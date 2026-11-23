@@ -7,7 +7,7 @@
   "remote_display": ["remote_display_scenario.odin"],
   "network": ["network_scenario.odin"],
   "principals": ["principals_scenario.odin", "tpm_key_scenario.odin"],
-  "disk_processes": ["disk_processes.odin"],
+  "disk_processes": ["disk_processes.odin", "program_loop_scenario.odin"],
   "missing_devices": ["missing_devices_scenario.odin"],
   "trusted_boot": ["trusted_boot_scenario.odin"],
   "hierarchy": ["hierarchy_scenario.odin"],

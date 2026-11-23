@@ -90,7 +90,7 @@ The catalog is the declaration that a project reads under the name `catalog`: a 
 Layer 1 holds: the recipe that the project names reaches the service under one identity ("One identity for a recipe"). Layer 2 stops at three places, each an entry of `ROADMAP.md`:
 
 - **No C builder.** No module exports the `build` of the builder contract ([recipes.md](recipes.md), "The builder"): `c_compiler` and `assemble` export their own calls, which the console chains by hand.
-- **No sandboxed builder start.** `recipes.build` refuses each builder but the inputs tree builder with `Builder_Needs_Sandbox`: the root service does not start a builder in its sandbox yet.
+- **No source of a project in the place `objects`.** `recipes` starts a builder in its sandbox ([recipes.md](recipes.md), "The builder"), but an input must be an output of an earlier build: nothing imports the tree of a source from outside. The recipe of `collatz` is refused first with `Builder_Absent`, as no C builder is a module yet, and its source would be refused with `Input_Absent`.
 - **No signature of a local realisation.** A realisation of the machine is kept, but not signed with the key of the principal.
 
 Layer 3 needs layer 2, and the QUIC client of the object cache inside the system, which is also left ([recipes.md](recipes.md), "State").

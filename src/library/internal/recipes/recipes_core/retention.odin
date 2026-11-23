@@ -38,12 +38,29 @@ Retention_Refusal :: enum u8 {
 // The memory of one pass, kept by the caller: the marks, a page of names,
 // and the bytes of one object.
 Retention_Workspace :: struct {
-	marks:      [RETENTION_MARKS_MOST][RETENTION_NAME_HASH_BYTES]u8, // Open addressing; all zero: free.
+	marks:      [RETENTION_MARKS_MOST]Retention_Mark, // Open addressing; a zero key: free.
 	mark_count: int,
 	names:      [RETENTION_PAGE_NAMES]pr.Private_Object_Name,
 	object:     [pr.REALISATION_OBJECT_HEAD_SIZE + MAX_OBJECT_BYTES]u8,
 	nodes:      [RETENTION_DEPTH_MOST][tree_hash.MAX_ENCODED_TREE_BYTES]u8,
 	recipe:     pr.Recipe_Spec,
+}
+
+// One marked object: the bytes of its hash, and whether the pass walked it
+// as a tree. Marked and walked are apart: an object that a put marked
+// first is still walked when a recipe names it as a tree, so the children
+// of a tree are kept whatever named it first.
+Retention_Mark :: struct {
+	key:    [RETENTION_NAME_HASH_BYTES]u8,
+	walked: bool,
+}
+
+// What a namer says of the kind of an object: a put names an object of any
+// kind, which the pass reads to know if it is a tree.
+Retention_Kind :: enum u8 {
+	Blob    = 0,
+	Tree    = 1,
+	Unknown = 2,
 }
 
 // What one pass did.
@@ -67,31 +84,31 @@ retention_start :: proc "contextless" (key: [RETENTION_NAME_HASH_BYTES]u8) -> in
 	return int(u32(key[0]) | u32(key[1]) << 8 | u32(key[2]) << 16 | u32(key[3]) << 24) % RETENTION_MARKS_MOST
 }
 
-// retention_mark adds a hash: fresh is false when it was marked already.
-// A zero key is never marked: a zero hash names nothing.
+// retention_mark adds a hash and gives its place. A zero key is never
+// marked: a zero hash names nothing.
 @(private = "file")
-retention_mark :: proc "contextless" (workspace: ^Retention_Workspace, key: [RETENTION_NAME_HASH_BYTES]u8) -> (fresh: bool, refusal: Retention_Refusal) {
+retention_mark :: proc "contextless" (workspace: ^Retention_Workspace, key: [RETENTION_NAME_HASH_BYTES]u8) -> (mark: ^Retention_Mark, refusal: Retention_Refusal) {
 	zero: [RETENTION_NAME_HASH_BYTES]u8
 	if key == zero {
-		return false, .None
+		return nil, .None
 	}
 	start := retention_start(key)
 	for step in 0 ..< RETENTION_MARKS_MOST {
-		place := (start + step) % RETENTION_MARKS_MOST
-		if workspace.marks[place] == key {
-			return false, .None
+		place := &workspace.marks[(start + step) % RETENTION_MARKS_MOST]
+		if place.key == key {
+			return place, .None
 		}
-		if workspace.marks[place] == zero {
+		if place.key == zero {
 			// One place stays free, so a search for an absent key ends.
 			if workspace.mark_count >= RETENTION_MARKS_MOST - 1 {
-				return false, .Marks_Full
+				return nil, .Marks_Full
 			}
-			workspace.marks[place] = key
+			place.key = key
 			workspace.mark_count += 1
-			return true, .None
+			return place, .None
 		}
 	}
-	return false, .Marks_Full
+	return nil, .Marks_Full
 }
 
 @(private = "file")
@@ -99,11 +116,11 @@ retention_marked :: proc "contextless" (workspace: ^Retention_Workspace, key: [R
 	zero: [RETENTION_NAME_HASH_BYTES]u8
 	start := retention_start(key)
 	for step in 0 ..< RETENTION_MARKS_MOST {
-		place := (start + step) % RETENTION_MARKS_MOST
-		if workspace.marks[place] == key {
+		place := &workspace.marks[(start + step) % RETENTION_MARKS_MOST]
+		if place.key == key {
 			return true
 		}
-		if workspace.marks[place] == zero {
+		if place.key == zero {
 			return false
 		}
 	}
@@ -114,9 +131,9 @@ retention_marked :: proc "contextless" (workspace: ^Retention_Workspace, key: [R
 // it that the store holds. A tree that the store lacks names nothing more:
 // the store has nothing under it to keep.
 @(private = "file")
-retention_mark_object :: proc "contextless" (workspace: ^Retention_Workspace, port: ^pr.Private_Store_Port, kind: object_cache.Cache_Object_Kind, hash: blake3.Hash, depth: int) -> Retention_Refusal {
-	fresh, refusal := retention_mark(workspace, retention_key(hash))
-	if refusal != .None || !fresh || kind != .Tree {
+retention_mark_object :: proc "contextless" (workspace: ^Retention_Workspace, port: ^pr.Private_Store_Port, kind: Retention_Kind, hash: blake3.Hash, depth: int) -> Retention_Refusal {
+	mark, refusal := retention_mark(workspace, retention_key(hash))
+	if refusal != .None || mark == nil || mark.walked || kind == .Blob {
 		return refusal
 	}
 	if depth >= RETENTION_DEPTH_MOST {
@@ -128,9 +145,19 @@ retention_mark_object :: proc "contextless" (workspace: ^Retention_Workspace, po
 	case .Ok:
 	case .Absent:
 		return .None
-	case .Too_Large, .Failed:
+	case .Too_Large:
+		// An object larger than a node of a tree is a blob: a put of it
+		// names nothing more. A namer that says Tree names a damaged one.
+		return kind == .Unknown ? .None : .Store_Failed
+	case .Failed:
 		return .Store_Failed
 	}
+	if kind == .Unknown {
+		if _, tree_refusal := tree_hash.tree_validate(bytes); tree_refusal != .None {
+			return .None
+		}
+	}
+	mark.walked = true
 	return retention_mark_tree(workspace, port, bytes, depth)
 }
 
@@ -145,7 +172,7 @@ retention_mark_tree :: proc "contextless" (workspace: ^Retention_Workspace, port
 		if !ok {
 			return .None
 		}
-		kind := object_cache.Cache_Object_Kind.Blob
+		kind := Retention_Kind.Blob
 		switch entry.kind {
 		case .Object:
 			kind = .Blob
@@ -166,7 +193,8 @@ retention_mark_tree :: proc "contextless" (workspace: ^Retention_Workspace, port
 retention_mark_recipe :: proc "contextless" (workspace: ^Retention_Workspace, port: ^pr.Private_Store_Port, spec: ^pr.Recipe_Spec) -> Retention_Refusal {
 	for index in 0 ..< min(spec.input_count, pr.MAX_RECIPE_INPUTS) {
 		input := &spec.inputs[index]
-		if refusal := retention_mark_object(workspace, port, input.kind, input.hash, 0); refusal != .None {
+		kind: Retention_Kind = input.kind == .Tree ? .Tree : .Blob
+		if refusal := retention_mark_object(workspace, port, kind, input.hash, 0); refusal != .None {
 			return refusal
 		}
 	}
@@ -216,8 +244,10 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 	workspace.marks = {}
 	workspace.mark_count = 0
 	port := &state.store
+	// A put names an object of any kind: a tree is walked, so its children
+	// stay while the put stays.
 	for hash in extra {
-		if _, refusal := retention_mark(workspace, retention_key(hash)); refusal != .None {
+		if refusal := retention_mark_object(workspace, port, .Unknown, hash, 0); refusal != .None {
 			result.refusal = refusal
 			return result
 		}
@@ -280,11 +310,13 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 			if decode_refusal != .None {
 				continue
 			}
-			if _, refusal := retention_mark(workspace, retention_key(record.output_hash)); refusal != .None {
-				result.refusal = refusal
+			mark, mark_refusal := retention_mark(workspace, retention_key(record.output_hash))
+			if mark_refusal != .None {
+				result.refusal = mark_refusal
 				return result
 			}
-			if kind == .Tree {
+			if kind == .Tree && mark != nil && !mark.walked {
+				mark.walked = true
 				if refusal := retention_mark_tree(workspace, port, payload, 0); refusal != .None {
 					result.refusal = refusal
 					return result

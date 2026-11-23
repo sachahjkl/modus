@@ -254,6 +254,9 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 			grant         = grant,
 		}
 		service.connected += 1
+		// The ring is mapped with the consent to receive handles: the caller
+		// can lend from now (src/md/api/call_ring_ready.md).
+		send(&connection.calls.completions, isolated.ready_record())
 		return true
 	}
 	return false

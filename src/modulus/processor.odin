@@ -187,7 +187,7 @@ Processor :: struct {
 	first_use_faults: u64, // Page faults after which the page was present.
 	lock_counts:   [op.LOCK_KIND_CAPACITY]op.Lock_Count, // By Lock_Kind (lock.odin).
 	held:          [op.Lock_Kind]u32, // The locks of each kind that the processor holds.
-	processes_held: u64, // Bit n: the processor holds the lock of process n.
+	processes_held: Process_Set, // The processes whose lock the processor holds.
 	ports_serial:  u64, // The ports_serial of the process whose ports are open (ports_switch).
 	record_serial: u32, // The serial of the thread whose record address is in the gs register of processes.
 	// The thread whose extended state still lives in this processor's x87, SSE
@@ -200,7 +200,7 @@ Processor :: struct {
 	// The serial of process n when the operation stopped it: read only for
 	// a bit of operation.stopped_processes, so the reset of the record at
 	// each command does not write it.
-	stopped_serials: [PROCESS_CAPACITY]u32,
+	stopped_serials: [PROCESS_CAPACITY_MOST]u32,
 	// The event ring of this processor (events.odin): only this processor
 	// writes these fields and the ring, while observed_kinds is not 0; the
 	// control path writes them only while it is 0 and after a

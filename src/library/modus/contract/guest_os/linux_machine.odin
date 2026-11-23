@@ -270,13 +270,6 @@ linux_machine_resume :: proc "contextless" (machine: ^Linux_Machine, registers: 
 	machine_interrupts_update(machine, registers)
 }
 
-// linux_machine_serial_receive_room gives the free bytes in the serial
-// receive queue of the guest, so a caller can pace pasted text without
-// dropping characters.
-linux_machine_serial_receive_room :: proc "contextless" (machine: ^Linux_Machine) -> int {
-	return serial_receive_room(&machine.serial)
-}
-
 // linux_machine_serial_input gives bytes of a principal to the serial port
 // of the guest, and gives how many the port took: its receive queue holds
 // SERIAL_RECEIVE_BYTES, and a byte past it is dropped and counted.

@@ -217,6 +217,11 @@ module_builds := [?]Module_Build {
 	{name = "grid_terminal", source = SYSTEM_MODULE_SOURCES + "grid_terminal", category = .Service, entry = true, image = true},
 	{name = "dom_terminal", source = SYSTEM_MODULE_SOURCES + "dom_terminal", category = .Service, entry = true, image = true},
 	{name = "flood", source = TEST_MODULE_SOURCES + "flood", entry = true, image = true},
+	// The test builder and the driver of the machine test of the builders
+	// (src/md/features/recipes.md, "The builder"): recipes starts
+	// builder_probe as a call host, so it has no entry.
+	{name = "builder_probe", source = TEST_MODULE_SOURCES + "builder_probe", image = true},
+	{name = "build_check", source = TEST_MODULE_SOURCES + "build_check", entry = true, image = true},
 	{name = "hostile_terminal", source = TEST_MODULE_SOURCES + "hostile_terminal", entry = true, image = true},
 	{name = "arena", source = TEST_MODULE_SOURCES + "arena", entry = true, image = true},
 	{name = "output_wiring", source = TEST_MODULE_SOURCES + "output_wiring", entry = true, image = true},

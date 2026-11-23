@@ -29,7 +29,7 @@ PLACE_GAP :: graphics.GAP
 // The candidates at most: the two edges of the work area and the two
 // sides of each window give the starts of a free rectangle.
 @(private = "file")
-PLACE_WINDOW_CAPACITY :: 64
+PLACE_WINDOW_CAPACITY :: WINDOW_CAPACITY
 
 @(private = "file")
 overlap :: proc "contextless" (a, b: Box) -> int {

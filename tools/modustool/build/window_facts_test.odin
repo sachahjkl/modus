@@ -418,7 +418,7 @@ the_facts_of_the_console_write_the_lines_of_before :: proc(t: ^testing.T) {
 	longest_member, longest_command, longest_row := strings.repeat("m", 31, context.temp_allocator), strings.repeat("c", 64, context.temp_allocator), strings.repeat("r", 24, context.temp_allocator)
 	facts_expect_line(t, render(t, file, "Palette_Mark_Moved", {{"member", longest_member}, {"command", longest_command}, {"parameter", longest_row}}), line_of_before("console: the palette marks .", longest_member, " for ", longest_command, " ", longest_row))
 	facts_expect_line(t, render(t, file, "Palette_Marks_Refreshed", {{"sent", u64(0)}, {"in_the_console", max(u64)}}), line_of_before("console: the palette refreshed its marks: ", u64(0), " getters sent, ", max(u64), " getters in the process of the console not called"))
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"search", 64}, {"history_problem", u32(len(problems[0]))}, {"entry_name", 64}, {"result_kind", u32(len("an Integer"))}, {"module_name", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"refusal", u32(len(CHOICE_REFUSAL_LONGEST))}, {"name_set", u32(len("the names of this console"))}, {"member", 31}, {"command", 64}, {"parameter", 24}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"search", 64}, {"history_problem", u32(len(problems[0]))}, {"entry_name", 64}, {"result_kind", u32(len("an Integer"))}, {"module_name", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"refusal", u32(len(CHOICE_REFUSAL_LONGEST))}, {"name_set", u32(len("the names of this console"))}, {"member", 31}, {"command", 64}, {"parameter", 24}, {"project", value_kinds.MODULE_NAME_FIELD_BYTES - 1}))
 }
 
 // The facts of the compositor past the lines of its windows: the counts
@@ -600,6 +600,11 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["viewer_key_head"] = 8
 	most["resource"] = 95
 	most["plan"] = 48
+	// The act dialog: the border of the dialog refuses an asker past
+	// PLAN_DIFFERENCE_NAME_BYTES and an act past PLAN_DIFFERENCE_ITEM_BYTES,
+	// 48 bytes each.
+	most["asker"] = 48
+	most["act"] = 48
 	most["kind"] = u32(len("screen_reader"))
 	most["nickname"] = value_kinds.MODULE_NAME_FIELD_BYTES - 1
 	facts_expect_text_fields_last(t, file, most)

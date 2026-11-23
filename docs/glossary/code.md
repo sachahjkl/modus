@@ -904,7 +904,7 @@ Do not use: build result, cache entry, substitute.
 
 A builder is a module that exports `build`, with a fixed contract, and writes the output of a recipe into its store "out".
 
-The root service starts it in a sandbox: its inputs as clones with Read, an empty store "out", no network, a random seed equal to the recipe hash, and a frozen date page. It is a plain module: a native compiler, the guest builder, or a small module of a developer. It is not a daemon that builds for others.
+The service `recipes` starts it as a call host, in a sandbox: its inputs as clones in a store with Read only, an empty store "out", no network, no root ring, a random seed equal to the recipe hash, and no date page. `build` takes the input rows and the argument bytes, and gives 1 or an error record; the service computes the output hash over the store "out". It is a plain module: a native compiler, the guest builder, or a small module of a developer. It is not a daemon that builds for others.
 
 The design: `src/md/features/recipes.md`.
 

@@ -309,6 +309,13 @@ status_reader_times_out_a_head_that_does_not_end :: proc(t: ^testing.T) {
 @(private = "file")
 LARGE_ANSWER_BYTES :: 32 * 1024 * 1024
 
+// The pause of the slow reader between two reads of 16 bytes: each read
+// frees room, so no single write of the server stalls for long, and the
+// pace stays far under LARGE_ANSWER_BYTES in SHORT_DEADLINE, so only the one
+// deadline of the connection can end the answer.
+@(private = "file")
+SLOW_READER_PAUSE :: 5 * time.Millisecond
+
 @(private = "file")
 Slow_Reader :: struct {
 	socket:      net.TCP_Socket,
@@ -360,7 +367,7 @@ status_one_deadline_frees_the_thread_from_a_slow_reader :: proc(t: ^testing.T) {
 			copy(slow.head[slow.head_length:], buffer[:taken])
 			slow.head_length += taken
 			slow.received += count
-			time.sleep(5 * time.Millisecond)
+			time.sleep(SLOW_READER_PAUSE)
 		}
 	})
 	testing.expect(t, strings.has_prefix(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n")), "HTTP/1.1 "))

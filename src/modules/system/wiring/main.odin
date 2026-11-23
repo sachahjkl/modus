@@ -36,7 +36,8 @@ import "modus:system"
 // One thread serves SERVICE_RING, SERVICE_STOPS_RING, and mapped process
 // wiring rings. All stream rings, end pages, terms pages, description files,
 // and list pages are paid from each asker's child wiring budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
+// The working memory holds the wait room of the loop too (WIRING_WAIT_WORDS).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32 + WIRING_WAIT_ROOM_PAGES, processes = 1, threads = 1}
 
 // Stall bound in wiring_core must stay identical to the system hang bound.
 #assert(wiring_core.STALL_HANG_BOUND_MS == system.TEST_HANG_BOUND_MILLISECONDS)
@@ -48,8 +49,20 @@ STALL_POLL_INTERVAL_MS :: u64(1_000)
 // Fixed words in one wait of the main loop: the event word, SERVICE_RING,
 // and SERVICE_STOPS_RING.
 WIRING_WAIT_FIXED_WORDS :: 1 + 2 + 2
-WIRING_WAITED_RINGS_MOST :: (op.WORD_WAIT_CAPACITY - WIRING_WAIT_FIXED_WORDS) / 2
-#assert(WIRING_WAIT_FIXED_WORDS + 2 * WIRING_WAITED_RINGS_MOST <= op.WORD_WAIT_CAPACITY)
+// The words of the wait: the fixed words, and the completions of the
+// wiring ring of each process, with its flag. Each ring fits.
+WIRING_WAIT_WORDS :: WIRING_WAIT_FIXED_WORDS + 2 * wiring_core.PROCESS_CAPACITY
+#assert(WIRING_WAIT_WORDS <= op.WORD_WAIT_MOST)
+// The pages of its wait room (op.wait_room_pages): the page that names the
+// others, and one for each op.WAIT_ROOM_WORDS_OF_A_PAGE words past the
+// words that the kernel holds with no room.
+#assert(WIRING_WAIT_WORDS > op.WORD_WAIT_INLINE)
+WIRING_WAIT_ROOM_PAGES :: 1 + (WIRING_WAIT_WORDS - op.WORD_WAIT_INLINE + op.WAIT_ROOM_WORDS_OF_A_PAGE - 1) / op.WAIT_ROOM_WORDS_OF_A_PAGE
+// The places of the wait of the main loop: more than a wait on the stack
+// holds. The set is made at the start of entry.
+wiring_wait_words: [WIRING_WAIT_WORDS]op.Word
+wiring_wait_parts: [WIRING_WAIT_WORDS]system.Wait_Part
+wiring_wait_set: system.Wait_Set
 
 // Kernel handles associated with one registered Process_Entry in `state`.
 Process_Handles :: struct {
@@ -1152,10 +1165,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region = ([^]u8)(reg_addr)[:ws.SERVICE_REGION_SIZE]
 
 	wiring_core.state_init(&state)
+	wiring_wait_set = system.wait_set_of(wiring_wait_words[:], wiring_wait_parts[:])
 	system.log_fact(.Info, Ready{image_bytes = image_size})
 
 	for {
-		wait := system.wait_begin()
+		wait := system.wait_begin(&wiring_wait_set)
 		// Serve core commands (Register_Process, Commit_Start_Wiring) before
 		// stops_drain so a short-lived child that exits immediately after start
 		// commits its wiring batch before its stop notice unregisters it.
@@ -1170,15 +1184,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 		system.wait_records(&wait, &stops_ring.commands)
 		system.wait_records(&wait, &core_ring.commands)
-		waited_rings := 0
 		for proc_idx in 0 ..< wiring_core.PROCESS_CAPACITY {
-			if waited_rings >= WIRING_WAITED_RINGS_MOST {
-				break
-			}
 			ph := &process_handles[proc_idx]
 			if state.processes[proc_idx].active && ph.wiring_ring.head != nil {
 				system.wait_records(&wait, &ph.wiring_ring.completions)
-				waited_rings += 1
 			}
 		}
 		deadline := system.WAIT_FOREVER

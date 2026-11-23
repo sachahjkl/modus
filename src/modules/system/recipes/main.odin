@@ -17,19 +17,24 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// The budget that the service asks for: its working memory, and one guest
-// build at a time of a typical guest (guest_build.odin): the buffers of its
-// disks and of its kernel and initial archive, 128 MiB of guest memory, the
-// kernel of a distribution, and its nested page table, and the stack of
-// the build thread past the stack that the tool counts for a thread. The
-// guest is a second process; the build thread is a second thread. The
-// starter decides the grant: a build checks the memory of its guest against
-// what the granted budget has left, so a larger grant runs a larger guest.
-SERVICE_WORKING_PAGES :: u64(1024)
-TYPICAL_GUEST_MEMORY_PAGES :: u64(32_768)
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 58_544, processes = 2, threads = 2}
-TYPICAL_GUEST_TABLE_PAGES :: TYPICAL_GUEST_MEMORY_PAGES / 512 + 64 // guest_table_pages of the typical guest.
-#assert(58_544 == SERVICE_WORKING_PAGES + GUEST_BUFFER_PAGES + TYPICAL_GUEST_MEMORY_PAGES + TYPICAL_GUEST_TABLE_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
+// The budget that the service asks for. Its own pages and one builder that
+// it starts as a call host of its own budget: 1024 pages of the service,
+// system.CALL_HOST_PAGES (512) of the builder, and the memory objects of
+// one native C build (source up to 256 KiB, assembly text up to 1 MiB,
+// module up to 64 KiB) with its compiler and assembler call hosts one at a
+// time. Then one guest build of a typical guest (guest_build.odin): 128 MiB
+// of guest memory, the kernel of a distribution, its nested page table and
+// its process, its kernel, its initial archive, its output disk and its
+// input disks, and the stack of the build thread past the stack that the
+// tool counts for a thread. The starter grants up to a share of the
+// machine; each guest build sizes its buffers from its spec and from what
+// the granted budget has left (recipes_core.guest_build_plan), so a smaller
+// grant runs the guest builds that fit it.
+SERVICE_AND_BUILDER_PAGES :: u64(4096)
+#assert(SERVICE_AND_BUILDER_PAGES >= 1024 + system.CALL_HOST_PAGES)
+TYPICAL_GUEST_BUILD_PAGES :: recipes_core.TYPICAL_GUEST_BUILD_PAGES
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 54_512, processes = 3, threads = 2}
+#assert(54_512 == SERVICE_AND_BUILDER_PAGES + TYPICAL_GUEST_BUILD_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -165,7 +170,8 @@ handle_command :: proc "contextless" (command: ring.Record) {
 		// A recipe of the guest builder builds on the build thread, which
 		// completes the command at its end (guest_build.odin).
 		if copied_spec.builder_hash == pr.guest_builder_hash() && mode != .Cache_Only {
-			if refusal := guest_build_start({mode = mode, from_ring = true, spec = copied_spec, ring_tag = command.tag, result_offset = result_offset}); refusal != .None {
+			ring_recipe_hash, _ := pr.recipe_hash(&copied_spec)
+			if refusal := guest_build_queue({principal = recipes_core.GUEST_QUEUE_RING_PRINCIPAL, recipe_hash = ring_recipe_hash, mode = mode, from_ring = true, spec = copied_spec, ring_tag = command.tag, result_offset = result_offset}); refusal != .None {
 				ring.push(&service_ring.completions, ring.Record{kind = u32(pr.Service_Ring_Status.Refused), tag = command.tag, values = {u64(refusal), 0, 0, 0, 0, 0, 0}})
 			}
 			return
@@ -276,6 +282,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	store_port, store_open := storage_port.bind(ctx)
 	recipes_core.state_init(&service_state, store_port)
+	builder_start_init(ctx)
+	c_builder_bind(ctx)
 	if store_open {
 		retention_pass()
 	}

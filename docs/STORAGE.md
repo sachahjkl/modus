@@ -334,7 +334,7 @@ A connection to the storage service is a handle on a store or on a part of it. A
 | `list(place, after, rows, names)` | A page of the entries after the name `after`, in the order of the names: a table of rows (the place of the name in `names`, its count of bytes, the kind, the size, the generation) and the bytes of the names. A tree of a million entries is never given whole |
 | `rename(place, name, to_place, to_name)` | Moves an entry, in one commit, inside one store. Refused when `to_name` exists, or when a tree moves into itself |
 | `remove(place, name)` | Removes an object, or a tree and all under it (section 4.4) |
-| `share(place, read_only)` | A new connection whose root is the tree of the place: two handles (its call ring and its call region) for the caller, to give to another process |
+| `share(place, read_only)` | A new connection whose root is the tree of the place: two handles (its call ring and its call region) for the caller, with the right Give, to give to another process |
 | `unshare(share)` | Ends a connection that `share` made |
 | `usage()` | The counts of the store of the connection; through a share of a tree, the counts of that tree only (section 4.3) |
 | `stores()` | A first line with the generation of the disk, its blocks in use, and the commits, the commits refused by their read back, the commits whose root write or read failed on the device (for the next open to decide), the blocks written and the blocks read back with the time of those reads since the start of the service (section 3.3: a measure of the cost of the commit read back). Then one line for each store that the caller is allowed to name (section 4.2): its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. A caller that does not act for a principal gets the error record `No_Grant`, unit `Acts_For_Principal` (-10) |
@@ -351,9 +351,12 @@ A connection to the storage service is a handle on a store or on a part of it. A
 ### 4.3 Read only, and revocation
 
 - A connection that `share` made with `read_only` refuses each change (No_Grant, unit Changes).
+- The two handles of a share carry the right Give: the maker makes a share to give it to another process, as the service `recipes` gives the stores of a builder.
+- A share makes no share: `share` through a share is refused (No_Grant, unit Connections). The holder of a share is the process that its maker chose, and the 16 shares of the service are for the makers: a share that made shares could hold each of them, and a process that stopped never calls again to free them.
 - A share of a tree sees the counts of its tree only. `usage()` through it gives the objects, the trees and the versions under the tree, and its blocks: the nodes of its trees, the blocks of the current state of each object (a block that two states share counted once for each), and the index and the leaves of the versions of each object. It gives the limit of the store, and no removal. The count is a walk of the tree: one read of each node, of the root of each object and of each version index, at most 4096 reads for one call; a larger tree, or a tree with a wrong block, gives `USAGE_NOT_COUNTED` (-1). A count of the whole store would tell the holder what the rest of the store holds (section 4.7).
 - `unshare` revokes the two handles of the connection: the kernel ends each holding that came from them, in each process (`Handle_Revoke`), and the service frees the connection and its places. A call on it gives Gone.
 - When the grant of the store of a connection ends (the root service revokes it, or the connection closes), each connection that it shared ends too, at its next call.
+- A share has the limit of blocks of the store of its maker: a share that can change can fill that store. A limit of its own for each share is left (`ROADMAP.md`).
 
 ### 4.4 The removal of a tree
 

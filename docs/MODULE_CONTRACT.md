@@ -329,19 +329,19 @@ The step that describes the exports reads the constant from the tree of the pars
 | The least budget | 2048 | 1 | 1 |
 | The largest budget of a process | 16384 | 8 | 32 |
 
-Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 64 000 (`op.LOG_RECORDS_OF_THE_MACHINE`), 1000 for each process slot (`src/md/features/log_side_channels.md`). The root service keeps a table of budget exceptions (`budget_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk process and a module of another project have no row.
+Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 1000 for each process slot, 256 000 on a machine of 1 GiB and at most 1 024 000 (`op.LOG_RECORDS_OF_THE_MACHINE_MOST`; `src/md/features/log_side_channels.md`). The largest budget of a process of the boot image is one share of the pages and of the threads that the root service holds at its start, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages (`module.largest_budget_of_machine`; `src/md/features/module_budget_request.md`): a machine of 1 GiB gives one process about 190 MiB. The root service keeps a table of budget exceptions (`processor_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another limit of processor time, and holds its reason. No row gives pages. A disk process and a module of another project have no row.
 
 **A disk process** is paid by one budget that the root service makes from its own at the first disk process, and keeps (`src/library/modus/disk_process/budget.odin`):
 
 | Amount | Pages | Processes | Threads | Processor | Log records |
 |---|---|---|---|---|---|
-| The budget of all disk processes | 16384 | 4 | 16 | two processors | 4000 in each second |
-| The largest budget of one disk process | 8192 | 1 | 4 | one processor for each thread | 1000 in each second |
+| The budget of all disk processes | 32768 | 4 | 16 | two processors | 4000 in each second |
+| The largest budget of one disk process | 16384 | 1 | 4 | one processor for each thread | 1000 in each second |
 
 A file chooses its own request, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process holds no grant that starts a process, so one process slot loses nothing. The log has one line when the budget of the disk processes is made:
 
 ```
-root: the disk processes share one budget of 64 MiB, 4 processes and 16 threads
+root: the disk processes share one budget of 128 MiB, 4 processes and 16 threads
 ```
 
 A request above the largest budget starts the process with the largest budget, and the log has one line for each part:
@@ -830,6 +830,8 @@ A disk process whose imports are all in the boot image makes no scan.
 ```
 
 - `module_files.receive(nickname, path)` sends `GET path`, takes a body of 1 to 4 MiB with a `Content-Length` before the deadline of a load (30 seconds), writes it as the object `nickname` in one commit, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The nickname follows the rules of the name of a disk process: `module_files` and `grant_table` are refused, so no file is written over the disk grant table. The path is 1 to 200 visible bytes that start with `/`.
+- `module_files.put(nickname, module, size)` writes the first `size` bytes of a memory object that the caller lends as the object `nickname`, in one commit, and gives the 64 hexadecimal digits of the hash of the bytes. The command `build` of the console puts a module that it built with it.
+- `module_files.read(nickname, module)` copies the object `nickname` into a memory object that the caller lends, and gives the count of its bytes. The caller computes the hash of the bytes that it received.
 - `module_files.list()` gives a row for each object of the root tree but `grant_table` and the debug objects (section "The debug object of a disk process"): `name`, `bytes`, and `hash`, the BLAKE3 hash of its bytes, which the service reads again. An object over 4 MiB has no hash.
 
 The caller must act for the principal of the store: the root service gives the service the number of its principal (`disk_process.SERVICE_VALUE_PRINCIPAL`). The hash that the service gives is a help, not a proof: the root service checks the bytes at the start, so a changed service or a changed web server cannot make other bytes run under the hash that the principal types. The log has one line for each file stored, and one for each row of a list:
@@ -999,7 +1001,8 @@ The code is `src/library/modus/contract/isolated/` and `src/modules/system/host`
 - **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 12 integers and 8 floats are 160 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
 - **Completion record**: `kind` is a status (`isolated.Status`): 0 `Ok`; 1 `Bad_Export`, the module has no export with this index, or the export has no description; 2 `Bad_Arguments`, the argument record or one of its slices is not in the call region; 3 `Bad_Handle`, a handle of the argument record did not come through the call ring or lacks a right of the description ("Records and handles, as implemented"); 4 `Load_Failed`, only in the first completion of a call host, with the tag 0 (section 2, "The error of a load"). `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
 - **The receiver checks**: The call host reads the types from the description in the module, not from the caller. It copies the argument record to private memory once. It checks the offset and the count of each slice against the size of the call region, with no overflow. Then it calls `export_call`.
-- **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call.
+- **The ready completion**: the first completion of a call ring has the tag 0, the kind `Ok` and no value. The call host sends it after it loads its module, and a service after it maps the ring of a new connection with the consent to receive handles. The caller sends its first call only after it, because the kernel gives a lent handle only to a process that maps the ring with that consent (`system.connection_ready_wait`). The wait ends when the call host or the service stops; its bound, `system.ANSWER_BOUND_MILLISECONDS`, only ends a hang.
+- **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call. A call has a tag from 1: no call has the tag of the ready completion.
 - **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the process. The caller reads the stop cause, and the stop report of a fault. A call has no time limit. The caller ends a call when it closes the handle: the kernel stops a process that no handle names. The console does this when Escape is pressed. The next call starts a new call host.
 - **Tests**: `odin test isolated` has a round trip, the refused cases at each limit, and 200 000 random argument records. The machine test calls a module that reads address 0, that loops with no end, and that tries to stop the machine.
 

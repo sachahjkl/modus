@@ -73,13 +73,23 @@ registered_recipe :: proc "contextless" (registry: ^Recipe_Registry, recipe_hash
 	return nil
 }
 
+// The start of a builder that is not the inputs tree builder: the service
+// gives it (src/modules/system/recipes, builder_start.odin), and a host
+// test gives one in memory. invoke writes the cause of a refusal in
+// refusal: the result gives it in place of Builder_Failed.
+Builder_Start :: struct {
+	invoke:  Builder_Invoke_Proc,
+	data:    rawptr,
+	refusal: pr.Recipe_Refusal,
+}
+
 // build_registered builds the registered recipe of recipe_hash in mode, and
 // keeps the result in the history. A realisation in the local store answers
 // a mode that takes the cache with no build. On a miss, the service builds a
-// recipe of the inputs tree builder itself; another builder needs a sandbox
-// that only the root service starts, and is refused with
-// Builder_Needs_Sandbox.
-build_registered :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, recipe_hash: blake3.Hash, mode: pr.Build_Mode) -> (result: pr.Recipe_Build_Result) {
+// recipe of the inputs tree builder itself, and each other builder with
+// start, in its own process (src/md/features/recipes.md, "The builder").
+// With no start, another builder is refused with Builder_Needs_Sandbox.
+build_registered :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, recipe_hash: blake3.Hash, mode: pr.Build_Mode, start: ^Builder_Start = nil) -> (result: pr.Recipe_Build_Result) {
 	spec := registered_recipe(registry, recipe_hash)
 	if spec == nil {
 		state.counters.total_refusals += 1
@@ -87,7 +97,15 @@ build_registered :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe
 		history_add(registry, &result, mode)
 		return result
 	}
-	result = build_with_inputs_tree(state, spec, mode)
+	if start != nil && start.invoke != nil && spec.builder_hash != pr.inputs_tree_builder_hash() {
+		start.refusal = .None
+		result = build_recipe(state, spec, mode, {}, nil, start.invoke, nil, nil, start)
+		if result.refusal == .Builder_Failed && start.refusal != .None {
+			result.refusal = start.refusal
+		}
+	} else {
+		result = build_with_inputs_tree(state, spec, mode)
+	}
 	history_add(registry, &result, mode)
 	return result
 }

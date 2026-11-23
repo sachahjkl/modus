@@ -160,14 +160,28 @@ Work :: struct {
 	refresh:  u32, // 1: the second thread calls the getters of the palette when no line waits.
 	wake:     u32, // The first thread adds 1 for a line or a refresh. The second thread waits on this word.
 	cancel:   u32, // 1: the input pressed Escape. An isolated call waits on this word.
-	// 1: the line is in a call that Escape can stop (a call of a sandboxed
-	// process or of a service). The second thread writes it; the first
-	// thread reads it to know what Escape means.
+	// Depth of nested waits that Escape can stop (an isolated call, a
+	// Connect, a ready wait, a record stream): not 0 means Escape stops the
+	// wait. A nesting count keeps an inner wait (sandbox_start inside
+	// call_isolated) from clearing the outer wait. The second thread writes
+	// it (call_stoppable_enter, call_stoppable_leave); the first thread
+	// reads it to know what Escape means.
 	call_stoppable: u32,
 }
 
 work: Work
 running: bool // For the first thread: a line runs.
+
+// call_stoppable_enter marks one wait of the second thread that Escape can
+// stop; call_stoppable_leave ends it. Nested waits keep the count above 0
+// until the outermost one ends.
+call_stoppable_enter :: proc "contextless" () {
+	intrinsics.atomic_add(&work.call_stoppable, 1)
+}
+
+call_stoppable_leave :: proc "contextless" () {
+	intrinsics.atomic_sub(&work.call_stoppable, 1)
+}
 pending: line_editor.Waiting_Keys(Key, PENDING_CAPACITY) // The keys that the input typed during a line.
 keys_loss: key_path.Loss_Period // The keys that found `pending` full while Escape could stop the call of the line.
 // The second thread adds 1 when it ends a line. The first thread waits on
@@ -393,6 +407,10 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		done += 1
 		services_check()
 		run_line(string(work.text[:work.count]))
+		// An Escape stops the line that ran, and nothing after it: the
+		// getters of the palette and the waits outside a line read the word
+		// too.
+		intrinsics.atomic_store(&work.cancel, 0)
 		// The palette: the answer to its choice, then the table of the
 		// commands of now (palette_provider.odin).
 		chosen_by_palette := palette_tag != 0

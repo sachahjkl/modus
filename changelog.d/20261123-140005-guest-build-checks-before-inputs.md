@@ -1,3 +1,3 @@
 type: Changed
 
-**A guest build checks its guest before its inputs.** A kernel or an initial archive that the store lacks gives `Cache_Miss`, and a guest larger than the budget of the service gives `Memory_Past_Bound`, before any input is read or packed. The memory of a guest build follows the budget of the service in place of a fixed 128 MiB.
+**A guest build fits the budget of the service.** Each guest build sizes its buffers from its spec and from the memory that the budget of the service has left, so a smaller machine runs the guest builds that fit it; a build whose guest does not fit, or whose kernel or initial archive the store lacks, is refused before any input is read.

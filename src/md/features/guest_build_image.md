@@ -25,11 +25,22 @@ Its steps:
 1. Mount `/proc` and `/sys`. Load `virtio_ring`, `virtio`, `virtio_mmio` with the words `virtio_mmio.device=` of `/proc/cmdline` as its parameters, then `virtio_blk`, with `finit_module`.
 2. Find the two disks by their identifiers in `/sys/block/vd*/serial` (`modus-inputs`, `modus-outputs`) and make their nodes from `/sys/block/vd*/dev`.
 3. Read the input disk whole, check it (`validate_disk_image`, the role Inputs_Read_Only), and write each file under `/inputs/<path>`.
-4. Read the frozen time from the ports of the build, install the applets of busybox, and run `/bin/sh -c <command>` in `/inputs`, with `SOURCE_DATE_EPOCH` the frozen time. The words after `--` on the command line are the arguments of `init`; it joins them with one space.
-5. Walk `/outputs`, sort the paths by their bytes, and write the files with the stream writer into a disk of the size of the output device, then write that disk to the device and sync it.
-6. Write the exit status of the command to the port Build_Exit_Status. A failure of `init` itself writes one line on the console that says what did not happen, and the status `INIT_FAILED_STATUS` (125).
+4. Read the frozen time from the ports of the build, close the ports (`iopl(0)`), install the applets of busybox, and run `/bin/sh -c <command>` in `/inputs` as the build user ("The border inside the guest"), with `SOURCE_DATE_EPOCH` the frozen time. When the shell ends, end each process that it left (`kill(-1, SIGKILL)`). The words after `--` on the command line are the arguments of `init`; it joins them with one space.
+5. Walk `/outputs` with no link followed, sort the paths by their bytes, and write the files with the stream writer into a disk of the size of the output device, then write that disk to the device and sync it.
+6. Open the ports again and write the exit status of the command to the port Build_Exit_Status. A failure of `init` itself writes one line on the console that says what did not happen, and the status `INIT_FAILED_STATUS` (125).
 
 Bounds: the files of a disk (MAX_DISK_ENTRIES), the bytes of a path (MAX_MOUNT_PATH_BYTES), the depth of a path (MAX_PATH_DEPTH), the size of the output device. Each is checked, and each refusal is a status, never a hang: the time bound of the spec ends a guest that hangs anyway.
+
+### The border inside the guest
+
+The guest as a whole is the sandbox of the host. Inside it, `init` is a border too: the command of a recipe is foreign code, and the protocol of the build (the ports of the status and of the frozen clock, the output disk) belongs to `init` alone. So the command never holds a right that would let it speak the protocol for `init`:
+
+- **It runs as the build user** (uid and gid 1000, no supplementary group): the child drops the groups, then the group, then the user, and checks each; a failure ends it with `INIT_FAILED_STATUS` before the command runs.
+- **No port.** `init` closes the ports (`iopl(0)`) before the fork, and a user that is not root cannot open them: a command cannot write a status or read the clock of the build. `init` opens them again for the status, after the command.
+- **No disk.** The nodes of the two disks are made by `init` with the mode 0600 and the owner root; the modules of the kernel are loaded before the command. The command reads its inputs from `/inputs` and writes `/outputs`, which `init` gives to the build user.
+- **No race on the output.** Each process that the command left ends before `init` walks `/outputs`, and the walk follows no link and refuses each entry that is not a file or a folder: a device node, a link, a pipe.
+
+Refused: the command as root, the way of the first form. Root in the guest writes the port of the status, so a command that fails could report 0, and writes the output disk under the writer of `init`. The kernel of the guest is a weaker border than the guest itself, so the user is a second fence, not the first: the time bound and the bounds of the disks still hold if it falls.
 
 ### The archive and the recipe
 

@@ -96,7 +96,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	inside = interface.card(&frame, {8, 208, WIDTH - 16, 144}, "CONNECTIONS", "root: Connect, a call ring and a call region of 64 KiB", graphics.colors.memory)
 	shown := 0
 	for &connection in service_connections {
-		if connection.name[0] == 0 {
+		if connection.state != .Ready {
 			continue
 		}
 		y := inside.y + shown * LINE

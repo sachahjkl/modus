@@ -88,10 +88,12 @@ The process `scheduler` runs the policy with no change of the kernel. One round 
 
 ### The rule of one round
 
-The process weight is a setting of the principal for the processes with one name: a number from 32 to 1024, and 1024 for a process with no setting. A round reads each process slot and the thread report of each process. It runs each 100 ms, by the clock of the system.
+The process weight is a setting of the principal for the processes with one name: a number from 256 to 8192, and 8192, the full weight, for a process with no setting. A round reads each process slot and the thread report of each process. It runs each 100 ms, by the clock of the system.
 
 - **A thread counts** when the round saw it for the first time, when it is ready, or when its run time or its virtual time changed since the last round. `N` is the count of these threads, and `T` the count of the threads that live.
-- **A thread that counts gets the process weight divided by `N`.** A thread that does not count gets the process weight divided by `T`. The division drops the rest. A process has at most 32 threads, so the least process weight, 32, keeps each quotient at 1 or more: the weights of the threads that count never sum to more than the process weight. The rest that the division drops is under `N` units of weight: under 3 % of the full weight.
+- **A thread that counts gets the process weight divided by `N`.** A thread that does not count gets the process weight divided by `T`. The division drops the rest. A process has at most 256 threads (`op.THREAD_CAPACITY`), so the least process weight, 256, keeps each quotient at 1 or more: the weights of the threads that count never sum to more than the process weight. The rest that the division drops is under `N` units of weight: under 3.2 % of the full weight for 256 threads.
+
+**The unit of a weight is finer than the count of threads.** The full weight is 8192 (`op.WEIGHT_FULL`), 32 times the most threads of a process, so the narrowest share is 1/32 of the full weight whatever the count of threads. With the full weight 1024, a process of 256 threads made the least process weight 256, a quarter: a lifted count of threads narrowed the shares. Refused: a process weight in a unit of its own, multiplied into the weight of the threads. Two units for one word is the confusion that one term for one concept forbids, and the kernel still needs a finer unit to hold the part of each thread.
 - **The weight limit of a thread is its quotient.**
 - **The new-thread weight limit of each process, and of each of its threads, is the process weight divided by 32.** The round writes the value of the process before it reads the report of the process. A thread that the process creates between two rounds gets the value as its weight limit and as its weight. The section "A thread that no round saw" says why.
 - **The policy never raises a thread above what its process asked.** The first write of a thread reads its schedule. A weight under its limit is a weight that the process chose: the policy keeps it as the most of that thread. A weight equal to its limit is "the most that I can have": the kernel gives the same weight for the value 0. Later, a weight under the weight that the policy wrote is a weight that the process lowered: it becomes the most of that thread. The thread gets the smaller of its quotient and that most.
@@ -141,10 +143,10 @@ So the gap of the first round is closed in that round: a chain started before th
 After the first round of a process, each thread of it either was written by a round or was created after the last write of its process:
 
 - the threads that the last round counted sum to `P` at most;
-- each thread that no round saw has at most `P / 32`; a process has at most 32 threads, so these sum to under `P`;
+- each thread that no round saw has at most `P / 256`; a process has at most 256 threads, so these sum to under `P`;
 - a thread that the round saw and did not count has `P / T`, and these sum to under `P`: the wake of the section "Why the moment of a wake gives nothing", for one period.
 
-So the process has under two process weights, plus the part of the wake (under one more) for one period. With `T` threads seen, `N = 1` of them counted, and the rest of the 32 threads unseen, the most is `P·(3 − 1/T − T/32)`: about `2.65 P` for `T = 6`. The bound does not depend on the moments of the rounds or of the creations: a process that knows the moments of the rounds gains nothing more.
+So the process has under two process weights, plus the part of the wake (under one more) for one period. With `T` threads seen, `N = 1` of them counted, and the rest of the 256 threads unseen, the most is `P·(3 − 1/T − T/256)`: about `2.81 P` for `T = 6`. The bound does not depend on the moments of the rounds or of the creations: a process that knows the moments of the rounds gains nothing more.
 
 #### The refused forms
 
@@ -153,7 +155,7 @@ So the process has under two process weights, plus the part of the wake (under o
 - **A weight for a new thread that the kernel computes, such as the weight of the creator divided by its count of threads.** That is a policy in the kernel, and the kernel keeps the mechanism only.
 - **A new thread whose weight is cut to the new-thread weight limit, with no refusal.** The policy reads the weight of a new thread to know what its process asked: a weight under the limit is a choice of the process. A cut weight equal to the limit reads as "the most", and the policy then raises the thread above the weight that its process asked. The refusal keeps the rule "the policy never raises a thread above what its process asked".
 - **The value of a thread alone, with more passes of the round.** A chain of short threads is always newer than the last report, so no fixed count of passes closes it. One value of the process, written before the report, closes it in one write.
-- **The weight 1 for a new thread.** `P / 32` is already the weight of a thread of a process with its 32 threads. A smaller value closes nothing more, and an honest new thread then waits longer for its first turn on a busy machine.
+- **The weight 1 for a new thread.** `P / 256` is already the weight of a thread of a process with its 256 threads. A smaller value closes nothing more, and an honest new thread then waits longer for its first turn on a busy machine.
 
 #### The subtle points
 

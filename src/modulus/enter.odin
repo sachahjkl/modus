@@ -5,6 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:slot_set"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
@@ -157,7 +158,7 @@ Operation_In_Progress :: struct {
 	control: bool, // The operation holds the control lock.
 	// The stops that the operation made (stop_wait).
 	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
-	stopped_processes: u64, // Bit n: process n had a thread on a processor; its serial is in Processor.stopped_serials.
+	stopped_processes: Process_Set, // The processes that had a thread on a processor; the serial of each is in Processor.stopped_serials.
 	// The part and the value that a write of Thread_Control refused: the
 	// error record takes them from here, not from a second read of the
 	// memory of the caller, which the caller can change between the two
@@ -234,9 +235,7 @@ stop_wait :: proc "contextless" (cpu: ^Processor) {
 		}
 		operation.stopped_thread = 0
 	}
-	for operation.stopped_processes != 0 {
-		index := u32(intrinsics.count_trailing_zeros(operation.stopped_processes))
-		operation.stopped_processes &~= 1 << index
+	for index in slot_set.take(&operation.stopped_processes) {
 		process := &processes[index]
 		for intrinsics.atomic_load(&process.serial) == cpu.stopped_serials[index] && intrinsics.atomic_load(&process.holds) & (HOLDS_STOPPED - 1) != 0 && !intrinsics.atomic_load(&self.stop_requested) {
 			sync_acknowledge(cpu)
@@ -376,7 +375,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if log_region == 0 || memory.object != log_region {
 			return .Bad_Handle
 		}
-		if v[1] == 0 || v[1] >= PROCESS_CAPACITY || v[5] > op.OWN_LOG_RECORD_CAPACITY {
+		if v[1] == 0 || v[1] >= u64(process_capacity) || v[5] > op.OWN_LOG_RECORD_CAPACITY {
 			return .Bad_Operation
 		}
 		// The pages of the caller are present before the log lock: a page on
@@ -832,7 +831,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Word_Wait:
 		thread := &threads[index]
-		if v[1] > u64(op.WORD_WAIT_CAPACITY - thread.word_count) {
+		if v[1] > u64(wait_capacity(thread) - thread.word_count) {
 			return .No_Slot
 		}
 		if !user_range(process, v[0], v[1] * size_of(op.Word), false) {
@@ -971,7 +970,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			report := op.System_Report {
 				time          = intrinsics.atomic_load(&time_milliseconds),
 				page_count    = frame_count,
-				process_slots = PROCESS_CAPACITY,
+				process_slots = u64(process_capacity),
 				processors    = u64(processor_count),
 				locks         = lock_counts_sum(),
 				strategy      = intrinsics.atomic_load(&strategy_chosen),
@@ -1004,7 +1003,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// Another process: under its lock, with the control lock.
 			require_control() or_return
 			report: op.Process_Report
-			if v[2] != 0 && v[2] < PROCESS_CAPACITY {
+			if v[2] != 0 && v[2] < u64(process_capacity) {
 				about := &processes[v[2]]
 				about_taken := process_lock(u32(v[2]))
 				defer process_unlock(u32(v[2]), about_taken)
@@ -1063,7 +1062,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			require_control() or_return
 			report := &processor_self().module_report
 			report^ = {}
-			if v[2] != 0 && v[2] < PROCESS_CAPACITY {
+			if v[2] != 0 && v[2] < u64(process_capacity) {
 				about_taken := process_lock(u32(v[2]))
 				defer process_unlock(u32(v[2]), about_taken)
 				if processes[v[2]].state != .None {
@@ -1118,19 +1117,19 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		case .Process_Mappings:
 			developer_report_ready(process, v, size_of(op.Process_Mapping_Report)) or_return
 			report := &processor_self().process_mapping_report
-			process_mappings_report(report, u32(min(v[2], PROCESS_CAPACITY)))
+			process_mappings_report(report, u32(min(v[2], u64(process_capacity))))
 			user_copy_to_process(v[3], report, size_of(op.Process_Mapping_Report))
 			results[0] = size_of(op.Process_Mapping_Report)
 		case .Threads:
 			developer_report_ready(process, v, size_of(op.Thread_Table_Report)) or_return
 			report := &processor_self().thread_table_report
-			threads_report(report, u32(min(v[2], PROCESS_CAPACITY)))
+			threads_report(report, u32(min(v[2], u64(process_capacity))))
 			user_copy_to_process(v[3], report, size_of(op.Thread_Table_Report))
 			results[0] = size_of(op.Thread_Table_Report)
 		case .Stop:
 			developer_report_ready(process, v, size_of(op.Stop_Report)) or_return
 			report := &processor_self().stop_report
-			stop_report_for_inspect(report, u32(min(v[2], PROCESS_CAPACITY)))
+			stop_report_for_inspect(report, u32(min(v[2], u64(process_capacity))))
 			user_copy_to_process(v[3], report, size_of(op.Stop_Report))
 			results[0] = size_of(op.Stop_Report)
 		case .Pages:

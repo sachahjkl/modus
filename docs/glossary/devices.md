@@ -94,7 +94,7 @@ Do not use: bus address, IOVA, DMA address.
 
 A device window is the run of device addresses where the IOMMU shows the pages of a memory object that is not contiguous, in their order.
 
-`Memory_Physical` from a device service gives an object its window, and gives each page its frame until the object ends. The slot of the object fixes the window, so it is the same in every device domain. A large object, an `Uncommitted` object, or an object for a unit with too few address bits gets no window. Example: a datagram region of 128 pages anywhere in memory is one run of 512 KiB for the network device. A device window is not a mapping of a process: no process reads through it.
+`Memory_Physical` from a device service gives an object its window, and gives each page its frame until the object ends. The object keeps one window, the same in every device domain, while it is declared, and gives it back after the last end of a declaration. A large object, an `Uncommitted` object, or an object for a unit with too few address bits gets no window. Example: a datagram region of 128 pages anywhere in memory is one run of 512 KiB for the network device. A device window is not a mapping of a process: no process reads through it.
 
 The design: `src/md/infrastructure/iommu.md`, "Device addresses".
 

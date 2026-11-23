@@ -310,7 +310,7 @@ recipe_refusal_of_guest_refusal :: proc "contextless" (
 	timed_out: bool = false,
 ) -> pr.Recipe_Refusal {
 	if timed_out {
-		return .Build_Timed_Out
+		return .Builder_Timed_Out
 	}
 	switch violation {
 	case .None:
@@ -332,6 +332,8 @@ recipe_refusal_of_guest_refusal :: proc "contextless" (
 		return .Builder_Failed
 	case .Memory_Past_Bound:
 		return .Memory_Past_Bound
+	case .Cancelled:
+		return .Build_Cancelled
 	case .Zero_Kernel_Hash, .Zero_Root_Image_Hash, .Empty_Command, .Command_Too_Long, .Invalid_Command_Text, .Too_Many_Inputs, .Duplicate_Input_Mount, .Invalid_Mount_Path, .Memory_Too_Small, .Initial_Archive_Too_Large, .Initial_Archive_Size_Invalid, .Initial_Archive_Mismatch, .Time_Bound_Past_Most:
 		return .Damaged_Recipe
 	}
@@ -339,9 +341,11 @@ recipe_refusal_of_guest_refusal :: proc "contextless" (
 }
 
 // guest_builder_build executes one guest builder recipe end to end inside the
-// validated sandbox, writing canonical MODTREE1 bytes into out_payload only on
-// clean exit code 0 with zero sandbox violations. On any refusal out_payload
-// is untouched.
+// validated sandbox, and gives the canonical MODTREE1 bytes of the output in
+// out_payload on a clean exit code 0 with zero sandbox violations and each
+// object of the output kept. A refusal gives written 0: out_payload may hold
+// the bytes of an unpack that a later step refused, which the caller never
+// reads.
 guest_builder_build :: proc "contextless" (
 	state: ^Recipes_State,
 	workspace: ^Guest_Builder_Workspace,
@@ -396,10 +400,6 @@ guest_builder_build :: proc "contextless" (
 			return fail(workspace, .Output_Too_Large, .Output_Too_Large)
 		}
 	}
-	if u64(len(workspace.output_disk)) < guest_spec.output_size_bound {
-		return fail(workspace, .Output_Too_Large, .Output_Too_Large)
-	}
-
 	// The inputs of the recipe are the mounts of the guest: a spec that names
 	// its own would give the guest two sources of one disk.
 	if guest_spec.input_count != 0 {
@@ -408,10 +408,15 @@ guest_builder_build :: proc "contextless" (
 
 	// The kernel, the initial archive and the memory of the guest, before
 	// any input is read or packed: a build that cannot run costs no disk.
+	// The backend sizes the buffers of the build here, from the spec and
+	// its budget: the output disk is checked after it.
 	if workspace.prepare_guest != nil {
 		if prepared := workspace.prepare_guest(&guest_spec, workspace.user_data); prepared != .None {
 			return fail(workspace, prepared)
 		}
+	}
+	if u64(len(workspace.output_disk)) < guest_spec.output_size_bound {
+		return fail(workspace, .Output_Too_Large, .Output_Too_Large)
 	}
 
 	// Resolve and hash-verify every input before packing the read-only input disk.
@@ -493,7 +498,7 @@ guest_builder_build :: proc "contextless" (
 	}
 
 	if workspace.runner.state == .Timed_Out {
-		return fail(workspace, .Build_Timed_Out, .Nonzero_Guest_Exit)
+		return fail(workspace, .Builder_Timed_Out, .Nonzero_Guest_Exit)
 	}
 
 	tree_digest, tree_written, finish_refusal := gb.runner_finish(&workspace.runner, &workspace.unpack_workspace, out_payload)

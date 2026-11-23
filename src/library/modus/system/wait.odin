@@ -23,21 +23,108 @@ import "base:intrinsics"
 // The count of `word_wake` that wakes each thread that waits on the word.
 WAKE_ALL :: max(u64)
 
+// The words that a wait holds in itself, on the stack of its thread: about
+// 3.5 KiB. A stream end, a call and a window wait on fewer
+// (src/md/data/table_sizes.md, "A wait holds 64 words on the stack"). The
+// kernel holds as many for each thread with no wait room.
+WAIT_INLINE_WORDS :: op.WORD_WAIT_INLINE
+
+// What wait_end does with one word of a list, past its value.
+Wait_Part :: struct {
+	flag:       ^u32, // The `waits` word of a queue: wait_end sets it.
+	other_flag: ^u32, // A queue: the `waits` word of the other side.
+	other_word: ^u32, // A queue: the counter that the other side waits on.
+	waiters:    ^ring.Waiters, // A word that several threads wait on, when one wake is for one thread.
+	kept:       bool, // Several threads set the flag: the thread does not clear it after the wait.
+}
+
+// The places of a list of more than WAIT_INLINE_WORDS words, in memory of
+// the caller: a thread that waits on the rings of many clients sizes one
+// to its tables, keeps it in its globals or its arena (wait_set_of), and
+// gives it to wait_begin. The first wait_begin with the set asks the kernel
+// for a wait room of its words for the calling thread
+// (op.Thread_Control_Command.Wait_Room), which the budget of the process
+// pays. One set serves one thread: the room is of the thread that asked,
+// and two threads that fill one set at once mix their lists.
+Wait_Set :: struct {
+	words: []op.Word,
+	parts: []Wait_Part,
+	// The words that the kernel holds for the thread of the set: 0 until the
+	// first wait_begin asks; WAIT_INLINE_WORDS when the kernel refused the
+	// room, so a list past them is refused (Wait.refused) and not sent.
+	room:  int,
+}
+
+// wait_set_of gives a set of the places of the caller: words and parts of
+// one length, at most op.WORD_WAIT_MOST. It asks the kernel for nothing:
+// the first wait_begin of the thread that waits does.
+wait_set_of :: proc "contextless" (words: []op.Word, parts: []Wait_Part) -> Wait_Set {
+	count := min(len(words), len(parts), op.WORD_WAIT_MOST)
+	return {words = words[:count], parts = parts[:count]}
+}
+
+// wait_set_room asks the kernel once for the wait room of a set, for the
+// calling thread. A refusal (the budget cannot pay its pages) leaves the
+// set at the words of the kernel with no room, and writes one line.
+@(private = "file")
+wait_set_room :: proc "contextless" (set: ^Wait_Set) {
+	if set.room != 0 {
+		return
+	}
+	set.room = WAIT_INLINE_WORDS
+	if len(set.words) <= WAIT_INLINE_WORDS {
+		set.room = len(set.words)
+		return
+	}
+	held, status := call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, u64(len(set.words)))
+	if status != .Ok {
+		log(.Error, "system: the kernel gave no wait room of ", u64(len(set.words)), " words to this thread: its waits hold ", u64(WAIT_INLINE_WORDS), " words, and a wait on more waits until its deadline")
+		return
+	}
+	set.room = min(int(held[0]), len(set.words))
+}
+
 // The list of the words of one wait, built by `wait_begin` and the
 // `wait_` procedures, ended by `wait_end`. It lives on the stack of the
-// thread for one turn of its loop; it holds at most `op.WORD_WAIT_CAPACITY`
-// words, the `waits` flags of the queues included.
+// thread for one turn of its loop, with WAIT_INLINE_WORDS places, or with
+// the places of a Wait_Set of the caller. The `waits` flags of the queues
+// take places too.
 Wait :: struct {
-	words:   [op.WORD_WAIT_CAPACITY]op.Word, // The words, and the value that each one holds while the thread waits.
-	flags:   [op.WORD_WAIT_CAPACITY]^u32, // The `waits` word of a queue: wait_end sets it.
-	other_flags: [op.WORD_WAIT_CAPACITY]^u32, // A queue: the `waits` word of the other side.
-	other_words: [op.WORD_WAIT_CAPACITY]^u32, // A queue: the counter that the other side waits on.
-	waiters: [op.WORD_WAIT_CAPACITY]^ring.Waiters, // A word that several threads wait on, when one wake is for one thread.
-	kept:    [op.WORD_WAIT_CAPACITY]bool, // Several threads set the flag: the thread does not clear it after the wait.
-	count:   int, // The words in the list.
-	flag_count: int, // The words that have a flag: wait_end adds one word for each.
-	full:    bool, // A word did not fit: the wait ends at once.
+	inline_words: [WAIT_INLINE_WORDS]op.Word, // The words, and the value that each one holds while the thread waits.
+	inline_parts: [WAIT_INLINE_WORDS]Wait_Part,
+	set:          ^Wait_Set, // The places of the caller; nil: the places above.
+	count:        int, // The words in the list.
+	flag_count:   int, // The words that have a flag: wait_end adds one word for each.
+	full:         bool, // A word changed, or a queue has room now: the wait ends at once.
+	// A word did not fit. The caller bounds its words by wait_room_left
+	// and refuses what does not fit; a list that overflows anyway is a
+	// fault of the caller, which wait_end writes on the log once and does
+	// not turn into a loop with no wait.
+	refused:      bool,
 }
+
+// wait_words gives the places of the words of a list.
+@(private = "file")
+wait_words :: #force_inline proc "contextless" (wait: ^Wait) -> []op.Word {
+	return wait.set != nil ? wait.set.words[:wait.set.room] : wait.inline_words[:]
+}
+
+// wait_parts gives the places of the parts of a list.
+@(private = "file")
+wait_parts :: #force_inline proc "contextless" (wait: ^Wait) -> []Wait_Part {
+	return wait.set != nil ? wait.set.parts[:wait.set.room] : wait.inline_parts[:]
+}
+
+// wait_room_left gives the words that a list still takes, with the flags
+// that wait_end adds: a caller that adds a ring for each client checks it,
+// and refuses a client past it.
+wait_room_left :: proc "contextless" (wait: ^Wait) -> int {
+	return len(wait_words(wait)) - wait.count - wait.flag_count
+}
+
+// wait_overflow_told: the line of a list that overflowed is on the log.
+@(private = "file")
+wait_overflow_told: bool
 
 SPIN_COUNT :: 400 // The times that wait_spin reads the words: some microseconds.
 
@@ -49,44 +136,55 @@ events :: proc "contextless" () -> ^u32 {
 }
 
 // wait_begin starts a list with the event word. Call it before the thread
-// reads the state that an event changes.
-wait_begin :: proc "contextless" () -> (wait: Wait) {
+// reads the state that an event changes. set: the places of the caller for
+// a list of more than WAIT_INLINE_WORDS words; nil: the places of the list.
+wait_begin :: proc "contextless" (set: ^Wait_Set = nil) -> (wait: Wait) {
+	if set != nil {
+		wait_set_room(set)
+	}
+	wait.set = set
 	word := events()
 	wait_word(&wait, word, intrinsics.volatile_load(word))
 	return wait
 }
 
+// wait_of_set starts a list in the places of a set with no word, for a
+// loop that adds the event word itself or waits on none.
+wait_of_set :: proc "contextless" (set: ^Wait_Set) -> (wait: Wait) {
+	wait_set_room(set)
+	wait.set = set
+	return wait
+}
+
 // wait_word adds a word: the thread waits while the word holds value.
-// word_wake ends the wait.
-wait_word :: proc "contextless" (wait: ^Wait, word: ^u32, value: u32, flag: ^u32 = nil, other_flag: ^u32 = nil, other_word: ^u32 = nil, waiters: ^ring.Waiters = nil, keep_flag := false) {
-	if wait.count + wait.flag_count + (flag != nil ? 2 : 1) > len(wait.words) {
-		wait.full = true
-		return
+// word_wake ends the wait. false: the list has no place for it, and is
+// refused (Wait.refused).
+wait_word :: proc "contextless" (wait: ^Wait, word: ^u32, value: u32, flag: ^u32 = nil, other_flag: ^u32 = nil, other_word: ^u32 = nil, waiters: ^ring.Waiters = nil, keep_flag := false) -> bool {
+	if wait_room_left(wait) < (flag != nil ? 2 : 1) {
+		wait.refused = true
+		return false
 	}
 	if flag != nil {
 		wait.flag_count += 1
 	}
-	wait.waiters[wait.count] = waiters
-	wait.kept[wait.count] = keep_flag
-	wait.words[wait.count] = {address = u64(uintptr(word)), value = u64(value)}
-	wait.flags[wait.count] = flag
-	wait.other_flags[wait.count] = other_flag
-	wait.other_words[wait.count] = other_word
+	wait_words(wait)[wait.count] = {address = u64(uintptr(word)), value = u64(value)}
+	wait_parts(wait)[wait.count] = {flag = flag, other_flag = other_flag, other_word = other_word, waiters = waiters, kept = keep_flag}
 	wait.count += 1
+	return true
 }
 
 // wait_records adds a queue that this thread reads: the thread waits while
 // the queue is empty.
-wait_records :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) {
+wait_records :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) -> bool {
 	counters := queue.counters
-	wait_word(wait, &counters.write, intrinsics.atomic_load_explicit(&counters.read, .Relaxed), &counters.reader_waits, &counters.writer_waits, &counters.read)
+	return wait_word(wait, &counters.write, intrinsics.atomic_load_explicit(&counters.read, .Relaxed), &counters.reader_waits, &counters.writer_waits, &counters.read)
 }
 
 // wait_room adds a queue that this thread writes: the thread waits while
 // the queue is full. The reader wakes it when half of the queue is free.
-wait_room :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) {
+wait_room :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) -> bool {
 	counters := queue.counters
-	wait_word(wait, &counters.read, intrinsics.atomic_load_explicit(&counters.write, .Relaxed) - ring.capacity(queue), &counters.writer_waits, &counters.reader_waits, &counters.write)
+	return wait_word(wait, &counters.read, intrinsics.atomic_load_explicit(&counters.write, .Relaxed) - ring.capacity(queue), &counters.writer_waits, &counters.reader_waits, &counters.write)
 }
 
 // wait_room_for adds a queue that this thread writes: the thread waits
@@ -136,18 +234,19 @@ wait_spin :: proc "contextless" (wait: ^Wait) -> bool {
 	}
 	// The other side of a shared queue does not wake a thread while this
 	// thread reads the words: this thread takes the record.
-	for waiters in wait.waiters[:wait.count] {
-		if waiters != nil {
-			intrinsics.atomic_add(&waiters.spins, 1)
+	parts := wait_parts(wait)[:wait.count]
+	for part in parts {
+		if part.waiters != nil {
+			intrinsics.atomic_add(&part.waiters.spins, 1)
 		}
 	}
-	defer for waiters in wait.waiters[:wait.count] {
-		if waiters != nil {
-			intrinsics.atomic_sub(&waiters.spins, 1)
+	defer for part in parts {
+		if part.waiters != nil {
+			intrinsics.atomic_sub(&part.waiters.spins, 1)
 		}
 	}
 	for _ in 0 ..< SPIN_COUNT {
-		for word in wait.words[:wait.count] {
+		for word in wait_words(wait)[:wait.count] {
 			if intrinsics.volatile_load((^u32)(uintptr(word.address))) != u32(word.value) {
 				return true
 			}
@@ -163,18 +262,27 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 	if wait.full {
 		return time()
 	}
+	// A list that overflowed waits on the words that it holds until its
+	// deadline: never a loop with no wait. Its caller did not bound its
+	// words, and the log says so once.
+	if wait.refused && !wait_overflow_told {
+		wait_overflow_told = true
+		log(.Error, "system: a wait held more words than its ", u64(len(wait_words(wait))), " places: it waits on the first ones until its deadline; its process bounds its words by wait_room_left, or gives wait_begin a wait set")
+	}
+	words := wait_words(wait)
+	parts := wait_parts(wait)
 	// A `waits` word is also a word of the wait: the thread waits while it
 	// is 1. The other side sets it to 0 before each wake. A late wake, for
 	// a record that this thread already read, can set it to 0 before this
 	// thread waits: the wait then ends at once, and no later wake is lost.
 	total := wait.count
 	for index in 0 ..< wait.count {
-		if flag := wait.flags[index]; flag != nil {
+		if flag := parts[index].flag; flag != nil {
 			intrinsics.atomic_store(flag, 1)
-			wait.words[total] = {address = u64(uintptr(flag)), value = 1}
+			words[total] = {address = u64(uintptr(flag)), value = 1}
 			total += 1
 		}
-		if waiters := wait.waiters[index]; waiters != nil {
+		if waiters := parts[index].waiters; waiters != nil {
 			// The other side changes the word before it reads the count:
 			// the kernel then reads a new value, and this thread does not
 			// stop.
@@ -184,8 +292,8 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 		// other side waits for this thread, it must continue now: a writer
 		// that waits for half of the queue, or a reader that was not told
 		// of the last records (ring.push with no wake_reader).
-		if other := wait.other_flags[index]; other != nil && intrinsics.atomic_exchange(other, 0) != 0 {
-			word_wake(wait.other_words[index], WAKE_ALL)
+		if other := parts[index].other_flag; other != nil && intrinsics.atomic_exchange(other, 0) != 0 {
+			word_wake(parts[index].other_word, WAKE_ALL)
 		}
 	}
 	// The kernel reads each word again: a record that arrived before the
@@ -194,17 +302,17 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 	// early end is an answer of each wait, as its caller reads its words
 	// again, and no held command keeps the address of these words after
 	// this frame ends (src/md/api/kernel_ring_completion_room.md).
-	commands := [1]ring.Record{wait_command(&wait.words, total)}
+	commands := [1]ring.Record{wait_command(words[:total])}
 	completions: [1]ring.Record
 	now, _ := commands_call(commands[:], completions[:], max(deadline, 1))
 	// The thread does not wait now: the other side does not need to wake it.
 	for index in 0 ..< wait.count {
 		// A flag that several threads set stays: another thread can still
 		// wait with it.
-		if flag := wait.flags[index]; flag != nil && !wait.kept[index] {
+		if flag := parts[index].flag; flag != nil && !parts[index].kept {
 			intrinsics.atomic_store(flag, 0)
 		}
-		if waiters := wait.waiters[index]; waiters != nil {
+		if waiters := parts[index].waiters; waiters != nil {
 			intrinsics.atomic_sub(&waiters.count, 1)
 			intrinsics.atomic_store(&waiters.wakes, 0) // This thread runs: see wake_one.
 		}
@@ -212,21 +320,25 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 	return now
 }
 
-// wait_command gives the command Word_Wait of the first count words of a
-// list. A pure part of wait_end, so the host tests what it pushes.
+// wait_command gives the command Word_Wait of the words of a list. A pure
+// part of wait_end, so the host tests what it pushes.
 @(private = "package")
-wait_command :: proc "contextless" (words: ^[op.WORD_WAIT_CAPACITY]op.Word, count: int) -> ring.Record {
-	return {kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(words)), 1 = u64(count)}}
+wait_command :: proc "contextless" (words: []op.Word) -> ring.Record {
+	return {kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(raw_data(words))), 1 = u64(len(words))}}
 }
 
 // word_wait stops the thread while the word holds value, until word_wake
 // names the word or until the time is deadline. It gives the time.
 // The word can be in memory that another process maps.
-// Read the word again after the wait: the deadline also ends it.
+// Read the word again after the wait: the deadline also ends it. It holds
+// one word on the stack, not a whole list: the threads that wait on one
+// word have small stacks.
 word_wait :: proc "contextless" (word: ^u32, value: u32, deadline: u64 = WAIT_FOREVER) -> u64 {
-	wait: Wait
-	wait_word(&wait, word, value)
-	return wait_end(&wait, deadline)
+	words := [1]op.Word{{address = u64(uintptr(word)), value = u64(value)}}
+	commands := [1]ring.Record{wait_command(words[:])}
+	completions: [1]ring.Record
+	now, _ := commands_call(commands[:], completions[:], max(deadline, 1))
+	return now
 }
 
 // word_wake wakes at most count threads that wait on the word. It gives
@@ -356,16 +468,21 @@ event_wake :: proc "contextless" (event: ^Event) {
 
 // wait_event adds an event to a list: the thread waits while the count of
 // the event is seen.
-wait_event :: proc "contextless" (wait: ^Wait, event: ^Event, seen: u32) {
-	wait_word(wait, &event.count, seen, &event.waits, keep_flag = true)
+wait_event :: proc "contextless" (wait: ^Wait, event: ^Event, seen: u32) -> bool {
+	return wait_word(wait, &event.count, seen, &event.waits, keep_flag = true)
 }
 
 // event_wait stops the thread while the count of the event is seen, or
-// until the time is deadline. It gives the time.
+// until the time is deadline. It gives the time. It holds the word of the
+// event and its flag on the stack, not a whole list.
 event_wait :: proc "contextless" (event: ^Event, seen: u32, deadline: u64 = WAIT_FOREVER) -> u64 {
-	wait: Wait
-	wait_event(&wait, event, seen)
-	return wait_end(&wait, deadline)
+	intrinsics.atomic_store(&event.waits, 1)
+	words := [2]op.Word{{address = u64(uintptr(&event.count)), value = u64(seen)}, {address = u64(uintptr(&event.waits)), value = 1}}
+	commands := [1]ring.Record{wait_command(words[:])}
+	completions: [1]ring.Record
+	now, _ := commands_call(commands[:], completions[:], max(deadline, 1))
+	// The flag stays: another thread can wait with it (wait_event keeps it too).
+	return now
 }
 
 // shared_send writes a record in a shared queue, and wakes one reader if
@@ -398,23 +515,23 @@ shared_receive :: proc "contextless" (queue: ^ring.Shared) -> (record: ring.Reco
 
 // wait_shared_records adds a shared queue that this thread reads: the
 // thread waits until a writer completes a record.
-wait_shared_records :: proc "contextless" (wait: ^Wait, queue: ^ring.Shared) {
+wait_shared_records :: proc "contextless" (wait: ^Wait, queue: ^ring.Shared) -> bool {
 	written := intrinsics.atomic_load(&queue.head.written)
 	if ring.shared_ready(queue) {
 		wait.full = true // A record arrived after the thread tried to read.
-		return
+		return true
 	}
-	wait_word(wait, &queue.head.written, written, waiters = &queue.head.readers)
+	return wait_word(wait, &queue.head.written, written, waiters = &queue.head.readers)
 }
 
 // wait_shared_room adds a shared queue that this thread writes: the thread
 // waits until a reader takes a record. The readers wake it when half of
 // the queue is free.
-wait_shared_room :: proc "contextless" (wait: ^Wait, queue: ^ring.Shared) {
+wait_shared_room :: proc "contextless" (wait: ^Wait, queue: ^ring.Shared) -> bool {
 	taken := intrinsics.atomic_load(&queue.head.taken)
 	if ring.shared_room(queue) {
 		wait.full = true
-		return
+		return true
 	}
-	wait_word(wait, &queue.head.taken, taken, &queue.head.writer_waits, keep_flag = true)
+	return wait_word(wait, &queue.head.taken, taken, &queue.head.writer_waits, keep_flag = true)
 }

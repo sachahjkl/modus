@@ -15,7 +15,9 @@ import "modus:contract/value_kinds"
 import "modus:system"
 
 // Working memory budget for the freestanding devices service process and its
-// fixed-capacity identity and binding tables.
+// fixed-capacity identity and binding tables, and the shared region of the
+// root service with one bind place for each process slot: 32 pages and
+// their page tables.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256, processes = 1, threads = 1}
 
 // Status record returned by the status() export.

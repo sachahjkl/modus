@@ -123,7 +123,7 @@ Process_Record_State :: struct {
 	writer_wait_since:  u64, // The first start of that wait (gate.wait_started_tick, atomic copy for the tick).
 }
 
-process_records: [PROCESS_CAPACITY]Process_Record_State
+process_records: []Process_Record_State // One for each process slot: tables_start.
 // Read-only zero page used to encode initial point copy deltas without placing
 // a 4 KiB array on the kernel stack.
 @(rodata)
@@ -204,10 +204,45 @@ record_traps_unload :: proc "contextless" (cpu: ^Processor) {
 	cpu.record_traps_loaded = false
 }
 
+// region_mappings_of gives the mappings of region_index in one process, and
+// those with Write. It takes the process lock of that process, or uses the
+// lock that this processor holds already.
+@(private = "file")
+region_mappings_of :: proc "contextless" (index: u32, region_index: u32) -> (mappings: u32, writable: u32) {
+	taken := process_lock(index)
+	defer process_unlock(index, taken)
+	for place in processes[index].mapping_order[:processes[index].mapping_order_count] {
+		mapping := &processes[index].mappings[place]
+		if mapping.region == region_index {
+			mappings += 1
+			if mapping.bits & PAGE_WRITE != 0 {
+				writable += 1
+			}
+		}
+	}
+	return
+}
+
+// region_others_none says, from the counts of the object, that no process
+// other than target_index maps region_index (with Write, when writable):
+// then no table of another process needs a read. A count that says some
+// other process does is answered by the read of each process.
+@(private = "file")
+region_others_none :: proc "contextless" (target_index: u32, region_index: u32, writable: bool) -> bool {
+	own, own_writable := region_mappings_of(target_index, region_index)
+	if writable {
+		return intrinsics.atomic_load(&regions[region_index].writable_mapping_count) <= own_writable
+	}
+	return intrinsics.atomic_load(&regions[region_index].mapping_count) <= own
+}
+
 // region_mapped_writable_by_other says whether any live process other than
 // target_index maps region_index with Write permission. Caller holds Control.
 @(private = "file")
 region_mapped_writable_by_other :: proc "contextless" (target_index: u32, region_index: u32) -> bool {
+	if region_others_none(target_index, region_index, true) {
+		return false
+	}
 	for &other, slot in processes[1:] {
 		other_index := u32(slot + 1)
 		if other_index == target_index {
@@ -235,6 +270,9 @@ region_mapped_writable_by_other :: proc "contextless" (target_index: u32, region
 // maps region_index at all. Caller holds Control.
 @(private = "file")
 region_mapped_by_other :: proc "contextless" (target_index: u32, region_index: u32) -> bool {
+	if region_others_none(target_index, region_index, false) {
+		return false
+	}
 	for &other, slot in processes[1:] {
 		other_index := u32(slot + 1)
 		if other_index == target_index {
@@ -1120,7 +1158,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		intrinsics.atomic_add(&record_replay_active_count, 1)
 		return .Ok
 
-	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Wait_Room:
 		return .Bad_Operation
 	}
 	return .Bad_Operation
@@ -1392,7 +1430,7 @@ record_replay_recorder_stopped :: proc "contextless" (recorder_index: u32, recor
 	if intrinsics.atomic_load(&record_replay_active_count) == 0 {
 		return
 	}
-	for target_index in u32(1) ..< PROCESS_CAPACITY {
+	for target_index in u32(1) ..< process_capacity {
 		rec := &process_records[target_index]
 		if intrinsics.atomic_load(&rec.mode) != .None && rec.recorder_process == recorder_index && rec.recorder_serial == recorder_serial {
 			taken := process_lock(target_index)
@@ -1944,7 +1982,7 @@ record_command_output_range :: proc "contextless" (command: ring.Record, status:
 		switch sub {
 		case .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Read_Process_Schedule, .Read_Counters:
 			return v[3], results[0]
-		case .None, .Stop, .Resume, .Write_Registers, .Write_Extended_State, .Write_Schedule, .Write_Breakpoints, .Write_Placement, .Write_Process_Schedule, .Start_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
+		case .None, .Stop, .Resume, .Write_Registers, .Write_Extended_State, .Write_Schedule, .Write_Breakpoints, .Write_Placement, .Write_Process_Schedule, .Start_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
 		}
 	case .None, .Log, .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Commit, .Memory_Protect, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Guest_Run:
 	}
@@ -2156,6 +2194,9 @@ record_context_page_locked :: proc "contextless" (cpu: ^Processor, target_index:
 @(private = "file")
 shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Process_Record_State, region_index: u32, admit_only := false) -> Operation_Outcome {
 	new_writers: u32
+	if region_others_none(target_index, region_index, true) {
+		return .Ok
+	}
 	for &other, slot in processes[1:] {
 		other_index := u32(slot + 1)
 		if other_index == target_index {
@@ -2610,7 +2651,7 @@ shared_writer_has_ready_thread :: proc "contextless" (process_index: u32, serial
 // input point. Runs at the tick of the first processor, with no lock held;
 // it takes the control lock only for a record past its bound.
 shared_writer_wait_bound_check :: proc "contextless" (now: u64) {
-	for target_index in u32(1) ..< PROCESS_CAPACITY {
+	for target_index in u32(1) ..< process_capacity {
 		rec := &process_records[target_index]
 		if !intrinsics.atomic_load(&rec.has_shared_writers) {
 			continue

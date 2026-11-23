@@ -42,7 +42,7 @@ when KERNEL_EDGE_COUNTERS {
 	// The mark of each process slot: its process is counted. Each
 	// Process_Create writes the byte of the slot that it fills, so a slot
 	// that served a counted process loses the mark with its next process.
-	edge_counted_processes: [PROCESS_CAPACITY]bool
+	edge_counted_processes: [PROCESS_CAPACITY_MOST]bool
 
 	// The interrupt controller did not send the reset of a processor that
 	// did not start in time (processors_start): that processor can still

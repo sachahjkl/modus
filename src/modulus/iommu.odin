@@ -46,9 +46,50 @@ IOMMU_DEVICES_OF_A_SERVICE :: 4
 IOMMU_STANDING_CAPACITY :: 8
 IOMMU_STANDING_DOMAIN_FIRST :: IOMMU_DEVICE_CAPACITY + 1
 
-// Every window of a memory object ends where a domain of 39 bits ends, so
-// the slot of an object always names a window that the tables can map.
-#assert(REGION_CAPACITY * iommu.WINDOW_SIZE <= iommu.WINDOW_BASE)
+// The windows of the memory objects that are not contiguous and that a
+// device reaches (iommu.Window_Table). A window is not the slot of its
+// object: only the objects that a service declares need one, and the table
+// of the memory objects is larger than the windows that a domain holds. An
+// object takes a window at its first declaration, and gives it back when no
+// device has its pages any more, after the invalidation of each domain that
+// had them (iommu_window_return): a unit never translates a window of a new
+// object to the frames of an old one. Frame lock.
+IOMMU_WINDOW_CAPACITY :: iommu.WINDOW_COUNT
+iommu_windows: iommu.Window_Table
+
+// iommu_window_take gives a memory object that is not contiguous its
+// window, once. false: each window is taken. The caller holds the frame lock.
+@(private = "file")
+iommu_window_take :: proc "contextless" (region: ^Region) -> bool {
+	if region.window != 0 {
+		return true
+	}
+	window, ok := iommu.window_take(&iommu_windows)
+	region.window = window
+	return ok
+}
+
+// iommu_windows_wanted says if a declaration of a memory object would need
+// a window and finds none: the one cause of No_Slot that the error record
+// of Memory_Physical names by its table. Frame lock.
+iommu_windows_wanted :: proc "contextless" (region_index: u32) -> bool {
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	region := &regions[region_index]
+	return iommu_in_use && !region.contiguous && region.window == 0 && iommu.window_table_full(&iommu_windows)
+}
+
+// iommu_window_return gives the window of a memory object back when no
+// device has its pages any more. The caller holds the frame lock, and ran
+// the invalidation of each domain that had them.
+@(private = "file")
+iommu_window_return :: proc "contextless" (region_index: u32) {
+	region := &regions[region_index]
+	if region.window != 0 && region.declared == 0 {
+		iommu.window_give(&iommu_windows, region.window)
+		region.window = 0
+	}
+}
 
 // The vendor of the units: two vendors are a closed set. Each place where
 // they differ reads it, in a switch or in a test of one vendor, with no
@@ -1816,7 +1857,7 @@ tables_free :: proc "contextless" (table: u64, level: u32) -> (count: u64) {
 @(private = "file")
 device_address :: proc "contextless" (region_index: u32) -> u64 {
 	region := &regions[region_index]
-	return region.contiguous ? region.physical : iommu.window_address(region_index)
+	return region.contiguous ? region.physical : iommu.window_address(region.window)
 }
 
 // object_pages_change changes the entries of the pages of a memory object
@@ -2178,6 +2219,9 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 	_, write_held := holds_with(process, region_index, nil)
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
+	if !region.contiguous && !iommu_window_take(region) {
+		return 0, .No_Slot
+	}
 	added, write_allowed, changed, made: u32
 	status = .Ok
 	for requester, index in requesters[:count] {
@@ -2232,6 +2276,9 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 	// A new context entry on a unit with the caching mode is forgotten
 	// under the identifier 0 too.
 	invalidate_slots(changed, made)
+	// A declaration that failed and left no device with the pages gives
+	// its window back.
+	iommu_window_return(region_index)
 	if status != .Ok {
 		return 0, status
 	}
@@ -2254,6 +2301,9 @@ iommu_region_end_held :: proc "contextless" (region_index: u32) {
 	if iommu_in_use {
 		invalidate_slots(region_end_for(region_index, max(u32)), 0)
 	}
+	// The pages left each domain and the invalidation ran: the window can
+	// serve another object.
+	iommu_window_return(region_index)
 }
 
 // iommu_handle_closed follows a close or a revocation of a memory handle
@@ -2310,6 +2360,7 @@ iommu_handle_closed :: proc "contextless" (process: ^Process, closed: ^Handle_Sl
 			}
 		}
 		invalidate_slots(changed, 0)
+		iommu_window_return(closed.object)
 	}
 	domains_ended(ended)
 }
@@ -2424,6 +2475,12 @@ domains_end :: proc "contextless" (process_index: u32, owned: u32) {
 	for slot in u32(0) ..< IOMMU_DEVICE_CAPACITY {
 		if owned & (1 << slot) != 0 {
 			invalidate_slot(slot, .Cleared)
+		}
+	}
+	// The objects that no device has now give their windows back.
+	for &region, index in regions {
+		if region.window != 0 && region.declared == 0 {
+			iommu_window_return(u32(index))
 		}
 	}
 	budget := processes[process_index].budget

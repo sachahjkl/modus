@@ -395,7 +395,8 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 // starts, the deadline of a load. The result is 64, or a negative number with an error record:
 //
 // - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long`, `Bad_Byte` or `Reserved` (-2): the nickname.
+// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
+//   store keeps.
 // - `Empty`, `Too_Long` or `Bad_Byte` (-3): the path; for `Bad_Byte`, the record holds the place of the byte.
 // - `No_Answer`, `Full` or `Refused` (-4): the connection to the web server, or the deadline.
 // - `Refused`, `Malformed`, `Too_Long` or `Too_Small` (-5): the answer: a status that is not 200 (the record holds
@@ -408,28 +409,10 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	if !caller_allowed() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	// The call region stays writable by the caller during the call: copy
-	// each text one time, then check and use the copy only.
-	nickname_text := nickname^
 	name_copy: [disk_process.NAME_LIMIT]u8
-	name_length := copy(name_copy[:], nickname_text)
-	if len(nickname_text) > disk_process.NAME_LIMIT {
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(nickname_text)), disk_process.NAME_LIMIT)
-	}
-	name := string(name_copy[:name_length])
-	problem, offset := disk_process.name_problem(name)
-	switch problem {
-	case .None:
-	case .Empty:
-		return errors.fail(error, ERROR_NAME, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
-	case .Too_Long:
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(name_length), disk_process.NAME_LIMIT)
-	case .Bad_Byte:
-		return errors.fail(error, ERROR_NAME, .Bad_Byte, .Bytes, 1, i64(offset), 0, i64(name_copy[offset]))
-	case .Store_Name, .Table_Name:
-		// The disk grant table of the principal is an object of this
-		// store: no file is written over it.
-		return errors.fail(error, ERROR_NAME, .Reserved, .None, 1)
+	name, name_failure := nickname_check(nickname, &name_copy, .Make, error)
+	if name_failure != 0 {
+		return name_failure
 	}
 	path_text := path^
 	path_copy: [PATH_LIMIT]u8

@@ -95,7 +95,7 @@ READER_WAIT_WORDS_OF_A_RING :: 3
 
 // reader_wait_words gives the words of one wait of a reader of rings
 // rings: the library checks at compile time that the ends of a process fit
-// op.WORD_WAIT_CAPACITY, as a list that overflows ends its wait at once.
+// op.WORD_WAIT_INLINE, the words of a wait on the stack of its thread.
 reader_wait_words :: proc "contextless" (rings: int) -> int {
 	return READER_WAIT_WORDS_BESIDE_RINGS + READER_WAIT_WORDS_OF_A_RING * rings
 }

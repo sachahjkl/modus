@@ -336,22 +336,33 @@ device_identity_answers_refuse_out_of_range_words :: proc(t: ^testing.T) {
 	}
 }
 
-// The bind places of the region: a negative place, the count and the
-// largest int are refused; the first and the last place are taken, apart,
-// with the specification after the discovered record and inside the
-// region.
+// The bind places of the region, for the places of a small machine, of a
+// machine of 1 GiB and of the largest: a negative place, the count of the
+// places, the most places and the largest int are refused; the first and
+// the last place are taken, apart, with the specification after the
+// discovered record and inside the region of that count.
 @(test)
 devices_bind_places_stay_inside_the_region :: proc(t: ^testing.T) {
-	for place in ([?]int{-1, DEVICES_BIND_PLACE_COUNT, max(int)}) {
-		_, _, ok := devices_bind_place_offsets(place)
-		testing.expectf(t, !ok, "the place %d is taken", place)
+	for places in ([?]int{op.PROCESS_SLOTS_LEAST - 1, 255, DEVICES_BIND_PLACE_COUNT}) {
+		for place in ([?]int{-1, places, DEVICES_BIND_PLACE_COUNT, max(int)}) {
+			_, _, ok := devices_bind_place_offsets(place, places)
+			testing.expectf(t, !ok, "the place %d of %d is taken", place, places)
+		}
+		region_bytes := devices_region_pages(places) * op.PAGE_SIZE
+		first_discovered, first_spec, first_ok := devices_bind_place_offsets(0, places)
+		last_discovered, last_spec, last_ok := devices_bind_place_offsets(places - 1, places)
+		testing.expect(t, first_ok && last_ok)
+		testing.expect_value(t, first_discovered, u64(0))
+		testing.expect(t, first_spec >= first_discovered + size_of(Pci_Discovered_Device))
+		testing.expect(t, last_discovered >= first_spec + size_of(Device_Grant_Spec))
+		testing.expect(t, last_spec + size_of(Device_Grant_Spec) <= region_bytes)
 	}
-	region_bytes := u64(DEVICES_REGION_PAGES * op.PAGE_SIZE)
-	first_discovered, first_spec, first_ok := devices_bind_place_offsets(0)
-	last_discovered, last_spec, last_ok := devices_bind_place_offsets(DEVICES_BIND_PLACE_COUNT - 1)
-	testing.expect(t, first_ok && last_ok)
-	testing.expect_value(t, first_discovered, u64(0))
-	testing.expect(t, first_spec >= first_discovered + size_of(Pci_Discovered_Device))
-	testing.expect(t, last_discovered >= first_spec + size_of(Device_Grant_Spec))
-	testing.expect(t, last_spec + size_of(Device_Grant_Spec) <= region_bytes)
+	// A count past the most places takes the most, and no place is past
+	// the region of the most.
+	testing.expect_value(t, devices_region_pages(max(int)), devices_region_pages(DEVICES_BIND_PLACE_COUNT))
+	testing.expect_value(t, devices_region_pages(DEVICES_BIND_PLACE_COUNT), u64(128))
+	testing.expect_value(t, devices_region_pages(255), u64(32))
+	testing.expect_value(t, devices_region_pages(0), u64(1))
+	_, _, past_ok := devices_bind_place_offsets(DEVICES_BIND_PLACE_COUNT, max(int))
+	testing.expect(t, !past_ok)
 }

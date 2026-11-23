@@ -12,7 +12,7 @@ A caller must know three things after a call, in this order, with no description
 2. What the caller can do next: fix an argument, get a grant, create the thing, read again, wait, or give up.
 3. Why, in the words of the call: which argument, which value, which limit.
 
-Today the first two answers come from the sign of the integer result, which is also a value (`math.number("-5")` is -5), and from eleven sets of statuses ([`docs/research/call_outcome_study.md`](../../../docs/research/call_outcome_study.md), "2.2 Eleven sets that each say how a call ended"). The storage service gives 13 distinct negative numbers that repeat the kind of its error record. The third answer, the error record, is right and stays.
+Today the first two answers come from the sign of the integer result, which is also a value (`math.number("-5")` is -5), and from eleven sets of statuses (the section "2.2 Eleven sets that each say how a call ended" of [`docs/research/call_outcome_study.md`](../../../docs/research/call_outcome_study.md)). The storage service gives 13 distinct negative numbers that repeat the kind of its error record. The third answer, the error record, is right and stays.
 
 ## The constraints
 
@@ -124,7 +124,7 @@ A reader takes the outcome word through one border, `call_outcome.outcome_of_wor
 | Call from another machine (`remote`) | `Answer.outcome`, and `Answer.relay_outcome` for the request | `Answer.value` | `Answer.error` |
 
 - **The direct call** of an export that can fail returns two words: the outcome first, the value second. In C it is one struct returned by value, `struct modus_answer { uint64_t outcome; int64_t value; }`, which every compiler returns in `rax` and `rdx` on System V and in `x0` and `x1` on AArch64. It is the one aggregate by value of the call form. The rule "no record by value" refused the edge cases of the conventions; a struct of two words of 8 bytes is not one of them. In Odin it is `-> (outcome: Call_Outcome, value: i64)`, which the compiler of the flake returns in the same registers. chibicc returns a struct of 16 bytes in `rax` and `rdx` too.
-- **The outcome first** puts the outcome in the first integer register of the result for each type of value, on each machine. With a float value, System V gives the float in `xmm0` and the outcome in `rax`, and AAPCS64 gives the outcome in `x0` and the bits of the float in `x1` (measured: [`docs/research/call_outcome_study.md`](../../../docs/research/call_outcome_study.md), "5. Measures of this note"). An export that can fail and has no value (a Record result, or no result) returns the outcome alone, in the same register.
+- **The outcome first** puts the outcome in the first integer register of the result for each type of value, on each machine. With a float value, System V gives the float in `xmm0` and the outcome in `rax`, and AAPCS64 gives the outcome in `x0` and the bits of the float in `x1` (measured in the section "5. Measures of this note" of [`docs/research/call_outcome_study.md`](../../../docs/research/call_outcome_study.md)). An export that can fail and has no value (a Record result, or no result) returns the outcome alone, in the same register.
 - **Odin inside a module.** `or_return` reads the last result, so the procedures of a package that are not exports keep the order `(value, outcome)`, and the client library of a service gives that order to an Odin caller. Only the export and the import slot have the order of the call form: the export swaps the two words at its `return`.
 - **`Call_Outcome` is `enum u64`** in the call form: `rax` holds the whole word, so no reader masks bits. The completion of a ring has a `kind` of 32 bits; each member has a value below 2^32, and the border reads the word in 64 bits as `enum_word.member_of_word` does.
 - **WebAssembly.** The system gives each export and import of a WebAssembly module the type `(i64, i64)` for the pair. The C ABI of LLVM for WebAssembly returns a struct through memory (measured for `freestanding_wasm64p32`), so the engine module of the system adapts that one form at the border of the instance. The browser machine of today runs the x86-64 code of the modules in a software processor ([../features/browser_machine.md](../features/browser_machine.md)), so it reads `rax` and `rdx` as the hardware does.
@@ -367,4 +367,4 @@ A host test of the contract checks that each member has an effect group and a pa
 
 ## State
 
-Decided: designed, not built. Nothing of this form is in the code. The steps are in [`ROADMAP.md`](../../../ROADMAP.md), "Next".
+Decided: designed, not built. Nothing of this form is in the code. The steps are in the section Next of [`ROADMAP.md`](../../../ROADMAP.md).

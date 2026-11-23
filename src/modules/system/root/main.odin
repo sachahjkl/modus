@@ -416,16 +416,22 @@ connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
 	return grant_for(connection.caller, connection.service)
 }
 
-CONNECTION_CAPACITY :: 32
+// The connections that this service holds: each client of each service,
+// at one time.
+CONNECTION_CAPACITY :: 256
 
 connections: [CONNECTION_CAPACITY]Connection
 
-STARTED_CAPACITY :: 48
+// The most places of the processes that this service starts: each process
+// slot of the largest machine but its own. The places of this machine are
+// `started`, one for each process slot of the kernel but its own
+// (root_tables.odin).
+STARTED_CAPACITY :: op.PROCESS_SLOTS_MOST - 1
 
 machine: system.Handle
 image: []u8
 image_memory: system.Handle
-started: [STARTED_CAPACITY]Started
+started: []Started // root_tables_start.
 // The shared code of the modules of the processes that this service starts.
 prepared: system.Prepared_Modules
 display_holder: system.Handle
@@ -723,6 +729,8 @@ entropy_report: random.Entropy_Report
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[op.ROOT_MACHINE]
+	// The places of the processes, before anything reads them.
+	root_tables_start()
 	boot_image_take(ctx)
 	// The kernel refuses a stop code that the host cannot receive whole,
 	// with its error record, and changes nothing: the line after the two
@@ -741,6 +749,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The boot image against the system description, before any process
 	// starts (trust.odin).
 	trust_check()
+	// The largest budgets of this machine, from the pages of this service
+	// before any process holds a part of them.
+	budgets_start()
 	principals_start()
 	// The random seed of the system: before the first process starts.
 	random_seed_make()
@@ -1152,13 +1163,17 @@ display_holder_end :: proc "contextless" () {
 	}
 }
 
+// The places of the one wait of the loop, with each queue of each place
+// (root_ring.root_wait_words): made by root_tables_start.
+root_wait_set: system.Wait_Set
+
 // root_loop_pass is one pass of the loop of this service: the control ring
 // of the compositor, the root ring of each process, the answers of the
 // services that it waits for, the reap of the processes that stopped, then
 // one wait for the next event or deadline.
 root_loop_pass :: proc "contextless" () {
 	// The stop of a process is an event.
-	wait := system.wait_begin()
+	wait := system.wait_begin(&root_wait_set)
 	control_ring_serve()
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {

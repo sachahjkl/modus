@@ -111,11 +111,12 @@ log_records: [^]op.Log_Record
 // of it with Read is the authority of Log_Read: its holder reads each
 // record already. 0: no log.
 log_region: u32
-// A record keeps the slot of its process and of its thread in one byte
-// each, so that it has room for the process serial and the own number in
-// its 256 bytes.
-#assert(PROCESS_CAPACITY <= 1 << 8)
-#assert(THREAD_TABLE_CAPACITY <= 1 << 8)
+// A record keeps the slot of its process and the number of its thread in
+// its process in one byte each, so that it has room for the process serial
+// and the own number in its 256 bytes. The slot of the thread in the table
+// of the kernel does not fit a byte.
+#assert(PROCESS_CAPACITY_MOST <= 1 << 16)
+#assert(op.THREAD_CAPACITY <= 1 << 8)
 log_serial_only: bool // The kernel reports its own fault: it takes no lock, and writes the serial port only.
 // The log lock protects the records of the log and their counter, and the
 // own log ring of each process with its count and its frames
@@ -1022,7 +1023,7 @@ log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Pro
 		}
 		rest = rest[len(part):]
 		record, written, own_count := log_record_open(process, process_serial, owner, thread, name, level, len(rest) != 0)
-		record.text_count = u16(len(part))
+		record.text_count = u8(len(part))
 		copy(record.text[:], part)
 		record.run_count = u8(value_kinds.value_runs_of_record(runs, offset, len(part), record.runs[:]))
 		offset += len(part)
@@ -1036,7 +1037,9 @@ log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Pro
 
 // log_record_open gives the next record of the whole log with its head
 // written and zero bytes after the name. The caller holds the log lock,
-// writes the bytes of its form, then calls log_record_close.
+// writes the bytes of its form, then calls log_record_close. thread is the
+// slot of the thread in the table of the kernel, 0 for the kernel; the
+// record names the thread by its number in its process.
 @(private = "file")
 log_record_open :: proc "contextless" (process: u32, process_serial: u32, owner: ^Process, thread: u32, name: []u8, level: op.Log_Level, more: bool) -> (record: ^op.Log_Record, written: u64, own_count: u64) {
 	written = log_head.written
@@ -1054,8 +1057,8 @@ log_record_open :: proc "contextless" (process: u32, process_serial: u32, owner:
 	record^ = {
 		sequence       = written,
 		time           = microseconds(cycles_now()),
-		process        = u8(process),
-		thread         = u8(thread),
+		process        = u16(process),
+		thread         = u8(thread == 0 ? 0 : threads[thread].number),
 		process_serial = process_serial,
 		own_number     = u32(own_count), // The low bits: a reader names a record by its distance to the count (op.own_log_window).
 		level          = level,

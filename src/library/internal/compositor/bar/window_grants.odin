@@ -16,8 +16,11 @@ WINDOW_GRANT_PROCESS_BYTES :: 31
 // it, it fills a field of 96 bytes of a row or a fact.
 WINDOW_GRANT_RESOURCE_BYTES :: 95
 
+// The windows of the desktop at one time: the clients of the compositor.
+WINDOW_CAPACITY :: 128
+
 // The rows of the menu of the windows: each window and each grant.
-WINDOWS_MENU_ROW_CAPACITY :: 32 + WINDOW_GRANT_CAPACITY
+WINDOWS_MENU_ROW_CAPACITY :: WINDOW_CAPACITY + WINDOW_GRANT_CAPACITY
 
 // A grant row: the key icon after the place of the icon of the window, so
 // the row reads as a part of the window above it; then the object; then

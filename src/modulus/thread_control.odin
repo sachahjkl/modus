@@ -124,6 +124,15 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	if op.thread_control_records_a_process(command) {
 		return record_replay_control(caller_index, caller_process, command, v, results)
 	}
+	if op.thread_control_sizes_the_wait(command) {
+		// A room serves the thread that waits: no other thread is named.
+		if v[0] != 0 || v[1] != 0 {
+			return .Bad_Operation
+		}
+		capacity, status := wait_room_set(&threads[caller_index], caller_process, v[4])
+		results[0] = capacity
+		return status
+	}
 	target_index: u32
 	owner := caller_process_index
 	by_machine := false // The machine handle names the thread: a write sets its weight limit, or the limit of its placement.
@@ -158,7 +167,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			}
 			by_machine = true
 			place, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
-			if place == 0 || place >= THREAD_TABLE_CAPACITY {
+			if place == 0 || place >= u64(thread_table_capacity) {
 				return thread_control_state_refuse(.Thread_Absent, 2, v[1])
 			}
 			// No handle keeps the place for this thread: a place serves a
@@ -359,6 +368,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		// They act on a process handle: record_replay_control runs them
 		// before a thread is named.
 		return .Bad_Operation
+	case .Wait_Room:
+		// It acts on the calling thread: thread_control runs it before a
+		// thread is named.
+		return .Bad_Operation
 	case .Read_Memory:
 		// The bytes of the process of the thread (breakpoints.odin). The
 		// thread is not held: the memory of a process changes while its
@@ -480,7 +493,7 @@ process_schedule_control :: proc "contextless" (caller_process: ^Process, comman
 		return .Bad_Address
 	}
 	slot, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
-	if slot == 0 || slot >= PROCESS_CAPACITY {
+	if slot == 0 || slot >= u64(process_capacity) {
 		return thread_control_state_refuse(.Process_Absent, 2, v[1])
 	}
 	// A slot serves a new process only under the control lock

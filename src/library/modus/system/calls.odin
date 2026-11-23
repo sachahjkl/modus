@@ -135,7 +135,19 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // `rows`: the memory of the caller for the records of a Table result. The
 // result is then the count of the records that were copied there: the
 // records that the export gave, at most those that `rows` holds.
-call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil) -> (result: i64, status: call_status.Call_Status) {
+//
+// `deadline`: a time of the clock of the machine past which the caller
+// stops to wait, with Deadline_Passed, while the other process runs. A call of
+// work that the caller does not trust (a compiler on a source of a
+// principal, or a builder) gives the hang bound of an answer (answer_deadline):
+// else a source that makes it loop holds the caller for ever. The caller then
+// ends the call host. WAIT_FOREVER (or 0): only the stop of the process ends it.
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil, deadline: u64 = WAIT_FOREVER) -> (result: i64, status: call_status.Call_Status) {
+	bound := deadline == 0 ? WAIT_FOREVER : deadline
+	// A deadline that passed before the call sends nothing: no work starts.
+	if deadline_passed(time(), bound) {
+		return 0, .Deadline_Passed
+	}
 	function, described := module.function(file, export)
 	if !described {
 		return 0, .Refused
@@ -179,14 +191,25 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	}
 	for {
 		wait := wait_begin()
-		for _ in 0 ..< ring.CAPACITY {
-			completion, has := receive(&connection.calls.completions)
-			if !has {
-				break
-			}
-			if completion.tag != connection.tag {
+		// The state before the ring: a process that answered and stopped is
+		// read with its answer.
+		state, _, _ := process_state(connection.process)
+		completion, waited := call_answer_step(&connection.calls, connection.tag, time(), bound, state)
+		switch waited {
+		case .Waits:
+			wait_records(&wait, &connection.calls.completions)
+			if wait_spin(&wait) {
 				continue
 			}
+			wait_end(&wait, bound)
+			continue
+		case .Stopped:
+			return 0, .Stopped
+		case .Deadline_Passed:
+			return 0, .Deadline_Passed
+		case .Answered:
+		}
+		{
 			if completion.kind != u32(isolated.Status.Ok) {
 				// The values of a refusal hold its error record.
 				if error != nil {
@@ -230,19 +253,68 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			}
 			return result, .Ok
 		}
-		if state, _, _ := process_state(connection.process); state == .Stopped || state == .None {
-			return 0, .Stopped
-		}
-		wait_records(&wait, &connection.calls.completions)
-		if wait_spin(&wait) {
-			continue
-		}
-		wait_end(&wait)
 	}
+}
+
+// deadline_passed says if a caller stops waiting at the time now: 0 and
+// WAIT_FOREVER are no deadline, and the time of the deadline itself has passed it.
+deadline_passed :: proc "contextless" (now: u64, deadline: u64) -> bool {
+	return deadline != 0 && deadline != WAIT_FOREVER && now >= deadline
+}
+
+// What one read of a call ring found for a call.
+Call_Wait :: enum u8 {
+	Answered, // The completion with the tag of the call came.
+	Waits, // The process runs and the deadline did not pass: wait again.
+	Stopped, // The process stopped, or the handle names none: no answer comes.
+	Deadline_Passed, // The process runs and the deadline passed.
+}
+
+// call_answer_step reads the completions of a call ring once, after the
+// caller read the state of the other process. The completion with the tag
+// decides first; a completion with another tag answers a call that the
+// caller gave up, and is skipped. With no answer, answer_wait_of decides.
+// It is pure, so a host test gives it a process that never answers.
+call_answer_step :: proc "contextless" (calls: ^ring.Ring, tag: u32, now, deadline: u64, state: op.Process_State) -> (completion: ring.Record, waited: Call_Wait) {
+	for _ in 0 ..< ring.CAPACITY {
+		record, has := receive(&calls.completions)
+		if !has {
+			break
+		}
+		if record.tag == tag {
+			return record, .Answered
+		}
+	}
+	switch answer_wait_of(now, deadline, state) {
+	case .Waits:
+		return {}, .Waits
+	case .Stopped:
+		return {}, .Stopped
+	case .Silent:
+		return {}, .Deadline_Passed
+	}
+	return {}, .Stopped
 }
 
 // The log records of each second that a call host gets by default.
 CALL_HOST_LOG_RECORDS :: 100
+
+// The pages of a call host when its starter names none.
+CALL_HOST_PAGES :: 512
+
+// The mappings that a starter adds to a call host, past the files.
+CALL_HOST_ADDED_MAPPING_CAPACITY :: 4
+
+// What a starter adds to the context of a call host, past its call ring and
+// its call region: the stores of a builder (modus:contract/builder). A
+// slot with no handle adds nothing. call_host_start refuses a handle in the
+// slot of the call ring or of the call region, and more mappings than
+// CALL_HOST_ADDED_MAPPING_CAPACITY.
+Call_Host_Context :: struct {
+	grants:   [op.CONTEXT_HANDLES]Grant,
+	mappings: []Mapping,
+	pages:    u64, // The pages of the budget of the call host. 0: CALL_HOST_PAGES.
+}
 
 // call_host_start starts a call host (the module "host" of the boot
 // image) for one module, and maps the file of the module and of its
@@ -255,7 +327,13 @@ CALL_HOST_LOG_RECORDS :: 100
 // log records of each second that the call host takes from the budget of
 // the caller: 100 by default, so a caller with 1000 records starts nine
 // hosts and keeps 100; a caller that starts more gives each fewer.
-call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS) -> (connection: Call_Connection, status: Status) {
+//
+// `added`: the handles, the mappings and the pages that the starter adds
+// (Call_Host_Context); nil adds none.
+call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS, added: ^Call_Host_Context = nil) -> (connection: Call_Connection, status: Status) {
+	if added != nil && (added.grants[isolated.GRANT_RING].handle != 0 || added.grants[isolated.GRANT_REGION].handle != 0 || len(added.mappings) > CALL_HOST_ADDED_MAPPING_CAPACITY) {
+		return {}, .Bad_Operation
+	}
 	files: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry
 	source := Load_Source {
 		image = image,
@@ -273,7 +351,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	page := ([^]u8)(page_address)[:PAGE_SIZE]
 	(^info.Image_Header)(page_address)^ = {magic = info.IMAGE_MAGIC, count = u32(count)}
 	entries := ([^]info.Image_Entry)(raw_data(page[size_of(info.Image_Header):]))[:count]
-	mappings: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY + 1]Mapping
+	mappings: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY + 1 + CALL_HOST_ADDED_MAPPING_CAPACITY]Mapping
 	mappings[0] = {memory = connection.files_memory, address = isolated.FILE_ADDRESS}
 	offset := u64(PAGE_SIZE)
 	for item, index in files[:count] {
@@ -293,78 +371,95 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	region_address := memory_map(connection.region_memory) or_return
 	connection.region = ([^]u8)(region_address)[:isolated.REGION_PAGES * PAGE_SIZE]
 	grants: [op.CONTEXT_HANDLES]Grant
+	mapping_count := count + 1
+	pages := u64(CALL_HOST_PAGES)
+	if added != nil {
+		grants = added.grants
+		for item in added.mappings {
+			mappings[mapping_count] = item
+			mapping_count += 1
+		}
+		if added.pages != 0 {
+			pages = added.pages
+		}
+	}
 	values := values_with_seed
 	grants[isolated.GRANT_RING] = {connection.ring_memory, {.Read, .Write}}
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = offset
-	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = 512, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:count + 1]) or_return
+	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
 	// The first completion says if the call host loaded the module.
-	limit := time() + 5000
-	for {
-		wait := wait_begin()
-		state, _, _ := process_state(connection.process)
-		for _ in 0 ..< ring.CAPACITY {
-			completion, has := receive(&connection.calls.completions)
-			if !has {
-				break
-			}
-			if completion.tag != 0 {
-				continue
-			}
-			if completion.kind == u32(isolated.Status.Ok) {
-				return connection, .Ok
-			}
-			if load_error != nil {
-				intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
-			}
-			return connection, .Bad_State
+	switch connection_ready_wait(&connection.calls, connection.process) {
+	case .Ready:
+		return connection, .Ok
+	case .Load_Failed:
+		if load_error != nil {
+			intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
 		}
-		if state == .Stopped {
-			return connection, .Bad_State
-		}
-		wait_records(&wait, &connection.calls.completions)
-		if wait_end(&wait, limit) >= limit {
-			return connection, .Bad_State
-		}
+		return connection, .Bad_State
+	case .Refused:
+		return connection, .Bad_State
 	}
+	return connection, .Bad_State
 }
+
 
 // service_connection asks the root service for a connection to the
 // service with a name, through a ring to the root service (GRANT_ROOT): a
-// ring of the grant Root_Ring or of the grant Connect.
-service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: string) -> (connection: Call_Connection, status: Status) {
+// ring of the grant Root_Ring or of the grant Connect. It is the one path
+// of a Connect: it waits for the answer and for the ready completion with
+// the hang bound, and ends what is left when either does not come.
+// refused: the answer of a refusal, with its error record, when the caller
+// asks for it.
+service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: string, refused: ^ring.Record = nil) -> (connection: Call_Connection, status: Status) {
 	packed := name_pack(name)
 	if !send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
 		return {}, .No_Slot
 	}
-	limit := time() + 5000
-	for {
-		for record in receive(&requests.completions) {
-			if record.tag != tag {
-				continue
-			}
-			if record.kind != u32(Status.Ok) {
-				refused, _ := status_of_word(record.kind)
-				return {}, refused
-			}
-			connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
-			connection.module_hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
-			defer if status != .Ok {
-				call_connection_end(&connection)
-			}
-			connection.calls = ring_open(connection.ring_memory, receive_handles = true) or_return
-			region_pages := memory_size(connection.region_memory) or_return
-			address := memory_map(connection.region_memory) or_return
-			connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
-			return connection, .Ok
-		}
-		wait: Wait
-		wait_records(&wait, &requests.completions)
-		if wait_end(&wait, limit) >= limit {
-			return {}, .Bad_State
-		}
+	// The root service can start the service first: only the hang bound
+	// ends this wait.
+	record, answered := root_answer_wait(requests, tag)
+	if !answered {
+		connect_give_up(requests, tag, tag, packed)
+		return {}, .Bad_State
 	}
+	if record.kind != u32(Status.Ok) {
+		if refused != nil {
+			refused^ = record
+		}
+		refusal, _ := status_of_word(record.kind)
+		return {}, refusal
+	}
+	connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
+	connection.module_hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
+	defer if status != .Ok {
+		call_connection_end(&connection)
+	}
+	connection.calls = ring_open(connection.ring_memory, receive_handles = true) or_return
+	region_pages := memory_size(connection.region_memory) or_return
+	address := memory_map(connection.region_memory) or_return
+	connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
+	// The service maps the ring when it reads the Connect of the root
+	// service, which can be after its start on demand: no call before.
+	if connection_ready_wait(&connection.calls, connection.process) != .Ready {
+		service_disconnection(requests, tag, packed)
+		return connection, .Bad_State
+	}
+	return connection, .Ok
+}
+
+// service_disconnection asks the root service to end its side of a
+// connection that this process gives up: else the root service keeps it,
+// and refuses the next Connect of this caller to the service. It waits for
+// the answer, so that no answer with the tag stays in the ring for a later
+// request that uses the same tag.
+@(private = "file")
+service_disconnection :: proc "contextless" (requests: ^ring.Ring, tag: u32, packed: [4]u64) {
+	if !send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+		return
+	}
+	root_answer_wait(requests, tag)
 }
 
 // call_connection_end closes what this process holds of a connection. A

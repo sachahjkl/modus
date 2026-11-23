@@ -66,7 +66,6 @@ import "modus:system"
 SAMPLE_INTERVAL :: 250 // Milliseconds.
 KEY_TAB :: 0x0F
 FILTER_CAPACITY :: 24
-PROCESS_SLOTS :: 64 // The process slots of the kernel (System_Report.process_slots).
 
 Entry :: struct {
 	slot:           u64,
@@ -91,9 +90,12 @@ Sample :: struct {
 machine: system.Handle
 image: []u8
 debug_names: system.Debug_Names // The debug image and the verdicts of its objects. With no image, the frames are "module + offset".
-entries: [PROCESS_SLOTS]Entry
+// The tables of the processes, one entry for each process slot of this
+// machine: taken at the start from an arena that the budget pays
+// (tables_take).
+entries: []Entry
 entry_count: int
-shown: [PROCESS_SLOTS]int // The indexes in entries that the filter keeps.
+shown: []int // The indexes in entries that the filter keeps.
 shown_count: int
 filter: [FILTER_CAPACITY]u8
 filter_count: int
@@ -115,9 +117,48 @@ inspect_call :: proc "contextless" (kind: op.Inspect_Kind, index: u64, record: r
 	return status == .Ok
 }
 
+// The process slots of this machine (System_Report.process_slots), read
+// once at the start (tables_take): the kernel chose them at its start. 0:
+// the tables have no entry.
+machine_process_slots: u64
+
+// process_slots gives the slots to read: those of this machine, which the
+// tables hold.
+process_slots :: proc "contextless" () -> u64 {
+	return machine_process_slots
+}
+
+// The arena of the tables of the processes.
+tables: system.Arena
+
+// tables_take takes the tables of the processes, one entry for each slot
+// of this machine. With no count of the slots, or no page for them, the
+// tables are empty and the list shows no process.
+tables_take :: proc "contextless" () {
+	slots := int(system.process_slots_of(machine))
+	machine_process_slots = u64(slots)
+	if slots == 0 {
+		return
+	}
+	sizes := [?]u64{u64(slots) * size_of(Entry), u64(slots) * size_of(int), u64(slots + 1) * size_of(int)}
+	status: system.Status
+	if tables, status = system.arena_create(system.arena_take_pages(sizes[:])); status != .Ok {
+		return
+	}
+	taken_entries, entries_status := system.arena_take(&tables, Entry, slots)
+	taken_shown, shown_status := system.arena_take(&tables, int, slots)
+	taken_rows, rows_status := system.arena_take(&tables, int, slots + 1)
+	if entries_status != .Ok || shown_status != .Ok || rows_status != .Ok {
+		system.arena_end(&tables)
+		machine_process_slots = 0
+		return
+	}
+	entries, shown, shown_row = taken_entries, taken_shown, taken_rows
+}
+
 // slot_of gives the slot of the process with a name, or 0.
 slot_of :: proc "contextless" (name: string) -> u64 {
-	for slot in 1 ..< u64(PROCESS_SLOTS) {
+	for slot in 1 ..< process_slots() {
 		report: op.Process_Report
 		if inspect_call(.Process, slot, &report, size_of(report)) && report.state != .None && system.name_of(report.name[:]) == name {
 			return slot
@@ -130,7 +171,7 @@ slot_of :: proc "contextless" (name: string) -> u64 {
 // filter keeps.
 list_read :: proc "contextless" () {
 	entry_count = 0
-	for slot in 1 ..< u64(PROCESS_SLOTS) {
+	for slot in 1 ..< process_slots() {
 		report: op.Process_Report
 		if !inspect_call(.Process, slot, &report, size_of(report)) || report.state == .None {
 			continue
@@ -425,6 +466,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	element_tokens, _ = layout.tokens_for(graphics.appearance, .Standard)
 	places, _ = inspect_layout(window.width, window.height, element_tokens)
 	machine = ctx.handles[system.GRANT_MACHINE]
+	tables_take()
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}

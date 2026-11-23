@@ -33,15 +33,25 @@ Linux_Call :: enum uintptr {
 	Fork          = 57,
 	Execve        = 59,
 	Wait4         = 61,
+	Kill          = 62,
 	Fsync         = 74,
 	Chdir         = 80,
 	Mkdir         = 83,
+	Chown         = 92,
+	Setuid        = 105,
+	Setgid        = 106,
+	Setgroups     = 116,
 	Mknod         = 133,
 	Iopl          = 172,
 	Mount         = 165,
 	Getdents64    = 217,
 	Finit_Module  = 313,
 }
+
+// The user and the group of the build command: no right to the ports, to
+// the nodes of the disks or to the modules of the kernel, which belong to
+// init, process 1 and the one root of the guest.
+BUILD_USER :: uintptr(1000)
 
 // The status that init gives when it fails itself, as a shell gives 126
 // and 127: no command returns it by chance.
@@ -51,6 +61,7 @@ INIT_FAILED_STATUS :: u32(125)
 OPEN_READ :: 0
 OPEN_WRITE :: 1
 OPEN_DIRECTORY :: 0o200000
+OPEN_NO_FOLLOW :: 0o400000
 OPEN_CREATE_TRUNCATE :: 0o100 | 0o1000
 MAP_PRIVATE_ANONYMOUS :: 0x02 | 0x20
 PROTECT_READ_WRITE :: 0x1 | 0x2
@@ -311,7 +322,16 @@ disk_open :: proc "contextless" (serial: string, flags: uintptr) -> (descriptor:
 	return -1, 0, false
 }
 
-// make_folders makes each folder of path under root.
+// give_to_build_user makes the build user the owner of a path, so the
+// command writes there.
+give_to_build_user :: proc "contextless" (parts: ..string) -> bool {
+	path: [PATH_BYTES]u8
+	pointer, ok := c_text(path[:], ..parts)
+	return ok && linux_call(uintptr(Linux_Call.Chown), pointer, BUILD_USER, BUILD_USER) >= 0
+}
+
+// make_folders makes each folder of path under root, owned by the build
+// user.
 make_folders :: proc "contextless" (root: string, path: string) -> bool {
 	for index in 0 ..< len(path) {
 		if path[index] != '/' {
@@ -323,6 +343,9 @@ make_folders :: proc "contextless" (root: string, path: string) -> bool {
 			return false
 		}
 		if result := linux_call(uintptr(Linux_Call.Mkdir), pointer, 0o755); result < 0 && result != ERROR_EXISTS {
+			return false
+		}
+		if !give_to_build_user(root, "/", path[:index]) {
 			return false
 		}
 	}
@@ -353,7 +376,7 @@ unpack_inputs :: proc "contextless" () -> bool {
 			return false
 		}
 		file := open_path(OPEN_WRITE | OPEN_CREATE_TRUNCATE, 0o644, "/inputs/", entry.path)
-		if file < 0 || !write_all(file, image[entry.data_offset:][:entry.data_size]) {
+		if file < 0 || !write_all(file, image[entry.data_offset:][:entry.data_size]) || !give_to_build_user("/inputs/", entry.path) {
 			say("linux_build_init: the input ", entry.path, " was not written")
 			return false
 		}
@@ -364,12 +387,24 @@ unpack_inputs :: proc "contextless" () -> bool {
 
 // run waits for a child that runs program with arguments, and gives its
 // status: the exit code, or 128 and the signal that ended it.
-run :: proc "contextless" (arguments: []uintptr, environment: []uintptr, folder: string) -> (status: u32, ok: bool) {
+run :: proc "contextless" (arguments: []uintptr, environment: []uintptr, folder: string, as_build_user: bool) -> (status: u32, ok: bool) {
 	child := linux_call(uintptr(Linux_Call.Fork))
 	if child < 0 {
 		return 0, false
 	}
 	if child == 0 {
+		// The command runs as the build user: no supplementary group, then
+		// the group, then the user, each checked. The I/O privilege level of
+		// init is 0 here (build drops it before the fork), and a user that
+		// is not root cannot raise it.
+		if as_build_user {
+			if linux_call(uintptr(Linux_Call.Iopl), 0) < 0 || linux_call(uintptr(Linux_Call.Setgroups), 0, 0) < 0 || linux_call(uintptr(Linux_Call.Setgid), BUILD_USER) < 0 || linux_call(uintptr(Linux_Call.Setuid), BUILD_USER) < 0 {
+				say("linux_build_init: the command was not run: init did not become the build user")
+				for {
+					_ = linux_call(60, uintptr(INIT_FAILED_STATUS))
+				}
+			}
+		}
 		place: [PATH_BYTES]u8
 		pointer, _ := c_text(place[:], folder)
 		_ = linux_call(uintptr(Linux_Call.Chdir), pointer)
@@ -397,7 +432,7 @@ run :: proc "contextless" (arguments: []uintptr, environment: []uintptr, folder:
 
 // command_run runs the command of the spec, the arguments of init joined
 // with one space, with sh -c in /inputs.
-command_run :: proc "contextless" (stack: rawptr) -> (status: u32, ok: bool) {
+command_run :: proc "contextless" (stack: rawptr, epoch: u64) -> (status: u32, ok: bool) {
 	words := ([^]uintptr)(stack)
 	count := int(words[0])
 	command: [COMMAND_BYTES]u8
@@ -420,15 +455,13 @@ command_run :: proc "contextless" (stack: rawptr) -> (status: u32, ok: bool) {
 	}
 	shell := [?]u8{'/', 'b', 'i', 'n', '/', 's', 'h', 0}
 	dash_c := [?]u8{'-', 'c', 0}
-	low := port_in32(u32(gb.Guest_Io_Port.Frozen_Clock_Low))
-	high := port_in32(u32(gb.Guest_Io_Port.Frozen_Clock_High))
 	epoch_text: [64]u8
 	epoch_digits: [24]u8
-	epoch_pointer, _ := c_text(epoch_text[:], "SOURCE_DATE_EPOCH=", decimal(epoch_digits[:], u64(high) << 32 | u64(low)))
+	epoch_pointer, _ := c_text(epoch_text[:], "SOURCE_DATE_EPOCH=", decimal(epoch_digits[:], epoch))
 	path_variable := [?]u8{'P', 'A', 'T', 'H', '=', '/', 'b', 'i', 'n', 0}
 	environment := [3]uintptr{uintptr(&path_variable[0]), epoch_pointer, 0}
 	arguments := [4]uintptr{uintptr(&shell[0]), uintptr(&dash_c[0]), uintptr(&command[0]), 0}
-	return run(arguments[:], environment[:], "/inputs")
+	return run(arguments[:], environment[:], "/inputs", true)
 }
 
 // busybox_install makes the links of the applets of busybox in /bin.
@@ -439,7 +472,7 @@ busybox_install :: proc "contextless" () -> bool {
 	folder := [?]u8{'/', 'b', 'i', 'n', 0}
 	arguments := [5]uintptr{uintptr(&busybox[0]), uintptr(&install[0]), uintptr(&symbolic[0]), uintptr(&folder[0]), 0}
 	environment := [1]uintptr{0}
-	status, ok := run(arguments[:], environment[:], "/")
+	status, ok := run(arguments[:], environment[:], "/", false)
 	return ok && status == 0
 }
 
@@ -451,7 +484,7 @@ collect_outputs :: proc "contextless" (folder: string, depth: int) -> bool {
 		say("linux_build_init: the output was not written: /outputs/", folder, " is deeper than a disk holds")
 		return false
 	}
-	descriptor := open_path(OPEN_READ | OPEN_DIRECTORY, 0, "/outputs/", folder)
+	descriptor := open_path(OPEN_READ | OPEN_DIRECTORY | OPEN_NO_FOLLOW, 0, "/outputs/", folder)
 	if descriptor < 0 {
 		return depth == 0 // No /outputs: an empty output.
 	}
@@ -574,7 +607,9 @@ pack_outputs :: proc "contextless" (epoch: u64) -> bool {
 	}
 	for index in output_order[:output_count] {
 		path := string(output_path(index))
-		file := open_path(OPEN_READ, 0, "/outputs/", path)
+		// No link is followed: a link that the command made in /outputs
+		// is refused, never read through.
+		file := open_path(OPEN_READ | OPEN_NO_FOLLOW, 0, "/outputs/", path)
 		if file < 0 {
 			say("linux_build_init: the output ", path, " was not read")
 			return false
@@ -616,15 +651,28 @@ build :: proc "contextless" (stack: rawptr) -> u32 {
 		path: [32]u8
 		pointer, _ := c_text(path[:], folder)
 		_ = linux_call(uintptr(Linux_Call.Mkdir), pointer, 0o755)
+		if !give_to_build_user(folder) {
+			say("linux_build_init: the command was not run: ", folder, " was not given to the build user")
+			return INIT_FAILED_STATUS
+		}
 	}
-	status, ran := command_run(stack)
+	// The frozen time, then the ports close: the command runs with no right
+	// to them, and init opens them again for the status.
+	epoch := u64(port_in32(u32(gb.Guest_Io_Port.Frozen_Clock_High))) << 32 | u64(port_in32(u32(gb.Guest_Io_Port.Frozen_Clock_Low)))
+	if linux_call(uintptr(Linux_Call.Iopl), 0) < 0 {
+		say("linux_build_init: the command was not run: the ports of the build did not close")
+		return INIT_FAILED_STATUS
+	}
+	status, ran := command_run(stack, epoch)
+	// Each process that the command left ends before init reads /outputs:
+	// none changes a file between the walk and the read.
+	_ = linux_call(uintptr(Linux_Call.Kill), ~uintptr(0), 9)
 	if !ran {
 		return INIT_FAILED_STATUS
 	}
 	if status != 0 {
 		return status
 	}
-	epoch := u64(port_in32(u32(gb.Guest_Io_Port.Frozen_Clock_High))) << 32 | u64(port_in32(u32(gb.Guest_Io_Port.Frozen_Clock_Low)))
 	if !pack_outputs(epoch) {
 		return INIT_FAILED_STATUS
 	}

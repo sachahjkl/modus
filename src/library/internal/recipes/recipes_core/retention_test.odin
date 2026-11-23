@@ -170,3 +170,35 @@ retention_removes_nothing_when_it_cannot_see_all :: proc(t: ^testing.T) {
 	testing.expect_value(t, failed.removed, 0)
 	testing.expect(t, has_blob(test, blake3.hash(orphan)), "nothing is removed")
 }
+
+// A tree that a put of this window keeps, and that a recipe names, keeps
+// its children: the put marks the tree first, and the walk of the tree
+// still runs. A put tree that no recipe names keeps its children too, for
+// the time of the put.
+@(test)
+retention_walks_a_put_tree_that_a_recipe_names :: proc(t: ^testing.T) {
+	for named in ([?]bool{true, false}) {
+		test := retention_test_make()
+		defer retention_test_end(test)
+		child := []u8{'c', 'h', 'i', 'l', 'd'}
+		put_object(test, child)
+		entry, _ := tree_hash.tree_entry_make(.Object, "child", blake3.hash(child))
+		entries := [1]tree_hash.Tree_Entry{entry}
+		tree, _ := put_tree(test, 0, entries[:])
+		if named {
+			spec: pr.Recipe_Spec
+			spec.builder_hash = pr.inputs_tree_builder_hash()
+			spec.output_kind = .Tree
+			spec.input_count = 1
+			spec.inputs[0], _ = pr.recipe_input_make("put", .Tree, tree)
+			_, refusal := register_recipe(test.registry, &spec)
+			assert(refusal == .None)
+		}
+		extra := [1]blake3.Hash{tree}
+		result := retention_collect(test.state, test.registry, extra[:], test.workspace)
+		testing.expect_value(t, result.refusal, Retention_Refusal.None)
+		testing.expect_value(t, result.removed, 0)
+		testing.expect(t, has_blob(test, blake3.hash(child)), "the child of a put tree stays")
+		testing.expect(t, has_blob(test, tree), "the put tree stays")
+	}
+}

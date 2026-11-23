@@ -78,11 +78,27 @@ Recipe_Refusal :: enum u8 {
 	Not_A_Recipe          = 29, // The value is not a recipe, or its arguments are not a record.
 	Damaged_Recipe        = 30, // The recipe does not decode, or its written hash is not the hash of its record.
 	Unsupported_Argument  = 31, // An argument of a kind that a recipe does not take: a recipe, a follow, a store, a plan, a project, or a negative source_date.
-	Output_Too_Large      = 32, // The output passes the size bound of the recipe.
-	Build_Timed_Out       = 33, // The builder passed its time bound or the bound of its exits.
-	Builder_Busy          = 34, // The one guest build of the service runs: a second waits for its end.
-	Memory_Past_Bound     = 35, // The guest of the recipe asks for more memory than the budget of the service has left.
-	Put_Quota_Reached     = 36, // The caller put as many objects as a caller may keep while no recipe names them.
+	Builder_Absent        = 32, // No module of the boot image has the hash of the builder.
+	Input_Absent          = 33, // An object of an input is not in the place of the objects of the service: no build gave it.
+	Builder_Timed_Out     = 34, // The builder gave no answer within builder.BUILD_TIME_BOUND_MILLISECONDS: the service ended it.
+	Input_Too_Large       = 35, // The inputs of one build hold more objects than builder.MAX_INPUT_OBJECTS, or a tree nested deeper than the bound.
+	Output_Too_Large      = 36, // The output passes the size bound of the recipe.
+	Builder_Busy          = 37, // The guest builds that the service holds are as many as it runs and queues: a build waits for room.
+	Memory_Past_Bound     = 38, // The guest build needs more memory than the budget of the service has left.
+	Put_Quota_Reached     = 39, // The principal put as many objects in the hour as a principal may keep while no recipe names them.
+	Build_Cancelled       = 40, // The principal that queued the guest build cancelled it.
+}
+
+// recipe_refusal_of_word is the one border of a refusal word that crosses
+// a call: the value found of an error record of the service recipes. A
+// word that names no refusal is refused, and so is None, which is no
+// refusal.
+recipe_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: Recipe_Refusal, ok: bool) {
+	member := enum_word.member_of_word(Recipe_Refusal, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
 }
 
 // The words of each refusal of a recipe, for the failure of an evaluation
@@ -121,11 +137,15 @@ recipe_refusal_words := [Recipe_Refusal]string {
 	.Not_A_Recipe          = "the value is not a recipe",
 	.Damaged_Recipe        = "the recipe does not decode",
 	.Unsupported_Argument  = "an argument of a kind that a recipe does not take",
+	.Builder_Absent        = "no module of the boot image is the builder",
+	.Input_Absent          = "an input is not an output of a build of this machine",
+	.Builder_Timed_Out     = "the builder gave no answer within the bound of a build",
+	.Input_Too_Large       = "the inputs hold more objects than one build takes",
 	.Output_Too_Large      = "the output passes the size bound of the recipe",
-	.Build_Timed_Out       = "the builder passed its time bound",
-	.Builder_Busy          = "another guest build runs",
-	.Memory_Past_Bound     = "the guest asks for more memory than the service has",
-	.Put_Quota_Reached     = "the caller kept as many objects as it may",
+	.Builder_Busy          = "the guest builds of the service are full",
+	.Memory_Past_Bound     = "the guest build needs more memory than the service has",
+	.Put_Quota_Reached     = "the principal kept as many objects in the hour as it may",
+	.Build_Cancelled       = "the principal cancelled the build",
 }
 
 // Closed set of commands accepted on the recipes service ring.

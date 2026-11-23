@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:mapping_order"
 
 // The virtual memory of a process (docs/ARCHITECTURE.md, "The virtual
 // memory of a process"): commit and decommit the pages of an uncommitted
@@ -206,8 +207,8 @@ waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region
 			thread_words_wake(&thread)
 			continue
 		}
-		for word in thread.words[:thread.word_count] {
-			words[count] = {page = word &~ (PAGE_SIZE - 1), thread = u32(slot + 1)}
+		for n in 0 ..< thread.word_count {
+			words[count] = {page = wait_entry(&thread, n).word &~ (PAGE_SIZE - 1), thread = u32(slot + 1)}
 			count += 1
 		}
 	}
@@ -273,7 +274,7 @@ protection_bits :: proc "contextless" (mapping: ^Mapping, flags: op.Map_Flags) -
 // A range covers the pages of one mapping of this process; Write needs a
 // mapping made with Write, Execute one made with Execute; a part of a
 // mapping needs an object with a frame list named only by this process.
-protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u8, status: Operation_Outcome) {
+protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u16, status: Operation_Outcome) {
 	if .Write in flags && .Execute in flags || .No_Access in flags && flags != {.No_Access} {
 		return mappings, .Bad_Operation
 	}
@@ -282,14 +283,8 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 		if address % PAGE_SIZE != 0 || count == 0 || address >= USER_END || count > (USER_END - address) / PAGE_SIZE {
 			return mappings, .Bad_Address
 		}
-		found := -1
-		for &mapping, slot in process.mappings {
-			if mapping.page_count != 0 && address >= mapping.address && (address - mapping.address) / PAGE_SIZE + count <= mapping.page_count {
-				found = slot
-				break
-			}
-		}
-		if found < 0 {
+		found, inside := mapping_order.containing(process.mapping_order[:process.mapping_order_count], process.mappings[:], address)
+		if !inside || (address - process.mappings[found].address) / PAGE_SIZE + count > process.mappings[found].page_count {
 			return mappings, .Bad_Address
 		}
 		mapping := &process.mappings[found]
@@ -328,7 +323,7 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 				return mappings, .Bad_State
 			}
 		}
-		mappings[index] = u8(found)
+		mappings[index] = found
 	}
 	// One table that names one mapping whole and in part: the parts are
 	// checked against the protection before the change of the whole:
@@ -419,7 +414,14 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 		count := range.page_count
 		mapping.protected = true
 		if first == 0 && count == mapping.page_count {
+			wrote := mapping.bits & PAGE_WRITE != 0
 			mapping.bits = protection_bits(mapping, flags)
+			writes := mapping.bits & PAGE_WRITE != 0
+			if writes && !wrote {
+				intrinsics.atomic_add(&region.writable_mapping_count, 1)
+			} else if wrote && !writes {
+				intrinsics.atomic_sub(&region.writable_mapping_count, 1)
+			}
 		}
 		// The protection of each page of a part, in its slot, as marks that
 		// take away from the protection of the mapping now: a part that gets

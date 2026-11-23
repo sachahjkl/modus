@@ -8,20 +8,35 @@ import op "modus:contract/operation"
 import "modulus:extended_switch"
 import "modulus:page_attributes"
 import "modulus:processor_counters"
+import "modulus:mapping_order"
+import "modulus:slot_set"
+import "modulus:table_sizes"
 
 // The objects, the handle tables, the processes and their threads
 // (docs/ARCHITECTURE.md, "Handle table"). The scheduler is in schedule.odin
 // and strategy.odin.
 // All tables are flat arrays with a fixed capacity. Index 0 of each table is
 // not used, so that 0 means "none".
+//
+// The tables of the processes, the threads and the memory objects have the
+// size that the kernel chose at its start from the memory of the machine
+// (tables.odin; src/md/data/table_sizes.md, which gives their cost). They
+// are bounds of the kernel tables, not budgets: a process gets its slot,
+// its threads and its pages from a budget, which the root service divides.
 
 USER_END :: u64(op.USER_END)
-REGION_CAPACITY :: 2048
-// The root budget holds the log records of a process of normal use for
-// each process slot: the contract counts the slots of the kernel.
-PROCESS_CAPACITY :: op.PROCESS_SLOTS_OF_THE_MACHINE
+// The most of each table that the kernel sizes at its start: the size of
+// the tables that keep their most (a set of process slots, the locks of the
+// processes).
+PROCESS_CAPACITY_MOST :: op.PROCESS_SLOTS_MOST
+THREAD_TABLE_CAPACITY_MOST :: table_sizes.THREADS_MOST
+REGION_CAPACITY_MOST :: table_sizes.REGIONS_MOST
 HANDLE_CAPACITY :: op.HANDLE_TABLE_CAPACITY
-MAPPING_CAPACITY :: 128
+MAPPING_CAPACITY :: op.MAPPING_REPORT_CAPACITY
+
+// A set of process slots: the process locks that a processor holds, the
+// processes whose last handle closed, the processes that a stop reached.
+Process_Set :: slot_set.Slot_Set(PROCESS_CAPACITY_MOST)
 
 // A memory object: pages, each with a page frame or with none yet.
 //
@@ -66,6 +81,15 @@ Region :: struct {
 	bridge_function: u32, // A function behind a conventional bridge: 1 + its own requester identifier, while `requester` names the one that it shares with the devices behind the bridge. 0: a function with its own requester.
 	declared:          u32, // A bit for each device slot of the IOMMU whose domain maps the pages (iommu.odin). Frame lock.
 	declared_writable: u32, // The slots of `declared` whose device can also write the pages. Frame lock.
+	// The mappings of this object in every process, and those with Write
+	// (map_region, unmap, Memory_Protect of a whole mapping). Atomic. A
+	// recording asks whether another process maps the object, and these
+	// counts answer no with no read of the mappings of each process.
+	mapping_count:          u32,
+	writable_mapping_count: u32,
+	// The IOMMU window of an object that is not contiguous, from its first
+	// declaration until it ends (iommu.odin). 0: none. Frame lock.
+	window: u32,
 	// Count of mappings of this region currently held by active recorded or
 	// replayed processes (record_replay.odin). Atomic: prevents another process
 	// from gaining a writable mapping to a recorded/replayed region.
@@ -232,9 +256,15 @@ Thread :: struct #align (64) {
 	in_enter:     bool,
 	run_time:     u64,
 	// The word wait of the entry in progress or of the wait in progress:
-	// the physical addresses of the words.
-	words:        [op.WORD_WAIT_CAPACITY]u64,
+	// its entries are in wait_entries, then in the wait room (wait.odin).
 	word_count:   u32, // The words registered in the wait table (wait.odin).
+	// The wait room of the thread: the page that names the pages of its
+	// entries past op.WORD_WAIT_INLINE, 0 for none; its pages with that one;
+	// the budget that paid them. Only the thread changes them, in its own
+	// entry with no word registered, or its end (wait_room_set).
+	wait_room:        u64,
+	wait_room_pages:  u32,
+	wait_room_budget: u32,
 	word_changed: bool, // A word did not hold the value: this entry does not wait.
 	wait_serial:  u32, // Changes when a wait ends: wait.odin. Run lock of home.
 	woken:        bool, // A waker came while the thread registered its words. Run lock of home.
@@ -371,7 +401,6 @@ word_address :: proc "contextless" (process: ^Process, address: u64) -> u64 {
 	return entry & PAGE_ADDRESS | address & (PAGE_SIZE - 1)
 }
 
-THREAD_TABLE_CAPACITY :: 256
 
 Process :: struct {
 	state:        op.Process_State, // None, Created, Ready or Stopped.
@@ -381,7 +410,7 @@ Process :: struct {
 	table:        u64,
 	references:   u32, // Handles to this process.
 	budget:       u32, // The budget that paid for the slot. It pays for the page tables.
-	thread_areas: u32, // Bit n: thread area n is in use.
+	thread_areas: slot_set.Slot_Set(op.THREAD_CAPACITY), // The thread areas in use, by the number of their thread.
 	thread_count: u32,
 	has_ports:    bool,
 	// The recorded process whose shared memory this process writes: its
@@ -405,7 +434,22 @@ Process :: struct {
 	mappings_held: u32, // Mappings currently in `mappings`. Process lock.
 	mappings_peak: u32, // Largest `mappings_held` reached by this process. Process lock.
 	handles:       [HANDLE_CAPACITY]Handle_Slot,
+	// The processes that received a handle to this process since its start
+	// (handle_insert): a stop tells each of them, and reads no other handle
+	// table. A holder that closed its handle stays in the set; the stop then
+	// reads its table and finds none. Written with atomic or by the
+	// processors that insert a handle.
+	holders:       Process_Set,
+	// The handles of kind Ports of this process: a switch to it opens their
+	// ports with no read of the other handles. Process lock to write; a
+	// switch reads it with atomic loads.
+	ports_handles: slot_set.Slot_Set(HANDLE_CAPACITY),
 	mappings:     [MAPPING_CAPACITY]Mapping,
+	// The places of the live mappings in the order of their addresses
+	// (modulus:mapping_order): a lookup by address is a binary search, and a
+	// map at a chosen address walks it once. Process lock.
+	mapping_order:       [MAPPING_CAPACITY]u16,
+	mapping_order_count: int,
 	modules:      [op.PROCESS_MODULE_CAPACITY]op.Module_Record, // What the loaders asserted (Process_Module).
 	stop:         op.Stop_Report, // A process that stopped on a fault: where.
 	// The processors that run a thread of the process, plus 1 while a stop
@@ -534,7 +578,10 @@ module_of :: proc "contextless" (process: ^Process, address: u64) -> ^op.Module_
 	return nil
 }
 
-BUDGET_CAPACITY :: 128
+// The budgets of the machine: each process has one, and a process can
+// divide its own among its children and its parts (a build with one
+// budget for each worker). A budget is small: the table keeps its most.
+BUDGET_CAPACITY :: 4 * PROCESS_CAPACITY_MOST
 
 // A budget: see operation.Budget_Amounts. Budget 0 is not live: it holds
 // what returned to no budget.
@@ -552,9 +599,10 @@ Budget :: struct {
 }
 
 budgets: [BUDGET_CAPACITY]Budget
-regions: [REGION_CAPACITY]Region
-processes: [PROCESS_CAPACITY]Process
-threads: [THREAD_TABLE_CAPACITY]Thread
+// Taken at the start (tables_start), with the size of this machine.
+regions: []Region
+processes: []Process
+threads: []Thread
 interrupt_owner: [INTERRUPT_CAPACITY]u32 // A process.
 interrupt_pending: [INTERRUPT_CAPACITY]u32
 interrupt_references: [INTERRUPT_CAPACITY]u32 // Handles. A message interrupt with none is free.
@@ -772,8 +820,8 @@ region_hint: u32 // Where the search of a free slot starts. Frame lock.
 // gives it a new serial. The caller holds the frame lock. 0: none.
 @(private = "file")
 region_slot_take :: proc "contextless" () -> u32 {
-	for step in 0 ..< u32(REGION_CAPACITY - 1) {
-		index := 1 + (region_hint + step) % (REGION_CAPACITY - 1)
+	for step in 0 ..< region_capacity - 1 {
+		index := 1 + (region_hint + step) % (region_capacity - 1)
 		if regions[index].page_count == 0 {
 			region_hint = index
 			region_serial += 1
@@ -912,7 +960,7 @@ region_frame :: proc "contextless" (region: ^Region, page: u64, give: bool) -> u
 }
 
 // The lock of each memory object: it gives a page on first use one frame.
-region_locks: [REGION_CAPACITY]Lock
+region_locks: []Lock // One for each memory object: tables_start.
 
 region_release :: proc "contextless" (index: u32) {
 	region := &regions[index]
@@ -1001,11 +1049,13 @@ handle_insert :: proc "contextless" (process: ^Process, slot: Handle_Slot) -> op
 			intrinsics.atomic_add(&regions[slot.object].references, 1)
 		case .Process:
 			intrinsics.atomic_add(&processes[slot.object].references, 1)
+			slot_set.add_atomic(&processes[slot.object].holders, index_of_process(process))
 		case .Thread:
 			intrinsics.atomic_add(&threads[slot.object].references, 1)
 		case .Budget:
 			intrinsics.atomic_add(&budgets[slot.object].references, 1)
 		case .Ports:
+			slot_set.add_atomic(&process.ports_handles, u32(index + 1))
 			intrinsics.atomic_store(&process.has_ports, true)
 			ports_changed(process)
 		case .Interrupt:
@@ -1148,7 +1198,7 @@ handle_close :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) {
 			record_right_closed(process, slot)
 		}
 		if intrinsics.atomic_sub(&processes[slot.object].references, 1) == 1 {
-			stops_pending |= 1 << slot.object
+			slot_set.add(&stops_pending, slot.object)
 		}
 	case .Thread:
 		thread := &threads[slot.object]
@@ -1160,6 +1210,7 @@ handle_close :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) {
 	case .Interrupt:
 		interrupt_handle_released(process, slot.object)
 	case .Ports:
+		slot_set.remove_atomic(&process.ports_handles, u32(intrinsics.ptr_sub(slot, &process.handles[0])))
 		slot.kind = .None
 		ports_changed(process)
 	case .Machine:
@@ -1250,14 +1301,14 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	}
 	// A page on first use has no page table entry yet: the mappings say
 	// which addresses are taken.
+	if mapping_order.overlaps(process.mapping_order[:process.mapping_order_count], process.mappings[:], address, size) {
+		return 0, .Bad_Address
+	}
 	mapping: ^Mapping
 	for &candidate in process.mappings {
 		if candidate.page_count == 0 {
-			if mapping == nil {
-				mapping = &candidate
-			}
-		} else if address < candidate.address + candidate.page_count * PAGE_SIZE && candidate.address < address + size {
-			return 0, .Bad_Address
+			mapping = &candidate
+			break
 		}
 	}
 	if mapping == nil {
@@ -1387,6 +1438,12 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// it (Memory_Map through target_lock in enter.odin, process_create and
 	// thread_create in this file, the start of the root service in main.odin).
 	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large, receive_handles = .Receive_Handles in flags}
+	// A free mapping slot exists, so the order has room for its place.
+	mapping_order.insert(process.mapping_order[:], &process.mapping_order_count, process.mappings[:], u16(intrinsics.ptr_sub(mapping, &process.mappings[0])))
+	intrinsics.atomic_add(&region.mapping_count, 1)
+	if bits & PAGE_WRITE != 0 {
+		intrinsics.atomic_add(&region.writable_mapping_count, 1)
+	}
 	// The mapping owns its count of the cache type now: its unmap gives it
 	// back, and the deferred release must not give it a second time.
 	cache_claimed = false
@@ -1416,28 +1473,19 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 // same few addresses, and its tables are those of one mapping at a time.
 // A module record of the writer Starter is a range that the gap avoids too:
 // the process cannot map there, and an address that the kernel chooses must
-// not give a refusal that the process cannot avoid. Each pass moves the
-// candidate past at least one mapping or record, which it never meets
-// again: at most MAPPING_CAPACITY + PROCESS_MODULE_CAPACITY passes. The
-// caller holds the process lock.
+// not give a refusal that the process cannot avoid. Each pass walks the
+// order of the mappings once from the candidate (mapping_order.free_range)
+// and moves it past at least one module record, which it never meets
+// again: at most PROCESS_MODULE_CAPACITY + 1 passes, never a pass over
+// each mapping for each mapping. The caller holds the process lock.
 chosen_address :: proc "contextless" (process: ^Process, count: u64, alignment: u64 = PAGE_SIZE) -> u64 {
-	align_up :: #force_inline proc "contextless" (value, alignment: u64) -> u64 {
-		return (value + alignment - 1) / alignment * alignment
-	}
+	align_up :: mapping_order.align_up
 	candidate := align_up(u64(op.CHOSEN_BASE), alignment)
 	size := count * PAGE_SIZE
-	for _ in 0 ..= MAPPING_CAPACITY + op.PROCESS_MODULE_CAPACITY {
+	order := process.mapping_order[:process.mapping_order_count]
+	for _ in 0 ..= op.PROCESS_MODULE_CAPACITY {
+		candidate = mapping_order.free_range(order, process.mappings[:], candidate, size, alignment, PAGE_SIZE)
 		moved := false
-		for mapping in process.mappings {
-			if mapping.page_count == 0 {
-				continue
-			}
-			end := mapping.address + mapping.page_count * PAGE_SIZE
-			if candidate < end + PAGE_SIZE && mapping.address < candidate + size + PAGE_SIZE {
-				candidate = align_up(end + PAGE_SIZE, alignment)
-				moved = true
-			}
-		}
 		for item in process.modules {
 			if item.size == 0 || item.writer != u64(op.Module_Writer.Starter) {
 				continue
@@ -1549,6 +1597,13 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 	if mapping.page_count != 0 && process.mappings_held > 0 {
 		process.mappings_held -= 1
 	}
+	if mapping.page_count != 0 {
+		mapping_order.remove(process.mapping_order[:], &process.mapping_order_count, process.mappings[:], u16(intrinsics.ptr_sub(mapping, &process.mappings[0])))
+		intrinsics.atomic_sub(&regions[mapping.region].mapping_count, 1)
+		if mapping.bits & PAGE_WRITE != 0 {
+			intrinsics.atomic_sub(&regions[mapping.region].writable_mapping_count, 1)
+		}
+	}
 	// A mapping of the registers of a device keeps the domain of that device
 	// as a handle does: the last one of the two ends it.
 	iommu_mapping_ended(process, mapping)
@@ -1587,12 +1642,8 @@ processors_with_table :: proc "contextless" (table: u64) -> (set: u64) {
 
 // mapping_at gives the mapping of a process that holds an address, or nil.
 mapping_at :: proc "contextless" (process: ^Process, address: u64) -> ^Mapping {
-	for &mapping in process.mappings {
-		if mapping.page_count != 0 && address >= mapping.address && address - mapping.address < mapping.page_count * PAGE_SIZE {
-			return &mapping
-		}
-	}
-	return nil
+	place, found := mapping_order.containing(process.mapping_order[:process.mapping_order_count], process.mappings[:], address)
+	return found ? &process.mappings[place] : nil
 }
 
 // page_give makes the page of an address present in a process, for an
@@ -1703,6 +1754,15 @@ time_page_create :: proc "contextless" () -> bool {
 	return true
 }
 
+// process_reset makes the record of a slot zero, but for the two serials
+// that a slot keeps across its processes. It writes the record in place.
+@(private = "file")
+process_reset :: proc "contextless" (process: ^Process, ports_serial: u64, serial: u32) {
+	intrinsics.mem_zero(process, size_of(Process))
+	process.ports_serial = ports_serial
+	process.serial = serial
+}
+
 // process_create makes a process with no memory. The budget pays for the
 // slot and for the page tables. The caller holds the control lock.
 process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: Operation_Outcome) {
@@ -1718,10 +1778,14 @@ process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		defer process_unlock(index, taken)
 		ports_serial := process.ports_serial
 		serial := process.serial + 1
-		process = {ports_serial = ports_serial, serial = serial, budget = budget}
+		// Written in place: a composite literal of the whole record can be
+		// built on the kernel stack first, and the record holds the handle
+		// table and the mappings, about 90 KiB.
+		process_reset(&process, ports_serial, serial)
+		process.budget = budget
 		process.table = address_space_create(&process.budget)
 		if process.table == 0 {
-			process = {ports_serial = ports_serial, serial = serial}
+			process_reset(&process, ports_serial, serial)
 			return 0, .No_Budget
 		}
 		// The own log ring: the budget of the process pays it, as it pays
@@ -1730,7 +1794,7 @@ process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		ring_frames, ring_taken := own_log_ring_take(&process.budget)
 		if !ring_taken {
 			address_space_free(process.table, &process.budget)
-			process = {ports_serial = ports_serial, serial = serial}
+			process_reset(&process, ports_serial, serial)
 			return 0, .No_Budget
 		}
 		budgets[budget].amounts.processes -= 1
@@ -1740,7 +1804,7 @@ process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 			own_log_ring_give_back(ring_frames, &process.budget)
 			address_space_free(process.table, &process.budget)
 			budgets[budget].amounts.processes += 1
-			process = {ports_serial = ports_serial, serial = serial}
+			process_reset(&process, ports_serial, serial)
 			return 0, map_status
 		}
 		// Under the log lock: Log_Read finds the frames of the ring only
@@ -1849,7 +1913,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	}
 	number := u32(op.THREAD_CAPACITY)
 	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
-		if process.thread_areas & (1 << candidate) == 0 {
+		if !slot_set.has(&process.thread_areas, candidate) {
 			number = candidate
 			break
 		}
@@ -1924,7 +1988,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	extended_state_start(&thread.extended_state)
 	extended_switch.thread_initialize(&thread.extended_switch)
 	budgets[budget].amounts.threads -= 1
-	process.thread_areas |= 1 << number
+	slot_set.add(&process.thread_areas, number)
 	process.thread_count += 1
 	record_replay_thread_init(process_index, thread)
 	thread_queue(thread)
@@ -1975,6 +2039,7 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	thread.finished = true
 	extended_switch.thread_mark_modified(&thread.extended_switch)
 	wait_unregister(thread)
+	wait_room_end(thread)
 	process_index := thread.process
 	process := &processes[process_index]
 	// The debug handler of another process ends with its thread: that
@@ -2003,13 +2068,10 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	running := process.state != .Stopped
 	last := false
 	if running {
-		for &mapping in process.mappings {
-			if mapping.page_count != 0 && mapping.address == thread.record {
-				unmap(process, &mapping)
-				break
-			}
+		if mapping := mapping_at(process, thread.record); mapping != nil && mapping.address == thread.record {
+			unmap(process, mapping)
 		}
-		process.thread_areas &~= 1 << thread.number
+		slot_set.remove(&process.thread_areas, thread.number)
 		process.thread_count -= 1
 		last = process.thread_count == 0
 	}
@@ -2078,7 +2140,7 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: o
 		// Another stop marked the threads, and some can still be on their
 		// processors: this operation also returns only after they left.
 		if self := processor_self(); process.state == .Stopped && self.operation.running {
-			self.operation.stopped_processes |= 1 << index
+			slot_set.add(&self.operation.stopped_processes, index)
 			self.stopped_serials[index] = process.serial
 		}
 		process_unlock(index, taken)
@@ -2101,7 +2163,7 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: o
 	process_unlock(index, taken)
 	self := processor_self()
 	running: u64
-	ended: [THREAD_TABLE_CAPACITY]bool
+	ended: slot_set.Slot_Set(THREAD_TABLE_CAPACITY_MOST)
 	for &thread, slot in threads[1:] {
 		if thread.process != index {
 			continue
@@ -2115,7 +2177,7 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: o
 				queue_remove(&thread)
 				thread.state = .Stopped
 				intrinsics.atomic_add(&thread.wait_serial, 1)
-				ended[slot + 1] = true
+				slot_set.add(&ended, u32(slot + 1))
 			}
 		}
 		run_unlock(home)
@@ -2130,10 +2192,8 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: o
 			}
 		}
 	}
-	for slot in 1 ..< u32(THREAD_TABLE_CAPACITY) {
-		if ended[slot] {
-			thread_finish(slot, threads[slot].serial)
-		}
+	for slot in slot_set.take(&ended) {
+		thread_finish(slot, threads[slot].serial)
 	}
 	for cpu in processors[:processor_count] {
 		if running & (1 << cpu.index) != 0 && cpu != self {
@@ -2142,7 +2202,7 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: o
 	}
 	// The operation returns after the threads left their processors.
 	if running &~ (1 << self.index) != 0 && self.operation.running {
-		self.operation.stopped_processes |= 1 << index
+		slot_set.add(&self.operation.stopped_processes, index)
 		self.stopped_serials[index] = process.serial
 	}
 	if intrinsics.atomic_add(&process.holds, HOLDS_STOPPED - 1) + HOLDS_STOPPED - 1 == HOLDS_STOPPED {
@@ -2175,7 +2235,7 @@ process_cleanup :: proc "contextless" (index: u32) {
 	}
 	taken := process_lock(index)
 	process.thread_count = 0
-	process.thread_areas = 0
+	process.thread_areas = {}
 	// No processor keeps the page table of the process.
 	self := processor_self()
 	if intrinsics.atomic_load(&self.table) == process.table {
@@ -2205,9 +2265,15 @@ process_cleanup :: proc "contextless" (index: u32) {
 	// holder of the process handle, such as the starter, still reads the
 	// last records of a process that stopped.
 	process.cleaned = true
+	holders := slot_set.copy_atomic(&process.holders)
 	process_unlock(index, taken)
-	for &other, other_index in processes[1:] {
-		other_slot := u32(other_index + 1)
+	// Only the processes that received a handle to this one: a stop reads
+	// their handle tables, never the table of each process of the machine.
+	for other_slot in slot_set.take(&holders) {
+		if other_slot == 0 || other_slot >= process_capacity {
+			continue
+		}
+		other := &processes[other_slot]
 		other_taken := process_lock(other_slot)
 		holds := false
 		if other.state != .None && other.state != .Stopped {
@@ -2242,7 +2308,11 @@ ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 	}
 	if index != 0 {
-		for &slot in processes[index].handles {
+		// Only the handles of kind Ports: a process holds a thousand
+		// handles, and a switch reads none of the others.
+		places := slot_set.copy_atomic(&processes[index].ports_handles)
+		for place in slot_set.take(&places) {
+			slot := &processes[index].handles[place]
 			if intrinsics.atomic_load(&slot.kind) == .Ports {
 				ports_allow(cpu, u64(slot.object), u64(slot.count), true)
 			}
@@ -2556,7 +2626,7 @@ process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: 
 	// cause: the access went to addresses with no memory paid behind them.
 	cause = .Fault
 	if frame.vector == VECTOR_PAGE_FAULT && process.table != 0 {
-		if mapping := mapping_at(process, address); mapping != nil && mapping.region < REGION_CAPACITY {
+		if mapping := mapping_at(process, address); mapping != nil && mapping.region < region_capacity {
 			region := &regions[mapping.region]
 			page := mapping.first + (address - mapping.address) / PAGE_SIZE
 			if region.uncommitted && !page_committed(region, region_page_state(region, page)) {

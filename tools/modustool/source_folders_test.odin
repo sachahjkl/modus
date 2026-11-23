@@ -16,7 +16,7 @@ import "modustool:site"
 @(test)
 source_folders_are_folders_of_the_repository :: proc(t: ^testing.T) {
 	folders := foundation.SOURCE_FOLDERS
-	testing.expect_value(t, len(folders), 6)
+	testing.expect_value(t, len(folders), 7)
 	for folder in folders {
 		testing.expectf(t, os.is_dir(folder), "%s is not a folder of the repository", folder)
 	}

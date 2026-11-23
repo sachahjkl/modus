@@ -3,6 +3,7 @@ package kernel
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modulus:slot_set"
 
 // The origin tree: what came from which handle. Kernel state is flat tables
 // with no pointer tree, so the tree is one table of links below
@@ -17,15 +18,27 @@ import op "modus:contract/operation"
 // origin: a process that closes a handle does not hide what it passed on.
 // Handle_Revoke ends each holding that came from a handle.
 //
-// The tree is one flat table of links. Holding number = process slot * 256
-// + n. n < 128: handle slot n. n >= 128: mapping slot n - 128. 0: none.
-// Each change is a constant number of writes: a holding is in the list of
-// the holdings of its origin, with a link in each direction.
-HOLDINGS_PER_PROCESS :: 256
-#assert(HANDLE_CAPACITY == 128 && MAPPING_CAPACITY == 128)
-#assert(PROCESS_CAPACITY * HOLDINGS_PER_PROCESS <= 65536)
+// The tree is one flat table of links. Holding number = process slot *
+// HOLDINGS_PER_PROCESS + n. n < HANDLE_CAPACITY: handle slot n. n >=
+// HANDLE_CAPACITY: mapping slot n - HANDLE_CAPACITY. 0: none, because the
+// process slot 0 holds no process. Each change is a constant number of
+// writes: a holding is in the list of the holdings of its origin, with a
+// link in each direction.
+HOLDINGS_PER_PROCESS :: HANDLE_CAPACITY + MAPPING_CAPACITY
+#assert(u64(PROCESS_CAPACITY_MOST) * HOLDINGS_PER_PROCESS <= u64(max(u32)))
 
-Holding :: u16
+Holding :: u32
+
+// holding_process gives the process slot of a holding.
+holding_process :: #force_inline proc "contextless" (holding: Holding) -> u32 {
+	return holding / HOLDINGS_PER_PROCESS
+}
+
+// holding_place gives the place of a holding in its process: a handle slot
+// below HANDLE_CAPACITY, else HANDLE_CAPACITY + a mapping slot.
+holding_place :: #force_inline proc "contextless" (holding: Holding) -> u32 {
+	return holding % HOLDINGS_PER_PROCESS
+}
 
 Origin_Link :: struct {
 	origin:   Holding,
@@ -38,18 +51,17 @@ Origin_Link :: struct {
 // link of a holding changes under the origin lock; a path that ends a
 // holding also holds the process lock of the holder.
 origin_lock: Lock
-origins: [PROCESS_CAPACITY * HOLDINGS_PER_PROCESS]Origin_Link
+origins: []Origin_Link // HOLDINGS_PER_PROCESS for each process slot: tables_start.
 origin_changes: u64 // Detaches since boot: a revocation sees that another processor changed the tree.
 revoking: bool // A revocation lists and ends holdings: a path with no control lock adds none.
-revoke_lost: u64 // Bit n: Handle_Revoke ended a holding of process n. Control lock.
-#assert(PROCESS_CAPACITY <= 64)
+revoke_lost: Process_Set // The processes of which Handle_Revoke ended a holding. Control lock.
 
 holding_of_handle :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) -> Holding {
-	return Holding(intrinsics.ptr_sub(process, &processes[0])) << 8 | Holding(intrinsics.ptr_sub(slot, &process.handles[0]))
+	return Holding(intrinsics.ptr_sub(process, &processes[0])) * HOLDINGS_PER_PROCESS + Holding(intrinsics.ptr_sub(slot, &process.handles[0]))
 }
 
 holding_of_mapping :: proc "contextless" (process: ^Process, mapping: ^Mapping) -> Holding {
-	return Holding(intrinsics.ptr_sub(process, &processes[0])) << 8 | Holding(HANDLE_CAPACITY + intrinsics.ptr_sub(mapping, &process.mappings[0]))
+	return Holding(intrinsics.ptr_sub(process, &processes[0])) * HOLDINGS_PER_PROCESS + Holding(HANDLE_CAPACITY + intrinsics.ptr_sub(mapping, &process.mappings[0]))
 }
 
 // origin_attach says that a holding came from a handle. The holding is in
@@ -147,7 +159,7 @@ origin_count :: proc "contextless" (top: Holding) -> (count: u64) {
 // its own memory when it takes back what it gave.
 @(private = "file")
 stays :: proc "contextless" (holding: Holding, caller: u32) -> bool {
-	return u32(holding >> 8) == caller && holding & 0xFF >= HANDLE_CAPACITY
+	return holding_process(holding) == caller && holding_place(holding) >= HANDLE_CAPACITY
 }
 
 // holding_end closes a handle or removes a mapping, for Handle_Revoke. The
@@ -162,7 +174,7 @@ End :: enum {
 
 @(private = "file")
 holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
-	index := u32(holding >> 8)
+	index := holding_process(holding)
 	process := &processes[index]
 	taken := process_lock(index)
 	defer process_unlock(index, taken)
@@ -174,7 +186,7 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 	}
 	// A revocation never waits for a recording: end the input history at once.
 	record_replay_on_revocation(index)
-	n := holding & 0xFF
+	n := holding_place(holding)
 	if n < HANDLE_CAPACITY {
 		slot := &process.handles[n]
 		if slot.kind == .None {
@@ -200,7 +212,7 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 		waiters_on_frames_wake(process, region, whole[:])
 		unmap(process, mapping)
 	}
-	revoke_lost |= 1 << index
+	slot_set.add(&revoke_lost, index)
 	return .Ended
 }
 
@@ -251,7 +263,7 @@ revoke_under :: proc "contextless" (top: Holding, caller: u32, changes: u64) -> 
 // came from it, in any process. The handle stays. The caller holds the
 // control lock.
 revoke :: proc "contextless" (top: Holding, caller: u32, only: u32) -> (count: u64) {
-	revoke_lost = 0
+	revoke_lost = {}
 	lock_take(&origin_lock, .Origin)
 	revoking = true
 	lock_free(&origin_lock, .Origin)
@@ -259,7 +271,7 @@ revoke :: proc "contextless" (top: Holding, caller: u32, only: u32) -> (count: u
 		found: Holding
 		lock_take(&origin_lock, .Origin)
 		for at := origin_next(top, top); at != 0; at = origin_next(top, at) {
-			if !stays(at, caller) && (only == 0 || u32(at >> 8) == only) {
+			if !stays(at, caller) && (only == 0 || holding_process(at) == only) {
 				found = at
 				break
 			}
@@ -275,8 +287,8 @@ revoke :: proc "contextless" (top: Holding, caller: u32, only: u32) -> (count: u
 	revoking = false
 	lock_free(&origin_lock, .Origin)
 	// Each process that lost a holding gets an event.
-	for index in 1 ..< u32(PROCESS_CAPACITY) {
-		if revoke_lost & (1 << index) != 0 && index != caller {
+	for index in slot_set.take(&revoke_lost) {
+		if index != caller {
 			process_event(index)
 		}
 	}

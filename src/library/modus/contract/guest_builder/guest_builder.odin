@@ -177,6 +177,7 @@ Guest_Builder_Refusal :: enum u8 {
 	Initial_Archive_Size_Invalid = 19, // A size with no hash, a hash with no size, or bytes whose count is not the size.
 	Initial_Archive_Mismatch     = 20, // The bytes do not have the hash of the spec.
 	Time_Bound_Past_Most         = 21, // time_bound_seconds is past MAX_BUILD_TIME_BOUND_SECONDS.
+	Cancelled                    = 22, // The caller that started the build cancelled it: the run ended at the next exit.
 }
 
 // Closed set of block device operations dispatched by the sandbox controller.

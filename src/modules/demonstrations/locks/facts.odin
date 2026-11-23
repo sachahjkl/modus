@@ -167,6 +167,29 @@ Word_Wait_Counted :: struct {
 	lost:   u64,
 }
 
+// The wait room of the kernel at its edges (wait_room.odin).
+@(log_fact = "locks: the wait room: with no room a wait of {inline_words} words and one more {no_room_status}; a room past {most_words} words {too_many_status}, for another thread {other_status}; a room of {asked} words held {held} words for {pages} pages of the budget; a wait of the {held} words {held_status}, of one more {past_status}; the room given back returned its pages: {returned}: {verdict}")
+Wait_Room_Checked :: struct {
+	inline_words:    u64,
+	no_room_status:  op.Status_Word,
+	most_words:      u64,
+	too_many_status: op.Status_Word,
+	other_status:    op.Status_Word,
+	asked:           u64,
+	held:            u64,
+	pages:           u64,
+	held_status:     op.Status_Word,
+	past_status:     op.Status_Word,
+	returned:        u64,
+	verdict:         [16]u8,
+}
+
+// verdict_field gives the Text field of the verdict of a case in the words
+// of the line: "as it must" or "WRONG".
+verdict_field :: proc "contextless" (right: bool) -> [16]u8 {
+	return value_kinds.text_field(right ? "as it must" : "WRONG", 16)
+}
+
 // A check failed: each check as 1 when it passed, and the lost wakes.
 @(log_fact = "locks: wrong: entries {entries_right} faults {faults_right} pages {pages_right} wakes {wakes_right} lost {lost} stress {stress_right} frames {frames_right}")
 Checks_Wrong :: struct {

@@ -20,6 +20,9 @@ role_registry_slot_number :: proc "contextless" (item: ^Started) -> u32 {
 	if item == nil {
 		return 0
 	}
+	if len(started) == 0 {
+		return 0
+	}
 	base := uintptr(&started[0])
 	address := uintptr(item)
 	if address < base {
@@ -30,7 +33,7 @@ role_registry_slot_number :: proc "contextless" (item: ^Started) -> u32 {
 		return 0
 	}
 	index := offset / size_of(Started)
-	if index >= STARTED_CAPACITY {
+	if index >= uintptr(len(started)) {
 		return 0
 	}
 	return u32(index + 1)
@@ -78,7 +81,7 @@ role_registry_bind :: proc "contextless" (
 // scope, if any.
 role_registry_holder :: proc "contextless" (role: role_contract.Role, scope: role_policy.Scope_Key) -> (holder: ^Started, entry: role_policy.Role_Holder, found: bool) {
 	entry, found = role_policy.holder_find(&root_role_registry, role, scope)
-	if !found || entry.process_slot == 0 || int(entry.process_slot) > STARTED_CAPACITY {
+	if !found || entry.process_slot == 0 || int(entry.process_slot) > len(started) {
 		return nil, {}, false
 	}
 	return &started[entry.process_slot - 1], entry, true

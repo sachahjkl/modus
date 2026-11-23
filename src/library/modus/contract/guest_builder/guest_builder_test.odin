@@ -67,8 +67,8 @@ enum_word_borders_refuse_unknown_values :: proc(t: ^testing.T) {
 		testing.expect(t, ok && got == member)
 	}
 
-	// Guest_Builder_Refusal: 0..21 valid.
-	for bad in ([]u64{22, 23, 255, max(u64)}) {
+	// Guest_Builder_Refusal: 0..22 valid.
+	for bad in ([]u64{23, 24, 255, max(u64)}) {
 		_, ok := guest_builder_refusal_of_word(bad)
 		testing.expectf(t, !ok, "Guest_Builder_Refusal must refuse %d", bad)
 	}
@@ -341,6 +341,23 @@ every_refusal_member_is_triggered :: proc(t: ^testing.T) {
 	byte_order.write_u32_little_endian(time_wire[:], 12, MAX_BUILD_TIME_BOUND_SECONDS + 1)
 	_, past_refusal := decode_build_spec(time_wire[:time_written])
 	testing.expect_value(t, past_refusal, Guest_Builder_Refusal.Time_Bound_Past_Most)
+
+	// 22: Cancelled (a cancel from another thread ends the run at the next
+	// exit, and nothing is extracted).
+	s = valid_spec()
+	cancel_runner := new(Guest_Sandbox_Runner, context.temp_allocator)
+	cancel_disk: [8192]u8
+	testing.expect_value(t, runner_prepare(cancel_runner, &s, nil, nil, cancel_disk[:]), Guest_Builder_Refusal.None)
+	testing.expect_value(t, runner_start(cancel_runner), Guest_Builder_Refusal.None)
+	cancel_registers := op.Guest_Registers{rip = 0x1000}
+	testing.expect(t, runner_handle_exit(cancel_runner, &cancel_registers, .Cpuid, 0, 0, 0, 0x1002))
+	runner_cancel(cancel_runner)
+	testing.expect(t, !runner_handle_exit(cancel_runner, &cancel_registers, .Interrupted, 0, 0, 0, 0x1002))
+	testing.expect_value(t, cancel_runner.state, Guest_Build_State.Refused)
+	_, cancel_written, cancel_refusal := runner_finish(cancel_runner, workspace, tree_out[:])
+	testing.expect_value(t, cancel_written, 0)
+	record(t, &seen, cancel_refusal, .Cancelled)
+	runner_cancel(nil)
 
 	// Confirm every single enum member of Guest_Builder_Refusal was exercised.
 	for member in Guest_Builder_Refusal {

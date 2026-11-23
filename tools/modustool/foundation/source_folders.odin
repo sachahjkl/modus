@@ -26,12 +26,14 @@ SOURCE_FOLDER_INTERNAL :: SOURCE_FOLDER_LIBRARY + "/" + INTERNAL_LIBRARY_NAME //
 SOURCE_FOLDER_OUTSIDE :: "src/outside"
 // The programs of the system that run inside a guest of Linux, not on
 // modus: the init of a guest build (src/md/features/guest_build_image.md).
+// The check of the imports reads them with the rule of a source of the
+// system: base: and modus: only, so they reach Linux by its system calls.
 SOURCE_FOLDER_GUEST :: "src/guest"
 
 // Each folder of the sources of the system. A list of the tool that reads
 // a part of them names its folders by their constants, in its own order:
 // the order of a list can be the order of an output.
-SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_PUBLIC, SOURCE_FOLDER_INTERNAL}
+SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_PUBLIC, SOURCE_FOLDER_INTERNAL, SOURCE_FOLDER_GUEST}
 
 // The folder of the programs of the host that build, test and tell the
 // system: this tool. It is not a folder of the sources of the system, but

@@ -302,8 +302,8 @@ guest_builder_bridge_refuses_each_bad_end_of_the_guest :: proc(t: ^testing.T) {
 		{.Nonzero_Exit, .Builder_Failed},
 		{.Damaged_Output, .Malformed_Output},
 		{.Write_Past_Bound, .Output_Too_Large},
-		{.Hang, .Build_Timed_Out},
-		{.Interrupts_Only, .Build_Timed_Out},
+		{.Hang, .Builder_Timed_Out},
+		{.Interrupts_Only, .Builder_Timed_Out},
 		{.Write_Input, .Sandbox_Violation},
 	}
 	for each in cases {
@@ -385,8 +385,8 @@ guest_builder_bridge_refuses_before_the_guest_runs :: proc(t: ^testing.T) {
 	// The error records of the two refusals of a guest build.
 	record := recipe_refusal_record(.Output_Too_Large, 1)
 	testing.expect_value(t, record.kind, i64(errors.Kind.Over_Limit))
-	record = recipe_refusal_record(.Build_Timed_Out, 1)
-	testing.expect_value(t, record.kind, i64(errors.Kind.No_Answer))
+	record = recipe_refusal_record(.Builder_Timed_Out, 1)
+	testing.expect_value(t, record.kind, i64(errors.Kind.Refused))
 }
 
 // The successful case last: the inputs reach the guest as one sorted

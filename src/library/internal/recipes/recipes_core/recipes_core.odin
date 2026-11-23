@@ -511,6 +511,17 @@ build_recipe :: proc "contextless" (
 	}
 }
 
+// output_bytes gives the bytes of an output of the local store by its
+// hash: the module of a C build that build_recipe built or substituted.
+// found is false when the memory holds no such object.
+output_bytes :: proc "contextless" (state: ^Recipes_State, hash: blake3.Hash) -> (bytes: []u8, found: bool) {
+	slot := find_local_object(state, hash)
+	if slot == nil {
+		return nil, false
+	}
+	return slot.payload[:slot.length], true
+}
+
 // query_provenance returns the locally stored realisation and origin for
 // recipe_hash, or found = false if absent.
 query_provenance :: proc "contextless" (state: ^Recipes_State, recipe_hash: blake3.Hash) -> (slot: Local_Realisation_Slot, found: bool) {

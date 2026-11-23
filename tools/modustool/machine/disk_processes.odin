@@ -362,7 +362,8 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&fourth, Step{kind = .Type, text = "shutdown()"})
 	append(&fourth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
 	machine_test(part, fourth[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROCESSES, 4), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_MODULES_DISK}) or_return
-	return disk_processes_named_principal_tests_run(part, hash)
+	disk_processes_named_principal_tests_run(part, hash) or_return
+	return program_loop_run(part)
 }
 
 // The grants of a disk process of a named principal, on the same disk
