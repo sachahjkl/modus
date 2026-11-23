@@ -237,9 +237,9 @@ plan_difference_act_open_refuses_each_word_that_is_no_identifier :: proc(t: ^tes
 plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
 	serial, _, _ := plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + PLAN_DIFFERENCE_ARM_MILLISECONDS - 1), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS - 1), Plan_Difference_Decision.Pending)
 	testing.expect(t, dialog.open)
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + PLAN_DIFFERENCE_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
 	decision, known := plan_difference_decision_of_serial(&dialog, serial)
 	testing.expect(t, known && decision == .Refused)
 	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 5000)
@@ -247,4 +247,150 @@ plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
 	_, known = plan_difference_decision_of_serial(&dialog, serial)
 	testing.expect(t, !known)
 	testing.expect_value(t, plan_serial, serial + 1)
+}
+
+// The act face moves the focus only after the arm time, and each move
+// starts the arm time again: Tab then Enter at once, before or after the
+// first arm time, never allows; Enter after the arm time of the move does.
+@(test)
+plan_difference_act_face_arms_again_after_each_move_of_the_focus :: proc(t: ^testing.T) {
+	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	dialog: Plan_Difference_Dialog
+	plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
+	// Tab before the arm time: no move, and Enter then refuses.
+	for now in ([?]u64{1000, 1000 + ARM - 1}) {
+		testing.expect_value(t, plan_difference_key(&dialog, .Next, now), Plan_Difference_Decision.Pending)
+		testing.expect_value(t, dialog.focus, Plan_Difference_Button.Refuse)
+	}
+	// Tab at the arm time moves; Enter at once, and one millisecond before
+	// the new arm time, does nothing.
+	moved := u64(1000 + ARM)
+	testing.expect_value(t, plan_difference_key(&dialog, .Next, moved), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
+	for now in ([?]u64{moved, moved + ARM - 1}) {
+		testing.expect_value(t, plan_difference_key(&dialog, .Act, now), Plan_Difference_Decision.Pending)
+		testing.expect(t, dialog.open)
+	}
+	// A second Tab within the new arm time does not move back.
+	plan_difference_key(&dialog, .Next, moved + 1)
+	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
+	// After the arm time of the move, Enter allows.
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, moved + ARM), Plan_Difference_Decision.Accepted)
+	// On the next dialog, Tab then Enter long after the show and at the
+	// same time: no allow.
+	plan_difference_act_open(&dialog, "assistant", "plans.apply", 10_000)
+	testing.expect_value(t, plan_difference_key(&dialog, .Next, 20_000), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 20_000), Plan_Difference_Decision.Pending)
+	testing.expect(t, dialog.open)
+	// The plan face keeps its moves at any time.
+	dialog.open = false
+	plan_difference_open(&dialog, "home", "a", "", 30_000)
+	plan_difference_key(&dialog, .Next, 30_000)
+	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
+}
+
+// On the act face a press on the button with no focus moves the focus
+// only, under the same arm rule; a second press after the arm time acts.
+@(test)
+plan_difference_act_face_press_on_the_other_button_moves_the_focus_only :: proc(t: ^testing.T) {
+	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM :: 1280, 32, 768
+	dialog: Plan_Difference_Dialog
+	plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
+	x, y, width, height := plan_difference_place(&dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM)
+	accept_x, accept_y, _, _ := plan_difference_button_place(x, y, width, height, .Accept)
+	press :: proc(dialog: ^Plan_Difference_Dialog, point_x, point_y: int, now: u64) -> Plan_Difference_Decision {
+		return plan_difference_press(dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM, point_x, point_y, now)
+	}
+	testing.expect_value(t, press(&dialog, accept_x + 1, accept_y + 1, 1000 + ARM - 1), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Refuse)
+	testing.expect_value(t, press(&dialog, accept_x + 1, accept_y + 1, 1000 + ARM), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
+	testing.expect(t, dialog.open)
+	testing.expect_value(t, press(&dialog, accept_x + 1, accept_y + 1, 1000 + 2 * ARM - 1), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, press(&dialog, accept_x + 1, accept_y + 1, 1000 + 2 * ARM), Plan_Difference_Decision.Accepted)
+}
+
+// act_ask refuses a caller with no grant, and Busy while the grant dialog
+// or a dialog of a plan shows; each refusal changes nothing.
+@(test)
+plan_difference_act_ask_refuses_a_caller_without_the_grant_and_a_busy_display :: proc(t: ^testing.T) {
+	dialog: Plan_Difference_Dialog
+	serial, refusal, _ := plan_difference_act_ask(&dialog, {}, false, "assistant", "plans.apply", 1000)
+	testing.expect(t, serial == 0 && refusal == .No_Grant && !dialog.open)
+	serial, refusal, _ = plan_difference_act_ask(&dialog, {allowed = true}, true, "assistant", "plans.apply", 1000)
+	testing.expect(t, serial == 0 && refusal == .Busy && !dialog.open)
+	plan_difference_open(&dialog, "home", "a", "", 1000)
+	serial, refusal, _ = plan_difference_act_ask(&dialog, {allowed = true}, false, "assistant", "plans.apply", 1000)
+	testing.expect(t, serial == 0 && refusal == .Busy && dialog.face == .Plan)
+	testing.expect_value(t, dialog.serial, 1)
+	dialog.open = false
+	serial, refusal, _ = plan_difference_act_ask(&dialog, {allowed = true}, false, "assistant", "plans.apply", 1000)
+	testing.expect(t, serial == 2 && refusal == .None && dialog.face == .Act)
+}
+
+// A poll refuses a caller with no grant and a serial under 1; a serial of
+// the other face, the largest serial, and a caller that is not the asker
+// of an act read unknown. The asker reads its decision last.
+@(test)
+plan_difference_poll_gives_a_decision_to_its_face_and_its_asker_only :: proc(t: ^testing.T) {
+	dialog: Plan_Difference_Dialog
+	asker := Plan_Difference_Caller{allowed = true, is_asker = true}
+	other := Plan_Difference_Caller{allowed = true}
+	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 1000)
+	_, known, refusal := plan_difference_poll(&dialog, .Act, asker, i64(plan_serial))
+	testing.expect(t, !known && refusal == .None)
+	plan_difference_key(&dialog, .Escape, 1000)
+	act_serial, _, _ := plan_difference_act_open(&dialog, "assistant", "plans.apply", 2000)
+	_, known, refusal = plan_difference_poll(&dialog, .Plan, asker, i64(act_serial))
+	testing.expect(t, !known && refusal == .None)
+	for serial in ([?]i64{0, -1, min(i64)}) {
+		_, known, refusal = plan_difference_poll(&dialog, .Act, asker, serial)
+		testing.expectf(t, !known && refusal == .Bad_Serial, "serial %d", serial)
+	}
+	_, known, refusal = plan_difference_poll(&dialog, .Act, asker, max(i64))
+	testing.expect(t, !known && refusal == .None)
+	_, known, refusal = plan_difference_poll(&dialog, .Act, {}, i64(act_serial))
+	testing.expect(t, !known && refusal == .No_Grant)
+	_, known, refusal = plan_difference_poll(&dialog, .Act, {is_asker = true}, i64(act_serial))
+	testing.expect(t, !known && refusal == .No_Grant)
+	_, known, refusal = plan_difference_poll(&dialog, .Act, other, i64(act_serial))
+	testing.expect(t, !known && refusal == .None)
+	decision: Plan_Difference_Decision
+	decision, known, refusal = plan_difference_poll(&dialog, .Act, asker, i64(act_serial))
+	testing.expect(t, known && decision == .Pending && refusal == .None)
+	plan_difference_key(&dialog, .Escape, 2000)
+	decision, known, _ = plan_difference_poll(&dialog, .Act, asker, i64(act_serial))
+	testing.expect(t, known && decision == .Refused)
+}
+
+// act_cancel refuses a caller with no grant and a serial under 1, closes
+// nothing for another caller, another serial or a dialog of a plan, and
+// closes the act dialog of its asker with a refusal.
+@(test)
+plan_difference_act_cancel_closes_the_dialog_of_its_asker_only :: proc(t: ^testing.T) {
+	dialog: Plan_Difference_Dialog
+	asker := Plan_Difference_Caller{allowed = true, is_asker = true}
+	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 1000)
+	closed, refusal := plan_difference_act_cancel(&dialog, asker, i64(plan_serial))
+	testing.expect(t, !closed && refusal == .None && dialog.open)
+	dialog.open = false
+	serial, _, _ := plan_difference_act_open(&dialog, "assistant", "plans.apply", 2000)
+	closed, refusal = plan_difference_act_cancel(&dialog, {}, i64(serial))
+	testing.expect(t, !closed && refusal == .No_Grant && dialog.open)
+	for bad in ([?]i64{0, -1, min(i64)}) {
+		closed, refusal = plan_difference_act_cancel(&dialog, asker, bad)
+		testing.expect(t, !closed && refusal == .Bad_Serial && dialog.open)
+	}
+	for wrong in ([?]i64{i64(serial) + 1, max(i64)}) {
+		closed, refusal = plan_difference_act_cancel(&dialog, asker, wrong)
+		testing.expect(t, !closed && refusal == .None && dialog.open)
+	}
+	closed, refusal = plan_difference_act_cancel(&dialog, {allowed = true}, i64(serial))
+	testing.expect(t, !closed && refusal == .None && dialog.open)
+	closed, refusal = plan_difference_act_cancel(&dialog, asker, i64(serial))
+	testing.expect(t, closed && refusal == .None && !dialog.open)
+	testing.expect_value(t, dialog.decision, Plan_Difference_Decision.Refused)
+	closed, _ = plan_difference_act_cancel(&dialog, asker, i64(serial))
+	testing.expect(t, !closed)
 }

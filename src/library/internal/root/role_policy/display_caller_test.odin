@@ -54,14 +54,14 @@ roles_move :: proc(t: ^testing.T, names: ^Holder_Names, kept: ^Override_Names, o
 display_caller_amount_refuses_each_caller_that_is_not_the_holder_of_plans :: proc(t: ^testing.T) {
 	names := names_of_the_image()
 	// A caller that holds no role, or another role.
-	testing.expect_value(t, display_caller_amount(&names, "compositor", "console"), 0)
-	testing.expect_value(t, display_caller_amount(&names, "compositor", "visitor"), 0)
-	testing.expect_value(t, display_caller_amount(&names, "compositor", ""), 0)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "console", false), 0)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "visitor", false), 0)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "", false), 0)
 	// The holder of Plans, to a service that does not hold Display.
-	testing.expect_value(t, display_caller_amount(&names, "storage", "plans"), 0)
-	testing.expect_value(t, display_caller_amount(&names, "", "plans"), 0)
+	testing.expect_value(t, display_caller_amount(&names, "storage", "plans", false), 0)
+	testing.expect_value(t, display_caller_amount(&names, "", "plans", false), 0)
 	// The name of the role is no module name.
-	testing.expect_value(t, display_caller_amount(&names, "display", "plans"), 0)
+	testing.expect_value(t, display_caller_amount(&names, "display", "plans", false), 0)
 }
 
 @(test)
@@ -70,18 +70,32 @@ display_caller_amount_follows_the_role_and_not_the_module_name :: proc(t: ^testi
 	kept: Override_Names
 	// The role Plans moves: the module plans holds it no more.
 	roles_move(t, &names, &kept, {role_word = u64(role_contract.Role.Plans), module_hash = other_plans_hash})
-	testing.expect_value(t, display_caller_amount(&names, "compositor", "plans"), 0)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "plans", false), 0)
 	// The role Display moves too: the old display serves nobody as the
 	// holder of Plans.
 	roles_move(t, &names, &kept, {role_word = u64(role_contract.Role.Plans), module_hash = other_plans_hash}, {role_word = u64(role_contract.Role.Display), module_hash = other_display_hash})
-	testing.expect_value(t, display_caller_amount(&names, "compositor", "other_plans"), 0)
-	testing.expect_value(t, display_caller_amount(&names, "other_display", "plans"), 0)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "other_plans", false), 0)
+	testing.expect_value(t, display_caller_amount(&names, "other_display", "plans", false), 0)
 	// The holders in force, last.
-	testing.expect_value(t, display_caller_amount(&names, "other_display", "other_plans"), pr.DISPLAY_AMOUNT_PLANS_HOLDER)
+	testing.expect_value(t, display_caller_amount(&names, "other_display", "other_plans", false), pr.DISPLAY_AMOUNT_PLANS_HOLDER)
 }
 
 @(test)
 display_caller_amount_gives_the_holder_of_the_image :: proc(t: ^testing.T) {
 	names := names_of_the_image()
-	testing.expect_value(t, display_caller_amount(&names, "compositor", "plans"), pr.DISPLAY_AMOUNT_PLANS_HOLDER)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "plans", false), pr.DISPLAY_AMOUNT_PLANS_HOLDER)
+}
+
+// The term asks_acts gives the amount of an asker of acts on a connection
+// to the holder of Display only, and never to the holder of Plans, whose
+// amount stays its own.
+@(test)
+display_caller_amount_gives_an_asker_of_acts_its_amount_to_the_display_only :: proc(t: ^testing.T) {
+	names := names_of_the_image()
+	testing.expect_value(t, display_caller_amount(&names, "storage", "assistant", true), 0)
+	testing.expect_value(t, display_caller_amount(&names, "", "assistant", true), 0)
+	testing.expect_value(t, display_caller_amount(&names, "display", "assistant", true), 0)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "assistant", false), 0)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "plans", true), pr.DISPLAY_AMOUNT_PLANS_HOLDER)
+	testing.expect_value(t, display_caller_amount(&names, "compositor", "assistant", true), pr.DISPLAY_AMOUNT_ACT_ASKER)
 }

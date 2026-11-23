@@ -15,21 +15,23 @@ import "modus:contract/remote"
 // person who types a request waits less than a second for its reply.
 IDLE_PAUSE :: 500 * time.Millisecond
 
-USAGE :: "modustool: assistant --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--key-variable <NAME>] [--fake <script>] [--once]"
+USAGE :: "modustool: assistant --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--key-variable <NAME>] [--fake <script>] [--once] [--key-in-clear-off-host]"
 
 // run_assistant is the command `modustool assistant`: the agent runner. It
 // answers the requests of the window of the assistant through remote, one
 // at a time, until it stops; with --once, it answers one request, or none
 // when none waits. The model is the endpoint of MODUS_ASSISTANT_ENDPOINT
 // with the key of MODUS_ASSISTANT_KEY (or of --key-variable), or the script
-// of --fake, which reads no variable. The key is never printed.
+// of --fake, which reads no variable. The key is never printed. The
+// endpoint is this machine, unless --key-in-clear-off-host accepts that
+// plain HTTP carries the key in clear on the network.
 run_assistant :: proc(args: []string) -> int {
 	remote_key_text, client_key_text, socket_override, fake_path := "", "", "", ""
 	key_variable := KEY_VARIABLE
 	principal_id: u64
-	once := false
+	once, off_host_allowed := false, false
 	for index := 0; index < len(args); index += 1 {
-		value_needed := args[index] != "--once"
+		value_needed := args[index] != "--once" && args[index] != OFF_HOST_OPTION
 		if value_needed && index + 1 >= len(args) {
 			fmt.eprintln(USAGE)
 			return foundation.EXIT_USAGE
@@ -60,6 +62,8 @@ run_assistant :: proc(args: []string) -> int {
 			fake_path = args[index]
 		case "--once":
 			once = true
+		case OFF_HOST_OPTION:
+			off_host_allowed = true
 		case:
 			fmt.eprintfln("modustool: assistant: unknown option %s", args[index])
 			fmt.eprintln(USAGE)
@@ -85,7 +89,7 @@ run_assistant :: proc(args: []string) -> int {
 		model = fake_model(&fake)
 	} else {
 		url := os.get_env(ENDPOINT_VARIABLE, context.allocator)
-		endpoint, problem := endpoint_parse(url)
+		endpoint, problem := endpoint_parse(url, off_host_allowed)
 		if problem != "" {
 			fmt.eprintfln("modustool: assistant: %s: %s", ENDPOINT_VARIABLE, problem)
 			return foundation.EXIT_USAGE
@@ -93,6 +97,10 @@ run_assistant :: proc(args: []string) -> int {
 		key := os.get_env(key_variable, context.allocator)
 		if key == "" {
 			fmt.eprintfln("modustool: assistant: the variable %s holds no key", key_variable)
+			return foundation.EXIT_USAGE
+		}
+		if key_problem := key_check(key); key_problem != "" {
+			fmt.eprintfln("modustool: assistant: the variable %s: %s", key_variable, key_problem)
 			return foundation.EXIT_USAGE
 		}
 		name := os.get_env(MODEL_NAME_VARIABLE, context.allocator)
@@ -124,6 +132,7 @@ run_assistant :: proc(args: []string) -> int {
 	}
 	defer agent_bridge.bridge_destroy(&bridge)
 	runner := Runner{client = &client, bridge = &bridge, model = model}
+	defer conversation_close(&runner)
 	for {
 		report := runner_turn(&runner)
 		report_print(report)

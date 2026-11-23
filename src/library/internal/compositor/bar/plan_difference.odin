@@ -66,6 +66,15 @@ Plan_Difference_Refusal :: enum u8 {
 	No_Change, // Nothing added and nothing removed: nothing to accept.
 	Not_A_Name, // The asker of an act is not an identifier: a name of a process.
 	Not_An_Act, // The act is not two identifiers with a period between them.
+	No_Grant, // The caller may not ask for a dialog of this face: no connection, or a grant that names no asker.
+	Bad_Serial, // A serial under 1: no dialog has it.
+}
+
+// The facts of the connection of a call that the compositor reads, for a
+// dialog of one face.
+Plan_Difference_Caller :: struct {
+	allowed:  bool, // The grant of the connection lets it ask for the dialog of the face; false with no connection where the face needs one.
+	is_asker: bool, // It is the connection that asked for the last dialog, and it lasts.
 }
 
 Plan_Difference_Item :: struct {
@@ -84,6 +93,7 @@ Plan_Difference_Dialog :: struct {
 	removed:              [PLAN_DIFFERENCE_ITEM_CAPACITY]Plan_Difference_Item,
 	removed_count:        int,
 	shown_at_milliseconds: u64, // The clock of the system when the dialog showed.
+	armed_from_milliseconds: u64, // An act counts from this time on: the show, plus the arm time; on the act face, the last move of the focus too.
 	focus:                Plan_Difference_Button,
 	decision:             Plan_Difference_Decision, // Of the last dialog.
 }
@@ -123,6 +133,7 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	dialog.added, dialog.added_count = added_items, added_count
 	dialog.removed, dialog.removed_count = removed_items, removed_count
 	dialog.shown_at_milliseconds = now_milliseconds
+	dialog.armed_from_milliseconds = now_milliseconds
 	dialog.focus = .Refuse
 	dialog.decision = .Pending
 	return dialog.serial, .None, 0
@@ -162,6 +173,7 @@ plan_difference_act_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog,
 	dialog.added_count = 1
 	dialog.removed_count = 0
 	dialog.shown_at_milliseconds = now_milliseconds
+	dialog.armed_from_milliseconds = now_milliseconds
 	dialog.focus = .Refuse
 	dialog.decision = .Pending
 	return dialog.serial, .None, 0
@@ -234,9 +246,33 @@ plan_difference_item_text :: proc "contextless" (item: ^Plan_Difference_Item) ->
 	return string(item.text[:item.length])
 }
 
-// plan_difference_armed reports whether an act counts at a time.
+// plan_difference_armed reports whether an act counts at a time: the arm
+// time after the show, and on the act face after the last move of the
+// focus too.
 plan_difference_armed :: proc "contextless" (dialog: ^Plan_Difference_Dialog, now_milliseconds: u64) -> bool {
-	return dialog.open && now_milliseconds >= dialog.shown_at_milliseconds + pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	return dialog.open && now_milliseconds >= dialog.armed_from_milliseconds + pr.PLAN_DISPLAY_ARM_MILLISECONDS
+}
+
+// plan_difference_focus_move gives the focus to a button. On the act face
+// a move counts only after the arm time, and starts the arm time again: a
+// Tab and an Enter typed for a window at once never allow an act, so the
+// principal sees the focus on Allow for the whole arm time before Enter
+// counts. The plan face moves at any time, as the grant dialog.
+@(private = "file")
+plan_difference_focus_move :: proc "contextless" (dialog: ^Plan_Difference_Dialog, button: Plan_Difference_Button, now_milliseconds: u64) {
+	if dialog.focus == button {
+		return
+	}
+	switch dialog.face {
+	case .Plan:
+		dialog.focus = button
+	case .Act:
+		if !plan_difference_armed(dialog, now_milliseconds) {
+			return
+		}
+		dialog.focus = button
+		dialog.armed_from_milliseconds = now_milliseconds
+	}
 }
 
 // plan_difference_decide closes the dialog with a decision.
@@ -270,7 +306,7 @@ plan_difference_key :: proc "contextless" (dialog: ^Plan_Difference_Dialog, key:
 	switch key {
 	case .Other:
 	case .Next:
-		dialog.focus = dialog.focus == .Refuse ? .Accept : .Refuse
+		plan_difference_focus_move(dialog, dialog.focus == .Refuse ? .Accept : .Refuse, now_milliseconds)
 	case .Escape:
 		return plan_difference_decide(dialog, .Refused)
 	case .Act:
@@ -324,7 +360,9 @@ plan_difference_button_place :: proc "contextless" (x, y, width, height: int, bu
 // plan_difference_press gives a press of the pointer to the dialog, and
 // gives the decision that it made, or Pending. The dialog takes each press
 // while it shows: a press outside it reaches no window. A press on a
-// button gives it the focus, and acts after the arm time.
+// button gives it the focus, and acts after the arm time. On the act face
+// a press on the button that has no focus moves the focus only
+// (plan_difference_focus_move): a second press after the arm time acts.
 plan_difference_press :: proc "contextless" (dialog: ^Plan_Difference_Dialog, screen_width, work_top, work_bottom, point_x, point_y: int, now_milliseconds: u64) -> Plan_Difference_Decision {
 	if !dialog.open {
 		return .Pending
@@ -335,8 +373,76 @@ plan_difference_press :: proc "contextless" (dialog: ^Plan_Difference_Dialog, sc
 		if !inside(point_x, point_y, button_x, button_y, button_width, button_height) {
 			continue
 		}
-		dialog.focus = button
+		switch dialog.face {
+		case .Plan:
+			dialog.focus = button
+		case .Act:
+			if dialog.focus != button {
+				plan_difference_focus_move(dialog, button, now_milliseconds)
+				return .Pending
+			}
+		}
 		return plan_difference_key(dialog, .Act, now_milliseconds)
 	}
 	return .Pending
+}
+
+// plan_difference_act_ask shows one act of an agent for a caller: it
+// refuses a caller that may not ask (No_Grant), and Busy while the grant
+// dialog shows (grant_dialog_open) or a dialog of this state shows. Each
+// other refusal is the one of plan_difference_act_open.
+plan_difference_act_ask :: proc "contextless" (dialog: ^Plan_Difference_Dialog, caller: Plan_Difference_Caller, grant_dialog_open: bool, asker, act: string, now_milliseconds: u64) -> (serial: u64, refusal: Plan_Difference_Refusal, argument: int) {
+	if !caller.allowed {
+		return 0, .No_Grant, 0
+	}
+	if grant_dialog_open {
+		return 0, .Busy, 0
+	}
+	return plan_difference_act_open(dialog, asker, act, now_milliseconds)
+}
+
+// plan_difference_poll gives the decision of the dialog of a face with a
+// serial, for a caller: Pending while it shows. known is false for a
+// serial that is not the last dialog, for the last dialog when it has the
+// other face, and on the act face for a caller that is not its asker: a
+// decision on an act goes to the one that asked. A caller that may not
+// ask is refused with No_Grant, a serial under 1 with Bad_Serial.
+plan_difference_poll :: proc "contextless" (dialog: ^Plan_Difference_Dialog, face: Plan_Difference_Face, caller: Plan_Difference_Caller, serial: i64) -> (decision: Plan_Difference_Decision, known: bool, refusal: Plan_Difference_Refusal) {
+	if !caller.allowed {
+		return .Pending, false, .No_Grant
+	}
+	if serial < 1 {
+		return .Pending, false, .Bad_Serial
+	}
+	decision, known = plan_difference_decision_of_serial(dialog, u64(serial))
+	if !known || dialog.face != face {
+		return .Pending, false, .None
+	}
+	switch face {
+	case .Plan:
+	case .Act:
+		if !caller.is_asker {
+			return .Pending, false, .None
+		}
+	}
+	return decision, true, .None
+}
+
+// plan_difference_act_cancel closes the act dialog with a serial with a
+// refusal, for its asker only: the agent withdrew the act, and the
+// principal never decides an act that its asker no longer shows. closed is
+// false, with no refusal, when no act dialog of the caller with that serial
+// shows.
+plan_difference_act_cancel :: proc "contextless" (dialog: ^Plan_Difference_Dialog, caller: Plan_Difference_Caller, serial: i64) -> (closed: bool, refusal: Plan_Difference_Refusal) {
+	if !caller.allowed {
+		return false, .No_Grant
+	}
+	if serial < 1 {
+		return false, .Bad_Serial
+	}
+	if !dialog.open || dialog.face != .Act || u64(serial) != dialog.serial || !caller.is_asker {
+		return false, .None
+	}
+	plan_difference_decide(dialog, .Refused)
+	return true, .None
 }

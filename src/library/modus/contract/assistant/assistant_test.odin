@@ -12,7 +12,7 @@ the_words_of_a_kind_and_a_state_name_a_member :: proc(t: ^testing.T) {
 		_, ok := act_kind_of_word(word)
 		testing.expectf(t, !ok, "the kind word %d", word)
 	}
-	for word in ([]i64{0, -1, 7, 255, max(i64)}) {
+	for word in ([]i64{0, -1, 8, 255, max(i64)}) {
 		_, ok := act_state_of_word(word)
 		testing.expectf(t, !ok, "the state word %d", word)
 	}
@@ -39,9 +39,10 @@ the_states_of_an_act_change_once_in_their_order :: proc(t: ^testing.T) {
 	testing.expect(t, !act_state_from_runner(.Allowed_By_Principal))
 	testing.expect(t, !act_state_from_runner(.Refused_By_Principal))
 	testing.expect(t, !act_state_from_runner(.Proposed))
+	testing.expect(t, !act_state_from_runner(.Not_Shown))
 	for from in Act_State {
 		for to in Act_State {
-			allowed := (from == .Proposed && (to == .Done || to == .Refused || to == .Awaiting_Principal)) || (from == .Awaiting_Principal && (to == .Allowed_By_Principal || to == .Refused_By_Principal))
+			allowed := (from == .Proposed && (to == .Done || to == .Refused || to == .Awaiting_Principal)) || (from == .Awaiting_Principal && (to == .Allowed_By_Principal || to == .Refused_By_Principal || to == .Not_Shown))
 			testing.expectf(t, act_state_changes(from, to) == allowed, "%v to %v", from, to)
 		}
 	}
@@ -59,4 +60,16 @@ a_text_crosses_with_its_bound_and_no_control :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_check("a\x01", 10), Text_Refusal.Not_Text)
 	testing.expect_value(t, text_check("\xc3", 10), Text_Refusal.Not_Text)
 	testing.expect_value(t, text_check("été", 10), Text_Refusal.None)
+}
+
+// A name of an act: none, an upper case letter, a digit first, a period, a
+// space, an argument, one past the bound; the bound itself passes.
+@(test)
+an_act_name_is_one_identifier_within_its_bound :: proc(t: ^testing.T) {
+	for name in ([]string{"", "Plans", "1plans", "plans.apply", "plans apply", "apply(1)", "_x", strings.repeat("a", ACT_NAME_BYTES + 1, context.temp_allocator)}) {
+		testing.expectf(t, !act_name_valid(name), "the name %q", name)
+	}
+	testing.expect(t, act_name_valid("a"))
+	testing.expect(t, act_name_valid("plan_diff_ask2"))
+	testing.expect(t, act_name_valid(strings.repeat("a", ACT_NAME_BYTES, context.temp_allocator)))
 }

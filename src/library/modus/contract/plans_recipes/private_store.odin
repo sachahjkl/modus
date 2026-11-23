@@ -190,6 +190,24 @@ plan_display_caller_allowed :: proc "contextless" (grant: u64) -> bool {
 	return grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0 || grant & isolated.CALLER_AMOUNT_MASK == DISPLAY_AMOUNT_PLANS_HOLDER
 }
 
+// The amount of the grant of a connection to the holder of Display whose
+// caller may ask the principal to decide one act of an agent: a process
+// whose start grant set has the term asks_acts, as the assistant
+// (src/md/features/assistant.md, "The right to ask an act"). It is not the
+// grant to act for the principal, which would open each export of the
+// display that serves the principal.
+DISPLAY_AMOUNT_ACT_ASKER :: u64(2)
+
+// act_display_caller_allowed says if the trusted display serves act_ask,
+// act_poll and act_cancel to a connection with this grant: an asker of
+// acts, or a caller that acts for its principal.
+//
+// Example: `act_display_caller_allowed(DISPLAY_AMOUNT_ACT_ASKER)` is true;
+// `act_display_caller_allowed(DISPLAY_AMOUNT_PLANS_HOLDER)` is false.
+act_display_caller_allowed :: proc "contextless" (grant: u64) -> bool {
+	return grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0 || grant & isolated.CALLER_AMOUNT_MASK == DISPLAY_AMOUNT_ACT_ASKER
+}
+
 // The decision of the trusted display on the difference of a plan, as the
 // export plan_diff_poll of the Display role gives it. The values cross the
 // border of the export: the compositor writes i64(member).

@@ -219,8 +219,9 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	// The amount has the meaning that its service gives it: the limit of
 	// the private store for the holder of Storage, and for the holder of
 	// Display whether the caller holds the role Plans, which acts for
-	// nobody and is shown the difference of a plan. A change of the roles
-	// writes the grant again (plan_roles.odin).
+	// nobody and is shown the difference of a plan, or may ask an act of
+	// an agent (the term asks_acts). A change of the roles writes the
+	// grant again (plan_roles.odin).
 	if is_role_holder(service_name, .Storage) {
 		amount: u64
 		if .Store in start_grant_set.grants && .Store not_in caller.revoked {
@@ -234,7 +235,7 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 		}
 		return grant
 	}
-	amount := role_policy.display_caller_amount(&role_holder_names, service_name, system.name_of(caller.name[:]))
+	amount := role_policy.display_caller_amount(&role_holder_names, service_name, system.name_of(caller.name[:]), start_grant_set.asks_acts)
 	return isolated.caller_grant_make(amount, caller.principal, acts)
 }
 

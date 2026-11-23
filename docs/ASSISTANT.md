@@ -31,6 +31,7 @@ Each entry has a label and words:
 | `act N, waiting for the principal` | The line; the act dialog of the trusted display asks you |
 | `act N, refused by the principal` | You refused it: nothing ran |
 | `act N, allowed by the principal` | You allowed it once. It does not run yet: an allowed act runs only in the agent console of a wide grant |
+| `act N, not shown by the trusted display` | The trusted display refused its act dialog, or the window has no connection to it: nothing ran, and the window does not ask again |
 | `the reply to request N was refused at the border` | The words of the error record of the reply; no act of it runs |
 
 The window keeps 64 entries; past them the oldest leaves. The conversation ends with the window.
@@ -44,7 +45,10 @@ modustool assistant --remote-key <key of remote> --client-key <key of the client
 ```
 
 - **The endpoint** is plain HTTP of the chat completions form, in `MODUS_ASSISTANT_ENDPOINT`. The tool has no TLS: a model behind HTTPS is reached through a local proxy. `MODUS_ASSISTANT_MODEL` names the model; the default is `default`.
-- **The key** is in `MODUS_ASSISTANT_KEY`, or in the variable that `--key-variable NAME` names: a secret of the keyring of the host comes in a variable of its name. The runner never prints it, never writes it, and never sends it to the machine.
+- **The endpoint is this machine**: `127.0.0.0/8`, `localhost` or `[::1]`. Plain HTTP to another host carries the key in clear on the network; `--key-in-clear-off-host` accepts that risk.
+- **The key** is in `MODUS_ASSISTANT_KEY`, or in the variable that `--key-variable NAME` names: a secret of the keyring of the host comes in a variable of its name. The runner never prints it, never writes it, and never sends it to the machine. A key with a space, a line end or another control byte is refused at the start.
+- **One answer of the model has 120 seconds**, the send and the receive together. An endpoint that stalls fails the request: the window shows `No_Answer`.
+- **The model reads the last 16 requests**, with their replies and the outcome of each act. An outcome has the role `tool`: a result of the machine never speaks as you.
 - **`--fake <script>`** takes the replies from a file, one reply on each line, and reads no variable: the tests run so.
 - **`--once`** answers one request, or none, then stops.
 - The runner prints one line for each request: `request N answered, K acts`, then one line for each act with its state.
@@ -74,9 +78,14 @@ The kind is `Bad_Value`, `Too_Long`, `Empty` or `Absent`; `found` is the number 
 
 ## 5. The act dialog
 
-An act that the bridge stops shows "TRUSTED ACT" on the trusted display: the asker, `assistant`, and the act, `service.export`, never its arguments and never a word of the model. The focus starts on Refuse: Enter refuses, Tab moves the focus to "Allow once", and Escape refuses at any time. A key counts 500 ms after the dialog showed. While the dialog shows, no window gets a key or a press.
+An act that the bridge stops shows "TRUSTED ACT" on the trusted display: the asker, `assistant`, and the act, `service.export`, never its arguments and never a word of the model. The runner takes the two names with the parser of the bridge. While the dialog shows, no window gets a key or a press.
 
-The exports `compositor.act_ask(act)` and `compositor.act_poll(serial)` show the dialog and give its decision to a process that acts for the principal (`docs/CONSOLE.md`, "The built-in commands and the services").
+- The focus starts on Refuse. Enter acts on the button that has the focus, 500 ms after the dialog showed. Escape refuses at any time.
+- Tab moves the focus to "Allow once" only 500 ms after the dialog showed, and each move starts the 500 ms again. Tab then Enter typed at once never allows.
+- A press on the button that has no focus moves the focus only; a second press, 500 ms later, acts.
+- The dialog closes with a refusal when the window that asked exits, or when its entry leaves the window.
+
+The exports `compositor.act_ask(act)`, `compositor.act_poll(serial)` and `compositor.act_cancel(serial)` show the dialog, give its decision to the connection that asked, and close it. They serve a process with the right to ask an act, as the assistant, and a process that acts for the principal (`docs/CONSOLE.md`, "The built-in commands and the services"). The assistant has the right to ask an act and no grant to act for the principal.
 
 ## 6. The exports of the window
 
@@ -85,15 +94,15 @@ The runner calls them through `remote`; each refuses a caller that does not act 
 | Export | What it does |
 |---|---|
 | `assistant.request_serial()` | The serial of the oldest request that no runner took, or 0 |
-| `assistant.request_text(serial)` | Its text; the request is then taken |
-| `assistant.reply(serial, text)` | The reply of the model |
-| `assistant.reply_refused(serial, kind, unit, argument, value, limit)` | A reply refused at the border of the runner |
-| `assistant.act(serial, kind, line)` | A proposed act; gives its number |
+| `assistant.request_text(serial)` | Its text; the request is then taken. A result too small for the text is refused, and the request is not taken |
+| `assistant.reply(serial, text, acts)` | The reply of the model and the count of its acts, 0 to 4; once for each request |
+| `assistant.reply_refused(serial, kind, unit, argument, value, limit)` | A reply refused at the border of the runner; no act of it comes |
+| `assistant.act(serial, kind, line, service, export)` | A proposed act, with the names of its one call, or two empty texts for a line that is no single call; gives its number. An act past the count of the reply is refused with `State` |
 | `assistant.act_result(act, state, text)` | The answer of the bridge: 2 done, 3 refused, 4 waiting for the principal |
-| `assistant.act_state(act)` | The state of an act: 5 allowed or 6 refused by the principal once you decided |
+| `assistant.act_state(act)` | The state of an act: 5 allowed or 6 refused by the principal once you decided, 7 not shown by the trusted display |
 
-The runner cannot write the states 5 and 6: `act_result` refuses them with `Bad_Value`.
+The runner cannot write the states 5, 6 and 7: `act_result` refuses them with `Bad_Value`.
 
 ## 7. The tests
 
-The machine test part `assistant` (`docs/TOOLS.md`, "The parts of the machine test") runs the runner with a fake model: a reply with an act that reads, a grant-adding act that you refuse in the act dialog, and a malformed reply. The host tests of `tools/modustool/agent_runner`, `src/library/modus/contract/assistant` and `src/library/internal/compositor/bar` give each refused form.
+The machine test part `assistant` (`docs/TOOLS.md`, "The parts of the machine test") runs the runner with a fake model: a reply with an act that reads, a grant-adding act that you refuse in the act dialog, and a malformed reply. The step that decides the act dialog presses only Enter or Escape, which refuse; a test never allows an act with repeated keys. The host tests of `tools/modustool/agent_runner`, `src/library/modus/contract/assistant`, `src/library/internal/assistant/conversation` and `src/library/internal/compositor/bar` give each refused form.

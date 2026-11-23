@@ -255,7 +255,7 @@ Step :: struct {
 	// is a named constant whose comment gives that reason: modustool check
 	// refuses a number here.
 	seconds:    int,
-	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes.
+	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes. For Key_Again_Until: the other decision of the dialog, which fails the step and stops the presses.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
@@ -1814,9 +1814,27 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 		case .Key_Again_Until:
+			// The step decides a dialog of the trusted display with keys
+			// that act on its first focus, Refuse, and never move it: a test
+			// never allows an act or accepts a plan with repeated keys
+			// (src/md/features/assistant.md, "Subtle points"). Its fact
+			// fails_on names the other end of the dialog, so the presses
+			// stop when the dialog leaves, either way.
+			if step.text != "ret" && step.text != "esc" {
+				fmt.eprintfln("modustool: test failed: step %d: the step Key_Again_Until presses only ret or esc, which act on Refuse, the first focus of a dialog; it does not press %q", index + 1, step.text)
+				return false
+			}
+			if step.fails_on == "" {
+				fmt.eprintfln("modustool: test failed: step %d: the step Key_Again_Until needs fails_on, the fact of the other decision of the dialog", index + 1)
+				return false
+			}
 			decided := false
 			for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 				log := log_read(machine)
+				if len(log) > machine.seen && strings.contains(log[machine.seen:], step.fails_on) {
+					fmt.eprintfln("modustool: test failed: step %d: the machine printed \"%s\" after presses of the key %s, which only refuse", index + 1, step.fails_on, step.text)
+					return false
+				}
 				if len(log) > machine.seen && strings.contains(log[machine.seen:], step.expected) {
 					decided = true
 					break

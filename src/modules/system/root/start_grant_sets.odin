@@ -22,8 +22,10 @@ Start_Grant_Set :: struct {
 // The services that a process with the grant Connect and not Root_Ring can
 // connect to: the list of its row, an empty text after the last one. The
 // longest list is the one of remote, whose clients call the services of
-// the principal: ten today, with one place more.
-CALLABLE_LIMIT :: 11
+// the principal: ten. A full list needs no empty text, as the reader stops
+// at the end of the array too, so the limit is that length, with no spare
+// place that no row uses.
+CALLABLE_LIMIT :: 10
 
 // The parts of a start grant set that are not start grants. Zero is the start grant set of a
 // process that needs none of them.
@@ -35,6 +37,7 @@ Start_Grant_Set_Terms :: struct {
 	terminal_rows:    u64, // 0: TERMINAL_ROWS_DEFAULT.
 	terminal_measure: bool, // Its terminal shows the rates of the process.
 	on_demand:        bool, // A service that starts at the first connection to it.
+	asks_acts:        bool, // With the grant Connect to the holder of Display: it may ask the principal to decide one act of an agent (plans_recipes.DISPLAY_AMOUNT_ACT_ASKER), and nothing else that serves the principal.
 }
 
 STORE_BLOCKS_DEFAULT :: 64
@@ -198,10 +201,13 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// (src/md/features/paint_application.md).
 	{name = "paint", grants = {.Serve, .Store}, terms = {store_blocks = 12000}},
 	// A window and a service: the agent runner on the host calls its
-	// exports through remote, and it shows the act dialog of the trusted
-	// display, which needs a caller that acts for the principal
-	// (src/md/features/assistant.md).
-	{name = "assistant", grants = {.Serve, .Image, .Connect, .Acts_For_Principal}, terms = {callable = {0 = "display"}}},
+	// exports through remote, and it asks the trusted display for the act
+	// dialog with the term asks_acts. It acts for nobody: the grant to act
+	// for the principal would open each export of the display that serves
+	// the principal (src/md/features/assistant.md, "The right to ask an
+	// act"). The boot image checks that the holder of Display has the act
+	// dialog.
+	{name = "assistant", grants = {.Serve, .Image, .Connect}, terms = {callable = {0 = "display"}, asks_acts = true}},
 	// A service: the console calls its exports through a connection.
 	{name = "life", grants = {.Serve}},
 	// A service: the console calls its exports through a connection.

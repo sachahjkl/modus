@@ -13,15 +13,98 @@ import "modus:contract/errors"
 // The service of the window, as remote names it.
 WINDOW_SERVICE :: "assistant"
 
+// The requests that the conversation of the model keeps, with their
+// replies and outcomes: a run of the runner has no end, and the words that
+// the model reads have a bound.
+CONVERSATION_REQUEST_CAPACITY :: 16
+
 // The parties of the runner: the calls to the window through remote, the
 // bridge that runs each act, and the model. The conversation is the words
-// that the model reads at its next reply.
+// that the model reads at its next reply; its strings belong to the
+// allocator of the runner.
 Runner :: struct {
-	client:       ^machine.Call_Client,
-	bridge:       ^agent_bridge.Agent_Bridge,
-	model:        Model,
-	conversation: [dynamic]Turn,
+	client:              ^machine.Call_Client,
+	bridge:              ^agent_bridge.Agent_Bridge,
+	model:               Model,
+	conversation:        [dynamic]Turn,
 	next_bridge_request: u64,
+	next_call:           u64, // The number of the last call id of an act.
+}
+
+// turn_free frees the strings of one turn of the conversation.
+@(private = "file")
+turn_free :: proc(turn: Turn) {
+	delete(turn.text)
+	delete(turn.call_id)
+	for call in turn.calls {
+		delete(call.id)
+		delete(call.line)
+	}
+	delete(turn.calls)
+}
+
+// conversation_bound drops the oldest request with all its turns while the
+// conversation keeps more than CONVERSATION_REQUEST_CAPACITY requests. A
+// request leaves whole, so no outcome stays without the call that it
+// answers.
+conversation_bound :: proc(runner: ^Runner) {
+	for {
+		requests, second := 0, -1
+		for turn, index in runner.conversation {
+			if turn.role == .Principal {
+				requests += 1
+				if requests == 2 {
+					second = index
+				}
+			}
+		}
+		if requests <= CONVERSATION_REQUEST_CAPACITY || second < 0 {
+			return
+		}
+		for turn in runner.conversation[:second] {
+			turn_free(turn)
+		}
+		remove_range(&runner.conversation, 0, second)
+	}
+}
+
+// conversation_close frees the conversation of a runner.
+conversation_close :: proc(runner: ^Runner) {
+	for turn in runner.conversation {
+		turn_free(turn)
+	}
+	delete(runner.conversation)
+}
+
+// exchange_keep keeps the reply of the model and the outcome of each of
+// its acts in the conversation: a call for each act, and a turn of the
+// role tool for each outcome. An act with no outcome, as when a call to
+// the window failed, says so: each call has its answer.
+@(private = "file")
+exchange_keep :: proc(runner: ^Runner, reply: Model_Reply, outcomes: []string) {
+	reply := reply
+	calls := make([]Turn_Call, reply.act_count)
+	for act, index in reply.acts[:reply.act_count] {
+		runner.next_call += 1
+		calls[index] = {id = fmt.aprintf("call_%d", runner.next_call), kind = act.kind, line = strings.clone(act.line)}
+	}
+	append(&runner.conversation, Turn{role = .Model, text = strings.clone(reply.text), calls = calls})
+	for call, index in calls {
+		outcome := index < len(outcomes) && outcomes[index] != "" ? outcomes[index] : "no outcome: the turn ended before the act ran"
+		append(&runner.conversation, Turn{role = .Outcome, text = strings.clone(outcome), call_id = strings.clone(call.id)})
+	}
+}
+
+// act_names gives the service and the export of the one call of a line,
+// with the parser of the bridge, or two empty texts for a line that is no
+// single call: the window and the trusted display read the names as typed
+// values, never from the line.
+act_names :: proc(line: string) -> (service, export: string) {
+	service_bytes, export_bytes, ok := bridge_contract.lex_line_single_call(transmute([]u8)line)
+	if !ok || !assistant_contract.act_name_valid(string(service_bytes)) || !assistant_contract.act_name_valid(string(export_bytes)) {
+		return "", ""
+	}
+	return string(service_bytes), string(export_bytes)
 }
 
 Turn_Outcome :: enum {
@@ -82,6 +165,7 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 		return
 	}
 	append(&runner.conversation, Turn{role = .Principal, text = strings.clone(text_result.text)})
+	conversation_bound(runner)
 	raw, model_problem := runner.model.reply(runner.model.user_data, runner.conversation[:], context.temp_allocator)
 	if model_problem != "" {
 		report.outcome, report.problem = .Model_Failed, model_problem
@@ -95,14 +179,16 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 		window_problem_keep(&report, reply_refused_show(runner, report.serial, record))
 		return
 	}
-	append(&runner.conversation, Turn{role = .Model, text = strings.clone(reply.text)})
-	reply_arguments := [2]machine.Call_Argument{serial_argument, {is_text = true, text = reply.text}}
+	outcomes: [assistant_contract.MODEL_ACT_CAPACITY]string
+	defer exchange_keep(runner, reply, outcomes[:])
+	reply_arguments := [3]machine.Call_Argument{serial_argument, {is_text = true, text = reply.text}, {integer = i64(reply.act_count)}}
 	if _, problem = window_call(runner, "reply", reply_arguments[:]); problem != "" {
 		report.outcome, report.problem = .Window_Failed, problem
 		return
 	}
-	for act in reply.acts[:reply.act_count] {
-		act_arguments := [3]machine.Call_Argument{serial_argument, {integer = i64(act.kind)}, {is_text = true, text = act.line}}
+	for act, index in reply.acts[:reply.act_count] {
+		service, export := act_names(act.line)
+		act_arguments := [5]machine.Call_Argument{serial_argument, {integer = i64(act.kind)}, {is_text = true, text = act.line}, {is_text = true, text = service}, {is_text = true, text = export}}
 		act_result: machine.Call_Result
 		if act_result, problem = window_call(runner, "act", act_arguments[:]); problem != "" {
 			report.outcome, report.problem = .Window_Failed, problem
@@ -115,7 +201,7 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 			report.outcome, report.problem = .Window_Failed, problem
 			return
 		}
-		append(&runner.conversation, Turn{role = .Outcome, text = fmt.aprintf("%s: %s, %s", act.line, assistant_contract.ACT_KIND_NAMES[act.kind], outcome.text)})
+		outcomes[index] = fmt.tprintf("%v: %s", outcome.state, outcome.text)
 		report.acts[report.act_count] = outcome
 		report.act_count += 1
 	}

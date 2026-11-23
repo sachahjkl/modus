@@ -3,7 +3,9 @@ package agent_runner
 import "core:fmt"
 import "core:mem"
 import "core:strings"
+import "core:net"
 import "core:testing"
+import "core:time"
 import "modustool:agent_bridge"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/cut_mark"
@@ -212,4 +214,132 @@ a_bridge_answer_that_is_not_whole_is_a_refusal :: proc(t: ^testing.T) {
 	}
 	report := bridge_answer_read(`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"Integer","value":12}}`)
 	testing.expect(t, report.state == .Done && report.text == "12")
+}
+
+// A host that is not this machine is refused unless the option names the
+// risk; a host with a space, a line end or another byte that names no host
+// is refused with the option too. The loopback forms pass.
+@(test)
+an_endpoint_off_this_machine_needs_the_option_that_names_the_risk :: proc(t: ^testing.T) {
+	for url in ([]string{"http://10.0.2.2:8080/v1", "http://api.example:80/v1", "http://128.0.0.1:80/v1", "http://127.0.0.256:80/v1", "http://127.0.0:80/v1", "http://127.0.0.1.2:80/v1", "http://localhost.example:80/v1", "http://[::2]:80/v1"}) {
+		_, problem := endpoint_parse(url)
+		testing.expectf(t, strings.contains(problem, OFF_HOST_OPTION), "%q: %q", url, problem)
+	}
+	for url in ([]string{"http://a\r\nX-Injected: 1:80/v1", "http://a b:80/v1", "http://a\n:80/v1", "http://a\x00:80/v1", "http://é:80/v1"}) {
+		_, problem := endpoint_parse(url, true)
+		testing.expectf(t, problem != "", "%q passed with the option", url)
+	}
+	for url in ([]string{"http://127.0.0.1:80/v1", "http://127.255.0.9:80/v1", "http://localhost:11434/v1", "http://[::1]:80/v1"}) {
+		_, problem := endpoint_parse(url)
+		testing.expectf(t, problem == "", "%q: %q", url, problem)
+	}
+	endpoint, problem := endpoint_parse("http://10.0.2.2:8080/v1", true)
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, endpoint.host, "10.0.2.2")
+}
+
+// A key with a line end, a space, a control byte or a byte that is not
+// ASCII would add a line to the head of the request: refused, and the
+// problem never names the key.
+@(test)
+a_key_with_a_line_end_or_a_space_is_refused :: proc(t: ^testing.T) {
+	for key in ([]string{"", "abc\r\nX-Injected: 1", "abc\ndef", "abc def", "abc\tdef", "abc\x00", "abc\x7F", "abcé"}) {
+		problem := key_check(key)
+		testing.expectf(t, problem != "", "%q passed", key)
+		testing.expect(t, len(key) == 0 || !strings.contains(problem, key))
+	}
+	testing.expect_value(t, key_check("sk-0123456789abcdef_ABC.~"), "")
+}
+
+// The chunks of an answer: a size near the largest int, a size one past
+// the room, a chunk with no end of line; the room itself passes.
+@(test)
+the_chunks_of_an_answer_keep_their_bounds :: proc(t: ^testing.T) {
+	head := "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+	for chunks in ([]string{"7fffffffffffffff\r\nab\r\n0\r\n\r\n", "ffffffffffffffff\r\nab\r\n0\r\n\r\n", "3\r\nab\r\n0\r\n\r\n", "2\r\nab", "2\r\nab\r", "-1\r\nab\r\n"}) {
+		_, problem := http_answer_content(transmute([]u8)strings.concatenate({head, chunks}, context.temp_allocator))
+		testing.expectf(t, problem != "", "%q passed", chunks)
+	}
+}
+
+// A body nested past the bound is refused before the parser descends; a
+// bracket inside a string counts nothing.
+@(test)
+a_body_nested_past_the_bound_is_refused :: proc(t: ^testing.T) {
+	deep := strings.concatenate({strings.repeat("[", 100_000, context.temp_allocator), strings.repeat("]", 100_000, context.temp_allocator)}, context.temp_allocator)
+	_, problem := http_answer_content(transmute([]u8)strings.concatenate({"HTTP/1.1 200 OK\r\n\r\n", deep}, context.temp_allocator))
+	testing.expect(t, strings.contains(problem, "nested"))
+	testing.expect(t, !json_depth_within(strings.repeat("{", JSON_DEPTH_BOUND + 1, context.temp_allocator), JSON_DEPTH_BOUND))
+	testing.expect(t, json_depth_within(strings.repeat("[", JSON_DEPTH_BOUND, context.temp_allocator), JSON_DEPTH_BOUND))
+	testing.expect(t, json_depth_within(`["[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[\"[["]`, 2))
+}
+
+// The status of an answer is printed only when it is three digits: a long
+// token, a token with a control byte, and words are refused with a
+// problem that does not hold them.
+@(test)
+the_status_of_an_answer_is_three_digits :: proc(t: ^testing.T) {
+	long_token := strings.repeat("9", 5000, context.temp_allocator)
+	for status in ([]string{long_token, "2000", "20", "abc", "6xx", "2\x1b0"}) {
+		_, problem := http_answer_content(transmute([]u8)strings.concatenate({"HTTP/1.1 ", status, " X\r\n\r\n{}"}, context.temp_allocator))
+		testing.expectf(t, problem != "" && !strings.contains(problem, status), "%q: %q", status, problem)
+	}
+	_, problem := http_answer_content(transmute([]u8)string("HTTP/1.1 503 Busy\r\n\r\n{}"))
+	testing.expect(t, strings.contains(problem, "503"))
+}
+
+// An endpoint that takes the connection and never answers fails the model
+// within the deadline of the answer: the turn is Model_Failed, not a hang.
+@(test)
+an_endpoint_that_stalls_fails_the_model :: proc(t: ^testing.T) {
+	listener, listen_error := net.listen_tcp({address = net.IP4_Loopback, port = 0})
+	testing.expect(t, listen_error == nil)
+	defer net.close(listener)
+	bound, bound_error := net.bound_endpoint(listener)
+	testing.expect(t, bound_error == nil)
+	model := Http_Model{endpoint = {host = "127.0.0.1", port = bound.port, path = "/v1"}, key = "k", model_name = "m", answer_deadline = 200 * time.Millisecond}
+	reply_model := http_model(&model)
+	text, problem := reply_model.reply(reply_model.user_data, nil, context.temp_allocator)
+	testing.expect_value(t, text, "")
+	testing.expectf(t, strings.contains(problem, "no whole answer within"), "%q", problem)
+}
+
+// The conversation keeps the last requests whole: an outcome never stays
+// without the call that it answers. A request is the role user, a reply
+// the role assistant with its acts as calls, an outcome the role tool.
+@(test)
+the_conversation_is_bounded_and_outcomes_speak_as_tools :: proc(t: ^testing.T) {
+	runner: Runner
+	defer conversation_close(&runner)
+	for index in 0 ..< CONVERSATION_REQUEST_CAPACITY + 3 {
+		append(&runner.conversation, Turn{role = .Principal, text = fmt.aprintf("request %d", index)})
+		calls := make([]Turn_Call, 1)
+		calls[0] = {id = fmt.aprintf("call_%d", index), kind = .Eval_Lex, line = strings.clone("monitor.processes()")}
+		append(&runner.conversation, Turn{role = .Model, text = strings.clone("a reply"), calls = calls})
+		append(&runner.conversation, Turn{role = .Outcome, text = strings.clone("Done: 3 rows"), call_id = fmt.aprintf("call_%d", index)})
+		conversation_bound(&runner)
+	}
+	testing.expect_value(t, len(runner.conversation), 3 * CONVERSATION_REQUEST_CAPACITY)
+	testing.expect_value(t, runner.conversation[0].role, Turn_Role.Principal)
+	testing.expect_value(t, runner.conversation[0].text, "request 3")
+	model := Http_Model{endpoint = {host = "127.0.0.1", port = 8080, path = "/v1"}, key = "k", model_name = "m"}
+	request := http_request_build(&model, runner.conversation[:3])
+	testing.expect(t, strings.contains(request, `{"role":"user","content":"request 3"}`))
+	testing.expect(t, strings.contains(request, `"tool_calls":[{"id":"call_3","type":"function","function":{"name":"eval_lex","arguments":"{\"line\":\"monitor.processes()\"}"}}]`))
+	testing.expect(t, strings.contains(request, `{"role":"tool","tool_call_id":"call_3","content":"Done: 3 rows"}`))
+	testing.expect_value(t, strings.count(request, `"role":"user"`), 1)
+}
+
+// The names of an act come from the parser of the bridge: one call gives
+// its two names, any other line none.
+@(test)
+the_names_of_an_act_come_from_the_parser_of_the_bridge :: proc(t: ^testing.T) {
+	service, export := act_names(`plans.apply("home")`)
+	testing.expect(t, service == "plans" && export == "apply")
+	service, export = act_names("monitor.processes()")
+	testing.expect(t, service == "monitor" && export == "processes")
+	for line in ([]string{"monitor.processes() |> first(1)", "let x = 1 in x", "lock", "a.b.c()", "Plans.apply()", "x.y(); z.w()", "monitor.processes()\nplans.apply()"}) {
+		service, export = act_names(line)
+		testing.expectf(t, service == "" && export == "", "%q gave %q %q", line, service, export)
+	}
 }

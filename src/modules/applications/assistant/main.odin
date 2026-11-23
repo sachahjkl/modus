@@ -15,10 +15,12 @@
 //
 // - **Serve**: its exports, for the agent runner through remote.
 // - **Connect** to the role Display, with the boot image: the act dialog.
-// - **Acts_For_Principal**: the trusted display shows the act dialog only to
-//   a caller that acts for the principal.
+//   The term **asks_acts** lets it ask the trusted display for an act
+//   dialog, and for nothing else that serves the principal: it acts for
+//   nobody.
 package assistant_window
 
+import "internal:assistant/conversation"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
 import "modus:display"
@@ -52,7 +54,7 @@ typed_count: int
 INPUT_IDENTITY :: "request"
 
 // entry_label gives the words above an entry, and their color.
-entry_label :: proc "contextless" (entry: ^Entry, buffer: []u8) -> (label: string, color: graphics.Color) {
+entry_label :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (label: string, color: graphics.Color) {
 	switch entry.kind {
 	case .Request:
 		return system.format(buffer, "you, request ", entry.serial), graphics.colors.link
@@ -67,7 +69,7 @@ entry_label :: proc "contextless" (entry: ^Entry, buffer: []u8) -> (label: strin
 			state_color = graphics.colors.warning
 		case .Done, .Allowed_By_Principal:
 			state_color = graphics.colors.process
-		case .Refused, .Refused_By_Principal:
+		case .Refused, .Refused_By_Principal, .Not_Shown:
 			state_color = graphics.colors.failed
 		}
 		return system.format(buffer, "act ", entry.act, ", ", STATE_WORDS[entry.state]), state_color
@@ -76,7 +78,7 @@ entry_label :: proc "contextless" (entry: ^Entry, buffer: []u8) -> (label: strin
 }
 
 // entry_body gives the text under the label of an entry.
-entry_body :: proc "contextless" (entry: ^Entry, buffer: []u8) -> string {
+entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> string {
 	switch entry.kind {
 	case .Request, .Reply:
 		return string(entry.text[:entry.text_count])
@@ -98,7 +100,7 @@ entry_body :: proc "contextless" (entry: ^Entry, buffer: []u8) -> string {
 			return system.format(buffer, line, ": decide it in the act dialog of the trusted display")
 		case .Allowed_By_Principal:
 			return system.format(buffer, line, ": allowed; the act runs when the agent console of a wide grant runs it")
-		case .Refused_By_Principal:
+		case .Refused_By_Principal, .Not_Shown:
 			return system.format(buffer, line, ": nothing ran")
 		}
 	}
@@ -116,8 +118,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	line := interface.line_height(interface.FONT_INTERFACE)
 	bottom := input_top - MARGIN
 	// From the newest entry up: only the entries that show are measured.
-	for index := entry_count - 1; index >= 0 && bottom > MARGIN; index -= 1 {
-		entry := entry_at(index)
+	for index := talk.entry_count - 1; index >= 0 && bottom > MARGIN; index -= 1 {
+		entry := conversation.entry_at(&talk, index)
 		label_buffer: [160]u8
 		body_buffer: [assistant_contract.REPLY_TEXT_BYTES + assistant_contract.ACT_LINE_BYTES + 160]u8
 		label, color := entry_label(entry, label_buffer[:])
@@ -132,7 +134,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_text_wrapped(table, MARGIN, top + line, room, body, graphics.colors.text, interface.FONT_INTERFACE)
 		bottom = top
 	}
-	if entry_count == 0 {
+	if talk.entry_count == 0 {
 		interface.draw_text_wrapped(table, MARGIN, MARGIN, room, "Ask the agent for help. It reads your request on the host, and each act that it proposes shows here before its result.", graphics.colors.dim, interface.FONT_INTERFACE)
 	}
 	// The field takes the keys when nothing else has the focus.
@@ -170,12 +172,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait, waiting ? system.time() + DECISION_POLL_MILLISECONDS : system.WAIT_FOREVER)
 		system.service_run(&service)
 		came := interface.window_events(&window_memory.drawing, &window)
-		if came || conversation_changed {
-			conversation_changed = false
+		if came || talk.changed {
+			talk.changed = false
 			draw(&window)
 			// A request that the field kept draws in the next frame.
-			if conversation_changed {
-				conversation_changed = false
+			if talk.changed {
+				talk.changed = false
 				draw(&window)
 			}
 		}

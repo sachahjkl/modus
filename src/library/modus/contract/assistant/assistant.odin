@@ -22,8 +22,13 @@ ACT_LINE_BYTES :: 200
 // request, a reply, a refused reply and an act take one each.
 CONVERSATION_ENTRY_CAPACITY :: 64
 
-// The acts of one model reply at most.
+// The acts of one model reply at most. The window refuses an act past the
+// count that the reply gave.
 MODEL_ACT_CAPACITY :: 4
+
+// The bytes of the name of the service or of the export of an act: a name
+// of the system, as the root service names a process.
+ACT_NAME_BYTES :: 31
 
 // What an act asks the bridge for. The values cross the border of an export
 // and of the model reply: 0 names no member.
@@ -46,6 +51,7 @@ Act_State :: enum u8 {
 	Awaiting_Principal   = 4, // The bridge stopped it with Awaiting_Principal_Approval: the act dialog decides.
 	Allowed_By_Principal = 5, // The principal allowed it on the trusted display. It does not run yet.
 	Refused_By_Principal = 6, // The principal refused it on the trusted display. Nothing runs.
+	Not_Shown            = 7, // The trusted display refused its act dialog for a cause other than Busy, or the window has no connection to it. Nothing runs.
 }
 
 // act_kind_of_word is the border of the word of a kind: false for a word
@@ -84,6 +90,8 @@ act_state_of_word :: proc "contextless" (word: i64) -> (state: Act_State, ok: bo
 		return .Allowed_By_Principal, true
 	case i64(Act_State.Refused_By_Principal):
 		return .Refused_By_Principal, true
+	case i64(Act_State.Not_Shown):
+		return .Not_Shown, true
 	}
 	return {}, false
 }
@@ -95,7 +103,7 @@ act_state_from_runner :: proc "contextless" (state: Act_State) -> bool {
 	switch state {
 	case .Done, .Refused, .Awaiting_Principal:
 		return true
-	case .Proposed, .Allowed_By_Principal, .Refused_By_Principal:
+	case .Proposed, .Allowed_By_Principal, .Refused_By_Principal, .Not_Shown:
 		return false
 	}
 	return false
@@ -103,17 +111,37 @@ act_state_from_runner :: proc "contextless" (state: Act_State) -> bool {
 
 // act_state_changes says if an act in a state may take a new state: the
 // runner gives one outcome to a proposed act, and the trusted display one
-// decision to an act that waits for it. Each other change is refused.
+// decision to an act that waits for it, or the window the final state
+// Not_Shown when the trusted display cannot show it. Each other change is
+// refused.
 act_state_changes :: proc "contextless" (from, to: Act_State) -> bool {
 	switch from {
 	case .Proposed:
 		return act_state_from_runner(to)
 	case .Awaiting_Principal:
-		return to == .Allowed_By_Principal || to == .Refused_By_Principal
-	case .Done, .Refused, .Allowed_By_Principal, .Refused_By_Principal:
+		return to == .Allowed_By_Principal || to == .Refused_By_Principal || to == .Not_Shown
+	case .Done, .Refused, .Allowed_By_Principal, .Refused_By_Principal, .Not_Shown:
 		return false
 	}
 	return false
+}
+
+// act_name_valid says if a text is a name of the service or of the export
+// of an act: 1 to ACT_NAME_BYTES bytes, a lowercase letter first, then
+// lowercase letters, digits and `_`. The trusted display shows such names
+// only.
+act_name_valid :: proc "contextless" (text: string) -> bool {
+	if len(text) == 0 || len(text) > ACT_NAME_BYTES || text[0] < 'a' || text[0] > 'z' {
+		return false
+	}
+	for character in transmute([]u8)text {
+		letter := character >= 'a' && character <= 'z'
+		digit := character >= '0' && character <= '9'
+		if !letter && !digit && character != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // Why a text is refused at the border of an export.

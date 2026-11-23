@@ -34,6 +34,7 @@ machine_turn_run :: proc(client: ^machine.Call_Client, socket: string, reply: st
 	replies := [1]string{reply}
 	fake := Fake_Model{replies = replies[:]}
 	runner := Runner{client = client, bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
 	report := runner_turn(&runner)
 	builder := strings.builder_make(context.temp_allocator)
 	report_write(&builder, report)

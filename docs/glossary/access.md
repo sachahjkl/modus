@@ -684,11 +684,21 @@ Do not use: completion, response, output.
 
 The act dialog is the dialog of the trusted display that asks the principal to allow once or to refuse one act of an agent, named `service.export`.
 
-The asker is the process that called `compositor.act_ask`, which the trusted display reads from the connection; the act is two identifiers that it checks, never a word of the agent. Its focus starts on Refuse, as the dialog of a plan. It is not the grant dialog of the powerbox.
+The asker is the process that called `compositor.act_ask`, which the trusted display reads from the connection; the act is two identifiers that it checks, never a word of the agent. Its focus starts on Refuse, as the dialog of a plan; a move of the focus counts only after the arm time and starts it again. Its decision goes to its asker only, and it closes with a refusal when its asker exits. It is not the grant dialog of the powerbox.
 
 The design: `src/md/features/assistant.md`, "The act dialog".
 
 Do not use: confirmation popup, approval prompt.
+
+### Right to ask an act
+
+The right to ask an act lets a process ask the trusted display for an act dialog, and for nothing else that serves the principal.
+
+It is the term `asks_acts` of a start grant set; the root service writes it as the amount `DISPLAY_AMOUNT_ACT_ASKER` of the grant of a connection to the holder of Display. The assistant holds it in place of the grant to act for the principal, which would open each export of the trusted display that serves the principal. It is not a start grant, and it opens no dialog of a plan.
+
+The design: `src/md/features/assistant.md`, "The right to ask an act".
+
+Do not use: act permission, approval right.
 
 ### Act record
 

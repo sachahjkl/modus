@@ -1342,6 +1342,21 @@ Act_Refused :: struct {
 	act:   [56]u8,
 }
 
+// The asker withdrew the act that showed: the dialog closed with a
+// refusal, and the principal decided nothing.
+@(log_fact = "compositor: the act {act} of {asker} is withdrawn by its asker")
+Act_Cancelled :: struct {
+	asker: [56]u8,
+	act:   [56]u8,
+}
+
+// The connection of the asker of an act dialog ended, or its grant no
+// longer names an asker of acts: the dialog is refused and closes.
+@(log_fact = "compositor: the act dialog of {asker} closes: its asker is gone or may no longer ask")
+Act_Asker_Lost :: struct {
+	asker: [56]u8,
+}
+
 // A holder of the assistive role reads the trees from here on: the bar
 // shows its mark.
 @(log_fact = "compositor: the assistive holder {holder} reads the trees as {kind}: {nickname}")

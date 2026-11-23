@@ -1,5 +1,7 @@
 package assistant_window
 
+import "internal:assistant/conversation"
+import assistant_contract "modus:contract/assistant"
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -14,8 +16,8 @@ import "modus:system"
 // principal, by the role name, so it reaches the holder in force. The
 // module file that describes the exports is the entry of the boot image
 // with the hash that the root service gives with the connection, checked
-// against the bytes: a holder with no act_ask and act_poll is no trusted
-// display, and an act that waits stays waiting.
+// against the bytes: a holder with no act_ask, act_poll and act_cancel is
+// no trusted display, and an act that waits takes the state Not_Shown.
 
 Display_Port :: struct {
 	root_handle:   system.Handle,
@@ -28,15 +30,14 @@ Display_Port :: struct {
 	file:          []u8,
 	ask_export:    u32,
 	poll_export:   u32,
+	cancel_export: u32,
 }
 
 display_port: Display_Port
 
-// The decision of the principal on an act, from the word of act_poll.
-Act_Decision :: enum u8 {
-	Pending,
-	Allowed,
-	Refused,
+// The port of the act dialog that the loop of the window uses.
+display_act_dialog_port :: proc "contextless" () -> conversation.Act_Dialog_Port {
+	return {ask = display_act_ask, poll = display_act_poll, cancel = display_act_cancel}
 }
 
 // display_port_bind keeps the ring to the root service and maps the boot
@@ -80,12 +81,13 @@ display_connect :: proc "contextless" () -> (cause: string) {
 	}
 	ask := module.export_find(file, "act_ask")
 	poll := module.export_find(file, "act_poll")
-	if ask == 0 || poll == 0 {
+	cancel := module.export_find(file, "act_cancel")
+	if ask == 0 || poll == 0 || cancel == 0 {
 		system.call_connection_end(&connection)
 		return "the trusted display has no act dialog"
 	}
 	display_port.connection, display_port.file = connection, file
-	display_port.ask_export, display_port.poll_export = ask, poll
+	display_port.ask_export, display_port.poll_export, display_port.cancel_export = ask, poll, cancel
 	display_port.connected = true
 	return ""
 }
@@ -98,34 +100,55 @@ display_disconnect :: proc "contextless" () {
 	}
 }
 
-// display_act_ask shows the act dialog for an act, and gives its serial.
-// 0 with no cause: another dialog of the trusted display shows, and the
-// act asks again later. 0 with a cause: no dialog can show.
-display_act_ask :: proc "contextless" (act: string) -> (serial: u64, cause: string) {
+// display_act_ask shows the act dialog for an act, named by the service
+// and the export of its one call, as the runner gave them, and gives its
+// serial. Busy: another dialog of the trusted display shows, and the act
+// asks again later. Refused, with its cause: no dialog can show.
+display_act_ask :: proc "contextless" (service, export: string) -> (serial: u64, outcome: conversation.Act_Ask_Outcome, cause: string) {
 	if cause = display_connect(); cause != "" {
-		return 0, cause
+		return 0, .Refused, cause
 	}
-	arguments := [1]isolated.Argument{{text = transmute([]u8)act}}
+	name_buffer: [2 * assistant_contract.ACT_NAME_BYTES + 1]u8
+	count := copy(name_buffer[:], service)
+	name_buffer[count] = '.'
+	count += 1
+	count += copy(name_buffer[count:], export)
+	arguments := [1]isolated.Argument{{text = name_buffer[:count]}}
 	error: errors.Error_Record
 	result, status := system.call_isolated(&display_port.connection, display_port.file, display_port.ask_export, arguments[:], &error)
 	if status != .Ok && status != .Failed {
 		display_disconnect()
-		return 0, "the call of act_ask did not end"
+		return 0, .Refused, "the call of act_ask did not end"
 	}
 	if result > 0 {
-		return u64(result), ""
+		return u64(result), .Shown, ""
 	}
 	kind, _ := errors.kind_of_word(error.kind)
 	if kind == .Busy {
-		return 0, ""
+		return 0, .Busy, ""
 	}
-	return 0, errors.KIND_NAMES[kind]
+	return 0, .Refused, errors.KIND_NAMES[kind]
+}
+
+// display_act_cancel closes the act dialog with a serial, when it still
+// shows: the act left the conversation of the window. A failure changes
+// nothing that the window keeps: the trusted display closes the dialog
+// when the connection of its asker ends.
+display_act_cancel :: proc "contextless" (serial: u64) {
+	if serial == 0 || serial > u64(max(i64)) || display_connect() != "" {
+		return
+	}
+	arguments := [1]isolated.Argument{{integer = serial}}
+	error: errors.Error_Record
+	if _, status := system.call_isolated(&display_port.connection, display_port.file, display_port.cancel_export, arguments[:], &error); status != .Ok && status != .Failed {
+		display_disconnect()
+	}
 }
 
 // display_act_poll gives the decision on the act dialog with a serial.
 // known is false when the trusted display does not answer, or no longer
 // knows the dialog: the caller then asks again.
-display_act_poll :: proc "contextless" (serial: u64) -> (decision: Act_Decision, known: bool) {
+display_act_poll :: proc "contextless" (serial: u64) -> (decision: conversation.Act_Decision, known: bool) {
 	if display_connect() != "" || serial > u64(max(i64)) {
 		return .Pending, false
 	}
