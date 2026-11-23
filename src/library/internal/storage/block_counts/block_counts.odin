@@ -58,6 +58,45 @@ Counts :: struct {
 	hand:         int,
 	failure:      Read, // The first failure of a read since counts_failure_clear.
 	failed_block: u64,
+	// The leaves found wrong: their counts are not known until a repair
+	// counts them again. The search of a free block passes them.
+	wrong_leaves:      [WRONG_LEAVES_MOST]u64, // The first block of each one.
+	wrong_leaf_count:  int,
+	wrong_leaves_full: bool, // More leaves were wrong than the list holds.
+	// The leaves that a repair counted again, until a commit writes them:
+	// their counts come from here, not from their pages.
+	repaired:          []Repaired_Leaf,
+}
+
+// The wrong leaves that the counts keep, and that one repair counts again.
+WRONG_LEAVES_MOST :: 16
+
+// A leaf that a repair counted again.
+Repaired_Leaf :: struct {
+	first:  u64,
+	counts: [format.COUNTS_OF_A_PAGE]u32,
+	owners: [format.COUNTS_OF_A_PAGE]u16,
+}
+
+// leaf_is_wrong says if a leaf is in the list of the wrong leaves.
+leaf_is_wrong :: proc "contextless" (counts: ^Counts, first: u64) -> bool {
+	for wrong in counts.wrong_leaves[:counts.wrong_leaf_count] {
+		if wrong == first {
+			return true
+		}
+	}
+	return false
+}
+
+// leaf_repaired gives the counts of a leaf that a repair counted again, or
+// nil.
+leaf_repaired :: proc "contextless" (counts: ^Counts, first: u64) -> ^Repaired_Leaf {
+	for &leaf in counts.repaired {
+		if leaf.first == first {
+			return &leaf
+		}
+	}
+	return nil
 }
 
 // counts_bind gives a count tree its memory and its root. The frames hold
@@ -239,6 +278,14 @@ page_get :: proc "contextless" (counts: ^Counts, level: int, first: u64) -> (fra
 	}
 	if format.check(frame.bytes[:]) != pointer.check || !page_valid(&frame.bytes, level, first) {
 		counts_fail(counts, .Wrong, pointer.block)
+		if level == 0 && !leaf_is_wrong(counts, first) {
+			if counts.wrong_leaf_count < WRONG_LEAVES_MOST {
+				counts.wrong_leaves[counts.wrong_leaf_count] = first
+				counts.wrong_leaf_count += 1
+			} else {
+				counts.wrong_leaves_full = true
+			}
+		}
 		return nil, .Wrong
 	}
 	frame.level, frame.first, frame.block = level, first, pointer.block
@@ -253,6 +300,10 @@ page_get :: proc "contextless" (counts: ^Counts, level: int, first: u64) -> (fra
 count_get :: proc "contextless" (counts: ^Counts, number: u64) -> (count: u32, owner: u16, outcome: Read) {
 	if number >= counts.disk_blocks {
 		return 0, 0, .Good
+	}
+	if repaired := leaf_repaired(counts, page_first(0, number)); repaired != nil {
+		place := number - repaired.first
+		return repaired.counts[place], repaired.owners[place], .Good
 	}
 	leaf: ^Frame
 	leaf, outcome = page_get(counts, 0, page_first(0, number))
@@ -282,11 +333,22 @@ free_search :: proc "contextless" (counts: ^Counts, from: u64, taken: Taken, dat
 				number = skip
 				continue
 			}
-			leaf, outcome := page_get(counts, 0, page_first(0, number))
+			leaf_first := page_first(0, number)
+			leaf_end := min(leaf_first + format.COUNTS_OF_A_PAGE, end)
+			// A wrong leaf, or one that a repair counted and no commit wrote
+			// yet, is passed: its blocks wait for the repair.
+			if leaf_is_wrong(counts, leaf_first) || leaf_repaired(counts, leaf_first) != nil {
+				number = leaf_end
+				continue
+			}
+			leaf, outcome := page_get(counts, 0, leaf_first)
+			if outcome == .Wrong && page_first(0, number) == leaf_first && leaf_is_wrong(counts, leaf_first) {
+				number = leaf_end
+				continue
+			}
 			if outcome != .Good {
 				return 0
 			}
-			leaf_end := min(page_first(0, number) + format.COUNTS_OF_A_PAGE, end)
 			for ; number < leaf_end; number += 1 {
 				free := leaf == nil || (^format.Count_Page)(&leaf.bytes).counts[number % format.COUNTS_OF_A_PAGE] == 0
 				if free && (taken == nil || !taken(data, number)) {

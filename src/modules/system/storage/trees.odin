@@ -441,6 +441,16 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	if broken {
 		return -1, errors.fail(error, failure(.Disk), .Device, .None, 0, 0, 0, 1)
 	}
+	// The form Count_Tree keeps the damage that it finds in sets: past a
+	// full set the damage is not known whole, and a change could name a
+	// damaged block as whole.
+	if opened.damage_set_full {
+		if !damage_set_full_said {
+			damage_set_full_said = true
+			system.log_fact(.Error, Damage_Set_Full{wrong_blocks = u64(len(opened.wrong_set) / 2)})
+		}
+		return -1, errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+	}
 	store_index = store_find(store.name)
 	if store_index >= 0 && store_damaged[store_index] {
 		return -1, errors.fail(error, failure(.Damaged), .Damaged, .Stores)
@@ -1153,6 +1163,7 @@ entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, fr
 // ---------------------------------------------------------------------
 // The removal of a tree, in steps.
 
+damage_set_full_said: bool // The fact of a full set of damage is on the log.
 removal_stalled: [STORE_CAPACITY]bool // A step failed: no other step until the next change of the store.
 removal_names: [REMOVAL_STEP_LIMIT]Entry_Name
 removal_values: [REMOVAL_STEP_LIMIT]Entry
@@ -1172,7 +1183,7 @@ removal_waits :: proc "contextless" () -> bool {
 // them goes into the queue in its turn. It gives false when no store has a
 // removal to continue.
 removal_step :: proc "contextless" () -> bool {
-	if broken {
+	if broken || opened.damage_set_full {
 		return false
 	}
 	store_index := -1

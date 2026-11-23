@@ -334,6 +334,22 @@ Count_Leaves_Differ :: struct {
 	leaves: u64,
 }
 
+// The repair of wrong leaves of the count tree ended: a commit wrote them.
+@(log_fact = "storage: the leaves of the count tree that had a wrong check are counted again and written")
+Count_Leaves_Repaired :: struct {}
+
+// A step of the repair of the count tree failed on the device: the repair
+// starts again at its next step.
+@(log_fact = "storage: the repair of the count tree did not end: a read failed on the device; it starts again")
+Count_Repair_Stopped :: struct {}
+
+// A set of the damage of the form Count_Tree is full: the service makes no
+// change until its next start.
+@(log_fact = "storage: the service found more than {wrong_blocks} wrong blocks with no table of each block: it makes no change until its next start")
+Damage_Set_Full :: struct {
+	wrong_blocks: u64,
+}
+
 // The count tree of the disk has a wrong page: the open counts by its
 // walk, and the commits after it write a new count tree.
 @(log_fact = "storage: the count tree of the disk has a wrong page: the service takes the counts of names that the open found, and the next commits write a new count tree")

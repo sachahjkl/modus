@@ -44,7 +44,7 @@ import "modus:system"
 // of the ranges (4 MB), the object nodes that one commit copies (7 MB), the
 // pages and the heads of the stores of the store table (4 MB), and the
 // buffers of the content trees (7 MB). The tables of the blocks have the
-// size of the disk, so they are working memory (tables_bind): 6 bytes and
+// size of the disk, so they are working memory (storage_mount.open_with_forms): 6 bytes and
 // 3 bits for each block, the hash index, the cache and the staging of the
 // count tree. The working memory holds them for a disk of 16 GiB (2^22
 // blocks: storage_mount.state_layout gives 10 704 pages), which is more
@@ -263,6 +263,20 @@ may_name_store :: proc "contextless" (caller: ^Caller, store_name: string) -> bo
 		return false
 	}
 	return principals.store_name_principal(store_name) == caller.principal
+}
+
+// connection_ended frees what the service keeps for a connection that
+// ends: its pending changes and their memory, and its places. A later
+// connection whose ring has the same handle starts with none of them.
+connection_ended :: proc "contextless" (_: ^system.Service, connection: ^system.Connection) {
+	holder := connection.ring_memory
+	pending_drop_of(holder)
+	for &item in places {
+		if item.holder == holder {
+			item.holder = 0
+			item.generation += 1
+		}
+	}
 }
 
 // places_sweep frees the places of connections that ended.
@@ -1265,6 +1279,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Error, No_Service_Ring{})
 		system.stop(.Refused)
 	}
+	service.disconnected = connection_ended
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
@@ -1317,7 +1332,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A removal that waits runs when no call waits; a service that makes no
 	// change runs none, and waits.
 	for {
-		if broken || !removal_waits() {
+		if broken || !removal_waits() && !repair_waits() {
 			wait: system.Wait
 			system.service_wait(&wait, &service)
 			for &item in shares {
@@ -1330,7 +1345,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		calls := system.service_run(&service)
 		calls += shares_serve()
 		if calls == 0 {
-			removal_step()
+			if repair_waits() {
+				repair_step()
+			} else {
+				removal_step()
+			}
 		}
 	}
 }
@@ -1351,7 +1370,7 @@ disk_open :: proc "contextless" () {
 	}
 	switch {
 	case mounted.failed && mounted.larger_than_capacity:
-		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(opened.capacity)})
+		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(table_blocks_held)})
 		system.stop(.Failed)
 	case mounted.failed:
 		system.log_fact(.Error, No_Valid_Root{})

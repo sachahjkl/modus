@@ -395,3 +395,50 @@ a_full_disk_refuses_the_pages :: proc(t: ^testing.T) {
 	testing.expect_value(t, failure, Commit_Failure.No_Block)
 	testing.expect_value(t, disk.tree.root, Pointer{})
 }
+
+// The counts after a commit, read through the cache of the tree as the
+// service reads them: with the least cache, a leaf leaves it between two
+// reads. A read that fails on the device then refuses the commit, and the
+// tree stays as it was; no page holds a count of 0 for a block in use.
+@(test)
+a_failed_read_of_a_count_refuses_the_commit :: proc(t: ^testing.T) {
+	disk := disk_make(200_000, format.COUNT_LEVEL_LIMIT + 2)
+	defer disk_free(disk)
+	changed := make([dynamic]u64, context.temp_allocator)
+	for number in ([?]u64{5, 70_000, 140_000, 199_000}) {
+		disk.counts[number] = {1, 1}
+		append(&changed, number)
+	}
+	_, failure := disk_commit(disk, changed[:])
+	testing.expect_value(t, failure, Commit_Failure.None)
+	before := disk.tree.root
+	// The plan reads the count before through the tree, and adds one.
+	through_tree :: proc "contextless" (commit: ^Commit, number: u64) -> (count: u32, owner: u16) {
+		disk := (^Test_Disk)(commit.data)
+		context = runtime.default_context()
+		if held, found := disk.counts[number]; found && held[1] == u64(format.COUNT_TREE_OWNER) {
+			return u32(held[0]), u16(held[1])
+		}
+		count, owner, _ = count_get(&disk.tree, number)
+		if number == 140_000 {
+			count += 1
+		}
+		return count, owner
+	}
+	disk.commit.after = through_tree
+	defer disk.commit.after = test_after
+	// The leaf of block 199 000 fails on the device from now on, and the
+	// cache is cold: the plan reads it again.
+	for number, bytes in disk.blocks {
+		copied := bytes
+		page := (^format.Count_Page)(&copied)
+		if page.magic == format.COUNT_PAGE_MAGIC && page.first == page_first(0, 199_000) {
+			disk.broken[number] = true
+		}
+	}
+	testing.expect(t, counts_bind(&disk.tree, &disk.source, before, disk.disk_blocks, disk.frames, disk.slots))
+	counts_failure_clear(&disk.tree)
+	_, failure = disk_commit(disk, {140_000, 199_000})
+	testing.expect_value(t, failure, Commit_Failure.Device)
+	testing.expect_value(t, disk.tree.root, before)
+}

@@ -142,6 +142,18 @@ commit_finish :: proc "contextless" (commit: ^Commit) -> (root: Pointer, ok: boo
 			}
 		}
 	}
+	// The counts after the commit come through the cache of the tree: a leaf
+	// that left the cache and could not be read again gave no count, so the
+	// pages hold no count of it. The commit is refused with that read.
+	switch commit.counts.failure {
+	case .Good:
+	case .Wrong:
+		commit_fail(commit, .Wrong)
+		return {}, false
+	case .Device:
+		commit_fail(commit, .Device)
+		return {}, false
+	}
 	top := commit_staged(commit, commit.counts.levels, 0)
 	return {block = top.block, check = format.check(top.bytes[:])}, true
 }

@@ -62,6 +62,10 @@ Service :: struct {
 	connections: [isolated.SERVICE_CONNECTION_CAPACITY]Connection, // The callers; a free place has no ring.
 	connected:   int, // The callers connected now.
 	calls:       u64, // The calls that this process executed.
+	// disconnected, when set, runs at the end of each connection, before its
+	// handles close: the service ends what it keeps for that caller, so that
+	// a later connection whose ring has the same handle starts with nothing.
+	disconnected: proc "contextless" (service: ^Service, connection: ^Connection),
 }
 
 // service_open opens the service ring of this process (`GRANT_SERVICE`) and
@@ -144,6 +148,9 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 		case .Disconnect:
 			for &connection in service.connections {
 				if connection.calls.head != nil && connection.ring_memory == ring_memory {
+					if service.disconnected != nil {
+						service.disconnected(service, &connection)
+					}
 					ring_close(&connection.calls)
 					memory_unmap(raw_data(connection.region))
 					close(connection.ring_memory)
