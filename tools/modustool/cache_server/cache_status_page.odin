@@ -109,6 +109,33 @@ object_kind_text :: proc(kind: object_cache.Cache_Object_Kind) -> string {
 	return "blob"
 }
 
+// cache_page_distinct_signers counts the distinct signer keys of the rows:
+// at most RECENT_REALISATION_COUNT rows, so a pass over the rows before each
+// row costs at most 45 comparisons.
+cache_page_distinct_signers :: proc(rows: []Recent_Realisation) -> int {
+	count := 0
+	for row, index in rows {
+		seen := false
+		for earlier in rows[:index] {
+			if earlier.record.signer_public_key == row.record.signer_public_key {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			count += 1
+		}
+	}
+	return count
+}
+
+// cache_page_html_text gives a text in its escaped form for HTML.
+cache_page_html_text :: proc(text: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	foundation.html_escape(&b, text)
+	return strings.to_string(b)
+}
+
 // cache_page_html writes the page from a copy of the facts. It reads no
 // file: the counts, the keys and the settings are in memory.
 cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapshot: Cache_Status_Snapshot, disk_free: u64, disk_free_known: bool) -> string {
@@ -120,7 +147,11 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 		foundation.html_escape(b, text)
 	}
 	site_address := page.site_address
-	pictures := strings.concatenate({site_address, "/", resources.SITE_PICTURE_FOLDER, "/"}, context.temp_allocator)
+	// The address in its escaped form, for each attribute that names it: the
+	// command refuses a byte that HTML must escape, and the page does not
+	// rely on that.
+	site_html := cache_page_html_text(site_address)
+	pictures := strings.concatenate({site_html, "/", resources.SITE_PICTURE_FOLDER, "/"}, context.temp_allocator)
 
 	write(&b, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	write(&b, "<title>" + CACHE_PAGE_TITLE + " - " + site.SITE_SYSTEM_NAME + "</title>\n")
@@ -128,15 +159,15 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 	write(&b, "<meta name=\"color-scheme\" content=\"dark light\">\n")
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"%s\">\n", site.site_color(site.site_dark_colors().background))
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"%s\">\n", site.site_color(site.site_light_colors().background))
-	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s/%s\" sizes=\"32x32\">\n", site_address, resources.SITE_FAVICON)
+	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s/%s\" sizes=\"32x32\">\n", site_html, resources.SITE_FAVICON)
 	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s%s\" type=\"image/svg+xml\">\n", pictures, resources.SITE_ICON_SVG)
-	fmt.sbprintf(&b, "<link rel=\"preload\" href=\"%s/%s\" as=\"font\" type=\"font/ttf\" crossorigin>\n", site_address, site.SITE_MARK_FONT)
+	fmt.sbprintf(&b, "<link rel=\"preload\" href=\"%s/%s\" as=\"font\" type=\"font/ttf\" crossorigin>\n", site_html, site.SITE_MARK_FONT)
 	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n</head>\n", status_path_texts[.Style_Sheet])
 	write(&b, "<body class=\"section-cache layout-presentation\">\n<a class=\"skip\" href=\"#content\">Skip to the content</a>\n")
 
 	// The bar of the site: the heron and the name, a link to the site.
 	write(&b, "<header class=\"bar\">\n<div class=\"bar-inner\">\n")
-	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s/\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s%s\">", site_address, pictures, resources.SITE_MARK_BAR_LIGHT)
+	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s/\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s%s\">", site_html, pictures, resources.SITE_MARK_BAR_LIGHT)
 	fmt.sbprintf(&b, "<img src=\"%s%s\" width=\"24\" height=\"24\" alt=\"\"></picture>%s</a>\n", pictures, resources.SITE_MARK_BAR, site.SITE_MARK_NAME_HTML)
 	write(&b, "</div>\n</header>\n")
 
@@ -212,8 +243,19 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 	if snapshot.recent_count == 0 {
 		write(&b, "<p>No realisation yet.</p>\n")
 	} else {
-		columns := [?]site.Site_Column{{"Recipe", .Name}, {"Output", .Name}, {"Kind", .Short}, {"Signer", .Name}, {"Written", .Date}}
-		table := site.site_table_start(&b, "Last realisations", columns[:])
+		// A column whose cells are all one key says nothing that the list of
+		// the keys does not say: the signer is a column only when the rows
+		// name more than one.
+		rows := snapshot.recent
+		show_signer := cache_page_distinct_signers(rows[:snapshot.recent_count]) > 1
+		// Each hash column is of the kind Version, so its head carries the
+		// icon of the kind, as the Date column carries the icon of Time
+		// (docs/SITE.md, "The kinds of values").
+		with_signer := [?]site.Site_Column{{"Recipe", .Name}, {"Output", .Name}, {"Kind", .Short}, {"Signer", .Name}, {"Written", .Date}}
+		with_signer_kinds := [?]value_kinds.Value_Kind{.Version, .Version, .None, .Version, .None}
+		without_signer := [?]site.Site_Column{{"Recipe", .Name}, {"Output", .Name}, {"Kind", .Short}, {"Written", .Date}}
+		without_signer_kinds := [?]value_kinds.Value_Kind{.Version, .Version, .None, .None}
+		table := show_signer ? site.site_table_start(&b, "Last realisations", with_signer[:], with_signer_kinds[:]) : site.site_table_start(&b, "Last realisations", without_signer[:], without_signer_kinds[:])
 		for index in 0 ..< snapshot.recent_count {
 			entry := snapshot.recent[index]
 			write(&b, "<tr><td>")
@@ -221,8 +263,10 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 			write(&b, "</td><td>")
 			hash_write(&b, entry.record.output_hash)
 			fmt.sbprintf(&b, "</td><td>%s</td><td>", object_kind_text(entry.record.output_kind))
-			hash_write(&b, entry.record.signer_public_key)
-			write(&b, "</td><td>")
+			if show_signer {
+				hash_write(&b, entry.record.signer_public_key)
+				write(&b, "</td><td>")
+			}
 			time_write(&b, entry.written)
 			write(&b, "</td></tr>\n")
 		}
@@ -272,7 +316,7 @@ json_hex :: proc(b: ^strings.Builder, value: [32]u8) {
 
 // cache_status_json writes the status record: the facts of the page, each
 // hash and key whole, for a monitor of the host.
-cache_status_json :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapshot: Cache_Status_Snapshot, disk_free: u64, disk_free_known: bool, now: time.Time) -> string {
+cache_status_json :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapshot: Cache_Status_Snapshot, disk_free: u64, disk_free_known: bool) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\n  \"endpoint\": ")
 	json_text(&b, page.endpoint)
@@ -293,7 +337,7 @@ cache_status_json :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snap
 	json_time(&b, snapshot.counts.last_write)
 	strings.write_string(&b, ",\n  \"started\": ")
 	json_time(&b, snapshot.started)
-	fmt.sbprintf(&b, ",\n  \"uptime_seconds\": %d,\n  \"recent_realisations\": [", i64(time.duration_seconds(time.diff(snapshot.started, now))))
+	fmt.sbprintf(&b, ",\n  \"uptime_seconds\": %d,\n  \"recent_realisations\": [", i64(time.duration_seconds(time.tick_since(snapshot.started_tick))))
 	for index in 0 ..< snapshot.recent_count {
 		entry := snapshot.recent[index]
 		strings.write_string(&b, index > 0 ? ",\n    {" : "\n    {")

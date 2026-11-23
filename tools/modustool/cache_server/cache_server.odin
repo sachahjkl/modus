@@ -150,6 +150,7 @@ cache_server_open :: proc(
 		}
 	}
 	server.status.started = time.now()
+	server.status.started_tick = time.tick_now()
 	if !cache_status_scan(&server) {
 		cache_server_destroy(&server, allocator)
 		return {}, false
@@ -708,6 +709,11 @@ cache_server_serve :: proc(options: Cache_Serve_Options) -> bool {
 			fmt.printfln("modustool: cache-serve: the page and status.json on http://%s/", net.endpoint_to_string(status_bound, context.temp_allocator))
 		}
 		status_running = cache_status_start(&server, page, status_socket)
+		if status_running == nil {
+			fmt.eprintln("modustool: cache-serve: the system refused the thread of the page")
+			net.close(status_socket)
+			return false
+		}
 	}
 	defer if status_running != nil {
 		sync.atomic_store(&server.stop, true)

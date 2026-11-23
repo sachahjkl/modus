@@ -23,13 +23,18 @@ An address that a person finds in a plan, in a log or in a search must say what 
 | `/status.json` | The same facts as a record, for a monitor |
 | `/style.css` | The style sheet of the site, made once at the start |
 
-`--endpoint <host:port>` is the public address that the page shows (the host behind a proxy does not know its own name); with none, the page shows the listen address. `--site <address>` is the address of the site, `https://modus.systems` by default: the page links to it and takes the font of the name and the heron from it.
+`--endpoint <host:port>` is the public address that the page shows (the host behind a proxy does not know its own name); with none, the page shows the listen address. A deployment passes its public name, such as `--endpoint cache.modus.systems:5010`: no default claims a host that runs. `--site <address>` is the address of the site; by default, the address that the tool gives the site (`SITE_ADDRESS` of `tools/modustool/site`), so a move of the site changes one constant. The page links to the site and takes the font of the name and the heron from it.
+
+The two values reach a page and a header, so the command refuses them at its border, and the page escapes each use all the same:
+
+- An endpoint is `host:port`: a host of letters, digits, `.` and `-`, or an IPv6 address in brackets, and a port of 1 to 65535 in digits. `host:`, `:5010` and `:::` are refused.
+- A site address starts with `https://` or `http://` and a host, and has no byte below or at the space, no byte past ASCII, and none of `"`, `'`, `<`, `>`, `;`, `?`, `#`, `\`, `` ` ``, `,` and `&`.
 
 Refused: a second program that serves the page (a shell script that scans the store each minute into a file, and `python -m http.server` beside it). A second program in a second language reads the store with its own rules, and its page says what the scan saw a minute ago.
 
 ### The counts kept by the server
 
-The server counts the objects, the realisations and their bytes once, when it opens the store: one listing of each folder, with the size of each entry from the listing, no read of a file. Only the names that are 64 lowercase hexadecimal digits count; the 10 newest realisations by their time are read and decoded for the list of the page. After that, each write of the server changes the counts:
+The server counts the objects, the realisations and their bytes once, when it opens the store: one listing of each folder, entry by entry through the directory iterator, with the size of each entry from the listing, no read of a file. The memory of the listing is one entry, whatever the size of the folder; the time is one entry and its size for each file, once at the start. Only the names that are 64 lowercase hexadecimal digits count; the 10 newest realisations by their time are read and decoded for the list of the page. After that, each write of the server changes the counts:
 
 - a write of a name that the store did not hold adds one entry and its bytes;
 - a write of a name that the store held (the same object again, or another realisation of one recipe) adds nothing, and moves the time of the last write;
@@ -39,6 +44,7 @@ The counts sit behind one lock, which the thread of the protocol takes at a writ
 
 - **The free space of the disk** comes from one `statfs` of the folder, kept at most 10 seconds: a flood of requests makes at most one call each 10 seconds. A host with no `statfs` shows no free space.
 - **Refused: a scan of the store at each request, or each minute.** Its cost grows with the store; a store of a million objects then costs a million entries for each view of a page. A count kept at each write costs one addition.
+- **The start of the server and its uptime** come from two clocks: the date of the start from the clock of the date, for the page; the uptime of `status.json` from the monotonic clock, so a step back of the date never gives a negative uptime.
 - **The server is the one writer of its folder.** A file that another program puts in the folder is counted at the next start. Two servers on one folder are not a form of the system.
 
 ### The reader of a request
@@ -46,17 +52,21 @@ The counts sit behind one lock, which the thread of the protocol takes at a writ
 The page is a public address behind a proxy, so its reader is the border of a hostile input:
 
 - One request on one connection. The answer says `Connection: close`, and the server closes after it: bytes after the first head get no answer.
-- The head is at most 4096 bytes and ends with an empty line within a deadline, 5 seconds by default (a parameter, so that a test sets it short). A longer head is `431`; a head with no end in time is `408`.
+- **One deadline for each connection**, 5 seconds by default (a parameter, so that a test sets it short), taken at the accept. It bounds the read of the head, the write of the answer and the read that drops the bytes after the answer, together: each read and each send waits at most the time that remains. A client that never reads, or reads a few bytes at a time, holds the thread for the deadline at most. Refused: a timeout of each send, which a client that reads one byte before each timeout stretches to minutes. Each send is one call of the system, because `net.send_tcp` calls again after a partial send with the whole timeout. An answer that the deadline cuts ends with a reset (`SO_LINGER` of 0), so the system drops the megabytes that it still holds for the slow client. An error answer is a head of less than 200 bytes with no body: it goes in one send of at most a millisecond, also after the deadline, so a `408` reaches the client.
+- The head is at most 4096 bytes and ends with an empty line within the deadline. A longer head is `431`; a head with no end in time is `408`.
 - The request line is `GET <path> HTTP/1.1` or `HTTP/1.0`. Another method is `405` with `Allow: GET`. A path outside the three, a query, a path with `..` or `%2e` is `404`: the path is compared whole with the three, never decoded and never joined to a folder, so no path reaches a file.
 - A NUL byte, a control byte other than the end of a line and a tab, a byte past ASCII, a line with no colon in the headers, a `Content-Length` or a `Transfer-Encoding` is `400`. A `GET` has no body, and a body that the server does not read is a way to hide a second request from the proxy.
 - No answer repeats a byte of the request. An error answer has no body.
+- After its answer the server ends its side, then reads and drops what the client still sends, at most 16 KiB, until the client closes or the deadline passes: a close with bytes unread makes the system send a reset, which can remove the answer before the client reads it.
 - One connection at a time: the page is a view, not the service. A slow client holds the thread of the page for the deadline at most, and never the thread of the protocol.
+- **This protection assumes a proxy in front that reads the whole head before it opens a connection to the server**, as the TLS proxy of the deployment does. Exposed with no such proxy, a client that opens one connection after another holds the page for one deadline each: the page then waits, and the protocol does not.
+- A refused accept that passes (a connection aborted before the accept, an interrupt, a lack of resources) does not end the thread: it ends only when the server stops or its listener is closed. The stop ends the side of the listener, joins the thread, and only then closes the listener, so the thread never waits on a descriptor that the system gave to another file.
 
 Refused: a library of HTTP for three paths; keep-alive, which makes the reader a loop over hostile heads.
 
 ### The look
 
-The page uses the style sheet of the site, from the same procedure of the tool (`site_style_sheet` of `tools/modustool/site`): its colors come from the color tokens of the system, its light form follows `prefers-color-scheme`, its bar has the heron and the name of the mark. The tool makes it once at the start and keeps it. The font of the name and the pictures of the heron are files of the site, named by their address on the site.
+The page uses the style sheet of the site, from the same procedure of the tool (`site_style_sheet` of `tools/modustool/site`): its colors come from the color tokens of the system, its light form follows `prefers-color-scheme`, its bar has the heron and the name of the mark. The tool makes it once at the start and keeps it. The font of the name and the pictures of the heron are files of the site, named by their address on the site. A font of another host loads only when that host allows it: GitHub Pages sends `Access-Control-Allow-Origin: *` with each answer, and the proxy of Cloudflare passes it ([`docs/SITE.md`](../../../docs/SITE.md), "How the site is published"). A host of the site that does not send it gives a page whose name falls back to the monospace font in the same box.
 
 - **Refused: a style sheet written for the page.** It drifts from the site at the first change of a color.
 - **Refused: a link to the `style.css` of the site.** The page of one build then takes the classes of another build.
@@ -71,7 +81,7 @@ Each fact once, in this order:
 3. **The signer keys**: the hexadecimal form of each key of `--authorized-key` and `--signer-key`, whole. These are the keys whose uploads the host accepts. The page says that this list is no reason to trust a key: a client takes the key of a publisher from the publisher.
 4. **The endpoint and the protocol**: the endpoint, what the server speaks today (binary frames `MOCQ` and `MOCR` over TCP), a link to the entry "Object cache" of the glossary on the site, the lines of a substitution policy that name this host, and the command that runs an object cache of one's own.
 5. **The store now**: objects, realisations, bytes, free space, the last write, the start of the server.
-6. **The last 10 realisations**: the recipe hash, the output hash and its kind, the signer, the time. Each hash shows its first 12 digits; the whole value is in the `title` of its element and in `status.json`.
+6. **The last 10 realisations**: the recipe hash, the output hash and its kind, the signer, the time. Each hash shows its first 12 digits; the whole value is in the `title` of its element and in `status.json`. The column of the signer is shown only when the rows name more than one signer: with one, each row repeats one key, which the list of the keys already gives. The heads of the hash columns carry the icon of the kind Version, as the head of the column of the time carries the icon of Time: a column whose cells are all of one kind shows its icon once, in its head ([`docs/SITE.md`](../../../docs/SITE.md), "The kinds of values").
 
 The lines of the policy follow the fields of `Substitution` (`sources`, `signers`, `mode`; [../features/declarations.md](../features/declarations.md), "A record literal is typed by its use") and the table `keys` of the publisher keys that a principal trusts. The literal of a source is not fixed yet ("Open questions").
 
@@ -89,4 +99,4 @@ The lines of the policy follow the fields of `Substitution` (`sources`, `signers
 
 ## State
 
-Built: the listener of the page in `tools/modustool/cache_server` (`cache_status.odin`, `cache_status_http.odin`, `cache_status_page.odin`), the counts kept at each write, and host tests of each refusal of the reader and of the counts.
+Built: the listener of the page in `tools/modustool/cache_server` (`cache_status.odin`, `cache_status_http.odin`, `cache_status_page.odin`), the counts kept at each write, and host tests of each refusal of the reader, of the one deadline against a client that never reads and one that reads slowly, of the escape of each value of the page, and of the counts under a concurrent writer.

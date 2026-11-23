@@ -265,6 +265,7 @@ Site_Gallery_Excluded :: struct {
 }
 
 site_gallery_excluded := [?]Site_Gallery_Excluded {
+	{"public_object_cache.png", "A page of a host that runs modustool cache-serve, not a picture of the screen of the system: the news entry of the page of a public object cache shows it.", false},
 	{"pointers.png", "The repository does not hold this picture, and git ignores it: it shows a pointer theme whose license allows no commercial use. The folder of a developer has it after a test; the picture pointers_system shows the theme of the system.", true},
 }
 

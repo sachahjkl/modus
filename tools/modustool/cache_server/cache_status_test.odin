@@ -5,16 +5,18 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
+import "core:thread"
 import "core:time"
 import "modus:contract/blake3"
 import "modus:contract/object_cache"
 import "modustool:foundation"
 
-// A deadline for the head that a test can pass in a slow head, short so
-// that the test of the deadline ends soon. The tests assert the outcome,
-// never a time.
+// The deadline of the cases that must reach it: a head that never ends, a
+// client that never reads, a client that reads slowly. Every other case
+// runs under the hang bound, so no success depends on the speed of the
+// host. The tests assert the outcome, never a time.
 @(private = "file")
-TEST_DEADLINE :: 300 * time.Millisecond
+SHORT_DEADLINE :: 500 * time.Millisecond
 
 @(private = "file")
 Status_Test :: struct {
@@ -24,8 +26,12 @@ Status_Test :: struct {
 	endpoint:  net.Endpoint,
 }
 
+// status_test_start starts the page of a fresh store. A style sheet of a
+// test takes the place of the style sheet of the site before the thread
+// starts, so a test can make an answer larger than the buffers of the
+// system.
 @(private = "file")
-status_test_start :: proc(t: ^testing.T, authorized: [][object_cache.PUBLIC_KEY_SIZE]u8) -> ^Status_Test {
+status_test_start :: proc(t: ^testing.T, authorized: [][object_cache.PUBLIC_KEY_SIZE]u8, deadline := foundation.HANG_BOUND, style_sheet := "") -> ^Status_Test {
 	test := new(Status_Test)
 	test.directory = make_temp_store_dir(t)
 	open_ok: bool
@@ -38,7 +44,12 @@ status_test_start :: proc(t: ^testing.T, authorized: [][object_cache.PUBLIC_KEY_
 	testing.expect_value(t, bound_error, nil)
 	// The settings are values of this frame: the start keeps its own copy.
 	settings := Cache_Page_Settings{endpoint = strings.clone("cache.example:5010", context.temp_allocator), site_address = DEFAULT_SITE_ADDRESS}
-	test.running = cache_status_start(&test.server, settings, socket, TEST_DEADLINE)
+	test.running = cache_status_prepare(&test.server, settings, socket, deadline)
+	if style_sheet != "" {
+		delete(test.running.status_listener.style_sheet)
+		test.running.status_listener.style_sheet = strings.clone(style_sheet)
+	}
+	testing.expect(t, cache_status_run(test.running))
 	return test
 }
 
@@ -52,20 +63,17 @@ status_test_stop :: proc(test: ^Status_Test) {
 	free(test)
 }
 
-// status_exchange sends bytes on one connection, then reads the whole answer
-// until the server closes. With end_send, the client also ends its side.
 @(private = "file")
-status_exchange :: proc(t: ^testing.T, test: ^Status_Test, request: []u8, end_send := false) -> string {
+status_dial :: proc(t: ^testing.T, test: ^Status_Test) -> net.TCP_Socket {
 	client, dial_error := net.dial_tcp(test.endpoint)
 	testing.expect_value(t, dial_error, nil)
-	defer net.close(client)
 	_ = net.set_option(client, .Receive_Timeout, foundation.HANG_BOUND)
-	if len(request) > 0 {
-		testing.expect(t, tcp_write_all(client, request))
-	}
-	if end_send {
-		_ = net.shutdown(client, .Send)
-	}
+	return client
+}
+
+// status_read_to_end reads until the server closes or the hang bound.
+@(private = "file")
+status_read_to_end :: proc(client: net.TCP_Socket) -> string {
 	answer := strings.builder_make(context.temp_allocator)
 	buffer: [4096]u8
 	for {
@@ -76,6 +84,21 @@ status_exchange :: proc(t: ^testing.T, test: ^Status_Test, request: []u8, end_se
 		strings.write_bytes(&answer, buffer[:count])
 	}
 	return strings.to_string(answer)
+}
+
+// status_exchange sends bytes on one connection, then reads the whole answer
+// until the server closes. With end_send, the client also ends its side.
+@(private = "file")
+status_exchange :: proc(t: ^testing.T, test: ^Status_Test, request: []u8, end_send := false) -> string {
+	client := status_dial(t, test)
+	defer net.close(client)
+	if len(request) > 0 {
+		testing.expect(t, tcp_write_all(client, request))
+	}
+	if end_send {
+		_ = net.shutdown(client, .Send)
+	}
+	return status_read_to_end(client)
 }
 
 @(private = "file")
@@ -114,6 +137,7 @@ status_parse_refuses_each_malformed_head :: proc(t: ^testing.T) {
 		{"GET / HTTP/1.1\n\r\n", .Bad_Request},
 		{"GET / HTTP/1.1\r\r\n\r\n", .Bad_Request},
 		{"GET / HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n", .Bad_Request},
+		{"GET / HTTP/1.1\r\nX: a\r\n\r\nY: b\r\n\r\n", .Bad_Request},
 		// The request line.
 		{"GET\r\n\r\n", .Bad_Request},
 		{"GET /\r\n\r\n", .Bad_Request},
@@ -176,22 +200,27 @@ status_parse_refuses_each_malformed_head :: proc(t: ^testing.T) {
 
 @(test)
 status_page_settings_refuse_unsafe_values :: proc(t: ^testing.T) {
-	bad_endpoints := [?]string{"", ":5010", "cache.example", "cache example:5010", "cache.example:5010\r\nX: y", "<b>:1", "a\"b:1", "a;b:1", "a/b:1"}
+	bad_endpoints := [?]string{"", ":5010", "host:", ":::", "[::1]", "cache.example", "cache example:5010", "cache.example:5010\r\nX: y", "<b>:1", "a\"b:1", "a;b:1", "a/b:1", "a:0", "a:65536", "a:123456", "a:+1", "a:1a", "a:b:1", "[zz::1]:5010", "[]:5010", "[::1:5010", "a&b:1"}
 	for value in bad_endpoints {
 		testing.expectf(t, !cache_page_endpoint_valid(value), "endpoint %q", value)
 	}
-	bad_sites := [?]string{"", "modus.systems", "ftp://modus.systems", "https://", "https:///x", "https://a b", "https://a\"b", "https://a;b", "https://a'b", "https://a<b", "https://a?b", "https://a#b", "javascript:alert(1)", "https://a\x7fb"}
+	bad_sites := [?]string{"", "modus.systems", "ftp://modus.systems", "https://", "https:///x", "https://a b", "https://a\"b", "https://a;b", "https://a'b", "https://a<b", "https://a?b", "https://a#b", "https://a&b", "https://a\\b", "javascript:alert(1)", "https://a\x7fb", "https://a\xc3\xa9"}
 	for value in bad_sites {
 		testing.expectf(t, !cache_page_site_address_valid(value), "site %q", value)
 	}
+	// The edges of the port, last.
+	testing.expect(t, cache_page_endpoint_valid("a:1"))
+	testing.expect(t, cache_page_endpoint_valid("a:65535"))
 	testing.expect(t, cache_page_endpoint_valid("cache.modus.systems:5010"))
 	testing.expect(t, cache_page_endpoint_valid("[::1]:5010"))
-	testing.expect(t, cache_page_site_address_valid("https://modus.systems"))
+	testing.expect(t, cache_page_site_address_valid(DEFAULT_SITE_ADDRESS))
 	testing.expect(t, cache_page_site_address_valid("http://127.0.0.1:8000/site"))
 
 	// The command refuses them before it opens any store.
 	testing.expect_value(t, run_cache_serve([]string{"--dir", "/nonexistent", "--endpoint", "a b:1"}), foundation.EXIT_USAGE)
+	testing.expect_value(t, run_cache_serve([]string{"--dir", "/nonexistent", "--endpoint", "host:"}), foundation.EXIT_USAGE)
 	testing.expect_value(t, run_cache_serve([]string{"--dir", "/nonexistent", "--site", "https://a;b"}), foundation.EXIT_USAGE)
+	testing.expect_value(t, run_cache_serve([]string{"--dir", "/nonexistent", "--site", "https://a&b"}), foundation.EXIT_USAGE)
 	testing.expect_value(t, run_cache_serve([]string{"--dir", "/nonexistent", "--status-listen"}), foundation.EXIT_USAGE)
 }
 
@@ -216,16 +245,13 @@ status_reader_refuses_on_the_socket :: proc(t: ^testing.T) {
 	past_bound := strings.concatenate({at_bound_prefix, strings.repeat("q", STATUS_HEAD_BOUND - len(at_bound_prefix) - 3, context.temp_allocator), "\r\n\r\n"}, context.temp_allocator)
 	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes(past_bound))), "HTTP/1.1 431 Request Header Fields Too Large")
 
-	// A slow head that never ends: 408 after the deadline.
-	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET / HT"))), "HTTP/1.1 408 Request Timeout")
-	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET / HTTP/1.1\r\nHost: a\r\n"))), "HTTP/1.1 408 Request Timeout")
-	// A connection that sends nothing: 408 too.
-	testing.expect_value(t, answer_line(status_exchange(t, test, nil)), "HTTP/1.1 408 Request Timeout")
 	// A head with no end, then the client closes its side: no answer.
 	testing.expect_value(t, status_exchange(t, test, head_bytes("GET / HTTP/1.1\r\nHost: a\r\n"), end_send = true), "")
+	// A connection closed with nothing sent: no answer, and the thread goes on.
+	testing.expect_value(t, status_exchange(t, test, nil, end_send = true), "")
 
 	// A NUL byte, a byte past ASCII and a bare line feed end the read at
-	// once, before the deadline would: 400.
+	// once, with no wait for the end of the head: 400.
 	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET /\x00"))), "HTTP/1.1 400 Bad Request")
 	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET /\xff"))), "HTTP/1.1 400 Bad Request")
 	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET / HTTP/1.1\n"))), "HTTP/1.1 400 Bad Request")
@@ -248,12 +274,107 @@ status_reader_refuses_on_the_socket :: proc(t: ^testing.T) {
 	// A body: 400.
 	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET / HTTP/1.1\r\nContent-Length: 4\r\n\r\nabcd"))), "HTTP/1.1 400 Bad Request")
 
-	// Two requests on one connection: one answer, then the server closes.
+	// Two requests on one connection, and a second empty line after a
+	// header: the head ends at the first empty line, one answer comes, then
+	// the server closes.
 	answer = status_exchange(t, test, head_bytes("GET /style.css HTTP/1.1\r\n\r\nGET /status.json HTTP/1.1\r\n\r\n"))
 	testing.expect_value(t, strings.count(answer, "HTTP/1.1 "), 1)
 	testing.expect_value(t, answer_line(answer), "HTTP/1.1 200 OK")
 	testing.expect(t, strings.contains(answer, "\r\nContent-Type: text/css; charset=utf-8\r\n"))
 	testing.expect(t, strings.contains(answer, "\r\nConnection: close\r\n"))
+	answer = status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\nX: a\r\n\r\nPOST / HTTP/1.1\r\n\r\n"))
+	testing.expect_value(t, strings.count(answer, "HTTP/1.1 "), 1)
+	testing.expect_value(t, answer_line(answer), "HTTP/1.1 200 OK")
+	testing.expect(t, strings.contains(answer, "\r\nContent-Type: application/json\r\n"))
+}
+
+@(test)
+status_reader_times_out_a_head_that_does_not_end :: proc(t: ^testing.T) {
+	test := status_test_start(t, nil, SHORT_DEADLINE)
+	defer status_test_stop(test)
+	// A slow head that never ends, a head with no empty line, and a
+	// connection that sends nothing: 408 at the deadline.
+	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET / HT"))), "HTTP/1.1 408 Request Timeout")
+	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET / HTTP/1.1\r\nHost: a\r\n"))), "HTTP/1.1 408 Request Timeout")
+	testing.expect_value(t, answer_line(status_exchange(t, test, nil)), "HTTP/1.1 408 Request Timeout")
+}
+
+// The answer of the deadline tests: larger than the buffers of the system on
+// both sides of a loopback connection, so the write blocks on a reader that
+// does not read.
+@(private = "file")
+LARGE_ANSWER_BYTES :: 32 * 1024 * 1024
+
+@(private = "file")
+Slow_Reader :: struct {
+	socket:   net.TCP_Socket,
+	received: int,
+	// Set by the test when the next client got its answer: the bytes that
+	// the system queued on the side of the reader before the reset are not
+	// the subject of the test.
+	done:     bool,
+}
+
+@(test)
+status_one_deadline_frees_the_thread_from_a_slow_reader :: proc(t: ^testing.T) {
+	test := status_test_start(t, nil, SHORT_DEADLINE, strings.repeat("x", LARGE_ANSWER_BYTES, context.temp_allocator))
+	defer status_test_stop(test)
+
+	// A client that never reads. The next client is answered: the write to
+	// the first one ends at its deadline.
+	silent := status_dial(t, test)
+	defer net.close(silent)
+	_ = net.set_option(silent, .Receive_Buffer_Size, 4096)
+	testing.expect(t, tcp_write_all(silent, head_bytes("GET /style.css HTTP/1.1\r\n\r\n")))
+	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n"))), "HTTP/1.1 200 OK")
+
+	// A client that reads a few bytes at a time, never enough to stop a send
+	// for long. Its pace is the hostile input, not a wait of the test: the
+	// test waits only for the answer of the next client.
+	slow := Slow_Reader{socket = status_dial(t, test)}
+	defer net.close(slow.socket)
+	_ = net.set_option(slow.socket, .Receive_Buffer_Size, 4096)
+	testing.expect(t, tcp_write_all(slow.socket, head_bytes("GET /style.css HTTP/1.1\r\n\r\n")))
+	reader := thread.create_and_start_with_poly_data(&slow, proc(slow: ^Slow_Reader) {
+		buffer: [16]u8
+		for !sync.atomic_load(&slow.done) {
+			count, receive_error := net.recv_tcp(slow.socket, buffer[:])
+			if receive_error != .None || count == 0 {
+				return
+			}
+			slow.received += count
+			time.sleep(5 * time.Millisecond)
+		}
+	})
+	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n"))), "HTTP/1.1 200 OK")
+	sync.atomic_store(&slow.done, true)
+	thread.join(reader)
+	thread.destroy(reader)
+	// The server cut the answer of the slow reader at its deadline.
+	testing.expect(t, slow.received < LARGE_ANSWER_BYTES)
+}
+
+@(test)
+status_drain_ends_at_its_bound_and_at_the_deadline :: proc(t: ^testing.T) {
+	// The bound of the bytes: under the hang bound, only the bound of the
+	// drain frees the thread from a client that sends without end.
+	test := status_test_start(t, nil)
+	flood := status_dial(t, test)
+	request := strings.concatenate({"GET /status.json HTTP/1.1\r\n\r\n", strings.repeat("z", 1024 * 1024, context.temp_allocator)}, context.temp_allocator)
+	_ = tcp_write_all(flood, head_bytes(request))
+	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n"))), "HTTP/1.1 200 OK")
+	net.close(flood)
+	status_test_stop(test)
+
+	// A client silent after the answer, which keeps its side open: the drain
+	// ends at the deadline and the next client is answered.
+	short := status_test_start(t, nil, SHORT_DEADLINE)
+	defer status_test_stop(short)
+	quiet := status_dial(t, short)
+	defer net.close(quiet)
+	testing.expect(t, tcp_write_all(quiet, head_bytes("GET /status.json HTTP/1.1\r\n\r\n")))
+	testing.expect_value(t, answer_line(status_read_to_end(quiet)), "HTTP/1.1 200 OK")
+	testing.expect_value(t, answer_line(status_exchange(t, short, head_bytes("GET /status.json HTTP/1.1\r\n\r\n"))), "HTTP/1.1 200 OK")
 }
 
 @(private = "file")
@@ -366,6 +487,143 @@ status_counts_follow_each_write :: proc(t: ^testing.T) {
 }
 
 @(test)
+status_page_and_record_escape_each_value :: proc(t: ^testing.T) {
+	server := Cache_Server{root_directory = "/nonexistent/folder"}
+	hostile := Cache_Page_Settings {
+		endpoint     = "<script>alert(1)</script>&\"x'\n:1",
+		site_address = "https://a\"><script>alert(2)</script>&'",
+	}
+	snapshot: Cache_Status_Snapshot
+	page := cache_page_html(&server, hostile, snapshot, 0, false)
+	testing.expect(t, !strings.contains(page, "<script"))
+	testing.expect(t, strings.contains(page, "&lt;script&gt;alert(1)&lt;/script&gt;&amp;&quot;x&#39;"))
+	testing.expect(t, strings.contains(page, "https://a&quot;&gt;&lt;script&gt;alert(2)&lt;/script&gt;&amp;&#39;/"))
+	record := cache_status_json(&server, hostile, snapshot, 0, false)
+	testing.expect(t, strings.contains(record, "\"endpoint\": \"<script>alert(1)</script>&\\\"x'\\u000a:1\""))
+}
+
+@(test)
+status_free_space_is_kept_and_can_be_unknown :: proc(t: ^testing.T) {
+	directory := make_temp_store_dir(t)
+	defer {
+		_ = os.remove_all(directory)
+		delete(directory)
+	}
+	server := Cache_Server{root_directory = directory}
+	listener := Cache_Status_Listener{server = &server}
+	first, first_known := cache_status_disk_free(&listener)
+	testing.expect(t, first_known)
+	testing.expect(t, first > 0)
+	// Within its age the value is kept: no new call to the system.
+	listener.disk_free_bytes = 12345
+	kept, kept_known := cache_status_disk_free(&listener)
+	testing.expect_value(t, kept, 12345)
+	testing.expect(t, kept_known)
+	// Past its age it is read again.
+	listener.disk_free_read_at = time.Tick{}
+	again, again_known := cache_status_disk_free(&listener)
+	testing.expect(t, again_known)
+	testing.expect(t, again != 12345)
+
+	// A folder that does not exist: not known, on the page and in the record.
+	missing := Cache_Server{root_directory = "/nonexistent/folder"}
+	unknown_listener := Cache_Status_Listener{server = &missing}
+	_, unknown_known := cache_status_disk_free(&unknown_listener)
+	testing.expect(t, !unknown_known)
+	snapshot: Cache_Status_Snapshot
+	settings := Cache_Page_Settings{endpoint = "cache.example:5010", site_address = DEFAULT_SITE_ADDRESS}
+	testing.expect(t, strings.contains(cache_page_html(&missing, settings, snapshot, 0, false), "not known on this host"))
+	testing.expect(t, strings.contains(cache_status_json(&missing, settings, snapshot, 0, false), "\"disk_free_bytes\": null,"))
+}
+
+@(private = "file")
+CONCURRENT_PUT_COUNT :: 200
+
+@(private = "file")
+Concurrent_Writer :: struct {
+	server: ^Cache_Server,
+	t:      ^testing.T,
+}
+
+@(test)
+status_snapshots_while_another_thread_puts :: proc(t: ^testing.T) {
+	directory := make_temp_store_dir(t)
+	defer {
+		_ = os.remove_all(directory)
+		delete(directory)
+	}
+	_, public_key, _ := make_test_keypair(0x51)
+	authorized := [1][object_cache.PUBLIC_KEY_SIZE]u8{public_key}
+	server, open_ok := cache_server_open(directory, authorized[:])
+	testing.expect(t, open_ok)
+	defer cache_server_destroy(&server)
+
+	writer := Concurrent_Writer{server = &server, t = t}
+	worker := thread.create_and_start_with_poly_data(&writer, proc(writer: ^Concurrent_Writer) {
+		private_key, public_key, _ := make_test_keypair(0x51)
+		for index in 0 ..< CONCURRENT_PUT_COUNT {
+			payload := transmute([]u8)strings.repeat("p", index + 1, context.temp_allocator)
+			request := make_signed_put_object_request(.Blob, blake3.hash(payload), payload, &private_key, public_key)
+			frame := encode_req_alloc(writer.t, &request)
+			answer, _ := cache_server_handle_frame(writer.server, frame)
+			delete(answer)
+			delete(frame)
+		}
+	})
+	// Each copy is whole: the counts only grow, and the bytes match the
+	// objects (object n has n bytes).
+	last: u64 = 0
+	for !thread.is_done(worker) {
+		snapshot := cache_status_snapshot(&server.status)
+		testing.expect(t, snapshot.counts.objects >= last)
+		testing.expect_value(t, snapshot.counts.object_bytes, snapshot.counts.objects * (snapshot.counts.objects + 1) / 2)
+		last = snapshot.counts.objects
+	}
+	thread.join(worker)
+	thread.destroy(worker)
+	final := cache_status_snapshot(&server.status)
+	testing.expect_value(t, final.counts.objects, u64(CONCURRENT_PUT_COUNT))
+	testing.expect_value(t, final.counts.object_bytes, u64(CONCURRENT_PUT_COUNT * (CONCURRENT_PUT_COUNT + 1) / 2))
+}
+
+@(test)
+status_page_shows_the_signer_only_for_several_signers :: proc(t: ^testing.T) {
+	first_key, first_public, _ := make_test_keypair(0x41)
+	second_key, second_public, _ := make_test_keypair(0x42)
+	keys := [2][object_cache.PUBLIC_KEY_SIZE]u8{first_public, second_public}
+	server := Cache_Server{authorized_signers = make([dynamic][object_cache.PUBLIC_KEY_SIZE]u8, context.temp_allocator)}
+	append(&server.authorized_signers, ..keys[:])
+	settings := Cache_Page_Settings{endpoint = "cache.example:5010", site_address = DEFAULT_SITE_ADDRESS}
+	output := blake3.hash(transmute([]u8)string("output"))
+
+	// No row: no table, so no signer column.
+	empty: Cache_Status_Snapshot
+	testing.expect_value(t, cache_page_distinct_signers(empty.recent[:0]), 0)
+	testing.expect(t, !strings.contains(cache_page_html(&server, settings, empty, 0, false), ">Signer<"))
+
+	// Three rows of one signer: the key is in the list, not in each row.
+	one: Cache_Status_Snapshot
+	for index in 0 ..< 3 {
+		recipe := blake3.hash(transmute([]u8)strings.repeat("o", index + 1, context.temp_allocator))
+		one.recent[index] = Recent_Realisation{record = make_signed_realisation_record(recipe, output, .Blob, &first_key, first_public)}
+	}
+	one.recent_count = 3
+	testing.expect_value(t, cache_page_distinct_signers(one.recent[:one.recent_count]), 1)
+	one_page := cache_page_html(&server, settings, one, 0, false)
+	testing.expect(t, !strings.contains(one_page, ">Signer<"))
+	first_hex := hash_to_hex(first_public)
+	testing.expect_value(t, strings.count(one_page, string(first_hex[:CACHE_PAGE_HASH_DIGITS])), 1)
+
+	// A second signer in the rows: the column comes back.
+	two := one
+	recipe := blake3.hash(transmute([]u8)string("second"))
+	two.recent[3] = Recent_Realisation{record = make_signed_realisation_record(recipe, output, .Blob, &second_key, second_public)}
+	two.recent_count = 4
+	testing.expect_value(t, cache_page_distinct_signers(two.recent[:two.recent_count]), 2)
+	testing.expect(t, strings.contains(cache_page_html(&server, settings, two, 0, false), ">Signer<"))
+}
+
+@(test)
 status_answers_the_page_the_record_and_the_style_sheet :: proc(t: ^testing.T) {
 	private_key, public_key, _ := make_test_keypair(0x31)
 	authorized := [1][object_cache.PUBLIC_KEY_SIZE]u8{public_key}
@@ -409,6 +667,6 @@ status_answers_the_page_the_record_and_the_style_sheet :: proc(t: ^testing.T) {
 
 	style := status_exchange(t, test, head_bytes("GET /style.css HTTP/1.1\r\n\r\n"))
 	testing.expect_value(t, answer_line(style), "HTTP/1.1 200 OK")
-	testing.expect(t, strings.contains(answer_body(style), "url(\"https://modus.systems/fonts/"))
+	testing.expect(t, strings.contains(answer_body(style), strings.concatenate({"url(\"", DEFAULT_SITE_ADDRESS, "/fonts/"}, context.temp_allocator)))
 	testing.expect(t, !strings.contains(answer_body(style), "url(\"fonts/"))
 }

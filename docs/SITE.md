@@ -1895,7 +1895,7 @@ The domain:
 - The record at Cloudflare: `modus.froment.software`, a `CNAME` to `sachahjkl.github.io`, through the proxy of Cloudflare. Not verified here: GitHub Pages makes the certificate of a custom domain only when its check of the record sees GitHub, and the proxy hides it. The usual order: the record with no proxy until GitHub shows "Enforce HTTPS", then the proxy, with the TLS mode "Full (strict)" of Cloudflare.
 - The branch `gh-pages` that served the first version by hand is no longer read once the source is "GitHub Actions".
 
-The headers: GitHub Pages sends no header that a site chooses. The proxy of Cloudflare adds these to each answer for the host `modus.froment.software` (a rule that changes the headers of the response):
+The headers: GitHub Pages sends no header that a site chooses. It sends `Access-Control-Allow-Origin: *` with each answer, which lets the page of a public object cache take the font of the name from the site (`src/md/infrastructure/public_object_cache.md`). The proxy of Cloudflare adds these to each answer for the host `modus.froment.software` (a rule that changes the headers of the response):
 
 | Header | Value | Why |
 |---|---|---|

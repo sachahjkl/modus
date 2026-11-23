@@ -37,7 +37,10 @@ Cache_Status :: struct {
 	counts:       Store_Counts,
 	recent:       [RECENT_REALISATION_COUNT]Recent_Realisation,
 	recent_count: int,
+	// The date of the start, for the page; the monotonic time of the start,
+	// for the uptime, which a step of the date must not make negative.
 	started:      time.Time,
+	started_tick: time.Tick,
 }
 
 // A copy of the facts, taken under the lock, that the page and the status
@@ -47,6 +50,7 @@ Cache_Status_Snapshot :: struct {
 	recent:       [RECENT_REALISATION_COUNT]Recent_Realisation,
 	recent_count: int,
 	started:      time.Time,
+	started_tick: time.Tick,
 }
 
 @(private = "file")
@@ -113,6 +117,7 @@ cache_status_snapshot :: proc(status: ^Cache_Status) -> (snapshot: Cache_Status_
 	snapshot.recent = status.recent
 	snapshot.recent_count = status.recent_count
 	snapshot.started = status.started
+	snapshot.started_tick = status.started_tick
 	return snapshot
 }
 
@@ -137,12 +142,16 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 
 	for directory in ([2]Store_Directory{.Objects, .Realisations}) {
 		path := strings.concatenate({server.root_directory, "/", store_directory_name(directory)}, context.temp_allocator)
-		entries, read_error := os.read_all_directory_by_path(path, context.allocator)
-		if read_error != nil {
+		folder, open_error := os.open(path)
+		if open_error != nil {
 			return false
 		}
-		defer os.file_info_slice_delete(entries, context.allocator)
-		for entry in entries {
+		defer os.close(folder)
+		// One entry at a time: the memory of the listing does not grow with
+		// the folder.
+		iterator := os.read_directory_iterator_create(folder)
+		defer os.read_directory_iterator_destroy(&iterator)
+		for entry in os.read_directory_iterator(&iterator) {
 			if entry.type != .Regular || !hex_hash_valid(entry.name) || entry.size < 0 {
 				continue
 			}

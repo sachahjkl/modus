@@ -267,7 +267,7 @@ modustool run
 | `build` | Build the modules, the boot image and the boot program. One host process for each module, as many at once as the processors; `build <host_processes>` sets the count. A module or a boot volume whose inputs are the same as at its last build is kept; `build whole` builds all |
 | `module` | `module <name> with_checks\|without_checks with_debug_information\|without_debug_information [compile\|convert]`: build one module of the table, or run one of its two steps alone (the parallel build runs it for each step) |
 | `module-build` | `module-build <folder> [--system <folder>] [--out <folder>]`: build one module from a folder of another project, with its file `module.txt` ("Build a module of your own", below) |
-| `cache-serve` | `cache-serve --dir <folder> [--listen <host:port>] [--authorized-key <path>] [--status-listen <host:port>]`: serve an object cache of objects and signed realisations, and with `--status-listen` its page and `status.json` |
+| `cache-serve` | `cache-serve --dir <folder> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]`: serve an object cache of objects and signed realisations, and with `--status-listen` its page and `status.json` |
 | `module-disk` | `module-disk <disk file> <module file> ...`: write a data disk whose store of the module files holds the module files; a machine with that disk starts each one with `start_from_disk` |
 | `volume` | `volume <name>`: build one boot volume (the build runs it for each boot volume that it must build, several at once) |
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
