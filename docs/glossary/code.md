@@ -900,6 +900,16 @@ The design: `src/md/features/recipes.md`.
 
 Do not use: build result, cache entry, substitute.
 
+### Recipe object
+
+A recipe object is a blob that holds a recipe: the magic `MODRCP01`, then the canonical bytes over which its recipe hash is computed.
+
+A realisation names its recipe by hash only. A publisher puts the recipe object beside it, and a reader computes the recipe hash again from the blob alone, so the object needs no trust. An object cache keeps a copy under the recipe hash, so the page of a realisation shows the inputs of its recipe. One recipe has one object: inputs in another order are refused. It is not a realisation and not an output.
+
+The design: `src/md/infrastructure/cache_browser.md`, "A realisation and its recipe".
+
+Do not use: recipe file, recipe manifest, derivation.
+
 ### Builder
 
 A builder is a module that exports `build`, with a fixed contract, and writes the output of a recipe into its store "out".

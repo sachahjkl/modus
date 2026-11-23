@@ -224,11 +224,11 @@ a_cut_or_damaged_answer_is_refused_by_the_client :: proc(t: ^testing.T) {
 
 	// A kind and a status that name no member: 0, one past the last, the
 	// largest byte.
-	for word in ([3]u8{0, 6, 255}) {
+	for word in ([3]u8{0, u8(max(object_cache.Cache_Request_Kind)) + 1, 255}) {
 		unknown_kind := answer_head(word, u8(object_cache.Cache_Response_Status.Not_Found), 0)
 		testing.expect_value(t, fake_get_object(t, unknown_kind[:], asked), Cache_Client_Outcome.Damaged_Answer)
 	}
-	for word in ([3]u8{0, 8, 255}) {
+	for word in ([3]u8{0, u8(max(object_cache.Cache_Response_Status)) + 1, 255}) {
 		unknown_status := answer_head(u8(object_cache.Cache_Request_Kind.Get_Object), word, 0)
 		testing.expect_value(t, fake_get_object(t, unknown_status[:], asked), Cache_Client_Outcome.Damaged_Answer)
 	}
@@ -593,6 +593,19 @@ the_publication_of_a_release_on_loopback :: proc(t: ^testing.T) {
 	testing.expect_value(t, again_problem, "")
 	testing.expect_value(t, again.put, 0)
 	testing.expect_value(t, again.already_held, 3)
+
+	// A later release is published: a run of the job of this release again
+	// is done, and leaves the higher pointer.
+	later_number := again.release_number + 1
+	testing.expect_value(t, cache_publish_release_pointer(&client, &publisher_key, later_number, again.release_tree), "")
+	_, rerun_problem := cache_publish_release(&client, &publisher_key, image)
+	testing.expect_value(t, rerun_problem, "")
+	held, held_outcome := cache_client_get_release_pointer(&client, publisher, CACHE_RELEASE_POINTER_NAME)
+	testing.expect_value(t, held_outcome, Cache_Client_Outcome.Done)
+	testing.expect_value(t, held.number, later_number)
+	// The same number with another tree is refused, not taken as done.
+	other_tree := blake3.hash(transmute([]u8)string("another release tree"))
+	testing.expect(t, cache_publish_release_pointer(&client, &publisher_key, later_number, other_tree) != "")
 
 	// The check refuses another signer than the publisher.
 	_, wrong_signer := cache_verify_release(&client, stranger, image)

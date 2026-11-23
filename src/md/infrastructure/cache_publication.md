@@ -34,7 +34,8 @@ A key of its own, an Ed25519 key pair, separate from the signing key and from th
 ### What a release publishes
 
 1. **Each file of the release boot image** (`build/boot_volume_release.image`, the signed image of the release volume): each module and each resource, as a blob, under the BLAKE3 hash that its entry states, the hash by which the loader finds it. The tool checks each hash against the bytes before any upload: a damaged image uploads nothing. The resources are published too: a machine that takes a system by its hashes needs the system description and the start list as much as the modules.
-2. **The realisation of the cache test recipe**, its input and its output.
+2. **The realisation of the cache test recipe**, its recipe object, its input and its output.
+3. **The release tree and its signed release pointer**: a tree `files` naming each file of the boot image, a release tree naming `boot.image` (by hash) and `files`, and a signed `Release_Pointer` under the name `release` with the release number ([cache_browser.md](cache_browser.md), "The release pointers").
 
 The cache test recipe is a recipe of the inputs tree builder with one input: the blob `cache_test`, a fixed text of the tool ("modus object cache test v1"). Its output is a tree of one entry. The realisation says "this recipe gave this tree", signed with the cache signing key.
 
@@ -86,4 +87,4 @@ Built: the client, `cache-put`, `cache-get`, the cache test recipe, `key new cac
 
 The cache signing key of the publisher exists: its public key is `resources/keys/cache_signing_key.public`, its seed is in `secrets/production.yaml` and in the environment `cache`.
 
-Left: the `--authorized-key` of that public key in the deployment of `cache.modus.systems`, and the first publication by a release. Until the deployment authorises the key, the job `cache` fails with "the object cache does not authorise the key that signed the upload", and the release is published.
+Left: the `--authorized-key` of that public key in the deployment of `cache.modus.systems`, and the first publication by a release. The deployed `cache-serve` must also be upgraded to a build that knows `Put_Release_Pointer` before the next release: an older server refuses that request, and the job `cache` then fails after it put the files. Until the deployment authorises the key, the job `cache` fails with "the object cache does not authorise the key that signed the upload", and the release is published.

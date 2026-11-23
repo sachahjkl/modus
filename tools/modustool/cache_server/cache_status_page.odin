@@ -15,10 +15,6 @@ import "modustool:foundation"
 import "modustool:resources"
 import "modustool:site"
 
-// The digits of a hash that the page shows; the whole value is in the
-// title of its element and in the status record.
-CACHE_PAGE_HASH_DIGITS :: 12
-
 // The glossary group and the term that describe the cache protocol on the
 // site.
 CACHE_PAGE_GLOSSARY_GROUP :: "code"
@@ -45,11 +41,12 @@ cache_page_style_sheet :: proc(site_address: string, allocator := context.alloca
 	return strings.clone(replaced, allocator)
 }
 
-// cache_page_security_policy allows the style sheet of this host and the
-// pictures and the font of the site; the style sheet draws its icons from
-// data addresses. Nothing else loads, and no script runs.
+// cache_page_security_policy allows the style sheet and PNG previews of
+// this host, the pictures and the font of the site, and the GET form of
+// the search. The style sheet draws its icons from data addresses. Nothing
+// else loads, and no script runs.
 cache_page_security_policy :: proc(site_address: string) -> string {
-	return fmt.tprintf("default-src 'none'; style-src 'self'; img-src %s data:; font-src %s; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", site_address, site_address)
+	return fmt.tprintf("default-src 'none'; style-src 'self'; img-src 'self' %s data:; font-src %s; base-uri 'none'; form-action 'self'; frame-ancestors 'none'", site_address, site_address)
 }
 
 // cache_page_bytes_text gives a size in the binary units of the site.
@@ -86,19 +83,48 @@ time_known :: proc(moment: time.Time) -> bool {
 	return moment._nsec != 0
 }
 
-@(private = "file")
+// Which top-level page of the cache bar is current.
+Cache_Bar_Section :: enum u8 {
+	None,
+	Overview,
+	Releases,
+	Search,
+}
+
+@(private)
 time_write :: proc(b: ^strings.Builder, moment: time.Time) {
 	fmt.sbprintf(b, "<time class=\"value value-%s\" datetime=\"%s\">%s</time>", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Time], cache_page_time_attribute(moment), cache_page_time_shown(moment))
 }
 
-// A hash or a key: its first digits, the whole value in its title.
-@(private = "file")
+// A hash or a key, whole: its column of the kind Hash shows the digits
+// that it holds and the browser cuts the rest, so a copy of the cell takes
+// the whole value; the title shows it too.
+@(private)
 hash_write :: proc(b: ^strings.Builder, value: [32]u8) {
 	hex := hash_to_hex(value)
-	fmt.sbprintf(b, "<code class=\"value value-%s\" title=\"%s\">%s…</code>", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Version], string(hex[:]), string(hex[:CACHE_PAGE_HASH_DIGITS]))
+	fmt.sbprintf(b, "<code class=\"value value-%s\" title=\"%s\">%s</code>", value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Version], string(hex[:]), string(hex[:]))
 }
 
-@(private = "file")
+// A hash as a link to one of the fixed browse prefixes (/tree/, /blob/,
+// /realisation/). The href is formed from the validated 32-byte hash.
+@(private)
+hash_link_write :: proc(b: ^strings.Builder, path_prefix: string, value: [32]u8) {
+	hex := hash_to_hex(value)
+	fmt.sbprintf(b, "<a href=\"%s%s\" title=\"%s\"><code class=\"value value-%s\">%s</code></a>", path_prefix, string(hex[:]), string(hex[:]), value_kinds.VALUE_KIND_NAMES[value_kinds.Value_Kind.Version], string(hex[:]))
+}
+
+@(private)
+object_path_prefix :: proc(kind: object_cache.Cache_Object_Kind) -> string {
+	switch kind {
+	case .Blob:
+		return "/blob/"
+	case .Tree:
+		return "/tree/"
+	}
+	return "/blob/"
+}
+
+@(private)
 object_kind_text :: proc(kind: object_cache.Cache_Object_Kind) -> string {
 	switch kind {
 	case .Blob:
@@ -136,6 +162,53 @@ cache_page_html_text :: proc(text: string) -> string {
 	return strings.to_string(b)
 }
 
+// cache_page_start writes the head, the bar (the heron, the name, and the
+// links of this object cache) and the start of <main> for any page of this
+// host.
+@(private)
+cache_page_start :: proc(b: ^strings.Builder, page: Cache_Page_Settings, title: string, description: string, current: Cache_Bar_Section) {
+	site_html := cache_page_html_text(page.site_address)
+	pictures := strings.concatenate({site_html, "/", resources.SITE_PICTURE_FOLDER, "/"}, context.temp_allocator)
+
+	strings.write_string(b, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>")
+	foundation.html_escape(b, title)
+	strings.write_string(b, " - " + site.SITE_SYSTEM_NAME + "</title>\n<meta name=\"description\" content=\"")
+	foundation.html_escape(b, description)
+	strings.write_string(b, "\">\n<meta name=\"color-scheme\" content=\"dark light\">\n")
+	fmt.sbprintf(b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"%s\">\n", site.site_color(site.site_dark_colors().background))
+	fmt.sbprintf(b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"%s\">\n", site.site_color(site.site_light_colors().background))
+	fmt.sbprintf(b, "<link rel=\"icon\" href=\"%s/%s\" sizes=\"32x32\">\n", site_html, resources.SITE_FAVICON)
+	fmt.sbprintf(b, "<link rel=\"icon\" href=\"%s%s\" type=\"image/svg+xml\">\n", pictures, resources.SITE_ICON_SVG)
+	fmt.sbprintf(b, "<link rel=\"preload\" href=\"%s/%s\" as=\"font\" type=\"font/ttf\" crossorigin>\n", site_html, site.SITE_MARK_FONT)
+	fmt.sbprintf(b, "<link rel=\"stylesheet\" href=\"%s\">\n</head>\n", status_path_texts[.Style_Sheet])
+	strings.write_string(b, "<body class=\"section-cache layout-presentation\">\n<a class=\"skip\" href=\"#content\">Skip to the content</a>\n")
+
+	// The bar of the site: the heron and the name linking to the site, then
+	// the pages of this object cache.
+	strings.write_string(b, "<header class=\"bar\">\n<div class=\"bar-inner\">\n")
+	fmt.sbprintf(b, "<a class=\"bar-home\" href=\"%s/\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s%s\">", site_html, pictures, resources.SITE_MARK_BAR_LIGHT)
+	fmt.sbprintf(b, "<img src=\"%s%s\" width=\"24\" height=\"24\" alt=\"\"></picture>%s</a>\n", pictures, resources.SITE_MARK_BAR, site.SITE_MARK_NAME_HTML)
+	strings.write_string(b, "<nav class=\"bar-sections\" aria-label=\"Object cache\"><ul>")
+	bar_link :: proc(b: ^strings.Builder, href, label: string, active: bool) {
+		if active {
+			fmt.sbprintf(b, "<li><a href=\"%s\" aria-current=\"page\">%s</a></li>", href, label)
+		} else {
+			fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>", href, label)
+		}
+	}
+	bar_link(b, "/", "Overview", current == .Overview)
+	bar_link(b, "/releases", "Releases", current == .Releases)
+	bar_link(b, "/search", "Search", current == .Search)
+	strings.write_string(b, "</ul></nav>\n</div>\n</header>\n<main id=\"content\" class=\"page\">\n")
+}
+
+// cache_page_end closes <main> and writes the footer of the host.
+@(private)
+cache_page_end :: proc(b: ^strings.Builder) {
+	strings.write_string(b, "</main>\n<footer class=\"foot\">\n<div class=\"page\">\n<p class=\"foot-maker\">" + site.SITE_MARK_NAME_HTML + " · served by <code>modustool cache-serve</code></p>\n")
+	strings.write_string(b, "<p><a href=\"" + checks.REPOSITORY_ADDRESS + "\">The repository</a></p>\n</div>\n</footer>\n</body>\n</html>\n")
+}
+
 // cache_page_html writes the page from a copy of the facts. It reads no
 // file: the counts, the keys and the settings are in memory.
 cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapshot: Cache_Status_Snapshot, disk_free: u64, disk_free_known: bool) -> string {
@@ -147,31 +220,9 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 		foundation.html_escape(b, text)
 	}
 	site_address := page.site_address
-	// The address in its escaped form, for each attribute that names it: the
-	// command refuses a byte that HTML must escape, and the page does not
-	// rely on that.
-	site_html := cache_page_html_text(site_address)
-	pictures := strings.concatenate({site_html, "/", resources.SITE_PICTURE_FOLDER, "/"}, context.temp_allocator)
 
-	write(&b, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
-	write(&b, "<title>" + CACHE_PAGE_TITLE + " - " + site.SITE_SYSTEM_NAME + "</title>\n")
-	write(&b, "<meta name=\"description\" content=\"An object cache of modus: objects by their BLAKE3 hash and signed realisations of recipes. A client trusts a hash or a signer key, never this host.\">\n")
-	write(&b, "<meta name=\"color-scheme\" content=\"dark light\">\n")
-	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"%s\">\n", site.site_color(site.site_dark_colors().background))
-	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"%s\">\n", site.site_color(site.site_light_colors().background))
-	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s/%s\" sizes=\"32x32\">\n", site_html, resources.SITE_FAVICON)
-	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s%s\" type=\"image/svg+xml\">\n", pictures, resources.SITE_ICON_SVG)
-	fmt.sbprintf(&b, "<link rel=\"preload\" href=\"%s/%s\" as=\"font\" type=\"font/ttf\" crossorigin>\n", site_html, site.SITE_MARK_FONT)
-	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n</head>\n", status_path_texts[.Style_Sheet])
-	write(&b, "<body class=\"section-cache layout-presentation\">\n<a class=\"skip\" href=\"#content\">Skip to the content</a>\n")
-
-	// The bar of the site: the heron and the name, a link to the site.
-	write(&b, "<header class=\"bar\">\n<div class=\"bar-inner\">\n")
-	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s/\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s%s\">", site_html, pictures, resources.SITE_MARK_BAR_LIGHT)
-	fmt.sbprintf(&b, "<img src=\"%s%s\" width=\"24\" height=\"24\" alt=\"\"></picture>%s</a>\n", pictures, resources.SITE_MARK_BAR, site.SITE_MARK_NAME_HTML)
-	write(&b, "</div>\n</header>\n")
-
-	write(&b, "<main id=\"content\" class=\"page\">\n<h1>" + CACHE_PAGE_TITLE + "</h1>\n")
+	cache_page_start(&b, page, CACHE_PAGE_TITLE, "An object cache of modus: objects by their BLAKE3 hash and signed realisations of recipes. A client trusts a hash or a signer key, never this host.", .Overview)
+	write(&b, "<h1>" + CACHE_PAGE_TITLE + "</h1>\n")
 	write(&b, "<p class=\"lead\">modus is a modular operating system, sandboxed by default, in which each module is named by its hash: <a href=\"")
 	escape(&b, site_address)
 	write(&b, "/\">")
@@ -248,20 +299,23 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 		// name more than one.
 		rows := snapshot.recent
 		show_signer := cache_page_distinct_signers(rows[:snapshot.recent_count]) > 1
-		// Each hash column is of the kind Version, so its head carries the
-		// icon of the kind, as the Date column carries the icon of Time
-		// (docs/SITE.md, "The kinds of values").
-		with_signer := [?]site.Site_Column{{"Recipe", .Name}, {"Output", .Name}, {"Kind", .Short}, {"Signer", .Name}, {"Written", .Date}}
+		// Each hash column is of the column kind Hash, so the table takes
+		// the width of the card and each hash shows the digits that its
+		// column holds (docs/SITE.md, "The tables"). Its values are of the
+		// kind Version, so its head carries the icon of the kind, as the
+		// Date column carries the icon of Time (docs/SITE.md, "The kinds of
+		// values").
+		with_signer := [?]site.Site_Column{{"Recipe", .Hash}, {"Output", .Hash}, {"Kind", .Short}, {"Signer", .Hash}, {"Written", .Date}}
 		with_signer_kinds := [?]value_kinds.Value_Kind{.Version, .Version, .None, .Version, .None}
-		without_signer := [?]site.Site_Column{{"Recipe", .Name}, {"Output", .Name}, {"Kind", .Short}, {"Written", .Date}}
+		without_signer := [?]site.Site_Column{{"Recipe", .Hash}, {"Output", .Hash}, {"Kind", .Short}, {"Written", .Date}}
 		without_signer_kinds := [?]value_kinds.Value_Kind{.Version, .Version, .None, .None}
 		table := show_signer ? site.site_table_start(&b, "Last realisations", with_signer[:], with_signer_kinds[:]) : site.site_table_start(&b, "Last realisations", without_signer[:], without_signer_kinds[:])
 		for index in 0 ..< snapshot.recent_count {
 			entry := snapshot.recent[index]
 			write(&b, "<tr><td>")
-			hash_write(&b, entry.record.recipe_hash)
+			hash_link_write(&b, "/realisation/", entry.record.recipe_hash)
 			write(&b, "</td><td>")
-			hash_write(&b, entry.record.output_hash)
+			hash_link_write(&b, object_path_prefix(entry.record.output_kind), entry.record.output_hash)
 			fmt.sbprintf(&b, "</td><td>%s</td><td>", object_kind_text(entry.record.output_kind))
 			if show_signer {
 				hash_write(&b, entry.record.signer_public_key)
@@ -272,10 +326,8 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 		}
 		site.site_table_end(&b, table)
 	}
-	write(&b, "</section>\n</main>\n")
-
-	write(&b, "<footer class=\"foot\">\n<div class=\"page\">\n<p class=\"foot-maker\">" + site.SITE_MARK_NAME_HTML + " · served by <code>modustool cache-serve</code></p>\n")
-	write(&b, "<p><a href=\"" + checks.REPOSITORY_ADDRESS + "\">The repository</a></p>\n</div>\n</footer>\n</body>\n</html>\n")
+	write(&b, "</section>\n")
+	cache_page_end(&b)
 	return strings.to_string(b)
 }
 

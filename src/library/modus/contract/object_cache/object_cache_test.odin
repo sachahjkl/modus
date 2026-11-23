@@ -135,7 +135,7 @@ signing_bytes_domain_separation_and_edges :: proc(t: ^testing.T) {
 @(test)
 enum_borders_refuse_unknown_words :: proc(t: ^testing.T) {
 	// Edges: 0, valid members, one past max, 255, max u64.
-	for bad in ([]u64{0, 6, 7, 255, max(u64)}) {
+	for bad in ([]u64{0, 8, 9, 255, max(u64)}) {
 		_, ok := cache_request_kind_of_word(bad)
 		testing.expect(t, !ok)
 	}
@@ -369,8 +369,8 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 	}
 	bad_magic[4] = WIRE_VERSION
 
-	// Unknown request kind words: 0, 6, 255.
-	for bad_kind in ([]u8{0, 6, 255}) {
+	// Unknown request kind words: 0, one past the last kind, 255.
+	for bad_kind in ([]u8{0, 8, 255}) {
 		bad_magic[5] = bad_kind
 		_, kind_ref := decode_request(bad_magic)
 		testing.expect_value(t, kind_ref, Wire_Refusal.Bad_Request_Kind)

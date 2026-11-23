@@ -192,9 +192,9 @@ cache_client_answer_outcome :: proc(request_kind: object_cache.Cache_Request_Kin
 		// Only a get can find nothing: a Has or a put answered Not_Found is
 		// an answer that the protocol does not give.
 		switch request_kind {
-		case .Get_Object, .Get_Realisation:
+		case .Get_Object, .Get_Realisation, .Get_Release_Pointer:
 			return .Not_Found
-		case .Has, .Put_Object, .Put_Realisation:
+		case .Has, .Put_Object, .Put_Realisation, .Put_Release_Pointer:
 			return .Damaged_Answer
 		}
 		return .Damaged_Answer
@@ -432,4 +432,85 @@ cache_client_get_realisation :: proc(
 		return {}, check
 	}
 	return record, .Done
+}
+
+// cache_client_release_pointer_sign gives a release pointer signed by the
+// publisher: its key is the key of the pointer.
+cache_client_release_pointer_sign :: proc(
+	publisher: ^ed25519.Private_Key,
+	name: string,
+	number: u64,
+	tree: blake3.Hash,
+) -> (pointer: object_cache.Release_Pointer, ok: bool) {
+	public_key: [object_cache.PUBLIC_KEY_SIZE]u8
+	ed25519.private_key_public_bytes(publisher, public_key[:])
+	refusal: object_cache.Wire_Refusal
+	pointer, refusal = object_cache.release_pointer_make(public_key, name, number, tree)
+	if refusal != .None {
+		return {}, false
+	}
+	signing_bytes := object_cache.release_pointer_signing_bytes(&pointer) or_return
+	ed25519.sign(publisher, signing_bytes[:], pointer.signature[:])
+	return pointer, true
+}
+
+// cache_client_put_release_pointer puts one signed release pointer.
+cache_client_put_release_pointer :: proc(client: ^Cache_Client, pointer: object_cache.Release_Pointer) -> Cache_Client_Outcome {
+	request := object_cache.Cache_Request {
+		kind            = .Put_Release_Pointer,
+		release_pointer = pointer,
+	}
+	frame, _, outcome := cache_client_exchange(client, &request)
+	delete(frame)
+	return outcome
+}
+
+// cache_client_release_pointer_check keeps a pointer only when it is of the
+// publisher and the name asked, and its signature verifies with the key of
+// that publisher, the key that the caller gave.
+cache_client_release_pointer_check :: proc(
+	publisher: [object_cache.PUBLIC_KEY_SIZE]u8,
+	name: string,
+	pointer: ^object_cache.Release_Pointer,
+) -> Cache_Client_Outcome {
+	if !object_cache.hashes_equal_constant_time(pointer.publisher_public_key, publisher) {
+		return .Untrusted_Signer
+	}
+	if object_cache.release_pointer_name(pointer) != name {
+		return .Damaged_Answer
+	}
+	signing_bytes, signing_ok := object_cache.release_pointer_signing_bytes(pointer)
+	if !signing_ok {
+		return .Damaged_Answer
+	}
+	if !cache_server_verify_ed25519(publisher, signing_bytes[:], pointer.signature) {
+		return .Bad_Signature
+	}
+	return .Done
+}
+
+// cache_client_get_release_pointer gets the pointer of a publisher and a
+// name with the highest number, and checks it against that publisher.
+cache_client_get_release_pointer :: proc(
+	client: ^Cache_Client,
+	publisher: [object_cache.PUBLIC_KEY_SIZE]u8,
+	name: string,
+) -> (pointer: object_cache.Release_Pointer, outcome: Cache_Client_Outcome) {
+	if len(name) == 0 || len(name) > object_cache.RELEASE_POINTER_NAME_CAPACITY {
+		return {}, .Bad_Request
+	}
+	request := object_cache.Cache_Request{kind = .Get_Release_Pointer}
+	request.release_pointer.publisher_public_key = publisher
+	request.release_pointer.name_length = u8(len(name))
+	copy(request.release_pointer.name[:], name)
+	frame, response, exchange_outcome := cache_client_exchange(client, &request)
+	defer delete(frame)
+	if exchange_outcome != .Done {
+		return {}, exchange_outcome
+	}
+	pointer = response.release_pointer
+	if check := cache_client_release_pointer_check(publisher, name, &pointer); check != .Done {
+		return {}, check
+	}
+	return pointer, .Done
 }
