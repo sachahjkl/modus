@@ -206,6 +206,8 @@ resize_surface_take :: proc "contextless" (client: ^Client) {
 		system.log_fact(.Info, Window_Resized{old_width = u64(old_width), old_height = u64(old_height), width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
 	}
 	desktop_restore_size_after_answer(client) // desktop_features.odin
+	// A fit that grows the window waits for this surface at the new scale.
+	window_fit_after_scale(client) // scale.odin
 }
 
 // surface_release_take takes the record Surface_Release of a window

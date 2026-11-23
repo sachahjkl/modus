@@ -12,6 +12,22 @@ terminal_at :: proc(x, y, width, height: int) -> Fit_Window {
 	return {x = x, y = y, width = width, height = height, chrome_width = 2, chrome_height = 41, limits = {least_width = 200, least_height = 120, largest_width = 1600, largest_height = 900}, resizable = true}
 }
 
+// The order of the fit and of the scale: a fit that grows on either axis,
+// by one pixel too, comes after the rescale; the same size and a smaller
+// one come before it. The maximized terminal from 2 back to 1.25 grows
+// from 958 x 467 to 1534 x 791: the scale first.
+@(test)
+a_fit_that_grows_comes_after_the_scale :: proc(t: ^testing.T) {
+	testing.expect_value(t, fit_order(958, 467, 1534, 791), Fit_Order.Scale_First)
+	testing.expect_value(t, fit_order(958, 467, 959, 467), Fit_Order.Scale_First)
+	testing.expect_value(t, fit_order(958, 467, 958, 468), Fit_Order.Scale_First)
+	testing.expect_value(t, fit_order(958, 467, 900, 468), Fit_Order.Scale_First)
+	testing.expect_value(t, fit_order(0, 0, max(int), max(int)), Fit_Order.Scale_First)
+	testing.expect_value(t, fit_order(958, 467, 958, 467), Fit_Order.Fit_First)
+	testing.expect_value(t, fit_order(1534, 791, 958, 467), Fit_Order.Fit_First)
+	testing.expect_value(t, fit_order(max(int), max(int), 0, 0), Fit_Order.Fit_First)
+}
+
 // A window larger than the work area first: the terminal maximized at
 // 1.25, 1536 x 792 under its frame, gets the size that fits the work area
 // at 2, and its corner at the top left of it.

@@ -3093,12 +3093,14 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(scale = .ten_eighths)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
 	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
-	// The fit before a new scale (src/md/features/window_resize.md, "The
-	// fit before a new scale"): the console maximized at 1.25 is 1536 x
-	// 792 logical pixels, whose surface at 2 its budget does not pay. The
-	// compositor fits it into the work area of 2 before it names the scale,
-	// so the console shows a surface at 2 and declines nothing: a decline
-	// fails the step. Then 1.25 again, and the restore.
+	// The fit at a new scale (src/md/features/window_resize.md, "The fit at
+	// a new scale"): the console maximized at 1.25 is 1532 x 806 logical
+	// pixels, whose surface at 2 its budget does not pay. The compositor
+	// fits it into the work area of 2, 956 x 482, before it names the
+	// scale, so the console shows a surface at 2 and declines nothing: a
+	// decline fails the step. Back at 1.25 the fit grows it, so it comes
+	// after the rescale: the console takes its maximized size again, and a
+	// surface that its budget does not pay fails the step. Then the restore.
 	{kind = .Front, text = "console"},
 	{kind = .Key, text = "ctrl-shift-up"},
 	{kind = .Wait, text = "compositor: window console maximized"},
@@ -3108,6 +3110,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = " windows shows a surface at 16 eighths", fails_on = "declined the scale"},
 	{kind = .Call, text = "settings.set(scale = .ten_eighths)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
+	// The console takes its maximized size before or after the last window
+	// shows its surface at 1.25: the wait does not move the place.
+	{kind = .Wait, text = "compositor: window console resized from 956x482 to 1532x806", any_order = true, fails_on = "no surface of"},
 	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
 	{kind = .Key, text = "ctrl-shift-up"},
 	{kind = .Wait, text = "compositor: window console restored"},

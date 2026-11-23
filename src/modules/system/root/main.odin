@@ -1205,7 +1205,11 @@ control_ring_serve :: proc "contextless" () {
 		case .Start:
 			// The desktop starts a process in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
-			start(system.name_of(name[:]), desktop_principal())
+			if system.name_of(name[:]) == "settings" {
+				settings_window_start(desktop_principal()) // text_settings.odin: waits for a pass that runs
+			} else {
+				start(system.name_of(name[:]), desktop_principal())
+			}
 		case .Stop:
 			for &item in started {
 				if item.process != 0 && item.client == system.Handle(record.values[0]) {

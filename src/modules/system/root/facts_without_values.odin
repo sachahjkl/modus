@@ -20,6 +20,9 @@ Settings_Raise_Ring_Full :: struct {}
 @(log_fact = "root: a pass of settings is refused: another process settings runs, and it is the one writer of the settings page")
 Settings_Pass_Refused_Settings_Runs :: struct {}
 
+@(log_fact = "root: the start of settings is refused: a pass of settings runs, and it is the one writer of the settings page; only a start of the desktop waits for its end")
+Settings_Start_Refused_Pass_Runs :: struct {}
+
 @(log_fact = "root: the start of settings waits: a pass of settings runs, and it is the one writer of the settings page; the window starts when the pass stops")
 Settings_Start_Waits_For_Pass :: struct {}
 

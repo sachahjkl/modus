@@ -102,7 +102,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	defer start_handles_close(&work)
 	// The process `settings` is the one writer of the settings page: each
 	// start of it, by any caller, is decided here (text_settings.odin).
-	if name == "settings" && !settings_start_allowed(principal) {
+	if name == "settings" && settings_start_decide(principal, .Other) != .Start {
 		return .Bad_State
 	}
 	// The handles of the start are free before any is made: the table of

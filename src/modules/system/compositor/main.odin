@@ -202,13 +202,15 @@ Client :: struct {
 	// the scale while that scale is in force and it is released.
 	declined:       bool,
 	declined_scale: scale_factor.Scale,
-	// The fit before a new scale (window_resize.md, "The fit before a new
-	// scale"): scale_due holds the scale in force for this window until its
+	// The fit at a new scale (window_resize.md, "The fit at a new scale"): scale_due holds the scale in force for this window until its
 	// fit request ends; fit_due says that the fit to the newest work area is
 	// not asked yet; scale_told is the scale of the last Settings_Changed.
 	scale_due:  bool,
 	fit_due:    bool,
 	scale_told: scale_factor.Scale,
+	// A fit that grows the window waits for its surface at the new scale
+	// (bar.fit_order): window_fit_after_scale takes it.
+	fit_after_scale: bool,
 	answer_due:  bar.Answer_Slot, // A Surface_Answer that the full ring of the window did not take (window_events.odin).
 	shown:       int, // The picture that surface is: the one that the last Present named.
 	// The proof that the window shows whole frames: the frames that read a
