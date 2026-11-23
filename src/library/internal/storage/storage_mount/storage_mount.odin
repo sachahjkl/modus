@@ -324,6 +324,7 @@ Mount :: struct {
 	larger_than_capacity: bool, // The root names more blocks than the tables hold, and no complete count tree: no root is usable with this memory.
 	count_tree_damaged:   bool, // The count tree of the root has a wrong page: the commits make a new one.
 	no_memory:            bool, // The budget paid neither form of the open: the service said so.
+	older_format:         bool, // A root of the format of an older release, which this release does not read: the open refuses the disk whole.
 	count_leaves_differ:  u64, // The leaves of the count tree that do not hold the counts of the walk: the commits write them.
 	// Roots of current objects whose store has another root with the same
 	// first 8 bytes of hash and the same size: two copies of one object,
@@ -1843,6 +1844,8 @@ mount :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk_blocks: 
 				}
 			} else if candidates[index].magic == format.ROOT_MAGIC {
 				result.cut = candidates[index].generation
+			} else if candidates[index].magic == format.OLDER_ROOT_MAGIC {
+				result.older_format = true
 			}
 			continue
 		}
@@ -1862,6 +1865,9 @@ mount :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk_blocks: 
 		result.failed = true
 		return result
 	}
+	// A disk with a root of an older release and a root of this one: the
+	// newest root of this release opens, and the older root is no state.
+	result.older_format = false
 	if result.wrong != 0 && walked != first {
 		if !walk(state, reader, &candidates[first], &result) {
 			result.failed = true

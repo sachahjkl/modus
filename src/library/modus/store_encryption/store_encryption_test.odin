@@ -88,47 +88,95 @@ a_name_tag_names_one_store_of_one_principal :: proc(t: ^testing.T) {
 	testing.expect(t, notes_first != other_first, "two names share a tag")
 }
 
-// The nonce refuses the generation 0, and two writes never share one: a
-// block number and a generation are each a whole field, so no two pairs
-// give one nonce, at the edges too.
+@(private = "file")
+test_keys :: proc(first: u8) -> Store_Keys {
+	keys, _ := store_keys_of(filled(Key, first), filled(principals.Principal_Identifier, 40), filled(Salt, 90))
+	return keys
+}
+
+// The nonce: two blocks or two checks give two nonces, the same pair the
+// same nonce, and another key another nonce, at the edges of each field.
 @(test)
-two_writes_never_share_a_nonce :: proc(t: ^testing.T) {
-	_, ok := block_nonce(5, 0)
-	testing.expect(t, !ok)
-	pairs := [?][2]u64{{0, 1}, {1, 1}, {0, 2}, {1, 2}, {max(u64), 1}, {1, max(u64)}, {max(u64), max(u64)}, {1 << 32, 1}, {1, 1 << 32}}
+the_nonce_follows_the_block_the_check_and_the_key :: proc(t: ^testing.T) {
+	keys := test_keys(1)
+	other := test_keys(2)
+	pairs := [?][2]u64{{0, 0}, {1, 0}, {0, 1}, {max(u64), 0}, {0, max(u64)}, {1 << 32, 1}, {1, 1 << 32}}
 	for first, i in pairs {
-		a, a_ok := block_nonce(first[0], first[1])
-		testing.expect(t, a_ok)
-		for byte in a[16:] {
-			testing.expect(t, byte == 0, "the last 8 bytes are zero")
-		}
+		a := block_nonce(&keys, first[0], first[1])
+		testing.expect(t, a == block_nonce(&keys, first[0], first[1]))
+		testing.expect(t, a != block_nonce(&other, first[0], first[1]), "two keys share a nonce")
 		for second, j in pairs {
-			if i == j {
-				continue
+			if i != j {
+				testing.expectf(t, a != block_nonce(&keys, second[0], second[1]), "%v and %v share a nonce", first, second)
 			}
-			b, _ := block_nonce(second[0], second[1])
-			testing.expectf(t, a != b, "%v and %v share a nonce", first, second)
 		}
 	}
 }
 
-// The tag of a node changes with one bit of its bytes, with its place,
-// with its generation and with the key.
+// A node opens only under its key, at its block, with its check, and with
+// each of its bits: each refusal erases the bytes. The round trip last.
 @(test)
-the_tag_of_a_node_binds_its_bytes_its_place_and_its_key :: proc(t: ^testing.T) {
-	key := filled(Key, 7)
-	bytes: [64]u8
-	for index in 0 ..< len(bytes) {
-		bytes[index] = u8(index * 3)
+a_node_opens_only_as_it_was_sealed :: proc(t: ^testing.T) {
+	keys := test_keys(1)
+	other := test_keys(2)
+	clear := new(Block)
+	defer free(clear)
+	for index in 0 ..< BLOCK_SIZE {
+		clear[index] = u8(index * 7)
 	}
-	tag := node_tag(key, 10, 4, bytes[:])
-	flipped := bytes
-	flipped[63] ~= 1
-	testing.expect(t, node_tag(key, 10, 4, flipped[:]) != tag)
-	testing.expect(t, node_tag(key, 11, 4, bytes[:]) != tag)
-	testing.expect(t, node_tag(key, 10, 5, bytes[:]) != tag)
-	other := key
-	other[0] ~= 1
-	testing.expect(t, node_tag(other, 10, 4, bytes[:]) != tag)
-	testing.expect(t, node_check(key, 10, 4, bytes[:]) != node_check(key, 10, 4, flipped[:]))
+	sealed := new(Block)
+	defer free(sealed)
+	sealed^ = clear^
+	check := node_seal(&keys, 10, sealed)
+	testing.expect(t, sealed^ != clear^, "the sealed node is its clear bytes")
+	trial := new(Block)
+	defer free(trial)
+	refusals := [?]struct {
+		keys:  ^Store_Keys,
+		block: u64,
+		check: u64,
+		flip:  int,
+	}{{&other, 10, check, -1}, {&keys, 11, check, -1}, {&keys, 10, check ~ 1, -1}, {&keys, 10, check, 0}, {&keys, 10, check, BLOCK_SIZE - 1}}
+	for refusal in refusals {
+		trial^ = sealed^
+		if refusal.flip >= 0 {
+			trial[refusal.flip] ~= 1
+		}
+		testing.expect(t, !node_open(refusal.keys, refusal.block, refusal.check, trial), "a node opened as it was not sealed")
+		testing.expect(t, trial^ == Block{}, "a refused node kept bytes")
+	}
+	trial^ = sealed^
+	testing.expect(t, node_open(&keys, 10, check, trial))
+	testing.expect(t, trial^ == clear^)
+}
+
+// A block of data: the encryption changes it, the decryption under the
+// same key, block and check gives it back, and any other one does not.
+@(test)
+a_block_of_data_decrypts_only_as_it_was_encrypted :: proc(t: ^testing.T) {
+	keys := test_keys(1)
+	other := test_keys(2)
+	clear := new(Block)
+	defer free(clear)
+	for index in 0 ..< BLOCK_SIZE {
+		clear[index] = u8(index)
+	}
+	bytes := new(Block)
+	defer free(bytes)
+	bytes^ = clear^
+	data_encrypt(&keys, 20, 99, bytes)
+	testing.expect(t, bytes^ != clear^)
+	encrypted := bytes^
+	for wrong in ([?]struct {
+		keys:  ^Store_Keys,
+		block: u64,
+		check: u64,
+	}{{&other, 20, 99}, {&keys, 21, 99}, {&keys, 20, 98}}) {
+		bytes^ = encrypted
+		data_decrypt(wrong.keys, wrong.block, wrong.check, bytes)
+		testing.expect(t, bytes^ != clear^, "a block of data decrypted under another key, block or check")
+	}
+	bytes^ = encrypted
+	data_decrypt(&keys, 20, 99, bytes)
+	testing.expect(t, bytes^ == clear^)
 }

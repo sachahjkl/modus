@@ -1,7 +1,9 @@
 package root
 
+import "base:intrinsics"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
+import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/system_description"
 import "modus:principals"
@@ -353,6 +355,65 @@ principal_identifier :: proc "contextless" (values: [7]u64, completion: ^[7]u64)
 	return .Succeeded
 }
 
+// storage_holder gives the process that holds the role Storage, or nil.
+storage_holder :: proc "contextless" () -> ^Started {
+	for &item in started {
+		if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
+			return &item
+		}
+	}
+	return nil
+}
+
+// principal_storage_key passes the storage key of a named principal from
+// `unlock` to the holder of Storage, with its identifier, and keeps no copy
+// (src/md/features/store_encryption.md, "The keys"). values[0..3] the key,
+// values[4] the number; this service erases them.
+principal_storage_key :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Principal_Storage_Key)
+	defer intrinsics.mem_zero_volatile(values, size_of(values^))
+	number := values[4]
+	for index in 5 ..< len(values) {
+		if values[index] != 0 {
+			completion^ = root_ring.word_refusal(.Principal_Storage_Key, i64(index) + 1, values[index], 0)
+			return .Argument_Refused
+		}
+	}
+	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent || principal_records[number].state == .Creating || principals.identifier_is_zero(principal_records[number].identifier[:]) {
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 5, i64(min(number, 1 << 62)))
+	}
+	if values[0] == 0 && values[1] == 0 && values[2] == 0 && values[3] == 0 {
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Empty, .Bytes, 1)
+	}
+	holder := storage_holder()
+	if holder == nil {
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Services)
+	}
+	// The identity first: a key with no identity before it is refused by
+	// the storage service, and an identity with no key opens nothing. A full
+	// ring refuses the unlock, which `unlock` says.
+	identifier := transmute([4]u64)principal_records[number].identifier
+	if !system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Identity), values = {identifier[0], identifier[1], identifier[2], identifier[3], number, 0, 0}}) ||
+	   !system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Storage_Key), values = {values[0], values[1], values[2], values[3], number, 0, 0}}) {
+		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
+	}
+	return .Succeeded
+}
+
+// storage_principal_locked tells the holder of Storage that the session of
+// a principal ended: it erases its keys. A full ring is said, never
+// dropped in silence; the storage service also serves no store of the
+// principal past the lock, as its processes stopped.
+storage_principal_locked :: proc "contextless" (number: u64) {
+	holder := storage_holder()
+	if holder == nil {
+		return
+	}
+	if !system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Locked), values = {4 = number}}) {
+		system.log_fact(.Warning, Storage_Lock_Not_Sent{principal = number})
+	}
+}
+
 // principal_unlock starts the session of a named principal: from now on the
 // desktop starts each process in it. values[4] is its number; values[0..3]
 // and values[5] are the key of the tag of its disk grant table and its
@@ -420,6 +481,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> call_outcome.Call_
 	}
 	session_change(number, .Locked)
 	seat_change(.Session_Locked, number)
+	storage_principal_locked(number)
 	// A call from another machine acts for no principal whose session is
 	// locked: the connections of its client keys end.
 	remote_clients_session_changed(number, true)

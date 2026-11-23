@@ -677,9 +677,21 @@ store_cell :: proc "contextless" (index: int) -> ^Store_Entry {
 	return storage_mount.store_cell(&opened, index)
 }
 
-// store_name_of gives the name of the store of a number.
+// store_name_of gives the name of the store of a number. A store of a
+// named principal keeps a name tag only: it is said as such, and its name
+// comes from the caller (plan_store_name) or its keys (owned_name_into).
 store_name_of :: proc "contextless" (index: int) -> string {
+	if store_cell(index).name[0] == format.OWNED_CELL_MARK {
+		return "(a store of a named principal)"
+	}
 	return system.name_of(store_cell(index).name[:])
+}
+
+// The name of the store of the plan, as the caller named it.
+plan_store_name_bytes: system.Name
+
+plan_store_name :: proc "contextless" () -> string {
+	return system.name_of(plan_store_name_bytes[:])
 }
 
 // store_listed says if a number names a store that the service serves: a
@@ -689,9 +701,15 @@ store_listed :: proc "contextless" (index: int) -> bool {
 	return !opened.store_page_damaged[page] && store_cell(index).name[0] != 0
 }
 
+// store_find gives the store of a name: a store of a named principal by
+// its name tag, with the keys of that principal (owned_stores.odin), a
+// store of principal 0 by its name.
 store_find :: proc "contextless" (name: string) -> int {
+	if slot := owned_slot(name); slot != 0 {
+		return owned_find(slot, name)
+	}
 	for index in 0 ..< store_numbers() {
-		if store_listed(index) && store_name_of(index) == name {
+		if store_listed(index) && !owned_cell(index) && store_name_of(index) == name {
 			return index
 		}
 	}
@@ -1012,6 +1030,15 @@ plan_reset :: proc "contextless" (store_index: int) {
 	later_count = 0
 	plan.next = root
 	plan.store_block = store_index >= 0 ? storage_mount.store_block_of(store_blocks[store_index]) : {}
+	// The head keeps no owner fields: the commit of a store of a principal
+	// keeps those of its store block (owned_stores.odin).
+	if store_index >= 0 && store_index < store_numbers() && owned_cell(store_index) {
+		if owner, read := owned_fields_read(store_index); read {
+			format.store_owner_set(&plan.store_block, owner)
+		} else {
+			plan.device = true
+		}
+	}
 	plan.page_written = {}
 	if store_index >= 0 {
 		page, _ := format.store_place(store_index)
@@ -2349,7 +2376,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 	// has a writable share of a tree open, a new root is hidden: never a
 	// candidate, so the holder cannot plant bytes that a later write of the
 	// maker would find (docs/STORAGE.md, "4.7 The same object one time").
-	hidden := writable_tree_share_open(store_name_of(plan.store_index))
+	hidden := writable_tree_share_open(plan_store_name())
 	for &item in plan.entries[:plan.entry_count] {
 		storage_mount.hash_index_entry_change(&opened, item.before, item.entry, item.gone, hidden)
 	}

@@ -478,6 +478,40 @@ blocks_field :: proc "contextless" (count: u64) -> value_kinds.Size_In_Blocks {
 	return value_kinds.Size_In_Blocks(count)
 }
 
+// A cell with the name tag of a store of a principal whose store block
+// names another owner or another key check: the store is not served.
+@(log_fact = "storage: the store {store} has the name tag of a store of the principal in slot {slot}, and another owner or key check: it is not served")
+Owned_Store_Refused :: struct {
+	store: u64,
+	slot:  u64,
+}
+
+// The disk has the format of an older release: the service reads nothing
+// of it, and changes nothing.
+@(log_fact = "storage: the data disk has the format of an older release of modus, which this release does not read: write the data disk again")
+Disk_Of_An_Older_Format :: struct {}
+
+// The root service sent a key of a principal that this service refuses: a
+// slot that names no named principal, a key before its identity, or zero
+// bytes. The codes are of isolated.Service_Command.
+@(log_fact = "storage: the keys of the principal in slot {slot} were refused, command {command_code}: no store of that principal opens with them")
+Principal_Keys_Refused :: struct {
+	slot:         u64,
+	command_code: u64,
+}
+
+// The storage key of a principal came at its unlock.
+@(log_fact = "storage: the keys of the principal in slot {slot} are held while its session runs")
+Principal_Keys_Taken :: struct {
+	slot: u64,
+}
+
+// The lock of a principal: its keys are erased.
+@(log_fact = "storage: the keys of the principal in slot {slot} are erased: its session ended")
+Principal_Keys_Erased :: struct {
+	slot: u64,
+}
+
 // milliseconds_field gives a time in milliseconds as a field with its unit.
 milliseconds_field :: proc "contextless" (milliseconds: u64) -> value_kinds.Time_In_Milliseconds {
 	return value_kinds.Time_In_Milliseconds(milliseconds)

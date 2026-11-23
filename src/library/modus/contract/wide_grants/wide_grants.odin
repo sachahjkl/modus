@@ -58,6 +58,11 @@ GENESIS_PREVIOUS_HASH :: blake3.Hash{}
 SERVICE_RING_SLOT :: 10
 SERVICE_REGION_SLOT :: 11
 CONTEXT_VALUE_PRINCIPAL_SLOT :: 4
+// At the start of a collector, the region of its ring holds the principal
+// identifier of its principal in its first 32 bytes, which the root service
+// wrote before the start; all zero for principal 0, which has none. The
+// collector copies it before its first request, which writes over it.
+COLLECTOR_REGION_IDENTIFIER_AT :: 0
 CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT :: 5
 CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT :: 4
 

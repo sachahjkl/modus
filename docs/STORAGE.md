@@ -119,13 +119,14 @@ The model of section 1 is the direction; the service of today builds a part of i
 
 Built. The disk is blocks of 4096 bytes. A root block names each store; a store names one tree; a tree is a B+ tree of entries; an entry names an object, whose bytes are a tree of blocks. Nothing on the disk is written in place: a commit writes new blocks, then switches the root block, so a loss of power leaves the state before or after the commit, never a mix.
 
-The format is the contract `src/library/modus/contract/store`, `STORAGE6`. A disk of an earlier format is not read: `STORAGE5` had no count tree, and `STORAGE4` had the stores in 60 cells of the root block and names of 64 bytes.
+The format is the contract `src/library/modus/contract/store`, `STORAGE7`. A disk of an earlier format is not read: the open of a disk of `STORAGE6`, which had no owner in a store block, stops with "storage: the data disk has the format of an older release of modus, which this release does not read: write the data disk again"; `STORAGE5` had no count tree, and `STORAGE4` had the stores in 60 cells of the root block and names of 64 bytes.
 
 ### 3.1 The blocks
 
-- **Root block** (`Root` of `src/library/modus/contract/store`): the mark `STORAGE6`, the generation, the count of blocks of the disk, the time since the format, the date, the pointer of the top directory of the count tree and whether that tree holds each count (`counts_complete`), and the pointers of the pages of the store table. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
+- **Root block** (`Root` of `src/library/modus/contract/store`): the mark `STORAGE7`, the generation, the count of blocks of the disk, the time since the format, the date, the pointer of the top directory of the count tree and whether that tree holds each count (`counts_complete`), and the pointers of the pages of the store table. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
 - **Store table page** (`Store_Table_Page`): 63 cells, each one store: its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. The root names up to 251 pages, so a disk holds up to 15 813 stores (`STORE_CAPACITY`). A store keeps its cell, and so its number, for the life of the disk; a commit of a store writes its page again, with copy on write. A page with a wrong check damages its stores only: the service serves none of them and makes no new store in that page.
 - **Store block**: one for each store: the root node of its tree, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes of its trees, the trees that the removal queue holds).
+- **The owner of a store of a named principal**: its store block also keeps, in clear, the principal identifier of its owner, its salt, the key check of its key and its name sealed under its key; its cell keeps the byte 1 then its name tag in place of its name. A store of principal 0 has zero bytes there and its name in its cell. The storage service finds, makes and lists such a store only with the keys of its principal, which the root service gives it at the unlock and which the lock erases; the encryption of its blocks is not built. The design is `src/md/features/store_encryption.md`.
 - **Node**: a node of the B+ tree of one tree. A leaf holds up to 11 records of a name (256 bytes) and its entry (104 bytes); a branch up to 14 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
 - **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6). It starts with the mark "BLOB".
 - **Data**: 4096 bytes of an object, at one place of it. The block service reads and writes blocks of data through a data region that its client shares with it: the storage service makes a region of 64 blocks (`REGION_BLOCKS`), the process `disk` one of 1 MiB.
@@ -180,8 +181,12 @@ offset  size  field           type
     56     8  current_blocks  u64
     64     8  node_blocks     u64
     72     8  removing        u64
-    80    32  reserved        [4]u64
-   112  3984  padding         [BLOCK_SIZE - 112]u8
+    80    32  owner           [OWNER_FIELD_SIZE]u8
+   112    32  salt            [OWNER_FIELD_SIZE]u8
+   144    32  key_check       [OWNER_FIELD_SIZE]u8
+   176    32  name_sealed     [OWNER_FIELD_SIZE]u8
+   208    32  reserved        [4]u64
+   240  3856  padding         [BLOCK_SIZE - 240]u8
 
 store.Tree_Header, 32 bytes: the start of a node and of an object node
 offset  size  field     type
@@ -589,7 +594,7 @@ Each step is one tested capability on a system that works.
 3. **Objects by their hash.** Built in part: the hash index of section 4.7 finds the current object of a store by its hash, so an object that two entries name is kept one time. Not built: the hash of a tree on its entries (section 1.3).
 4. **The first objects from storage.** Built for one case: a principal starts a process whose module file is in the store `module_files`, by its name and its hash, and the module file service puts such a file there from the network (`MODULE_CONTRACT.md`, "A module from a disk"). An import of such a process comes from the same store too: the root service reads each object of the store and keeps the bytes whose BLAKE3 hash the import names (`glossary/code.md`, "Import scan"); the index of step 3 is not needed for it, as the root service checks the bytes anyway. Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
 5. **Packages.** A signed tree with its six facts; the store of the data of an application, attached to the identity of the package.
-6. **Encryption for a principal.**
+6. **Encryption for a principal.** Built in part: the keys and their transfer, the owner of a store and its name tag. Not built: the encryption of the blocks (`src/md/features/store_encryption.md`, "Where the engine stops").
 7. **The network as a channel.** An object comes from a peer; its hash proves it.
 
 ## 6. The tests

@@ -89,7 +89,17 @@ import "modus:contract/blake3"
 import "modus:contract/text_encoding"
 
 BLOCK_SIZE :: 4096 // The bytes of one block of the disk: one page, one block of the block service.
-ROOT_MAGIC :: u64(0x36454741524F5453) // The bytes "STORAGE6": a paged store table, names of 255 bytes, the counts of names in a count tree.
+ROOT_MAGIC :: u64(0x37454741524F5453) // The bytes "STORAGE7": a paged store table, names of 255 bytes, the counts of names in a count tree, the owner of each store.
+// The root of the release before: no owner in a store block. The open
+// refuses it whole, with a sentence that says what to do: before 1.0 a
+// format changes with no migration.
+OLDER_ROOT_MAGIC :: u64(0x36454741524F5453) // The bytes "STORAGE6".
+// The first byte of the name field of a cell of a store of a named
+// principal: its name tag follows (src/md/features/store_encryption.md,
+// "What is encrypted"). A name of a store is text with no control
+// character, so no name starts with it.
+OWNED_CELL_MARK :: u8(0x01)
+OWNER_FIELD_SIZE :: 32 // Format property: a principal identifier, a salt, a key check, a sealed name.
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
 
 // The blocks of a disk: at least the two places of the root, and at most
@@ -341,8 +351,31 @@ Store_Block :: struct {
 	current_blocks: u64,
 	node_blocks:    u64, // The nodes of all the trees of the store, and of its removal queue.
 	removing:       u64, // The entries of the removal queue.
+	// The owner of a store of a named principal (src/md/features/store_encryption.md,
+	// "The keys"), each all zero for a store of principal 0. In clear: the
+	// open reads them with no key.
+	owner:          [OWNER_FIELD_SIZE]u8, // The principal identifier of the owner.
+	salt:           [OWNER_FIELD_SIZE]u8, // 32 random bytes of the store: its key comes from them.
+	key_check:      [OWNER_FIELD_SIZE]u8, // The key check of the key of the store: a wrong key opens nothing.
+	name_sealed:    [OWNER_FIELD_SIZE]u8, // The name of the store, encrypted under the key of the store.
 	reserved:       [4]u64, // 0.
-	padding:        [BLOCK_SIZE - 112]u8, // 0.
+	padding:        [BLOCK_SIZE - 240]u8, // 0.
+}
+
+// Store_Owner is the owner fields of a store block, which a commit keeps.
+Store_Owner :: struct {
+	owner:       [OWNER_FIELD_SIZE]u8,
+	salt:        [OWNER_FIELD_SIZE]u8,
+	key_check:   [OWNER_FIELD_SIZE]u8,
+	name_sealed: [OWNER_FIELD_SIZE]u8,
+}
+
+store_owner_of :: proc "contextless" (block: ^Store_Block) -> Store_Owner {
+	return {owner = block.owner, salt = block.salt, key_check = block.key_check, name_sealed = block.name_sealed}
+}
+
+store_owner_set :: proc "contextless" (block: ^Store_Block, owner: Store_Owner) {
+	block.owner, block.salt, block.key_check, block.name_sealed = owner.owner, owner.salt, owner.key_check, owner.name_sealed
 }
 
 // What an entry of a tree names.

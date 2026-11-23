@@ -573,21 +573,22 @@ The format, all numbers little-endian (`src/library/modus/contract/wide_grants/c
 | Bytes | Audit segment | Index |
 |---|---|---|
 | 0 | `mcolsegm` | `mcolspcs` |
-| 8 | version 1 (u32) | version 1 (u32) |
-| 12 | kind, forwarding, space, bound, record size (u32 each) | count of rows (u32), then the principal (u64) |
-| 32 | principal, index of the segment, first serial, last serial, count of records (u64 each) | |
-| 72 | name of the source, name of the record output (32 bytes each, zeros after the name) | |
-| 136 | hash of the audit segment before it (zeros for the first) | |
-| 168 / 24 | each record: serial (u64), time (u64), its bytes | each row: space, kind, forwarding, bound, record size (u32 each), source, output (32 bytes each) |
+| 8 | version 2 (u32) | version 4 (u32) |
+| 12 | kind, forwarding, space, bound, record size (u32 each) | count of rows (u32), then the principal identifier (32 bytes) |
+| 32 | principal identifier (32 bytes) | |
+| 64 | index of the segment, first serial, last serial, count of records (u64 each) | |
+| 96 | name of the source, name of the record output (32 bytes each, zeros after the name) | |
+| 160 | hash of the audit segment before it (zeros for the first) | |
+| 192 / 48 | each record: serial (u64), time (u64), its bytes | each row: space, kind, forwarding, bound, record size (u32 each), source, output (32 bytes each) |
 | end | the link of the last record, then the BLAKE3 hash of each byte before it (`"modus collector segment v1"`) | the BLAKE3 hash of each byte before it (`"modus collector spaces v1"`) |
 
 **Keep before forward, in the store.** `record_append` writes the open audit segment with the new record before the space keeps it in memory and before the forward queue takes it. A write that the store refuses is `Store_Failed`: the space, the forward queue and the stored audit segments stay as they were, and the writer sends the record again with the same serial. A full forward queue refuses the record before the write. So no record leaves through `forward` that the store lacks, even after a stop of the collector.
 
-**The read at the start.** The first step of the spaces after a start reads the index and each audit segment, and checks each one whole: its length, its hash, its head against the terms of the index and the hash of the audit segment before it, the serial of each record, and the link of its last record against the chain that it computes again. An audit segment after a missing one or after one that is not full, an audit segment past the bound, an audit segment of a space that the index does not name, and an index of another principal are each damaged. One damaged object refuses each step of each space with `Store_Damaged` until the next start, and the collector logs the space: no part of an audit is served as the whole. A read that the store refuses leaves no space, and the next step reads again. `space_verify` reads the audit segments back too, and compares each one with the space in memory.
+**The read at the start.** The first step of the spaces after a start reads the index and each audit segment, and checks each one whole: its length, its hash, its head against the terms of the index and the hash of the audit segment before it, the serial of each record, and the link of its last record against the chain that it computes again. An audit segment after a missing one or after one that is not full, an audit segment past the bound, an audit segment of a space that the index does not name, and an index of another principal (another principal identifier, which the root service writes in the region of the ring of the collector before its start) are each damaged. An index of the version 3 of an older release, which named the principal by its slot, is refused with `Older_Format` and the sentence "the audit spaces in the store are of an older release of modus, which this release does not read". One damaged object refuses each step of each space with `Store_Damaged` until the next start, and the collector logs the space: no part of an audit is served as the whole. A read that the store refuses leaves no space, and the next step reads again. `space_verify` reads the audit segments back too, and compares each one with the space in memory.
 
 **The decisions of the audit segments.**
 
-- **16 records in an audit segment.** At 256 bytes a record, the largest audit segment is 4584 bytes. A space `Audit` holds up to 4096 records in its 256 slots (`SPACE_AUDIT_BOUND_MOST`), and its newest 64 in memory; a reader reads the older ones from the segments. A slot map object for each space names the segment of each slot, so a start reads one map and the segments of the window for each space. A space `Keep` holds 64 at most, in memory only. The measure 8 chooses the size in blocks of the store, with the bound of a space in blocks.
+- **16 records in an audit segment.** At 256 bytes a record, the largest audit segment is 4608 bytes. A space `Audit` holds up to 4096 records in its 256 slots (`SPACE_AUDIT_BOUND_MOST`), and its newest 64 in memory; a reader reads the older ones from the segments. A slot map object for each space names the segment of each slot, so a start reads one map and the segments of the window for each space. A space `Keep` holds 64 at most, in memory only. The measure 8 chooses the size in blocks of the store, with the bound of a space in blocks.
 - **A space `Keep` stays in memory.** Its oldest records leave by design, and an audit segment is never removed. A start of the collector loses its spaces `Keep`.
 - **No store, no audit.** A collector with no grant `Store` gets a port with no procedure: each step of a space is refused with `Store_Failed`, spaces `Keep` included, since the numbers of the spaces come from the index. Refused: an audit space in memory when the store is missing, which a stop would lose in silence.
 - **The counts of memory start at 0.** `removed`, `refused_full` and `forwarded` are not in the store: a write for each forward would double the writes.

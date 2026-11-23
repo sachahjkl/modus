@@ -4,6 +4,9 @@ package collector_service
 import "base:intrinsics"
 import "core:testing"
 import "internal:collector/collector_core"
+
+// The principal identifier of the stores of these tests.
+TEST_COLLECTOR_IDENTIFIER :: [wide_grants.COLLECTOR_IDENTIFIER_SIZE]u8{0 = 0xC0, 31 = 0x11}
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
@@ -55,7 +58,7 @@ fixture_restart :: proc(fixture: ^Service_Fixture) {
 	port := pr.memory_private_store_port(&fixture.memory)
 	fixture.memory.writes_allowed = writes_allowed
 	fixture.service = {}
-	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, port, wide_grants.space_window_heap_port())
+	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, TEST_COLLECTOR_IDENTIFIER, port, wide_grants.space_window_heap_port())
 }
 
 @(private = "file")
@@ -582,7 +585,7 @@ a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 
 	no_store := new(Space_Service)
 	defer free(no_store)
-	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {}, wide_grants.space_window_heap_port())
+	wide_grants.space_store_init(&no_store.store, PRINCIPAL, TEST_COLLECTOR_IDENTIFIER, {}, wide_grants.space_window_heap_port())
 	source_text, output_text, terms := "server", "orders", terms_of(.Audit, 4)
 	error = {}
 	expect_refusal(t, answer_of(space_open_for(no_store, &console, &source_text, &output_text, &terms, &error)), .Callee_Unavailable, error, .Device, .Store)

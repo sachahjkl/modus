@@ -153,7 +153,7 @@ principal_file_pin_check :: proc "contextless" (principal: u64, file: []u8) -> (
 		system.log_fact(.Info, Principal_Pin_Not_Read{principal = principal})
 		return true
 	}
-	verdict, pin, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], principal, file, true)
+	verdict, pin, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], principal, identifier, file, true)
 	switch verdict {
 	case .Record_Pin_Mismatch, .Principal_File_Pin_Mismatch:
 		system.log_fact(.Info, Principal_File_Pin_Mismatch{principal = principal, pin_refusal = pin_refusal_field(refusal)})
@@ -186,7 +186,7 @@ principal_file_removed_check :: proc "contextless" () -> (removed: bool) {
 			removed = true
 			continue
 		}
-		verdict, _, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], principal, nil, false)
+		verdict, _, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], principal, identifier, nil, false)
 		if verdict == .Principal_File_Pin_Mismatch {
 			system.log_fact(.Info, Principal_File_Pin_Mismatch{principal = principal, pin_refusal = pin_refusal_field(refusal)})
 			removed = true
@@ -325,7 +325,7 @@ pin_settle :: proc "contextless" (kind: tpm_service.Pin_Kind, kept: []u8) {
 			return
 		}
 		proposed: tpm_attestation.Principal_File_Pin
-		proposed, refusal = tpm_attestation.principal_file_pin_settle(principal_pin, u32(number), kept)
+		proposed, refusal = tpm_attestation.principal_file_pin_settle(principal_pin, u32(number), identifier, kept)
 		if refusal == .None {
 			count, refusal = tpm_attestation.principal_file_pin_encode(proposed, payload[:])
 		}

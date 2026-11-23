@@ -244,7 +244,7 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 			refuse(error, .Argument_Refused, .Absent, .Places, argument, place)
 			return {}, false
 		}
-		path.store = {store_name_of(store_index), store_cell(store_index).limit}
+		path.store = {name, store_cell(store_index).limit}
 	}
 	path.depth = item.depth
 	copy(path.names[:], item.path[:path.depth])
@@ -858,19 +858,25 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 	}
 	for index in 0 ..< store_numbers() {
 		// The one rule of the stores that a caller may name: here, the
-		// stores that it sees.
-		if !store_listed(index) || !may_name_store(&caller, store_name_of(index)) {
+		// stores that it sees. The name of a store of a principal opens
+		// with the keys of that principal only.
+		if !store_listed(index) {
+			continue
+		}
+		name_buffer: [format.OWNER_FIELD_SIZE]u8
+		store_name := owned_cell(index) ? owned_name_into(index, caller.principal, &name_buffer) : store_name_of(index)
+		if store_name == "" || !may_name_store(&caller, store_name) {
 			continue
 		}
 		store := store_cell(index)
 		holders: u64
 		for &connection in service.connections {
-			if connection.calls.head != nil && system.name_of(connection.caller[:]) == system.name_of(store.name[:]) && connection.grant & isolated.CALLER_AMOUNT_MASK != 0 {
+			if connection.calls.head != nil && system.name_of(connection.caller[:]) == store_name && connection.grant & isolated.CALLER_AMOUNT_MASK != 0 {
 				holders += 1
 			}
 		}
 		counts := &store_blocks[index]
-		line := [?]system.Part{"\n", system.name_of(store.name[:]), ": ", counts.objects, " objects, ", counts.trees, " trees, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? string(" connection") : string(" connections")}
+		line := [?]system.Part{"\n", store_name, ": ", counts.objects, " objects, ", counts.trees, " trees, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? string(" connection") : string(" connections")}
 		for part in line {
 			system.write_part(&writer, part)
 		}
@@ -922,7 +928,9 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> (outcome
 	if index < 0 || len(store^) >= len(copied) {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Stores, 1)
 	}
-	path := Path{store = {store_name_of(index), store_cell(index).limit}}
+	// The name that the caller gave: a store of a principal keeps only its
+	// name tag in its cell.
+	path := Path{store = {name, store_cell(index).limit}}
 	opened_place, ok := place_new(&caller, &path)
 	if !ok {
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Places, 0, 0, PLACE_CAPACITY)
@@ -1299,8 +1307,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// that no party can choose hashes whose first slots make one long run.
 	// The generator is local: it serves this one draw, and leaves no state
 	// of the key in the data of the module.
-	slot_key_generator: random.Generator
-	if !random.generator_from_context(&slot_key_generator, ctx) {
+	// The generator then serves the salts of new stores (owned_stores.odin):
+	// a salt is public, and a generator that erases each key it served
+	// keeps no state of the key of the slots.
+	if !random.generator_from_context(&salt_generator, ctx) {
 		system.log_fact(.Error, No_Seed{})
 		system.stop(.Refused)
 	}
@@ -1308,8 +1318,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// same draw: a page that a start before wrote is not taken for a page of
 	// this start, with a date or with none.
 	slot_key: [16]u8
-	random.fill(&slot_key_generator, slot_key[:])
-	slot_key_generator = {}
+	random.fill(&salt_generator, slot_key[:])
 	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
 	repair_disk.nonce = intrinsics.unaligned_load((^u64)(&slot_key[8]))
 	ok: bool
@@ -1318,6 +1327,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Refused)
 	}
 	service.disconnected = connection_ended
+	service.principal_keys = storage_principal_keys // principal_keys.odin
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
@@ -1414,6 +1424,9 @@ disk_open :: proc "contextless" () {
 	switch {
 	case mounted.failed && mounted.no_memory:
 		// The open said why: No_Table_Memory.
+		system.stop(.Failed)
+	case mounted.failed && mounted.older_format:
+		system.log_fact(.Error, Disk_Of_An_Older_Format{})
 		system.stop(.Failed)
 	case mounted.failed && mounted.larger_than_capacity:
 		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(table_blocks_held)})

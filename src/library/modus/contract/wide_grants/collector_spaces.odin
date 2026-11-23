@@ -102,6 +102,7 @@ Space_Refusal :: enum u8 {
 	Space_Closed        = 21, // The space closed when its record size changed: it keeps its records and takes no more.
 	Space_Removed       = 22, // The space closed, and its retention ended: its records are removed, or being removed.
 	Act_Space           = 23, // The pair names an act space of a wide grant, which only the grant opens (act_wiring_attach).
+	Older_Format        = 24, // The private store holds the spaces of an older release, which names its principal by its slot: none is read.
 }
 
 // The window of an open space: the ring of its newest records in memory,
@@ -240,7 +241,8 @@ Forward_Item :: struct {
 // The spaces of one collector, for its principal, and the port of the
 // private store that keeps its audit spaces.
 Space_Store :: struct {
-	principal:     u64,
+	principal:     u64, // The slot of the principal in this run: the checks of the callers.
+	identifier:    [COLLECTOR_IDENTIFIER_SIZE]u8, // The principal identifier: the name of the principal in each object of the store.
 	store_port:    pr.Private_Store_Port,
 	load_state:    Space_Load_State,
 	damaged_space: u32, // The space whose objects were damaged at the read, from 1; 0 for the index.
@@ -267,9 +269,10 @@ space_forwarding_of_word :: proc "contextless" (word: u64) -> (forwarding: Space
 // space_store_init empties store for principal, over the private store of
 // store_port and the memory of memory. The audit spaces come back from that
 // store at the first step.
-space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64, store_port: pr.Private_Store_Port, memory: Space_Memory_Port) {
+space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64, identifier: [COLLECTOR_IDENTIFIER_SIZE]u8, store_port: pr.Private_Store_Port, memory: Space_Memory_Port) {
 	store^ = {}
 	store.principal = principal
+	store.identifier = identifier
 	store.store_port = store_port
 	store.memory = memory
 }

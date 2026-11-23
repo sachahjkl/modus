@@ -139,6 +139,9 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 		return call_outcome.fail(error, .Callee_Unavailable, .Device, .Store, argument, 0, 0, found)
 	case .Store_Damaged:
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Store, argument, 0, 0, found)
+	case .Older_Format:
+		// The spaces of an older release: the store is read as no spaces.
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Store, argument, 0, 0, found)
 	case .Space_Held:
 		return call_outcome.fail(error, .Name_Already_Taken, .Exists, .Records, argument, 0, 0, found)
 	case .Memory_Refused:

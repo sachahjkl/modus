@@ -5,6 +5,9 @@ import "core:testing"
 import "modus:contract/call_outcome"
 import "modus:contract/tpm_attestation"
 
+// The principal identifier of the pins of these tests.
+TEST_IDENTIFIER :: tpm_attestation.Identifier{0 = 0xA1, 31 = 0x5C}
+
 // The pins on the ring and in unlock: a writer of the disk swaps, removes
 // or rolls back the record of the machine key or the file of a principal,
 // and the decision of unlock refuses it before any key opens
@@ -155,47 +158,47 @@ a_swapped_or_removed_machine_record_is_refused :: proc(t: ^testing.T) {
 a_principal_file_rolled_back_to_an_older_passphrase_is_refused :: proc(t: ^testing.T) {
 	old_file := transmute([]u8)string("PRINCIPT the file under the old passphrase")
 	new_file := transmute([]u8)string("PRINCIPT the file under the new passphrase")
-	first, refusal := tpm_attestation.principal_file_pin_settle({}, 1, old_file)
+	first, refusal := tpm_attestation.principal_file_pin_settle({}, 1, TEST_IDENTIFIER, old_file)
 	testing.expect_value(t, refusal, tpm_attestation.Pin_Refusal.None)
 	announced: tpm_attestation.Principal_File_Pin
 	announced, refusal = tpm_attestation.principal_file_pin_announce(first, new_file)
 	testing.expect_value(t, refusal, tpm_attestation.Pin_Refusal.None)
 	settled: tpm_attestation.Principal_File_Pin
-	settled, refusal = tpm_attestation.principal_file_pin_settle(announced, 1, new_file)
+	settled, refusal = tpm_attestation.principal_file_pin_settle(announced, 1, TEST_IDENTIFIER, new_file)
 	testing.expect_value(t, refusal, tpm_attestation.Pin_Refusal.None)
 	payload := principal_payload_of(t, settled)
 
 	verdict: Pin_Verdict
-	verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], 1, old_file, true)
+	verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], 1, TEST_IDENTIFIER, old_file, true)
 	testing.expect(t, verdict == .Principal_File_Pin_Mismatch && refusal == .Digest_Mismatch)
-	verdict, _, refusal = principal_file_pin_verdict(.Held_Other_Policy, payload[:], 1, old_file, true)
+	verdict, _, refusal = principal_file_pin_verdict(.Held_Other_Policy, payload[:], 1, TEST_IDENTIFIER, old_file, true)
 	testing.expect(t, verdict == .Principal_File_Pin_Mismatch && refusal == .Digest_Mismatch)
-	verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], 1, nil, false)
+	verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], 1, TEST_IDENTIFIER, nil, false)
 	testing.expect(t, verdict == .Principal_File_Pin_Mismatch && refusal == .Record_Absent)
 	// The pin of principal 1 against the number of another principal, 0,
 	// and one past the limit.
 	for principal in ([?]u64{2, 0, PIN_PRINCIPAL_LIMIT + 1, max(u64)}) {
-		verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], principal, new_file, true)
+		verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], principal, TEST_IDENTIFIER, new_file, true)
 		testing.expectf(t, verdict == .Principal_File_Pin_Mismatch && refusal == .Principal_Mismatch, "the principal %d gave %v, %v", principal, verdict, refusal)
 	}
 	// Each step of the change refuses the file of before the change, once
 	// the settle names the new one.
 	old_payload := principal_payload_of(t, first)
 	announced_payload := principal_payload_of(t, announced)
-	verdict, _, _ = principal_file_pin_verdict(.Held, old_payload[:], 1, new_file, true)
+	verdict, _, _ = principal_file_pin_verdict(.Held, old_payload[:], 1, TEST_IDENTIFIER, new_file, true)
 	testing.expect_value(t, verdict, Pin_Verdict.Principal_File_Pin_Mismatch)
 	// The service refuses to put the old pin back over the new one.
 	write_request := Pin_Request{kind = .Principal_File, principal = 1, bytes = len(old_payload)}
 	testing.expect_value(t, pin_write_refusal(write_request, .Held, payload[:], old_payload[:]), tpm_attestation.Pin_Refusal.Generation_Rollback)
 
 	// The accepted cases come last.
-	verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], 1, new_file, true)
+	verdict, _, refusal = principal_file_pin_verdict(.Held, payload[:], 1, TEST_IDENTIFIER, new_file, true)
 	testing.expect(t, verdict == .Accepted && refusal == .None)
-	verdict, _, _ = principal_file_pin_verdict(.Held, announced_payload[:], 1, old_file, true)
+	verdict, _, _ = principal_file_pin_verdict(.Held, announced_payload[:], 1, TEST_IDENTIFIER, old_file, true)
 	testing.expect_value(t, verdict, Pin_Verdict.Accepted)
-	verdict, _, _ = principal_file_pin_verdict(.Held, announced_payload[:], 1, new_file, true)
+	verdict, _, _ = principal_file_pin_verdict(.Held, announced_payload[:], 1, TEST_IDENTIFIER, new_file, true)
 	testing.expect_value(t, verdict, Pin_Verdict.Accepted_Next)
-	verdict, _, _ = principal_file_pin_verdict(.Absent, nil, 1, old_file, true)
+	verdict, _, _ = principal_file_pin_verdict(.Absent, nil, 1, TEST_IDENTIFIER, old_file, true)
 	testing.expect_value(t, verdict, Pin_Verdict.Not_Pinned)
 }
 
@@ -223,7 +226,7 @@ the_service_refuses_each_pin_that_goes_back :: proc(t: ^testing.T) {
 	forward := machine_payload_of(t, {form = .MachineT, epoch = 8, record_digest = current.record_digest})
 	testing.expect_value(t, pin_write_refusal(machine_request, .Held, damaged_stored[:], forward[:]), tpm_attestation.Pin_Refusal.Bad_Checksum)
 	// A payload of the other kind.
-	principal_payload := principal_payload_of(t, {principal = 1, generation = 1, file_digest = current.record_digest})
+	principal_payload := principal_payload_of(t, {identifier = TEST_IDENTIFIER, principal = 1, generation = 1, file_digest = current.record_digest})
 	testing.expect(t, pin_write_refusal(machine_request, .Absent, nil, principal_payload[:]) != .None)
 	principal_request := Pin_Request{kind = .Principal_File, principal = 2, bytes = len(principal_payload)}
 	testing.expect_value(t, pin_write_refusal(principal_request, .Absent, nil, principal_payload[:]), tpm_attestation.Pin_Refusal.Principal_Mismatch)
@@ -282,19 +285,19 @@ a_crash_before_the_settle_retires_the_old_record_at_the_next_start :: proc(t: ^t
 	// The same for the file of a principal.
 	old_file := transmute([]u8)string("PRINCIPT the file before the change")
 	new_file := transmute([]u8)string("PRINCIPT the file after the change")
-	principal_first, _ := tpm_attestation.principal_file_pin_settle({}, 1, old_file)
+	principal_first, _ := tpm_attestation.principal_file_pin_settle({}, 1, TEST_IDENTIFIER, old_file)
 	principal_announced, _ := tpm_attestation.principal_file_pin_announce(principal_first, new_file)
 	principal_announced_payload := principal_payload_of(t, principal_announced)
 	principal_pin: tpm_attestation.Principal_File_Pin
-	verdict, principal_pin, _ = principal_file_pin_verdict(.Held, principal_announced_payload[:], 1, new_file, true)
+	verdict, principal_pin, _ = principal_file_pin_verdict(.Held, principal_announced_payload[:], 1, TEST_IDENTIFIER, new_file, true)
 	testing.expect_value(t, verdict, Pin_Verdict.Accepted_Next)
-	principal_settled, settle_refusal := tpm_attestation.principal_file_pin_settle(principal_pin, 1, new_file)
+	principal_settled, settle_refusal := tpm_attestation.principal_file_pin_settle(principal_pin, 1, TEST_IDENTIFIER, new_file)
 	testing.expect_value(t, settle_refusal, tpm_attestation.Pin_Refusal.None)
 	principal_settled_payload := principal_payload_of(t, principal_settled)
-	verdict, _, refusal = principal_file_pin_verdict(.Held, principal_settled_payload[:], 1, old_file, true)
+	verdict, _, refusal = principal_file_pin_verdict(.Held, principal_settled_payload[:], 1, TEST_IDENTIFIER, old_file, true)
 	testing.expect(t, verdict == .Principal_File_Pin_Mismatch && refusal == .Digest_Mismatch)
 	// The accepted case comes last.
-	verdict, _, _ = principal_file_pin_verdict(.Held, principal_settled_payload[:], 1, new_file, true)
+	verdict, _, _ = principal_file_pin_verdict(.Held, principal_settled_payload[:], 1, TEST_IDENTIFIER, new_file, true)
 	testing.expect_value(t, verdict, Pin_Verdict.Accepted)
 }
 
@@ -305,15 +308,15 @@ a_crash_before_the_settle_retires_the_old_record_at_the_next_start :: proc(t: ^t
 a_removed_principal_file_is_never_a_new_principal :: proc(t: ^testing.T) {
 	file := transmute([]u8)string("PRINCIPT the file of alice")
 	other_file := transmute([]u8)string("PRINCIPT the file of a new principal")
-	pinned := tpm_attestation.Principal_File_Pin{principal = 1, generation = 5, file_digest = tpm_attestation.principal_file_digest(file)}
+	pinned := tpm_attestation.Principal_File_Pin{identifier = TEST_IDENTIFIER, principal = 1, generation = 5, file_digest = tpm_attestation.principal_file_digest(file)}
 	payload := principal_payload_of(t, pinned)
 	for state in ([?]Pin_State{.Held, .Held_Other_Policy}) {
-		verdict, _, refusal := principal_file_pin_verdict(state, payload[:], 1, nil, false)
+		verdict, _, refusal := principal_file_pin_verdict(state, payload[:], 1, TEST_IDENTIFIER, nil, false)
 		testing.expectf(t, verdict == .Principal_File_Pin_Mismatch && refusal == .Record_Absent, "a removed file in %v gave %v", state, verdict)
 	}
 	request := Pin_Request{kind = .Principal_File, principal = 1, bytes = len(payload)}
 	for generation in ([?]u64{1, 4, 5}) {
-		reset := principal_payload_of(t, {principal = 1, generation = generation, file_digest = tpm_attestation.principal_file_digest(other_file)})
+		reset := principal_payload_of(t, {identifier = TEST_IDENTIFIER, principal = 1, generation = generation, file_digest = tpm_attestation.principal_file_digest(other_file)})
 		refusal := pin_write_refusal(request, .Held, payload[:], reset[:])
 		testing.expectf(t, refusal == .Generation_Rollback || refusal == .Generation_Replay, "a pin of generation %d over generation 5 gave %v", generation, refusal)
 		refusal = pin_write_refusal(request, .Held_Other_Policy, payload[:], reset[:])
@@ -359,7 +362,7 @@ an_unsettled_pin_refuses_a_new_announce :: proc(t: ^testing.T) {
 	file_a := transmute([]u8)string("PRINCIPT file A")
 	file_b := transmute([]u8)string("PRINCIPT file B")
 	file_c := transmute([]u8)string("PRINCIPT file C")
-	principal_first, _ := tpm_attestation.principal_file_pin_settle({}, 1, file_a)
+	principal_first, _ := tpm_attestation.principal_file_pin_settle({}, 1, TEST_IDENTIFIER, file_a)
 	principal_announced, _ := tpm_attestation.principal_file_pin_announce(principal_first, file_b)
 	_, refusal = tpm_attestation.principal_file_pin_announce(principal_announced, file_c)
 	testing.expect_value(t, refusal, tpm_attestation.Pin_Refusal.Announce_Pending)
@@ -380,14 +383,14 @@ an_unsettled_pin_refuses_a_new_announce :: proc(t: ^testing.T) {
 	settled_payload := machine_payload_of(t, settled)
 	next_payload := machine_payload_of(t, next)
 	testing.expect_value(t, pin_write_refusal(request, .Held, settled_payload[:], next_payload[:]), tpm_attestation.Pin_Refusal.None)
-	principal_settled, _ := tpm_attestation.principal_file_pin_settle(principal_announced, 1, file_b)
+	principal_settled, _ := tpm_attestation.principal_file_pin_settle(principal_announced, 1, TEST_IDENTIFIER, file_b)
 	_, refusal = tpm_attestation.principal_file_pin_announce(principal_settled, file_c)
 	testing.expect_value(t, refusal, tpm_attestation.Pin_Refusal.None)
 }
 
 @(test)
 the_word_of_a_pin_refusal_crosses_its_border :: proc(t: ^testing.T) {
-	for word in ([?]u64{27, 255, 256, max(u64)}) {
+	for word in ([?]u64{u64(max(tpm_attestation.Pin_Refusal)) + 1, 255, 256, max(u64)}) {
 		_, ok := tpm_attestation.pin_refusal_of_word(word)
 		testing.expectf(t, !ok, "the word %d named a refusal", word)
 	}

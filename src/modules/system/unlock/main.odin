@@ -2315,6 +2315,18 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	defer erase(unlock_key[:])
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
+	// The storage key first: the stores of the session open with it
+	// (src/md/features/store_encryption.md, "The keys").
+	storage_key := principals.principal_storage_key(&unlock_key)
+	storage_words := transmute([4]u64)storage_key
+	defer erase(storage_key[:])
+	defer erase(([^]u8)(rawptr(&storage_words))[:size_of(storage_words)])
+	stored, stored_answered := root_command(.Principal_Storage_Key, {storage_words[0], storage_words[1], storage_words[2], storage_words[3], number, 0, 0})
+	if !stored_answered || stored.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Session_Not_Started{principal = number, outcome = outcome_field(stored.kind)})
+		message, message_failed = "The root service did not start the session.", true
+		return
+	}
 	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, u64(origin), 0})
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Session_Not_Started{principal = number, outcome = outcome_field(completion.kind)})

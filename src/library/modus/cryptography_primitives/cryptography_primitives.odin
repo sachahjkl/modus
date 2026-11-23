@@ -78,6 +78,18 @@ zero_context :: #force_inline proc "contextless" () -> runtime.Context {
 	return {}
 }
 
+// xchacha20_xor applies the XChaCha20 key stream of a key and a nonce of
+// 24 bytes to bytes, in place: the encryption and the decryption are one
+// procedure. The caller makes the nonce never come two times with one key
+// for two different texts (src/md/features/store_encryption.md, "The nonce").
+xchacha20_xor :: proc "contextless" (key: ^[chacha20.KEY_SIZE]u8, nonce: ^[chacha20.XIV_SIZE]u8, bytes: []u8) {
+	context = zero_context()
+	state: chacha20.Context
+	chacha20.init(&state, key[:], nonce[:])
+	chacha20.xor_bytes(&state, bytes, bytes)
+	chacha20.reset(&state)
+}
+
 // size_check gives an error record when an input has not the size that it
 // must have (argument from 1).
 @(private)

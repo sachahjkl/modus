@@ -47,8 +47,16 @@ SPACE_AUDIT_BOUND_MOST :: SPACE_SEGMENT_SLOTS * SPACE_SEGMENT_RECORDS
 // The first bytes of a segment and of the index, and the version of each.
 SEGMENT_MAGIC :: "mcolsegm"
 SPACE_INDEX_MAGIC :: "mcolspcs"
-SEGMENT_VERSION :: 1
-SPACE_INDEX_VERSION :: 3
+// Version 2 of a segment and version 4 of the index name their principal
+// by its principal identifier, not by its slot (src/md/features/several_principals.md,
+// "The identity: three names"). An object of an older version is refused
+// with Older_Format, and none of its bytes is read.
+SEGMENT_VERSION :: 2
+OLDER_SEGMENT_VERSION :: 1
+SPACE_INDEX_VERSION :: 4
+OLDER_SPACE_INDEX_VERSION :: 3
+// The bytes of a principal identifier (modus:principals, Principal_Identifier).
+COLLECTOR_IDENTIFIER_SIZE :: 32
 
 // The context strings of the hash of a segment and of the index.
 SEGMENT_HASH_DOMAIN :: "modus collector segment v1"
@@ -65,12 +73,12 @@ SEGMENT_FORWARDING_AT :: 16
 SEGMENT_SPACE_AT :: 20
 SEGMENT_BOUND_AT :: 24
 SEGMENT_RECORD_SIZE_AT :: 28
-SEGMENT_PRINCIPAL_AT :: 32
-SEGMENT_INDEX_AT :: 40
-SEGMENT_FIRST_SERIAL_AT :: 48
-SEGMENT_LAST_SERIAL_AT :: 56
-SEGMENT_RECORD_COUNT_AT :: 64
-SEGMENT_SOURCE_AT :: 72
+SEGMENT_IDENTIFIER_AT :: 32
+SEGMENT_INDEX_AT :: SEGMENT_IDENTIFIER_AT + COLLECTOR_IDENTIFIER_SIZE
+SEGMENT_FIRST_SERIAL_AT :: SEGMENT_INDEX_AT + 8
+SEGMENT_LAST_SERIAL_AT :: SEGMENT_FIRST_SERIAL_AT + 8
+SEGMENT_RECORD_COUNT_AT :: SEGMENT_LAST_SERIAL_AT + 8
+SEGMENT_SOURCE_AT :: SEGMENT_RECORD_COUNT_AT + 8
 SEGMENT_OUTPUT_AT :: SEGMENT_SOURCE_AT + SPACE_NAME_BYTES
 SEGMENT_PREVIOUS_HASH_AT :: SEGMENT_OUTPUT_AT + SPACE_NAME_BYTES
 SEGMENT_HEAD_BYTES :: SEGMENT_PREVIOUS_HASH_AT + blake3.HASH_SIZE
@@ -84,15 +92,15 @@ SEGMENT_TAIL_BYTES :: 2 * blake3.HASH_SIZE
 
 SEGMENT_BYTES_MOST :: SEGMENT_HEAD_BYTES + SPACE_SEGMENT_RECORDS * (SEGMENT_RECORD_HEAD_BYTES + SPACE_RECORD_BYTES_MOST) + SEGMENT_TAIL_BYTES
 
-#assert(SEGMENT_HEAD_BYTES == 168)
-#assert(SEGMENT_BYTES_MOST == 4584)
+#assert(SEGMENT_HEAD_BYTES == 192)
+#assert(SEGMENT_BYTES_MOST == 4608)
 
 // The places of the head of the index, and of each row after it.
 SPACE_INDEX_MAGIC_AT :: 0
 SPACE_INDEX_VERSION_AT :: 8
 SPACE_INDEX_COUNT_AT :: 12
-SPACE_INDEX_PRINCIPAL_AT :: 16
-SPACE_INDEX_HEAD_BYTES :: 24
+SPACE_INDEX_IDENTIFIER_AT :: 16
+SPACE_INDEX_HEAD_BYTES :: SPACE_INDEX_IDENTIFIER_AT + COLLECTOR_IDENTIFIER_SIZE
 SPACE_INDEX_ROW_SPACE_AT :: 0
 SPACE_INDEX_ROW_KIND_AT :: 4
 SPACE_INDEX_ROW_FORWARDING_AT :: 8
@@ -301,7 +309,7 @@ name_field_valid :: proc "contextless" (field: []u8) -> bool {
 @(private = "file")
 segment_head_write :: proc "contextless" (
 	into: []u8,
-	principal: u64,
+	identifier: [COLLECTOR_IDENTIFIER_SIZE]u8,
 	space_number: u32,
 	space: ^Collector_Space,
 	segment: u64,
@@ -316,7 +324,8 @@ segment_head_write :: proc "contextless" (
 	byte_order.write_u32_little_endian(into, SEGMENT_SPACE_AT, space_number)
 	byte_order.write_u32_little_endian(into, SEGMENT_BOUND_AT, space.bound)
 	byte_order.write_u32_little_endian(into, SEGMENT_RECORD_SIZE_AT, space.record_size)
-	byte_order.write_u64_little_endian(into, SEGMENT_PRINCIPAL_AT, principal)
+	identifier := identifier
+	copy(into[SEGMENT_IDENTIFIER_AT:][:COLLECTOR_IDENTIFIER_SIZE], identifier[:])
 	byte_order.write_u64_little_endian(into, SEGMENT_INDEX_AT, segment)
 	byte_order.write_u64_little_endian(into, SEGMENT_FIRST_SERIAL_AT, first_serial)
 	byte_order.write_u64_little_endian(into, SEGMENT_LAST_SERIAL_AT, first_serial + u64(record_count) - 1)
@@ -379,7 +388,7 @@ segment_persist :: proc "contextless" (
 	}
 	length := segment_length(space.record_size, record_count)
 	bytes := store.segment_bytes[:length]
-	segment_head_write(bytes, store.principal, space_number, space, segment, record_count, segment_previous_hash(space, segment))
+	segment_head_write(bytes, store.identifier, space_number, space, segment, record_count, segment_previous_hash(space, segment))
 	at := SEGMENT_HEAD_BYTES
 	for index in first_index ..< serial {
 		place := space_place_of(space, index)
@@ -443,7 +452,7 @@ segment_check :: proc "contextless" (
 		return {}, 0, false
 	}
 	expected_head: [SEGMENT_HEAD_BYTES]u8
-	segment_head_write(expected_head[:], store.principal, space_number, space, segment, record_count, previous)
+	segment_head_write(expected_head[:], store.identifier, space_number, space, segment, record_count, previous)
 	if string(expected_head[:]) != string(bytes[:SEGMENT_HEAD_BYTES]) {
 		return {}, 0, false
 	}
@@ -540,7 +549,7 @@ space_index_persist :: proc "contextless" (store: ^Space_Store) -> Space_Refusal
 	bytes := store.index_bytes
 	copy(bytes[SPACE_INDEX_MAGIC_AT:][:8], SPACE_INDEX_MAGIC)
 	byte_order.write_u32_little_endian(bytes, SPACE_INDEX_VERSION_AT, SPACE_INDEX_VERSION)
-	byte_order.write_u64_little_endian(bytes, SPACE_INDEX_PRINCIPAL_AT, store.principal)
+	copy(bytes[SPACE_INDEX_IDENTIFIER_AT:][:COLLECTOR_IDENTIFIER_SIZE], store.identifier[:])
 	count: u32 = 0
 	at := SPACE_INDEX_HEAD_BYTES
 	for &space, index in store.spaces {
@@ -621,6 +630,11 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	if read_refusal != .None || bytes == nil {
 		return read_refusal
 	}
+	// The index of an older release names its principal by its slot: it is
+	// refused whole, and so are the segments that it names.
+	if len(bytes) >= SPACE_INDEX_VERSION_AT + 4 && string(bytes[SPACE_INDEX_MAGIC_AT:][:8]) == SPACE_INDEX_MAGIC && byte_order.read_u32_little_endian(bytes, SPACE_INDEX_VERSION_AT) == OLDER_SPACE_INDEX_VERSION {
+		return .Older_Format
+	}
 	if len(bytes) < SPACE_INDEX_HEAD_BYTES + blake3.HASH_SIZE {
 		return .Store_Damaged
 	}
@@ -636,7 +650,8 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	if string(bytes[SPACE_INDEX_MAGIC_AT:][:8]) != SPACE_INDEX_MAGIC || byte_order.read_u32_little_endian(bytes, SPACE_INDEX_VERSION_AT) != SPACE_INDEX_VERSION {
 		return .Store_Damaged
 	}
-	if byte_order.read_u64_little_endian(bytes, SPACE_INDEX_PRINCIPAL_AT) != store.principal {
+	// The index of another principal, or of no identifier: never read.
+	if string(bytes[SPACE_INDEX_IDENTIFIER_AT:][:COLLECTOR_IDENTIFIER_SIZE]) != string(store.identifier[:]) {
 		return .Store_Damaged
 	}
 	// The last row names the most places: the table grows to them first.
@@ -1090,6 +1105,10 @@ space_store_ready :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	case .Store_Damaged:
 		store.load_state = .Damaged
 		return .Store_Damaged
+	case .Older_Format:
+		// The store serves no space, as a damaged one, and says why.
+		store.load_state = .Damaged
+		return .Older_Format
 	case .Memory_Refused:
 		// The budget pays fewer windows than the open spaces of the index:
 		// the next step reads again.
@@ -1246,7 +1265,7 @@ space_segments_verify :: proc "contextless" (store: ^Space_Store, space_number: 
 	case .None:
 	case .Store_Failed:
 		return .Store_Failed, 0
-	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed, .Act_Space:
+	case .Store_Damaged, .Older_Format, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed, .Act_Space:
 		return .Chain_Broken, after * SPACE_SEGMENT_RECORDS
 	}
 	return .None, 0

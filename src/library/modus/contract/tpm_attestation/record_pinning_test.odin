@@ -9,6 +9,9 @@ import "core:crypto/hash"
 import "core:testing"
 import "modus:contract/byte_order"
 
+// The principal identifier of the pins of these tests.
+TEST_IDENTIFIER :: Identifier{0 = 0xA1, 31 = 0x5C}
+
 @(private = "file")
 pin_test_digest :: proc(seed: u8) -> (out: Digest) {
 	for i in 0 ..< SHA256_SIZE {
@@ -279,7 +282,7 @@ machine_key_pin_refuses_swap_and_rollback_of_the_record :: proc(t: ^testing.T) {
 principal_file_pin_payload_refuses_damage :: proc(t: ^testing.T) {
 	digest := pin_test_digest(0x40)
 	next_digest := pin_test_digest(0x41)
-	pin := Principal_File_Pin{principal = 0x0A0B_0C0D, generation = 0x1122_3344_5566_7788, file_digest = digest, next_digest = next_digest}
+	pin := Principal_File_Pin{identifier = TEST_IDENTIFIER, principal = 0x0A0B_0C0D, generation = 0x1122_3344_5566_7788, file_digest = digest, next_digest = next_digest}
 
 	untouched: [PRINCIPAL_FILE_PIN_RECORD_SIZE]u8
 	for &item in untouched {
@@ -287,9 +290,11 @@ principal_file_pin_payload_refuses_damage :: proc(t: ^testing.T) {
 	}
 	_, refusal := principal_file_pin_encode({principal = 0, generation = 1, file_digest = digest}, untouched[:])
 	testing.expect_value(t, refusal, Pin_Refusal.Principal_Zero)
-	_, refusal = principal_file_pin_encode({principal = 1, generation = 0, file_digest = digest}, untouched[:])
+	_, refusal = principal_file_pin_encode({principal = 1, generation = 1, file_digest = digest}, untouched[:])
+	testing.expect_value(t, refusal, Pin_Refusal.Identifier_Zero)
+	_, refusal = principal_file_pin_encode({identifier = TEST_IDENTIFIER, principal = 1, generation = 0, file_digest = digest}, untouched[:])
 	testing.expect_value(t, refusal, Pin_Refusal.Generation_Zero)
-	_, refusal = principal_file_pin_encode({principal = 1, generation = 1}, untouched[:])
+	_, refusal = principal_file_pin_encode({identifier = TEST_IDENTIFIER, principal = 1, generation = 1}, untouched[:])
 	testing.expect_value(t, refusal, Pin_Refusal.Zero_Digest)
 	_, refusal = principal_file_pin_encode(pin, untouched[:PRINCIPAL_FILE_PIN_RECORD_SIZE - 1])
 	testing.expect_value(t, refusal, Pin_Refusal.Buffer_Too_Small)
@@ -299,13 +304,20 @@ principal_file_pin_payload_refuses_damage :: proc(t: ^testing.T) {
 	count: int
 	count, refusal = principal_file_pin_encode(pin, payload[:])
 	testing.expect_value(t, refusal, Pin_Refusal.None)
-	testing.expect_value(t, count, 120)
-	expected_head := [24]u8{'M', 'O', 'D', 'U', 'S', 'P', 'F', 'P', 0x00, 0x02, 0x00, 0x00, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
+	testing.expect_value(t, count, 152)
+	expected_head := [24]u8{'M', 'O', 'D', 'U', 'S', 'P', 'F', 'P', 0x00, 0x03, 0x00, 0x00, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
 	testing.expect(t, string(payload[:24]) == string(expected_head[:]))
-	testing.expect(t, string(payload[24:56]) == string(digest[:]))
-	testing.expect(t, string(payload[56:88]) == string(next_digest[:]))
-	checksum := reference_pin_checksum(PRINCIPAL_FILE_PIN_DOMAIN, payload[:88])
-	testing.expect(t, string(payload[88:]) == string(checksum[:]))
+	identifier := TEST_IDENTIFIER
+	testing.expect(t, string(payload[24:56]) == string(identifier[:]))
+	testing.expect(t, string(payload[56:88]) == string(digest[:]))
+	testing.expect(t, string(payload[88:120]) == string(next_digest[:]))
+	checksum := reference_pin_checksum(PRINCIPAL_FILE_PIN_DOMAIN, payload[:120])
+	testing.expect(t, string(payload[120:]) == string(checksum[:]))
+	// A payload of format 2, before the identifier, is of no known format.
+	older_format := payload
+	older_format[9] = 0x02
+	_, older_refusal := principal_file_pin_decode(older_format[:])
+	testing.expect_value(t, older_refusal, Pin_Refusal.Unknown_Format)
 	decoded, decode_refusal := principal_file_pin_decode(payload[:])
 	testing.expect_value(t, decode_refusal, Pin_Refusal.None)
 	testing.expect_value(t, decoded, pin)
@@ -370,33 +382,42 @@ principal_file_pin_refuses_rollback_and_mismatch :: proc(t: ^testing.T) {
 	hash.hash_bytes_to_buffer(.SHA256, file_three, reference[:])
 	testing.expect_value(t, principal_file_digest(file_three), Digest(reference))
 
-	current := Principal_File_Pin{principal = 7, generation = 3, file_digest = principal_file_digest(file_three)}
-	older := Principal_File_Pin{principal = 7, generation = 2, file_digest = principal_file_digest(file_two)}
+	current := Principal_File_Pin{identifier = TEST_IDENTIFIER, principal = 7, generation = 3, file_digest = principal_file_digest(file_three)}
+	older := Principal_File_Pin{identifier = TEST_IDENTIFIER, principal = 7, generation = 2, file_digest = principal_file_digest(file_two)}
 	testing.expect_value(t, principal_file_pin_advance(current, older), Pin_Refusal.Generation_Rollback)
 	testing.expect_value(t, principal_file_pin_advance(current, current), Pin_Refusal.Generation_Replay)
-	same_generation_other_file := Principal_File_Pin{principal = 7, generation = 3, file_digest = principal_file_digest(file_two)}
+	same_generation_other_file := Principal_File_Pin{identifier = TEST_IDENTIFIER, principal = 7, generation = 3, file_digest = principal_file_digest(file_two)}
 	testing.expect_value(t, principal_file_pin_advance(current, same_generation_other_file), Pin_Refusal.Generation_Replay)
-	testing.expect_value(t, principal_file_pin_advance(current, {principal = 8, generation = 4, file_digest = current.file_digest}), Pin_Refusal.Principal_Mismatch)
-	testing.expect_value(t, principal_file_pin_advance(current, {principal = 7, generation = 4}), Pin_Refusal.Zero_Digest)
-	testing.expect_value(t, principal_file_pin_advance(current, {principal = 7, generation = 0, file_digest = current.file_digest}), Pin_Refusal.Generation_Zero)
+	testing.expect_value(t, principal_file_pin_advance(current, {identifier = TEST_IDENTIFIER, principal = 8, generation = 4, file_digest = current.file_digest}), Pin_Refusal.Principal_Mismatch)
+	testing.expect_value(t, principal_file_pin_advance(current, {identifier = TEST_IDENTIFIER, principal = 7, generation = 4}), Pin_Refusal.Zero_Digest)
+	testing.expect_value(t, principal_file_pin_advance(current, {identifier = TEST_IDENTIFIER, principal = 7, generation = 0, file_digest = current.file_digest}), Pin_Refusal.Generation_Zero)
 	testing.expect_value(t, principal_file_pin_advance(current, {principal = 0, generation = 4, file_digest = current.file_digest}), Pin_Refusal.Principal_Zero)
-	testing.expect_value(t, principal_file_pin_advance({}, {principal = 7, generation = 1}), Pin_Refusal.Zero_Digest)
+	testing.expect_value(t, principal_file_pin_advance({}, {identifier = TEST_IDENTIFIER, principal = 7, generation = 1}), Pin_Refusal.Zero_Digest)
+	// The identifier: none, and another principal in the same slot.
+	testing.expect_value(t, principal_file_pin_advance(current, {principal = 7, generation = 4, file_digest = current.file_digest}), Pin_Refusal.Identifier_Zero)
+	other_identifier := TEST_IDENTIFIER
+	other_identifier[31] ~= 1
+	testing.expect_value(t, principal_file_pin_advance(current, {identifier = other_identifier, principal = 7, generation = 4, file_digest = current.file_digest}), Pin_Refusal.Identifier_Mismatch)
+	_, other_refusal := principal_file_pin_check(current, 7, other_identifier, file_three)
+	testing.expect_value(t, other_refusal, Pin_Refusal.Identifier_Mismatch)
+	_, other_refusal = principal_file_pin_check(current, 7, {}, file_three)
+	testing.expect_value(t, other_refusal, Pin_Refusal.Identifier_Mismatch)
 
 	// The file that the disk gives against the pin.
-	_, refusal := principal_file_pin_check(current, 7, file_two)
+	_, refusal := principal_file_pin_check(current, 7, TEST_IDENTIFIER, file_two)
 	testing.expect_value(t, refusal, Pin_Refusal.Digest_Mismatch)
-	_, refusal = principal_file_pin_check(current, 7, nil)
+	_, refusal = principal_file_pin_check(current, 7, TEST_IDENTIFIER, nil)
 	testing.expect_value(t, refusal, Pin_Refusal.Digest_Mismatch)
-	_, refusal = principal_file_pin_check(current, 7, file_three[:len(file_three) - 1])
+	_, refusal = principal_file_pin_check(current, 7, TEST_IDENTIFIER, file_three[:len(file_three) - 1])
 	testing.expect_value(t, refusal, Pin_Refusal.Digest_Mismatch)
 	changed: [64]u8
 	copy(changed[:], file_three)
 	changed[len(file_three) - 1] ~= 0x01
-	_, refusal = principal_file_pin_check(current, 7, changed[:len(file_three)])
+	_, refusal = principal_file_pin_check(current, 7, TEST_IDENTIFIER, changed[:len(file_three)])
 	testing.expect_value(t, refusal, Pin_Refusal.Digest_Mismatch)
-	_, refusal = principal_file_pin_check(current, 8, file_three)
+	_, refusal = principal_file_pin_check(current, 8, TEST_IDENTIFIER, file_three)
 	testing.expect_value(t, refusal, Pin_Refusal.Principal_Mismatch)
-	_, refusal = principal_file_pin_check({}, 7, file_three)
+	_, refusal = principal_file_pin_check({}, 7, TEST_IDENTIFIER, file_three)
 	testing.expect_value(t, refusal, Pin_Refusal.Not_Pinned)
 
 	// A change of the passphrase: announce, write, settle. The older file
@@ -408,42 +429,42 @@ principal_file_pin_refuses_rollback_and_mismatch :: proc(t: ^testing.T) {
 	exhausted.generation = max(u64)
 	_, refusal = principal_file_pin_announce(exhausted, file_four)
 	testing.expect_value(t, refusal, Pin_Refusal.Generation_Exhausted)
-	_, refusal = principal_file_pin_settle(exhausted, 7, file_four)
+	_, refusal = principal_file_pin_settle(exhausted, 7, TEST_IDENTIFIER, file_four)
 	testing.expect_value(t, refusal, Pin_Refusal.Generation_Exhausted)
-	_, refusal = principal_file_pin_settle(current, 8, file_four)
+	_, refusal = principal_file_pin_settle(current, 8, TEST_IDENTIFIER, file_four)
 	testing.expect_value(t, refusal, Pin_Refusal.Principal_Mismatch)
-	_, refusal = principal_file_pin_settle(current, 0, file_four)
+	_, refusal = principal_file_pin_settle(current, 0, TEST_IDENTIFIER, file_four)
 	testing.expect_value(t, refusal, Pin_Refusal.Principal_Zero)
 	announced: Principal_File_Pin
 	announced, refusal = principal_file_pin_announce(current, file_four)
 	testing.expect_value(t, refusal, Pin_Refusal.None)
-	_, refusal = principal_file_pin_check(announced, 7, file_two)
+	_, refusal = principal_file_pin_check(announced, 7, TEST_IDENTIFIER, file_two)
 	testing.expect_value(t, refusal, Pin_Refusal.Digest_Mismatch)
 	match: Pin_Match
-	match, refusal = principal_file_pin_check(announced, 7, file_three)
+	match, refusal = principal_file_pin_check(announced, 7, TEST_IDENTIFIER, file_three)
 	testing.expect(t, refusal == .None && match == .Current)
-	match, refusal = principal_file_pin_check(announced, 7, file_four)
+	match, refusal = principal_file_pin_check(announced, 7, TEST_IDENTIFIER, file_four)
 	testing.expect(t, refusal == .None && match == .Next)
 	settled: Principal_File_Pin
-	settled, refusal = principal_file_pin_settle(announced, 7, file_four)
+	settled, refusal = principal_file_pin_settle(announced, 7, TEST_IDENTIFIER, file_four)
 	testing.expect_value(t, refusal, Pin_Refusal.None)
 	testing.expect_value(t, settled.generation, u64(5))
-	_, refusal = principal_file_pin_check(settled, 7, file_three)
+	_, refusal = principal_file_pin_check(settled, 7, TEST_IDENTIFIER, file_three)
 	testing.expect_value(t, refusal, Pin_Refusal.Digest_Mismatch)
-	_, refusal = principal_file_pin_check(settled, 7, file_two)
+	_, refusal = principal_file_pin_check(settled, 7, TEST_IDENTIFIER, file_two)
 	testing.expect_value(t, refusal, Pin_Refusal.Digest_Mismatch)
 
 	// The accepted cases come last.
 	testing.expect_value(t, principal_file_pin_advance({}, older), Pin_Refusal.None)
-	forward := Principal_File_Pin{principal = 7, generation = 4, file_digest = principal_file_digest(file_two)}
+	forward := Principal_File_Pin{identifier = TEST_IDENTIFIER, principal = 7, generation = 4, file_digest = principal_file_digest(file_two)}
 	testing.expect_value(t, principal_file_pin_advance(current, forward), Pin_Refusal.None)
-	match, refusal = principal_file_pin_check(current, 7, file_three)
+	match, refusal = principal_file_pin_check(current, 7, TEST_IDENTIFIER, file_three)
 	testing.expect(t, refusal == .None && match == .Current)
 	first: Principal_File_Pin
-	first, refusal = principal_file_pin_settle({}, 7, file_three)
+	first, refusal = principal_file_pin_settle({}, 7, TEST_IDENTIFIER, file_three)
 	testing.expect_value(t, refusal, Pin_Refusal.None)
 	testing.expect_value(t, first.generation, u64(1))
-	match, refusal = principal_file_pin_check(settled, 7, file_four)
+	match, refusal = principal_file_pin_check(settled, 7, TEST_IDENTIFIER, file_four)
 	testing.expect(t, refusal == .None && match == .Current)
 }
 

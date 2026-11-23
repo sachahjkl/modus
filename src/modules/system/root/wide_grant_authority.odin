@@ -137,6 +137,10 @@ wide_grant_collector_context :: proc "contextless" (work: ^Start_Work) {
 		return
 	}
 	link.region = ([^]u8)(region_address)[:COLLECTOR_REGION_PAGES * system.PAGE_SIZE]
+	// The principal identifier of the collector, before its start: the name
+	// of its principal in its store (wide_grants.COLLECTOR_REGION_IDENTIFIER_AT).
+	identifier := principal_records[work.principal].identifier
+	copy(link.region[wide_grants.COLLECTOR_REGION_IDENTIFIER_AT:][:wide_grants.COLLECTOR_IDENTIFIER_SIZE], identifier[:])
 	system.grant_put(&work.grants, wide_grants.SERVICE_RING_SLOT, {link.ring_memory, {.Read, .Write}})
 	system.grant_put(&work.grants, wide_grants.SERVICE_REGION_SLOT, {link.region_memory, {.Read, .Write}})
 }

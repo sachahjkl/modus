@@ -7,8 +7,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The principal identifier in the stores, the pin and the audit.** The identifier that the file of a principal holds names the owner of each of its stores, the payload of its pin and its collector index, so a number of a slot never names a principal on the disk. [Design](src/md/features/several_principals.md)
-- **The stores of a principal encrypted.** The blocks of the stores of a named principal are encrypted under keys that come from its unlock key, and the lock erases them, so a reader of the disk reads nothing of a locked principal. [Design](src/md/features/store_encryption.md)
+- **The blocks of the stores of a principal encrypted.** The blocks and the nodes of the stores of a named principal are encrypted with its keys, with the pointers that the open and the repair follow in clear, after a vector form of XChaCha20, so a reader of the disk reads no byte of a locked principal. [Design](src/md/features/store_encryption.md)
 - **A surface of unlock in no capture, and the unlock hints.** No capture of the screen holds the window of `unlock`, and the file of a principal keeps the layout in which its passphrase was typed. [Design](src/md/features/several_principals.md)
 
 - **The largest budget set by the plan of the principal.** The plan of principal 0 gives the share of the machine that one process gets through the border that the root service has for it (`budget_share_take`), in place of the default quarter, and a row of the plan gives a module a limit of processor time in place of a row in the code of the root service. [Design](src/md/features/module_budget_request.md)

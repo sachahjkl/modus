@@ -67,6 +67,11 @@ Service :: struct {
 	// handles close: the service ends what it keeps for that caller, so that
 	// a later connection whose ring has the same handle starts with nothing.
 	disconnected: proc "contextless" (service: ^Service, connection: ^Connection),
+	// principal_keys, when set, takes the keys of a named principal that the
+	// root service sends (Principal_Identity, Principal_Storage_Key,
+	// Principal_Locked). Only the holder of the role Storage sets it; each
+	// other service refuses them.
+	principal_keys: proc "contextless" (service: ^Service, command: isolated.Service_Command, values: [7]u64),
 }
 
 // The service ring and the call ring of each caller, two words each, take
@@ -152,6 +157,13 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 					connection.grant = command.values[6]
 				}
 			}
+		case .Principal_Identity, .Principal_Storage_Key, .Principal_Locked:
+			// The words are keys, never handles: nothing to close.
+			if service.principal_keys == nil {
+				log(.Warning, "service: the root service sent the keys of a principal to a service that takes none: they are refused")
+				continue
+			}
+			service.principal_keys(service, service_command, command.values)
 		case .Disconnect:
 			for &connection in service.connections {
 				if connection.calls.head != nil && connection.ring_memory == ring_memory {

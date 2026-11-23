@@ -545,6 +545,15 @@ Root_Command :: enum u32 {
 	// a number with no record, an identifier of zero bytes, and another
 	// identifier for a record that has one.
 	Principal_Identifier = 39,
+	// Principal_Storage_Key gives the storage key of a named principal at
+	// its unlock (src/md/features/store_encryption.md, "The keys"):
+	// values[0..3] the key, values[4] the number of the principal, values[5..6]
+	// 0. Only the holder of Principals sends it, after Principal_Identifier
+	// and before Principal_Unlock. The root service passes the key and the
+	// identifier to the holder of Storage, and keeps no copy. Refused: a
+	// number with no record or no identifier, a key of zero bytes, and no
+	// storage service to take it.
+	Principal_Storage_Key = 40,
 }
 
 // The step of a Screen_Budget, in values[0].
@@ -837,6 +846,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Principal_Record       = .Principals,
 	.Principal_Unlock       = .Principals,
 	.Principal_Identifier   = .Principals,
+	.Principal_Storage_Key  = .Principals,
 	.Debug                  = .Debugger,
 	.Palette_Provide        = .Root_Ring,
 	.Start_From_Disk        = .Root_Ring,
@@ -1239,6 +1249,7 @@ root_command_names := [Root_Command]string {
 	.Principal_Record       = "Principal_Record",
 	.Principal_Unlock       = "Principal_Unlock",
 	.Principal_Identifier   = "Principal_Identifier",
+	.Principal_Storage_Key  = "Principal_Storage_Key",
 	.Debug                  = "Debug",
 	.Palette_Provide        = "Palette_Provide",
 	.Start_From_Disk        = "Start_From_Disk",
@@ -1285,6 +1296,7 @@ root_first_argument_names := [Root_Command]string {
 	.Principal_Record       = "name",
 	.Principal_Unlock       = "name",
 	.Principal_Identifier   = "identifier",
+	.Principal_Storage_Key  = "key",
 	.Debug                  = "name",
 	.Palette_Provide        = "name",
 	.Start_From_Disk        = "name",
@@ -1332,6 +1344,7 @@ root_second_argument_names := [Root_Command]string {
 	.Principal_Record       = "",
 	.Principal_Unlock       = "number",
 	.Principal_Identifier   = "",
+	.Principal_Storage_Key  = "",
 	.Debug                  = "",
 	.Palette_Provide        = "",
 	.Start_From_Disk        = "hash",

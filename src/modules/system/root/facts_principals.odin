@@ -45,6 +45,13 @@ Session_Table_Row_Refused :: struct {
 	principal: u64,
 }
 
+// The ring of the storage service had no room for the lock of a principal:
+// its keys stay in the storage service until the next lock or stop.
+@(log_fact = "root: the storage service did not take the lock of principal {principal}: its ring is full, and the keys of the principal stay there until the next lock")
+Storage_Lock_Not_Sent :: struct {
+	principal: u64,
+}
+
 // The creation of a named principal starts in the window of unlock.
 @(log_fact = "root: the principal \"{principal_name}\" is created in the window of unlock")
 Principal_Creation_Started :: struct {

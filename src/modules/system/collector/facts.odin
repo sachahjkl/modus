@@ -50,6 +50,11 @@ Spaces_Store_Damaged :: struct {
 	space: u64,
 }
 
+// The private store holds the audit spaces of an older release, which named
+// the principal by its slot: the collector reads none of them.
+@(log_fact = "collector: the audit spaces in the store are of an older release of modus, which this release does not read: the collector keeps no record of them; remove the store of the collector to start again")
+Spaces_Older_Format :: struct {}
+
 @(log_fact = "collector: {failure}")
 Service_Failed :: struct {
 	failure: [96]u8,

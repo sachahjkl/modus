@@ -458,6 +458,8 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 		}
 		return -1, refuse(error, .Data_Damaged, .Damaged, .Stores)
 	}
+	plan_store_name_bytes = {}
+	copy(plan_store_name_bytes[:len(plan_store_name_bytes) - 1], store.name)
 	store_index = store_find(store.name)
 	if store_index >= 0 && store_damaged[store_index] {
 		return -1, refuse(error, .Data_Damaged, .Damaged, .Stores)
@@ -473,6 +475,21 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	}
 	if !create {
 		return -1, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
+	}
+	// A store of a named principal is made only with its keys: a locked
+	// principal makes none, and no store of its name in clear.
+	slot := owned_slot(store.name)
+	owner: format.Store_Owner
+	owned_field: [NAME_CAPACITY]u8
+	if slot != 0 {
+		made: bool
+		owner, owned_field, made = owned_make(slot, store.name, error)
+		if !made {
+			if principal_keys_held(slot) == nil {
+				return -1, refuse(error, .Wrong_State, .State, .Stores)
+			}
+			return -1, refuse(error, .Argument_Refused, .Too_Long, .Bytes, 1, 0, format.OWNER_FIELD_SIZE - 1)
+		}
 	}
 	// The first free cell of a page with no damage, or the first cell of a
 	// new page.
@@ -491,7 +508,12 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	}
 	plan_reset(store_index)
 	plan_cell()^ = {limit = store.limit}
-	copy(plan_cell().name[:NAME_CAPACITY - 1], store.name)
+	if slot != 0 {
+		plan_cell().name = owned_field
+		format.store_owner_set(&plan.store_block, owner)
+	} else {
+		copy(plan_cell().name[:NAME_CAPACITY - 1], store.name)
+	}
 	return store_index, .Succeeded
 }
 
@@ -940,7 +962,7 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	// A parameter has no address: the text of the name comes from a copy.
 	kept_name := name
 	object_name := kept_text(&kept_name)
-	store_name := store_name_of(store_index)
+	store_name := plan_store_name()
 	// The second root replaces the root before the commit, the one root
 	// that the open can fall back to if the disk did not keep a write of the
 	// commit. The commit read its blocks back before it returned: a commit
@@ -1217,6 +1239,11 @@ removal_step :: proc "contextless" () -> bool {
 	if store_index < 0 {
 		return false
 	}
+	// A step names no caller: the store is named by its cell. A store of a
+	// named principal has no name there, and no share of its maker is
+	// matched by it, so the hash index takes its new roots as for no share.
+	plan_store_name_bytes = {}
+	copy(plan_store_name_bytes[:len(plan_store_name_bytes) - 1], store_name_of(store_index))
 	plan_reset(store_index)
 	error: errors.Error_Record
 	queue := &plan.trees[1]

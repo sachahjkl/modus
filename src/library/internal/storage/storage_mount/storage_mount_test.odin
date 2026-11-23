@@ -253,6 +253,39 @@ a_version_too_large :: proc(t: ^testing.T) {
 	testing.expect_value(t, state.references[other.data.block], 0)
 }
 
+// A disk of the format of the release before: its root is whole, with the
+// magic STORAGE6. The open refuses it whole and says why, never formats it,
+// and a disk with a root of this release beside it opens that root.
+@(test)
+a_disk_of_an_older_format_is_refused_whole :: proc(t: ^testing.T) {
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	object := disk_object(&disk)
+	disk_root(&disk, disk_store(&disk, object, {}), 3)
+	older := (^format.Root)(raw_data(disk.bytes))
+	older.magic = format.OLDER_ROOT_MAGIC
+	older.check = format.root_check(older)
+	state := test_state_make()
+	defer test_state_free(state)
+	result := mount(state, &disk, 16)
+	testing.expect(t, result.failed, "a disk of the older format opened")
+	testing.expect(t, result.older_format, "the open did not say the older format")
+	testing.expect(t, !result.needs_format, "a disk of the older format would be formatted")
+	// A root of this release in the other place: it opens, and the older
+	// root is no state.
+	current := older^
+	current.magic = format.ROOT_MAGIC
+	current.generation = 1
+	current.check = format.root_check(&current)
+	copy(disk.bytes[BLOCK_SIZE:][:BLOCK_SIZE], ([^]u8)(&current)[:BLOCK_SIZE])
+	again := test_state_make()
+	defer test_state_free(again)
+	result = mount(again, &disk, 16)
+	testing.expect(t, !result.failed)
+	testing.expect(t, !result.older_format)
+	testing.expect_value(t, result.generation, 1)
+}
+
 // The count of a store in the root that is not its distinct blocks: the open
 // takes the recount, and says that the engine wrote a wrong count.
 @(test)
