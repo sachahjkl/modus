@@ -86,6 +86,27 @@ Picker_Ring_Status :: enum u32 {
 	List_Not_Whole = 5,
 }
 
+// Why the picker shows no row for one store of the list that the storage
+// service gave. A store that cannot show (Not_Display_Text, Repeated) is
+// left out with its cause in the log, and each other store shows; a
+// store that the table does not take (Table_Full) makes the list not
+// whole, as the principal would not see a store that it holds.
+Picker_Store_Refusal :: enum u64 {
+	None             = 0,
+	Not_Display_Text = 1, // The name is empty, past MAX_NAME_BYTES, or no display text: no row can show it. Or the store id is 0.
+	Repeated         = 2, // The principal holds a store of that name or of that id already.
+	Table_Full       = 3, // The budget of the powerbox pays no more rows of stores.
+}
+
+// The cause of each refusal of a store, as a log writes it.
+@(rodata)
+picker_store_refusal_texts := [Picker_Store_Refusal]string {
+	.None             = "no cause",
+	.Not_Display_Text = "its name is no display text of 1 to 64 bytes, or it has no number",
+	.Repeated         = "the principal holds a store of that name or that number already",
+	.Table_Full       = "the budget of the powerbox pays no more rows of stores",
+}
+
 // Why a list of stores is not whole.
 Picker_List_Cause :: enum u64 {
 	None              = 0,

@@ -489,7 +489,63 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Memory_Size:
 		slot := handle_find(process, v[0], .Memory) or_return
-		results[0] = regions[slot.object].page_count
+		region := &regions[slot.object]
+		results[0] = region.page_count
+		flags: op.Memory_Flags
+		if region.contiguous && !region.device {
+			flags += {.Contiguous}
+		}
+		if region.uncommitted {
+			flags += {.Uncommitted}
+		}
+		if region.large_pages {
+			flags += {.Large_Pages}
+		}
+		results[1] = transmute(u64)flags
+		return .Ok
+
+	case .Memory_Read:
+		slot := handle_find(process, v[0], .Memory, {.Read}) or_return
+		region := &regions[slot.object]
+		offset, address, length := v[1], v[2], v[3]
+		if length > op.MEMORY_READ_LIMIT || region.device {
+			return .Bad_Operation
+		}
+		object_bytes := region.page_count * PAGE_SIZE
+		if offset > object_bytes || length > object_bytes - offset || !user_range(process, address, length, true) {
+			return .Bad_Address
+		}
+		// Page by page under the lock of the object: a decommit takes that
+		// lock, so it waits for the copy of the page or comes before it. The
+		// pages of the caller are present (user_range), and its process lock
+		// keeps them so: the copy into them does not fault.
+		copied: u64
+		for copied < length {
+			place := offset + copied
+			page, within := place / PAGE_SIZE, place % PAGE_SIZE
+			part := min(PAGE_SIZE - within, length - copied)
+			if region.contiguous {
+				user_copy_to_process(address + copied, direct(region.physical + page * PAGE_SIZE + within, u8), part)
+				copied += part
+				continue
+			}
+			// A committed page with no frame yet gets its zero frame, as a read
+			// through a mapping would; a page that is not committed gets none.
+			if region_frame(region, page, true) == 0 {
+				return .Bad_State
+			}
+			lock_take(&region_locks[slot.object], .Region)
+			value := intrinsics.atomic_load(region_slot(region, page))
+			frame := value & PAGE_ADDRESS
+			if frame == 0 || !page_committed(region, value) {
+				lock_free(&region_locks[slot.object], .Region)
+				return .Bad_State
+			}
+			user_copy_to_process(address + copied, direct(frame + within, u8), part)
+			lock_free(&region_locks[slot.object], .Region)
+			copied += part
+		}
+		results[0] = copied
 		return .Ok
 
 	case .Process_Create:

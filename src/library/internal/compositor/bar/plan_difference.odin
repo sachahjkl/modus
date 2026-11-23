@@ -204,9 +204,10 @@ Plan_Difference_Read :: struct {
 // difference that a caller gives: it came through the call ring of that
 // caller, it names a memory object, it holds Read and no other right, the
 // lengths of the sides are not negative and not both 0, and the object
-// has exactly the pages of the two sides.
-plan_difference_object_check :: proc "contextless" (kind: op.Object_Kind, rights: op.Rights, through: bool, object_pages: u64, added_bytes, removed_bytes: i64) -> Plan_Difference_Refusal {
-	if !through || kind != .Memory || rights != {.Read} {
+// has exactly the pages of the two sides. An Uncommitted object is
+// refused: its maker can leave pages with no frame.
+plan_difference_object_check :: proc "contextless" (kind: op.Object_Kind, rights: op.Rights, through: bool, object_pages: u64, object_flags: op.Memory_Flags, added_bytes, removed_bytes: i64) -> Plan_Difference_Refusal {
+	if !through || kind != .Memory || rights != {.Read} || .Uncommitted in object_flags {
 		return .Not_A_Difference
 	}
 	if added_bytes < 0 || removed_bytes < 0 || added_bytes > max(i64) - removed_bytes {
@@ -222,14 +223,26 @@ plan_difference_object_check :: proc "contextless" (kind: op.Object_Kind, rights
 	return .None
 }
 
+// The object of a difference, as the reading copies it: copy fills into
+// with the bytes of the object from its start, and says false when the
+// object gives them not (a page with no frame, a revoked handle). The
+// compositor copies with system.memory_read, which gives a status where a
+// mapping would fault; a test copies from a slice.
+Plan_Difference_Source :: struct {
+	user:  rawptr,
+	bytes: int, // The bytes of the object: the reading refuses sides past them.
+	copy:  proc "contextless" (user: rawptr, into: []u8) -> bool,
+}
+
 // plan_difference_read copies the two sides out of the object once, into
 // the memory of the reading, then counts, checks and splits them into
 // items there. It runs on the worker of the compositor, never on the
 // interface thread: its work is in proportion to the difference. The
 // object is memory of the caller, which can change it while it is read:
-// each check reads the copy only.
-plan_difference_read :: proc "contextless" (source: []u8, added_bytes, removed_bytes: int, memory: Plan_Difference_Memory) -> (read: Plan_Difference_Read) {
-	if added_bytes < 0 || removed_bytes < 0 || added_bytes > len(source) || removed_bytes > len(source) - added_bytes {
+// each check reads the copy only. A copy that the object refuses is
+// Not_A_Difference.
+plan_difference_read :: proc "contextless" (source: Plan_Difference_Source, added_bytes, removed_bytes: int, memory: Plan_Difference_Memory) -> (read: Plan_Difference_Read) {
+	if added_bytes < 0 || removed_bytes < 0 || added_bytes > source.bytes || removed_bytes > source.bytes - added_bytes {
 		return {refusal = .Not_A_Difference, argument = 2}
 	}
 	total := added_bytes + removed_bytes
@@ -240,7 +253,9 @@ plan_difference_read :: proc "contextless" (source: []u8, added_bytes, removed_b
 	if copied == nil {
 		return {refusal = .Too_Many_Items, argument = 2}
 	}
-	copy(copied[:total], source[:total])
+	if source.copy == nil || !source.copy(source.user, copied[:total]) {
+		return {refusal = .Not_A_Difference, argument = 2}
+	}
 	added := string(copied[:added_bytes])
 	removed := string(copied[added_bytes:total])
 	added_count, removed_count: int

@@ -106,7 +106,7 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 		return false
 	}
 	switch operation {
-	case .None, .Log, .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Protect, .Fault_Answer, .Events_Set, .Guest_Run, .Log_Read:
+	case .None, .Log, .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Protect, .Fault_Answer, .Events_Set, .Guest_Run, .Log_Read, .Memory_Read:
 		// Each argument of these is read when its form says so. A new
 		// operation stops the build here, and its author says which of its
 		// arguments it reads.
@@ -132,7 +132,7 @@ argument_is_read :: proc "contextless" (operation: Operation, index: int, values
 @(private = "file")
 count_limit_holds :: proc "contextless" (operation: Operation, index: int, values: [7]u64) -> bool {
 	switch operation {
-	case .None, .Log, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Commit, .Memory_Protect, .Fault_Handler_Set, .Fault_Answer, .Thread_Control, .Guest_Run, .Log_Read:
+	case .None, .Log, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Commit, .Memory_Protect, .Fault_Handler_Set, .Fault_Answer, .Thread_Control, .Guest_Run, .Log_Read, .Memory_Read:
 		// The limit of the form of each count of these holds alone. A new
 		// operation stops the build here.
 	case .Memory_Create:

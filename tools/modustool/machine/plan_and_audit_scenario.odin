@@ -29,7 +29,9 @@ import "modustool:foundation"
 //      picker lists the stores of principal 0 through the powerbox, the
 //      principal picks one, and the one grant of the windows is the grant
 //      of store_asker; `store_stranger` gets No_Grant for the grants and
-//      for a picker of its own.
+//      for a picker of its own. Last, `difference_hostile` gives the
+//      trusted display an Uncommitted object and an object that it revokes
+//      during the reading, and the display serves after each.
 //   2. The same disk: the plans service gives the roles of the stored plan
 //      before the start policy, so the row "settings" of the start list
 //      starts settings_stand_in, with the boot pass, and never
@@ -56,6 +58,9 @@ PLAN_APPLIER_WRONG :: "plan_applier: WRONG"
 // picker received no list.
 STORE_ASKER_WRONG :: "store_asker: WRONG"
 STORE_PICKER_NO_LIST_LINE :: "compositor: the store picker received no list of stores"
+
+// A fault that the hostile caller of the trusted display found.
+DIFFERENCE_HOSTILE_WRONG :: "difference_hostile: WRONG"
 
 scenario_plan_and_audit_first := [?]Step {
 	// The plans service reads the store before the start policy, and finds
@@ -165,6 +170,16 @@ scenario_plan_and_audit_first := [?]Step {
 	{kind = .Wait, text = "[console] 1 row of Window_Grant_Row"},
 	{kind = .Type, text = "stop(\"store_asker\")"},
 	{kind = .Wait, text = "root: store_asker stopped: ", fails_on = STORE_ASKER_WRONG},
+	// A hostile caller of the trusted display of a plan difference: an
+	// Uncommitted object is refused at the border, and an object revoked
+	// while the worker reads it ends its dialog or leaves the lines that the
+	// worker read, which Escape refuses. The display serves after each.
+	{kind = .Type, text = "start(\"difference_hostile\")"},
+	{kind = .Wait, text = "difference_hostile: the display refused an Uncommitted object with Bad_Value, kept no copy of it, and still serves: as it must", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	{kind = .Wait, text = "difference_hostile: the object of the difference ", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "difference_hostile: the dialog of the revoked difference ended with the decision ", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	{kind = .Wait, text = "root: difference_hostile stopped: itself, done", fails_on = DIFFERENCE_HOSTILE_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

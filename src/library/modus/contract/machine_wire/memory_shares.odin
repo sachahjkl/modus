@@ -13,7 +13,7 @@ package machine_wire
 Memory_Shares :: struct {
 	kept_pages:        u64, // Never taken by a table of the mesh.
 	store_share_pages: u64, // The versions of one store.
-	peer_share_pages:  u64, // The versions of the stores of one partner. An object in assembly, which names no store, counts as its own store.
+	peer_share_pages:  u64, // The versions of the stores of one partner, and the object in assembly that it sends. That object counts as a store of its own too.
 }
 
 // The parts: a store holds a quarter of the mesh, a partner a half.
@@ -30,8 +30,10 @@ memory_shares_of :: proc "contextless" (budget_pages, kept_pages: u64) -> Memory
 // memory_growth_allowed says if a growth of push_pages may take place: the
 // budget left keeps the kept pages after it, the store that grows stays in
 // its share, and its partner in its share. store_pages and peer_pages are
-// the pages that they hold before the growth; a growth of no store (an
-// object) names the same count for both.
+// the pages that they hold before the growth. A growth of the object in
+// assembly names its pages as store_pages, and the pages of the versions
+// of its partner and its own as peer_pages: the partner holds at most half
+// of the mesh, its object included.
 memory_growth_allowed :: proc "contextless" (shares: Memory_Shares, budget_pages_left, push_pages, store_pages, peer_pages: u64) -> bool {
 	if budget_pages_left < shares.kept_pages || push_pages > budget_pages_left - shares.kept_pages {
 		return false

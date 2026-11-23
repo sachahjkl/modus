@@ -868,7 +868,7 @@ offset  size  field        type
 
 **The answer `Stop`** writes the stop report of the fault (`process_fault_report`, the same code as a fault with no handler: the stop cause `Fault`, the vector, the instruction, the address of a page fault), with the stack trace of the waiting thread: the answering thread is of the same process, so the page table of its processor is the one of the process. The instruction address and the frame pointer of the report are those of the fault, which `fault_deliver` keeps in the thread: a write of `Thread_Control` while the thread waits changes its frame, and the report still names the instruction that faulted.
 
-**The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events"), `Thread_Control` (33, "The control of a thread"), `Guest_Run` (34, "A guest") and `Log_Read` (35, "The own log ring of a process"), the kernel has 35 operations.
+**The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events"), `Thread_Control` (33, "The control of a thread"), `Guest_Run` (34, "A guest"), `Log_Read` (35, "The own log ring of a process") and `Memory_Read` (36, "The read of a memory object by its handle"), the kernel has 36 operations.
 
 **The address of a fault** is read from `cr2` once, at the start of `kernel_interrupt`, and each path of the page fault (`page_fault`, `fault_deliver`, `process_fault`) takes that value. For another kind the address is 0.
 
@@ -1679,6 +1679,17 @@ The kernel writes each log record of a process in two places: the whole log, the
 - **The cost.** One more store of 256 bytes for each record of a process, under the log lock; 16 KiB for each process, and 16 KiB in the record of each processor.
 
 The reason for one more operation: the ring is memory of the kernel that the budget of a process pays, and the log service holds no handle of that process. A mapping of the rings by the log service needs a shoot-down in the log service at each stop of a process; `Inspect` copies records of the kernel, but needs the machine handle with **Inspect**, which shows the whole machine.
+
+## The read of a memory object by its handle
+
+A process that reads an object that another process made cannot trust its pages. The maker can make the object `Uncommitted` and leave pages with no frame, or revoke the copy of the reader at any time (`Handle_Revoke`), and a read through a mapping then faults and stops the reader. For a client that reads its own objects, that is its own fault. For the trusted display, which reads the difference of a plan from the plans service and the entries of the palette from the console, it stops the desktop for each user.
+
+- **What it does.** `Memory_Read(memory, offset, address, length) -> copied` copies up to `MEMORY_READ_LIMIT` (1 MiB) bytes of a memory object, named by a handle with **Read**, into memory of the caller. A page that is not committed gives `Bad_State`, a range past the object gives `Bad_Address`, device memory gives `Bad_Operation`: each is a status, never a fault. `system.memory_read` makes several calls for a larger range.
+- **Locks.** The kernel copies page by page under the lock of the object, and under the process lock of the caller, which each command holds. A revocation ends the holdings of a process under its process lock, so it comes before the call or after it, never during a page. A decommit needs the object alone in its process (`object_only_here`), so a page of an object that another process holds never loses its frame. The pages of the caller are present before the copy (`user_range`), so the copy into them never faults in the kernel.
+- **The border.** `Memory_Size` gives the flags of the creation that the object keeps (`Contiguous`, `Uncommitted`, `Large_Pages`) beside its pages, so a reader refuses an `Uncommitted` object before it reads it at all.
+- **Record and replay.** The bytes that the copy wrote are the output of the command: a replay gives them again.
+
+The reason for one more operation: no operation of before copies a memory object by its handle. `Thread_Control` reads the memory of a process, with a thread handle that has **Inspect** and **Write**: a right over the whole process of the maker, which the reader must not hold. A fault handler in each reader that turns a fault of a lost mapping into a refusal is a second mechanism in each process, with its own thread and its own state machine; a copy by the kernel is one place that each reader uses. The kernel has 36 operations.
 
 ## How the systems depend on each other
 

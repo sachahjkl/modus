@@ -45,7 +45,21 @@ palette_destroying_commands := [?]string{"shutdown", "stop", "revoke", "lock", "
 
 palette_ring: ring.Ring // The ring from the compositor: its choices, and the answers of the console.
 palette_table_handle, palette_ring_handle: system.Handle
-palette_memory: []u8 // The mapping of the entry table.
+palette_memory: []u8 // The mapping of the entry table, which the root service made.
+// The object of the entries alone, once they passed the table, and its
+// number as Header.entries_object names it: 0 and nil while the entries
+// are in the table.
+palette_entries_object_handle: system.Handle
+palette_entries_object: []u8
+palette_entries_object_number: u32
+
+// palette_entries_place gives the bytes where the entries go now.
+palette_entries_place :: proc "contextless" () -> []u8 {
+	if palette_entries_object != nil {
+		return palette_entries_object
+	}
+	return palette_memory[palette_table.ENTRIES_OFFSET:]
+}
 // 1: the console is the palette provider. The two threads read it; it goes
 // to 0 once, before the grant ends.
 palette_provided: u32
@@ -737,17 +751,16 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	if !palette_active() {
 		return
 	}
-	// If the current shared table cannot hold all entries, allocate a new
-	// memory object sized for count and give a read-only handle to the
-	// compositor through the palette ring. Do not update palette_entries or
-	// palette_entry_count until the replacement succeeds so a failed grow
-	// retries cleanly on the next write.
-	if expected_bytes > u64(len(palette_memory)) {
-		needed_pages, pages_ok := palette_table.table_pages_for(u64(count))
-		if !pages_ok {
-			return
-		}
-		old_pages := u64(len(palette_memory)) / system.PAGE_SIZE
+	// The entries go in the table while they fit, then in an object of the
+	// entries alone that this console makes and gives to the compositor with
+	// Read through the palette ring (modus:contract/palette_table, "The object
+	// of the entries"). The header, the result and the candidates stay in the
+	// table that the root service made. palette_entries and
+	// palette_entry_count change only after a move succeeded, so a failed
+	// move tries again at the next write.
+	if u64(size) > u64(len(palette_entries_place())) {
+		needed_pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		old_pages := u64(len(palette_entries_object)) / system.PAGE_SIZE
 		new_pages := needed_pages
 		if old_pages <= max(u64) / 2 {
 			new_pages = max(needed_pages, old_pages * 2)
@@ -761,14 +774,7 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 			system.close(new_handle)
 			return
 		}
-		new_memory := ([^]u8)(new_addr)[:new_pages * system.PAGE_SIZE]
-		copy(new_memory[:palette_table.ENTRIES_OFFSET], palette_memory[:palette_table.ENTRIES_OFFSET])
-		if size > 0 {
-			copy(new_memory[palette_table.ENTRIES_OFFSET:], next_bytes)
-		}
-		generation := header.change_count + 2
-		new_header := (^palette_table.Header)(new_addr)
-		new_header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = generation, entry_count = u32(count), byte_length = expected_bytes}
+		number := palette_entries_object_number + 1
 		given, give_status := system.give(palette_ring_handle, new_handle, {.Read})
 		if give_status != .Ok {
 			system.memory_unmap(new_addr)
@@ -776,7 +782,7 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 			return
 		}
 		system.lock(&palette_send_lock)
-		sent := system.send(&palette_ring.completions, ring.Record{values = {0 = u64(palette_table.Outcome.Table_Replaced), 1 = u64(given), 2 = u64(len(new_memory))}})
+		sent := system.send(&palette_ring.completions, ring.Record{values = {0 = u64(palette_table.Outcome.Table_Replaced), 1 = u64(given), 2 = new_pages * system.PAGE_SIZE, 3 = u64(number)}})
 		system.unlock(&palette_send_lock)
 		if !sent {
 			// Revoke the handle already transferred into the compositor so
@@ -786,16 +792,15 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 			system.close(new_handle)
 			return
 		}
-		if size > 0 {
-			copy(([^]u8)(&palette_entries[0])[:size], next_bytes)
+		// The compositor keeps its copy of the object before: it reads the
+		// place that the header names, and retires the one before itself.
+		if palette_entries_object != nil {
+			system.memory_unmap(raw_data(palette_entries_object))
+			system.close(palette_entries_object_handle)
 		}
-		palette_entry_count = count
-		system.memory_unmap(raw_data(palette_memory))
-		system.close(palette_table_handle)
-		palette_table_handle = new_handle
-		palette_memory = new_memory
-		system.log_fact(.Info, Palette_Table_Written{entries = u64(count), table_generation = u64(generation)})
-		return
+		palette_entries_object_handle = new_handle
+		palette_entries_object = ([^]u8)(new_addr)[:new_pages * system.PAGE_SIZE]
+		palette_entries_object_number = number
 	}
 	if size > 0 {
 		copy(([^]u8)(&palette_entries[0])[:size], next_bytes)
@@ -803,10 +808,11 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	palette_entry_count = count
 	intrinsics.atomic_add(&header.change_count, 1)
 	if size > 0 {
-		copy(palette_memory[palette_table.ENTRIES_OFFSET:], next_bytes)
+		copy(palette_entries_place(), next_bytes)
 	}
 	header.entry_count = u32(count)
 	header.byte_length = expected_bytes
+	header.entries_object = palette_entries_object_number
 	generation := intrinsics.atomic_add(&header.change_count, 1) + 1
 	system.word_wake(&header.change_count, 64)
 	system.log_fact(.Info, Palette_Table_Written{entries = u64(count), table_generation = u64(generation)})

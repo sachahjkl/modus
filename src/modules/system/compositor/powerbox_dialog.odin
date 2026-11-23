@@ -264,11 +264,21 @@ plan_reading_take :: proc "contextless" (_: rawptr, bytes, alignment: int) -> ra
 	return ok ? address : nil
 }
 
+// plan_reading_copy copies the object of the job through the kernel
+// (system.memory_read), never through a mapping: the caller made the
+// object, and a page with no frame or a revocation during the read is
+// then a status, where a read through a mapping would fault and stop the
+// trusted display.
+@(private = "file")
+plan_reading_copy :: proc "contextless" (_: rawptr, into: []u8) -> bool {
+	_, status := system.memory_read(plan_reading.memory, 0, into)
+	return status == .Ok
+}
+
 // plan_difference_worker is the entry of the thread of the readings: it
-// maps the object read-only, copies and parses it into the arena of the
-// difference (bar.plan_difference_read), and publishes the reading. Its
-// work is in proportion to the difference, so it never runs on the
-// interface thread.
+// copies the object into the arena of the difference and parses it there
+// (bar.plan_difference_read), and publishes the reading. Its work is in
+// proportion to the difference, so it never runs on the interface thread.
 plan_difference_worker :: proc "c" (_: rawptr) -> ! {
 	for {
 		system.word_wait(&plan_reading.stage, u32(Plan_Reading_Stage.Idle))
@@ -288,13 +298,8 @@ plan_difference_worker :: proc "c" (_: rawptr) -> ! {
 		}
 		if plan_difference_arena.base != nil {
 			system.arena_reset(&plan_difference_arena)
-			total := plan_reading.added_bytes + plan_reading.removed_bytes
-			if address, map_status := system.memory_map(plan_reading.memory, {}); map_status == .Ok {
-				read = bar.plan_difference_read(([^]u8)(address)[:total], plan_reading.added_bytes, plan_reading.removed_bytes, {take = plan_reading_take})
-				system.memory_unmap(address)
-			} else {
-				read = {refusal = .Not_A_Difference, argument = 2}
-			}
+			source := bar.Plan_Difference_Source{bytes = plan_reading.added_bytes + plan_reading.removed_bytes, copy = plan_reading_copy}
+			read = bar.plan_difference_read(source, plan_reading.added_bytes, plan_reading.removed_bytes, {take = plan_reading_take})
 		}
 		plan_reading.read = read
 		plan_reading_stage_set(.Published)
@@ -321,10 +326,11 @@ plan_difference_show :: proc "contextless" (plan_name: string, memory: system.Ha
 		system.close(memory)
 	}
 	pages: u64
+	flags: op.Memory_Flags
 	if through && kind == .Memory {
-		pages, _ = system.memory_size(memory)
+		pages, flags, _ = system.memory_size_and_flags(memory)
 	}
-	if refusal = bar.plan_difference_object_check(kind, rights, through, pages, added_bytes, removed_bytes); refusal != .None {
+	if refusal = bar.plan_difference_object_check(kind, rights, through, pages, flags, added_bytes, removed_bytes); refusal != .None {
 		return 0, refusal, 2
 	}
 	if powerbox_prompt.open || !plan_difference_worker_running || plan_reading_stage() != .Idle {

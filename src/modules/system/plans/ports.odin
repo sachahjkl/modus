@@ -175,7 +175,10 @@ display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: strin
 	if call_status != .Ok || result <= 0 {
 		// The display closes the copy of a call that it refused; a call
 		// that did not reach it leaves the copy there, which this revokes.
-		system.handle_revoke(memory, connection.process)
+		// The copy is the one holding that came from memory. The display
+		// reads the object by system.memory_read, so a revocation during a
+		// reading is a status there, never a fault.
+		system.handle_revoke(memory)
 		if call_status != .Ok && call_status != .Failed {
 			display_disconnect()
 		}

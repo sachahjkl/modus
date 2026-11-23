@@ -15,6 +15,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/powerbox"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
 import "modus:storage"
 import "modus:system"
 
@@ -295,11 +296,22 @@ stores_call_step :: proc "contextless" (now_ms: u64) -> (answered: bool) {
 		if !more {
 			break
 		}
-		// A line that names no store is no candidate. A store that the
-		// table does not take makes the list not whole.
+		// A line that names no store is no candidate. A store that no row
+		// can show is left out with its cause; a store that the table does
+		// not take makes the list not whole.
 		store_id += 1
-		if len(name) > 0 && !powerbox_core.register_session_store(&service_state, principal, string(name), store_id) {
+		if len(name) == 0 {
+			continue
+		}
+		switch refusal := powerbox_core.register_session_store(&service_state, principal, string(name), store_id); refusal {
+		case .None:
+		case .Not_Display_Text, .Repeated:
+			system.log_fact(.Warning, Picker_Store_Left_Out{principal = principal, store = store_id, cause = value_kinds.text_field(powerbox.picker_store_refusal_texts[refusal], STORE_CAUSE_FIELD_BYTES)})
+		case .Table_Full:
 			whole = false
+		}
+		if !whole {
+			break
 		}
 	}
 	stores_call_end(.Ok)

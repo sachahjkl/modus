@@ -338,15 +338,15 @@ store_index_has_room :: proc "contextless" (state: ^Powerbox_State) -> bool {
 // candidate catalog. Candidates are strictly scoped to their principal. A
 // name or a store id that the principal holds already is refused, by the
 // index; a table with no free row grows from the budget, and a budget
-// that pays no more refuses the store: the caller sees false, and the
-// list is not whole.
-register_session_store :: proc "contextless" (state: ^Powerbox_State, principal: u64, name: string, store_id: u64) -> bool {
+// that pays no more refuses the store with Table_Full. Each refusal leaves
+// the table as it was.
+register_session_store :: proc "contextless" (state: ^Powerbox_State, principal: u64, name: string, store_id: u64) -> powerbox.Picker_Store_Refusal {
 	candidate, ok := powerbox.picker_candidate_make(name, store_id)
 	if !ok {
-		return false
+		return .Not_Display_Text
 	}
 	if store_index_find(state, .Name, principal, candidate.name_hash, store_id) || store_index_find(state, .Id, principal, candidate.name_hash, store_id) {
-		return false
+		return .Repeated
 	}
 	free := -1
 	for row in state.store_free_from ..< len(state.stores) {
@@ -359,14 +359,14 @@ register_session_store :: proc "contextless" (state: ^Powerbox_State, principal:
 		rows := len(state.stores)
 		wanted := free < 0 ? max(2 * rows, 16) : rows
 		if state.stores_grow == nil || !state.stores_grow(state.stores_grow_user, state, wanted) || len(state.stores) < wanted {
-			return false
+			return .Table_Full
 		}
 		for &store in state.stores[rows:] {
 			store = {}
 		}
 		store_index_rebuild(state)
 		if !store_index_has_room(state) {
-			return false
+			return .Table_Full
 		}
 		if free < 0 {
 			free = rows
@@ -377,7 +377,7 @@ register_session_store :: proc "contextless" (state: ^Powerbox_State, principal:
 	state.store_free_from = free + 1
 	store_index_put(state, free)
 	state.picker_change_count += 1
-	return true
+	return .None
 }
 
 // register_start_grant records an already-held capability from a process's

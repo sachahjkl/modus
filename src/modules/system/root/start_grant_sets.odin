@@ -522,6 +522,10 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// act for the principal, so the display refuses it each grant and each
 	// list.
 	{name = "store_stranger", grants = {.Connect, .Image}, terms = {callable = {0 = "display"}}},
+	// The hostile caller of the trusted display of a plan difference: the
+	// grant to act for the principal, so the display reads the objects that
+	// it gives, and a connection to the holder of Display only.
+	{name = "difference_hostile", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "display"}}},
 	// The driver of the machine test of the builders: it registers and
 	// builds recipes with the service recipes, which takes a caller that
 	// acts for its principal; the boot image gives the hash of the test

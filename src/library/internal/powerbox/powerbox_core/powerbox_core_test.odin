@@ -471,9 +471,9 @@ picker_isolation_and_out_of_bounds_index_issues_zero_grants :: proc(t: ^testing.
 	state := make_test_state()
 
 	// Register stores for principal 1 and an unrelated store for principal 2.
-	testing.expect(t, register_session_store(state, 1, "documents", 101))
-	testing.expect(t, register_session_store(state, 1, "photos", 202))
-	testing.expect(t, register_session_store(state, 2, "principal2_secret", 999))
+	testing.expect_value(t, register_session_store(state, 1, "documents", 101), powerbox.Picker_Store_Refusal.None)
+	testing.expect_value(t, register_session_store(state, 1, "photos", 202), powerbox.Picker_Store_Refusal.None)
+	testing.expect_value(t, register_session_store(state, 2, "principal2_secret", 999), powerbox.Picker_Store_Refusal.None)
 
 	// Principal 1 asks for [Network_Endpoint, Store_Share(Read_Only)] in one grouped batch.
 	batch := make_batch(1, 90, 1, .Disk_Module, 0x90, "gallery", make_network_item(0x0A00_0264, 443))
@@ -576,9 +576,9 @@ picker_pages_reach_each_store_of_a_long_list :: proc(t: ^testing.T) {
 	name_buffer: [16]u8
 	for index in 0 ..< COUNT {
 		name := store_name(name_buffer[:], index)
-		testing.expect(t, register_session_store(state, 1, name, u64(1000 + index)))
+		testing.expect_value(t, register_session_store(state, 1, name, u64(1000 + index)), powerbox.Picker_Store_Refusal.None)
 	}
-	testing.expect(t, register_session_store(state, 2, "other principal", 9))
+	testing.expect_value(t, register_session_store(state, 2, "other principal", 9), powerbox.Picker_Store_Refusal.None)
 
 	batch := make_batch(1, 91, 1, .Disk_Module, 0x91, "gallery", make_store_item(.Read_Only, .This_Run))
 	sub, dlg, has_dlg := submit_batch(state, &batch, 1000)
@@ -657,11 +657,11 @@ store_name :: proc(buffer: []u8, index: int) -> string {
 @(test)
 picker_pick_after_the_list_changed_is_refused :: proc(t: ^testing.T) {
 	state := make_test_state()
-	testing.expect(t, register_session_store(state, 1, "documents", 101))
+	testing.expect_value(t, register_session_store(state, 1, "documents", 101), powerbox.Picker_Store_Refusal.None)
 	batch := make_batch(1, 92, 1, .Disk_Module, 0x92, "gallery", make_store_item(.Read_Only, .This_Run))
 	_, dlg, has_dlg := submit_batch(state, &batch, 1000)
 	testing.expect(t, has_dlg)
-	testing.expect(t, register_session_store(state, 1, "photos", 202))
+	testing.expect_value(t, register_session_store(state, 1, "photos", 202), powerbox.Picker_Store_Refusal.None)
 	request := powerbox.Picker_Page_Request{dialog_serial = dlg.dialog_serial}
 	page: powerbox.Picker_Page
 	testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT, &request, &page), powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
@@ -681,9 +681,9 @@ picker_pick_after_the_list_changed_is_refused :: proc(t: ^testing.T) {
 powerbox_tables_refuse_at_their_own_size :: proc(t: ^testing.T) {
 	state := new(Powerbox_State, context.temp_allocator)
 	state_init(state, TRUSTED_DISPLAY_SLOT, {})
-	testing.expect(t, !register_session_store(state, 1, "documents", 101))
+	testing.expect_value(t, register_session_store(state, 1, "documents", 101), powerbox.Picker_Store_Refusal.Table_Full)
 	one: [1]Session_Store
 	state_init(state, TRUSTED_DISPLAY_SLOT, {stores = one[:]})
-	testing.expect(t, register_session_store(state, 1, "documents", 101))
-	testing.expect(t, !register_session_store(state, 1, "photos", 202))
+	testing.expect_value(t, register_session_store(state, 1, "documents", 101), powerbox.Picker_Store_Refusal.None)
+	testing.expect_value(t, register_session_store(state, 1, "photos", 202), powerbox.Picker_Store_Refusal.Table_Full)
 }

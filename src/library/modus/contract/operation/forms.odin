@@ -88,6 +88,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {"source", .Address, .None, {}, 0}, {}}},
 	.Guest_Run = {"Guest_Run", {{"process", .Handle, .Process, {.Control}, 0}, {"registers", .Address, .None, {}, 0}, {"processor", .Bounded, .None, {}, GUEST_PROCESSOR_CAPACITY - 1}, {}, {}, {}, {}}},
 	.Log_Read = {"Log_Read", {{"memory", .Handle, .Memory, {.Read}, 0}, {"process", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"after", .Value, .None, {}, 0}, {"records", .Address, .None, {}, 0}, {"count", .Count, .None, {}, OWN_LOG_RECORD_CAPACITY}, {}}},
+	.Memory_Read = {"Memory_Read", {{"memory", .Handle, .Memory, {.Read}, 0}, {"offset", .Value, .None, {}, 0}, {"address", .Address, .None, {}, 0}, {"length", .Count, .None, {}, MEMORY_READ_LIMIT}, {}, {}, {}}},
 }
 
 // The name of each object kind, for the sentence of an error record

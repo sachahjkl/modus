@@ -75,6 +75,7 @@ fuzz_address_parameters := [?]Fuzz_Address_Parameter {
 	{operation = .Thread_Control, parameter = 5},
 	{operation = .Guest_Run, parameter = 1, record = .Guest_Registers},
 	{operation = .Log_Read, parameter = 4},
+	{operation = .Memory_Read, parameter = 2},
 }
 
 // The grammar that the start of the generated target reads once.

@@ -190,8 +190,9 @@ Exchanged_Store :: struct {
 	merged:            Store_Version,
 	merged_later:      Store_Version,
 	// The pages that the owner of the memory counts for the versions of this
-	// store: its share of the memory of the mesh (memory_shares.odin). The
-	// contract keeps it; only the owner writes it.
+	// store: its share of the memory of the mesh (memory_shares.odin). Only
+	// the owner adds to it; a reset row starts at 0, as its versions gave
+	// their memory back.
 	memory_pages:      u64,
 }
 
@@ -262,10 +263,10 @@ store_exchange_reset :: proc "contextless" (store: ^Exchanged_Store) {
 	for version, index in versions {
 		kept[index] = {entries = version.entries, conflicts = version.conflicts, grow = version.grow, grow_user = version.grow_user, trim = version.trim}
 	}
-	// The pages that the owner counts follow the memory of the versions.
-	memory_pages := store.memory_pages
+	// A row is reset when a store takes it and when its store is removed,
+	// which gives the memory of its versions back first: it holds no page
+	// that its owner counts, and a later store starts at 0.
 	store^ = {}
-	store.memory_pages = memory_pages
 	for version, index in versions {
 		version^ = kept[index]
 	}
@@ -406,11 +407,17 @@ store_exchange_add :: proc "contextless" (stores: ^Store_Table, store_identifier
 }
 
 // store_exchange_remove ends the exchange of a store: the plan no longer
-// names it. The versions of this machine stay in the store itself.
+// names it. The versions of this machine stay in the store itself. The
+// versions give their memory back to their owner, so the row holds no page
+// of this store when a later store takes it.
 store_exchange_remove :: proc "contextless" (stores: ^Store_Table, store_identifier: blake3.Hash) -> Store_Status {
 	store := store_exchange_find(stores, store_identifier)
 	if store == nil {
 		return .Refused_Unknown_Store
+	}
+	versions := [STORE_VERSIONS_OF_A_STORE]^Store_Version{&store.current, &store.common, &store.offered, &store.reply, &store.incoming, &store.previous_common, &store.last_reply, &store.merged, &store.merged_later}
+	for version in versions {
+		version_trim(version)
 	}
 	store_exchange_reset(store)
 	return .Ok
@@ -773,7 +780,14 @@ store_page_read :: proc "contextless" (body: []u8) -> (page: Store_Page, status:
 @(private)
 assembly_take_page :: proc "contextless" (assembly: ^Store_Assembly, version: ^Store_Version, page: ^Store_Page) -> (whole: bool, status: Store_Status) {
 	if page.first == {} {
-		version_clear(version)
+		// A new offer from its first page: the pages that an offer before
+		// it took and never ended go back, so a sender that stalls between
+		// two pages and starts again holds no more than one offer.
+		if assembly.active {
+			version_trim(version)
+		} else {
+			version_clear(version)
+		}
 		assembly^ = {active = true, version_hash = page.version_hash, common_hash = page.common_hash, entry_total = page.entry_total, conflict_total = page.conflict_total}
 	} else if !assembly.active || assembly.version_hash != page.version_hash || assembly.common_hash != page.common_hash || assembly.entry_total != page.entry_total || assembly.conflict_total != page.conflict_total || page.first != {version.count, version.conflict_count} {
 		return false, .Refused_Out_Of_Order

@@ -795,6 +795,18 @@ memory_size :: proc "contextless" (memory: Handle, error: ^errors.Error_Record =
 	return results[0], .Ok
 }
 
+// memory_size_and_flags gives the count of pages of a memory object and the
+// flags of its creation that it keeps (op.Operation.Memory_Size): the
+// check of an object that another process gives, before its first read.
+memory_size_and_flags :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (pages: u64, flags: op.Memory_Flags, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Memory_Size, u64(memory))
+	if status != .Ok {
+		return 0, {}, status
+	}
+	return results[0], transmute(op.Memory_Flags)results[1], .Ok
+}
+
 // give copies a handle to another process. target is a process handle, or a
 // memory handle: then the other process that maps this memory receives it.
 // With the target 0, the copy is in this process.
@@ -812,6 +824,26 @@ give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights, erro
 	results: [7]u64
 	results, status = call_with_error(error, .Handle_Give, u64(target), u64(handle), u64(transmute(u32)rights))
 	return Handle(results[0]), status
+}
+
+// memory_read copies the bytes of a memory object from offset into into, by
+// its handle (op.Operation.Memory_Read): a status where a mapping would
+// fault. It is the read of an object that another process gives: a page
+// that is not committed, or a revocation between two calls, is a status,
+// not a stop of the reader. A range past op.MEMORY_READ_LIMIT is several
+// calls; after a status other than Ok, the bytes of into are none of the
+// object.
+memory_read :: proc "contextless" (memory: Handle, offset: u64, into: []u8, error: ^errors.Error_Record = nil) -> (copied: u64, status: Status) {
+	for copied < u64(len(into)) {
+		part := min(u64(len(into)) - copied, op.MEMORY_READ_LIMIT)
+		results: [7]u64
+		results, status = call_with_error(error, .Memory_Read, u64(memory), offset + copied, u64(uintptr(&into[copied])), part)
+		if status != .Ok {
+			return copied, status
+		}
+		copied += part
+	}
+	return copied, .Ok
 }
 
 // handle_state gives the kind of the object of a handle, and the rights of

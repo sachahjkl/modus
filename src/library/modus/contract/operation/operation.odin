@@ -399,14 +399,18 @@ Operation :: enum u32 {
 	//   `Starter` (`Module_Writer`). The error kind is `Starter_Module`.
 	// - `Bad_State`: the process is stopped.
 	// - `Bad_Address`: no mapping starts at the address, or it is a thread area or the time page.
-	Memory_Size    = 5, // (memory) -> pages.
-	// Gives the count of pages of a memory object.
+	Memory_Size    = 5, // (memory) -> pages, flags: Memory_Flags.
+	// Gives the count of pages of a memory object, and the flags of its creation that it keeps. A process that
+	// reads an object that another process gives checks them before it maps it: the pages of an Uncommitted
+	// object can have no frame, and an access to such a page is a fault.
 	//
 	// **Arguments**
 	//
 	// - `memory`: a memory handle, with any rights.
 	//
-	// **Results**: the count of pages.
+	// **Results**: the count of pages; the flags `Contiguous`, `Uncommitted` and `Large_Pages` that the object
+	// was made with. `Frames_Now` is not given: an object made with it is the same as one whose pages each
+	// had their first use.
 	//
 	// **Statuses**
 	//
@@ -1355,7 +1359,43 @@ Operation :: enum u32 {
 	// ```odin
 	// results, status := system.call(.Log_Read, u64(log_memory), slot, serial, after, u64(uintptr(&rows[0])), u64(len(rows)))
 	// ```
+	Memory_Read = 36, // (memory, offset, address, length) -> bytes copied.
+	// Copies bytes of a memory object, named by its handle, into memory of this process, and gives a
+	// status where a mapping would fault. A process that reads an object that another process gives (the
+	// trusted display reads the difference of a plan, a palette table) cannot trust its pages: their
+	// maker can make the object Uncommitted and leave pages with no frame, or revoke the handle while
+	// the reader reads, and a read through a mapping then faults and stops the reader. The kernel reads
+	// each page under the lock of the object and under the process lock of the caller: a revocation
+	// takes that process lock, so it comes before the call or after it, and a page that is not
+	// committed is a status.
+	//
+	// **Arguments**
+	//
+	// - `memory`: a memory handle with **Read**. Device memory is refused: a read of a register can
+	//   change the device.
+	// - `offset`: the first byte to copy, from the start of the object.
+	// - `address`, `length`: the bytes of this process that receive the copy; `length` at most
+	//   `MEMORY_READ_LIMIT`, so one call holds each lock for a bounded time.
+	//
+	// **Results**: the bytes copied: `length`.
+	//
+	// **Statuses**
+	//
+	// - `Bad_Handle`, `No_Right`: `memory` is not a memory handle with **Read**.
+	// - `Bad_Operation`: `length` is above `MEMORY_READ_LIMIT`, or the object is device memory.
+	// - `Bad_Address`: the range passes the end of the object, or the process cannot write the `length`
+	//   bytes at `address`.
+	// - `Bad_State`: a page of the range is not committed: an Uncommitted object that the copy reaches
+	//   past its committed pages, or a page that its holder decommitted. The bytes before that page may be
+	//   in the memory of the process; the caller takes none of them.
+	//
+	// ```odin
+	// copied, status := system.memory_read(memory, 0, buffer[:])
+	// ```
 }
+
+// The bytes of one Memory_Read: a read of a larger range is several calls.
+MEMORY_READ_LIMIT :: 1 << 20
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
 // orders the ready threads of each run queue. 0 is no strategy: a report of

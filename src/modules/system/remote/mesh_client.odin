@@ -573,6 +573,9 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 	switch item.kind {
 	case .Object_Request:
 		next: u64
+		// The object in assembly belongs to the partner of this link, whose
+		// share pays its pages (mesh_object_grow).
+		mesh_assembly_partner = link.session.pinned_identity
 		item.fetch, _, next = machine_wire.object_response_accept(&mesh, item.object_kind, item.hash, answer, item.offset)
 		// An object of several pieces: the same request asks for the next
 		// piece, and the caller reads its end once the object is whole.

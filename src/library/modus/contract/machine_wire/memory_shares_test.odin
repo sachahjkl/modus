@@ -26,6 +26,11 @@ memory_growth_keeps_the_kept_pages_and_the_shares :: proc(t: ^testing.T) {
 	testing.expect(t, !memory_growth_allowed(shares, 1 << 20, 1, 100, 1024))
 	testing.expect(t, !memory_growth_allowed(shares, 1 << 20, 1, 600, 600))
 	testing.expect(t, !memory_growth_allowed(shares, max(u64), max(u64), 0, 0))
+	// An object in assembly of 300 pages, from a partner whose stores hold
+	// 700: the object fits the share of a store, and the partner reaches its
+	// half at 24 pages more, not one page past it.
+	testing.expect(t, memory_growth_allowed(shares, 1 << 20, 24, 300, 700 + 300))
+	testing.expect(t, !memory_growth_allowed(shares, 1 << 20, 25, 300, 700 + 300))
 	// A budget under the kept pages leaves the mesh nothing.
 	none := memory_shares_of(100, 512)
 	testing.expect(t, !memory_growth_allowed(none, 1 << 20, 1, 0, 0))

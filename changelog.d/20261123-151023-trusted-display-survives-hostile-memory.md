@@ -1,0 +1,3 @@
+type: Security
+
+**A caller can no longer stop the trusted display with a memory object that it gives.** The display refuses an Uncommitted object of a plan difference at its border, and reads a difference and the entries of the palette by a copy of the kernel, never through a mapping: a page with no frame, or a revocation by the giver during the read, ends the dialog with no decision, or leaves the palette without the entries of its provider, and the desktop keeps running. The palette table keeps its header, its result and its candidates in the table that the root service made; the entries that pass it move to an object of the entries alone (`Table_Replaced`, table version 10).

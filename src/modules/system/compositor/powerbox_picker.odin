@@ -6,6 +6,7 @@
 package compositor
 
 import "base:intrinsics"
+import "internal:compositor/bar"
 import "modus:contract/powerbox"
 import "modus:contract/ring"
 import "modus:system"
@@ -35,10 +36,11 @@ Picker_Client :: struct {
 
 picker: Picker_Client
 
-// The tag of an Open that the principal left before its answer: its
-// answer, when it comes, names a dialog of the powerbox that this process
-// closes at once, so no dialog of the powerbox outlives its picker.
-picker_abandoned_tag: u32
+// The tags of the Opens that the principal left before their answers:
+// each answer, when it comes, names a dialog of the powerbox that this
+// process closes at once, so no dialog of the powerbox outlives its
+// picker (bar.Abandoned_Tags).
+picker_abandoned_tags: bar.Abandoned_Tags
 
 // powerbox_picker_open_ring opens the end of the picker ring of this
 // process. With none, a store picker shows no list.
@@ -76,7 +78,9 @@ picker_send :: proc "contextless" (command: powerbox.Picker_Ring_Command, values
 // powerbox_picker_open asks the powerbox for the stores of principal.
 powerbox_picker_open :: proc "contextless" (principal: u64) {
 	picker = {}
-	picker.stage = picker_send(.Open, {0 = principal}) ? .Opening : .No_List
+	// With every place of the set taken, an Open that the principal left
+	// could not be kept: its dialog of the powerbox would stay open.
+	picker.stage = !bar.abandoned_tags_full(&picker_abandoned_tags) && picker_send(.Open, {0 = principal}) ? .Opening : .No_List
 	if picker.stage == .No_List {
 		system.log_fact(.Warning, Store_Picker_No_List{})
 	}
@@ -140,7 +144,8 @@ powerbox_picker_pick :: proc "contextless" (list_index: int) -> bool {
 // powerbox_picker_close ends the dialog of the powerbox with no pick.
 powerbox_picker_close :: proc "contextless" () {
 	if picker.stage == .Opening {
-		picker_abandoned_tag = picker.tag
+		// The open refused a new Open while the set was full: a place is free.
+		bar.abandoned_tags_add(&picker_abandoned_tags, picker.tag)
 	} else if picker.serial != 0 {
 		picker_send(.Close, {0 = picker.serial})
 	}
@@ -156,8 +161,7 @@ powerbox_picker_step :: proc "contextless" () {
 	}
 	for {
 		record := system.receive(&picker_ring.completions) or_break
-		if picker_abandoned_tag != 0 && record.tag == picker_abandoned_tag {
-			picker_abandoned_tag = 0
+		if bar.abandoned_tags_take(&picker_abandoned_tags, record.tag) {
 			// values[1] is the serial of the dialog of an Open that was
 			// answered; an Open with no list made no dialog.
 			if record.kind == u32(powerbox.Picker_Ring_Status.Ok) && record.values[1] != 0 {

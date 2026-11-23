@@ -536,6 +536,7 @@ the_modules_of_the_operation_sequences_are_in_their_image_only :: proc(t: ^testi
 		{"settings_stand_in", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
 		{"store_asker", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
 		{"store_stranger", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
+		{"difference_hostile", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
 	}
 	found := 0
 	for build in foundation.module_builds {

@@ -1812,3 +1812,64 @@ peer_tables_refuse_past_the_budget :: proc(t: ^testing.T) {
 	// The pieces that came gave their bytes back.
 	testing.expect(t, small_budget.trims == 2 && len(home.peer.objects.bytes) == 0)
 }
+
+// A store that the plan stops exchanging gives the memory of its versions
+// back, and the store that takes its row later starts with no page of it.
+@(test)
+a_removed_store_gives_its_versions_back :: proc(t: ^testing.T) {
+	budget := Test_Budget{bytes_left = 1 << 20}
+	table := Store_Table{rows = make([]Exchanged_Store, 1, context.temp_allocator), version_grow = test_version_grow, version_grow_user = &budget, version_trim = test_version_trim}
+	first_identifier, second_identifier: blake3.Hash
+	first_identifier[0], second_identifier[0] = 1, 2
+	first_partner, second_partner: [machine_mesh.PUBLIC_KEY_SIZE]u8
+	first_partner[0], second_partner[0] = 3, 4
+	store, status := store_exchange_add(&table, first_identifier, first_partner)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect(t, version_room(&store.current, 100, 2) && version_room(&store.incoming, 50, 0))
+	// The owner counts the pages of the versions.
+	store.memory_pages = 7
+	before := budget.bytes_left
+	// A store that the table does not hold: refused, and nothing changes.
+	testing.expect_value(t, store_exchange_remove(&table, second_identifier), Store_Status.Refused_Unknown_Store)
+	testing.expect(t, budget.bytes_left == before && store.memory_pages == 7 && len(store.current.entries) >= 100)
+	testing.expect_value(t, store_exchange_remove(&table, first_identifier), Store_Status.Ok)
+	testing.expect(t, budget.bytes_left > before && store.current.entries == nil && store.incoming.entries == nil)
+	testing.expect_value(t, store.memory_pages, 0)
+	testing.expect(t, !store.in_use)
+	// The row taken again: another store of another partner, with no page.
+	reused, reused_status := store_exchange_add(&table, second_identifier, second_partner)
+	testing.expect_value(t, reused_status, Store_Status.Ok)
+	testing.expect(t, reused == store && reused.memory_pages == 0 && reused.current.count == 0 && reused.partner_identity == second_partner)
+	// Its versions still grow from the owner.
+	testing.expect(t, version_room(&reused.current, 10, 0))
+}
+
+// An offer that stalls between two pages gives its pages back when an
+// offer starts again from its first page.
+@(test)
+a_stalled_offer_gives_its_pages_back_at_a_restart :: proc(t: ^testing.T) {
+	budget := Test_Budget{bytes_left = 1 << 20}
+	version := Store_Version{grow = test_version_grow, grow_user = &budget, trim = test_version_trim}
+	assembly: Store_Assembly
+	items: [2 * STORE_ENTRY_WIRE_SIZE]u8
+	for index in 0 ..< 2 {
+		items[index * STORE_ENTRY_WIRE_SIZE] = u8(index + 1) // The identifiers, in their order.
+		items[index * STORE_ENTRY_WIRE_SIZE + blake3.HASH_SIZE] = 9 // A hash that is not zero.
+	}
+	// The first page of an offer of 2 entries carries 1: the offer stalls.
+	first := Store_Page{entry_total = 2, entry_count = 1, items = items[:STORE_ENTRY_WIRE_SIZE]}
+	first.version_hash[0] = 5
+	whole, status := assembly_take_page(&assembly, &version, &first)
+	testing.expect(t, !whole && status == .Ok && assembly.active && version.count == 1)
+	trims := budget.trims
+	// A page that does not follow: refused, and the pages stay for the caller.
+	out_of_order := first
+	out_of_order.first = {entry = 2}
+	_, refused := assembly_take_page(&assembly, &version, &out_of_order)
+	testing.expect_value(t, refused, Store_Status.Refused_Out_Of_Order)
+	testing.expect_value(t, budget.trims, trims)
+	// The sender starts again from its first page: the stalled pages go back.
+	whole, status = assembly_take_page(&assembly, &version, &first)
+	testing.expect(t, !whole && status == .Ok && version.count == 1)
+	testing.expect_value(t, budget.trims, trims + 1)
+}

@@ -1165,7 +1165,7 @@ table_make :: proc(given: []Given) -> []u8 {
 
 @(private = "file")
 collect_with_table :: proc(panel: ^Panel, table: []u8) -> palette_table.Problem {
-	problem, _ := list_collect(panel.list, {}, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}, table)
+	problem, _ := list_collect(panel.list, {}, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}, table, palette_table.entries_of_table(table))
 	list_build(panel)
 	return problem
 }
@@ -2562,7 +2562,7 @@ any_count_of_entries_0_1_500_5000 :: proc(t: ^testing.T) {
 		defer panel_free(panel)
 		table := table_make_numbered(count)
 		defer delete(table)
-		problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+		problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table, palette_table.entries_of_table(table))
 		testing.expect_value(t, problem, palette_table.Problem.None)
 		testing.expect_value(t, panel.list.provider, Provider_State.Ready)
 		testing.expect_value(t, panel.list.entry_count, count)
@@ -2583,7 +2583,7 @@ any_count_of_entries_0_1_500_5000 :: proc(t: ^testing.T) {
 			// Verify frecency boosts a frequently-used deep entry to rank 0.
 			recent_note(panel, chosen_entry(panel))
 			recent_note(panel, chosen_entry(panel))
-			problem2, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+			problem2, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table, palette_table.entries_of_table(table))
 			testing.expect_value(t, problem2, palette_table.Problem.None)
 			line_editor.line_clear(&panel.line)
 			type_text(panel, ">cmd_")
@@ -2608,7 +2608,7 @@ virtual_viewport_scroll_offsets :: proc(t: ^testing.T) {
 	defer panel_free(panel)
 	table := table_make_numbered(COUNT)
 	defer delete(table)
-	problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+	problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table, palette_table.entries_of_table(table))
 	testing.expect_value(t, problem, palette_table.Problem.None)
 	panel_open(panel)
 	type_text(panel, ">cmd_")
@@ -2678,24 +2678,24 @@ malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
 	entries_buf := make([]palette_table.Entry, 4)
 	defer delete(entries_buf)
 	snap := palette_table.Snapshot{entries = entries_buf}
-	problem, _ := palette_table.snapshot_take(valid, &snap)
+	problem, _ := palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.None)
 	saved_first := entries_buf[0]
 
 	// Truncated by 1 byte -> Too_Small, entries_buf untouched.
-	problem, _ = palette_table.snapshot_take(valid[:len(valid) - 1], &snap)
+	problem, _ = palette_table.snapshot_take(valid[:len(valid) - 1], palette_table.entries_of_table(valid[:len(valid) - 1]), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
 	testing.expect_value(t, snap.entry_count, 0)
 	testing.expect_value(t, snap.generation, 0)
 	testing.expect_value(t, entries_buf[0], saved_first)
 
 	// Truncated below MIN_TABLE_BYTES -> Too_Small, entries_buf untouched.
-	problem, _ = palette_table.snapshot_take(valid[:palette_table.MIN_TABLE_BYTES - 1], &snap)
+	problem, _ = palette_table.snapshot_take(valid[:palette_table.MIN_TABLE_BYTES - 1], palette_table.entries_of_table(valid[:palette_table.MIN_TABLE_BYTES - 1]), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
 	testing.expect_value(t, entries_buf[0], saved_first)
 
 	// Empty slice -> Too_Small, entries_buf untouched.
-	problem, _ = palette_table.snapshot_take(nil, &snap)
+	problem, _ = palette_table.snapshot_take(nil, palette_table.entries_of_table(nil), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
 	testing.expect_value(t, entries_buf[0], saved_first)
 
@@ -2704,7 +2704,7 @@ malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
 	orig_len := header.byte_length
 	for bad_len in ([3]u64{0, orig_len + 1, max(u64)}) {
 		header.byte_length = bad_len
-		problem, _ = palette_table.snapshot_take(valid, &snap)
+		problem, _ = palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 		testing.expect_value(t, problem, palette_table.Problem.Bad_Byte_Length)
 		testing.expect_value(t, entries_buf[0], saved_first)
 	}
@@ -2712,12 +2712,12 @@ malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
 
 	// Corrupt magic / version -> refused, entries_buf untouched.
 	header.magic = 0
-	problem, _ = palette_table.snapshot_take(valid, &snap)
+	problem, _ = palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Bad_Magic)
 	testing.expect_value(t, entries_buf[0], saved_first)
 	header.magic = palette_table.MAGIC
 	header.version = palette_table.VERSION + 1
-	problem, _ = palette_table.snapshot_take(valid, &snap)
+	problem, _ = palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Bad_Version)
 	testing.expect_value(t, entries_buf[0], saved_first)
 }
