@@ -357,20 +357,22 @@ lex_measure_suite :: proc(t: ^testing.T) {
 			(f64(len(src)) / (1024.0 * 1024.0)) / (f64(st.min_ns) / 1e9))
 	}
 
-	// ---- M2: 1024-field base + 64 with overlays + 1024/4096 lookups
-	{
+	// ---- M2: 1024-field base + 64 with overlays + 1024 and 4096 lookups
+	for queries in ([?]int{1024, 4096}) {
 		ws, _ := measure_workspace_make(context.temp_allocator, 3)
-		src := generate_m2_source(1024, 64, 1024, context.temp_allocator)
+		src := generate_m2_source(1024, 64, queries, context.temp_allocator)
 		last_res: Declaration_Result
+		prof: Evaluation_Profile
 		for r in 0 ..< MEASURE_ROUNDS {
+			prof = {}
 			start := time.tick_now()
-			last_res = declaration_evaluate(ws, src, "", {stack_bytes = 16 * 1024 * 1024, depth_limit = 4096})
+			last_res = declaration_evaluate(ws, src, "", {stack_bytes = 16 * 1024 * 1024, depth_limit = 4096, profile = &prof})
 			samples[r] = time.duration_nanoseconds(time.tick_since(start))
 		}
 		st := compute_stats(samples[:])
-		fmt.printfln("M2_deep_with_overlays (1024f+64ov+1024q): ok=%v fail=%v val=%d steps=%d min=%.3f ms median=%.3f ms",
-			last_res.ok, last_res.failure_kind, value_integer(last_res.value), last_res.steps_taken,
-			f64(st.min_ns) / 1e6, f64(st.median_ns) / 1e6)
+		fmt.printfln("M2_deep_with_overlays (1024f+64ov+%dq): ok=%v fail=%v val=%d steps=%d compacts=%d hash_lookups=%d min=%.3f ms median=%.3f ms",
+			queries, last_res.ok, last_res.failure_kind, value_integer(last_res.value), last_res.steps_taken,
+			prof.overlay_compacts, prof.shape_hash_lookups, f64(st.min_ns) / 1e6, f64(st.median_ns) / 1e6)
 	}
 
 	// ---- M3: list pipeline (512 items for v1 cap + 4096 items target)

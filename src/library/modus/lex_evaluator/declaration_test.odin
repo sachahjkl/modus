@@ -677,3 +677,61 @@ a_declaration_file_past_64_kib_takes_a_larger_scale :: proc(t: ^testing.T) {
 	testing.expect(t, other.nodes == nil && other.vm_pools.text_arena == nil)
 	testing.expect(t, declaration_workspace_carve(other, memory, pools))
 }
+
+// Per-shape Slice_Hash_Index boundary and overlay compaction tests (L3):
+// - <= 16 fields: direct Sym_Id scan, no hash index built.
+// - 17 fields (one past SHAPE_HASH_INDEX_THRESHOLD): hash index built and hit.
+// - 1024 fields + 20 chained overlays (crossing OVERLAY_COMPACT_THRESHOLD):
+//   compacts without forcing broken sibling fields; miss returns Field_Unknown.
+@(test)
+declaration_shape_hash_index_and_overlay_compaction :: proc(t: ^testing.T) {
+	make_rec_src :: proc(count: int, query_field: string) -> string {
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "let r = {\n")
+		for i in 0 ..< count {
+			fmt.sbprintf(&b, "  f_%04d = %d,\n", i, i * 10 + 1)
+		}
+		fmt.sbprintf(&b, "  broken = 1 / 0,\n}} in r.%s\n", query_field)
+		return strings.to_string(b)
+	}
+
+	ws := new_workspace(2)
+	prof: Evaluation_Profile
+
+	// 15 + 1 = 16 fields (at inline threshold): no hash index built.
+	res := declaration_evaluate(ws, make_rec_src(15, "f_0014"), "", {stack_bytes = DECL_TEST_STACK, profile = &prof})
+	testing.expect(t, res.ok && value_integer(res.value) == 141)
+	testing.expect_value(t, prof.shape_indices_built, u64(0))
+	testing.expect_value(t, prof.shape_hash_lookups, u64(0))
+
+	// 16 + 1 = 17 fields (one past threshold): per-shape Slice_Hash_Index built and hit.
+	prof = {}
+	res = declaration_evaluate(ws, make_rec_src(16, "f_0015"), "", {stack_bytes = DECL_TEST_STACK, profile = &prof})
+	testing.expect(t, res.ok && value_integer(res.value) == 151)
+	testing.expect_value(t, prof.shape_indices_built, u64(1))
+	testing.expect(t, prof.shape_hash_lookups >= 1)
+
+	// Missing field on indexed >16-field shape returns Field_Unknown cleanly.
+	prof = {}
+	res = declaration_evaluate(ws, make_rec_src(32, "no_such_field"), "", {stack_bytes = DECL_TEST_STACK, profile = &prof})
+	testing.expect(t, !res.ok && res.failure_kind == .Field_Unknown && res.detail == "no_such_field")
+	testing.expect(t, prof.shape_indices_built >= 1)
+
+	// 20 chained overlays over a 64-field record containing a broken field:
+	// crosses OVERLAY_COMPACT_THRESHOLD (16) and compacts without forcing broken!
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "let r0 = {\n  broken = 1 / 0,\n")
+	for i in 0 ..< 64 {
+		fmt.sbprintf(&b, "  k_%02d = %d,\n", i, i)
+	}
+	strings.write_string(&b, "},\n")
+	for ov in 1 ..= 20 {
+		fmt.sbprintf(&b, "  r%d = r%d with {{ k_%02d = %d }},\n", ov, ov - 1, ov % 64, ov * 100)
+	}
+	strings.write_string(&b, "in r20.k_01 + r20.k_20 + r20.k_60\n")
+	prof = {}
+	res = declaration_evaluate(ws, strings.to_string(b), "", {stack_bytes = DECL_TEST_STACK, profile = &prof})
+	testing.expectf(t, res.ok && value_integer(res.value) == 100 + 2000 + 60, "overlay compact failed: ok=%v fail=%v val=%d", res.ok, res.failure_kind, value_integer(res.value))
+	testing.expect(t, prof.overlay_compacts >= 1)
+	testing.expect(t, prof.shape_indices_built >= 1)
+}

@@ -306,20 +306,23 @@ Evaluation_Host :: struct {
 
 // Deterministic VM profiling counters (zero wall-clock reads; nil = off).
 Evaluation_Profile :: struct {
-	opcode_counts:    [len(Opcode)]u64,
-	steps_total:      u64,
-	thunks_created:   u64,
-	thunks_forced:    u64,
-	thunks_reused:    u64,
-	calls_total:      u64,
-	tail_calls_total: u64,
-	max_frame_depth:  u32,
-	max_reg_depth:    u32,
-	overlay_compacts: u64,
-	cache_l1_hits:    u64,
-	cache_l1_misses:  u64,
-	cache_l2_hits:    u64,
-	cache_l2_misses:  u64,
+	opcode_counts:         [len(Opcode)]u64,
+	steps_total:           u64,
+	thunks_created:        u64,
+	thunks_forced:         u64,
+	thunks_reused:         u64,
+	calls_total:           u64,
+	tail_calls_total:      u64,
+	max_frame_depth:       u32,
+	max_reg_depth:         u32,
+	overlay_compacts:      u64,
+	shape_indices_built:   u64,
+	shape_index_fallbacks: u64,
+	shape_hash_lookups:    u64,
+	cache_l1_hits:         u64,
+	cache_l1_misses:       u64,
+	cache_l2_hits:         u64,
+	cache_l2_misses:       u64,
 }
 
 // ---- Value constructors and fast accessors.

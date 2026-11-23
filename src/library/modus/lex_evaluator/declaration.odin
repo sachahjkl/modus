@@ -250,9 +250,10 @@ Decl_Layout :: struct {
 	max_sites:        int,
 	max_site_args:    int,
 	max_field_syms:   int,
-	max_shapes:       int,
-	max_shape_fields: int,
-	max_regs:         int,
+	max_shapes:          int,
+	max_shape_fields:    int,
+	max_shape_idx_slots: int,
+	max_regs:            int,
 	max_frames:       int,
 	max_thunks:       int,
 	max_env_slots:    int,
@@ -294,9 +295,10 @@ compute_layout :: proc "contextless" (pools: Declaration_Pools) -> Decl_Layout {
 		max_sites        = max(256, n / 8),
 		max_site_args    = max(1024, n / 2),
 		max_field_syms   = max(512, n / 2),
-		max_shapes       = max(256, n / 4),
-		max_shape_fields = max(1024, n),
-		max_regs         = max(4096, EVALUATION_DEPTH_LIMIT * 4),
+		max_shapes          = max(256, n / 4),
+		max_shape_fields    = max(1024, n),
+		max_shape_idx_slots = hash_table.slice_index_groups_for_entries(max(1024, n)) * hash_table.GROUP_WIDTH,
+		max_regs            = max(4096, EVALUATION_DEPTH_LIMIT * 4),
 		max_frames       = EVALUATION_DEPTH_LIMIT + 16,
 		max_thunks       = n * 2,
 		max_env_slots    = n * 2,
@@ -355,6 +357,8 @@ declaration_workspace_bytes :: proc "contextless" (pools: Declaration_Pools) -> 
 	at = align_up(at, l.max_field_syms * size_of(lex_parser.Sym_Id))
 	at = align_up(at, l.max_shapes * size_of(Record_Shape))
 	at = align_up(at, l.max_shape_fields * size_of(lex_parser.Sym_Id))
+	at = align_up(at, l.max_shape_idx_slots * size_of(u8))
+	at = align_up(at, l.max_shape_idx_slots * size_of(u32))
 	// Compile scratch
 	at = align_up(at, l.max_let_protos * size_of(Compile_Local))
 	at = align_up(at, l.max_let_descs * size_of(Compile_Let_Scope))
@@ -434,9 +438,11 @@ declaration_workspace_carve :: proc "contextless" (ws: ^Declaration_Workspace, m
 		call_sites        = carve_slice(Call_Site_Desc, base, &at, l.max_sites),
 		site_args         = carve_slice(Call_Site_Arg, base, &at, l.max_site_args),
 		field_syms        = carve_slice(lex_parser.Sym_Id, base, &at, l.max_field_syms),
-		shapes            = carve_slice(Record_Shape, base, &at, l.max_shapes),
-		shape_fields      = carve_slice(lex_parser.Sym_Id, base, &at, l.max_shape_fields),
-		interner          = interner,
+		shapes             = carve_slice(Record_Shape, base, &at, l.max_shapes),
+		shape_fields       = carve_slice(lex_parser.Sym_Id, base, &at, l.max_shape_fields),
+		shape_idx_controls = carve_slice(u8, base, &at, l.max_shape_idx_slots),
+		shape_idx_refs     = carve_slice(u32, base, &at, l.max_shape_idx_slots),
+		interner           = interner,
 		compile_scratch   = {
 			locals     = carve_slice(Compile_Local, base, &at, l.max_let_protos),
 			let_scopes = carve_slice(Compile_Let_Scope, base, &at, l.max_let_descs),

@@ -983,6 +983,7 @@ build_record_desc :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node
 		shape_hash  = shape_h,
 	}
 	c.eval.shape_count += 1
+	build_shape_hash_index(c.eval, shape_id)
 
 	desc_rel = u32(c.eval.rec_desc_count) - c.chunk.rec_desc_start
 	c.eval.rec_descs[c.eval.rec_desc_count] = {

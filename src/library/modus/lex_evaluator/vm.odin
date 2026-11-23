@@ -19,6 +19,12 @@ import "modus:lex_parser"
 // without forcing any field).
 OVERLAY_COMPACT_THRESHOLD :: 16
 
+// Per-shape hash-index threshold (inline capacity: records up to 16 fields fit
+// 16 Sym_Ids in one 64-byte cache line for direct u32 scan; records past 16
+// fields build a per-shape Slice_Hash_Index for O(1) lookup, falling back to
+// binary search if the carved index pool is full).
+SHAPE_HASH_INDEX_THRESHOLD :: 16
+
 // Console-line inline capacities for Console_Eval_Buffers.
 CONSOLE_CODE_CAPACITY :: 8192
 CONSOLE_PROTO_CAPACITY :: 512
@@ -33,6 +39,7 @@ CONSOLE_SITE_ARG_CAPACITY :: 1024
 CONSOLE_FIELD_SYM_CAPACITY :: 512
 CONSOLE_SHAPE_CAPACITY :: 256
 CONSOLE_SHAPE_FIELD_CAPACITY :: 1024
+CONSOLE_SHAPE_IDX_SLOTS :: 2048
 CONSOLE_INTERN_SYMS :: 1024
 CONSOLE_INTERN_GROUPS :: 74 // ceil(1024 / 14)
 CONSOLE_INTERN_BYTES :: 16 * 1024
@@ -102,9 +109,11 @@ Eval_Pools :: struct {
 	call_sites:        []Call_Site_Desc,
 	site_args:         []Call_Site_Arg,
 	field_syms:        []lex_parser.Sym_Id,
-	shapes:            []Record_Shape,
-	shape_fields:      []lex_parser.Sym_Id,
-	interner:          lex_parser.String_Interner,
+	shapes:             []Record_Shape,
+	shape_fields:       []lex_parser.Sym_Id,
+	shape_idx_controls: []u8,
+	shape_idx_refs:     []u32,
+	interner:           lex_parser.String_Interner,
 	compile_scratch:   Compile_Scratch,
 	// Runtime pools
 	reg_stack:         []Value,
@@ -148,9 +157,11 @@ Console_Eval_Buffers :: struct {
 	call_sites:        [CONSOLE_SITE_CAPACITY]Call_Site_Desc,
 	site_args:         [CONSOLE_SITE_ARG_CAPACITY]Call_Site_Arg,
 	field_syms:        [CONSOLE_FIELD_SYM_CAPACITY]lex_parser.Sym_Id,
-	shapes:            [CONSOLE_SHAPE_CAPACITY]Record_Shape,
-	shape_fields:      [CONSOLE_SHAPE_FIELD_CAPACITY]lex_parser.Sym_Id,
-	intern_controls:   [CONSOLE_INTERN_GROUPS * hash_table.GROUP_WIDTH]u8,
+	shapes:             [CONSOLE_SHAPE_CAPACITY]Record_Shape,
+	shape_fields:       [CONSOLE_SHAPE_FIELD_CAPACITY]lex_parser.Sym_Id,
+	shape_idx_controls: [CONSOLE_SHAPE_IDX_SLOTS]u8,
+	shape_idx_refs:     [CONSOLE_SHAPE_IDX_SLOTS]u32,
+	intern_controls:    [CONSOLE_INTERN_GROUPS * hash_table.GROUP_WIDTH]u8,
 	intern_refs:       [CONSOLE_INTERN_GROUPS * hash_table.GROUP_WIDTH]u32,
 	intern_spans:      [CONSOLE_INTERN_SYMS + 1]lex_parser.Sym_Span,
 	intern_bytes:      [CONSOLE_INTERN_BYTES]u8,
@@ -207,9 +218,11 @@ console_eval_pools :: proc "contextless" (buf: ^Console_Eval_Buffers, seed: u64 
 		call_sites        = buf.call_sites[:],
 		site_args         = buf.site_args[:],
 		field_syms        = buf.field_syms[:],
-		shapes            = buf.shapes[:],
-		shape_fields      = buf.shape_fields[:],
-		interner          = interner,
+		shapes             = buf.shapes[:],
+		shape_fields       = buf.shape_fields[:],
+		shape_idx_controls = buf.shape_idx_controls[:],
+		shape_idx_refs     = buf.shape_idx_refs[:],
+		interner           = interner,
 		compile_scratch   = {
 			locals     = buf.scratch_locals[:],
 			let_scopes = buf.scratch_scopes[:],
@@ -293,6 +306,9 @@ Evaluation :: struct {
 	shape_count:           int,
 	shape_fields:          []lex_parser.Sym_Id,
 	shape_field_count:     int,
+	shape_idx_controls:    []u8,
+	shape_idx_refs:        []u32,
+	shape_idx_used:        int,
 	interner:              lex_parser.String_Interner,
 	compile_scratch:       Compile_Scratch,
 	// Runtime pools
@@ -387,9 +403,11 @@ evaluation_start_with_pools :: proc "contextless" (
 		call_sites        = pools.call_sites,
 		site_args         = pools.site_args,
 		field_syms        = pools.field_syms,
-		shapes            = pools.shapes,
-		shape_fields      = pools.shape_fields,
-		interner          = pools.interner,
+		shapes             = pools.shapes,
+		shape_fields       = pools.shape_fields,
+		shape_idx_controls = pools.shape_idx_controls,
+		shape_idx_refs     = pools.shape_idx_refs,
+		interner           = pools.interner,
 		compile_scratch   = pools.compile_scratch,
 		reg_stack         = pools.reg_stack,
 		frames            = pools.frames,
@@ -613,9 +631,71 @@ host_to_value :: proc "contextless" (eval: ^Evaluation, hv: Host_Value) -> (v: V
 
 // ---- Record_Shape lookups and lazy record / overlay operations.
 
-// shape_lookup_sym looks up `sym` in a UTF-8 sorted Record_Shape. Uses O(1)
-// Slice_Hash_Index when attached (Layer 3 for >16 fields) and O(log F) binary
-// search over UTF-8 byte order otherwise.
+// build_shape_hash_index attaches a per-shape Slice_Hash_Index to shapes with
+// more than SHAPE_HASH_INDEX_THRESHOLD fields. If the carved index pool is full
+// it records a fallback and leaves has_index = false (inline capacity never refuses).
+@(private)
+build_shape_hash_index :: proc "contextless" (eval: ^Evaluation, shape_id: u32) {
+	if int(shape_id) >= eval.shape_count {
+		return
+	}
+	shape := &eval.shapes[shape_id]
+	count := int(shape.field_count)
+	if count <= SHAPE_HASH_INDEX_THRESHOLD {
+		return
+	}
+	groups := hash_table.slice_index_groups_for_entries(count)
+	slots := groups * hash_table.GROUP_WIDTH
+	if slots <= 0 || eval.shape_idx_used + slots > len(eval.shape_idx_controls) || eval.shape_idx_used + slots > len(eval.shape_idx_refs) {
+		if eval.profile != nil {
+			eval.profile.shape_index_fallbacks += 1
+		}
+		return
+	}
+	start := eval.shape_idx_used
+	ctrls := eval.shape_idx_controls[start:start + slots]
+	refs := eval.shape_idx_refs[start:start + slots]
+	idx, ok := hash_table.slice_index_init(u32, ctrls, refs, eval.interner.index.prepared_seed)
+	if !ok {
+		if eval.profile != nil {
+			eval.profile.shape_index_fallbacks += 1
+		}
+		return
+	}
+	Shape_Hash_Owner :: struct {
+		idx:    ^hash_table.Slice_Hash_Index(u32),
+		fields: []lex_parser.Sym_Id,
+	}
+	shape_hash_of_ref :: proc "contextless" (owner: rawptr, reference: u64) -> u64 {
+		o := (^Shape_Hash_Owner)(owner)
+		i := int(reference)
+		if i < 0 || i >= len(o.fields) {
+			return 0
+		}
+		return hash_table.slice_index_hash_word(o.idx, u64(o.fields[i]))
+	}
+	fields := eval.shape_fields[int(shape.fields_off):int(shape.fields_off) + count]
+	owner := Shape_Hash_Owner{idx = &idx, fields = fields}
+	for sym, ci in fields {
+		h := hash_table.slice_index_hash_word(&idx, u64(sym))
+		if !hash_table.slice_index_insert(&idx, h, u32(ci), &owner, shape_hash_of_ref) {
+			if eval.profile != nil {
+				eval.profile.shape_index_fallbacks += 1
+			}
+			return
+		}
+	}
+	eval.shape_idx_used = start + slots
+	shape.hash_index = idx
+	shape.has_index = true
+	if eval.profile != nil {
+		eval.profile.shape_indices_built += 1
+	}
+}
+
+// shape_lookup_sym looks up `sym` in a UTF-8 sorted Record_Shape.
+// <= 16 fields: single-cache-line u32 Sym_Id scan (zero string dereferences).
+// > 16 fields: O(1) Slice_Hash_Index lookup (or UTF-8 binary search fallback).
 shape_lookup_sym :: proc "contextless" (eval: ^Evaluation, shape_id: u32, sym: lex_parser.Sym_Id) -> (field_idx: int, found: bool) {
 	if int(shape_id) >= eval.shape_count || sym == lex_parser.NO_SYM {
 		return -1, false
@@ -626,7 +706,18 @@ shape_lookup_sym :: proc "contextless" (eval: ^Evaluation, shape_id: u32, sym: l
 		return -1, false
 	}
 	fields := eval.shape_fields[int(shape.fields_off):int(shape.fields_off) + count]
+	if count <= SHAPE_HASH_INDEX_THRESHOLD {
+		for i in 0 ..< count {
+			if fields[i] == sym {
+				return i, true
+			}
+		}
+		return -1, false
+	}
 	if shape.has_index {
+		if eval.profile != nil {
+			eval.profile.shape_hash_lookups += 1
+		}
 		h := hash_table.slice_index_hash_word(&shape.hash_index, u64(sym))
 		probe := hash_table.slice_index_search_begin(&shape.hash_index, h)
 		for {
