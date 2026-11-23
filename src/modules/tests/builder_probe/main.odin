@@ -18,6 +18,7 @@ package builder_probe
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/declaration_eval"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -99,18 +100,18 @@ argument_text :: proc "contextless" (arguments: []u8, name: string) -> (text: st
 
 // build is the export of the builder contract.
 @(export, link_name = "build")
-build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	argument_bytes := arguments.bytes[:arguments.count]
 	act_name, has_act := argument_text(argument_bytes, "act")
 	act, known := probe_act_of_name(act_name)
 	if !has_act || !known {
 		system.log_fact(.Warning, Unknown_Act{})
-		return errors.fail(error, -1, .Bad_Value, .None, 2)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2)
 	}
 	ctx := system.context_record()
 	input, output, opened := storage.builder_stores_open(ctx)
 	if !opened {
-		return errors.fail(error, -2, .No_Grant, .Store, 0)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 0)
 	}
 	switch act {
 	case .Make:
@@ -119,9 +120,10 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 			text = "made by a builder"
 		}
 		if _, status := storage.write(&output, storage.ROOT, "made", transmute([]u8)text, error); status != .Ok {
-			return -3
+			// The storage client wrote the record of the refused write.
+			return .Callee_Unavailable, 0
 		}
-		return 1
+		return .Succeeded, 1
 	case .Copy:
 		return copy_inputs(&input, &output, system.table_records(inputs), error)
 	case .Write_Input:
@@ -149,7 +151,7 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		} else {
 			system.log_fact(.Info, Above_Out_Refused{kind = open_error.kind}, "an open of ..")
 		}
-		return errors.fail(error, -4, .Refused, .None, 0)
+		return call_outcome.fail(error, .Wrong_State, .Refused, .None, 0)
 	case .Share_Out:
 		// One share more than the service holds: each is refused, so no
 		// builder holds a share of the service after its end.
@@ -158,12 +160,12 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		for _ in 0 ..= SHARES_OF_THE_SERVICE {
 			if _, _, status := storage.share(&output, storage.ROOT, false, &share_error); status == .Ok {
 				system.log_fact(.Error, Share_Made{})
-				return errors.fail(error, -13, .Refused, .None, 0)
+				return call_outcome.fail(error, .Wrong_State, .Refused, .None, 0)
 			}
 			refused += 1
 		}
 		system.log_fact(.Info, Shares_Refused{count = refused, kind = share_error.kind})
-		return errors.fail(error, -13, .Refused, .None, 0)
+		return call_outcome.fail(error, .Wrong_State, .Refused, .None, 0)
 	case .Network:
 		// The slots that a builder has are 0 to 6 and the log; each other
 		// slot below the log is empty: a datagram ring, the control ring of
@@ -171,21 +173,21 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		for slot in 7 ..< op.CONTEXT_LOG {
 			if kind, _, _ := system.handle_state(ctx.handles[slot]); kind != .None {
 				system.log_fact(.Error, Other_Handle{slot = u64(slot)})
-				return errors.fail(error, -5, .Refused, .None, 0)
+				return call_outcome.fail(error, .Wrong_State, .Refused, .None, 0)
 			}
 		}
 		system.log_fact(.Info, No_Other_Handle{first = 7, last = op.CONTEXT_LOG - 1})
-		return errors.fail(error, -5, .Refused, .None, 0)
+		return call_outcome.fail(error, .Wrong_State, .Refused, .None, 0)
 	case .Hang:
 		for {
 			intrinsics.cpu_relax()
 		}
 	case .Fail:
-		return errors.fail(error, -6, .Refused, .None, 2)
+		return call_outcome.fail(error, .Wrong_State, .Refused, .None, 2)
 	case .Stop:
 		system.stop(.Failed)
 	}
-	return -7
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2)
 }
 
 // The shares that the storage service holds (SHARE_CAPACITY of its module).
@@ -209,26 +211,27 @@ object_bytes: [4096]u8
 // copy_inputs writes, for each input tree, the bytes of its object "made"
 // as the object "copied" of the store "out". The input store holds the
 // objects of each input under their hexadecimal hash.
-copy_inputs :: proc "contextless" (input, output: ^storage.Client, rows: []pr.Recipe_Input_Row, error: ^errors.Error_Record) -> i64 {
+copy_inputs :: proc "contextless" (input, output: ^storage.Client, rows: []pr.Recipe_Input_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if len(rows) == 0 {
-		return errors.fail(error, -8, .Empty, .Records, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Records, 1)
 	}
 	for &row in rows {
 		name := hash_hex(blake3.Hash(row.hash))
 		arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name[:]}}
-		value, text, status, _ := storage.call(input, "tree_read", arguments[:], error)
-		if status != .Ok || value < 0 || len(text) > len(tree_bytes) {
-			return -9
+		tree_size, text, status, _ := storage.call(input, "tree_read", arguments[:], error)
+		if status != .Ok || tree_size < 0 || len(text) > len(tree_bytes) {
+			// The storage client wrote the record of the refused read.
+			return .Callee_Unavailable, 0
 		}
 		copy(tree_bytes[:], text)
 		entry, found, refusal := tree_hash.tree_lookup(tree_bytes[:len(text)], "made")
 		if refusal != .None || !found {
-			return errors.fail(error, -10, .Absent, .Objects, 1)
+			return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Objects, 1)
 		}
 		object_name := hash_hex(entry.hash)
 		bytes, object_found, read_status := storage.read(input, storage.ROOT, string(object_name[:]), object_bytes[:], error)
 		if read_status != .Ok || !object_found || blake3.hash(bytes) != entry.hash {
-			return errors.fail(error, -11, .Damaged, .Objects, 1)
+			return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
 		}
 		name_length := 0
 		for name_length < len(row.name) && row.name[name_length] != 0 {
@@ -236,8 +239,9 @@ copy_inputs :: proc "contextless" (input, output: ^storage.Client, rows: []pr.Re
 		}
 		system.log_fact(.Info, Input_Read{size = u64(len(bytes))}, string(row.name[:name_length]))
 		if _, write_status := storage.write(output, storage.ROOT, "copied", bytes, error); write_status != .Ok {
-			return -12
+			// The storage client wrote the record of the refused write.
+			return .Callee_Unavailable, 0
 		}
 	}
-	return 1
+	return .Succeeded, 1
 }

@@ -25,7 +25,7 @@
 package script_fonts_planner
 
 import "modus:contract/blake3"
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
 import "modus:contract/isolated"
@@ -64,7 +64,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 }
 
 @(private = "file")
-wrong_call :: proc "contextless" (text: string, status: call_status.Call_Status, error: errors.Error_Record) -> ! {
+wrong_call :: proc "contextless" (text: string, status: call_outcome.Call_Outcome, error: errors.Error_Record) -> ! {
 	system.log_fact(.Error, Wrong_Call{status = u64(status), error_kind = u64(error.kind), error_unit = u64(error.unit), error_argument = error.argument, error_value = error.value, error_found = error.found}, text)
 	system.stop(.Failed)
 }
@@ -77,7 +77,7 @@ bytes_of :: proc "contextless" (value: ^$T) -> []u8 {
 // decision_wait reads the decision on ticket until the principal took one,
 // and writes the line of the arm time once.
 @(private = "file")
-decision_wait :: proc "contextless" (ticket: i64, asked_at: u64, generation_row: ^pr.Plan_Generation_Row, error: ^errors.Error_Record) -> (generation: i64, status: call_status.Call_Status) {
+decision_wait :: proc "contextless" (ticket: i64, asked_at: u64, generation_row: ^pr.Plan_Generation_Row, error: ^errors.Error_Record) -> (generation: i64, status: call_outcome.Call_Outcome) {
 	armed := false
 	deadline := asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
@@ -85,7 +85,7 @@ decision_wait :: proc "contextless" (ticket: i64, asked_at: u64, generation_row:
 		arguments := [1]isolated.Argument{{integer = u64(ticket)}}
 		error^ = {}
 		generation, status = system.call_isolated(&plans.connection, plans.file, plans.poll_export, arguments[:], error, false, bytes_of(&rows))
-		if status != .Ok || generation != 0 {
+		if status != .Succeeded || generation != 0 {
 			generation_row^ = rows[0]
 			return generation, status
 		}
@@ -132,16 +132,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ring_status != .Ok {
 		wrong("no root ring; the status word", u64(ring_status))
 	}
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	plans.connection, connected = system.service_connection(&requests, 1, role_contract.role_properties(.Plans).name)
-	if connected != .Ok {
-		wrong("the root service gave no connection to the holder of Plans; the status word", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the holder of Plans; the call outcome", u64(connected))
 	}
 	// Each machine of the test starts on a new data disk: no plan is
 	// current, so the plan expects none.
 	error: errors.Error_Record
 	current, current_status := system.call_isolated(&plans.connection, plans.file, plans.generation_export, nil, &error)
-	if current_status != .Ok || current != 0 {
+	if current_status != .Succeeded || current != 0 {
 		wrong("a plan of principal 0 is current at the start; its generation", u64(current))
 	}
 
@@ -153,13 +153,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	name := PLAN_NAME
 	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {table = {records = bytes_of(&row), count = 1}}, {record = bytes_of(&expected)}}
 	ticket, status := system.call_isolated(&plans.connection, plans.file, plans.apply_export, arguments[:], &error)
-	if status != .Ok || ticket <= 0 {
+	if status != .Succeeded || ticket <= 0 {
 		wrong_call("plans.apply refused the plan before its dialog", status, error)
 	}
 	system.log_fact(.Info, Difference_Shown{ticket = u64(ticket)}, PLAN_NAME)
 	generation_row: pr.Plan_Generation_Row
 	generation, poll_status := decision_wait(ticket, system.time(), &generation_row, &error)
-	if poll_status != .Ok || generation <= 0 {
+	if poll_status != .Succeeded || generation <= 0 {
 		wrong_call("plans.apply_poll did not commit the accepted plan", poll_status, error)
 	}
 	if generation_row.generation != generation || generation_row.standing_word != i64(pr.Generation_Standing.Current) {

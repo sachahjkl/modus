@@ -566,7 +566,8 @@ mesh_client_continue :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh
 	item.has_stream = false
 	item.written = 0
 	item.received = 0
-	item.outcome = .None
+	// The outcome counts only once an answer came (the phase says so).
+	item.outcome = {}
 	item.request_length = copy(item.request[:], frame)
 	return true
 }

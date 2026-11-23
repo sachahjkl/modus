@@ -574,7 +574,6 @@ the_facts_of_a_status_write_the_name_of_its_member :: proc(t: ^testing.T) {
 		}
 		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Machine_Usable_Refused", {{"outcome", outcome_word}}), line_of_before("start_policy: the root service refused Machine_Usable: outcome ", outcome_text))
 		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Row_Start_Refused", {{"outcome", outcome_word}, {"row_process", name}}), line_of_before("start_policy: cannot start ", sentence.Module_Name{name}, ": outcome ", outcome_text))
-		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Row_List_Page_Refused", {{"outcome", outcome_word}, {"row_process", name}}), line_of_before("start_policy: ", sentence.Module_Name{name}, " does not start: the root service refused its list page with the outcome ", outcome_text))
 	}
 	edges := edges_make().sizes
 	words := status_words()

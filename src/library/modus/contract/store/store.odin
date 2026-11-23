@@ -95,6 +95,10 @@ NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, 
 // The blocks of a disk: at least the two places of the root, and at most
 // the count whose bytes a u64 holds, so that no offset of a block wraps.
 DISK_BLOCKS_MIN :: u64(2)
+// The most blocks that a grant of a store names: the amount of a grant of
+// a caller holds 46 bits (isolated.CALLER_AMOUNT_MASK), more blocks than a
+// disk of 256 TiB has, so the disk bounds a store before a grant does.
+STORE_GRANT_BLOCKS_MOST :: u64(1) << 46 - 1
 DISK_BLOCKS_MAX :: max(u64) / BLOCK_SIZE
 
 // The block tree of an object. A node has 64 children: 64 is a power of

@@ -372,33 +372,34 @@ clear :: proc "c" () {
 // - **width**: 1 to 65536 pixels.
 // - **height**: 1 to 65536 pixels; width x height is at most 268 435 456 pixels.
 //
-// The result is the pixels of the picture after the call. It fails with -1 and an error record: Bad_Value when a
+// The value is the pixels of the picture after the call. A failure gives its outcome and an error record: Bad_Value when a
 // side is outside its range, or the pixels past their bound (the record names the argument); Busy when a stroke,
 // a long change (a fill, or the step of undo of a large change), a keep or a read of a picture runs, as the picture must not move then; Budget, in pages, when the budget does
 // not pay the memory of the picture, which stays as it was.
 //
 // Example: paint.extend(6000, 4000).
 @(export, link_name = "extend")
-extend :: proc "c" (width, height: i64, error: ^errors.Error_Record) -> i64 {
+extend :: proc "c" (width, height: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch {
 	case width < 1 || width > paint_model.PICTURE_SIDE_LIMIT:
-		return errors.fail(error, -1, .Bad_Value, .None, 1, width, paint_model.PICTURE_SIDE_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, width, paint_model.PICTURE_SIDE_LIMIT)
 	case height < 1 || height > paint_model.PICTURE_SIDE_LIMIT:
-		return errors.fail(error, -1, .Bad_Value, .None, 2, height, paint_model.PICTURE_SIDE_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, height, paint_model.PICTURE_SIDE_LIMIT)
 	case drag.active || keep.keeping || keep.reading || change_running() || !paint_model.change_allowed(&keep):
-		return errors.fail(error, -1, .Busy, .None)
+		// The work that holds the picture ends by itself.
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .None)
 	}
 	switch picture_grow(int(width), int(height)) {
 	case .Unchanged, .Grown:
 	case .Too_Large:
-		return errors.fail(error, -1, .Bad_Value, .None, 2, width * height, paint_model.PICTURE_PIXELS_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, width * height, paint_model.PICTURE_PIXELS_LIMIT)
 	case .No_Room:
 		// The record of the budget: the pages that the pictures ask, and the
 		// pages that their arenas hold.
 		wanted := 2 * width * height * size_of(graphics.Color) / system.PAGE_SIZE
-		return errors.fail(error, -1, .Budget, .Pages, 0, wanted, i64((picture_arena.used_bytes + backup_arena.used_bytes) / system.PAGE_SIZE))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, 0, wanted, i64((picture_arena.used_bytes + backup_arena.used_bytes) / system.PAGE_SIZE))
 	}
-	return i64(picture.width * picture.height)
+	return .Succeeded, i64(picture.width * picture.height)
 }
 
 // lines gives the count of lines that calls drew since the last clear.
@@ -829,8 +830,8 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			request.act_failed = true
 			return
 		}
-		size, status := storage.size(&client, storage.ROOT, object)
-		if storage.export_failed_with(status, size, .Absent) {
+		_, status := storage.size(&client, storage.ROOT, object)
+		if status == .Absent {
 			request.name_free = true
 			return
 		}

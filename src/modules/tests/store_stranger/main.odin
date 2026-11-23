@@ -12,7 +12,7 @@
 package store_stranger
 
 import "modus:contract/blake3"
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -25,8 +25,8 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64}
 rows: [4096]u8
 
 @(private = "file")
-refused_with_no_grant :: proc "contextless" (what: string, result: i64, status: call_status.Call_Status, error: ^errors.Error_Record) {
-	if status != .Failed || result >= 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {
+refused_with_no_grant :: proc "contextless" (what: string, result: i64, status: call_outcome.Call_Outcome, error: ^errors.Error_Record) {
+	if status != .Grant_Or_Right_Missing || result != 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {
 		system.log_fact(.Error, Wrong_Answer{status = u64(status), result = result, error_kind = error.kind, error_unit = error.unit}, what)
 		system.stop(.Failed)
 	}
@@ -73,10 +73,10 @@ display_connect :: proc "contextless" (ctx: ^system.Context) -> (connection: sys
 		wrong("the boot image does not map; the status word", u64(map_status))
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	connection, connected = system.service_connection(&requests, 1, "display")
-	if connected != .Ok {
-		wrong("the root service gave no connection to the holder of Display; the status word", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the holder of Display; the call outcome", u64(connected))
 	}
 	entry := system.image_entry_of(image, connection.module_hash)
 	if entry == nil {

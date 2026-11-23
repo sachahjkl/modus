@@ -730,12 +730,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	// largest budget of one process bounds it, as each part.
 	if name == wide_grants.COLLECTOR_MODULE_NAME && work.principal == principals.MACHINE && start_list_audits > 0 {
 		widened := process_budget.pages + start_list_audits * wide_grants.SPACE_AUDIT_PAGES
-		process_budget.pages = min(widened, module.LARGEST_BUDGET_PAGES)
+		process_budget.pages = min(widened, largest_budget.pages)
 	}
 	// The start policy pays the wirings of its list: the header gives their
 	// pages, and this service adds them (start_policy.odin).
 	if is_role_holder(name, .Start_Policy) && start_list_wiring_pages > 0 {
-		process_budget.pages = min(process_budget.pages + start_list_wiring_pages, module.LARGEST_BUDGET_PAGES)
+		process_budget.pages = min(process_budget.pages + start_list_wiring_pages, largest_budget.pages)
 	}
 	status: system.Status
 	// The start of the measure of the start of a window: the load of the

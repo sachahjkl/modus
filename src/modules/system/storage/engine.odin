@@ -1757,17 +1757,17 @@ plan_page_write :: proc "contextless" () -> bool {
 // and the leaves of their own blocks. Their writes join the writes of the
 // plan, and the new root names the new tree. It gives the refusal of a
 // commit that cannot make them.
-count_pages_make :: proc "contextless" (error: ^errors.Error_Record) -> (refusal: i64, refused: bool) {
+count_pages_make :: proc "contextless" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, refused: bool) {
 	switch opened.counts.failure {
 	case .Good:
 	case .Device:
-		return errors.fail(error, failure(.Disk), .Device), true
+		return refuse(error, .Callee_Unavailable, .Device), true
 	case .Wrong:
-		return errors.fail(error, failure(.Damaged), .Damaged, .Counts), true
+		return refuse(error, .Data_Damaged, .Damaged, .Counts), true
 	}
 	commit := &opened.count_commit
 	if !block_counts.commit_begin(commit, &opened.counts, opened.count_staging, opened.count_staged_slots) {
-		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks), true
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks), true
 	}
 	commit.after = count_after_commit
 	commit.take = count_page_take
@@ -1796,40 +1796,40 @@ count_pages_make :: proc "contextless" (error: ^errors.Error_Record) -> (refusal
 	if !made {
 		switch commit.failure {
 		case .None, .Full:
-			return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, storage_mount.COUNT_STAGING_PAGES), true
+			return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, storage_mount.COUNT_STAGING_PAGES), true
 		case .No_Block:
 			// A search of a free block that could not read a leaf finds none:
 			// the read is the cause, not a full disk.
 			switch opened.counts.failure {
 			case .Good:
-				return errors.fail(error, failure(.Full), .Full), true
+				return refuse(error, .Budget_Or_Capacity_Exhausted, .Full), true
 			case .Device:
-				return errors.fail(error, failure(.Disk), .Device), true
+				return refuse(error, .Callee_Unavailable, .Device), true
 			case .Wrong:
-				return errors.fail(error, failure(.Damaged), .Damaged, .Counts), true
+				return refuse(error, .Data_Damaged, .Damaged, .Counts), true
 			}
 		case .Wrong:
-			return errors.fail(error, failure(.Damaged), .Damaged, .Counts), true
+			return refuse(error, .Data_Damaged, .Damaged, .Counts), true
 		case .Device:
-			return errors.fail(error, failure(.Disk), .Device), true
+			return refuse(error, .Callee_Unavailable, .Device), true
 		}
 	}
 	// The counts of the pages themselves passed through delta_add: a count
 	// out of its range, or a table of the plan that is full, refuses here.
 	if plan.capacity_reached {
-		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit)), true
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit)), true
 	}
 	if plan.count_fault || plan.count_overflow {
-		return errors.fail(error, failure(.Damaged), .Damaged, .Counts), true
+		return refuse(error, .Data_Damaged, .Damaged, .Counts), true
 	}
 	if plan.full {
-		return errors.fail(error, failure(.Full), .Full), true
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full), true
 	}
 	if plan.device {
-		return errors.fail(error, failure(.Disk), .Device), true
+		return refuse(error, .Callee_Unavailable, .Device), true
 	}
 	if plan.write_count + commit.staged > len(plan.writes) {
-		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(len(plan.writes))), true
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, i64(len(plan.writes))), true
 	}
 	remaining := opened.leaves_to_write_count
 	for &page in commit.staging[:commit.staged] {
@@ -1841,7 +1841,7 @@ count_pages_make :: proc "contextless" (error: ^errors.Error_Record) -> (refusal
 	}
 	plan.next.counts = counts_root
 	plan.next.counts_complete = remaining == 0 ? 1 : 0
-	return 0, false
+	return .Succeeded, false
 }
 
 // leaf_is_to_write says if the tree does not hold a leaf yet (the form
@@ -1921,12 +1921,13 @@ repair_call_came :: proc "contextless" () {
 // repair_refusal refuses a change while the service repairs its count
 // tree: Busy, with the stores that the walk ended and the stores in all.
 // The caller can make the call again after the repair.
-repair_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, result: i64) {
+repair_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, outcome: call_outcome.Call_Outcome) {
 	if broken || !storage_mount.repair_active(&opened) {
-		return false, 0
+		return false, .Succeeded
 	}
 	walked, total := storage_mount.repair_progress(&opened)
-	return true, errors.fail(error, failure(.Busy), .Busy, .Count_Repair, 0, i64(walked), i64(total))
+	// The repair ends by itself, with no act of the caller.
+	return true, refuse(error, .Callee_Busy, .Busy, .Count_Repair, 0, i64(walked), i64(total))
 }
 
 // repair_step runs one step of the repair of the count tree, or the commit
@@ -1976,8 +1977,8 @@ repair_commit :: proc "contextless" () -> bool {
 		plan_drop()
 		return false
 	}
-	place, _, written := plan_write_with_root(&error)
-	if !written {
+	place, written := plan_write_with_root(&error)
+	if written != .Succeeded {
 		return false
 	}
 	root = plan.next

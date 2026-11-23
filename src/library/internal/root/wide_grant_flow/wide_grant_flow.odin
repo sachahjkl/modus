@@ -20,9 +20,10 @@ REFUSED_SCREENS_MOST :: 3
 // until the principal unlocks its session again.
 PROOF_FAILURES_MOST :: 3
 // The keys whose refusals the flow counts at once: each row of the client
-// table of `remote` fits (the root service asserts it). A key past them
-// takes the place of the key whose pause ended first.
-KEY_RECORDS_MOST :: 16
+// table of `remote` fits (the root service asserts it against
+// remote.CLIENT_CAPACITY). A key past them takes the place of the key whose
+// pause ended first.
+KEY_RECORDS_MOST :: 64
 // The principals whose proofs the flow counts: principals.PRINCIPAL_CAPACITY
 // at least (the root service asserts it).
 PRINCIPALS_MOST :: 16

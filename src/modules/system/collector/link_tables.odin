@@ -96,6 +96,10 @@ link_tables_ensure :: proc "contextless" (count: int) -> bool {
 	closed_tags = ([^]u32)(tables.closed.base)[:count]
 	pair_tags = ([^]u32)(tables.pair_tags.base)[:count]
 	pair_source_tags = ([^]u32)(tables.pair_sources.base)[:count]
+	// The wait of the loop holds a ring of a source and of a pair for each
+	// place. A set that the budget does not pay keeps its places: the loop
+	// then reads the rings past them at its retry period (sources_wait).
+	_ = system.wait_set_grow(&collector_wait, collector_wait_words(count))
 	return true
 }
 

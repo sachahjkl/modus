@@ -40,12 +40,14 @@ import "modus:system"
 GUEST_MEMORY_PAGES_MOST :: contract.MAX_GUEST_MEMORY_PAGES
 INPUT_DISK_BYTES_MOST :: contract.MAX_INPUT_DISK_BYTES
 OUTPUT_DISK_BYTES_MOST :: contract.MAX_OUTPUT_DISK_BYTES
-// Default budget request for a standalone guest build (256 MiB guest RAM,
-// 16 MiB input disk, 64 MiB output disk, nested page tables and scratch);
-// a starter can grant a larger budget for multi-GiB builds.
+// The guest RAM and the disks of the default budget (below).
 DEFAULT_GUEST_MEMORY_PAGES :: u64(65_536)
 DEFAULT_INPUT_DISK_PAGES :: u64(4_096)
 DEFAULT_OUTPUT_DISK_PAGES :: u64(16_384)
+
+// Default budget request for a standalone guest build (256 MiB guest RAM,
+// 16 MiB input disk, 64 MiB output disk, nested page tables and scratch);
+// a starter can grant a larger budget for multi-GiB builds.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 88064, processes = 2, threads = 1}
 #assert(88064 == DEFAULT_GUEST_MEMORY_PAGES + DEFAULT_INPUT_DISK_PAGES + DEFAULT_OUTPUT_DISK_PAGES + 2048)
 TREE_OUTPUT_BYTES_MOST :: contract.UNPACK_NODE_BUFFER_BYTES

@@ -931,12 +931,12 @@ limit_case :: proc "contextless" () {
 	writer := start_child("output_writer")
 	numbers: [LIMIT_CASE_WIRINGS_MOST]u32
 	held := 0
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	answer: [7]u64
 	for held < len(numbers) {
 		handles := [1]u32{lend(writer)}
 		status, answer = wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
-		if status != .Ok || answer[0] == 0 {
+		if status != .Succeeded || answer[0] == 0 {
 			break
 		}
 		numbers[held] = u32(answer[0])
@@ -953,12 +953,12 @@ limit_case :: proc "contextless" () {
 		wrong("the budget of this asker paid each wiring of the test; wirings:", u64(held))
 	}
 	// The refusal that ended the loop is the budget's: of the wirings
-	// (No_Budget, Budget of Pages) or of the place of an end (No_Slot), and
-	// it changed nothing.
-	budget_refused :: proc "contextless" (what: string, before: u64, status: system.Status, answer: [7]u64) {
+	// (Budget of Pages) or of the place of an end (Full), and it changed
+	// nothing.
+	budget_refused :: proc "contextless" (what: string, before: u64, status: call_outcome.Call_Outcome, answer: [7]u64) {
 		record := errors.completion_record(answer)
-		by_budget := status == .No_Budget && errors.Kind(record.kind) == .Budget && errors.Unit(record.unit) == .Pages
-		by_place := status == .No_Slot && errors.Kind(record.kind) == .Full
+		by_budget := status == .Budget_Or_Capacity_Exhausted && errors.Kind(record.kind) == .Budget && errors.Unit(record.unit) == .Pages
+		by_place := (status == .Budget_Or_Capacity_Exhausted || status == .Callee_Busy) && errors.Kind(record.kind) == .Full
 		if !by_budget && !by_place {
 			wrong_refused(what, status, answer)
 		}

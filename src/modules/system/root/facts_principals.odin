@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -302,9 +303,9 @@ Wide_Grant_Collector_Refused :: struct {
 	refusal_code: u64,
 }
 
-@(log_fact = "root: a wiring of the act records of a wide grant was refused: {status}; the grant ends")
+@(log_fact = "root: a wiring of the act records of a wide grant was refused: {outcome}; the grant ends")
 Wide_Grant_Wiring_Refused :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 @(log_fact = "root: the wide grant {grant_serial} of principal {principal} holds, with {writers} writers of act records")

@@ -1046,12 +1046,12 @@ test_ask_wide_grant_borders_and_transport :: proc(t: ^testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":7,"minutes":60}}`,
 	}
 	for line in refused {
-		expect_json_error(t, bridge_handle_json_line(&bridge, line), .Invalid_Params, .Refused, .Invalid_Field)
+		expect_json_error(t, bridge_handle_json_line(&bridge, line), .Invalid_Params, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Invalid_Field), .Invalid_Field)
 	}
 	testing.expect_value(t, state.ask_calls, 0)
 
 	state.fail_ask = true
-	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":2,"method":"ask_wide_grant","params":{"scopes":"view","minutes":60}}`), .Transport_Error, .Transport_Error, .None)
+	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":2,"method":"ask_wide_grant","params":{"scopes":"view","minutes":60}}`), .Transport_Error, .Callee_Unavailable, .None)
 	testing.expect_value(t, state.ask_calls, 1)
 
 	state.fail_ask = false
@@ -1203,7 +1203,7 @@ test_manual_discovery_exports_are_read_only_and_others_wait :: proc(t: ^testing.
 	for line in ([?]string{"manual.show(\"monitor\")", "manual.overview()", "manual.running()", "manual.edges()"}) {
 		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{{"line":%q}}}}`, line)
 		resp := bridge_handle_json_line(&bridge, req)
-		expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+		expect_json_error(t, resp, .Awaiting_Principal_Approval, .Succeeded, .Principal_Approval_Required)
 	}
 	testing.expect_value(t, state.eval_lex_calls, 0)
 

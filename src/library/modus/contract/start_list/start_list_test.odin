@@ -772,7 +772,7 @@ a_screen_of_memory_past_its_bounds_is_refused :: proc(t: ^testing.T) {
 	for size in ([?][2]u32{{0, 0}, {memory_screen.MIN_WIDTH, memory_screen.MIN_HEIGHT}, {memory_screen.MAX_WIDTH, memory_screen.MAX_HEIGHT}}) {
 		_, sized := display_rows(size[0], size[1])
 		list: List
-		problem, _, _ := list_read(sized, &list)
+		problem, _, _ := list_read(sized, &list, nil)
 		testing.expectf(t, problem == .None, "%v was refused: %v", size, problem)
 		width, height := screen_of_memory_of_list(&list)
 		testing.expect(t, width == size[0] && height == size[1])
@@ -787,7 +787,7 @@ a_screen_of_memory_past_its_bounds_is_refused :: proc(t: ^testing.T) {
 a_screen_of_memory_gives_the_rows_a_screen :: proc(t: ^testing.T) {
 	_, sized := display_rows(1920, 1080)
 	list: List
-	problem, _, _ := list_read(sized, &list)
+	problem, _, _ := list_read(sized, &list, nil)
 	testing.expect(t, problem == .None)
 	testing.expect_value(t, parts_for_rows(&list, {.Screen}), Machine_Parts{.Screen})
 	width, height := row_screen_of_memory(&list, &list.rows[0])
@@ -798,7 +798,7 @@ a_screen_of_memory_gives_the_rows_a_screen :: proc(t: ^testing.T) {
 	width, height = row_screen_of_memory(&list, &list.rows[1])
 	testing.expect(t, width == 0 && height == 0, "the row console carries a size")
 	_, unsized := display_rows(0, 0)
-	problem, _, _ = list_read(unsized, &list)
+	problem, _, _ = list_read(unsized, &list, nil)
 	testing.expect(t, problem == .None)
 	testing.expect_value(t, parts_for_rows(&list, {}), Machine_Parts{})
 }

@@ -252,7 +252,7 @@ run_program :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	defer system.close(module_memory)
-	if size.integer <= 0 || size.integer > PROGRAM_MODULE_BYTES_MOST {
+	if size.integer <= 0 || size.integer > i64(PROGRAM_MODULE_BYTES_MOST) {
 		return fail("run: the module of ", project, " has ", size.integer, " bytes; a run takes 1 to ", i64(PROGRAM_MODULE_BYTES_MOST))
 	}
 	address, map_status := system.memory_map(module_memory, {})

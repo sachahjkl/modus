@@ -903,5 +903,5 @@ act_table_rows :: proc "contextless" (conversation: ^Conversation, acts_for_prin
 	}
 	table.row_count += extra_rows
 	entry_touch(conversation, entry)
-	return i64(table.row_count), entry
+	return .Succeeded, i64(table.row_count), entry
 }

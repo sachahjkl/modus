@@ -424,8 +424,11 @@ size :: proc "contextless" (client: ^Client, place: Place, name: string, error: 
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
 	outcome: call_outcome.Call_Outcome
 	bytes, _, status, outcome = call(client, "size", arguments[:], error)
-	if outcome == .Nothing_Has_That_Name {
+	#partial switch outcome {
+	case .Nothing_Has_That_Name:
 		return 0, .Absent
+	case .Data_Damaged:
+		return 0, .Damaged
 	}
 	return bytes, status
 }

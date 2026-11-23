@@ -994,9 +994,9 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 		case .Pending:
 			return nil, .Succeeded, {}, true
 		case .Refusal:
-			refused, refusal := item.refused, item.refusal
+			item_refused, refusal := item.refused, item.refusal
 			connection_forget(&item, item.disconnect_owed)
-			return nil, refused, refusal, false
+			return nil, item_refused, refusal, false
 		case .Given_Up:
 			return nil, item.refused, item.refusal, false
 		}
@@ -1347,34 +1347,36 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 wide_grant_ask_serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client) -> int {
 	authorities, duration_ms, error, ok := wide_grants.wide_grant_ask_check(buffer[:received])
 	if !ok {
-		return refuse(buffer, error, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+		return refuse(buffer, .Argument_Refused, error, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 	}
 	key := transmute([4]u64)client.key
 	request_tag += 1
 	tag := request_tag
 	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Wide_Grant_Agent_Ask), tag = tag, values = {0 = key[0], 1 = key[1], 2 = key[2], 3 = key[3], 4 = wide_grants.wide_authorities_to_word(authorities), 5 = duration_ms}}) {
-		return refuse(buffer, errors.error_make(.Busy, .Requests, 0, 0, 0), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+		return refuse(buffer, .Callee_Busy, errors.error_make(.Busy, .Requests, 0, 0, 0), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 	}
-	limit := system.time() + CONNECT_LIMIT
+	limit := system.time() + REQUEST_TIME_LIMIT
 	for {
 		for record in system.receive(&requests.completions) {
 			if record.tag != tag {
 				continue
 			}
-			status, status_refusal := system.status_of_word(record.kind)
-			if status_refusal.kind != 0 {
-				return refuse(buffer, status_refusal, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+			// The root service answers with the word of its call outcome: a
+			// word that names no outcome is an answer that it cannot have sent.
+			outcome, word_refusal := call_outcome.outcome_of_word(u64(record.kind))
+			if word_refusal.kind != 0 {
+				return refuse(buffer, .Answer_Unreadable, word_refusal, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 			}
-			if status != .Ok {
-				return refuse(buffer, errors.completion_record(record.values), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+			if outcome != .Succeeded {
+				return refuse(buffer, outcome, call_outcome.record_explained(outcome, errors.completion_record(record.values)), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 			}
 			system.log_fact(.Info, Wide_Grant_Asked_By_Agent{principal = client.principal, client_key_head = key_head_field(client.key), flow = record.values[0]})
-			return answer_put(buffer, remote.Answer{status = .Ok, value = i64(min(record.values[0], u64(max(i64))))}, nil)
+			return answer_put(buffer, remote.Answer{relay_outcome = u32(call_outcome.Call_Outcome.Succeeded), outcome = u32(call_outcome.Call_Outcome.Succeeded), value = i64(min(record.values[0], u64(max(i64))))}, nil)
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &requests.completions)
 		if system.wait_end(&wait, limit) >= limit {
-			return refuse(buffer, errors.error_make(.Over_Limit, .Milliseconds, 0, CONNECT_LIMIT, CONNECT_LIMIT), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+			return refuse(buffer, .Deadline_Passed_During_The_Call, errors.error_make(.No_Answer, .Milliseconds, 0, REQUEST_TIME_LIMIT, REQUEST_TIME_LIMIT), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 		}
 	}
 }
@@ -1420,6 +1422,7 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 		// The region of the connection of this relay holds less than a call
 		// region: a capacity of the relay, not a fault of the request.
 		return refuse(buffer, .Budget_Or_Capacity_Exhausted, errors.error_make(.Over_Limit, .Bytes, remote.FIELD_SERVICE, remote.REGION_SIZE, i64(len(connection.region))), service, connection.hash)
+	}
 	// Under a wide grant of the key, each call is an act: its record leaves
 	// first, and a full ring refuses the call, so no call runs unrecorded
 	// (src/md/features/wide_grants.md, "The path of a grant, end to end").
@@ -1430,7 +1433,6 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 			// next call is refused too, until the grant ends.
 			return refuse(buffer, .Budget_Or_Capacity_Exhausted, errors.error_make(.Full, .Act_Records, remote.FIELD_SERVICE, 0, 0, i64(status)), service, connection.hash)
 		}
-	}
 	}
 	completion, path_outcome, call_error, called := isolated_call_make(connection, request, arguments)
 	connection.count += 1

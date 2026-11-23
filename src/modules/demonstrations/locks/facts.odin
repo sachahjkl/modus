@@ -168,7 +168,7 @@ Word_Wait_Counted :: struct {
 }
 
 // The wait room of the kernel at its edges (wait_room.odin).
-@(log_fact = "locks: the wait room: with no room a wait of {inline_words} words and one more {no_room_status}; a word twice in a wait {twice_status}; a room past {most_words} words {too_many_status}, for another thread {other_status}; a room of {asked} words held {held} words for {pages} pages of the budget; a wait of the {held} words {held_status}, of one more {past_status}; the room given back returned its pages: {returned}: {verdict}")
+@(log_fact = "locks: the wait room: with no room a wait of {inline_words} words and one more {no_room_status}; a word twice in a wait {twice_status}; a room past {most_words} words {too_many_status}, for another thread {other_status}; a room of {asked} words held {held} words for {pages} pages of the budget; a wait of that many words {held_status}, of one more {past_status}; the room given back returned its pages: {returned}: {verdict}")
 Wait_Room_Checked :: struct {
 	inline_words:    u64,
 	no_room_status:  op.Status_Word,

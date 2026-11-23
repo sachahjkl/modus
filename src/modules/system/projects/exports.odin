@@ -321,6 +321,9 @@ pins :: proc "c" (project_name: ^string, result: ^[]pr.Pin_Row, error: ^errors.E
 	return .Succeeded, i64(project.pin_count)
 }
 
+// The recipe that build_recipe makes: about 90 KiB, too large for the stack.
+export_inputs_spec: pr.Recipe_Spec
+
 // build_recipe gives the recipe of the inputs tree of a project of the
 // principal of the caller: the builder that the recipes service runs itself,
 // and one input for each pin: a tree, by the tree hash that pins.lex gives
@@ -335,9 +338,6 @@ pins :: proc "c" (project_name: ^string, result: ^[]pr.Pin_Row, error: ^errors.E
 // error record (the list above), with the refusal as the value found:
 // Unknown_Project, Pin_Not_Found for a project with no pin, Store_Failed and
 // Store_Damaged for the private store.
-// The recipe that build_recipe makes: about 90 KiB, too large for the stack.
-export_inputs_spec: pr.Recipe_Spec
-
 @(export, link_name = "build_recipe")
 build_recipe :: proc "c" (project_name: ^string, head: ^system.Table_To_Append(pr.Recipe_Head), result: ^[]pr.Recipe_Input_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	principal, failure, allowed := caller_principal(false, error)

@@ -50,7 +50,7 @@ object_hash :: proc(tag: int) -> blake3.Hash {
 // tree_add encodes a tree of the given entries, keeps it, and gives its hash.
 @(private = "file")
 tree_add :: proc(objects: ^Memory_Objects, entries: []tree_hash.Tree_Entry) -> blake3.Hash {
-	bytes := make([]u8, tree_hash.tree_encoded_size(len(entries)), context.temp_allocator)
+	bytes := make([]u8, tree_hash.tree_encoded_size(entries[:]), context.temp_allocator)
 	written, refusal := tree_hash.tree_encode(entries, bytes)
 	assert(refusal == .None)
 	hash, _ := tree_hash.tree_hash(bytes[:written])

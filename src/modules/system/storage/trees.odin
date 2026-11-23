@@ -456,7 +456,7 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 			damage_set_full_said = true
 			system.log_fact(.Error, Damage_Set_Full{wrong_blocks = u64(len(opened.wrong_set) / 2)})
 		}
-		return -1, errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+		return -1, refuse(error, .Data_Damaged, .Damaged, .Stores)
 	}
 	store_index = store_find(store.name)
 	if store_index >= 0 && store_damaged[store_index] {
@@ -712,7 +712,9 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		size_before := found ? plan.entries[index].before.size : 0
 		if !pool_commit_tables(pending, size_before, error) {
 			plan_drop()
-			return failure(.Full)
+			// pool_commit_tables wrote the record of the memory that it did
+			// not get.
+			return 0, .Budget_Or_Capacity_Exhausted
 		}
 	}
 	if !found {
@@ -762,7 +764,9 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			changes, made = pending_changes(pending, error)
 			if !made {
 				plan_drop()
-				return failure(.Full)
+				// pending_changes wrote the record of the memory that it did
+				// not get.
+				return 0, .Budget_Or_Capacity_Exhausted
 			}
 			size, cut = pending.size, pending.cut
 		}

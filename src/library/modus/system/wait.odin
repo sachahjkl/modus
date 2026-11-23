@@ -145,11 +145,13 @@ events :: proc "contextless" () -> ^u32 {
 // reads the state that an event changes. set: the places of the caller for
 // a list of more than WAIT_INLINE_WORDS words; nil: the places of the list.
 wait_begin :: proc "contextless" (set: ^Wait_Set = nil) -> (wait: Wait) {
-	if set != nil {
+	// A set that holds no word yet (a Growing_Wait_Set before its first
+	// growth) waits in the places of the list.
+	if set != nil && len(set.words) > 0 {
 		wait_set_room(set)
 		wait.room = thread_wait_room()
+		wait.set = set
 	}
-	wait.set = set
 	word := events()
 	wait_word(&wait, word, intrinsics.volatile_load(word))
 	return wait
@@ -158,10 +160,66 @@ wait_begin :: proc "contextless" (set: ^Wait_Set = nil) -> (wait: Wait) {
 // wait_of_set starts a list in the places of a set with no word, for a
 // loop that adds the event word itself or waits on none.
 wait_of_set :: proc "contextless" (set: ^Wait_Set) -> (wait: Wait) {
+	if len(set.words) == 0 {
+		return wait
+	}
 	wait_set_room(set)
 	wait.set = set
 	wait.room = thread_wait_room()
 	return wait
+}
+
+// A set whose places grow with the tables of its owner: a thread that
+// waits on a ring for each entry of a table that has no fixed count. The
+// words and the parts are in two arenas of the budget of the process, which
+// never move, so a set grows with no copy. The first wait_begin after a
+// growth asks the kernel for the room of the new count.
+Growing_Wait_Set :: struct {
+	set:   Wait_Set,
+	words: Arena,
+	parts: Arena,
+	made:  bool,
+}
+
+// wait_set_grow makes a set hold count words, at most op.WORD_WAIT_MOST,
+// the largest wait of the kernel. false: the budget does not pay the
+// places, and the set keeps the words that it holds.
+wait_set_grow :: proc "contextless" (growing: ^Growing_Wait_Set, count: int) -> bool {
+	wanted := min(count, op.WORD_WAIT_MOST)
+	held := len(growing.set.words)
+	if wanted <= held {
+		return true
+	}
+	if !growing.made {
+		// The arenas reserve the places of the largest wait, and commit
+		// only what a growth pushes.
+		words, words_status := arena_create(u64(op.WORD_WAIT_MOST * size_of(op.Word) + PAGE_SIZE - 1) / PAGE_SIZE)
+		if words_status != .Ok {
+			return false
+		}
+		parts, parts_status := arena_create(u64(op.WORD_WAIT_MOST * size_of(Wait_Part) + PAGE_SIZE - 1) / PAGE_SIZE)
+		if parts_status != .Ok {
+			_ = arena_end(&words)
+			return false
+		}
+		growing.words, growing.parts, growing.made = words, parts, true
+	}
+	added := wanted - held
+	words_place, words_status := arena_push(&growing.words, u64(added * size_of(op.Word)), align_of(op.Word))
+	if words_status != .Ok {
+		return false
+	}
+	parts_place, parts_status := arena_push(&growing.parts, u64(added * size_of(Wait_Part)), align_of(Wait_Part))
+	if parts_status != .Ok {
+		_ = arena_pop(&growing.words, u64(added * size_of(op.Word)))
+		return false
+	}
+	intrinsics.mem_zero(words_place, added * size_of(op.Word))
+	intrinsics.mem_zero(parts_place, added * size_of(Wait_Part))
+	// A room that the kernel refused for the smaller set is asked again
+	// for the larger one: the budget can pay it now.
+	growing.set = wait_set_of(([^]op.Word)(growing.words.base)[:wanted], ([^]Wait_Part)(growing.parts.base)[:wanted])
+	return true
 }
 
 // wait_word adds a word: the thread waits while the word holds value.

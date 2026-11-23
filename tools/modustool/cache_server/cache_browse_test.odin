@@ -254,8 +254,8 @@ browse_tree_pages_escaping_damage_and_wrong_kind :: proc(t: ^testing.T) {
 	_, empty_ref := tree_hash.tree_encode(nil, empty_buf[:])
 	testing.expect_value(t, empty_ref, tree_hash.Tree_Refusal.None)
 	empty_hash, _ := tree_hash.tree_hash(empty_buf[:])
-	put_empty := make_signed_put_object_request(.Tree, empty_hash, empty_buf[:], &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_empty), object_cache.Cache_Response_Status.Ok)
+	put_empty := make_signed_put_object_request(.Tree, empty_hash, u64(len(empty_buf[:])), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_empty, empty_buf[:]), object_cache.Cache_Response_Status.Ok)
 	empty_p1 := cache_browse_tree(&server, settings, empty_hash, 1)
 	testing.expect_value(t, empty_p1.status, Status_Answer.Ok)
 	testing.expect(t, strings.contains(string(empty_p1.body), "no entries"))
@@ -265,19 +265,19 @@ browse_tree_pages_escaping_damage_and_wrong_kind :: proc(t: ^testing.T) {
 	// Put one held blob, and build a tree with HTML in a name plus an absent entry.
 	held_payload := transmute([]u8)string("held blob bytes")
 	held_hash := blake3.hash(held_payload)
-	put_held := make_signed_put_object_request(.Blob, held_hash, held_payload, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_held), object_cache.Cache_Response_Status.Ok)
+	put_held := make_signed_put_object_request(.Blob, held_hash, u64(len(held_payload)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_held, held_payload), object_cache.Cache_Response_Status.Ok)
 
 	unheld_hash := blake3.hash(transmute([]u8)string("not uploaded"))
 	e1, _ := tree_hash.tree_entry_make(.Object, "<img src=x onerror=alert(1)>&\"", held_hash)
 	e2, _ := tree_hash.tree_entry_make(.Object, "absent_file", unheld_hash)
 	entries2 := [2]tree_hash.Tree_Entry{e1, e2}
-	tree2_buf := make([]u8, tree_hash.tree_encoded_size(2), context.temp_allocator)
+	tree2_buf := make([]u8, tree_hash.tree_encoded_size(entries2[:]), context.temp_allocator)
 	_, t2_ref := tree_hash.tree_encode(entries2[:], tree2_buf)
 	testing.expect_value(t, t2_ref, tree_hash.Tree_Refusal.None)
 	tree2_hash, _ := tree_hash.tree_hash(tree2_buf)
-	put_tree2 := make_signed_put_object_request(.Tree, tree2_hash, tree2_buf, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_tree2), object_cache.Cache_Response_Status.Ok)
+	put_tree2 := make_signed_put_object_request(.Tree, tree2_hash, u64(len(tree2_buf)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_tree2, tree2_buf), object_cache.Cache_Response_Status.Ok)
 
 	tree2_ans := cache_browse_tree(&server, settings, tree2_hash, 1)
 	testing.expect_value(t, tree2_ans.status, Status_Answer.Ok)
@@ -296,12 +296,12 @@ browse_tree_pages_escaping_damage_and_wrong_kind :: proc(t: ^testing.T) {
 		name := fmt.tprintf("entry_%03d", idx)
 		big_entries[idx], _ = tree_hash.tree_entry_make(.Object, name, held_hash)
 	}
-	big_buf := make([]u8, tree_hash.tree_encoded_size(tree_hash.MAX_TREE_ENTRIES), context.temp_allocator)
+	big_buf := make([]u8, tree_hash.tree_encoded_size(big_entries), context.temp_allocator)
 	_, big_ref := tree_hash.tree_encode(big_entries, big_buf)
 	testing.expect_value(t, big_ref, tree_hash.Tree_Refusal.None)
 	big_hash, _ := tree_hash.tree_hash(big_buf)
-	put_big := make_signed_put_object_request(.Tree, big_hash, big_buf, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_big), object_cache.Cache_Response_Status.Ok)
+	put_big := make_signed_put_object_request(.Tree, big_hash, u64(len(big_buf)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_big, big_buf), object_cache.Cache_Response_Status.Ok)
 
 	big_p1 := cache_browse_tree(&server, settings, big_hash, 1)
 	testing.expect_value(t, big_p1.status, Status_Answer.Ok)
@@ -363,8 +363,8 @@ browse_blob_kinds_module_preview_raw_and_damage :: proc(t: ^testing.T) {
 
 	put_blob :: proc(t: ^testing.T, server: ^Cache_Server, key: ^ed25519.Private_Key, pub: [32]u8, payload: []u8) -> blake3.Hash {
 		h := blake3.hash(payload)
-		req := make_signed_put_object_request(.Blob, h, payload, key, pub)
-		testing.expect_value(t, put_frame(t, server, &req), object_cache.Cache_Response_Status.Ok)
+		req := make_signed_put_object_request(.Blob, h, u64(len(payload)), key, pub)
+		testing.expect_value(t, test_put_object_on_server(server, &req, payload), object_cache.Cache_Response_Status.Ok)
 		return h
 	}
 
@@ -457,8 +457,8 @@ browse_blob_kinds_module_preview_raw_and_damage :: proc(t: ^testing.T) {
 	empty_tree: [tree_hash.HEADER_SIZE]u8
 	_, _ = tree_hash.tree_encode(nil, empty_tree[:])
 	th, _ := tree_hash.tree_hash(empty_tree[:])
-	put_t := make_signed_put_object_request(.Tree, th, empty_tree[:], &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_t), object_cache.Cache_Response_Status.Ok)
+	put_t := make_signed_put_object_request(.Tree, th, u64(len(empty_tree[:])), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_t, empty_tree[:]), object_cache.Cache_Response_Status.Ok)
 	wrong := cache_browse_blob(&server, settings, th)
 	testing.expect_value(t, wrong.status, Status_Answer.Ok)
 	testing.expect(t, strings.contains(string(wrong.body), "Tree, not a blob"))
@@ -490,13 +490,13 @@ browse_realisation_with_and_without_recipe_and_signature_states :: proc(t: ^test
 	// Put input, recipe object (auto-indexed into recipes/), output, and realisation.
 	input_bytes := transmute([]u8)string("recipe input bytes")
 	input_hash := blake3.hash(input_bytes)
-	put_in := make_signed_put_object_request(.Blob, input_hash, input_bytes, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_in), object_cache.Cache_Response_Status.Ok)
+	put_in := make_signed_put_object_request(.Blob, input_hash, u64(len(input_bytes)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_in, input_bytes), object_cache.Cache_Response_Status.Ok)
 
 	output_bytes := transmute([]u8)string("recipe output bytes")
 	output_hash := blake3.hash(output_bytes)
-	put_out := make_signed_put_object_request(.Blob, output_hash, output_bytes, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_out), object_cache.Cache_Response_Status.Ok)
+	put_out := make_signed_put_object_request(.Blob, output_hash, u64(len(output_bytes)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_out, output_bytes), object_cache.Cache_Response_Status.Ok)
 
 	spec := new(plans_recipes.Recipe_Spec, context.temp_allocator)
 	spec.builder_hash = blake3.hash(transmute([]u8)string("builder"))
@@ -512,8 +512,8 @@ browse_realisation_with_and_without_recipe_and_signature_states :: proc(t: ^test
 	recipe_buf: [plans_recipes.MAX_RECIPE_OBJECT_BYTES]u8
 	recipe_len, _ := plans_recipes.recipe_object_encode(spec, recipe_buf[:])
 	recipe_blob_hash := blake3.hash(recipe_buf[:recipe_len])
-	put_rcp := make_signed_put_object_request(.Blob, recipe_blob_hash, recipe_buf[:recipe_len], &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &put_rcp), object_cache.Cache_Response_Status.Ok)
+	put_rcp := make_signed_put_object_request(.Blob, recipe_blob_hash, u64(len(recipe_buf[:recipe_len])), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &put_rcp, recipe_buf[:recipe_len]), object_cache.Cache_Response_Status.Ok)
 
 	record := make_signed_realisation_record(recipe_digest, output_hash, .Blob, &private_key, public_key)
 	put_real := object_cache.Cache_Request{kind = .Put_Realisation, realisation = record}
@@ -585,8 +585,8 @@ browse_releases_protocol_search_and_http :: proc(t: ^testing.T) {
 	tbuf: [tree_hash.HEADER_SIZE]u8
 	_, _ = tree_hash.tree_encode(nil, tbuf[:])
 	t_hash, _ := tree_hash.tree_hash(tbuf[:])
-	put_t := make_signed_put_object_request(.Tree, t_hash, tbuf[:], &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &test.server, &put_t), object_cache.Cache_Response_Status.Ok)
+	put_t := make_signed_put_object_request(.Tree, t_hash, u64(len(tbuf[:])), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&test.server, &put_t, tbuf[:]), object_cache.Cache_Response_Status.Ok)
 
 	// Unauthorised publisher refused.
 	stranger_ptr, _ := cache_client_release_pointer_sign(&stranger_key, "release", 1, t_hash)
@@ -717,8 +717,8 @@ browse_module_strings_are_bounded_and_cleaned :: proc(t: ^testing.T) {
 	settings := Cache_Page_Settings{endpoint = "cache.example:5010", site_address = DEFAULT_SITE_ADDRESS}
 	put_blob :: proc(t: ^testing.T, server: ^Cache_Server, key: ^ed25519.Private_Key, pub: [32]u8, payload: []u8) -> blake3.Hash {
 		h := blake3.hash(payload)
-		req := make_signed_put_object_request(.Blob, h, payload, key, pub)
-		testing.expect_value(t, put_frame(t, server, &req), object_cache.Cache_Response_Status.Ok)
+		req := make_signed_put_object_request(.Blob, h, u64(len(payload)), key, pub)
+		testing.expect_value(t, test_put_object_on_server(server, &req, payload), object_cache.Cache_Response_Status.Ok)
 		return h
 	}
 
@@ -767,4 +767,3 @@ browse_module_strings_are_bounded_and_cleaned :: proc(t: ^testing.T) {
 	directory[module.Table_Kind.Rebases] = {}
 	testing.expect(t, browse_module_tables_within_bounds(past))
 }
-

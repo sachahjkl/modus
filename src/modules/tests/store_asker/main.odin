@@ -12,6 +12,7 @@
 package store_asker
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -31,8 +32,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	mode := "read"
 	arguments := [2]isolated.Argument{{text = transmute([]u8)name}, {text = transmute([]u8)mode}}
 	error: errors.Error_Record
-	result, status := system.call_isolated(&connection, file, pick, arguments[:], &error)
-	if status != .Ok || result <= 0 {
+	result, outcome := system.call_isolated(&connection, file, pick, arguments[:], &error)
+	if outcome != .Succeeded || result <= 0 {
 		wrong("the trusted display opened no store picker; the result", u64(result))
 	}
 	system.log_fact(.Info, Picker_Asked{request = u64(result)})
@@ -58,10 +59,10 @@ display_connect :: proc "contextless" (ctx: ^system.Context) -> (connection: sys
 		wrong("the boot image does not map; the status word", u64(map_status))
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	connection, connected = system.service_connection(&requests, 1, "display")
-	if connected != .Ok {
-		wrong("the root service gave no connection to the holder of Display; the status word", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the holder of Display; the call outcome", u64(connected))
 	}
 	entry := system.image_entry_of(image, connection.module_hash)
 	if entry == nil {

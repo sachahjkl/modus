@@ -2,7 +2,6 @@
 package plans_recipes
 
 import "core:testing"
-import "modus:contract/blake3"
 import "modus:contract/errors"
 
 @(private = "file")

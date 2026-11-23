@@ -18,6 +18,11 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
+// The pages of one typical native C build and of one typical guest build
+// (below).
+TYPICAL_C_BUILD_PAGES :: 9216
+TYPICAL_GUEST_BUILD_PAGES :: recipes_core.TYPICAL_GUEST_BUILD_PAGES
+
 // The budget that the service asks for: 1024 pages of the service (the
 // index of its local store, its staging, the sandbox of a build); one
 // typical native C build: a program of the size of Lua, about 700 KB of C,
@@ -32,8 +37,6 @@ import "modus:system"
 // call (c_build_plan, recipes_core.guest_build_plan), so a larger grant
 // runs a build of SQLite or a larger guest, and a smaller one refuses it
 // with the pages that it needs.
-TYPICAL_C_BUILD_PAGES :: 9216
-TYPICAL_GUEST_BUILD_PAGES :: recipes_core.TYPICAL_GUEST_BUILD_PAGES
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 60_656, processes = 3, threads = 2}
 #assert(60_656 == C_BUILD_SERVICE_PAGES_KEPT + TYPICAL_C_BUILD_PAGES + TYPICAL_GUEST_BUILD_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
 #assert(TYPICAL_C_BUILD_PAGES * system.PAGE_SIZE >= 700 * 1024 * C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE + system.CALL_HOST_PAGES * system.PAGE_SIZE)

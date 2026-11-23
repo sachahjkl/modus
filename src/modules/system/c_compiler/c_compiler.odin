@@ -356,8 +356,7 @@ unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_C
 	// views is too large for the stack of the call host.
 	names_address, names_status := system.arena_push(&arena, program_files.EXPORTS_MOST * size_of(string), align_of(string), &refusal)
 	if names_status != .Ok {
-		arena_refusal_give(error, refusal)
-		return false
+		return arena_refusal_give(error, refusal)
 	}
 	names := ([^]string)(names_address)[:program_files.EXPORTS_MOST]
 	export_count, export_refusal := program_files.export_list_read(string(exports_copy[:unit.exports_count]), names)

@@ -72,11 +72,11 @@ LARGEST_HEIGHT :: 900
 // its need alone when the budget does not pay twice: 8192 pages hold the
 // page, its growth and the frame lists of the 13 reservations. A larger
 // page takes the pages that the budget holds, and past them it is cut.
-// 2604 + 8192 = 10796.
-DOCUMENT_PAGES :: 8192
+// 2604 + 8192 = 10796 (DOCUMENT_PAGES: the document).
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10796, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 // The second surface, the glyph memory, and the document.
 #assert(MODULE_BUDGET.working_memory_pages == 2250 + 354 + DOCUMENT_PAGES)
+DOCUMENT_PAGES :: 8192
 
 LINE :: graphics.LINE_HEIGHT
 ROW_HEIGHT :: interface.TABLE_LINE // A text field and a button.

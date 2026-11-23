@@ -40,8 +40,10 @@ Retention_Refusal :: enum u8 {
 Retention_Workspace :: struct {
 	marks:      [RETENTION_MARKS_MOST]Retention_Mark, // Open addressing; a zero key: free.
 	mark_count: int,
-	names:      [RETENTION_PAGE_NAMES]pr.Private_Object_Name,
-	object:     [pr.REALISATION_OBJECT_HEAD_SIZE + MAX_OBJECT_BYTES]u8,
+	rows:       [RETENTION_PAGE_NAMES]pr.Private_Store_Entry,
+	name_bytes: [RETENTION_PAGE_NAMES * tree_hash.ENTRY_NAME_CAPACITY]u8,
+	after:      [tree_hash.ENTRY_NAME_CAPACITY]u8, // The last name of the page before.
+	object:     [max(pr.REALISATION_OBJECT_HEAD_SIZE, pr.MAX_RECIPE_OBJECT_BYTES)]u8,
 	nodes:      [RETENTION_DEPTH_MOST][tree_hash.MAX_ENCODED_TREE_BYTES]u8,
 	recipe:     pr.Recipe_Spec,
 }
@@ -140,7 +142,7 @@ retention_mark_object :: proc "contextless" (workspace: ^Retention_Workspace, po
 		return .Too_Deep
 	}
 	name := pr.blob_object_name(hash)
-	bytes, status := pr.private_store_read_large(port, pr.private_object_name_text(&name), workspace.nodes[depth][:])
+	bytes, status := pr.private_store_read(port, pr.private_object_name_text(&name), workspace.nodes[depth][:])
 	switch status {
 	case .Ok:
 	case .Absent:
@@ -161,6 +163,17 @@ retention_mark_object :: proc "contextless" (workspace: ^Retention_Workspace, po
 	return retention_mark_tree(workspace, port, bytes, depth)
 }
 
+// retention_page_after keeps the last name of a page, from which the next
+// page starts: the names of the page go when the next page is read.
+@(private = "file")
+retention_page_after :: proc "contextless" (workspace: ^Retention_Workspace, page: []pr.Private_Store_Entry) -> (after_length: int, status: pr.Private_Store_Status) {
+	last := page[len(page) - 1]
+	if last.name_count > len(workspace.after) {
+		return 0, .Failed
+	}
+	return copy(workspace.after[:], workspace.name_bytes[last.name_offset:][:last.name_count]), .Ok
+}
+
 @(private = "file")
 retention_mark_tree :: proc "contextless" (workspace: ^Retention_Workspace, port: ^pr.Private_Store_Port, tree_bytes: []u8, depth: int) -> Retention_Refusal {
 	count, tree_refusal := tree_hash.tree_validate(tree_bytes)
@@ -176,7 +189,7 @@ retention_mark_tree :: proc "contextless" (workspace: ^Retention_Workspace, port
 		switch entry.kind {
 		case .Object:
 			kind = .Blob
-		case .Tree:
+		case .Tree, .Part: // A part is a node of a tree: it and its entries are kept.
 			kind = .Tree
 		}
 		if refusal := retention_mark_object(workspace, port, kind, entry.hash, depth + 1); refusal != .None {
@@ -283,9 +296,9 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 		}
 	}
 	// The realisations and the recipes of the store.
-	after: pr.Private_Object_Name
+	after_length := 0
 	for {
-		page, status := pr.private_store_list(port, pr.private_object_name_text(&after), workspace.names[:])
+		page, status := pr.private_store_list(port, string(workspace.after[:after_length]), workspace.rows[:], workspace.name_bytes[:])
 		if status != .Ok {
 			result.refusal = .Store_Failed
 			return result
@@ -293,15 +306,18 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 		if len(page) == 0 {
 			break
 		}
-		after = page[len(page) - 1]
-		for &name in page {
-			text := pr.private_object_name_text(&name)
+		if after_length, status = retention_page_after(workspace, page); status != .Ok {
+			result.refusal = .Store_Failed
+			return result
+		}
+		for row in page {
+			text := string(workspace.name_bytes[row.name_offset:][:row.name_count])
 			is_realisation := len(text) > 12 && text[:12] == "realisation_"
 			is_recipe := len(text) > 7 && text[:7] == "recipe_"
 			if !is_realisation && !is_recipe {
 				continue
 			}
-			bytes, read_status := pr.private_store_read_large(port, text, workspace.object[:])
+			bytes, read_status := pr.private_store_read(port, text, workspace.object[:])
 			if read_status != .Ok {
 				result.refusal = .Store_Failed
 				return result
@@ -315,8 +331,9 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 				}
 				continue
 			}
-			// A realisation names its output, and its output tree names the
-			// rest. A damaged realisation names nothing: no build takes it.
+			// A realisation names its output, the object blob_ of its output
+			// hash, and its output tree names the rest. A damaged realisation
+			// names nothing: no build takes it.
 			if len(bytes) < pr.REALISATION_OBJECT_HEAD_SIZE {
 				continue
 			}
@@ -326,21 +343,14 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 			if !kind_ok {
 				continue
 			}
-			record, _, payload, decode_refusal := pr.decode_realisation_object(bytes, recipe_hash, kind)
+			record, _, _, decode_refusal := pr.decode_realisation_object(bytes, recipe_hash, kind)
 			if decode_refusal != .None {
 				continue
 			}
-			mark, mark_refusal := retention_mark(workspace, retention_key(record.output_hash))
-			if mark_refusal != .None {
-				result.refusal = mark_refusal
+			output_kind: Retention_Kind = kind == .Tree ? .Tree : .Blob
+			if refusal := retention_mark_object(workspace, port, output_kind, record.output_hash, 0); refusal != .None {
+				result.refusal = refusal
 				return result
-			}
-			if kind == .Tree && mark != nil && !mark.walked {
-				mark.walked = true
-				if refusal := retention_mark_tree(workspace, port, payload, 0); refusal != .None {
-					result.refusal = refusal
-					return result
-				}
 			}
 		}
 	}
@@ -348,9 +358,9 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 
 	// The sweep: each object blob_ that nothing names. The removes change
 	// no name before the last one read, so the next page starts after it.
-	after = {}
+	after_length = 0
 	for {
-		page, status := pr.private_store_list(port, pr.private_object_name_text(&after), workspace.names[:])
+		page, status := pr.private_store_list(port, string(workspace.after[:after_length]), workspace.rows[:], workspace.name_bytes[:])
 		if status != .Ok {
 			result.refusal = .Store_Failed
 			return result
@@ -358,9 +368,12 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 		if len(page) == 0 {
 			break
 		}
-		after = page[len(page) - 1]
-		for &name in page {
-			text := pr.private_object_name_text(&name)
+		if after_length, status = retention_page_after(workspace, page); status != .Ok {
+			result.refusal = .Store_Failed
+			return result
+		}
+		for row in page {
+			text := string(workspace.name_bytes[row.name_offset:][:row.name_count])
 			key, is_blob := retention_name_key(text)
 			if !is_blob {
 				continue

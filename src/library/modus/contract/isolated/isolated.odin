@@ -162,7 +162,7 @@ REGION_PAGES :: 16
 // The callers of one service at one time: tools, consoles, agents through
 // `remote` and other services. A service waits on the call ring of each
 // one, two words of a wait each, and keeps half of a wait of the kernel
-// (op.WORD_WAIT_CAPACITY) for its other words.
+// (op.WORD_WAIT_MOST) for its other words.
 SERVICE_CONNECTION_CAPACITY :: 48
 // The connections that the root service holds at one time: each client of
 // each service. Stated once here, so the table of remote is sized from the

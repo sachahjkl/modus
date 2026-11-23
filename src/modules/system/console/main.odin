@@ -145,7 +145,7 @@ LINE_THREAD_STACK_PAGES :: 160
 
 // The request of the console under the largest budget that the root
 // service gives a process of the boot image: the floor of that budget,
-// module.LARGEST_BUDGET_PAGES, which a larger machine only raises. The
+// module.LARGEST_BUDGET_LEAST_PAGES, which a larger machine only raises. The
 // sum is the stated working memory, the module (its code and its small
 // tables, 729 pages as measured on the module before a line grew to
 // LINE_CAPACITY bytes, and the tables of one line, counted here from
@@ -155,7 +155,7 @@ CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES :: 729
 CONSOLE_LINE_TABLE_BYTES :: size_of(line_tree) + size_of(line_evaluation) + size_of(list_keeping) + size_of(history) + size_of(history_copy) + TABLE_ARENA + size_of(scratch) + size_of(nested_line) + size_of(work) + size_of(shown)
 CONSOLE_THREAD_PAGES :: 72 + (MODULE_BUDGET.threads - 1) * 19
 CONSOLE_REQUEST_PAGES :: MODULE_BUDGET.working_memory_pages + CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES + (CONSOLE_LINE_TABLE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE + CONSOLE_THREAD_PAGES
-#assert(CONSOLE_REQUEST_PAGES <= module.LARGEST_BUDGET_PAGES, "the console asks for more pages than the largest budget of a process of the boot image")
+#assert(CONSOLE_REQUEST_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES, "the console asks for more pages than the largest budget of a process of the boot image")
 
 #assert(LINE_THREAD_STACK_PAGES * system.PAGE_SIZE == lex_evaluator.EVALUATION_STACK_BYTES + 128 * 1024)
 #assert(LINE_THREAD_STACK_PAGES - system.THREAD_STACK_PAGES == 144)

@@ -3,7 +3,6 @@ package remote_display_service
 import "modus:contract/value_kinds"
 import "modus:quic"
 import "modus:quic_server"
-import op "modus:contract/operation"
 import "modus:contract/call_outcome"
 
 // The log facts of the remote display (src/md/features/log_facts.md, "The

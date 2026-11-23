@@ -177,9 +177,9 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 	// Wiring pages that the budget of a process does not pay beside the
 	// pages of the start policy: at the largest budget, taken; one page
 	// past it, refused.
-	testing.expect_value(t, start_policy_pages_problem(32, module.LARGEST_BUDGET_PAGES - 32), "")
+	testing.expect_value(t, start_policy_pages_problem(32, module.LARGEST_BUDGET_LEAST_PAGES - 32), "")
 	testing.expect_value(t, start_policy_pages_problem(0, 0), "")
-	testing.expect(t, start_policy_pages_problem(32, module.LARGEST_BUDGET_PAGES - 31) != "", "pages past the largest budget pass")
+	testing.expect(t, start_policy_pages_problem(32, module.LARGEST_BUDGET_LEAST_PAGES - 31) != "", "pages past the largest budget pass")
 	// Sizes of another count than the rows: no list.
 	one_records, _, _ := start_list_wiring_records(rows, past[:1], files)
 	_, _, no_sizes := start_list_bytes(rows, one_records, nil)
@@ -232,7 +232,7 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, start_list_audits_problem(twenty, COLLECTOR_PAGES), "")
 	testing.expect_value(t, start_list_audits_problem(twenty[:0], COLLECTOR_PAGES), "")
-	room := int((module.LARGEST_BUDGET_PAGES - COLLECTOR_PAGES) / wide_grants.SPACE_AUDIT_PAGES)
+	room := int((module.LARGEST_BUDGET_LEAST_PAGES - COLLECTOR_PAGES) / wide_grants.SPACE_AUDIT_PAGES)
 	audits := make([]Start_List_Wiring, room + 1, context.temp_allocator)
 	for &audit in audits {
 		audit = {audit_bound = 1}

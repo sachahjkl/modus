@@ -2314,9 +2314,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the ask of a wide grant got no answer: %s", index + 1, transport.reason)
 				return false
 			}
-			refused := answer.status != .Ok
+			answered, answer_record, _ := remote.answer_outcome(answer)
+			refused := answered != .Succeeded
 			if refused != (step.outcome == .Refused) || (!refused && step.expected != "" && fmt.tprint(answer.value) != step.expected) {
-				fmt.eprintfln("modustool: test failed: step %d: the ask of a wide grant gave the status %v, the screen %d, and the error record %v", index + 1, answer.status, answer.value, answer.error)
+				fmt.eprintfln("modustool: test failed: step %d: the ask of a wide grant gave the outcome %v, the screen %d, and the error record %v", index + 1, answered, answer.value, answer_record)
 				return false
 			}
 			foundation.test_passed_print("the ask of a wide grant with the scopes %s for %d ms gave %s", step.text, step.milliseconds, refused ? "its refusal" : fmt.tprintf("the screen %d", answer.value))

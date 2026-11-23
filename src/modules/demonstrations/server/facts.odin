@@ -1,7 +1,6 @@
 package server
 
 import "modus:contract/value_kinds"
-import "modus:web"
 
 // The log facts of server (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
@@ -46,8 +45,9 @@ METHOD_FIELD_BYTES :: 8
 // The bytes of the Text field of the target of a request: the target of an
 // Access_Row, 48 bytes at most with its cut mark, and a zero byte.
 TARGET_FIELD_BYTES :: 56
-// The bytes of the Text field of the name of a page: web.PAGE_NAME_LIMIT
-// bytes at most, and a zero byte, up to a multiple of 8.
+// The bytes of the Text field of the name of a page in a fact: a fact has
+// at most op.LOG_FACT_VALUE_CAPACITY bytes, so a longer name is cut on a
+// whole character, with the cut mark (value_kinds.text_field).
 PAGE_FIELD_BYTES :: 72
 // The bytes of the Text field of how a connection ended: the longest,
 // "aborted: an answer under 4096 bytes in one second", has 50 bytes.
@@ -176,7 +176,6 @@ Page_Removed :: struct {
 	page: [72]u8,
 }
 
-#assert(PAGE_FIELD_BYTES > web.PAGE_NAME_LIMIT)
 #assert(size_of(Connection_Ended) == 56 + PEER_FIELD_BYTES + HOW_FIELD_BYTES)
 #assert(size_of(Page_Stored) == 8 + PAGE_FIELD_BYTES)
 

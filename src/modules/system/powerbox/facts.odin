@@ -35,8 +35,9 @@ STORE_CAUSE_FIELD_BYTES :: 72
 Picker_Store_Left_Out :: struct {
 	principal: u64,
 	store:     u64,
-	cause:     [STORE_CAUSE_FIELD_BYTES]u8,
+	cause:     [72]u8,
 }
+#assert(size_of(Picker_Store_Left_Out{}.cause) == STORE_CAUSE_FIELD_BYTES)
 
 @(log_fact = "powerbox: expired {expired_dialogs} pending dialogs")
 Dialogs_Expired :: struct {

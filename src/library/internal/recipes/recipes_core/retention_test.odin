@@ -85,7 +85,7 @@ retention_keeps_what_is_named_and_removes_the_rest :: proc(t: ^testing.T) {
 	root_hash, root_bytes := put_tree(test, 1, root_entries[:])
 	record := object_cache.Realisation_Record{recipe_hash = blake3.hash([]u8{'r'}), output_hash = root_hash, output_kind = .Tree}
 	object: [pr.REALISATION_OBJECT_HEAD_SIZE + 512]u8
-	written, _ := pr.encode_realisation_object(&record, 1, root_bytes, object[:])
+	written, _ := pr.encode_realisation_object(&record, 1, u64(len(root_bytes)), object[:])
 	realisation_name := pr.realisation_object_name(record.recipe_hash)
 	assert(pr.private_store_write(&test.state.store, pr.private_object_name_text(&realisation_name), object[:written]) == .Ok)
 

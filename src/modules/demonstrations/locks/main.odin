@@ -64,7 +64,8 @@ import "modus:system"
 // the two processes of the case of the untouched page, with 2 threads and
 // 1024 pages each (untouched_page.odin); and the mapping of the measure of
 // an unmap, 4096 pages and its frame list (wait_room.odin).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8099 + 672 + 2048 + 4097, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+// 8099 + 672 + 2048 + 4097 = 14916.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 14916, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

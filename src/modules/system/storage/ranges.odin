@@ -133,9 +133,9 @@ pool_end :: proc "contextless" (pool: ^Pending_Pool) {
 // pool_take gives the pool of a connection, and makes it at its first
 // change, with no memory yet: its first push makes its first arena. nil
 // with the error record when the service has no free pool.
-pool_take :: proc "contextless" (holder: system.Handle, limit: u64, error: ^errors.Error_Record) -> (pool: ^Pending_Pool, result: i64) {
+pool_take :: proc "contextless" (holder: system.Handle, limit: u64, error: ^errors.Error_Record) -> (pool: ^Pending_Pool, outcome: call_outcome.Call_Outcome) {
 	if pool = pool_of(holder); pool != nil {
-		return pool, 0
+		return pool, .Succeeded
 	}
 	for attempt in 0 ..< 2 {
 		for &free in pending_pools {
@@ -143,13 +143,15 @@ pool_take :: proc "contextless" (holder: system.Handle, limit: u64, error: ^erro
 				continue
 			}
 			free = {holder = holder, limit = limit}
-			return &free, 0
+			return &free, .Succeeded
 		}
 		if attempt == 0 {
 			pending_sweep()
 		}
 	}
-	return nil, errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, PENDING_POOL_CAPACITY)
+	// The pools are shared by the connections, and one frees when its
+	// connection commits or ends.
+	return nil, refuse(error, .Callee_Busy, .Full, .Pending, 0, 0, PENDING_POOL_CAPACITY)
 }
 
 // pool_push gives `size` bytes of the arena of a pool, or nil with the
@@ -168,7 +170,7 @@ pool_push :: proc "contextless" (pool: ^Pending_Pool, size: int, alignment: int,
 	// The reservation of the last arena is full: one more, twice as large,
 	// and large enough for the push.
 	if pool.arena_count == POOL_ARENA_CAPACITY {
-		errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, POOL_ARENA_CAPACITY)
+		_ = refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Pending, 0, 0, POOL_ARENA_CAPACITY)
 		return nil
 	}
 	pages := u64(POOL_ARENA_FIRST_PAGES)
@@ -177,7 +179,7 @@ pool_push :: proc "contextless" (pool: ^Pending_Pool, size: int, alignment: int,
 	}
 	wanted := (u64(size) + u64(alignment) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	if wanted > op.MEMORY_PAGE_LIMIT {
-		errors.fail(error, failure(.Too_Large), .Too_Long, .Bytes, 0, i64(size), i64(op.MEMORY_PAGE_LIMIT * system.PAGE_SIZE))
+		_ = refuse(error, .Argument_Refused, .Too_Long, .Bytes, 0, i64(size), i64(op.MEMORY_PAGE_LIMIT * system.PAGE_SIZE))
 		return nil
 	}
 	pages = system.arena_reservation_pages(max(pages, wanted))
@@ -440,7 +442,7 @@ pending_drop_of :: proc "contextless" (holder: system.Handle) {
 }
 
 // pending_take gives a new pending object of a connection.
-pending_take :: proc "contextless" (holder: system.Handle, limit: u64, path: ^Path, name: Entry_Name, base_generation: u64, size: u64, error: ^errors.Error_Record) -> (pending: ^Pending_Object, result: i64) {
+pending_take :: proc "contextless" (holder: system.Handle, limit: u64, path: ^Path, name: Entry_Name, base_generation: u64, size: u64, error: ^errors.Error_Record) -> (pending: ^Pending_Object, outcome: call_outcome.Call_Outcome) {
 	pool, taken := pool_take(holder, limit, error)
 	if pool == nil {
 		return nil, taken
@@ -454,7 +456,8 @@ pending_take :: proc "contextless" (holder: system.Handle, limit: u64, path: ^Pa
 			if pool.objects == nil {
 				pool_end(pool)
 			}
-			return nil, failure(.Full)
+			// pool_push wrote the record of the memory that it did not get.
+			return nil, .Budget_Or_Capacity_Exhausted
 		}
 		pending = (^Pending_Object)(address)
 	}
@@ -463,7 +466,7 @@ pending_take :: proc "contextless" (holder: system.Handle, limit: u64, path: ^Pa
 	copy(pending.path[:], path.names[:path.depth])
 	pending.next = pool.objects
 	pool.objects = pending
-	return pending, 0
+	return pending, .Succeeded
 }
 
 // pending_changes gives the pending blocks of a pending object as the
@@ -623,7 +626,7 @@ pending_block_take :: proc "contextless" (ranged: ^Ranged, index: u64, error: ^e
 	}
 	pool := pending.pool
 	if u64(pool.blocks) >= pool.limit {
-		return nil, errors.fail(error, failure(.No_Budget), .Over_Limit, .Pending, 0, i64(pool.blocks) + 1, i64(pool.limit))
+		return nil, refuse(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Pending, 0, i64(pool.blocks) + 1, i64(pool.limit))
 	}
 	if !slots_grow(pool, error) {
 		return nil, .Budget_Or_Capacity_Exhausted
@@ -634,11 +637,12 @@ pending_block_take :: proc "contextless" (ranged: ^Ranged, index: u64, error: ^e
 	} else {
 		address := pool_push(pool, size_of(Pending_Block), align_of(Pending_Block), error)
 		if address == nil {
-			return nil, failure(.Full)
+			// pool_push wrote the record of the memory that it did not get.
+			return nil, .Budget_Or_Capacity_Exhausted
 		}
 		block = (^Pending_Block)(address)
 	}
-	if read := base_read(ranged, index * BLOCK_SIZE, block.bytes[:], error); read < 0 {
+	if _, read := base_read(ranged, index * BLOCK_SIZE, block.bytes[:], error); read != .Succeeded {
 		block.object = nil
 		block.next = pool.free_blocks
 		pool.free_blocks = block
@@ -651,7 +655,7 @@ pending_block_take :: proc "contextless" (ranged: ^Ranged, index: u64, error: ^e
 	slots_insert(pool, block)
 	pending.blocks += 1
 	pool.blocks += 1
-	return block, 0
+	return block, .Succeeded
 }
 
 // pending_blocks_cut frees the pending blocks of an object at or past the

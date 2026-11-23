@@ -53,7 +53,6 @@ import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/memory_screen"
 import "modus:contract/pointer_pictures"
 import "modus:contract/remote"
@@ -1453,7 +1452,6 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	}
 	screen = {u32(width), u32(height)}
 	opening_growth = paying.growth
-	}
 	mirror_pixels = int(width) * int(height)
 	mirror_valid = false
 	compositor_send({kind = u32(display.Command.Capture_Open), values = {0 = u64(given), 1 = width, 2 = height}})

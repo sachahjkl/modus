@@ -1250,7 +1250,7 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 		// The processes that run, from the reports of the machine, as the
 		// completion of the edit line reads them.
 		report: op.System_Report
-		seen_names: [op.PROCESS_SLOTS_OF_THE_MACHINE]u64
+		seen_names: [op.PROCESS_SLOTS_MOST]u64
 		seen_count := 0
 		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status == .Ok {
 			for slot in 1 ..< report.process_slots {

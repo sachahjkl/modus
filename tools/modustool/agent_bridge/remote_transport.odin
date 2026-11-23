@@ -97,9 +97,8 @@ remote_transport_ask_wide_grant :: proc(user_data: rawptr, authorities: wide_gra
 	if !sent {
 		return 0, format_remote_transport_failure(call_transport, context.temp_allocator), false
 	}
-	if answer.status != .Ok {
-		error := answer.error
-		return 0, fmt.tprintf("remote refused the ask of a wide grant: kind %d, unit %d, field %d", error.kind, error.unit, error.argument), false
+	if outcome, error, _ := remote.answer_outcome(answer); outcome != .Succeeded {
+		return 0, fmt.tprintf("remote refused the ask of a wide grant: %v, kind %d, unit %d, field %d", outcome, error.kind, error.unit, error.argument), false
 	}
 	return u64(answer.value), "", true
 }

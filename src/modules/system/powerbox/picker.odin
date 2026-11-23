@@ -260,7 +260,7 @@ stores_call_step :: proc "contextless" (now_ms: u64) -> (answered: bool) {
 		return false
 	}
 	error: errors.Error_Record
-	full_count, text, status, done := storage.call_answer(&stores_call.client, &stores_call.sent, nil, &error)
+	full_count, text, status, _, done := storage.call_answer(&stores_call.client, &stores_call.sent, nil, &error)
 	if !done {
 		if !storage.connected(&stores_call.client) || now_ms >= stores_call.deadline {
 			stores_call_end(.Refused)

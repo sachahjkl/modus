@@ -583,11 +583,11 @@ multi_step_loop_bounds_steps_and_refuses_step_17 :: proc(t: ^testing.T) {
 	talk := taken_conversation(t)
 	error: errors.Error_Record
 	for step in 1 ..= assistant_contract.AGENT_LOOP_STEP_CAPACITY {
-		r, kept := reply(talk, true, 1, "step", assistant_contract.MODEL_ACT_CAPACITY, &error)
-		testing.expectf(t, r == 4 && kept != nil && int(kept.step) == step, "step %d reply", step)
+		replied, r, kept := reply(talk, true, 1, "step", assistant_contract.MODEL_ACT_CAPACITY, &error)
+		testing.expectf(t, replied == .Succeeded && r == 4 && kept != nil && int(kept.step) == step, "step %d reply", step)
 		for _ in 0 ..< assistant_contract.MODEL_ACT_CAPACITY {
-			num, act_entry := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
-			testing.expect(t, num > 0 && act_entry != nil && int(act_entry.step) == step)
+			acted, num, act_entry := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+			testing.expect(t, acted == .Succeeded && num > 0 && act_entry != nil && int(act_entry.step) == step)
 		}
 	}
 	// The request is still in the ring and refuses step 17.
@@ -598,8 +598,8 @@ multi_step_loop_bounds_steps_and_refuses_step_17 :: proc(t: ^testing.T) {
 	outcome, result, _ = reply_refused(talk, true, 1, i64(errors.Kind.Bad_Value), i64(errors.Unit.Bytes), 1, 0, 0, &error)
 	expect_refusal(t, outcome, result, error, .Too_Long, 1)
 	// loop_end closes the request with Step_Limit once; a second call fails with State.
-	ended, end_entry := loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Step_Limit), &error)
-	testing.expect(t, ended == 1 && end_entry != nil && end_entry.kind == .Loop_End)
+	end_outcome, ended, end_entry := loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Step_Limit), &error)
+	testing.expect(t, end_outcome == .Succeeded && ended == 1 && end_entry != nil && end_entry.kind == .Loop_End)
 	testing.expect_value(t, end_entry.end_cause, assistant_contract.Agent_Loop_End.Step_Limit)
 	testing.expect_value(t, int(end_entry.step), assistant_contract.AGENT_LOOP_STEP_CAPACITY)
 	outcome, result, _ = loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Step_Limit), &error)
@@ -624,18 +624,20 @@ stop_requested_and_loop_end_enforce_borders :: proc(t: ^testing.T) {
 		outcome, result, _ := loop_end(talk, true, 1, cause, &error)
 		expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	}
-	testing.expect_value(t, stop_requested(talk, true, 1, &error), 0)
+	asked, before_stop := stop_requested(talk, true, 1, &error)
+	testing.expect(t, asked == .Succeeded && before_stop == 0)
 	stopped := principal_stop(talk)
 	testing.expect(t, stopped != nil && stopped.serial == 1)
-	testing.expect_value(t, stop_requested(talk, true, 1, &error), 1)
+	after_outcome, after_stop := stop_requested(talk, true, 1, &error)
+	testing.expect(t, after_outcome == .Succeeded && after_stop == 1)
 	// Calling principal_stop again does not trigger a second event.
 	testing.expect(t, principal_stop(talk) == nil)
 	// Mid-step loop_end in Acts_Coming ends the request cleanly.
 	reply(talk, true, 1, "step 1", 2, &error)
 	act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
 	testing.expect_value(t, request_of(talk, 1).turn, Turn_State.Acts_Coming)
-	ended, end_entry := loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Stopped_By_Principal), &error)
-	testing.expect(t, ended == 1 && end_entry != nil && end_entry.end_cause == .Stopped_By_Principal)
+	end_outcome, ended, end_entry := loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Stopped_By_Principal), &error)
+	testing.expect(t, end_outcome == .Succeeded && ended == 1 && end_entry != nil && end_entry.end_cause == .Stopped_By_Principal)
 	testing.expect(t, request_running(talk) == nil)
 	// No act or reply after loop_end.
 	outcome, result, _ := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
@@ -653,7 +655,7 @@ older_steps_fold_their_results_and_toggle :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	// Step 1: one act, Done.
 	reply(talk, true, 1, "discover", 1, &error)
-	_, act1 := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	_, _, act1 := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
 	// Proposed act never folds.
 	testing.expect(t, !act_folded(talk, act1))
 	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "42 rows of Module", &error)
@@ -661,7 +663,7 @@ older_steps_fold_their_results_and_toggle :: proc(t: ^testing.T) {
 	testing.expect(t, !act_folded(talk, act1))
 	// Step 2 proposes another act: step 1 folds by default, step 2 stays open.
 	reply(talk, true, 1, "query", 1, &error)
-	_, act2 := act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	_, _, act2 := act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
 	act_result(talk, true, 2, i64(assistant_contract.Act_State.Done), "12 rows of Process", &error)
 	testing.expect(t, act_folded(talk, act1))
 	testing.expect(t, !act_folded(talk, act2))
@@ -740,7 +742,7 @@ the_numbers_and_revisions_follow_each_change_and_no_refusal :: proc(t: ^testing.
 	testing.expect_value(t, request.number, 1)
 	serial := talk.layout_serial
 	reply(talk, true, 1, "one act", 1, &error)
-	_, entry := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	_, _, entry := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
 	testing.expect_value(t, entry.number, 3)
 	testing.expect(t, talk.layout_serial > serial)
 	revision, serial_before := entry.revision, talk.layout_serial
@@ -773,7 +775,7 @@ the_fold_of_an_act_follows_the_newest_request :: proc(t: ^testing.T) {
 	talk := taken_conversation(t)
 	error: errors.Error_Record
 	reply(talk, true, 1, "one", 1, &error)
-	_, first := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	_, _, first := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
 	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "done", &error)
 	testing.expect_value(t, talk.newest_last_act_step, 1)
 	testing.expect(t, !act_folded(talk, first))

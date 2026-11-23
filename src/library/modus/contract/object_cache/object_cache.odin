@@ -53,7 +53,11 @@ SIGNATURE_SIZE :: 64
 MAX_HAS_HASHES :: 64
 
 // Upper bound on one canonical tree payload (matches tree_hash).
-MAX_TREE_PAYLOAD_BYTES :: tree_hash.MAX_ENCODED_TREE_BYTES
+// A tree is checked by its tree hash, which needs its bytes whole, so it
+// travels in one frame: a node of a tree past one frame is refused with
+// Too_Large. A folder of more entries than one node holds is several
+// nodes (tree_hash, "parts"), each of which a cache carries.
+MAX_TREE_PAYLOAD_BYTES :: min(tree_hash.MAX_ENCODED_TREE_BYTES, FRAME_PAYLOAD_BYTES)
 
 // Exact wire body sizes for fixed-size messages and message headers.
 HAS_HEADER_SIZE :: 4
@@ -77,9 +81,10 @@ REALISATION_SIGNING_DOMAIN :: "modus realisation v1"
 PUT_OBJECT_SIGNING_DOMAIN :: "modus object put v1"
 RELEASE_POINTER_SIGNING_DOMAIN :: "modus release pointer v1"
 
-// The bytes of the name of a release pointer: the bound of a tree entry
-// name, so that a name of a pointer is also a name of a tree.
-RELEASE_POINTER_NAME_CAPACITY :: tree_hash.ENTRY_NAME_CAPACITY
+// The bytes of the name of a release pointer, under the bound of a tree
+// entry name, so that a name of a pointer is also a name of a tree.
+RELEASE_POINTER_NAME_CAPACITY :: 64
+#assert(RELEASE_POINTER_NAME_CAPACITY <= tree_hash.ENTRY_NAME_CAPACITY)
 
 //   Release pointer (208 bytes), on the wire and in a store:
 //     [0..32]    publisher_public_key
@@ -1037,7 +1042,7 @@ validate_get_object_response :: proc "contextless" (
 busy_progress_check :: proc "contextless" (kind: Cache_Request_Kind, frames_built, frame_count: u64) -> Wire_Refusal {
 	switch kind {
 	case .Get_Object:
-	case .Has, .Get_Realisation, .Put_Object, .Put_Realisation, .Put_Object_Frame:
+	case .Has, .Get_Realisation, .Put_Object, .Put_Realisation, .Put_Object_Frame, .Put_Release_Pointer, .Get_Release_Pointer:
 		return .Bad_Response_Status
 	}
 	if frame_count < 2 || frame_count > MAX_FRAME_COUNT || frames_built == 0 || frames_built >= frame_count {

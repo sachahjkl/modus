@@ -209,33 +209,33 @@ build :: proc "c" (recipe: ^pr.Recipe_Reference, mode: i64, result: ^[]pr.Recipe
 // - **mode**: the Build_Mode word, as for build.
 // - **result**: one row, as for build.
 //
-// The result is 1, or a negative number with an error record, as for
-// build; a text that is not 64 lowercase hexadecimal digits is refused with
-// ERROR_BUILD and the refusal Unknown_Recipe.
+// The value is 1. A failure gives its outcome and its error record, as
+// for build; a text that is not 64 lowercase hexadecimal digits is refused
+// with the refusal Unknown_Recipe.
 @(export, link_name = "build_stored")
-build_stored :: proc "c" (recipe: ^system.Bytes_To_Read, mode: i64, result: ^[]pr.Recipe_Build_Row, error: ^errors.Error_Record) -> i64 {
+build_stored :: proc "c" (recipe: ^system.Bytes_To_Read, mode: i64, result: ^[]pr.Recipe_Build_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := caller_check(true, error); !ok {
-		return failure
+		return failure, 0
 	}
 	if recipe == nil {
-		return errors.fail(error, ERROR_BUILD, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	count := intrinsics.volatile_load(&recipe.count)
 	if count != 2 * blake3.HASH_SIZE {
-		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+		return recipe_refusal_fail(error, .Unknown_Recipe, 1)
 	}
 	digits: [2 * blake3.HASH_SIZE]u8
 	intrinsics.mem_copy_non_overlapping(&digits[0], recipe.bytes, len(digits))
 	recipe_hash, hash_ok := pr.hash_of_hexadecimal(digits[:])
 	if !hash_ok {
-		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+		return recipe_refusal_fail(error, .Unknown_Recipe, 1)
 	}
 	if mode < 0 {
-		return recipe_refusal_fail(error, ERROR_BUILD, .Bad_Build_Mode, 2)
+		return recipe_refusal_fail(error, .Bad_Build_Mode, 2)
 	}
 	checked_mode, mode_ok := pr.build_mode_of_word(u64(mode))
 	if !mode_ok {
-		return recipe_refusal_fail(error, ERROR_BUILD, .Bad_Build_Mode, 2)
+		return recipe_refusal_fail(error, .Bad_Build_Mode, 2)
 	}
 	return build_of_hash(recipe_hash, checked_mode, result, error)
 }
@@ -248,39 +248,38 @@ build_stored :: proc "c" (recipe: ^system.Bytes_To_Read, mode: i64, result: ^[]p
 //
 // - **recipe**: 64 lowercase hexadecimal digits, the recipe hash.
 //
-// The result is 1 when the build left the queue, 2 when the running build
-// was asked to end, or a negative number with an error record:
-// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or ERROR_BUILD
-// with Unknown_Recipe: no build of this recipe of the principal of the
-// caller waits or runs, or the text is not a hash. A build of another
+// The value is 1 when the build left the queue, 2 when the running build
+// was asked to end. A failure gives its outcome and its error record (the
+// list above); the refusal Unknown_Recipe: no build of this recipe of the
+// principal of the caller waits or runs, or the text is not a hash. A build of another
 // principal gets the same answer, so a caller learns nothing of it.
 @(export, link_name = "build_cancel")
-build_cancel :: proc "c" (recipe: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+build_cancel :: proc "c" (recipe: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := caller_check(true, error); !ok {
-		return failure
+		return failure, 0
 	}
 	if recipe == nil {
-		return errors.fail(error, ERROR_BUILD, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	count := intrinsics.volatile_load(&recipe.count)
 	if count != 2 * blake3.HASH_SIZE {
-		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+		return recipe_refusal_fail(error, .Unknown_Recipe, 1)
 	}
 	digits: [2 * blake3.HASH_SIZE]u8
 	intrinsics.mem_copy_non_overlapping(&digits[0], recipe.bytes, len(digits))
 	recipe_hash, hash_ok := pr.hash_of_hexadecimal(digits[:])
 	if !hash_ok {
-		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+		return recipe_refusal_fail(error, .Unknown_Recipe, 1)
 	}
 	switch guest_build_cancel(caller_principal(), recipe_hash) {
 	case .Removed:
-		return 1
+		return .Succeeded, 1
 	case .Requested:
-		return 2
+		return .Succeeded, 2
 	case .Absent:
-		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+		return recipe_refusal_fail(error, .Unknown_Recipe, 1)
 	}
-	return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+	return recipe_refusal_fail(error, .Unknown_Recipe, 1)
 }
 
 // caller_principal gives the number of the principal of the caller of the
@@ -297,7 +296,7 @@ caller_principal :: proc "contextless" () -> u64 {
 
 // build_of_hash builds the recipe of recipe_hash for build and build_stored.
 @(private = "file")
-build_of_hash :: proc "contextless" (recipe_hash: blake3.Hash, checked_mode: pr.Build_Mode, result: ^[]pr.Recipe_Build_Row, error: ^errors.Error_Record) -> i64 {
+build_of_hash :: proc "contextless" (recipe_hash: blake3.Hash, checked_mode: pr.Build_Mode, result: ^[]pr.Recipe_Build_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// A recipe that a writer of the store kept there registers at its first
 	// build (guest_build.odin).
 	stored_recipe_register(recipe_hash)
@@ -307,13 +306,13 @@ build_of_hash :: proc "contextless" (recipe_hash: blake3.Hash, checked_mode: pr.
 	// builds, and answers here.
 	if spec := recipes_core.registered_recipe(&service_registry, recipe_hash); spec != nil && spec.builder_hash == pr.guest_builder_hash() && checked_mode != .Cache_Only {
 		if refusal := guest_build_queue({principal = caller_principal(), recipe_hash = recipe_hash, mode = checked_mode}); refusal != .None {
-			return recipe_refusal_fail(error, ERROR_BUILD, refusal, 1)
+			return recipe_refusal_fail(error, refusal, 1)
 		}
 		export_result = {outcome = .Building, recipe_hash = recipe_hash}
 		if len(result^) > 0 {
 			result[0] = pr.recipe_build_row_of(&export_result, checked_mode)
 		}
-		return 1
+		return .Succeeded, 1
 	}
 	export_result = recipes_core.build_registered(&service_state, &service_registry, recipe_hash, checked_mode, &builder_start)
 	system.log_fact(.Info, Recipe_Build_Completed{outcome = u64(export_result.outcome), refusal_code = u64(export_result.refusal)})
@@ -347,20 +346,19 @@ copied_object: [OBJECT_PUT_BYTES_MOST]u8
 // - **bytes**: the object, at most OBJECT_PUT_BYTES_MOST bytes.
 // - **result**: one row: the hash of the object.
 //
-// The result is 1, or a negative number with an error record:
-// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
-// ERROR_RECIPE with the refusal as the value found.
+// The value is 1. A failure gives its outcome and its error record (the
+// list above), with the refusal as the value found.
 @(export, link_name = "put")
-put :: proc "c" (kind: i64, bytes: ^system.Bytes_To_Read, result: ^[]Object_Reference, error: ^errors.Error_Record) -> i64 {
+put :: proc "c" (kind: i64, bytes: ^system.Bytes_To_Read, result: ^[]Object_Reference, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := caller_check(true, error); !ok {
-		return failure
+		return failure, 0
 	}
 	if bytes == nil {
-		return errors.fail(error, ERROR_RECIPE, .Bad_Address, .None, 2)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 2)
 	}
 	count := intrinsics.volatile_load(&bytes.count)
 	if count > OBJECT_PUT_BYTES_MOST {
-		return errors.fail(error, ERROR_RECIPE, .Too_Long, .Bytes, 2, i64(min(count, 1 << 62)), OBJECT_PUT_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(min(count, 1 << 62)), OBJECT_PUT_BYTES_MOST)
 	}
 	// A private copy: the hash and the write read the same bytes.
 	if count > 0 {
@@ -368,12 +366,12 @@ put :: proc "c" (kind: i64, bytes: ^system.Bytes_To_Read, result: ^[]Object_Refe
 	}
 	hash, refusal := recipes_core.put_object(&service_state, &put_ledger, caller_principal(), system.time() / 1000, kind, copied_object[:count])
 	if refusal != .None {
-		return recipe_refusal_fail(error, ERROR_RECIPE, refusal, refusal == .Bad_Input_Kind ? 1 : 2)
+		return recipe_refusal_fail(error, refusal, refusal == .Bad_Input_Kind ? 1 : 2)
 	}
 	if len(result^) > 0 {
 		result[0] = {hash = value_kinds.Hash_Field(hash)}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // cache_lookup gives the realisation of a recipe in the local store, with

@@ -331,8 +331,7 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 	}
 	pages := min(avail.pages, stated)
 	if pages < list_cost {
-		values^ = errors.ring_fail(u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(pages))
-		return .No_Budget
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(pages))
 	}
 	err: errors.Error_Record
 	child, status := system.budget_create({pages = pages}, asker.budget, error = &err)
@@ -762,23 +761,23 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 // pays the ring from its budget; the core writes the request whole, with
 // the fact audit_wired_by_root on both ends, so no list of an asker ever
 // carries it. The answer reaches wide_grant_wire_answered.
-audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, producer: wide_grants.Act_Producer, writer_output_index: u32, collector_input_index: u32, flow_serial: u64) -> system.Status {
+audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, producer: wide_grants.Act_Producer, writer_output_index: u32, collector_input_index: u32, flow_serial: u64) -> call_outcome.Call_Outcome {
 	if wiring_request.stage != .Idle {
-		return .No_Slot
+		return .Callee_Busy
 	}
 	if !wiring_service_start() {
-		return .Bad_State
+		return .Wrong_State
 	}
 	for item in ([2]^Started{collector, writer}) {
 		if !item.wiring_registered {
 			wiring_register_process(item)
 		}
 		if !item.wiring_registered {
-			return .Bad_State
+			return .Wrong_State
 		}
 	}
 	values: [7]u64
-	if budget_status := wiring_asker_budget_ensure(collector, .Wire, &values); budget_status != .Ok {
+	if budget_status := wiring_asker_budget_ensure(collector, .Wire, &values); budget_status != .Succeeded {
 		return budget_status
 	}
 	endpoints := [1]wide_grants.Act_Producer_Endpoint{{producer = producer, end = .Started, handle = 1, output_index = writer_output_index}}
@@ -786,12 +785,12 @@ audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, p
 	terms: wide_grants.Space_Terms
 	terms_start := u32(output.wiring_terms_start(1, 2))
 	if _, refusal := wide_grants.act_wiring_rows_build(.Started, 2, collector_input_index, endpoints[:], terms_start, wide_grants.ACT_SPACE_BOUND_RECORDS, rows[:], &terms); refusal != .None {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	core_list_copy = {}
 	handles := [2]u32{1, 2}
 	if !output.wiring_list_write(core_list_copy[:], rows[:], handles[:]) {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	intrinsics.mem_copy_non_overlapping(&core_list_copy[terms_start], &terms, size_of(terms))
 	core_resolved_req = {
@@ -806,7 +805,7 @@ audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, p
 	stag := next_service_tag()
 	cmd := ws.Command{kind = .Wire, tag = stag, process = {collector.process_slot, collector.process_serial}, flags = process_flags_of(collector)}
 	if !system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
-		return .No_Slot
+		return .Callee_Busy
 	}
 	wiring_request = {
 		stage               = .Wire,
@@ -818,7 +817,7 @@ audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, p
 		audit               = .Wire,
 		audit_flow_serial   = flow_serial,
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // audit_unwire_begin asks the end of every wiring whose asker is the
@@ -829,18 +828,18 @@ audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, p
 // gives the answer, so the flow reads the answer of a request that it
 // sent. .No_Slot: the wiring service serves another request; the caller
 // tries again at the next pass.
-audit_unwire_begin :: proc "contextless" (collector: ^Started, flow_serial: u64) -> (status: system.Status, done: bool) {
+audit_unwire_begin :: proc "contextless" (collector: ^Started, flow_serial: u64) -> (outcome: call_outcome.Call_Outcome, done: bool) {
 	if wiring_process == nil || collector == nil || collector.process == 0 {
-		return .Ok, true
+		return .Succeeded, true
 	}
 	values: [7]u64
 	held: bool
-	status, held = wirings_revoke_begin(nil, collector, 0, &values)
-	if status == .Ok && held {
+	outcome, held = wirings_revoke_begin(nil, collector, 0, &values)
+	if outcome == .Succeeded && held {
 		wiring_request.audit = .Unwire
 		wiring_request.audit_flow_serial = flow_serial
 	}
-	return status, status == .Ok && !held
+	return outcome, outcome == .Succeeded && !held
 }
 
 // wirings_revoke_begin delegates revocation of the recorded grant `.Wirings`
@@ -886,7 +885,7 @@ wiring_request_reply :: proc "contextless" (outcome: call_outcome.Call_Outcome, 
 	audit_flow_serial := wiring_request.audit_flow_serial
 	wiring_request = {}
 	if audit != .None {
-		wide_grant_wire_answered(audit, audit_flow_serial, status)
+		wide_grant_wire_answered(audit, audit_flow_serial, outcome)
 		return
 	}
 	if asker != nil && asker.process != 0 && asker.requests.head != nil {

@@ -19,7 +19,8 @@ LARGE_PAGES :: op.MEMORY_READ_LIMIT / system.PAGE_SIZE
 UNTOUCHED :: 0xAA
 
 // The objects of the cases, the buffer of 1 MiB, the code.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2 * LARGE_PAGES + 64}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 576}
+#assert(MODULE_BUDGET.working_memory_pages == 2 * LARGE_PAGES + 64)
 
 buffer: [op.MEMORY_READ_LIMIT]u8
 

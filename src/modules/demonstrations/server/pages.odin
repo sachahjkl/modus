@@ -26,11 +26,15 @@ import "modus:web"
 PAGE_CAPACITY :: 16
 PAGE_SIZE_LIMIT :: 60 * 1024 // Bytes of one page: the call region of a connection has 64 KiB.
 PAGE_NAME_LIMIT :: web.PAGE_NAME_LIMIT
+// The name of a page in a row of server.pages(): a row has at most 256
+// bytes, so a longer name is cut on a whole character, with the cut mark.
+PAGE_ROW_NAME_BYTES :: 208
+#assert(size_of(Page_Row{}.name) == PAGE_ROW_NAME_BYTES && size_of(Page_Row) <= 256)
 PAGE_INDEX_NAME :: web.PAGE_INDEX_NAME
 PAGE_MEMORY_PAGES :: PAGE_CAPACITY * PAGE_SIZE_LIMIT / system.PAGE_SIZE
 
 Page_Entry :: struct {
-	name:        [72]u8,
+	name:        [PAGE_NAME_LIMIT]u8,
 	name_length: int,
 	length:      int, // The bytes of the page.
 	used:        bool, // false: the place is free.
@@ -40,7 +44,7 @@ Page_Entry :: struct {
 
 // One row of server.pages().
 Page_Row :: struct {
-	name:   [72]u8,
+	name:   [208]u8, // PAGE_ROW_NAME_BYTES
 	bytes:  i64,
 	served: i64, // The answers of this page since the start of the server.
 	type:   [32]u8,
@@ -309,7 +313,7 @@ pages_export :: proc "c" (result: ^[]Page_Row, error: ^errors.Error_Record) -> (
 		if total < len(result^) {
 			row := &result[total]
 			row^ = {bytes = i64(item.length), served = i64(item.served)}
-			copy(row.name[:len(row.name) - 1], page_name(index))
+			row.name = value_kinds.text_field(page_name(index), PAGE_ROW_NAME_BYTES)
 			copy(row.type[:len(row.type) - 1], web.content_type_of_name(page_name(index)))
 		}
 		total += 1

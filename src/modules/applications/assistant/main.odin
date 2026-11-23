@@ -69,7 +69,7 @@ STATE_PAGES :: (STATE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 WINDOW_SCREEN_WIDTH :: min((u64(WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
 WINDOW_SCREEN_HEIGHT :: min((u64(HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
 WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(u64(MODULE_BUDGET.working_memory_pages) + WINDOW_PAGES <= module.LARGEST_BUDGET_PAGES)
+#assert(u64(MODULE_BUDGET.working_memory_pages) + WINDOW_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES)
 
 MARGIN :: 12
 INPUT_HEIGHT :: 28

@@ -1092,7 +1092,7 @@ bridge_handle_json_line :: proc(
 		scopes_text, has_scopes, scopes_ok := json_get_string(params, "scopes")
 		minutes, has_minutes, minutes_ok := json_get_u64(params, "minutes")
 		if !scopes_ok || !has_scopes || !minutes_ok || !has_minutes {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "ask_wide_grant requires string parameter scopes and integer parameter minutes", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "ask_wide_grant requires string parameter scopes and integer parameter minutes", allocator)
 		}
 		authorities: wide_grants.Wide_Authorities
 		switch scopes_text {
@@ -1101,18 +1101,18 @@ bridge_handle_json_line :: proc(
 		case "view_and_input":
 			authorities = {.View_Screen, .Send_Input}
 		case:
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "scopes must be view or view_and_input", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "scopes must be view or view_and_input", allocator)
 		}
 		most := wide_grants.MAX_WIDE_GRANT_DURATION_MS / 60_000
 		if minutes < 1 || minutes > most {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, fmt.tprintf("minutes must be 1 to %d", most), allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, fmt.tprintf("minutes must be 1 to %d", most), allocator)
 		}
 		if bridge.transport.ask_wide_grant == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, "ask_wide_grant transport is not configured", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "ask_wide_grant transport is not configured", allocator)
 		}
 		screen, err_text, ok := bridge.transport.ask_wide_grant(bridge.transport.user_data, authorities, minutes * 60_000)
 		if !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote ask_wide_grant failed", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, err_text != "" ? err_text : "remote ask_wide_grant failed", allocator)
 		}
 		builder := strings.builder_make(allocator)
 		strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)

@@ -1,5 +1,6 @@
 package text_rendering
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/text_encoding"
 import "modus:system"
@@ -15,6 +16,10 @@ import "modus:vector_font"
 // compiles it, and so does each host build; a module of the system calls
 // that module for each line that is not simple.
 WRITTEN_SHAPING_COMPILED_IN :: #config(WRITTEN_SHAPING_COMPILED_IN, ODIN_OS != .Freestanding)
+
+// The calls of the library module give a call outcome; a build with the
+// written part compiled in makes none of them.
+_ :: call_outcome
 
 // The error record and the text of a call of the library module.
 @(private)
@@ -168,19 +173,19 @@ when WRITTEN_SHAPING_COMPILED_IN {
 	// declarations of an import reads the layout of a struct by its name.
 	foreign _ {
 		@(link_name = "process_fonts_open")
-		module_process_fonts_open :: proc "c" (held: ^system.Table_To_Append(Held_Font), error: ^errors.Error_Record) -> i64 ---
+		module_process_fonts_open :: proc "c" (held: ^system.Table_To_Append(Held_Font), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(link_name = "line_shape")
-		module_line_shape :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(Placed_Glyph), error: ^errors.Error_Record) -> i64 ---
+		module_line_shape :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(Placed_Glyph), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(link_name = "line_widths")
-		module_line_widths :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, ranges: ^system.Table_To_Change(Text_Range), error: ^errors.Error_Record) -> i64 ---
+		module_line_widths :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, ranges: ^system.Table_To_Change(Text_Range), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(link_name = "line_fit")
-		module_line_fit :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, room: i64, error: ^errors.Error_Record) -> i64 ---
+		module_line_fit :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, room: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(link_name = "glyph_find")
-		module_glyph_find :: proc "c" (face: i64, character: i64, error: ^errors.Error_Record) -> i64 ---
+		module_glyph_find :: proc "c" (face: i64, character: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(link_name = "glyph_outline")
-		module_glyph_outline :: proc "c" (face: i64, font: i64, glyph: i64, points: ^system.Table_To_Append(Outline_Word), contours: ^system.Table_To_Append(Contour_End), error: ^errors.Error_Record) -> i64 ---
+		module_glyph_outline :: proc "c" (face: i64, font: i64, glyph: i64, points: ^system.Table_To_Append(Outline_Word), contours: ^system.Table_To_Append(Contour_End), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(link_name = "cell_cluster_read")
-		module_cell_cluster_read :: proc "c" (face: i64, text: ^system.Bytes_To_Read, place: i64, sara_am_taken: i64, cluster: ^system.Table_To_Append(Cell_Cluster), marks: ^system.Table_To_Append(Cell_Mark), error: ^errors.Error_Record) -> i64 ---
+		module_cell_cluster_read :: proc "c" (face: i64, text: ^system.Bytes_To_Read, place: i64, sara_am_taken: i64, cluster: ^system.Table_To_Append(Cell_Cluster), marks: ^system.Table_To_Append(Cell_Mark), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 	}
 
 	// held_fonts_open asks the library module to open the fonts of the
@@ -192,7 +197,7 @@ when WRITTEN_SHAPING_COMPILED_IN {
 		records: [len(Outline_Font)]Held_Font
 		table := system.Table_To_Append(Held_Font){records = &records[0], capacity = len(records)}
 		error: errors.Error_Record
-		if module_process_fonts_open(&table, &error) < 0 {
+		if opened, _ := module_process_fonts_open(&table, &error); opened != .Succeeded {
 			return SCRIPT_FONTS, false
 		}
 		for held in records[:min(int(table.count), len(records))] {
@@ -227,8 +232,8 @@ when WRITTEN_SHAPING_COMPILED_IN {
 			return 0, width, called
 		}
 		table := system.Table_To_Append(Placed_Glyph){records = raw_data(placed), capacity = u64(len(placed))}
-		total := module_line_shape(i64(spacing.face), i64(spacing.size), &bytes, &table, &error)
-		if total < 0 {
+		shaped, total := module_line_shape(i64(spacing.face), i64(spacing.size), &bytes, &table, &error)
+		if shaped != .Succeeded || total < 0 {
 			return 0, 0, false
 		}
 		count = int(total)
@@ -250,7 +255,7 @@ when WRITTEN_SHAPING_COMPILED_IN {
 		ranges := [1]Text_Range{{start = 0, count = u32(len(text))}}
 		table := system.Table_To_Change(Text_Range){records = &ranges[0], count = 1, capacity = 1}
 		error: errors.Error_Record
-		if module_line_widths(i64(spacing.face), i64(spacing.size), &bytes, &table, &error) != 1 {
+		if measured, ranges_measured := module_line_widths(i64(spacing.face), i64(spacing.size), &bytes, &table, &error); measured != .Succeeded || ranges_measured != 1 {
 			return 0, false
 		}
 		return ranges[0].width, true
@@ -263,8 +268,8 @@ when WRITTEN_SHAPING_COMPILED_IN {
 		}
 		bytes := text_to_read(text)
 		error: errors.Error_Record
-		fit := module_line_fit(i64(spacing.face), i64(spacing.size), &bytes, room, &error)
-		if fit < 0 || fit > i64(len(text)) {
+		fitted, fit := module_line_fit(i64(spacing.face), i64(spacing.size), &bytes, room, &error)
+		if fitted != .Succeeded || fit < 0 || fit > i64(len(text)) {
 			return 0, false
 		}
 		return int(fit), true
@@ -275,8 +280,8 @@ when WRITTEN_SHAPING_COMPILED_IN {
 	@(private)
 	held_glyph_find :: proc "contextless" (face: Face, character: rune) -> (font: Outline_Font, glyph_index: int) {
 		error: errors.Error_Record
-		found := module_glyph_find(i64(face), i64(character), &error)
-		if found <= 0 {
+		looked, found := module_glyph_find(i64(face), i64(character), &error)
+		if looked != .Succeeded || found <= 0 {
 			return .None, 0
 		}
 		word := found >> 16
@@ -293,8 +298,8 @@ when WRITTEN_SHAPING_COMPILED_IN {
 		points := system.Table_To_Append(Outline_Word){records = ([^]Outline_Word)(raw_data(outline.points)), capacity = u64(len(outline.points))}
 		contours := system.Table_To_Append(Contour_End){records = ([^]Contour_End)(raw_data(outline.contour_ends)), capacity = u64(len(outline.contour_ends))}
 		error: errors.Error_Record
-		advance := module_glyph_outline(i64(face), i64(font), i64(glyph_index), &points, &contours, &error)
-		if advance < 0 || points.count > u64(len(outline.points)) || contours.count > u64(len(outline.contour_ends)) {
+		read_outline, advance := module_glyph_outline(i64(face), i64(font), i64(glyph_index), &points, &contours, &error)
+		if read_outline != .Succeeded || advance < 0 || points.count > u64(len(outline.points)) || contours.count > u64(len(outline.contour_ends)) {
 			return false
 		}
 		outline.point_count = int(points.count)
@@ -319,8 +324,8 @@ when WRITTEN_SHAPING_COMPILED_IN {
 		head_table := system.Table_To_Append(Cell_Cluster){records = &head[0], capacity = 1}
 		mark_table := system.Table_To_Append(Cell_Mark){records = &marks[0], capacity = len(marks)}
 		error: errors.Error_Record
-		read := module_cell_cluster_read(i64(face), &bytes, i64(place), i64(sara_am_taken), &head_table, &mark_table, &error)
-		if read < 0 {
+		cluster_outcome, read := module_cell_cluster_read(i64(face), &bytes, i64(place), i64(sara_am_taken), &head_table, &mark_table, &error)
+		if cluster_outcome != .Succeeded || read < 0 {
 			return {}, false, false
 		}
 		if read == 0 || head_table.count != 1 {

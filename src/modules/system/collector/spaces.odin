@@ -72,7 +72,7 @@ closed_spaces_pass :: proc "contextless" (now_ms: u64) -> (deadline: u64) {
 		system.log_fact(.Info, Closed_Spaces_Removed{spaces = u64(removed)})
 	}
 	if refusal != .None && refusal != .Store_Failed {
-		system.log_fact(.Warning, Closed_Spaces_Pass_Refused{refusal = refusal})
+		system.log_fact(.Warning, Closed_Spaces_Pass_Refused{refusal_code = u64(refusal)})
 	}
 	due_date, dated_due, at_once, undated := wide_grants.space_closed_next_due(&space_service.store, retention)
 	deadline = system.WAIT_FOREVER

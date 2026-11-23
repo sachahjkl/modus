@@ -658,7 +658,10 @@ generation_load :: proc "contextless" (state: ^Plans_State, principal, generatio
 	case .Failed:
 		return {}, .Store_Failed
 	}
-	object := memory_take(state, size)
+	if size > u64(max(int)) {
+		return {}, .Store_Damaged
+	}
+	object := memory_take(state, int(size))
 	if object == nil {
 		return {}, size == 0 ? .Store_Damaged : .No_Memory
 	}

@@ -118,9 +118,20 @@ input_resolve :: proc "contextless" (collector: ^Input_Collector, request: ^pr.R
 	workspace := collector.workspace
 	found := false
 	if collector.state != nil {
+		// The objects of the service are in its store: one is read into the
+		// staging, as an object of the backend is. A damaged or absent one
+		// is asked of the backend.
 		if slot := find_local_object(collector.state, request.hash); slot != nil && slot.kind == request.kind {
-			bytes = slot.payload[:slot.length]
-			found = true
+			read, read_refusal := output_read(collector.state, request.hash, workspace.input_staging[collector.staging_used:])
+			switch read_refusal {
+			case .None:
+				bytes = read
+				collector.staging_used += len(read)
+				found = true
+			case .Buffer_Too_Small:
+				return nil, .Input_Too_Large
+			case .Zero_Builder_Hash, .Bad_Output_Kind, .Bad_Build_Mode, .Invalid_Input_Name, .Zero_Input_Hash, .Duplicate_Input, .Bad_Input_Kind, .Nonzero_Padding, .Bad_Head_Value, .Untyped_Hash, .Nested_Input, .Not_A_Recipe, .Unsupported_Argument, .Too_Many_Inputs, .Arguments_Too_Large, .Damaged_Recipe, .Cache_Miss, .Unknown_Recipe, .Builder_Absent, .Input_Absent, .Store_Full, .Recipe_Limit_Reached, .Input_Too_Large, .Output_Too_Large, .Memory_Past_Bound, .Put_Quota_Reached, .Builder_Busy, .Build_Cancelled, .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement, .Store_Damaged, .Builder_Failed, .Sandbox_Violation, .Store_Failed, .Builder_Timed_Out, .Builder_Needs_Sandbox:
+			}
 		}
 	}
 	if !found {
@@ -191,11 +202,26 @@ input_tree_collect :: proc "contextless" (collector: ^Input_Collector, prefix: [
 		if !ok {
 			return .Malformed_Output
 		}
+		// A part is one node of the same folder: its name is the first name
+		// under it, not a name of the path, and its files take the prefix of
+		// the folder. It counts as a level, so a chain of parts ends too.
+		if entry.kind == .Part {
+			request := pr.Recipe_Input{kind = .Tree, hash = entry.hash}
+			bytes, refusal := input_resolve(collector, &request)
+			if refusal != .None {
+				return refusal
+			}
+			if nested := input_tree_collect(collector, prefix, bytes, depth + 1); nested != .None {
+				return nested
+			}
+			continue
+		}
 		path, path_refusal := input_path_join(collector, prefix, entry.name[:entry.name_length])
 		if path_refusal != .None {
 			return path_refusal
 		}
 		switch entry.kind {
+		case .Part:
 		case .Object:
 			request := pr.Recipe_Input{kind = .Blob, hash = entry.hash}
 			bytes, refusal := input_resolve(collector, &request)
@@ -267,7 +293,7 @@ output_object_keep :: proc "contextless" (kind: tree_hash.Tree_Entry_Kind, hash:
 	switch kind {
 	case .Object:
 		object_kind = .Blob
-	case .Tree:
+	case .Tree, .Part: // A part is a node of a tree, kept as a tree.
 		object_kind = .Tree
 	}
 	if workspace.kept_count >= len(workspace.kept) {
@@ -570,27 +596,27 @@ build_registered_with_guest :: proc "contextless" (
 }
 
 @(private = "file")
-builders_dispatch_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_payload: []u8, user_data: rawptr) -> (payload_length: int, ok: bool) {
+builders_dispatch_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, staging: []u8, user_data: rawptr) -> (payload: []u8, ok: bool) {
 	call := (^Dispatch_Call)(user_data)
 	if sandbox == nil || call == nil {
-		return 0, false
+		return nil, false
 	}
 	if sandbox.builder_hash == pr.inputs_tree_builder_hash() {
-		written, refusal := pr.inputs_tree_build(sandbox, out_payload)
+		written, refusal := pr.inputs_tree_build(sandbox, staging)
 		if refusal != .None {
 			call.refusal = refusal
-			return 0, false
+			return nil, false
 		}
-		return written, true
+		return staging[:written], true
 	}
 	if sandbox.builder_hash == pr.guest_builder_hash() {
-		written, refusal := guest_builder_build(call.state, call.guest, sandbox, out_payload)
+		written, refusal := guest_builder_build(call.state, call.guest, sandbox, staging)
 		if refusal != .None {
 			call.refusal = refusal
-			return 0, false
+			return nil, false
 		}
-		return written, true
+		return staging[:written], true
 	}
 	call.refusal = .Builder_Needs_Sandbox
-	return 0, false
+	return nil, false
 }

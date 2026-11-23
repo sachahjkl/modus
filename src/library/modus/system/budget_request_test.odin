@@ -191,9 +191,9 @@ the_wiring_pages_are_a_stated_amount :: proc(t: ^testing.T) {
 	testing.expect_value(t, wiring_pages_of_request({pages = 200}), u64(100))
 	testing.expect_value(t, wiring_pages_of_request({pages = 1}), u64(0))
 	testing.expect_value(t, wiring_pages_of_request({}), u64(0))
-	granted, _ := budget_decide({pages = 50000, wiring_pages = 40000}, {2048, 1, 1, 0}, {16384, 8, 32, 0})
+	granted, _ := budget_decide({pages = 50000, wiring_pages = 40000}, {2048, 1, 1, 0, 0}, {16384, 8, 32, 0, 0})
 	testing.expect_value(t, granted.pages, u64(16384))
 	testing.expect_value(t, granted.wiring_pages, u64(16384))
-	kept, _ := budget_decide({pages = 300, wiring_pages = 28}, {2048, 1, 1, 0}, {16384, 8, 32, 0})
+	kept, _ := budget_decide({pages = 300, wiring_pages = 28}, {2048, 1, 1, 0, 0}, {16384, 8, 32, 0, 0})
 	testing.expect_value(t, kept.wiring_pages, u64(28))
 }

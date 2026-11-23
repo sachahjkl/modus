@@ -23,7 +23,8 @@ TABLE_PAGES :: 512
 // Working memory budget for the freestanding powerbox service process: the
 // grants (TABLE_PAGES), the stores of the picker and their index, which
 // grow from the rest (512 pages: about 10 000 stores), and its data.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = TABLE_PAGES + 512 + 256, processes = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1280, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == TABLE_PAGES + 512 + 256)
 
 // Status record returned by the status() export required by Role.Powerbox.
 Powerbox_Status :: struct {

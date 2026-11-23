@@ -123,7 +123,7 @@ put_object :: proc "contextless" (state: ^Recipes_State, ledger: ^Put_Ledger, pr
 		return {}, .Put_Quota_Reached
 	}
 	name := pr.blob_object_name(hash)
-	if pr.private_store_write_large(&state.store, pr.private_object_name_text(&name), bytes) != .Ok {
+	if pr.private_store_write(&state.store, pr.private_object_name_text(&name), bytes) != .Ok {
 		return {}, .Store_Failed
 	}
 	if !known {

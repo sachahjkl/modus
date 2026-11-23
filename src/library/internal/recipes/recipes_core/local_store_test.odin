@@ -167,7 +167,7 @@ an_output_of_any_size_reaches_the_store_and_comes_back :: proc(t: ^testing.T) {
 	state := new(Recipes_State, context.temp_allocator)
 	store: Large_Store
 	state_init(state, large_store_port(&store))
-	sizes := [?]int{1, STAGING_BYTES - 1, STAGING_BYTES, STAGING_BYTES + 1, 1024 * 1024 + 1, OUTPUT_BYTES_MOST}
+	sizes := [?]int{1, STAGING_BYTES - 1, STAGING_BYTES, STAGING_BYTES + 1, 1024 * 1024 + 1, int(OUTPUT_BYTES_MOST)}
 	for size, index in sizes {
 		builder := Large_Builder{output = large_output(size, u8(index))}
 		spec := large_spec(index)
@@ -185,7 +185,7 @@ an_output_of_any_size_reaches_the_store_and_comes_back :: proc(t: ^testing.T) {
 		testing.expect_value(t, short, pr.Recipe_Refusal.Buffer_Too_Small)
 	}
 	objects := len(store.objects)
-	past := Large_Builder{output = large_output(OUTPUT_BYTES_MOST + 1, 9)}
+	past := Large_Builder{output = large_output(int(OUTPUT_BYTES_MOST) + 1, 9)}
 	refused := build_recipe(state, large_spec(100), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &past)
 	testing.expect_value(t, refused.refusal, pr.Recipe_Refusal.Malformed_Output)
 	testing.expect_value(t, len(store.objects), objects)

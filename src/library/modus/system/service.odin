@@ -70,9 +70,10 @@ Service :: struct {
 }
 
 // The service ring and the call ring of each caller, two words each, take
-// at most half of one wait: the other half is for the other words of the
-// service.
-#assert(2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) <= op.WORD_WAIT_CAPACITY / 2)
+// at most half of the largest wait of the kernel: the other half is for the
+// other words of the service. Past the 64 words on the stack of a thread
+// (op.WORD_WAIT_INLINE), a wait needs a wait set of its own.
+#assert(2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) <= op.WORD_WAIT_MOST / 2)
 
 // service_open opens the service ring of this process (`GRANT_SERVICE`) and
 // the file of its exports (`GRANT_VALUE_FILE_ADDRESS`). ok is false, and the

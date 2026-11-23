@@ -47,12 +47,11 @@ import "modus:system"
 // Ready sets the count back to zero, so stops far apart never use it up.
 DISK_PROCESSES_RESTART_LIMIT :: 3
 
-// The deadline of the load of the script font set: sixteen times the
-// bytes of a module file, so sixteen times its deadline. It frees the one
-// place of the load when the storage service gives no answer; it is not a
-// measure of the disk.
-SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS :: 16 * disk_process.LOAD_DEADLINE_MILLISECONDS
-#assert(font_outlines.SCRIPT_FONTS_BYTES_LIMIT == 16 * disk_process.FILE_BYTES_LIMIT)
+// The deadline of the load of the script font set: the deadline of a
+// module file for each module file of bytes that the set can hold. It frees
+// the one place of the load when the storage service gives no answer; it
+// is not a measure of the disk.
+SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS :: (font_outlines.SCRIPT_FONTS_BYTES_LIMIT + disk_process.FILE_BYTES_LIMIT - 1) / disk_process.FILE_BYTES_LIMIT * disk_process.LOAD_DEADLINE_MILLISECONDS
 
 // The time that the service has to answer Cancel with Cancelled. Past it
 // the service is stopped: the core then ends each loan with no wait.

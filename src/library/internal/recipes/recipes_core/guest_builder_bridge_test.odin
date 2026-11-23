@@ -494,7 +494,7 @@ edge_end :: proc(edge: ^Edge_Test) {
 // guest, and gives its hash.
 @(private = "file")
 edge_tree :: proc(edge: ^Edge_Test, entries: []tree_hash.Tree_Entry) -> blake3.Hash {
-	bytes := make([]u8, tree_hash.HEADER_SIZE + len(entries) * tree_hash.ENTRY_SIZE)
+	bytes := make([]u8, tree_hash.tree_encoded_size(entries))
 	append(&edge.buffers, bytes)
 	written, refusal := tree_hash.tree_encode(entries, bytes)
 	assert(refusal == .None)

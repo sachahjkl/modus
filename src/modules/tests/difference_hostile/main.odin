@@ -22,7 +22,7 @@
 package difference_hostile
 
 import "modus:contract/blake3"
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -66,7 +66,7 @@ uncommitted_case :: proc "contextless" (display: ^Display) {
 	defer system.close(memory)
 	given := give(display, memory)
 	result, call, error := ask(display, given, 10, 0)
-	if call != .Failed || result >= 0 || error.kind != i64(errors.Kind.Bad_Value) {
+	if call != .Argument_Refused || result != 0 || error.kind != i64(errors.Kind.Bad_Value) {
 		system.log_fact(.Error, Wrong_Answer{status = u64(call), result = result, error_kind = error.kind})
 		system.stop(.Failed)
 	}
@@ -111,7 +111,7 @@ revoked_case :: proc "contextless" (display: ^Display) {
 	system.memory_unmap(address)
 	given := give(display, memory)
 	result, call, error := ask(display, given, added_bytes, 0)
-	if call != .Ok || result <= 0 {
+	if call != .Succeeded || result <= 0 {
 		system.log_fact(.Error, Wrong_Answer{status = u64(call), result = result, error_kind = error.kind})
 		system.stop(.Failed)
 	}
@@ -151,7 +151,7 @@ give :: proc "contextless" (display: ^Display, memory: system.Handle) -> system.
 }
 
 @(private = "file")
-ask :: proc "contextless" (display: ^Display, given: system.Handle, added_bytes, removed_bytes: int) -> (result: i64, status: call_status.Call_Status, error: errors.Error_Record) {
+ask :: proc "contextless" (display: ^Display, given: system.Handle, added_bytes, removed_bytes: int) -> (result: i64, status: call_outcome.Call_Outcome, error: errors.Error_Record) {
 	name := "difference_hostile"
 	arguments := [4]isolated.Argument{{text = transmute([]u8)name}, {integer = u64(given)}, {integer = u64(added_bytes)}, {integer = u64(removed_bytes)}}
 	result, status = system.call_isolated(&display.connection, display.file, display.ask, arguments[:], &error)
@@ -163,7 +163,7 @@ poll :: proc "contextless" (display: ^Display, serial: i64) -> i64 {
 	arguments := [1]isolated.Argument{{integer = u64(serial)}}
 	error: errors.Error_Record
 	result, status := system.call_isolated(&display.connection, display.file, display.poll, arguments[:], &error)
-	if status != .Ok || result < 0 {
+	if status != .Succeeded || result < 0 {
 		system.log_fact(.Error, Wrong_Answer{status = u64(status), result = result, error_kind = error.kind})
 		system.stop(.Failed)
 	}
@@ -190,10 +190,10 @@ display_connect :: proc "contextless" (ctx: ^system.Context) -> (display: Displa
 		wrong("the boot image does not map; the status word", u64(map_status))
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	display.connection, connected = system.service_connection(&requests, 1, "display")
-	if connected != .Ok {
-		wrong("the root service gave no connection to the holder of Display; the status word", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the holder of Display; the call outcome", u64(connected))
 	}
 	entry := system.image_entry_of(image, display.connection.module_hash)
 	if entry == nil {

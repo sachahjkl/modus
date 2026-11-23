@@ -242,7 +242,7 @@ cache_release_trees :: proc(image: []u8, allocator := context.temp_allocator) ->
 		left_copy, right_copy := left, right
 		return tree_hash.compare_name_bytes(transmute([]u8)tree_hash.tree_entry_name(&left_copy), transmute([]u8)tree_hash.tree_entry_name(&right_copy)) < 0
 	})
-	trees.files = make([]u8, tree_hash.tree_encoded_size(len(entries)), allocator)
+	trees.files = make([]u8, tree_hash.tree_encoded_size(entries[:]), allocator)
 	if _, refusal := tree_hash.tree_encode(entries[:], trees.files); refusal != .None {
 		return {}, fmt.tprintf("the tree of the files of the boot image was refused: %v", refusal)
 	}
@@ -250,7 +250,7 @@ cache_release_trees :: proc(image: []u8, allocator := context.temp_allocator) ->
 	image_entry, _ := tree_hash.tree_entry_make(.Object, CACHE_RELEASE_IMAGE_ENTRY, blake3.hash(image))
 	files_entry, _ := tree_hash.tree_entry_make(.Tree, CACHE_RELEASE_FILES_ENTRY, trees.files_hash)
 	release_entries := [2]tree_hash.Tree_Entry{image_entry, files_entry}
-	trees.release = make([]u8, tree_hash.tree_encoded_size(2), allocator)
+	trees.release = make([]u8, tree_hash.tree_encoded_size(release_entries[:]), allocator)
 	if _, refusal := tree_hash.tree_encode(release_entries[:], trees.release); refusal != .None {
 		return {}, fmt.tprintf("the release tree was refused: %v", refusal)
 	}
@@ -356,7 +356,7 @@ cache_publish_release_pointer :: proc(client: ^Cache_Client, signer: ^ed25519.Pr
 			return ""
 		}
 	case .Not_Found:
-	case .Bad_Request, .Unreachable, .Damaged_Answer, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed:
+	case .Bad_Request, .Unreachable, .Damaged_Answer, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed, .Out_Of_Range, .Local_File_Fault, .Busy:
 		return fmt.tprintf("the release pointer on the cache was not read: %s", cache_client_outcome_text(held_outcome, client.server_status))
 	}
 	pointer, signed_pointer := cache_client_release_pointer_sign(signer, CACHE_RELEASE_POINTER_NAME, number, release_tree)

@@ -84,17 +84,16 @@ the_types_of_a_process_have_a_bound :: proc(t: ^testing.T) {
 	testing.expect(t, generic_type_room_of(1, 2, MOST))
 }
 
-// The wait of a reader: the ends of a process fit one wait; the most rings
-// that fit, and one past them, which does not.
+// The wait of a reader: the words beside the rings, then 3 for each ring;
+// the most rings that the largest wait of the kernel holds, and one past
+// them, which does not fit.
 @(test)
 the_rings_of_a_reader_fit_one_wait :: proc(t: ^testing.T) {
-	most := (op.WORD_WAIT_INLINE - READER_WAIT_WORDS_BESIDE_RINGS) / READER_WAIT_WORDS_OF_A_RING
-	testing.expect(t, reader_wait_words(most) <= op.WORD_WAIT_INLINE)
-	testing.expect(t, reader_wait_words(most + 1) > op.WORD_WAIT_INLINE)
 	testing.expect_value(t, reader_wait_words(0), READER_WAIT_WORDS_BESIDE_RINGS)
-	// The rings that one wait holds: the most, and one more does not fit.
-	testing.expect(t, reader_wait_words(READER_RINGS_WAITED_MOST) <= op.WORD_WAIT_INLINE)
-	testing.expect(t, reader_wait_words(READER_RINGS_WAITED_MOST + 1) > op.WORD_WAIT_INLINE)
+	testing.expect_value(t, reader_wait_words(1), READER_WAIT_WORDS_BESIDE_RINGS + READER_WAIT_WORDS_OF_A_RING)
+	most := (op.WORD_WAIT_MOST - READER_WAIT_WORDS_BESIDE_RINGS) / READER_WAIT_WORDS_OF_A_RING
+	testing.expect(t, reader_wait_words(most) <= op.WORD_WAIT_MOST)
+	testing.expect(t, reader_wait_words(most + 1) > op.WORD_WAIT_MOST)
 }
 
 // The turn of a reader of several rings: a place outside the table and an

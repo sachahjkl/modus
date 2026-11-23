@@ -156,10 +156,10 @@ import "base:intrinsics"
 //   each draws every glyph of its text into its own private glyph cache,
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages;
-// - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 9 pages, which the
+// - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 10 pages, which the
 //   kernel takes at the first wait;
 // - the end of its record output of the acts of a wide grant: 4 pages.
-// 130 + 128 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 9 + 4 = 21814: the
+// 130 + 128 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 10 + 4 = 21815: the
 // bound of 128 windows at the largest surface, more than the least largest budget
 // of a process, and less than the share of a machine of 1 GiB. Page tables
 // are paid as the windows map, so a machine with a smaller share still runs
@@ -168,12 +168,12 @@ import "base:intrinsics"
 // (entry). Three threads: the interface, the ranking of the palette, and
 // the reading of a plan difference (powerbox_dialog.odin), whose work is in
 // proportion to the difference.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21814, processes = 1, threads = 3, screen_pictures = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21815, processes = 1, threads = 3, screen_pictures = 2}
 #assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES + 4)
 // The request on the machine of the machine tests, whose screen is the
-// reference screen: 21814 working pages, 2 x 2025 pages of the frame and
+// reference screen: 21815 working pages, 2 x 2025 pages of the frame and
 // the background, and the code, the data and the stacks that the tool
-// counts, under a bound of 8192 pages: 34056 pages, under the largest
+// counts, under a bound of 8192 pages: 34057 pages, under the largest
 // budget of that machine (50 000 pages), so no boot of a test writes
 // Budget_Part_Limited for the compositor. It passes the least largest
 // budget (16384 pages): a machine whose root holds less than about 128 000
@@ -208,8 +208,8 @@ TITLE_TEXT_X :: TITLE_ICON_X + bar.ICON_SIZE + 6 // The title, after the icon.
 CLIENT_CAPACITY :: bar.WINDOW_CAPACITY // The windows of the desktop at one time.
 
 // The words of the one wait of the loop, in its wait set: the control ring
-// and the input ring (2 each), the service ring and its 8 connections (2
-// each), the settings page, the palette (4), and for each client 2 for its
+// and the input ring (2 each), the service ring and its connections
+// (isolated.SERVICE_CONNECTION_CAPACITY, 2 each), the settings page, the palette (4), and for each client 2 for its
 // ring and 2 more while its window waits for room in its completions. So
 // each word of each client fits, and no wait is refused.
 COMPOSITOR_WAIT_FIXED_WORDS :: 2 + 2 + 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) + 1 + 4
@@ -220,7 +220,7 @@ COMPOSITOR_WAIT_WORDS :: COMPOSITOR_WAIT_FIXED_WORDS + 4 * CLIENT_CAPACITY
 // words that the kernel holds with no room.
 #assert(COMPOSITOR_WAIT_WORDS > op.WORD_WAIT_INLINE)
 COMPOSITOR_WAIT_ROOM_PAGES :: 1 + (COMPOSITOR_WAIT_WORDS - op.WORD_WAIT_INLINE + op.WAIT_ROOM_WORDS_OF_A_PAGE - 1) / op.WAIT_ROOM_WORDS_OF_A_PAGE
-#assert(COMPOSITOR_WAIT_ROOM_PAGES == 9)
+#assert(COMPOSITOR_WAIT_ROOM_PAGES == 10)
 // The places of the wait of the loop: more than a wait on the stack holds.
 compositor_wait_words: [COMPOSITOR_WAIT_WORDS]op.Word
 compositor_wait_parts: [COMPOSITOR_WAIT_WORDS]system.Wait_Part

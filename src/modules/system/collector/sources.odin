@@ -14,7 +14,6 @@ package collector_service
 
 import "modus:contract/errors"
 import "modus:contract/isolated"
-import op "modus:contract/operation"
 import "modus:contract/module"
 import "modus:contract/output"
 import "modus:contract/wide_grants"
@@ -289,25 +288,27 @@ pairs_orphaned_close :: proc "contextless" () {
 	}
 }
 
-// The words of the wait of the loop: the words that the loop adds besides
-// the rings, and the rings of each end of the sources and of the pairs that
-// a process holds (system.STREAM_END_CAPACITY each), so each ring fits.
 // The words before the rings: the event word, the export service and its
 // connections with their flags, and the ring of the delegated commands with
 // its flag.
 COLLECTOR_WAIT_WORDS_BEFORE_RINGS :: 1 + 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) + 2
-COLLECTOR_WAIT_WORDS :: COLLECTOR_WAIT_WORDS_KEPT + COLLECTOR_WAIT_WORDS_BEFORE_RINGS + 2 * system.STREAM_END_CAPACITY * system.INPUT_RECORDS_WAIT_WORDS
-#assert(COLLECTOR_WAIT_WORDS <= op.WORD_WAIT_MOST)
+
+// collector_wait_words gives the words of the wait of the loop for links
+// places of the tables: the words that the loop adds beside the rings, and
+// a ring of a source and a ring of a pair for each place, so each ring fits.
+collector_wait_words :: proc "contextless" (links: int) -> int {
+	return COLLECTOR_WAIT_WORDS_KEPT + COLLECTOR_WAIT_WORDS_BEFORE_RINGS + 2 * links * system.INPUT_RECORDS_WAIT_WORDS
+}
+
 // The places of the wait of the loop: the rings of the sources and the
-// pairs take more than a wait on the stack holds. The set is made at the
-// start of entry.
-collector_wait_words: [COLLECTOR_WAIT_WORDS]op.Word
-collector_wait_parts: [COLLECTOR_WAIT_WORDS]system.Wait_Part
-collector_wait_set: system.Wait_Set
+// pairs take more than a wait on the stack holds, and they grow with the
+// links (link_tables_ensure).
+collector_wait: system.Growing_Wait_Set
 
 // sources_wait adds the rings of the sources and the full rings of the
 // pairs to the wait of the loop, in the room that its other words leave.
-// It says if a ring found no room in the list: the loop then wakes after
+// It says if a ring found no room in the list, which happens only when the
+// budget did not pay a growth of the set: the loop then wakes after
 // PENDING_RETRY_MILLISECONDS.
 sources_wait :: proc "contextless" (waiting: ^system.Wait) -> (not_waited: bool) {
 	system.wait_wiring(waiting)
@@ -318,21 +319,6 @@ sources_wait :: proc "contextless" (waiting: ^system.Wait) -> (not_waited: bool)
 	not_waited = system.wait_input_records(waiting, &sources, source_rings) > 0
 	not_waited ||= system.wait_output_room(waiting, &forward, pair_rings) > 0
 	return not_waited
-}
-
-// The wakes of the loop at its retry period to read rings that its wait
-// could not hold: a measure of the poll that the wait room of the kernel
-// removes (ROADMAP.md, "A reader waits on each of its rings").
-poll_wakes: u64
-
-// poll_wakes_count counts one wake of the poll, and writes the count, with
-// the wakes of the reads of the library, at each power of two: a bounded
-// line of what the poll costs.
-poll_wakes_count :: proc "contextless" () {
-	poll_wakes += 1
-	if poll_wakes & (poll_wakes - 1) == 0 {
-		system.log_fact(.Info, Poll_Wakes_Counted{wakes = poll_wakes, read_wakes = system.stream_read_poll_wakes()})
-	}
 }
 
 @(private = "file")

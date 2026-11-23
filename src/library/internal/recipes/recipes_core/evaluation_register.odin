@@ -109,8 +109,13 @@ recipe_refusal_outcome :: proc "contextless" (refusal: pr.Recipe_Refusal) -> cal
 		return .Argument_Refused
 	case .Cache_Miss, .Unknown_Recipe, .Builder_Absent, .Input_Absent:
 		return .Nothing_Has_That_Name
-	case .Store_Full, .Recipe_Limit_Reached, .Input_Too_Large:
+	case .Store_Full, .Recipe_Limit_Reached, .Input_Too_Large, .Output_Too_Large, .Memory_Past_Bound, .Put_Quota_Reached:
 		return .Budget_Or_Capacity_Exhausted
+	case .Builder_Busy:
+		return .Callee_Busy
+	case .Build_Cancelled:
+		// The build stopped before it kept an output: nothing is in doubt.
+		return .Callee_Unavailable
 	case .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement, .Store_Damaged:
 		return .Data_Damaged
 	case .Builder_Failed, .Sandbox_Violation, .Store_Failed, .Builder_Timed_Out:

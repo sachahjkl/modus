@@ -91,6 +91,12 @@ Answer :: struct {
 }
 
 @(private = "file")
+// value_of gives the value of a call that succeeded, and -1 for a refusal:
+// the tests of a count read the count, and expect_error reads the refusal.
+value_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> i64 {
+	return outcome == .Succeeded ? value : -1
+}
+
 answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
 	return {outcome, value}
 }
@@ -99,8 +105,8 @@ answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
 // Argument_Refused with the value 0, and the kind and the argument of the
 // record.
 @(private = "file")
-expect_error :: proc(t: ^testing.T, result: Answer, error: errors.Error_Record, kind: errors.Kind, argument: i64, loc := #caller_location) {
-	testing.expect_value(t, result, Answer{.Argument_Refused, 0}, loc = loc)
+expect_error :: proc(t: ^testing.T, result: Answer, error: errors.Error_Record, kind: errors.Kind, argument: i64, outcome := call_outcome.Call_Outcome.Argument_Refused, loc := #caller_location) {
+	testing.expect_value(t, result, Answer{outcome, 0}, loc = loc)
 	testing.expect_value(t, errors.Kind(error.kind), kind, loc = loc)
 	testing.expect_value(t, error.argument, argument, loc = loc)
 }
@@ -163,7 +169,7 @@ the_three_ways_give_the_same_records :: proc(t: ^testing.T) {
 		room := width / 3
 		lines: [16]text_rendering.Text_Range
 		line_table := system.Table_To_Append(text_rendering.Text_Range){records = &lines[0], count = 0, capacity = 16}
-		line_outcome, line_count := break_text(&outlines.table, i64(each.face), i64(each.size), &text_table, room, &line_table, &error)
+		line_outcome, line_count := value_of(break_text(&outlines.table, i64(each.face), i64(each.size), &text_table, room, &line_table, &error))
 		testing.expect(t, line_outcome == .Succeeded && line_count > 1 && line_count <= 16)
 		start := 0
 		for line in lines[:line_count] {
@@ -464,7 +470,7 @@ shape_through_module :: proc(t: ^testing.T, outlines: ^Test_Outlines, text: stri
 	error: errors.Error_Record
 	text_table := bytes_to_read(transmute([]u8)text)
 	table := system.Table_To_Append(text_rendering.Placed_Glyph){records = raw_data(placed), count = 0, capacity = u64(len(placed))}
-	outcome, result := shape_text(&outlines.table, i64(text_rendering.Face.Interface), i64(size), &text_table, &table, &error)
+	outcome, result := value_of(shape_text(&outlines.table, i64(text_rendering.Face.Interface), i64(size), &text_table, &table, &error))
 	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, error.kind, i64(0))
 	count = int(result)
@@ -652,21 +658,21 @@ stack_call_make :: proc "c" (call: ^Stack_Call) {
 	error: errors.Error_Record
 	switch call.export {
 	case 0:
-		call.result = shape_text(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.placed, &error)
+		call.result = value_of(shape_text(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.placed, &error))
 	case 1:
-		call.result = measure_texts(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.ranges, &error)
+		call.result = value_of(measure_texts(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.ranges, &error))
 	case 2:
-		call.result = break_text(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, 40 * 64, &call.lines, &error)
+		call.result = value_of(break_text(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, 40 * 64, &call.lines, &error))
 	case 3:
-		call.result = line_shape(call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.placed, &error)
+		call.result = value_of(line_shape(call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.placed, &error))
 	case 4:
-		call.result = line_widths(call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.ranges, &error)
+		call.result = value_of(line_widths(call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.ranges, &error))
 	case 5:
-		call.result = line_fit(call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, 40 * 64, &error)
+		call.result = value_of(line_fit(call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, 40 * 64, &error))
 	case 6:
-		call.result = glyph_outline(call.face, call.font, call.glyph, &call.points, &call.contours, &error)
+		call.result = value_of(glyph_outline(call.face, call.font, call.glyph, &call.points, &call.contours, &error))
 	case:
-		call.result = cell_cluster_read(call.face, &call.text, 0, -1, &call.cluster, &call.marks, &error)
+		call.result = value_of(cell_cluster_read(call.face, &call.text, 0, -1, &call.cluster, &call.marks, &error))
 	}
 }
 
@@ -850,16 +856,16 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	marks_table := system.Table_To_Append(text_rendering.Cell_Mark){records = &marks[0], capacity = len(marks)}
 
 	// Before the open: Absent, and nothing written.
-	expect_error(t, line_shape(interface, size, &text, &placed_table, &error), error, .Absent, 0)
+	expect_error(t, answer_of(line_shape(interface, size, &text, &placed_table, &error)), error, .State, 0, .Wrong_State)
 	testing.expect_value(t, placed_table.count, 0)
 	whole := [1]text_rendering.Text_Range{{start = 0, count = u32(len(devanagari))}}
 	whole_table := system.Table_To_Change(text_rendering.Text_Range){records = &whole[0], count = 1, capacity = 1}
-	expect_error(t, line_widths(interface, size, &text, &whole_table, &error), error, .Absent, 0)
+	expect_error(t, answer_of(line_widths(interface, size, &text, &whole_table, &error)), error, .State, 0, .Wrong_State)
 	testing.expect_value(t, whole[0].width, 0)
-	expect_error(t, line_fit(interface, size, &text, 1 << 20, &error), error, .Absent, 0)
-	expect_error(t, glyph_find(interface, 'a', &error), error, .Absent, 0)
-	expect_error(t, glyph_outline(interface, i64(text_rendering.Outline_Font.B612), 1, &points_table, &contours_table, &error), error, .Absent, 0)
-	expect_error(t, cell_cluster_read(interface, &text, 0, -1, &cluster_table, &marks_table, &error), error, .Absent, 0)
+	expect_error(t, answer_of(line_fit(interface, size, &text, 1 << 20, &error)), error, .State, 0, .Wrong_State)
+	expect_error(t, answer_of(glyph_find(interface, 'a', &error)), error, .State, 0, .Wrong_State)
+	expect_error(t, answer_of(glyph_outline(interface, i64(text_rendering.Outline_Font.B612), 1, &points_table, &contours_table, &error)), error, .State, 0, .Wrong_State)
+	expect_error(t, answer_of(cell_cluster_read(interface, &text, 0, -1, &cluster_table, &marks_table, &error)), error, .State, 0, .Wrong_State)
 	testing.expect(t, points_table.count == 0 && contours_table.count == 0 && cluster_table.count == 0 && marks_table.count == 0)
 
 	fonts: Process_Test_Fonts
@@ -871,7 +877,7 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	held: [len(text_rendering.Outline_Font)]text_rendering.Held_Font
 	for _ in 0 ..< 2 {
 		held_table := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = len(held)}
-		count := process_fonts_open(&held_table, &error)
+		count := value_of(process_fonts_open(&held_table, &error))
 		if scripts_open {
 			testing.expect_value(t, count, i64(card(text_rendering.SCRIPT_FONTS)))
 			for record in held[:count] {
@@ -884,41 +890,41 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	// A table with no room takes no record, and the count of the full
 	// answer still comes.
 	empty_held := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = 0}
-	testing.expect_value(t, process_fonts_open(&empty_held, &error), scripts_open ? i64(card(text_rendering.SCRIPT_FONTS)) : 0)
+	testing.expect_value(t, value_of(process_fonts_open(&empty_held, &error)), scripts_open ? i64(card(text_rendering.SCRIPT_FONTS)) : 0)
 	huge_held := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = TABLE_LIMIT + 1}
-	expect_error(t, process_fonts_open(&huge_held, &error), error, .Too_Long, 1)
+	expect_error(t, answer_of(process_fonts_open(&huge_held, &error)), error, .Too_Long, 1)
 
 	// The refusals of the borders, each with nothing written.
-	expect_error(t, line_shape(0, size, &text, &placed_table, &error), error, .Bad_Value, 1)
-	expect_error(t, line_shape(i64(max(text_rendering.Face)) + 1, size, &text, &placed_table, &error), error, .Bad_Value, 1)
-	expect_error(t, line_shape(interface, 0, &text, &placed_table, &error), error, .Too_Small, 2)
-	expect_error(t, line_shape(interface, i64(text_rendering.TEXT_SIZE_LIMIT) + 1, &text, &placed_table, &error), error, .Bad_Value, 2)
+	expect_error(t, answer_of(line_shape(0, size, &text, &placed_table, &error)), error, .Bad_Value, 1)
+	expect_error(t, answer_of(line_shape(i64(max(text_rendering.Face)) + 1, size, &text, &placed_table, &error)), error, .Bad_Value, 1)
+	expect_error(t, answer_of(line_shape(interface, 0, &text, &placed_table, &error)), error, .Too_Small, 2)
+	expect_error(t, answer_of(line_shape(interface, i64(text_rendering.TEXT_SIZE_LIMIT) + 1, &text, &placed_table, &error)), error, .Bad_Value, 2)
 	long := bytes_to_read(transmute([]u8)devanagari)
 	long.count = text_rendering.TEXT_LIMIT + 1
-	expect_error(t, line_shape(interface, size, &long, &placed_table, &error), error, .Too_Long, 3)
+	expect_error(t, answer_of(line_shape(interface, size, &long, &placed_table, &error)), error, .Too_Long, 3)
 	// A range past the bytes, and a range past TEXT_LIMIT: refused with the
 	// number of the range, and no width written.
 	past := [2]text_rendering.Text_Range{{start = 0, count = 3}, {start = 3, count = u32(len(devanagari))}}
 	past_table := system.Table_To_Change(text_rendering.Text_Range){records = &past[0], count = 2, capacity = 2}
-	expect_error(t, line_widths(interface, size, &text, &past_table, &error), error, .Out_Of_Range, 4)
+	expect_error(t, answer_of(line_widths(interface, size, &text, &past_table, &error)), error, .Out_Of_Range, 4)
 	testing.expect(t, error.found == 2 && past[0].width > 0 && past[1].width == 0, "the range 2 is past the bytes; the range 1 has its width")
 	huge_range := [1]text_rendering.Text_Range{{start = 0, count = text_rendering.TEXT_LIMIT + 1}}
 	huge_range_table := system.Table_To_Change(text_rendering.Text_Range){records = &huge_range[0], count = 1, capacity = 1}
 	long_bytes := make([]u8, text_rendering.TEXT_LIMIT + 1)
 	defer delete(long_bytes)
 	long_text := bytes_to_read(long_bytes)
-	expect_error(t, line_widths(interface, size, &long_text, &huge_range_table, &error), error, .Too_Long, 4)
+	expect_error(t, answer_of(line_widths(interface, size, &long_text, &huge_range_table, &error)), error, .Too_Long, 4)
 	too_many := system.Table_To_Change(text_rendering.Text_Range){records = &whole[0], count = TABLE_LIMIT + 1, capacity = 1}
-	expect_error(t, line_widths(interface, size, &text, &too_many, &error), error, .Too_Long, 4)
-	expect_error(t, line_fit(interface, size, &long, 0, &error), error, .Too_Long, 3)
+	expect_error(t, answer_of(line_widths(interface, size, &text, &too_many, &error)), error, .Too_Long, 4)
+	expect_error(t, answer_of(line_fit(interface, size, &long, 0, &error)), error, .Too_Long, 3)
 	huge_placed := system.Table_To_Append(text_rendering.Placed_Glyph){records = &placed[0], capacity = TABLE_LIMIT + 1}
-	expect_error(t, line_shape(interface, size, &text, &huge_placed, &error), error, .Too_Long, 4)
+	expect_error(t, answer_of(line_shape(interface, size, &text, &huge_placed, &error)), error, .Too_Long, 4)
 	testing.expect_value(t, placed_table.count, 0)
-	expect_error(t, glyph_find(0, 'a', &error), error, .Bad_Value, 1)
-	expect_error(t, glyph_find(interface, -1, &error), error, .Bad_Value, 2)
-	expect_error(t, glyph_find(interface, 0x110000, &error), error, .Bad_Value, 2)
-	expect_error(t, glyph_outline(interface, 0, 1, &points_table, &contours_table, &error), error, .Bad_Value, 2)
-	expect_error(t, glyph_outline(interface, i64(max(text_rendering.Outline_Font)) + 1, 1, &points_table, &contours_table, &error), error, .Bad_Value, 2)
+	expect_error(t, answer_of(glyph_find(0, 'a', &error)), error, .Bad_Value, 1)
+	expect_error(t, answer_of(glyph_find(interface, -1, &error)), error, .Bad_Value, 2)
+	expect_error(t, answer_of(glyph_find(interface, 0x110000, &error)), error, .Bad_Value, 2)
+	expect_error(t, answer_of(glyph_outline(interface, 0, 1, &points_table, &contours_table, &error)), error, .Bad_Value, 2)
+	expect_error(t, answer_of(glyph_outline(interface, i64(max(text_rendering.Outline_Font)) + 1, 1, &points_table, &contours_table, &error)), error, .Bad_Value, 2)
 	// A font that no chain of the interface names.
 	outside: text_rendering.Outline_Font
 	for font in text_rendering.Outline_Font {
@@ -928,15 +934,15 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, outside != .None, "a font is outside the chains of the interface")
-	expect_error(t, glyph_outline(interface, i64(outside), 1, &points_table, &contours_table, &error), error, .Absent, 2)
+	expect_error(t, answer_of(glyph_outline(interface, i64(outside), 1, &points_table, &contours_table, &error)), error, .Absent, 2, .Nothing_Has_That_Name)
 	b612_glyphs := i64(text_rendering.font_at(&text_rendering.state.font_set, .B612).file.glyph_count)
-	expect_error(t, glyph_outline(interface, i64(text_rendering.Outline_Font.B612), 0, &points_table, &contours_table, &error), error, .Bad_Value, 3)
-	expect_error(t, glyph_outline(interface, i64(text_rendering.Outline_Font.B612), b612_glyphs, &points_table, &contours_table, &error), error, .Bad_Value, 3)
+	expect_error(t, answer_of(glyph_outline(interface, i64(text_rendering.Outline_Font.B612), 0, &points_table, &contours_table, &error)), error, .Bad_Value, 3)
+	expect_error(t, answer_of(glyph_outline(interface, i64(text_rendering.Outline_Font.B612), b612_glyphs, &points_table, &contours_table, &error)), error, .Bad_Value, 3)
 	testing.expect(t, points_table.count == 0 && contours_table.count == 0)
-	expect_error(t, cell_cluster_read(interface, &text, -1, -1, &cluster_table, &marks_table, &error), error, .Out_Of_Range, 3)
-	expect_error(t, cell_cluster_read(interface, &text, i64(len(devanagari)) + 1, -1, &cluster_table, &marks_table, &error), error, .Out_Of_Range, 3)
-	expect_error(t, cell_cluster_read(interface, &long, 0, -1, &cluster_table, &marks_table, &error), error, .Too_Long, 2)
-	testing.expect_value(t, cell_cluster_read(interface, &text, i64(len(devanagari)), -1, &cluster_table, &marks_table, &error), 0)
+	expect_error(t, answer_of(cell_cluster_read(interface, &text, -1, -1, &cluster_table, &marks_table, &error)), error, .Out_Of_Range, 3)
+	expect_error(t, answer_of(cell_cluster_read(interface, &text, i64(len(devanagari)) + 1, -1, &cluster_table, &marks_table, &error)), error, .Out_Of_Range, 3)
+	expect_error(t, answer_of(cell_cluster_read(interface, &long, 0, -1, &cluster_table, &marks_table, &error)), error, .Too_Long, 2)
+	testing.expect_value(t, value_of(cell_cluster_read(interface, &text, i64(len(devanagari)), -1, &cluster_table, &marks_table, &error)), 0)
 
 	// The answers: the line of the export is the line of the package.
 	spacing, ok := text_rendering.spacing_of(.Interface, int(size))
@@ -944,7 +950,7 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	for line in ([?]string{devanagari, "שלום (abc) بيت", "é q̣̂ 中文 ⬛", "Settings"}) {
 		bytes := bytes_to_read(transmute([]u8)line)
 		placed_table.count = 0
-		count := line_shape(interface, size, &bytes, &placed_table, &error)
+		count := value_of(line_shape(interface, size, &bytes, &placed_table, &error))
 		expected: [64]text_rendering.Placed_Glyph
 		expected_count, expected_width, _ := text_rendering.shape(&spacing, transmute([]u8)line, expected[:])
 		testing.expectf(t, count == i64(expected_count) && count > 0, "%q: %d placed glyphs, the package %d", line, count, expected_count)
@@ -953,27 +959,27 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 		}
 		line_range := [1]text_rendering.Text_Range{{start = 0, count = u32(len(line))}}
 		line_table := system.Table_To_Change(text_rendering.Text_Range){records = &line_range[0], count = 1, capacity = 1}
-		testing.expect_value(t, line_widths(interface, size, &bytes, &line_table, &error), 1)
+		testing.expect_value(t, value_of(line_widths(interface, size, &bytes, &line_table, &error)), 1)
 		testing.expect_value(t, line_range[0].width, expected_width)
-		testing.expect_value(t, line_fit(interface, size, &bytes, 1 << 30, &error), i64(len(line)))
-		testing.expect_value(t, line_fit(interface, size, &bytes, -1, &error), 0)
+		testing.expect_value(t, value_of(line_fit(interface, size, &bytes, 1 << 30, &error)), i64(len(line)))
+		testing.expect_value(t, value_of(line_fit(interface, size, &bytes, -1, &error)), 0)
 	}
 	// A table too small for the line takes what fits, and the count of the
 	// full answer comes.
 	small := system.Table_To_Append(text_rendering.Placed_Glyph){records = &placed[0], capacity = 1}
 	settings := bytes_to_read(transmute([]u8)string("Settings"))
-	testing.expect_value(t, line_shape(interface, size, &settings, &small, &error), 8)
+	testing.expect_value(t, value_of(line_shape(interface, size, &settings, &small, &error)), 8)
 	testing.expect_value(t, small.count, 8)
 
 	// The glyphs: a letter of B612, and the ideograph of Noto Sans CJK, a
 	// font of CFF outlines, which the module reads for the fast part.
-	found := glyph_find(interface, 'a', &error)
+	found := value_of(glyph_find(interface, 'a', &error))
 	testing.expect_value(t, text_rendering.Outline_Font(found >> 16), text_rendering.Outline_Font.B612)
-	testing.expect_value(t, glyph_find(interface, 0x0378, &error), 0)
+	testing.expect_value(t, value_of(glyph_find(interface, 0x0378, &error)), 0)
 	outline_of := proc(t: ^testing.T, face, found: i64, points_table: ^system.Table_To_Append(text_rendering.Outline_Word), contours_table: ^system.Table_To_Append(text_rendering.Contour_End), points: []text_rendering.Outline_Word, contours: []text_rendering.Contour_End) {
 		error: errors.Error_Record
 		points_table.count, contours_table.count = 0, 0
-		advance := glyph_outline(face, found >> 16, found & 0xFFFF, points_table, contours_table, &error)
+		advance := value_of(glyph_outline(face, found >> 16, found & 0xFFFF, points_table, contours_table, &error))
 		testing.expectf(t, advance > 0 && points_table.count > 0 && contours_table.count > 0, "the outline of the glyph %d of the font %d: advance %d, %d points, %d contours", found & 0xFFFF, found >> 16, advance, points_table.count, contours_table.count)
 		for word in points[:points_table.count] {
 			testing.expect(t, word.on_curve <= 1)
@@ -988,13 +994,13 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	// Tables of one point and of one contour have no room for the outline.
 	one_point := system.Table_To_Append(text_rendering.Outline_Word){records = &points[0], capacity = 1}
 	contours_table.count = 0
-	expect_error(t, glyph_outline(interface, found >> 16, found & 0xFFFF, &one_point, &contours_table, &error), error, .Full, 4)
+	expect_error(t, answer_of(glyph_outline(interface, found >> 16, found & 0xFFFF, &one_point, &contours_table, &error)), error, .Full, 4, .Budget_Or_Capacity_Exhausted)
 	// A table that holds records already is refused: the outline starts it.
 	points_table.count = 1
-	expect_error(t, glyph_outline(interface, found >> 16, found & 0xFFFF, &points_table, &contours_table, &error), error, .Bad_Value, 4)
+	expect_error(t, answer_of(glyph_outline(interface, found >> 16, found & 0xFFFF, &points_table, &contours_table, &error)), error, .Bad_Value, 4)
 	points_table.count = 0
 	if scripts_open {
-		ideograph := glyph_find(interface, 0x4E2D, &error)
+		ideograph := value_of(glyph_find(interface, 0x4E2D, &error))
 		testing.expect_value(t, text_rendering.Outline_Font(ideograph >> 16), text_rendering.Outline_Font.Noto_Sans_CJK)
 		outline_of(t, interface, ideograph, &points_table, &contours_table, points[:], contours[:])
 	}
@@ -1004,13 +1010,13 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	cells := i64(text_rendering.Face.Cells)
 	composed := bytes_to_read(transmute([]u8)string("éx"))
 	cluster_table.count, marks_table.count = 0, 0
-	testing.expect_value(t, cell_cluster_read(cells, &composed, 0, -1, &cluster_table, &marks_table, &error), 1)
+	testing.expect_value(t, value_of(cell_cluster_read(cells, &composed, 0, -1, &cluster_table, &marks_table, &error)), 1)
 	testing.expectf(t, cluster[0].base == 0x00E9 && cluster[0].mark_count == 0 && cluster[0].end == 3, "e and U+0301 make one cluster of é: %v", cluster[0])
-	expect_error(t, cell_cluster_read(cells, &composed, 0, -1, &cluster_table, &marks_table, &error), error, .Full, 5)
+	expect_error(t, answer_of(cell_cluster_read(cells, &composed, 0, -1, &cluster_table, &marks_table, &error)), error, .Full, 5, .Budget_Or_Capacity_Exhausted)
 	apart := bytes_to_read(transmute([]u8)string("q̣̂"))
 	cluster_table.count = 0
 	no_marks := system.Table_To_Append(text_rendering.Cell_Mark){records = &marks[0], capacity = 1}
-	expect_error(t, cell_cluster_read(cells, &apart, 0, -1, &cluster_table, &no_marks, &error), error, .Full, 6)
+	expect_error(t, answer_of(cell_cluster_read(cells, &apart, 0, -1, &cluster_table, &no_marks, &error)), error, .Full, 6, .Budget_Or_Capacity_Exhausted)
 	testing.expect(t, cluster_table.count == 0 && no_marks.count == 0)
 
 	// The stack of each export over the fonts of the process, with the
@@ -1069,7 +1075,7 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 			waiter := (^Waiter)(data)
 			table := system.Table_To_Append(text_rendering.Held_Font){records = &waiter.records[0], capacity = len(waiter.records)}
 			error: errors.Error_Record
-			waiter.count = process_fonts_open(&table, &error)
+			waiter.count = value_of(process_fonts_open(&table, &error))
 			intrinsics.atomic_store(&waiter.done, true)
 		})
 		boot_place, set_place := process_places()
@@ -1112,11 +1118,10 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	defer delete(hostile.words)
 	process_places_of_test[1] = test_place(&hostile)
 	held_table := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = len(held)}
-	testing.expect_value(t, process_fonts_open(&held_table, &error), i64(card(text_rendering.SCRIPT_FONTS)))
+	testing.expect_value(t, value_of(process_fonts_open(&held_table, &error)), i64(card(text_rendering.SCRIPT_FONTS)))
 	b612 := text_rendering.font_at(&text_rendering.state.font_set, .B612)
 	testing.expectf(t, b612.opened && b612.file.glyph_count == boot_b612_glyphs, "B612 is the font of the outlines: %d glyphs, the outlines hold %d", b612.file.glyph_count, boot_b612_glyphs)
 	testing.expect(t, text_rendering.font_at(&text_rendering.state.font_set, .Noto_Sans_Hebrew).opened, "the set opens its Hebrew font")
 	placed_table.count = 0
-	testing.expect_value(t, line_shape(interface, size, &settings, &placed_table, &error), 8)
+	testing.expect_value(t, value_of(line_shape(interface, size, &settings, &placed_table, &error)), 8)
 }
-

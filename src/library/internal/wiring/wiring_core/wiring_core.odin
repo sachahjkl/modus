@@ -696,7 +696,7 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 	// row that carries it is refused, so the fact opens no other wiring.
 	if writer_facts.audit_wired_by_root || reader_facts.audit_wired_by_root {
 		if !audit_row_allowed(work.form, row, reader_idx, work.asker_index) {
-			return .No_Right, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
+			return .Grant_Or_Right_Missing, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
 		}
 	}
 	// Self-wire or directed cycle refused.

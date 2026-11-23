@@ -556,7 +556,7 @@ client_syncs_a_store_and_repeats_a_lost_offer :: proc(t: ^testing.T) {
 	network.lose_answer_at = network.served + 2
 	sync = mesh_sync_store(&laptop.peer, &link, &transport, store_identifier, 50_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, sync.store, Store_Status.Stopped_Between_Pages)
-	testing.expect(t, sync.exchange.outcome != .Answered)
+	testing.expect(t, sync.exchange.outcome != .Succeeded)
 	testing.expect(t, store_version_hash(&laptop_store.common) == common_before)
 	network.lose_answer_at = 0
 	testing.expect_value(t, mesh_connect(&link, &laptop.peer, &transport, client_identity(home), .Paired, 50_000, 1_000), Mesh_Client_Status.Ok)

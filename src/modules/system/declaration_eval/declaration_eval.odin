@@ -39,13 +39,14 @@ workspace: lex_evaluator.Declaration_Workspace
 // refusal_give gives the error record of the budget or of the arena as
 // the error record of the export.
 @(private)
-refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record) -> i64 {
+refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	// The budget of the call host did not pay the memory of the call.
 	if error != nil {
-		error^ = refusal
+		error^ = call_outcome.record_explained(.Budget_Or_Capacity_Exhausted, refusal)
 		error.operation = 0
 		error.argument = 0
 	}
-	return ERROR
+	return .Budget_Or_Capacity_Exhausted, 0
 }
 
 @(private)
@@ -90,7 +91,7 @@ evaluate :: proc "c" (
 	}
 	amounts, budget_status := system.budget_read()
 	if budget_status != .Ok {
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(budget_status))
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0, 0, 0, i64(budget_status))
 	}
 	arena_refusal: errors.Error_Record
 	arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages), 0, &arena_refusal)

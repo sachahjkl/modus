@@ -10,6 +10,7 @@
 package root
 
 import "modus:contract/powerbox"
+import "modus:contract/root_ring"
 import "modus:contract/ring"
 import "modus:disk_process"
 import "modus:principals"
@@ -143,8 +144,8 @@ powerbox_service_start :: proc "contextless" () {
 	if name == "" || find(name) != nil || len(system.image_find(image, name)) == 0 {
 		return
 	}
-	if status := start(name); status != .Ok {
-		system.log_fact(.Warning, Powerbox_Start_Failed{status_number = u64(status)})
+	if outcome := start(name); outcome != .Succeeded {
+		system.log_fact(.Warning, Powerbox_Start_Failed{outcome = outcome})
 	}
 }
 
@@ -190,8 +191,9 @@ picker_listing_begin :: proc "contextless" (principal: u64) {
 	picker_store_lister = {}
 	copy(picker_store_lister.name[:len(picker_store_lister.name) - 1], disk_process.STORE_NAME)
 	picker_store_lister.principal = principal
-	connection, service, ring_memory, region_memory, status := connection_open(&picker_store_lister, role_holder_name(.Storage))
-	if status != .Ok {
+	open_refusal: [7]u64
+	connection, service, ring_memory, region_memory, opened := connection_open(&picker_store_lister, role_holder_name(.Storage), &open_refusal, u32(root_ring.Root_Command.Connect))
+	if opened != .Succeeded {
 		picker_listing_refuse(principal)
 		return
 	}
@@ -203,6 +205,7 @@ picker_listing_begin :: proc "contextless" (principal: u64) {
 	rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
 	given: [3]system.Handle
 	given_count := 0
+	status: system.Status
 	for source, index in sources {
 		given[index], status = system.give(powerbox_ring_memory, source, rights[index])
 		if status != .Ok {

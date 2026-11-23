@@ -30,11 +30,8 @@ Whole_Read :: enum u8 {
 // read leaves the room with no meaning.
 read_whole :: proc "contextless" (client: ^Client, place: Place, name: string, room: Whole_Room, room_data: rawptr, error: ^errors.Error_Record = nil) -> (bytes: []u8, outcome: Whole_Read, status: storage_status.Status) {
 	object_size, size_status := size(client, place, name, error)
-	if export_failed_with(size_status, object_size, .Absent) {
+	if size_status == .Absent {
 		return nil, .Absent, .Ok
-	}
-	if export_failed_with(size_status, object_size, .Damaged) {
-		return nil, .Refused, .Damaged
 	}
 	if size_status != .Ok {
 		return nil, .Refused, size_status

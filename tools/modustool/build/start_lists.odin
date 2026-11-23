@@ -409,8 +409,8 @@ start_list_audits_problem :: proc(wirings: []Start_List_Wiring, collector_pages:
 		}
 	}
 	needed := collector_pages + audits * wide_grants.SPACE_AUDIT_PAGES
-	if needed > module.LARGEST_BUDGET_PAGES {
-		return fmt.tprintf("the list declares %d audits of servers: the collector would need %d pages, %d for its own and %d for each audit, past the largest budget of one process, %d pages", audits, needed, collector_pages, wide_grants.SPACE_AUDIT_PAGES, module.LARGEST_BUDGET_PAGES)
+	if needed > module.LARGEST_BUDGET_LEAST_PAGES {
+		return fmt.tprintf("the list declares %d audits of servers: the collector would need %d pages, %d for its own and %d for each audit, past the largest budget of one process, %d pages", audits, needed, collector_pages, wide_grants.SPACE_AUDIT_PAGES, module.LARGEST_BUDGET_LEAST_PAGES)
 	}
 	return ""
 }
@@ -419,8 +419,8 @@ start_list_audits_problem :: proc(wirings: []Start_List_Wiring, collector_pages:
 // service to the pages that the start policy asks, pass the largest budget
 // of one process.
 start_policy_pages_problem :: proc(policy_pages: u64, wiring_pages: u64) -> string {
-	if policy_pages + wiring_pages > module.LARGEST_BUDGET_PAGES {
-		return fmt.tprintf("its wiring rows need %d pages of the budget of the start policy, and with its own %d pages that passes the largest budget of one process, %d pages", wiring_pages, policy_pages, module.LARGEST_BUDGET_PAGES)
+	if policy_pages + wiring_pages > module.LARGEST_BUDGET_LEAST_PAGES {
+		return fmt.tprintf("its wiring rows need %d pages of the budget of the start policy, and with its own %d pages that passes the largest budget of one process, %d pages", wiring_pages, policy_pages, module.LARGEST_BUDGET_LEAST_PAGES)
 	}
 	return ""
 }
@@ -592,7 +592,7 @@ START_POLICY_SOURCE_LINE_LIMIT :: 400
 // holds the decisions of the wiring rows, with their host tests, so the
 // start policy keeps only their calls.
 @(rodata)
-START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "internal:start_policy/wiring_rows", "modus:system"}
+START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "internal:start_policy/wiring_rows", "modus:system", "modus:contract/call_outcome"}
 
 // source_import_problems gives each import of the sources, tests not
 // counted, that allowed refuses, each foreign import or block, and each

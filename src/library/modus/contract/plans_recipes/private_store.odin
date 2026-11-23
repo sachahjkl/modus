@@ -96,8 +96,9 @@ private_store_read_range :: proc "contextless" (port: ^Private_Store_Port, name:
 	return into[:count], .Ok
 }
 
-// private_store_remove removes the object name and its versions. Absent
-// when no object has the name.
+// private_store_remove removes the object name and its versions, in one
+// commit. Absent: no object has the name, which a caller that removes an
+// object again takes as done.
 private_store_remove :: proc "contextless" (port: ^Private_Store_Port, name: string) -> Private_Store_Status {
 	if port == nil || port.remove == nil {
 		return .Failed
@@ -209,16 +210,6 @@ memory_private_object_bytes :: proc "contextless" (store: ^Memory_Private_Store,
 		return store.large_bytes[object.large_start:][:object.length]
 	}
 	return object.bytes[:object.length]
-}
-
-// private_store_remove removes the object name, in one commit. Absent: no
-// object has the name, which a caller that removes an object again takes
-// as done.
-private_store_remove :: proc "contextless" (port: ^Private_Store_Port, name: string) -> Private_Store_Status {
-	if port == nil || port.remove == nil {
-		return .Failed
-	}
-	return port.remove(port.user, name)
 }
 
 // memory_private_store_port gives the port of a memory store, with no bound
@@ -477,7 +468,6 @@ PLAN_GENERATION_HEAD_SIZE :: 8 + APPLIED_PLAN_WIRE_SIZE + 8
 PLAN_CURRENT_WIRE_SIZE :: 8 + 3 * 8 + blake3.HASH_SIZE
 
 #assert(PLAN_ENTRY_ROW_WIRE_SIZE == size_of(Plan_Entry_Row))
-#assert(PLAN_GENERATION_WIRE_MOST <= MEMORY_PRIVATE_STORE_RANGE_BYTES)
 
 // The pointer of the generations of a principal that its current object holds.
 Plan_Current_Record :: struct {

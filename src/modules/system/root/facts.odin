@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -560,9 +561,9 @@ text_field :: value_kinds.text_field
 
 // The powerbox did not start after the holder of Display: the trusted
 // display has no picker of stores until a start of the powerbox.
-@(log_fact = "root: the powerbox did not start after the compositor: status {status_number}; the picker of stores of the trusted display shows no store")
+@(log_fact = "root: the powerbox did not start after the compositor: {outcome}; the picker of stores of the trusted display shows no store")
 Powerbox_Start_Failed :: struct {
-	status_number: u64,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // The powerbox asked for the stores of a principal, and this service gave

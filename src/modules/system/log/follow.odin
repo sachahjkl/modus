@@ -40,17 +40,18 @@ import "modus:system"
 // words of the event of its surface; the log; the wiring ring and its flag;
 // the service ring and each of its connections, each with its flag.
 MAIN_WAIT_WORDS_BESIDE_FOLLOW :: 1 + 4 + 1 + 2 + 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY)
-// The full rings of follow that the main wait waits on: each ring that a
-// process holds (system.STREAM_END_CAPACITY), so no ring waits for a wake
-// for another cause.
-FOLLOW_RINGS_WAITED_MOST :: system.STREAM_END_CAPACITY
-MAIN_WAIT_WORDS :: MAIN_WAIT_WORDS_BESIDE_FOLLOW + FOLLOW_RINGS_WAITED_MOST * system.OUTPUT_ROOM_WAIT_WORDS
-#assert(MAIN_WAIT_WORDS <= op.WORD_WAIT_MOST)
-// The places of the main wait, which waits on these rings: more than a
-// wait on the stack holds. The set is made at the start of entry.
-log_wait_words: [MAIN_WAIT_WORDS]op.Word
-log_wait_parts: [MAIN_WAIT_WORDS]system.Wait_Part
-log_wait_set: system.Wait_Set
+// The places of the main wait: the words beside follow, and each full ring
+// of follow, one for each place of the table of the ends of this process,
+// so no ring waits for a wake for another cause. They grow with that table
+// (log_wait_follow_the_ends).
+log_wait: system.Growing_Wait_Set
+
+// log_wait_follow_the_ends grows the places of the main wait to the table
+// of the ends. A growth that the budget does not pay keeps the places: the
+// rings past them wait for the next record of the log.
+log_wait_follow_the_ends :: proc "contextless" () {
+	_ = system.wait_set_grow(&log_wait, MAIN_WAIT_WORDS_BESIDE_FOLLOW + system.stream_end_places() * system.OUTPUT_ROOM_WAIT_WORDS)
+}
 
 // One row of log.follow: one record of the whole log, as records() gives
 // it, with no byte that no field names. A fact has no text, as in

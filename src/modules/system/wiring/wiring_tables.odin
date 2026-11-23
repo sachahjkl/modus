@@ -74,6 +74,9 @@ processes_grow :: proc "contextless" (user: rawptr, count: int) -> []wiring_core
 		}
 		tables.process_count = count
 		process_handles = ([^]Process_Handles)(tables.handles.base)[:count]
+		// The wait of the loop holds the wiring ring of each process. A
+		// growth that the budget does not pay keeps its places.
+		_ = system.wait_set_grow(&wiring_wait, wiring_wait_words(count))
 	}
 	return ([^]wiring_core.Process_Entry)(tables.processes.base)[:tables.process_count]
 }

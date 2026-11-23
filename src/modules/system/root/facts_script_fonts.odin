@@ -1,6 +1,6 @@
 package root
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The facts of the script font set of the machine (script_fonts.odin).
@@ -70,7 +70,7 @@ Script_Fonts_Refused_Too_Large :: struct {
 	set_bytes_limit: u64,
 }
 
-@(log_fact = "root: the script font set was not read: status {status}: Hebrew, Arabic, the ideographs and the emoji draw the replacement glyph until the next start")
+@(log_fact = "root: the script font set was not read: {outcome}: Hebrew, Arabic, the ideographs and the emoji draw the replacement glyph until the next start")
 Script_Fonts_Not_Read :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }

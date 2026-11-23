@@ -16,6 +16,7 @@ package root
 import "base:intrinsics"
 import "internal:root/wide_grant_flow"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
@@ -308,65 +309,54 @@ wide_grant_mark_send :: proc "contextless" (mark: wide_grants.Mark) -> bool {
 // wide_grant_ask_open opens the flow of an ask, from a console or from an
 // agent, for the key of a row of principal, and shows its screen.
 @(private = "file")
-wide_grant_ask_open :: proc "contextless" (command: root_ring.Root_Command, principal: u64, key: [32]u8, authorities_word: u64, duration_ms: u64, values: ^[7]u64) -> system.Status {
+wide_grant_ask_open :: proc "contextless" (command: root_ring.Root_Command, principal: u64, key: [32]u8, authorities_word: u64, duration_ms: u64, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(command)
 	if display_holder == 0 {
-		values^ = errors.ring_fail(kind, .Absent, .Services)
-		return .Bad_State
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Services)
 	}
 	if wide_grant_authority.status != .Ready {
-		values^ = errors.ring_fail(kind, .Refused, .None)
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .None)
 	}
 	serial, refusal := wide_grant_flow.flow_ask(&wide_grant_flow_state, principal, key, authorities_word, duration_ms, system.time())
 	switch refusal {
 	case .None:
 	case .Busy:
-		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
-		return .No_Slot
+		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
 	case .Bad_Scopes:
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(authorities_word, 1 << 62)), i64(wide_grants.wide_authorities_to_word(wide_grants.SCREEN_AUTHORITIES)))
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(min(authorities_word, 1 << 62)), i64(wide_grants.wide_authorities_to_word(wide_grants.SCREEN_AUTHORITIES)))
 	case .Bad_Duration:
-		values^ = errors.ring_fail(kind, .Out_Of_Range, .Milliseconds, 3, i64(min(duration_ms, 1 << 62)), i64(wide_grants.MAX_WIDE_GRANT_DURATION_MS))
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Out_Of_Range, .Milliseconds, 3, i64(min(duration_ms, 1 << 62)), i64(wide_grants.MAX_WIDE_GRANT_DURATION_MS))
 	case .Zero_Key:
-		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	case .Paused, .Refused_For_Run, .Proofs_Refused:
-		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
 	case .Not_Awaited, .Other_Flow, .Scope_Not_Proposed, .Duration_Past_Ask, .Bad_Answer, .Other_Principal, .Terms_Refused, .No_Grant, .Other_Key, .Other_Tag:
-		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
 	}
 	show := wide_grant_flow.flow_screen(&wide_grant_flow_state)
 	if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Wide_Grant_Screen_Show), values = wide_grants.screen_show_values(show)}) {
 		wide_grant_flow.flow_to_idle(&wide_grant_flow_state)
-		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
-		return .No_Slot
+		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
 	}
 	system.log_fact(.Info, Wide_Grant_Screen_Asked{principal = principal, flow = serial})
 	values^ = {0 = serial}
-	return .Ok
+	return .Succeeded
 }
 
 // wide_grant_ask serves Wide_Grant_Ask: a console that acts for its
 // principal asks a grant for a key of a row of that principal.
-wide_grant_ask :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+wide_grant_ask :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_Ask)
 	if .Acts_For_Principal not_in grants_held(caller) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	if record.values[6] != 0 {
 		values^ = root_ring.word_refusal(.Wide_Grant_Ask, 7, record.values[6], 0)
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
 	if wide_grant_row_of(caller.principal, key) < 0 {
-		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	}
 	return wide_grant_ask_open(.Wide_Grant_Ask, caller.principal, key, record.values[4], record.values[5], values)
 }
@@ -375,100 +365,93 @@ wide_grant_ask :: proc "contextless" (caller: ^Started, record: ring.Record, val
 // ask of an agent for the key that its client proved. The principal is the
 // one of the row of the key, whose grant to call still holds: the agent
 // names no principal.
-wide_grant_agent_ask :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+wide_grant_agent_ask :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_Agent_Ask)
 	if record.values[6] != 0 {
 		values^ = root_ring.word_refusal(.Wide_Grant_Agent_Ask, 7, record.values[6], 0)
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
 	place := remote.client_find(&client_table.clients, key)
 	if place < 0 || !remote.client_grant_holds(&client_table.clients, place, client_table.clients[place].serial, .Calls) {
-		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	}
 	return wide_grant_ask_open(.Wide_Grant_Agent_Ask, client_table.clients[place].principal, key, record.values[4], record.values[5], values)
 }
 
 // wide_grant_second_connection serves Wide_Grant_Second_Connection: a
 // second connection of a key whose row holds a grant ends that grant.
-wide_grant_second_connection :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+wide_grant_second_connection :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_Second_Connection)
 	for index in 4 ..< len(record.values) {
 		if record.values[index] != 0 {
 			values^ = root_ring.word_refusal(.Wide_Grant_Second_Connection, i64(index) + 1, record.values[index], 0)
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 	}
 	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
 	if wide_grant_flow.flow_end_key(&wide_grant_flow_state, key) != .None {
-		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	}
 	wide_grant_end(.Duplicate_Connection, false)
-	return .Ok
+	return .Succeeded
 }
 
 // wide_grant_end_command serves Wide_Grant_End: the principal of the grant
 // ends it from a console.
-wide_grant_end_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+wide_grant_end_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_End)
 	if .Acts_For_Principal not_in grants_held(caller) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	for index in 4 ..< len(record.values) {
 		if record.values[index] != 0 {
 			values^ = root_ring.word_refusal(.Wide_Grant_End, i64(index) + 1, record.values[index], 0)
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 	}
 	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
 	if wide_grant_flow.flow_end_key(&wide_grant_flow_state, key) != .None || wide_grant_flow_state.principal != caller.principal {
-		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	}
 	wide_grant_end(.Principal_Revoked, false)
-	return .Ok
+	return .Succeeded
 }
 
 // wide_grant_proof serves Wide_Grant_Proof, which only the holder of
 // Principals sends: the run of `unlock` that this flow started says how its
 // proof ended.
-wide_grant_proof :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+wide_grant_proof :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_Proof)
 	outcome, outcome_status, outcome_refusal := root_ring.member_of_word(root_ring.Wide_Grant_Proof_Outcome, record.values[5], .Wide_Grant_Proof, 3)
-	if outcome_status != .Ok || outcome == .None {
-		values^ = outcome_status != .Ok ? outcome_refusal : root_ring.word_refusal(.Wide_Grant_Proof, 3, record.values[5], u64(max(root_ring.Wide_Grant_Proof_Outcome)))
-		return .Bad_Operation
+	if outcome_status != .Succeeded || outcome == .None {
+		values^ = outcome_status != .Succeeded ? outcome_refusal : root_ring.word_refusal(.Wide_Grant_Proof, 3, record.values[5], u64(max(root_ring.Wide_Grant_Proof_Outcome)))
+		return .Argument_Refused
 	}
 	if record.values[6] != 0 {
 		values^ = root_ring.word_refusal(.Wide_Grant_Proof, 7, record.values[6], 0)
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	// Only the run of unlock that this service started for the proof.
 	if unlock_run.mode != .Prove_Wide_Grant || (unlock_run.stage != .Running && unlock_run.stage != .Stop_Asked) || system.name_of(caller.name[:]) != "unlock" {
-		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(wide_grant_flow.Flow_Refusal.Not_Awaited))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .Grants, 0, 0, 0, i64(wide_grant_flow.Flow_Refusal.Not_Awaited))
 	}
 	principal := record.values[4]
 	now := system.time()
 	refusal := wide_grant_flow.flow_proved(&wide_grant_flow_state, principal, outcome == .Proved, now)
 	if refusal != .None {
 		system.log_fact(.Warning, Wide_Grant_Proof_Refused{principal = principal, refusal_code = u64(refusal)})
-		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
 	}
 	if outcome != .Proved {
 		system.log_fact(.Info, Wide_Grant_Proof_Not_Given{principal = principal})
-		return .Ok
+		return .Succeeded
 	}
 	if !wide_grant_create_send(now) {
 		wide_grant_flow.flow_to_idle(&wide_grant_flow_state)
-		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(wide_grant_flow.Flow_Refusal.No_Grant))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .Grants, 0, 0, 0, i64(wide_grant_flow.Flow_Refusal.No_Grant))
 	}
-	return .Ok
+	return .Succeeded
 }
 
 @(private = "file")
@@ -489,7 +472,7 @@ wide_grant_create_send :: proc "contextless" (now_ms: u64) -> bool {
 	link := &collector_links[flow.principal]
 	if link.owner == nil || link.owner.process == 0 {
 		placed: ^Started
-		if start("collector", flow.principal, place = &placed) != .Ok || link.owner == nil {
+		if start("collector", flow.principal, place = &placed) != .Succeeded || link.owner == nil {
 			system.log_fact(.Warning, Wide_Grant_Collector_Absent{principal = flow.principal})
 			return false
 		}
@@ -529,7 +512,7 @@ wide_grant_screen_answered :: proc "contextless" (values: [7]u64) {
 		system.log_fact(.Info, Wide_Grant_Screen_Declined{principal = flow.principal})
 		return
 	}
-	if status := unlock_start(.Prove_Wide_Grant, "", flow.principal); status != .Ok {
+	if outcome := unlock_start(.Prove_Wide_Grant, "", flow.principal); outcome != .Succeeded {
 		wide_grant_flow.flow_to_idle(flow)
 	}
 }
@@ -546,7 +529,7 @@ wide_grant_revoke_pressed :: proc "contextless" (values: [7]u64) {
 // wide_grant_wire_answered takes the answer of the wiring service to a
 // request of the path: a Wire of one writer, or the end of the wirings of
 // the collector. An answer of another flow counts for nothing.
-wide_grant_wire_answered :: proc "contextless" (request: Audit_Request, flow_serial: u64, status: system.Status) {
+wide_grant_wire_answered :: proc "contextless" (request: Audit_Request, flow_serial: u64, outcome: call_outcome.Call_Outcome) {
 	flow := &wide_grant_flow_state
 	if flow_serial != flow.serial {
 		return
@@ -555,10 +538,10 @@ wide_grant_wire_answered :: proc "contextless" (request: Audit_Request, flow_ser
 	case .None:
 		return
 	case .Unwire:
-		if status != .Ok {
-			system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = status})
+		if outcome != .Succeeded {
+			system.log_fact(.Warning, Wide_Grant_Wiring_Refused{outcome = outcome})
 		}
-		_ = wide_grant_flow.flow_unwired(flow, status == .Ok)
+		_ = wide_grant_flow.flow_unwired(flow, outcome == .Succeeded)
 		return
 	case .Wire:
 	}
@@ -567,8 +550,8 @@ wide_grant_wire_answered :: proc "contextless" (request: Audit_Request, flow_ser
 	if flow.stage != .Wiring && flow.stage != .Active {
 		return
 	}
-	if status != .Ok || index < 0 || index >= int(wide_grant_writer_count) {
-		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = status})
+	if outcome != .Succeeded || index < 0 || index >= int(wide_grant_writer_count) {
+		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{outcome = outcome})
 		wide_grant_end(.Audit_Ring_Closed, false)
 		return
 	}
@@ -648,10 +631,10 @@ wide_grant_end_work :: proc "contextless" () {
 		}
 	}
 	if wide_grant_flow.flow_unwire_due(flow) && wiring_request.stage == .Idle {
-		if status, done := audit_unwire_begin(link != nil ? link.owner : nil, flow.serial); status == .Ok {
+		if outcome, done := audit_unwire_begin(link != nil ? link.owner : nil, flow.serial); outcome == .Succeeded {
 			wide_grant_flow.flow_unwire_sent(flow)
 			if done {
-				wide_grant_wire_answered(.Unwire, flow.serial, .Ok) // wirings.odin
+				wide_grant_wire_answered(.Unwire, flow.serial, .Succeeded) // wirings.odin
 			}
 		}
 	}
@@ -808,16 +791,16 @@ wide_grant_wire_pass :: proc "contextless" () {
 	input_index := module_record_input_index(collector_file, "sources")
 	output_index := module_record_output_index(writer_file, wide_grants.ACT_OUTPUT_NAME)
 	if input_index == 0 || output_index == 0 {
-		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = .Bad_Operation})
+		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{outcome = .Argument_Refused})
 		wide_grant_end(.Audit_Ring_Closed, false)
 		return
 	}
-	// No_Slot: the wiring service serves another request; the next pass
-	// asks again.
-	if status := audit_wire_begin(link.owner, writer.writer, writer.producer, output_index, input_index, flow.serial); status == .Ok {
+	// Callee_Busy: the wiring service serves another request; the next
+	// pass asks again.
+	if outcome := audit_wire_begin(link.owner, writer.writer, writer.producer, output_index, input_index, flow.serial); outcome == .Succeeded {
 		wide_grant_wiring_writer = index
-	} else if status != .No_Slot {
-		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = status})
+	} else if outcome != .Callee_Busy {
+		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{outcome = outcome})
 		wide_grant_end(.Audit_Ring_Closed, false)
 	}
 }

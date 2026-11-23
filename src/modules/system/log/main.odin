@@ -75,6 +75,7 @@ package log
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import module "modus:contract/module"
+import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:display"
@@ -771,7 +772,6 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 // never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	log_wait_set = system.wait_set_of(log_wait_words[:], log_wait_parts[:])
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "log")
 	if !ok {
 		system.stop(.Failed)
@@ -864,7 +864,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The list comes after the reads and after the question to the
 		// canvas: a record or a call that arrived since ends the wait at
 		// once.
-		wait := system.wait_of_set(&log_wait_set)
+		log_wait_follow_the_ends() // follow.odin
+		wait := system.wait_of_set(&log_wait.set)
 		display.wait_events(&wait, &window)
 		system.wait_log(&wait, &reader)
 		// A new end of log.follow: the pump takes it at the next pass, so
@@ -872,10 +873,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_wiring(&wait)
 		// A follower whose full ring refused a row: its read wakes the
 		// pump, which writes the row that it kept, or the gap of the
-		// records that the kernel wrote over meanwhile. The count of the
-		// The list holds each ring of follow (FOLLOW_RINGS_WAITED_MOST), so
-		// the count of the rings that it could not wait on is 0.
-		_ = system.wait_output_room(&wait, &follow, FOLLOW_RINGS_WAITED_MOST)
+		// records that the kernel wrote over meanwhile. The list holds each
+		// ring of follow and leaves the words of the service after them.
+		follow_rings := max(system.wait_room_left(&wait) - 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY), 0) / system.OUTPUT_ROOM_WAIT_WORDS
+		_ = system.wait_output_room(&wait, &follow, follow_rings)
 		system.service_wait(&wait, &service)
 		system.wait_end(&wait)
 		system.service_run(&service)

@@ -39,8 +39,10 @@ import "modus:system"
 // and list pages are paid from each asker's child wiring budget.
 // Its tables grow in arenas of this budget as processes and wirings come
 // (wiring_tables.odin): 64 pages hold hundreds of each. The working memory
-// holds the wait room of the loop too (WIRING_WAIT_WORDS).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64 + WIRING_WAIT_ROOM_PAGES, processes = 1, threads = 1}
+// holds the wait room of the loop too, which grows with the processes
+// (wiring_wait_words): the room of 128 processes.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 69, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == 64 + WIRING_WAIT_ROOM_PAGES_STATED)
 
 // Stall bound in wiring_core must stay identical to the system hang bound.
 #assert(wiring_core.STALL_HANG_BOUND_MS == system.TEST_HANG_BOUND_MILLISECONDS)
@@ -52,20 +54,21 @@ STALL_POLL_INTERVAL_MS :: u64(1_000)
 // Fixed words in one wait of the main loop: the event word, SERVICE_RING,
 // and SERVICE_STOPS_RING.
 WIRING_WAIT_FIXED_WORDS :: 1 + 2 + 2
-// The words of the wait: the fixed words, and the completions of the
-// wiring ring of each process, with its flag. Each ring fits.
-WIRING_WAIT_WORDS :: WIRING_WAIT_FIXED_WORDS + 2 * wiring_core.PROCESS_CAPACITY
-#assert(WIRING_WAIT_WORDS <= op.WORD_WAIT_MOST)
-// The pages of its wait room (op.wait_room_pages): the page that names the
-// others, and one for each op.WAIT_ROOM_WORDS_OF_A_PAGE words past the
-// words that the kernel holds with no room.
-#assert(WIRING_WAIT_WORDS > op.WORD_WAIT_INLINE)
-WIRING_WAIT_ROOM_PAGES :: 1 + (WIRING_WAIT_WORDS - op.WORD_WAIT_INLINE + op.WAIT_ROOM_WORDS_OF_A_PAGE - 1) / op.WAIT_ROOM_WORDS_OF_A_PAGE
+// wiring_wait_words gives the words of the wait for processes places of
+// the table: the fixed words, and the completions of the wiring ring of
+// each process, with its flag. Each ring fits.
+wiring_wait_words :: proc "contextless" (processes: int) -> int {
+	return WIRING_WAIT_FIXED_WORDS + 2 * processes
+}
+// The pages of the wait room that the stated budget holds: the page that
+// names the others, and one for each op.WAIT_ROOM_WORDS_OF_A_PAGE words
+// past the words that the kernel holds with no room, for 128 processes. A
+// machine of more processes pays the rest from the budget of the service.
+WIRING_WAIT_STATED_WORDS :: WIRING_WAIT_FIXED_WORDS + 2 * 128
+WIRING_WAIT_ROOM_PAGES_STATED :: 1 + (WIRING_WAIT_STATED_WORDS - op.WORD_WAIT_INLINE + op.WAIT_ROOM_WORDS_OF_A_PAGE - 1) / op.WAIT_ROOM_WORDS_OF_A_PAGE
 // The places of the wait of the main loop: more than a wait on the stack
-// holds. The set is made at the start of entry.
-wiring_wait_words: [WIRING_WAIT_WORDS]op.Word
-wiring_wait_parts: [WIRING_WAIT_WORDS]system.Wait_Part
-wiring_wait_set: system.Wait_Set
+// holds. They grow with the table of the processes (processes_grow).
+wiring_wait: system.Growing_Wait_Set
 
 // Kernel handles associated with one registered Process_Entry in `state`.
 Process_Handles :: struct {
@@ -1176,11 +1179,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region = ([^]u8)(reg_addr)[:ws.SERVICE_REGION_SIZE]
 
 	wiring_core.state_init(&state, wiring_tables_reserve()) // wiring_tables.odin
-	wiring_wait_set = system.wait_set_of(wiring_wait_words[:], wiring_wait_parts[:])
 	system.log_fact(.Info, Ready{image_bytes = image_size})
 
 	for {
-		wait := system.wait_begin(&wiring_wait_set)
+		wait := system.wait_begin(&wiring_wait.set)
 		// Serve core commands (Register_Process, Commit_Start_Wiring) before
 		// stops_drain so a short-lived child that exits immediately after start
 		// commits its wiring batch before its stop notice unregisters it.
@@ -1194,9 +1196,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 		system.wait_records(&wait, &stops_ring.commands)
 		system.wait_records(&wait, &core_ring.commands)
-		waited_rings := 0
 		for proc_idx in 0 ..< len(state.processes) {
-			if waited_rings >= WIRING_WAITED_RINGS_MOST {
+			// Each ring fits a set that the budget paid. A set that the
+			// budget did not pay keeps its places, and the rings past them
+			// are not waited on: wait_set_room wrote why on the log.
+			if system.wait_room_left(&wait) < 2 {
 				break
 			}
 			ph := &process_handles[proc_idx]

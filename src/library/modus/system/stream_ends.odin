@@ -24,21 +24,15 @@ import "modus:contract/ring"
 // The ends of a process have no count: the table grows in an arena that
 // its budget pays, one place for each end that the wiring service gives
 // (stream_ends_grow; src/md/features/module_outputs.md, "The bounds of the
-// wirings"). A reader of more rings than one wait holds reads the others
-// again at this period.
-READ_POLL_MILLISECONDS :: u64(10)
+// wirings").
 
-// The wakes of a read at its poll period: a measure of the poll that the
-// wait room of the kernel removes (stream_read_poll_wakes).
-@(private = "package")
-read_poll_wakes: u64
-
-// stream_read_poll_wakes gives the wakes of the reads of this process at
-// their poll period, past the rings that one wait holds: 0 while each read
-// waits on each of its rings.
-stream_read_poll_wakes :: proc "contextless" () -> u64 {
-	return intrinsics.atomic_load(&read_poll_wakes)
-}
+// The places of the wait of a read: they grow with the table of the ends,
+// so a read waits on each of its rings (output.reader_wait_words). One set
+// serves each thread that reads: the calls of this file run in one thread
+// at a time, and wait_begin asks the kernel for the room of the thread
+// that waits.
+@(private = "file")
+reader_wait: Growing_Wait_Set
 
 // One end that the process holds. Free when command is None.
 @(private = "package")
@@ -197,6 +191,9 @@ stream_ends_grow :: proc "contextless" () -> bool {
 	table.count += 1
 	stream_ends = ([^]Stream_End)(table.ends.base)[:table.count]
 	closed_tags = ([^]u32)(table.tags.base)[:table.count]
+	// A set that the budget does not pay keeps its places: the rings past
+	// them are not waited on, and wait_set_room has written why.
+	_ = wait_set_grow(&reader_wait, output.reader_wait_words(table.count))
 	return true
 }
 
@@ -1744,20 +1741,17 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 		if !found {
 			return {}, .No_Writer
 		}
-		// One wait holds output.READER_RINGS_WAITED_MOST rings: a reader of
-		// more waits on those and reads each ring again at its poll period.
-		waiting := wait_begin()
-		rings_waited := 0
-		unwaited := false
+		// The set holds the words of each ring of the table and the words
+		// beside them; a ring past a room that the budget did not pay is
+		// left out, so the words beside the rings always fit.
+		waiting := wait_begin(&reader_wait.set)
 		for &end in stream_ends {
 			if end.command != command || !end.opened || (command == .Reader_End && (end.index != index || (tag != 0 && end.tag != tag))) || (command == .Asker_End && end.tag != tag) {
 				continue
 			}
-			if rings_waited >= output.READER_RINGS_WAITED_MOST {
-				unwaited = true
-				continue
+			if wait_room_left(&waiting) < output.READER_WAIT_WORDS_OF_A_RING + output.READER_WAIT_WORDS_BESIDE_RINGS {
+				break
 			}
-			rings_waited += 1
 			// The write that stream_end_read loaded when it found the ring
 			// empty: a record that the writer pushed after that load ends
 			// the wait at once.
@@ -1772,16 +1766,8 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 			wait_word(&waiting, wake_word, wake_value)
 		}
 		closed_words_wait(&waiting)
-		wait_until := deadline
-		if unwaited {
-			wait_until = min(deadline, time() + READ_POLL_MILLISECONDS)
-		}
-		woke := wait_end(&waiting, wait_until)
-		if woke >= deadline {
+		if wait_end(&waiting, deadline) >= deadline {
 			return {}, .No_Record
-		}
-		if unwaited && woke >= wait_until {
-			intrinsics.atomic_add(&read_poll_wakes, 1)
 		}
 	}
 }

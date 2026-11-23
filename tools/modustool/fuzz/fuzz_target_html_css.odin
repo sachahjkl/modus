@@ -18,7 +18,28 @@ FUZZ_HTML_CSS_INPUT_LIMIT :: 16 << 10
 fuzz_html_css_widths := [?]i32{0, 1, 640, max(i32)}
 
 FUZZ_HTML_CSS_RECORD_CAPACITY :: 1024
-FUZZ_HTML_CSS_TEXT_CAPACITY :: html_css.MAX_TEXT_POOL
+FUZZ_HTML_CSS_TEXT_CAPACITY :: 65536
+// The memory of each tree, style sheet and layout: the package takes the
+// memory of its caller and has no fixed count, so the fuzzer gives memory
+// that cannot grow, and the seeds pass each of these bounds.
+FUZZ_HTML_CSS_NODES :: 2048
+FUZZ_HTML_CSS_ATTRIBUTES :: 2048
+FUZZ_HTML_CSS_RULES :: 256
+FUZZ_HTML_CSS_NAME_BYTES :: 8192
+
+// The memory of one tree, one style sheet and one layout.
+@(private = "file")
+Fuzz_Html_Css_Memory :: struct {
+	nodes:       [FUZZ_HTML_CSS_NODES]html_css.Dom_Node,
+	attributes:  [FUZZ_HTML_CSS_ATTRIBUTES]html_css.Dom_Attr,
+	text:        [FUZZ_HTML_CSS_TEXT_CAPACITY]u8,
+	order:       [2 * FUZZ_HTML_CSS_NODES + 2]u32,
+	rules:       [FUZZ_HTML_CSS_RULES]html_css.Css_Rule,
+	names:       [FUZZ_HTML_CSS_NAME_BYTES]u8,
+	styles:      [FUZZ_HTML_CSS_NODES]html_css.Computed_Style,
+	boxes:       [FUZZ_HTML_CSS_NODES]html_css.Layout_Box,
+	matched:     [FUZZ_HTML_CSS_RULES]html_css.Matched_Rule,
+}
 
 // The records of the package are large (a tree, a style sheet, a layout):
 // in the memory of the process, not on the stack of each execution.
@@ -30,8 +51,40 @@ fuzz_html_css_state: struct {
 	sheet_again:  html_css.Css_Stylesheet,
 	layout:       html_css.Layout_Tree,
 	layout_again: html_css.Layout_Tree,
+	memory:       Fuzz_Html_Css_Memory,
+	memory_again: Fuzz_Html_Css_Memory,
 	records:      [FUZZ_HTML_CSS_RECORD_CAPACITY]draw_record.Draw_Record,
 	text:         [FUZZ_HTML_CSS_TEXT_CAPACITY]u8,
+}
+
+// fuzz_html_css_bind gives a tree, a style sheet and a layout their memory,
+// once: parse_html keeps the memory of a tree and clears the rest.
+@(private = "file")
+fuzz_html_css_bind :: proc(tree: ^html_css.Dom_Tree, sheet: ^html_css.Css_Stylesheet, layout: ^html_css.Layout_Tree, memory: ^Fuzz_Html_Css_Memory) {
+	if tree.nodes == nil {
+		tree^ = {nodes = memory.nodes[:], attrs = memory.attributes[:], text_pool = memory.text[:], order = memory.order[:]}
+	}
+	sheet^ = {rules = memory.rules[:], names = memory.names[:]}
+	if layout.boxes == nil {
+		layout^ = {node_styles = memory.styles[:], boxes = memory.boxes[:], matched = memory.matched[:]}
+	}
+}
+
+// The trees, the style sheets and the layouts hold slices of their own
+// memory: two are equal when the entries in use are equal.
+@(private = "file")
+fuzz_trees_equal :: proc(left, right: ^html_css.Dom_Tree) -> bool {
+	return left.origin == right.origin && left.node_count == right.node_count && left.attr_count == right.attr_count && left.text_len == right.text_len && left.max_depth_reached == right.max_depth_reached && left.truncated == right.truncated && slice.equal(left.nodes[:left.node_count], right.nodes[:right.node_count]) && slice.equal(left.attrs[:left.attr_count], right.attrs[:right.attr_count]) && slice.equal(left.text_pool[:left.text_len], right.text_pool[:right.text_len])
+}
+
+@(private = "file")
+fuzz_sheets_equal :: proc(left, right: ^html_css.Css_Stylesheet) -> bool {
+	return left.rule_count == right.rule_count && left.name_count == right.name_count && slice.equal(left.rules[:left.rule_count], right.rules[:right.rule_count]) && slice.equal(left.names[:left.name_count], right.names[:right.name_count])
+}
+
+@(private = "file")
+fuzz_layouts_equal :: proc(left, right: ^html_css.Layout_Tree) -> bool {
+	return left.box_count == right.box_count && left.root_box == right.root_box && left.truncated == right.truncated && slice.equal(left.boxes[:left.box_count], right.boxes[:right.box_count])
 }
 
 // fuzz_html_css_execute: the tree, the style sheet, each layout and its
@@ -44,6 +97,8 @@ fuzz_html_css_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	copy(origin.host[:], "fuzz.example")
 	origin.host_len = len("fuzz.example")
 
+	fuzz_html_css_bind(&state.tree, &state.sheet, &state.layout, &state.memory)
+	fuzz_html_css_bind(&state.tree_again, &state.sheet_again, &state.layout_again, &state.memory_again)
 	html_css.parse_html(&state.tree, origin, input)
 	if problem := fuzz_dom_problem(&state.tree); problem != "" {
 		return fuzz_broken(.Contract, "the tree: %s", problem)
@@ -52,21 +107,19 @@ fuzz_html_css_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return fuzz_broken(.Contract, "the tree holds another origin than the one of its parse")
 	}
 	html_css.parse_html(&state.tree_again, origin, input)
-	if state.tree != state.tree_again {
+	if !fuzz_trees_equal(&state.tree, &state.tree_again) {
 		return fuzz_broken(.Contract, "two parses of the same bytes give two trees")
 	}
 
-	state.sheet = {}
 	html_css.parse_document_styles(&state.tree, &state.sheet)
 	if problem := fuzz_stylesheet_problem(&state.sheet); problem != "" {
 		return fuzz_broken(.Contract, "the style sheet: %s", problem)
 	}
-	state.sheet_again = {}
 	html_css.parse_document_styles(&state.tree, &state.sheet_again)
-	if state.sheet != state.sheet_again {
+	if !fuzz_sheets_equal(&state.sheet, &state.sheet_again) {
 		return fuzz_broken(.Contract, "two reads of the same style blocks give two style sheets")
 	}
-	if state.tree != state.tree_again {
+	if !fuzz_trees_equal(&state.tree, &state.tree_again) {
 		return fuzz_broken(.Contract, "the read of the style blocks changed the tree")
 	}
 
@@ -76,14 +129,14 @@ fuzz_html_css_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			return fuzz_broken(.Contract, "the layout at the width %d: %s", width, problem)
 		}
 		html_css.compute_layout(&state.tree, &state.sheet, width, 480, &state.layout_again)
-		if state.layout != state.layout_again {
+		if !fuzz_layouts_equal(&state.layout, &state.layout_again) {
 			return fuzz_broken(.Contract, "two layouts at the width %d give two box trees", width)
 		}
 		if problem := fuzz_paint_problem(&state.tree, &state.layout); problem != "" {
 			return fuzz_broken(.Contract, "the paint at the width %d: %s", width, problem)
 		}
 	}
-	if state.tree != state.tree_again {
+	if !fuzz_trees_equal(&state.tree, &state.tree_again) {
 		return fuzz_broken(.Contract, "the layout changed the tree")
 	}
 	if !slice.equal(input, before) {
@@ -98,17 +151,17 @@ fuzz_html_css_execute :: proc(input: []u8) -> Fuzz_Verdict {
 @(private = "file")
 fuzz_dom_problem :: proc(tree: ^html_css.Dom_Tree) -> string {
 	node_count := int(tree.node_count)
-	if node_count < 1 || node_count > html_css.MAX_DOM_NODES {
-		return fuzz_text("%d nodes, out of 1 to %d", node_count, html_css.MAX_DOM_NODES)
+	if node_count < 1 || node_count > len(tree.nodes) {
+		return fuzz_text("%d nodes, out of 1 to %d", node_count, len(tree.nodes))
 	}
-	if int(tree.attr_count) > html_css.MAX_ATTRS || int(tree.text_len) > html_css.MAX_TEXT_POOL {
+	if int(tree.attr_count) > len(tree.attrs) || int(tree.text_len) > len(tree.text_pool) {
 		return fuzz_text("%d attributes and %d bytes of text, past the capacities", tree.attr_count, tree.text_len)
 	}
 	root := tree.nodes[0]
 	if root.kind != .Document || root.parent != html_css.NO_NODE || root.depth != 0 {
 		return fuzz_text("the first node is %v at the depth %d with the parent %d", root.kind, root.depth, root.parent)
 	}
-	deepest: u16 = 0
+	deepest: u32 = 0
 	attributes_named := 0
 	for index in 0 ..< node_count {
 		node := &tree.nodes[index]
@@ -182,7 +235,7 @@ fuzz_dom_problem :: proc(tree: ^html_css.Dom_Tree) -> string {
 			if int(child) >= node_count || int(child) <= index {
 				return fuzz_text("the node %d has the child %d", index, child)
 			}
-			if tree.nodes[child].parent != u16(index) {
+			if tree.nodes[child].parent != u32(index) {
 				return fuzz_text("the child %d of the node %d names the parent %d", child, index, tree.nodes[child].parent)
 			}
 			children_met += 1
@@ -207,8 +260,8 @@ fuzz_dom_problem :: proc(tree: ^html_css.Dom_Tree) -> string {
 // property takes.
 @(private = "file")
 fuzz_stylesheet_problem :: proc(sheet: ^html_css.Css_Stylesheet) -> string {
-	if int(sheet.rule_count) > html_css.MAX_CSS_RULES {
-		return fuzz_text("%d rules, past %d", sheet.rule_count, html_css.MAX_CSS_RULES)
+	if int(sheet.rule_count) > len(sheet.rules) {
+		return fuzz_text("%d rules, past %d", sheet.rule_count, len(sheet.rules))
 	}
 	for index in 0 ..< int(sheet.rule_count) {
 		rule := &sheet.rules[index]
@@ -238,8 +291,8 @@ fuzz_selector_problem :: proc(sheet: ^html_css.Css_Stylesheet, selector: ^html_c
 	if !selector.valid || selector.compound_count < 1 || int(selector.compound_count) > html_css.MAX_COMPOUNDS_PER_SELECTOR {
 		return fuzz_text("a selector that is not valid, of %d compounds", selector.compound_count)
 	}
-	if int(sheet.name_count) > html_css.CSS_NAME_POOL_CAPACITY {
-		return fuzz_text("%d bytes of names, past %d", sheet.name_count, html_css.CSS_NAME_POOL_CAPACITY)
+	if int(sheet.name_count) > len(sheet.names) {
+		return fuzz_text("%d bytes of names, past %d", sheet.name_count, len(sheet.names))
 	}
 	name_fits :: proc(sheet: ^html_css.Css_Stylesheet, name: html_css.Css_Name) -> bool {
 		return name.count >= 1 && int(name.count) <= html_css.MAX_SELECTOR_NAME_LEN && int(name.offset) + int(name.count) <= int(sheet.name_count)
@@ -311,7 +364,7 @@ fuzz_declarations_problem :: proc(declared: ^html_css.Css_Declarations) -> strin
 @(private = "file")
 fuzz_layout_problem :: proc(tree: ^html_css.Dom_Tree, layout: ^html_css.Layout_Tree) -> string {
 	box_count := int(layout.box_count)
-	if box_count > html_css.MAX_DOM_NODES || box_count > int(tree.node_count) {
+	if box_count > len(layout.boxes) || box_count > int(tree.node_count) {
 		return fuzz_text("%d boxes for %d nodes", box_count, tree.node_count)
 	}
 	if (box_count == 0) != (layout.root_box == html_css.NO_NODE) || box_count > 0 && layout.root_box != 0 {
@@ -351,7 +404,7 @@ fuzz_layout_problem :: proc(tree: ^html_css.Dom_Tree, layout: ^html_css.Layout_T
 		ancestor := node.parent
 		parent_node := layout.boxes[box.parent_box].node_index
 		steps := 0
-		for ancestor != html_css.NO_NODE && ancestor != parent_node && steps < html_css.MAX_DOM_NODES {
+		for ancestor != html_css.NO_NODE && ancestor != parent_node && steps < len(tree.nodes) {
 			ancestor = tree.nodes[ancestor].parent
 			steps += 1
 		}
@@ -368,7 +421,7 @@ fuzz_layout_problem :: proc(tree: ^html_css.Dom_Tree, layout: ^html_css.Layout_T
 			if int(child) >= box_count || int(child) <= index {
 				return fuzz_text("the box %d has the child %d", index, child)
 			}
-			if layout.boxes[child].parent_box != u16(index) {
+			if layout.boxes[child].parent_box != u32(index) {
 				return fuzz_text("the child %d of the box %d names the parent %d", child, index, layout.boxes[child].parent_box)
 			}
 			children_met += 1
@@ -450,13 +503,13 @@ fuzz_html_css_seeds :: proc(seeds: ^[dynamic][]u8) {
 	append(&deep, "<style>div{display:block}</style><script>x</script>deep")
 	append(seeds, slice.clone(deep[:]))
 	many := make([dynamic]u8, context.temp_allocator)
-	for _ in 0 ..< html_css.MAX_DOM_NODES + 8 {
+	for _ in 0 ..< FUZZ_HTML_CSS_NODES + 8 {
 		append(&many, "<b>x</b>")
 	}
 	append(seeds, slice.clone(many[:]))
 	attributes := make([dynamic]u8, context.temp_allocator)
 	append(&attributes, "<p")
-	for _ in 0 ..< html_css.MAX_ATTRS + 8 {
+	for _ in 0 ..< html_css.TOKEN_ATTRIBUTE_CAPACITY + 8 {
 		append(&attributes, " a=b")
 	}
 	append(&attributes, ">attributes</p>")
@@ -469,7 +522,7 @@ fuzz_html_css_seeds :: proc(seeds: ^[dynamic][]u8) {
 	append(seeds, slice.clone(text[:]))
 	rules := make([dynamic]u8, context.temp_allocator)
 	append(&rules, "<style>")
-	for _ in 0 ..< html_css.MAX_CSS_RULES + 8 {
+	for _ in 0 ..< FUZZ_HTML_CSS_RULES + 8 {
 		append(&rules, "p,div,.a,#b,span,li,ul,ol,em{color:blue;margin:1px}")
 	}
 	append(&rules, "</style><p class=a id=b>r</p>")

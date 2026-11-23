@@ -65,7 +65,7 @@ TABLE_OBJECT_NAME :: "grant_table"
 // no smaller quota of the code refuses a program first. The two numbers
 // are one constant, so the grant of a read never differs from the limit on
 // the disk.
-STORE_BLOCKS_LIMIT :: store.DISK_BLOCKS_LIMIT
+STORE_BLOCKS_LIMIT :: store.STORE_GRANT_BLOCKS_MOST
 
 // The bytes of the name of a disk process: three values of a record of
 // the root ring, with a zero byte after it. The other four values of the

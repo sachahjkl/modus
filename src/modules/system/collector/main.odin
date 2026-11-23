@@ -611,7 +611,6 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 // wide-grant manager, then loops over commands and monotonic expiry checks.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	collector_wait_set = system.wait_set_of(collector_wait_words[:], collector_wait_parts[:])
 	export_service, export_ok := system.service_open(ctx)
 	has_delegated := false
 	if ctx.handles[wide_grants.SERVICE_RING_SLOT] != 0 {
@@ -674,7 +673,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		wait := system.wait_begin(&collector_wait_set)
+		wait := system.wait_begin(&collector_wait.set)
 		now_ms := system.time()
 		if expired := collector_core.manager_expire_grants(&manager_state, now_ms); expired > 0 {
 			if grant_act_router.state == .Wired {
@@ -718,10 +717,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		closed_deadline := store_open ? closed_spaces_pass(now_ms) : system.WAIT_FOREVER // spaces.odin
 		if manager_state.counters.active_grants > 0 || pending || not_waited || grant_ended_pending.grant_serial != 0 {
 			retry := min(now_ms + PENDING_RETRY_MILLISECONDS, closed_deadline)
-			woke := system.wait_end(&wait, retry)
-			if not_waited && woke >= retry {
-				poll_wakes_count() // sources.odin
-			}
+			system.wait_end(&wait, retry)
 		} else if closed_deadline != system.WAIT_FOREVER {
 			system.wait_end(&wait, closed_deadline)
 		} else {

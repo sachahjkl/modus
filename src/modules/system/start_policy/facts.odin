@@ -13,8 +13,7 @@ import "modus:contract/value_kinds"
 // "a row has a mark that is neither needed nor not needed", has 54 bytes,
 // and a zero byte.
 LIST_PROBLEM_FIELD_BYTES :: 56
-// The bytes of the Text field of a part of the machine: the longest,
-// "disk of the measures", has 20 bytes.
+// The Text field of a part: the longest, "disk of the measures", has 20 bytes.
 PART_FIELD_BYTES :: 24
 
 // The start list is refused, at one of its rows.
@@ -107,16 +106,14 @@ Completion_Tag_Refused :: struct {
 	tag: u64,
 }
 
-// A completion of the root service that this process cannot read: an
-// outcome word that names no outcome, or a failure with no record. The
-// word keeps its number, as the line wrote it.
+// A completion of the root service that this process cannot read: its
+// outcome word names no outcome, or a failure has no record.
 @(log_fact = "start_policy: refused a completion of the root service that it cannot read: the outcome word {outcome_word}")
 Completion_Status_Refused :: struct {
 	outcome_word: u64,
 }
 
-// The ring of the root service does not open. The status is written by the
-// name of its member.
+// The ring of the root service does not open.
 @(log_fact = "start_policy: the root ring does not open: status {status}")
 Root_Ring_Refused :: struct {
 	status: op.Status,
@@ -140,7 +137,7 @@ Machine_Usable_Refused :: struct {
 @(log_fact = "start_policy: each needed row runs: the machine is usable")
 Machine_Usable :: struct {}
 
-// The root service refused the start of a row.
+// The root service refused the start of a row, or the list page of its wirings.
 @(log_fact = "start_policy: cannot start {row_process}: outcome {outcome}")
 Row_Start_Refused :: struct {
 	outcome:     call_outcome.Call_Outcome,
@@ -154,19 +151,11 @@ Row_Reader_Not_Running :: struct {
 	row_process: value_kinds.Module_Name_Field,
 }
 
-// A writer row does not start: the list page, the lend of a reader row or
-// the list after the lends failed.
+// A writer row does not start: a lend or its wiring list failed.
 @(log_fact = "start_policy: {row_process} does not start: its wiring list gave the status {status}, at the reader row {reader_row}; the row 0 is the list page or the list")
 Row_Wiring_Refused :: struct {
 	reader_row:  u32,
 	status:      op.Status,
-	row_process: value_kinds.Module_Name_Field,
-}
-
-// A writer row does not start: the root service refused its list page.
-@(log_fact = "start_policy: {row_process} does not start: the root service refused its list page with the outcome {outcome}")
-Row_List_Page_Refused :: struct {
-	outcome:     call_outcome.Call_Outcome,
 	row_process: value_kinds.Module_Name_Field,
 }
 

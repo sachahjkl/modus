@@ -1,7 +1,6 @@
 package output
 
 import "modus:contract/module"
-import op "modus:contract/operation"
 
 // The rules of the generic record inputs and outputs
 // (src/md/features/module_outputs.md, "The decisions of the generic record
@@ -94,15 +93,9 @@ generic_writer_step_of :: proc "contextless" (record: u32, pairing: module.Recor
 READER_WAIT_WORDS_BESIDE_RINGS :: 6
 READER_WAIT_WORDS_OF_A_RING :: 3
 
-// The rings that one wait of a reader holds, with the words beside them in
-// op.WORD_WAIT_CAPACITY: a list that overflows ends its wait at once, so a
-// reader of more rings waits on these and reads the others again at its
-// poll period (src/md/features/module_outputs.md, "The bounds of the
-// wirings").
-READER_RINGS_WAITED_MOST :: (op.WORD_WAIT_CAPACITY - READER_WAIT_WORDS_BESIDE_RINGS) / READER_WAIT_WORDS_OF_A_RING
-
 // reader_wait_words gives the words of one wait of a reader of rings
-// rings.
+// rings: the library sizes the places of the wait of a read with it, as
+// the table of the ends grows.
 reader_wait_words :: proc "contextless" (rings: int) -> int {
 	return READER_WAIT_WORDS_BESIDE_RINGS + READER_WAIT_WORDS_OF_A_RING * rings
 }

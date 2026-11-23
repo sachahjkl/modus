@@ -136,7 +136,7 @@ input_closure_take :: proc "contextless" (walk: ^Input_Closure, inputs: []pr.Rec
 				if refusal := closure_take_once(walk, entry.hash, take_object, data); refusal != .None {
 					return refusal
 				}
-			case .Tree:
+			case .Tree, .Part: // A part is a node of the same tree, walked as a tree.
 				if refusal := closure_tree_add(walk, entry.hash, next.depth + 1); refusal != .None {
 					return refusal
 				}

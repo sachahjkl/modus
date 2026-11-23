@@ -589,8 +589,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 		request_serial = proc(user_data: rawptr) -> (serial: i64, problem: string, grant_ended: bool) {
 			w := (^Memory_Window)(user_data)
 			err: errors.Error_Record
-			r := conversation.request_serial(w.talk, w.acts_for_principal, &err)
-			if r < 0 {
+			outcome, r := conversation.request_serial(w.talk, w.acts_for_principal, &err)
+			if outcome != .Succeeded {
 				return 0, "request_serial refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return r, "", false
@@ -599,8 +599,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 			w := (^Memory_Window)(user_data)
 			buf := make([]u8, assistant_contract.REQUEST_TEXT_BYTES, context.temp_allocator)
 			err: errors.Error_Record
-			r, _ := conversation.request_text(w.talk, w.acts_for_principal, serial, buf, &err)
-			if r < 0 {
+			outcome, r, _ := conversation.request_text(w.talk, w.acts_for_principal, serial, buf, &err)
+			if outcome != .Succeeded {
 				return "", "request_text refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return string(buf[:r]), "", false
@@ -608,8 +608,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 		stop_requested = proc(user_data: rawptr, serial: i64) -> (stopped: bool, problem: string, grant_ended: bool) {
 			w := (^Memory_Window)(user_data)
 			err: errors.Error_Record
-			r := conversation.stop_requested(w.talk, w.acts_for_principal, serial, &err)
-			if r < 0 {
+			outcome, r := conversation.stop_requested(w.talk, w.acts_for_principal, serial, &err)
+			if outcome != .Succeeded {
 				return false, "stop_requested refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return r != 0, "", false
@@ -617,8 +617,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 		reply = proc(user_data: rawptr, serial: i64, text: string, acts: int) -> (problem: string, grant_ended: bool) {
 			w := (^Memory_Window)(user_data)
 			err: errors.Error_Record
-			r, _ := conversation.reply(w.talk, w.acts_for_principal, serial, text, i64(acts), &err)
-			if r < 0 {
+			outcome, _, _ := conversation.reply(w.talk, w.acts_for_principal, serial, text, i64(acts), &err)
+			if outcome != .Succeeded {
 				return "reply refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return "", false
@@ -626,8 +626,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 		reply_refused = proc(user_data: rawptr, serial: i64, record: errors.Error_Record) -> (problem: string, grant_ended: bool) {
 			w := (^Memory_Window)(user_data)
 			err: errors.Error_Record
-			r, _ := conversation.reply_refused(w.talk, w.acts_for_principal, serial, record.kind, record.unit, record.argument, record.value, record.limit, &err)
-			if r < 0 {
+			outcome, _, _ := conversation.reply_refused(w.talk, w.acts_for_principal, serial, record.kind, record.unit, record.argument, record.value, record.limit, &err)
+			if outcome != .Succeeded {
 				return "reply_refused refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return "", false
@@ -635,8 +635,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 		act = proc(user_data: rawptr, serial: i64, kind: assistant_contract.Act_Kind, line, service, export: string) -> (number: i64, problem: string, grant_ended: bool) {
 			w := (^Memory_Window)(user_data)
 			err: errors.Error_Record
-			r, _ := conversation.act(w.talk, w.acts_for_principal, serial, i64(kind), line, service, export, &err)
-			if r < 0 {
+			outcome, r, _ := conversation.act(w.talk, w.acts_for_principal, serial, i64(kind), line, service, export, &err)
+			if outcome != .Succeeded {
 				return 0, "act refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return r, "", false
@@ -644,8 +644,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 		act_result = proc(user_data: rawptr, number: i64, state: assistant_contract.Act_State, text: string) -> (problem: string, grant_ended: bool) {
 			w := (^Memory_Window)(user_data)
 			err: errors.Error_Record
-			r, _ := conversation.act_result(w.talk, w.acts_for_principal, number, i64(state), text, &err)
-			if r < 0 {
+			outcome, _, _ := conversation.act_result(w.talk, w.acts_for_principal, number, i64(state), text, &err)
+			if outcome != .Succeeded {
 				return "act_result refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return "", false
@@ -664,8 +664,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 				cells[i].integer = table.integers[i]
 			}
 			err: errors.Error_Record
-			r, _ := conversation.act_table(w.talk, w.acts_for_principal, number, i64(table.shape), table.name, table.total_rows, cols, cells, &err)
-			if r < 0 {
+			outcome, _, _ := conversation.act_table(w.talk, w.acts_for_principal, number, i64(table.shape), table.name, table.total_rows, cols, cells, &err)
+			if outcome != .Succeeded {
 				return "act_table refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return "", false
@@ -673,8 +673,8 @@ memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
 		loop_end = proc(user_data: rawptr, serial: i64, cause: Agent_Loop_End) -> (problem: string, grant_ended: bool) {
 			w := (^Memory_Window)(user_data)
 			err: errors.Error_Record
-			r, _ := conversation.loop_end(w.talk, w.acts_for_principal, serial, i64(cause), &err)
-			if r < 0 {
+			outcome, _, _ := conversation.loop_end(w.talk, w.acts_for_principal, serial, i64(cause), &err)
+			if outcome != .Succeeded {
 				return "loop_end refused", err.kind == i64(errors.Kind.No_Grant)
 			}
 			return "", false
@@ -693,7 +693,7 @@ Loop_Transport :: struct {
 }
 
 @(private = "file")
-loop_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: agent_bridge.Lex_Eval_Result, err: string, ok: bool) {
+loop_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: agent_bridge.Lex_Eval_Result, outcome: call_outcome.Call_Outcome, err: string) {
 	state := (^Loop_Transport)(user_data)
 	append(&state.lines, strings.clone(line, allocator))
 	if state.after_act != nil {
@@ -714,7 +714,7 @@ loop_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator)
 		rows[0] = r0
 		row_ints := make([][]i64, 1, allocator)
 		row_ints[0] = i0
-		return {value_kind = .Table, record_name = "Module", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, "", true
+		return {value_kind = .Table, record_name = "Module", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, .Succeeded, ""
 	case strings.has_prefix(line, "manual.exports("):
 		cols := make([]string, 1, allocator)
 		cols[0] = "name"
@@ -728,12 +728,12 @@ loop_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator)
 		rows[0] = r0
 		row_ints := make([][]i64, 1, allocator)
 		row_ints[0] = i0
-		return {value_kind = .Table, record_name = "Export", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, "", true
+		return {value_kind = .Table, record_name = "Export", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, .Succeeded, ""
 	case strings.has_prefix(line, "manual.signature("):
 		if state.vary {
-			return {value_kind = .Text, text_value = fmt.aprintf("processes() -> Table, call %d", len(state.lines), allocator = allocator)}, "", true
+			return {value_kind = .Text, text_value = fmt.aprintf("processes() -> Table, call %d", len(state.lines), allocator = allocator)}, .Succeeded, ""
 		}
-		return {value_kind = .Text, text_value = "processes() -> Table"}, "", true
+		return {value_kind = .Text, text_value = "processes() -> Table"}, .Succeeded, ""
 	case:
 		cols := make([]string, 2, allocator)
 		cols[0], cols[1] = "slot", "name"
@@ -748,7 +748,7 @@ loop_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator)
 		rows[0] = r0
 		row_ints := make([][]i64, 1, allocator)
 		row_ints[0] = i0
-		return {value_kind = .Table, record_name = "Process", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, "", true
+		return {value_kind = .Table, record_name = "Process", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, .Succeeded, ""
 	}
 }
 

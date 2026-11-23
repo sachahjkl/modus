@@ -81,7 +81,7 @@ guest_buffers_end :: proc "contextless" () {
 @(private = "file")
 guest_resolve :: proc "contextless" (input: ^pr.Recipe_Input, out_bytes: []u8, user_data: rawptr) -> (written: int, ok: bool) {
 	name := pr.blob_object_name(input.hash)
-	bytes, status := pr.private_store_read_large(&service_state.store, pr.private_object_name_text(&name), out_bytes)
+	bytes, status := pr.private_store_read(&service_state.store, pr.private_object_name_text(&name), out_bytes)
 	if status != .Ok {
 		system.log_fact(.Info, Guest_Object_Missing{hash = value_kinds.Hash_Field(input.hash), status = u64(status)})
 		return 0, false
@@ -156,7 +156,7 @@ guest_prepare :: proc "contextless" (spec: ^gb.Guest_Build_Spec, user_data: rawp
 	guest_workspace.output_disk = guest_buffers[.Output_Disk].bytes
 	read :: proc "contextless" (hash: blake3.Hash, into: []u8) -> (bytes: []u8, refusal: pr.Recipe_Refusal) {
 		name := pr.blob_object_name(hash)
-		found, status := pr.private_store_read_large(&service_state.store, pr.private_object_name_text(&name), into)
+		found, status := pr.private_store_read(&service_state.store, pr.private_object_name_text(&name), into)
 		switch status {
 		case .Ok:
 			return found, .None
@@ -191,7 +191,7 @@ guest_keep :: proc "contextless" (kind: object_cache.Cache_Object_Kind, hash: bl
 	if _, status := pr.private_store_size(&service_state.store, text); status == .Ok {
 		return true, false
 	}
-	return pr.private_store_write_large(&service_state.store, text, bytes) == .Ok, true
+	return pr.private_store_write(&service_state.store, text, bytes) == .Ok, true
 }
 
 @(private = "file")
@@ -346,7 +346,7 @@ stored_recipe_register :: proc "contextless" (recipe_hash: blake3.Hash) -> bool 
 		return true
 	}
 	name := pr.recipe_object_name(recipe_hash)
-	bytes, status := pr.private_store_read_large(&service_state.store, pr.private_object_name_text(&name), stored_recipe_bytes[:])
+	bytes, status := pr.private_store_read(&service_state.store, pr.private_object_name_text(&name), stored_recipe_bytes[:])
 	if status != .Ok {
 		return false
 	}

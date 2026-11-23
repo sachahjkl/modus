@@ -1477,7 +1477,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 #assert(ENDPOINT_CAPACITY <= frame.READ_REGION_CAPACITY) // The place of an endpoint is the place of its read region.
 // The wait of the loop holds the frame ring, the control ring and the
 // command queue of each endpoint, two words each.
-#assert(2 * (2 + ENDPOINT_CAPACITY) <= op.WORD_WAIT_CAPACITY)
+#assert(2 * (2 + ENDPOINT_CAPACITY) <= op.WORD_WAIT_MOST)
 // The local ports of the endpoints do not meet: the UDP ports, then the
 // blocks of TCP ports, under the largest port.
 #assert(PORT_FIRST + ENDPOINT_CAPACITY <= TCP_PORT_FIRST && TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK <= 65536)

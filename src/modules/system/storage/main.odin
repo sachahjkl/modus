@@ -38,6 +38,9 @@ import "modus:principals"
 import "modus:random"
 import "modus:system"
 
+// The pages of the tables of the blocks for a disk of 16 GiB (below).
+STATE_PAGES_OF_16_GIB :: 10704
+
 // Its fixed tables are data of its module, so the tool counts them with the
 // module: the changes of one commit (8 MB), the leaves of one version
 // index, the versions of one object for versions(), the nodes of the trees
@@ -54,8 +57,8 @@ import "modus:system"
 // (src/md/data/storage_capacity.md, "The open has two forms"). With them,
 // the regions of the connections and the rest of the pages that the
 // service had before the tool counted (1 829 pages).
-STATE_PAGES_OF_16_GIB :: 10704
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829 + STATE_PAGES_OF_16_GIB, processes = 1, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 12533, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == 1829 + STATE_PAGES_OF_16_GIB)
 
 // refuse writes the error record of a refusal and gives its call outcome:
 // the last result of a procedure of this service that gives the outcome of

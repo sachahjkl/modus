@@ -117,11 +117,10 @@ row_start :: proc "contextless" (index: int) -> bool {
 		}
 	}
 	if list_page == nil && wiring_rows.row_has_wirings(&list, index) {
-		// Only an answer Succeeded names the page: a refusal holds an error
-		// record.
+		// Only Succeeded names the page: a refusal holds an error record.
 		outcome, values := command_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
 		if outcome != .Succeeded {
-			system.log_fact(.Warning, Row_List_Page_Refused{outcome = outcome, row_process = row_process})
+			system.log_fact(.Warning, Row_Start_Refused{outcome = outcome, row_process = row_process})
 			return false
 		}
 		address, status := system.memory_map(system.Handle(values[0]))

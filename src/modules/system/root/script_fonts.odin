@@ -16,6 +16,7 @@ package root
 
 import "internal:root/role_policy"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/font_outlines"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -99,10 +100,11 @@ script_fonts_step :: proc "contextless" () {
 		system.log_fact(.Info, Script_Fonts_Without_Data_Disk{})
 		return
 	}
-	failure, status := disk_load_begin(nil, 0, font_outlines.SCRIPT_FONTS_OBJECT_NAME, script_fonts_named, 0, false, .Script_Fonts)
+	refusal: [7]u64
+	failure, outcome := disk_load_begin(nil, 0, font_outlines.SCRIPT_FONTS_OBJECT_NAME, script_fonts_named, 0, false, &refusal, .Script_Fonts)
 	if failure != .None {
 		script_fonts_stage = .Absent
-		system.log_fact(.Warning, Script_Fonts_Not_Read{status = status})
+		system.log_fact(.Warning, Script_Fonts_Not_Read{outcome = outcome})
 		return
 	}
 	script_fonts_stage = .Reading
@@ -143,12 +145,12 @@ script_fonts_not_on_disk :: proc "contextless" () {
 
 // script_fonts_load_ended takes the end of a load of the set that did not
 // map it: its cause has its own line before this one.
-script_fonts_load_ended :: proc "contextless" (status: system.Status) {
+script_fonts_load_ended :: proc "contextless" (outcome: call_outcome.Call_Outcome) {
 	if script_fonts_stage != .Reading {
 		return
 	}
 	script_fonts_stage = .Absent
-	system.log_fact(.Warning, Script_Fonts_Not_Read{status = status})
+	system.log_fact(.Warning, Script_Fonts_Not_Read{outcome = outcome})
 }
 
 // script_fonts_give adds the set, read-only, to the mappings of a process

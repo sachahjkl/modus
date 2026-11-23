@@ -7,7 +7,6 @@ package module_files
 // stays the one writer of the module files of the store.
 
 import "base:intrinsics"
-import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "internal:module_files/module_files_core"
 import "modus:contract/errors"
