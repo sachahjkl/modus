@@ -134,3 +134,19 @@ derive_key_domain_separation :: proc(t: ^testing.T) {
 	testing.expect(t, long_derived != short_derived)
 	testing.expect(t, long_derived != hash(input[:128]))
 }
+
+@(test)
+chaining_value_bytes_roundtrip_and_tree_root_match :: proc(t: ^testing.T) {
+	input := make([]u8, 8 * CHUNK_SIZE + 37)
+	defer delete(input)
+	for &b, i in input {
+		b = u8(i % 251)
+	}
+	left := subtree_chaining_value(input[:8 * CHUNK_SIZE], 0)
+	right := subtree_chaining_value(input[8 * CHUNK_SIZE:], 8)
+	left_bytes := chaining_value_bytes(left)
+	right_bytes := chaining_value_bytes(right)
+	testing.expect_value(t, chaining_value_of_bytes(left_bytes), left)
+	testing.expect_value(t, chaining_value_of_bytes(right_bytes), right)
+	testing.expect_value(t, root_of_children(chaining_value_of_bytes(left_bytes), chaining_value_of_bytes(right_bytes)), hash(input))
+}

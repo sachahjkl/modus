@@ -25,11 +25,15 @@ Recent_Realisation :: struct {
 // The counts of the store. A zero last_write means that the store holds no
 // entry and the server wrote none.
 Store_Counts :: struct {
-	objects:           u64,
-	object_bytes:      u64,
-	realisations:      u64,
-	realisation_bytes: u64,
-	last_write:        time.Time,
+	objects:              u64,
+	object_bytes:         u64,
+	largest_object_bytes: u64,
+	// The objects that left objects/ because their bytes do not hash to
+	// their name.
+	damaged_objects:      u64,
+	realisations:         u64,
+	realisation_bytes:    u64,
+	last_write:           time.Time,
 }
 
 // A release pointer that the host keeps, the hash of its record (the name
@@ -276,7 +280,24 @@ cache_status_record_object :: proc(status: ^Cache_Status, name: blake3.Hash, siz
 		status.counts.object_bytes += size
 		sorted_names_insert(&status.object_names, name)
 	}
+	if size > status.counts.largest_object_bytes {
+		status.counts.largest_object_bytes = size
+	}
 	status.counts.last_write = time_later(status.counts.last_write, written)
+}
+
+// cache_status_record_damaged counts one object that moved from objects/ to
+// damaged/. The largest size stays: it is the largest object that the store
+// held since the start, and the listing of the next start gives it again.
+cache_status_record_damaged :: proc(status: ^Cache_Status, size: u64, moved: time.Time) {
+	sync.mutex_lock(&status.lock)
+	defer sync.mutex_unlock(&status.lock)
+	if status.counts.objects > 0 {
+		status.counts.objects -= 1
+	}
+	status.counts.object_bytes -= min(size, status.counts.object_bytes)
+	status.counts.damaged_objects += 1
+	status.counts.last_write = time_later(status.counts.last_write, moved)
 }
 
 // cache_status_record_realisation counts one realisation that the server
@@ -333,7 +354,7 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 		delete(release_pointers)
 	}
 
-	for directory in ([2]Store_Directory{.Objects, .Realisations}) {
+	for directory in ([3]Store_Directory{.Objects, .Realisations, .Damaged}) {
 		path := strings.concatenate({server.root_directory, "/", store_directory_name(directory)}, context.temp_allocator)
 		folder, open_error := os.open(path)
 		if open_error != nil {
@@ -355,6 +376,9 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 				counts.objects += 1
 				counts.object_bytes += u64(entry.size)
 				append(&object_names, name)
+				if u64(entry.size) > counts.largest_object_bytes {
+					counts.largest_object_bytes = u64(entry.size)
+				}
 			case .Realisations:
 				counts.realisations += 1
 				counts.realisation_bytes += u64(entry.size)
@@ -374,7 +398,9 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 					newest[place].written = entry.modification_time
 					newest_count = min(newest_count + 1, RECENT_REALISATION_COUNT)
 				}
-			case .Temp, .Recipes, .Release_Pointers:
+			case .Damaged:
+				counts.damaged_objects += 1
+			case .Temp, .Outboards, .Recipes, .Release_Pointers:
 			}
 		}
 		// A listing cut short gives counts that are too low: the open is refused,

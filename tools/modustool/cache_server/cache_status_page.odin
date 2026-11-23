@@ -252,7 +252,7 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 	// The endpoint, the protocol and the use.
 	write(&b, "<section class=\"card accent-kernel\" aria-labelledby=\"endpoint\">\n<h2 id=\"endpoint\">Endpoint</h2>\n<dl class=\"symbol-facts\">\n<dt>Address</dt><dd><code>")
 	escape(&b, page.endpoint)
-	write(&b, "</code></dd>\n<dt>Protocol</dt><dd>The cache protocol as binary frames over TCP: a request starts with <code>MOCQ</code>, an answer with <code>MOCR</code> (<a href=\"")
+	write(&b, "</code></dd>\n<dt>Protocol</dt><dd>The cache protocol as binary frames over TCP: a request starts with <code>MOCQ</code>, an answer with <code>MOCR</code>. An object of any size travels in frames of 1 MiB, each checked against the BLAKE3 hash of the whole object (<a href=\"")
 	escape(&b, cache_page_site_link(site_address, site.site_page_file(site.SITE_GLOSSARY_FOLDER + "/" + CACHE_PAGE_GLOSSARY_GROUP), CACHE_PAGE_GLOSSARY_TERM))
 	write(&b, "\">object cache</a>)</dd>\n</dl>\n")
 	write(&b, "<p>A plan names this host in its substitution policy:</p>\n<pre><code>substitution = {\n  sources = [\"")
@@ -273,6 +273,14 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 	number(&b, snapshot.counts.realisations)
 	write(&b, "</dd>\n<dt>Stored</dt><dd>")
 	site.site_value(&b, .Size, cache_page_bytes_text(snapshot.counts.object_bytes + snapshot.counts.realisation_bytes), false)
+	write(&b, "</dd>\n<dt>Largest object</dt><dd>")
+	if snapshot.counts.objects > 0 {
+		site.site_value(&b, .Size, cache_page_bytes_text(snapshot.counts.largest_object_bytes), false)
+	} else {
+		write(&b, "none")
+	}
+	write(&b, "</dd>\n<dt>Damaged objects</dt><dd>")
+	number(&b, snapshot.counts.damaged_objects)
 	write(&b, "</dd>\n<dt>Free on the disk</dt><dd>")
 	if disk_free_known {
 		site.site_value(&b, .Size, cache_page_bytes_text(disk_free), false)
@@ -379,7 +387,7 @@ cache_status_json :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snap
 		}
 		json_hex(&b, key)
 	}
-	fmt.sbprintf(&b, "],\n  \"objects\": %d,\n  \"object_bytes\": %d,\n  \"realisations\": %d,\n  \"realisation_bytes\": %d,\n  \"disk_free_bytes\": ", snapshot.counts.objects, snapshot.counts.object_bytes, snapshot.counts.realisations, snapshot.counts.realisation_bytes)
+	fmt.sbprintf(&b, "],\n  \"objects\": %d,\n  \"object_bytes\": %d,\n  \"largest_object_bytes\": %d,\n  \"damaged_objects\": %d,\n  \"realisations\": %d,\n  \"realisation_bytes\": %d,\n  \"disk_free_bytes\": ", snapshot.counts.objects, snapshot.counts.object_bytes, snapshot.counts.largest_object_bytes, snapshot.counts.damaged_objects, snapshot.counts.realisations, snapshot.counts.realisation_bytes)
 	if disk_free_known {
 		fmt.sbprintf(&b, "%d", disk_free)
 	} else {

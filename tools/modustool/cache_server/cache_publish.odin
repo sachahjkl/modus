@@ -114,8 +114,8 @@ cache_image_files :: proc(image: []u8, allocator := context.temp_allocator) -> (
 			if !in_image {
 				return nil, fmt.tprintf("the entry %s points outside the image", name)
 			}
-			if len(bytes) > object_cache.MAX_OBJECT_PAYLOAD_BYTES {
-				return nil, fmt.tprintf("the file %s holds %d bytes, more than the %d of one object", name, len(bytes), object_cache.MAX_OBJECT_PAYLOAD_BYTES)
+			if u64(len(bytes)) > object_cache.MAX_OBJECT_BYTES {
+				return nil, fmt.tprintf("the file %s holds %d bytes, more than the %d of one object", name, len(bytes), object_cache.MAX_OBJECT_BYTES)
 			}
 			if blake3.hash(bytes) != entry.hash {
 				return nil, fmt.tprintf("the file %s does not have the hash that its entry states", name)
@@ -403,8 +403,7 @@ cache_verify_release :: proc(client: ^Cache_Client, trusted_signer: [object_cach
 		return 0, fmt.tprintf("the boot image was not checked: %s", image_problem)
 	}
 	for file in image_files {
-		payload, outcome := cache_client_get_object(client, .Blob, file.hash)
-		delete(payload)
+		_, outcome := cache_client_verify_object(client, .Blob, file.hash)
 		if outcome != .Done {
 			return files, fmt.tprintf("the file %s (%s) was not taken: %s", file.name, hash_text(file.hash), cache_client_outcome_text(outcome, client.server_status))
 		}
@@ -493,7 +492,7 @@ cache_connect_or_say :: proc(command, endpoint: string) -> (client: Cache_Client
 		return client, true
 	case .Bad_Request:
 		fmt.eprintfln("modustool: %s: %s is not host:port", command, endpoint)
-	case .Unreachable, .Damaged_Answer, .Not_Found, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed:
+	case .Unreachable, .Damaged_Answer, .Not_Found, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed, .Out_Of_Range, .Local_File_Fault, .Busy:
 		fmt.eprintfln("modustool: %s: no connection to %s", command, endpoint)
 	}
 	return {}, false
@@ -536,12 +535,7 @@ run_cache_put :: proc(args: []string) -> int {
 	defer cache_client_close(&client)
 	if form == "blob" {
 		for path in operands {
-			bytes, read_error := os.read_entire_file(path, context.temp_allocator)
-			if read_error != nil {
-				fmt.eprintfln("modustool: cache-put: %s was not read: %v", path, read_error)
-				return foundation.EXIT_FAILURE
-			}
-			object_hash, outcome := cache_client_put_object(&client, &signer, .Blob, bytes)
+			object_hash, _, outcome := cache_client_put_file(&client, &signer, path)
 			if outcome != .Done {
 				fmt.eprintfln("modustool: cache-put: %s was not put on %s: %s", path, endpoint, cache_client_outcome_text(outcome, client.server_status))
 				return foundation.EXIT_FAILURE
@@ -644,19 +638,21 @@ run_cache_get :: proc(args: []string) -> int {
 	defer cache_client_close(&client)
 	switch form {
 	case "blob":
-		bytes, outcome := cache_client_get_object(&client, .Blob, asked_hash, context.allocator)
-		if outcome != .Done {
-			fmt.eprintfln("modustool: cache-get: the blob %s was not taken from %s: %s", operands[0], endpoint, cache_client_outcome_text(outcome, client.server_status))
-			return foundation.EXIT_FAILURE
-		}
-		defer delete(bytes)
 		if len(operands) == 2 {
-			if write_error := os.write_entire_file(operands[1], bytes); write_error != nil {
-				fmt.eprintfln("modustool: cache-get: %s was not written: %v", operands[1], write_error)
+			object_size, _, outcome := cache_client_get_file(&client, asked_hash, operands[1])
+			if outcome != .Done {
+				fmt.eprintfln("modustool: cache-get: the blob %s was not taken from %s: %s", operands[0], endpoint, cache_client_outcome_text(outcome, client.server_status))
 				return foundation.EXIT_FAILURE
 			}
+			fmt.printfln("modustool: cache-get: the blob %s, %d bytes, has its hash", operands[0], object_size)
+		} else {
+			object_size, outcome := cache_client_verify_object(&client, .Blob, asked_hash)
+			if outcome != .Done {
+				fmt.eprintfln("modustool: cache-get: the blob %s was not taken from %s: %s", operands[0], endpoint, cache_client_outcome_text(outcome, client.server_status))
+				return foundation.EXIT_FAILURE
+			}
+			fmt.printfln("modustool: cache-get: the blob %s, %d bytes, has its hash", operands[0], object_size)
 		}
-		fmt.printfln("modustool: cache-get: the blob %s, %d bytes, has its hash", operands[0], len(bytes))
 	case "realisation":
 		record, outcome := cache_client_get_realisation(&client, asked_hash, trusted_signer)
 		if outcome != .Done {

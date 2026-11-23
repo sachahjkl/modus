@@ -11,9 +11,9 @@ package object_cache
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 
-// The largest body of one blob that the page gives: the bound of one blob
-// of the cache protocol, so an object of the cache fits either path.
-BROWSER_CACHE_OBJECT_LIMIT :: MAX_OBJECT_PAYLOAD_BYTES
+// The largest body of one blob that a single fetch() of the page holds whole
+// in memory (16 MiB). Larger blobs need ranged fetches with proofs.
+BROWSER_CACHE_OBJECT_LIMIT :: 16 * 1024 * 1024
 
 // The parts of a path: a prefix of the kind, then the hash in 64 lowercase
 // hexadecimal digits.

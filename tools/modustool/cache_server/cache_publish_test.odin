@@ -217,10 +217,12 @@ a_cut_or_damaged_answer_is_refused_by_the_client :: proc(t: ^testing.T) {
 	bad_magic[0] = 'X'
 	testing.expect_value(t, fake_get_object(t, bad_magic[:], asked), Cache_Client_Outcome.Damaged_Answer)
 
-	// A version that is not 1.
-	bad_version := answer_head(u8(object_cache.Cache_Request_Kind.Get_Object), u8(object_cache.Cache_Response_Status.Not_Found), 0)
-	bad_version[4] = 2
-	testing.expect_value(t, fake_get_object(t, bad_version[:], asked), Cache_Client_Outcome.Damaged_Answer)
+	// A version that is not WIRE_VERSION (including stale v1).
+	for bad_ver in ([3]u8{0, 1, 3}) {
+		bad_version := answer_head(u8(object_cache.Cache_Request_Kind.Get_Object), u8(object_cache.Cache_Response_Status.Not_Found), 0)
+		bad_version[4] = bad_ver
+		testing.expect_value(t, fake_get_object(t, bad_version[:], asked), Cache_Client_Outcome.Damaged_Answer)
+	}
 
 	// A kind and a status that name no member: 0, one past the last, the
 	// largest byte.
@@ -240,11 +242,13 @@ a_cut_or_damaged_answer_is_refused_by_the_client :: proc(t: ^testing.T) {
 		testing.expect_value(t, fake_get_object(t, oversize[:], asked), Cache_Client_Outcome.Damaged_Answer)
 	}
 
-	// A body cut short: the head says 8 + 19 bytes, 3 come.
+	// A body cut short: the head says 24 + 19 bytes, 3 come.
 	whole := object_cache.Cache_Response {
 		request_kind = .Get_Object,
 		status       = .Ok,
 		object_kind  = .Blob,
+		object_size  = u64(len(payload)),
+		offset       = 0,
 		payload      = payload,
 	}
 	whole_frame := encoded_answer(t, &whole)
@@ -270,6 +274,8 @@ a_cut_or_damaged_answer_is_refused_by_the_client :: proc(t: ^testing.T) {
 		request_kind = .Get_Object,
 		status       = .Ok,
 		object_kind  = .Tree,
+		object_size  = u64(len(tree_bytes)),
+		offset       = 0,
 		payload      = tree_bytes,
 	}
 	testing.expect_value(t, fake_get_object(t, encoded_answer(t, &as_tree), tree_digest), Cache_Client_Outcome.Damaged_Answer)
@@ -359,8 +365,14 @@ a_damaged_answer_to_has_or_to_a_put_is_refused :: proc(t: ^testing.T) {
 	append(&has_frame, ..has_ok[:])
 	append(&has_frame, 1, 0, 0, 0, 0, 0, 0, 0)
 	testing.expect_value(t, fake_has(t, has_frame[:]), Cache_Client_Outcome.Done)
-	put_ok := answer_head(u8(object_cache.Cache_Request_Kind.Put_Object), u8(object_cache.Cache_Response_Status.Ok), 0)
-	testing.expect_value(t, fake_put(t, put_ok[:]), Cache_Client_Outcome.Done)
+	// Put_Object Ok with Already_Present body (16 bytes).
+	put_present := object_cache.Cache_Response {
+		request_kind = .Put_Object,
+		status       = .Ok,
+		put_state    = .Already_Present,
+		offset       = 0,
+	}
+	testing.expect_value(t, fake_put(t, encoded_answer(t, &put_present)), Cache_Client_Outcome.Done)
 }
 
 @(test)
@@ -454,10 +466,10 @@ the_client_refuses_a_request_before_it_leaves_the_host :: proc(t: ^testing.T) {
 	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
 	defer cache_client_close(&client)
 
-	// One byte past the bound of a blob, and bytes that are no tree.
-	oversize := make([]u8, object_cache.MAX_OBJECT_PAYLOAD_BYTES + 1)
-	defer delete(oversize)
-	_, oversize_outcome := cache_client_put_object(&client, &key, .Blob, oversize)
+	// One byte past the bound of a tree, and bytes that are no tree.
+	oversize_tree := make([]u8, object_cache.MAX_TREE_PAYLOAD_BYTES + 1)
+	defer delete(oversize_tree)
+	_, oversize_outcome := cache_client_put_object(&client, &key, .Tree, oversize_tree)
 	testing.expect_value(t, oversize_outcome, Cache_Client_Outcome.Too_Large)
 	_, tree_outcome := cache_client_put_object(&client, &key, .Tree, transmute([]u8)string("no tree"))
 	testing.expect_value(t, tree_outcome, Cache_Client_Outcome.Bad_Request)
@@ -474,11 +486,15 @@ the_client_refuses_a_request_before_it_leaves_the_host :: proc(t: ^testing.T) {
 	_, past_outcome := cache_client_has(&client, many[:])
 	testing.expect_value(t, past_outcome, Cache_Client_Outcome.Bad_Request)
 
-	// The bound itself passes: a blob of exactly the bound.
-	exact := make([]u8, object_cache.MAX_OBJECT_PAYLOAD_BYTES)
-	defer delete(exact)
-	_, exact_outcome := cache_client_put_object(&client, &key, .Blob, exact)
-	testing.expect_value(t, exact_outcome, Cache_Client_Outcome.Done)
+	// A blob past the old 16 MiB limit (17 MiB) passes with streaming frames.
+	large := make([]u8, 17 * object_cache.FRAME_PAYLOAD_BYTES)
+	defer delete(large)
+	for &b, i in large {
+		b = u8((i * 31) & 0xFF)
+	}
+	large_hash, large_outcome := cache_client_put_object(&client, &key, .Blob, large)
+	testing.expect_value(t, large_outcome, Cache_Client_Outcome.Done)
+	testing.expect_value(t, large_hash, blake3.hash(large))
 }
 
 // A boot image of these files, in the layout of the loader: the header, the

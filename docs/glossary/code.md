@@ -970,6 +970,26 @@ The design: `src/md/features/recipes.md`, "The object cache and its protocol", `
 
 Do not use: binary cache, substituter, package repository.
 
+### Object frame
+
+An object frame is one part of 1 MiB of an object, as the cache protocol carries it, checked alone against the hash of the whole object.
+
+Frame k holds the bytes from k × 1 MiB; the last frame holds the rest, and the empty blob is one frame of 0 bytes. A frame is a node of the tree of BLAKE3, so its proof, the chaining values of the siblings on its path, joins it to the hash of the blob. A reader checks each frame before it keeps it, and so holds one frame in memory for an object of any size. A tree is always one frame. An object frame is not a chunk of BLAKE3, which is 1 KiB, and not a frame of the wire: a frame of the wire is one request or one answer, which carries at most one object frame. Example: a blob of 100 MiB and 1 byte is 101 object frames, and the last one holds 1 byte.
+
+The design: `src/md/features/recipes.md`, "Objects of any size".
+
+Do not use: chunk, block, piece, segment.
+
+### Outboard
+
+An outboard is the file of the chaining values of the tree of frames of a blob, which an object cache keeps beside the blob to give the proof of each frame.
+
+It holds the chaining values of the two children of each parent of the tree of frames, 64 bytes each, in pre-order: (n − 1) × 64 bytes for a blob of n frames, none for a blob of one frame. The proof of a frame is one entry for each level of its path, so a get of one frame reads no other part of the blob. The server builds it during a put, or from the blob, 16 frames at each get, while the get answers `Busy`. It is the outboard of Bao, with frames of 1 MiB in place of chunks of 1 KiB. An outboard is not trusted: each frame that the server serves is checked against the hash of the blob. Example: the outboard of a blob of 100 MiB holds 99 entries, 6 336 bytes.
+
+The design: `src/md/features/recipes.md`, "Objects of any size".
+
+Do not use: index, hash tree file, sidecar.
+
 ### Distributed build
 
 A distributed build realises a graph of recipes across the paired machines of a principal: caches that give realisations, and builders that build a recipe that they receive.

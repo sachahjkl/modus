@@ -48,7 +48,7 @@ encode_req_alloc :: proc(t: ^testing.T, req: ^object_cache.Cache_Request) -> []u
 make_signed_put_object_request :: proc(
 	kind: object_cache.Cache_Object_Kind,
 	object_hash: blake3.Hash,
-	payload: []u8,
+	object_size: u64,
 	private_key: ^ed25519.Private_Key,
 	public_bytes: [object_cache.PUBLIC_KEY_SIZE]u8,
 ) -> object_cache.Cache_Request {
@@ -56,13 +56,68 @@ make_signed_put_object_request :: proc(
 		kind                = .Put_Object,
 		object_hash         = object_hash,
 		object_kind         = kind,
+		object_size         = object_size,
 		uploader_public_key = public_bytes,
-		payload             = payload,
 	}
-	sign_bytes, ok := object_cache.put_object_signing_bytes(kind, object_hash, u64(len(payload)), public_bytes)
+	sign_bytes, ok := object_cache.put_object_signing_bytes(kind, object_hash, object_size, public_bytes)
 	assert(ok)
 	ed25519.sign(private_key, sign_bytes[:], req.uploader_signature[:])
 	return req
+}
+
+// test_put_object_on_server runs the full Put_Object + Put_Object_Frame
+// exchange over one Cache_Connection and returns the final status.
+@(private)
+test_put_object_on_server :: proc(
+	server: ^Cache_Server,
+	head_req: ^object_cache.Cache_Request,
+	payload: []u8,
+) -> object_cache.Cache_Response_Status {
+	conn: Cache_Connection
+	cache_connection_init(&conn)
+	defer cache_connection_destroy(&conn)
+
+	head_written, head_ref := object_cache.encode_request(head_req, conn.request_buffer)
+	if head_ref != .None {
+		return .Refused
+	}
+	resp_bytes, status := cache_server_handle_connection_frame(server, &conn, conn.request_buffer[:head_written])
+	if status != .Ok {
+		return status
+	}
+	head_resp, dec_ref := object_cache.decode_response(resp_bytes)
+	if dec_ref != .None {
+		return .Refused
+	}
+	if head_resp.put_state == .Already_Present {
+		return .Ok
+	}
+	frame_count, count_ok := object_cache.object_frame_count(u64(len(payload)))
+	if !count_ok {
+		return .Too_Large
+	}
+	for frame_index in u64(0) ..< frame_count {
+		frame_len, len_ok := object_cache.object_frame_length(u64(len(payload)), frame_index)
+		if !len_ok {
+			return .Refused
+		}
+		offset := frame_index * object_cache.FRAME_PAYLOAD_BYTES
+		frame_req := object_cache.Cache_Request {
+			kind        = .Put_Object_Frame,
+			object_hash = head_req.object_hash,
+			offset      = offset,
+			payload     = payload[int(offset):int(offset) + int(frame_len)],
+		}
+		fw, fref := object_cache.encode_request(&frame_req, conn.request_buffer)
+		if fref != .None {
+			return .Refused
+		}
+		_, fstatus := cache_server_handle_connection_frame(server, &conn, conn.request_buffer[:fw])
+		if fstatus != .Ok {
+			return fstatus
+		}
+	}
+	return .Ok
 }
 
 @(private)
@@ -126,16 +181,9 @@ put_and_get_blob_and_tree :: proc(t: ^testing.T) {
 	// 1. Put + Get non-empty Blob.
 	blob_bytes := transmute([]u8)string("hello modus object cache blob")
 	blob_hash := blake3.hash(blob_bytes)
-	put_blob_req := make_signed_put_object_request(.Blob, blob_hash, blob_bytes, &priv, pub)
-	put_blob_frame := encode_req_alloc(t, &put_blob_req)
-	defer delete(put_blob_frame)
-
-	put_resp_frame, put_status := cache_server_handle_frame(&server, put_blob_frame)
-	defer delete(put_resp_frame)
+	put_blob_req := make_signed_put_object_request(.Blob, blob_hash, u64(len(blob_bytes)), &priv, pub)
+	put_status := test_put_object_on_server(&server, &put_blob_req, blob_bytes)
 	testing.expect_value(t, put_status, object_cache.Cache_Response_Status.Ok)
-	put_resp, put_dec_ref := object_cache.decode_response(put_resp_frame)
-	testing.expect_value(t, put_dec_ref, object_cache.Wire_Refusal.None)
-	testing.expect_value(t, put_resp.status, object_cache.Cache_Response_Status.Ok)
 
 	// Verify tmp/ is clean after atomic rename.
 	tmp_entries, tmp_err := os.read_all_directory_by_path(fmt.tprintf("%s/tmp", dir), context.temp_allocator)
@@ -147,6 +195,7 @@ put_and_get_blob_and_tree :: proc(t: ^testing.T) {
 		kind        = .Get_Object,
 		object_hash = blob_hash,
 		object_kind = .Blob,
+		offset      = 0,
 	}
 	get_blob_frame := encode_req_alloc(t, &get_blob_req)
 	defer delete(get_blob_frame)
@@ -156,6 +205,7 @@ put_and_get_blob_and_tree :: proc(t: ^testing.T) {
 	get_resp, get_dec_ref := object_cache.decode_response(get_resp_frame)
 	testing.expect_value(t, get_dec_ref, object_cache.Wire_Refusal.None)
 	testing.expect_value(t, get_resp.object_kind, object_cache.Cache_Object_Kind.Blob)
+	testing.expect_value(t, get_resp.object_size, u64(len(blob_bytes)))
 	testing.expect_value(t, string(get_resp.payload), string(blob_bytes))
 
 	// Requesting stored Blob as Tree must not succeed (Not_Found).
@@ -163,6 +213,7 @@ put_and_get_blob_and_tree :: proc(t: ^testing.T) {
 		kind        = .Get_Object,
 		object_hash = blob_hash,
 		object_kind = .Tree,
+		offset      = 0,
 	}
 	get_as_tree_frame := encode_req_alloc(t, &get_as_tree)
 	defer delete(get_as_tree_frame)
@@ -173,17 +224,15 @@ put_and_get_blob_and_tree :: proc(t: ^testing.T) {
 	// 2. Put + Get canonical Tree.
 	tree_buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE]u8
 	tree_bytes, t_hash := make_test_tree(tree_buf[:])
-	put_tree_req := make_signed_put_object_request(.Tree, t_hash, tree_bytes, &priv, pub)
-	put_tree_frame := encode_req_alloc(t, &put_tree_req)
-	defer delete(put_tree_frame)
-	put_tree_resp, put_tree_status := cache_server_handle_frame(&server, put_tree_frame)
-	defer delete(put_tree_resp)
+	put_tree_req := make_signed_put_object_request(.Tree, t_hash, u64(len(tree_bytes)), &priv, pub)
+	put_tree_status := test_put_object_on_server(&server, &put_tree_req, tree_bytes)
 	testing.expect_value(t, put_tree_status, object_cache.Cache_Response_Status.Ok)
 
 	get_tree_req := object_cache.Cache_Request {
 		kind        = .Get_Object,
 		object_hash = t_hash,
 		object_kind = .Tree,
+		offset      = 0,
 	}
 	get_tree_frame := encode_req_alloc(t, &get_tree_req)
 	defer delete(get_tree_frame)
@@ -217,11 +266,8 @@ put_and_get_signed_realisation_and_has_batch :: proc(t: ^testing.T) {
 	tree_bytes, output_tree_hash := make_test_tree(tree_buf[:])
 
 	// Store the output tree and its signed realisation.
-	put_tree := make_signed_put_object_request(.Tree, output_tree_hash, tree_bytes, &priv, pub)
-	put_tree_frame := encode_req_alloc(t, &put_tree)
-	defer delete(put_tree_frame)
-	put_tree_resp, put_tree_status := cache_server_handle_frame(&server, put_tree_frame)
-	defer delete(put_tree_resp)
+	put_tree := make_signed_put_object_request(.Tree, output_tree_hash, u64(len(tree_bytes)), &priv, pub)
+	put_tree_status := test_put_object_on_server(&server, &put_tree, tree_bytes)
 	testing.expect_value(t, put_tree_status, object_cache.Cache_Response_Status.Ok)
 
 	realisation := make_signed_realisation_record(recipe_hash, output_tree_hash, .Tree, &priv, pub)
@@ -305,41 +351,29 @@ tampered_and_unauthorized_puts_rejected :: proc(t: ^testing.T) {
 		payload[i] = u8(i + 1)
 	}
 	claimed_hash := blake3.hash(payload)
-	tampered_req := make_signed_put_object_request(.Blob, claimed_hash, payload, &auth_priv, auth_pub)
+	tampered_req := make_signed_put_object_request(.Blob, claimed_hash, u64(len(payload)), &auth_priv, auth_pub)
 	payload[10] ~= 0x01
-	tampered_frame := encode_req_alloc(t, &tampered_req)
-	defer delete(tampered_frame)
-	resp_tampered, st_tampered := cache_server_handle_frame(&server, tampered_frame)
-	defer delete(resp_tampered)
+	st_tampered := test_put_object_on_server(&server, &tampered_req, payload)
 	testing.expect_value(t, st_tampered, object_cache.Cache_Response_Status.Bad_Hash)
 	testing.expect(t, !cache_server_has(&server, claimed_hash))
 	payload[10] ~= 0x01
 
 	// 2. Blob masquerading as Tree -> Bad_Hash, nothing written.
-	fake_tree_req := make_signed_put_object_request(.Tree, claimed_hash, payload, &auth_priv, auth_pub)
-	fake_tree_frame := encode_req_alloc(t, &fake_tree_req)
-	defer delete(fake_tree_frame)
-	resp_fake_tree, st_fake_tree := cache_server_handle_frame(&server, fake_tree_frame)
-	defer delete(resp_fake_tree)
+	fake_tree_req := make_signed_put_object_request(.Tree, claimed_hash, u64(len(payload)), &auth_priv, auth_pub)
+	st_fake_tree := test_put_object_on_server(&server, &fake_tree_req, payload)
 	testing.expect_value(t, st_fake_tree, object_cache.Cache_Response_Status.Bad_Hash)
 	testing.expect(t, !cache_server_has(&server, claimed_hash))
 
 	// 3. Tampered signature on Put_Object -> Bad_Signature, nothing written.
-	bad_sig_put := make_signed_put_object_request(.Blob, claimed_hash, payload, &auth_priv, auth_pub)
+	bad_sig_put := make_signed_put_object_request(.Blob, claimed_hash, u64(len(payload)), &auth_priv, auth_pub)
 	bad_sig_put.uploader_signature[0] ~= 0x80
-	bad_sig_frame := encode_req_alloc(t, &bad_sig_put)
-	defer delete(bad_sig_frame)
-	resp_bad_sig, st_bad_sig := cache_server_handle_frame(&server, bad_sig_frame)
-	defer delete(resp_bad_sig)
+	st_bad_sig := test_put_object_on_server(&server, &bad_sig_put, payload)
 	testing.expect_value(t, st_bad_sig, object_cache.Cache_Response_Status.Bad_Signature)
 	testing.expect(t, !cache_server_has(&server, claimed_hash))
 
 	// 4. Unauthorized Put_Object (valid signature from rogue key) -> Unauthorized, nothing written.
-	unauth_put := make_signed_put_object_request(.Blob, claimed_hash, payload, &rogue_priv, rogue_pub)
-	unauth_frame := encode_req_alloc(t, &unauth_put)
-	defer delete(unauth_frame)
-	resp_unauth, st_unauth := cache_server_handle_frame(&server, unauth_frame)
-	defer delete(resp_unauth)
+	unauth_put := make_signed_put_object_request(.Blob, claimed_hash, u64(len(payload)), &rogue_priv, rogue_pub)
+	st_unauth := test_put_object_on_server(&server, &unauth_put, payload)
 	testing.expect_value(t, st_unauth, object_cache.Cache_Response_Status.Unauthorized)
 	testing.expect(t, !cache_server_has(&server, claimed_hash))
 
@@ -392,6 +426,7 @@ unknown_hash_not_found_and_on_disk_corruption_detected :: proc(t: ^testing.T) {
 		kind        = .Get_Object,
 		object_hash = missing_h,
 		object_kind = .Blob,
+		offset      = 0,
 	}
 	f1 := encode_req_alloc(t, &get_missing_obj)
 	defer delete(f1)
@@ -412,11 +447,8 @@ unknown_hash_not_found_and_on_disk_corruption_detected :: proc(t: ^testing.T) {
 	// Store valid blob, then simulate on-disk bitrot: Get_Object must detect Bad_Hash!
 	blob := transmute([]u8)string("intact bytes")
 	blob_h := blake3.hash(blob)
-	put_req := make_signed_put_object_request(.Blob, blob_h, blob, &priv, pub)
-	pf := encode_req_alloc(t, &put_req)
-	defer delete(pf)
-	pr, ps := cache_server_handle_frame(&server, pf)
-	defer delete(pr)
+	put_req := make_signed_put_object_request(.Blob, blob_h, u64(len(blob)), &priv, pub)
+	ps := test_put_object_on_server(&server, &put_req, blob)
 	testing.expect_value(t, ps, object_cache.Cache_Response_Status.Ok)
 
 	hex_h := hash_to_hex(blob_h)
@@ -429,6 +461,7 @@ unknown_hash_not_found_and_on_disk_corruption_detected :: proc(t: ^testing.T) {
 		kind        = .Get_Object,
 		object_hash = blob_h,
 		object_kind = .Blob,
+		offset      = 0,
 	}
 	cf := encode_req_alloc(t, &get_corrupt)
 	defer delete(cf)

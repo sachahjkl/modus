@@ -128,14 +128,19 @@ signing_bytes_domain_separation_and_edges :: proc(t: ^testing.T) {
 	testing.expect(t, !ok_put_zero)
 	_, ok_put_big_tree := put_object_signing_bytes(.Tree, make_sample_hash(5), u64(MAX_TREE_PAYLOAD_BYTES) + 1, pub_a)
 	testing.expect(t, !ok_put_big_tree)
-	_, ok_put_big_blob := put_object_signing_bytes(.Blob, make_sample_hash(5), u64(MAX_OBJECT_PAYLOAD_BYTES) + 1, pub_a)
+	// Large blob past the old 16 MiB limit is accepted up to MAX_OBJECT_BYTES; one byte past is refused.
+	_, ok_put_100m := put_object_signing_bytes(.Blob, make_sample_hash(5), 100 * 1024 * 1024, pub_a)
+	testing.expect(t, ok_put_100m)
+	_, ok_put_max := put_object_signing_bytes(.Blob, make_sample_hash(5), MAX_OBJECT_BYTES, pub_a)
+	testing.expect(t, ok_put_max)
+	_, ok_put_big_blob := put_object_signing_bytes(.Blob, make_sample_hash(5), MAX_OBJECT_BYTES + 1, pub_a)
 	testing.expect(t, !ok_put_big_blob)
 }
 
 @(test)
 enum_borders_refuse_unknown_words :: proc(t: ^testing.T) {
 	// Edges: 0, valid members, one past max, 255, max u64.
-	for bad in ([]u64{0, 8, 9, 255, max(u64)}) {
+	for bad in ([]u64{0, 9, 10, 255, max(u64)}) {
 		_, ok := cache_request_kind_of_word(bad)
 		testing.expect(t, !ok)
 	}
@@ -145,12 +150,22 @@ enum_borders_refuse_unknown_words :: proc(t: ^testing.T) {
 		testing.expect_value(t, got, member)
 	}
 
-	for bad in ([]u64{0, 8, 9, 255, max(u64)}) {
+	for bad in ([]u64{0, 10, 11, 255, max(u64)}) {
 		_, ok := cache_response_status_of_word(bad)
 		testing.expect(t, !ok)
 	}
 	for member in Cache_Response_Status {
 		got, ok := cache_response_status_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, got, member)
+	}
+
+	for bad in ([]u64{0, 3, 255, max(u64)}) {
+		_, ok := put_object_state_of_word(bad)
+		testing.expect(t, !ok)
+	}
+	for member in Put_Object_State {
+		got, ok := put_object_state_of_word(u64(member))
 		testing.expect(t, ok)
 		testing.expect_value(t, got, member)
 	}
@@ -217,12 +232,13 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 	testing.expect_value(t, dec_has_resp.status, Cache_Response_Status.Ok)
 	testing.expect_value(t, dec_has_resp.present_bitset, has_resp.present_bitset)
 
-	// 2. Get_Object (Blob and Tree).
+	// 2. Get_Object (Blob at offset 0 and aligned non-zero offset, and Tree at offset 0).
 	for kind in Cache_Object_Kind {
 		get_obj := Cache_Request {
 			kind        = .Get_Object,
 			object_hash = make_sample_hash(u8(kind) + 40),
 			object_kind = kind,
+			offset      = kind == .Blob ? 2 * FRAME_PAYLOAD_BYTES : 0,
 		}
 		n, r := encode_request(&get_obj, buffer[:])
 		testing.expect_value(t, r, Wire_Refusal.None)
@@ -231,15 +247,19 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 		testing.expect_value(t, got.kind, Cache_Request_Kind.Get_Object)
 		testing.expect_value(t, got.object_hash, get_obj.object_hash)
 		testing.expect_value(t, got.object_kind, kind)
+		testing.expect_value(t, got.offset, get_obj.offset)
 	}
 
-	// Get_Object Ok response (including 0-byte empty blob).
+	// Get_Object Ok response (including 0-byte empty blob and 1-byte blob).
 	blob_bytes := transmute([]u8)string("modus object payload")
-	for payload in ([][]u8{nil, blob_bytes}) {
+	one_byte := [1]u8{0x5A}
+	for payload in ([][]u8{nil, one_byte[:], blob_bytes}) {
 		resp := Cache_Response {
 			request_kind = .Get_Object,
 			status       = .Ok,
 			object_kind  = .Blob,
+			object_size  = u64(len(payload)),
+			offset       = 0,
 			payload      = payload,
 		}
 		n, r := encode_response(&resp, buffer[:])
@@ -248,11 +268,37 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 		testing.expect_value(t, dr, Wire_Refusal.None)
 		testing.expect_value(t, got.status, Cache_Response_Status.Ok)
 		testing.expect_value(t, got.object_kind, Cache_Object_Kind.Blob)
+		testing.expect_value(t, got.object_size, u64(len(payload)))
+		testing.expect_value(t, got.offset, u64(0))
+		testing.expect_value(t, len(got.proof), 0)
 		testing.expect_value(t, len(got.payload), len(payload))
 		for i in 0 ..< len(payload) {
 			testing.expect_value(t, got.payload[i], payload[i])
 		}
 	}
+
+	// Get_Object Ok response for a 2-frame blob (final 1-byte frame with 1-level proof).
+	proof_one: [PROOF_ENTRY_SIZE]u8
+	for i in 0 ..< len(proof_one) {
+		proof_one[i] = u8(i + 1)
+	}
+	ranged_resp := Cache_Response {
+		request_kind = .Get_Object,
+		status       = .Ok,
+		object_kind  = .Blob,
+		object_size  = FRAME_PAYLOAD_BYTES + 1,
+		offset       = FRAME_PAYLOAD_BYTES,
+		proof        = proof_one[:],
+		payload      = one_byte[:],
+	}
+	n_rr, r_rr := encode_response(&ranged_resp, buffer[:])
+	testing.expect_value(t, r_rr, Wire_Refusal.None)
+	got_rr, d_rr := decode_response(buffer[:n_rr])
+	testing.expect_value(t, d_rr, Wire_Refusal.None)
+	testing.expect_value(t, got_rr.object_size, u64(FRAME_PAYLOAD_BYTES + 1))
+	testing.expect_value(t, got_rr.offset, u64(FRAME_PAYLOAD_BYTES))
+	testing.expect_value(t, len(got_rr.proof), PROOF_ENTRY_SIZE)
+	testing.expect_value(t, len(got_rr.payload), 1)
 
 	// 3. Get_Realisation request + Ok response.
 	recipe_h := make_sample_hash(77)
@@ -280,13 +326,13 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 	testing.expect_value(t, d_gr_resp, Wire_Refusal.None)
 	testing.expect_value(t, got_gr_resp.realisation, realisation)
 
-	// 4. Put_Object request + Ok response.
+	// 4. Put_Object head request + Ok responses (Accept_Frames and Already_Present) + Put_Object_Frame.
 	put_obj := Cache_Request {
 		kind                = .Put_Object,
 		object_hash         = blake3.hash(blob_bytes),
 		object_kind         = .Blob,
+		object_size         = u64(len(blob_bytes)),
 		uploader_public_key = public_bytes,
-		payload             = blob_bytes,
 	}
 	put_sign_bytes, put_sign_ok := put_object_signing_bytes(.Blob, put_obj.object_hash, u64(len(blob_bytes)), public_bytes)
 	testing.expect(t, put_sign_ok)
@@ -298,9 +344,47 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 	testing.expect_value(t, got_po.kind, Cache_Request_Kind.Put_Object)
 	testing.expect_value(t, got_po.object_hash, put_obj.object_hash)
 	testing.expect_value(t, got_po.object_kind, Cache_Object_Kind.Blob)
+	testing.expect_value(t, got_po.object_size, u64(len(blob_bytes)))
 	testing.expect_value(t, got_po.uploader_public_key, public_bytes)
 	testing.expect_value(t, got_po.uploader_signature, put_obj.uploader_signature)
-	testing.expect_value(t, string(got_po.payload), string(blob_bytes))
+
+	for state in Put_Object_State {
+		po_resp := Cache_Response {
+			request_kind = .Put_Object,
+			status       = .Ok,
+			put_state    = state,
+			offset       = state == .Accept_Frames ? FRAME_PAYLOAD_BYTES : 0,
+		}
+		n_por, r_por := encode_response(&po_resp, buffer[:])
+		testing.expect_value(t, r_por, Wire_Refusal.None)
+		got_por, d_por := decode_response(buffer[:n_por])
+		testing.expect_value(t, d_por, Wire_Refusal.None)
+		testing.expect_value(t, got_por.put_state, state)
+		testing.expect_value(t, got_por.offset, po_resp.offset)
+	}
+
+	put_frame := Cache_Request {
+		kind        = .Put_Object_Frame,
+		object_hash = put_obj.object_hash,
+		offset      = 0,
+		payload     = blob_bytes,
+	}
+	n_pf, r_pf := encode_request(&put_frame, buffer[:])
+	testing.expect_value(t, r_pf, Wire_Refusal.None)
+	got_pf, d_pf := decode_request(buffer[:n_pf])
+	testing.expect_value(t, d_pf, Wire_Refusal.None)
+	testing.expect_value(t, got_pf.kind, Cache_Request_Kind.Put_Object_Frame)
+	testing.expect_value(t, got_pf.object_hash, put_obj.object_hash)
+	testing.expect_value(t, got_pf.offset, u64(0))
+	testing.expect_value(t, string(got_pf.payload), string(blob_bytes))
+
+	pfr := Cache_Response{request_kind = .Put_Object_Frame, status = .Ok}
+	n_pfr, r_pfr := encode_response(&pfr, buffer[:])
+	testing.expect_value(t, r_pfr, Wire_Refusal.None)
+	got_pfr, d_pfr := decode_response(buffer[:n_pfr])
+	testing.expect_value(t, d_pfr, Wire_Refusal.None)
+	testing.expect_value(t, got_pfr.request_kind, Cache_Request_Kind.Put_Object_Frame)
+	testing.expect_value(t, got_pfr.status, Cache_Response_Status.Ok)
 
 	// 5. Put_Realisation request + every non-Ok status response.
 	put_real := Cache_Request {
@@ -315,7 +399,8 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 	testing.expect_value(t, got_pr.realisation, realisation)
 
 	for status in Cache_Response_Status {
-		if status == .Ok {
+		// Ok has a body, and Busy answers Get_Object only (below).
+		if status == .Ok || status == .Busy {
 			continue
 		}
 		err_resp := Cache_Response {
@@ -329,6 +414,37 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 		testing.expect_value(t, d_err, Wire_Refusal.None)
 		testing.expect_value(t, got_err.status, status)
 	}
+
+	// Busy: refused for another request than Get_Object, for a progress that
+	// is not some of the frames of an object of several frames, and for a
+	// body of 15 or 17 bytes; then the answer that the protocol gives.
+	busy_put := Cache_Response{request_kind = .Put_Realisation, status = .Busy, frames_built = 1, frame_count = 2}
+	_, busy_put_ref := encode_response(&busy_put, buffer[:])
+	testing.expect_value(t, busy_put_ref, Wire_Refusal.Bad_Response_Status)
+	Busy_Case :: struct {
+		built, count: u64,
+	}
+	for bad in ([]Busy_Case{{0, 2}, {2, 2}, {3, 2}, {1, 1}, {0, 0}, {1, MAX_FRAME_COUNT + 1}, {max(u64), max(u64)}}) {
+		bad_busy := Cache_Response{request_kind = .Get_Object, status = .Busy, frames_built = bad.built, frame_count = bad.count}
+		_, bad_busy_ref := encode_response(&bad_busy, buffer[:])
+		testing.expect_value(t, bad_busy_ref, Wire_Refusal.Bad_Count)
+	}
+	busy := Cache_Response{request_kind = .Get_Object, status = .Busy, frames_built = MAX_FRAME_COUNT - 1, frame_count = MAX_FRAME_COUNT}
+	n_busy, busy_ref := encode_response(&busy, buffer[:])
+	testing.expect_value(t, busy_ref, Wire_Refusal.None)
+	testing.expect_value(t, n_busy, FRAME_HEADER_SIZE + BUSY_RESPONSE_BODY_SIZE)
+	for cut_length in ([2]u32{BUSY_RESPONSE_BODY_SIZE - 1, BUSY_RESPONSE_BODY_SIZE + 1}) {
+		odd: [FRAME_HEADER_SIZE + BUSY_RESPONSE_BODY_SIZE + 1]u8
+		copy(odd[:], buffer[:n_busy])
+		byte_order.write_u32_little_endian(odd[:], 8, cut_length)
+		_, odd_ref := decode_response(odd[:FRAME_HEADER_SIZE + int(cut_length)])
+		testing.expect(t, odd_ref == .Truncated || odd_ref == .Trailing_Bytes)
+	}
+	got_busy, got_busy_ref := decode_response(buffer[:n_busy])
+	testing.expect_value(t, got_busy_ref, Wire_Refusal.None)
+	testing.expect_value(t, got_busy.status, Cache_Response_Status.Busy)
+	testing.expect_value(t, got_busy.frames_built, MAX_FRAME_COUNT - 1)
+	testing.expect_value(t, got_busy.frame_count, MAX_FRAME_COUNT)
 }
 
 @(test)
@@ -338,6 +454,7 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 		kind        = .Get_Object,
 		object_hash = make_sample_hash(9),
 		object_kind = .Blob,
+		offset      = 0,
 	}
 	n, r := encode_request(&valid_req, buffer[:])
 	testing.expect_value(t, r, Wire_Refusal.None)
@@ -361,8 +478,8 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 	testing.expect_value(t, magic_ref, Wire_Refusal.Bad_Magic)
 	bad_magic[3] = saved_magic
 
-	// Unsupported version: 0, 2, 255.
-	for bad_ver in ([]u8{0, 2, 255}) {
+	// Unsupported version: 0, 1, 3, 255.
+	for bad_ver in ([]u8{0, 1, 3, 255}) {
 		bad_magic[4] = bad_ver
 		_, ver_ref := decode_request(bad_magic)
 		testing.expect_value(t, ver_ref, Wire_Refusal.Unsupported_Version)
@@ -370,7 +487,7 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 	bad_magic[4] = WIRE_VERSION
 
 	// Unknown request kind words: 0, one past the last kind, 255.
-	for bad_kind in ([]u8{0, 8, 255}) {
+	for bad_kind in ([]u8{0, 9, 255}) {
 		bad_magic[5] = bad_kind
 		_, kind_ref := decode_request(bad_magic)
 		testing.expect_value(t, kind_ref, Wire_Refusal.Bad_Request_Kind)
@@ -438,19 +555,66 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 		testing.expect_value(t, dec_count_ref, Wire_Refusal.Bad_Count)
 	}
 
-	// Put_Object claiming Tree payload larger than MAX_TREE_PAYLOAD_BYTES refused as Too_Large.
-	raw_put_tree: [FRAME_HEADER_SIZE + PUT_OBJECT_HEADER_SIZE]u8
+	// An unaligned offset in Get_Object is refused on encode and decode.
+	for bad_off in ([]u64{1, 1024, FRAME_PAYLOAD_BYTES - 1, FRAME_PAYLOAD_BYTES + 1}) {
+		unaligned_get := valid_req
+		unaligned_get.offset = bad_off
+		_, u_enc := encode_request(&unaligned_get, buffer[:])
+		testing.expect_value(t, u_enc, Wire_Refusal.Unaligned_Offset)
+
+		byte_order.write_u64_little_endian(bad_magic, FRAME_HEADER_SIZE + 36, bad_off)
+		_, u_dec := decode_request(bad_magic)
+		testing.expect_value(t, u_dec, Wire_Refusal.Unaligned_Offset)
+	}
+	byte_order.write_u64_little_endian(bad_magic, FRAME_HEADER_SIZE + 36, 0)
+	// Get_Object offset at MAX_OBJECT_BYTES refused as Bad_Range.
+	byte_order.write_u64_little_endian(bad_magic, FRAME_HEADER_SIZE + 36, MAX_OBJECT_BYTES)
+	_, max_off_ref := decode_request(bad_magic)
+	testing.expect_value(t, max_off_ref, Wire_Refusal.Bad_Range)
+	byte_order.write_u64_little_endian(bad_magic, FRAME_HEADER_SIZE + 36, 0)
+	// The largest offset of the last frame passes.
+	byte_order.write_u64_little_endian(bad_magic, FRAME_HEADER_SIZE + 36, MAX_OBJECT_BYTES - FRAME_PAYLOAD_BYTES)
+	last_offset_request, last_offset_ref := decode_request(bad_magic)
+	testing.expect_value(t, last_offset_ref, Wire_Refusal.None)
+	testing.expect_value(t, last_offset_request.offset, MAX_OBJECT_BYTES - FRAME_PAYLOAD_BYTES)
+	byte_order.write_u64_little_endian(bad_magic, FRAME_HEADER_SIZE + 36, 0)
+	// Get_Object for Tree with non-zero aligned offset refused as Bad_Range.
+	tree_off_req := Cache_Request {
+		kind        = .Get_Object,
+		object_hash = make_sample_hash(9),
+		object_kind = .Tree,
+		offset      = FRAME_PAYLOAD_BYTES,
+	}
+	_, tree_off_ref := encode_request(&tree_off_req, buffer[:])
+	testing.expect_value(t, tree_off_ref, Wire_Refusal.Bad_Range)
+
+	// Put_Object claiming Tree size past MAX_TREE_PAYLOAD_BYTES or Blob size past MAX_OBJECT_BYTES refused as Too_Large.
+	raw_put_tree: [FRAME_HEADER_SIZE + PUT_OBJECT_BODY_SIZE]u8
 	magic := REQUEST_MAGIC
 	copy(raw_put_tree[0:4], magic[:])
 	raw_put_tree[4] = WIRE_VERSION
 	raw_put_tree[5] = u8(Cache_Request_Kind.Put_Object)
-	byte_order.write_u32_little_endian(raw_put_tree[:], 8, PUT_OBJECT_HEADER_SIZE)
+	byte_order.write_u32_little_endian(raw_put_tree[:], 8, PUT_OBJECT_BODY_SIZE)
 	sample_h := make_sample_hash(12)
 	copy(raw_put_tree[FRAME_HEADER_SIZE:FRAME_HEADER_SIZE + 32], sample_h[:])
 	raw_put_tree[FRAME_HEADER_SIZE + 32] = u8(Cache_Object_Kind.Tree)
-	byte_order.write_u32_little_endian(raw_put_tree[:], FRAME_HEADER_SIZE + 132, u32(MAX_TREE_PAYLOAD_BYTES) + 1)
+	byte_order.write_u64_little_endian(raw_put_tree[:], FRAME_HEADER_SIZE + 36, u64(MAX_TREE_PAYLOAD_BYTES) + 1)
 	_, tree_big_ref := decode_request(raw_put_tree[:])
 	testing.expect_value(t, tree_big_ref, Wire_Refusal.Too_Large)
+	raw_put_tree[FRAME_HEADER_SIZE + 32] = u8(Cache_Object_Kind.Blob)
+	byte_order.write_u64_little_endian(raw_put_tree[:], FRAME_HEADER_SIZE + 36, MAX_OBJECT_BYTES + 1)
+	_, blob_big_ref := decode_request(raw_put_tree[:])
+	testing.expect_value(t, blob_big_ref, Wire_Refusal.Too_Large)
+
+	// Put_Object_Frame with unaligned offset refused as Unaligned_Offset.
+	bad_put_frame := Cache_Request {
+		kind        = .Put_Object_Frame,
+		object_hash = sample_h,
+		offset      = 4096,
+		payload     = nil,
+	}
+	_, pf_unaligned := encode_request(&bad_put_frame, buffer[:])
+	testing.expect_value(t, pf_unaligned, Wire_Refusal.Unaligned_Offset)
 
 	// Encode refusal must leave output buffer untouched.
 	sentinel: [64]u8
@@ -470,11 +634,43 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 	}
 	rn, rr := encode_response(&resp_ok, buffer[:])
 	testing.expect_value(t, rr, Wire_Refusal.None)
-	for bad_status in ([]u8{0, 8, 255}) {
+	for bad_status in ([]u8{0, 10, 255}) {
 		buffer[6] = bad_status
 		_, st_ref := decode_response(buffer[:rn])
 		testing.expect_value(t, st_ref, Wire_Refusal.Bad_Response_Status)
 	}
+	// Put_Object Ok response refuses unknown state, non-zero offset for Already_Present, and unaligned offset for Accept_Frames.
+	for bad_state in ([]u8{0, 3, 255}) {
+		raw_po_resp: [FRAME_HEADER_SIZE + PUT_OBJECT_RESPONSE_BODY_SIZE]u8
+		rmagic := RESPONSE_MAGIC
+		copy(raw_po_resp[0:4], rmagic[:])
+		raw_po_resp[4] = WIRE_VERSION
+		raw_po_resp[5] = u8(Cache_Request_Kind.Put_Object)
+		raw_po_resp[6] = u8(Cache_Response_Status.Ok)
+		byte_order.write_u32_little_endian(raw_po_resp[:], 8, PUT_OBJECT_RESPONSE_BODY_SIZE)
+		raw_po_resp[FRAME_HEADER_SIZE] = bad_state
+		_, ps_ref := decode_response(raw_po_resp[:])
+		testing.expect_value(t, ps_ref, Wire_Refusal.Bad_Put_State)
+	}
+	bad_present := Cache_Response{request_kind = .Put_Object, status = .Ok, put_state = .Already_Present, offset = FRAME_PAYLOAD_BYTES}
+	_, bp_ref := encode_response(&bad_present, buffer[:])
+	testing.expect_value(t, bp_ref, Wire_Refusal.Reserved_Nonzero)
+	bad_accept := Cache_Response{request_kind = .Put_Object, status = .Ok, put_state = .Accept_Frames, offset = 512}
+	_, ba_ref := encode_response(&bad_accept, buffer[:])
+	testing.expect_value(t, ba_ref, Wire_Refusal.Unaligned_Offset)
+
+	// Get_Object Ok response refuses short proof (proof cut short) and mismatched frame length.
+	short_proof_resp := Cache_Response {
+		request_kind = .Get_Object,
+		status       = .Ok,
+		object_kind  = .Blob,
+		object_size  = FRAME_PAYLOAD_BYTES + 1,
+		offset       = FRAME_PAYLOAD_BYTES,
+		proof        = nil,
+		payload      = []u8{0x42},
+	}
+	_, sp_ref := encode_response(&short_proof_resp, buffer[:])
+	testing.expect_value(t, sp_ref, Wire_Refusal.Bad_Range)
 	buffer[6] = u8(Cache_Response_Status.Not_Found)
 	// Non-zero body on non-Ok status refused as Trailing_Bytes.
 	byte_order.write_u32_little_endian(buffer[:], 8, 1)
