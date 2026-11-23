@@ -4157,6 +4157,14 @@ CONTEXT_LOG_OUTPUT :: 17 // The output ring of the record output log.
 // its reader stopped or closed, and no side forges the end of the other.
 // 0 when the handle 17 is 0.
 CONTEXT_LOG_OUTPUT_END :: 18 // The end page of the record output log.
+// The handle 19: the ready ring, a ring of the smallest capacity with
+// **Read** and **Write**, which the starter makes from the budget of the
+// process and reads. The process sends on it one record, the first state
+// of work of the process (`system.ready`), and the starter then reads the
+// peak of its budget and closes the ring
+// (src/md/features/module_budget_request.md, "The first state of work").
+// 0: the starter reads none.
+CONTEXT_READY_RING :: 19 // The ready ring.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
 // role of the system takes a number from 16, never 13 or 15, so that an

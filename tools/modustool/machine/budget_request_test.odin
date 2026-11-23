@@ -228,12 +228,13 @@ floor_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	// pixels of the screen of 4 bytes, two pictures: 22528000 bytes, 5500
 	// pages. No least size: no cut.
 	testing.expect_value(t, counted.window_pages, 5500)
-	// The load: the top table and the 3 tables of the time page; for each
+	// The load: the top table, the 3 tables of the time page and the ready
+	// ring; for each
 	// module the larger frame list (one object or its segments) and the
 	// tables of its mapping; the stack of the first thread and the context
 	// page; the two other stacks; the two pictures of 2750 pages.
 	picture_load := op.memory_list_pages(2750) + op.mapping_table_pages_most(2750)
-	load := 1 + 3 +
+	load := 1 + 3 + build.floor_ready_ring_pages() +
 		max(op.memory_list_pages(99), op.memory_list_pages(90) + op.memory_list_pages(9)) + op.mapping_table_pages_most(99) +
 		op.memory_list_pages(19) + op.mapping_table_pages_most(19) +
 		op.memory_list_pages(72) + op.mapping_table_pages_most(72) +
@@ -280,7 +281,7 @@ floor_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	// pictures.
 	alone, alone_ok := build.floor_count({modules = {{pages = 1, segment_pages = {1}}}})
 	testing.expect(t, alone_ok)
-	alone_load := 1 + 3 + op.mapping_table_pages_most(1) + op.memory_list_pages(op.STACK_PAGES) + op.mapping_table_pages_most(op.STACK_PAGES) + op.mapping_table_pages_most(1)
+	alone_load := 1 + 3 + build.floor_ready_ring_pages() + op.mapping_table_pages_most(1) + op.memory_list_pages(op.STACK_PAGES) + op.mapping_table_pages_most(op.STACK_PAGES) + op.mapping_table_pages_most(1)
 	testing.expect_value(t, alone.floor, module.Floor{pages = 1 + 72 + alone_load, processes = 1, threads = 1})
 	testing.expect_value(t, alone.window_pages, 0)
 

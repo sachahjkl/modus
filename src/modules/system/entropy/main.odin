@@ -176,6 +176,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	in_flight := false
 	in_flight_tag: u32
 	in_flight_count: u32
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		wait := system.wait_begin() // An interrupt of the device is an event.
 		answered := false

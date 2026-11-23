@@ -552,6 +552,11 @@ COMMANDS :: [?]foundation.Command {
 	// The file is written by hand: an entry is added when a work is planned,
 	// and removed in the commit that ends the work
 	// (docs/TOOLS.md, "The roadmap").
+	// Reads the peaks of the budgets at the first state of work in the logs
+	// of machine runs, and prints the working memory that each source
+	// states so that its floor is its peak
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	{name = "floors", about = "measured <log> ...: the peak of each module at its first state of work, its floor, and the working memory that its source states", run = build.run_floors},
 	{name = "roadmap", about = "check: the planned work of `" + checks.ROADMAP_FILE + "`, in the sections Now, Next, Later and Maybe, for the page of the roadmap of the site", run = checks.run_roadmap},
 	// Works on the fences `byte-layout` of the guides, whose body is the
 	// text form of the byte layout of a record of a format.

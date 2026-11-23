@@ -29,6 +29,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		if record, ok := system.receive(&blocks.completions); ok {
 			if record.tag == 1 && record.kind == u32(call_outcome.Call_Outcome.Succeeded) {
@@ -49,7 +52,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
-// The least budget of 2048 pages, in which it ran before its floor was
-// counted. It leaves when the peak of its budget at its first state of
-// work is read (src/md/features/module_budget_request.md, "State").
+// Measure pending: the 2048 pages of the least budget in which it ran
+// before its floor was counted. The first machine pass with the check of
+// the floors (the check boot-test of the flake) writes the peak of its
+// budget at its first state of work; modustool floors measured on the log
+// of that pass gives the working memory that replaces this number
+// (src/md/features/module_budget_request.md, "The first state of work").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}

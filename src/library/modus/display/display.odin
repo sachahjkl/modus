@@ -1169,6 +1169,9 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	}
 	window.presented = window.ring.commands.counters.write
 	window.presented_serial = window.rescale.serial
+	// The first picture of a window is shown: the process waits for its
+	// work. Each later call does nothing.
+	system.ready()
 	window.picture = 1 - window.picture
 	window.canvas = window.pictures[window.picture]
 	// The compositor ends the due picture at the Present.

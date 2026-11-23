@@ -816,6 +816,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	start_device(ctx.handles[pci.GRANT_QUEUES])
 
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		wait := system.wait_begin()
 		if virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {

@@ -365,7 +365,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		} else if driver_budget, budget_ok = budget_of(image_file_checked(service_name), service_name); !budget_ok {
 			status = .No_Budget
 		} else {
-			driver.process, status = system.process_start(image_file_checked(service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), driver_budget.amounts, driver_mappings[:driver_mapping_count], &prepared, load_source())
+			driver.process, status = system.process_start(image_file_checked(service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), driver_budget.amounts, driver_mappings[:driver_mapping_count], &prepared, load_source(), ready = &driver.ready)
 		}
 	}
 	if status != .Ok {

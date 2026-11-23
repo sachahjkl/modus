@@ -25,8 +25,8 @@ the_floor_mark_is_in_the_fact_of_the_root_service :: proc(t: ^testing.T) {
 // an empty log, and in the measure of a peak under its floor.
 @(test)
 the_floor_check_finds_the_passed_floor :: proc(t: ^testing.T) {
-	passed := "root: clock passed its floor before its first state of work: a peak of 3.1 MiB, for a floor of 3 MiB"
-	measure := "root: clock reached its first state of work with a peak of 2 MiB, for a floor of 3 MiB"
+	passed := "root: clock passed its floor before its first state of work: a peak of 6656 pages, for a floor of 6195 pages"
+	measure := "root: clock reached its first state of work with a peak of 5120 pages, for a floor of 6195 pages"
 	_, found := floor_passed_line("")
 	testing.expect(t, !found, "an empty log passes")
 	_, found = floor_passed_line(strings.concatenate({measure, "\n"}, context.temp_allocator))

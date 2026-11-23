@@ -1807,6 +1807,10 @@ A volume that a command does not need is not built and not checked. It stays wit
 
 One whole build before the incremental build, on a host with 16 processors, read in the times of the files that it wrote: 83 s from the first LLVM IR file to the last module (84 modules, one host process of the compiler for each processor), under 1 s for the debug image, the pointer themes and the three boot images, then 51 s for the 18 boot volumes, one after the other, 2.8 s each.
 
+### The floors measured
+
+Each machine test fails on a line `root: <module> passed its floor before its first state of work` (`tools/modustool/machine/floor_check.odin`): the floor that the module states is below the peak of its budget there (`MODULE_CONTRACT.md`, "The floor of a module"). `modustool floors measured <log> ...` reads the lines `root: <module> reached its first state of work with a peak of <n> pages, for a floor of <m> pages` of the logs of machine runs, raw or rendered, and prints for each module with an entry the larger peak of its lines, its floor, and the working memory that its source states so that the floor is the peak. A module whose working memory is marked `Measure pending` and that has no line in the logs is named: it says no first state of work. The command changes no file; the host tests `the_floors_command_reads_the_peaks_of_a_log` and `the_measured_working_memory_makes_the_floor_the_peak` give its edges.
+
 ### The deepest stack of the kernel
 
 Each processor has one kernel stack of 16 pages (65 536 bytes, `op.KERNEL_STACK_PAGES`), between guard pages (`glossary/running_code.md`: kernel stack, deepest chain). The compile step of each kernel module measures the deepest chain of calls on it, after the check of the vector instructions. The design is in `src/md/infrastructure/kernel_stack_depth.md`.

@@ -88,20 +88,30 @@ Start_Refused_Floor :: struct {
 // floor of its start: a measure of each build, which a reader follows over
 // the releases (src/md/features/module_budget_request.md, "The peak of a
 // budget").
-@(log_fact = "root: {ready_process} reached its first state of work with a peak of {peak}, for a floor of {floor}")
+// The pages are counts, not sizes, so that `modustool floors measured`
+// reads them whole from the line.
+@(log_fact = "root: {ready_process} reached its first state of work with a peak of {peak_pages} pages, for a floor of {floor_pages} pages")
 Budget_Peak_At_Ready :: struct {
-	peak:          value_kinds.Size_In_Pages,
-	floor:         value_kinds.Size_In_Pages,
+	peak_pages:    u64,
+	floor_pages:   u64,
 	ready_process: value_kinds.Module_Name_Field,
 }
 
 // A process paid more than its floor before its first state of work: the
 // floor that its module states is wrong. The machine test stops on this
 // line (tools/modustool/machine/floor_check.odin).
-@(log_fact = "root: {ready_process} passed its floor before its first state of work: a peak of {peak}, for a floor of {floor}")
+@(log_fact = "root: {ready_process} passed its floor before its first state of work: a peak of {peak_pages} pages, for a floor of {floor_pages} pages")
 Budget_Floor_Passed :: struct {
-	peak:          value_kinds.Size_In_Pages,
-	floor:         value_kinds.Size_In_Pages,
+	peak_pages:    u64,
+	floor_pages:   u64,
+	ready_process: value_kinds.Module_Name_Field,
+}
+
+// The ready ring of a process carried another record than Ready: the ring
+// ends, and the floor of the process is not checked.
+@(log_fact = "root: {ready_process} sent the record {kind} on its ready ring, which carries Ready alone: its floor is not checked")
+Ready_Record_Refused :: struct {
+	kind:          u64,
 	ready_process: value_kinds.Module_Name_Field,
 }
 

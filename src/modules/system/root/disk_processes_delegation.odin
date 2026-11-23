@@ -202,7 +202,7 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 		} else if service_budget, budget_ok = budget_of(file, name); !budget_ok {
 			status = .No_Budget
 		} else {
-			process, status = system.process_start(file, name, grants.grants, random.values_with_seed(&process_generator, values.values), service_budget.amounts, nil, &prepared, load_source())
+			process, status = system.process_start(file, name, grants.grants, random.values_with_seed(&process_generator, values.values), service_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
 	if status != .Ok {

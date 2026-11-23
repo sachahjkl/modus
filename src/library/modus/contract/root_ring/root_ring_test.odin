@@ -607,20 +607,34 @@ the_wide_grant_commands_keep_their_senders :: proc(t: ^testing.T) {
 		testing.expect(t, ok && read == outcome)
 	}
 }
-// Ready comes from each process with a root ring, whatever its start
-// grants, and from no process without one: the root service checks the
-// floor of each process that can say its first state of work.
+// Ready travels on the ready ring alone: the root ring refuses it at its
+// sender, whatever the start grants, so the one way to say the first
+// state of work is the same for each process. The word one past Ready
+// names no command.
 @(test)
-ready_comes_from_each_process_with_a_root_ring :: proc(t: ^testing.T) {
+ready_never_runs_on_the_root_ring :: proc(t: ^testing.T) {
 	for grant in ROOT_RING_GRANTS {
-		decision := dispatch_decide(u32(Root_Command.Ready), {grant}, false)
-		testing.expectf(t, decision.step == .Command && decision.command == .Ready, "Ready with the start grant %v", grant)
+		decision := dispatch_decide(u32(Root_Command.Ready), {grant}, true)
+		testing.expectf(t, decision.step == .Sender, "Ready on the root ring with the start grant %v", grant)
 	}
-	refused := dispatch_decide(u32(Root_Command.Ready), {}, false)
-	testing.expect_value(t, refused.step, Dispatch_Step.Sender)
 	testing.expect_value(t, root_command_name(i64(Root_Command.Ready)), "Ready")
-	testing.expect_value(t, root_argument_name(i64(Root_Command.Ready), 1), "values")
-	// The word one past Ready names no command.
 	past := dispatch_decide(u32(Root_Command.Ready) + 1, {.Root_Ring}, false)
 	testing.expect_value(t, past.step, Dispatch_Step.Border)
+}
+
+// The ready ring carries Ready with each value 0, and refuses each other
+// record: another kind, None, a word past the last command, and a Ready
+// with one value that is not 0, in the first place, the last, and the
+// largest word.
+@(test)
+the_ready_ring_takes_ready_alone :: proc(t: ^testing.T) {
+	testing.expect(t, !ready_record_refused({kind = u32(Root_Command.Ready)}))
+	testing.expect(t, !ready_record_refused({kind = u32(Root_Command.Ready), tag = 7}), "the tag is no value")
+	testing.expect(t, ready_record_refused({}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Start)}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready) + 1}))
+	testing.expect(t, ready_record_refused({kind = max(u32)}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {0 = 1}}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {6 = 1}}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {3 = max(u64)}}))
 }

@@ -1,10 +1,8 @@
 package root
 
-import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/reference_screen"
-import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
@@ -465,37 +463,44 @@ start_budget_note :: proc "contextless" (slot: ^Started, budget: Start_Budget) {
 	slot.floor_pages = budget.floor_pages
 }
 
-// ready_command serves Ready: the sender reached its first state of work.
-// At its first Ready alone, this service reads the least count of free
-// pages of the budget of the sender since its creation, and writes its
-// peak, its pages at the creation less that count, with the floor of its
-// start: one fact, Budget_Peak_At_Ready, a measure of each build, and a
-// second one, Budget_Floor_Passed, when the peak passed the floor, which
-// the machine test refuses (src/md/features/module_budget_request.md, "The
-// peak of a budget"). A process whose start this service did not note has
-// no floor to check: the fact gives no line. A later Ready changes nothing.
-ready_command :: proc "contextless" (item: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
-	for value in record.values {
-		if value != 0 {
-			values^ = root_ring.word_refusal(.Ready, 1, value, 0)
-			return .Argument_Refused
-		}
+// ready_ring_serve reads the ready ring of a process: its one record, the
+// first state of work of the process. This service then reads the least
+// count of free pages of the budget of the process since its creation, and
+// writes its peak, its pages at the creation less that count, with the
+// floor of its start: one fact, Budget_Peak_At_Ready, a measure of each
+// build, and a second one, Budget_Floor_Passed, when the peak passed the
+// floor, which the machine test refuses
+// (src/md/features/module_budget_request.md, "The first state of work").
+// Then it closes the ring: the process says it once, and no handle or
+// mapping of this service stays for it. Another record ends the ring with
+// one line and no peak. A process whose start noted no floor ends its ring
+// with no line.
+ready_ring_serve :: proc "contextless" (item: ^Started) {
+	record, received := system.receive(&item.ready.mapped.commands)
+	if !received {
+		return
 	}
-	if item.ready_read || item.floor_pages == 0 {
-		return .Succeeded
+	system.ready_ring_close(&item.ready)
+	name := system.name_of(item.name[:])
+	if root_ring.ready_record_refused(record) {
+		system.log_fact(.Warning, Ready_Record_Refused{kind = u64(record.kind), ready_process = module_name_field(name)})
+		return
 	}
-	item.ready_read = true
+	if item.floor_pages == 0 {
+		return
+	}
+	slot, serial, place_status := system.process_place(item.process)
 	report: op.Process_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), item.process_slot, u64(uintptr(&report)), size_of(report)); status != .Ok || report.process_serial != item.process_serial {
-		return .Succeeded
+	if place_status != .Ok {
+		return
+	}
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report)); status != .Ok || report.process_serial != serial {
+		return
 	}
 	peak := item.budget_pages - min(item.budget_pages, report.budget_least_pages)
-	name := system.name_of(item.name[:])
-	peak_field := value_kinds.Size_In_Pages(min(peak, u64(max(i64))))
-	floor_field := value_kinds.Size_In_Pages(min(item.floor_pages, u64(max(i64))))
-	system.log_fact(.Info, Budget_Peak_At_Ready{peak = peak_field, floor = floor_field, ready_process = module_name_field(name)})
+	system.log_fact(.Info, Budget_Peak_At_Ready{peak_pages = peak, floor_pages = item.floor_pages, ready_process = module_name_field(name)})
 	if peak > item.floor_pages {
-		system.log_fact(.Warning, Budget_Floor_Passed{peak = peak_field, floor = floor_field, ready_process = module_name_field(name)})
+		system.log_fact(.Warning, Budget_Floor_Passed{peak_pages = peak, floor_pages = item.floor_pages, ready_process = module_name_field(name)})
 	}
-	return .Succeeded
 }
+

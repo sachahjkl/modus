@@ -365,6 +365,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	dpc.machine_init(&machine, {image_holds = image_holds, imports_walk = imports_walk})
 	system.log_fact(.Info, Service_Ready{})
 
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		wait := system.wait_begin()
 		answered := false

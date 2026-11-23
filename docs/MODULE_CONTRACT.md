@@ -345,14 +345,14 @@ root: cannot start locks: its floor is 36 MiB, and this service can give 15.6 Mi
 
 Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 1000 for each process slot, 256 000 on a machine of 1 GiB and at most 1 024 000 (`op.LOG_RECORDS_OF_THE_MACHINE_MOST`; `src/md/features/log_side_channels.md`). The largest budget of a process of the boot image is one share of the pages and of the threads that the root service holds at its start, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages (`module.largest_budget_of_machine`; `src/md/features/module_budget_request.md`). The root service keeps a table of budget exceptions (`processor_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another limit of processor time, and holds its reason. No row gives pages. A disk process and a module of another project have no row.
 
-**The peak of a budget** checks the floor. A budget keeps the least count of its free pages since its creation, and `Process_Report` gives it (`budget_least_pages`). A process says its first state of work with `system.ready`, which sends `Root_Command.Ready` on its root ring; the root service then writes the peak with the floor of the start, and a second line when the peak passed the floor:
+**The peak of a budget** checks the floor. A budget keeps the least count of its free pages since its creation, and `Process_Report` gives it (`budget_least_pages`). A process says its first state of work with `system.ready`, which sends `Root_Command.Ready` on its ready ring, the handle 19 of its context: the library says it at the first present of a window and at the first wait of a service for its calls, and a process with neither calls it before its main loop. The root service then writes the peak with the floor of the start, and a second line when the peak passed the floor:
 
 ```
-root: console reached its first state of work with a peak of 41 MiB, for a floor of 44.2 MiB
-root: clock passed its floor before its first state of work: a peak of 26 MiB, for a floor of 24.2 MiB
+root: console reached its first state of work with a peak of 10496 pages, for a floor of 11315 pages
+root: clock passed its floor before its first state of work: a peak of 6656 pages, for a floor of 6195 pages
 ```
 
-The second line fails each machine test: the floor of the module is wrong.
+The second line fails each machine test: the floor of the module is wrong. `modustool floors measured <log> ...` reads the first lines of the logs of machine runs and prints, for each module, the working memory that makes its floor its peak; a working memory with no measure yet is marked `Measure pending` in its comment.
 
 **A disk process** is paid by one budget that the root service makes from its own at the first disk process, and keeps (`src/library/modus/disk_process/budget.odin`):
 
@@ -1589,7 +1589,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 | Part | Content |
 |---|---|
-| `handles` | 20 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. From 14 the roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`), 16 the wiring ring of a process whose module declares a record output or a record input (`CONTEXT_WIRING_RING`; "The record outputs and the record inputs", above), 17 the output ring of its record output `log` with Read and Write (`CONTEXT_LOG_OUTPUT`), and 18 the end page of that output with Read (`CONTEXT_LOG_OUTPUT_END`), both given only when the wiring list of its start wires `log`, and never by a grant of the starter. The handle 19 has no role yet. A new role of the system takes a handle from 19. A role that the process was not granted holds 0 |
+| `handles` | 20 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. From 14 the roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`), 16 the wiring ring of a process whose module declares a record output or a record input (`CONTEXT_WIRING_RING`; "The record outputs and the record inputs", above), 17 the output ring of its record output `log` with Read and Write (`CONTEXT_LOG_OUTPUT`), and 18 the end page of that output with Read (`CONTEXT_LOG_OUTPUT_END`), both given only when the wiring list of its start wires `log`, and never by a grant of the starter; 19 the ready ring, on which the process says its first state of work once (`CONTEXT_READY_RING`, `system.ready`), given by the root service to each process that it starts with a floor. A new role of the system needs a larger context. A role that the process was not granted holds 0 |
 | `values` | 24 values of 64 bits (`CONTEXT_VALUES`): sizes, addresses, flags. The values 0 to 8 and 13 have the roles that the starter and its process agree on. The other values have the roles of the table below |
 
 ```byte-layout operation.Context

@@ -2,6 +2,7 @@ package build
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "core:fmt"
 import "core:math/bits"
@@ -95,8 +96,11 @@ floor_count :: proc(inputs: Floor_Inputs) -> (counted: Floor_Count, ok: bool) {
 	stated := inputs.stated
 
 	// The address space: its top table, which Process_Create pays, and the
-	// tables of the time page, which it maps in each process.
+	// tables of the time page, which it maps in each process. The ready
+	// ring, which the budget of the process pays at its start and which it
+	// maps once, to say its first state of work (system.ready).
 	add(&counted.load_pages, 1 + op.mapping_table_pages_most(1)) or_return
+	add(&counted.load_pages, floor_ready_ring_pages()) or_return
 	for item in inputs.modules {
 		add(&counted.module_pages, item.pages) or_return
 		// The starter with no table of prepared modules copies the whole
@@ -171,6 +175,15 @@ floor_count :: proc(inputs: Floor_Inputs) -> (counted: Floor_Count, ok: bool) {
 	// hold the children at least: the process itself, and each child.
 	counted.floor = {pages = pages, processes = max(processes, child_processes), threads = max(threads, child_threads), screen_pictures = stated.screen_pictures, wiring_pages = stated.wiring_pages}
 	return counted, true
+}
+
+// floor_ready_ring_pages gives what the ready ring of a process costs its
+// budget: the pages of a ring of the smallest capacity
+// (system.READY_RING_CAPACITY) with its frame list, and the tables of its
+// mapping in the process.
+floor_ready_ring_pages :: proc() -> u64 {
+	pages := ring.pages(ring.CAPACITY)
+	return op.memory_cost(pages) + op.mapping_table_pages_most(pages)
 }
 
 // module_pages_of_size gives the pages of a size in bytes, the last one

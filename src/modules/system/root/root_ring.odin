@@ -247,9 +247,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .Wide_Grant_Second_Connection:
 		answer.outcome = wide_grant_second_connection(item, record, &answer.values)
 	case .Ready:
-		answer.outcome = ready_command(item, record, &answer.values) // budgets.odin
-		// A Ready that runs has no completion: the sender waits for nothing.
-		answer.held = answer.outcome == .Succeeded
+		// The ready ring carries it (budgets.odin, ready_ring_serve): the
+		// sender check refuses it here, so this case never runs.
 	}
 	return answer
 }

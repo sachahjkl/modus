@@ -301,7 +301,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 		} else {
 			source := load_source()
 			source.files = store_files
-			process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget.amounts, mappings[:mapping_count], nil, source, load_error, disk_processes)
+			process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget.amounts, mappings[:mapping_count], nil, source, load_error, disk_processes, ready = &slot.ready)
 			if status == .No_Budget {
 				budget_refusal_log(name, process_budget.amounts, disk_processes, "the disk processes")
 			}

@@ -373,8 +373,9 @@ Started :: struct {
 	budget_pages:    u64,
 	// The floor of its start (start_floor_of); 0: a start that noted none.
 	floor_pages:     u64,
-	// The first Ready of the process was read: a later one changes nothing.
-	ready_read:      bool,
+	// The ready ring of the process: open from its start to its first
+	// state of work or its stop (budgets.odin, ready_ring_serve).
+	ready:           system.Ready_Ring,
 	// The wiring ring of a process that declares record streams or asked
 	// for a list page: handed to the delegated `wiring` service, never
 	// mapped in the root core.
@@ -1007,7 +1008,7 @@ input_start :: proc "contextless" () -> system.Status {
 		device_arm_undo(&tablet)
 		return .No_Budget
 	}
-	process, status := system.process_start(image_file_checked(input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), input_budget.amounts, input_mappings[:input_mapping_count], &prepared, load_source())
+	process, status := system.process_start(image_file_checked(input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), input_budget.amounts, input_mappings[:input_mapping_count], &prepared, load_source(), ready = &slot.ready)
 	if status != .Ok {
 		fresh_bytes_forget(slot)
 		device_arm_undo(&tablet)
@@ -1188,7 +1189,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	}
 	start_budget_note(served, display_budget)
 	display_wiring: system.Start_Wiring
-	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring)
+	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring, ready = &served.ready)
 	if status != .Ok {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -1266,6 +1267,9 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
+		if item.process != 0 && item.ready.mapped.head != nil {
+			ready_ring_serve(&item) // budgets.odin
+		}
 	}
 	// Before reap: an entropy service that answered and stopped still has
 	// its answers in the ring.
@@ -1294,6 +1298,9 @@ root_loop_pass :: proc "contextless" () {
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
 			system.wait_records(&wait, &item.requests.commands)
+		}
+		if item.process != 0 && item.ready.mapped.head != nil {
+			system.wait_records(&wait, &item.ready.mapped.commands)
 		}
 	}
 	// The count of wait_words.odin keeps each list in the wait.
@@ -2060,7 +2067,7 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 		fresh_bytes_forget(view)
 		return .No_Budget
 	}
-	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error)
+	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error, ready = &view.ready)
 	if status != .Ok {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
@@ -2138,7 +2145,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return .No_Budget
 	}
-	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error)
+	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error, ready = &view.ready)
 	if status != .Ok {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
@@ -2542,6 +2549,9 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 		system.ring_close(&item.requests)
 		system.close(item.requests_memory)
 	}
+	// A process that stopped before its first state of work says nothing:
+	// its floor is not checked.
+	system.ready_ring_close(&item.ready)
 	if item.process != 0 {
 		system.close(item.process)
 	}

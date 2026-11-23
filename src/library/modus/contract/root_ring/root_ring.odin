@@ -22,6 +22,7 @@ import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/memory_screen"
 import "modus:contract/replacement_list"
+import "modus:contract/ring"
 import "modus:contract/start_grant"
 
 // The ring to the root service. The name of the process is in values[0..4],
@@ -537,15 +538,14 @@ Root_Command :: enum u32 {
 	// Duplicate_Connection. Only the holder of Remote_Clients sends it.
 	Wide_Grant_Second_Connection = 38,
 	// Ready says that the sender reached its first state of work: its start
-	// is done, and it waits for its work. Each value is 0; a record with a
-	// value that is not is refused with `Bad_Value`, argument 1, the first
-	// such value in the field of the value. The
-	// root service reads the peak of the budget of the sender at the first
-	// Ready alone, and writes it with the floor of its start as a fact
-	// (src/md/features/module_budget_request.md, "The peak of a budget").
-	// A later Ready changes nothing. A Ready that runs has no completion, so
-	// the sender waits for nothing; a refused one has its completion with
-	// its error record.
+	// is done, and it waits for its work. It travels on the ready ring of
+	// the process (op.CONTEXT_READY_RING), never on the root ring, which
+	// refuses it at its sender: each process has a ready ring, and only some
+	// have a root ring. Each value is 0 (ready_record_refused). The root
+	// service then reads the peak of the budget of the sender, writes it
+	// with the floor of its start as a fact, and closes the ready ring
+	// (src/md/features/module_budget_request.md, "The first state of
+	// work"). No completion comes.
 	Ready = 39,
 }
 
@@ -863,7 +863,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Wide_Grant_End         = .Root_Ring,
 	.Wide_Grant_Agent_Ask   = .Remote_Clients,
 	.Wide_Grant_Second_Connection = .Remote_Clients,
-	.Ready                  = .Each_Ring,
+	.Ready                  = .Nobody,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -1173,6 +1173,22 @@ member_of_word :: proc "contextless" ($Enum: typeid, word: u64, command: Root_Co
 refuse :: proc "contextless" (values: ^[7]u64, outcome: call_outcome.Call_Outcome, command: u32, kind: errors.Kind, unit: errors.Unit = .None, argument: i64 = 0, value: i64 = 0, limit: i64 = 0, found: i64 = 0) -> call_outcome.Call_Outcome {
 	values^ = errors.ring_fail(command, kind, unit, argument, value, limit, found)
 	return outcome
+}
+
+// ready_record_refused says if a record of a ready ring is not the record
+// Ready with each value 0: the one record that the ring carries. A refused
+// record ends the ring as a Ready does, with a line, and the starter reads
+// no peak.
+ready_record_refused :: proc "contextless" (record: ring.Record) -> bool {
+	if record.kind != u32(Root_Command.Ready) {
+		return true
+	}
+	for value in record.values {
+		if value != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // word_refusal is the error record of a word that names no member. It is
