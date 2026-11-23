@@ -136,11 +136,53 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 	return !client.gone
 }
 
+// The most milliseconds that a call waits while the storage service
+// repairs the counts of the blocks of its disk, and the time between two
+// tries. Past the bound the caller gets the refusal Busy, unit Count_Repair,
+// whose sentence gives the progress of the repair.
+REPAIR_WAIT_BOUND_MILLISECONDS :: 60_000
+REPAIR_RETRY_MILLISECONDS :: 100
+
+// repair_retry says if a call that the storage service answered is made
+// again: a refusal Busy with the unit Count_Repair (the service makes no
+// change while it repairs its counts) before the bound. wait is the time
+// to the next try.
+repair_retry :: proc "contextless" (status: storage_status.Status, outcome: call_outcome.Call_Outcome, record: ^errors.Error_Record, waited_milliseconds: u64) -> (retry: bool, wait_milliseconds: u64) {
+	if status != .Failed || outcome != .Callee_Busy {
+		return false, 0
+	}
+	if record.kind != i64(errors.Kind.Busy) || record.unit != i64(errors.Unit.Count_Repair) {
+		return false, 0
+	}
+	if waited_milliseconds >= REPAIR_WAIT_BOUND_MILLISECONDS {
+		return false, 0
+	}
+	return true, min(REPAIR_RETRY_MILLISECONDS, REPAIR_WAIT_BOUND_MILLISECONDS - waited_milliseconds)
+}
+
 // call makes one isolated call of the export with a name. For a Text result,
 // text has the bytes in the call region: copy them before the next call.
 // When the export fails, the status is Failed, outcome says how it ended,
-// and error has its error record, as the storage service wrote it.
+// and error has its error record, as the storage service wrote it. A change
+// that the service refuses while it repairs the counts of its disk is made
+// again, up to REPAIR_WAIT_BOUND_MILLISECONDS (repair_retry).
 call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status, outcome: call_outcome.Call_Outcome) {
+	local: errors.Error_Record
+	record := error != nil ? error : &local
+	start := system.time()
+	for {
+		value, text, status, outcome = call_once(client, name, arguments, record)
+		retry, wait := repair_retry(status, outcome, record, system.time() - start)
+		if !retry {
+			return value, text, status, outcome
+		}
+		system.sleep(system.time() + wait)
+	}
+}
+
+// call_once makes one isolated call and waits for its answer.
+@(private)
+call_once :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record) -> (value: i64, text: []u8, status: storage_status.Status, outcome: call_outcome.Call_Outcome) {
 	sent: Sent_Call
 	if sent, status = call_send(client, name, arguments); status != .Ok {
 		return 0, nil, status, .Succeeded
@@ -381,6 +423,16 @@ commit :: proc "contextless" (client: ^Client, place: Place, name: string, error
 		measure = (^Commit_Measure)(raw_data(bytes))^
 	}
 	return measure, status
+}
+
+// drop_pending drops the pending changes of this connection on one object:
+// a read of this connection then sees the last commit. The other pending
+// objects of the connection stay. Failed with Pending: the object has no
+// pending change.
+drop_pending :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> storage_status.Status {
+	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
+	_, _, status := call(client, "drop_pending", arguments[:], error)
+	return status
 }
 
 // open_tree gives the place of the tree `name` under a place.
@@ -624,26 +676,59 @@ versions :: proc "contextless" (client: ^Client, place: Place, name: string, int
 }
 
 // version copies the bytes of an object at a generation (a version, or the
-// current version) into result. Too_Small: result is smaller than the bytes.
+// current version) into result, one piece of the call region at a time, so
+// a version larger than the call region reads whole. Too_Small: result is
+// smaller than the bytes. A generation names one state that no commit
+// changes, so the pieces are of one state.
 version :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status) {
-	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}}
-	size: i64
+	filled := 0
+	for {
+		piece: []u8
+		piece, status = version_range(client, place, name, generation, u64(filled), result[filled:], error)
+		if status != .Ok {
+			return nil, status
+		}
+		if len(piece) == 0 {
+			return result[:filled], .Ok
+		}
+		filled += len(piece)
+		if filled == len(result) {
+			// The result is full: one more byte past it means that the
+			// version does not fit.
+			probe: [1]u8
+			more: []u8
+			more, status = version_range(client, place, name, generation, u64(filled), probe[:], error)
+			if status != .Ok {
+				return nil, status
+			}
+			if len(more) != 0 {
+				return nil, .Too_Small
+			}
+			return result[:filled], .Ok
+		}
+	}
+}
+
+// version_range copies the bytes of an object at a generation from
+// `offset` into result, up to the end of the state or of the call region.
+// bytes is empty at the end of the state.
+version_range :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, offset: u64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status) {
+	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}, {integer = offset}}
+	count: i64
 	text: []u8
-	size, text, status, _ = call(client, "version", arguments[:], error)
-	if status == .Refused && size > i64(len(result)) {
-		return nil, .Too_Small // The service gave the size, and no bytes that fit the call region.
+	outcome: call_outcome.Call_Outcome
+	count, text, status, outcome = call(client, "version", arguments[:], error)
+	if status == .Failed && outcome == .Data_Damaged {
+		return nil, .Damaged
 	}
 	if status != .Ok {
 		return nil, status
 	}
-	if size > i64(len(result)) {
-		return nil, .Too_Small
-	}
-	if i64(len(text)) != size {
+	if i64(len(text)) != count {
 		return nil, .Damaged
 	}
-	count := copy(result, text)
-	return result[:count], .Ok
+	copied := copy(result, text)
+	return result[:copied], .Ok
 }
 
 // One range of bytes that differ between two states: the row of the export
@@ -700,5 +785,14 @@ erase_versions :: proc "contextless" (client: ^Client, place: Place, name: strin
 restore :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status) {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}}
 	commit, _, status, _ = call(client, "restore", arguments[:], error)
+	return commit, status
+}
+
+// clone makes the object `new_name` under a place a copy of the object
+// `name` under the same place, in one commit: the two name the same blocks
+// until one of them changes. The result is the generation of the commit.
+clone :: proc "contextless" (client: ^Client, place: Place, name: string, new_name: string, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status) {
+	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {text = transmute([]u8)new_name}}
+	commit, _, status, _ = call(client, "clone", arguments[:], error)
 	return commit, status
 }

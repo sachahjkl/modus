@@ -9,6 +9,14 @@
 // Atomic rollback moves active_snapshot_id to any historical snapshot without
 // erasing newer snapshots; a subsequent commit allocates highest_snapshot_id + 1
 // with parent_id equal to the rollback target, preserving complete history.
+//
+// The memory of the history is the memory of its caller (docs/PROPERTIES.md,
+// "14. Memory is supplied by the caller"): a table of snapshot records and
+// one pool of objects that the snapshots share, each snapshot a run of the
+// pool. So the count of snapshots and of the objects of one snapshot is the
+// memory that the caller gives, and a full table or pool is a refusal that
+// changes nothing. One snapshot holds at most tree_hash.MAX_TREE_ENTRIES
+// objects: its hash is the hash of one tree node.
 package store_history
 
 import "modus:contract/blake3"
@@ -16,17 +24,12 @@ import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 import "modus:contract/tree_hash"
 
-// Maximum immutable snapshots stored in one bounded Store_History log.
-MAX_SNAPSHOTS :: 64
-
-// Maximum live objects recorded in one whole-store snapshot.
-MAX_OBJECTS_PER_SNAPSHOT :: 128
+// Maximum live objects recorded in one whole-store snapshot: the entries of
+// one canonical tree node.
+MAX_OBJECTS_PER_SNAPSHOT :: tree_hash.MAX_TREE_ENTRIES
 
 // Maximum UTF-8 byte length of one object name (matches tree_hash).
 OBJECT_NAME_CAPACITY :: tree_hash.ENTRY_NAME_CAPACITY
-
-// Exact byte buffer size needed to encode MAX_OBJECTS_PER_SNAPSHOT tree entries.
-MAX_SNAPSHOT_TREE_BYTES :: tree_hash.HEADER_SIZE + MAX_OBJECTS_PER_SNAPSHOT * tree_hash.ENTRY_SIZE
 
 // Domain separation string binding (object_version, content_hash) into a leaf
 // hash before canonical tree encoding.
@@ -42,8 +45,8 @@ Diff_Change_Kind :: enum u8 {
 // Closed set of refusals for Store_History operations.
 History_Refusal :: enum u8 {
 	None                = 0,
-	History_Full        = 1,
-	Too_Many_Objects    = 2,
+	History_Full        = 1, // The table of snapshot records that the caller gave is full.
+	Too_Many_Objects    = 2, // More objects than one tree node holds, or than the pool has room for.
 	Empty_Name          = 3,
 	Name_Too_Long       = 4,
 	Invalid_Name        = 5,
@@ -52,7 +55,7 @@ History_Refusal :: enum u8 {
 	Backwards_Timestamp = 8,
 	Zero_Snapshot_Id    = 9,
 	Unknown_Snapshot    = 10,
-	Output_Too_Small    = 11,
+	Output_Too_Small    = 11, // A diff output, or the workspace of the encoded tree of a commit, is too small.
 }
 
 // Caller-supplied object entry passed to snapshot_commit.
@@ -62,7 +65,7 @@ Snapshot_Object_Input :: struct {
 	content_hash:   blake3.Hash,
 }
 
-// Canonical immutable object record stored inside a Snapshot_Record.
+// Canonical immutable object record of a snapshot, in the pool of objects.
 Snapshot_Object :: struct {
 	name_length:    u8,
 	name:           [OBJECT_NAME_CAPACITY]u8,
@@ -70,14 +73,15 @@ Snapshot_Object :: struct {
 	content_hash:   blake3.Hash,
 }
 
-// One immutable whole-store snapshot in the DAG/linear snapshot log.
+// One immutable whole-store snapshot in the DAG/linear snapshot log. Its
+// objects are objects[object_first:][:object_count] of the pool.
 Snapshot_Record :: struct {
 	snapshot_id:     u64,
 	parent_id:       u64,
 	committed_at_ms: u64,
 	tree_hash:       blake3.Hash,
-	object_count:    u16,
-	objects:         [MAX_OBJECTS_PER_SNAPSHOT]Snapshot_Object,
+	object_first:    int,
+	object_count:    int,
 }
 
 // One object difference between two whole-store snapshots.
@@ -91,13 +95,16 @@ Snapshot_Diff_Entry :: struct {
 	to_hash:      blake3.Hash,
 }
 
-// Bounded whole-store snapshot history with monotonic IDs and atomic rollback.
+// A whole-store snapshot history with monotonic IDs and atomic rollback,
+// in the memory of its caller.
 Store_History :: struct {
-	snapshot_count:       u16,
+	snapshots:            []Snapshot_Record, // The table that the caller gave: snapshots[:snapshot_count] in use.
+	objects:              []Snapshot_Object, // The pool that the caller gave: objects[:object_count] in use.
+	snapshot_count:       int,
+	object_count:         int,
 	highest_snapshot_id:  u64,
 	active_snapshot_id:   u64,
 	last_committed_at_ms: u64,
-	snapshots:            [MAX_SNAPSHOTS]Snapshot_Record,
 }
 
 // diff_change_kind_of_word converts a transport word to Diff_Change_Kind.
@@ -110,12 +117,26 @@ history_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: History_R
 	return enum_word.member_of_word(History_Refusal, word)
 }
 
-// history_init resets a Store_History to the empty initial state.
-history_init :: proc "contextless" (history: ^Store_History) {
-	history.snapshot_count = 0
-	history.highest_snapshot_id = 0
-	history.active_snapshot_id = 0
-	history.last_committed_at_ms = 0
+// history_init gives a history the memory of its snapshots and of its
+// objects, and empties it.
+history_init :: proc "contextless" (history: ^Store_History, snapshots: []Snapshot_Record, objects: []Snapshot_Object) {
+	history^ = {snapshots = snapshots, objects = objects}
+}
+
+// snapshot_objects gives the objects of a snapshot, in the order of their
+// names.
+snapshot_objects :: proc "contextless" (history: ^Store_History, record: ^Snapshot_Record) -> []Snapshot_Object {
+	return history.objects[record.object_first:][:record.object_count]
+}
+
+// snapshot_tree_bytes gives the bytes of the canonical tree of a snapshot
+// of these objects: the size of the workspace that snapshot_commit needs.
+snapshot_tree_bytes :: proc "contextless" (objects: []Snapshot_Object_Input) -> int {
+	size := tree_hash.HEADER_SIZE
+	for item in objects {
+		size += tree_hash.ENTRY_FIXED_SIZE + min(len(item.name), OBJECT_NAME_CAPACITY)
+	}
+	return size
 }
 
 // snapshot_object_name returns the active UTF-8 slice of a Snapshot_Object name.
@@ -153,6 +174,11 @@ compute_versioned_object_hash :: proc "contextless" (object_version: u64, conten
 	return blake3.derive_key(SNAPSHOT_OBJECT_DOMAIN, payload[:])
 }
 
+@(private)
+object_name_bytes :: #force_inline proc "contextless" (object: ^Snapshot_Object) -> []u8 {
+	return object.name[:object.name_length]
+}
+
 // snapshot_find locates an immutable Snapshot_Record by snapshot_id using
 // binary search over monotonically ordered IDs.
 snapshot_find :: proc "contextless" (
@@ -163,7 +189,7 @@ snapshot_find :: proc "contextless" (
 		return nil, .Zero_Snapshot_Id
 	}
 	low := 0
-	high := int(history.snapshot_count)
+	high := history.snapshot_count
 	for low < high {
 		mid := low + (high - low) / 2
 		candidate := history.snapshots[mid].snapshot_id
@@ -180,25 +206,27 @@ snapshot_find :: proc "contextless" (
 }
 
 // snapshot_commit validates all input entries, checks timestamp monotonicity
-// and capacity bounds, sorts entries canonically by UTF-8 name order, computes
+// and capacity bounds, sorts entries canonically by UTF-8 name order into the
+// pool, encodes the canonical tree in workspace (snapshot_tree_bytes), computes
 // the deterministic whole-store tree_hash, and appends one immutable snapshot.
-// Any refusal leaves history completely unchanged.
+// Any refusal leaves the history unchanged: the objects of a refused commit
+// sit past object_count, where the next commit writes over them.
 snapshot_commit :: proc "contextless" (
 	history: ^Store_History,
 	objects: []Snapshot_Object_Input,
 	now_ms: u64,
+	workspace: []u8,
 ) -> (snapshot_id: u64, root_hash: blake3.Hash, refusal: History_Refusal) {
-	if int(history.snapshot_count) >= MAX_SNAPSHOTS {
+	if history.snapshot_count >= len(history.snapshots) {
 		return 0, {}, .History_Full
 	}
-	if len(objects) > MAX_OBJECTS_PER_SNAPSHOT {
+	if len(objects) > MAX_OBJECTS_PER_SNAPSHOT || len(objects) > len(history.objects) - history.object_count {
 		return 0, {}, .Too_Many_Objects
 	}
 	if history.snapshot_count > 0 && now_ms < history.last_committed_at_ms {
 		return 0, {}, .Backwards_Timestamp
 	}
-
-	sorted: [MAX_OBJECTS_PER_SNAPSHOT]Snapshot_Object
+	sorted := history.objects[history.object_count:][:len(objects)]
 	sorted_count := 0
 
 	// Validate each input object and insertion-sort into canonical UTF-8 byte order.
@@ -216,8 +244,7 @@ snapshot_commit :: proc "contextless" (
 		high := sorted_count
 		for low < high {
 			mid := low + (high - low) / 2
-			existing_len := int(sorted[mid].name_length)
-			order := tree_hash.compare_name_bytes(sorted[mid].name[:existing_len], name_bytes)
+			order := tree_hash.compare_name_bytes(object_name_bytes(&sorted[mid]), name_bytes)
 			if order == 0 {
 				return 0, {}, .Duplicate_Name
 			}
@@ -241,40 +268,43 @@ snapshot_commit :: proc "contextless" (
 		sorted_count += 1
 	}
 
-	// Build canonical tree_hash entries over (name, versioned_object_hash).
-	tree_entries: [MAX_OBJECTS_PER_SNAPSHOT]tree_hash.Tree_Entry
-	for i in 0 ..< sorted_count {
-		leaf_hash := compute_versioned_object_hash(sorted[i].object_version, sorted[i].content_hash)
-		tree_entries[i] = tree_hash.Tree_Entry {
-			kind        = .Object,
-			name_length = sorted[i].name_length,
-			name        = sorted[i].name,
-			hash        = leaf_hash,
-		}
+	// The canonical tree over (name, versioned_object_hash), written one
+	// entry at a time into the workspace of the caller.
+	required := snapshot_tree_bytes(objects)
+	if len(workspace) < required {
+		return 0, {}, .Output_Too_Small
 	}
-
-	encoded_tree: [MAX_SNAPSHOT_TREE_BYTES]u8
-	written, enc_refusal := tree_hash.tree_encode(tree_entries[:sorted_count], encoded_tree[:])
-	if enc_refusal != .None {
-		return 0, {}, map_tree_name_refusal(enc_refusal)
+	magic := tree_hash.HEADER_MAGIC
+	copy(workspace[0:8], magic[:])
+	byte_order.write_u32_little_endian(workspace, 8, u32(sorted_count))
+	byte_order.write_u32_little_endian(workspace, 12, 0)
+	offset := tree_hash.HEADER_SIZE
+	for &object in sorted {
+		leaf_hash := compute_versioned_object_hash(object.object_version, object.content_hash)
+		name_length := int(object.name_length)
+		workspace[offset] = u8(tree_hash.Tree_Entry_Kind.Object)
+		workspace[offset + 1] = object.name_length
+		copy(workspace[offset + 2:][:name_length], object.name[:name_length])
+		copy(workspace[offset + 2 + name_length:][:blake3.HASH_SIZE], leaf_hash[:])
+		offset += tree_hash.ENTRY_FIXED_SIZE + name_length
 	}
-	computed_hash, hash_refusal := tree_hash.tree_hash(encoded_tree[:written])
+	computed_hash, hash_refusal := tree_hash.tree_hash(workspace[:offset])
 	if hash_refusal != .None {
 		return 0, {}, map_tree_name_refusal(hash_refusal)
 	}
 
 	// Commit atomically only after every validation and hash step succeeded.
 	new_id := history.highest_snapshot_id + 1
-	slot := int(history.snapshot_count)
-	history.snapshots[slot] = Snapshot_Record {
+	history.snapshots[history.snapshot_count] = Snapshot_Record {
 		snapshot_id     = new_id,
 		parent_id       = history.active_snapshot_id,
 		committed_at_ms = now_ms,
 		tree_hash       = computed_hash,
-		object_count    = u16(sorted_count),
-		objects         = sorted,
+		object_first    = history.object_count,
+		object_count    = sorted_count,
 	}
 	history.snapshot_count += 1
+	history.object_count += sorted_count
 	history.highest_snapshot_id = new_id
 	history.active_snapshot_id = new_id
 	history.last_committed_at_ms = now_ms
@@ -296,15 +326,14 @@ snapshot_lookup_object :: proc "contextless" (
 	if name_refusal := map_tree_name_refusal(tree_hash.tree_name_validate(name_bytes)); name_refusal != .None {
 		return {}, false, name_refusal
 	}
-
+	items := snapshot_objects(history, record)
 	low := 0
-	high := int(record.object_count)
+	high := len(items)
 	for low < high {
 		mid := low + (high - low) / 2
-		candidate_len := int(record.objects[mid].name_length)
-		order := tree_hash.compare_name_bytes(record.objects[mid].name[:candidate_len], name_bytes)
+		order := tree_hash.compare_name_bytes(object_name_bytes(&items[mid]), name_bytes)
 		if order == 0 {
-			return record.objects[mid], true, .None
+			return items[mid], true, .None
 		}
 		if order < 0 {
 			low = mid + 1
@@ -329,124 +358,79 @@ snapshot_rollback :: proc "contextless" (
 	return .None
 }
 
-// snapshot_diff computes the exact sorted added/changed/removed object list
-// transforming snapshot from_id into snapshot to_id. Performs a dry-run count
-// first so an undersized changes_out buffer suffers zero mutation and returns
-// the required count along with .Output_Too_Small.
+@(private)
+diff_entry_of :: proc "contextless" (kind: Diff_Change_Kind, from: ^Snapshot_Object, to: ^Snapshot_Object) -> (entry: Snapshot_Diff_Entry) {
+	entry.kind = kind
+	named := to != nil ? to : from
+	entry.name_length = named.name_length
+	entry.name = named.name
+	if from != nil {
+		entry.from_version, entry.from_hash = from.object_version, from.content_hash
+	}
+	if to != nil {
+		entry.to_version, entry.to_hash = to.object_version, to.content_hash
+	}
+	return entry
+}
+
+// snapshot_diff computes the sorted added/changed/removed object list
+// transforming snapshot from_id into snapshot to_id, from the change
+// `first` on: a caller with a small output reads the changes in pages, each
+// page from the count that the page before gave. It gives the count of the
+// changes of the page. A change past the output is left for the next page;
+// `total` is the count of every change. A first past the total gives 0.
 snapshot_diff :: proc "contextless" (
 	history: ^Store_History,
 	from_id: u64,
 	to_id: u64,
 	changes_out: []Snapshot_Diff_Entry,
-) -> (count: int, refusal: History_Refusal) {
-	from_rec, from_refusal := snapshot_find(history, from_id)
+	first: int = 0,
+) -> (count: int, total: int, refusal: History_Refusal) {
+	from_record, from_refusal := snapshot_find(history, from_id)
 	if from_refusal != .None {
-		return 0, from_refusal
+		return 0, 0, from_refusal
 	}
-	to_rec, to_refusal := snapshot_find(history, to_id)
+	to_record, to_refusal := snapshot_find(history, to_id)
 	if to_refusal != .None {
-		return 0, to_refusal
+		return 0, 0, to_refusal
 	}
+	if first < 0 {
+		return 0, 0, .Output_Too_Small
+	}
+	from_items := snapshot_objects(history, from_record)
+	to_items := snapshot_objects(history, to_record)
 
-	from_n := int(from_rec.object_count)
-	to_n := int(to_rec.object_count)
-
-	// Pass 1: count total differences without writing changes_out.
-	needed := 0
-	i := 0
-	j := 0
-	for i < from_n && j < to_n {
-		f_len := int(from_rec.objects[i].name_length)
-		t_len := int(to_rec.objects[j].name_length)
-		order := tree_hash.compare_name_bytes(from_rec.objects[i].name[:f_len], to_rec.objects[j].name[:t_len])
+	emit :: proc "contextless" (changes_out: []Snapshot_Diff_Entry, first: int, total: ^int, count: ^int, entry: Snapshot_Diff_Entry) {
+		if total^ >= first && count^ < len(changes_out) {
+			changes_out[count^] = entry
+			count^ += 1
+		}
+		total^ += 1
+	}
+	i, j := 0, 0
+	for i < len(from_items) || j < len(to_items) {
+		order: int
+		switch {
+		case i == len(from_items):
+			order = 1
+		case j == len(to_items):
+			order = -1
+		case:
+			order = tree_hash.compare_name_bytes(object_name_bytes(&from_items[i]), object_name_bytes(&to_items[j]))
+		}
 		if order < 0 {
-			needed += 1
+			emit(changes_out, first, &total, &count, diff_entry_of(.Removed, &from_items[i], nil))
 			i += 1
 		} else if order > 0 {
-			needed += 1
+			emit(changes_out, first, &total, &count, diff_entry_of(.Added, nil, &to_items[j]))
 			j += 1
 		} else {
-			if from_rec.objects[i].object_version != to_rec.objects[j].object_version ||
-				from_rec.objects[i].content_hash != to_rec.objects[j].content_hash {
-				needed += 1
+			if from_items[i].object_version != to_items[j].object_version || from_items[i].content_hash != to_items[j].content_hash {
+				emit(changes_out, first, &total, &count, diff_entry_of(.Changed, &from_items[i], &to_items[j]))
 			}
 			i += 1
 			j += 1
 		}
 	}
-	needed += (from_n - i) + (to_n - j)
-
-	if needed > len(changes_out) {
-		return needed, .Output_Too_Small
-	}
-
-	// Pass 2: emit sorted Snapshot_Diff_Entry records.
-	out_idx := 0
-	i = 0
-	j = 0
-	for i < from_n && j < to_n {
-		f_len := int(from_rec.objects[i].name_length)
-		t_len := int(to_rec.objects[j].name_length)
-		order := tree_hash.compare_name_bytes(from_rec.objects[i].name[:f_len], to_rec.objects[j].name[:t_len])
-		if order < 0 {
-			changes_out[out_idx] = Snapshot_Diff_Entry {
-				kind         = .Removed,
-				name_length  = from_rec.objects[i].name_length,
-				name         = from_rec.objects[i].name,
-				from_version = from_rec.objects[i].object_version,
-				from_hash    = from_rec.objects[i].content_hash,
-			}
-			out_idx += 1
-			i += 1
-		} else if order > 0 {
-			changes_out[out_idx] = Snapshot_Diff_Entry {
-				kind       = .Added,
-				name_length = to_rec.objects[j].name_length,
-				name       = to_rec.objects[j].name,
-				to_version = to_rec.objects[j].object_version,
-				to_hash    = to_rec.objects[j].content_hash,
-			}
-			out_idx += 1
-			j += 1
-		} else {
-			if from_rec.objects[i].object_version != to_rec.objects[j].object_version ||
-				from_rec.objects[i].content_hash != to_rec.objects[j].content_hash {
-				changes_out[out_idx] = Snapshot_Diff_Entry {
-					kind         = .Changed,
-					name_length  = to_rec.objects[j].name_length,
-					name         = to_rec.objects[j].name,
-					from_version = from_rec.objects[i].object_version,
-					to_version   = to_rec.objects[j].object_version,
-					from_hash    = from_rec.objects[i].content_hash,
-					to_hash      = to_rec.objects[j].content_hash,
-				}
-				out_idx += 1
-			}
-			i += 1
-			j += 1
-		}
-	}
-	for i < from_n {
-		changes_out[out_idx] = Snapshot_Diff_Entry {
-			kind         = .Removed,
-			name_length  = from_rec.objects[i].name_length,
-			name         = from_rec.objects[i].name,
-			from_version = from_rec.objects[i].object_version,
-			from_hash    = from_rec.objects[i].content_hash,
-		}
-		out_idx += 1
-		i += 1
-	}
-	for j < to_n {
-		changes_out[out_idx] = Snapshot_Diff_Entry {
-			kind        = .Added,
-			name_length = to_rec.objects[j].name_length,
-			name        = to_rec.objects[j].name,
-			to_version  = to_rec.objects[j].object_version,
-			to_hash     = to_rec.objects[j].content_hash,
-		}
-		out_idx += 1
-		j += 1
-	}
-	return out_idx, .None
+	return count, total, .None
 }

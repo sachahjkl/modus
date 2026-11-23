@@ -1,6 +1,7 @@
 package storage_service
 
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
 
@@ -14,16 +15,16 @@ import "modus:contract/value_kinds"
 // case: the template has no condition. No field has the name of a column
 // of the head of facts(): number, time, process, level.
 //
-// A name is a Text field, and the last field: the serial line of a fact
-// stops at its last byte that is not zero, so the zeros after a short name
-// cost no byte. A store name has at most NAME_CAPACITY bytes, and an
-// object name at most format.ENTRY_NAME_CAPACITY: each field holds the
-// longest one and a zero byte, and ends the record on 8 bytes.
+// A store name is a Text field after the fields of numbers: the serial
+// line of a fact stops at its last byte that is not zero, so the zeros
+// after a short name cost no byte. A store name has at most NAME_CAPACITY
+// bytes: its field holds the longest one and a zero byte. An object name
+// has up to format.ENTRY_NAME_CAPACITY bytes, more than one record of a
+// fact holds with its numbers: it is a text view, the last field, whose
+// text a long name carries in the out-of-line area of its fact.
 
 // The bytes of the Text field of a store name.
 STORE_FIELD_BYTES :: 40
-// The bytes of the Text field of an object name.
-OBJECT_FIELD_BYTES :: 72
 // The bytes of the Text field of the cause of a silent disk: its longest
 // cause, and a zero byte.
 DISK_SILENT_CAUSE_BYTES :: 72
@@ -215,7 +216,7 @@ Versions_Erased_One_Version :: struct {
 	kept:       u64,
 	generation: u64,
 	store:      [40]u8,
-	object:     [72]u8,
+	object:     value_kinds.Text_View,
 }
 
 // The erase of the versions of an object ended several versions.
@@ -226,7 +227,7 @@ Versions_Erased :: struct {
 	kept:       u64,
 	generation: u64,
 	store:      [40]u8,
-	object:     [72]u8,
+	object:     value_kinds.Text_View,
 }
 
 // The erase left damaged parts of versions with no zeros over them.
@@ -234,7 +235,7 @@ Versions_Erased :: struct {
 Erase_Damaged_Left :: struct {
 	damaged: u64,
 	store:   [40]u8,
-	object:  [72]u8,
+	object:  value_kinds.Text_View,
 }
 
 // The removal of a tree stops: the removal queue gives no first tree.
@@ -267,7 +268,7 @@ Ranges_Committed :: struct {
 	written:       u64,
 	held:          value_kinds.Size_In_Blocks,
 	elapsed:       value_kinds.Time_In_Milliseconds,
-	object:        [72]u8,
+	object:        value_kinds.Text_View,
 }
 
 // The block service refused a request: the values of its error record,
@@ -301,6 +302,88 @@ No_Data_Region :: struct {}
 // The block service refused the data region.
 @(log_fact = "storage: the block service refused the data region")
 Data_Region_Refused :: struct {}
+
+// The budget of the service pays no tables of the blocks, even for the
+// least disk.
+@(log_fact = "storage: the memory of the service holds no tables of the blocks of the disk of {disk_blocks}: the service serves nothing")
+No_Table_Memory :: struct {
+	disk_blocks: value_kinds.Size_In_Blocks,
+}
+
+// The budget of the service pays the tables of the first blocks of the
+// disk only: the service reads the counts of the blocks from the count tree
+// of the disk.
+@(log_fact = "storage: the disk has {disk_blocks}, and the memory of the service holds the tables of {used_blocks}: the service reads the counts of the blocks from the count tree of the disk")
+Disk_Larger_Than_Tables :: struct {
+	disk_blocks: value_kinds.Size_In_Blocks,
+	used_blocks: value_kinds.Size_In_Blocks,
+}
+
+// A whole root names more blocks than the tables hold, and no count tree
+// that holds each count: the open uses no root rather than lose the blocks
+// past them.
+@(log_fact = "storage: the root of the disk names more blocks than the {used_blocks} whose tables the memory of the service holds, and no count tree that holds each count: the service keeps the disk as it is, and serves nothing; a larger budget of the service opens it")
+Root_Larger_Than_Tables :: struct {
+	used_blocks: value_kinds.Size_In_Blocks,
+}
+
+// The count tree of the disk does not hold the counts that the walk of the
+// open found: the commits after the open write the leaves that differ.
+@(log_fact = "storage: {leaves} leaves of the count tree do not hold the counts of names that the open found: the next commits write them")
+Count_Leaves_Differ :: struct {
+	leaves: u64,
+}
+
+// The repair of wrong leaves of the count tree ended: a commit wrote them.
+@(log_fact = "storage: the leaves of the count tree that had a wrong check are counted again and written: the service takes changes again")
+Count_Leaves_Repaired :: struct {}
+
+// Leaves of the count tree have a wrong check: the service enters the
+// repair state.
+@(log_fact = "storage: the count tree has a wrong check in {leaves} of its leaves: the service makes no change until it has counted the names of their blocks again, and serves the reads")
+Count_Repair_Started :: struct {
+	leaves: u64,
+}
+
+// A read or a write of the device failed during the repair of the count
+// tree: the walk starts again after the next call. Written once.
+@(log_fact = "storage: a read or a write of the disk failed during the repair of the count tree: the repair starts again after the next call")
+Count_Repair_Device :: struct {}
+
+// The disk has no free block for the scratch of the repair: the service
+// takes changes again. Written once.
+@(log_fact = "storage: the disk has no free block for the scratch of the repair of the count tree: the service takes changes again, and the repair starts again after the next commit")
+Count_Repair_No_Room :: struct {}
+
+// The commit of the repaired leaves failed on the device. Written once.
+@(log_fact = "storage: the commit of the repaired leaves of the count tree did not reach the disk: the service makes it again after the next call")
+Count_Repair_Commit_Failed :: struct {}
+
+// The repair found a wrong node of a tree of a store: the blocks under it
+// are not counted, as at an open.
+@(log_fact = "storage: the repair of the count tree found a wrong node of a tree in the store {store}: the store takes no change, and the repair goes on with the other stores")
+Count_Repair_Store_Damaged :: struct {
+	store: [40]u8,
+}
+
+// A set of the damage of the form Count_Tree is full: the service makes no
+// change until its next start.
+@(log_fact = "storage: the service found more than {wrong_blocks} wrong blocks with no table of each block: it makes no change until its next start")
+Damage_Set_Full :: struct {
+	wrong_blocks: u64,
+}
+
+// The count tree of the disk has a wrong page: the open counts by its
+// walk, and the commits after it write a new count tree.
+@(log_fact = "storage: the count tree of the disk has a wrong page: the service takes the counts of names that the open found, and the next commits write a new count tree")
+Count_Tree_Damaged :: struct {}
+
+// Pages of the store table have a wrong check: their stores are not
+// served, and no new store goes in them.
+@(log_fact = "storage: {pages} pages of the store table have a wrong check or break a rule of the format: the service serves none of their stores, and makes no new store in them")
+Store_Pages_Damaged :: struct {
+	pages: u64,
+}
 
 // The open found no valid root.
 @(log_fact = "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
@@ -338,7 +421,7 @@ Engine_Fault :: struct {
 Versions_Ended_Second_Root_Dropped :: struct {
 	generation: u64,
 	store:      [40]u8,
-	object:     [72]u8,
+	object:     value_kinds.Text_View,
 }
 
 // The erase of versions: the write or the read back of the second root
@@ -347,7 +430,7 @@ Versions_Ended_Second_Root_Dropped :: struct {
 Versions_Ended_Second_Root_Failed :: struct {
 	generation: u64,
 	store:      [40]u8,
-	object:     [72]u8,
+	object:     value_kinds.Text_View,
 }
 
 // The erase of versions: a write, the Flush or the read back of the zeros
@@ -358,7 +441,7 @@ Versions_Ended_Zeros_Failed :: struct {
 	zeroed:     u64,
 	not_zeroed: u64,
 	store:      [40]u8,
-	object:     [72]u8,
+	object:     value_kinds.Text_View,
 }
 
 // The erase of versions: the disk did not keep some writes of zeros.
@@ -367,14 +450,15 @@ Versions_Ended_Zeros_Dropped :: struct {
 	generation: u64,
 	not_zeroed: u64,
 	store:      [40]u8,
-	object:     [72]u8,
+	object:     value_kinds.Text_View,
 }
 
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes, and each holds its longest name and a zero byte.
-#assert(size_of(Versions_Ended_Zeros_Failed) == 24 + STORE_FIELD_BYTES + OBJECT_FIELD_BYTES)
+#assert(size_of(Versions_Ended_Zeros_Failed) == 24 + STORE_FIELD_BYTES + value_kinds.TEXT_VIEW_BYTES)
 #assert(size_of(Tree_Node_Damaged) == STORE_FIELD_BYTES && STORE_FIELD_BYTES > NAME_CAPACITY)
-#assert(size_of(Erase_Damaged_Left) == 8 + STORE_FIELD_BYTES + OBJECT_FIELD_BYTES && OBJECT_FIELD_BYTES > format.ENTRY_NAME_CAPACITY)
+#assert(size_of(Erase_Damaged_Left) == 8 + STORE_FIELD_BYTES + value_kinds.TEXT_VIEW_BYTES)
+#assert(format.ENTRY_NAME_CAPACITY <= op.LOG_FACT_TEXT_AREA_BYTES_MOST)
 #assert(size_of(Disk_Silent) == DISK_SILENT_CAUSE_BYTES)
 
 // store_field gives the Text field of a store name.
@@ -387,10 +471,6 @@ cause_field :: proc "contextless" (words: string) -> [DISK_SILENT_CAUSE_BYTES]u8
 	return value_kinds.text_field(words, DISK_SILENT_CAUSE_BYTES)
 }
 
-// object_field gives the Text field of an object name.
-object_field :: proc "contextless" (name: string) -> [OBJECT_FIELD_BYTES]u8 {
-	return value_kinds.text_field(name, OBJECT_FIELD_BYTES)
-}
 
 // blocks_field gives a count of blocks as a field with its unit. A count of
 // the service is far below the largest i64.

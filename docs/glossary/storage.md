@@ -24,7 +24,7 @@ Do not use: directory, folder, list (for this), manifest, catalog (for this).
 
 An entry is one name of a tree and what it names: an object or a tree.
 
-An entry is the only link between a name and data. It holds the kind, the size, the generation, the time and the date of its last change, the hash of an object, the pointer of its root, and the version index of an object. A name has 1 to 64 bytes, no byte `/`, and is not `.` or `..`, so a name always goes one step down. A rename moves an entry with its versions. An entry is not a path and not a hard link.
+An entry is the only link between a name and data. It holds the kind, the size, the generation, the time and the date of its last change, the hash of an object, the pointer of its root, and the version index of an object. A name has 1 to 255 bytes, no byte `/`, and is not `.` or `..`, so a name always goes one step down. A rename moves an entry with its versions. An entry is not a path and not a hard link.
 
 The design: `docs/STORAGE.md`, "3.2 An entry".
 
@@ -79,6 +79,26 @@ A remove of a large tree must not be one huge commit. So `storage.remove(place, 
 The design: `docs/STORAGE.md`, "4.4 The removal of a tree".
 
 Do not use: trash, bin, garbage list.
+
+### Release
+
+A release is an entry of a removal queue that holds the last names of states too large to free in one commit, in a chain of lists of up to 127 states: for each one its root, its size, and the first block of data that no step has freed.
+
+The release of a state changes the count of each name that it drops in the commit of the release. A state of a terabyte would pass the room of any commit, so the storage service puts such a state in a list of the removal queue, and each later step frees the next blocks of the states of a list, up to 65 536 names, in the order of their blocks of data. A version that shares most of its blocks with the state that stays drops few names, and goes in its commit. The remove of the object is one commit, and a loss of power loses no step. A release is not a version: nothing reads it, and no restore brings it back.
+
+The design: `src/md/data/storage_capacity.md`, "A large state is released in steps".
+
+Do not use: deferred free, orphan, zombie state.
+
+### Repair state
+
+The repair state is the time during which the storage service counts again the names of the blocks of the leaves of its count tree that have a wrong check, and makes no change.
+
+The service serves each read in the repair state, and refuses each change with `Busy`, unit `Count_Repair`, whose record gives the stores that the repair walked and the stores in all. The client of the storage service makes such a call again until the repair ends, up to 60 seconds. No commit runs, so the trees do not change while the repair walks them in steps between the calls. The repair records the nodes that it walked in a scratch on free blocks of the disk, which no root names. One commit writes the leaves that it counted and ends the repair state. A repair state is not a fault of the store: no data is lost, and a loss of power starts the repair again at the next open.
+
+The design: `src/md/data/storage_capacity.md`, "The repair state".
+
+Do not use: read-only mode, maintenance mode, fsck.
 
 ### Version
 
@@ -278,13 +298,33 @@ Do not use: file system.
 
 ### Root block
 
-The root block is the block of the data disk that names each store, with the generation of the last commit; the disk has two places for it.
+The root block is the block of the data disk that names each page of the store table, with the generation of the last commit; the disk has two places for it.
 
 The root block makes a commit atomic. A commit writes its new blocks to free blocks, asks the disk to keep them (`Flush`), then writes the root block in the place of the older of the two roots. The root has its own check. At the start, the storage service takes the valid root with the highest generation. The root block is not a superblock that a process can read: only the storage service and the modus tool read it.
 
 The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: superblock, uberblock, meta page.
+
+### Store table
+
+The store table is the list of the stores of a data disk: pages of 63 cells that the root block names, each cell the name, the limit, the blocks used and the store block of one store.
+
+A store keeps its cell for the life of the disk, so its number in the table is stable, and the storage service indexes its tables of the stores by it. A commit of a store writes the page of its cell again, with copy on write, and the root names the new page. The root names up to 251 pages: 15 813 stores on one disk. A page with a wrong check damages the stores of its cells only. The store table is not a directory that a process reads: a process reaches its own store only, and `stores()` lists the stores that it may name.
+
+The design: `src/md/data/storage_capacity.md`.
+
+Do not use: store directory, superblock table, store list.
+
+### Count tree
+
+The count tree is the count of names and the owner of each block of a data disk, kept on the disk itself in leaves of 512 blocks under directories of 128 children, which the root block names.
+
+The storage service needs the count of each block to free a block when its last name goes. With the counts in memory only, a disk needed memory in proportion to its size, and each start walked every block to count them. Each commit writes the new leaves of the counts that it changes, with copy on write, so a disk larger than the memory of the service opens from its count tree, with a cache of its pages. When the memory holds a table of each block, the start still walks and checks each block, and compares the tree with what it found. The count tree is not a bitmap of free blocks: it holds the counts of names, which the release of a shared block needs.
+
+The design: `src/md/data/storage_capacity.md`, "The counts of names live on the disk".
+
+Do not use: allocation bitmap, free list, space map.
 
 ### Commit
 
@@ -445,6 +485,26 @@ Pending changes group many small writes into one commit, which is one version. A
 The design: `docs/STORAGE.md`, "Ranges".
 
 Do not use: dirty page, write buffer, uncommitted write, transaction (for this).
+
+### Pending pool
+
+A pending pool is the memory of the pending changes of one connection, which the storage service takes at the first change of the connection and gives back at its commit, its drop or its end.
+
+Each connection has its own pool, so a connection that writes a large range takes no room of another one. A pool holds at most the limit of blocks of the store of its connection, and the commit of its changes takes the tables of its work from the same pool: the changes of a large text are one commit. `storage.drop_pending(place, name)` drops the pending changes of one object of the pool. A pending pool is not a cache of the disk: it holds changes that no commit made yet.
+
+The design: `src/md/data/storage_capacity.md`, "Pending changes are a pool of each connection".
+
+Do not use: write buffer, pending area, shared pool.
+
+### Part
+
+A part is an entry of a node of a frozen folder of more than 4096 entries: it names one node of that folder by the first name under it and by the tree hash of the node.
+
+A node holds at most 4096 entries, so a larger folder is cut, in the order of its names, into nodes of exactly 4096 entries, the last one with the rest; the parts of those nodes are cut the same way into nodes of 64 parts, up to one root. The cut depends on the count of the entries only, so a folder has one form and one tree hash. A part is not an entry of the folder: a lookup goes through it to the node that holds the name.
+
+The design: `src/md/data/storage_capacity.md`, "A folder of more than 4096 entries is a tree of several nodes".
+
+Do not use: chunk, page (for this), shard.
 
 ### Tree hash
 

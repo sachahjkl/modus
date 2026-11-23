@@ -16,7 +16,9 @@ A process that keeps two copies of one document, a picture under two names, or t
 
 ## The chosen form
 
-**The index is in the memory of the service, and the open makes it.** It is a table in `storage_mount.State`, beside the reference counts, built by the same walk. For each block that is the root of the current state of an object (the state that an entry names, in a tree of the store or in its removal queue), the table keeps the first 8 bytes of the hash of the entry, the size, the check of the root, and the count of the entries that name that root. A table of slots finds a root by its key: the 8 bytes, the size and the store. A root is one block, so the table never holds more roots than the disk has blocks, and it has twice that many slots.
+**The index is in the memory of the service, and the open makes it.** It is two tables in `storage_mount.State`, beside the reference counts, built by the same walk. For each block that is the root of the current state of an object (the state that an entry names, in a tree of the store or in its removal queue), a record keeps the number of the block, the first 8 bytes of the hash of the entry, the size, the check of the root, and the count of the entries that name that root. The records are found by the number of their block. A table of slots finds a root by its key: the 8 bytes, the size and the store.
+
+**Its size follows the roots, not the disk.** The caller of the open chooses how many roots the index holds (`state_bind`); the storage service takes 131 072, 6 MiB of its budget, whatever the size of the disk. The records and the slots are as many, so at most half of each is in use. When the records are half full, a new root gets no record: a later commit does not find its bytes, as for a root past the bound of a run. One change: the first form had one record for each block of the disk, 32 bytes each, so its memory grew with the disk and a disk of 64 GiB would have needed 512 MiB for it.
 
 **The cost of the slots is bounded.** Three rules bound it, because a process can choose its bytes and a hostile disk can choose the hash of each entry:
 
@@ -60,7 +62,8 @@ A share names no store with `open_store`, not even the store of its maker: a pla
 - A confirmation, for each candidate, at most `HASH_CONFIRMATION_LIMIT` of them: the hash of a state, which reads the object nodes on the path of its last block and the last block, through the cache. At most `OBJECT_LEVEL_LIMIT` nodes and one block of data each.
 - The update at a commit: one insert and one removal for each entry that the commit changed, each bounded by `HASH_PROBE_LIMIT` slots for each slot that it moves.
 - A found root saves the writes of the block tree: the data and the object nodes of the new state. The values and the hash are computed before the lookup, so the hashing work is the same as before.
-- The table costs 10 MiB of the memory of the service: 32 bytes for each block of the disk, and 4 bytes for each of twice as many slots.
+- The tables cost 48 bytes for each root that the index can hold: a record of 40 bytes and a slot of 8, twice the roots of each. The service holds 131 072 roots in 6 MiB.
+- A search for the record of a block reads its run of records: at a load of one half, a few records.
 
 ## Refused forms
 
@@ -68,7 +71,8 @@ A share names no store with `open_store`, not even the store of its maker: a pla
 - **A hash in each version, and versions in the index.** A version entry has no hash: the format would change (fewer versions in a leaf), or the open would compute the hash of each version. The current states are the objects that a process names; a version shares its blocks with the state after it already. Refused.
 - **One index for all the stores.** A block would be named from two stores, so the limit of one store would pay for the blocks of another, and a write that takes no block would tell one principal what another one has ([`docs/STORAGE.md`](../../../docs/STORAGE.md), "1.2 The hard points", the secrecy). Refused.
 - **Trust the hash of the entry.** A disk that another party changed can give an entry the hash of other bytes; the entry would then name the bytes of another object. Refused: each candidate is confirmed from its blocks.
-- **The full 32 bytes of the hash in the table.** 8 MiB more of memory for a comparison that the confirmation makes anyway. Refused.
+- **The full 32 bytes of the hash in the table.** 24 bytes more for each root for a comparison that the confirmation makes anyway. Refused.
+- **A record at the place of each block of the disk.** The first form: no search for a record, but 32 bytes for each block, 512 MiB for a disk of 64 GiB, for the roots of the objects, a small part of the blocks. Refused when the disk took the size of its device.
 - **An equal block inside two different objects** (a search by the value of each block). The value of a block depends on its place, so two equal blocks at two places have two values; a table of the blocks would be as large as the disk and its search would cost each commit. Refused: the unit that the model names by its hash is the object.
 
 ## Subtle points

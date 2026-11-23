@@ -22,7 +22,7 @@ A part that the system does not know is left out. A guess is worse than no part:
 
 - Bad: "Operation failed."
 - Bad: "Check your network and try again." The problem is missing, and the cause is a guess.
-- Good: "storage.write: the argument name has 70 bytes; it can have at most 64 bytes". The problem, then the limit, which is what the reader can do.
+- Good: "storage.write: the argument name has 270 bytes; it can have at most 255 bytes". The problem, then the limit, which is what the reader can do.
 - Good: "monitor.processes: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant".
 
 ### No blame

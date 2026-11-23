@@ -265,6 +265,7 @@ Each set of today becomes `Call_Outcome` in its migration step. Where one word o
 | | -11 `Exists` | `Name_Already_Taken` |
 | | -12 `Place` | `Argument_Refused` for a place of another connection; `Grant_Or_Right_Missing` for a connection that reads only |
 | | -13 `Pending` | `Nothing_Has_That_Name` for no pending change; `Another_Change_Came_First` when another change came first |
+| | -14 `Busy` | `Callee_Busy`: the service repairs the counts of its blocks, and the call can be made again |
 | The calls of supervision ([../features/supervision.md](../features/supervision.md)) | the library status `Holder_Stopped` | `Callee_Stopped_During_The_Call` for a call in doubt; `Callee_Unavailable` for a call that did not leave |
 | | the library status `No_Answer` | `Deadline_Passed_During_The_Call` |
 | | the library status `Ended` | `Connection_Ended_During_The_Call`; `Callee_Unavailable` for a call that did not leave |

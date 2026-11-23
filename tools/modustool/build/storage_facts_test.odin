@@ -1,6 +1,7 @@
 package build
 
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:sentence"
 import "core:strings"
 import "core:testing"
@@ -14,11 +15,11 @@ import "modustool:foundation"
 // old line written by sentence.format, at the edges of each field.
 
 // The longest store name (store.NAME_CAPACITY) and the longest object name
-// (store.ENTRY_NAME_CAPACITY).
+// (store.ENTRY_NAME_CAPACITY), which a text view carries.
 @(private = "file")
 STORE_NAME_BYTES_MOST :: 32
 @(private = "file")
-OBJECT_NAME_BYTES_MOST :: 64
+OBJECT_NAME_BYTES_MOST :: 255
 // The bytes of the Text field of the cause of a silent disk
 // (storage_service.DISK_SILENT_CAUSE_BYTES).
 @(private = "file")
@@ -49,6 +50,12 @@ the_facts_of_the_storage_service_write_the_lines_of_before :: proc(t: ^testing.T
 	}
 	render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
 		return fact_test_render(t, file, "storage_service", type_name, values)
+	}
+	// A fact that names an object: the name is the text of its view.
+	render_object :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field, object: string) -> string {
+		rendered, written := views_render(t, file, "storage_service", type_name, values, {object})
+		testing.expectf(t, len(written) == 1 && written[0] == object, "the view of %s holds the whole name of %d bytes", type_name, len(object))
+		return rendered
 	}
 	store := strings.repeat("s", STORE_NAME_BYTES_MOST, context.temp_allocator)
 	object := strings.repeat("o", OBJECT_NAME_BYTES_MOST, context.temp_allocator)
@@ -115,14 +122,14 @@ the_facts_of_the_storage_service_write_the_lines_of_before :: proc(t: ^testing.T
 	}
 
 	// The erase of the versions of an object.
-	facts_expect_line(t, render(t, file, "Versions_Erased_One_Version", {{"zeroed", most}, {"kept", u64(0)}, {"generation", most}, {"store", store}, {"object", object}}), line_of_before("storage: the versions of ", object, " in the store ", store, " are erased: ", u64(1), " version", " ended, ", most, " blocks written with zeros, ", u64(0), " blocks kept that another state names, generation ", most))
+	facts_expect_line(t, render_object(t, file, "Versions_Erased_One_Version", {{"zeroed", most}, {"kept", u64(0)}, {"generation", most}, {"store", store}}, object), line_of_before("storage: the versions of ", object, " in the store ", store, " are erased: ", u64(1), " version", " ended, ", most, " blocks written with zeros, ", u64(0), " blocks kept that another state names, generation ", most))
 	for ended in counts {
 		if ended == 1 {
 			continue
 		}
-		facts_expect_line(t, render(t, file, "Versions_Erased", {{"ended", ended}, {"zeroed", u64(0)}, {"kept", most}, {"generation", u64(1)}, {"store", store}, {"object", object}}), line_of_before("storage: the versions of ", object, " in the store ", store, " are erased: ", ended, " versions", " ended, ", u64(0), " blocks written with zeros, ", most, " blocks kept that another state names, generation ", u64(1)))
+		facts_expect_line(t, render_object(t, file, "Versions_Erased", {{"ended", ended}, {"zeroed", u64(0)}, {"kept", most}, {"generation", u64(1)}, {"store", store}}, object), line_of_before("storage: the versions of ", object, " in the store ", store, " are erased: ", ended, " versions", " ended, ", u64(0), " blocks written with zeros, ", most, " blocks kept that another state names, generation ", u64(1)))
 	}
-	facts_expect_line(t, render(t, file, "Erase_Damaged_Left", {{"damaged", most}, {"store", store}, {"object", object}}), line_of_before("storage: the erase of the versions of ", object, " in the store ", store, " ended ", most, " damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it"))
+	facts_expect_line(t, render_object(t, file, "Erase_Damaged_Left", {{"damaged", most}, {"store", store}}, object), line_of_before("storage: the erase of the versions of ", object, " in the store ", store, " ended ", most, " damaged version indexes, leaves or states with no zeros over them: their blocks keep their bytes, in use until the next start of the service and free after it"))
 
 	// The stops of the removal of a tree: each cause.
 	facts_expect_line(t, render(t, file, "Tree_Removal_No_First_Tree", {{"store", store}}), line_of_before("storage: the removal of a tree of the store ", store, " stops: ", "the removal queue gives no first tree", REMOVAL_END))
@@ -130,8 +137,8 @@ the_facts_of_the_storage_service_write_the_lines_of_before :: proc(t: ^testing.T
 	facts_expect_line(t, render(t, file, "Tree_Removal_Commit_Failed", {{"store", store}}), line_of_before("storage: the removal of a tree of the store ", store, " stops: ", "its commit failed", REMOVAL_END))
 
 	// The commit of the range writes of an object.
-	facts_expect_line(t, render(t, file, "Ranges_Committed", {{"generation", most}, {"changed", u64(0)}, {"object_blocks", most}, {"hashed_blocks", u64(1)}, {"hashed_nodes", most}, {"written", u64(0)}, {"held", largest}, {"elapsed", largest}, {"object", object}}), line_of_before("storage: the commit of generation ", most, " of ", object, ": ", u64(0), " blocks changed of ", most, ", ", u64(1), " blocks and ", most, " object nodes hashed, ", u64(0), " blocks written; the object holds ", sentence.Size{largest, .Blocks}, "; in ", sentence.Duration{largest, .Milliseconds}))
-	facts_expect_line(t, render(t, file, "Ranges_Committed", {{"generation", u64(3)}, {"changed", u64(3)}, {"object_blocks", u64(2097152)}, {"object", "sparse"}}), line_of_before("storage: the commit of generation ", u64(3), " of ", "sparse", ": ", u64(3), " blocks changed of ", u64(2097152), ", ", u64(0), " blocks and ", u64(0), " object nodes hashed, ", u64(0), " blocks written; the object holds ", sentence.Size{0, .Blocks}, "; in ", sentence.Duration{0, .Milliseconds}))
+	facts_expect_line(t, render_object(t, file, "Ranges_Committed", {{"generation", most}, {"changed", u64(0)}, {"object_blocks", most}, {"hashed_blocks", u64(1)}, {"hashed_nodes", most}, {"written", u64(0)}, {"held", largest}, {"elapsed", largest}}, object), line_of_before("storage: the commit of generation ", most, " of ", object, ": ", u64(0), " blocks changed of ", most, ", ", u64(1), " blocks and ", most, " object nodes hashed, ", u64(0), " blocks written; the object holds ", sentence.Size{largest, .Blocks}, "; in ", sentence.Duration{largest, .Milliseconds}))
+	facts_expect_line(t, render_object(t, file, "Ranges_Committed", {{"generation", u64(3)}, {"changed", u64(3)}, {"object_blocks", u64(2097152)}}, "sparse"), line_of_before("storage: the commit of generation ", u64(3), " of ", "sparse", ": ", u64(3), " blocks changed of ", u64(2097152), ", ", u64(0), " blocks and ", u64(0), " object nodes hashed, ", u64(0), " blocks written; the object holds ", sentence.Size{0, .Blocks}, "; in ", sentence.Duration{0, .Milliseconds}))
 }
 
 // Each fact type of the block service writes the line of before, byte for
@@ -152,10 +159,10 @@ the_facts_of_the_block_service_write_the_lines_of_before :: proc(t: ^testing.T) 
 	facts_expect_line(t, fact_test_render(t, file, "block_service", "Device_Silent", {{"bound", u64(0)}, {"in_flight", u64(1)}}), line_of_before("block: the device did not answer a request in ", u64(0), " ms: ", u64(1), " requests in flight fail, and the service stops"))
 }
 
-// Each fact type of the storage service with a name ends with a Text
-// field, and each Text field holds the longest name of its kind and a zero
-// byte: the serial line of a short name then ends with the name, and no
-// name is cut.
+// Each fact type of the storage service with a store name ends with that
+// Text field, before a text view of an object name only, and each Text
+// field holds the longest name of its kind and a zero byte: the serial line
+// of a short name then ends with the name, and no name is cut.
 @(test)
 the_names_of_the_storage_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	file, ok := facts_file_of_folder(t, foundation.SYSTEM_MODULE_SOURCES + "storage")
@@ -178,6 +185,13 @@ the_names_of_the_storage_facts_come_last_and_whole :: proc(t: ^testing.T) {
 			if !testing.expect(t, item_ok) {
 				continue
 			}
+			// A text view of an object name is the last field of all, after
+			// the Text fields: the build refuses a field after a view.
+			if item.kind == u8(value_kinds.Field_Kind.Text_View) {
+				name := module.string_at(file, item.name_offset, item.name_count)
+				testing.expectf(t, name == "object", "the text view %s of %s is no name that this test knows", name, type_name)
+				continue
+			}
 			end := item.offset + module.field_size(item)
 			is_text := item.type == u8(module.Type.Text)
 			if is_text {
@@ -186,8 +200,6 @@ the_names_of_the_storage_facts_come_last_and_whole :: proc(t: ^testing.T) {
 				switch name {
 				case "store":
 					testing.expectf(t, module.field_size(item) > STORE_NAME_BYTES_MOST, "the field store of %s holds no store name of %d bytes", type_name, STORE_NAME_BYTES_MOST)
-				case "object":
-					testing.expectf(t, module.field_size(item) > OBJECT_NAME_BYTES_MOST, "the field object of %s holds no object name of %d bytes", type_name, OBJECT_NAME_BYTES_MOST)
 				case "cause":
 					testing.expectf(t, module.field_size(item) == DISK_SILENT_CAUSE_BYTES, "the field cause of %s has %d bytes", type_name, module.field_size(item))
 				case:

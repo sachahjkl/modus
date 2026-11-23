@@ -5,13 +5,17 @@
 //
 // The disk is a row of blocks of 4096 bytes. Blocks 0 and 1 are the two
 // places of the root block. Each other block is free, or it is a store
-// block, a node, an object node, a block of data, a version index or a
-// version leaf. A block names another block with a Pointer: its number and
-// a check. The check of a block of data is the first 8 bytes of its value
-// (Block_Value); the check of each other block is the first 8 bytes of the
-// BLAKE3 hash of its 4096 bytes.
+// directory node, a store block, a node, an object node, a block of data,
+// a version index or a version leaf. A block names another block with a
+// Pointer: its number and a check. The check of a block of data is the
+// first 8 bytes of its value (Block_Value); the check of each other block
+// is the first 8 bytes of the BLAKE3 hash of its 4096 bytes.
 //
-//   root        the generation, and one Store_Entry for each store
+//   root        the generation, the blocks of the disk, and the Pointer
+//               of each store table page
+//   store table page
+//               63 cells of stores: the name, the limit, the blocks used
+//               and the store block of each (Store_Entry)
 //   store block one for each store: the root node of its tree, the root
 //               node of its removal queue, and its counts
 //   node        a node of the B+ tree of one tree: a leaf of entries (a name
@@ -39,9 +43,9 @@
 // blocks that it changes, and the new state names the other nodes and
 // blocks of the state before. So an object node or a block of data can be
 // named many times: by the nodes of several states, by an entry and its
-// versions, by an object and its clone (a shared block). A store block, a
-// node, an index and a leaf are named one time. A block is named from one
-// store only.
+// versions, by an object and its clone (a shared block). A store table
+// page, a store block, a node, an index and a leaf are named one time. A
+// block is named from one store only, or by the store table.
 //
 // The rule (copy on write): a commit never writes a block that the root on
 // the disk names. It writes each changed block to a free block, then the
@@ -59,20 +63,22 @@
 // is damage, not a cut commit: the state of the object that names it is
 // damaged, and the other objects are served. A store block or a node with a
 // wrong check, or a node that breaks a rule of this format, damages its
-// store.
+// store. A store table page with a wrong check damages each store of its
+// cells: the service serves none of them and makes no store in that page.
 //
 // Who uses it: the storage service (`src/modules/system/storage`, with
 // `src/library/internal/storage/storage_tree` and `src/library/internal/storage/storage_object`), and the tools that
 // check or damage a disk in the tests. A process never reads the disk: it
 // calls the storage service. The parts:
 //
-// - `Root`, `Store_Entry`: the root block, the one place that changes.
+// - `Root`, `Store_Table_Page`, `Store_Entry`: the root block, the pages of
+//   the store table, and the cell of one store.
 // - `Store_Block`: the counts of one store.
 // - `Tree_Header`, `Entry_Name`, `Entry`: the nodes of the B+ trees.
 // - `Object_Node`, `Object_Child`, `Block_Value`: the block tree of an
 //   object.
 // - `Version_Index`, `Version_Leaf`, `Version_Entry`: the versions.
-// - `Pointer`, `check`, `root_valid`: the checks of the blocks.
+// - `Pointer`, `check`, `root_valid`, `disk_blocks_valid`, `disk_bytes`: the checks and geometry of the disk.
 // - `name_refusal`: the rule of a name.
 //
 // See [store](term:store), [tree](term:tree) and [version](term:version).
@@ -83,38 +89,40 @@ import "modus:contract/blake3"
 import "modus:contract/text_encoding"
 
 BLOCK_SIZE :: 4096 // The bytes of one block of the disk: one page, one block of the block service.
-ROOT_MAGIC :: u64(0x34454741524F5453) // The bytes "STORAGE4": the format with an object as a tree of blocks.
-// The stores of one disk: the cells of the root block. 60 cells of 64 bytes
-// fit in one block with the head of the root and its check.
-STORE_CAPACITY :: 60
+ROOT_MAGIC :: u64(0x36454741524F5453) // The bytes "STORAGE6": a paged store table, names of 255 bytes, the counts of names in a count tree.
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
-DISK_BLOCKS_LIMIT :: 1 << 18 // 1 GiB: the service uses no block after this.
+
+// The blocks of a disk: at least the two places of the root, and at most
+// the count whose bytes a u64 holds, so that no offset of a block wraps.
+DISK_BLOCKS_MIN :: u64(2)
+DISK_BLOCKS_MAX :: max(u64) / BLOCK_SIZE
 
 // The block tree of an object. A node has 64 children: 64 is a power of
 // two, so a node covers a whole subtree of the BLAKE3 tree of the bytes,
 // and 64 children with their values fill most of a block. Five levels
 // name 64^5 blocks: an object holds up to 4 TiB. The limit is the depth:
 // a commit copies one node of each level for each block that it changes,
-// and the open takes a deeper tree for damage. 4 TiB is more than a disk of
-// DISK_BLOCKS_LIMIT blocks holds, and a sixth level costs one more node on
-// each path.
+// and the open takes a deeper tree for damage.
 OBJECT_FANOUT :: 64 // The children of one object node.
 OBJECT_LEVEL_LIMIT :: 5 // The most levels of the block tree of one object.
 OBJECT_BLOCKS_LIMIT :: u64(1) << 30 // 64^5 blocks.
 OBJECT_SIZE_LIMIT :: OBJECT_BLOCKS_LIMIT * BLOCK_SIZE // 4 TiB.
 
-// The name of an entry: 1 to 64 bytes of UTF-8 with no control character
-// (name_refusal checks it), with zero bytes after it in its key. A key of 64 bytes gives 24 entries in a leaf: a store of a
-// million objects has its entries in about 60000 blocks, inside the blocks
-// of a disk. A name has no zero byte (the padding), no byte '/' and is not
-// "." or "..": a name is one step down, so no name reaches past the tree
-// that it is looked up in.
-ENTRY_NAME_CAPACITY :: 64
+// The name of an entry: 1 to 255 bytes of UTF-8 with no control character
+// (name_refusal checks it), stored in a 256-byte zero-padded slot so every
+// record in a B+ tree node keeps 8-byte alignment for its Entry or Pointer.
+// A name has no zero byte (the padding), no byte '/' and is not "." or "..":
+// a name is one step down, so no name reaches past the tree that it is
+// looked up in.
+ENTRY_NAME_CAPACITY :: 255
+ENTRY_NAME_STORAGE :: ENTRY_NAME_CAPACITY + 1
 
-// The most levels of the B+ tree of one tree. With nodes a third full, 8
-// levels hold more entries than a disk of DISK_BLOCKS_LIMIT blocks can
-// name. The open takes a deeper B+ tree for damage, and no walk goes deeper.
-TREE_DEPTH_LIMIT :: 8
+// The most levels of the B+ tree of one tree. With keys of 256 bytes a
+// branch holds 14 children and at least 4, and a leaf at least 3 entries:
+// 10 levels hold about 800000 entries with each node at its least, and
+// more than a disk can name with full nodes. The open takes a deeper B+
+// tree for damage, and no walk goes deeper.
+TREE_DEPTH_LIMIT :: 10
 
 // The most trees on a path from the root of a store: a place holds the
 // names of its path, and a commit rewrites one tree on each level of it.
@@ -128,29 +136,189 @@ Pointer :: struct {
 	check: u64, // The check of the block: `check` of its bytes, or `value_check` of its value for a block of data.
 }
 
-// The cell of one store (docs/STORAGE.md: the one thing that changes).
+// The cell of one store (docs/STORAGE.md: the one thing that changes). 64
+// bytes.
 Store_Entry :: struct {
-	name:  [NAME_CAPACITY]u8, // All zero: the place is free.
+	name:  [NAME_CAPACITY]u8, // All zero: the cell is free.
 	limit: u64, // The most blocks of the store, as the last grant gave it.
 	used:  u64, // The distinct blocks of the store: its store block, its nodes, its object nodes, its data, its versions.
 	store: Pointer, // The store block.
 }
+#assert(size_of(Store_Entry) == 64)
 
-// The root block: the generation of the last commit and the cell of each
-// store. It is at block 0 or block 1: a commit writes the older of the two,
-// so a cut write leaves the other valid (`root_valid`). The service takes
-// the valid root with the highest generation. 4096 bytes. See
-// [root block](term:root-block).
+// The store table: pages of cells, each page one block that the root names.
+// A store keeps its cell for the life of the disk, so its number (page *
+// STORES_OF_A_PAGE + cell) is stable: the open and the service index their
+// tables of stores by it. A commit changes one store, so it writes one page
+// again, with copy on write as each other block. A store is never removed,
+// so the pages fill in order: each page before the last one is full.
+STORE_TABLE_MAGIC :: u32(0x524F5453) // The bytes "STOR".
+STORES_OF_A_PAGE :: 63 // The cells of 64 bytes that fit in a block after the 16 bytes of the head of a page.
+STORE_PAGE_CAPACITY :: 251 // The Pointers of 16 bytes that fit in the root after its head of 64 bytes and its check.
+STORE_CAPACITY :: STORE_PAGE_CAPACITY * STORES_OF_A_PAGE // 15813 stores on one disk.
+
+// One page of the store table. 4096 bytes.
+Store_Table_Page :: struct {
+	magic:    u32, // STORE_TABLE_MAGIC: a block of another kind is damage.
+	reserved: u32, // 0.
+	unused:   u64, // 0.
+	cells:    [STORES_OF_A_PAGE]Store_Entry, // A free cell has no name.
+	padding:  [BLOCK_SIZE - 16 - STORES_OF_A_PAGE * size_of(Store_Entry)]u8, // 0.
+}
+
+// The root block: the generation of the last commit, the blocks of the
+// disk, and the pages of the store table. It is at block 0 or block 1: a
+// commit writes the older of the two, so a cut write leaves the other valid
+// (`root_valid`). The service takes the valid root with the highest
+// generation. 4096 bytes. See [root block](term:root-block).
 Root :: struct {
-	magic:       u64, // `ROOT_MAGIC`.
-	generation:  u64, // The count of commits of the disk: one more at each commit.
-	disk_blocks: u64, // The blocks of the disk that the format uses: at least 2, at most the blocks of the disk.
-	time:        u64, // The time since the format of the disk at this commit, in milliseconds.
-	date:        u64, // The date of this commit in seconds since 1970 (UTC). 0: not known.
-	reserved:    [3]u64, // 0.
-	stores:      [STORE_CAPACITY]Store_Entry, // The cell of each store; a free cell has no name.
-	padding:     [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8, // 0.
-	check:       u64, // The hash of the bytes before it.
+	magic:            u64, // `ROOT_MAGIC`.
+	generation:       u64, // The count of commits of the disk: one more at each commit.
+	disk_blocks:      u64, // The blocks of the disk that the format uses: DISK_BLOCKS_MIN ..= DISK_BLOCKS_MAX, at most the blocks of the disk.
+	time:             u64, // The time since the format of the disk at this commit, in milliseconds.
+	date:             u64, // The date of this commit in seconds since 1970 (UTC). 0: not known.
+	store_page_count: u64, // The pages of the store table: store_pages[:store_page_count] name a block each.
+	counts:           Pointer, // The top directory of the count tree. No block: the root names no count tree.
+	store_pages:      [STORE_PAGE_CAPACITY]Pointer, // The pages of the store table, in the order of the numbers of the stores.
+	counts_complete:  u64, // 1: the count tree holds the count of each block of the disk; 0: some leaves are still to write.
+	check:            u64, // The hash of the bytes before it.
+}
+#assert(size_of(Root) == BLOCK_SIZE)
+
+// The count tree: the count of names and the owner of each block of the
+// disk, on the disk itself, so that a disk larger than the memory of the
+// service opens with no walk (src/md/data/storage_capacity.md, "The counts
+// of names live on the disk"). A leaf holds 512 blocks; a directory holds
+// 128 children, each a leaf or a directory of the level below, with the
+// count of the free blocks under it. A child with no block is 512 * 128^l
+// blocks of count 0 and owner 0. Each block of the tree has the count 1 and
+// the owner COUNT_TREE_OWNER in the tree itself. The top is always a
+// directory. Every page of the tree is copy on write.
+COUNTS_OF_A_PAGE :: 512
+COUNT_DIRECTORY_FANOUT :: 128
+COUNT_PAGE_MAGIC :: u32(0x53544E43) // The bytes "CNTS".
+// A list of the states that one commit gave to the removal queue
+// (Entry_Kind.Release): one block of up to 127 states, which names the next
+// list of the same commit, so a commit that releases any count of large
+// states makes one entry of the queue. A block of the store, counted as
+// each block of its store; the list before names it, and the entry names
+// the first.
+RELEASE_LIST_MAGIC :: u32(0x534C4552) // The bytes "RELS".
+RELEASES_OF_A_LIST :: 127
+
+// One state of a release list. 32 bytes.
+Release_State :: struct {
+	root:   Pointer, // The root of the state: the list holds its last name.
+	size:   u64, // The bytes of the state.
+	cursor: u64, // The first block of data that no step has freed yet.
+}
+#assert(size_of(Release_State) == 32)
+
+// A release list. 4096 bytes.
+Release_List :: struct {
+	magic:   u32, // RELEASE_LIST_MAGIC.
+	count:   u32, // The states: 1 ..= RELEASES_OF_A_LIST.
+	next:    Pointer, // The next list of the commit: no block and the check 0 for the last.
+	states:  [RELEASES_OF_A_LIST]Release_State,
+	padding: [BLOCK_SIZE - 24 - RELEASES_OF_A_LIST * size_of(Release_State)]u8, // 0.
+}
+#assert(size_of(Release_List) == BLOCK_SIZE)
+
+// release_list_valid says if a block is a release list: its magic, a count
+// in its bound, a next list of a block past the two roots or none (then
+// with the check 0), and zero bytes in the places of no state and in the
+// padding.
+release_list_valid :: proc "contextless" (list: ^Release_List) -> bool {
+	if list.magic != RELEASE_LIST_MAGIC || list.count == 0 || list.count > RELEASES_OF_A_LIST {
+		return false
+	}
+	if list.next.block == 1 || list.next.block == 0 && list.next.check != 0 {
+		return false
+	}
+	for state in list.states[list.count:] {
+		if state != {} {
+			return false
+		}
+	}
+	for byte in list.padding {
+		if byte != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// The owners of a block that are no store: a page of the store table, which
+// the root names, and a page of the count tree. A store is its number plus
+// 1, below both.
+STORE_TABLE_OWNER :: max(u16)
+COUNT_TREE_OWNER :: max(u16) - 1
+#assert(STORE_CAPACITY < int(COUNT_TREE_OWNER))
+COUNT_DIRECTORY_MAGIC :: u32(0x52494443) // The bytes "CDIR".
+// The levels of directories that the largest disk needs: 512 * 128^7 is
+// 2^58 blocks, more than DISK_BLOCKS_MAX.
+COUNT_LEVEL_LIMIT :: 7
+
+// A leaf of the count tree. 4096 bytes.
+Count_Page :: struct {
+	magic:   u32, // COUNT_PAGE_MAGIC.
+	level:   u32, // 0.
+	first:   u64, // The first block that it holds: a multiple of COUNTS_OF_A_PAGE.
+	counts:  [COUNTS_OF_A_PAGE]u32, // The count of names of each block.
+	owners:  [COUNTS_OF_A_PAGE]u16, // The store that names each block, plus 1, or a mark of the service: 0 for a free block.
+	padding: [BLOCK_SIZE - 16 - COUNTS_OF_A_PAGE * 6]u8, // 0.
+}
+#assert(size_of(Count_Page) == BLOCK_SIZE)
+
+// A child of a directory of the count tree. 24 bytes.
+Count_Child :: struct {
+	block:    u64, // 0: no page: each block under it has the count 0.
+	check:    u64, // The check of the page.
+	free:     u64, // The blocks of count 0 under it that the disk holds, past the two places of the root.
+}
+#assert(size_of(Count_Child) == 24)
+
+// A directory of the count tree. 4096 bytes.
+Count_Directory :: struct {
+	magic:    u32, // COUNT_DIRECTORY_MAGIC.
+	level:    u32, // 1 or more: its children are of the level below.
+	first:    u64, // The first block under it: a multiple of count_span(level).
+	children: [COUNT_DIRECTORY_FANOUT]Count_Child,
+	padding:  [BLOCK_SIZE - 16 - COUNT_DIRECTORY_FANOUT * size_of(Count_Child)]u8, // 0.
+}
+#assert(size_of(Count_Directory) == BLOCK_SIZE)
+
+// count_span gives the blocks under one page of the count tree of a level:
+// 512 for a leaf, 512 * 128^level for a directory. A level past
+// COUNT_LEVEL_LIMIT gives the span of that limit.
+count_span :: proc "contextless" (level: int) -> u64 {
+	span := u64(COUNTS_OF_A_PAGE)
+	for _ in 0 ..< clamp(level, 0, COUNT_LEVEL_LIMIT) {
+		span *= COUNT_DIRECTORY_FANOUT
+	}
+	return span
+}
+
+// count_tree_levels gives the level of the top directory of the count tree
+// of a disk: the least level, at least 1, whose span holds each block.
+count_tree_levels :: proc "contextless" (disk_blocks: u64) -> int {
+	level := 1
+	for level < COUNT_LEVEL_LIMIT && count_span(level) < disk_blocks {
+		level += 1
+	}
+	return level
+}
+
+// count_free_blocks gives the blocks of count 0 that a page of a level
+// that starts at `first` would hold if each count were 0: the blocks of
+// the disk under it, past the two places of the root.
+count_free_blocks :: proc "contextless" (level: int, first: u64, disk_blocks: u64) -> u64 {
+	end := first + count_span(level)
+	if end > disk_blocks || end < first {
+		end = disk_blocks
+	}
+	start := max(first, 2)
+	return end > start ? end - start : 0
 }
 
 // The block of one store: the root of its tree, its removal queue, and the
@@ -176,8 +344,14 @@ Store_Block :: struct {
 // What an entry of a tree names.
 Entry_Kind :: enum u64 {
 	None   = 0, // Not an entry: a leaf holds no such record.
-	Object = 1, // An object: bytes, with versions.
-	Tree   = 2, // A tree: names of other entries.
+	Object  = 1, // An object: bytes, with versions.
+	Tree    = 2, // A tree: names of other entries.
+	// States of objects that no entry or version names any more, too large
+	// to free in one commit: an entry of the removal queue only, which steps
+	// free a part at a time. pointer: the first Release_List of the states;
+	// the other fields are 0 (src/md/data/storage_capacity.md, "A large state
+	// is released in steps").
+	Release = 3,
 }
 
 // entry_kind_of_word is the border of the kind of an entry (Entry.kind): the
@@ -193,10 +367,11 @@ entry_kind_of_word :: proc "contextless" (word: u64) -> (kind: Entry_Kind, ok: b
 	return {}, false
 }
 
-// The key of an entry: its name, with zero bytes after it. The order of the
-// bytes is the order of the entries: a shorter name comes before the names
-// that start with it.
-Entry_Name :: [ENTRY_NAME_CAPACITY]u8
+// The key of an entry: its name (1 to 255 bytes), with zero bytes after it
+// up to 256 bytes so the trailing Entry or Pointer is 8-byte aligned. The
+// order of the bytes is the order of the entries: a shorter name comes
+// before the names that start with it.
+Entry_Name :: [ENTRY_NAME_STORAGE]u8
 
 // What an entry names.
 //
@@ -214,11 +389,11 @@ Entry :: struct {
 	versions:   Pointer, // An object: its version index. No block: no version.
 }
 
-#assert(size_of(Entry_Name) == 64)
+#assert(size_of(Entry_Name) == 256)
 #assert(size_of(Entry) == 104)
 
 // A node: the header, then `count` records. A record of a leaf is a name
-// and its Entry; a record of a branch is a name and the Pointer of a child.
+// and its value; a record of a branch is a name and the Pointer of a child.
 // In a branch, the name of the record n is at most each name under the
 // child n, and more than each name under the child n - 1; the search does
 // not read the name of the record 0, which can be larger than the name of
@@ -238,8 +413,10 @@ Tree_Header :: struct {
 }
 #assert(size_of(Tree_Header) == TREE_HEADER_SIZE)
 
-LEAF_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Entry)) // 24: the records of a name and an entry that fit in one block.
-BRANCH_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Pointer)) // 50: the records of a name and a pointer that fit in one block.
+LEAF_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Entry)) // 11: the records of a name and an entry that fit in one block.
+BRANCH_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Pointer)) // 14: the records of a name and a pointer that fit in one block.
+#assert(LEAF_CAPACITY == 11)
+#assert(BRANCH_CAPACITY == 14)
 
 // One version of an object: its state at the commit of `generation`.
 //
@@ -314,10 +491,36 @@ Object_Node :: struct {
 }
 
 #assert(size_of(Root) == BLOCK_SIZE)
+#assert(size_of(Store_Table_Page) == BLOCK_SIZE)
 #assert(size_of(Store_Block) == BLOCK_SIZE)
 #assert(size_of(Object_Node) == BLOCK_SIZE)
 #assert(size_of(Version_Leaf) == BLOCK_SIZE)
 #assert(size_of(Version_Index) == BLOCK_SIZE)
+
+// disk_blocks_valid says if a count of blocks can be a disk: at least the
+// two places of the root, and at most DISK_BLOCKS_MAX.
+disk_blocks_valid :: proc "contextless" (disk_blocks: u64) -> bool {
+	return disk_blocks >= DISK_BLOCKS_MIN && disk_blocks <= DISK_BLOCKS_MAX
+}
+
+// disk_bytes gives the bytes of a disk of disk_blocks blocks, or false for
+// a count that no disk has.
+disk_bytes :: proc "contextless" (disk_blocks: u64) -> (bytes: u64, ok: bool) {
+	if !disk_blocks_valid(disk_blocks) {
+		return 0, false
+	}
+	return disk_blocks * BLOCK_SIZE, true
+}
+
+// bitmap_words_for_blocks gives the words of 64 bits that hold one bit for
+// each block of a disk. The division rounds up from disk_blocks - 1, so it
+// never wraps.
+bitmap_words_for_blocks :: proc "contextless" (disk_blocks: u64) -> (words: u64, ok: bool) {
+	if !disk_blocks_valid(disk_blocks) {
+		return 0, false
+	}
+	return (disk_blocks - 1) / 64 + 1, true
+}
 
 // object_blocks gives the blocks of an object of `size` bytes, holes
 // included.
@@ -363,13 +566,24 @@ root_check :: proc "contextless" (value: ^Root) -> u64 {
 
 // root_valid says if a root block is one that a commit finished.
 root_valid :: proc "contextless" (value: ^Root, disk_blocks: u64) -> bool {
-	return value.magic == ROOT_MAGIC && value.check == root_check(value) && value.disk_blocks >= 2 && value.disk_blocks <= disk_blocks
+	if value.magic != ROOT_MAGIC || value.check != root_check(value) {
+		return false
+	}
+	if !disk_blocks_valid(value.disk_blocks) || value.disk_blocks > disk_blocks {
+		return false
+	}
+	return value.store_page_count <= STORE_PAGE_CAPACITY
+}
+
+// store_place gives the page and the cell of the store of a number.
+store_place :: #force_inline proc "contextless" (number: int) -> (page: int, cell: int) {
+	return number / STORES_OF_A_PAGE, number % STORES_OF_A_PAGE
 }
 
 // entry_name gives the key of a name. The name must have passed
 // name_refusal, or be a name of the removal queue.
 entry_name :: proc "contextless" (name: string) -> (key: Entry_Name) {
-	copy(key[:], name)
+	copy(key[:ENTRY_NAME_CAPACITY], name)
 	return key
 }
 

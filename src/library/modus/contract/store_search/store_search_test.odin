@@ -213,7 +213,7 @@ commit_driven_tree_hash_subtree_reuse :: proc(t: ^testing.T) {
 		e_a, _ := tree_hash.tree_entry_make(.Object, name_a, blake3.hash(bytes_a))
 		e_b, _ := tree_hash.tree_entry_make(.Object, name_b, blake3.hash(bytes_b))
 		entries := [2]tree_hash.Tree_Entry{e_a, e_b}
-		buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE]u8
+		buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE_MOST]u8
 		written, _ := tree_hash.tree_encode(entries[:], buf[:])
 		digest, _ := tree_hash.tree_hash(buf[:written])
 		return digest

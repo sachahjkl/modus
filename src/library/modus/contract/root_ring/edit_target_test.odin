@@ -55,7 +55,9 @@ edit_path_validate_refuses_bad_paths_and_splits_valid_ones :: proc(t: ^testing.T
 	refusal, _ = edit_path_validate(string(deep[:]))
 	testing.expect_value(t, refusal, Edit_Path_Refusal.Too_Deep)
 
-	// Segment over ENTRY_NAME_CAPACITY (65 bytes).
+	// Segment one byte over ENTRY_NAME_CAPACITY (256 bytes): the path limit
+	// holds it, the name limit refuses it.
+	#assert(store.ENTRY_NAME_CAPACITY + 1 <= EDIT_TARGET_PATH_LIMIT)
 	long_seg: [store.ENTRY_NAME_CAPACITY + 1]u8
 	for &value in long_seg {
 		value = 'x'

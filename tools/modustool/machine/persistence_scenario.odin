@@ -224,7 +224,7 @@ disk_root :: proc(file: ^os.File, root: ^store.Root) -> (place: u64, ok: bool) {
 	disk_block(file, 1, &roots[1]) or_return
 	found := false
 	for &candidate, index in roots {
-		if store.root_valid(&candidate, store.DISK_BLOCKS_LIMIT) && (!found || candidate.generation > root.generation) {
+		if store.root_valid(&candidate, store.DISK_BLOCKS_MAX) && (!found || candidate.generation > root.generation) {
 			root^, place, found = candidate, u64(index), true
 		}
 	}
@@ -264,44 +264,48 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 		}
 		return string(bytes[:count])
 	}
-	for &entry in root.stores {
-		if name_of(entry.name[:]) != store_name {
-			continue
-		}
-		block: store.Store_Block
-		disk_block(file, entry.store.block, &block) or_return
-		object, found := tree_entry_find(file, block.tree, object_name) or_return
-		if found && object.kind == u64(store.Entry_Kind.Object) && object.pointer.block != 0 {
-			// The first block of data: down the first child of each object
-			// node, or the root of an object of one block.
-			number := object.pointer.block
-			for level := store.object_levels(object.size); level >= 1 && number != 0; level -= 1 {
-				node: store.Object_Node
-				disk_block(file, number, &node) or_return
-				next: u64
-				for child in node.children {
-					if child.block != 0 {
-						next = child.block
-						break
+	for page_index in 0 ..< int(min(root.store_page_count, store.STORE_PAGE_CAPACITY)) {
+		page := new(store.Store_Table_Page, context.temp_allocator)
+		disk_block(file, root.store_pages[page_index].block, page) or_return
+		for &entry in page.cells {
+			if name_of(entry.name[:]) != store_name {
+				continue
+			}
+			block: store.Store_Block
+			disk_block(file, entry.store.block, &block) or_return
+			object, found := tree_entry_find(file, block.tree, object_name) or_return
+			if found && object.kind == u64(store.Entry_Kind.Object) && object.pointer.block != 0 {
+				// The first block of data: down the first child of each object
+				// node, or the root of an object of one block.
+				number := object.pointer.block
+				for level := store.object_levels(object.size); level >= 1 && number != 0; level -= 1 {
+					node: store.Object_Node
+					disk_block(file, number, &node) or_return
+					next: u64
+					for child in node.children {
+						if child.block != 0 {
+							next = child.block
+							break
+						}
 					}
+					number = next
 				}
-				number = next
+				if number == 0 {
+					break
+				}
+				at := i64(number * store.BLOCK_SIZE)
+				one: [1]u8
+				if count, err := os.read_at(file, one[:], at); err != nil || count != 1 {
+					return false
+				}
+				one[0] ~= 0x40
+				if _, err := os.write_at(file, one[:], at); err != nil {
+					fmt.eprintfln("modustool: cannot write %s: %v", path, err)
+					return false
+				}
+				fmt.printfln("modustool: one byte of the block %d is changed: the first block of data of the object %s of the store %s, under the root of generation %d", number, object_name, store_name, root.generation)
+				return true
 			}
-			if number == 0 {
-				break
-			}
-			at := i64(number * store.BLOCK_SIZE)
-			one: [1]u8
-			if count, err := os.read_at(file, one[:], at); err != nil || count != 1 {
-				return false
-			}
-			one[0] ~= 0x40
-			if _, err := os.write_at(file, one[:], at); err != nil {
-				fmt.eprintfln("modustool: cannot write %s: %v", path, err)
-				return false
-			}
-			fmt.printfln("modustool: one byte of the block %d is changed: the first block of data of the object %s of the store %s, under the root of generation %d", number, object_name, store_name, root.generation)
-			return true
 		}
 	}
 	fmt.eprintfln("modustool: the disk has no object %s in a store %s", object_name, store_name)

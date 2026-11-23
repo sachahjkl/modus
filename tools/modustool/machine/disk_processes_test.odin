@@ -1,5 +1,6 @@
 package machine
 
+import "core:fmt"
 import "core:slice"
 import "core:testing"
 import "modus:contract/blake3"
@@ -75,8 +76,8 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 		return
 	}
 	defer delete(image)
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	mount := contents.mount
 	testing.expect(t, !mount.failed && !mount.needs_format, "the open takes the disk")
@@ -93,10 +94,10 @@ the_storage_open_takes_the_disk_of_the_tool :: proc(t: ^testing.T) {
 	testing.expect_value(t, hashes_wrong(&contents), 0)
 	// The limit of the store is the limit that the root service grants for
 	// a read: a read then writes no root.
-	testing.expect_value(t, state.root.stores[0].limit, u64(disk_process.STORE_BLOCKS_LIMIT))
+	testing.expect_value(t, storage_mount.store_cell(state, 0).limit, u64(disk_process.STORE_BLOCKS_LIMIT))
 	// The blocks: 1, 1, 2 with one node, 70 with two nodes of level 1 and
 	// one of level 2; one leaf and the store block.
-	testing.expect_value(t, state.root.stores[0].used, u64(1 + 1 + 3 + 73 + 2))
+	testing.expect_value(t, storage_mount.store_cell(state, 0).used, u64(1 + 1 + 3 + 73 + 2))
 	for file in files {
 		stored := stored_module(&contents, file.name)
 		if !testing.expectf(t, stored != nil, "the store has the entry %s", file.name) {
@@ -124,8 +125,8 @@ the_store_of_the_module_files_of_a_named_principal :: proc(t: ^testing.T) {
 		return
 	}
 	defer delete(image)
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
 	testing.expect_value(t, contents.mount.stores, u64(2))
@@ -187,8 +188,8 @@ a_file_with_a_hole :: proc(t: ^testing.T) {
 		return
 	}
 	defer delete(image)
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
 	testing.expect_value(t, contents.mount.wrong, u64(0))
@@ -196,7 +197,7 @@ a_file_with_a_hole :: proc(t: ^testing.T) {
 	testing.expect_value(t, contents.mount.stores_with_wrong_count, u64(0))
 	// 7 blocks, 2 of them holes, and one object node; the leaf and the
 	// store block.
-	testing.expect_value(t, state.root.stores[0].used, u64(5 + 1 + 2))
+	testing.expect_value(t, storage_mount.store_cell(state, 0).used, u64(5 + 1 + 2))
 	stored := stored_module(&contents, "holed")
 	if !testing.expect(t, stored != nil) {
 		return
@@ -227,8 +228,8 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 		return
 	}
 	defer delete(image)
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	testing.expect(t, !contents.mount.failed && !contents.mount.needs_format)
 	testing.expect_value(t, contents.mount.objects, u64(2))
@@ -247,7 +248,8 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 
 // The writer refuses what the root service would refuse: a name that is no
 // name of a disk process, two files of one name, a file with no byte, and
-// more files than one leaf holds.
+// a store that the disk cannot hold. More files than one leaf holds make
+// a B+ tree of several nodes, which the open reads whole.
 @(test)
 the_writer_refuses_a_wrong_store :: proc(t: ^testing.T) {
 	good := test_file_bytes(100, 1)
@@ -269,12 +271,27 @@ the_writer_refuses_a_wrong_store :: proc(t: ^testing.T) {
 	upper_case_digits := "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
 	_, upper_encoded := build.module_disk_encode([]build.Module_File{{upper_case_digits, good}}, 64 * format.BLOCK_SIZE)
 	testing.expect(t, !upper_encoded)
-	many := make([]build.Module_File, format.LEAF_CAPACITY + 1, context.temp_allocator)
-	for &file in many {
+	same := make([]build.Module_File, format.LEAF_CAPACITY + 1, context.temp_allocator)
+	for &file in same {
 		file = {"x", good}
 	}
-	_, encoded := build.module_disk_encode(many, 64 * format.BLOCK_SIZE)
+	_, encoded := build.module_disk_encode(same, 64 * format.BLOCK_SIZE)
 	testing.expect(t, !encoded)
+	// Three leaves of files, with distinct names: the open gives each one.
+	MANY :: 3 * format.LEAF_CAPACITY
+	many := make([]build.Module_File, MANY, context.temp_allocator)
+	for &file, index in many {
+		file = {fmt.tprintf("m%02d", index), good}
+	}
+	many_image, many_encoded := build.module_disk_encode(many, 256 * format.BLOCK_SIZE)
+	testing.expect(t, many_encoded)
+	defer delete(many_image)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
+	contents := fuzz.disk_contents(many_image, state)
+	testing.expect_value(t, contents.mount.wrong, 0)
+	testing.expect_value(t, contents.mount.stores_with_wrong_count, 0)
+	testing.expect_value(t, len(contents.objects), MANY)
 	// A disk that is too small for the file.
 	large := [?]build.Module_File{{"large", test_file_bytes(40 * format.BLOCK_SIZE, 1)}}
 	_, encoded = build.module_disk_encode(large[:], 16 * format.BLOCK_SIZE)

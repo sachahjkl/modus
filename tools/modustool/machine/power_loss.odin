@@ -190,8 +190,8 @@ Crash_Search :: struct {
 // checks each one.
 crash_images_check :: proc(durable: []u8, pending: []Pending_Write, seed: u64) -> (search: Crash_Search) {
 	start := time.tick_now()
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	blocks := len(durable) / format.BLOCK_SIZE
 	known := fuzz.Known_Checks{checks = make([]u64, blocks), touched = make([]bool, blocks), values = make([]format.Block_Value, blocks), value_places = make([]u64, blocks)}
 	defer delete(known.checks)
@@ -432,8 +432,8 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 	}
 	// The flushes: two for each durable commit (its blocks, then its root),
 	// one for the format of the new disk.
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	durable_contents := fuzz.disk_contents(server.durable, state)
 	commits := int(durable_contents.mount.generation) - 1
 	if server.flushes < 2 * commits + 1 {
@@ -544,8 +544,8 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 		return false
 	}
 	// The record of the durable commit, and of the commit in flight.
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	durable := fuzz.disk_contents(server.durable, state)
 	durable_text, durable_found, durable_valid := kept_settings_of(&durable)
 	image := slice.clone(server.durable)
@@ -634,8 +634,8 @@ power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	// The commit in flight changes the object of the loop: range writes were
 	// in flight.
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	durable := fuzz.disk_contents(server.durable, state)
 	image := slice.clone(server.durable)
 	defer delete(image)

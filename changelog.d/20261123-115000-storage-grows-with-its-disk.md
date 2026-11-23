@@ -1,0 +1,3 @@
+type: Changed
+
+**Storage that grows with its disk**: the storage service uses each block of its data disk, not its first 1 GiB, with its tables of the blocks in memory of its budget (6 bytes for each block, 114 MiB for a disk of 64 GiB); a disk holds up to 15 813 stores in pages of the store table, not 60; a name of an object or a tree has up to 255 bytes, not 64; a content tree holds 4096 entries of names of any length (the format `MODTREE2`), not 512, and the snapshot history of a store has the size of the memory of its caller. The format of the disk is `STORAGE5`: a disk of `STORAGE4` is not read.

@@ -2,6 +2,7 @@
 package storage_mount
 
 import format "modus:contract/store"
+import "internal:storage/block_counts"
 import block_tree "internal:storage/storage_object"
 import "core:testing"
 
@@ -39,14 +40,59 @@ disk_put :: proc(disk: ^Test_Disk, value: ^$T) -> format.Pointer where size_of(T
 	return {block = number, check = format.check(block)}
 }
 
-// disk_root writes the root of one store "s" in block 0.
-disk_root :: proc(disk: ^Test_Disk, store_block: format.Pointer, used: u64) {
-	root := format.Root{magic = format.ROOT_MAGIC, generation = 2, disk_blocks = u64(len(disk.bytes) / BLOCK_SIZE)}
-	root.stores[0].name[0] = 's'
-	root.stores[0].limit = 1 << 20
-	root.stores[0].used = used
-	root.stores[0].store = store_block
+// The blocks that the tables of a test state hold, and the roots of its
+// hash index: more than each disk of these tests.
+TEST_STATE_BLOCKS :: 4096
+TEST_STATE_HASH_ROOTS :: 4096
+
+// test_state_make gives a State with memory for its tables.
+test_state_make :: proc(blocks: u64 = TEST_STATE_BLOCKS, hash_roots: u64 = TEST_STATE_HASH_ROOTS) -> ^State {
+	state := new(State)
+	layout, ok := state_layout(blocks, hash_roots)
+	assert(ok)
+	memory := make([]u64, (layout.bytes + 7) / 8)
+	bound := state_bind(state, ([^]u8)(raw_data(memory))[:layout.bytes], blocks, hash_roots)
+	assert(bound)
+	return state
+}
+
+// test_state_free frees a State of test_state_make and its memory.
+test_state_free :: proc(state: ^State) {
+	free(raw_data(state.in_use))
+	free(state)
+}
+
+// disk_page writes a page of the store table with one store in each cell
+// that `stores` gives, and gives its Pointer.
+disk_page :: proc(disk: ^Test_Disk, stores: []format.Store_Entry) -> format.Pointer {
+	page: format.Store_Table_Page
+	page.magic = format.STORE_TABLE_MAGIC
+	copy(page.cells[:], stores)
+	return disk_put(disk, &page)
+}
+
+// root_of_page gives a root of the disk with one page of the store table.
+root_of_page :: proc(disk_blocks: u64, generation: u64, page: format.Pointer) -> (root: format.Root) {
+	root = {magic = format.ROOT_MAGIC, generation = generation, disk_blocks = disk_blocks, store_page_count = 1}
+	root.store_pages[0] = page
 	root.check = format.root_check(&root)
+	return root
+}
+
+// store_s gives the cell of one store "s".
+store_s :: proc(store_block: format.Pointer, used: u64) -> (cell: format.Store_Entry) {
+	cell.name[0] = 's'
+	cell.limit = 1 << 20
+	cell.used = used
+	cell.store = store_block
+	return cell
+}
+
+// disk_root writes the page of one store "s", and the root that names it
+// in block 0.
+disk_root :: proc(disk: ^Test_Disk, store_block: format.Pointer, used: u64) {
+	page := disk_page(disk, {store_s(store_block, used)})
+	root := root_of_page(u64(len(disk.bytes) / BLOCK_SIZE), 2, page)
 	copy(disk.bytes[:BLOCK_SIZE], ([^]u8)(&root)[:BLOCK_SIZE])
 }
 
@@ -147,8 +193,8 @@ an_index_with_too_many_leaves :: proc(t: ^testing.T) {
 	index_pointer := disk_put(&disk, &index)
 	table := disk_store(&disk, object, index_pointer)
 	disk_root(&disk, table, 4)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect(t, !result.failed)
 	testing.expect_value(t, result.damaged_versions, 1)
@@ -174,8 +220,8 @@ leaves_with_a_wrong_count :: proc(t: ^testing.T) {
 		index.leaves[0] = leaf_pointer
 		index_pointer := disk_put(&disk, &index)
 		disk_root(&disk, disk_store(&disk, object, index_pointer), 5)
-		state := new(State)
-		defer free(state)
+		state := test_state_make()
+		defer test_state_free(state)
 		result := mount(state, &disk, 16)
 		testing.expectf(t, result.damaged_versions == 1 && wrong_block(state, leaf_pointer.block), "a leaf of %d entries: %d damaged versions", count, result.damaged_versions)
 		testing.expect_value(t, result.versions, 0)
@@ -199,8 +245,8 @@ a_version_too_large :: proc(t: ^testing.T) {
 	index.leaves[0] = leaf_pointer
 	index_pointer := disk_put(&disk, &index)
 	disk_root(&disk, disk_store(&disk, object, index_pointer), 8)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 32)
 	testing.expect_value(t, result.damaged_versions, 1)
 	testing.expect(t, wrong_block(state, other.root.block))
@@ -215,8 +261,8 @@ the_recount_of_a_store :: proc(t: ^testing.T) {
 	defer delete(disk.bytes)
 	object := disk_object(&disk)
 	disk_root(&disk, disk_store(&disk, object, {}), 99)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, state.store_recount[0], 3) // The store block, the leaf, the block of data.
 	testing.expect_value(t, result.stores_recounted, 1)
@@ -233,8 +279,8 @@ the_recount_of_a_damaged_store :: proc(t: ^testing.T) {
 	object := disk_large_object(&disk)
 	disk.bytes[object.root.block * BLOCK_SIZE + 40] ~= 1 // The object node no longer has its check.
 	disk_root(&disk, disk_store(&disk, object, {}), 4)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, result.damaged_objects, 1)
 	testing.expect_value(t, state.store_damaged_objects[0], 1)
@@ -255,8 +301,8 @@ a_changed_block_of_data :: proc(t: ^testing.T) {
 	object := disk_large_object(&disk)
 	disk.bytes[object.data.block * BLOCK_SIZE + 7] ~= 0x40
 	disk_root(&disk, disk_store(&disk, object, {}), 6)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, result.damaged_objects, 1)
 	testing.expect_value(t, result.wrong, 1)
@@ -288,14 +334,14 @@ a_shared_block_tree :: proc(t: ^testing.T) {
 	block.current_blocks = 3
 	block.node_blocks = 1
 	disk_root(&disk, disk_put(&disk, &block), 7)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, result.wrong, 0)
 	testing.expect_value(t, state.references[object.root.block], 2)
 	testing.expect_value(t, state.references[object.data.block], 1)
 	testing.expect_value(t, result.stores_with_wrong_count, 0)
-	testing.expect_value(t, state.store_blocks[0].current_blocks, 3)
+	testing.expect_value(t, state.store_heads[0].current_blocks, 3)
 }
 
 // A store whose counts are right: no fault, and the open keeps them.
@@ -305,13 +351,13 @@ a_store_with_its_counts :: proc(t: ^testing.T) {
 	defer delete(disk.bytes)
 	object := disk_object(&disk)
 	disk_root(&disk, disk_store(&disk, object, {}), 3)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, result.stores_with_wrong_count, 0)
 	testing.expect_value(t, result.stores_recounted, 0)
 	testing.expect_value(t, result.objects, 1)
-	testing.expect_value(t, state.store_blocks[0].current_blocks, 1)
+	testing.expect_value(t, state.store_heads[0].current_blocks, 1)
 }
 
 // A tree inside a tree: its nodes and its entries are walked and counted;
@@ -333,8 +379,8 @@ a_tree_inside_a_tree :: proc(t: ^testing.T) {
 		block.current_blocks = 2
 		block.node_blocks = 2
 		disk_root(&disk, disk_put(&disk, &block), 5)
-		state := new(State)
-		defer free(state)
+		state := test_state_make()
+		defer test_state_free(state)
 		result := mount(state, &disk, 16)
 		testing.expect_value(t, result.objects, 2)
 		testing.expect_value(t, result.trees, 1)
@@ -356,8 +402,8 @@ a_leaf_out_of_order :: proc(t: ^testing.T) {
 	block: format.Store_Block
 	block.tree = leaf
 	disk_root(&disk, disk_put(&disk, &block), 6)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect(t, !result.failed)
 	testing.expect(t, state.store_damaged[0])
@@ -388,14 +434,14 @@ a_store_root_with_no_block_is_damaged :: proc(t: ^testing.T) {
 				block.removals = {block = 0, check = check}
 			}
 			disk_root(&disk, disk_put(&disk, &block), 1)
-			state := new(State)
-			defer free(state)
+			state := test_state_make()
+			defer test_state_free(state)
 			result := mount(state, &disk, 16)
 			testing.expect(t, !result.failed)
 			testing.expectf(t, state.store_damaged[0], "the root %d with the check %d: the store is not damaged", which, check)
 			testing.expect_value(t, result.damaged_stores, 1)
 			testing.expect_value(t, result.wrong, 0)
-			testing.expect_value(t, state.store_blocks[0].objects, 7)
+			testing.expect_value(t, state.store_heads[0].objects, 7)
 		}
 	}
 	// Two empty roots: an empty store, with no damage.
@@ -403,8 +449,8 @@ a_store_root_with_no_block_is_damaged :: proc(t: ^testing.T) {
 	defer delete(disk.bytes)
 	block: format.Store_Block
 	disk_root(&disk, disk_put(&disk, &block), 1)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect(t, !state.store_damaged[0])
 	testing.expect_value(t, result.damaged_stores, 0)
@@ -425,8 +471,8 @@ a_tree_entry_with_no_block_is_damaged :: proc(t: ^testing.T) {
 		block.trees = 1
 		block.node_blocks = 1
 		disk_root(&disk, disk_put(&disk, &block), 2)
-		state := new(State)
-		defer free(state)
+		state := test_state_make()
+		defer test_state_free(state)
 		result := mount(state, &disk, 16)
 		testing.expect(t, !result.failed)
 		testing.expectf(t, state.store_damaged[0], "the check %d: the store is not damaged", check)
@@ -442,8 +488,8 @@ a_tree_entry_with_no_block_is_damaged :: proc(t: ^testing.T) {
 	block.trees = 1
 	block.node_blocks = 1
 	disk_root(&disk, disk_put(&disk, &block), 2)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect(t, !state.store_damaged[0])
 	testing.expect_value(t, result.damaged_stores, 0)
@@ -483,8 +529,8 @@ a_count_above_sixteen_bits :: proc(t: ^testing.T) {
 	block.node_blocks = 1
 	store_block := disk_put(&disk, &block)
 	disk_root(&disk, store_block, disk.next - 2)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, u64(blocks))
 	references := u64(OBJECTS) * (1 + format.VERSIONS_LIMIT)
 	testing.expect(t, references > 65535)
@@ -495,6 +541,141 @@ a_count_above_sixteen_bits :: proc(t: ^testing.T) {
 	testing.expect_value(t, result.versions, u64(OBJECTS) * format.VERSIONS_LIMIT)
 }
 
+// More stores than the 60 cells of the format before, in two pages of the
+// store table: the open walks each one. A page with a wrong check damages
+// its stores only, and the open serves the stores of the other page.
+@(test)
+more_than_sixty_stores_in_two_pages :: proc(t: ^testing.T) {
+	STORES :: 100
+	disk := disk_make(STORES + 8)
+	defer delete(disk.bytes)
+	empty: format.Store_Block
+	cells: [STORES]format.Store_Entry
+	for &cell, index in cells {
+		cell.name[0] = 'a' + u8(index / 26)
+		cell.name[1] = 'a' + u8(index % 26)
+		cell.limit = 64
+		cell.used = 1 // The store block alone: the tree is empty.
+		cell.store = disk_put(&disk, &empty)
+	}
+	first := disk_page(&disk, cells[:format.STORES_OF_A_PAGE])
+	second := disk_page(&disk, cells[format.STORES_OF_A_PAGE:])
+	root := format.Root{magic = format.ROOT_MAGIC, generation = 2, disk_blocks = u64(len(disk.bytes) / BLOCK_SIZE), store_page_count = 2}
+	root.store_pages[0], root.store_pages[1] = first, second
+	root.check = format.root_check(&root)
+	copy(disk.bytes[:BLOCK_SIZE], ([^]u8)(&root)[:BLOCK_SIZE])
+	state := test_state_make()
+	defer test_state_free(state)
+	result := mount(state, &disk, root.disk_blocks)
+	testing.expect(t, !result.failed)
+	testing.expect_value(t, result.stores, STORES)
+	testing.expect_value(t, result.wrong, 0)
+	testing.expect_value(t, result.stores_with_wrong_count, 0)
+	testing.expect_value(t, store_numbers(state), 2 * format.STORES_OF_A_PAGE)
+	testing.expect_value(t, store_cell(state, STORES - 1).store, cells[STORES - 1].store)
+	testing.expect_value(t, state.owner[second.block], STORE_TABLE_OWNER)
+	// The in-use blocks: the two roots, the store blocks and the two pages.
+	testing.expect_value(t, state.in_use_count, u64(2 + STORES + 2))
+
+	// One byte of the second page changed: its 37 stores are not served.
+	disk.bytes[second.block * BLOCK_SIZE + 100] ~= 1
+	damaged := mount(state, &disk, root.disk_blocks)
+	testing.expect(t, !damaged.failed)
+	testing.expect_value(t, damaged.damaged_store_pages, 1)
+	testing.expect_value(t, damaged.stores, format.STORES_OF_A_PAGE)
+	testing.expect(t, state.store_page_damaged[1] && !state.store_page_damaged[0])
+	testing.expect(t, wrong_block(state, second.block))
+}
+
+// A page whose magic is not the magic of a page, or whose name has a byte
+// after its end, is damage, as a wrong check.
+@(test)
+a_page_that_breaks_a_rule :: proc(t: ^testing.T) {
+	for which in 0 ..< 2 {
+		disk := disk_make(16)
+		defer delete(disk.bytes)
+		page: format.Store_Table_Page
+		page.magic = format.STORE_TABLE_MAGIC
+		page.cells[0] = store_s({}, 1)
+		if which == 0 {
+			page.magic = format.NODE_MAGIC
+		} else {
+			page.cells[0].name[5] = 'x'
+		}
+		root := root_of_page(16, 2, disk_put(&disk, &page))
+		copy(disk.bytes[:BLOCK_SIZE], ([^]u8)(&root)[:BLOCK_SIZE])
+		state := test_state_make()
+		defer test_state_free(state)
+		result := mount(state, &disk, 16)
+		testing.expect_value(t, result.damaged_store_pages, 1)
+		testing.expect_value(t, result.stores, 0)
+	}
+}
+
+// A disk whose root names more blocks than the tables hold: the open uses
+// no root rather than lose the blocks past the tables, and says why.
+@(test)
+a_disk_larger_than_the_tables :: proc(t: ^testing.T) {
+	disk := disk_make(32)
+	defer delete(disk.bytes)
+	object := disk_object(&disk)
+	disk_root(&disk, disk_store(&disk, object, {}), 3)
+	state := test_state_make(16, 16)
+	defer test_state_free(state)
+	result := mount(state, &disk, 32)
+	testing.expect(t, result.failed)
+	testing.expect(t, result.larger_than_capacity)
+	// A State with no memory opens nothing.
+	unbound := new(State)
+	defer free(unbound)
+	testing.expect(t, mount(unbound, &disk, 32).failed)
+}
+
+// The memory of the tables follows the disk: 3 bits and BLOCK_STATE_BYTES
+// for each block, and the hash index for its roots. A count of blocks or
+// of roots that no disk has, and a memory too small or not aligned, are
+// refused.
+@(test)
+the_memory_of_the_tables :: proc(t: ^testing.T) {
+	blocks_64gib := u64(1) << 24
+	layout, ok := state_layout(blocks_64gib, 1 << 17)
+	testing.expect(t, ok)
+	testing.expect_value(t, layout.hash_capacity, u64(1) << 18)
+	// The count tree: the cache of the directories, the staging of one
+	// commit, their indexes, and one bit for each leaf.
+	count_bytes := (COUNT_CACHE_PAGES_OF_TABLES + COUNT_STAGING_PAGES) * size_of(block_counts.Frame) + (128 + 2 * COUNT_STAGING_PAGES) * size_of(i32) + (blocks_64gib / format.COUNTS_OF_A_PAGE + 64) / 64 * 8
+	expected := 3 * (blocks_64gib / 64) * 8 + blocks_64gib * BLOCK_STATE_BYTES + (u64(1) << 18) * (size_of(Root_Record) + size_of(u64)) + count_bytes
+	testing.expect_value(t, layout.bytes, expected)
+	// The form Count_Tree: no table of each block, whatever the disk; its
+	// cache and its two sets of damage.
+	tree_layout, tree_ok := state_layout(format.DISK_BLOCKS_MAX, 1 << 17, .Count_Tree, 1 << 16)
+	testing.expect(t, tree_ok)
+	testing.expect(t, tree_layout.bytes < (u64(1) << 34), "the form Count_Tree has no table of each block")
+	testing.expect_value(t, tree_layout.bitmap_words, u64(0))
+	// A cache too small to hold a page of each level is refused.
+	_, small_cache := state_layout(1 << 20, 16, .Count_Tree, format.COUNT_LEVEL_LIMIT + 1)
+	testing.expect(t, !small_cache)
+	// The largest disk: its layout does not wrap.
+	largest, largest_ok := state_layout(format.DISK_BLOCKS_MAX, 16)
+	testing.expect(t, largest_ok && largest.bytes > format.DISK_BLOCKS_MAX * BLOCK_STATE_BYTES)
+	for blocks in ([?]u64{0, 1, format.DISK_BLOCKS_MAX + 1, max(u64)}) {
+		_, refused := state_layout(blocks, 16)
+		testing.expectf(t, !refused, "a layout of %d blocks is taken", blocks)
+	}
+	_, no_roots := state_layout(16, 0)
+	testing.expect(t, !no_roots)
+	small, _ := state_layout(16, 16)
+	memory := make([]u64, small.bytes / 8 + 1)
+	defer delete(memory)
+	state := new(State)
+	defer free(state)
+	bytes := ([^]u8)(raw_data(memory))[:small.bytes + 8]
+	testing.expect(t, !state_bind(state, bytes[:small.bytes - 1], 16, 16))
+	testing.expect(t, !state_bind(state, bytes[1:], 16, 16))
+	testing.expect(t, state_bind(state, bytes[:small.bytes], 16, 16))
+	testing.expect_value(t, state.capacity, u64(16))
+}
+
 // A store block named from two stores: a fault of the engine, and each of
 // the two stores is faulty.
 @(test)
@@ -503,17 +684,17 @@ a_block_named_from_two_stores :: proc(t: ^testing.T) {
 	defer delete(disk.bytes)
 	object := disk_object(&disk)
 	store_block := disk_store(&disk, object, {})
-	root := format.Root{magic = format.ROOT_MAGIC, generation = 2, disk_blocks = 16}
-	for index in 0 ..< 2 {
-		root.stores[index].name[0] = u8('s' + index)
-		root.stores[index].limit = 64
-		root.stores[index].used = 4
-		root.stores[index].store = store_block
+	cells: [2]format.Store_Entry
+	for &cell, index in cells {
+		cell.name[0] = u8('s' + index)
+		cell.limit = 64
+		cell.used = 4
+		cell.store = store_block
 	}
-	root.check = format.root_check(&root)
+	root := root_of_page(16, 2, disk_page(&disk, cells[:]))
 	copy(disk.bytes[:BLOCK_SIZE], ([^]u8)(&root)[:BLOCK_SIZE])
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect(t, result.named_by_two_stores > 0)
 	testing.expect(t, state.store_faulty[0] && state.store_faulty[1])
@@ -548,8 +729,8 @@ two_names_of_one_object :: proc(t: ^testing.T) {
 	block.current_blocks = 2 * 3 // A block that two objects share counts two times.
 	block.node_blocks = 1
 	disk_root(&disk, disk_put(&disk, &block), 5)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, result.wrong, 0)
 	testing.expect_value(t, result.stores_with_wrong_count, 0)
@@ -597,8 +778,8 @@ two_roots_with_one_hash :: proc(t: ^testing.T) {
 	block.current_blocks = 2
 	block.node_blocks = 1
 	disk_root(&disk, disk_put(&disk, &block), 4)
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, result.repeated_hashes, 1)
 	testing.expect_value(t, state.hash_index.roots, 1)
@@ -610,7 +791,7 @@ two_roots_with_one_hash :: proc(t: ^testing.T) {
 
 // The first slot of a prefix, as hash_index.odin computes it.
 test_home :: proc(state: ^State, prefix: u64) -> u64 {
-	return ((prefix ~ state.hash_index.slot_key) * HASH_SLOT_MIX) >> (64 - HASH_SLOT_BITS)
+	return ((prefix ~ state.hash_index.slot_key) * HASH_SLOT_MIX) >> (64 - state.hash_index.slot_bits)
 }
 
 // prefixes_with_home gives prefixes whose first slot is `home`, from the
@@ -630,8 +811,8 @@ prefixes_with_home :: proc(state: ^State, home: u64, from: u64, into: []u64) {
 // that stays is found from its key.
 @(test)
 removals_in_a_run_of_slots :: proc(t: ^testing.T) {
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	ROOTS :: 12
 	roots: [ROOTS]format.Pointer
 	sizes: [ROOTS]u64
@@ -641,7 +822,7 @@ removals_in_a_run_of_slots :: proc(t: ^testing.T) {
 	low_prefixes: [ROOTS / 2]u64
 	high_prefixes: [ROOTS / 2]u64
 	prefixes_with_home(state, 5, 1, low_prefixes[:])
-	prefixes_with_home(state, HASH_SLOT_CAPACITY - 1, 1, high_prefixes[:])
+	prefixes_with_home(state, hash_slot_capacity(&state.hash_index) - 1, 1, high_prefixes[:])
 	for index in 0 ..< ROOTS {
 		roots[index] = {block = u64(100 + index), check = u64(1000 + index)}
 		sizes[index] = u64(index + 1)
@@ -673,8 +854,8 @@ removals_in_a_run_of_slots :: proc(t: ^testing.T) {
 // bound keep a record and no slot, and no search reads past the bound.
 @(test)
 the_bound_of_a_run :: proc(t: ^testing.T) {
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	ROOTS :: HASH_PROBE_LIMIT + 8
 	prefixes: [ROOTS]u64
 	prefixes_with_home(state, 77, 1, prefixes[:])
@@ -720,14 +901,15 @@ test_next_number :: proc(seed: ^u64) -> int {
 // it had at its insert: a removal never makes another root unreachable.
 @(test)
 random_inserts_and_removals :: proc(t: ^testing.T) {
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	HOMES :: 4
 	ROOTS_OF_A_HOME :: 12
 	ROOTS :: HOMES * ROOTS_OF_A_HOME
-	STEPS :: 600 // Each step checks the whole table: 2^19 slots.
+	STEPS :: 600 // Each step checks the whole table.
 	FIRST_BLOCK :: 400
-	homes := [HOMES]u64{HASH_SLOT_CAPACITY - 2, HASH_SLOT_CAPACITY - 1, 0, 3}
+	last := hash_slot_capacity(&state.hash_index) - 1
+	homes := [HOMES]u64{last - 1, last, 0, 3}
 	prefixes: [ROOTS]u64
 	for home, home_index in homes {
 		prefixes_with_home(state, home, 1, prefixes[home_index * ROOTS_OF_A_HOME:][:ROOTS_OF_A_HOME])
@@ -768,8 +950,8 @@ random_inserts_and_removals :: proc(t: ^testing.T) {
 // record out. A rekey gives a root the key of its true hash.
 @(test)
 hidden_roots_and_rekeys :: proc(t: ^testing.T) {
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 	hidden_root := format.Pointer{block = 300, check = 3}
 	state.owner[hidden_root.block] = 1
 	hidden_hash := hash_with_prefix(0xABCD, 2)
@@ -862,8 +1044,8 @@ the_index_after_commits_is_the_index_of_a_new_open :: proc(t: ^testing.T) {
 	}
 	start_disk, _ := disk_of(&model, names[:])
 	defer delete(start_disk.bytes)
-	live := new(State)
-	defer free(live)
+	live := test_state_make()
+	defer test_state_free(live)
 	start := mount(live, &start_disk, DISK_BLOCKS)
 	testing.expect_value(t, start.wrong, 0)
 	for &object in objects {
@@ -900,16 +1082,18 @@ the_index_after_commits_is_the_index_of_a_new_open :: proc(t: ^testing.T) {
 	}
 	end_disk, _ := disk_of(&model, names[:])
 	defer delete(end_disk.bytes)
-	fresh := new(State)
-	defer free(fresh)
+	fresh := test_state_make()
+	defer test_state_free(fresh)
 	end := mount(fresh, &end_disk, DISK_BLOCKS)
 	testing.expect_value(t, end.wrong, 0)
 	testing.expect_value(t, hash_index_check(live), 0)
 	testing.expect_value(t, hash_index_check(fresh), 0)
 	testing.expect_value(t, live.hash_index.roots, fresh.hash_index.roots)
 	different := 0
-	for block in 0 ..< u64(format.DISK_BLOCKS_LIMIT) {
-		if live.hash_index.records[block] != fresh.hash_index.records[block] || hash_index_slotted(live, block) != hash_index_slotted(fresh, block) {
+	for block in 0 ..< u64(DISK_BLOCKS) {
+		live_record, fresh_record := hash_index_record(live, block), hash_index_record(fresh, block)
+		same_record := (live_record == nil) == (fresh_record == nil) && (live_record == nil || live_record^ == fresh_record^)
+		if !same_record || hash_index_slotted(live, block) != hash_index_slotted(fresh, block) {
 			different += 1
 		}
 	}

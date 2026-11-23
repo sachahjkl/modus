@@ -18,7 +18,7 @@ The terms are in `glossary/storage.md`. The versions and the date are in `ARCHIT
 |---|---|
 | "1. The model" | Objects, trees and stores; installation and packages; the hard points; where the model changed |
 | "2. What exists, and how it maps on the model" | What the system had first, and where each part stands in the model |
-| "3. The format on the disk" | The blocks, an entry, the commit and the open, and the limits |
+| "3. The format on the disk" | The blocks, an entry, the commit and the open, the limits, and the count tree |
 | "4. The interface of the service" | Places, the confinement, read-only shares and revocation, the removal of a tree, budgets, large objects, the same object one time, the erase of versions |
 | "5. Not built: the next steps" | The order of the next capabilities |
 | "6. The tests" | What the host tests and the machine tests check |
@@ -106,7 +106,7 @@ The model of section 1 is the direction; the service of today builds a part of i
 | What the system had first | In the model | State |
 |---|---|---|
 | A private store as one table of 39 named objects (the first format; not read any more) | A store of one process: it names one tree, with trees inside it | Built: section 3 |
-| The name of an object (1 to 39 bytes, the first format) | A name of an entry of a tree (1 to 64 bytes) | Built |
+| The name of an object (1 to 39 bytes, the first format) | A name of an entry of a tree (1 to 255 bytes) | Built |
 | An object of a store, as a list of blocks | An entry of a tree that names an object: its hash and the root of its block tree | Built: the hash is kept, and a commit finds the current object of the store with the same hash (section 4.7) |
 | The versions of an object, their thinning | The history of a store | Kept for each object; the history of a store is not built |
 | The system description (a signed list of hashes) | The tree of the system, signed by the principal that signs the system | Not built |
@@ -119,35 +119,46 @@ The model of section 1 is the direction; the service of today builds a part of i
 
 Built. The disk is blocks of 4096 bytes. A root block names each store; a store names one tree; a tree is a B+ tree of entries; an entry names an object, whose bytes are a tree of blocks. Nothing on the disk is written in place: a commit writes new blocks, then switches the root block, so a loss of power leaves the state before or after the commit, never a mix.
 
-The format is the contract `src/library/modus/contract/store`, `STORAGE4`. A disk of `STORAGE3` is not read: an object there is a list of blocks.
+The format is the contract `src/library/modus/contract/store`, `STORAGE6`. A disk of an earlier format is not read: `STORAGE5` had no count tree, and `STORAGE4` had the stores in 60 cells of the root block and names of 64 bytes.
 
 ### 3.1 The blocks
 
-- **Root block** (`Root` of `src/library/modus/contract/store`): the mark `STORAGE4`, the generation, the count of blocks of the disk, the time since the format, the date, and one store entry for each of up to 60 stores (`STORE_CAPACITY`): its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
+- **Root block** (`Root` of `src/library/modus/contract/store`): the mark `STORAGE6`, the generation, the count of blocks of the disk, the time since the format, the date, the pointer of the top directory of the count tree and whether that tree holds each count (`counts_complete`), and the pointers of the pages of the store table. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
+- **Store table page** (`Store_Table_Page`): 63 cells, each one store: its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. The root names up to 251 pages, so a disk holds up to 15 813 stores (`STORE_CAPACITY`). A store keeps its cell, and so its number, for the life of the disk; a commit of a store writes its page again, with copy on write. A page with a wrong check damages its stores only: the service serves none of them and makes no new store in that page.
 - **Store block**: one for each store: the root node of its tree, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes of its trees, the trees that the removal queue holds).
-- **Node**: a node of the B+ tree of one tree. A leaf holds up to 24 records of a name (64 bytes) and its entry (104 bytes); a branch up to 50 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
+- **Node**: a node of the B+ tree of one tree. A leaf holds up to 11 records of a name (256 bytes) and its entry (104 bytes); a branch up to 14 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
 - **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6). It starts with the mark "BLOB".
 - **Data**: 4096 bytes of an object, at one place of it. The block service reads and writes blocks of data through a data region that its client shares with it: the storage service makes a region of 64 blocks (`REGION_BLOCKS`), the process `disk` one of 1 MiB.
 - **Version index, version leaf**: the versions of an object, as before; a version names the root of the block tree of its state.
+- **Count tree** (`Count_Page`, `Count_Directory`): the count of names and the owner of each block of the disk (section 3.5). A leaf holds 512 blocks; a directory holds 128 children, each with the count of the free blocks under it. Each page of the tree is a block of count 1 with the owner `COUNT_TREE_OWNER`, in the tree itself.
 
 A pointer is a block number and a check. The check of a block of data is the first 8 bytes of its value (section 4.6); the check of each other block is the first 8 bytes of the BLAKE3 hash of its 4096 bytes.
 
 The bytes of each block, and of the records inside a block, in the order of a walk from the root block:
 
-```byte-layout store.Root store.Store_Entry store.Pointer store.Store_Block store.Tree_Header store.Object_Node store.Object_Child store.Version_Index store.Version_Leaf store.Version_Entry
+```byte-layout store.Root store.Store_Table_Page store.Store_Entry store.Pointer store.Store_Block store.Tree_Header store.Object_Node store.Object_Child store.Version_Index store.Version_Leaf store.Version_Entry
 store.Root, 4096 bytes: the root block, at block 0 or block 1
-offset  size  field        type
-     0     8  magic        u64
-     8     8  generation   u64
-    16     8  disk_blocks  u64
-    24     8  time         u64
-    32     8  date         u64
-    40    24  reserved     [3]u64
-    64  3840  stores       [STORE_CAPACITY]Store_Entry
-  3904   184  padding      [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8
-  4088     8  check        u64
+offset  size  field             type
+     0     8  magic             u64
+     8     8  generation        u64
+    16     8  disk_blocks       u64
+    24     8  time              u64
+    32     8  date              u64
+    40     8  store_page_count  u64
+    48    16  counts            Pointer
+    64  4016  store_pages       [STORE_PAGE_CAPACITY]Pointer
+  4080     8  counts_complete   u64
+  4088     8  check             u64
 
-store.Store_Entry, 64 bytes: the cell of one store in the root block
+store.Store_Table_Page, 4096 bytes: one page of the store table
+offset  size  field     type
+     0     4  magic     u32
+     4     4  reserved  u32
+     8     8  unused    u64
+    16  4032  cells     [STORES_OF_A_PAGE]Store_Entry
+  4048    48  padding   [BLOCK_SIZE - 16 - STORES_OF_A_PAGE * size_of(Store_Entry)]u8
+
+store.Store_Entry, 64 bytes: the cell of one store in a page of the store table
 offset  size  field  type
      0    32  name   [NAME_CAPACITY]u8
     32     8  limit  u64
@@ -222,7 +233,7 @@ An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
 
 | Field | An object | A tree |
 |---|---|---|
-| Name | 1 to 64 bytes of UTF-8 with no control character (`docs/glossary/text.md`, "Text encoding"), then zero bytes. No byte `/`, not `.` or `..` | the same |
+| Name | 1 to 255 bytes of UTF-8 with no control character (`docs/glossary/text.md`, "Text encoding"), then zero bytes. No byte `/`, not `.` or `..` | the same |
 | Kind | object | tree |
 | Size | its bytes | its entries |
 | Generation, time, date | of its last change | of its last change |
@@ -230,8 +241,10 @@ An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
 | Pointer | the root of its block tree: an object node, or its one block of data when it has one block; none when each of its bytes is zero | its root node; none when it is empty |
 | Versions | its version index | none |
 
+The removal queue of a store holds one more kind: a release (`Entry_Kind.Release`, 3), states of objects that steps free (section 4.4). Its pointer is the first of a chain of release lists (`Release_List`): each one block of up to 127 states, each state its root, its size and the first block of data that no step has freed (its cursor), and the pointer of the next list, or none (no block, check 0) for the last; the other fields of the entry are zero. A list is a block of its store. A list with another magic, a count of 0 or past 127, bytes in the places of no state or in its padding, or a next list in block 1 or of no block with a check is wrong: the open counts the lists before it and none of its states or of the lists after it, and a step drops the entry; the store stays whole. No tree of a store holds a release.
+
 ```byte-layout store.Entry
-store.Entry, 104 bytes: the record of a leaf after its name of 64 bytes
+store.Entry, 104 bytes: the record of a leaf after its name of 256 bytes
 offset  size  field       type
      0     8  kind        u64
      8     8  size        u64
@@ -284,16 +297,67 @@ The limit: a device that answers the read from the cache that lost the write pas
 
 | Limit | Value | Reason |
 |---|---|---|
-| A name | 1 to 64 bytes | A key of 64 bytes gives 24 entries in a leaf with their hash: a store of a million objects has its entries in about 60000 blocks, inside the 262144 blocks of a disk |
-| The levels of one B+ tree | 8 | With nodes a third full, 8 levels hold more entries than a disk can name. The open takes a deeper tree for damage |
+| A name | 1 to 255 bytes | The limit of the names of the other file systems. A key of 256 bytes gives 11 entries in a leaf: a store of a million objects has its entries in about 180 000 blocks |
+| The levels of one B+ tree | 10 | With each node at its least (3 entries in a leaf, 4 children in a branch), 10 levels hold about 800 000 entries; with full nodes, more than a disk names. The open takes a deeper tree for damage |
 | The trees on a path | 32 | A place holds the names of its path; a commit rewrites one tree on each level. 32 bounds both |
 | The entries that one call adds | 256 | One commit writes at most 4096 blocks |
 | An object | 4 TiB: five levels of object nodes of 64 children, 64^5 blocks | A commit copies one node of each level for each changed block, and the open takes a deeper tree for damage. 4 TiB is more than the disk, and a sixth level costs one more node on each path |
 | A write of a whole object | The call region: 64 KiB | The data comes in the call region. A larger object is written by ranges |
-| The pending changes | 1024 blocks (4 MiB) and 16 objects, for all the connections | The blocks of data that one commit writes. A range write past it is refused (Full, unit Pending): the caller commits first |
-| The blocks that one commit releases | 262144: each block of the disk | The remove of an object as large as the disk is one commit |
-| The disk | 262144 blocks (1 GiB) | Unchanged |
+| The pending changes of a connection | The limit of blocks of its store, in a pool of its own | A pending change past the limit could never commit: it is refused (`Over_Limit`, unit `Pending`). The memory of the pool is memory of the service; a pool that the budget refuses gives `Full` with the record of the budget. One connection takes no room of another |
+| The changes of one commit | The counts of one commit in one memory object: about 64 GiB of changed blocks | A commit of pending changes takes tables of the room of its changes from its pool; the fixed tables of a commit hold one call region |
+| The blocks that one commit releases | Up to the room of its counts; a larger state is freed in steps of 65 536 blocks | Section 4.4 |
+| The stores of a disk | 15 813: 251 pages of 63 cells | A page is one block, and the root names each page |
+| The disk | Each block of the device | When the budget of the service pays a table of each block (6 bytes and 3 bits: a disk of 64 GiB costs 114 MiB), the open walks and checks each block; past it, the service opens the disk from its count tree (section 3.5), and the log says so |
 | The entries of a tree | No limit but the disk | |
+| A frozen folder | 4096 entries in a node; a larger folder is nodes of 4096 entries under nodes of 64 parts, up to 2^36 entries | A node stays near 1 MB; one folder has one form and one tree hash |
+| The pages of the count tree that one commit writes | 1024, more for a commit of pending changes from its pool | A commit whose counts change more leaves is refused (`Full`, unit `Commit_Blocks`); a step of a release stops at a quarter of them |
+
+### 3.5 The count tree
+
+The count tree holds, on the disk, the count of names and the owner of each block: the store that names it plus 1, `STORE_TABLE_OWNER` for a page of the store table, `COUNT_TREE_OWNER` for a page of the count tree, 0 for a free block. The root names its top directory, a directory of the least level whose 512 * 128^level blocks hold the disk. A child with no block is a part of the disk where each count is 0: a new disk has no page.
+
+A commit, when its plan is final, makes the new version of each leaf whose counts it changes, and of each directory above them, each to a new block. Those new blocks, and the blocks of the pages that they replace, change counts too, in leaves that the commit adds, until no leaf is added; a new block is taken near the blocks of the commit. The pages are written with the other blocks of the commit and read back before the root: a loss of power leaves the counts of one commit.
+
+The open has two forms. When the memory of the service holds a table of each block (6 bytes and 3 bits for each), the open walks each store and checks each block, as before, and compares each leaf with the counts that it found: a leaf that differs is written by the next commits, with the fact `Count_Leaves_Differ`; a tree with a wrong page is no tree (`Count_Tree_Damaged`), and the next commits write a new one. A disk that the tool wrote has no tree yet: its first commits write it, and `counts_complete` is 1 when each leaf is written. When the memory does not hold a table of each block, a root whose tree is complete opens with no walk of the blocks of the objects: the counts come from the leaves, through a cache of up to 4096 pages in the memory of the service; the open walks the trees of the stores for their entries, reading each node once, so a disk whose trees name one node again and again ends its open with its store faulty; a wrong block is found when it is read, and the service keeps up to 32 768 wrong blocks (with the largest cache) before it stops its changes (`Damage_Set_Full`). A leaf with a wrong check is passed by the search of a free block, and the service enters the repair state (`Count_Repair_Started`): it serves reads, and refuses each change with `Busy` (-14), unit `Count_Repair`, value the stores that the repair walked, limit the stores in all; the client of the storage service makes the call again every 100 ms, up to 60 s (`REPAIR_WAIT_BOUND_MILLISECONDS`), and past it gives the refusal. The repair walks each store of the last commit again, in steps of at most 4096 reads and writes, one after each round of calls, and counts the names of the blocks of the wrong leaves, at most 128 in one run. It reads each node of a tree once, and records each node that it walked in a scratch, one bit for each block, so a node of several names is walked once: in memory on a disk of up to about a million blocks, else on free blocks of the disk, which no root names. ... (line truncated to 2000 chars)
+
+```byte-layout store.Count_Page store.Count_Directory store.Count_Child store.Release_List store.Release_State
+store.Count_Page, 4096 bytes: a leaf of the count tree: the counts of names and the owners of 512 blocks
+offset  size  field    type
+     0     4  magic    u32
+     4     4  level    u32
+     8     8  first    u64
+    16  2048  counts   [COUNTS_OF_A_PAGE]u32
+  2064  1024  owners   [COUNTS_OF_A_PAGE]u16
+  3088  1008  padding  [BLOCK_SIZE - 16 - COUNTS_OF_A_PAGE * 6]u8
+
+store.Count_Directory, 4096 bytes: a directory of the count tree: 128 children
+offset  size  field     type
+     0     4  magic     u32
+     4     4  level     u32
+     8     8  first     u64
+    16  3072  children  [COUNT_DIRECTORY_FANOUT]Count_Child
+  3088  1008  padding   [BLOCK_SIZE - 16 - COUNT_DIRECTORY_FANOUT * size_of(Count_Child)]u8
+
+store.Count_Child, 24 bytes: one child of a directory of the count tree
+offset  size  field  type
+     0     8  block  u64
+     8     8  check  u64
+    16     8  free   u64
+
+store.Release_List, 4096 bytes: a list of the states of a release in the removal queue, which names the next list
+offset  size  field    type
+     0     4  magic    u32
+     4     4  count    u32
+     8    16  next     Pointer
+    24  4064  states   [RELEASES_OF_A_LIST]Release_State
+  4088     8  padding  [BLOCK_SIZE - 24 - RELEASES_OF_A_LIST * size_of(Release_State)]u8
+
+store.Release_State, 32 bytes: one state of a release list
+offset  size  field   type
+     0    16  root    Pointer
+    16     8  size    u64
+    24     8  cursor  u64
+```
 
 ## 4. The interface of the service
 
@@ -310,7 +374,7 @@ kept on the disk
 > storage.write(0, "second", "one block more")
 error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks
 > storage.write(0, "", "x")
-error: storage.write: the argument name is empty; it must have 1 to 64 bytes
+error: storage.write: the argument name is empty; it must have 1 to 255 bytes
 > storage.stores()
 console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection
 ```
@@ -331,6 +395,7 @@ A connection to the storage service is a handle on a store or on a part of it. A
 | `read_range(place, name, offset, result)` | The bytes from `offset` up to the end, with the pending changes of the connection; a hole reads as zero bytes |
 | `write_range(place, name, offset, data)`, `set_size(place, name, size)` | A pending change of the connection: no commit, no hash (section 4.6, "Ranges") |
 | `commit(place, name)` | Puts the pending changes of the connection on the object in one commit, and gives a row: the generation and the measure of the commit |
+| `drop_pending(place, name)` | Drops the pending changes of the connection on one object; the other pending objects of the connection stay |
 | `list(place, after, rows, names)` | A page of the entries after the name `after`, in the order of the names: a table of rows (the place of the name in `names`, its count of bytes, the kind, the size, the generation) and the bytes of the names. A tree of a million entries is never given whole |
 | `rename(place, name, to_place, to_name)` | Moves an entry, in one commit, inside one store. Refused when `to_name` exists, or when a tree moves into itself |
 | `remove(place, name)` | Removes an object, or a tree and all under it (section 4.4) |
@@ -339,7 +404,8 @@ A connection to the storage service is a handle on a store or on a part of it. A
 | `usage()` | The counts of the store of the connection; through a share of a tree, the counts of that tree only (section 4.3) |
 | `stores()` | A first line with the generation of the disk, its blocks in use, and the commits, the commits refused by their read back, the commits whose root write or read failed on the device (for the next open to decide), the blocks written and the blocks read back with the time of those reads since the start of the service (section 3.3: a measure of the cost of the commit read back). Then one line for each store that the caller is allowed to name (section 4.2): its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. A caller that does not act for a principal gets the outcome `Grant_Or_Right_Missing` and the error record `No_Grant`, unit `Acts_For_Principal` |
 | `open_store(store)` | A place on the root of another store, for a caller that may name that store (section 4.2). Such a place reads, restores and clones; `write`, `add`, `remove`, `rename` and `share` refuse it |
-| `versions`, `version`, `restore`, `clone`, `compare` | As before, on an object `name` under a place; no argument names a store |
+| `versions`, `restore`, `clone`, `compare` | As before, on an object `name` under a place; no argument names a store |
+| `version(place, name, generation, offset, result)` | The bytes of the object at a generation from `offset`, up to the end of the state or of the call region: a version larger than the call region reads in pieces |
 | `erase_versions(place, name)` | Ends each version of the object, and writes zero bytes over each block that no other state names (section 4.8). A process with the grant `Versions_Erase`, on its own store, only |
 
 ### 4.2 No way up
@@ -361,6 +427,8 @@ A connection to the storage service is a handle on a store or on a part of it. A
 ### 4.4 The removal of a tree
 
 A remove of a tree is one commit: its entry leaves its tree, and the tree goes into the removal queue of the store. The name is gone at that commit. The blocks under it stay counted in the store until the service frees them, in steps: each step is one commit that removes up to 64 entries of the first tree of the queue (an inner tree goes into the queue in its turn). The service runs a step when no call waits. So the cost of the call is one commit, whatever the size of the tree; the work after it is bounded for each commit, and a loss of power loses no step: the queue is on the disk. `usage` gives the trees in the queue.
+
+**A large state goes the same way.** The release of the last name of a state counts each block that it frees, in the table of the counts of its commit. The commit first counts, with no change, the names that the release changes: the root, each child of a node that loses its last name, and the children under it. A version that shares most of its nodes with the state that stays changes a few names, whatever its size, and is released in its commit. When those names pass the room left in that table, or half of the pages of the count tree that the commit can write less the leaves that it touches already, the state goes to the removal queue: the commit gathers such states in release lists of 127, chained, under one entry of the queue, so a commit that releases any count of large versions puts one entry. The remove of an object of any size is one commit. Each step then frees the states of the first list in their order, several in one step, up to 65 536 names and at most a quarter of the pages of the count tree of its commit, in the order of the blocks of data, and writes the list again with what is left, each state with its cursor. A node that another state names too loses one name, whatever its size; the last step of a state frees its root; after the last state of a list, the entry names the next list, and after the last list the queue drops the entry. The open counts a queued state from that block. The blocks of the state stay counted in the store until their step.
 
 ### 4.5 Budgets
 
@@ -398,7 +466,36 @@ A connection changes an object by ranges in two steps:
 1. `write_range` and `set_size` are pending changes of the connection. The service keeps a copy of each changed block, as the connection sees it: the block of the last commit, read and checked at the first change of a part of it (a whole block that a write covers is not read), with the change on it. Nothing is written and nothing is hashed. A read of the connection sees its pending changes; another connection sees the last commit.
 2. `commit` makes the pending changes one commit, on the disk at its return. The state before becomes a version.
 
-A pending change starts from the state of the object at the first pending change. Another change of the object before the commit (a write, a restore, a remove, a rename, or a commit of another connection) comes first: the commit is refused (Absent, unit Pending, found 1), and the pending changes are dropped. A loss of power before the commit loses the pending changes and nothing else: the disk has the last commit. The end of a connection drops its pending changes.
+A pending change starts from the state of the object at the first pending change. Another change of the object before the commit (a write, a restore, a remove, a rename, or a commit of another connection) comes first: the commit is refused (Absent, unit Pending, found 1), and the pending changes are dropped. A loss of power before the commit loses the pending changes and nothing else: the disk has the last commit. `drop_pending` drops the pending changes of one object; the end of a connection drops all of its pending changes.
+
+**The pool of a connection.** The pending changes of a connection are a pool of its own: memory of the service that the connection takes at its first change and gives back at its commit, at the drop of its last object, or at its end. A pool holds at most the limit of blocks of the store of the connection: a change past it is refused with `Over_Limit`, unit `Pending`, and the blocks before it stay pending. The memory grows with the changes, one memory object after another: when the budget of the service refuses it, the change is refused with `Full` and the record of the budget. A commit of pending changes takes, from the same pool, the tables of the room of its changes (the object nodes that its blocks can copy, their writes and their counts), and gives them back at its end: a commit of the pending changes of a large text is one commit.
+
+**The exports, as the service declares them** (`src/modules/system/storage/ranges.odin`, `main.odin`):
+
+```odin
+write_range  :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, error: ^errors.Error_Record) -> i64
+set_size     :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes, error: ^errors.Error_Record) -> i64
+commit       :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error: ^errors.Error_Record) -> i64
+drop_pending :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> i64
+read_range   :: proc "c" (place: i64, name: ^string, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64
+version      :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64
+```
+
+`drop_pending` gives 0, or Absent (-13, unit Pending) when the object has no pending change on the connection. `version` gives the count of bytes from `offset` (0 at the end), Bad_Value (-3, argument 4) for a negative offset, and Out_Of_Range (-3, argument 4) for an offset past the end of the state.
+
+**The procedures of the client** (`modus:storage`):
+
+```odin
+write_range   :: proc "contextless" (client: ^Client, place: Place, name: string, offset: u64, data: []u8, error: ^errors.Error_Record = nil) -> (size: i64, status: storage_status.Status)
+set_size      :: proc "contextless" (client: ^Client, place: Place, name: string, size: u64, error: ^errors.Error_Record = nil) -> storage_status.Status
+commit        :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (measure: Commit_Measure, status: storage_status.Status)
+drop_pending  :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> storage_status.Status
+version       :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status)
+version_range :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, offset: u64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status)
+clone         :: proc "contextless" (client: ^Client, place: Place, name: string, new_name: string, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status)
+```
+
+`version` calls the export piece by piece until `result` holds the whole state, and gives `Too_Small` when the state does not fit `result`. `version_range` is one piece.
 
 This is the grouping of property 9: a process sends each change when it happens, and says which changes are one step. A whole write is the same mechanism: one call that cuts or extends the object to the size of its data, changes each of its blocks, and commits. A block that keeps its bytes keeps its block: its value is the value of the old block.
 
@@ -441,7 +538,7 @@ Built. Two entries of one store with the same bytes name one block tree: the byt
 - **A share of a tree.** A count of the whole store would tell the holder of a share whether the rest of the store holds bytes: a write that takes no block, or a removal that frees none. So `usage()` through a share of a tree gives the counts of its own tree only (section 4.3), a commit looks up a hash only when the connection of the caller reaches the whole store (the process of the store, or a share of its root), and while the store has a writable share of a tree open, no commit of the store looks up a hash and each root that a commit adds is hidden: never a candidate, after `unshare` too. What is left, for a writable share only: the limit of the store counts the blocks of the whole store, so a holder that writes until its write is refused with `Over_Limit` measures the room left in the store, and can learn from it whether its removal freed blocks or whether a write of the maker took any. Each measure costs it writes up to the limit. A read-only share has no channel.
 - **The versions are not in the index.** A version keeps no hash; it shares its blocks with the state that follows it already. A restore of a version whose bytes another entry holds names the root of that entry.
 
-The cost of a commit: a few slots of the index in memory, and for each candidate the read of the path of its last block, through the cache. A found root saves each write of the block tree. The index takes 10 MiB of the memory of the service.
+The cost of a commit: a few slots of the index in memory, and for each candidate the read of the path of its last block, through the cache. A found root saves each write of the block tree. The index holds up to 131 072 roots in 6 MiB of the memory of the service; a root past them is not found by its hash, and its commit writes its blocks.
 
 The count of the current objects of a store (`current_blocks`) counts a block that two names share two times, as for a clone; the blocks in use of the store (`usage().blocks`) count it one time. Example: the process `ranges` writes an object of 1 MiB under two names, and the store holds 261 blocks for both: 256 blocks of data, 4 object nodes of level 1 and the root.
 

@@ -689,8 +689,8 @@ tpm_key_changed_ticket_disk_write :: proc() -> bool {
 		return false
 	}
 	defer delete(image)
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	record: []u8
 	for &item in contents.objects {
@@ -712,14 +712,9 @@ tpm_key_changed_ticket_disk_write :: proc() -> bool {
 		next  = 2,
 	}
 	defer delete(disk.image)
-	root := new(format.Root, context.temp_allocator)
-	root.magic = format.ROOT_MAGIC
-	root.generation = build.MODULE_DISK_GENERATION
-	root.disk_blocks = u64(build.DATA_DISK_SIZE) / format.BLOCK_SIZE
 	files := [1]build.Module_File{{name = principals.MACHINE_OBJECT, bytes = changed}}
-	root.stores[0] = build.module_files_store_put(&disk, UNLOCK_STORE, files[:], build.DATA_DISK_SIZE) or_return
-	root.check = format.root_check(root)
-	copy(disk.image[:format.BLOCK_SIZE], ([^]u8)(root)[:format.BLOCK_SIZE])
+	cells := [1]format.Store_Entry{build.module_files_store_put(&disk, UNLOCK_STORE, files[:], build.DATA_DISK_SIZE) or_return}
+	build.module_disk_root(&disk, cells[:], build.DATA_DISK_SIZE) or_return
 	if err := os.write_entire_file(TEST_TPM_KEY_CHANGED_TICKET_DISK, disk.image); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", TEST_TPM_KEY_CHANGED_TICKET_DISK, err)
 		return false
@@ -750,8 +745,8 @@ principal_file_parts_read :: proc() -> (parts: Principal_File_Parts, ok: bool) {
 		return {}, false
 	}
 	defer delete(image)
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	file: []u8
 	for &item in contents.objects {
@@ -883,8 +878,8 @@ principal_file_parts_absent :: proc(parts: ^Principal_File_Parts, dropped_block:
 	}
 	// The disk that the engine left opens as the storage service opens it:
 	// no root names a block of zeros, and the file has no version.
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	mounted := contents.mount
 	if mounted.failed || mounted.wrong != 0 || mounted.damaged_objects != 0 || mounted.damaged_versions != 0 || storage_mount.hash_index_check(state) != 0 {

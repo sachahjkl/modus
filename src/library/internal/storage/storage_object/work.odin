@@ -20,7 +20,35 @@ import format "modus:contract/store"
 // that name (Counter.release). The name of the root of a state belongs to
 // the entry or to the version that holds it: the caller counts it.
 
-NODE_SLOT_CAPACITY :: 1536 // The object nodes that one commit changes: 1000 blocks of data spread over a large object change about 1000 nodes of level 1 and fewer above.
+// The slots of the work come in pages that the caller gives: a commit of
+// many changes needs many slots, and pages need no memory of one piece.
+SLOT_PAGE_SLOTS :: 64
+Slot_Page :: [SLOT_PAGE_SLOTS]Slot
+
+// slots_needed gives the slots that a work of `changes` changed blocks of
+// data needs on an object of at most `blocks` blocks: on each level, one
+// copy for each changed block, never more than the nodes of that level,
+// and a chain of new roots for a growth and the block of a cut.
+slots_needed :: proc "contextless" (changes: u64, blocks: u64) -> u64 {
+	// No object has more blocks than the limit: past it, nodes + FANOUT
+	// would wrap.
+	bounded := min(blocks, format.OBJECT_BLOCKS_LIMIT)
+	levels := format.object_levels(bounded * format.BLOCK_SIZE)
+	needed := u64(2 * levels + 2)
+	nodes := max(bounded, 1)
+	for _ in 1 ..= levels {
+		nodes = (nodes + FANOUT - 1) / FANOUT
+		// nodes is at least 1: the form min(changes, nodes - 1) + 1 never
+		// wraps for the largest count of changes.
+		needed += min(changes, nodes - 1) + 1
+	}
+	return needed
+}
+
+// slot_pages_needed gives the pages of slots_needed.
+slot_pages_needed :: proc "contextless" (changes: u64, blocks: u64) -> u64 {
+	return (slots_needed(changes, blocks) + SLOT_PAGE_SLOTS - 1) / SLOT_PAGE_SLOTS
+}
 
 // One block of data that a commit changes: its place, and its 4096 bytes
 // after the change, with zero bytes past the size.
@@ -66,6 +94,7 @@ Slot :: struct {
 	refs:  [FANOUT]i32,
 	level: int, // The level of the node, from 1.
 	used:  bool, // The slot holds a node of this work.
+	next_free: i32, // A free slot: 1 + the next free slot, 0 for none.
 }
 
 // The measure of one commit: what it hashed and wrote.
@@ -82,8 +111,9 @@ Measure :: struct {
 Work :: struct {
 	source:         ^Source, // Where the blocks of the state before come from.
 	counter:        ^Counter, // The names and the writes of the caller.
-	slots:          [NODE_SLOT_CAPACITY]Slot, // The nodes that the commit copies.
-	slots_high:     int, // No slot from here is used.
+	slot_pages:     []^Slot_Page, // The nodes that the commit copies, in memory of the caller.
+	slots_high:     int, // No slot from here was ever used.
+	free_slot:      i32, // 1 + the first free slot under slots_high, 0 for none.
 	// The root when root_reference is 0: a block of the disk, or a hole.
 	// root_known: its value and its blocks are known.
 	root:           Child,
@@ -120,12 +150,13 @@ fail_of_read :: proc "contextless" (work: ^Work, outcome: Read, block: u64) {
 	work_fail(work, outcome == .Device ? .Device : .Wrong, block)
 }
 
-// work_begin starts the work on a state of the disk.
-work_begin :: proc "contextless" (work: ^Work, source: ^Source, counter: ^Counter, before: State, changes: []Change) {
-	for &slot in work.slots[:work.slots_high] {
-		slot.used = false
-	}
+// work_begin starts the work on a state of the disk, with the slots of
+// `slot_pages` (slot_pages_needed gives how many the changes need: fewer
+// pages end the work with the failure Full).
+work_begin :: proc "contextless" (work: ^Work, source: ^Source, counter: ^Counter, before: State, changes: []Change, slot_pages: []^Slot_Page) {
+	work.slot_pages = slot_pages
 	work.slots_high = 0
+	work.free_slot = 0
 	work.source, work.counter = source, counter
 	work.root = {block = before.root.block, check = before.root.check}
 	work.root_known = before.root.block == 0
@@ -143,19 +174,38 @@ work_begin :: proc "contextless" (work: ^Work, source: ^Source, counter: ^Counte
 // failure Full.
 @(private)
 slot_take :: proc "contextless" (work: ^Work, level: int) -> int {
-	for index in 0 ..< NODE_SLOT_CAPACITY {
-		slot := &work.slots[index]
-		if slot.used {
-			continue
-		}
-		slot.used = true
-		slot.level = level
-		slot.refs = {}
-		work.slots_high = max(work.slots_high, index + 1)
-		return index
+	index: int
+	if work.free_slot != 0 {
+		index = int(work.free_slot - 1)
+		work.free_slot = slot_at(work, index).next_free
+	} else if work.slots_high < len(work.slot_pages) * SLOT_PAGE_SLOTS {
+		index = work.slots_high
+		work.slots_high += 1
+	} else {
+		work_fail(work, .Full)
+		return -1
 	}
-	work_fail(work, .Full)
-	return -1
+	slot := slot_at(work, index)
+	slot.used = true
+	slot.level = level
+	slot.refs = {}
+	slot.next_free = 0
+	return index
+}
+
+// slot_free gives a slot back to the free list.
+@(private)
+slot_free :: proc "contextless" (work: ^Work, index: int) {
+	slot := slot_at(work, index)
+	slot.used = false
+	slot.next_free = work.free_slot
+	work.free_slot = i32(index + 1)
+}
+
+// slot_at gives the slot `index` of the work.
+@(private)
+slot_at :: #force_inline proc "contextless" (work: ^Work, index: int) -> ^Slot {
+	return &work.slot_pages[index / SLOT_PAGE_SLOTS][index % SLOT_PAGE_SLOTS]
 }
 
 // slot_new gives a new node of a level, with no child.
@@ -165,7 +215,7 @@ slot_new :: proc "contextless" (work: ^Work, level: int) -> int {
 	if index < 0 {
 		return -1
 	}
-	slot := &work.slots[index]
+	slot := slot_at(work, index)
 	slot.node = {}
 	slot.node.header.level = u32(level)
 	slot.node.header.magic = format.OBJECT_NODE_MAGIC
@@ -180,9 +230,9 @@ slot_copy :: proc "contextless" (work: ^Work, child: Child, level: int, base: u6
 	if index < 0 {
 		return -1
 	}
-	slot := &work.slots[index]
+	slot := slot_at(work, index)
 	if outcome := node_load(work.source, {block = child.block, check = child.check}, level, base, work.size_before, &slot.node); outcome != .Good {
-		slot.used = false
+		slot_free(work, index)
 		fail_of_read(work, outcome, child.block)
 		return -1
 	}
@@ -224,7 +274,7 @@ reference_drop :: proc "contextless" (work: ^Work, reference: i32, level: int) {
 	}
 	index := int(reference - 1)
 	for place in 0 ..< FANOUT {
-		slot := &work.slots[index]
+		slot := slot_at(work, index)
 		child_reference := slot.refs[place]
 		if child_reference != 0 {
 			reference_drop(work, child_reference, level - 1)
@@ -232,7 +282,7 @@ reference_drop :: proc "contextless" (work: ^Work, reference: i32, level: int) {
 			work.counter.release(work.counter, slot.node.children[place], level - 1)
 		}
 	}
-	work.slots[index].used = false
+	slot_free(work, index)
 }
 
 // work_cut makes each byte at or past cut_size a hole, and lowers the
@@ -268,10 +318,10 @@ work_cut :: proc "contextless" (work: ^Work, cut_size: u64) {
 	for !work_failed(work) && work.levels > new_levels {
 		// Each child of the root but the first is a hole now: the first one
 		// becomes the root.
-		slot := &work.slots[int(work.root_reference - 1)]
+		slot := slot_at(work, int(work.root_reference - 1))
 		first_reference := slot.refs[0]
 		first := slot.node.children[0]
-		slot.used = false
+		slot_free(work, int(work.root_reference - 1))
 		if first_reference != 0 {
 			work.root_reference = first_reference
 			work.root = {}
@@ -296,7 +346,7 @@ cut_node :: proc "contextless" (work: ^Work, index: int, level: int, base: u64, 
 			return
 		}
 		start := base + u64(place) * span
-		slot := &work.slots[index]
+		slot := slot_at(work, index)
 		reference := slot.refs[place]
 		child := slot.node.children[place]
 		if start >= keep {
@@ -305,7 +355,7 @@ cut_node :: proc "contextless" (work: ^Work, index: int, level: int, base: u64, 
 			} else if child.block != 0 {
 				work.counter.release(work.counter, child, level - 1)
 			}
-			slot = &work.slots[index]
+			slot = slot_at(work, index)
 			slot.refs[place] = 0
 			slot.node.children[place] = {}
 			continue
@@ -325,7 +375,7 @@ cut_node :: proc "contextless" (work: ^Work, index: int, level: int, base: u64, 
 			return
 		}
 		work.counter.release(work.counter, child, level - 1)
-		slot = &work.slots[index]
+		slot = slot_at(work, index)
 		slot.refs[place] = i32(copied + 1)
 		slot.node.children[place] = {}
 		cut_node(work, copied, level - 1, start, keep)
@@ -383,7 +433,7 @@ work_resize :: proc "contextless" (work: ^Work, size: u64) {
 		if index < 0 {
 			return
 		}
-		slot := &work.slots[index]
+		slot := slot_at(work, index)
 		if root_reference != 0 {
 			slot.refs[0] = root_reference
 		} else if root.block != 0 {
@@ -407,7 +457,7 @@ path_slot :: proc "contextless" (work: ^Work, index: u64) -> (slot_index: int, b
 	for level := work.levels; level > 1 && slot_index >= 0; level -= 1 {
 		span := format.object_span(level - 1)
 		place := int((index - base) / span)
-		slot := &work.slots[slot_index]
+		slot := slot_at(work, slot_index)
 		reference := slot.refs[place]
 		next: int
 		if reference > 0 {
@@ -425,7 +475,7 @@ path_slot :: proc "contextless" (work: ^Work, index: u64) -> (slot_index: int, b
 			if next < 0 {
 				return -1, 0
 			}
-			slot = &work.slots[slot_index]
+			slot = slot_at(work, slot_index)
 			slot.refs[place] = i32(next + 1)
 			slot.node.children[place] = {}
 		}
@@ -461,7 +511,7 @@ work_change :: proc "contextless" (work: ^Work, number: int) {
 	if slot_index < 0 {
 		return
 	}
-	slot := &work.slots[slot_index]
+	slot := slot_at(work, slot_index)
 	place := int(change.index - base)
 	old := slot.node.children[place]
 	if slot.refs[place] == 0 && old.block != 0 {
@@ -495,10 +545,10 @@ values_of :: proc "contextless" (work: ^Work, reference: i32, level: int) -> (ch
 	count: u32
 	blocks: u64 = 1
 	for place in 0 ..< FANOUT {
-		child_reference := work.slots[index].refs[place]
+		child_reference := slot_at(work, index).refs[place]
 		if child_reference != 0 {
 			made, has := values_of(work, child_reference, level - 1)
-			slot := &work.slots[index]
+			slot := slot_at(work, index)
 			if !has {
 				slot.refs[place] = 0
 				slot.node.children[place] = {}
@@ -509,15 +559,15 @@ values_of :: proc "contextless" (work: ^Work, reference: i32, level: int) -> (ch
 				}
 			}
 		}
-		slot := &work.slots[index]
+		slot := slot_at(work, index)
 		if slot.refs[place] != 0 || slot.node.children[place].block != 0 {
 			count += 1
 			blocks += slot.node.children[place].blocks
 		}
 	}
-	slot := &work.slots[index]
+	slot := slot_at(work, index)
 	if count == 0 {
-		slot.used = false
+		slot_free(work, index)
 		return {}, false
 	}
 	slot.node.header.count = count
@@ -543,7 +593,7 @@ write_of :: proc "contextless" (work: ^Work, reference: i32, level: int) -> Poin
 	}
 	index := int(reference - 1)
 	for place in 0 ..< FANOUT {
-		child_reference := work.slots[index].refs[place]
+		child_reference := slot_at(work, index).refs[place]
 		if child_reference == 0 {
 			continue
 		}
@@ -551,10 +601,10 @@ write_of :: proc "contextless" (work: ^Work, reference: i32, level: int) -> Poin
 		if work_failed(work) {
 			return {}
 		}
-		child := &work.slots[index].node.children[place]
+		child := &slot_at(work, index).node.children[place]
 		child.block, child.check = pointer.block, pointer.check
 	}
-	pointer := work.counter.write_node(work.counter, (^Block)(&work.slots[index].node))
+	pointer := work.counter.write_node(work.counter, (^Block)(&slot_at(work, index).node))
 	if pointer.block == 0 {
 		work_fail(work, .Write)
 		return {}
@@ -677,7 +727,7 @@ work_node_at :: proc "contextless" (walk: ^Work_Hash, level: int, index: u64) ->
 	child := work.root
 	for current := work.levels; current >= level; current -= 1 {
 		if reference > 0 {
-			node = &work.slots[reference - 1].node
+			node = &slot_at(work, int(reference - 1)).node
 		} else if reference == 0 && child.block != 0 {
 			if outcome = node_load(work.source, {block = child.block, check = child.check}, current, base, work.size_before, &walk.node); outcome != .Good {
 				return nil, 0, false, outcome
@@ -691,7 +741,7 @@ work_node_at :: proc "contextless" (walk: ^Work_Hash, level: int, index: u64) ->
 		}
 		span := format.object_span(current - 1)
 		place := int((index - base) / span)
-		next := reference > 0 ? work.slots[reference - 1].refs[place] : 0
+		next := reference > 0 ? slot_at(work, int(reference - 1)).refs[place] : 0
 		child = node.children[place]
 		reference = next
 		base += u64(place) * span
@@ -728,7 +778,7 @@ work_last_block :: proc "contextless" (from: ^Hash_Source, index: u64, into: ^Bl
 		}
 		place := int(index - base)
 		node_reference := work_node_reference(work, 1, index)
-		reference = node_reference > 0 ? work.slots[node_reference - 1].refs[place] : 0
+		reference = node_reference > 0 ? slot_at(work, int(node_reference - 1)).refs[place] : 0
 		child = node.children[place]
 	}
 	if reference < 0 {
@@ -756,7 +806,7 @@ work_node_reference :: proc "contextless" (work: ^Work, level: int, index: u64) 
 		}
 		span := format.object_span(current - 1)
 		place := int((index - base) / span)
-		reference = work.slots[reference - 1].refs[place]
+		reference = slot_at(work, int(reference - 1)).refs[place]
 		base += u64(place) * span
 	}
 	return reference > 0 ? reference : 0

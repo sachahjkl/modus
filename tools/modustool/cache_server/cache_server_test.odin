@@ -222,7 +222,7 @@ put_and_get_blob_and_tree :: proc(t: ^testing.T) {
 	testing.expect_value(t, wrong_kind_status, object_cache.Cache_Response_Status.Not_Found)
 
 	// 2. Put + Get canonical Tree.
-	tree_buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE]u8
+	tree_buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE_MOST]u8
 	tree_bytes, t_hash := make_test_tree(tree_buf[:])
 	put_tree_req := make_signed_put_object_request(.Tree, t_hash, u64(len(tree_bytes)), &priv, pub)
 	put_tree_status := test_put_object_on_server(&server, &put_tree_req, tree_bytes)
@@ -262,7 +262,7 @@ put_and_get_signed_realisation_and_has_batch :: proc(t: ^testing.T) {
 	defer cache_server_destroy(&server)
 
 	recipe_hash := blake3.hash(transmute([]u8)string("recipe-kernel-v1"))
-	tree_buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE]u8
+	tree_buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE_MOST]u8
 	tree_bytes, output_tree_hash := make_test_tree(tree_buf[:])
 
 	// Store the output tree and its signed realisation.

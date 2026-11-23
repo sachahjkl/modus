@@ -38,16 +38,24 @@ import "modus:principals"
 import "modus:random"
 import "modus:system"
 
-// Its tables, about 44 MB, are data of its module, so the tool counts them
-// with the module: the count of names of each block of the disk, the hash
-// index of the roots of the current objects (10 MB), the
-// changes of one commit (8 MB: each block of the disk), the leaves of one
-// version index, the versions of one object for versions(), the nodes of
-// the trees of one commit and of one read, the walks of the trees, the
-// pending blocks of the ranges (4 MB), and the object nodes that one commit
-// copies (7 MB). The working memory: the regions of its connections, and
-// the rest of the 10240 pages that it had before the tool counted.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829, processes = 1, threads = 1}
+// Its fixed tables are data of its module, so the tool counts them with the
+// module: the changes of one commit (8 MB), the leaves of one version
+// index, the versions of one object for versions(), the nodes of the trees
+// of one commit and of one read, the walks of the trees, the pending blocks
+// of the ranges (4 MB), the object nodes that one commit copies (7 MB), the
+// pages and the heads of the stores of the store table (4 MB), and the
+// buffers of the content trees (7 MB). The tables of the blocks have the
+// size of the disk, so they are working memory (storage_mount.open_with_forms): 6 bytes and
+// 3 bits for each block, the hash index, the cache and the staging of the
+// count tree. The working memory holds them for a disk of 16 GiB (2^22
+// blocks: storage_mount.state_layout gives 10 704 pages), which is more
+// than the form that reads the counts from the count tree takes with its
+// largest cache (8 326 pages): a larger disk opens from its count tree
+// (src/md/data/storage_capacity.md, "The open has two forms"). With them,
+// the regions of the connections and the rest of the pages that the
+// service had before the tool counted (1 829 pages).
+STATE_PAGES_OF_16_GIB :: 10704
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829 + STATE_PAGES_OF_16_GIB, processes = 1, threads = 1}
 
 // refuse writes the error record of a refusal and gives its call outcome:
 // the last result of a procedure of this service that gives the outcome of
@@ -233,7 +241,7 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 			refuse(error, .Argument_Refused, .Absent, .Places, argument, place)
 			return {}, false
 		}
-		path.store = {system.name_of(root.stores[store_index].name[:]), root.stores[store_index].limit}
+		path.store = {store_name_of(store_index), store_cell(store_index).limit}
 	}
 	path.depth = item.depth
 	copy(path.names[:], item.path[:path.depth])
@@ -260,6 +268,20 @@ may_name_store :: proc "contextless" (caller: ^Caller, store_name: string) -> bo
 		return false
 	}
 	return principals.store_name_principal(store_name) == caller.principal
+}
+
+// connection_ended frees what the service keeps for a connection that
+// ends: its pending changes and their memory, and its places. A later
+// connection whose ring has the same handle starts with none of them.
+connection_ended :: proc "contextless" (_: ^system.Service, connection: ^system.Connection) {
+	holder := connection.ring_memory
+	pending_drop_of(holder)
+	for &item in places {
+		if item.holder == holder {
+			item.holder = 0
+			item.generation += 1
+		}
+	}
 }
 
 // places_sweep frees the places of connections that ended.
@@ -355,7 +377,7 @@ named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_R
 // - `No_Grant` (Grant_Or_Right_Missing, the caller has no store; Grant_Or_Right_Missing, unit Changes, the connection reads only);
 // - `Absent` (Argument_Refused, unit Places: the place is not a place of this connection; Nothing_Has_That_Name, unit Places: its tree was removed or renamed; Nothing_Has_That_Name, unit Objects: the name is a tree);
 // - `Over_Limit` (Budget_Or_Capacity_Exhausted, the current objects with the change need more blocks than the limit, with no earlier version kept);
-// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, the name has 1 to 64 bytes, no zero byte, no byte '/', and is not "." or "..");
+// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, the name has 1 to 255 bytes, no zero byte, no byte '/', and is not "." or "..");
 // - `Too_Long` (Argument_Refused, the data has more bytes than the call region holds: write a larger object by ranges);
 // - `Full` (Budget_Or_Capacity_Exhausted, no place for one more store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can);
 // - `Device` (Callee_Unavailable; unit Dropped_Writes: the read back after the commit found blocks with other bytes, found their count: the disk did not keep the commit, and the object keeps its state before);
@@ -801,7 +823,7 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 			row.objects = i64(store_blocks[index].objects)
 			row.trees = i64(store_blocks[index].trees)
 			row.versions = i64(opened.store_versions[index])
-			row.blocks = i64(root.stores[index].used)
+			row.blocks = i64(store_cell(index).used)
 			row.removing = i64(store_blocks[index].removing)
 		}
 	}
@@ -827,16 +849,17 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	writer := system.Writer{buffer = result^}
-	parts := [?]system.Part{"generation ", root.generation, ", ", opened.in_use_count, " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds since the start"}
+	parts := [?]system.Part{"generation ", root.generation, ", ", blocks_in_use(), " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds since the start"}
 	for part in parts {
 		system.write_part(&writer, part)
 	}
-	for &store, index in root.stores {
+	for index in 0 ..< store_numbers() {
 		// The one rule of the stores that a caller may name: here, the
 		// stores that it sees.
-		if store.name[0] == 0 || !may_name_store(&caller, system.name_of(store.name[:])) {
+		if !store_listed(index) || !may_name_store(&caller, store_name_of(index)) {
 			continue
 		}
+		store := store_cell(index)
 		holders: u64
 		for &connection in service.connections {
 			if connection.calls.head != nil && system.name_of(connection.caller[:]) == system.name_of(store.name[:]) && connection.grant & isolated.CALLER_AMOUNT_MASK != 0 {
@@ -896,7 +919,7 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> (outcome
 	if index < 0 || len(store^) >= len(copied) {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Stores, 1)
 	}
-	path := Path{store = {system.name_of(root.stores[index].name[:]), root.stores[index].limit}}
+	path := Path{store = {store_name_of(index), store_cell(index).limit}}
 	opened_place, ok := place_new(&caller, &path)
 	if !ok {
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Places, 0, 0, PLACE_CAPACITY)
@@ -953,15 +976,17 @@ versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^err
 	return .Succeeded, i64(rows)
 }
 
-// version gives the bytes of the object `name` under a place at a generation: one of its versions, or its current version. The place: as for versions. The result is the count of bytes, or a failure with its call outcome and an error record.
+// version copies the bytes of the object `name` under a place at a generation (one of its versions, or its current version) from `offset` into result, up to the end of the state or of the call region. A caller reads a version larger than the call region in pieces: a generation names one state, which no commit changes. The place: as for versions. The result is the count of bytes (0 at the end), or a failure with its call outcome and an error record.
 //
 // **Error kinds**
 //
 // - those of versions;
 // - `Absent` (Nothing_Has_That_Name, the object has no version of this generation);
+// - `Bad_Value` (Argument_Refused, offset is negative);
+// - `Out_Of_Range` (Argument_Refused, offset is past the end of the state);
 // - `Damaged` (Data_Damaged, a block of this version has a wrong check).
 @(export, link_name = "version")
-version :: proc "c" (place: i64, name: ^string, generation: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	named, refused := named_of(place, name^, error, 1, false)
 	if refused != .Succeeded {
 		return refused, 0
@@ -974,10 +999,17 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, result: ^[]u8, 
 	if state_refused != .Succeeded {
 		return state_refused, 0
 	}
-	if state.size > u64(len(result)) {
-		return .Succeeded, i64(state.size) // The caller sees that it does not fit.
+	if offset < 0 {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 4, offset)
 	}
-	value, outcome = state_read(state, 0, result^[:state.size], error, 2)
+	if u64(offset) > state.size {
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 4, offset, i64(state.size))
+	}
+	count := min(u64(len(result)), state.size - u64(offset))
+	if count == 0 {
+		return .Succeeded, 0
+	}
+	value, outcome = state_read(state, u64(offset), result^[:count], error, 2)
 	return
 }
 
@@ -1269,15 +1301,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Error, No_Seed{})
 		system.stop(.Refused)
 	}
-	slot_key: [8]u8
+	// The nonce of the scratch of a repair of the count tree comes from the
+	// same draw: a page that a start before wrote is not taken for a page of
+	// this start, with a date or with none.
+	slot_key: [16]u8
 	random.fill(&slot_key_generator, slot_key[:])
 	slot_key_generator = {}
 	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
+	repair_disk.nonce = intrinsics.unaligned_load((^u64)(&slot_key[8]))
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {
 		system.log_fact(.Error, No_Service_Ring{})
 		system.stop(.Refused)
 	}
+	service.disconnected = connection_ended
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {
@@ -1327,10 +1364,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !disk_silent {
 		disk_open()
 	}
-	// A removal that waits runs when no call waits; a service that makes no
-	// change runs none, and waits.
+	// A removal that waits runs when no call waits, and a step of a repair
+	// after each round of calls; a service that makes no change runs none,
+	// and waits.
 	for {
-		if broken || !removal_waits() {
+		if broken || !removal_waits() && !repair_waits() {
 			wait: system.Wait
 			system.service_wait(&wait, &service)
 			for &item in shares {
@@ -1342,7 +1380,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		calls := system.service_run(&service)
 		calls += shares_serve()
-		if calls == 0 {
+		if calls > 0 {
+			repair_call_came()
+		}
+		// A step of a repair runs after each round of calls, so a service
+		// that is never idle still ends its repair; a removal runs when no
+		// call waits.
+		if repair_waits() {
+			repair_step()
+		} else if calls == 0 {
 			removal_step()
 		}
 	}
@@ -1363,6 +1409,12 @@ disk_open :: proc "contextless" () {
 		return
 	}
 	switch {
+	case mounted.failed && mounted.no_memory:
+		// The open said why: No_Table_Memory.
+		system.stop(.Failed)
+	case mounted.failed && mounted.larger_than_capacity:
+		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(table_blocks_held)})
+		system.stop(.Failed)
 	case mounted.failed:
 		system.log_fact(.Error, No_Valid_Root{})
 		system.stop(.Failed)
@@ -1384,6 +1436,16 @@ disk_open :: proc "contextless" () {
 		if mounted.damaged_versions != 0 {
 			system.log_fact(.Warning, Versions_Damaged{versions = mounted.damaged_versions})
 		}
+		if mounted.damaged_store_pages != 0 {
+			system.log_fact(.Warning, Store_Pages_Damaged{pages = mounted.damaged_store_pages})
+		}
+		// A disk with no count tree yet (one that the tool wrote) has each of
+		// its leaves to write: only a tree that differs is a fact.
+		if mounted.count_tree_damaged {
+			system.log_fact(.Warning, Count_Tree_Damaged{})
+		} else if mounted.count_leaves_differ != 0 && opened.root.counts.block != 0 {
+			system.log_fact(.Warning, Count_Leaves_Differ{leaves = mounted.count_leaves_differ})
+		}
 		if mounted.named_twice != 0 || mounted.named_by_two_stores != 0 || mounted.reference_overflow != 0 {
 			faulty: u64
 			for flag in opened.store_faulty {
@@ -1400,7 +1462,7 @@ disk_open :: proc "contextless" () {
 		if mounted.stores_recounted != 0 || mounted.stores_with_wrong_count != 0 {
 			system.log_fact(.Warning, Store_Counts_Differ{stores_recounted = mounted.stores_recounted, stores_with_wrong_count = mounted.stores_with_wrong_count})
 		}
-		system.log_fact(.Info, Disk_Opened{generation = mounted.generation, stores = mounted.stores, objects = mounted.objects, trees = mounted.trees, versions = mounted.versions, in_use = blocks_field(opened.in_use_count), shared = mounted.shared, checked = mounted.checked, wrong = mounted.wrong, elapsed = milliseconds_field(elapsed)})
+		system.log_fact(.Info, Disk_Opened{generation = mounted.generation, stores = mounted.stores, objects = mounted.objects, trees = mounted.trees, versions = mounted.versions, in_use = blocks_field(blocks_in_use()), shared = mounted.shared, checked = mounted.checked, wrong = mounted.wrong, elapsed = milliseconds_field(elapsed)})
 		if mounted.removing != 0 {
 			system.log_fact(.Info, Trees_Wait_To_Be_Freed{trees = mounted.removing})
 		}

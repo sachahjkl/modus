@@ -37,40 +37,51 @@ Dropped_Write_Model_Write :: struct {
 	bytes:  []u8,
 }
 
-// dropped_root gives the bytes of a root of one store "s".
+// One state of the model: the store block, and the page of the store table
+// that names it.
 @(private = "file")
-dropped_root :: proc(generation: u64, store_block: format.Pointer, used_blocks: u64) -> []u8 {
+Dropped_State :: struct {
+	store: format.Pointer,
+	page:  format.Pointer,
+}
+
+// dropped_root gives the bytes of a root of one page of the store table.
+@(private = "file")
+dropped_root :: proc(generation: u64, state: Dropped_State) -> []u8 {
 	root := new(format.Root, context.temp_allocator)
-	root^ = {magic = format.ROOT_MAGIC, generation = generation, disk_blocks = DROPPED_DISK_BLOCKS}
-	root.stores[0].name[0] = 's'
-	root.stores[0].limit = 1 << 20
-	root.stores[0].used = used_blocks
-	root.stores[0].store = store_block
-	root.check = format.root_check(root)
+	root^ = root_of_page(DROPPED_DISK_BLOCKS, generation, state.page)
 	return ([^]u8)(root)[:BLOCK_SIZE]
 }
 
-// dropped_state writes one version of "a": its block of data, its leaf and
-// its store block. It gives the store block.
+// dropped_state writes one version of "a": its block of data, its leaf,
+// its store block and the page of the store table.
 @(private = "file")
-dropped_state :: proc(disk: ^Test_Disk, text: string) -> format.Pointer {
+dropped_state :: proc(disk: ^Test_Disk, text: string) -> (state: Dropped_State) {
 	bytes: block_tree.Block
 	copy(bytes[:], text)
 	data, _ := disk_data(disk, &bytes, 0)
-	return disk_store(disk, {root = data, data = data, size = u64(len(text))}, {})
+	state.store = disk_store(disk, {root = data, data = data, size = u64(len(text))}, {})
+	state.page = disk_page(disk, {store_s(state.store, STATE_BLOCKS)})
+	return state
 }
+
+// The blocks of a state that the store counts: the data, the leaf and the
+// store block. The page belongs to the store table.
+@(private = "file")
+STATE_BLOCKS :: 3
 
 // dropped_check opens one image: it opens with no wrong block, at the root
 // before or at the commit after the refusal. It gives true for the commit
 // after the refusal.
 @(private = "file")
-dropped_check :: proc(t: ^testing.T, state: ^State, image_disk: ^Test_Disk, before_store: format.Pointer, next_store: format.Pointer, what: string) -> (next: bool) {
+dropped_check :: proc(t: ^testing.T, state: ^State, image_disk: ^Test_Disk, before: Dropped_State, next_state: Dropped_State, what: string) -> (next: bool) {
+	before_store, next_store := before.store, next_state.store
 	opened := mount(state, image_disk, DROPPED_DISK_BLOCKS)
 	testing.expectf(t, !opened.failed, "%s: the disk does not open", what)
 	testing.expectf(t, !opened.older, "%s: the open fell back: a root on the disk names a wrong block", what)
 	testing.expectf(t, opened.wrong == 0 && opened.damaged_objects == 0 && opened.damaged_stores == 0, "%s: %d wrong blocks, %d damaged objects, %d damaged stores", what, opened.wrong, opened.damaged_objects, opened.damaged_stores)
 	testing.expectf(t, opened.objects == 1, "%s: %d objects", what, opened.objects)
-	store := state.root.stores[0].store
+	store := store_cell(state, 0).store
 	next = opened.generation == DROPPED_BEFORE_GENERATION + 1
 	if next {
 		testing.expectf(t, store == next_store, "%s: the generation of the next commit names another store block", what)
@@ -87,13 +98,12 @@ dropped_model :: proc(t: ^testing.T, next_text: string) {
 	disk := disk_make(DROPPED_DISK_BLOCKS)
 	defer delete(disk.bytes)
 	// The data, the leaf and the store block of each state.
-	STATE_BLOCKS :: 3
 
 	// The root before, in the place 0, and an older root in the place 1:
 	// the root of the commit before it, which names the same state here.
 	store_before := dropped_state(&disk, "the version that the disk keeps")
-	copy(disk.bytes[:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION, store_before, STATE_BLOCKS))
-	copy(disk.bytes[BLOCK_SIZE:][:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION - 1, store_before, STATE_BLOCKS))
+	copy(disk.bytes[:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION, store_before))
+	copy(disk.bytes[BLOCK_SIZE:][:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION - 1, store_before))
 
 	// The blocks of the refused commit. The disk did not keep its block of
 	// data, which holds the zero bytes of a free block, and the read back
@@ -122,13 +132,13 @@ dropped_model :: proc(t: ^testing.T, next_text: string) {
 	}
 	// Its root goes to the other place of the root before.
 	next_root := len(writes)
-	append(&writes, Dropped_Write_Model_Write{number = 1, bytes = dropped_root(DROPPED_BEFORE_GENERATION + 1, store_next, STATE_BLOCKS)})
+	append(&writes, Dropped_Write_Model_Write{number = 1, bytes = dropped_root(DROPPED_BEFORE_GENERATION + 1, store_next)})
 
 	image := make([]u8, len(base))
 	defer delete(image)
 	image_disk := Test_Disk{reader = {read = test_read}, bytes = image}
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 
 	// The image that the refusal leaves: the root before, with no fallback.
 	copy(image, base)
@@ -185,15 +195,14 @@ a_refused_commit_and_the_same_bytes_after_it :: proc(t: ^testing.T) {
 a_dropped_second_root_and_the_commit_after_it :: proc(t: ^testing.T) {
 	disk := disk_make(DROPPED_DISK_BLOCKS)
 	defer delete(disk.bytes)
-	STATE_BLOCKS :: 3
 
 	// P: the state with the version, in the blocks 2 to 4.
 	first_freed := disk.next
 	store_p := dropped_state(&disk, "the version that the erase ends")
-	copy(disk.bytes[BLOCK_SIZE:][:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION - 1, store_p, STATE_BLOCKS))
+	copy(disk.bytes[BLOCK_SIZE:][:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION - 1, store_p))
 	// N: the commit of the end, in the blocks after them.
 	store_n := dropped_state(&disk, "the current version")
-	copy(disk.bytes[:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION, store_n, STATE_BLOCKS))
+	copy(disk.bytes[:BLOCK_SIZE], dropped_root(DROPPED_BEFORE_GENERATION, store_n))
 	base := make([]u8, len(disk.bytes))
 	defer delete(base)
 	copy(base, disk.bytes)
@@ -210,13 +219,13 @@ a_dropped_second_root_and_the_commit_after_it :: proc(t: ^testing.T) {
 		append(&writes, Dropped_Write_Model_Write{number = number, bytes = bytes})
 	}
 	next_root := len(writes)
-	append(&writes, Dropped_Write_Model_Write{number = 1, bytes = dropped_root(DROPPED_BEFORE_GENERATION + 1, store_next, STATE_BLOCKS)})
+	append(&writes, Dropped_Write_Model_Write{number = 1, bytes = dropped_root(DROPPED_BEFORE_GENERATION + 1, store_next)})
 
 	image := make([]u8, len(base))
 	defer delete(image)
 	image_disk := Test_Disk{reader = {read = test_read}, bytes = image}
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 
 	for count in 0 ..= len(writes) {
 		copy(image, base)

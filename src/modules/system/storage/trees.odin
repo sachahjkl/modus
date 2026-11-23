@@ -442,6 +442,22 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	if broken {
 		return -1, refuse(error, .Callee_Unavailable, .Device, .None, 0, 0, 0, 1)
 	}
+	// The repair state: each change waits for the end of the repair.
+	if refused, refusal := repair_refusal(error); refused {
+		return -1, refusal
+	}
+	// The form Count_Tree keeps the damage that it finds in sets: past a
+	// full set the damage is not known whole, and a change could name a
+	// damaged block as whole.
+	// More wrong leaves than a repair counts are damage that is not known
+	// whole too.
+	if opened.damage_set_full || opened.counts.wrong_leaves_full {
+		if !damage_set_full_said {
+			damage_set_full_said = true
+			system.log_fact(.Error, Damage_Set_Full{wrong_blocks = u64(len(opened.wrong_set) / 2)})
+		}
+		return -1, errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+	}
 	store_index = store_find(store.name)
 	if store_index >= 0 && store_damaged[store_index] {
 		return -1, refuse(error, .Data_Damaged, .Damaged, .Stores)
@@ -451,25 +467,31 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	}
 	if store_index >= 0 {
 		plan_reset(store_index)
-		plan.next.stores[store_index].limit = store.limit
+		plan_cell().limit = store.limit
 		removal_stalled[store_index] = false // A change of the store tries a stopped removal again.
 		return store_index, .Succeeded
 	}
 	if !create {
 		return -1, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 	}
-	for &entry, index in root.stores {
-		if entry.name[0] == 0 {
+	// The first free cell of a page with no damage, or the first cell of a
+	// new page.
+	for index in 0 ..< store_numbers() {
+		page, _ := format.store_place(index)
+		if !opened.store_page_damaged[page] && store_cell(index).name[0] == 0 {
 			store_index = index
 			break
 		}
 	}
+	if store_index < 0 && root.store_page_count < format.STORE_PAGE_CAPACITY {
+		store_index = store_numbers()
+	}
 	if store_index < 0 {
-		return -1, refuse(error, .Budget_Or_Capacity_Exhausted, .Full) // The disk: a fact of all the stores, so no number.
+		return -1, refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Stores, 0, 0, format.STORE_CAPACITY)
 	}
 	plan_reset(store_index)
-	plan.next.stores[store_index] = {limit = store.limit}
-	copy(plan.next.stores[store_index].name[:NAME_CAPACITY - 1], store.name)
+	plan_cell()^ = {limit = store.limit}
+	copy(plan_cell().name[:NAME_CAPACITY - 1], store.name)
 	return store_index, .Succeeded
 }
 
@@ -524,7 +546,7 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 	}
 	at_limit := plan.thinned - thinned_before
 	plan_finish()
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
 		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, limit_argument, i64(entry.used) + plan.used_change, i64(store.limit))
@@ -614,7 +636,7 @@ work_failure_take :: proc "contextless" () -> (damaged: bool) {
 	case .Wrong:
 		return true
 	case .Full:
-		capacity_reached(block_tree.NODE_SLOT_CAPACITY)
+		capacity_reached(len(plan.slot_pages) * block_tree.SLOT_PAGE_SLOTS)
 	case .Write:
 		// plan_write gave no block: it set the cause.
 		if !plan.full && !plan.capacity_reached {
@@ -685,6 +707,13 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			plan_drop()
 			return call_outcome.fail_with_value_first(error, .Another_Change_Came_First, .Absent, .Pending, name_argument, 0, 0, 1)
 		}
+		// The room of the changes, in the memory of the pool, before the
+		// first count or write of the plan.
+		size_before := found ? plan.entries[index].before.size : 0
+		if !pool_commit_tables(pending, size_before, error) {
+			plan_drop()
+			return failure(.Full)
+		}
 	}
 	if !found {
 		if kind == .Restore {
@@ -729,7 +758,12 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			changes = whole_changes[:count]
 			size, cut = u64(len(data)), u64(len(data))
 		} else {
-			changes = pending_changes(pending)
+			made: bool
+			changes, made = pending_changes(pending, error)
+			if !made {
+				plan_drop()
+				return failure(.Full)
+			}
 			size, cut = pending.size, pending.cut
 		}
 		// A damaged state is not kept: the change replaces it whole.
@@ -737,7 +771,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		if existed && !damaged_before {
 			before = {root = old.pointer, size = old.size}
 		}
-		block_tree.work_begin(&object_work, &object_source, &object_counter, before, changes)
+		block_tree.work_begin(&object_work, &object_source, &object_counter, before, changes, plan.slot_pages)
 		block_tree.work_cut(&object_work, cut)
 		block_tree.work_resize(&object_work, size)
 		for change_index in 0 ..< len(changes) {
@@ -902,7 +936,7 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	// A parameter has no address: the text of the name comes from a copy.
 	kept_name := name
 	object_name := kept_text(&kept_name)
-	store_name := system.name_of(root.stores[store_index].name[:])
+	store_name := store_name_of(store_index)
 	// The second root replaces the root before the commit, the one root
 	// that the open can fall back to if the disk did not keep a write of the
 	// commit. The commit read its blocks back before it returned: a commit
@@ -913,33 +947,33 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	case .Wrong:
 		// The root before the commit is still on the disk and names the
 		// freed blocks: no zeros. The next commit writes its root over it.
-		system.log_fact(.Error, Versions_Ended_Second_Root_Dropped{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Second_Root_Dropped{generation = u64(generation), store = store_field(store_name)}, object_name)
 		// No unit Dropped_Writes: its sentence says that the store keeps its
 		// state before, and the commit of the end is already on the disk.
 		return {}, refuse(error, .Callee_Unavailable, .Device)
 	case .Device:
-		system.log_fact(.Error, Versions_Ended_Second_Root_Failed{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Second_Root_Failed{generation = u64(generation), store = store_field(store_name)}, object_name)
 		return {}, refuse(error, .Callee_Unavailable, .Device)
 	}
 	zeroed, not_zeroed, zeros_written := freed_blocks_zero()
 	if !zeros_written {
-		system.log_fact(.Error, Versions_Ended_Zeros_Failed{generation = root.generation, zeroed = zeroed, not_zeroed = not_zeroed, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Zeros_Failed{generation = root.generation, zeroed = zeroed, not_zeroed = not_zeroed, store = store_field(store_name)}, object_name)
 		return {}, refuse(error, .Callee_Unavailable, .Device)
 	}
 	if not_zeroed != 0 {
 		// The versions are ended; the bytes of these free blocks stay on the
 		// disk. The row counts only the blocks that read back as zeros.
-		system.log_fact(.Error, Versions_Ended_Zeros_Dropped{generation = root.generation, not_zeroed = not_zeroed, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Zeros_Dropped{generation = root.generation, not_zeroed = not_zeroed, store = store_field(store_name)}, object_name)
 	}
 	// The count of the zeros is the count of the blocks that read back as
 	// zeros: a block that the disk did not write is in the line above.
 	if u64(ended) == 1 {
-		system.log_fact(.Info, Versions_Erased_One_Version{zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Info, Versions_Erased_One_Version{zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name)}, object_name)
 	} else {
-		system.log_fact(.Info, Versions_Erased{ended = u64(ended), zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Info, Versions_Erased{ended = u64(ended), zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name)}, object_name)
 	}
 	if damaged != 0 {
-		system.log_fact(.Warning, Erase_Damaged_Left{damaged = damaged, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Warning, Erase_Damaged_Left{damaged = damaged, store = store_field(store_name)}, object_name)
 	}
 	return {generation = i64(root.generation), versions = ended, zeroed = i64(zeroed), kept = i64(kept), damaged = i64(damaged)}, .Succeeded
 }
@@ -975,7 +1009,9 @@ entry_free :: proc "contextless" (index: int) {
 		tree.put(&plan.trees[1].work, key[:], entry_bytes(&queued), false)
 		plan.trees[1].changed = true
 		plan.store_block.removing += 1
-	case .None:
+	case .None, .Release:
+		// No tree of a store holds a release: it is an entry of the removal
+		// queue only, which entry_free never frees.
 	}
 }
 
@@ -1059,7 +1095,7 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	opened_tree.count_change += i64(count)
 	opened_tree.changed = true
 	plan_finish()
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
 		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 2, i64(entry.used) + plan.used_change, i64(store.limit))
@@ -1128,7 +1164,7 @@ entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, fr
 	plan.trees[to_tree].count_change += 1
 	plan.trees[to_tree].changed = true
 	plan_finish()
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
 		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 0, i64(entry.used) + plan.used_change, i64(store.limit))
@@ -1139,14 +1175,20 @@ entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, fr
 // ---------------------------------------------------------------------
 // The removal of a tree, in steps.
 
+damage_set_full_said: bool // The fact of a full set of damage is on the log.
 removal_stalled: [STORE_CAPACITY]bool // A step failed: no other step until the next change of the store.
 removal_names: [REMOVAL_STEP_LIMIT]Entry_Name
 removal_values: [REMOVAL_STEP_LIMIT]Entry
 
 // removal_waits says if a store has a removal to continue.
 removal_waits :: proc "contextless" () -> bool {
-	for &entry, index in root.stores {
-		if entry.name[0] != 0 && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
+	// A removal that removal_step would not run does not wait: the loop of
+	// the service then waits for a call, and does not spin.
+	if broken || opened.damage_set_full || opened.counts.wrong_leaves_full || storage_mount.repair_active(&opened) {
+		return false
+	}
+	for index in 0 ..< store_numbers() {
+		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
 			return true
 		}
 	}
@@ -1158,12 +1200,12 @@ removal_waits :: proc "contextless" () -> bool {
 // them goes into the queue in its turn. It gives false when no store has a
 // removal to continue.
 removal_step :: proc "contextless" () -> bool {
-	if broken {
+	if broken || opened.damage_set_full || opened.counts.wrong_leaves_full || storage_mount.repair_active(&opened) {
 		return false
 	}
 	store_index := -1
-	for &entry, index in root.stores {
-		if entry.name[0] != 0 && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
+	for index in 0 ..< store_numbers() {
+		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
 			store_index = index
 			break
 		}
@@ -1181,7 +1223,40 @@ removal_step :: proc "contextless" () -> bool {
 		removal_failed(store_index, .No_First_Tree)
 		return true
 	}
-	if queued.kind != u64(format.Entry_Kind.Tree) || queued.pointer.block == 0 {
+	if queued.kind == u64(format.Entry_Kind.Release) {
+		// A list of large states: the next parts of their blocks, then the
+		// list again with what is left, or the next list of the chain, or no
+		// entry after the last part of the last list.
+		list := &plan_fixed.step_list
+		outcome := read_single(queued.pointer, (^Block)(list))
+		if outcome == .Device {
+			plan.device = true
+		} else if outcome == .Wrong || !format.release_list_valid(list) {
+			// A wrong list: its states and the lists after it keep their
+			// blocks until the next open, which does not count under it
+			// either. The entry goes, the rest of the store stays.
+			storage_mount.wrong_block_set(&opened, queued.pointer.block)
+			delta_add(queued.pointer.block, -1)
+			tree.remove(&queue.work, queued_name[:])
+			plan.store_block.removing -= 1
+			plan.release_damaged += 1
+			queue.changed = true
+		} else {
+			empty := release_step(list)
+			delta_add(queued.pointer.block, -1)
+			if empty && list.next.block != 0 {
+				queued.pointer = list.next
+				tree.put(&queue.work, queued_name[:], entry_bytes(&queued), true)
+			} else if empty {
+				tree.remove(&queue.work, queued_name[:])
+				plan.store_block.removing -= 1
+			} else {
+				queued.pointer = plan_write((^Block)(list))
+				tree.put(&queue.work, queued_name[:], entry_bytes(&queued), true)
+			}
+			queue.changed = true
+		}
+	} else if queued.kind != u64(format.Entry_Kind.Tree) || queued.pointer.block == 0 {
 		// An empty tree in the queue: it leaves the queue.
 		tree.remove(&queue.work, queued_name[:])
 		queue.changed = true
@@ -1247,7 +1322,7 @@ Removal_Stop :: enum {
 
 removal_failed :: proc "contextless" (store_index: int, why: Removal_Stop) {
 	removal_stalled[store_index] = true
-	store := store_field(system.name_of(root.stores[store_index].name[:]))
+	store := store_field(store_name_of(store_index))
 	switch why {
 	case .No_First_Tree:
 		system.log_fact(.Warning, Tree_Removal_No_First_Tree{store = store})
@@ -1358,7 +1433,7 @@ oldest_visit :: proc "contextless" (_: ^tree.Walk, key: []u8, value: []u8) {
 			oldest.name = name
 			oldest.found = true
 		}
-	case .None:
+	case .None, .Release:
 	}
 }
 
@@ -1537,7 +1612,7 @@ tree_usage_record :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) 
 		return
 	}
 	switch kind {
-	case .None:
+	case .None, .Release:
 	case .Tree:
 		tree_usage_state.trees += 1
 		tree_usage_walk(entry.pointer, tree_usage_state.nesting + 1)
@@ -1697,7 +1772,7 @@ state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, 
 // own_blocks gives the blocks that only one state holds: its root, when no
 // other state names it, and under it each block that no other node names.
 own_blocks :: proc "contextless" (root: Pointer, size: u64) -> u64 {
-	if root.block == 0 || root.block >= DISK_BLOCKS_LIMIT || opened.references[root.block] != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
+	if root.block == 0 || root.block >= opened.capacity || storage_mount.block_count(&opened, root.block) != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
 		return 0
 	}
 	return own_under({block = root.block, check = root.check}, format.object_levels(size))
@@ -1714,7 +1789,7 @@ own_under :: proc "contextless" (child: Object_Child, level: int) -> u64 {
 	count: u64 = 1
 	for item in node.children {
 		// The level below reads into its own node: this one stays.
-		if item.block != 0 && item.block < DISK_BLOCKS_LIMIT && opened.references[item.block] == 1 {
+		if item.block != 0 && item.block < opened.capacity && storage_mount.block_count(&opened, item.block) == 1 {
 			count += own_under(item, level - 1)
 		}
 	}

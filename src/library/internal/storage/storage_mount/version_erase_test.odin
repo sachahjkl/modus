@@ -27,16 +27,11 @@ Erase_Write :: struct {
 	bytes:  []u8,
 }
 
-// erase_root gives the bytes of a root of one store "s".
+// erase_root gives the bytes of a root of one page of the store table.
 @(private = "file")
-erase_root :: proc(disk_blocks: u64, generation: u64, store_block: format.Pointer, used_blocks: u64) -> []u8 {
+erase_root :: proc(disk_blocks: u64, generation: u64, page: format.Pointer) -> []u8 {
 	root := new(format.Root, context.temp_allocator)
-	root^ = {magic = format.ROOT_MAGIC, generation = generation, disk_blocks = disk_blocks}
-	root.stores[0].name[0] = 's'
-	root.stores[0].limit = 1 << 20
-	root.stores[0].used = used_blocks
-	root.stores[0].store = store_block
-	root.check = format.root_check(root)
+	root^ = root_of_page(disk_blocks, generation, page)
 	return ([^]u8)(root)[:BLOCK_SIZE]
 }
 
@@ -91,7 +86,8 @@ the_erase_of_versions_through_a_loss_of_power :: proc(t: ^testing.T) {
 	store_before_pointer := disk_put(&disk, &store_before)
 	// The store block, the leaf of the tree, the index, the leaf of the
 	// versions, and three blocks of data.
-	copy(disk.bytes[:BLOCK_SIZE], erase_root(ERASE_DISK_BLOCKS, ERASE_BEFORE_GENERATION, store_before_pointer, 7))
+	page_before := disk_page(&disk, {store_s(store_before_pointer, 7)})
+	copy(disk.bytes[:BLOCK_SIZE], erase_root(ERASE_DISK_BLOCKS, ERASE_BEFORE_GENERATION, page_before))
 
 	// The commit of the end: a new leaf of the tree, whose entry "a" names
 	// no version index, and a new store block. Each goes to a free block.
@@ -101,6 +97,8 @@ the_erase_of_versions_through_a_loss_of_power :: proc(t: ^testing.T) {
 	tree_after := disk_leaf(&disk, []Named_Entry{{"a", entry_a_after}, {"b", entry_b}})
 	store_after := format.Store_Block{tree = tree_after, objects = 2, current_blocks = 2, node_blocks = 1}
 	store_after_pointer := disk_put(&disk, &store_after)
+	// The page of the store table again: the cell names the new store block.
+	page_after := disk_page(&disk, {store_s(store_after_pointer, 4)})
 	writes := make([dynamic]Erase_Write, context.temp_allocator)
 	for number in first_pending ..< disk.next {
 		bytes := make([]u8, BLOCK_SIZE, context.temp_allocator)
@@ -115,11 +113,12 @@ the_erase_of_versions_through_a_loss_of_power :: proc(t: ^testing.T) {
 	// The root of the commit, in the other place; then the same root with
 	// the next generation, over the root before.
 	root_of_end := len(writes)
-	append(&writes, Erase_Write{number = 1, bytes = erase_root(ERASE_DISK_BLOCKS, ERASE_BEFORE_GENERATION + 1, store_after_pointer, 4)})
+	append(&writes, Erase_Write{number = 1, bytes = erase_root(ERASE_DISK_BLOCKS, ERASE_BEFORE_GENERATION + 1, page_after)})
 	root_again := len(writes)
-	append(&writes, Erase_Write{number = 0, bytes = erase_root(ERASE_DISK_BLOCKS, ERASE_BEFORE_GENERATION + 2, store_after_pointer, 4)})
+	append(&writes, Erase_Write{number = 0, bytes = erase_root(ERASE_DISK_BLOCKS, ERASE_BEFORE_GENERATION + 2, page_after)})
 	// The zeros: each block that the commit freed. The block of "b" is not
-	// one of them: "b" still names it.
+	// one of them: "b" still names it. The page before holds names and
+	// counts of stores, no byte of an object: the erase leaves it.
 	freed := [?]u64{store_before_pointer.block, tree_before.block, index_pointer.block, leaf_pointer.block, first_version.block}
 	first_zero := len(writes)
 	zeros := make([]u8, BLOCK_SIZE, context.temp_allocator)
@@ -131,8 +130,8 @@ the_erase_of_versions_through_a_loss_of_power :: proc(t: ^testing.T) {
 	image := make([]u8, len(base))
 	defer delete(image)
 	image_disk := Test_Disk{reader = {read = test_read}, bytes = image}
-	state := new(State)
-	defer free(state)
+	state := test_state_make()
+	defer test_state_free(state)
 
 	// check opens one image: it opens, with no wrong block, and with the two
 	// versions at the generation before the erase, or with none after it.

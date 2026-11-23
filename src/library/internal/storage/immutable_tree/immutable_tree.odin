@@ -7,7 +7,11 @@
 //   max_depth), persists leaf objects by their hash, encodes every tree node
 //   canonically via modus:contract/tree_hash, computes its domain-separated
 //   tree hash, and writes each new tree object under its 64-byte lowercase hex
-//   hash (skipping already-present identical subtrees).
+//   hash (skipping already-present identical subtrees). A tree of more than
+//   tree_hash.MAX_TREE_ENTRIES entries becomes a tree of several nodes
+//   (tree_hash, "a tree of several nodes"): the freeze writes each node of
+//   entries when its entries are whole, and keeps the parts of the levels
+//   above on a stack.
 // - `tree_read`, `tree_entry`, `tree_walk_path`: read and traverse immutable
 //   trees strictly through the tree_hash contract border, verifying canonical
 //   validity and exact domain-separated hash match on every node.
@@ -20,11 +24,16 @@ import "internal:storage/storage_tree"
 
 // Length in bytes of a canonical lowercase hexadecimal BLAKE3 hash name.
 HASH_HEX_LENGTH :: 2 * blake3.HASH_SIZE
-#assert(HASH_HEX_LENGTH == format.ENTRY_NAME_CAPACITY)
+#assert(HASH_HEX_LENGTH <= format.ENTRY_NAME_CAPACITY)
 
 // Maximum total pending Tree_Entry slots held simultaneously across all active
-// frames during a bottom-up freeze_tree walk.
-FREEZE_ENTRY_POOL_CAPACITY :: 4096
+// frames during a bottom-up freeze_tree walk: a whole node of entries, and
+// as many more for the trees above it on the path.
+FREEZE_ENTRY_POOL_CAPACITY :: 2 * tree_hash.MAX_TREE_ENTRIES
+
+// The parts that a freeze holds at once: for each tree on the path, at most
+// one node of parts on each level.
+FREEZE_PART_POOL_CAPACITY :: (format.NESTING_LIMIT + 1) * tree_hash.PART_LEVEL_LIMIT * tree_hash.PART_FANOUT
 
 // Closed set of outcomes returned by a Store_Backend callback.
 Backend_Status :: enum u8 {
@@ -78,13 +87,35 @@ Freeze_Frame :: struct {
 	entry_start:  int,
 	entry_count:  int,
 	pending_name: format.Entry_Name,
+	part_start:   int, // The first part of this tree on the part pool.
+	level_counts: [tree_hash.PART_LEVEL_LIMIT + 1]int, // The parts of this tree on each level, from 1, on the pool: the higher level deeper.
 }
 
 // Caller-owned fixed workspace for freeze_tree (zero dynamic allocation).
+// The size of the nodes of a frozen folder: the entries of a node of
+// entries and the parts of a node of parts. A folder has one form for one
+// shape. The service freezes with FOLDER_SHAPE, the bounds of the format;
+// a host test takes small nodes, so that its folders of a few dozen entries
+// reach each path of the cut (src/md/data/storage_capacity.md, "A folder of
+// more than 4096 entries is a tree of several nodes").
+Folder_Shape :: struct {
+	node_entries: int, // 2 ..= tree_hash.MAX_TREE_ENTRIES.
+	part_fanout:  int, // 2 ..= tree_hash.PART_FANOUT.
+}
+FOLDER_SHAPE :: Folder_Shape{node_entries = tree_hash.MAX_TREE_ENTRIES, part_fanout = tree_hash.PART_FANOUT}
+
+// folder_shape_valid says if a shape fits the bounds of the format.
+folder_shape_valid :: proc "contextless" (shape: Folder_Shape) -> bool {
+	return shape.node_entries >= 2 && shape.node_entries <= tree_hash.MAX_TREE_ENTRIES && shape.part_fanout >= 2 && shape.part_fanout <= tree_hash.PART_FANOUT
+}
+
 Freeze_Work :: struct {
+	shape:         Folder_Shape, // The shape of the freeze in progress.
 	frames:        [format.NESTING_LIMIT + 1]Freeze_Frame,
 	entries:       [FREEZE_ENTRY_POOL_CAPACITY]tree_hash.Tree_Entry,
 	entry_top:     int,
+	parts:         [FREEZE_PART_POOL_CAPACITY]tree_hash.Tree_Entry,
+	part_top:      int,
 	encode_buffer: [tree_hash.MAX_ENCODED_TREE_BYTES]u8,
 	stats:         Freeze_Stats,
 }
@@ -164,6 +195,126 @@ tree_failure_to_status :: proc "contextless" (failure: storage_tree.Failure) -> 
 	return .Damaged
 }
 
+// node_write encodes entries as one canonical node, writes it under its
+// hash unless the backend has it, and gives the hash.
+@(private)
+node_write :: proc "contextless" (work: ^Freeze_Work, backend: ^Store_Backend, entries: []tree_hash.Tree_Entry) -> (hash: blake3.Hash, status: Tree_Store_Status) {
+	written, refusal := tree_hash.tree_encode(entries, work.encode_buffer[:])
+	if refusal != .None {
+		return {}, refusal == .Too_Many_Entries ? .Too_Many_Entries : .Invalid_Name
+	}
+	encoded := work.encode_buffer[:written]
+	node_hash, hash_refusal := tree_hash.tree_hash(encoded)
+	if hash_refusal != .None {
+		return {}, .Corrupt_Tree
+	}
+	node_hex := hash_to_hex(node_hash)
+	exists, has_status := backend.has_object(backend, node_hex)
+	if has_status != .Ok {
+		return {}, backend_status_to_tree_status(has_status)
+	}
+	if exists {
+		work.stats.trees_reused += 1
+	} else {
+		if write_status := backend.write_object(backend, node_hex, encoded); write_status != .Ok {
+			return {}, backend_status_to_tree_status(write_status)
+		}
+		work.stats.trees_written += 1
+	}
+	return node_hash, .Ok
+}
+
+// part_of gives the part of a node: the first name under it, and its hash.
+@(private)
+part_of :: proc "contextless" (first: ^tree_hash.Tree_Entry, hash: blake3.Hash) -> tree_hash.Tree_Entry {
+	part := first^
+	part.kind = .Part
+	part.hash = hash
+	return part
+}
+
+// part_add adds a part to a level of a tree. A level that holds a whole
+// node of parts already becomes that node first, whose part goes one level
+// up: a node is whole only when one more comes, so a level of a whole node
+// of parts at the end stays the last node of its level. The run of
+// the level is on top of the pool: each level below it has just ended.
+@(private)
+part_add :: proc "contextless" (work: ^Freeze_Work, frame: ^Freeze_Frame, backend: ^Store_Backend, level: int, part: tree_hash.Tree_Entry) -> Tree_Store_Status {
+	if level > tree_hash.PART_LEVEL_LIMIT {
+		return .Too_Many_Entries
+	}
+	if frame.level_counts[level] == work.shape.part_fanout {
+		run := work.parts[work.part_top - work.shape.part_fanout:work.part_top]
+		hash := node_write(work, backend, run) or_return
+		upper := part_of(&run[0], hash)
+		work.part_top -= work.shape.part_fanout
+		frame.level_counts[level] = 0
+		part_add(work, frame, backend, level + 1, upper) or_return
+	}
+	if work.part_top >= FREEZE_PART_POOL_CAPACITY {
+		return .Capacity_Exceeded
+	}
+	work.parts[work.part_top] = part
+	work.part_top += 1
+	frame.level_counts[level] += 1
+	return .Ok
+}
+
+// entry_add adds an entry to a tree. A tree that holds a whole node of
+// entries already writes that node first, as a part of level 1.
+@(private)
+entry_add :: proc "contextless" (work: ^Freeze_Work, frame: ^Freeze_Frame, backend: ^Store_Backend, entry: tree_hash.Tree_Entry) -> Tree_Store_Status {
+	if frame.entry_count == work.shape.node_entries {
+		node := work.entries[frame.entry_start:][:frame.entry_count]
+		hash := node_write(work, backend, node) or_return
+		part_add(work, frame, backend, 1, part_of(&node[0], hash)) or_return
+		frame.entry_count = 0
+		work.entry_top = frame.entry_start
+	}
+	if work.entry_top >= FREEZE_ENTRY_POOL_CAPACITY {
+		return .Capacity_Exceeded
+	}
+	work.entries[work.entry_top] = entry
+	work.entry_top += 1
+	frame.entry_count += 1
+	return .Ok
+}
+
+// frame_finish writes the last nodes of a tree whose entries are all added,
+// and gives its hash: one node when it never held more than a node, else
+// the last node of each level, up to the root of parts.
+@(private)
+frame_finish :: proc "contextless" (work: ^Freeze_Work, frame: ^Freeze_Frame, backend: ^Store_Backend) -> (hash: blake3.Hash, status: Tree_Store_Status) {
+	node := work.entries[frame.entry_start:][:frame.entry_count]
+	hash = node_write(work, backend, node) or_return
+	work.entry_top = frame.entry_start
+	if frame.level_counts[1] == 0 {
+		return hash, .Ok
+	}
+	// A tree of several nodes: its last node of entries holds at least one
+	// entry, since a node is written only when one more entry comes.
+	part_add(work, frame, backend, 1, part_of(&node[0], hash)) or_return
+	for level in 1 ..= tree_hash.PART_LEVEL_LIMIT {
+		count := frame.level_counts[level]
+		higher := false
+		for above in level + 1 ..= tree_hash.PART_LEVEL_LIMIT {
+			higher ||= frame.level_counts[above] != 0
+		}
+		run := work.parts[work.part_top - count:work.part_top]
+		hash = node_write(work, backend, run) or_return
+		upper := part_of(&run[0], hash)
+		work.part_top -= count
+		frame.level_counts[level] = 0
+		if !higher {
+			// The root of parts: it holds at least two, the whole node
+			// before and the last one.
+			return hash, .Ok
+		}
+		part_add(work, frame, backend, level + 1, upper) or_return
+	}
+	return {}, .Too_Many_Entries
+}
+
 // freeze_tree hashes a mutable B+ tree subtree bottom-up into canonical
 // immutable tree objects stored in backend, deduplicating identical subtrees
 // and leaf objects by hash, and returns the root tree hash.
@@ -174,6 +325,7 @@ freeze_tree :: proc "contextless" (
 	root_pointer: format.Pointer,
 	backend: ^Store_Backend,
 	max_depth: int = format.NESTING_LIMIT,
+	shape: Folder_Shape = FOLDER_SHAPE,
 ) -> (root_hash: blake3.Hash, status: Tree_Store_Status) {
 	if work == nil || tree_source == nil || tree_pool == nil || backend == nil || backend.has_object == nil || backend.write_object == nil {
 		return {}, .Damaged
@@ -181,7 +333,12 @@ freeze_tree :: proc "contextless" (
 	if max_depth < 0 || max_depth > format.NESTING_LIMIT {
 		return {}, .Depth_Exceeded
 	}
+	if !folder_shape_valid(shape) {
+		return {}, .Damaged
+	}
+	work.shape = shape
 	work.entry_top = 0
+	work.part_top = 0
 	work.stats = {}
 	work.frames[0] = {root = root_pointer, entry_start = 0}
 	frame_depth := 0
@@ -209,50 +366,18 @@ freeze_tree :: proc "contextless" (
 		}
 		if !found {
 			// All entries of this tree have been collected in sorted order.
-			collected := work.entries[frame.entry_start:frame.entry_start + frame.entry_count]
-			written, enc_refusal := tree_hash.tree_encode(collected, work.encode_buffer[:])
-			if enc_refusal != .None {
-				return {}, enc_refusal == .Too_Many_Entries ? .Too_Many_Entries : .Invalid_Name
-			}
-			encoded := work.encode_buffer[:written]
-			node_hash, hash_refusal := tree_hash.tree_hash(encoded)
-			if hash_refusal != .None {
-				return {}, .Corrupt_Tree
-			}
-			node_hex := hash_to_hex(node_hash)
-			exists, has_status := backend.has_object(backend, node_hex)
-			if has_status != .Ok {
-				return {}, backend_status_to_tree_status(has_status)
-			}
-			if exists {
-				work.stats.trees_reused += 1
-			} else {
-				if write_status := backend.write_object(backend, node_hex, encoded); write_status != .Ok {
-					return {}, backend_status_to_tree_status(write_status)
-				}
-				work.stats.trees_written += 1
-			}
-			// Rewind the flat entry pool before returning to the parent frame.
-			work.entry_top = frame.entry_start
+			node_hash := frame_finish(work, frame, backend) or_return
 			frame_depth -= 1
 			if frame_depth < 0 {
 				return node_hash, .Ok
 			}
 			parent := &work.frames[frame_depth]
-			if parent.entry_count >= tree_hash.MAX_TREE_ENTRIES {
-				return {}, .Too_Many_Entries
-			}
-			if work.entry_top >= FREEZE_ENTRY_POOL_CAPACITY {
-				return {}, .Capacity_Exceeded
-			}
 			parent_name := format.name_of(&parent.pending_name)
 			tree_entry, make_refusal := tree_hash.tree_entry_make(.Tree, parent_name, node_hash)
 			if make_refusal != .None {
 				return {}, .Invalid_Name
 			}
-			work.entries[work.entry_top] = tree_entry
-			work.entry_top += 1
-			parent.entry_count += 1
+			entry_add(work, parent, backend, tree_entry) or_return
 			continue
 		}
 
@@ -263,15 +388,11 @@ freeze_tree :: proc "contextless" (
 			return {}, .Damaged
 		}
 		switch entry_kind {
-		case .None:
+		case .None, .Release:
+			// No tree of a store holds a release: it is an entry of the
+			// removal queue only.
 			return {}, .Damaged
 		case .Object:
-			if frame.entry_count >= tree_hash.MAX_TREE_ENTRIES {
-				return {}, .Too_Many_Entries
-			}
-			if work.entry_top >= FREEZE_ENTRY_POOL_CAPACITY {
-				return {}, .Capacity_Exceeded
-			}
 			object_hash := entry.hash
 			if entry.size == 0 && entry.pointer.block == 0 {
 				// Empty objects always carry the BLAKE3 hash of empty bytes.
@@ -297,9 +418,7 @@ freeze_tree :: proc "contextless" (
 			if make_refusal != .None {
 				return {}, .Invalid_Name
 			}
-			work.entries[work.entry_top] = obj_entry
-			work.entry_top += 1
-			frame.entry_count += 1
+			entry_add(work, frame, backend, obj_entry) or_return
 		case .Tree:
 			if frame_depth >= max_depth {
 				return {}, .Depth_Exceeded
@@ -309,6 +428,7 @@ freeze_tree :: proc "contextless" (
 			work.frames[frame_depth] = {
 				root        = entry.pointer,
 				entry_start = work.entry_top,
+				part_start  = work.part_top,
 			}
 		}
 	}
@@ -339,13 +459,50 @@ tree_read :: proc "contextless" (backend: ^Store_Backend, hash: blake3.Hash, buf
 }
 
 // tree_entry looks up a single entry by name inside the immutable tree root_hash.
-tree_entry :: proc "contextless" (backend: ^Store_Backend, root_hash: blake3.Hash, name: string, scratch: []u8) -> (entry: tree_hash.Tree_Entry, status: Tree_Store_Status) {
+tree_entry :: proc "contextless" (backend: ^Store_Backend, root_hash: blake3.Hash, name: string, scratch: []u8, shape: Folder_Shape = FOLDER_SHAPE) -> (entry: tree_hash.Tree_Entry, status: Tree_Store_Status) {
+	if !folder_shape_valid(shape) {
+		return {}, .Damaged
+	}
 	if name_refusal := tree_hash.tree_name_validate(transmute([]u8)name); name_refusal != .None {
 		return {}, .Invalid_Name
 	}
 	canonical, read_status := tree_read(backend, root_hash, scratch)
 	if read_status != .Ok {
 		return {}, read_status
+	}
+	// A tree of several nodes: down the parts to the node of entries that
+	// holds the name. Each node but the last of its level is whole, and
+	// starts with the name of its part (tree_hash, "a tree of several
+	// nodes"): a node that breaks it is not the canonical form.
+	is_root := true
+	for level := 0; tree_hash.tree_holds_parts(canonical); level += 1 {
+		if level > tree_hash.PART_LEVEL_LIMIT {
+			return {}, .Corrupt_Tree
+		}
+		part, index, count, found := tree_hash.tree_part_find(canonical, name)
+		if is_root && count < 2 || count > shape.part_fanout {
+			return {}, .Corrupt_Tree
+		}
+		if !found {
+			return {}, .Absent
+		}
+		is_root = false
+		canonical, read_status = tree_read(backend, part.hash, scratch)
+		if read_status != .Ok {
+			return {}, read_status
+		}
+		first, first_ok := tree_hash.tree_entry_at(canonical, 0)
+		if !first_ok || first.name_length != part.name_length || first.name != part.name {
+			return {}, .Corrupt_Tree
+		}
+		whole := tree_hash.tree_holds_parts(canonical) ? shape.part_fanout : shape.node_entries
+		if index < count - 1 && tree_hash.tree_entry_count(canonical) != whole {
+			return {}, .Corrupt_Tree
+		}
+	}
+	// A node of entries holds at most the entries of a node of the shape.
+	if tree_hash.tree_entry_count(canonical) > shape.node_entries {
+		return {}, .Corrupt_Tree
 	}
 	found_entry, found, lookup_refusal := tree_hash.tree_lookup(canonical, name)
 	if lookup_refusal != .None {
@@ -365,6 +522,7 @@ tree_walk_path :: proc "contextless" (
 	path: []string,
 	scratch: []u8,
 	max_depth: int = format.NESTING_LIMIT,
+	shape: Folder_Shape = FOLDER_SHAPE,
 ) -> (entry: tree_hash.Tree_Entry, status: Tree_Store_Status) {
 	if len(path) == 0 {
 		return {}, .Invalid_Name
@@ -374,7 +532,7 @@ tree_walk_path :: proc "contextless" (
 	}
 	current := root_hash
 	for component, step in path {
-		found_entry, step_status := tree_entry(backend, current, component, scratch)
+		found_entry, step_status := tree_entry(backend, current, component, scratch, shape)
 		if step_status != .Ok {
 			return {}, step_status
 		}

@@ -146,3 +146,20 @@ the_problem_comes_before_its_code :: proc(t: ^testing.T) {
 	error_text(&writer, &record, "manual.show", "name")
 	testing.expect_value(t, written(&writer), "manual.show: the module of the argument name breaks a rule of the module format at byte 9")
 }
+
+// A change during the repair of the counts of the storage service: Busy
+// with the unit Count_Repair says why the call waits and how far the repair
+// is, never a count of requests in flight.
+@(test)
+a_change_during_a_repair_of_the_counts :: proc(t: ^testing.T) {
+	buffer: [256]u8
+	writer := Writer{buffer = buffer[:]}
+	record := errors.error_make(.Busy, .Count_Repair, 0, 3, 7, 0)
+	error_text(&writer, &record, "storage.write", "")
+	testing.expect_value(t, written(&writer), "storage.write: the storage service makes no change while it repairs the counts of the blocks of its disk: it walked 3 of 7 stores; the call can be made again after the repair")
+	// The same kind with the unit of requests keeps its own sentence.
+	writer = Writer{buffer = buffer[:]}
+	record = errors.error_make(.Busy, .Requests, 0, 3, 7, 0)
+	error_text(&writer, &record, "storage.write", "")
+	testing.expect(t, !strings.contains(written(&writer), "repair"))
+}

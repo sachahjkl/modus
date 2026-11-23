@@ -2600,10 +2600,10 @@ scenario := [?]Step {
 	// The date of the machine, from the host, some minutes after its start:
 	// it advanced with the host.
 	{kind = .Call, text = "date.now()", expected = "Date{milliseconds = ", date_after = "milliseconds = "},
-	{kind = .Call, text = "storage.version(1, \"note_000001\", {generation})", expected = "a second line"},
+	{kind = .Call, text = "storage.version(1, \"note_000001\", {generation}, 0)", expected = "a second line"},
 	{kind = .Call, text = "storage.compare(1, \"note_000001\", {generation}, {generation+1})", expected = "1 rows of Byte_Range"},
 	// The generation 1 is the format of the disk: no object has it.
-	{kind = .Call, text = "storage.version(1, \"note_000001\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1\n  outcome    Nothing_Has_That_Name"},
+	{kind = .Call, text = "storage.version(1, \"note_000001\", 1, 0)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1\n  outcome    Nothing_Has_That_Name"},
 	{kind = .Call, text = "storage.restore(1, \"note_000001\", {generation})", expected = "{generation+2}"},
 	{kind = .Call, text = "storage.clone(1, \"note_000001\", \"copy\")", expected = "{generation+3}"},
 	// A second note, and the first again.

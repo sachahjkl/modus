@@ -79,9 +79,17 @@ path_is_same_or_under :: proc "contextless" (candidate: ^Path, base: ^Path) -> b
 
 @(private = "file")
 kept_name_of_hex :: proc "contextless" (hex: [immutable_tree.HASH_HEX_LENGTH]u8) -> (kept: Kept_Name) {
-	kept.key = hex
+	kept.key = key_of_hex(hex)
 	kept.count = immutable_tree.HASH_HEX_LENGTH
 	return kept
+}
+
+// key_of_hex gives the key of the name of an object of a content tree: its
+// hash in 64 hexadecimal digits, with zero bytes after it.
+@(private = "file")
+key_of_hex :: proc "contextless" (hex: [immutable_tree.HASH_HEX_LENGTH]u8) -> Entry_Name {
+	digits := hex
+	return format.entry_name(string(digits[:]))
 }
 
 @(private = "file")
@@ -94,7 +102,7 @@ immutable_has_object :: proc "contextless" (backend: ^immutable_tree.Store_Backe
 	if store_damaged[store_index] {
 		return false, .Damaged
 	}
-	value, outcome := entry_of(store_index, path_names(ctx.target_path), name)
+	value, outcome := entry_of(store_index, path_names(ctx.target_path), key_of_hex(name))
 	switch outcome {
 	case .Found:
 		return value.kind == u64(format.Entry_Kind.Object), .Ok
@@ -118,7 +126,7 @@ immutable_read_object :: proc "contextless" (backend: ^immutable_tree.Store_Back
 	if store_damaged[store_index] {
 		return 0, .Damaged
 	}
-	value, outcome := entry_of(store_index, path_names(ctx.target_path), name)
+	value, outcome := entry_of(store_index, path_names(ctx.target_path), key_of_hex(name))
 	switch outcome {
 	case .Found:
 	case .Absent:
@@ -323,7 +331,7 @@ parse_hex_hash_argument :: proc "contextless" (given: string, error: ^errors.Err
 // - `No_Grant` (Grant_Or_Right_Missing: no store, read-only connection, or target_place is not the caller's own store);
 // - `Absent` (Argument_Refused, Nothing_Has_That_Name: place or target_place absent);
 // - `Bad_Value` (Argument_Refused, unit Trees: target_place is equal to or inside place);
-// - `Too_Long` (Argument_Refused: tree nesting past 32 levels or more than 512 entries in one tree);
+// - `Too_Long` (Argument_Refused: tree nesting past 32 levels or more than 4096 entries in one tree);
 // - `Over_Limit` (Budget_Or_Capacity_Exhausted: store block limit exceeded);
 // - `Full`, `Device`, `Damaged`.
 @(export, link_name = "freeze_tree")
@@ -510,7 +518,7 @@ gc_read_object :: proc "contextless" (reader: ^module_gc.Object_Reader, hash: bl
 		return 0, .Device_Error
 	}
 	name := immutable_tree.hash_to_hex(hash)
-	value, outcome := entry_of(ctx.store_index, path_names(ctx.target_path), name)
+	value, outcome := entry_of(ctx.store_index, path_names(ctx.target_path), key_of_hex(name))
 	switch outcome {
 	case .Found:
 	case .Absent:

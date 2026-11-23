@@ -140,8 +140,11 @@ relative_path_validation_refuses_traversal_and_malformed_paths :: proc(t: ^testi
 		"a",
 		"bin/tool",
 		"d1/d2/d3/d4/d5/d6/d7/d8", // Exact depth bound 8.
-		strings.repeat("x", tree_hash.ENTRY_NAME_CAPACITY, context.temp_allocator),
+		// A whole path of the disk image of a guest holds MAX_MOUNT_PATH_BYTES,
+		// fewer than the bytes of a name of a tree: one segment of that length.
+		strings.repeat("x", MAX_MOUNT_PATH_BYTES, context.temp_allocator),
 	}
+	#assert(MAX_MOUNT_PATH_BYTES <= tree_hash.ENTRY_NAME_CAPACITY)
 	for candidate in good_paths {
 		testing.expectf(t, validate_relative_path(transmute([]u8)candidate), "must accept valid path %q", candidate)
 	}
@@ -431,7 +434,7 @@ disk_image_refuses_corruption_traversal_and_prefix_conflicts :: proc(t: ^testing
 
 	// 2. Bad version.
 	mut = good_disk
-	mut[7] = 2
+	mut[7] = DISK_FORMAT_VERSION + 1
 	expect_corrupt(t, mut[:], 4096, .Malformed_Disk_Image, workspace, tree_out[:], "bad version")
 
 	// 3. Invalid role word (99) and wrong role (Inputs_Read_Only).
@@ -470,14 +473,14 @@ disk_image_refuses_corruption_traversal_and_prefix_conflicts :: proc(t: ^testing
 
 	// 9. Out-of-bounds / integer-overflow extent.
 	mut = good_disk
-	byte_order.write_u64_little_endian(mut[:], DISK_HEADER_SIZE + 128, max(u64) - 4)
-	byte_order.write_u64_little_endian(mut[:], DISK_HEADER_SIZE + 136, 16)
+	byte_order.write_u64_little_endian(mut[:], DISK_HEADER_SIZE + DISK_ENTRY_DATA_OFFSET_AT, max(u64) - 4)
+	byte_order.write_u64_little_endian(mut[:], DISK_HEADER_SIZE + DISK_ENTRY_DATA_SIZE_AT, 16)
 	expect_corrupt(t, mut[:], 4096, .Malformed_Disk_Image, workspace, tree_out[:], "overflow extent")
 
 	// 10. Overlapping extents (second entry points into first entry's data).
 	mut = good_disk
-	first_offset := byte_order.read_u64_little_endian(mut[:], DISK_HEADER_SIZE + 128)
-	byte_order.write_u64_little_endian(mut[:], DISK_HEADER_SIZE + DISK_ENTRY_SIZE + 128, first_offset)
+	first_offset := byte_order.read_u64_little_endian(mut[:], DISK_HEADER_SIZE + DISK_ENTRY_DATA_OFFSET_AT)
+	byte_order.write_u64_little_endian(mut[:], DISK_HEADER_SIZE + DISK_ENTRY_SIZE + DISK_ENTRY_DATA_OFFSET_AT, first_offset)
 	expect_corrupt(t, mut[:], 4096, .Malformed_Disk_Image, workspace, tree_out[:], "overlapping extent")
 
 	// 11. Single bit flipped in payload -> content BLAKE3 mismatch.
@@ -489,7 +492,7 @@ disk_image_refuses_corruption_traversal_and_prefix_conflicts :: proc(t: ^testing
 	mut = good_disk
 	forged := "../escape"
 	byte_order.write_u16_little_endian(mut[:], DISK_HEADER_SIZE, u16(len(forged)))
-	copy(mut[DISK_HEADER_SIZE + 4:][:MAX_MOUNT_PATH_BYTES], make([]u8, MAX_MOUNT_PATH_BYTES, context.temp_allocator))
+	copy(mut[DISK_HEADER_SIZE + DISK_ENTRY_PATH_AT:][:MAX_DISK_PATH_BYTES], make([]u8, MAX_DISK_PATH_BYTES, context.temp_allocator))
 	copy(mut[DISK_HEADER_SIZE + 4:][:len(forged)], transmute([]u8)forged)
 	expect_corrupt(t, mut[:], 4096, .Malformed_Disk_Image, workspace, tree_out[:], "forged traversal path")
 }
@@ -497,6 +500,55 @@ disk_image_refuses_corruption_traversal_and_prefix_conflicts :: proc(t: ^testing
 // Nested directory unpack must produce the exact domain-separated Merkle
 // tree_hash matching hand-constructed tree_hash.tree_encode + tree_hash.tree_hash,
 // including directories whose names sort before hyphenated siblings ("a" < "a-b").
+@(test)
+a_disk_image_holds_a_path_of_one_whole_store_name :: proc(t: ^testing.T) {
+	workspace := new(Disk_Unpack_Workspace, context.temp_allocator)
+	disk: [4096]u8
+	content := transmute([]u8)string("named at the edge")
+	// One name of 255 bytes: packed, read back whole, and unpacked to a tree
+	// of one entry with that name.
+	longest := strings.repeat("n", MAX_DISK_PATH_BYTES, context.temp_allocator)
+	files := [?]Disk_File_Input{{path = longest, content = content}}
+	written, refusal := pack_disk_image(.Output_Writable, files[:], 0, disk[:])
+	testing.expect_value(t, refusal, Guest_Builder_Refusal.None)
+	testing.expect_value(t, written, DISK_HEADER_SIZE + DISK_ENTRY_SIZE + len(content))
+	entry, found := disk_image_entry_at(disk[:written], 0)
+	testing.expect(t, found && entry.path == longest, "the entry gives the path of 255 bytes whole")
+	tree_out: [1024]u8
+	tree_size, _, unpack_refusal := unpack_output_disk(disk[:], 4096, workspace, tree_out[:])
+	testing.expect_value(t, unpack_refusal, Guest_Builder_Refusal.None)
+	expected, _ := tree_hash.tree_entry_make(.Object, longest, blake3.hash(content))
+	expected_tree: [1024]u8
+	expected_size, _ := tree_hash.tree_encode([]tree_hash.Tree_Entry{expected}, expected_tree[:])
+	testing.expect(t, slice.equal(tree_out[:tree_size], expected_tree[:expected_size]), "the tree holds the name of 255 bytes")
+
+	// One byte more: refused, and the buffer keeps its bytes.
+	sentinel: [4096]u8
+	for &byte in sentinel {
+		byte = 0xA5
+	}
+	too_long := [?]Disk_File_Input{{path = strings.repeat("n", MAX_DISK_PATH_BYTES + 1, context.temp_allocator), content = content}}
+	buffer := sentinel
+	refused_written, too_long_refusal := pack_disk_image(.Output_Writable, too_long[:], 0, buffer[:])
+	testing.expect_value(t, too_long_refusal, Guest_Builder_Refusal.Invalid_Mount_Path)
+	testing.expect_value(t, refused_written, 0)
+	testing.expect(t, slice.equal(buffer[:], sentinel[:]), "a refused path writes no byte")
+
+	// A directory entry that states a path length of 256: the image is
+	// refused.
+	forged := disk
+	byte_order.write_u16_little_endian(forged[:], DISK_HEADER_SIZE, MAX_DISK_PATH_BYTES + 1)
+	_, forged_refusal := validate_disk_image(forged[:written], .Output_Writable, 4096)
+	testing.expect_value(t, forged_refusal, Guest_Builder_Refusal.Malformed_Disk_Image)
+	// The byte after the longest path is padding: a byte there is refused.
+	padded := disk
+	padded[DISK_HEADER_SIZE + DISK_ENTRY_PATH_AT + MAX_DISK_PATH_BYTES] = 1
+	_, padded_refusal := validate_disk_image(padded[:written], .Output_Writable, 4096)
+	testing.expect_value(t, padded_refusal, Guest_Builder_Refusal.Malformed_Disk_Image)
+	// A mount path keeps its own limit: the wire of a mount holds 124 bytes.
+	testing.expect(t, !validate_relative_path(transmute([]u8)longest), "a mount path of 255 bytes is refused")
+}
+
 @(test)
 nested_output_disk_matches_canonical_tree_hash :: proc(t: ^testing.T) {
 	workspace := new(Disk_Unpack_Workspace, context.temp_allocator)

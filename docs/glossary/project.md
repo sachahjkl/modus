@@ -78,7 +78,7 @@ Do not use: user-facing string, UI copy, microcopy.
 
 An error sentence is the screen text that says why a call or an action did not succeed: the problem, then the cause, then what the reader can do.
 
-The sentence of an error record, which `modus:sentence` writes, is an error sentence; so is the line of a window that says why a save did not happen. It says only the parts that the system knows, and it never shows the negative result of a call. Example: "storage.write: the argument name has 70 bytes; it can have at most 64 bytes".
+The sentence of an error record, which `modus:sentence` writes, is an error sentence; so is the line of a window that says why a save did not happen. It says only the parts that the system knows, and it never shows the negative result of a call. Example: "storage.write: the argument name has 270 bytes; it can have at most 255 bytes".
 
 The design: `docs/WRITING.md`, "1. An error sentence".
 

@@ -350,13 +350,15 @@ paths_conflict_as_file_and_directory :: proc "contextless" (left, right: []u8) -
 
 // validate_relative_path verifies that path_bytes is a canonical relative
 // POSIX-style path:
-//   - length 1 ..= MAX_MOUNT_PATH_BYTES;
+//   - length 1 ..= limit (a mount: MAX_MOUNT_PATH_BYTES; a file of a disk
+//     image: MAX_DISK_PATH_BYTES);
 //   - valid non-control UTF-8;
 //   - no leading '/', no trailing '/', no empty "//" segment, no '\' byte;
 //   - 1 ..= MAX_PATH_DEPTH segments, each passing tree_hash.tree_name_validate
-//     (refusing ".", "..", NUL, and segments longer than 64 bytes).
-validate_relative_path :: proc "contextless" (path_bytes: []u8) -> bool {
-	if len(path_bytes) == 0 || len(path_bytes) > MAX_MOUNT_PATH_BYTES {
+//     (refusing ".", "..", NUL, and segments longer than
+//     tree_hash.ENTRY_NAME_CAPACITY bytes).
+validate_relative_path :: proc "contextless" (path_bytes: []u8, limit := MAX_MOUNT_PATH_BYTES) -> bool {
+	if len(path_bytes) == 0 || len(path_bytes) > limit {
 		return false
 	}
 	if path_bytes[0] == '/' || path_bytes[len(path_bytes) - 1] == '/' {

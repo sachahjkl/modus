@@ -4,7 +4,6 @@ import format "modus:contract/store"
 import "core:fmt"
 import "core:os"
 import "core:sync"
-import "internal:storage/storage_mount"
 import "modustool:foundation"
 import "modustool:build"
 import "modustool:fuzz"
@@ -160,8 +159,8 @@ Dropped_Write_Expected :: enum {
 dropped_write_image_check :: proc(image: []u8, expected: Dropped_Write_Expected, what: string) -> (generation: u64, ok: bool) {
 	generations := root_generations(image)
 	newest := max(generations[0], generations[1])
-	state := new(storage_mount.State)
-	defer free(state)
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
 	contents := fuzz.disk_contents(image, state)
 	kept := stored_object_of(&contents, DROPPED_WRITE_STORE, DROPPED_WRITE_OBJECT)
 	if contents.mount.failed || contents.mount.needs_format {

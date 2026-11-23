@@ -64,6 +64,7 @@ expected_fields :: proc() -> []Expected_Field {
 	thread_record: op.Thread_Record
 	fault_record: op.Fault_Record
 	root: store.Root
+	store_page: store.Store_Table_Page
 	store_entry: store.Store_Entry
 	pointer: store.Pointer
 	store_block: store.Store_Block
@@ -74,6 +75,11 @@ expected_fields :: proc() -> []Expected_Field {
 	version_index: store.Version_Index
 	version_leaf: store.Version_Leaf
 	version_entry: store.Version_Entry
+	count_page: store.Count_Page
+	count_directory: store.Count_Directory
+	count_child: store.Count_Child
+	release_list: store.Release_List
+	release_state: store.Release_State
 	rows := [?]Expected_Field {
 		{"module.Header", "magic", offset_of(module.Header, magic), size_of(header.magic)},
 		{"module.Header", "version", offset_of(module.Header, version), size_of(header.version)},
@@ -324,10 +330,16 @@ expected_fields :: proc() -> []Expected_Field {
 		{"store.Root", "disk_blocks", offset_of(store.Root, disk_blocks), size_of(root.disk_blocks)},
 		{"store.Root", "time", offset_of(store.Root, time), size_of(root.time)},
 		{"store.Root", "date", offset_of(store.Root, date), size_of(root.date)},
-		{"store.Root", "reserved", offset_of(store.Root, reserved), size_of(root.reserved)},
-		{"store.Root", "stores", offset_of(store.Root, stores), size_of(root.stores)},
-		{"store.Root", "padding", offset_of(store.Root, padding), size_of(root.padding)},
+		{"store.Root", "store_page_count", offset_of(store.Root, store_page_count), size_of(root.store_page_count)},
+		{"store.Root", "counts", offset_of(store.Root, counts), size_of(root.counts)},
+		{"store.Root", "store_pages", offset_of(store.Root, store_pages), size_of(root.store_pages)},
+		{"store.Root", "counts_complete", offset_of(store.Root, counts_complete), size_of(root.counts_complete)},
 		{"store.Root", "check", offset_of(store.Root, check), size_of(root.check)},
+		{"store.Store_Table_Page", "magic", offset_of(store.Store_Table_Page, magic), size_of(store_page.magic)},
+		{"store.Store_Table_Page", "reserved", offset_of(store.Store_Table_Page, reserved), size_of(store_page.reserved)},
+		{"store.Store_Table_Page", "unused", offset_of(store.Store_Table_Page, unused), size_of(store_page.unused)},
+		{"store.Store_Table_Page", "cells", offset_of(store.Store_Table_Page, cells), size_of(store_page.cells)},
+		{"store.Store_Table_Page", "padding", offset_of(store.Store_Table_Page, padding), size_of(store_page.padding)},
 		{"store.Store_Entry", "name", offset_of(store.Store_Entry, name), size_of(store_entry.name)},
 		{"store.Store_Entry", "limit", offset_of(store.Store_Entry, limit), size_of(store_entry.limit)},
 		{"store.Store_Entry", "used", offset_of(store.Store_Entry, used), size_of(store_entry.used)},
@@ -377,6 +389,28 @@ expected_fields :: proc() -> []Expected_Field {
 		{"store.Version_Entry", "time", offset_of(store.Version_Entry, time), size_of(version_entry.time)},
 		{"store.Version_Entry", "date", offset_of(store.Version_Entry, date), size_of(version_entry.date)},
 		{"store.Version_Entry", "root", offset_of(store.Version_Entry, root), size_of(version_entry.root)},
+		{"store.Count_Page", "magic", offset_of(store.Count_Page, magic), size_of(count_page.magic)},
+		{"store.Count_Page", "level", offset_of(store.Count_Page, level), size_of(count_page.level)},
+		{"store.Count_Page", "first", offset_of(store.Count_Page, first), size_of(count_page.first)},
+		{"store.Count_Page", "counts", offset_of(store.Count_Page, counts), size_of(count_page.counts)},
+		{"store.Count_Page", "owners", offset_of(store.Count_Page, owners), size_of(count_page.owners)},
+		{"store.Count_Page", "padding", offset_of(store.Count_Page, padding), size_of(count_page.padding)},
+		{"store.Count_Directory", "magic", offset_of(store.Count_Directory, magic), size_of(count_directory.magic)},
+		{"store.Count_Directory", "level", offset_of(store.Count_Directory, level), size_of(count_directory.level)},
+		{"store.Count_Directory", "first", offset_of(store.Count_Directory, first), size_of(count_directory.first)},
+		{"store.Count_Directory", "children", offset_of(store.Count_Directory, children), size_of(count_directory.children)},
+		{"store.Count_Directory", "padding", offset_of(store.Count_Directory, padding), size_of(count_directory.padding)},
+		{"store.Count_Child", "block", offset_of(store.Count_Child, block), size_of(count_child.block)},
+		{"store.Count_Child", "check", offset_of(store.Count_Child, check), size_of(count_child.check)},
+		{"store.Count_Child", "free", offset_of(store.Count_Child, free), size_of(count_child.free)},
+		{"store.Release_List", "magic", offset_of(store.Release_List, magic), size_of(release_list.magic)},
+		{"store.Release_List", "count", offset_of(store.Release_List, count), size_of(release_list.count)},
+		{"store.Release_List", "next", offset_of(store.Release_List, next), size_of(release_list.next)},
+		{"store.Release_List", "states", offset_of(store.Release_List, states), size_of(release_list.states)},
+		{"store.Release_List", "padding", offset_of(store.Release_List, padding), size_of(release_list.padding)},
+		{"store.Release_State", "root", offset_of(store.Release_State, root), size_of(release_state.root)},
+		{"store.Release_State", "size", offset_of(store.Release_State, size), size_of(release_state.size)},
+		{"store.Release_State", "cursor", offset_of(store.Release_State, cursor), size_of(release_state.cursor)},
 	}
 	list := make([]Expected_Field, len(rows), context.temp_allocator)
 	copy(list, rows[:])
@@ -485,13 +519,14 @@ byte_layout_tall_rectangles_fold :: proc(t: ^testing.T) {
 		testing.expect_value(t, offsets[len(offsets) - 1], int(offset_of(Fold_Record, tail)))
 	}
 
-	// The root block of the disk: 512 rows, each array and its padding folded.
+	// The root block of the disk: 512 rows, the array of the pages of the
+	// store table folded; the field of one row after it stays.
 	layouts, ok := byte_layouts_read()
 	testing.expect(t, ok, "the byte layouts are read")
 	root_offsets := byte_layout_grid_row_offsets(layouts["store.Root"])
-	stores_offset := int(offset_of(store.Root, stores))
-	padding_offset := int(offset_of(store.Root, padding))
-	expected_root := [?]int{0, 8, 16, 24, 32, 40, 48, 56, stores_offset, padding_offset - BYTE_LAYOUT_ROW_BYTES, padding_offset, int(offset_of(store.Root, check)) - BYTE_LAYOUT_ROW_BYTES, int(offset_of(store.Root, check))}
+	pages_offset := int(offset_of(store.Root, store_pages))
+	complete_offset := int(offset_of(store.Root, counts_complete))
+	expected_root := [?]int{0, 8, 16, 24, 32, 40, 48, 56, pages_offset, complete_offset - BYTE_LAYOUT_ROW_BYTES, complete_offset, int(offset_of(store.Root, check))}
 	if testing.expect_value(t, len(root_offsets), len(expected_root)) {
 		for offset, index in expected_root {
 			testing.expect_value(t, root_offsets[index], offset)
@@ -726,9 +761,9 @@ byte_layout_fence_on_a_page :: proc(t: ^testing.T) {
 	root_renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
 	site_render_markdown(&root_renderer, strings.concatenate({"```byte-layout store.Root\n", byte_layouts_text(root_layout), "```\n"}, context.temp_allocator))
 	root_html := strings.to_string(root_renderer.builder)
-	testing.expect(t, strings.contains(root_html, "<div class=\"byte-cell byte-cell-folded byte-column-1 byte-span-8 byte-row-9 byte-rows-2\" title=\"stores:"), "the array of the stores is folded to two rows of the grid")
-	testing.expect(t, strings.contains(root_html, fmt.tprintf("%d rows folded", size_of(store.Root{}.stores) / BYTE_LAYOUT_ROW_BYTES)), "a folded rectangle says how many rows it folds")
-	testing.expect(t, strings.contains(root_html, fmt.tprintf("<span class=\"byte-offset byte-row-11\">%d</span>", offset_of(store.Root, padding))), "the row after a fold has its own offset")
+	testing.expect(t, strings.contains(root_html, "<div class=\"byte-cell byte-cell-folded byte-column-1 byte-span-8 byte-row-9 byte-rows-2\" title=\"store_pages:"), "the array of the pages of the store table is folded to two rows of the grid")
+	testing.expect(t, strings.contains(root_html, fmt.tprintf("%d rows folded", size_of(store.Root{}.store_pages) / BYTE_LAYOUT_ROW_BYTES)), "a folded rectangle says how many rows it folds")
+	testing.expect(t, strings.contains(root_html, fmt.tprintf("<span class=\"byte-offset byte-row-11\">%d</span>", offset_of(store.Root, counts_complete))), "the row after a fold has its own offset")
 	testing.expectf(t, len(site.byte_layout_problems) == 0, "no fault: %v", site.byte_layout_problems)
 
 	// The rules of the rows reach the largest grid of a layout, folds

@@ -21,6 +21,7 @@ import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
+import "modus:contract/store"
 
 // The context of the service disk_processes.
 DISK_PROCESSES_RING_SLOT :: 10 // Memory (Read, Write): the ring from the core, opened with Receive_Handles.
@@ -35,8 +36,9 @@ MODULE_BYTES_LIMIT :: 4 << 20
 // The most files of the store that one load keeps for its imports.
 LOAD_IMPORT_CAPACITY :: 8
 
-// The most bytes of the name of an entry of the store module_files.
-LOAD_FILE_NAME_CAPACITY :: 64
+// The most bytes of the name of an entry of the store module_files: the
+// most bytes of the name of any entry of a store.
+LOAD_FILE_NAME_CAPACITY :: store.ENTRY_NAME_CAPACITY
 
 // The most loans of an entry of the scan in one load: each entry one
 // time, and two reads more for each wanted hash, as the scan reads

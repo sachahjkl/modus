@@ -716,7 +716,7 @@ substitution_policy_verifies_blobs_and_trees_by_hash_without_signer :: proc(t: ^
 	}
 
 	// Valid canonical tree passes with zero signers and nil verifier.
-	tree_buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE]u8
+	tree_buf: [tree_hash.HEADER_SIZE + 2 * tree_hash.ENTRY_SIZE_MOST]u8
 	tree_bytes, expected_tree_hash := make_sample_tree(tree_buf[:])
 	testing.expect_value(
 		t,
@@ -725,7 +725,8 @@ substitution_policy_verifies_blobs_and_trees_by_hash_without_signer :: proc(t: ^
 	)
 
 	// Single tampered bit in tree entry hash -> Refuse_Hash_Mismatch.
-	hash_byte_offset := tree_hash.HEADER_SIZE + tree_hash.ENTRY_SIZE - 1
+	// The last byte of the hash of the first entry, "alpha.module".
+	hash_byte_offset := tree_hash.HEADER_SIZE + tree_hash.ENTRY_FIXED_SIZE + len("alpha.module") - 1
 	tree_bytes[hash_byte_offset] ~= 0x80
 	testing.expect_value(
 		t,

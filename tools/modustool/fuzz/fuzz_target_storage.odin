@@ -273,13 +273,13 @@ FUZZ_MOUNT_DISK_SIZE :: 128 * format.BLOCK_SIZE // A disk of 128 blocks: room fo
 fuzz_mount_state: ^storage_mount.State
 
 fuzz_storage_mount_start :: proc() -> bool {
-	fuzz_mount_state = new(storage_mount.State)
+	fuzz_mount_state = mount_state_make(FUZZ_MOUNT_DISK_SIZE / format.BLOCK_SIZE, FUZZ_MOUNT_DISK_SIZE / format.BLOCK_SIZE)
 	return fuzz_mount_state != nil
 }
 
-// fuzz_mount_contents opens an image with a state at zero.
+// fuzz_mount_contents opens an image. The walk of the open clears each
+// table that it uses, so the state of the image before leaves nothing.
 fuzz_mount_contents :: proc(image: []u8) -> Disk_Contents {
-	fuzz_mount_state^ = {}
 	return disk_contents(image, fuzz_mount_state, context.temp_allocator)
 }
 

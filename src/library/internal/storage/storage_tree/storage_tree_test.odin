@@ -100,10 +100,10 @@ walk_all :: proc(disk: ^Test_Disk, root: Pointer) -> (keys: [dynamic]u64, nodes:
 
 @(test)
 the_sizes_of_the_format :: proc(t: ^testing.T) {
-	testing.expect_value(t, format.LEAF_CAPACITY, 24)
-	testing.expect_value(t, format.BRANCH_CAPACITY, 50)
-	testing.expect_value(t, record_size(TREE_SHAPE, 0), 168)
-	testing.expect_value(t, record_size(TREE_SHAPE, 1), 80)
+	testing.expect_value(t, format.LEAF_CAPACITY, 11)
+	testing.expect_value(t, format.BRANCH_CAPACITY, 14)
+	testing.expect_value(t, record_size(TREE_SHAPE, 0), 360)
+	testing.expect_value(t, record_size(TREE_SHAPE, 1), 272)
 	testing.expect(t, HEADER_SIZE + TREE_SHAPE.leaf_capacity * record_size(TREE_SHAPE, 0) <= BLOCK_SIZE)
 	testing.expect(t, HEADER_SIZE + TREE_SHAPE.branch_capacity * record_size(TREE_SHAPE, 1) <= BLOCK_SIZE)
 	testing.expect_value(t, size_of(format.Store_Block), BLOCK_SIZE)
@@ -150,9 +150,10 @@ insert_split_and_order :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(keys), COUNT)
 	testing.expect_value(t, bad, 0)
 	testing.expect(t, slice.is_sorted(keys[:]))
-	// Each node at least a third full: at most COUNT / 8 leaves, and the
-	// branches above them.
-	testing.expect(t, nodes <= COUNT / 8 + 100)
+	// Each node at least a third full: at most COUNT / 3 leaves of 11
+	// records, and at most a third of that in branches of 14 children.
+	leaves_most := u64(COUNT / minimum_count(TREE_SHAPE, 0))
+	testing.expect(t, nodes <= leaves_most + leaves_most / 3 + 100)
 	for identifier in ([]u64{16, 17, 9000, COUNT + 15}) {
 		key := name_of_number(identifier)
 		value: format.Entry
@@ -413,12 +414,14 @@ a_damaged_node_is_found :: proc(t: ^testing.T) {
 	defer free(pool)
 	pool_reset(pool)
 	work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE}
-	for identifier in 16 ..< u64(30) {
+	// One leaf: the order of its records is checked from the record 0.
+	for identifier in 16 ..< u64(16 + TREE_SHAPE.leaf_capacity) {
 		key := name_of_number(identifier)
 		value := entry_of_number(identifier)
 		put(&work, key[:], ([^]u8)(&value)[:size_of(value)], false)
 	}
 	root := finish(&work, &disk.writer)
+	testing.expect_value(t, header(&disk.blocks[root.block]).level, 0)
 	// The same bytes with another magic: a block of another kind.
 	wrong := disk.blocks[root.block]
 	header(&wrong).magic = 0

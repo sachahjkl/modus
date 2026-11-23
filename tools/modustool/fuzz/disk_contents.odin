@@ -134,6 +134,30 @@ Contents_Walk :: struct {
 	failed:    bool,
 }
 
+// The blocks that the tables of a state of the tool hold, and the roots of
+// its hash index: each image that the tool opens (a data disk of 64 MiB, a
+// fuzz disk) fits.
+MOUNT_STATE_BLOCKS :: u64(1) << 18
+MOUNT_STATE_HASH_ROOTS :: u64(1) << 16
+
+// mount_state_make gives a State of the open with memory for its tables,
+// as the storage service binds it from its budget.
+mount_state_make :: proc(blocks: u64 = MOUNT_STATE_BLOCKS, hash_roots: u64 = MOUNT_STATE_HASH_ROOTS) -> ^storage_mount.State {
+	state := new(storage_mount.State)
+	layout, ok := storage_mount.state_layout(blocks, hash_roots)
+	assert(ok)
+	memory := make([]u64, (layout.bytes + 7) / 8)
+	bound := storage_mount.state_bind(state, ([^]u8)(raw_data(memory))[:layout.bytes], blocks, hash_roots)
+	assert(bound)
+	return state
+}
+
+// mount_state_free frees a State of mount_state_make and its memory.
+mount_state_free :: proc(state: ^storage_mount.State) {
+	free(raw_data(state.in_use))
+	free(state)
+}
+
 // disk_contents opens an image as the storage service does, and reads each
 // entry of each tree of each store, checked. The strings and the bytes are
 // in the allocator.
@@ -154,12 +178,14 @@ disk_contents :: proc(image: []u8, state: ^storage_mount.State, allocator := con
 	walking.saved = context
 	walking.bytes = make([]u8, CONTENTS_BYTES_LIMIT, allocator)
 	walking.collected = make([dynamic]Stored_Block, context.temp_allocator)
-	for &store, store_index in state.root.stores {
-		if store.name[0] == 0 || state.store_damaged[store_index] {
+	for store_index in 0 ..< storage_mount.store_numbers(state) {
+		page, _ := format.store_place(store_index)
+		store := storage_mount.store_cell(state, store_index)
+		if state.store_page_damaged[page] || store.name[0] == 0 || state.store_damaged[store_index] {
 			continue
 		}
 		walking.store = strings.clone(string(cstring(&store.name[0])), allocator)
-		contents_walk_tree(walking, state.store_blocks[store_index].tree, 0)
+		contents_walk_tree(walking, state.store_heads[store_index].tree, 0)
 	}
 	contents.objects = walking.objects
 	if walking.failed {
