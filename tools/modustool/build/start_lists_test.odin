@@ -307,3 +307,44 @@ wiring_rows_that_call_the_kernel_are_refused :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, len(wiring_rows_source_problems(sources[:])) == 0, "the source of wiring_rows is refused: %v", wiring_rows_source_problems(sources[:]))
 }
+// The row of the input service in the default list and in the rescue list:
+// its restarts have a window, and the bytes of the list keep both. The
+// window bounds a loop of stops: the restart past the count is refused
+// until the oldest restart is one window old, the last millisecond before
+// it included, and allowed at that millisecond. A stop that the row reaches
+// later starts it again: the count bounds a loop, not the life of the
+// machine.
+@(test)
+the_input_service_restarts_within_a_window :: proc(t: ^testing.T) {
+	for rows in ([?][]Start_List_Row{DEFAULT_START_LIST[:], DEFAULT_RESCUE_LIST[:]}) {
+		testing.expect_value(t, rows[0].name, "input")
+		testing.expect_value(t, rows[0].restart_count, u32(INPUT_RESTARTS))
+		testing.expect_value(t, rows[0].restart_window_seconds, u32(INPUT_RESTART_WINDOW_SECONDS))
+		_, list, problem := start_list_bytes(rows)
+		testing.expect_value(t, problem, "")
+		testing.expect_value(t, list.rows[0].restart_count, u32(INPUT_RESTARTS))
+		testing.expect_value(t, list.rows[0].restart_window_seconds, u32(INPUT_RESTART_WINDOW_SECONDS))
+	}
+	WINDOW :: u64(INPUT_RESTART_WINDOW_SECONDS) * 1000
+	FIRST :: u64(5_000)
+	window: start_list.Restart_Window
+	for index in u64(0) ..< INPUT_RESTARTS {
+		allowed, left := start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + index)
+		testing.expect(t, allowed)
+		testing.expect_value(t, left, u32(INPUT_RESTARTS) - u32(index) - 1)
+	}
+	// A loop: the next stop at once, then one millisecond before the
+	// oldest restart is one window old.
+	allowed, _ := start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + INPUT_RESTARTS)
+	testing.expect(t, !allowed)
+	allowed, _ = start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + WINDOW - 1)
+	testing.expect(t, !allowed)
+	// The oldest restart is one window old: one restart more.
+	allowed, _ = start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + WINDOW)
+	testing.expect(t, allowed)
+	// The second oldest is one window old one millisecond later, not before.
+	allowed, _ = start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + WINDOW)
+	testing.expect(t, !allowed)
+	allowed, _ = start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + WINDOW + 1)
+	testing.expect(t, allowed)
+}

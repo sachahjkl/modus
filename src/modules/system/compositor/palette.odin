@@ -132,6 +132,7 @@ Ranking_Window :: struct {
 	number: u32,
 	focus:  bool,
 	resizable: bool, // As palette.Window.resizable.
+	maximized: bool, // As palette.Window.maximized.
 	from_disk:   bool, // A window of a disk process: hash_prefix holds the hash prefix of its file.
 	hash_prefix: [process_page.HASH_PREFIX_DIGITS]u8,
 }
@@ -255,7 +256,7 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		window_count := clamp(ranking.window_count, 0, CLIENT_CAPACITY)
 		for index in 0 ..< window_count {
 			titles[index] = ranking.windows[index].title
-			windows[index] = {title = system.name_of(titles[index][:]), number = ranking.windows[index].number, focus = ranking.windows[index].focus, resizable = ranking.windows[index].resizable}
+			windows[index] = {title = system.name_of(titles[index][:]), number = ranking.windows[index].number, focus = ranking.windows[index].focus, resizable = ranking.windows[index].resizable, maximized = ranking.windows[index].maximized}
 			if ranking.windows[index].from_disk {
 				prefixes[index] = ranking.windows[index].hash_prefix
 				windows[index].hash_prefix = string(prefixes[index][:])
@@ -421,7 +422,7 @@ palette_entries_refresh :: proc "contextless" () {
 	for position := order_count - 1; position >= 0; position -= 1 {
 		client := &clients[order[position]]
 		resizable := client.resizable && !client.resize_asked && client.resize_pictures == nil && !client.released
-		ranking.windows[ranking.window_count] = {title = client.title, number = u32(order[position]), focus = position == order_count - 1, resizable = resizable, from_disk = client.from_disk, hash_prefix = client.hash_prefix}
+		ranking.windows[ranking.window_count] = {title = client.title, number = u32(order[position]), focus = position == order_count - 1, resizable = resizable, maximized = client.maximized, from_disk = client.from_disk, hash_prefix = client.hash_prefix}
 		ranking.window_count += 1
 	}
 	ranking.recent_count = copy(ranking.recents[:], palette_panel.recents[:clamp(palette_panel.recent_count, 0, palette.RECENT_CAPACITY)])
@@ -1361,6 +1362,11 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 		// window that took the front since then is not the one chosen.
 		if order_count > 0 && order[order_count - 1] == number {
 			keyboard_window_begin(kind == .Move_Window ? bar.Keyboard_Window_Mode.Move : bar.Keyboard_Window_Mode.Resize) // keyboard_desktop.odin
+		}
+	case .Maximize_Window:
+		// The same rule: only the window that is still in front.
+		if order_count > 0 && order[order_count - 1] == number {
+			_ = desktop_toggle_maximize(&clients[number]) // desktop_features.odin
 		}
 	case .Command, .Export:
 		// An entry with parameters: the provider writes it in its edit

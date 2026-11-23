@@ -48,6 +48,7 @@ Entry_Kind :: enum u8 {
 	Setting      = 5, // A setting of the machine, or a state that the palette provider sets (the scheduling strategy): a setting row with one button for each value, or one value alone. The provider sets it.
 	Move_Window   = 6, // The move of the window in front by keys: the choice gives the arrows to the compositor until Enter or Escape.
 	Resize_Window = 7, // The resize of the window in front by keys, when it is resizable: as Move_Window, and Enter asks the one Resized.
+	Maximize_Window = 8, // The maximize of the window in front, or its restore when it is maximized: the choice toggles it.
 }
 
 // The facts of an entry that are true or false.
@@ -148,6 +149,7 @@ Window :: struct {
 	number: u32, // The index of the window in the table of its owner.
 	focus:  bool, // The window has the focus.
 	resizable: bool, // Its process declared it resizable, and no resize of it waits for its process.
+	maximized: bool, // It fills the work area: its entry of the maximize is the restore.
 	hash_prefix: string, // A window of a disk process: the hash prefix of its file, as the root service gave it. "" for another window.
 }
 
@@ -371,10 +373,12 @@ CLOSE_NAME_START :: "close " // The start of the name of the close of a window: 
 // (src/md/features/accessibility.md, "3. Keyboard access to everything").
 MOVE_WINDOW_NAME :: "move window"
 RESIZE_WINDOW_NAME :: "resize window"
+MAXIMIZE_WINDOW_NAME :: "maximize window"
+RESTORE_WINDOW_NAME :: "restore window" // The same entry while the window is maximized.
 // The entries of the window in front, beside the entries of each window:
-// its move and its resize. The owner of the list counts them in its
-// capacity.
-FRONT_WINDOW_ENTRY_COUNT :: 2
+// its move, its resize and its maximize. The owner of the list counts them
+// in its capacity.
+FRONT_WINDOW_ENTRY_COUNT :: 3
 
 // list_collect makes the entries of a list again from the sources: the
 // windows, the front one first; the names of the modules, in the order of
@@ -412,6 +416,7 @@ list_collect :: proc "contextless" (list: ^List, uses: Uses, process_names: []st
 		if window.resizable {
 			entry_add(list, uses, {kind = .Resize_Window, mark = .Has_Focus, number = window.number}, RESIZE_WINDOW_NAME, "")
 		}
+		entry_add(list, uses, {kind = .Maximize_Window, mark = .Has_Focus, number = window.number}, window.maximized ? RESTORE_WINDOW_NAME : MAXIMIZE_WINDOW_NAME, "")
 		break
 	}
 	for window in windows {
@@ -679,7 +684,9 @@ kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 		return 4
 	case .Move_Window:
 		return 5
-	case .Resize_Window:
+	case .Resize_Window, .Maximize_Window:
+		// The kind takes three bits of the tie order: the two acts of the
+		// window in front share one.
 		return 6
 	case .Close_Window:
 		return 7
@@ -751,7 +758,7 @@ prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
 	case .Commands:
 		return kind == .Command || kind == .Export
 	case .Windows:
-		return kind == .Window || kind == .Close_Window || kind == .Move_Window || kind == .Resize_Window
+		return kind == .Window || kind == .Close_Window || kind == .Move_Window || kind == .Resize_Window || kind == .Maximize_Window
 	case .Settings:
 		return kind == .Setting
 	case .Manual:

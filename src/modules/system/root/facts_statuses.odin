@@ -61,6 +61,13 @@ Input_Start_Failed :: struct {
 	status: op.Status,
 }
 
+// The virtio tablet was classified but could not be armed: the input
+// service starts with the PS/2 controller only.
+@(log_fact = "root: cannot give the virtio tablet to input: status {status}: the pointer is the PS/2 mouse only")
+Input_Tablet_Arm_Failed :: struct {
+	status: op.Status,
+}
+
 @(log_fact = "root: cannot start the compositor: no control ring: status {status}")
 Compositor_Control_Ring_Failed :: struct {
 	status: op.Status,

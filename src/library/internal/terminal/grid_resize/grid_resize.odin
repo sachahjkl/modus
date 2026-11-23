@@ -8,8 +8,14 @@
 package grid_resize
 
 import "modus:display"
+import "modus:graphics"
 import "modus:interface"
 import "modus:terminal"
+
+// The limits of the terminal contract count cells of the font of the
+// system: a cell of another size would give a maximized window a grid
+// that does not cover it.
+#assert(terminal.GRID_CELL_WIDTH == graphics.CELL_WIDTH && terminal.GRID_CELL_HEIGHT == graphics.CELL_HEIGHT)
 
 // Inclusive minimum and maximum dimensions of a terminal grid, in cells.
 Grid_Bounds :: struct {

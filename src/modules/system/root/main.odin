@@ -117,6 +117,7 @@ import terminal "modus:terminal"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
+import "modus:contract/input_context"
 import "modus:contract/log_scope"
 import "modus:contract/root_ring"
 import "modus:pci"
@@ -134,14 +135,18 @@ import "internal:root/role_policy"
 // start grant that refused a debug access (src/library/modus/contract/start_grant).
 Grant :: start_grant.Grant
 
-// The context of the input service: the slots that src/modules/system/input
-// names GRANT_RING, GRANT_PORTS, GRANT_KEYBOARD_INTERRUPT and
-// GRANT_MOUSE_INTERRUPT. The input service is no package that this service
-// imports, so the numbers are written on both sides.
-INPUT_GRANT_RING :: 0 // The input ring, which the compositor reads.
-INPUT_GRANT_PORTS :: 1 // The ports of the PS/2 controller.
-INPUT_GRANT_KEYBOARD_INTERRUPT :: 2
-INPUT_GRANT_MOUSE_INTERRUPT :: 3
+// The virtio tablet of the input service, when the machine has one, at the
+// slots of modus:contract/input_context.
+INPUT_TABLET_LAYOUT :: Device_Context_Layout {
+	interrupt     = input_context.GRANT_TABLET_INTERRUPT,
+	queues        = input_context.GRANT_TABLET_QUEUES,
+	machine       = input_context.GRANT_TABLET_MACHINE,
+	configuration = input_context.GRANT_TABLET_CONFIGURATION,
+	first_bar     = input_context.GRANT_TABLET_FIRST_BAR,
+}
+#assert(input_context.GRANT_TABLET_CONFIGURATION == pci.GRANT_CONFIGURATION && input_context.GRANT_TABLET_FIRST_BAR == pci.GRANT_BAR)
+#assert(input_context.GRANT_TABLET_BAR_COUNT == pci.BAR_COUNT)
+#assert(input_context.GRANT_TABLET_MACHINE < op.CONTEXT_LOG)
 // The context of the compositor, as src/modules/system/compositor names it. The
 // handle 0: the framebuffer of the firmware, or the memory of two screen
 // pages.
@@ -856,7 +861,8 @@ replacement_table_create :: proc "contextless" () {
 }
 
 // input_start starts the input service with the ports and the interrupts
-// of the PS/2 controller, and the input ring, which the compositor reads.
+// of the PS/2 controller, the virtio tablet when the machine has one, and
+// the input ring, which the compositor reads.
 // A start policy asks for it: a failure of the start is its status, with
 // one line. The kernel makes a device handle from its arguments and the
 // rights of this service only, so a refusal of a device handle is a fault
@@ -887,12 +893,29 @@ input_start :: proc "contextless" () -> system.Status {
 		devices[index] = system.Handle(results[0])
 	}
 	context_grants: system.Context_Grants
-	system.grant_put(&context_grants, INPUT_GRANT_RING, {input_memory, {.Read, .Write}})
-	system.grant_put(&context_grants, INPUT_GRANT_PORTS, {devices[0], {}})
-	system.grant_put(&context_grants, INPUT_GRANT_KEYBOARD_INTERRUPT, {devices[1], {.Read}})
-	system.grant_put(&context_grants, INPUT_GRANT_MOUSE_INTERRUPT, {devices[2], {.Read}})
+	system.grant_put(&context_grants, input_context.GRANT_RING, {input_memory, {.Read, .Write}})
+	system.grant_put(&context_grants, input_context.GRANT_PORTS, {devices[0], {}})
+	system.grant_put(&context_grants, input_context.GRANT_KEYBOARD_INTERRUPT, {devices[1], {.Read}})
+	system.grant_put(&context_grants, input_context.GRANT_MOUSE_INTERRUPT, {devices[2], {.Read}})
 	input_name := role_holder_name(.Input)
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set_of(input_name)))
+	// The virtio tablet, when the devices service classified one at its
+	// place: an absolute pointer, which a window of a virtual machine moves
+	// with no grab. With none, or when it cannot be armed, the input service
+	// starts with the PS/2 controller only.
+	tablet: Armed_Device
+	tablet_armed := false
+	tablet_place := pci.Place{device = pci.TABLET_DEVICE}
+	if identity, found := classified_identity_at(tablet_place, .Input_Device); found {
+		arm_status: system.Status
+		tablet, arm_status = device_arm(tablet_place, identity, INPUT_TABLET_LAYOUT, &context_grants)
+		if arm_status == .Ok {
+			tablet_armed = true
+		} else {
+			system.log_fact(.Warning, Input_Tablet_Arm_Failed{status = arm_status})
+		}
+	}
+	defer device_arm_handles_close(&tablet)
 	// The settings page, read-only: the input service reads the layout of
 	// the keyboard there at each key.
 	// With no settings page, no mapping and no bit of its range: the input
@@ -908,15 +931,20 @@ input_start :: proc "contextless" () -> system.Status {
 	fresh_bytes_page_give(slot, input_mappings[:], &input_mapping_count, &input_values)
 	if context_refused(input_name, &context_grants, &input_values) {
 		fresh_bytes_forget(slot)
+		device_arm_undo(&tablet)
 		return .Bad_State
 	}
 	process, status := system.process_start(image_file_checked(input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(image_file_checked(input_name), input_name), input_mappings[:input_mapping_count], &prepared, load_source())
 	if status != .Ok {
 		fresh_bytes_forget(slot)
+		device_arm_undo(&tablet)
 		system.log_fact(.Warning, Input_Start_Failed{status = status})
 		return status
 	}
 	part_place_fill(slot, input_name, process)
+	if tablet_armed {
+		device_arm_keep(slot, &tablet)
+	}
 	started_log(input_name, principals.MACHINE, false)
 	return .Ok
 }

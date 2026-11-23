@@ -167,6 +167,9 @@ BAR_HEIGHT :: bar.HEIGHT
 // reads these numbers (tools/modustool/machine/machine.odin, WINDOW_*).
 TITLE_HEIGHT :: 24
 BORDER :: 2
+// A press on the grip of the bottom right corner is a drag of that corner:
+// the square of the corner holds the grip and the border beside it.
+#assert(bar.CORNER_REACH >= bar.GRIP_SIZE + BORDER)
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
 TITLE_ICON_X :: 8 // The icon of the module in the title bar, from the corner of the frame.
 TITLE_TEXT_X :: TITLE_ICON_X + bar.ICON_SIZE + 6 // The title, after the icon.
@@ -265,7 +268,13 @@ Client :: struct {
 	capture_allowed: bool,
 	minimized:       bool,
 	maximized:       bool,
+	// The place and the size of a maximized window before its maximize: the
+	// second toggle gives them back.
 	saved_x, saved_y: int,
+	saved_width, saved_height: int,
+	// A restore came while a request of the window waited for its answer:
+	// the saved size is asked when that request ends.
+	restore_size_due: bool,
 	decoration:      desktop_shell.Window_Decoration,
 }
 
@@ -302,6 +311,11 @@ control: ring.Ring
 pointer_x, pointer_y: int
 buttons: u32
 dragging := -1
+// The press that started the drag of a title: a maximized window gives back
+// its size of before only once the pointer leaves it.
+drag_press_x, drag_press_y: int
+// The last press on a title bar, the first of a double press.
+title_double_press: bar.Double_Press
 // A menu of the bar.
 Menu :: enum {
 	None,
@@ -1202,6 +1216,11 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 				break
 			}
 		}
+		// A new window can take this place of the table: a press on its
+		// title is no second press of the window that left.
+		if title_double_press.window == index {
+			title_double_press = {}
+		}
 		if dragging == index {
 			dragging = -1
 		}
@@ -1384,6 +1403,15 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	}
 	if dragging >= 0 {
 		if buttons & display.BUTTON_LEFT != 0 {
+			if clients[dragging].maximized {
+				// A maximized window stays in place while the pointer is
+				// still at the press: a hand that shakes between the two
+				// presses of a double press does not move it.
+				if bar.press_still(drag_press_x, drag_press_y, pointer_x, pointer_y) {
+					return
+				}
+				desktop_restore_under_pointer(&clients[dragging]) // desktop_features.odin
+			}
 			damage_window(&clients[dragging])
 			// The window follows the pointer to the pixel, and a part
 			// of its title stays on the screen at each edge.
@@ -1439,6 +1467,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 	}
 	if pressed {
+		// Only two presses on a title bar make a double press: each other
+		// press forgets the first one, and a press on a title takes it back.
+		last_title_press := title_double_press
+		title_double_press = {}
 		keyboard_pointer_pressed() // keyboard_desktop.odin
 		if capture_popover_press(pointer_x, pointer_y) {
 			return
@@ -1480,6 +1512,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, outer_height) {
 				continue
 			}
+			client_index := order[position]
 			raise(position)
 			if !csd {
 				close_x := client.x + outer_width - BORDER - CLOSE_SIZE
@@ -1490,7 +1523,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 					return
 				}
 				if inside(pointer_x, pointer_y, max_x, client.y, 28, TITLE_HEIGHT) {
-					desktop_toggle_maximize(client)
+					_ = desktop_toggle_maximize(client)
 					return
 				}
 				if inside(pointer_x, pointer_y, min_x, client.y, 28, TITLE_HEIGHT) {
@@ -1498,8 +1531,14 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 					return
 				}
 				if pointer_y < client.y + TITLE_HEIGHT {
-					dragging = order[order_count - 1]
+					title_double_press = last_title_press
+					if bar.double_press_take(&title_double_press, system.time(), pointer_x, pointer_y, client_index) {
+						_ = desktop_toggle_maximize(client)
+						return
+					}
+					dragging = client_index
 					drag_x, drag_y = pointer_x - client.x, pointer_y - client.y
+					drag_press_x, drag_press_y = pointer_x, pointer_y
 					return
 				}
 			}
@@ -1763,8 +1802,19 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 		}
 		mx := max_x + (CTRL_PITCH - 9) / 2
 		my := y + (TITLE_HEIGHT - 8) / 2
-		interface.draw_outline(table, mx, my, 9, 8, 1, ctrl_mark)
-		interface.draw_rectangle(table, mx + 1, my + 1, 7, 1, ctrl_mark)
+		if client.maximized {
+			// The restore: a second window behind the first, of which
+			// only the edges that the first does not hide are drawn.
+			interface.draw_rectangle(table, mx + 2, my, 7, 1, ctrl_mark)
+			interface.draw_rectangle(table, mx + 8, my, 1, 6, ctrl_mark)
+			interface.draw_rectangle(table, mx + 2, my, 1, 2, ctrl_mark)
+			interface.draw_rectangle(table, mx + 7, my + 5, 2, 1, ctrl_mark)
+			interface.draw_outline(table, mx, my + 2, 7, 6, 1, ctrl_mark)
+			interface.draw_rectangle(table, mx + 1, my + 3, 5, 1, ctrl_mark)
+		} else {
+			interface.draw_outline(table, mx, my, 9, 8, 1, ctrl_mark)
+			interface.draw_rectangle(table, mx + 1, my + 1, 7, 1, ctrl_mark)
+		}
 	}
 	// Close (x) button (exact rightmost position preserved)
 	interface.draw_vertical_gradient(table, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
@@ -2134,13 +2184,13 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		if client.resizable && client.decoration != .Client {
 			grip_first := table.record_count
 			outer_width := client.width + 2 * BORDER
-			gx := client.x + outer_width - BORDER - 11
-			gy := client.y + TITLE_HEIGHT + client.height - 11
+			gx := client.x + outer_width - BORDER - bar.GRIP_SIZE
+			gy := client.y + TITLE_HEIGHT + client.height - bar.GRIP_SIZE
 			grip_col := focus ? graphics.colors.text : graphics.colors.dim
 			interface.draw_rectangle(table, gx + 7, gy + 1, 2, 8, grip_col)
 			interface.draw_rectangle(table, gx + 1, gy + 7, 8, 2, grip_col)
 			interface.draw_rectangle(table, gx + 4, gy + 4, 3, 3, grip_col)
-			screen_part_end(grip_first, nil, screen_rectangle_of(gx, gy, 11, 11), true, true)
+			screen_part_end(grip_first, nil, screen_rectangle_of(gx, gy, bar.GRIP_SIZE, bar.GRIP_SIZE), true, true)
 		}
 	}
 	// The outline of the frame that a drag of the edges gives, over the

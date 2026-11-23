@@ -108,6 +108,20 @@ Step_Kind :: enum {
 	// with its line (src/md/features/start_policy.md, "The rescue key").
 	Key_Until,
 	Click, // Press the left button at (x, y).
+	// Move the pointer with one report of the virtio tablet to (x, y), or,
+	// with inside_window, from the corner of that window as the step Point
+	// places it, and press the left button in the same report; then release
+	// it there. The machine must have the tablet (Machine_Tablet). The tool
+	// believes no place of the pointer after it: a step that moves the
+	// pointer by relative moves cannot follow it.
+	Click_Absolute,
+	// As Click_Absolute, with no release: the button stays down.
+	Press_Absolute,
+	// Move the pointer by (x, y) logical pixels from the place of the last
+	// report of the tablet, with the button down: a drag.
+	Move_Absolute,
+	// Release the button at the place of the last report of the tablet.
+	Release_Absolute,
 	Launch, // Open the start menu, and press the line of the process text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
@@ -515,6 +529,7 @@ Machine :: struct {
 	call_socket: string, // The socket where the peer receives the calls of the tool.
 	peer:        ^Peer,
 	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
+	tablet_x, tablet_y: int, // The logical place of the last report of the tablet (machine_tablet.odin).
 	keys_confirmed: int, // Keys whose records the compositor received before the tool went on (keys_send).
 	key_batches_confirmed: int, // The sends of keys that ended with that count of the compositor.
 	qmp:         Qmp, // The connection to the machine protocol of QEMU: the keys, the pointer, the pictures.
@@ -1209,6 +1224,7 @@ Machine_Options :: struct {
 	// The UDP port of the machine that the UDP relay of the peer reaches
 	// (peer_relay.odin). 0: the port of quic_echo, QUIC_SERVER_PORT.
 	relay_machine_port: u16,
+	tablet: Machine_Tablet, // The virtio tablet of the machine (tablet_scenario.odin).
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -1322,7 +1338,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet)
 		if !ok {
 			return false
 		}
@@ -1789,6 +1805,42 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v of the character %q on its serial line", index + 1, step.expected, BOOT_HANG_BOUND, step.text)
 				return false
 			}
+		case .Click_Absolute, .Press_Absolute, .Move_Absolute, .Release_Absolute:
+			x, y := step.x, step.y
+			if step.kind == .Move_Absolute {
+				x, y = machine.tablet_x + step.x, machine.tablet_y + step.y
+			} else if step.kind == .Release_Absolute {
+				x, y = machine.tablet_x, machine.tablet_y
+			}
+			if (step.kind == .Click_Absolute || step.kind == .Press_Absolute) && step.inside_window != "" {
+				window_x, window_y, placed := window_place(machine, step.inside_window)
+				width, sized := window_width(machine, step.inside_window)
+				if !placed || !sized {
+					fmt.eprintfln("modustool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.inside_window)
+					return false
+				}
+				x = step.x < 0 ? window_x + width + 2 * WINDOW_BORDER + step.x : window_x + step.x
+				y = window_y + step.y
+			}
+			report_x, x_ok := tablet_report_of_pixel(x, LOGICAL_SCREEN_WIDTH)
+			report_y, y_ok := tablet_report_of_pixel(y, LOGICAL_SCREEN_HEIGHT)
+			if !x_ok || !y_ok {
+				fmt.eprintfln("modustool: test failed: step %d: no report of the tablet lands on %d,%d", index + 1, x, y)
+				return false
+			}
+			// A click presses then releases; a press and a move hold the
+			// button; a release lets it go.
+			down := step.kind != .Release_Absolute
+			sent := machine_command_send(machine, qmp_tablet_click_command(report_x, report_y, down))
+			if step.kind == .Click_Absolute {
+				sent = sent && machine_command_send(machine, qmp_tablet_click_command(report_x, report_y, false))
+			}
+			if !sent {
+				fmt.eprintfln("modustool: test failed: step %d: QEMU did not take the report of the tablet", index + 1)
+				return false
+			}
+			machine.tablet_x, machine.tablet_y = x, y
+			foundation.test_passed_print("the tablet %s at %d,%d (the reports %d,%d)", tablet_act_words(step.kind), x, y, report_x, report_y)
 		case .Point:
 			x, y := step.x, step.y
 			if step.inside_window != "" {

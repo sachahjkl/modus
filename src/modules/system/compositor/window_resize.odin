@@ -69,6 +69,7 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 		client.resizes_refused += 1
 		client.resize_asked, client.resize_edges = false, {}
 		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Refused), 1 = serial})
+		desktop_restore_size_after_answer(client) // desktop_features.odin
 	}
 	// The process wrote the number of the handle: it can name any handle of
 	// the compositor. A number with no proof of this process is neither used
@@ -148,6 +149,7 @@ resize_declined_take :: proc "contextless" (client: ^Client) {
 	}
 	client.resize_asked, client.resize_edges = false, {}
 	system.log_fact(.Info, Window_Keeps_Size{width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
+	desktop_restore_size_after_answer(client) // desktop_features.odin
 }
 
 // size_range_of gives the limits of a window as the pure procedures of the
@@ -199,6 +201,7 @@ resize_surface_take :: proc "contextless" (client: ^Client) {
 	if width != old_width || height != old_height {
 		system.log_fact(.Info, Window_Resized{old_width = u64(old_width), old_height = u64(old_height), width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
 	}
+	desktop_restore_size_after_answer(client) // desktop_features.odin
 }
 
 // surface_release_take takes the record Surface_Release of a window
@@ -374,7 +377,9 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 	}
 	resize_outline_damage()
 	resizing = -1
-	if !bar.drag_asks_size(client.released, client.resize_pictures != nil, width == client.width && height == client.height) {
+	// One request at a time: a request that waits for its answer is never
+	// crossed by a second.
+	if client.resize_asked || !bar.drag_asks_size(client.released, client.resize_pictures != nil, width == client.width && height == client.height) {
 		return
 	}
 	client.resize_asked = true
@@ -382,6 +387,42 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 	client.resize_edges = resize_start.edges
 	send(client, .Resized, {0 = u64(width), 1 = u64(height)})
 	system.log_fact(.Info, Draw_Size_Asked{width = u64(width), height = u64(height), window = window_field(client.title[:])})
+}
+
+// window_frame_take puts a window into a frame of the screen: its place,
+// and the size of its surface that fills the outer size of the frame.
+window_frame_take :: proc "contextless" (client: ^Client, x, y, outer_width, outer_height: int) {
+	width, height := outer_width - 2 * BORDER, outer_height - TITLE_HEIGHT - BORDER
+	if client.decoration == .Client {
+		// The process draws its own frame inside its surface.
+		width, height = outer_width, outer_height
+	}
+	window_place_and_size_take(client, x, y, width, height)
+}
+
+// window_place_and_size_take moves a window and asks its process for a new
+// size with the one event Resized, as at the release of a drag of its edges.
+// The size stays within the limits that the process declared; a window
+// that is not resizable only moves. The top left corner stays where it is
+// when the new surface comes, so the window fills the frame that it asked.
+window_place_and_size_take :: proc "contextless" (client: ^Client, x, y, width, height: int) {
+	damage_window(client)
+	client.x, client.y = x, y
+	damage_window(client)
+	if !client.resizable || client.resize_asked {
+		return
+	}
+	limits := size_range_of(client)
+	asked_width := clamp(width, limits.least_width, limits.largest_width)
+	asked_height := clamp(height, limits.least_height, limits.largest_height)
+	if !bar.drag_asks_size(client.released, client.resize_pictures != nil, asked_width == client.width && asked_height == client.height) {
+		return
+	}
+	client.resize_asked = true
+	client.resize_asked_width, client.resize_asked_height = asked_width, asked_height
+	client.resize_edges = {.Right, .Bottom}
+	send(client, .Resized, {0 = u64(asked_width), 1 = u64(asked_height)})
+	system.log_fact(.Info, Draw_Size_Asked{width = u64(asked_width), height = u64(asked_height), window = window_field(client.title[:])})
 }
 
 // resize_outline_damage records the rectangle of the outline.

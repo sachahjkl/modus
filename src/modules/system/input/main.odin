@@ -61,6 +61,7 @@ import "internal:input/keyboard_layout"
 import "internal:input/ps2_controller"
 import "internal:input/tablet"
 import "modus:contract/fixed_addresses"
+import "modus:contract/input_context"
 import "modus:contract/ring"
 import "modus:contract/settings"
 import "modus:contract/virtio_input"
@@ -70,15 +71,10 @@ import "modus:system"
 // by its name, once the tool counts its module and its thread.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1}
 
-// The context of this service. Slots 4..13 carry an optional virtio-tablet-pci
-// device (pci.GRANT_CONFIGURATION at 4, pci.GRANT_BAR + 0..5 at 5..10).
-GRANT_RING :: 0
-GRANT_PORTS :: 1
-GRANT_KEYBOARD_INTERRUPT :: 2
-GRANT_MOUSE_INTERRUPT :: 3
-GRANT_TABLET_INTERRUPT :: 11
-GRANT_TABLET_QUEUES :: 12
-GRANT_TABLET_MACHINE :: 13
+// The context of this service is the layout of modus:contract/input_context,
+// which the root service writes. modus:virtio reads the BARs of the tablet
+// at the slots of package pci: the contract puts them there.
+#assert(input_context.GRANT_TABLET_CONFIGURATION == pci.GRANT_CONFIGURATION && input_context.GRANT_TABLET_FIRST_BAR == pci.GRANT_BAR)
 
 // Virtio tablet event buffers in page virtio.QUEUE_PAGES of the queue memory.
 TABLET_BUFFER_PAGE :: virtio.QUEUE_PAGES
@@ -245,7 +241,7 @@ mouse_command :: proc "contextless" (command: u8) {
 // with no input. Else it never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	output_memory = ctx.handles[GRANT_RING]
+	output_memory = ctx.handles[input_context.GRANT_RING]
 	status: system.Status
 	if output, status = system.ring_open(output_memory); status != .Ok {
 		system.log_fact(.Info, No_Ring{})
@@ -260,6 +256,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The drain of the bytes that wait finds a controller that is absent:
 	// its status port reads all ones, so a byte would seem to wait for
 	// ever, and this loop would hold one processor for ever.
+	// A machine with no controller and a tablet still has a pointer: the
+	// service goes on with the tablet alone.
+	controller_present := true
 	bytes_drained: u64
 	drain: for {
 		switch ps2_controller.drain_step(system.port_read_8(PORT_STATUS), bytes_drained) {
@@ -269,38 +268,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.port_read_8(PORT_DATA)
 			bytes_drained += 1
 		case .No_Controller:
-			system.log_fact(.Info, No_Controller{})
-			system.stop(.Failed)
+			controller_present = false
+			break drain
 		}
 	}
-	controller_command(0xA8) // Enable the mouse port.
-	controller_command(0x20) // Read the configuration.
-	configuration := controller_read()
-	configuration |= 0x03 // Both interrupts on.
-	configuration &~= 0x20 // The mouse clock on.
-	controller_command(0x60)
-	controller_data(configuration)
-	mouse_command(MOUSE_SET_DEFAULTS)
-	for rate in mouse_wheel_rates {
-		mouse_command(MOUSE_SET_SAMPLE_RATE)
-		mouse_command(rate)
-	}
-	mouse_command(MOUSE_GET_IDENTITY)
-	if identity, answered := mouse_answer_read(); answered {
-		mouse_decoder.protocol = key_path.mouse_protocol_of_identity(identity)
-	}
-	mouse_command(MOUSE_SET_SAMPLE_RATE)
-	mouse_command(MOUSE_SAMPLE_RATE)
-	mouse_command(MOUSE_ENABLE_REPORTING)
-	if keyboard_bytes_dropped_at_start > 0 {
-		system.log_fact(.Info, Keyboard_Bytes_Lost_At_Start{keyboard_bytes = keyboard_bytes_dropped_at_start})
-	}
-	if mouse_decoder.protocol == .Standard {
-		system.log_fact(.Info, Ready_Mouse_Without_Wheel{})
-	} else {
-		system.log_fact(.Info, Ready_Mouse_With_Wheel{})
+	if controller_present {
+		controller_start()
 	}
 	tablet_device_open(ctx)
+	if !controller_present {
+		if !tablet_active {
+			// No controller and no tablet: the stop is a refusal, which no
+			// start policy restarts, since neither comes back.
+			system.log_fact(.Info, No_Controller{})
+			system.stop(.Refused)
+		}
+		system.log_fact(.Info, No_Controller_Tablet_Only{})
+	}
 
 	held_before := false // The turn before left a byte in the controller.
 	for {
@@ -312,6 +296,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			pointer_backlog_send()
 			tablet_backlog_send()
 			tablet_poll()
+			// An absent controller reads all ones: no byte waits there.
+			if !controller_present {
+				break
+			}
 			state := system.port_read_8(PORT_STATUS)
 			if state & ps2_controller.STATUS_OUTPUT_FULL == 0 {
 				break
@@ -356,6 +344,38 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.wait_room_for(&wait, &output.commands, room_needed)
 		}
 		system.wait_end(&wait)
+	}
+}
+
+// controller_start turns the two ports of the PS/2 controller on with their
+// interrupts, and asks the mouse for its wheel.
+controller_start :: proc "contextless" () {
+	controller_command(0xA8) // Enable the mouse port.
+	controller_command(0x20) // Read the configuration.
+	configuration := controller_read()
+	configuration |= 0x03 // Both interrupts on.
+	configuration &~= 0x20 // The mouse clock on.
+	controller_command(0x60)
+	controller_data(configuration)
+	mouse_command(MOUSE_SET_DEFAULTS)
+	for rate in mouse_wheel_rates {
+		mouse_command(MOUSE_SET_SAMPLE_RATE)
+		mouse_command(rate)
+	}
+	mouse_command(MOUSE_GET_IDENTITY)
+	if identity, answered := mouse_answer_read(); answered {
+		mouse_decoder.protocol = key_path.mouse_protocol_of_identity(identity)
+	}
+	mouse_command(MOUSE_SET_SAMPLE_RATE)
+	mouse_command(MOUSE_SAMPLE_RATE)
+	mouse_command(MOUSE_ENABLE_REPORTING)
+	if keyboard_bytes_dropped_at_start > 0 {
+		system.log_fact(.Info, Keyboard_Bytes_Lost_At_Start{keyboard_bytes = keyboard_bytes_dropped_at_start})
+	}
+	if mouse_decoder.protocol == .Standard {
+		system.log_fact(.Info, Ready_Mouse_Without_Wheel{})
+	} else {
+		system.log_fact(.Info, Ready_Mouse_With_Wheel{})
 	}
 }
 
@@ -501,9 +521,9 @@ tablet_axis_range_read :: proc "contextless" (axis: virtio_input.Abs_Axis) -> vi
 // the root service granted its configuration, BARs, queue memory, and
 // machine handle. If absent or unusable, PS/2 remains active without error.
 tablet_device_open :: proc "contextless" (ctx: ^system.Context) {
-	config_handle := ctx.handles[pci.GRANT_CONFIGURATION]
-	queues_handle := ctx.handles[GRANT_TABLET_QUEUES]
-	machine_handle := ctx.handles[GRANT_TABLET_MACHINE]
+	config_handle := ctx.handles[input_context.GRANT_TABLET_CONFIGURATION]
+	queues_handle := ctx.handles[input_context.GRANT_TABLET_QUEUES]
+	machine_handle := ctx.handles[input_context.GRANT_TABLET_MACHINE]
 	if config_handle == 0 || queues_handle == 0 || machine_handle == 0 {
 		return
 	}
@@ -574,14 +594,13 @@ tablet_record :: proc "contextless" (event: tablet.Tablet_Event) -> ring.Record 
 	}
 }
 
+// tablet_backlog_send writes in the input ring the tablet events that wait,
+// the oldest first, while the ring has room.
 tablet_backlog_send :: proc "contextless" () {
-	for {
-		waiting := tablet.tablet_backlog_first(&tablet_backlog) or_break
-		if !system.send(&output.commands, tablet_record(waiting)) {
-			break
-		}
-		tablet.tablet_backlog_remove_first(&tablet_backlog)
+	send_record :: proc "contextless" (_: rawptr, event: tablet.Tablet_Event) -> bool {
+		return system.send(&output.commands, tablet_record(event))
 	}
+	_ = tablet.tablet_backlog_drain(&tablet_backlog, nil, send_record)
 }
 
 tablet_poll :: proc "contextless" () {

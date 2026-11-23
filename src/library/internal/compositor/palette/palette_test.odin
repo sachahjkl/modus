@@ -172,7 +172,7 @@ entries_of_the_two_sources :: proc(t: ^testing.T) {
 	panel := panel_make()
 	defer panel_free(panel)
 	panel_of_test(panel)
-	testing.expect_value(t, panel.list.entry_count, 2 + len(MODULE_NAMES) + 1 + 2)
+	testing.expect_value(t, panel.list.entry_count, 2 + len(MODULE_NAMES) + 2 + 2)
 	move := &panel.list.entries[2 + len(MODULE_NAMES)]
 	testing.expect_value(t, move.kind, Entry_Kind.Move_Window)
 	testing.expect_value(t, entry_name(move), MOVE_WINDOW_NAME)
@@ -242,6 +242,44 @@ the_window_in_front_moves_and_resizes_by_keys :: proc(t: ^testing.T) {
 	testing.expect_value(t, panel.list.entries[panel.list.rows[0].entry].kind, Entry_Kind.Resize_Window)
 	testing.expect_value(t, kind_words(.Move_Window), "move by keys")
 	testing.expect_value(t, kind_words(.Resize_Window), "resize by keys")
+}
+
+// The window in front has one entry of the maximize, fixed or resizable:
+// "maximize window", or "restore window" while it is maximized. A window
+// that is not in front has none, and no window gives none.
+@(test)
+the_window_in_front_maximizes_or_restores :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	maximize_of :: proc(panel: ^Panel) -> (count: int, number: u32, name: string) {
+		for &entry in panel.list.entries[:panel.list.entry_count] {
+			if entry.kind == .Maximize_Window {
+				count += 1
+				number = entry.number
+				name = entry_name(&entry)
+			}
+		}
+		return
+	}
+	entries_collect(panel, MODULE_NAMES[:], nil)
+	count, _, _ := maximize_of(panel)
+	testing.expect_value(t, count, 0)
+	entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, maximized = true}, {title = "plasma", number = 7}})
+	count, _, _ = maximize_of(panel)
+	testing.expect_value(t, count, 0)
+	number: u32
+	name: string
+	entries_collect(panel, MODULE_NAMES[:], {{title = "plasma", number = 7, focus = true}, {title = "console", number = 3}})
+	count, number, name = maximize_of(panel)
+	testing.expect(t, count == 1 && number == 7)
+	testing.expect_value(t, name, MAXIMIZE_WINDOW_NAME)
+	entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, focus = true, resizable = true, maximized = true}})
+	count, number, name = maximize_of(panel)
+	testing.expect(t, count == 1 && number == 3)
+	testing.expect_value(t, name, RESTORE_WINDOW_NAME)
+	testing.expect_value(t, kind_words(.Maximize_Window), "maximize or restore")
+	testing.expect(t, prefix_admits(.Windows, .Maximize_Window))
+	testing.expect(t, !prefix_admits(.Commands, .Maximize_Window))
 }
 
 // A name is whole or absent: a name longer than its room is not listed,
@@ -949,7 +987,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	// counts the entries in a plain word.
 	testing.expect(t, has_text(&screen.table, "close a window"))
 	testing.expect(t, has_text(&screen.table, "enter: close   esc: close"))
-	testing.expect(t, has_text(&screen.table, "1 of 15"))
+	testing.expect(t, has_text(&screen.table, "1 of 16"))
 	testing.expect(t, has_text(&screen.table, "entries"))
 	testing.expect(t, has_text(&screen.table, NOTE_NO_PROVIDER))
 	testing.expect(t, has_text(&screen.table, "Stops the process plasma: its window closes. Asks for a second Enter."))
@@ -968,7 +1006,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	type_text(panel, "xyz")
 	panel_build(screen, panel)
 	testing.expect(t, has_text(&screen.table, "nothing has \"xyz\" in its name"))
-	testing.expect(t, has_text(&screen.table, "0 of 15"))
+	testing.expect(t, has_text(&screen.table, "0 of 16"))
 	// The first open: the placeholder, and the headings of the groups.
 	line_editor.line_clear(&panel.line)
 	list_build(panel)
@@ -1105,7 +1143,7 @@ the_entries_of_a_provider :: proc(t: ^testing.T) {
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
 	testing.expect_value(t, panel.list.provider, Provider_State.Ready)
 	testing.expect_value(t, panel.list.snapshot.generation, 6)
-	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1 + len(GIVEN))
+	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 2 + 1 + len(GIVEN))
 	// With no typed part the commands do not show.
 	for row in panel.list.rows[:panel.list.row_count] {
 		testing.expect(t, row.kind != .Entry || !entry_of_provider(&panel.list.entries[row.entry]))
@@ -1199,7 +1237,8 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		problem := collect_with_table(panel, table)
 		testing.expectf(t, problem == damage.problem, "damage %d: %v, not %v", number, problem, damage.problem)
 		testing.expect_value(t, panel.list.provider, Provider_State.Refused)
-		testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1)
+		// One window, the modules, its move and its maximize, its close.
+		testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 2 + 1)
 		testing.expect_value(t, panel.list.snapshot.entry_count, 0)
 	}
 	// A memory smaller than a table is no table.
@@ -1534,7 +1573,7 @@ the_prefixes :: proc(t: ^testing.T) {
 		typed: string,
 		kinds: bit_set[Entry_Kind],
 	}
-	cases := [?]Case{{">", {.Command}}, {"@", {.Window, .Close_Window, .Move_Window}}, {":", {.Setting}}, {"?", {.Module}}, {">re", {.Command}}, {"?pla", {.Module}}}
+	cases := [?]Case{{">", {.Command}}, {"@", {.Window, .Close_Window, .Move_Window, .Maximize_Window}}, {":", {.Setting}}, {"?", {.Module}}, {">re", {.Command}}, {"?pla", {.Module}}}
 	for item in cases {
 		line_editor.line_clear(&panel.line)
 		type_text(panel, item.typed)
@@ -2098,9 +2137,9 @@ the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
 		row_texts_set(&entries[6 + index], "shade", "shade", value)
 	}
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
-	// One window, its move, its close, the modules, the command, two rows,
-	// and the seven shades one by one.
-	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1 + 1 + 2 + 7)
+	// One window, its move, its maximize, its close, the modules, the
+	// command, two rows, and the seven shades one by one.
+	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 2 + 1 + 1 + 2 + 7)
 	panel.state = .Search
 	type_text(panel, ":font")
 	testing.expect_value(t, row_text(panel, 0), "font (setting)")

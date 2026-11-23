@@ -227,13 +227,15 @@ desktop_context_menu_open :: proc "contextless" (x, y: int) {
 	// A shortcut is shown only for an act that desktop_shortcut_key does
 	// with the same keys. The edge that the bar holds now is disabled.
 	at_bottom := bar_layout.edge == .Bottom
+	// The entry of the toggle names what it does to the window in front.
+	front_maximized := order_count > 0 && clients[order[order_count - 1]].maximized
 	items := [10]interface.Context_Menu_Item{
 		{id = u32(Desktop_Context_Action.New_Console), label = "New Console"},
 		{id = u32(Desktop_Context_Action.Open_Monitor), label = "Open Monitor"},
 		{id = u32(Desktop_Context_Action.Open_Clock), label = "Open Clock"},
 		{id = u32(Desktop_Context_Action.Snap_Left), label = "Snap Window Left", shortcut = "Ctrl+Shift+Left"},
 		{id = u32(Desktop_Context_Action.Snap_Right), label = "Snap Window Right", shortcut = "Ctrl+Shift+Right"},
-		{id = u32(Desktop_Context_Action.Maximize), label = "Maximize Window", shortcut = "Ctrl+Shift+Up"},
+		{id = u32(Desktop_Context_Action.Maximize), label = front_maximized ? "Restore Window" : "Maximize Window", shortcut = "Ctrl+Shift+Up"},
 		{id = u32(Desktop_Context_Action.Toggle_Mag), label = "Toggle Magnifier", shortcut = "Ctrl+Shift+M"},
 		{id = u32(Desktop_Context_Action.Restore_All), label = "Restore Minimized"},
 		{id = u32(Desktop_Context_Action.Bar_Top), label = "Bar Position Top", disabled = !at_bottom},
@@ -395,7 +397,7 @@ desktop_taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Ta
 		}
 		line_y := y + TASKBAR_PREVIEW_TITLE + row * TASKBAR_PREVIEW_LINE
 		in_front := position == order_count - 1 && !client.minimized
-		state := client.minimized ? "minimized" : (in_front ? "active" : "open")
+		state := client.minimized ? "minimized" : (in_front ? (client.maximized ? "active, maximized" : "active") : (client.maximized ? "maximized" : "open"))
 		color := client.minimized ? graphics.colors.dim : (in_front ? graphics.colors.text_strong : graphics.colors.text)
 		if in_front {
 			interface.draw_rectangle(table, left + 10, line_y + 3, 2, TASKBAR_PREVIEW_LINE - 6, graphics.colors.title)
@@ -666,42 +668,127 @@ desktop_workspace_select :: proc "contextless" (index: u8) -> bool {
 	return true
 }
 
+// desktop_snap_front_window gives the window in front the frame of a zone
+// of the work area. The zone Maximized toggles the maximized state, so the
+// button of the title bar, the menu and Ctrl+Shift+Up take one path.
 desktop_snap_front_window :: proc "contextless" (zone: desktop_layout.Snap_Zone) -> bool {
 	if !desktop_features_ready || order_count == 0 {
 		return false
 	}
-	rect, ok := desktop_layout.snap_zone_rect(desktop_work_area, zone)
+	client := &clients[order[order_count - 1]]
+	if zone == .Maximized {
+		return desktop_toggle_maximize(client)
+	}
+	// The same refusal as the maximize: the answer to a request would give
+	// the window a size under the new one.
+	if !client.created || window_held_by_input(client) || window_waits_for_answer(client) {
+		return false
+	}
+	x, y, outer_width, outer_height, ok := desktop_zone_frame(zone)
 	if !ok {
 		return false
 	}
-	idx := order[order_count - 1]
-	client := &clients[idx]
-	damage_window(client)
-	client.x = int(rect.x)
-	// The zones of the layout start under a bar at the top: over a bar at
-	// the bottom they start at the first row of the screen.
-	client.y = int(rect.y) - BAR_HEIGHT + desktop_work_top()
-	damage_window(client)
+	if client.maximized {
+		client.maximized = false
+		system.log_fact(.Info, Window_Restored{window = window_field(client.title[:])})
+		palette_entries_refresh()
+	}
+	window_frame_take(client, x, y, outer_width, outer_height)
 	return true
 }
 
-desktop_toggle_maximize :: proc "contextless" (client: ^Client) {
-	if client == nil {
-		return
+// desktop_zone_frame gives the frame of a zone of the work area: its place
+// and its outer size, in logical pixels.
+desktop_zone_frame :: proc "contextless" (zone: desktop_layout.Snap_Zone) -> (x, y, outer_width, outer_height: int, ok: bool) {
+	rect, found := desktop_layout.snap_zone_rect(desktop_work_area, zone)
+	if !found {
+		return 0, 0, 0, 0, false
 	}
-	damage_window(client)
+	// The zones of the layout start under a bar at the top: over a bar at
+	// the bottom they start at the first row of the screen.
+	return int(rect.x), int(rect.y) - BAR_HEIGHT + desktop_work_top(), int(rect.width), int(rect.height), true
+}
+
+// desktop_toggle_maximize gives a window the whole work area, or gives a
+// maximized window back the place and the size that it had before. The size
+// is a request to the process of the window, as at the end of a drag of its
+// edges, within the limits that the process declared: a window that is not
+// resizable only moves. A window whose last request has no answer yet is
+// not maximized: the answer would change its size under the new one. A
+// maximized window in that state takes back its place at once, and asks
+// for its saved size when the request ends (desktop_restore_size_after_answer):
+// a process that never answers cannot keep its window over the whole screen. A drag of the edges of the window
+// or a resize by keys holds it: the toggle waits for their end.
+desktop_toggle_maximize :: proc "contextless" (client: ^Client) -> bool {
+	if client == nil || !client.created || window_held_by_input(client) {
+		return false
+	}
 	if !client.maximized {
-		client.saved_x = client.x
-		client.saved_y = client.y
+		if window_waits_for_answer(client) {
+			return false
+		}
+		x, y, outer_width, outer_height, ok := desktop_zone_frame(.Maximized)
+		if !ok {
+			return false
+		}
+		client.saved_x, client.saved_y = client.x, client.y
+		client.saved_width, client.saved_height = client.width, client.height
 		client.maximized = true
-		client.x = 0
-		client.y = desktop_work_top()
+		client.restore_size_due = false
+		system.log_fact(.Info, Window_Maximized{window = window_field(client.title[:])})
+		window_frame_take(client, x, y, outer_width, outer_height)
 	} else {
 		client.maximized = false
-		client.x = client.saved_x
-		client.y = client.saved_y
+		system.log_fact(.Info, Window_Restored{window = window_field(client.title[:])})
+		// A request that waits cannot be crossed: the window takes its
+		// place now, and asks for its size when the request ends.
+		client.restore_size_due = window_waits_for_answer(client)
+		window_place_and_size_take(client, client.saved_x, client.saved_y, client.saved_width, client.saved_height)
 	}
+	palette_entries_refresh() // The entry of the window in front names the maximize or the restore.
 	damage_whole_screen()
+	return true
+}
+
+// desktop_restore_size_after_answer asks for the saved size of a window
+// whose restore came while a request waited, once that request ended: its
+// answer, a decline or a refusal. The place stays where the restore put it.
+desktop_restore_size_after_answer :: proc "contextless" (client: ^Client) {
+	if !client.restore_size_due || client.maximized || window_waits_for_answer(client) {
+		return
+	}
+	client.restore_size_due = false
+	window_place_and_size_take(client, client.x, client.y, client.saved_width, client.saved_height)
+}
+
+// desktop_restore_under_pointer gives a maximized window that a drag of its
+// title moves the place and the size of before its maximize. The pointer
+// keeps the same part of the title, so the smaller window comes under the
+// pointer and the drag goes on. While a request of the window waits for its
+// answer, the window stays maximized and moves: the next move tries again.
+desktop_restore_under_pointer :: proc "contextless" (client: ^Client) {
+	if !client.maximized || window_waits_for_answer(client) {
+		return
+	}
+	frame_width := client.decoration == .Client ? 0 : 2 * BORDER
+	drag_x = bar.restored_hold_x(drag_x, client.width + frame_width, client.saved_width + frame_width)
+	client.maximized = false
+	system.log_fact(.Info, Window_Restored{window = window_field(client.title[:])})
+	window_place_and_size_take(client, pointer_x - drag_x, pointer_y - drag_y, client.saved_width, client.saved_height)
+	palette_entries_refresh()
+	damage_whole_screen()
+}
+
+// window_waits_for_answer says whether the process of a window has a
+// request of a size or a surface to answer: a new request would cross it.
+window_waits_for_answer :: proc "contextless" (client: ^Client) -> bool {
+	return client.resize_asked || client.resize_pictures != nil || client.released
+}
+
+// window_held_by_input says whether a drag of the edges or a mode of the
+// arrow keys holds a window: their end asks for its size.
+window_held_by_input :: proc "contextless" (client: ^Client) -> bool {
+	return (resizing >= 0 && &clients[resizing] == client) || (keyboard_window_mode != .None && keyboard_window >= 0 && &clients[keyboard_window] == client)
 }
 
 desktop_toggle_minimize :: proc "contextless" (client: ^Client) {

@@ -15,10 +15,10 @@ The border of the drawing module is in [library_modules.md](library_modules.md).
 
 The numbers come from the code of the terminal and of the window layer.
 
-- A terminal has at most 104 columns and 32 rows (`COLUMNS_LIMIT`, `ROWS_LIMIT`): 3,328 cells. A cell is 16 bytes (a code point, two flags, two reserved bytes and two colors: [../data/text_encoding.md](../data/text_encoding.md)), so a full grid is 53,248 bytes.
-- The draw of a grid makes one call of the glyph code for each run of cells: a run ends at a change of color, at a reverse cell, at the end of a group of filled cells, and at an empty cell. A line of plain text is one run. A line of colored code is one run for each token. The most is one run for each cell: 3,328 runs in one frame.
+- A terminal has at most 192 columns and 54 rows (`COLUMNS_LIMIT`, `ROWS_LIMIT`): 10,368 cells. The limits are the cells of the font of the system that cover the largest logical screen, the reference screen at the smallest scale (1536 × 864 logical pixels), so a maximized terminal fills its window. A cell is 16 bytes (a code point, two flags, two reserved bytes and two colors: [../data/text_encoding.md](../data/text_encoding.md)), so a full grid is 165,888 bytes.
+- The draw of a grid makes one call of the glyph code for each run of cells: a run ends at a change of color, at a reverse cell, at the end of a group of filled cells, and at an empty cell. A line of plain text is one run. A line of colored code is one run for each token. The most is one run for each cell: 10,368 runs in one frame.
 - With the chosen form, a frame crosses the border one time for the difference and one time for the draw of all its damage rectangles: 2 calls, whatever the count of runs ([picture.md](picture.md), "The draw export: the rectangles of a frame in one call"). When this form was chosen, the draw took one rectangle for each call: at most 9 calls.
-- An export for one run of cells would cross the border up to 3,328 times for one frame of a full grid, and each call checks its arguments again.
+- An export for one run of cells would cross the border up to 10,368 times for one frame of a full grid, and each call checks its arguments again.
 
 ## The chosen form: the cells are in the text table
 

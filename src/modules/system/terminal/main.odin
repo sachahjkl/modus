@@ -85,6 +85,7 @@ import "internal:terminal/grid_resize"
 import "internal:terminal/wide_cells"
 import "modus:contract/enum_word"
 import op "modus:contract/operation"
+import "modus:contract/reference_screen"
 import "modus:display"
 import "modus:text_rendering"
 import "modus:graphics"
@@ -98,16 +99,26 @@ import "modus:system"
 import terminal "modus:terminal"
 import "base:intrinsics"
 
-// The lines that it keeps, and the two pictures of its window: their size
-// follows the columns and the rows that its starter gives, so the tool
-// cannot count them, and the working memory holds them at their largest:
-// 8035 pages. And the glyph memory of its two copies of the text
+// The lines that it keeps, and the surfaces of its window: their size
+// follows the columns and the rows that its starter gives, and each resize,
+// so the tool cannot count them, and the working memory holds them at their
+// largest. The lines take 3840 pages. A surface holds two pictures; one of
+// the reference screen takes 4050 pages. During a resize the window holds
+// two surfaces, the one that the compositor shows and the new one, until
+// the compositor answers: so two surfaces of the reference screen, 8100
+// pages, and a maximize from a window as large as the screen fits.
+// 3840 + 8100 = 11940 (checked under the type Line). A drag can ask for
+// more, up to the limits of the grid, when the window starts past the left
+// edge of the screen: then the surface does not fit,
+// display.surface_resize declines the request with a line, and the window
+// keeps its size. The cells of the largest grid are in the module: the tool
+// counts them. And the glyph memory of its two copies of the text
 // rendering, the one of the drawing module, which draws its cells, and its
 // own, which draws a cell again to tell where its glyph comes from
 // (display.cell_fallback_of): each reserves its memory at its first glyph,
-// 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708 pages. 8035 + 708 =
-// 8743.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8743, processes = 1, threads = 2}
+// 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708 pages. 11940 + 708 =
+// 12648.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 12648, processes = 1, threads = 2}
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
 ROWS_LIMIT :: terminal.ROWS_LIMIT
@@ -236,6 +247,12 @@ Line :: struct {
 	run_count: u32,
 	length:    u32, // Bytes of UTF-8.
 }
+
+// The working memory holds the lines and two surfaces of the reference
+// screen at once, the surface shown and the new one of a resize.
+LINES_PAGES :: (LINE_CAPACITY * size_of(Line) + RUN_CAPACITY * size_of(Run) + BYTE_CAPACITY + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+SCREEN_SURFACE_PAGES :: (display.PICTURE_COUNT * reference_screen.WIDTH * reference_screen.HEIGHT * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+#assert(LINES_PAGES + 2 * SCREEN_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
 
 lines: [^]Line
 runs: [^]Run
@@ -1101,6 +1118,9 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 // tables are words: the cells hold 4-byte colors, so the table starts at
 // an address that is a multiple of 4. Each holds the texts of a frame, the
 // 3 bytes at most before the cells, and the cells of the largest grid.
+// The count of records does not follow the rows: the grid is one record,
+// and the only records of each row are the icons of the completion list,
+// at most terminal.LIST_ROWS.
 records_now, records_before: [448]interface.Draw_Record
 TEXT_WORDS :: (1024 + 4 + ROWS_LIMIT * COLUMNS_LIMIT * size_of(Cell)) / 4
 text_words_now, text_words_before: [TEXT_WORDS]u32

@@ -193,6 +193,22 @@ tablet_backlog_first :: proc "contextless" (backlog: ^Tablet_Backlog) -> (event:
 	return backlog.events[0], true
 }
 
+// tablet_backlog_drain sends the queued events, the oldest first, while the
+// sender takes them, and removes each event only once it is sent: an event
+// that the sender refuses, a change of a button among them, stays first in
+// the backlog for the next drain.
+tablet_backlog_drain :: proc "contextless" (backlog: ^Tablet_Backlog, sender: rawptr, send: proc "contextless" (sender: rawptr, event: Tablet_Event) -> bool) -> (sent: int) {
+	for {
+		waiting := tablet_backlog_first(backlog) or_break
+		if !send(sender, waiting) {
+			break
+		}
+		tablet_backlog_remove_first(backlog)
+		sent += 1
+	}
+	return sent
+}
+
 // tablet_backlog_remove_first drops the oldest queued tablet event.
 tablet_backlog_remove_first :: proc "contextless" (backlog: ^Tablet_Backlog) {
 	if backlog.count == 0 {

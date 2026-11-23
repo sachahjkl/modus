@@ -140,6 +140,53 @@ tablet_state_refuses_unknown_events_and_clamps_out_of_range :: proc(t: ^testing.
 	testing.expect_value(t, ev, Tablet_Event{x = 0, y = 1079, buttons = 0, wheel = 0})
 }
 
+// A ring with room for a count of records, as the input ring of the
+// compositor: it refuses each record past its room.
+@(private = "file")
+Test_Ring :: struct {
+	room:     int,
+	received: [16]Tablet_Event,
+	count:    int,
+}
+
+@(private = "file")
+test_ring_send :: proc "contextless" (sender: rawptr, event: Tablet_Event) -> bool {
+	ring := (^Test_Ring)(sender)
+	if ring.count >= ring.room {
+		return false
+	}
+	ring.received[ring.count] = event
+	ring.count += 1
+	return true
+}
+
+// A full ring refuses each record: the drain sends none and removes none,
+// a change of a button queued behind a move stays, and once the ring has
+// room both arrive in order, the release of the button last. A ring with
+// room for one takes the first event only, and the second stays.
+@(test)
+a_full_ring_keeps_each_tablet_event_until_it_has_room :: proc(t: ^testing.T) {
+	backlog: Tablet_Backlog
+	ring := Test_Ring{room = 0}
+	testing.expect(t, tablet_backlog_add(&backlog, {x = 10, y = 20, buttons = BUTTON_LEFT}))
+	testing.expect(t, tablet_backlog_add(&backlog, {x = 10, y = 20, buttons = 0})) // The release.
+	testing.expect_value(t, tablet_backlog_drain(&backlog, &ring, test_ring_send), 0)
+	testing.expect_value(t, backlog.count, 2)
+	testing.expect_value(t, ring.count, 0)
+	ring.room = 1
+	testing.expect_value(t, tablet_backlog_drain(&backlog, &ring, test_ring_send), 1)
+	testing.expect_value(t, backlog.count, 1)
+	testing.expect_value(t, backlog.events[0].buttons, u32(0))
+	ring.room = 16
+	testing.expect_value(t, tablet_backlog_drain(&backlog, &ring, test_ring_send), 1)
+	testing.expect_value(t, backlog.count, 0)
+	testing.expect_value(t, ring.count, 2)
+	testing.expect_value(t, ring.received[0].buttons, BUTTON_LEFT)
+	testing.expect_value(t, ring.received[1].buttons, u32(0))
+	// An empty backlog sends nothing.
+	testing.expect_value(t, tablet_backlog_drain(&backlog, &ring, test_ring_send), 0)
+}
+
 // The tablet backlog coalesces moves with equal buttons and preserves button
 // transitions up to its stated capacity.
 @(test)

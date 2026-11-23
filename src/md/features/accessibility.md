@@ -147,6 +147,7 @@ The roles of the elements of the interface package:
 
 | Keys | What they do |
 |---|---|
+| Control+Shift+Up, or the entry "maximize window" ("restore window" while it is maximized) of the palette | The window in front fills the work area, or takes back its place and its size of before |
 | Control+Shift+F7, or the entry "move window" of the palette | The arrows move the window in front by 16 logical pixels, a spacing token; with Shift, by 1. The rule of a drag keeps its title on the screen. Enter keeps the place; Escape gives the old place back |
 | Control+Shift+F8, or the entry "resize window" of the palette | The arrows move the right and the bottom edges of the window in front by the same steps, inside its size limits and the screen. An outline shows the size; the window keeps its surface. Enter asks the one `Resized`, as the release of a drag does; Escape asks nothing, so the size never changed. A fixed window, and one whose resize waits for its process, does not enter the mode |
 | Control+Shift+F10 | The bar takes the focus of the keys, on the heron button. Left and Right (Tab and Shift+Tab too) move along the heron button, the button of the windows, the plates, the viewer mark, the button of the control center, the button of the notifications and the clock, around the ends. Down and Up open the menu or the card of a button and move its choice; Enter or Space acts; Escape closes the menu or the card and gives the focus back to the window in front |

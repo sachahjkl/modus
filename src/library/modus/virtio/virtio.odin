@@ -241,6 +241,34 @@ find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (devic
 	return device, device.common != 0 && device.notify_base != 0 && device.device_config != 0
 }
 
+// common_place gives the BAR and the place in it of the common
+// configuration, from the copy of the configuration of a device: the first
+// capability of that kind whose length holds COMMON_CONFIG_SIZE, as find
+// takes it. The holder of the bus reads it to reset a device before a new
+// process receives it. A walk of the capabilities ends after 48 steps, at a
+// place before 0x40, and at a place past the configuration.
+common_place :: proc "contextless" (configuration: []u8) -> (bar: u8, place: u32, found: bool) {
+	if len(configuration) < pci.CONFIGURATION_SIZE {
+		return 0, 0, false
+	}
+	offset := u32(configuration[pci.OFFSET_CAPABILITIES]) &~ 3
+	for _ in 0 ..< 48 {
+		if offset < 0x40 || offset > pci.CONFIGURATION_SIZE - 20 {
+			break
+		}
+		if configuration[offset] == CAPABILITY_VIRTIO && configuration[offset + 3] == CAPABILITY_COMMON {
+			capability_bar := configuration[offset + 4]
+			capability_place := intrinsics.unaligned_load((^u32)(&configuration[offset + 8]))
+			length := intrinsics.unaligned_load((^u32)(&configuration[offset + 12]))
+			if capability_bar < pci.BAR_COUNT && length >= COMMON_CONFIG_SIZE {
+				return capability_bar, capability_place, true
+			}
+		}
+		offset = u32(configuration[offset + 1]) &~ 3
+	}
+	return 0, 0, false
+}
+
 // status_write writes the device status.
 status_write :: proc "contextless" (device: ^Device, value: u8) {
 	intrinsics.volatile_store((^u8)(device.common + COMMON_STATUS), value)

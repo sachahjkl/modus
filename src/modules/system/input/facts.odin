@@ -39,6 +39,11 @@ No_Ring :: struct {}
 @(log_fact = "input: no PS/2 controller: no keyboard and no mouse")
 No_Controller :: struct {}
 
+// No PS/2 controller, and the virtio tablet is ready: the service goes on
+// with the pointer of the tablet only.
+@(log_fact = "input: no PS/2 controller: no keyboard; the pointer is the virtio tablet")
+No_Controller_Tablet_Only :: struct {}
+
 // The service is ready, and the mouse has no wheel.
 @(log_fact = "input: ok, the mouse has no wheel")
 Ready_Mouse_Without_Wheel :: struct {}
