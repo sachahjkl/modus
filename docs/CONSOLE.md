@@ -150,13 +150,13 @@ Here `columns` made a table of another record, with fewer fields, so the export 
 
 The bounds:
 
-- 16 variables. A new name takes a free slot; a name that exists takes its new value.
-- A name of 16 bytes at most, and a text value of 96 bytes at most.
-- A table of 32 KiB of rows at most (`TABLE_KEPT`).
+- 64 variables. A new name takes a free slot; a name that exists takes its new value.
+- A name of 64 bytes at most. The bytes of a value (a text, a record, a table and its description, the items of a list) go in a memory object of their size, which the budget of the console pays: a value that the budget cannot pay is refused, and the variable keeps its old value.
+- A table of a line whole: the tables of a line share 1 MiB (`TABLE_ARENA`).
 - No `Bytes` value: "error: a variable keeps no Bytes value".
 - No `Stream`: a Stream is a wiring, and a variable outlives its line ("Streams").
 - No `Function`: a function reads the values of its line, which end with the line ("Functions and lists").
-- A `List` of 64 items at most, the items of its nested lists included, and 32 KiB of their texts and records. A list past a bound is refused with an error record `Over_Limit`, and the variable keeps its old value. A list in a variable holds no function, no table and no hash ("Functions and lists").
+- A `List` of 4096 items at most, the items of its nested lists included (each list that a line makes), and 1 MiB of their texts and records. A list past a bound is refused with an error record `Over_Limit`, and the variable keeps its old value. A list in a variable holds no function, no table and no hash ("Functions and lists").
 - An expression with no value (a call of a command with no result) cannot be kept: "error: the expression has no value".
 
 `variables()` gives them as a table: the name, the type and the value as a text. A variable lives in the memory of the console: it does not survive a stop of the console.
@@ -221,9 +221,9 @@ A record is a group of named fields, as a module describes it. The command with 
 [2, 3, 4]
 ```
 
-A list variable takes 64 items at most, the items of its nested lists included, and 32 KiB of the texts and records of its items. Its items are integers, booleans, texts, members, handles, records and such lists. A line that reads list variables copies their items among the 256 items of the line, once for each variable.
+A list variable takes 4096 items at most, the items of its nested lists included, and 1 MiB of the texts and records of its items. Its items are integers, booleans, texts, members, handles, records and such lists. A line that reads list variables copies their items among the 4096 items of the line, once for each variable.
 
-**The bounds of a line**: 256 calls of functions, 512 values of their bodies, 256 items in all its lists, the items of the list variables that it reads included.
+**The bounds of a line**: 4096 bytes of text, 256 levels of nesting, 4096 calls of functions, 8192 values of their bodies, 4096 items in all its lists, the items of the list variables that it reads included. The edit line shows the part of a long line around the caret.
 
 ### Tables as values
 
@@ -242,7 +242,7 @@ A table is the records of one description, one after the other. An export with a
 
 `join` and `columns` make a new record description. The console writes it in the format of the module contract, so the next command reads it as it reads the description of a module. A command that gives a table gives a new table; the table of its argument does not change.
 
-The tables of one line share 256 KiB (`TABLE_ARENA`). The console draws a table with no cut inside a value ("Results and their drawers").
+The tables of one line share 1 MiB (`TABLE_ARENA`). The console draws a table with no cut inside a value ("Results and their drawers").
 
 ![Tables as parameters: one description, three ways to call](screenshots/tables.png)
 
@@ -323,7 +323,7 @@ serial  status
 |---|---|
 | `where(stream, field = value)` | The same record stream with one more condition ("Conditions"), at most four. The console checks each condition on each record as it reads it |
 | `first(stream, count)` | A `Table` of the first rows that pass the conditions, once the count came or the record stream ended |
-| `table(stream)` | A `Table` of the rows that pass the conditions, at the end of the record stream; at most 32 KiB of rows (`TABLE_KEPT`) |
+| `table(stream)` | A `Table` of the rows that pass the conditions, at the end of the record stream; at most the 1 MiB of the tables of the line (`TABLE_ARENA`) |
 | A `Stream` at the end of a line | The line of the names of the fields, then each row as it comes, until the end of the record stream or Escape |
 
 `first` and `table` keep the rows only. Each other command that takes a table refuses a `Stream`, before any call, and so does a variable:
@@ -492,8 +492,8 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A call of a name whose value is no function | `error: f is Integer, not a function: a call of a binding needs a function` |
 | A function or a list given to a command | `error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one` |
 | A function kept by a variable | `error: a variable keeps no function: a function reads the values of its line, which end with the line` |
-| The lists of a line past 256 items, list variables included | `error: the lists of the line hold more than 256 items in all`, with an error record `Over_Limit` |
-| A list past the bound of a variable | `error: a variable keeps a list of 64 items at most, the items of its nested lists included; this one has 65 or more`, with an error record `Over_Limit` |
+| The lists of a line past 4096 items, list variables included | `error: the lists of the line hold more than 4096 items in all`, with an error record `Over_Limit` |
+| A list past the bound of a variable | `error: a variable keeps a list of 4096 items at most, the items of its nested lists included; this one has 4097 or more`, with an error record `Over_Limit` |
 | `map` on another value than a list | `error: map: argument 1 is Integer, not a list` |
 | A recursion, or a line nested deeper than the stack of the evaluator | `error: the line nests deeper than the stack of the evaluator holds: 524288 bytes; it stopped at column 16` |
 | A `_` that is no whole argument of the call on the right of `\|>` | `error: \|>: _ is a whole argument of f, not a part of an expression` |
@@ -864,13 +864,13 @@ Each bound holds against a description that another process wrote:
 
 - The match reads at most the first 128 bytes of a name (`NAME_SCAN_LIMIT`): one decode of the name and of the query (128 and 64 bytes), two passes of 128 characters and 64 places of score, at most 512 steps for a name. A longer name matches only in its start.
 - A query of more than 64 bytes matches nothing.
-- One ranking reads at most 4096 names (`CANDIDATE_SCAN_LIMIT`), and keeps the best 64 (`RANKED_CAPACITY`). The place of a name in the kept ones is a binary search: at most 7 orders of two names. An order reads at most 256 bytes of the names (`NAME_COMPARE_LIMIT`, a whole line of the history); after them the shorter name comes first, and two names of one length are equal. The search of the history skips a line equal to a kept one: at most 64 compares of 256 bytes for each line. So one key costs at most 4096 x (512 + 1792 + 64) steps, about 9.7 million, and one key of the search at most 256 x (512 + 1792 + 64 + 16 384), about 4.8 million. Before, an order read whole names: long names of one length with a long common start made a key cost names x 64 x their length. The console reads at most 512 names today (`CANDIDATE_CAPACITY`: 128 commands, 8 services, 16 variables, the modules of the boot image, 64 processes), so 10 000 exports of one service never reach the list: the console refuses a service whose commands do not fit in its table.
+- One ranking reads at most 4096 names (`CANDIDATE_SCAN_LIMIT`), and keeps the best 64 (`RANKED_CAPACITY`). The place of a name in the kept ones is a binary search: at most 7 orders of two names. An order reads at most 4096 bytes of the names (`NAME_COMPARE_LIMIT`, a whole line of the history); after them the shorter name comes first, and two names of one length are equal. An order stops at the first byte that differs. The search of the history skips a line equal to a kept one: at most 64 compares of 4096 bytes for each line. So one key costs at most 4096 x (512 + 28 672 + 64) steps, about 120 million, and one key of the search at most 1024 x (512 + 28 672 + 64 + 262 144), about 300 million; names that differ early cost far less. Before, an order read whole names: long names of one length with a long common start made a key cost names x 64 x their length. The console reads at most 512 names today (`CANDIDATE_CAPACITY`: 128 commands, 8 services, 64 variables, the modules of the boot image, 64 processes), so 10 000 exports of one service never reach the list: the console refuses a service whose commands do not fit in its table.
 - The console measures each ranking with the cycle counter, and writes the longest one on the log when Tab opens a list ("one ranking takes N us at most, over K keys").
 - When the names are more than the console reads (512), the line under the edit line says it: "N names match, and more names than the list reads: type more characters" (short form: "N names and more").
 - A name of 0 bytes is not a name. A name is UTF-8 (`docs/glossary/text.md`, "Text encoding"): the terminal draws an invalid sequence, and a character that its font lacks, as the replacement glyph. A line takes only characters with no control character, so a name with a control character cannot go in a line.
 - In the quotes of `connect`, `stop`, `grants` and `revoke`, the console reads the names of the processes that run once, when the quote opens (up to 64 `Inspect` calls), and keeps them while the caret stays in that quote and no line runs. A key in the quote makes no kernel call.
 
-The measure: the command `measure_completion()` times the four parts of one key with the list open, for the query `mcnt`: the collect (the table of names), the rank (the match of each name, and the best 64), the rows (the text of the 8 rows that the terminal receives), the colors (the runs of code of an edit line of 200 bytes with more parts than 64 runs hold, and of the 8 rows: section 7). Each number is the least of 20 batches of 10 keys, in microseconds. It writes two lines: one for the names of the console as they are, one for the worst case, 512 names of 128 bytes whose matched characters are far apart, so that the two passes read each whole name:
+The measure: the command `measure_completion()` times the four parts of one key with the list open, for the query `mcnt`: the collect (the table of names), the rank (the match of each name, and the best 64), the rows (the text of the 8 rows that the terminal receives), the colors (the runs of code of an edit line of 4096 bytes with more parts than 64 runs hold, and of the 8 rows: section 7). Each number is the least of 20 batches of 10 keys, in microseconds. It writes two lines: one for the names of the console as they are, one for the worst case, 512 names of 128 bytes whose matched characters are far apart, so that the two passes read each whole name:
 
 ```
 console: one key with the completion list: the collect N us, the rank N us, the rows N us, the colors N us, over K names (the names of this console, the least of 20 batches of 10)
@@ -897,19 +897,19 @@ The status line of the terminal names the lines of the text that the view shows:
 
 The console remembers the lines that were entered, and keeps them in a small store of its own, so they come back after a stop of the console or of the machine. Up and Down walk through them; Control-R searches them.
 
-The history lives in the memory of the console: 256 lines at most in a ring of 16 384 bytes (`line_editor.History`), and fewer when the lines are long (81 lines of 200 bytes). A line never wraps at the end of the ring, so each line is one slice of it. The same line two times in a row is kept one time. It also survives a stop of the console and a stop of the machine.
+The history lives in the memory of the console: 1024 lines at most in a ring of 256 KiB (`line_editor.History`), and fewer when the lines are long (64 lines of 4096 bytes). A line never wraps at the end of the ring, so each line is one slice of it. The same line two times in a row is kept one time. It also survives a stop of the console and a stop of the machine.
 
 **Why a store of its own.** The history is the state of the console, not a file of the principal; a grant for one purpose with a small limit is what property 20 asks for; the store of the principal and its checks stay as they are.
 
 **The history store.** The root service gives the console a second connection to the storage service, for its history only (`Root_Command.Connect_History`, the start grant `History_Store`, the grant `history`):
 
 - The store is named after the console with `.history` (`console.history`): the storage service names the store of a connection by the name that the root service sends with it, and no module of the boot image has a dot in its name.
-- Its limit is 4 blocks. One object of one block takes 3 blocks of a store (its store block, the leaf of its tree, and its block of data, which the entry names with no object node), as the store of the principal shows ("3 of 4 blocks" for 20 bytes); a change needs one block more for its new data, in the commit that thins the version before. 2 blocks cannot hold the file. At its limit each commit thins the version before; the storage service says it once in a run.
-- The connection has no grant to act for the principal: the store of the history and no other one. A hostile console can fill 4 blocks, as its private store lets it fill 4.
+- Its limit is 24 blocks. The file has 32 KiB at most, 8 blocks of data: with its store block, the leaf of its tree and its object node it takes 11 blocks, and a change needs 8 blocks more for its new data and a node, in the commit that thins the version before. At its limit each commit thins the version before; the storage service says it once in a run.
+- The connection has no grant to act for the principal: the store of the history and no other one. A hostile console can fill 24 blocks, as its private store lets it fill its own limit.
 - The form: a connection that the console asks for through its root ring, at its start, as `connect("storage")` but with its own command. Not a boot pass: the console runs the whole time, it reads its history at its start. Not a connection in its context at the start: the places of the context of the store connection (7, 8, 9) are the places of the terminal of the console, and the storage service starts at boot after the console (the boot pass of `settings` starts it); a connection in the context needs the storage service before the console, which changes the order of the boot. The root service handles the root ring of the console only after the boot pass has started, so the storage service runs when the request comes: the order of the starts is the order of before.
 - The root service keeps the connection apart: `Disconnect` of the service `storage` does not end it, a revocation of the grant `store` does not change it, and a revocation of `acts_for_principal` gives it its limit only. `revoke("console", "history")` ends it: the console keeps its history in its memory. A second connection of one process to one service is refused as before, for each kind.
 
-**The load.** At its start, before it reads a key, the console asks for the connection (it waits 30 s at most: the storage service mounts the disk at boot) and reads the object `line_history`. The second thread runs no line yet, so the history has one user. One log line says what came: "console: the line history: N lines kept from before the stop", or "no line history kept", or that the file is damaged, cannot be read, has more than 4096 bytes, or is refused by a check of `history_file_read` (with its name: "its hash is wrong", "a line is not a text of UTF-8", ...). Each of these gives an empty history and an empty completion frecency table; a valid history rebuilds the completion frecency table from the kept lines, oldest first. A line of the file goes through the bounds of a typed line (200 bytes of valid UTF-8 with no control character), and nothing of the file runs: a line runs only when the input takes it (Up, or Enter in the search) and presses Enter.
+**The load.** At its start, before it reads a key, the console asks for the connection (it waits 30 s at most: the storage service mounts the disk at boot) and reads the object `line_history`. The second thread runs no line yet, so the history has one user. One log line says what came: "console: the line history: N lines kept from before the stop", or "no line history kept", or that the file is damaged, cannot be read, has more than 32 KiB, or is refused by a check of `history_file_read` (with its name: "its hash is wrong", "a line is not a text of UTF-8", ...). Each of these gives an empty history and an empty completion frecency table; a valid history rebuilds the completion frecency table from the kept lines, oldest first. A line of the file goes through the bounds of a typed line (4096 bytes of valid UTF-8 with no control character, its length in two bytes), and nothing of the file runs: a line runs only when the input takes it (Up, or Enter in the search) and presses Enter.
 
 **The save, and its bound.** The second thread writes the file for each line that the history added, after the line ended and when no other line waits: the save holds no key, and a line never waits for a commit. A line typed during a line runs before the save of the line before it. The first thread can add the next line meanwhile, so the save writes a copy of the history of now, made under a lock that is held for the copy only. One commit for each line added, whatever the order of the lines and the saves. A held Enter adds one line at most: an empty line and the newest line again add nothing. So the commits follow the lines that are typed, about 4 ms each (one commit of `notes` in the machine test). `shutdown()` and `stop("console")` save before they act: their save after the line never comes. A stop that the console does not see (a close of its window, a fault, a loss of power) loses the line that runs then and the line whose save is in flight, and no line before them. A save that fails writes one log line in a run, and the history stays in memory; the commits owed then wait for the next line, so a store that cannot be reached is not tried in a loop.
 
@@ -966,7 +966,7 @@ A part with no class has the color of the text around it: the tone of the line, 
 
 **The bound, and a hostile list.** A row has at most 64 runs: a line with more parts keeps its first 64 runs, and the text after them is whole, in the plain color. The text is never cut by the runs: only the color stops. The terminal checks the runs against the row that takes them: each run inside the row, after the run before it, with at least one byte and a kind that exists. One run that fails, or bytes that are not a whole count of runs, or a target that takes no runs: the row is plain, its text whole, and the terminal counts it and writes once on the log "terminal: console sent runs of code that do not fit their row: the row is drawn plain, its text whole".
 
-**The cost.** The runs of the edit line are made only when its text or its caret changes, on at most 202 bytes, with one look in the tables of names (256 commands, 16 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
+**The cost.** The runs of the edit line are made only when its text or its caret changes, on the part of the line that the edit line shows, at most 256 bytes, with one look in the tables of names (256 commands, 64 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
 
 ## 8. The palette provider
 

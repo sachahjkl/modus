@@ -9,9 +9,9 @@ package clipboard
 // The compositor asserts that the two are the same.
 MODIFIER_CONTROL :: 2
 
-// The largest content (display.CLIPBOARD_TEXT_LIMIT); the compositor
-// asserts that the two are the same.
-TEXT_LIMIT :: 4096
+// The largest content (display.CLIPBOARD_TEXT_LIMIT): one memory object
+// of 1 GiB. The compositor asserts that the two are the same.
+TEXT_LIMIT :: 1 << 30
 
 // A key of the principal for the clipboard.
 Clipboard_Key :: enum {

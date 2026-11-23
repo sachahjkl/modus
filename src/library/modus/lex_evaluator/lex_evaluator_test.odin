@@ -999,44 +999,50 @@ evaluation_refusals_of_functions :: proc(t: ^testing.T) {
 	testing.expect(t, run.fake.log_count > 2)
 
 	// The thunks of the calls: a body of 26 fields and a parameter takes 27
-	// in each call, so the 19th call of map passes 512, after the effect of
-	// the list and 18 calls, at the place of map.
+	// in each call, so a call of map passes CALL_THUNK_CAPACITY after the
+	// effect of the list and the calls before it, at the place of map.
+	CALLS_THAT_FIT :: CALL_THUNK_CAPACITY / 27
 	fields := make([dynamic]string, context.temp_allocator)
 	for letter in 'a' ..= 'z' {
 		append(&fields, strings.concatenate({string([]u8{u8(letter)}), "=x"}, context.temp_allocator))
 	}
-	thunks := strings.concatenate({"map([g()", strings.repeat(",1", 18, context.temp_allocator), "], (x) => {", strings.join(fields[:], ",", context.temp_allocator), "})"}, context.temp_allocator)
+	thunks := strings.concatenate({"map([g()", strings.repeat(",1", CALLS_THAT_FIT, context.temp_allocator), "], (x) => {", strings.join(fields[:], ",", context.temp_allocator), "})"}, context.temp_allocator)
 	testing.expect(t, len(thunks) <= lex_parser.TEXT_BYTES_MOST)
 	run = run_of(thunks)
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Calls_Full)
 	testing.expect_value(t, run.evaluation.refusal.place.column, u32(1))
-	testing.expect_value(t, run.evaluation.call_count, 18)
-	testing.expect_value(t, run.evaluation.call_thunk_count, 18 * 27)
+	testing.expect_value(t, run.evaluation.call_count, CALLS_THAT_FIT)
+	testing.expect_value(t, run.evaluation.call_thunk_count, CALLS_THAT_FIT * 27)
 	expect_log(t, run, {"g"}, "the thunks of the calls")
 
-	// The items of all the lists of a line: 50, then 50 for each map;
-	// the fifth map passes 256 before it calls the function.
-	items := strings.repeat("1,", 49, context.temp_allocator)
-	lists := strings.concatenate({"let f = (x) => x, l = [", items, "1] in map(map(map(map(map(l, f), f), f), f), f)"}, context.temp_allocator)
+	// The items of all the lists of a line: 1000, then 1000 for each map;
+	// the fourth map passes LIST_ITEM_CAPACITY before it calls the
+	// function.
+	ITEMS :: 1000
+	#assert(4 * ITEMS <= LIST_ITEM_CAPACITY && 5 * ITEMS > LIST_ITEM_CAPACITY)
+	items := strings.repeat("1,", ITEMS - 1, context.temp_allocator)
+	lists := strings.concatenate({"let f = (x) => x, l = [", items, "1] in map(map(map(map(l, f), f), f), f)"}, context.temp_allocator)
 	testing.expect(t, len(lists) <= lex_parser.TEXT_BYTES_MOST)
 	run = run_of(lists)
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Lists_Full)
 	testing.expect_value(t, run.evaluation.refusal.place.column, u32(strings.index(lists, "map(") + 1))
-	testing.expect_value(t, run.evaluation.call_count, 200)
-	// The edges of the items: 64, then 64 for each map, is 256 and holds;
-	// one more item, a list around them, passes it at the third map.
-	items = strings.repeat("1,", 63, context.temp_allocator)
+	testing.expect_value(t, run.evaluation.call_count, 3 * ITEMS)
+	// The edges of the items: a quarter of the capacity, then as many for
+	// each map, is the capacity and holds; one more item, a list around
+	// them, passes it at the third map.
+	QUARTER :: LIST_ITEM_CAPACITY / 4
+	items = strings.repeat("1,", QUARTER - 1, context.temp_allocator)
 	whole := strings.concatenate({"let f = (x) => x, l = [", items, "1] in map(map(map(l, f), f), f)"}, context.temp_allocator)
 	run = run_of(whole)
 	testing.expect(t, run.ok)
 	testing.expect_value(t, run.evaluation.list_item_count, LIST_ITEM_CAPACITY)
-	testing.expect_value(t, run.value.detail, u32(64))
+	testing.expect_value(t, run.value.detail, u32(QUARTER))
 	one_more := strings.concatenate({"let f = (x) => x, l = [", items, "1] in [map(map(map(l, f), f), f)]"}, context.temp_allocator)
 	testing.expect(t, len(one_more) <= lex_parser.TEXT_BYTES_MOST)
 	run = run_of(one_more)
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Lists_Full)
 	testing.expect_value(t, run.evaluation.refusal.place.column, u32(strings.index(one_more, "map(") + 1))
-	testing.expect_value(t, run.evaluation.list_item_count, LIST_ITEM_CAPACITY - 63)
+	testing.expect_value(t, run.evaluation.list_item_count, LIST_ITEM_CAPACITY - (QUARTER - 1))
 }
 
 // A refusal of the text in the arguments of a call of a function or of map
@@ -1185,8 +1191,8 @@ evaluation_values_of_functions :: proc(t: ^testing.T) {
 	testing.expect_value(t, run.value.kind, Kind.Function)
 	testing.expect_value(t, lex_parser.Node_Index(run.value.integer), run.tree.root)
 	testing.expect_value(t, run.value.call, NO_CALL)
-	// The deepest nesting of functions that a line holds.
-	run = run_of(strings.concatenate({strings.repeat("()=>", (lex_parser.TEXT_BYTES_MOST - 1) / 4, context.temp_allocator), "1"}, context.temp_allocator))
+	// A deep nesting of functions that the depth of a line holds.
+	run = run_of(strings.concatenate({strings.repeat("()=>", lex_parser.LINE_PARSE_DEPTH_LIMIT / 2 - 1, context.temp_allocator), "1"}, context.temp_allocator))
 	testing.expect(t, run.ok)
 	testing.expect_value(t, run.value.kind, Kind.Function)
 
@@ -1235,7 +1241,7 @@ evaluation_of_a_thin_arrow_runs_nothing :: proc(t: ^testing.T) {
 // item, then the last places.
 @(test)
 evaluation_takes_back_the_items_of_a_kept_list :: proc(t: ^testing.T) {
-	kept: [LIST_ITEM_CAPACITY + 1]Value
+	kept := make([]Value, LIST_ITEM_CAPACITY + 1, context.temp_allocator)
 	for &item, index in kept {
 		item = {kind = .Integer, integer = i64(index) * 10}
 	}

@@ -218,48 +218,62 @@ parse_fills_the_node_memory_exactly :: proc(t: ^testing.T) {
 	testing.expect_value(t, tree.node_count, len(whole))
 }
 
-// The depth: each level of a nesting takes one byte at least, so the bound
-// of the text is the bound of the depth. The deepest nesting of each kind
-// that fits, then one level more, which no longer fits.
+// nesting_deepest gives the most levels of a form of nesting that a line
+// parses, and checks that one level more is refused with Nesting_Too_Deep
+// and fits the bytes of a line: the depth has its own bound, below the
+// bound of the text.
+@(private = "file")
+nesting_deepest :: proc(t: ^testing.T, opening, inner, closing: string) -> (levels: int) {
+	text_of :: proc(opening, inner, closing: string, levels: int) -> string {
+		return strings.concatenate({strings.repeat(opening, levels, context.temp_allocator), inner, strings.repeat(closing, levels, context.temp_allocator)}, context.temp_allocator)
+	}
+	for levels = 1; levels <= TEXT_BYTES_MOST; levels += 1 {
+		if parse_of(text_of(opening, inner, closing, levels + 1)).refusal.refusal != .None {
+			break
+		}
+	}
+	more := text_of(opening, inner, closing, levels + 1)
+	testing.expectf(t, len(more) <= TEXT_BYTES_MOST, "%q: %d levels fit the bytes of a line", opening, levels + 1)
+	testing.expect_value(t, parse_of(more).refusal.refusal, Refusal.Nesting_Too_Deep)
+	testing.expect_value(t, parse_of(text_of(opening, inner, closing, levels)).refusal.refusal, Refusal.None)
+	// A level takes one or two steps of the depth.
+	testing.expectf(t, levels >= LINE_PARSE_DEPTH_LIMIT / 2 - 1 && levels <= LINE_PARSE_DEPTH_LIMIT, "%q: %d levels", opening, levels)
+	return levels
+}
+
+// The depth: a line of TEXT_BYTES_MOST bytes could nest one level for each
+// byte, so the parser has a depth bound of its own, LINE_PARSE_DEPTH_LIMIT.
+// The deepest nesting of each kind that fits, then one level more, refused
+// with Nesting_Too_Deep; then a text past the bytes of a line.
 @(test)
-parse_nesting_at_the_bound_of_the_text :: proc(t: ^testing.T) {
+parse_nesting_at_the_bound_of_the_depth :: proc(t: ^testing.T) {
 	// "-": one byte for each level.
-	deepest := strings.concatenate({strings.repeat("-", TEXT_BYTES_MOST - 1, context.temp_allocator), "1"}, context.temp_allocator)
-	tree := parse_of(deepest)
-	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	levels := nesting_deepest(t, "-", "1", "")
+	tree := parse_of(strings.concatenate({strings.repeat("-", levels, context.temp_allocator), "1"}, context.temp_allocator))
 	depth := 0
 	for index := tree.root; node_at(tree, index).kind == .Negate; index = node_at(tree, index).first_child {
 		depth += 1
 	}
-	testing.expect_value(t, depth, TEXT_BYTES_MOST - 1)
+	testing.expect_value(t, depth, levels)
 	tree = parse_of(strings.concatenate({strings.repeat("-", TEXT_BYTES_MOST, context.temp_allocator), "1"}, context.temp_allocator))
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 
-	// Parentheses: two bytes for each level; a group is no node.
-	levels := (TEXT_BYTES_MOST - 1) / 2
-	grouped := strings.concatenate({strings.repeat("(", levels, context.temp_allocator), "1", strings.repeat(")", levels, context.temp_allocator)}, context.temp_allocator)
-	tree = parse_of(grouped)
-	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	// Parentheses: a group is no node.
+	levels = nesting_deepest(t, "(", "1", ")")
+	tree = parse_of(strings.concatenate({strings.repeat("(", levels, context.temp_allocator), "1", strings.repeat(")", levels, context.temp_allocator)}, context.temp_allocator))
 	testing.expect_value(t, tree.node_count, 1)
-	tree = parse_of(strings.concatenate({strings.repeat("(", levels + 1, context.temp_allocator), "1", strings.repeat(")", levels + 1, context.temp_allocator)}, context.temp_allocator))
-	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 
-	// Calls: three bytes for each level.
-	calls := (TEXT_BYTES_MOST - 1) / 3
-	nested := strings.concatenate({strings.repeat("f(", calls, context.temp_allocator), "1", strings.repeat(")", calls, context.temp_allocator)}, context.temp_allocator)
-	tree = parse_of(nested)
-	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
-	testing.expect_value(t, tree.node_count, calls + 1)
-	tree = parse_of(strings.concatenate({strings.repeat("f(", calls + 1, context.temp_allocator), "1", strings.repeat(")", calls + 1, context.temp_allocator)}, context.temp_allocator))
-	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
+	// Calls: one node for each level.
+	levels = nesting_deepest(t, "f(", "1", ")")
+	tree = parse_of(strings.concatenate({strings.repeat("f(", levels, context.temp_allocator), "1", strings.repeat(")", levels, context.temp_allocator)}, context.temp_allocator))
+	testing.expect_value(t, tree.node_count, levels + 1)
 
-	// An unclosed group at the deepest place: the refusal is the innermost
-	// one, after the last byte.
+	// An unclosed group past the depth: the refusal is the depth, at the
+	// first byte that it does not read.
 	open := strings.concatenate({strings.repeat("(", TEXT_BYTES_MOST - 1, context.temp_allocator), "1"}, context.temp_allocator)
 	tree = parse_of(open)
-	testing.expect_value(t, tree.refusal.refusal, Refusal.Close_Parenthesis_Missing)
-	testing.expect_value(t, tree.refusal.place.column, u32(TEXT_BYTES_MOST + 1))
-	testing.expect_value(t, tree_form(tree, tree.root), "!Close_Parenthesis_Missing(1)")
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Nesting_Too_Deep)
+	testing.expect(t, int(tree.refusal.place.column) <= LINE_PARSE_DEPTH_LIMIT + 1)
 }
 
 // Each refusal of the text, with its record, its place, and the tree that
@@ -719,14 +733,16 @@ parse_literal_edges :: proc(t: ^testing.T) {
 	tree = parse_of("{ }")
 	testing.expect_value(t, tree_form(tree, tree.root), "#{}")
 
-	// Fields of two letters, "xy=1," each: 39 in a line of 196 bytes.
+	// Fields of three letters, "xab=1," each: the names after "x" of two
+	// letters, none a word of Lex, which a line holds.
 	builder := strings.builder_make(context.temp_allocator)
 	strings.write_string(&builder, "{")
-	most := (TEXT_BYTES_MOST - 2) / 5
+	most := min((TEXT_BYTES_MOST - 2) / 6, 26 * 26)
 	for field in 0 ..< most {
 		if field > 0 {
 			strings.write_string(&builder, ",")
 		}
+		strings.write_byte(&builder, 'x')
 		strings.write_byte(&builder, u8('a' + field / 26))
 		strings.write_byte(&builder, u8('a' + field % 26))
 		strings.write_string(&builder, "=1")
@@ -742,18 +758,15 @@ parse_literal_edges :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, fields, most)
 
-	// "{a=" and "}": four bytes for each level.
-	levels := (TEXT_BYTES_MOST - 1) / 4
+	// "{a=" and "}": the deepest that the depth bound takes.
+	levels := nesting_deepest(t, "{a=", "1", "}")
 	deepest := strings.concatenate({strings.repeat("{a=", levels, context.temp_allocator), "1", strings.repeat("}", levels, context.temp_allocator)}, context.temp_allocator)
 	tree = parse_of(deepest)
-	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	depth := 0
 	for index := tree.root; node_at(tree, index).kind == .Record_Literal; index = node_at(tree, node_at(tree, index).first_child).first_child {
 		depth += 1
 	}
 	testing.expect_value(t, depth, levels)
-	tree = parse_of(strings.concatenate({strings.repeat("{a=", levels + 1, context.temp_allocator), "1", strings.repeat("}", levels + 1, context.temp_allocator)}, context.temp_allocator))
-	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 }
 
 // The trees of the forms of records, and the binding of each name that a
@@ -1012,18 +1025,15 @@ parse_function_edges :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, parameters, ARGUMENT_CAPACITY)
 
-	// "()=>" for each level: four bytes.
-	levels := (TEXT_BYTES_MOST - 1) / 4
+	// "()=>" for each level: the deepest that the depth bound takes.
+	levels := nesting_deepest(t, "()=>", "1", "")
 	deepest := strings.concatenate({strings.repeat("()=>", levels, context.temp_allocator), "1"}, context.temp_allocator)
 	tree = parse_of(deepest)
-	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	depth := 0
 	for index := tree.root; node_at(tree, index).kind == .Function; index = node_at(tree, index).first_child {
 		depth += 1
 	}
 	testing.expect_value(t, depth, levels)
-	tree = parse_of(strings.concatenate({strings.repeat("()=>", levels + 1, context.temp_allocator), "1"}, context.temp_allocator))
-	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 
 	// "1," for each item: the nodes of the line hold them all.
 	builder := strings.builder_make(context.temp_allocator)
@@ -1117,7 +1127,7 @@ parse_layer5_forms_and_refusals :: proc(t: ^testing.T) {
 @(test)
 parse_multiline_declarations_and_bounds :: proc(t: ^testing.T) {
 	nodes := make([]Node, 1024, context.temp_allocator)
-	tree: Syntax_Tree
+	tree := new(Syntax_Tree, context.temp_allocator)
 
 	source := `// A multi-line project declaration.
 let
@@ -1140,31 +1150,31 @@ project {
 	},
 }
 `
-	parse_declaration(source, nodes, &tree)
+	parse_declaration(source, nodes, tree)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	testing.expect(t, tree.node_count > 10)
 	// Line numbers are tracked across newlines.
-	root := node_at(&tree, tree.root)
+	root := node_at(tree, tree.root)
 	testing.expect(t, root != nil && root.kind == .Let && root.place.line == 2)
 
 	// Top-level console assignment is refused in declaration mode (parsed as equality expression or unexpected).
 	// Wait: "a = 1" is a comparison expression in declaration mode, not an assignment!
-	parse_declaration("a = 1", nodes, &tree)
+	parse_declaration("a = 1", nodes, tree)
 	testing.expect_value(t, tree.assigned_name, "")
-	testing.expect_value(t, node_at(&tree, tree.root).kind, Node_Kind.Binary)
-	testing.expect_value(t, node_at(&tree, tree.root).operator, Operator.Equal)
+	testing.expect_value(t, node_at(tree, tree.root).kind, Node_Kind.Binary)
+	testing.expect_value(t, node_at(tree, tree.root).operator, Operator.Equal)
 
 	// Depth bound prevents stack overflow on hostile deeply nested input.
 	deep := strings.concatenate({strings.repeat("(", 300, context.temp_allocator), "1", strings.repeat(")", 300, context.temp_allocator)}, context.temp_allocator)
-	parse_declaration(deep, nodes, &tree, DECLARATION_TEXT_BYTES_MOST, 64)
+	parse_declaration(deep, nodes, tree, DECLARATION_TEXT_BYTES_MOST, 64)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Nesting_Too_Deep)
 
 	// Node buffer exhaustion stops cleanly with Nodes_Full.
 	tiny_nodes: [4]Node
-	parse_declaration("{ a = 1, b = 2, c = 3 }", tiny_nodes[:], &tree)
+	parse_declaration("{ a = 1, b = 2, c = 3 }", tiny_nodes[:], tree)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Nodes_Full)
 
 	// Text past bound stops cleanly with Text_Too_Long.
-	parse_declaration("1 + 2 + 3", nodes, &tree, text_bytes_most = 4)
+	parse_declaration("1 + 2 + 3", nodes, tree, text_bytes_most = 4)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 }

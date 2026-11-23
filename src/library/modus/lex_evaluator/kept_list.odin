@@ -9,11 +9,13 @@ import "modus:contract/errors"
 // records in its own memory, and gives them back to each later line that
 // reads them, as a list of that line.
 
-// The items of one kept list, the items of its nested lists included.
-KEPT_LIST_ITEM_CAPACITY :: 64
+// The items of one kept list, the items of its nested lists included: the
+// items of a line, so a kept list holds each list that a line can make.
+KEPT_LIST_ITEM_CAPACITY :: LIST_ITEM_CAPACITY
 
-// The bytes of the texts and the records of the items of one kept list.
-KEPT_LIST_BYTE_CAPACITY :: 32 * 1024
+// The bytes of the texts and the records of the items of one kept list, as
+// the copy holds them before the host keeps them in memory of their size.
+KEPT_LIST_BYTE_CAPACITY :: 1024 * 1024
 
 // The copy of a list before it goes into the memory of the host: the host
 // keeps its old list until the whole new one fits, and `x = map(x, f)`

@@ -114,7 +114,7 @@ Window_Problem :: enum u8 {
 	Full      = 3, // The note has TEXT_CAPACITY bytes: a key or a paste that adds one is refused.
 	Too_Long  = 4, // A note of the store is longer than a text: it is not shown.
 	List_Full = 5, // The list holds NOTE_CAPACITY notes: no new note.
-	Selection = 6, // The selection is longer than the limit of the clipboard.
+	Selection = 6, // The selection is longer than the buffer of a copy.
 	Busy      = 7, // The queue of the store thread is full: the act did not start.
 	Unreadable = 8, // The note shown could not be read whole: it is shown empty, and never written.
 	Version_Unreadable = 9, // The version chosen could not be read: it is not restored.
@@ -128,7 +128,7 @@ window_problem_texts := [Window_Problem]string {
 	.Full      = "the note is full: a key that adds a byte is refused",
 	.Too_Long  = "the note in the store is too long to show: it is not written over",
 	.List_Full = "the list is full: delete a note to make a new one",
-	.Selection = "the selection is longer than the clipboard limit of 4096 bytes",
+	.Selection = "the selection is longer than a note can be",
 	.Busy      = "the store is busy: the act did not start, try it again",
 	.Unreadable = "the note could not be read: it is not shown and not written over",
 	.Version_Unreadable = "this version could not be read: it cannot be restored",
@@ -208,7 +208,8 @@ tokens: box_layout.Element_Tokens
 window_request: store_work.Request
 window_result: store_work.Result
 clean_buffer: [text_model.TEXT_CAPACITY]u8
-clipboard_buffer: [display.CLIPBOARD_TEXT_LIMIT]u8
+// A copy or a paste holds at most the bytes of a note.
+clipboard_buffer: [text_model.TEXT_CAPACITY]u8
 
 title_field :: proc "contextless" (title: string) -> [TITLE_FIELD_BYTES]u8 {
 	return value_kinds.text_field(title, TITLE_FIELD_BYTES)
@@ -1132,6 +1133,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// this source, and the window then keeps its size.
 	_, _ = display.resizable_set(&window, {least_width = LEAST_WIDTH, least_height = LEAST_HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT})
 	columns = columns_of_width(window.width)
+	// The rows inside the model: a note is a text of the model's inline
+	// buffer, so its rows fit there.
+	text_model.layout_init_buffer(&layout, nil)
 	// Each call of the storage service runs on the store thread: this
 	// thread draws while the store works.
 	if _, status := system.thread_start(store_thread_entry, ctx, STORE_THREAD_STACK_PAGES); status != .Ok {

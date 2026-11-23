@@ -1962,8 +1962,11 @@ scroll_log :: proc "contextless" (act, part: string) {
 	}
 }
 
-// The memory of a paste: the copy that display.paste_read checks.
-paste_bytes: [display.CLIPBOARD_TEXT_LIMIT]u8
+// The memory of a paste: the copy that display.paste_read checks. The
+// terminal types a paste as one key record for each character, and its
+// queue holds RING_CAPACITY records: a paste of more characters is refused
+// whole, so the copy holds the longest characters of a full queue.
+paste_bytes: [terminal.RING_CAPACITY * text_encoding.CHARACTER_BYTES_LIMIT]u8
 
 // paste_type gives the text of a paste to the process as typed characters:
 // one key record with no key code for each character, in the order of the

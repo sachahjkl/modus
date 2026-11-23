@@ -28,7 +28,7 @@ import "modus:system"
 Clipboard_Content :: struct {
 	memory: system.Handle, // The gift of the process that copied, with Read and Give.
 	kind:   display.Clipboard_Kind,
-	count:  int, // Its bytes, 1 to CLIPBOARD_TEXT_LIMIT.
+	count:  int, // Its bytes, 1 to CLIPBOARD_TEXT_LIMIT: the memory of the copier holds them.
 	owner:  int, // The client that copied: its end empties the slot.
 	owner_title: system.Name, // Its title, for the line of a paste.
 }

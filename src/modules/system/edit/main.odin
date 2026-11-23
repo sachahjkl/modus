@@ -81,9 +81,9 @@ OBJECT_NAME :: "text" // The object of the private store that the editor edits.
 
 // The padding of the pane of the text, on each side.
 EDITOR_PADDING :: 8
-// The line numbers end one cell before the text. A text has at most
-// TEXT_CAPACITY + 1 lines: 5 digits.
-GUTTER_COLUMNS :: 6
+// The line numbers end one cell before the text: 7 digits hold the
+// lines of a text that the budget of the editor holds.
+GUTTER_COLUMNS :: 8
 GUTTER_WIDTH :: GUTTER_COLUMNS * graphics.CELL_WIDTH
 // The cells of a display row: the rows keep this width whatever the width
 // of the window (src/md/features/editor.md, "The refused forms").
@@ -114,7 +114,7 @@ VERSION_ROW_HEIGHT :: graphics.CELL_HEIGHT + 4
 // and the principal resizes it from LEAST_HEIGHT up to LARGEST_WIDTH by
 // LARGEST_HEIGHT; it is never narrower than a row of the text, so no row is
 // cut (src/md/features/window_resize.md).
-WIDTH :: 736
+WIDTH :: 752
 #assert(WIDTH >= EDITOR_LEAST_WIDTH)
 HEIGHT :: 560
 LEAST_HEIGHT :: 320
@@ -127,7 +127,7 @@ LARGEST_HEIGHT :: 960
 // tables and its glyph memory. The tool counts the window at the window
 // bound, at its largest size (docs/MODULE_CONTRACT.md, "The budget that a
 // module asks for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1313, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7457, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 CARET_WIDTH :: 2
 // The bytes of one display row as the frame draws it: each cell is one
 // character of at most 4 bytes, or a space of a tab.
@@ -142,10 +142,10 @@ Window_Problem :: enum u8 {
 	None               = 0,
 	No_Store           = 1, // No store, or the text cannot be read: nothing is kept.
 	Damaged            = 2, // The object is damaged: the next change writes a new text.
-	Too_Long           = 3, // The object is longer than a text of the editor: nothing is kept.
+	Too_Long           = 3, // The budget of the editor cannot hold the object: nothing is kept.
 	Not_Kept           = 4, // The store refused a commit: the changes after it are not kept.
-	Full               = 5, // The text has TEXT_CAPACITY bytes: a key or paste that adds one is refused.
-	Selection_Too_Long = 6, // The selection is longer than CLIPBOARD_TEXT_LIMIT: copy or cut is refused.
+	Full               = 5, // The budget of the editor holds no more bytes: a key or paste that adds one is refused.
+	Selection_Too_Long = 6, // The budget of the editor cannot hold a copy of the selection: copy or cut is refused.
 	Invalid_Target     = 7, // The target store or object path is invalid: nothing is kept.
 }
 
@@ -155,10 +155,10 @@ window_problem_texts := [Window_Problem]string {
 	.None               = "",
 	.No_Store           = "no store: the text is not kept",
 	.Damaged            = "the text in the store is damaged: the next change writes a new text",
-	.Too_Long           = "the text in the store is too long for the editor: nothing is kept",
+	.Too_Long           = "the text in the store is larger than the memory of the editor: nothing is kept",
 	.Not_Kept           = "the store refused the text: the changes are not kept",
-	.Full               = "the text is full: a key that adds a byte is refused",
-	.Selection_Too_Long = "the selection is longer than the clipboard limit of 4096 bytes",
+	.Full               = "the memory of the editor is full: a key that adds a byte is refused",
+	.Selection_Too_Long = "the memory of the editor cannot hold a copy of the selection",
 	.Invalid_Target     = "the target object is not valid: nothing is kept",
 }
 
@@ -219,13 +219,161 @@ target_invalid: bool
 pointer_buttons_before: u32
 pointer_dragging: bool // The left button went down in the text, and is still down.
 
-// The bytes from the store: one byte more than a text can have, so a
-// larger object shows as one.
-read_buffer: [text_model.TEXT_CAPACITY + 1]u8
-clean_buffer: [text_model.TEXT_CAPACITY]u8
-clipboard_buffer: [display.CLIPBOARD_TEXT_LIMIT]u8
+// The arenas of the text (src/md/features/memory_without_a_bound.md):
+// each holds one buffer that grows in place, paid by the budget of this
+// process, so a text has the size that the budget holds, not a size of
+// the source. A reservation costs its frame list only; the budget refuses
+// a commit past it, and the editor says that the text is full.
+TEXT_RESERVE_PAGES :: 4096 // The bytes of the text: 16 MiB.
+ROWS_RESERVE_PAGES :: 4096 // The display rows: 2 Mi rows of 8 bytes.
+MATCHES_RESERVE_PAGES :: 2048 // The places of the matches of a search: 2 Mi.
+// A text from the store, its clean copy, a selection to copy and a paste.
+TRANSFER_RESERVE_PAGES :: 8192
+// The bytes of one call of read_range or write_range: the call region of
+// 64 KiB holds them, the name and the record of the call. A text of at
+// most this size goes in one write.
+RANGE_BYTES :: 32 * 1024
+
+text_arena: system.Arena
+rows_arena: system.Arena
+matches_arena: system.Arena
+transfer_arena: system.Arena
 version_rows: [VERSION_ROWS_CAPACITY]storage.Version
 version_generations: [VERSION_ROWS_CAPACITY]i64
+
+// arena_bytes_grow, arena_rows_grow and arena_matches_grow are the growth
+// of the buffers of the text model: each extends the one buffer of its
+// arena in place.
+arena_bytes_grow :: proc "contextless" (data: rawptr, current: []u8, minimum: int) -> (grown: []u8, ok: bool) {
+	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum))
+	return bytes, status == .Ok
+}
+
+arena_rows_grow :: proc "contextless" (data: rawptr, current: []text_model.Row, minimum: int) -> (grown: []text_model.Row, ok: bool) {
+	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum * size_of(text_model.Row)))
+	if status != .Ok {
+		return nil, false
+	}
+	return ([^]text_model.Row)(raw_data(bytes))[:len(bytes) / size_of(text_model.Row)], true
+}
+
+arena_matches_grow :: proc "contextless" (data: rawptr, current: []i32, minimum: int) -> (grown: []i32, ok: bool) {
+	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum * size_of(i32)))
+	if status != .Ok {
+		return nil, false
+	}
+	return ([^]i32)(raw_data(bytes))[:len(bytes) / size_of(i32)], true
+}
+
+// arenas_start reserves the arenas and gives them to the text model. A
+// reservation that the budget refuses leaves its zero arena, which refuses
+// each growth: the text then keeps the buffers inside the model.
+arenas_start :: proc "contextless" () {
+	text_arena, _ = system.arena_create(TEXT_RESERVE_PAGES)
+	rows_arena, _ = system.arena_create(ROWS_RESERVE_PAGES)
+	matches_arena, _ = system.arena_create(MATCHES_RESERVE_PAGES)
+	transfer_arena, _ = system.arena_create(TRANSFER_RESERVE_PAGES)
+	text_model.text_init_buffer(&text, nil, arena_bytes_grow, &text_arena)
+	text_model.layout_init_buffer(&layout, nil, arena_rows_grow, &rows_arena)
+	text_model.search_init_buffer(&search, nil, arena_matches_grow, &matches_arena)
+}
+
+// transfer_bytes gives count bytes of the transfer arena after its first
+// `after` bytes, which stay. nil: the budget cannot pay them.
+transfer_bytes :: proc "contextless" (after, count: int) -> []u8 {
+	whole, status := system.arena_extend_to(&transfer_arena, u64(after + count))
+	if status != .Ok {
+		return nil
+	}
+	return whole[after:][:count]
+}
+
+// Why a whole read of the object gave no bytes.
+Read_Outcome :: enum u8 {
+	Read     = 0, // The bytes came.
+	Absent   = 1, // The store has no such object.
+	Too_Long = 2, // The budget cannot hold the bytes.
+	Refused  = 3, // A call refused: the status says how.
+}
+
+// object_read reads the whole object in the transfer arena, by ranges
+// after its size: a call region holds 64 KiB, a text more
+// (docs/STORAGE.md, "Ranges").
+object_read :: proc "contextless" (error: ^errors.Error_Record) -> (bytes: []u8, outcome: Read_Outcome, status: storage_status.Status) {
+	name := target_object_name()
+	size, size_status := storage.size(&client, target_place, name, error)
+	if storage.export_failed_with(size_status, size, .Absent) {
+		return nil, .Absent, .Ok
+	}
+	if storage.export_failed_with(size_status, size, .Damaged) {
+		return nil, .Refused, .Damaged
+	}
+	if size_status != .Ok {
+		return nil, .Refused, size_status
+	}
+	if size < 0 {
+		return nil, .Refused, .Refused
+	}
+	system.arena_reset(&transfer_arena)
+	if size == 0 {
+		return nil, .Read, .Ok
+	}
+	whole := transfer_bytes(0, int(size))
+	if whole == nil {
+		return nil, .Too_Long, .Ok
+	}
+	offset := 0
+	for offset < len(whole) {
+		part, part_status := storage.read_range(&client, target_place, name, u64(offset), whole[offset:], error)
+		if part_status != .Ok {
+			return nil, .Refused, part_status
+		}
+		// No byte before the end: the object changed under the read.
+		if len(part) == 0 {
+			return nil, .Refused, .Damaged
+		}
+		offset += len(part)
+	}
+	return whole, .Read, .Ok
+}
+
+// object_write writes the whole text in one commit: in one call when it
+// fits the call region, else as ranges of this connection and their
+// commit.
+object_write :: proc "contextless" (bytes: []u8, error: ^errors.Error_Record) -> (generation: i64, status: storage_status.Status) {
+	name := target_object_name()
+	if len(bytes) <= RANGE_BYTES {
+		return storage.write(&client, target_place, name, bytes, error)
+	}
+	if status = storage.set_size(&client, target_place, name, u64(len(bytes)), error); status != .Ok {
+		return -1, status
+	}
+	for offset := 0; offset < len(bytes); offset += RANGE_BYTES {
+		size, range_status := storage.write_range(&client, target_place, name, u64(offset), bytes[offset:min(offset + RANGE_BYTES, len(bytes))], error)
+		if range_status != .Ok || size < 0 {
+			return -1, range_status
+		}
+	}
+	measure: storage.Commit_Measure
+	measure, status = storage.commit(&client, target_place, name, error)
+	return measure.generation, status
+}
+
+// text_take_clean makes the text the bytes read, cleaned: each invalid
+// sequence becomes the replacement character. ok false: the budget cannot
+// hold the clean copy or the text, and the text did not change.
+text_take_clean :: proc "contextless" (bytes: []u8) -> (count: int, replaced: int, ok: bool) {
+	clean := transfer_bytes(len(bytes), text_model.text_clean_length(bytes))
+	if clean == nil && len(bytes) > 0 {
+		return 0, 0, false
+	}
+	problem: text_model.Edit_Problem
+	count, replaced, problem = text_model.text_clean(bytes, clean)
+	if problem != .None || text_model.text_replace_whole(&text, clean[:count]) != .None {
+		return 0, 0, false
+	}
+	return count, replaced, true
+}
 
 target_object_name :: proc "contextless" () -> string {
 	return string(target_object_bytes[:target_object_length])
@@ -304,7 +452,7 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 			cursor = next
 		}
 	}
-	bytes, found, read_status := storage.read(&client, target_place, target_object_name(), read_buffer[:], &error)
+	bytes, outcome, read_status := object_read(&error)
 	switch {
 	case read_status == .Damaged:
 		// The versions of the object are still in the store: a change
@@ -314,20 +462,20 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 	case read_status != .Ok:
 		problem_shown = .No_Store
 		log_storage_failure(.Read_Text, read_status, &error)
-	case !found:
+	case outcome == .Absent:
 		keeping = true
 		system.log_fact(.Info, New_Store{})
-	case len(bytes) > text_model.TEXT_CAPACITY:
+	case outcome == .Too_Long:
 		problem_shown = .Too_Long
-		system.log_fact(.Info, Stored_Text_Too_Long{text_capacity = value_kinds.Size_In_Bytes(text_model.TEXT_CAPACITY)})
+		system.log_fact(.Info, Stored_Text_Too_Long{length = value_kinds.Size_In_Bytes(len(bytes))})
 	case:
-		count, replaced, problem := text_model.text_clean(bytes, clean_buffer[:])
-		if problem != .None {
+		count, replaced, taken := text_take_clean(bytes)
+		system.arena_reset(&transfer_arena)
+		if !taken {
 			problem_shown = .Too_Long
-			system.log_fact(.Info, Cleaned_Text_Too_Long{text_capacity = value_kinds.Size_In_Bytes(text_model.TEXT_CAPACITY)})
+			system.log_fact(.Info, Cleaned_Text_Too_Long{length = value_kinds.Size_In_Bytes(len(bytes))})
 			return
 		}
-		text_model.text_replace_whole(&text, clean_buffer[:count])
 		text_model.selection_set(&text, 0, 0)
 		keeping = true
 		text_model.layout_compute(&layout, &text, ROW_COLUMNS, .Character)
@@ -384,7 +532,7 @@ group_commit :: proc "contextless" () {
 		return
 	}
 	error: errors.Error_Record
-	generation, write_status := storage.write(&client, target_place, target_object_name(), text_model.text_bytes(&text), &error)
+	generation, write_status := object_write(text_model.text_bytes(&text), &error)
 	if write_status != .Ok || generation < 0 {
 		keeping, problem_shown = false, .Not_Kept
 		log_storage_failure(.Write_Text, write_status, &error)
@@ -514,26 +662,34 @@ versions_list :: proc "contextless" (action: string) -> (generations: []i64, ok:
 }
 
 // version_restore makes a version the current text: the store makes it
-// its current version in one commit, then the window shows it. false: the
-// store refused, and nothing changed.
+// its current version in one commit, then the window reads it by ranges
+// and shows it. A version can be larger than a call region, so the read
+// comes after the restore. false: the store refused, and nothing changed;
+// or the read after the restore failed, and the editor keeps nothing more,
+// so it never writes over the version that the store made current.
 version_restore :: proc "contextless" (generation: i64, action: string) -> bool {
 	error: errors.Error_Record
-	bytes, read_status := storage.version(&client, target_place, target_object_name(), generation, read_buffer[:], &error)
-	if read_status != .Ok {
-		log_storage_failure(.Read_Version, read_status, &error)
-		return false
-	}
-	count, replaced, problem := text_model.text_clean(bytes, clean_buffer[:])
-	if problem != .None {
-		system.log_fact(.Info, Version_Too_Long{generation = generation, action = value_kinds.text_field(action, ACTION_FIELD_BYTES)})
-		return false
-	}
 	commit, restore_status := storage.restore(&client, target_place, target_object_name(), generation, &error)
 	if restore_status != .Ok || commit < 0 {
 		log_storage_failure(.Restore_Version, restore_status, &error)
 		return false
 	}
-	text_model.text_replace_whole(&text, clean_buffer[:count])
+	bytes, outcome, read_status := object_read(&error)
+	if outcome == .Refused || outcome == .Absent {
+		keeping, problem_shown = false, .No_Store
+		log_storage_failure(.Read_Version, read_status, &error)
+		return false
+	}
+	count, replaced, taken := 0, 0, false
+	if outcome == .Read {
+		count, replaced, taken = text_take_clean(bytes)
+	}
+	system.arena_reset(&transfer_arena)
+	if !taken {
+		keeping, problem_shown = false, .Too_Long
+		system.log_fact(.Info, Version_Too_Long{generation = generation, action = value_kinds.text_field(action, ACTION_FIELD_BYTES)})
+		return false
+	}
 	layout_refresh()
 	versions_stale = true
 	if search.query_count > 0 {
@@ -731,7 +887,12 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 		}
 		return
 	}
-	count, copy_problem := text_model.selection_copy(&text, clipboard_buffer[:])
+	copied := transfer_bytes(0, text_model.selection_count(&text))
+	count, copy_problem := text_model.selection_copy(&text, copied)
+	if copied == nil && text_model.selection_count(&text) > 0 {
+		copy_problem = .Too_Long
+	}
+	defer system.arena_reset(&transfer_arena)
 	switch copy_problem {
 	case .Empty, .Not_Text:
 		display.copy_decline(window)
@@ -742,7 +903,7 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 		return
 	case .None:
 	}
-	send_problem, _ := display.copy_send(window, clipboard_buffer[:count])
+	send_problem, _ := display.copy_send(window, copied[:count])
 	if send_problem != .None {
 		return
 	}
@@ -763,22 +924,30 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 // only single-line text is taken; in the document multi-line text (LF and
 // tab) is taken and committed atomically.
 paste_event :: proc "contextless" (window: ^display.Window, event: display.Event) {
+	// The room of a paste is the bytes of its content, in the transfer
+	// arena; a budget that cannot hold them gives a room of none, and the
+	// paste is refused whole.
+	room := transfer_bytes(0, max(event.byte_count, 0))
+	defer system.arena_reset(&transfer_arena)
 	if search.active {
-		pasted, paste_problem := display.paste_read(window, event, clipboard_buffer[:], .Single_Line)
+		pasted, paste_problem := display.paste_read(window, event, room, .Single_Line)
 		if paste_problem != .None {
 			return
 		}
-		if text_model.search_query_insert(&search, &text, clipboard_buffer[:pasted]) == .None {
+		if text_model.search_query_insert(&search, &text, room[:pasted]) == .None {
 			scroll_to_caret()
 		}
 		return
 	}
-	pasted, paste_problem := display.paste_read(window, event, clipboard_buffer[:], .Multi_Line)
+	pasted, paste_problem := display.paste_read(window, event, room, .Multi_Line)
 	if paste_problem != .None {
+		if paste_problem == .Too_Large {
+			problem_shown = .Full
+		}
 		return
 	}
 	group_commit()
-	switch text_model.text_insert(&text, clipboard_buffer[:pasted]) {
+	switch text_model.text_insert(&text, room[:pasted]) {
 	case .None:
 		change_end(.Insert)
 		group_commit()
@@ -1299,6 +1468,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else if !sent {
 		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", STAYS_FIXED_CAUSE_FIELD_BYTES)})
 	}
+	arenas_start()
 	store_open(ctx)
 	layout_refresh()
 	first_picture := true

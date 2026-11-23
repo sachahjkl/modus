@@ -35,7 +35,7 @@ List_Mode :: enum u8 {
 }
 
 // The names that one list reads. Today the console has at most 128
-// commands, 12 services, 16 variables, the modules of the boot image and 64
+// commands, 12 services, 64 variables, the modules of the boot image and 64
 // processes; a name past this count is not read.
 CANDIDATE_CAPACITY :: 512
 SEARCH_CAPACITY :: 64 // The bytes of a search of the history.

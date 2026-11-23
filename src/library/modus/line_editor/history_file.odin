@@ -11,24 +11,26 @@ import "modus:contract/text_encoding"
 // history and the name of the check: the process says it once, and runs
 // nothing of it.
 //
-// The form, version 1, numbers in little-endian order:
+// The form, version 2, numbers in little-endian order:
 //   0   4 bytes   "LHST"
-//   4   u32       the version: 1
+//   4   u32       the version: 2
 //   8   u32       the count of lines
 //   12  u32       the count of bytes of the lines
-//   16  the lines, the oldest first: for each one a byte with its length
+//   16  the lines, the oldest first: for each one a u16 with its length
 //       (1 to LINE_CAPACITY), then its bytes, valid UTF-8
 //       (text_encoding.text_valid). A file of lines of ASCII is a file of
 //       this form.
 //   the end: the BLAKE3 hash of each byte before it (32 bytes)
 
 HISTORY_FILE_MAGIC :: "LHST" // The first 4 bytes of the file.
-HISTORY_FILE_VERSION :: 1 // The version of the file. A file of another version is refused.
+HISTORY_FILE_VERSION :: 2 // The version of the file. A file of another version is refused.
 HISTORY_FILE_HEADER_SIZE :: 16 // The bytes before the lines.
 HISTORY_FILE_HASH_SIZE :: blake3.HASH_SIZE // The bytes of the hash at the end.
-// One block of the storage service. The newest lines that fit in it are
-// kept: about 120 lines of 30 bytes.
-HISTORY_FILE_SIZE_LIMIT :: 4096
+HISTORY_LINE_LENGTH_SIZE :: 2 // The bytes of the length of a line.
+// Half the call region of the storage service: the file goes in one write
+// and comes back in one read. The newest lines that fit in it are kept:
+// about 1000 lines of 30 bytes, or 7 lines of LINE_CAPACITY bytes.
+HISTORY_FILE_SIZE_LIMIT :: 32 * 1024
 
 // Why a history file is refused. The process then starts with an empty
 // history, and says so.
@@ -51,7 +53,7 @@ history_file_problem_texts := [History_File_Problem]string {
 	.None           = "no problem",
 	.Too_Short      = "it has fewer bytes than a header and a hash",
 	.Wrong_Magic    = "it does not start with LHST",
-	.Wrong_Version  = "its version is not 1",
+	.Wrong_Version  = "its version is not 2",
 	.Wrong_Hash     = "its hash is wrong",
 	.Too_Many_Lines = "it has more lines than the history holds",
 	.Wrong_Size     = "its count of bytes is wrong",
@@ -73,10 +75,10 @@ history_file_write :: proc "contextless" (history: ^History, buffer: []u8) -> (b
 	line_count, line_bytes := 0, 0
 	for {
 		text, ok := history_line(history, line_count)
-		if !ok || line_bytes + 1 + len(text) > room {
+		if !ok || line_bytes + HISTORY_LINE_LENGTH_SIZE + len(text) > room {
 			break
 		}
-		line_bytes += 1 + len(text)
+		line_bytes += HISTORY_LINE_LENGTH_SIZE + len(text)
 		line_count += 1
 	}
 	copy(buffer[0:4], HISTORY_FILE_MAGIC)
@@ -86,9 +88,9 @@ history_file_write :: proc "contextless" (history: ^History, buffer: []u8) -> (b
 	place := HISTORY_FILE_HEADER_SIZE
 	for age := line_count - 1; age >= 0; age -= 1 {
 		text, _ := history_line(history, age)
-		buffer[place] = u8(len(text))
-		copy(buffer[place + 1:], text)
-		place += 1 + len(text)
+		byte_order.write_u16_little_endian(buffer[place:place + HISTORY_LINE_LENGTH_SIZE], 0, u16(len(text)))
+		copy(buffer[place + HISTORY_LINE_LENGTH_SIZE:], text)
+		place += HISTORY_LINE_LENGTH_SIZE + len(text)
 	}
 	hash := blake3.hash(buffer[:place])
 	copy(buffer[place:], hash[:])
@@ -126,23 +128,26 @@ history_file_read :: proc "contextless" (bytes: []u8, history: ^History) -> (pro
 		if place >= end {
 			return .Wrong_Count
 		}
-		length := int(bytes[place])
-		if length == 0 || length > LINE_CAPACITY || length > end - place - 1 {
+		if end - place < HISTORY_LINE_LENGTH_SIZE {
 			return .Wrong_Line
 		}
-		if !text_encoding.text_valid(bytes[place + 1:][:length]) {
+		length := int(byte_order.read_u16_little_endian(bytes[place:place + HISTORY_LINE_LENGTH_SIZE], 0))
+		if length == 0 || length > LINE_CAPACITY || length > end - place - HISTORY_LINE_LENGTH_SIZE {
+			return .Wrong_Line
+		}
+		if !text_encoding.text_valid(bytes[place + HISTORY_LINE_LENGTH_SIZE:][:length]) {
 			return .Not_Text
 		}
-		place += 1 + length
+		place += HISTORY_LINE_LENGTH_SIZE + length
 	}
 	if place != end {
 		return .Wrong_Count
 	}
 	place = HISTORY_FILE_HEADER_SIZE
 	for _ in 0 ..< line_count {
-		length := int(bytes[place])
-		history_add(history, string(bytes[place + 1:][:length]))
-		place += 1 + length
+		length := int(byte_order.read_u16_little_endian(bytes[place:place + HISTORY_LINE_LENGTH_SIZE], 0))
+		history_add(history, string(bytes[place + HISTORY_LINE_LENGTH_SIZE:][:length]))
+		place += HISTORY_LINE_LENGTH_SIZE + length
 	}
 	return .None
 }

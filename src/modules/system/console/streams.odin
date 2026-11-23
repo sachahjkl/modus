@@ -866,9 +866,6 @@ stream_collect :: proc "contextless" (command: string, value: Value, wanted: int
 	shown := stream_value(stream, int(value.integer))
 	start := min((table_used + 7) &~ 7, len(table_memory))
 	capacity := len(table_memory) - start
-	if wanted == console_stream.TABLE_ROWS_WANTED_ALL {
-		capacity = min(capacity, TABLE_KEPT)
-	}
 	kept := 0
 	// A count of 0 reads no record, and wires nothing.
 	if console_stream.collect_step_of(kept, wanted, row_size, capacity) == .Done {

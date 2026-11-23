@@ -16,6 +16,20 @@ fresh_evaluation :: proc() -> ^Evaluation {
 	return evaluation
 }
 
+// An evaluation whose pool of items has more room than a line has: a test
+// of a kept list past its bounds needs a list that no line makes.
+@(private = "file")
+large_evaluation :: proc(items: int) -> ^Evaluation {
+	tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
+	lex_parser.parse("0", {}, tree)
+	evaluation := new(Evaluation, context.temp_allocator)
+	trees := make([]Tree_Slot, 1, context.temp_allocator)
+	trees[0] = {tree = tree, thunks = evaluation.thunks[:], slots = evaluation.slots[:], slot_counts = evaluation.slot_counts[:]}
+	pools := Evaluation_Pools{trees = trees, calls = evaluation.calls[:], call_thunks = evaluation.call_thunks[:], list_items = make([]Value, items, context.temp_allocator), hashes = evaluation.hashes[:]}
+	evaluation_start_with_pools(evaluation, tree, .Console, {}, pools)
+	return evaluation
+}
+
 // list_of makes a List of the evaluation with the values.
 @(private = "file")
 list_of :: proc(t: ^testing.T, evaluation: ^Evaluation, values: []Value) -> Value {
@@ -87,20 +101,22 @@ a_kept_list_is_refused_past_its_bounds_with_an_error_record :: proc(t: ^testing.
 	items := list_of(t, evaluation, integers(KEPT_LIST_ITEM_CAPACITY))
 	testing.expect_value(t, list_keep(keeping, evaluation, items).refusal, List_Keep_Refusal.None)
 	testing.expect_value(t, keeping.item_count, KEPT_LIST_ITEM_CAPACITY)
-	evaluation = fresh_evaluation()
+	evaluation = large_evaluation(KEPT_LIST_ITEM_CAPACITY + 1)
 	items = list_of(t, evaluation, integers(KEPT_LIST_ITEM_CAPACITY + 1))
 	result = list_keep(keeping, evaluation, items)
 	testing.expect_value(t, result.refusal, List_Keep_Refusal.Items_Full)
 	testing.expect_value(t, result.record, errors.error_make(.Over_Limit, .None, 0, KEPT_LIST_ITEM_CAPACITY + 1, KEPT_LIST_ITEM_CAPACITY))
 
-	// Two nested lists of 31 items and the two lists: 64 in all, kept; one
-	// item more in a nested list: refused.
-	evaluation = fresh_evaluation()
-	inner := list_of(t, evaluation, integers(31))
+	// Two nested lists of the half of the bound less one item, and the two
+	// lists: the bound in all, kept; one item more in a nested list:
+	// refused.
+	HALF :: KEPT_LIST_ITEM_CAPACITY / 2
+	evaluation = large_evaluation(3 * KEPT_LIST_ITEM_CAPACITY)
+	inner := list_of(t, evaluation, integers(HALF - 1))
 	outer := list_of(t, evaluation, {inner, inner})
 	testing.expect_value(t, list_keep(keeping, evaluation, outer).refusal, List_Keep_Refusal.None)
-	testing.expect_value(t, keeping.item_count, 64)
-	larger := list_of(t, evaluation, integers(32))
+	testing.expect_value(t, keeping.item_count, KEPT_LIST_ITEM_CAPACITY)
+	larger := list_of(t, evaluation, integers(HALF))
 	outer = list_of(t, evaluation, {inner, larger})
 	result = list_keep(keeping, evaluation, outer)
 	testing.expect_value(t, result.refusal, List_Keep_Refusal.Items_Full)
@@ -148,22 +164,21 @@ a_kept_list_refuses_the_items_of_its_line :: proc(t: ^testing.T) {
 	testing.expect_value(t, keeping.items[0].record[3], u8(6))
 }
 
-// A line reads full kept lists among the 256 items of its evaluation: four
-// fit, the fifth is refused with its error record and adds nothing.
+// A line reads a full kept list among the items of its evaluation: one
+// fits, the second is refused with its error record and adds nothing.
 @(test)
-five_full_kept_lists_do_not_fit_in_one_line :: proc(t: ^testing.T) {
+two_full_kept_lists_do_not_fit_in_one_line :: proc(t: ^testing.T) {
 	kept := new(Kept, context.temp_allocator)
 	source := fresh_evaluation()
 	keep_into(t, kept, source, list_of(t, source, integers(KEPT_LIST_ITEM_CAPACITY)))
 	evaluation := fresh_evaluation()
-	for read in 0 ..< 4 {
-		value, _, ok := kept_list_read(evaluation, kept.items[:kept.count], kept.top)
-		testing.expect(t, ok)
-		testing.expect_value(t, value.integer, i64(read * KEPT_LIST_ITEM_CAPACITY))
-	}
-	_, record, ok := kept_list_read(evaluation, kept.items[:kept.count], kept.top)
+	value, _, ok := kept_list_read(evaluation, kept.items[:kept.count], kept.top)
+	testing.expect(t, ok)
+	testing.expect_value(t, value.integer, 0)
+	record: errors.Error_Record
+	_, record, ok = kept_list_read(evaluation, kept.items[:kept.count], kept.top)
 	testing.expect(t, !ok)
-	testing.expect_value(t, record, errors.error_make(.Over_Limit, .None, 0, 5 * KEPT_LIST_ITEM_CAPACITY, LIST_ITEM_CAPACITY))
+	testing.expect_value(t, record, errors.error_make(.Over_Limit, .None, 0, 2 * KEPT_LIST_ITEM_CAPACITY, LIST_ITEM_CAPACITY))
 	testing.expect_value(t, evaluation.list_item_count, LIST_ITEM_CAPACITY)
 }
 

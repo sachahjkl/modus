@@ -547,7 +547,7 @@ ten_thousand_candidates :: proc(t: ^testing.T) {
 // test checks the order only; the bound of the work follows from it.
 @(test)
 long_names_of_one_length :: proc(t: ^testing.T) {
-	NAME_SIZE :: 1000
+	NAME_SIZE :: NAME_COMPARE_LIMIT + 8
 	COUNT :: CANDIDATE_SCAN_LIMIT
 	bytes := make([]u8, NAME_SIZE * COUNT)
 	defer delete(bytes)
@@ -601,13 +601,13 @@ history_ring :: proc(t: ^testing.T) {
 	// More lines than the capacity: the oldest go.
 	history^ = {}
 	buffer: [16]u8
-	for number in 0 ..< 300 {
+	for number in 0 ..< HISTORY_LINE_CAPACITY + 44 {
 		text := fmt_line(buffer[:], number)
 		history_add(history, text)
 	}
 	testing.expect_value(t, history_count(history), HISTORY_LINE_CAPACITY)
 	newest, _ = history_line(history, 0)
-	testing.expect_value(t, newest, "line 299")
+	testing.expect_value(t, newest, fmt_line(buffer[:], HISTORY_LINE_CAPACITY + 43))
 	oldest, _ := history_line(history, HISTORY_LINE_CAPACITY - 1)
 	testing.expect_value(t, oldest, "line 44")
 
@@ -620,8 +620,8 @@ history_ring :: proc(t: ^testing.T) {
 		}
 		history_add(history, string(long[:]))
 	}
-	testing.expect_value(t, history_count(history), 81)
-	for age in 0 ..< 81 {
+	testing.expect_value(t, history_count(history), HISTORY_BYTE_CAPACITY / LINE_CAPACITY)
+	for age in 0 ..< HISTORY_BYTE_CAPACITY / LINE_CAPACITY {
 		text, ok := history_line(history, age)
 		testing.expect(t, ok && len(text) == LINE_CAPACITY && text[0] == u8('a' + (99 - age) % 26) && text[LINE_CAPACITY - 1] == text[0])
 	}
@@ -709,7 +709,7 @@ history_file_round_trip :: proc(t: ^testing.T) {
 	}
 	buffer: [HISTORY_FILE_SIZE_LIMIT]u8
 	bytes := history_file_write(history, buffer[:])
-	testing.expect_value(t, len(bytes), HISTORY_FILE_HEADER_SIZE + 3 + 18 + 27 + 6 + HISTORY_FILE_HASH_SIZE)
+	testing.expect_value(t, len(bytes), HISTORY_FILE_HEADER_SIZE + 3 * HISTORY_LINE_LENGTH_SIZE + 18 + 27 + 6 + HISTORY_FILE_HASH_SIZE)
 	testing.expect_value(t, history_file_read(bytes, read_back), History_File_Problem.None)
 	testing.expect_value(t, history_count(read_back), 3)
 	for age in 0 ..< 3 {
@@ -745,10 +745,10 @@ history_file_keeps_the_newest_lines :: proc(t: ^testing.T) {
 	}
 	buffer: [HISTORY_FILE_SIZE_LIMIT]u8
 	bytes := history_file_write(history, buffer[:])
-	// (4096 - 16 - 32) / 201 = 20 lines.
+	KEPT :: (HISTORY_FILE_SIZE_LIMIT - HISTORY_FILE_HEADER_SIZE - HISTORY_FILE_HASH_SIZE) / (LINE_CAPACITY + HISTORY_LINE_LENGTH_SIZE)
 	testing.expect_value(t, history_file_read(bytes, read_back), History_File_Problem.None)
-	testing.expect_value(t, history_count(read_back), 20)
-	for age in 0 ..< 20 {
+	testing.expect_value(t, history_count(read_back), KEPT)
+	for age in 0 ..< KEPT {
 		text, _ := history_line(read_back, age)
 		testing.expect(t, len(text) == LINE_CAPACITY && text[0] == u8('a' + (39 - age) % 26))
 	}
@@ -790,7 +790,9 @@ history_file_hostile :: proc(t: ^testing.T) {
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Size, proc(bytes: []u8) {bytes[12] += 1}, true, "the count of bytes")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16] = 0}, true, "a line of 0 bytes")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16] = 250}, true, "a line longer than the lines")
-	expect_problem(t, good, copy_of_good[:], read_back, .Not_Text, proc(bytes: []u8) {bytes[17] = 7}, true, "a control byte")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16], bytes[17] = u8((LINE_CAPACITY + 1) & 0xFF), u8((LINE_CAPACITY + 1) >> 8)}, true, "a line one byte past a line of the editor")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16], bytes[17] = 0xFF, 0xFF}, true, "the largest length")
+	expect_problem(t, good, copy_of_good[:], read_back, .Not_Text, proc(bytes: []u8) {bytes[18] = 7}, true, "a control byte")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Count, proc(bytes: []u8) {bytes[8] = 1}, true, "fewer lines than the bytes")
 	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Count, proc(bytes: []u8) {bytes[8] = 3}, true, "more lines than the bytes")
 	short := [10]u8{}
@@ -798,7 +800,7 @@ history_file_hostile :: proc(t: ^testing.T) {
 	testing.expect_value(t, history_file_read(nil, read_back), History_File_Problem.Too_Short)
 	// A byte that starts a sequence of two, then a byte of ASCII: a
 	// sequence cut short.
-	expect_problem(t, good, copy_of_good[:], read_back, .Not_Text, proc(bytes: []u8) {bytes[17] = 0xC3}, true, "a sequence cut short")
+	expect_problem(t, good, copy_of_good[:], read_back, .Not_Text, proc(bytes: []u8) {bytes[18] = 0xC3}, true, "a sequence cut short")
 }
 
 // A line of UTF-8 goes into the file and comes back the same, and a line
@@ -890,4 +892,31 @@ one_read_of_the_line_never_drops_a_key_that_could_stay :: proc(t: ^testing.T) {
 			}
 		}
 	}
+}
+
+// The view of a long line: a room of none, a text that fits, then a text
+// past the room with the caret at the start, in the middle and at the end;
+// a view never cuts a character and always holds the caret.
+@(test)
+line_view_holds_the_caret_and_whole_characters :: proc(t: ^testing.T) {
+	start, end := line_view("abc", 1, 0)
+	testing.expect_value(t, start, 0)
+	testing.expect_value(t, end, 0)
+	start, end = line_view("abc", 3, 3)
+	testing.expect_value(t, end, 3)
+	long: [LINE_CAPACITY]u8
+	for &b, index in long {
+		b = index % 3 == 0 ? 0xC3 : (index % 3 == 1 ? 0xA9 : 'x') // "éx" again and again.
+	}
+	text := string(long[:LINE_CAPACITY - LINE_CAPACITY % 3])
+	ROOM :: 250
+	for caret in ([?]int{0, 1, 300, 2000, len(text) - 1, len(text), len(text) + 5, -1}) {
+		start, end = line_view(text, caret, ROOM)
+		testing.expectf(t, end - start <= ROOM, "caret %d: the view has %d bytes", caret, end - start)
+		testing.expectf(t, start <= clamp(caret, 0, len(text)) && clamp(caret, 0, len(text)) <= end, "caret %d: the view %d..%d holds it", caret, start, end)
+		testing.expectf(t, start == len(text) || text[start] & 0xC0 != 0x80, "caret %d: the view starts at a character", caret)
+		testing.expectf(t, end == len(text) || text[end] & 0xC0 != 0x80, "caret %d: the view ends at a character", caret)
+	}
+	start, end = line_view(text, len(text), ROOM)
+	testing.expect_value(t, end, len(text))
 }

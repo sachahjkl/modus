@@ -15,7 +15,7 @@ import terminal "modus:terminal"
 // console_name_role gives what a name is for this console now: a command or
 // an export, a command that makes a record, a service or a module that the
 // console loaded, a variable. The tables have at most 256 commands, 8
-// services, the loaded modules and 16 variables.
+// services, the loaded modules and 64 variables.
 console_name_role :: proc "contextless" (data: rawptr, name: string) -> console_language.Name_Role {
 	if name == "" {
 		return .Unknown

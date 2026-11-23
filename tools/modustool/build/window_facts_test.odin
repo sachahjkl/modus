@@ -275,8 +275,8 @@ the_facts_of_edit_write_the_lines_of_before :: proc(t: ^testing.T) {
 	replaced_words := [2]string{"", ", with invalid sequences replaced"}
 	generations := [3]i64{min(i64), 0, max(i64)}
 	for size in UNIT_VALUES {
-		facts_expect_line(t, render(t, file, "Stored_Text_Too_Long", {{"text_capacity", size}}), line_of_before("edit: the text in the store has more than ", size, " bytes: the editor starts empty and keeps nothing"))
-		facts_expect_line(t, render(t, file, "Cleaned_Text_Too_Long", {{"text_capacity", size}}), line_of_before("edit: the text in the store passes ", size, " bytes with its replacement characters: the editor starts empty and keeps nothing"))
+		facts_expect_line(t, render(t, file, "Stored_Text_Too_Long", {{"length", size}}), line_of_before("edit: the text in the store has ", size, " bytes, more than the memory of the editor holds: the editor starts empty and keeps nothing"))
+		facts_expect_line(t, render(t, file, "Cleaned_Text_Too_Long", {{"length", size}}), line_of_before("edit: the text in the store has ", size, " bytes, and with its replacement characters it is more than the memory of the editor holds: the editor starts empty and keeps nothing"))
 		for count in COUNTS {
 			facts_expect_line(t, render(t, file, "Text_Restored", {{"length", size}, {"lines", count}}), line_of_before("edit: restored a text of ", size, " bytes, ", count, " lines"))
 			facts_expect_line(t, render(t, file, "Text_Restored_With_Replacements", {{"length", size}, {"lines", count}, {"replaced", max(u64) - count}}), line_of_before("edit: restored a text of ", size, " bytes, ", count, " lines, with ", max(u64) - count, " invalid sequences replaced by the replacement character"))
@@ -286,7 +286,7 @@ the_facts_of_edit_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for action in actions {
 		for generation in generations {
 			facts_expect_line(t, render(t, file, "Too_Many_Versions", {{"versions", signed_bits(generation)}, {"listed_versions", u64(256)}, {"action", action}}), line_of_before("edit: ", action, ": the text has ", generation, " versions, more than the ", u64(256), " that the editor lists"))
-			facts_expect_line(t, render(t, file, "Version_Too_Long", {{"generation", signed_bits(generation)}, {"action", action}}), line_of_before("edit: ", action, ": the version of generation ", generation, " is too long for the editor"))
+			facts_expect_line(t, render(t, file, "Version_Too_Long", {{"generation", signed_bits(generation)}, {"action", action}}), line_of_before("edit: ", action, ": the version of generation ", generation, " is more than the memory of the editor holds: the store keeps it as the current text, and the editor keeps nothing more"))
 			for words in replaced_words {
 				facts_expect_line(t, render(t, file, "Version_Restored", {{"length", u64(max(i64))}, {"caret", max(u64)}, {"generation", signed_bits(generation)}, {"action", action}, {"replaced_words", words}}), line_of_before("edit: ", action, ": the text has ", u64(max(i64)), " bytes, the caret at byte ", max(u64), ", the version of generation ", generation, words))
 			}

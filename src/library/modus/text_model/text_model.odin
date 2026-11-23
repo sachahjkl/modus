@@ -16,9 +16,10 @@ package text_model
 
 import "modus:contract/text_encoding"
 
-// The most bytes of a text. A whole write of the text to the storage
-// service goes through one call region, which has room for it and its
-// name (src/md/features/editor.md, "The text model").
+// The inline capacity of a zero-value Text when the caller supplies no
+// external buffer or growth callback (src/md/features/editor.md, "The text
+// model"). Callers that edit larger documents supply a growable buffer
+// backed by an arena of their process budget.
 TEXT_CAPACITY :: 32768
 
 LINE_END :: '\n'
@@ -28,19 +29,29 @@ TAB :: '\t'
 // editor writes in place of each invalid sequence of a text that it reads.
 REPLACEMENT_BYTES :: [3]u8{0xEF, 0xBF, 0xBD}
 
+// Caller-supplied growth callback for the gap buffer. Returns a slice of
+// at least minimum_bytes (either extending current in place from the same
+// base address or a new buffer), or false when the caller's budget refuses
+// the growth.
+Buffer_Grow :: #type proc "contextless" (user_data: rawptr, current: []u8, minimum_bytes: int) -> (grown: []u8, ok: bool)
+
 // The text of the editor. The zero value is an empty text with the caret
-// at 0.
+// at 0, backed by the inline buffer. Call text_init_buffer to attach a
+// caller-supplied buffer and optional arena-backed growth callback.
 Text :: struct {
-	bytes:        [TEXT_CAPACITY]u8,
-	before_count: int, // bytes[:before_count] is the text before the gap.
-	after_count:  int, // bytes[TEXT_CAPACITY - after_count:] is the text after the gap.
-	caret:        int, // Where the keys act.
-	anchor:       int, // The other end of the selection; equal to the caret when nothing is selected.
+	bytes:          [TEXT_CAPACITY]u8,
+	external_bytes: []u8, // When non-empty, replaces the inline buffer.
+	grow:           Buffer_Grow,
+	grow_data:      rawptr,
+	before_count:   int, // storage[:before_count] is the text before the gap.
+	after_count:    int, // storage[len(storage) - after_count:] is the text after the gap.
+	caret:          int, // Where the keys act.
+	anchor:         int, // The other end of the selection; equal to the caret when nothing is selected.
 	// The cell column that a run of Up, Down, Page Up and Page Down keeps,
 	// so that a short line on the way does not move the caret to the left
 	// for the lines after it.
-	goal_column:  int,
-	has_goal:     bool,
+	goal_column:    int,
+	has_goal:       bool,
 }
 
 // Why an edit is refused. A refused edit changes nothing.
@@ -48,7 +59,69 @@ Edit_Problem :: enum u8 {
 	None     = 0,
 	Empty    = 1, // An insert of no byte.
 	Not_Text = 2, // An invalid sequence, or a control character other than the line end and the tab.
-	Too_Long = 3, // The text would pass TEXT_CAPACITY.
+	Too_Long = 3, // The text would pass the buffer capacity and any caller budget.
+}
+
+// text_init_buffer resets text to empty and attaches a caller-supplied
+// backing slice and optional growth callback. Passing nil for buffer with a
+// non-nil grow callback starts on the inline buffer and grows on demand.
+text_init_buffer :: proc "contextless" (text: ^Text, buffer: []u8, grow: Buffer_Grow = nil, grow_data: rawptr = nil) {
+	text.external_bytes = buffer
+	text.grow = grow
+	text.grow_data = grow_data
+	text.before_count = 0
+	text.after_count = 0
+	text.caret = 0
+	text.anchor = 0
+	text.goal_column = 0
+	text.has_goal = false
+}
+
+// text_storage returns the active backing slice of text.
+@(private)
+text_storage :: proc "contextless" (text: ^Text) -> []u8 {
+	if len(text.external_bytes) > 0 {
+		return text.external_bytes
+	}
+	return text.bytes[:]
+}
+
+// text_capacity gives the current byte capacity of text without growing.
+text_capacity :: proc "contextless" (text: ^Text) -> int {
+	return len(text_storage(text))
+}
+
+// text_ensure_capacity grows the gap buffer to hold at least needed bytes,
+// preserving both gap segments intact. Returns false without modifying text
+// if the growth is refused.
+@(private)
+text_ensure_capacity :: proc "contextless" (text: ^Text, needed: int) -> bool {
+	if needed < 0 {
+		return false
+	}
+	storage := text_storage(text)
+	if needed <= len(storage) {
+		return true
+	}
+	if text.grow == nil {
+		return false
+	}
+	old_capacity := len(storage)
+	grown, ok := text.grow(text.grow_data, storage, needed)
+	if !ok || len(grown) < needed {
+		return false
+	}
+	same_base := len(storage) > 0 && raw_data(grown) == raw_data(storage)
+	if !same_base && text.before_count > 0 {
+		copy(grown[:text.before_count], storage[:text.before_count])
+	}
+	if text.after_count > 0 {
+		old_after := old_capacity - text.after_count
+		new_after := len(grown) - text.after_count
+		copy(grown[new_after:len(grown)], storage[old_after:old_capacity])
+	}
+	text.external_bytes = grown
+	return true
 }
 
 // text_length gives the bytes of the text.
@@ -58,26 +131,29 @@ text_length :: proc "contextless" (text: ^Text) -> int {
 
 // byte_at gives the byte at a place of the text, 0 <= place < text_length.
 byte_at :: proc "contextless" (text: ^Text, place: int) -> u8 {
+	storage := text_storage(text)
 	if place < text.before_count {
-		return text.bytes[place]
+		return storage[place]
 	}
-	return text.bytes[TEXT_CAPACITY - text.after_count + place - text.before_count]
+	return storage[len(storage) - text.after_count + place - text.before_count]
 }
 
 // gap_move puts the gap at a place of the text, 0 <= place <= text_length.
 // The copy can overlap its source: copy moves the bytes as memmove does.
 @(private)
 gap_move :: proc "contextless" (text: ^Text, place: int) {
+	storage := text_storage(text)
+	capacity := len(storage)
 	if place < text.before_count {
 		count := text.before_count - place
-		after_start := TEXT_CAPACITY - text.after_count
-		copy(text.bytes[after_start - count:after_start], text.bytes[place:text.before_count])
+		after_start := capacity - text.after_count
+		copy(storage[after_start - count:after_start], storage[place:text.before_count])
 		text.after_count += count
 		text.before_count = place
 	} else if place > text.before_count {
 		count := place - text.before_count
-		after_start := TEXT_CAPACITY - text.after_count
-		copy(text.bytes[text.before_count:place], text.bytes[after_start:after_start + count])
+		after_start := capacity - text.after_count
+		copy(storage[text.before_count:place], storage[after_start:after_start + count])
 		text.before_count = place
 		text.after_count -= count
 	}
@@ -87,7 +163,7 @@ gap_move :: proc "contextless" (text: ^Text, place: int) {
 // end. The slice is valid until the next edit.
 text_bytes :: proc "contextless" (text: ^Text) -> []u8 {
 	gap_move(text, text_length(text))
-	return text.bytes[:text.before_count]
+	return text_storage(text)[:text.before_count]
 }
 
 // text_valid says if bytes are a text of the editor: UTF-8 with no control
@@ -148,16 +224,35 @@ text_clean :: proc "contextless" (source: []u8, target: []u8) -> (count: int, re
 	return count, replaced, .None
 }
 
+// text_clean_length gives the bytes that text_clean writes for source: a
+// caller sizes its target from it before the copy.
+text_clean_length :: proc "contextless" (source: []u8) -> int {
+	count := 0
+	place := 0
+	for place < len(source) {
+		value := source[place]
+		if value == LINE_END || value == TAB {
+			count += 1
+			place += 1
+			continue
+		}
+		_, length, valid := text_encoding.character_decode(source, place)
+		count += valid ? length : len(REPLACEMENT_BYTES)
+		place += max(length, 1)
+	}
+	return count
+}
+
 // text_replace_whole makes the text the bytes given, which text_clean or a
 // check made: a version that Ctrl+Z or Ctrl+Y restores, or the text read at
 // the start. The caret goes to the end of the part that differs, so a
 // principal sees where the text changed; nothing is selected.
 text_replace_whole :: proc "contextless" (text: ^Text, bytes: []u8) -> Edit_Problem {
-	if len(bytes) > TEXT_CAPACITY {
-		return .Too_Long
-	}
 	if !text_valid(bytes) {
 		return .Not_Text
+	}
+	if !text_ensure_capacity(text, len(bytes)) {
+		return .Too_Long
 	}
 	old := text_bytes(text)
 	shorter := min(len(old), len(bytes))
@@ -171,7 +266,8 @@ text_replace_whole :: proc "contextless" (text: ^Text, bytes: []u8) -> Edit_Prob
 	}
 	// The two texts can overlap in memory only if a caller passes the
 	// slice of text_bytes: copy moves the bytes as memmove does.
-	copy(text.bytes[:len(bytes)], bytes)
+	storage := text_storage(text)
+	copy(storage[:len(bytes)], bytes)
 	text.before_count, text.after_count = len(bytes), 0
 	caret := len(bytes) - suffix
 	// A byte compare can stop inside a character: é and è share their
@@ -213,17 +309,19 @@ selection_copy :: proc "contextless" (text: ^Text, target: []u8) -> (count: int,
 	if selected > len(target) {
 		return 0, .Too_Long
 	}
+	storage := text_storage(text)
+	capacity := len(storage)
 	switch {
 	case last <= text.before_count:
-		copy(target[:selected], text.bytes[first:last])
+		copy(target[:selected], storage[first:last])
 	case first >= text.before_count:
-		after_start := TEXT_CAPACITY - text.after_count + (first - text.before_count)
-		copy(target[:selected], text.bytes[after_start:after_start + selected])
+		after_start := capacity - text.after_count + (first - text.before_count)
+		copy(target[:selected], storage[after_start:after_start + selected])
 	case:
 		left := text.before_count - first
-		copy(target[:left], text.bytes[first:text.before_count])
-		after_start := TEXT_CAPACITY - text.after_count
-		copy(target[left:selected], text.bytes[after_start:after_start + (selected - left)])
+		copy(target[:left], storage[first:text.before_count])
+		after_start := capacity - text.after_count
+		copy(target[left:selected], storage[after_start:after_start + (selected - left)])
 	}
 	return selected, .None
 }
@@ -270,7 +368,8 @@ text_insert :: proc "contextless" (text: ^Text, bytes: []u8) -> Edit_Problem {
 	if !text_valid(bytes) {
 		return .Not_Text
 	}
-	if text_length(text) - selection_count(text) + len(bytes) > TEXT_CAPACITY {
+	kept := text_length(text) - selection_count(text)
+	if len(bytes) > max(int) - kept || !text_ensure_capacity(text, kept + len(bytes)) {
 		return .Too_Long
 	}
 	if selection_count(text) > 0 {
@@ -278,7 +377,8 @@ text_insert :: proc "contextless" (text: ^Text, bytes: []u8) -> Edit_Problem {
 		range_remove(text, first, last)
 	}
 	gap_move(text, text.caret)
-	copy(text.bytes[text.before_count:text.before_count + len(bytes)], bytes)
+	storage := text_storage(text)
+	copy(storage[text.before_count:text.before_count + len(bytes)], bytes)
 	text.before_count += len(bytes)
 	text.caret, text.anchor, text.has_goal = text.before_count, text.before_count, false
 	return .None

@@ -131,9 +131,11 @@ import "modus:text_rendering"
 import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread. The working
-// memory holds 7583 pages, and the 144 pages of the stack of the second
-// thread past the stack of a thread that names no size.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7727, processes = 5, threads = 6}
+// memory holds 7583 pages, the 144 pages of the stack of the second thread
+// past the stack of a thread that names no size, and 2048 pages (8 MiB)
+// for the values that the variables keep, each in a memory object of its
+// size.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9775, processes = 5, threads = 6}
 
 // The stack of the second thread, which runs the lines: the bytes that the
 // evaluator may take, and 128 KiB for the host and the command that a call
@@ -568,9 +570,13 @@ edit_show :: proc "contextless" () {
 		}
 		style.tone = u8(terminal.Tone.Warning)
 	} else {
+		// A line longer than one record of the terminal shows the part
+		// around the caret, cut at whole characters.
+		whole := line_editor.line_text(&line)
+		start, end := line_editor.line_view(whole, line.caret, terminal.RUN_LIMIT - len(PROMPT))
 		system.write_part(&writer, PROMPT)
-		system.write_part(&writer, line_editor.line_text(&line))
-		cursor = u64(len(PROMPT) + line.caret)
+		system.write_part(&writer, whole[start:end])
+		cursor = u64(len(PROMPT) + line.caret - start)
 	}
 	text := system.written(&writer)
 	system.lock(&output_lock)

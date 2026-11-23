@@ -81,7 +81,7 @@ scenario := [?]Step {
 	// The console asks for the store of its line history at its start: the
 	// root service answers after the start of the boot pass, so the storage
 	// service runs.
-	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
+	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 24 blocks", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
 	// The first window takes the free place at the top left of the work
 	// area (src/md/features/window_placement.md); the steps of this

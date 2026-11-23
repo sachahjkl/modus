@@ -498,3 +498,54 @@ arena_push_with_a_refused_undo_keeps_the_committed_pages :: proc(t: ^testing.T) 
 	testing.expect_value(t, offset_of_address(result), 0)
 	testing.expect_value(t, three.commit_calls, calls)
 }
+
+// A buffer that grows in one arena: each refusal first (past the
+// reservation, a budget that pays neither step), then the doubled step,
+// the minimum alone when the budget refuses the double, and a size already
+// in use, which commits nothing. The base never moves.
+@(test)
+arena_extend_to_grows_one_buffer_in_place :: proc(t: ^testing.T) {
+	RESERVED_PAGES :: 8
+	past := fake_reservation(RESERVED_PAGES, 100)
+	bytes, status := arena_extend_to(&past.arena, RESERVED_PAGES * PAGE_SIZE + 1)
+	testing.expect_value(t, status, Status.No_Slot)
+	testing.expect(t, bytes == nil)
+	testing.expect_value(t, past.used_bytes, 0)
+	testing.expect_value(t, past.commit_calls, 0)
+
+	poor := fake_reservation(RESERVED_PAGES, 0)
+	bytes, status = arena_extend_to(&poor.arena, 1)
+	testing.expect_value(t, status, Status.No_Budget)
+	testing.expect_value(t, poor.used_bytes, 0)
+	testing.expect_value(t, poor.pages_of_the_fake, 0)
+
+	fake := fake_reservation(RESERVED_PAGES, 100)
+	bytes, status = arena_extend_to(&fake.arena, 100)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, len(bytes), 100)
+	testing.expect_value(t, uintptr(raw_data(bytes)), FAKE_BASE)
+	// Past the end: the double of the bytes in use, from the same base.
+	bytes, status = arena_extend_to(&fake.arena, 150)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, len(bytes), 200)
+	testing.expect_value(t, uintptr(raw_data(bytes)), FAKE_BASE)
+	// A size in use commits nothing.
+	calls := fake.commit_calls
+	bytes, status = arena_extend_to(&fake.arena, 10)
+	testing.expect_value(t, len(bytes), 200)
+	testing.expect_value(t, fake.commit_calls, calls)
+	// The reservation whole: the double is cut to it.
+	bytes, status = arena_extend_to(&fake.arena, RESERVED_PAGES * PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, len(bytes), RESERVED_PAGES * PAGE_SIZE)
+
+	// A budget of 3 pages refuses the doubled step of 4 pages and pays the
+	// minimum of 3.
+	tight := fake_reservation(RESERVED_PAGES, 3)
+	_, status = arena_extend_to(&tight.arena, 2 * PAGE_SIZE)
+	testing.expect_value(t, status, Status.Ok)
+	bytes, status = arena_extend_to(&tight.arena, 2 * PAGE_SIZE + 1)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, len(bytes), 2 * PAGE_SIZE + 1)
+	testing.expect_value(t, uintptr(raw_data(bytes)), FAKE_BASE)
+}
