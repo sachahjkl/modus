@@ -23,18 +23,18 @@ An address that a person finds in a plan, in a log or in a search must say what 
 | `/status.json` | The same facts as a record, for a monitor |
 | `/style.css` | The style sheet of the site, made once at the start |
 
-`--endpoint <host:port>` is the public address that the page shows (the host behind a proxy does not know its own name); with none, the page shows the listen address. A deployment passes its public name, such as `--endpoint cache.modus.systems:5010`: no default claims a host that runs. `--site <address>` is the address of the site; by default, the address that the tool gives the site (`SITE_ADDRESS` of `tools/modustool/site`), so a move of the site changes one constant. The page links to the site and takes the font of the name and the heron from it.
+`--endpoint <host:port>` is the public address that the page shows (the host behind a proxy does not know its own name); with none, the page shows the listen address. The deployment passes its public name, `--endpoint cache.modus.systems:5010`: no default claims a host that runs. `--site <address>` is the address of the site; by default, the address that the tool gives the site (`SITE_ADDRESS` of `tools/modustool/site`), so a move of the site changes one constant. The page links to the site and takes the font of the name and the heron from it.
 
 The two values reach a page and a header, so the command refuses them at its border, and the page escapes each use all the same:
 
-- An endpoint is `host:port`: a host of letters, digits, `.` and `-`, or an IPv6 address in brackets, and a port of 1 to 65535 in digits. `host:`, `:5010` and `:::` are refused.
+- An endpoint is `host:port`. The host is a DNS name (labels of `a` to `z`, `0` to `9` and `-`, none that starts or ends with `-`, joined by single dots), an IPv4 address, or an IPv6 address in brackets. The port is 1 to 65535 in digits, with no leading zero. `host:`, `:5010`, `:::`, `-:1`, `...:1` and `a:05010` are refused.
 - A site address starts with `https://` or `http://` and a host, and has no byte below or at the space, no byte past ASCII, and none of `"`, `'`, `<`, `>`, `;`, `?`, `#`, `\`, `` ` ``, `,` and `&`.
 
 Refused: a second program that serves the page (a shell script that scans the store each minute into a file, and `python -m http.server` beside it). A second program in a second language reads the store with its own rules, and its page says what the scan saw a minute ago.
 
 ### The counts kept by the server
 
-The server counts the objects, the realisations and their bytes once, when it opens the store: one listing of each folder, entry by entry through the directory iterator, with the size of each entry from the listing, no read of a file. The memory of the listing is one entry, whatever the size of the folder; the time is one entry and its size for each file, once at the start. Only the names that are 64 lowercase hexadecimal digits count; the 10 newest realisations by their time are read and decoded for the list of the page. After that, each write of the server changes the counts:
+The server counts the objects, the realisations and their bytes once, when it opens the store: one listing of each folder, entry by entry through the directory iterator, with the size of each entry from the listing, no read of a file. A listing that the system cuts short refuses the open: counts that are too low are worse than no server. The memory of the listing is one entry, whatever the size of the folder; the time is one entry and its size for each file, once at the start. Only the names that are 64 lowercase hexadecimal digits count; the 10 newest realisations by their time are read and decoded for the list of the page. After that, each write of the server changes the counts:
 
 - a write of a name that the store did not hold adds one entry and its bytes;
 - a write of a name that the store held (the same object again, or another realisation of one recipe) adds nothing, and moves the time of the last write;

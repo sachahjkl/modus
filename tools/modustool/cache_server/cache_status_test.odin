@@ -200,7 +200,7 @@ status_parse_refuses_each_malformed_head :: proc(t: ^testing.T) {
 
 @(test)
 status_page_settings_refuse_unsafe_values :: proc(t: ^testing.T) {
-	bad_endpoints := [?]string{"", ":5010", "host:", ":::", "[::1]", "cache.example", "cache example:5010", "cache.example:5010\r\nX: y", "<b>:1", "a\"b:1", "a;b:1", "a/b:1", "a:0", "a:65536", "a:123456", "a:+1", "a:1a", "a:b:1", "[zz::1]:5010", "[]:5010", "[::1:5010", "a&b:1"}
+	bad_endpoints := [?]string{"", ":5010", "host:", ":::", "[::1]", "-:1", "...:1", "a:05010", "a:00", "a-:1", "-a:1", "a..b:1", ".a:1", "a.:1", "A.example:1", "a_b:1", "1.2.3:1", "1.2.3.4.5:1", "256.1.1.1:1", "01.2.3.4:1", "1.2.3.-4:1", "cache.example", "cache example:5010", "cache.example:5010\r\nX: y", "<b>:1", "a\"b:1", "a;b:1", "a/b:1", "a:0", "a:65536", "a:123456", "a:+1", "a:1a", "a:b:1", "[zz::1]:5010", "[]:5010", "[::1:5010", "a&b:1"}
 	for value in bad_endpoints {
 		testing.expectf(t, !cache_page_endpoint_valid(value), "endpoint %q", value)
 	}
@@ -209,6 +209,10 @@ status_page_settings_refuse_unsafe_values :: proc(t: ^testing.T) {
 		testing.expectf(t, !cache_page_site_address_valid(value), "site %q", value)
 	}
 	// The edges of the port, last.
+	testing.expect(t, cache_page_endpoint_valid("127.0.0.1:5010"))
+	testing.expect(t, cache_page_endpoint_valid("0.0.0.0:1"))
+	testing.expect(t, cache_page_endpoint_valid("cache-1.example:5010"))
+	testing.expect(t, cache_page_endpoint_valid("1a.example:5010"))
 	testing.expect(t, cache_page_endpoint_valid("a:1"))
 	testing.expect(t, cache_page_endpoint_valid("a:65535"))
 	testing.expect(t, cache_page_endpoint_valid("cache.modus.systems:5010"))
@@ -307,8 +311,11 @@ LARGE_ANSWER_BYTES :: 32 * 1024 * 1024
 
 @(private = "file")
 Slow_Reader :: struct {
-	socket:   net.TCP_Socket,
-	received: int,
+	socket:      net.TCP_Socket,
+	received:    int,
+	// The first bytes of the answer: its status line.
+	head:        [32]u8,
+	head_length: int,
 	// Set by the test when the next client got its answer: the bytes that
 	// the system queued on the side of the reader before the reset are not
 	// the subject of the test.
@@ -326,7 +333,14 @@ status_one_deadline_frees_the_thread_from_a_slow_reader :: proc(t: ^testing.T) {
 	defer net.close(silent)
 	_ = net.set_option(silent, .Receive_Buffer_Size, 4096)
 	testing.expect(t, tcp_write_all(silent, head_bytes("GET /style.css HTTP/1.1\r\n\r\n")))
-	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n"))), "HTTP/1.1 200 OK")
+	// The next client gets an answer: the thread is free. Its code is not
+	// the subject, so the test does not depend on the time that the answer
+	// takes under the short deadline.
+	testing.expect(t, strings.has_prefix(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n")), "HTTP/1.1 "))
+	// The silent client was answered: the head of a 200 waits in its buffer.
+	silent_head: [32]u8
+	silent_count, _ := net.recv_tcp(silent, silent_head[:])
+	testing.expect(t, strings.has_prefix(string(silent_head[:max(silent_count, 0)]), "HTTP/1.1 200 OK"))
 
 	// A client that reads a few bytes at a time, never enough to stop a send
 	// for long. Its pace is the hostile input, not a wait of the test: the
@@ -342,15 +356,21 @@ status_one_deadline_frees_the_thread_from_a_slow_reader :: proc(t: ^testing.T) {
 			if receive_error != .None || count == 0 {
 				return
 			}
+			taken := min(count, len(slow.head) - slow.head_length)
+			copy(slow.head[slow.head_length:], buffer[:taken])
+			slow.head_length += taken
 			slow.received += count
 			time.sleep(5 * time.Millisecond)
 		}
 	})
-	testing.expect_value(t, answer_line(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n"))), "HTTP/1.1 200 OK")
+	testing.expect(t, strings.has_prefix(status_exchange(t, test, head_bytes("GET /status.json HTTP/1.1\r\n\r\n")), "HTTP/1.1 "))
 	sync.atomic_store(&slow.done, true)
 	thread.join(reader)
 	thread.destroy(reader)
-	// The server cut the answer of the slow reader at its deadline.
+	// The slow reader was answered with a 200, then cut at the deadline: it
+	// read some bytes, and fewer than the whole answer.
+	testing.expect(t, strings.has_prefix(string(slow.head[:slow.head_length]), "HTTP/1.1 200 OK"))
+	testing.expect(t, slow.received > 0)
 	testing.expect(t, slow.received < LARGE_ANSWER_BYTES)
 }
 
@@ -367,14 +387,16 @@ status_drain_ends_at_its_bound_and_at_the_deadline :: proc(t: ^testing.T) {
 	status_test_stop(test)
 
 	// A client silent after the answer, which keeps its side open: the drain
-	// ends at the deadline and the next client is answered.
+	// ends at the deadline and the next client gets an answer. The test
+	// asserts only that the thread is free, not the code of either answer,
+	// which the short deadline makes depend on the speed of the host.
 	short := status_test_start(t, nil, SHORT_DEADLINE)
 	defer status_test_stop(short)
 	quiet := status_dial(t, short)
 	defer net.close(quiet)
 	testing.expect(t, tcp_write_all(quiet, head_bytes("GET /status.json HTTP/1.1\r\n\r\n")))
-	testing.expect_value(t, answer_line(status_read_to_end(quiet)), "HTTP/1.1 200 OK")
-	testing.expect_value(t, answer_line(status_exchange(t, short, head_bytes("GET /status.json HTTP/1.1\r\n\r\n"))), "HTTP/1.1 200 OK")
+	_ = status_read_to_end(quiet)
+	testing.expect(t, strings.has_prefix(status_exchange(t, short, head_bytes("GET /status.json HTTP/1.1\r\n\r\n")), "HTTP/1.1 "))
 }
 
 @(private = "file")
@@ -519,8 +541,9 @@ status_free_space_is_kept_and_can_be_unknown :: proc(t: ^testing.T) {
 	kept, kept_known := cache_status_disk_free(&listener)
 	testing.expect_value(t, kept, 12345)
 	testing.expect(t, kept_known)
-	// Past its age it is read again.
-	listener.disk_free_read_at = time.Tick{}
+	// Past its age it is read again: the last read is set one age and one
+	// nanosecond before now, whatever the time since the start of the host.
+	listener.disk_free_read_at = time.Tick{_nsec = time.tick_now()._nsec - i64(DISK_FREE_LONGEST_AGE) - 1}
 	again, again_known := cache_status_disk_free(&listener)
 	testing.expect(t, again_known)
 	testing.expect(t, again != 12345)
@@ -536,13 +559,38 @@ status_free_space_is_kept_and_can_be_unknown :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(cache_status_json(&missing, settings, snapshot, 0, false), "\"disk_free_bytes\": null,"))
 }
 
+@(test)
+status_open_refuses_a_listing_that_fails :: proc(t: ^testing.T) {
+	directory := make_temp_store_dir(t)
+	defer {
+		_ = os.remove_all(directory)
+		delete(directory)
+	}
+	// A file where the folder of the objects must be: its listing fails, so
+	// the open fails, in place of counts of zero.
+	objects := strings.concatenate({directory, "/objects"}, context.temp_allocator)
+	testing.expect_value(t, os.write_entire_file(objects, transmute([]u8)string("not a folder")), nil)
+	server, open_ok := cache_server_open(directory, nil)
+	testing.expect(t, !open_ok)
+	if open_ok {
+		cache_server_destroy(&server)
+	}
+	// The same store with the folder in its place opens.
+	testing.expect_value(t, os.remove(objects), nil)
+	reopened, reopen_ok := cache_server_open(directory, nil)
+	testing.expect(t, reopen_ok)
+	cache_server_destroy(&reopened)
+}
+
 @(private = "file")
 CONCURRENT_PUT_COUNT :: 200
 
 @(private = "file")
 Concurrent_Writer :: struct {
-	server: ^Cache_Server,
-	t:      ^testing.T,
+	server:   ^Cache_Server,
+	// The puts that did not give Ok, counted on the thread of the writer
+	// and checked on the thread of the test, which alone uses testing.T.
+	failures: int,
 }
 
 @(test)
@@ -558,14 +606,23 @@ status_snapshots_while_another_thread_puts :: proc(t: ^testing.T) {
 	testing.expect(t, open_ok)
 	defer cache_server_destroy(&server)
 
-	writer := Concurrent_Writer{server = &server, t = t}
+	writer := Concurrent_Writer{server = &server}
 	worker := thread.create_and_start_with_poly_data(&writer, proc(writer: ^Concurrent_Writer) {
 		private_key, public_key, _ := make_test_keypair(0x51)
 		for index in 0 ..< CONCURRENT_PUT_COUNT {
 			payload := transmute([]u8)strings.repeat("p", index + 1, context.temp_allocator)
 			request := make_signed_put_object_request(.Blob, blake3.hash(payload), payload, &private_key, public_key)
-			frame := encode_req_alloc(writer.t, &request)
-			answer, _ := cache_server_handle_frame(writer.server, frame)
+			size, size_refusal := object_cache.encoded_request_size(&request)
+			if size_refusal != .None {
+				writer.failures += 1
+				continue
+			}
+			frame := make([]u8, size)
+			_, encode_refusal := object_cache.encode_request(&request, frame)
+			answer, status := cache_server_handle_frame(writer.server, frame)
+			if encode_refusal != .None || status != .Ok {
+				writer.failures += 1
+			}
 			delete(answer)
 			delete(frame)
 		}
@@ -581,6 +638,7 @@ status_snapshots_while_another_thread_puts :: proc(t: ^testing.T) {
 	}
 	thread.join(worker)
 	thread.destroy(worker)
+	testing.expect_value(t, writer.failures, 0)
 	final := cache_status_snapshot(&server.status)
 	testing.expect_value(t, final.counts.objects, u64(CONCURRENT_PUT_COUNT))
 	testing.expect_value(t, final.counts.object_bytes, u64(CONCURRENT_PUT_COUNT * (CONCURRENT_PUT_COUNT + 1) / 2))

@@ -106,7 +106,8 @@ cache_page_endpoint_valid :: proc(text: string) -> bool {
 	}
 	host := text[:colon]
 	port := text[colon + 1:]
-	if len(port) == 0 || len(port) > 5 {
+	// A port is written with no leading zero.
+	if len(port) == 0 || len(port) > 5 || port[0] == '0' {
 		return false
 	}
 	port_value := 0
@@ -138,14 +139,70 @@ cache_page_endpoint_valid :: proc(text: string) -> bool {
 		}
 		return colons >= 2
 	}
-	for index in 0 ..< len(host) {
-		switch host[index] {
-		case 'a' ..= 'z', 'A' ..= 'Z', '0' ..= '9', '.', '-':
-		case:
+	return cache_page_host_name_valid(host) || cache_page_ipv4_valid(host)
+}
+
+// cache_page_host_name_valid accepts a DNS name: labels of 1 to 63 bytes of
+// 'a' to 'z', '0' to '9' and '-', none that starts or ends with '-', joined
+// by single dots, at most 253 bytes, and one label at least that is not all
+// digits (a name of digits only is an IPv4 address or nothing).
+cache_page_host_name_valid :: proc(host: string) -> bool {
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	has_letter := false
+	remaining := host
+	for {
+		dot := strings.index_byte(remaining, '.')
+		label := dot < 0 ? remaining : remaining[:dot]
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label) - 1] == '-' {
 			return false
 		}
+		for index in 0 ..< len(label) {
+			switch label[index] {
+			case 'a' ..= 'z', '-':
+				has_letter = true
+			case '0' ..= '9':
+			case:
+				return false
+			}
+		}
+		if dot < 0 {
+			break
+		}
+		remaining = remaining[dot + 1:]
 	}
-	return true
+	return has_letter
+}
+
+// cache_page_ipv4_valid accepts four decimal numbers of 0 to 255, each with
+// no leading zero, joined by dots.
+cache_page_ipv4_valid :: proc(host: string) -> bool {
+	parts := 0
+	remaining := host
+	for {
+		dot := strings.index_byte(remaining, '.')
+		part := dot < 0 ? remaining : remaining[:dot]
+		if len(part) == 0 || len(part) > 3 || (len(part) > 1 && part[0] == '0') {
+			return false
+		}
+		value := 0
+		for index in 0 ..< len(part) {
+			if part[index] < '0' || part[index] > '9' {
+				return false
+			}
+			value = value * 10 + int(part[index] - '0')
+		}
+		if value > 255 {
+			return false
+		}
+		parts += 1
+		if dot < 0 {
+			break
+		}
+		remaining = remaining[dot + 1:]
+	}
+	return parts == 4
 }
 
 // cache_page_site_address_valid accepts an address of http or https with a

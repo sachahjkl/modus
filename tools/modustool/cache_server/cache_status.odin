@@ -181,6 +181,11 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 			case .Temp:
 			}
 		}
+		// A listing cut short gives counts that are too low: the open is refused,
+		// as for a folder that does not open.
+		if _, iterator_error := os.read_directory_iterator_error(&iterator); iterator_error != nil {
+			return false
+		}
 	}
 
 	recent: [RECENT_REALISATION_COUNT]Recent_Realisation
