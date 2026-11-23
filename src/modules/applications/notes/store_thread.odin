@@ -293,7 +293,7 @@ store_list :: proc "contextless" (ctx: ^system.Context) {
 				bytes = nil
 			}
 			if _, problem := note_list.list_add_stored(&store_listed, name, bytes, row.generation); problem == .Full {
-				system.log_fact(.Info, Notes_Cut{listed = note_list.NOTE_CAPACITY})
+				system.log_fact(.Info, Notes_Cut{listed = u64(store_listed.count)})
 				return
 			}
 		}

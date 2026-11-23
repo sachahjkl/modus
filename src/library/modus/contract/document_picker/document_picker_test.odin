@@ -167,3 +167,52 @@ document_pages_reach_each_document :: proc(t: ^testing.T) {
 	testing.expect_value(t, document_remove(&svc, ids[10]), Picker_Refusal.Not_Found)
 	testing.expect_value(t, document_remove(&svc, 0), Picker_Refusal.Invalid_Id)
 }
+
+// Document names follow the 255-byte STORAGE7 format property: 65-byte and
+// 255-byte names register, match search queries, and mint grants, while 256
+// bytes is refused.
+@(test)
+document_names_support_full_255_byte_storage_limit :: proc(t: ^testing.T) {
+	testing.expect_value(t, MAX_DOC_NAME_BYTES, 255)
+	tables := new(Test_Tables)
+	defer free(tables)
+	svc := service_make(tables)
+
+	name_65: [65]u8
+	for &b in name_65 {
+		b = 'a'
+	}
+	id_65, ref_65 := document_register(&svc, 1, string(name_65[:]))
+	testing.expect_value(t, ref_65, Picker_Refusal.None)
+	testing.expect(t, id_65 != 0)
+
+	name_255: [MAX_DOC_NAME_BYTES]u8
+	for &b in name_255 {
+		b = 'z'
+	}
+	name_255[254] = 'Q'
+	id_255, ref_255 := document_register(&svc, 1, string(name_255[:]))
+	testing.expect_value(t, ref_255, Picker_Refusal.None)
+	testing.expect(t, id_255 != 0)
+
+	name_256: [MAX_DOC_NAME_BYTES + 1]u8
+	for &b in name_256 {
+		b = 'x'
+	}
+	_, ref_256 := document_register(&svc, 1, string(name_256[:]))
+	testing.expect_value(t, ref_256, Picker_Refusal.Invalid_Name)
+
+	// Query up to 255 bytes finds the 255-byte name case-insensitively; 256 is refused.
+	query_255 := name_255
+	query_255[254] = 'q'
+	rows: [4]Document_Record
+	page, p_ref := document_page(&svc, 1, 0, string(query_255[:]), rows[:])
+	testing.expect_value(t, p_ref, Picker_Refusal.None)
+	testing.expect_value(t, page.count, 1)
+	testing.expect_value(t, rows[0].doc_id, id_255)
+	testing.expect_value(t, int(rows[0].name_len), MAX_DOC_NAME_BYTES)
+
+	_, q_ref := document_page(&svc, 1, 0, string(name_256[:]), rows[:])
+	testing.expect_value(t, q_ref, Picker_Refusal.Invalid_Query)
+}
+

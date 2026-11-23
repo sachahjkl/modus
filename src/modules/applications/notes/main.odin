@@ -220,16 +220,39 @@ ROWS_RESERVE_PAGES :: 4096 // The display rows: 2 Mi rows of 8 bytes.
 TRANSFER_RESERVE_PAGES :: 8192
 // The read memory and the write memory of the store thread: one note each.
 STORE_RESERVE_PAGES :: TEXT_RESERVE_PAGES
+// Plan value: reservation for the overflow tier of the note list (4 MiB, ~8000 notes).
+NOTES_LIST_RESERVE_PAGES :: 1024
 
 text_arena: system.Arena
 preview_arena: system.Arena
 rows_arena: system.Arena
 transfer_arena: system.Arena
+notes_arena: system.Arena
+store_listed_arena: system.Arena
 
-// arenas_start reserves the arenas and gives them to the text model and to
-// the store thread. A reservation that the budget refuses leaves its zero
-// arena, which refuses each growth: the texts then keep the buffers inside
-// the model.
+note_list_arena_grow :: proc "contextless" (user_data: rawptr, current: []note_list.Note, minimum_notes: int) -> (grown: []note_list.Note, ok: bool) {
+	arena := (^system.Arena)(user_data)
+	if arena == nil || minimum_notes <= 0 {
+		return nil, false
+	}
+	target := max(minimum_notes, len(current) * 2, note_list.NOTE_CAPACITY * 2)
+	bytes, status := system.arena_extend_to(arena, u64(target) * u64(size_of(note_list.Note)))
+	if status != .Ok {
+		bytes, status = system.arena_extend_to(arena, u64(minimum_notes) * u64(size_of(note_list.Note)))
+		if status != .Ok {
+			return nil, false
+		}
+	}
+	count := len(bytes) / size_of(note_list.Note)
+	if count < minimum_notes {
+		return nil, false
+	}
+	return ([^]note_list.Note)(raw_data(bytes))[:count], true
+}
+
+// arenas_start reserves the arenas and gives them to the text model, the note
+// lists and the store thread. A reservation that the budget refuses leaves its
+// zero arena, which refuses each growth: the models then keep their inline tiers.
 arenas_start :: proc "contextless" () {
 	text_arena, _ = system.arena_create(TEXT_RESERVE_PAGES)
 	preview_arena, _ = system.arena_create(TEXT_RESERVE_PAGES)
@@ -237,9 +260,13 @@ arenas_start :: proc "contextless" () {
 	transfer_arena, _ = system.arena_create(TRANSFER_RESERVE_PAGES)
 	read_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
 	write_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
+	notes_arena, _ = system.arena_create(NOTES_LIST_RESERVE_PAGES)
+	store_listed_arena, _ = system.arena_create(NOTES_LIST_RESERVE_PAGES)
 	text_model.text_init_buffer(&text, nil, system.arena_grow, &text_arena)
 	text_model.text_init_buffer(&preview, nil, system.arena_grow, &preview_arena)
 	text_model.layout_init_buffer(&layout, nil, system.arena_grow, &rows_arena)
+	note_list.list_init_overflow(&notes, nil, note_list_arena_grow, &notes_arena)
+	note_list.list_init_overflow(&store_listed, nil, note_list_arena_grow, &store_listed_arena)
 }
 
 // transfer_bytes gives count bytes of the transfer arena after its first
@@ -257,10 +284,11 @@ title_field :: proc "contextless" (title: string) -> [TITLE_FIELD_BYTES]u8 {
 }
 
 shown_title :: proc "contextless" () -> string {
-	if shown < 0 {
+	note := note_list.note_at(&notes, shown)
+	if note == nil {
 		return ""
 	}
-	return note_list.note_title(&notes.notes[shown])
+	return note_list.note_title(note)
 }
 
 // request_of_note puts a request about a note in the queue of the store
@@ -330,7 +358,8 @@ scroll_to_caret :: proc "contextless" () {
 
 // title_refresh renames the note shown by its first line, at each change.
 title_refresh :: proc "contextless" () {
-	if shown < 0 {
+	note := note_list.note_at(&notes, shown)
+	if note == nil {
 		return
 	}
 	first: [TITLE_READ_BYTES]u8
@@ -338,7 +367,7 @@ title_refresh :: proc "contextless" () {
 	for place in 0 ..< count {
 		first[place] = text_model.byte_at(&text, place)
 	}
-	note_list.title_set(&notes.notes[shown], first[:count])
+	note_list.title_set(note, first[:count])
 }
 
 // commit puts the note shown in the queue of the store thread, when a
@@ -349,11 +378,11 @@ commit :: proc "contextless" () {
 	if !change_wait.waiting {
 		return
 	}
-	if !note_session.commit_allowed(&session) || shown < 0 {
+	note := note_list.note_at(&notes, shown)
+	if !note_session.commit_allowed(&session) || note == nil {
 		change_wait.waiting = false
 		return
 	}
-	note := &notes.notes[shown]
 	if note_list.note_name_take(&notes, shown) != .None {
 		note.write_refused = true
 		problem_shown, change_wait.waiting = .Not_Kept, false
@@ -426,8 +455,8 @@ room_for :: proc "contextless" (needed: int) -> bool {
 note_load_ask :: proc "contextless" () {
 	text_model.text_replace_whole(&text, nil)
 	text_model.selection_set(&text, 0, 0)
-	note := &notes.notes[shown]
-	if note.name_count == 0 || !session.keeping {
+	note := note_list.note_at(&notes, shown)
+	if note == nil || note.name_count == 0 || !session.keeping {
 		note_session.note_shown_new(&session)
 		return
 	}
@@ -446,15 +475,17 @@ note_load_ask :: proc "contextless" () {
 // holds; the window draws meanwhile. With no room in the queue for the
 // commit and the load, the note shown stays.
 note_show :: proc "contextless" (index: int) {
-	if index < 0 || index >= notes.count || index == shown {
+	target := note_list.note_at(&notes, index)
+	if target == nil || index == shown {
 		return
 	}
-	if !room_for(note_session.show_room(&session, change_wait.waiting, notes.notes[index].name_count > 0)) {
+	if !room_for(note_session.show_room(&session, change_wait.waiting, target.name_count > 0)) {
 		return
 	}
 	commit()
 	wanted := index
-	if shown >= 0 && notes.notes[shown].name_count == 0 && text_model.text_length(&text) == 0 {
+	current := note_list.note_at(&notes, shown)
+	if current != nil && current.name_count == 0 && text_model.text_length(&text) == 0 {
 		note_list.list_remove(&notes, shown)
 		if wanted > shown {
 			wanted -= 1
@@ -474,7 +505,8 @@ note_new :: proc "contextless" () {
 		return
 	}
 	commit()
-	if shown >= 0 && notes.notes[shown].name_count == 0 && text_model.text_length(&text) == 0 && !session.loading && !session.locked {
+	current := note_list.note_at(&notes, shown)
+	if current != nil && current.name_count == 0 && text_model.text_length(&text) == 0 && !session.loading && !session.locked {
 		// The note shown is new and empty already.
 		return
 	}
@@ -499,12 +531,13 @@ note_new :: proc "contextless" () {
 note_delete :: proc "contextless" () {
 	note_session.delete_closed(&session)
 	bar = {}
-	if shown < 0 {
+	note := note_list.note_at(&notes, shown)
+	if note == nil {
 		return
 	}
-	note := &notes.notes[shown]
 	next := shown + 1 < notes.count ? shown + 1 : shown - 1
-	next_stored := next >= 0 && notes.notes[next].name_count > 0
+	next_note := note_list.note_at(&notes, next)
+	next_stored := next_note != nil && next_note.name_count > 0
 	deleted_stored := note.name_count > 0
 	if !room_for(note_session.delete_room(&session, deleted_stored, next_stored)) {
 		return
@@ -540,8 +573,8 @@ versions_open :: proc "contextless" () {
 		return
 	}
 	commit()
-	note := &notes.notes[shown]
-	if note.name_count == 0 {
+	note := note_list.note_at(&notes, shown)
+	if note == nil || note.name_count == 0 {
 		return
 	}
 	if serial, put := request_of_note(.Versions, note); put {
@@ -552,10 +585,11 @@ versions_open :: proc "contextless" () {
 // version_choose asks for the bytes of a version; the text pane shows it
 // when they come, and Enter restores it only then.
 version_choose :: proc "contextless" (index: int) {
-	if index < 0 || index >= version_count || shown < 0 || !note_session.versions_keys_act(&session) {
+	note := note_list.note_at(&notes, shown)
+	if index < 0 || index >= version_count || note == nil || !note_session.versions_keys_act(&session) {
 		return
 	}
-	serial, put := request_of_note(.Version, &notes.notes[shown], version_rows[index].generation, int(max(version_rows[index].bytes, 0)))
+	serial, put := request_of_note(.Version, note, version_rows[index].generation, int(max(version_rows[index].bytes, 0)))
 	if !put {
 		problem_shown = .Busy
 		return
@@ -589,7 +623,8 @@ versions_close :: proc "contextless" () {
 // version whose bytes came is restored, and the keys wait for the result;
 // then the window loads the note from the store.
 version_restore :: proc "contextless" () {
-	if version_chosen < 0 || version_chosen >= version_count || shown < 0 {
+	note := note_list.note_at(&notes, shown)
+	if version_chosen < 0 || version_chosen >= version_count || note == nil {
 		return
 	}
 	row := &version_rows[version_chosen]
@@ -600,7 +635,7 @@ version_restore :: proc "contextless" () {
 	if !note_session.restore_allowed(&session, row.current == 1) || !room_for(2) {
 		return
 	}
-	serial, put := request_of_note(.Restore, &notes.notes[shown], row.generation)
+	serial, put := request_of_note(.Restore, note, row.generation)
 	if !put {
 		problem_shown = .Busy
 		return
@@ -637,9 +672,11 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		if result.status != .Done {
 			problem_shown = .Not_Kept
 		}
-		// The store thread wrote the list before this result, and writes it
-		// for no other request.
-		notes = store_listed
+		// Copy from store_listed into notes so the two lists keep separate
+		// backing tiers.
+		if note_list.list_copy_from(&notes, &store_listed) != .None {
+			problem_shown = .List_Full
+		}
 		newest := note_list.list_newest(&notes)
 		if newest < 0 {
 			if session.keeping {
@@ -715,8 +752,10 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 			problem_shown = .Not_Kept
 			return
 		}
-		notes.notes[shown].generation = result.generation
-		notes.notes[shown].write_refused = false
+		if restored_note := note_list.note_at(&notes, shown); restored_note != nil {
+			restored_note.generation = result.generation
+			restored_note.write_refused = false
+		}
 		if problem_shown == .Version_Unreadable || problem_shown == .Not_Kept {
 			problem_shown = shown_note_problem()
 		}
@@ -1112,7 +1151,8 @@ pane_draw :: proc "contextless" (table: ^interface.Draw_Table, area: interface.A
 			version := &version_rows[version_count - 1 - row]
 			label = version.date != 0 ? calendar.iso_text(label_buffer[:], version.date) : system.format(label_buffer[:], "generation ", version.generation)
 		} else {
-			label = note_list.note_title(&notes.notes[row])
+			row_note := note_list.note_at(&notes, row)
+			label = row_note != nil ? note_list.note_title(row_note) : ""
 			if label == "" {
 				label = "empty note"
 				color = is_chosen ? tokens.text_on_chosen : tokens.text_dim

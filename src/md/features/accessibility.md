@@ -159,7 +159,7 @@ The mode of the arrows draws an outline of 2 logical pixels in `colors.text_stro
 **The gaps of today**, each a later step:
 
 - **The window `pointers`** and the windows that draw with `graphics` have no element and no tree. They wait for the work "Every window uses the interface package" of `ROADMAP.md`.
-- **The order of Tab holds 64 elements.** An element after them takes a press and no Tab (`Frame.focus_overflow`). A window that passes 64 is a fault that a test finds (section 6), not a bound to raise in silence.
+- **The order of Tab has an inline capacity of 64 elements.** Past 64 elements, an `Interface_State` with a caller-supplied overflow slice or growth callback (`interface_state_set_focus_overflow`) moves the focus order to that slower tier and increments `focus_overflow_moves` so Tab reaches every element. Without an overflow tier, elements past 64 take a press and no Tab, and `Frame.focus_overflow` counts them.
 
 **The focus order** is the order of the frame. A process that wants another order changes the order of its calls, so the order of reading follows too. `tabindex` with a number is refused (below).
 

@@ -21,7 +21,7 @@ Box_State :: struct {
 	collapsed:         bool,
 	sort_ascending:    bool,
 	scrolls:           bool, // The box scrolls on an axis: the wheel goes to it.
-	last_order:        u16, // Its index in the tree of the last frame: a later box is drawn on top.
+	last_order:        u32, // Its index in the tree of the last frame: a later box is drawn on top.
 	last_rect:         Rect,
 	last_clipped_rect: Rect,
 	last_seen_frame:   u64,
@@ -245,8 +245,9 @@ box_input :: proc "contextless" (states: ^Box_States, identity: Identity) -> (Bo
 // state the full table refused.
 states_record :: proc "contextless" (states: ^Box_States, tree: ^Box_Tree) -> int {
 	refused := 0
-	for index in 1 ..= min(tree.count, BOX_CAPACITY) {
-		box := &tree.boxes[index]
+	boxes := tree_boxes(tree)
+	for index in 1 ..= min(tree.count, len(boxes) - 1) {
+		box := &boxes[index]
 		if box.identity == 0 {
 			continue
 		}
@@ -257,7 +258,7 @@ states_record :: proc "contextless" (states: ^Box_States, tree: ^Box_Tree) -> in
 		}
 		entry.last_rect = box.rect
 		entry.last_clipped_rect = box.clipped_rect
-		entry.last_order = u16(index)
+		entry.last_order = u32(index)
 		entry.scrolls = box.overflow[.X] == .Scroll || box.overflow[.Y] == .Scroll
 		entry.scroll = box.scroll
 	}

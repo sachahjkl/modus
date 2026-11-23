@@ -39,6 +39,7 @@ package processors
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -68,7 +69,111 @@ LOAD_INTERVAL :: 250 // Milliseconds between two measures of the load.
 WORKER_COUNT :: 4
 PROCESSOR_ROWS :: 8 // The panel shows at most this number of processors.
 ITERATIONS :: 4000
-LINE :: 20
+LINE :: 18
+#assert(PANEL >= 2 * graphics.GAP + 240)
+#assert(PICTURE_HEIGHT >= 2 * graphics.GAP + 20 + (4 + 1 + 3 + 1 + WORKER_COUNT + 1) * LINE + 2 * 6 + 4)
+
+processors_layout_tree: layout.Box_Tree
+
+Processors_Places :: struct {
+	header:          interface.Area,
+	picture:         interface.Area,
+	panel:           interface.Area,
+	summary:         interface.Area,
+	processor_rows:  [PROCESSOR_ROWS]interface.Area,
+	times_header:    interface.Area,
+	time_rows:       [3]interface.Area,
+	workers_header:  interface.Area,
+	worker_rows:     [WORKER_COUNT]interface.Area,
+	lock_waits:      interface.Area,
+}
+
+@(private)
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// processors_window_layout computes the header, picture, and statistics panel
+// rows with modus:layout.
+processors_window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int, shown_processors: int, tokens: layout.Element_Tokens) -> (places: Processors_Places, ok: bool) {
+	if tree == nil || width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y, padding = {.X = MARGIN, .Y = MARGIN}}) != .Done {
+		return {}, false
+	}
+	hdr_box, s0 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(HEADER)}})
+	_, s1 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .X, gap = MARGIN})
+	pic_box, s2 := layout.box_add(tree, {size = {.X = layout.px(PICTURE_WIDTH), .Y = layout.px(PICTURE_HEIGHT)}})
+	panel_box, s3 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(PICTURE_HEIGHT)}, child_axis = .Y, padding = {.X = tokens.gap, .Y = tokens.gap}, overflow = {.X = .Clip, .Y = .Clip}})
+	sum_box, s4 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(20)}})
+	if s0 != .Done || s1 != .Done || s2 != .Done || s3 != .Done || s4 != .Done {
+		return {}, false
+	}
+	proc_count := clamp(shown_processors, 0, PROCESSOR_ROWS)
+	proc_boxes: [PROCESSOR_ROWS]layout.Box_Index
+	for i in 0 ..< proc_count {
+		st: layout.Box_Status
+		proc_boxes[i], st = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+		if st != .Done {
+			return {}, false
+		}
+	}
+	_, sp1 := layout.box_add(tree, {size = {.X = layout.px(0), .Y = layout.px(6)}})
+	th_box, sth := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	if sp1 != .Done || sth != .Done {
+		return {}, false
+	}
+	time_boxes: [3]layout.Box_Index
+	for i in 0 ..< 3 {
+		st: layout.Box_Status
+		time_boxes[i], st = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+		if st != .Done {
+			return {}, false
+		}
+	}
+	_, sp2 := layout.box_add(tree, {size = {.X = layout.px(0), .Y = layout.px(6)}})
+	wh_box, swh := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	if sp2 != .Done || swh != .Done {
+		return {}, false
+	}
+	worker_boxes: [WORKER_COUNT]layout.Box_Index
+	for i in 0 ..< WORKER_COUNT {
+		st: layout.Box_Status
+		worker_boxes[i], st = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+		if st != .Done {
+			return {}, false
+		}
+	}
+	_, sp3 := layout.box_add(tree, {size = {.X = layout.px(0), .Y = layout.px(4)}})
+	lock_box, slk := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	sc1 := layout.box_close(tree)
+	sc2 := layout.box_close(tree)
+	if sp3 != .Done || slk != .Done || sc1 != .Done || sc2 != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	places.header = area_of(tree, hdr_box)
+	places.picture = area_of(tree, pic_box)
+	places.panel = area_of(tree, panel_box)
+	places.summary = area_of(tree, sum_box)
+	for i in 0 ..< proc_count {
+		places.processor_rows[i] = area_of(tree, proc_boxes[i])
+	}
+	places.times_header = area_of(tree, th_box)
+	for i in 0 ..< 3 {
+		places.time_rows[i] = area_of(tree, time_boxes[i])
+	}
+	places.workers_header = area_of(tree, wh_box)
+	for i in 0 ..< WORKER_COUNT {
+		places.worker_rows[i] = area_of(tree, worker_boxes[i])
+	}
+	places.lock_waits = area_of(tree, lock_box)
+	return places, true
+}
 
 // One picture to compute: the threads share it, the lock keeps it correct.
 Job :: struct {
@@ -325,55 +430,49 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 		frame := interface.window_frame_start(&window_memory, &window)
 		table := frame.table
-		interface.draw_text(table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.colors.text)
-		// The pixels change when a row is complete, and when a new picture
-		// clears them: the number of the picture and its complete rows are
-		// the generation.
-		interface.draw_picture(table, MARGIN, HEADER + MARGIN, picture, job.number * 1024 + done)
-		x := 2 * MARGIN + PICTURE_WIDTH
-		y := HEADER + MARGIN
-		interface.draw_rectangle(table, x, y, PANEL, PICTURE_HEIGHT, graphics.colors.card_top)
-		x += 8
-		y += 8
-		after := interface.draw_unsigned(table, x, y, processor_count, graphics.colors.text)
-		after = interface.draw_text(table, after, y, " processors, at one time ", graphics.colors.text)
-		interface.draw_unsigned(table, after, y, together, graphics.colors.process)
-		y += LINE + 4
-		for &processor, index in processors[:min(processor_count, PROCESSOR_ROWS)] {
-			interface.draw_unsigned(table, x, y, u64(index), graphics.colors.dim)
-			interface.draw_rectangle(table, x + 20, y + 3, 80, 10, graphics.colors.track)
-			// A processor is a device of the machine.
-			interface.draw_rectangle(table, x + 20, y + 3, int(processor.load) * 80 / 100, 10, graphics.colors.machine)
-			interface.draw_text(table, x + 108, y, system.name_of(processor.name[:]), graphics.colors.text)
-			y += LINE
-		}
-		y += 8
-		interface.draw_text(table, x, y, "threads  time of the picture", graphics.colors.dim)
-		y += LINE
-		for count, index in thread_counts {
-			color := graphics.Color(index == phase ? graphics.colors.text : graphics.colors.dim)
-			interface.draw_unsigned(table, x, y, u64(count), color)
-			if times[index] != 0 {
-				after = interface.draw_unsigned(table, x + 72, y, times[index], color)
-				interface.draw_text(table, after, y, " ms", color)
-				// The time that the process took for one picture.
-				interface.draw_rectangle(table, x + 152, y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, graphics.colors.process)
+		tokens, _ := layout.tokens_for(graphics.appearance, .Standard)
+		shown_procs := int(min(processor_count, PROCESSOR_ROWS))
+		if places, layout_ok := processors_window_layout(&processors_layout_tree, window.width, window.height, shown_procs, tokens); layout_ok {
+			interface.draw_text(table, places.header.x, places.header.y, "One picture, computed by 1, 2 and 4 threads.", tokens.text)
+			// The pixels change when a row is complete, and when a new picture
+			// clears them: the number of the picture and its complete rows are
+			// the generation.
+			interface.draw_picture(table, places.picture.x, places.picture.y, picture, job.number * 1024 + done)
+			interface.draw_rectangle(table, places.panel.x, places.panel.y, places.panel.width, places.panel.height, tokens.surface_card)
+			after := interface.draw_unsigned(table, places.summary.x, places.summary.y, processor_count, tokens.text)
+			after = interface.draw_text(table, after, places.summary.y, " processors, at one time ", tokens.text)
+			interface.draw_unsigned(table, after, places.summary.y, together, tokens.expected)
+			for &processor, index in processors[:shown_procs] {
+				row_area := places.processor_rows[index]
+				interface.draw_unsigned(table, row_area.x, row_area.y, u64(index), tokens.text_dim)
+				interface.draw_rectangle(table, row_area.x + 20, row_area.y + 3, 80, 10, tokens.surface_track)
+				// A processor is a device of the machine.
+				interface.draw_rectangle(table, row_area.x + 20, row_area.y + 3, int(processor.load) * 80 / 100, 10, graphics.colors.machine)
+				interface.draw_text(table, row_area.x + 108, row_area.y, system.name_of(processor.name[:]), tokens.text)
 			}
-			y += LINE
+			interface.draw_text(table, places.times_header.x, places.times_header.y, "threads  time of the picture", tokens.text_dim)
+			for count, index in thread_counts {
+				row_area := places.time_rows[index]
+				color := index == phase ? tokens.text : tokens.text_dim
+				interface.draw_unsigned(table, row_area.x, row_area.y, u64(count), color)
+				if times[index] != 0 {
+					after = interface.draw_unsigned(table, row_area.x + 72, row_area.y, times[index], color)
+					interface.draw_text(table, after, row_area.y, " ms", color)
+					// The time that the process took for one picture.
+					interface.draw_rectangle(table, row_area.x + 152, row_area.y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, tokens.expected)
+				}
+			}
+			interface.draw_text(table, places.workers_header.x, places.workers_header.y, "thread   rows of this picture", tokens.text_dim)
+			for &worker, index in workers {
+				row_area := places.worker_rows[index]
+				interface.draw_unsigned(table, row_area.x, row_area.y, u64(index + 1), graphics.colors.series[index])
+				interface.draw_unsigned(table, row_area.x + 72, row_area.y, u64(worker.rows), tokens.text)
+				interface.draw_rectangle(table, row_area.x + 112, row_area.y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, graphics.colors.series[index])
+			}
+			// A wait of the lock is a wait in the kernel.
+			after = interface.draw_text(table, places.lock_waits.x, places.lock_waits.y, "lock waits ", graphics.colors.kernel)
+			interface.draw_unsigned(table, after, places.lock_waits.y, u64(job.lock.waits), graphics.colors.kernel)
 		}
-		y += 8
-		interface.draw_text(table, x, y, "thread   rows of this picture", graphics.colors.dim)
-		y += LINE
-		for &worker, index in workers {
-			interface.draw_unsigned(table, x, y, u64(index + 1), graphics.colors.series[index])
-			interface.draw_unsigned(table, x + 72, y, u64(worker.rows), graphics.colors.text)
-			interface.draw_rectangle(table, x + 112, y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, graphics.colors.series[index])
-			y += LINE
-		}
-		y += 4
-		// A wait of the lock is a wait in the kernel.
-		after = interface.draw_text(table, x, y, "lock waits ", graphics.colors.kernel)
-		interface.draw_unsigned(table, after, y, u64(job.lock.waits), graphics.colors.kernel)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		for _ in interface.window_next_event(&window_memory.drawing, &window) {}
 		display.wait(&window, now + FRAME_TIME)

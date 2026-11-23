@@ -49,6 +49,7 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:storage"
 import "modus:system"
 import "modus:trigonometry"
@@ -126,15 +127,21 @@ PALETTE_CELL :: 24 // A cell of the palette, square.
 CANVAS_TOP :: PALETTE_TOP + PALETTE_CELL + GAP
 STATUS_HEIGHT :: interface.TABLE_LINE // The status line, and the action bar at its right.
 PANEL_WIDTH :: 256 // A panel at the right of the canvas: the pictures, or the custom color.
+// Minimum pane bounds match paint_model.window_layout.
+#assert(LEAST_WIDTH == paint_model.LAYOUT_LEAST_WIDTH && LEAST_HEIGHT == paint_model.LAYOUT_LEAST_HEIGHT)
+#assert(PANEL_WIDTH == paint_model.LAYOUT_PANEL_WIDTH && STATUS_HEIGHT == paint_model.LAYOUT_STATUS_HEIGHT)
+
+paint_layout_tree: layout.Box_Tree
+paint_tokens: layout.Element_Tokens
+
+rect_area :: proc "contextless" (r: layout.Rect) -> interface.Area {
+	return {int(r.x), int(r.y), int(r.width), int(r.height)}
+}
 
 // The exports draw lines of this width, as before the tools.
 EXPORT_LINE_WIDTH :: 3
 
-Panel :: enum u8 {
-	None     = 0,
-	Pictures = 1,
-	Color    = 2,
-}
+Panel :: paint_model.Panel_Kind
 
 // The picture and its memory. The pixels of the picture and its copy before
 // a stroke are arenas of the budget that grow with the picture
@@ -1449,22 +1456,23 @@ button_fitted :: proc "contextless" (frame: ^interface.Frame, x, y: int, label: 
 }
 
 // tools_row draws the buttons of the tools and of the size.
-tools_row :: proc "contextless" (frame: ^interface.Frame) {
-	x := GAP
+tools_row :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
+	x := area.x + GAP
+	y := area.y + GAP
 	for name, each in paint_model.TOOL_NAMES {
 		activated: bool
-		x, activated = button_fitted(frame, x, GAP, name, each == tool)
+		x, activated = button_fitted(frame, x, y, name, each == tool)
 		if activated {
 			tool = each
 		}
 	}
 	x += 2 * GAP
 	activated: bool
-	x, activated = button_fitted(frame, x, GAP, "Smaller")
+	x, activated = button_fitted(frame, x, y, "Smaller")
 	if activated {
 		size_index = paint_model.size_index_step(size_index, -1)
 	}
-	x, activated = button_fitted(frame, x, GAP, "Larger")
+	x, activated = button_fitted(frame, x, y, "Larger")
 	if activated {
 		size_index = paint_model.size_index_step(size_index, 1)
 	}
@@ -1472,20 +1480,21 @@ tools_row :: proc "contextless" (frame: ^interface.Frame) {
 
 // palette_row draws the cells of the palette and the button of the custom
 // color. The chosen color has a frame of the strong text color.
-palette_row :: proc "contextless" (frame: ^interface.Frame) {
-	x := GAP
+palette_row :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
+	x := area.x + GAP
+	y := area.y
 	for each, index in paint_model.PALETTE {
-		area := interface.Area{x, PALETTE_TOP, PALETTE_CELL, PALETTE_CELL}
+		cell := interface.Area{x, y, PALETTE_CELL, PALETTE_CELL}
 		element := interface.identity_with(interface.identity("palette"), index)
-		result := interface.element_interact(frame, element, area, .Button)
-		interface.element_name(frame, area, paint_model.PALETTE_NAMES[index])
-		interface.draw_rectangle(frame.table, x, PALETTE_TOP, PALETTE_CELL, PALETTE_CELL, each)
+		result := interface.element_interact(frame, element, cell, .Button)
+		interface.element_name(frame, cell, paint_model.PALETTE_NAMES[index])
+		interface.draw_rectangle(frame.table, x, y, PALETTE_CELL, PALETTE_CELL, each)
 		if each == color {
-			interface.draw_outline(frame.table, x, PALETTE_TOP, PALETTE_CELL, PALETTE_CELL, 3, graphics.colors.text_strong)
-			interface.draw_outline(frame.table, x + 3, PALETTE_TOP + 3, PALETTE_CELL - 6, PALETTE_CELL - 6, 1, graphics.colors.background)
+			interface.draw_outline(frame.table, x, y, PALETTE_CELL, PALETTE_CELL, 3, paint_tokens.text_strong)
+			interface.draw_outline(frame.table, x + 3, y + 3, PALETTE_CELL - 6, PALETTE_CELL - 6, 1, paint_tokens.surface_background)
 		}
 		if result.focused {
-			interface.draw_focus_ring(frame.table, area, u32(element))
+			interface.draw_focus_ring(frame.table, cell, u32(element))
 		}
 		if result.activated {
 			color = each
@@ -1500,12 +1509,12 @@ palette_row :: proc "contextless" (frame: ^interface.Frame) {
 		in_palette ||= each == color
 	}
 	if !in_palette {
-		interface.draw_rectangle(frame.table, x, PALETTE_TOP, PALETTE_CELL, PALETTE_CELL, color)
-		interface.draw_outline(frame.table, x, PALETTE_TOP, PALETTE_CELL, PALETTE_CELL, 3, graphics.colors.text_strong)
+		interface.draw_rectangle(frame.table, x, y, PALETTE_CELL, PALETTE_CELL, color)
+		interface.draw_outline(frame.table, x, y, PALETTE_CELL, PALETTE_CELL, 3, paint_tokens.text_strong)
 		x += PALETTE_CELL + GAP
 	}
 	width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, "Custom color") + 16
-	if interface.button(frame, {x, PALETTE_TOP, width, PALETTE_CELL}, interface.identity("custom color"), "Custom color", panel == .Color).activated {
+	if interface.button(frame, {x, y, width, PALETTE_CELL}, interface.identity("custom color"), "Custom color", panel == .Color).activated {
 		panel_toggle(.Color)
 	}
 }
@@ -1519,22 +1528,19 @@ CHANNEL_NAMES := [paint_model.Channel]string {
 // color_panel draws the custom color: a sample, three channels each with
 // a bar that a press sets and two steps, and the field of the hexadecimal
 // form.
-color_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
-	x, y := area.x, area.y
-	interface.draw_rectangle(frame.table, x, y, area.width, 40, color)
-	interface.draw_outline(frame.table, x, y, area.width, 40, 1, graphics.colors.track)
-	y += 40 + 2 * GAP
-	STEP_WIDTH :: 44
-	LABEL_WIDTH :: 48
+color_panel :: proc "contextless" (frame: ^interface.Frame, places: ^paint_model.Window_Layout) {
+	sample := rect_area(places.color_sample)
+	interface.draw_rectangle(frame.table, sample.x, sample.y, sample.width, sample.height, color)
+	interface.draw_outline(frame.table, sample.x, sample.y, sample.width, sample.height, 1, paint_tokens.surface_track)
 	for name, channel in CHANNEL_NAMES {
+		ch := places.color_channels[channel]
 		value := paint_model.channel_value(color, channel)
-		interface.cell_text(frame, {x, y, LABEL_WIDTH, ROW_HEIGHT}, name, graphics.colors.dim)
-		row_x := x + LABEL_WIDTH
+		interface.cell_text(frame, rect_area(ch.label), name, paint_tokens.text_dim)
 		parent := interface.identity(name)
-		if interface.button(frame, {row_x, y, STEP_WIDTH, ROW_HEIGHT}, interface.identity_in(parent, "less"), "-16").activated {
+		if interface.button(frame, rect_area(ch.less), interface.identity_in(parent, "less"), "-16").activated {
 			color = paint_model.channel_step(color, channel, -16)
 		}
-		bar := interface.Area{row_x + STEP_WIDTH + GAP, y + 6, area.width - LABEL_WIDTH - 2 * (STEP_WIDTH + GAP), ROW_HEIGHT - 12}
+		bar := rect_area(ch.bar)
 		element := interface.identity_in(parent, "bar")
 		result := interface.element_interact(frame, element, bar, .Button)
 		interface.element_name(frame, bar, name)
@@ -1545,20 +1551,17 @@ color_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.Area
 			color = paint_model.channel_set(color, channel, u8(place * 255 / max(bar.width - 1, 1)))
 			value = paint_model.channel_value(color, channel)
 		}
-		interface.draw_rectangle(frame.table, bar.x, bar.y, bar.width, bar.height, graphics.colors.track)
+		interface.draw_rectangle(frame.table, bar.x, bar.y, bar.width, bar.height, paint_tokens.surface_track)
 		interface.draw_rectangle(frame.table, bar.x, bar.y, int(value) * bar.width / 255, bar.height, paint_model.channel_set(0, channel, 255))
 		if result.focused {
 			interface.draw_focus_ring(frame.table, bar, u32(element))
 		}
-		if interface.button(frame, {bar.x + bar.width + GAP, y, STEP_WIDTH, ROW_HEIGHT}, interface.identity_in(parent, "more"), "+16").activated {
+		if interface.button(frame, rect_area(ch.more), interface.identity_in(parent, "more"), "+16").activated {
 			color = paint_model.channel_step(color, channel, 16)
 		}
-		y += ROW_HEIGHT + GAP
 	}
-	y += GAP
-	field := interface.Area{x, y, area.width - 80 - GAP, ROW_HEIGHT}
-	entered := interface.text_input(frame, field, interface.identity("color text"), hex_text[:], &hex_count, "#RRGGBB").activated
-	if interface.button(frame, {field.x + field.width + GAP, y, 80, ROW_HEIGHT}, interface.identity("apply"), "Apply").activated || entered {
+	entered := interface.text_input(frame, rect_area(places.color_hex_field), interface.identity("color text"), hex_text[:], &hex_count, "#RRGGBB").activated
+	if interface.button(frame, rect_area(places.color_apply_btn), interface.identity("apply"), "Apply").activated || entered {
 		if parsed, ok := paint_model.color_of_text(string(hex_text[:hex_count])); ok {
 			color = parsed
 			message = ""
@@ -1571,45 +1574,36 @@ color_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.Area
 // pictures_panel draws the field of a name with the buttons new and
 // rename, the list of the pictures of the store, and the buttons open and
 // delete. No button saves: the store keeps the open picture as it changes.
-pictures_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
-	x, y := area.x, area.y
+pictures_panel :: proc "contextless" (frame: ^interface.Frame, places: ^paint_model.Window_Layout) {
 	if !keep.store_open {
 		opening := interface.background_work_busy(&work) && store_request.act == .Open
-		interface.cell_text(frame, {x, y, area.width, ROW_HEIGHT}, opening ? "The store opens." : "No store: nothing is kept.", graphics.colors.dim)
+		panel_box := rect_area(places.panel)
+		interface.cell_text(frame, {panel_box.x, panel_box.y, panel_box.width, ROW_HEIGHT}, opening ? "The store opens." : "No store: nothing is kept.", paint_tokens.text_dim)
 		return
 	}
-	BUTTON_WIDTH :: 72
-	field := interface.Area{x, y, area.width - 2 * (BUTTON_WIDTH + GAP), ROW_HEIGHT}
-	interface.text_input(frame, field, interface.identity("picture name"), name_text[:], &name_count, "Name")
+	interface.text_input(frame, rect_area(places.pic_name_field), interface.identity("picture name"), name_text[:], &name_count, "Name")
 	name := string(name_text[:name_count])
-	if interface.button(frame, {field.x + field.width + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("new"), "New").activated {
+	if interface.button(frame, rect_area(places.pic_new_btn), interface.identity("new"), "New").activated {
 		panel_act(.New, name)
 	}
-	if interface.button(frame, {field.x + field.width + 2 * GAP + BUTTON_WIDTH, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("rename"), "Rename").activated {
+	if interface.button(frame, rect_area(places.pic_rename_btn), interface.identity("rename"), "Rename").activated {
 		panel_act(.Rename, name)
 	}
-	y += ROW_HEIGHT + 2 * GAP
-	// The list of the page, then the row of open and delete, then the row
-	// of the pages.
-	list := interface.Area{x, y, area.width, max(area.y + area.height - y - 2 * (ROW_HEIGHT + 2 * GAP), interface.TABLE_LINE)}
-	chosen := interface.list_with_choice(frame, list, interface.identity("pictures"), picture_names[:picture_name_count], &picture_choice, {empty_text = picture_page == 0 ? "No picture in the store." : "No picture on this page.", name = "pictures"}).activated
-	y = list.y + list.height + 2 * GAP
-	PAGE_BUTTON_WIDTH :: (PANEL_WIDTH - GAP) / 2
-	pages_y := y + ROW_HEIGHT + 2 * GAP
-	if picture_page > 0 && interface.button(frame, {x, pages_y, PAGE_BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("previous page"), "Previous").activated {
+	chosen := interface.list_with_choice(frame, rect_area(places.pic_list), interface.identity("pictures"), picture_names[:picture_name_count], &picture_choice, {empty_text = picture_page == 0 ? "No picture in the store." : "No picture on this page.", name = "pictures"}).activated
+	if picture_page > 0 && interface.button(frame, rect_area(places.pic_prev_btn), interface.identity("previous page"), "Previous").activated {
 		pictures_page_ask(picture_page - 1)
 	}
-	if pictures_more && interface.button(frame, {x + PAGE_BUTTON_WIDTH + GAP, pages_y, PAGE_BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("next page"), "Next").activated {
+	if pictures_more && interface.button(frame, rect_area(places.pic_next_btn), interface.identity("next page"), "Next").activated {
 		pictures_page_ask(picture_page + 1)
 	}
 	if picture_name_count == 0 {
 		return
 	}
 	chosen_name := picture_names[clamp(picture_choice, 0, picture_name_count - 1)]
-	if interface.button(frame, {x, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("open"), "Open").activated || chosen {
+	if interface.button(frame, rect_area(places.pic_open_btn), interface.identity("open"), "Open").activated || chosen {
 		panel_act(.Read, chosen_name)
 	}
-	if interface.button(frame, {x + BUTTON_WIDTH + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("delete"), "Delete").activated {
+	if interface.button(frame, rect_area(places.pic_delete_btn), interface.identity("delete"), "Delete").activated {
 		panel_act(.Delete, chosen_name)
 	}
 }
@@ -1720,48 +1714,51 @@ status_text :: proc "contextless" (builder: ^interface.Text_Builder) -> string {
 // element took, and gives the result of the action bar.
 frame_build :: proc "contextless" (window: ^display.Window) -> (bar_result: interface.Action_Bar_Result) {
 	frame := interface.window_frame_start(&window_memory, window)
+	paint_tokens, _ = layout.tokens_for(graphics.appearance, .Standard)
 	interface.action_bar_input_take(&frame, &bar)
 	width, height := window.width, window.height
 	interface.background(&frame, {0, 0, width, height})
-	panel_room := panel != .None ? PANEL_WIDTH + 2 * GAP : 0
-	canvas_area = {0, CANVAS_TOP, max(width - panel_room, 1), max(height - CANVAS_TOP - STATUS_HEIGHT, 1)}
-	// A larger window grows the picture; a smaller one keeps it. A growth
-	// is a change that the next keep writes. It waits while a stroke, a keep
-	// or a read runs: each holds places in the picture, and a read grows
-	// the arena of the copy on the worker thread.
-	if !drag.active && !keep.keeping && !keep.reading && !change_running() {
-		picture_grow(canvas_area.width, canvas_area.height)
-	}
-	tools_row(&frame)
-	palette_row(&frame)
-	shown := graphics.Canvas{pixels = raw_data(picture.pixels), width = min(picture.width, canvas_area.width), height = min(picture.height, canvas_area.height), stride = picture.width}
-	interface.draw_picture(frame.table, canvas_area.x, canvas_area.y, shown, picture.generation)
-	interface.element_name(&frame, canvas_area, "canvas")
-	preview_draw(&frame)
-	panel_area := interface.Area{canvas_area.width + GAP, CANVAS_TOP + GAP, PANEL_WIDTH, canvas_area.height - 2 * GAP}
-	switch panel {
-	case .None:
-	case .Pictures:
-		pictures_panel(&frame, panel_area)
-	case .Color:
-		color_panel(&frame, panel_area)
-	}
-	// The status line, and the action bar of the keys at its right
-	// (docs/INTERFACE.md, "4.4 The action bar").
-	status_y := height - STATUS_HEIGHT
-	builder: interface.Text_Builder
-	text_right := interface.draw_text(frame.table, GAP, status_y + (STATUS_HEIGHT - interface.LINE) / 2, status_text(&builder), graphics.colors.dim)
-	bar_left := text_right + 16
-	items := bar_items()
-	bar_result = interface.action_bar(&frame, {bar_left, status_y, max(width - bar_left, 0), STATUS_HEIGHT}, items[:], &bar, {alignment = .Right})
-	for {
-		press := interface.key_take(&frame) or_break
-		outcome := interface.action_bar_key(&bar, press)
-		if outcome.ran {
-			key_run(outcome.run)
+	places, layout_ok := paint_model.window_layout(&paint_layout_tree, width, height, panel, paint_tokens)
+	if layout_ok {
+		canvas_area = {int(places.canvas.x), int(places.canvas.y), max(int(places.canvas.width), 1), max(int(places.canvas.height), 1)}
+		// A larger window grows the picture; a smaller one keeps it. A growth
+		// is a change that the next keep writes. It waits while a stroke, a keep
+		// or a read runs: each holds places in the picture, and a read grows
+		// the arena of the copy on the worker thread.
+		if !drag.active && !keep.keeping && !keep.reading && !change_running() {
+			picture_grow(canvas_area.width, canvas_area.height)
 		}
-		if !outcome.taken {
-			key_run(press)
+		tools_row(&frame, rect_area(places.tools_row))
+		palette_row(&frame, rect_area(places.palette_row))
+		shown := graphics.Canvas{pixels = raw_data(picture.pixels), width = min(picture.width, canvas_area.width), height = min(picture.height, canvas_area.height), stride = picture.width}
+		interface.draw_picture(frame.table, canvas_area.x, canvas_area.y, shown, picture.generation)
+		interface.element_name(&frame, canvas_area, "canvas")
+		preview_draw(&frame)
+		switch panel {
+		case .None:
+		case .Pictures:
+			pictures_panel(&frame, &places)
+		case .Color:
+			color_panel(&frame, &places)
+		}
+		// The status line, and the action bar of the keys at its right
+		// (docs/INTERFACE.md, "4.4 The action bar").
+		status_bar := rect_area(places.status_bar)
+		status_y := status_bar.y
+		builder: interface.Text_Builder
+		text_right := interface.draw_text(frame.table, status_bar.x + GAP, status_y + (status_bar.height - interface.LINE) / 2, status_text(&builder), paint_tokens.text_dim)
+		bar_left := text_right + 16
+		items := bar_items()
+		bar_result = interface.action_bar(&frame, {bar_left, status_y, max(status_bar.x + status_bar.width - bar_left, 0), status_bar.height}, items[:], &bar, {alignment = .Right})
+		for {
+			press := interface.key_take(&frame) or_break
+			outcome := interface.action_bar_key(&bar, press)
+			if outcome.ran {
+				key_run(outcome.run)
+			}
+			if !outcome.taken {
+				key_run(press)
+			}
 		}
 	}
 	interface.window_frame_end(&window_memory.drawing, &frame, window)

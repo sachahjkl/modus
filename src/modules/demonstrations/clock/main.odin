@@ -41,6 +41,7 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:system"
 
 // The size of the window at its start, its least size, and its largest:
@@ -83,12 +84,211 @@ MARGIN :: graphics.MARGIN
 GAP :: graphics.GAP
 BUTTON_HEIGHT :: 28
 TAB_WIDTH :: 120
+// Minimum pane bounds so the tab strip, digits, buttons, and calendar fit
+// without overlap or clipped text at the smallest resizable window size.
+#assert(LEAST_WIDTH >= 2 * MARGIN + 3 * TAB_WIDTH + 2 * GAP)
+#assert(LEAST_HEIGHT >= 3 * MARGIN + BUTTON_HEIGHT + GAP + 1 + DIGITS_SIZE_LEAST + 2 * BUTTON_HEIGHT + 4 * interface.TABLE_LINE)
 // The waits while a stopwatch or a timer runs and is shown: the tenths of
 // a second move.
 RUNNING_FRAME_MILLISECONDS :: 50
 // The largest digits: the bound of a text record.
 DIGITS_SIZE_LIMIT :: 128
 DIGITS_SIZE_LEAST :: 32
+
+// The layout tree of one frame (modus:layout). Lives in module memory, never on stack.
+clock_layout_tree: layout.Box_Tree
+clock_tokens: layout.Element_Tokens
+
+Clock_Places :: struct {
+	tabs:    [Section]interface.Area,
+	divider: interface.Area,
+	content: interface.Area,
+}
+
+Clock_Section_Places :: struct {
+	digits:       interface.Area,
+	date:         interface.Area,
+	cal_header:   interface.Area,
+	cal_buttons:  interface.Area,
+	cal_weekdays: interface.Area,
+	cal_grid:     interface.Area,
+}
+
+Stopwatch_Section_Places :: struct {
+	digits:       interface.Area,
+	buttons:      interface.Area,
+	table_header: interface.Area,
+	table_rows:   interface.Area,
+	columns:      [3]layout.Table_Column_Place,
+}
+
+Timer_Section_Places :: struct {
+	digits:  interface.Area,
+	bar:     interface.Area,
+	ended:   interface.Area,
+	actions: interface.Area,
+	steps:   interface.Area,
+	presets: interface.Area,
+}
+
+@(private)
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// clock_window_layout computes the top-level tab strip, divider, and section
+// content area with modus:layout.
+clock_window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int, tokens: layout.Element_Tokens) -> (places: Clock_Places, ok: bool) {
+	if tree == nil || width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y, padding = {.X = tokens.margin, .Y = tokens.margin}, gap = tokens.gap}) != .Done {
+		return {}, false
+	}
+	tab_boxes: [Section]layout.Box_Index
+	if _, st := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(BUTTON_HEIGHT)}, child_axis = .X, gap = tokens.gap}); st != .Done {
+		return {}, false
+	}
+	for chosen in Section {
+		st: layout.Box_Status
+		tab_boxes[chosen], st = layout.box_add(tree, {size = {.X = layout.px(TAB_WIDTH), .Y = layout.fill()}})
+		if st != .Done {
+			return {}, false
+		}
+	}
+	if layout.box_close(tree) != .Done {
+		return {}, false
+	}
+	div_box, div_st := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(1)}})
+	if div_st != .Done {
+		return {}, false
+	}
+	if _, sp_st := layout.box_add(tree, {size = {.X = layout.px(0), .Y = layout.px(tokens.gap)}}); sp_st != .Done {
+		return {}, false
+	}
+	content_box, content_st := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	if content_st != .Done {
+		return {}, false
+	}
+	if layout.solve(tree) != .Done {
+		return {}, false
+	}
+	for chosen in Section {
+		places.tabs[chosen] = area_of(tree, tab_boxes[chosen])
+	}
+	places.divider = area_of(tree, div_box)
+	places.content = area_of(tree, content_box)
+	return places, true
+}
+
+// clock_section_layout places the digits, date, calendar header, weekdays, and grid.
+clock_section_layout :: proc "contextless" (tree: ^layout.Box_Tree, content: interface.Area, digits_height, buttons_width: int, tokens: layout.Element_Tokens) -> (places: Clock_Section_Places, ok: bool) {
+	if tree == nil || content.width <= 0 || content.height <= 0 || content.width > layout.LENGTH_LIMIT || content.height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(content.width), i32(content.height), {child_axis = .Y, gap = tokens.gap}) != .Done {
+		return {}, false
+	}
+	digits_box, s1 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(i32(max(digits_height, 1)))}})
+	date_box, s2 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(interface.LINE)}})
+	_, s3 := layout.box_add(tree, {size = {.X = layout.px(0), .Y = layout.px(tokens.margin)}})
+	cal_hdr_row, s4 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(BUTTON_HEIGHT)}, child_axis = .X, gap = tokens.gap})
+	_, s5 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	cal_btns, s6 := layout.box_add(tree, {size = {.X = layout.px(i32(clamp(buttons_width, 0, content.width))), .Y = layout.fill()}})
+	s7 := layout.box_close(tree)
+	cal_wk, s8 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(interface.TABLE_LINE)}})
+	cal_grid, s9 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	if s1 != .Done || s2 != .Done || s3 != .Done || s4 != .Done || s5 != .Done || s6 != .Done || s7 != .Done || s8 != .Done || s9 != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	shift :: proc "contextless" (a: interface.Area, ox, oy: int) -> interface.Area {
+		return {a.x + ox, a.y + oy, a.width, a.height}
+	}
+	places.digits = shift(area_of(tree, digits_box), content.x, content.y)
+	places.date = shift(area_of(tree, date_box), content.x, content.y)
+	places.cal_header = shift(area_of(tree, cal_hdr_row), content.x, content.y)
+	places.cal_buttons = shift(area_of(tree, cal_btns), content.x, content.y)
+	places.cal_weekdays = shift(area_of(tree, cal_wk), content.x, content.y)
+	places.cal_grid = shift(area_of(tree, cal_grid), content.x, content.y)
+	return places, true
+}
+
+// stopwatch_section_layout places the digits, action buttons, and laps table.
+stopwatch_section_layout :: proc "contextless" (tree: ^layout.Box_Tree, content: interface.Area, digits_height, buttons_width: int, tokens: layout.Element_Tokens) -> (places: Stopwatch_Section_Places, ok: bool) {
+	if tree == nil || content.width <= 0 || content.height <= 0 || content.width > layout.LENGTH_LIMIT || content.height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(content.width), i32(content.height), {child_axis = .Y, cross_align = .Center, gap = tokens.margin}) != .Done {
+		return {}, false
+	}
+	digits_box, s1 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(i32(max(digits_height, 1)))}})
+	btns_box, s2 := layout.box_add(tree, {size = {.X = layout.px(i32(clamp(buttons_width, 0, content.width))), .Y = layout.px(BUTTON_HEIGHT)}})
+	table_w := i32(min(content.width, 480))
+	_, s3 := layout.box_open(tree, {size = {.X = layout.px(table_w), .Y = layout.fill()}, child_axis = .Y})
+	hdr_box, s4 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(interface.TABLE_LINE)}})
+	rows_box, s5 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	s6 := layout.box_close(tree)
+	if s1 != .Done || s2 != .Done || s3 != .Done || s4 != .Done || s5 != .Done || s6 != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	shift :: proc "contextless" (a: interface.Area, ox, oy: int) -> interface.Area {
+		return {a.x + ox, a.y + oy, a.width, a.height}
+	}
+	places.digits = shift(area_of(tree, digits_box), content.x, content.y)
+	places.buttons = shift(area_of(tree, btns_box), content.x, content.y)
+	places.table_header = shift(area_of(tree, hdr_box), content.x, content.y)
+	places.table_rows = shift(area_of(tree, rows_box), content.x, content.y)
+	cols := [3]layout.Table_Column{
+		{width = 8 * graphics.CELL_WIDTH},
+		{weight = 1, least = 8 * graphics.CELL_WIDTH},
+		{weight = 1, least = 8 * graphics.CELL_WIDTH},
+	}
+	hdr_rect := layout.Rect{i32(places.table_header.x), i32(places.table_header.y), i32(places.table_header.width), i32(places.table_header.height)}
+	if layout.table_columns(cols[:], places.columns[:], hdr_rect, 0) != .Done {
+		return {}, false
+	}
+	return places, true
+}
+
+// timer_section_layout places the digits, remaining bar, ended banner, actions,
+// duration step buttons, and preset buttons.
+timer_section_layout :: proc "contextless" (tree: ^layout.Box_Tree, content: interface.Area, digits_height, actions_width, steps_width: int, ended: bool, tokens: layout.Element_Tokens) -> (places: Timer_Section_Places, ok: bool) {
+	if tree == nil || content.width <= 0 || content.height <= 0 || content.width > layout.LENGTH_LIMIT || content.height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(content.width), i32(content.height), {child_axis = .Y, cross_align = .Center, gap = tokens.gap}) != .Done {
+		return {}, false
+	}
+	digits_box, s1 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(i32(max(digits_height, 1)))}})
+	bar_box, s2 := layout.box_add(tree, {size = {.X = layout.px(i32(min(content.width, 560))), .Y = layout.px(8)}})
+	ended_box: layout.Box_Index
+	s3 := layout.Box_Status.Done
+	if ended {
+		ended_box, s3 = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(interface.LINE)}})
+	}
+	actions_box, s4 := layout.box_add(tree, {size = {.X = layout.px(i32(clamp(actions_width, 0, content.width))), .Y = layout.px(BUTTON_HEIGHT)}})
+	steps_box, s5 := layout.box_add(tree, {size = {.X = layout.px(i32(clamp(steps_width, 0, content.width))), .Y = layout.px(BUTTON_HEIGHT)}})
+	presets_box, s6 := layout.box_add(tree, {size = {.X = layout.px(i32(clamp(steps_width, 0, content.width))), .Y = layout.px(BUTTON_HEIGHT)}})
+	if s1 != .Done || s2 != .Done || s3 != .Done || s4 != .Done || s5 != .Done || s6 != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	shift :: proc "contextless" (a: interface.Area, ox, oy: int) -> interface.Area {
+		return {a.x + ox, a.y + oy, a.width, a.height}
+	}
+	places.digits = shift(area_of(tree, digits_box), content.x, content.y)
+	places.bar = shift(area_of(tree, bar_box), content.x, content.y)
+	if ended {
+		places.ended = shift(area_of(tree, ended_box), content.x, content.y)
+	}
+	places.actions = shift(area_of(tree, actions_box), content.x, content.y)
+	places.steps = shift(area_of(tree, steps_box), content.x, content.y)
+	places.presets = shift(area_of(tree, presets_box), content.x, content.y)
+	return places, true
+}
 
 Section :: enum u8 {
 	Clock     = 0,
@@ -272,19 +472,18 @@ WEEKDAY_HEADS := [7]string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 
 // calendar_draw draws the month: its title with its buttons, the heads of
 // the days, and a cell for each day; today is in the chosen blue.
-calendar_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, today: calendar.Civil) {
+calendar_draw :: proc "contextless" (frame: ^interface.Frame, places: Clock_Section_Places, today: calendar.Civil) {
 	year, month := calendar_month_shown(today)
 	grid, ok := clock_model.month_grid(year, month)
 	if !ok {
 		return
 	}
 	title: clock_model.Text_Room
-	interface.draw_text(frame.table, area.x, area.y + (BUTTON_HEIGHT - interface.LINE) / 2, clock_model.month_title_text(&title, year, month), graphics.colors.text, interface.FONT_INTERFACE_BOLD)
+	interface.draw_text(frame.table, places.cal_header.x, places.cal_header.y + (BUTTON_HEIGHT - interface.LINE) / 2, clock_model.month_title_text(&title, year, month), clock_tokens.text, interface.FONT_INTERFACE_BOLD)
 	// The button today shows only away from the month of today.
 	labels := [3]string{"Previous", calendar_year == 0 ? "" : "Today", "Next"}
 	BUTTON_WIDTH :: 88
-	row_width := buttons_row_width(labels[:], BUTTON_WIDTH)
-	switch buttons_row(frame, {area.x + area.width - row_width, area.y, row_width, BUTTON_HEIGHT}, labels[:], BUTTON_WIDTH) {
+	switch buttons_row(frame, places.cal_buttons, labels[:], BUTTON_WIDTH) {
 	case 0:
 		calendar_move(today, -1)
 	case 1:
@@ -292,15 +491,12 @@ calendar_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 	case 2:
 		calendar_move(today, 1)
 	}
-	top := area.y + BUTTON_HEIGHT + GAP
-	cell_width := min(area.width / clock_model.WEEK_DAYS, 96)
-	rest := area.height - (top - area.y) - interface.TABLE_LINE
-	cell_height := clamp(rest / clock_model.MONTH_ROWS_LIMIT, interface.TABLE_LINE, 64)
-	left := area.x + (area.width - cell_width * clock_model.WEEK_DAYS) / 2
+	cell_width := min(places.cal_grid.width / clock_model.WEEK_DAYS, 96)
+	cell_height := clamp(places.cal_grid.height / clock_model.MONTH_ROWS_LIMIT, interface.TABLE_LINE, 64)
+	left := places.cal_grid.x + (places.cal_grid.width - cell_width * clock_model.WEEK_DAYS) / 2
 	for head, column in WEEKDAY_HEADS {
-		interface.cell_text(frame, {left + column * cell_width + 6, top, cell_width - 8, interface.TABLE_LINE}, head, graphics.colors.dim)
+		interface.cell_text(frame, {left + column * cell_width + 6, places.cal_weekdays.y, cell_width - 8, interface.TABLE_LINE}, head, clock_tokens.text_dim)
 	}
-	top += interface.TABLE_LINE
 	is_today_month := year == today.year && month == today.month
 	for row_index in 0 ..< grid.row_count {
 		for column in 0 ..< clock_model.WEEK_DAYS {
@@ -308,12 +504,12 @@ calendar_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 			if !has_day {
 				continue
 			}
-			x, y := left + column * cell_width, top + row_index * cell_height
+			x, y := left + column * cell_width, places.cal_grid.y + row_index * cell_height
 			today_cell := is_today_month && day == today.day
-			interface.draw_rectangle(frame.table, x, y, cell_width - 2, cell_height - 2, today_cell ? graphics.colors.chosen : graphics.colors.track)
+			interface.draw_rectangle(frame.table, x, y, cell_width - 2, cell_height - 2, today_cell ? clock_tokens.surface_chosen : clock_tokens.surface_track)
 			number: clock_model.Text_Room
 			clock_model.text_put_digits(&number, u64(day), 1)
-			interface.draw_text(frame.table, x + 6, y + 4, clock_model.text_of(&number), today_cell ? graphics.COLOR_WHITE : graphics.colors.text)
+			interface.draw_text(frame.table, x + 6, y + 4, clock_model.text_of(&number), today_cell ? clock_tokens.text_on_chosen : clock_tokens.text)
 		}
 	}
 }
@@ -321,25 +517,25 @@ calendar_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 // clock_section draws the local time, the date and the calendar.
 clock_section :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, milliseconds: i64, known: bool, zone: i64) {
 	if !known {
-		interface.cell_text(frame, {area.x, area.y, area.width, interface.LINE}, "The system has no date: the date page is absent or holds no date.", graphics.colors.dim)
+		interface.cell_text(frame, {area.x, area.y, area.width, interface.LINE}, "The system has no date: the date page is absent or holds no date.", clock_tokens.text_dim)
 		return
 	}
 	today := clock_model.local_civil(milliseconds, zone)
 	font := digits_font(area.width, area.height / 4, 8)
+	labels := [3]string{"Previous", calendar_year == 0 ? "" : "Today", "Next"}
+	places, layout_ok := clock_section_layout(&clock_layout_tree, area, interface.line_height(font), buttons_row_width(labels[:], 88), clock_tokens)
+	if !layout_ok {
+		return
+	}
 	room: clock_model.Text_Room
-	text_centered(frame, area, clock_model.time_of_day_text(&room, today), graphics.colors.text_strong, font)
-	y := area.y + interface.line_height(font) + GAP
-	text_centered(frame, {area.x, y, area.width, interface.LINE}, clock_model.date_text(&room, today, zone), graphics.colors.dim, interface.FONT_INTERFACE)
-	y += interface.LINE + 2 * MARGIN
-	calendar_draw(frame, {area.x, y, area.width, area.y + area.height - y}, today)
+	text_centered(frame, places.digits, clock_model.time_of_day_text(&room, today), clock_tokens.text_strong, font)
+	text_centered(frame, places.date, clock_model.date_text(&room, today, zone), clock_tokens.text_dim, interface.FONT_INTERFACE)
+	calendar_draw(frame, places, today)
 }
 
 // stopwatch_section draws the elapsed time, its buttons and the laps.
 stopwatch_section :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, now: u64) {
 	font := digits_font(area.width, area.height / 4, 9)
-	room: clock_model.Text_Room
-	text_centered(frame, area, clock_model.elapsed_text(&room, clock_model.stopwatch_elapsed(&watch, now)), graphics.colors.text_strong, font)
-	y := area.y + interface.line_height(font) + MARGIN
 	// Only the acts that the state takes have a button.
 	labels: [3]string
 	switch watch.state {
@@ -349,8 +545,13 @@ stopwatch_section :: proc "contextless" (frame: ^interface.Frame, area: interfac
 		labels = {"Start", "", watch.elapsed_of_runs > 0 || watch.lap_count > 0 ? "Reset" : ""}
 	}
 	BUTTON_WIDTH :: 104
-	row_width := buttons_row_width(labels[:], BUTTON_WIDTH)
-	switch buttons_row(frame, {area.x + (area.width - row_width) / 2, y, row_width, BUTTON_HEIGHT}, labels[:], BUTTON_WIDTH) {
+	places, layout_ok := stopwatch_section_layout(&clock_layout_tree, area, interface.line_height(font), buttons_row_width(labels[:], BUTTON_WIDTH), clock_tokens)
+	if !layout_ok {
+		return
+	}
+	room: clock_model.Text_Room
+	text_centered(frame, places.digits, clock_model.elapsed_text(&room, clock_model.stopwatch_elapsed(&watch, now)), clock_tokens.text_strong, font)
+	switch buttons_row(frame, places.buttons, labels[:], BUTTON_WIDTH) {
 	case 0:
 		stopwatch_toggle_told(now)
 	case 1:
@@ -358,31 +559,34 @@ stopwatch_section :: proc "contextless" (frame: ^interface.Frame, area: interfac
 	case 2:
 		clock_model.stopwatch_reset(&watch)
 	}
-	y += BUTTON_HEIGHT + MARGIN
 	if watch.lap_count == 0 {
 		return
 	}
-	cells: [3]interface.Area
-	sizes := [3]interface.Size{interface.characters(8), interface.share(), interface.share()}
-	table_width := min(area.width, 480)
-	table_x := area.x + (area.width - table_width) / 2
-	interface.row_split({table_x, y, table_width, interface.TABLE_LINE}, sizes[:], cells[:], 16)
-	interface.table_header(frame, cells[:], {"Lap", "Lap time", "Total"}, {.Left, .Right, .Right})
-	y += interface.TABLE_LINE
+	header_cells := [3]interface.Area{
+		{int(places.columns[0].x), places.table_header.y, int(places.columns[0].width), interface.TABLE_LINE},
+		{int(places.columns[1].x), places.table_header.y, int(places.columns[1].width), interface.TABLE_LINE},
+		{int(places.columns[2].x), places.table_header.y, int(places.columns[2].width), interface.TABLE_LINE},
+	}
+	interface.table_header(frame, header_cells[:], {"Lap", "Lap time", "Total"}, {.Left, .Right, .Right})
+	y := places.table_rows.y
 	band := 0
-	for index := watch.lap_count - 1; index >= 0 && y + interface.TABLE_LINE <= area.y + area.height; index -= 1 {
+	for index := watch.lap_count - 1; index >= 0 && y + interface.TABLE_LINE <= places.table_rows.y + places.table_rows.height; index -= 1 {
 		own, total, ok := clock_model.stopwatch_lap_times(&watch, index)
 		if !ok {
 			continue
 		}
-		line := interface.Area{table_x, y, table_width, interface.TABLE_LINE}
+		line := interface.Area{places.table_rows.x, y, places.table_rows.width, interface.TABLE_LINE}
 		interface.table_band(frame, line, band)
-		interface.row_split(line, sizes[:], cells[:], 16)
+		cells := [3]interface.Area{
+			{int(places.columns[0].x), y, int(places.columns[0].width), interface.TABLE_LINE},
+			{int(places.columns[1].x), y, int(places.columns[1].width), interface.TABLE_LINE},
+			{int(places.columns[2].x), y, int(places.columns[2].width), interface.TABLE_LINE},
+		}
 		number, own_text, total_text: clock_model.Text_Room
 		clock_model.text_put_digits(&number, u64(index + 1), 1)
-		interface.cell_text(frame, cells[0], clock_model.text_of(&number), graphics.colors.dim)
-		interface.cell_text(frame, cells[1], clock_model.elapsed_text(&own_text, own), graphics.colors.text, .Right)
-		interface.cell_text(frame, cells[2], clock_model.elapsed_text(&total_text, total), graphics.colors.text, .Right)
+		interface.cell_text(frame, cells[0], clock_model.text_of(&number), clock_tokens.text_dim)
+		interface.cell_text(frame, cells[1], clock_model.elapsed_text(&own_text, own), clock_tokens.text, .Right)
+		interface.cell_text(frame, cells[2], clock_model.elapsed_text(&total_text, total), clock_tokens.text, .Right)
 		y += interface.TABLE_LINE
 		band += 1
 	}
@@ -409,24 +613,7 @@ DURATION_PRESETS := [4]u64{60_000, 300_000, 600_000, 1_500_000}
 // and, for a ready timer, the steps and the presets of the duration.
 timer_section :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, now: u64) {
 	font := digits_font(area.width, area.height / 4, 8)
-	room: clock_model.Text_Room
 	ended := timer.state == .Ended
-	text_centered(frame, area, clock_model.remaining_text(&room, clock_model.timer_remaining(&timer, now)), ended ? graphics.colors.warning : graphics.colors.text_strong, font)
-	y := area.y + interface.line_height(font) + GAP
-	// The part of the duration that is left, as a rectangular bar.
-	BAR_HEIGHT :: 8
-	bar_width := min(area.width, 560)
-	bar_x := area.x + (area.width - bar_width) / 2
-	interface.draw_rectangle(frame.table, bar_x, y, bar_width, BAR_HEIGHT, graphics.colors.track)
-	filled := int(u64(bar_width) * clock_model.timer_left_in_millionths(&timer, now) / 1_000_000)
-	if filled > 0 {
-		interface.draw_rectangle(frame.table, bar_x, y, filled, BAR_HEIGHT, graphics.colors.chosen)
-	}
-	y += BAR_HEIGHT + MARGIN
-	if ended {
-		text_centered(frame, {area.x, y, area.width, interface.LINE}, "The timer ended.", graphics.colors.warning, interface.FONT_INTERFACE)
-		y += interface.LINE + MARGIN
-	}
 	labels: [2]string
 	switch timer.state {
 	case .Ready:
@@ -439,8 +626,24 @@ timer_section :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 		labels = {"", "Reset"}
 	}
 	BUTTON_WIDTH :: 104
-	row_width := buttons_row_width(labels[:], BUTTON_WIDTH)
-	switch buttons_row(frame, {area.x + (area.width - row_width) / 2, y, row_width, BUTTON_HEIGHT}, labels[:], BUTTON_WIDTH) {
+	STEP_WIDTH :: 80
+	step_labels := [4]string{"-1 min", "-10 s", "+10 s", "+1 min"}
+	places, layout_ok := timer_section_layout(&clock_layout_tree, area, interface.line_height(font), buttons_row_width(labels[:], BUTTON_WIDTH), buttons_row_width(step_labels[:], STEP_WIDTH), ended, clock_tokens)
+	if !layout_ok {
+		return
+	}
+	room: clock_model.Text_Room
+	text_centered(frame, places.digits, clock_model.remaining_text(&room, clock_model.timer_remaining(&timer, now)), ended ? clock_tokens.warning : clock_tokens.text_strong, font)
+	// The part of the duration that is left, as a rectangular bar.
+	interface.draw_rectangle(frame.table, places.bar.x, places.bar.y, places.bar.width, places.bar.height, clock_tokens.surface_track)
+	filled := int(u64(places.bar.width) * clock_model.timer_left_in_millionths(&timer, now) / 1_000_000)
+	if filled > 0 {
+		interface.draw_rectangle(frame.table, places.bar.x, places.bar.y, filled, places.bar.height, clock_tokens.surface_chosen)
+	}
+	if ended {
+		text_centered(frame, places.ended, "The timer ended.", clock_tokens.warning, interface.FONT_INTERFACE)
+	}
+	switch buttons_row(frame, places.actions, labels[:], BUTTON_WIDTH) {
 	case 0:
 		clock_model.timer_toggle(&timer, now)
 	case 1:
@@ -449,16 +652,11 @@ timer_section :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 	if timer.state != .Ready {
 		return
 	}
-	y += BUTTON_HEIGHT + MARGIN
-	step_labels := [4]string{"-1 min", "-10 s", "+10 s", "+1 min"}
-	STEP_WIDTH :: 80
-	steps_width := buttons_row_width(step_labels[:], STEP_WIDTH)
-	if chosen := buttons_row(frame, {area.x + (area.width - steps_width) / 2, y, steps_width, BUTTON_HEIGHT}, step_labels[:], STEP_WIDTH); chosen >= 0 {
+	if chosen := buttons_row(frame, places.steps, step_labels[:], STEP_WIDTH); chosen >= 0 {
 		clock_model.timer_duration_change(&timer, DURATION_STEPS[chosen])
 	}
-	y += BUTTON_HEIGHT + GAP
 	preset_labels := [4]string{"1 min", "5 min", "10 min", "25 min"}
-	if chosen := buttons_row(frame, {area.x + (area.width - steps_width) / 2, y, steps_width, BUTTON_HEIGHT}, preset_labels[:], STEP_WIDTH); chosen >= 0 {
+	if chosen := buttons_row(frame, places.presets, preset_labels[:], STEP_WIDTH); chosen >= 0 {
 		clock_model.timer_duration_set(&timer, DURATION_PRESETS[chosen])
 	}
 }
@@ -518,29 +716,29 @@ keys_run :: proc "contextless" (frame: ^interface.Frame, now: u64, today: calend
 // draw builds one frame: the tabs, then the section that is chosen.
 draw :: proc "contextless" (window: ^display.Window, now: u64, milliseconds: i64, known: bool, zone: i64) {
 	frame := interface.window_frame_start(&window_memory, window)
+	clock_tokens, _ = layout.tokens_for(graphics.appearance, .Standard)
 	width, height := window.width, window.height
 	interface.background(&frame, {0, 0, width, height})
-	x := MARGIN
-	for name, chosen in SECTION_NAMES {
-		toggle := chosen == section ? accessibility.Toggle_State.True : accessibility.Toggle_State.False
-		if interface.button(&frame, {x, MARGIN, TAB_WIDTH, BUTTON_HEIGHT}, interface.identity(name), name, chosen == section, toggle).activated {
-			section = chosen
+	places, layout_ok := clock_window_layout(&clock_layout_tree, width, height, clock_tokens)
+	if layout_ok {
+		for name, chosen in SECTION_NAMES {
+			toggle := chosen == section ? accessibility.Toggle_State.True : accessibility.Toggle_State.False
+			if interface.button(&frame, places.tabs[chosen], interface.identity(name), name, chosen == section, toggle).activated {
+				section = chosen
+			}
 		}
-		x += TAB_WIDTH + GAP
+		interface.draw_rectangle(frame.table, places.divider.x, places.divider.y, places.divider.width, places.divider.height, clock_tokens.surface_track)
+		today := known ? clock_model.local_civil(milliseconds, zone) : calendar.Civil{}
+		switch section {
+		case .Clock:
+			clock_section(&frame, places.content, milliseconds, known, zone)
+		case .Stopwatch:
+			stopwatch_section(&frame, places.content, now)
+		case .Timer:
+			timer_section(&frame, places.content, now)
+		}
+		keys_run(&frame, now, today, known)
 	}
-	interface.draw_rectangle(frame.table, MARGIN, MARGIN + BUTTON_HEIGHT + GAP, width - 2 * MARGIN, 1, graphics.colors.track)
-	top := MARGIN + BUTTON_HEIGHT + 2 * MARGIN
-	content := interface.Area{MARGIN, top, width - 2 * MARGIN, height - top - MARGIN}
-	today := known ? clock_model.local_civil(milliseconds, zone) : calendar.Civil{}
-	switch section {
-	case .Clock:
-		clock_section(&frame, content, milliseconds, known, zone)
-	case .Stopwatch:
-		stopwatch_section(&frame, content, now)
-	case .Timer:
-		timer_section(&frame, content, now)
-	}
-	keys_run(&frame, now, today, known)
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 

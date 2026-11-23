@@ -1,0 +1,3 @@
+type: Changed
+
+**Removed UI hardcoded caps and migrated seven desktop windows to `modus:layout`.** `Box_Tree` (1024 inline boxes), `Interface_State` Tab focus order (64 inline elements), and `note_list` (256 inline notes) now move transparently to caller-supplied overflow tiers with transition counters, while note titles and `document_picker` names accept the full 255-byte STORAGE7 limit. `clock`, `paint`, `processors`, `locks`, `scheduler`, `hall_of_fame`, and `terminal` now compute their window layouts with `modus:layout` and `Element_Tokens`, verified by host non-overlap tests across window sizes, HiDPI scales, and dark and light appearances.

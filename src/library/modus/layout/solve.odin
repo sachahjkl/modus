@@ -10,7 +10,8 @@ package layout
 // solve sizes and places each box of the tree. Each box then has its rect,
 // its clipped rect, its content size and its clamped scroll offsets.
 solve :: proc "contextless" (tree: ^Box_Tree) -> Box_Status {
-	if tree.count <= 0 || tree.count > BOX_CAPACITY || tree.open_depth <= 0 {
+	boxes := tree_boxes(tree)
+	if tree.count <= 0 || tree.count >= len(boxes) || tree.open_depth <= 0 {
 		return .No_Open_Box
 	}
 	if tree.open_depth != 1 {
@@ -80,8 +81,9 @@ box_content :: #force_inline proc "contextless" (box: ^Box, axis: Axis) -> i64 {
 
 @(private)
 child_count :: proc "contextless" (tree: ^Box_Tree, box: ^Box) -> i64 {
+	boxes := tree_boxes(tree)
 	count: i64
-	for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
+	for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
 		count += 1
 	}
 	return count
@@ -100,8 +102,9 @@ box_gaps :: proc "contextless" (tree: ^Box_Tree, box: ^Box, axis: Axis) -> i64 {
 // Pass 1: the sizes that need no other box.
 @(private)
 solve_standalone :: proc "contextless" (tree: ^Box_Tree, axis: Axis) {
+	boxes := tree_boxes(tree)
 	for index in 1 ..= tree.count {
-		box := &tree.boxes[index]
+		box := &boxes[index]
 		size := box.size[axis]
 		extent: i64
 		switch size.kind {
@@ -120,18 +123,19 @@ solve_standalone :: proc "contextless" (tree: ^Box_Tree, axis: Axis) {
 // The ancestor comes before the box in the array, so it has its size.
 @(private)
 solve_from_above :: proc "contextless" (tree: ^Box_Tree, axis: Axis) {
+	boxes := tree_boxes(tree)
 	for index in 1 ..= tree.count {
-		box := &tree.boxes[index]
+		box := &boxes[index]
 		if box.size[axis].kind != .Percent {
 			continue
 		}
 		ancestor := box.parent
-		for ancestor != NO_BOX && tree.boxes[ancestor].size[axis].kind == .Children_Sum {
-			ancestor = tree.boxes[ancestor].parent
+		for ancestor != NO_BOX && boxes[ancestor].size[axis].kind == .Children_Sum {
+			ancestor = boxes[ancestor].parent
 		}
 		basis: i64
 		if ancestor != NO_BOX {
-			basis = box_content(&tree.boxes[ancestor], axis)
+			basis = box_content(&boxes[ancestor], axis)
 		}
 		box.extent[axis] = box_bounded(box, axis, multiply_divide(basis, i64(box.size[axis].value), RATIO_WHOLE))
 	}
@@ -141,12 +145,13 @@ solve_from_above :: proc "contextless" (tree: ^Box_Tree, axis: Axis) {
 // largest across it.
 @(private)
 children_extent :: proc "contextless" (tree: ^Box_Tree, box: ^Box, axis: Axis) -> i64 {
+	boxes := tree_boxes(tree)
 	total: i64
-	for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
+	for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
 		if axis == box.child_axis {
-			total += tree.boxes[child].extent[axis]
+			total += boxes[child].extent[axis]
 		} else {
-			total = max(total, tree.boxes[child].extent[axis])
+			total = max(total, boxes[child].extent[axis])
 		}
 	}
 	return total
@@ -156,8 +161,9 @@ children_extent :: proc "contextless" (tree: ^Box_Tree, box: ^Box, axis: Axis) -
 // visits each child before its parent.
 @(private)
 solve_from_below :: proc "contextless" (tree: ^Box_Tree, axis: Axis) {
+	boxes := tree_boxes(tree)
 	for index := tree.count; index >= 1; index -= 1 {
-		box := &tree.boxes[index]
+		box := &boxes[index]
 		if box.size[axis].kind != .Children_Sum {
 			continue
 		}
@@ -179,16 +185,17 @@ box_giveable :: proc "contextless" (box: ^Box, axis: Axis) -> i64 {
 // violations of the children, then their places.
 @(private)
 solve_violations_and_places :: proc "contextless" (tree: ^Box_Tree, axis: Axis) {
-	root := &tree.boxes[ROOT_BOX]
+	boxes := tree_boxes(tree)
+	root := &boxes[ROOT_BOX]
 	root.place[axis] = 0
 	for index in 1 ..= tree.count {
-		box := &tree.boxes[index]
+		box := &boxes[index]
 		content := box_content(box, axis)
 		if box.size[axis].kind != .Children_Sum {
 			// The pass 2 gave each percent from the size of this box before
 			// this box lost room: give it its part of the final size.
-			for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
-				child_box := &tree.boxes[child]
+			for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
+				child_box := &boxes[child]
 				if child_box.size[axis].kind == .Percent {
 					child_box.extent[axis] = box_bounded(child_box, axis, multiply_divide(content, i64(child_box.size[axis].value), RATIO_WHOLE))
 				}
@@ -198,8 +205,8 @@ solve_violations_and_places :: proc "contextless" (tree: ^Box_Tree, axis: Axis) 
 			if axis == box.child_axis {
 				shrink_along(tree, box, axis, content - box_gaps(tree, box, axis))
 			} else {
-				for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
-					child_box := &tree.boxes[child]
+				for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
+					child_box := &boxes[child]
 					if excess := child_box.extent[axis] - content; excess > 0 {
 						child_box.extent[axis] -= min(excess, box_giveable(child_box, axis))
 					}
@@ -215,22 +222,23 @@ solve_violations_and_places :: proc "contextless" (tree: ^Box_Tree, axis: Axis) 
 // so the shares add up to what is taken, with no remainder lost.
 @(private)
 shrink_along :: proc "contextless" (tree: ^Box_Tree, box: ^Box, axis: Axis, room: i64) {
+	boxes := tree_boxes(tree)
 	total := children_extent(tree, box, axis)
 	violation := total - max(room, 0)
 	if violation <= 0 {
 		return
 	}
 	budget: i64
-	for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
-		budget += box_giveable(&tree.boxes[child], axis)
+	for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
+		budget += box_giveable(&boxes[child], axis)
 	}
 	if budget <= 0 {
 		return
 	}
 	taken := min(violation, budget)
 	running, given_before: i64
-	for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
-		child_box := &tree.boxes[child]
+	for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
+		child_box := &boxes[child]
 		giveable := box_giveable(child_box, axis)
 		running += giveable
 		given_to_here := multiply_divide(taken, running, budget)
@@ -259,6 +267,7 @@ align_offset :: #force_inline proc "contextless" (align: Align, room: i64) -> i6
 // scroll offset on the axis.
 @(private)
 place_children :: proc "contextless" (tree: ^Box_Tree, box: ^Box, axis: Axis, content: i64) {
+	boxes := tree_boxes(tree)
 	padding := pixels_to_subpixels(box.padding[axis])
 	used: i64
 	if box.first_child == NO_BOX {
@@ -280,14 +289,14 @@ place_children :: proc "contextless" (tree: ^Box_Tree, box: ^Box, axis: Axis, co
 	if axis == box.child_axis {
 		cursor := start + align_offset(box.align, content - used)
 		gap := pixels_to_subpixels(box.gap)
-		for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
-			child_box := &tree.boxes[child]
+		for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
+			child_box := &boxes[child]
 			child_box.place[axis] = cursor
 			cursor += child_box.extent[axis] + gap
 		}
 	} else {
-		for child := box.first_child; child != NO_BOX; child = tree.boxes[child].next_sibling {
-			child_box := &tree.boxes[child]
+		for child := box.first_child; child != NO_BOX; child = boxes[child].next_sibling {
+			child_box := &boxes[child]
 			child_box.place[axis] = start + align_offset(box.cross_align, content - child_box.extent[axis])
 		}
 	}
@@ -312,14 +321,15 @@ rect_contains :: proc "contextless" (rect: Rect, x, y: i32) -> bool {
 // subpixels touch in pixels. Then the clip of each box from its parent.
 @(private)
 solve_snap_and_clip :: proc "contextless" (tree: ^Box_Tree) {
+	boxes := tree_boxes(tree)
 	for index in 1 ..= tree.count {
-		box := &tree.boxes[index]
+		box := &boxes[index]
 		left := subpixels_to_nearest_pixel(box.place[.X])
 		top := subpixels_to_nearest_pixel(box.place[.Y])
 		right := subpixels_to_nearest_pixel(box.place[.X] + box.extent[.X])
 		bottom := subpixels_to_nearest_pixel(box.place[.Y] + box.extent[.Y])
 		box.rect = {left, top, right - left, bottom - top}
-		inherited := box.parent == NO_BOX ? box.rect : tree.boxes[box.parent].children_clip
+		inherited := box.parent == NO_BOX ? box.rect : boxes[box.parent].children_clip
 		box.clipped_rect = rect_intersection(box.rect, inherited)
 		box.children_clip = inherited
 		if box.overflow[.X] != .Visible {

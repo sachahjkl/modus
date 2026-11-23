@@ -18,8 +18,11 @@
 package document_picker
 
 import "modus:contract/enum_word"
+import "modus:contract/store"
 
-MAX_DOC_NAME_BYTES :: 64
+// Format property: matches the 255-byte object name limit of STORAGE7
+// (src/md/data/storage_capacity.md).
+MAX_DOC_NAME_BYTES :: store.ENTRY_NAME_CAPACITY
 
 Document_Right :: enum u8 {
 	Read  = 0,
