@@ -23,7 +23,7 @@ import "modustool:checks"
 // a JSON-LD graph and a sitemap from it. An empty address gives a site of
 // relative links only. `modustool site --address https://...` sets
 // another one for one run.
-SITE_ADDRESS :: "https://modus.froment.software"
+SITE_ADDRESS :: "https://modus.systems"
 // The folder of the docs: its home, and its two parts, the guides and the
 // reference. Every path of a page of the docs starts here, so that one
 // change of these lines moves the whole docs (docs/SITE.md, "The
