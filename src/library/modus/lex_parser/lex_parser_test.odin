@@ -470,6 +470,40 @@ parse_assignments :: proc(t: ^testing.T) {
 	testing.expect_value(t, tree.assigned_name, "a.b")
 }
 
+// "->" where the line goes on is the refusal Thin_Arrow at the "->", in
+// place of the refusal of the token that the parser expected: in a call, a
+// list, a literal, a let and at the end of a line. A "->" with no value
+// before it keeps its own refusal, and "=>" makes a function.
+@(test)
+parse_thin_arrow :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:    string,
+		refusal: Refusal,
+		column:  u32,
+	}
+	cases := []Case {
+		// A "->" with no value before it is a "-" before ">".
+		{"->", .Unexpected, 2},
+		{"f(->)", .Unexpected, 4},
+		{"n -> n * n", .Thin_Arrow, 3},
+		{"map(x, n -> n * n)", .Thin_Arrow, 10},
+		{"map(x, n->n*n)", .Thin_Arrow, 9},
+		{"map(x, (n) -> n * n)", .Thin_Arrow, 12},
+		{"[1, n -> n]", .Thin_Arrow, 7},
+		{"{a = n -> n}", .Thin_Arrow, 8},
+		{"let f = n -> n in f(1)", .Thin_Arrow, 11},
+		{"x = n -> n", .Thin_Arrow, 7},
+		{"g() + (n -> n)", .Thin_Arrow, 10},
+		{"let x = n -> n", .Thin_Arrow, 11},
+		{"map(x, n => n)", .Comma_Or_Close_Missing, 10},
+		{"map(x, (n) => n * n)", .None, 0},
+	}
+	for item in cases {
+		tree := parse_of(item.text)
+		testing.expectf(t, tree.refusal.refusal == item.refusal && (item.refusal == .None || tree.refusal.place.column == item.column), "%q: %v at column %d, not %v at column %d; %q", item.text, tree.refusal.refusal, tree.refusal.place.column, item.refusal, item.column, tree_form(tree, tree.root))
+	}
+}
+
 // `let x = value` with nothing after the value is the assignment
 // `x = value`; each other form of `let` is the expression, with its own
 // refusals in their places, as if the first reading had not happened.

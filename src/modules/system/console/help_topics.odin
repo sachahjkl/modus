@@ -3,11 +3,12 @@ package console
 import "modus:console_language"
 import "modus:system"
 
-// help(topic) gives a short guide to one name: a command gives its
-// signature and its help, as describe does, and a word of Lex or a name of
-// the evaluation gives a guide with an example. A command and a guide can
-// have one name (where, connect): the answer then has both. A name that is
-// neither gets the names near it. The guides are texts of the console, so
+// describe(name) gives the help on one name: a command gives its signature
+// and its help, and a word of Lex or a name of the evaluation gives a guide
+// with an example. help() stays the table of the commands: one command
+// gives the help on one name. A command and a guide can have one name
+// (where, connect): the answer then has both. A name that is neither gets
+// the names near it. The guides are texts of the console, so
 // a guide names only what a line of this console can do
 // (docs/CONSOLE.md, "Help on one name").
 
@@ -46,8 +47,8 @@ HELP_TOPICS := [?]Help_Topic {
 	{"if", HELP_IF},
 }
 
-// help_topic gives the text of help(topic), or fails the line with the
-// names near the topic.
+// help_topic gives the text of describe(name), or fails the line with the
+// names near the name.
 help_topic :: proc "contextless" (topic: string) -> Value {
 	found := command_find(topic)
 	guide := ""
@@ -65,9 +66,9 @@ help_topic :: proc "contextless" (topic: string) -> Value {
 			console_language.nearest_name_offer(&nearest, command.name)
 		}
 		if nearest.count == 0 {
-			return fail("help: no command and no word of Lex has the name ", topic, "; help() gives the commands")
+			return fail("describe: no command and no word of Lex has the name ", topic, "; help() gives the commands")
 		}
-		return fail("help: no command and no word of Lex has the name ", topic, nearest_names_text(&nearest))
+		return fail("describe: no command and no word of Lex has the name ", topic, nearest_names_text(&nearest))
 	}
 	writer := system.Writer {
 		buffer = scratch[scratch_count:],

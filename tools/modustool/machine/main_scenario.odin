@@ -613,6 +613,28 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: no command has the name proceses; did you mean processes"},
 	{kind = .Type, text = "where(processes(), pages > 1000)"},
 	{kind = .Wait, text = "[console] error: where: the records Process have no field pages; did you mean resident or mapped? Their fields are slot, name"},
+	// A call of `module.export` connects only when the module of the image
+	// has the export. A fault in the export of a connected service gets the
+	// near name and no second connection; a name that no module has asks
+	// for no connection; an export of a module that is no service gets the
+	// refusal of connect, adds no command, and frees the slot of the
+	// connection, so the same call is refused the same way again.
+	{kind = .Type, text = "monitor.procesess()"},
+	{kind = .Wait, text = "[console] error: no command has the name monitor.procesess; did you mean monitor.processes", fails_on = "connected console to the service monitor"},
+	{kind = .Type, text = "nothing.x()"},
+	{kind = .Wait, text = "[console] error: no command has the name nothing.x; try help()", fails_on = "cannot connect"},
+	{kind = .Type, text = "math.x()"},
+	{kind = .Wait, text = "[console] error: no command has the name math.x", fails_on = "cannot connect"},
+	{kind = .Type, text = "math.gcd(84, 36)"},
+	{kind = .Wait, text = "[console] error: cannot connect to math: root.Connect: the argument name names none of the services that run"},
+	{kind = .Type, text = "math.gcd(84, 36)"},
+	{kind = .Wait, text = "[console] error: cannot connect to math: root.Connect: the argument name names none of the services that run", fails_on = "no room for the service"},
+	{kind = .Type, text = "describe(\"math.gcd\")"},
+	{kind = .Wait, text = "[console] error: describe: no command and no word of Lex has the name math.gcd"},
+	// The arguments are forced before the call connects: a refused argument
+	// connects nothing.
+	{kind = .Type, text = "math.gcd(1 / 0, 2)"},
+	{kind = .Wait, text = "[console] error: division by zero", fails_on = "cannot connect"},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = "[console]   interrupts"},
 	{kind = .Type, text = "stop(\"paint\")"},
@@ -811,10 +833,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: a variable keeps no function"},
 	// Help on one name: a word of Lex gives its guide, a fault of typing the
 	// names near it.
-	{kind = .Type, text = "help(\"let\")"},
+	{kind = .Type, text = "describe(\"let\")"},
 	{kind = .Wait, text = "[console] let binds names for one expression"},
-	{kind = .Type, text = "help(\"lte\")"},
-	{kind = .Wait, text = "[console] error: help: no command and no word of Lex has the name lte; did you mean let"},
+	{kind = .Type, text = "describe(\"lte\")"},
+	{kind = .Wait, text = "[console] error: describe: no command and no word of Lex has the name lte; did you mean let"},
+	{kind = .Type, text = "help(\"let\")"},
+	{kind = .Wait, text = "[console] error: help takes no argument: use describe(\"let\") for the help on one name"},
+	// The hint of a function written with "->".
+	{kind = .Type, text = "map(numbers, n -> n * n)"},
+	{kind = .Wait, text = "[console] error: \"->\" is no operator: a function is written (n) => n * n"},
 	// The deepest line of calls of a command: 31 calls of hash inside each
 	// other and length in 197 bytes, a call of the host at the deepest
 	// place. It is the deepest line of the run so far, so its measure of
@@ -1523,6 +1550,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must", fails_on = "manual: the Markdown of its page: FAILED"},
 	{kind = .Move, text = "manual", to_x = 208, to_y = WINDOW_TITLE_ONLY_Y},
 	{kind = .Front, text = "console"},
+	// A call that nothing forces connects nothing: the body of a function
+	// with no call, and a "|>" in it, which the check before the parse
+	// reads.
+	{kind = .Type, text = "let f = () => manual.about(\"math\") in 1"},
+	{kind = .Wait, text = "[console] 1", fails_on = "connected console to the service manual"},
+	{kind = .Type, text = "let f = () => \"math\" |> manual.about() in 2"},
+	{kind = .Type, text = "6 * 7"},
+	{kind = .Wait, text = "[console] 42", fails_on = "connected console to the service manual"},
 	// A call of an export connects its service at its first use, as connect
 	// does; connect then gives the record of the connection that exists.
 	{kind = .Type, text = "manual.about(\"math\")"},

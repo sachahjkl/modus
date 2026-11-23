@@ -28,11 +28,15 @@ Nearest_Names :: struct {
 }
 
 // nearest_names_start starts a search for the names near wanted. The bound
-// is 1 edit for a name of 1 to 4 bytes, 2 edits up to 8 bytes, and 3 past
-// that: half the bytes of a short name changed is another name, not a fault.
+// is 0 edits for a name of 0 to 2 bytes, which then gets no suggestion: one
+// edit of "x" is any name of one or two bytes. It is 1 edit up to 4 bytes,
+// 2 edits up to 8 bytes, and 3 past that: half the bytes of a short name
+// changed is another name, not a fault.
 nearest_names_start :: proc "contextless" (wanted: string) -> Nearest_Names {
 	bound := 3
 	switch {
+	case len(wanted) < 3:
+		bound = 0
 	case len(wanted) <= 4:
 		bound = 1
 	case len(wanted) <= 8:

@@ -221,10 +221,10 @@ VARIABLE_TEXT_SIZE :: 96
 ARGUMENT_CAPACITY :: module.PARAMETER_CAPACITY // The arguments of a call: those of an export at most.
 
 // The items of a list that one variable keeps, the items of its nested
-// lists included (src/md/features/declarations.md, "The functions of layer
-// 4 as built"). Their texts and records take the memory of a table of the
-// variable, TABLE_KEPT bytes.
-VARIABLE_LIST_ITEM_CAPACITY :: 64
+// lists included (lex_evaluator, kept_list.odin). Their texts and records
+// take the memory of a table of the variable.
+VARIABLE_LIST_ITEM_CAPACITY :: lex_evaluator.KEPT_LIST_ITEM_CAPACITY
+#assert(TABLE_KEPT >= lex_evaluator.KEPT_LIST_BYTE_CAPACITY)
 
 Variable :: struct {
 	name:            [VARIABLE_NAME_SIZE]u8,
@@ -251,16 +251,7 @@ variables: [VARIABLE_CAPACITY]Variable
 line_serial: u64
 
 // The copy of a list that a line assigns, before it goes into its variable.
-// The variable keeps its old value until the whole list fits, and
-// `x = map(x, f)` reads the old items of x while the new ones are copied.
-List_Keeping :: struct {
-	items:      [VARIABLE_LIST_ITEM_CAPACITY]Value,
-	item_count: int,
-	bytes:      [TABLE_KEPT]u8,
-	byte_count: int,
-}
-
-list_keeping: List_Keeping
+list_keeping: lex_evaluator.List_Keeping
 
 // The memory of the Text values of one line.
 scratch: [4096]u8
@@ -387,8 +378,7 @@ assign :: proc "contextless" (name: string, value: Value) {
 	// The whole list is copied before the variable changes: a refusal
 	// leaves the old value.
 	if value.kind == .List {
-		list_keeping.item_count, list_keeping.byte_count = 0, 0
-		if _, kept := list_keep(value); !kept {
+		if !list_keep(value) {
 			return
 		}
 	}
@@ -442,94 +432,38 @@ assign :: proc "contextless" (name: string, value: Value) {
 
 FUNCTION_VARIABLE_REFUSAL :: "a variable keeps no function: a function reads the values of its line, which end with the line"
 
-// list_keep copies the items of a List of the line into list_keeping, after
-// the items there, then the items of each nested list after them. It gives
-// the place of the first item, or kept false after it failed the line: an
-// item that a variable cannot keep, or a list past a bound. The depth is
-// bounded: each nested list is an item, and the items are bounded.
-list_keep :: proc "contextless" (value: Value) -> (first: int, kept: bool) {
-	items := lex_evaluator.list_items_of(&line_evaluation, value)
-	if len(items) > VARIABLE_LIST_ITEM_CAPACITY - list_keeping.item_count {
-		count := i64(list_keeping.item_count + len(items))
-		fail("a variable keeps a list of ", i64(VARIABLE_LIST_ITEM_CAPACITY), " items at most, the items of its nested lists included; this one has ", count, " or more")
-		failure_record_set(errors.error_make(.Over_Limit, .None, 0, count, VARIABLE_LIST_ITEM_CAPACITY), "a list of a variable", nil)
-		return 0, false
+// list_keep copies a List of the line into list_keeping, or fails the line
+// with the sentence of the refusal and, at a bound, its error record.
+list_keep :: proc "contextless" (value: Value) -> bool {
+	result := lex_evaluator.list_keep(&list_keeping, &line_evaluation, value, in_table_memory)
+	switch result.refusal {
+	case .None:
+		return true
+	case .Items_Full:
+		fail("a variable keeps a list of ", i64(VARIABLE_LIST_ITEM_CAPACITY), " items at most, the items of its nested lists included; this one has ", result.record.value, " or more")
+		failure_record_set(result.record, "a list of a variable", nil)
+	case .Bytes_Full:
+		fail("a variable keeps ", i64(lex_evaluator.KEPT_LIST_BYTE_CAPACITY), " bytes of texts and records in a list at most; this one has ", result.record.value, " or more")
+		failure_record_set(result.record, "a list of a variable", nil)
+	case .Function:
+		fail(FUNCTION_VARIABLE_REFUSAL, "; a list of a variable holds none")
+	case .Table:
+		fail("a list of a variable holds no Table: a variable keeps one table whole, t = ...")
+	case .Hash:
+		fail("a list of a variable holds no hash: a hash lives in the evaluation of its line")
+	case .Description_Of_Line:
+		fail("a list of a variable holds no record whose description join or columns made: that description lives in its line")
+	case .Kind:
+		fail("a list of a variable holds no ", kind_names[result.kind])
 	}
-	first = list_keeping.item_count
-	list_keeping.item_count += len(items)
-	for item, index in items {
-		copied := item
-		switch item.kind {
-		case .Integer, .Boolean, .Handle, .Enum:
-			// The value holds no memory of the line. An Enum names the module
-			// file of its enum, which stays while the module does.
-		case .Text:
-			bytes := list_bytes_keep(transmute([]u8)item.text, 1) or_return
-			copied.text = string(bytes)
-		case .Record:
-			if in_table_memory(item.file) {
-				fail("a list of a variable holds no record whose description join or columns made: that description lives in its line")
-				return 0, false
-			}
-			copied.record = list_bytes_keep(item.record, 8) or_return
-		case .List:
-			copied.integer = i64(list_keep(item) or_return)
-		case .Function:
-			fail(FUNCTION_VARIABLE_REFUSAL, "; a list of a variable holds none")
-			return 0, false
-		case .Table:
-			fail("a list of a variable holds no Table: a variable keeps one table whole, t = ...")
-			return 0, false
-		case .Hash:
-			fail("a list of a variable holds no hash: a hash lives in the evaluation of its line")
-			return 0, false
-		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
-			// The evaluator refuses an untyped item and an item with no value
-			// before; a value of a declaration has no place in the console.
-			fail("a list of a variable holds no ", kind_names[item.kind])
-			return 0, false
-		}
-		list_keeping.items[first + index] = copied
-	}
-	return first, true
-}
-
-// list_bytes_keep copies the bytes of a text or a record of an item into
-// list_keeping, at a place of the alignment, or fails the line past
-// TABLE_KEPT bytes.
-list_bytes_keep :: proc "contextless" (bytes: []u8, alignment: int) -> (kept: []u8, ok: bool) {
-	start := (list_keeping.byte_count + alignment - 1) &~ (alignment - 1)
-	if start > len(list_keeping.bytes) || len(bytes) > len(list_keeping.bytes) - start {
-		count := i64(start + len(bytes))
-		fail("a variable keeps ", i64(TABLE_KEPT), " bytes of texts and records in a list at most; this one has ", count, " or more")
-		failure_record_set(errors.error_make(.Over_Limit, .Bytes, 0, count, TABLE_KEPT), "a list of a variable", nil)
-		return nil, false
-	}
-	list_keeping.byte_count = start + len(bytes)
-	kept = list_keeping.bytes[start:list_keeping.byte_count]
-	copy(kept, bytes)
-	return kept, true
+	return false
 }
 
 // list_keeping_commit moves the list that list_keep copied into a variable:
-// its items, and its bytes into the memory of the table of the variable,
-// where each text and record of an item then points.
+// its items, and its bytes into the memory of the table of the variable.
 list_keeping_commit :: proc "contextless" (slot: ^Variable) {
-	bytes := ([^]u8)(&slot.table)[:list_keeping.byte_count]
-	copy(bytes, list_keeping.bytes[:list_keeping.byte_count])
-	base := uintptr(&list_keeping.bytes[0])
-	slot.list_item_count = copy(slot.list_items[:], list_keeping.items[:list_keeping.item_count])
-	// Only a Text and a Record of an item point into the bytes.
-	for &item in slot.list_items[:slot.list_item_count] {
-		if item.kind == .Text && len(item.text) > 0 {
-			offset := int(uintptr(raw_data(item.text)) - base)
-			item.text = string(bytes[offset:][:len(item.text)])
-		}
-		if item.kind == .Record && len(item.record) > 0 {
-			offset := int(uintptr(raw_data(item.record)) - base)
-			item.record = bytes[offset:][:len(item.record)]
-		}
-	}
+	bytes := ([^]u8)(&slot.table)[:lex_evaluator.KEPT_LIST_BYTE_CAPACITY]
+	slot.list_item_count = lex_evaluator.list_keeping_commit(&list_keeping, slot.list_items[:], bytes)
 	// The top list is the first items; the next line copies them again.
 	slot.value.integer = 0
 	slot.list_line = 0
@@ -537,19 +471,16 @@ list_keeping_commit :: proc "contextless" (slot: ^Variable) {
 
 // list_variable_read gives the list of a variable as a List of the line that
 // runs: its items copied into the items of the evaluation once for each
-// line, with each nested list moved to its new place.
+// line, at the first read.
 list_variable_read :: proc "contextless" (variable: ^Variable) -> Value {
 	if variable.list_line != line_serial {
-		first, added := lex_evaluator.list_items_add(&line_evaluation, variable.list_items[:variable.list_item_count])
-		if !added {
-			return fail("the lists of the line hold more than ", i64(lex_evaluator.LIST_ITEM_CAPACITY), " items in all, with the ", i64(variable.list_item_count), " items of ", string(variable.name[:variable.name_count]))
+		value, record, read := lex_evaluator.kept_list_read(&line_evaluation, variable.list_items[:variable.list_item_count], variable.value.detail)
+		if !read {
+			fail("the lists of the line hold more than ", i64(lex_evaluator.LIST_ITEM_CAPACITY), " items in all, with the ", i64(variable.list_item_count), " items of ", string(variable.name[:variable.name_count]))
+			failure_record_set(record, "the lists of the line", nil)
+			return {}
 		}
-		for &item in lex_evaluator.list_items_of(&line_evaluation, {kind = .List, integer = i64(first), detail = u32(variable.list_item_count)}) {
-			if item.kind == .List {
-				item.integer += i64(first)
-			}
-		}
-		variable.list_line, variable.list_line_first = line_serial, first
+		variable.list_line, variable.list_line_first = line_serial, int(value.integer)
 	}
 	return {kind = .List, integer = i64(variable.list_line_first), detail = variable.value.detail}
 }
@@ -683,7 +614,11 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 	case .Calls_Full:
 		fail("the line makes more calls of functions than the evaluator holds: ", i64(lex_evaluator.CALL_CAPACITY), " calls and ", i64(lex_evaluator.CALL_THUNK_CAPACITY), " values of their bodies")
 	case .Lists_Full:
+		already := failed
 		fail("the lists of the line hold more than ", i64(lex_evaluator.LIST_ITEM_CAPACITY), " items in all")
+		if !already {
+			failure_record_set(errors.error_make(.Over_Limit, .None, 0, i64(lex_evaluator.LIST_ITEM_CAPACITY) + 1, lex_evaluator.LIST_ITEM_CAPACITY), "the lists of the line", nil)
+		}
 	case .Not_A_List:
 		fail(record.command, ": argument 1 is ", kind_names[record.left_kind], ", not a list")
 	case .Condition_Not_Boolean:
@@ -816,6 +751,13 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		fail("\"else\" is missing in if")
 	case .Nesting_Too_Deep:
 		fail("the expression nests too deeply")
+	case .Thin_Arrow:
+		parameters, body := console_language.thin_arrow_function(line_tree.text, int(record.place.offset))
+		if parameters == "" || body == "" {
+			fail("\"->\" is no operator: a function is written (n) => n * n")
+		} else {
+			fail("\"->\" is no operator: a function is written (", parameters, ") => ", body)
+		}
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -836,11 +778,12 @@ host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Va
 // parameter of an export. Each command of the console has an effect: the
 // names of the evaluation, which have none, are not built.
 host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signature: lex_evaluator.Command_Signature, found: bool) {
-	item := command_find_connecting(name)
+	// The arguments are forced before the call connects a service
+	// (command_find_connecting in call_run): a signature from the image
+	// connects nothing.
+	item := command_known(name)
 	if item == nil {
-		if !failed {
-			command_unknown_fail(name)
-		}
+		command_unknown_fail(name)
 		return {}, false
 	}
 	signature.has_effect = true
@@ -947,14 +890,78 @@ name_evaluate :: proc "contextless" (name: string) -> Value {
 	return fail("no variable has the name ", name, nearest_names_text(&nearest))
 }
 
-// module_of_image says if a module of the boot image has the name.
-module_of_image :: proc "contextless" (name: string) -> bool {
-	for &entry in system.image_entries(image) {
-		if system.name_of(entry.name[:]) == name {
+// service_export_split gives the service and the export of a name
+// `service.export`, or ok false for a name with no period inside it.
+service_export_split :: proc "contextless" (name: string) -> (service, export: string, ok: bool) {
+	for character, index in transmute([]u8)name {
+		if character == '.' {
+			if index == 0 || index == len(name) - 1 {
+				return "", "", false
+			}
+			return name[:index], name[index + 1:], true
+		}
+	}
+	return "", "", false
+}
+
+// service_connected says if the console connected the service for its
+// commands: its exports are commands already.
+service_connected :: proc "contextless" (service: string) -> bool {
+	for &sandbox in sandboxes {
+		if sandbox.service && !sandbox.quiet && sandbox.process != 0 && sandbox.name == service {
 			return true
 		}
 	}
 	return false
+}
+
+// The command of an export of a module of the boot image that the console
+// has not connected: its signature, read from the module file with no
+// connection. It lasts until the next call of image_export_command.
+image_export_pending: Command
+
+// image_export_command gives the command of `service.export` from the
+// module file of the boot image named service, when that file has the
+// export and the service is not connected: the evaluator reads its
+// signature and forces the arguments before any connection
+// (command_find_connecting connects when the call runs). nil: no module of
+// the image has the name, the module has no such export that the console
+// can call, or the service is connected already.
+image_export_command :: proc "contextless" (name: string) -> ^Command {
+	service, export, split := service_export_split(name)
+	if !split || service_connected(service) {
+		return nil
+	}
+	file, _, found := image_module_file(service)
+	if !found {
+		return nil
+	}
+	head, _ := module.header(file)
+	for index in 1 ..< module.count(file, .Exports) {
+		if index == head.entry_export {
+			continue
+		}
+		function, ok := module.function(file, index)
+		if !ok || module.string_at(file, function.name_offset, function.name_count) != export {
+			continue
+		}
+		if !export_command_make(&image_export_pending, file, index) {
+			return nil
+		}
+		image_export_pending.name = name
+		return &image_export_pending
+	}
+	return nil
+}
+
+// command_known gives the command of a name for the checks before a call:
+// a command of the table, or the signature of an export of the image that
+// is not connected yet. It connects nothing.
+command_known :: proc "contextless" (name: string) -> ^Command {
+	if found := command_find(name); found != nil {
+		return found
+	}
+	return image_export_command(name)
 }
 
 // nearest_names_text gives "; did you mean a or b?" for the names that a
@@ -978,52 +985,60 @@ command_unknown_fail :: proc "contextless" (name: string) -> Value {
 	for &command in commands[:command_count] {
 		console_language.nearest_name_offer(&nearest, command.name)
 	}
+	// The exports of a module of the image that is not connected: a fault
+	// in the name of an export gets the name, and connects nothing.
+	if service, _, split := service_export_split(name); split && !service_connected(service) {
+		if file, _, found := image_module_file(service); found {
+			head, _ := module.header(file)
+			for index in 1 ..< module.count(file, .Exports) {
+				function, ok := module.function(file, index)
+				if !ok || index == head.entry_export || !callable_by_console(file, function) {
+					continue
+				}
+				console_language.nearest_name_offer(&nearest, scratch_text(service, ".", module.string_at(file, function.name_offset, function.name_count)))
+			}
+		}
+	}
 	if nearest.count == 0 {
 		return fail("no command has the name ", name, "; try help()")
 	}
 	return fail("no command has the name ", name, nearest_names_text(&nearest))
 }
 
-// command_find_connecting gives the command that a call of a name runs, as
-// command_find. A name `service.export` whose service is a module of the
-// boot image, and that the console has not connected, connects it first, as
-// connect(service) does: the root service checks that the principal may
-// connect it, starts a service that starts at its first connection, and
-// logs the connection. A module that is no service, or that the principal
-// may not connect, fails the line with the refusal of connect. No
-// connection is asked for a name that no module of the image has: a fault
-// of typing gets the near names (command_unknown_fail).
+// command_find_connecting gives the command that a call runs, after its
+// arguments were forced. A name `service.export` of an export that the
+// module file of the boot image named service has, when the console has not
+// connected the service, connects it first, as connect(service) does: the
+// root service checks that the principal may connect it, starts a service
+// that starts at its first connection, and logs the connection. A module
+// that is no service, or that the principal may not connect, fails the line
+// with the refusal of connect, and the slot of the connection is free
+// again. A name of an export that the file does not have asks for no
+// connection: it gets the near names (command_unknown_fail).
 command_find_connecting :: proc "contextless" (name: string) -> ^Command {
 	if found := command_find(name); found != nil || failed {
 		return found
 	}
-	period := -1
-	for character, index in transmute([]u8)name {
-		if character == '.' {
-			period = index
-			break
-		}
-	}
-	if period <= 0 || period == len(name) - 1 {
+	if image_export_command(name) == nil {
 		return nil
 	}
-	service := name[:period]
-	for &sandbox in sandboxes {
-		// A service that the console connected for its commands: the export
-		// is not one of them.
-		if sandbox.service && !sandbox.quiet && sandbox.process != 0 && sandbox.name == service {
-			return nil
-		}
-	}
-	if !module_of_image(service) {
-		return nil
-	}
+	service, _, _ := service_export_split(name)
 	connect_arguments := [1]Value{{kind = .Text, text = service}}
 	connect_service(connect_arguments[:])
 	if failed {
 		return nil
 	}
 	return command_find(name)
+}
+
+// argument_count_fail fails a call with a count of arguments that its
+// command does not take. help takes none: the help on one name is
+// describe(name), so help(name) names that command.
+argument_count_fail :: proc "contextless" (name: string, found: ^Command, count: int, topic := "let") -> Value {
+	if name == "help" && count == 1 {
+		return fail("help takes no argument: use describe(\"", topic, "\") for the help on one name, a command or a word of Lex")
+	}
+	return fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(count))
 }
 
 // command_find gives the command that a call of a name runs: of two
@@ -1111,7 +1126,8 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	// A command whose last parameter may be left out takes one argument
 	// less: start(name) and start(name, list).
 	if count != found.parameter_count && !(found.optional_last && count == found.parameter_count - 1) {
-		return fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(count))
+		topic := count == 1 && arguments[0].kind == .Text ? arguments[0].text : "let"
+		return argument_count_fail(name, found, count, topic)
 	}
 	for kind, index in found.parameters[:count] {
 		argument := &arguments[index]
@@ -1178,10 +1194,11 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 	// their arguments when the call starts, before any of them runs.
 	for index := len(stages) - 1; index >= 0; index -= 1 {
 		name := text[stages[index].name_start:stages[index].name_end]
-		if !stage_of_the_evaluation(text, stages[index]) && command_find_connecting(name) == nil {
-			if !failed {
-				command_unknown_fail(name)
-			}
+		// This check runs before the parse: it connects nothing, and an
+		// export of the image that is not connected is checked from its
+		// file; the call connects when the evaluation forces it.
+		if !stage_of_the_evaluation(text, stages[index]) && command_known(name) == nil {
+			command_unknown_fail(name)
 			return text
 		}
 	}
@@ -1190,7 +1207,10 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 			continue
 		}
 		name := text[stage.name_start:stage.name_end]
-		found := command_find(name)
+		// A copy: the signature of an export of the image that is not
+		// connected lives in one place, which a later lookup writes again.
+		known := command_known(name)^
+		found := &known
 		if found.parameter_count == 0 {
 			fail(name, " takes no argument, and |> gives it the value on its left")
 			return text
@@ -1208,7 +1228,7 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 		arguments_given := placeholder ? stage.argument_count : stage.argument_count + 1
 		count_ok := arguments_given == found.parameter_count || (names_last && arguments_given > found.parameter_count) || (found.optional_last && arguments_given == found.parameter_count - 1)
 		if !count_ok {
-			fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(arguments_given))
+			argument_count_fail(name, found, arguments_given)
 			return text
 		}
 		// The parameter that takes the value on the left: the first one, or

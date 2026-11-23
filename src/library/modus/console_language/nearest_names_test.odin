@@ -34,9 +34,19 @@ name_distance_counts_the_edits_up_to_the_bound :: proc(t: ^testing.T) {
 // and never the wanted name, an empty name or a name twice.
 @(test)
 nearest_names_keep_the_nearest_within_the_bound :: proc(t: ^testing.T) {
-	nearest := nearest_names_start("")
-	nearest_name_offer(&nearest, "")
-	nearest_name_offer(&nearest, "a")
+	// A name of 0 to 2 bytes gets no suggestion: one edit of it is any
+	// short name. 3 bytes is the first length with a bound of 1.
+	for wanted in ([]string{"", "x", "ab"}) {
+		nearest := nearest_names_start(wanted)
+		testing.expect_value(t, nearest.bound, 0)
+		for name in ([]string{"", "a", "x", "xy", "ab", "abc", "y", "let"}) {
+			nearest_name_offer(&nearest, name)
+		}
+		testing.expectf(t, len(nearest_names_found(&nearest)) == 0, "%q: %v", wanted, nearest_names_found(&nearest))
+	}
+	nearest := nearest_names_start("lte")
+	testing.expect_value(t, nearest.bound, 1)
+	nearest_name_offer(&nearest, "let")
 	testing.expect_value(t, len(nearest_names_found(&nearest)), 1)
 
 	nearest = nearest_names_start("pages")

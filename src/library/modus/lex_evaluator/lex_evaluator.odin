@@ -500,6 +500,11 @@ line_force :: proc "contextless" (evaluation: ^Evaluation) -> (value: Value, ok:
 	switch tree.refusal.refusal {
 	case .Text_Too_Long, .Nodes_Full, .Nesting_Too_Deep:
 		return refuse(evaluation, {refusal = .Text, text_refusal = tree.refusal.refusal, place = tree.refusal.place, node = tree.root})
+	case .Thin_Arrow:
+		// The names before a "->" are the parameters of a function that the
+		// line meant, never values: no part of the line runs, so the
+		// refusal names the form of a function, not a missing variable.
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Thin_Arrow, place = tree.refusal.place, node = tree.root})
 	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing:
 	}
 	value = force(evaluation, tree.root) or_return

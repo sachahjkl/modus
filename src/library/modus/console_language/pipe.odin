@@ -116,9 +116,10 @@ Pipe_Writer :: struct {
 
 // expression_start gives the first byte of the expression of a line: the
 // byte after "name =" when the line keeps its value in a variable, else 0.
-// "let name =" with no word "in" after it keeps a value too: the parser
+// "let name =" with no word "in" of its own keeps a value too: the parser
 // reads it as "name =" (src/md/features/declarations.md, "The functions of
-// layer 4 as built").
+// layer 4 as built"). An "in" counts only at the depth of the line, and
+// each inner "let" there takes the next "in" for itself.
 expression_start :: proc "contextless" (text: string) -> int {
 	name := token_next(text, 0)
 	if name.kind != .Name {
@@ -133,9 +134,28 @@ expression_start :: proc "contextless" (text: string) -> int {
 		if after == 0 {
 			return 0
 		}
+		depth := 0
+		inner_lets := 0
 		for token := token_next(text, after); token.kind != .None; token = token_next(text, token.end) {
-			if token.kind == .Name && text[token.start:token.end] == "in" {
-				return 0
+			if token.end - token.start == 1 {
+				switch text[token.start] {
+				case '(', '[', '{':
+					depth += 1
+				case ')', ']', '}':
+					depth = max(depth - 1, 0)
+				}
+			}
+			if depth != 0 || token.kind != .Name {
+				continue
+			}
+			switch text[token.start:token.end] {
+			case "let":
+				inner_lets += 1
+			case "in":
+				if inner_lets == 0 {
+					return 0
+				}
+				inner_lets -= 1
 			}
 		}
 		return after

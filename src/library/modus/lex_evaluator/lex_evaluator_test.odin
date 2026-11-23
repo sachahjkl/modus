@@ -1218,6 +1218,17 @@ evaluation_values_of_functions :: proc(t: ^testing.T) {
 	}
 }
 
+// A line with "->" where a function is expected runs nothing: the names
+// before it are parameters, never variables, and no call before it runs.
+@(test)
+evaluation_of_a_thin_arrow_runs_nothing :: proc(t: ^testing.T) {
+	for text in ([]string{"map([1], n -> n * n)", "map([g()], n -> g())", "g() + (n -> n)", "n -> n"}) {
+		run := run_of(text)
+		testing.expectf(t, !run.ok && run.evaluation.refusal.refusal == .Text && run.evaluation.refusal.text_refusal == .Thin_Arrow, "%q: %v %v", text, run.evaluation.refusal.refusal, run.evaluation.refusal.text_refusal)
+		expect_log(t, run, {}, text)
+	}
+}
+
 // A host gives back the items of a list that it kept: they go after the
 // items of the lists of the line, up to the capacity and never past it.
 // The edges first: past the capacity at once, one past what is left, no

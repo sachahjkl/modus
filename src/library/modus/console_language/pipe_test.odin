@@ -220,6 +220,13 @@ pipe_places_of_a_line :: proc(t: ^testing.T) {
 	testing.expect_value(t, expression_start("let x = f(\"in\") |> g"), 7)
 	testing.expect_value(t, expression_start("let x = [1, 2] |> map((n) => n)"), 7)
 	testing.expect_value(t, expression_start("letter = 1"), 8)
+	// An "in" inside brackets, or of an inner let, is no "in" of the first.
+	testing.expect_value(t, expression_start("let x = f(let a = 1 in a) |> g"), 7)
+	testing.expect_value(t, expression_start("let x = [let a = 1 in a] |> g"), 7)
+	testing.expect_value(t, expression_start("let x = let a = 1 in a |> g"), 7)
+	testing.expect_value(t, expression_start("let x = let a = 1 in a in x"), 0)
+	testing.expect_value(t, expression_start("let x = (1 in"), 7)
+	testing.expect_value(t, expression_start("let x = 1) in x"), 0)
 	testing.expect(t, pipe_before("x |> wh", 5))
 	testing.expect(t, pipe_before("x |> ", 5))
 	testing.expect(t, pipe_before("x|>wh", 3))
