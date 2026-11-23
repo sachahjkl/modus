@@ -345,6 +345,18 @@ Count_Repair_Started :: struct {
 	leaves: u64,
 }
 
+// A release met a wrong block: the service counts again, in runs when no
+// call waits, the leaves that can hold names that no state holds. Written
+// once for each recount.
+@(log_fact = "storage: a release met a wrong block, so {leaves} leaves of the count tree can hold names that no state holds: the service counts them again when no call waits, and refuses changes only during each run")
+Count_Recount_Started :: struct {
+	leaves: u64,
+}
+
+// The recount of the count tree ended: its last commit wrote its leaves.
+@(log_fact = "storage: the recount of the count tree ended: the blocks that only a wrong release named are free")
+Count_Recount_Ended :: struct {}
+
 // A read or a write of the device failed during the repair of the count
 // tree: the walk starts again after the next call. Written once.
 @(log_fact = "storage: a read or a write of the disk failed during the repair of the count tree: the repair starts again after the next call")

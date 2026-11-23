@@ -1071,6 +1071,9 @@ repair_commit_model :: proc(t: ^testing.T, state: ^State, disk: ^Test_Disk) -> (
 	for &leaf in state.counts.repaired {
 		block_counts.commit_leaf_add(commit, leaf.first)
 	}
+	if leaves, set := repair_recount_after(state); set {
+		block_counts.commit_recount_set(commit, leaves)
+	}
 	root: format.Pointer
 	root, made = block_counts.commit_finish(commit)
 	commit.data = nil
@@ -1312,4 +1315,266 @@ a_wrong_directory_is_made_again :: proc(t: ^testing.T) {
 	result := mount(check, &disk, 1100)
 	testing.expect(t, !result.failed && !result.count_tree_damaged)
 	testing.expect_value(t, result.count_leaves_differ, u64(0))
+}
+
+// recount_record_write writes in the top directory of the count tree of
+// the disk the leaves to recount, as the commit of a release that met a
+// wrong block does, and gives the new pointer of the top.
+@(private = "file")
+recount_record_write :: proc(disk: ^Test_Disk, top: format.Pointer, leaves: u64) -> format.Pointer {
+	bytes := disk.bytes[top.block * BLOCK_SIZE:][:BLOCK_SIZE]
+	(^format.Count_Directory)(raw_data(bytes)).leaves_to_recount = leaves
+	pointer := format.Pointer{block = top.block, check = format.check(bytes)}
+	root_counts_set(disk, pointer, 1)
+	return pointer
+}
+
+// Recount_Disk is a store whose tree holds a live object of two levels in
+// leaf 0, and whose removal queue holds one release: a list of one state
+// in leaf 1 that shares the first node of level 1 of the live object.
+@(private = "file")
+Recount_Disk :: struct {
+	disk:     Test_Disk,
+	live:     Object_Blocks,
+	shared:   format.Object_Child, // The node of level 1 that both states name.
+	released: format.Pointer, // The root of the state of the release.
+	own:      format.Object_Child, // A node of level 1 of the release only.
+	list:     format.Pointer,
+	top:      format.Pointer, // The top directory of the count tree, with each leaf to recount.
+}
+
+@(private = "file")
+recount_disk_make :: proc(t: ^testing.T) -> (made: Recount_Disk) {
+	made.disk = disk_make(1100)
+	disk := &made.disk
+	made.live = disk_deep_object(disk, 2)
+	live_root := (^format.Object_Node)(&disk.bytes[made.live.root.block * BLOCK_SIZE])^
+	made.shared = live_root.children[0]
+	disk.next = 600
+	other := disk_deep_object(disk, 2)
+	mixed := (^format.Object_Node)(&disk.bytes[other.root.block * BLOCK_SIZE])^
+	mixed.children[0] = made.shared
+	made.own = mixed.children[1]
+	made.released = disk_put(disk, &mixed)
+	made.list = disk_release_list(disk, {{root = made.released, size = other.size}})
+	disk.next = 100
+	key := format.removal_name(1)
+	block: format.Store_Block
+	block.tree = disk_leaf(disk, {{"a", object_entry(made.live, {})}})
+	block.removals = disk_leaf(disk, {{string(key[:8]), {kind = u64(format.Entry_Kind.Release), pointer = made.list}}})
+	block.removing = 1
+	block.objects = 1
+	disk_root(disk, disk_put(disk, &block), 20)
+	// The counts while the list was whole: the state of the release holds
+	// its names.
+	tables := test_state_make(1100)
+	defer test_state_free(tables)
+	_ = mount(tables, disk, 1100)
+	testing.expect_value(t, tables.references[made.shared.block], u32(2))
+	made.top = count_tree_write(t, tables, disk)
+	made.top = recount_record_write(disk, made.top, format.count_tree_leaves(1100))
+	return
+}
+
+// recount_until_done runs each run of the recount, each with the commit
+// of the host model, and gives the count of the runs. Between two runs the
+// service is not in the repair state: it takes changes.
+@(private = "file")
+recount_until_done :: proc(t: ^testing.T, state: ^State, disk: ^Test_Disk, repair: ^Test_Repair) -> (runs: int) {
+	for recount_waits(state) {
+		testing.expect(t, !repair_active(state), "the service takes changes between two runs")
+		repair.last_root = (^format.Root)(raw_data(disk.bytes))^
+		outcome := repair_step(state, disk, &repair.repair_disk)
+		testing.expectf(t, outcome == .Running || outcome == .Done, "a run starts with %v", outcome)
+		testing.expect(t, repair_active(state), "the service is in the repair state during a run")
+		repair_until_done(t, state, disk, repair)
+		testing.expect(t, repair_commit_waits(state), "the run ends with its commit")
+		taken, made := repair_commit_model(t, state, disk)
+		delete(taken)
+		testing.expect(t, made, "the commit of the run is made")
+		repair_written(state)
+		runs += 1
+		if runs > 100 {
+			testing.fail_now(t, "the recount does not end")
+		}
+	}
+	return runs
+}
+
+// recount_expect compares each count of the form Count_Tree with the walk
+// of the form Tables of the same disk, and checks that the tree holds the
+// counts of that walk.
+@(private = "file")
+recount_expect :: proc(t: ^testing.T, state: ^State, disk: ^Test_Disk, label: string) {
+	check := test_state_make(1100)
+	defer test_state_free(check)
+	result := mount(check, disk, 1100)
+	testing.expectf(t, !result.failed && !result.count_tree_damaged, "%s: the form Tables opens the disk", label)
+	testing.expectf(t, result.count_leaves_differ == 0, "%s: %d leaves differ from the walk", label, result.count_leaves_differ)
+	for number in u64(0) ..< 1100 {
+		count, owner, read := block_counts.count_get(&state.counts, number)
+		testing.expectf(t, read == .Good && count == check.references[number] && owner == check.owner[number], "%s: block %d: %d of %d, not %d of %d", label, number, count, owner, check.references[number], check.owner[number])
+	}
+}
+
+// node_data gives the two data blocks of a node of level 1 of the test disk.
+@(private = "file")
+node_data :: proc(disk: ^Test_Disk, node: format.Object_Child) -> [2]u64 {
+	read := (^format.Object_Node)(&disk.bytes[node.block * BLOCK_SIZE])
+	return {read.children[0].block, read.children[1].block}
+}
+
+// A wrong release list in the form Count_Tree: the commit that dropped it
+// wrote each leaf to recount in the top directory. The open reads that
+// record; runs of one leaf count leaf 0 and leaf 1, and pass leaf 2,
+// which holds no block in use. The blocks that only the list named are
+// free after it; the node that the live object shares keeps its one live
+// name, and each count is that of the walk.
+@(test)
+a_recount_frees_the_blocks_of_a_wrong_release_list :: proc(t: ^testing.T) {
+	made := recount_disk_make(t)
+	disk := &made.disk
+	defer delete(disk.bytes)
+	own_data := node_data(disk, made.own)
+	disk.bytes[made.list.block * BLOCK_SIZE + 100] ~= 1
+	state, memory := tree_state_make(1100)
+	defer delete(memory)
+	defer free(state)
+	testing.expect(t, !mount(state, disk, 1100).failed)
+	testing.expect_value(t, state.counts.leaves_to_recount, u64(3))
+	testing.expect(t, recount_waits(state), "the recount waits for a run")
+	testing.expect(t, !repair_active(state), "the service takes changes before the first run")
+	count, _, _ := block_counts.count_get(&state.counts, own_data[0])
+	testing.expect_value(t, count, u32(1))
+	state.repair.recount_leaves = 1
+	repair := test_repair_make(state, disk)
+	defer free(repair)
+	runs := recount_until_done(t, state, disk, repair)
+	testing.expect_value(t, runs, 2)
+	testing.expect_value(t, state.counts.leaves_to_recount, u64(0))
+	testing.expect(t, !recount_waits(state) && !repair_active(state), "the recount ended")
+	for number in ([?]u64{made.released.block, made.own.block, own_data[0], own_data[1]}) {
+		count, _, _ = block_counts.count_get(&state.counts, number)
+		testing.expectf(t, count == 0, "block %d of the wrong list: %d names", number, count)
+	}
+	count, _, _ = block_counts.count_get(&state.counts, made.shared.block)
+	testing.expect_value(t, count, u32(1))
+	for number in node_data(disk, made.shared) {
+		count, _, _ = block_counts.count_get(&state.counts, number)
+		testing.expectf(t, count == 1, "live block %d: %d names", number, count)
+	}
+	count, _, _ = block_counts.count_get(&state.counts, made.list.block)
+	testing.expect_value(t, count, u32(1))
+	recount_expect(t, state, disk, "a wrong list")
+}
+
+// A wrong node of a state of a release: the blocks under it have no name
+// after the recount; the root of the state and the shared node keep
+// theirs.
+@(test)
+a_recount_frees_the_blocks_under_a_wrong_release_node :: proc(t: ^testing.T) {
+	made := recount_disk_make(t)
+	disk := &made.disk
+	defer delete(disk.bytes)
+	own_data := node_data(disk, made.own)
+	disk.bytes[made.own.block * BLOCK_SIZE + 100] ~= 1
+	state, memory := tree_state_make(1100)
+	defer delete(memory)
+	defer free(state)
+	testing.expect(t, !mount(state, disk, 1100).failed)
+	repair := test_repair_make(state, disk)
+	defer free(repair)
+	runs := recount_until_done(t, state, disk, repair)
+	testing.expect_value(t, runs, 1)
+	for number in own_data {
+		count, _, _ := block_counts.count_get(&state.counts, number)
+		testing.expectf(t, count == 0, "block %d under the wrong node: %d names", number, count)
+	}
+	count, _, _ := block_counts.count_get(&state.counts, made.shared.block)
+	testing.expect_value(t, count, u32(2))
+	count, _, _ = block_counts.count_get(&state.counts, made.released.block)
+	testing.expect_value(t, count, u32(1))
+	recount_expect(t, state, disk, "a wrong node")
+}
+
+// A loss of power during the second run: the scratch is lost, the record
+// is not. The next open reads the leaves left to recount from the top that
+// the commit of the first run wrote, and goes on from there.
+@(test)
+a_loss_of_power_during_a_recount :: proc(t: ^testing.T) {
+	made := recount_disk_make(t)
+	disk := &made.disk
+	defer delete(disk.bytes)
+	own_data := node_data(disk, made.own)
+	disk.bytes[made.list.block * BLOCK_SIZE + 100] ~= 1
+	state, memory := tree_state_make(1100)
+	defer delete(memory)
+	defer free(state)
+	testing.expect(t, !mount(state, disk, 1100).failed)
+	state.repair.recount_leaves = 1
+	repair := test_repair_make(state, disk)
+	defer free(repair)
+	first := repair_step(state, disk, &repair.repair_disk)
+	testing.expect(t, first == .Running || first == .Done, "the first run starts")
+	repair_until_done(t, state, disk, repair)
+	taken, committed := repair_commit_model(t, state, disk)
+	delete(taken)
+	testing.expect(t, committed)
+	repair_written(state)
+	testing.expect_value(t, state.counts.leaves_to_recount, u64(2))
+	state.repair.nodes_per_step = 1
+	repair.last_root = (^format.Root)(raw_data(disk.bytes))^
+	for _ in 0 ..< 3 {
+		testing.expect_value(t, repair_step(state, disk, &repair.repair_disk), Repair_Outcome.Running)
+	}
+
+	again, again_memory := tree_state_make(1100)
+	defer delete(again_memory)
+	defer free(again)
+	testing.expect(t, !mount(again, disk, 1100).failed)
+	testing.expect_value(t, again.counts.leaves_to_recount, u64(2))
+	again.repair.recount_leaves = 1
+	second := test_repair_make(again, disk)
+	defer free(second)
+	testing.expect_value(t, recount_until_done(t, again, disk, second), 1)
+	testing.expect_value(t, again.counts.leaves_to_recount, u64(0))
+	count, _, _ := block_counts.count_get(&again.counts, own_data[0])
+	testing.expect_value(t, count, u32(0))
+	recount_expect(t, again, disk, "after the loss of power")
+}
+
+// The record of the top directory names at most each leaf of the disk:
+// one more, or the largest value, makes the top wrong. Its repair makes the
+// top again with each leaf to recount, the safe side, and the recount then
+// gives the counts of the walk.
+@(test)
+a_record_past_the_leaves_makes_the_top_wrong :: proc(t: ^testing.T) {
+	for leaves in ([?]u64{format.count_tree_leaves(1100) + 1, max(u64)}) {
+		made := recount_disk_make(t)
+		disk := &made.disk
+		defer delete(disk.bytes)
+		_ = recount_record_write(disk, made.top, leaves)
+		state, memory := tree_state_make(1100)
+		defer delete(memory)
+		defer free(state)
+		testing.expect(t, !mount(state, disk, 1100).failed)
+		testing.expectf(t, state.counts.leaves_to_recount == 0, "%d: no record is taken", leaves)
+		testing.expectf(t, state.counts.wrong_directory_count == 1, "%d: the top is a wrong directory", leaves)
+		testing.expect(t, !recount_waits(state) && repair_waits(state), "the repair of the top runs first")
+		repair := test_repair_make(state, disk)
+		defer free(repair)
+		repair_until_done(t, state, disk, repair)
+		taken, committed := repair_commit_model(t, state, disk)
+		delete(taken)
+		testing.expect(t, committed)
+		repair_written(state)
+		testing.expectf(t, state.counts.leaves_to_recount == format.count_tree_leaves(1100), "%d: the new top names each leaf", leaves)
+		recount_until_done(t, state, disk, repair)
+		recount_expect(t, state, disk, "a record past the leaves")
+	}
+	// The edges of the count of the leaves.
+	testing.expect_value(t, format.count_tree_leaves(0), u64(0))
+	testing.expect_value(t, format.count_tree_leaves(1), u64(1))
+	testing.expect_value(t, format.count_tree_leaves(format.COUNTS_OF_A_PAGE), u64(1))
+	testing.expect_value(t, format.count_tree_leaves(format.COUNTS_OF_A_PAGE + 1), u64(2))
 }

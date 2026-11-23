@@ -288,7 +288,13 @@ Count_Directory :: struct {
 	level:    u32, // 1 or more: its children are of the level below.
 	first:    u64, // The first block under it: a multiple of count_span(level).
 	children: [COUNT_DIRECTORY_FANOUT]Count_Child,
-	padding:  [BLOCK_SIZE - 16 - COUNT_DIRECTORY_FANOUT * size_of(Count_Child)]u8, // 0.
+	// The top directory only, 0 in each other one: the last leaves of the
+	// disk, in this count, that can hold names that no state holds, after a
+	// release that met a wrong block. A recount counts them again, from the
+	// first one (src/md/data/storage_capacity.md, "A recount frees the
+	// blocks that a release could not read"). At most count_tree_leaves.
+	leaves_to_recount: u64,
+	padding:  [BLOCK_SIZE - 24 - COUNT_DIRECTORY_FANOUT * size_of(Count_Child)]u8, // 0.
 }
 #assert(size_of(Count_Directory) == BLOCK_SIZE)
 
@@ -311,6 +317,12 @@ count_tree_levels :: proc "contextless" (disk_blocks: u64) -> int {
 		level += 1
 	}
 	return level
+}
+
+// count_tree_leaves gives the leaves of the count tree of a disk: one for
+// each 512 blocks, the last one in part.
+count_tree_leaves :: proc "contextless" (disk_blocks: u64) -> u64 {
+	return disk_blocks / COUNTS_OF_A_PAGE + (disk_blocks % COUNTS_OF_A_PAGE != 0 ? 1 : 0)
 }
 
 // count_free_blocks gives the blocks of count 0 that a page of a level

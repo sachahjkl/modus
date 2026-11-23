@@ -100,6 +100,16 @@ The design: `src/md/data/storage_capacity.md`, "The repair state".
 
 Do not use: read-only mode, maintenance mode, fsck.
 
+### Recount
+
+A recount is the count of the names of the blocks of the count tree again, leaf after leaf from the first, after a release that met a wrong block left names that no state holds.
+
+A wrong release list or a wrong node of a released state cannot say which blocks it named, so the commit of that release writes in the top directory of the count tree that each leaf waits for a recount. When no call and no removal waits, a run of the repair counts the next leaves, up to 128, and its commit writes them and the leaves still to recount; a leaf whose blocks are all free is passed. The service is in the repair state during a run only: between two runs it takes changes, as a count that waits is too large, never too small. A loss of power keeps the leaves still to recount, as the top directory holds them. A recount is not a repair of a wrong leaf: each leaf it counts has a valid check.
+
+The design: `src/md/data/storage_capacity.md`, "A recount frees the blocks that a release could not read".
+
+Do not use: scrub, garbage collection, sweep.
+
 ### Version
 
 A version is the state of one object at one commit: its size, the root of its block tree, and the generation, the time and the date of that commit.

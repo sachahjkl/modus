@@ -38,7 +38,7 @@ Releaser :: struct {
 	leaves_left: int, // The leaves of the count tree that the step can still change.
 	last_leaf:   u64,
 	device:      bool, // A read failed on the device: the step stops, and its commit is refused.
-	damaged:     u64, // Nodes that were wrong: their blocks stay in use until the next open.
+	damaged:     u64, // Nodes that were wrong: the blocks under them keep names until a recount of the count tree, or the next open of the form Tables.
 	nodes:       [format.OBJECT_LEVEL_LIMIT + 1]Object_Node, // One node for each level of the walk.
 }
 
@@ -164,7 +164,8 @@ part :: proc "contextless" (releaser: ^Releaser, node_child: Object_Child, level
 		return false
 	case .Wrong:
 		// The open did not count under a wrong block: its node loses its
-		// name, and the blocks under it stay in use until the next open.
+		// name, and the blocks under it keep names until a recount of the
+		// count tree, which the caller starts for a damaged step.
 		releaser.damaged += 1
 		releaser.drop(releaser, node_child.block)
 		cursor^ = end

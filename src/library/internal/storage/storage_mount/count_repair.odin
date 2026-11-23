@@ -172,8 +172,12 @@ Repair :: struct {
 	step_reads:     int, // The reads and the writes of the step: nodes, lists, versions and pages of the scratch.
 	reads:          u64, // The reads and the writes of the run: a measure.
 	nodes_per_step: int, // REPAIR_NODES_PER_STEP; a host test takes a smaller one.
+	recount_leaves: int, // The leaves of a recount in one run with no wrong leaf: REPAIR_LEAVES_MOST; a host test takes fewer, so that a small disk takes several runs.
 	shape:          Scratch_Shape, // The shape of the scratch of the next run.
 	scratch:        Scratch,
+	recount_in_run: bool, // The run takes leaves of a recount: its commit writes recount_after in the top directory.
+	recount_after:  u64, // The leaves to recount after the commit of the run.
+	recount_done:   bool, // The run of a recount ended: its commit waits.
 }
 
 // repair_active says if the service is in the repair state: it makes no
@@ -182,7 +186,34 @@ repair_active :: proc "contextless" (state: ^State) -> bool {
 	if state.form != .Count_Tree || state.repair.no_room {
 		return false
 	}
-	return state.repair.running || len(state.counts.repaired) != 0 || state.counts.wrong_leaf_count > 0
+	return state.repair.running || len(state.counts.repaired) != 0 || state.repair.recount_done || state.counts.wrong_leaf_count > 0
+}
+
+// repair_commit_waits says if a run ended and its commit waits: the
+// counted leaves, or the record of a recount with no leaf left to count.
+repair_commit_waits :: proc "contextless" (state: ^State) -> bool {
+	return len(state.counts.repaired) != 0 || state.repair.recount_done
+}
+
+// repair_recount_after gives the leaves to recount that the commit of the
+// run writes in the top directory: set is false when the run took no leaf
+// of a recount.
+repair_recount_after :: proc "contextless" (state: ^State) -> (leaves: u64, set: bool) {
+	return state.repair.recount_after, state.repair.recount_done
+}
+
+// recount_waits says if a run of a recount can start: leaves wait for it,
+// and no other run, commit or failure of a run waits. The service starts
+// it when no call waits: between two runs it takes changes, as each count
+// of a leaf to recount is too large, never too small.
+recount_waits :: proc "contextless" (state: ^State) -> bool {
+	if state.form != .Count_Tree || state.counts.leaves_to_recount == 0 || state.counts.wrong_leaves_full {
+		return false
+	}
+	if state.repair.wait_for_call || state.repair.no_room {
+		return false
+	}
+	return !repair_active(state)
 }
 
 // repair_waits says if a step of a repair waits: a walk in progress, or
@@ -191,7 +222,7 @@ repair_waits :: proc "contextless" (state: ^State) -> bool {
 	if !repair_active(state) || state.repair.wait_for_call {
 		return false
 	}
-	return state.repair.running || len(state.counts.repaired) == 0
+	return state.repair.running || len(state.counts.repaired) == 0 && !state.repair.recount_done
 }
 
 // repair_progress gives the stores that the walk ended and the stores in all.
@@ -840,7 +871,7 @@ repair_store_numbers :: proc "contextless" (disk: ^Repair_Disk) -> int {
 // repair_begin starts a walk: the leaves that it counts, an empty scratch,
 // the first store.
 @(private)
-repair_begin :: proc "contextless" (state: ^State, disk: ^Repair_Disk) {
+repair_begin :: proc "contextless" (state: ^State, disk: ^Repair_Disk) -> (device: bool) {
 	repair := &state.repair
 	counts := &state.counts
 	repair.leaf_count = 0
@@ -866,6 +897,7 @@ repair_begin :: proc "contextless" (state: ^State, disk: ^Repair_Disk) {
 			repair.leaf_count += 1
 		}
 	}
+	device = repair_recount_take(state)
 	// In the order of their first block, for the search at each name.
 	for index in 1 ..< repair.leaf_count {
 		for at := index; at > 0 && repair.leaves[at - 1].first > repair.leaves[at].first; at -= 1 {
@@ -884,6 +916,58 @@ repair_begin :: proc "contextless" (state: ^State, disk: ^Repair_Disk) {
 	repair.reads = 0
 	scratch_reset(state)
 	repair.running = true
+	return device
+}
+
+// repair_recount_take fills the run with the next leaves of a recount,
+// after the wrong leaves, and gives the leaves to recount after them. A
+// leaf whose blocks are all free is passed: it holds no name. It gives
+// true when a read of the count tree failed on the device.
+@(private)
+repair_recount_take :: proc "contextless" (state: ^State) -> (device: bool) {
+	repair := &state.repair
+	counts := &state.counts
+	repair.recount_in_run, repair.recount_after, repair.recount_done = false, 0, false
+	if state.form != .Count_Tree || counts.leaves_to_recount == 0 {
+		return false
+	}
+	total := format.count_tree_leaves(counts.disk_blocks)
+	from := (total - min(counts.leaves_to_recount, total)) * format.COUNTS_OF_A_PAGE
+	repair.recount_in_run = true
+	most := clamp(repair.recount_leaves, 1, REPAIR_LEAVES_MOST)
+	for repair.leaf_count < most && from < counts.disk_blocks {
+		next, read := block_counts.leaf_in_use_next(counts, from)
+		switch read {
+		case .Good:
+		case .Device:
+			device = true
+		case .Wrong:
+			// The wrong page is now a wrong leaf or directory: a run counts it.
+		}
+		if read != .Good {
+			break
+		}
+		if next >= counts.disk_blocks {
+			from = counts.disk_blocks
+			break
+		}
+		from = next + format.COUNTS_OF_A_PAGE
+		// A wrong leaf is counted by its own run.
+		if block_counts.leaf_is_wrong(counts, next) || block_counts.directory_is_wrong(counts, block_counts.page_first(1, next)) {
+			continue
+		}
+		repair.leaves[repair.leaf_count] = {first = next}
+		repair.leaf_count += 1
+	}
+	// The free leaves after the last one taken go with this run: a run with
+	// nothing to count is not needed for them.
+	if !device && from < counts.disk_blocks {
+		if next, read := block_counts.leaf_in_use_next(counts, from); read == .Good {
+			from = next
+		}
+	}
+	repair.recount_after = from >= counts.disk_blocks ? 0 : total - from / format.COUNTS_OF_A_PAGE
+	return device
 }
 
 // repair_step runs one step of the repair of the wrong leaves of the count
@@ -896,7 +980,20 @@ repair_begin :: proc "contextless" (state: ^State, disk: ^Repair_Disk) {
 repair_step :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^Repair_Disk) -> Repair_Outcome {
 	repair := &state.repair
 	if !repair.running {
-		repair_begin(state, disk)
+		if repair_begin(state, disk) {
+			repair.running = false
+			repair.recount_in_run = false
+			repair.wait_for_call = true
+			return .Device
+		}
+		// A run of a recount whose leaves left are all free walks nothing:
+		// its commit writes the record only.
+		if repair.leaf_count == 0 && repair.recount_in_run {
+			repair.running = false
+			state.counts.repaired = repair.leaves[:0]
+			repair.recount_done = true
+			return .Done
+		}
 	}
 	repair.step_reads = 0
 	repair.failure = .Running
@@ -962,6 +1059,7 @@ repair_finish :: proc "contextless" (state: ^State, disk: ^Repair_Disk) {
 	}
 	repair.running = false
 	state.counts.repaired = repair.leaves[:repair.leaf_count]
+	repair.recount_done = repair.recount_in_run
 }
 
 // repair_count_pages names each page of the count tree under a page: the
@@ -1009,4 +1107,7 @@ repair_written :: proc "contextless" (state: ^State) {
 	counts.wrong_leaves_full = false
 	counts.repaired = nil
 	state.repair.leaf_count = 0
+	// The commit installed the top directory with the leaves left to
+	// recount (counts.leaves_to_recount).
+	state.repair.recount_in_run, state.repair.recount_done, state.repair.recount_after = false, false, 0
 }

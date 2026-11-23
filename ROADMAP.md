@@ -44,7 +44,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Later
 
 - **The address of the network from the network.** The network service takes the prefix length of its interface as a field and checks it; DHCP, or the plan, then gives the address, the gateway and the prefix of a real network in place of the network of QEMU.
-- **The blocks that a wrong release keeps are freed on a disk larger than the memory.** A recount of each leaf of the count tree, in runs, frees the blocks under a wrong release list or a wrong node of a release, which stay in use in the form Count_Tree until an open of the form Tables. [Design](src/md/data/storage_capacity.md)
 - **A reader waits on each of its rings.** A reader of more rings than one wait of 64 words holds waits on part of them and reads the others on a period, and the collector logs these wakes. With the wait room of `work/limits_kernel_and_budgets` merged, each reader waits on all of its rings and nothing is read on a period. [Design](src/md/features/module_outputs.md)
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)

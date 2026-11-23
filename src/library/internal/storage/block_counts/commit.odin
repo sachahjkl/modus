@@ -28,6 +28,10 @@ Commit :: struct {
 	release:      proc "contextless" (commit: ^Commit, number: u64),
 	data:         rawptr,
 	failure:      Commit_Failure,
+	// The leaves to recount that the new top directory names, when the
+	// commit changes them; else the top keeps the value of the top before.
+	recount_set:  bool,
+	recount:      u64,
 }
 
 // commit_begin starts the new pages of a commit on a count tree.
@@ -40,6 +44,7 @@ commit_begin :: proc "contextless" (commit: ^Commit, counts: ^Counts, staging: [
 	commit.staged_slots = staged_slots
 	commit.staged = 0
 	commit.failure = .None
+	commit.recount_set, commit.recount = false, 0
 	intrinsics.mem_zero(raw_data(staged_slots), len(staged_slots) * size_of(i32))
 	return true
 }
@@ -108,6 +113,17 @@ commit_leaf_add :: proc "contextless" (commit: ^Commit, number: u64) {
 		return
 	}
 	stage(commit, 0, page_first(0, number))
+}
+
+// commit_recount_set makes the new top directory name these leaves to
+// recount, at most each leaf of the disk: the commit stages the top.
+commit_recount_set :: proc "contextless" (commit: ^Commit, leaves: u64) {
+	if commit.failure != .None {
+		return
+	}
+	commit.recount_set = true
+	commit.recount = min(leaves, format.count_tree_leaves(commit.counts.disk_blocks))
+	stage(commit, commit.counts.levels, 0)
 }
 
 // commit_finish gives each staged page a new block, until no page is added
@@ -219,6 +235,12 @@ directory_fill :: proc "contextless" (commit: ^Commit, frame: ^Frame) -> bool {
 	directory.magic = format.COUNT_DIRECTORY_MAGIC
 	directory.level = u32(frame.level)
 	directory.first = frame.first
+	if frame.level == counts.levels && commit.recount_set {
+		directory.leaves_to_recount = commit.recount
+	} else if frame.level == counts.levels && rebuilt {
+		// The record of the wrong top is not known: each leaf, the safe side.
+		directory.leaves_to_recount = format.count_tree_leaves(counts.disk_blocks)
+	}
 	frame.free = 0
 	for &child, place in directory.children {
 		child_first := frame.first + u64(place) * span
@@ -257,8 +279,12 @@ commit_install :: proc "contextless" (commit: ^Commit, root: Pointer) {
 		frame.referenced = false
 		slot_insert(counts.frames, counts.slots, index)
 	}
+	if top := commit_staged(commit, counts.levels, 0); top != nil {
+		counts.leaves_to_recount = (^format.Count_Directory)(&top.bytes).leaves_to_recount
+	}
 	counts.root = root
 	commit.staged = 0
+	commit.recount_set = false
 }
 
 // commit_drop forgets the staged pages: the counts are those of the tree
@@ -266,4 +292,5 @@ commit_install :: proc "contextless" (commit: ^Commit, root: Pointer) {
 commit_drop :: proc "contextless" (commit: ^Commit) {
 	commit.staged = 0
 	commit.failure = .None
+	commit.recount_set = false
 }

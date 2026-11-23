@@ -1368,10 +1368,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		disk_open()
 	}
 	// A removal that waits runs when no call waits, and a step of a repair
-	// after each round of calls; a service that makes no change runs none,
-	// and waits.
+	// after each round of calls; a run of a recount starts when no call and
+	// no removal waits; a service that makes no change runs none, and waits.
 	for {
-		if broken || !removal_waits() && !repair_waits() {
+		if broken || !removal_waits() && !repair_waits() && !recount_waits() {
 			wait: system.Wait
 			system.service_wait(&wait, &service)
 			for &item in shares {
@@ -1388,11 +1388,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		// A step of a repair runs after each round of calls, so a service
 		// that is never idle still ends its repair; a removal runs when no
-		// call waits.
+		// call waits, and a run of a recount when no removal waits either.
 		if repair_waits() {
 			repair_step()
 		} else if calls == 0 {
-			removal_step()
+			if !removal_step() && recount_waits() {
+				repair_step()
+			}
 		}
 	}
 }

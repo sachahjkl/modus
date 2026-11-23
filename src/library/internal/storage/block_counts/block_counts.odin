@@ -73,6 +73,10 @@ Counts :: struct {
 	// in the order of their first block: their counts come from here, not
 	// from their pages.
 	repaired:          []Repaired_Leaf,
+	// The last leaves of the disk that wait for a recount, as the top
+	// directory names them: known once the top is read or a commit
+	// installs a new one.
+	leaves_to_recount: u64,
 }
 
 // The wrong leaves that the counts keep: the leaves of two directories.
@@ -321,14 +325,16 @@ frame_evict :: proc "contextless" (counts: ^Counts) -> int {
 }
 
 // page_valid says if the bytes of a page are a page of its level and place.
+// Only the top directory names leaves to recount, at most each leaf.
 @(private)
-page_valid :: proc "contextless" (bytes: ^Block, level: int, first: u64) -> bool {
+page_valid :: proc "contextless" (counts: ^Counts, bytes: ^Block, level: int, first: u64) -> bool {
 	if level == 0 {
 		page := (^format.Count_Page)(bytes)
 		return page.magic == format.COUNT_PAGE_MAGIC && page.level == 0 && page.first == first
 	}
 	directory := (^format.Count_Directory)(bytes)
-	return directory.magic == format.COUNT_DIRECTORY_MAGIC && int(directory.level) == level && directory.first == first
+	recount_limit := level == counts.levels ? format.count_tree_leaves(counts.disk_blocks) : 0
+	return directory.magic == format.COUNT_DIRECTORY_MAGIC && int(directory.level) == level && directory.first == first && directory.leaves_to_recount <= recount_limit
 }
 
 // page_get gives the frame of the page of a level that starts at first, as
@@ -381,7 +387,7 @@ page_get :: proc "contextless" (counts: ^Counts, level: int, first: u64) -> (fra
 		counts_fail(counts, .Device, pointer.block)
 		return nil, .Device
 	}
-	if format.check(frame.bytes[:]) != pointer.check || !page_valid(&frame.bytes, level, first) {
+	if format.check(frame.bytes[:]) != pointer.check || !page_valid(counts, &frame.bytes, level, first) {
 		counts_fail(counts, .Wrong, pointer.block)
 		if level == 0 {
 			leaf_wrong_note(counts, first)
@@ -394,7 +400,48 @@ page_get :: proc "contextless" (counts: ^Counts, level: int, first: u64) -> (fra
 	frame.state = .Clean
 	frame.referenced = true
 	slot_insert(counts.frames, counts.slots, index)
+	if level == counts.levels {
+		counts.leaves_to_recount = (^format.Count_Directory)(&frame.bytes).leaves_to_recount
+	}
 	return frame, .Good
+}
+
+// leaf_in_use_next gives the first leaf at or after the leaf that holds
+// `from` that can hold a block in use, or disk_blocks when none can: a
+// child whose free count is each block under it is passed whole, with no
+// read under it. A page that cannot be read gives its outcome and the
+// leaf where the search stopped.
+leaf_in_use_next :: proc "contextless" (counts: ^Counts, from: u64) -> (first: u64, outcome: Read) {
+	number := page_first(0, from)
+	if counts.root.block == 0 {
+		return counts.disk_blocks, .Good
+	}
+	search: for number < counts.disk_blocks {
+		for level := counts.levels; level >= 1; level -= 1 {
+			// A wrong directory is not read again: its leaves are taken.
+			if level == 1 && directory_is_wrong(counts, page_first(1, number)) {
+				return number, .Good
+			}
+			directory, read := page_get(counts, level, page_first(level, number))
+			if read != .Good {
+				return number, read
+			}
+			if directory == nil {
+				return number, .Good
+			}
+			page := (^format.Count_Directory)(&directory.bytes)
+			span := format.count_span(level - 1)
+			place := (number - page.first) / span
+			child := page.children[place]
+			child_first := page.first + place * span
+			if child.block == 0 || child.free >= format.count_free_blocks(level - 1, child_first, counts.disk_blocks) {
+				number = child_first + span
+				continue search
+			}
+		}
+		return number, .Good
+	}
+	return counts.disk_blocks, .Good
 }
 
 // count_get gives the count of names and the owner of a block, as the root

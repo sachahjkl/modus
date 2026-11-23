@@ -468,6 +468,7 @@ state_bind :: proc "contextless" (state: ^State, memory: []u8, blocks: u64, hash
 	state.count_staged_slots = slots[layout.cache_slots:]
 	state.leaves_to_write = ([^]u64)(&base[layout.leaves])[:layout.leaf_words]
 	state.repair.nodes_per_step = REPAIR_NODES_PER_STEP
+	state.repair.recount_leaves = REPAIR_LEAVES_MOST
 	state.hash_index.records = ([^]Root_Record)(&base[layout.hash_records])[:layout.hash_capacity]
 	state.hash_index.slots = ([^]u64)(&base[layout.hash_slots])[:layout.hash_capacity]
 	state.hash_index.slot_bits = 0
@@ -1100,6 +1101,7 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	// come from its own walk.
 	state.repair.running, state.repair.wait_for_call, state.repair.no_room = false, false, false
 	state.repair.leaf_count = 0
+	state.repair.recount_in_run, state.repair.recount_done, state.repair.recount_after = false, false, 0
 	if !count_tree_bind(state, reader, candidate) {
 		return false
 	}
@@ -1148,6 +1150,13 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	case .Tables:
 		return walk_count_tree(state, candidate, result)
 	case .Count_Tree:
+		// The top directory names the leaves that wait for a recount. A wrong
+		// top is found here as at any read: the service stops its changes.
+		if candidate.counts.block != 0 {
+			if _, outcome := block_counts.page_get(&state.counts, state.counts.levels, 0); outcome == .Device {
+				return false
+			}
+		}
 	}
 	return true
 }
