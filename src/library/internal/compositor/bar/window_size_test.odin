@@ -53,6 +53,12 @@ resize_edges_at_refuses_each_place_that_is_no_edge :: proc(t: ^testing.T) {
 		{middle_x, outer.y + 12}, // The title bar.
 		{outer.x + BORDER_OF_TEST, middle_y}, // The first column of the surface.
 		{right - BORDER_OF_TEST - 1, middle_y}, // The last column of the surface.
+		{right - CORNER_REACH - 1, bottom - CORNER_REACH}, // One column past the square of the bottom right corner.
+		{right - CORNER_REACH, bottom - CORNER_REACH - 1}, // One row above it.
+		{outer.x + CORNER_REACH - 1, bottom - CORNER_REACH}, // The bottom left corner has no square inside the frame.
+		{outer.x + BORDER_OF_TEST, bottom - BORDER_OF_TEST - 1}, // Its pixel nearest to the corner inside the frame.
+		{right - CORNER_REACH, outer.y + CORNER_REACH - 1}, // The top corners have no square: the buttons of the title.
+		{outer.x + CORNER_REACH - 1, outer.y + 1},
 	}
 	for place in no_edge {
 		edges := resize_edges_at(outer, BORDER_OF_TEST, place[0], place[1])
@@ -83,7 +89,28 @@ resize_edges_at_each_edge_and_corner :: proc(t: ^testing.T) {
 		{outer.x, bottom - 1, {.Left, .Bottom}},
 		{outer.x - 1, outer.y - 1, {.Left, .Top}},
 		{right, outer.y - 1, {.Right, .Top}},
-		{outer.x, outer.y + 12, {.Left}}, // The left border goes up through the title bar.
+		{outer.x, outer.y + CORNER_REACH, {.Left}}, // The left border goes up through the title bar.
+		// The corners take CORNER_REACH along each edge: the last pixel of
+		// the reach, then one past it.
+		{outer.x, outer.y + CORNER_REACH - 1, {.Left, .Top}},
+		{right - 1, outer.y + CORNER_REACH - 1, {.Right, .Top}},
+		{right - 1, outer.y + CORNER_REACH, {.Right}},
+		{right - 1, bottom - CORNER_REACH, {.Right, .Bottom}},
+		{right - 1, bottom - CORNER_REACH - 1, {.Right}},
+		{outer.x, bottom - CORNER_REACH, {.Left, .Bottom}},
+		{middle_x, bottom - 1, {.Bottom}},
+		{right - CORNER_REACH, bottom - 1, {.Right, .Bottom}},
+		{right - CORNER_REACH - 1, bottom - 1, {.Bottom}},
+		{outer.x + CORNER_REACH - 1, bottom - 1, {.Left, .Bottom}},
+		{outer.x + CORNER_REACH - 1, outer.y - 1, {.Left, .Top}},
+		{right - CORNER_REACH, outer.y - 1, {.Right, .Top}},
+		{right - CORNER_REACH - 1, outer.y - 1, {.Top}},
+		{right + RESIZE_REACH - 1, bottom - CORNER_REACH, {.Right, .Bottom}}, // The band outside the frame too.
+		// The square inside the bottom right corner: the grip, its first
+		// pixel and its last.
+		{right - BORDER_OF_TEST - GRIP_SIZE, bottom - BORDER_OF_TEST - GRIP_SIZE, {.Right, .Bottom}},
+		{right - BORDER_OF_TEST - 1, bottom - BORDER_OF_TEST - 1, {.Right, .Bottom}},
+		{right - CORNER_REACH, bottom - CORNER_REACH, {.Right, .Bottom}},
 	}
 	for each in cases {
 		edges := resize_edges_at(outer, BORDER_OF_TEST, each.x, each.y)

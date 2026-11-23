@@ -38,6 +38,10 @@ Start_Grant_Set_Terms :: struct {
 STORE_BLOCKS_DEFAULT :: 64
 TERMINAL_COLUMNS_DEFAULT :: 96
 TERMINAL_ROWS_DEFAULT :: 26
+// The terminal of flood: the size of its measures since they started.
+FLOOD_TERMINAL_COLUMNS :: 104
+FLOOD_TERMINAL_ROWS :: 32
+#assert(FLOOD_TERMINAL_COLUMNS <= terminal.COLUMNS_LIMIT && FLOOD_TERMINAL_ROWS <= terminal.ROWS_LIMIT)
 
 // A row of the table: the whole start grant set of one process, by its name.
 Start_Grant_Set_Row :: struct {
@@ -86,8 +90,9 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "console", grants = {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image, .Palette}, terms = {store_blocks = 3, log_gives = true}},
 	// It writes its lines to a terminal and reads the key Space from it:
 	// it has no surface and needs nothing else. It shows the rates of the
-	// process in a terminal as large as a terminal can be.
-	{name = "flood", grants = {.Terminal}, terms = {terminal_columns = terminal.COLUMNS_LIMIT, terminal_rows = terminal.ROWS_LIMIT, terminal_measure = true}},
+	// process in a terminal of a fixed size, so that its measures compare
+	// from one run to the next.
+	{name = "flood", grants = {.Terminal}, terms = {terminal_columns = FLOOD_TERMINAL_COLUMNS, terminal_rows = FLOOD_TERMINAL_ROWS, terminal_measure = true}},
 	// The test of the records of a terminal ring whose kind names no
 	// record: it writes them to its terminal, as flood writes lines.
 	{name = "hostile_terminal", grants = {.Terminal}},

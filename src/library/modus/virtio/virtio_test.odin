@@ -2,6 +2,7 @@
 package virtio
 
 import "core:testing"
+import "modus:pci"
 
 // A device whose status is 0 finished its reset.
 @(test)
@@ -32,6 +33,55 @@ start_goes_past_a_reset_that_is_done :: proc(t: ^testing.T) {
 	_, start_error := start(&device, 0)
 	testing.expect_value(t, start_error, Start_Error.No_Version_1)
 	testing.expect_value(t, registers[COMMON_STATUS], u8(STATUS_ACKNOWLEDGE | STATUS_DRIVER))
+}
+
+// A configuration with one capability at 0x40: its kind, its BAR, its
+// place and its length.
+@(private = "file")
+configuration_with_capability :: proc(kind, bar: u8, place, length: u32) -> (configuration: [pci.CONFIGURATION_SIZE]u8) {
+	configuration[pci.OFFSET_CAPABILITIES] = 0x40
+	configuration[0x40] = CAPABILITY_VIRTIO
+	configuration[0x41] = 0 // No next capability.
+	configuration[0x43] = kind
+	configuration[0x44] = bar
+	(^u32)(&configuration[0x48])^ = place
+	(^u32)(&configuration[0x4C])^ = length
+	return
+}
+
+// The common configuration is found only in a capability of its kind, at
+// a BAR of the device, with the length of its registers; a short copy of
+// the configuration, a list that starts before 0x40 and a list that loops
+// give none.
+@(test)
+the_common_configuration_is_found_only_where_it_fits :: proc(t: ^testing.T) {
+	found_configuration := configuration_with_capability(CAPABILITY_COMMON, 4, 0x3000, COMMON_CONFIG_SIZE)
+	bar, place, found := common_place(found_configuration[:])
+	testing.expect(t, found && bar == 4 && place == 0x3000)
+	refused := [?][pci.CONFIGURATION_SIZE]u8{
+		configuration_with_capability(CAPABILITY_NOTIFY, 4, 0x3000, COMMON_CONFIG_SIZE),
+		configuration_with_capability(CAPABILITY_COMMON, pci.BAR_COUNT, 0x3000, COMMON_CONFIG_SIZE), // One past the last BAR.
+		configuration_with_capability(CAPABILITY_COMMON, 255, 0x3000, COMMON_CONFIG_SIZE),
+		configuration_with_capability(CAPABILITY_COMMON, 4, 0x3000, COMMON_CONFIG_SIZE - 1), // One byte short.
+		configuration_with_capability(CAPABILITY_COMMON, 4, 0x3000, 0),
+	}
+	for &configuration in refused {
+		_, _, refused_found := common_place(configuration[:])
+		testing.expect(t, !refused_found)
+	}
+	short := found_configuration
+	_, _, short_found := common_place(short[:pci.CONFIGURATION_SIZE - 1])
+	testing.expect(t, !short_found)
+	before := found_configuration
+	before[pci.OFFSET_CAPABILITIES] = 0x3C
+	_, _, before_found := common_place(before[:])
+	testing.expect(t, !before_found)
+	// A capability of another kind that names itself as the next one: the
+	// walk ends at its bound.
+	looping := configuration_with_capability(CAPABILITY_NOTIFY, 4, 0x3000, COMMON_CONFIG_SIZE)
+	looping[0x41] = 0x40
+	_, _, looping_found := common_place(looping[:])
+	testing.expect(t, !looping_found)
 }
 
 // A region that the device places fits only inside the memory, and a sum

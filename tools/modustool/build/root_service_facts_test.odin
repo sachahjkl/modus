@@ -565,6 +565,7 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		{"Shortage_Start_Failed", "root: cannot start shortage: status ", ""},
 		{"Operation_Fuzzing_Start_Failed", "root: cannot start operation_fuzzing: status ", ""},
 		{"Input_Start_Failed", "root: cannot start input: status ", ""},
+		{"Input_Tablet_Arm_Failed", "root: cannot give the virtio tablet to input: status ", ": the pointer is the PS/2 mouse only"},
 		{"Compositor_Control_Ring_Failed", "root: cannot start the compositor: no control ring: status ", ""},
 		{"Compositor_Service_Ring_Failed", "root: cannot start the compositor: no service ring: status ", ""},
 		{"Compositor_Start_Failed", "root: cannot start the compositor: status ", ""},

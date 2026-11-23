@@ -94,6 +94,21 @@ processor_models := [Processor_Model]string {
 // processor gives the processor of the machine (Processor_Model).
 // entropy_device gives the machine the entropy device of virtio at the place
 // pci.ENTROPY_DEVICE (src/md/features/entropy_device.md).
+// The virtio tablet of a machine (tablet_scenario.odin): none; at its place
+// on the bus, where the root service gives it to the input service; a
+// tablet at another place, and another virtio device at its place, which
+// both leave the PS/2 mouse as the only pointer.
+Machine_Tablet :: enum {
+	None,
+	At_Its_Place,
+	At_Another_Place,
+	Other_Device_At_Its_Place,
+}
+
+// A free place of bus 0 for a tablet that the root service must not take.
+TABLET_OTHER_PLACE :: 0x17
+#assert(TABLET_OTHER_PLACE != pci.TABLET_DEVICE && TABLET_OTHER_PLACE != pci.GPU_DEVICE && TABLET_OTHER_PLACE != pci.SCRATCH_BRIDGE_DEVICE)
+
 // The IOMMU of a machine: none, the unit of Intel, or the unit of AMD
 // (src/md/infrastructure/iommu.md).
 Machine_Iommu :: enum {
@@ -157,11 +172,13 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // request that the disk never answers stops no processor (silent_disk.odin).
 // without_pit leaves the 8254 out of the machine (`pit=off`): the start of
 // the kernel with no time base (src/md/features/missing_hardware.md).
+// tablet: the virtio tablet of a test machine (Machine_Tablet); the
+// machine of a person always has one at its place.
 // shared_variables: the variable store that the machines of a part share
 // (start_policy_scenario.odin), or "" for a new copy. serial_input: the
 // FIFO that is the input of the serial line of a test machine, which the
 // caller made and opened (serial_input_linux.odin), or "" for none.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "") -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -452,6 +469,20 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		append(&list, "-qmp", strings.concatenate({"unix:", film_qmp_socket_of(test_output), ",server=on,wait=off"}, context.temp_allocator))
 	} else {
 		append(&list, "-serial", "stdio")
+	}
+	// The window of a person always has the tablet: an absolute pointer,
+	// so the pointer of the host moves the pointer of the system where it
+	// is, with no grab of the window. QEMU sends the pointer to the PS/2
+	// mouse only when no device takes absolute moves. A test machine has it
+	// only when its part asks: the other scenarios send relative moves.
+	switch test_output == "" ? Machine_Tablet.At_Its_Place : tablet {
+	case .None:
+	case .At_Its_Place:
+		append(&list, "-device", fmt.tprintf("virtio-tablet-pci,disable-legacy=on,addr=0x%x%s", pci.TABLET_DEVICE, virtio_iommu))
+	case .At_Another_Place:
+		append(&list, "-device", fmt.tprintf("virtio-tablet-pci,disable-legacy=on,addr=0x%x%s", TABLET_OTHER_PLACE, virtio_iommu))
+	case .Other_Device_At_Its_Place:
+		append(&list, "-device", fmt.tprintf("virtio-rng-pci,disable-legacy=on,vectors=2,addr=0x%x%s", pci.TABLET_DEVICE, virtio_iommu))
 	}
 	return list[:], true
 }

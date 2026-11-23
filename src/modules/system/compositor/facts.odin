@@ -700,6 +700,18 @@ Window_Resized :: struct {
 	window:     value_kinds.Module_Name_Field,
 }
 
+// A window took the work area: the maximize.
+@(log_fact = "compositor: window {window} maximized")
+Window_Maximized :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// A maximized window takes back its place, and its size of before.
+@(log_fact = "compositor: window {window} restored")
+Window_Restored :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
 // The compositor asked a window to draw at a size.
 @(log_fact = "compositor: window {window} asked to draw at {width}x{height}")
 Draw_Size_Asked :: struct {

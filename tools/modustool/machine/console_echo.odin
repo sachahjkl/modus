@@ -52,6 +52,9 @@ console_echo_note_step :: proc(echo: ^Console_Echo, step: Step) {
 		echo.console_in_front = step.text == CONSOLE_TITLE
 	case .Launch, .Move, .Close, .Click, .Drag:
 		echo.console_in_front = false
+	case .Click_Absolute, .Press_Absolute:
+		// A press in a window brings it to the front.
+		echo.console_in_front = step.inside_window == CONSOLE_TITLE
 	case .Resize:
 		// The resized window comes to the front.
 		echo.console_in_front = step.text == CONSOLE_TITLE

@@ -7,6 +7,14 @@ package bar
 // The pixels outside the frame of a window that are still its edge: the
 // border is 2 pixels, too thin to take with the pointer.
 RESIZE_REACH :: 6
+// The pixels along each edge from a corner of the frame that take the edge
+// beside it too, so a corner is a target as large as a grip. At the bottom
+// right corner the square of that size inside the frame is the corner too:
+// it holds the grip that the compositor draws there.
+CORNER_REACH :: 14
+// The side of the grip that the compositor draws in the bottom right corner
+// of a resizable window, inside its border.
+GRIP_SIZE :: 11
 
 // One edge of the frame of a window.
 Resize_Edge :: enum {
@@ -43,8 +51,10 @@ Resize_Start :: struct {
 // the border at the left, the right and the bottom, and the band of
 // RESIZE_REACH pixels around the frame. The title bar is not an edge: a
 // press on it moves the window; the band above it is the top edge, and its
-// left and right columns are the left and right edges. A place far from
-// the frame, or inside it, gives no edge.
+// left and right columns are the left and right edges. Within CORNER_REACH
+// of a corner, an edge takes the edge beside it too, and the square of
+// CORNER_REACH inside the bottom right corner is that corner: the grip. A place far from
+// the frame, or inside it elsewhere, gives no edge.
 resize_edges_at :: proc "contextless" (outer: Outer_Rectangle, border, pointer_x, pointer_y: int) -> (edges: Resize_Edges) {
 	left, top := outer.x, outer.y
 	right, bottom := outer.x + outer.width, outer.y + outer.height
@@ -60,6 +70,28 @@ resize_edges_at :: proc "contextless" (outer: Outer_Rectangle, border, pointer_x
 		edges += {.Top}
 	} else if pointer_y >= bottom - border {
 		edges += {.Bottom}
+	}
+	near_left, near_right := pointer_x < left + CORNER_REACH, pointer_x >= right - CORNER_REACH
+	near_top, near_bottom := pointer_y < top + CORNER_REACH, pointer_y >= bottom - CORNER_REACH
+	if (.Left in edges || .Right in edges) && .Top not_in edges && .Bottom not_in edges {
+		if near_top {
+			edges += {.Top}
+		} else if near_bottom {
+			edges += {.Bottom}
+		}
+	}
+	if (.Top in edges || .Bottom in edges) && .Left not_in edges && .Right not_in edges {
+		if near_left {
+			edges += {.Left}
+		} else if near_right {
+			edges += {.Right}
+		}
+	}
+	// The grip: the square of the bottom right corner inside the frame. No
+	// other corner has one: the buttons of the title bar are at the top,
+	// and the surface of the process at the bottom left keeps its pixels.
+	if edges == {} && near_bottom && near_right {
+		edges = {.Right, .Bottom}
 	}
 	return edges
 }

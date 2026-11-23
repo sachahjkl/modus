@@ -45,6 +45,14 @@ Start_List_Wiring :: struct {
 // The name of the record output log of a writer row in this table.
 WIRING_OUTPUT_LOG :: "log"
 
+// The restarts of the input service: a stop that is no refusal (a fault,
+// a stop of a principal) gives the machine its keys and its pointer back,
+// with the tablet armed again by the root service. An absent PS/2
+// controller is a refusal: no restart. The window bounds a loop of stops,
+// not the life of the machine: 3 restarts in each minute.
+INPUT_RESTARTS :: 3
+INPUT_RESTART_WINDOW_SECONDS :: 60
+
 // The default start list: the start of the machine, row by row as the
 // design maps it. The entropy service and the TPM service are no row: the
 // seed and the keys of the machine need them before any start policy.
@@ -52,7 +60,7 @@ WIRING_OUTPUT_LOG :: "log"
 DEFAULT_START_LIST := [?]Start_List_Row {
 	// With no screen, no window reads a key. An absent PS/2 controller is
 	// the line of the input service itself, which stops.
-	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "input", needs = {.Screen}, absent_rule = .Not_Started, restart_count = INPUT_RESTARTS, restart_window_seconds = INPUT_RESTART_WINDOW_SECONDS},
 	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},
 	// A failure of the console no longer stops the machine: the start
@@ -77,7 +85,7 @@ DEFAULT_START_WIRINGS := [?]Start_List_Wiring{{writer = "wired_writer", record_o
 // a machine with a screen is usable without it.
 @(rodata)
 DEFAULT_RESCUE_LIST := [?]Start_List_Row {
-	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "input", needs = {.Screen}, absent_rule = .Not_Started, restart_count = INPUT_RESTARTS, restart_window_seconds = INPUT_RESTART_WINDOW_SECONDS},
 	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "console", needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
 	{name = "remote", needs = {.Network_Device}, absent_rule = .Not_Started},

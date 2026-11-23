@@ -62,7 +62,9 @@ import "modus:contract/enum_word"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:contract/reference_screen"
 import "modus:contract/ring"
+import "modus:contract/scale_factor"
 import "modus:contract/text_encoding"
 import "modus:system"
 
@@ -107,8 +109,25 @@ context_of :: proc "contextless" (grants: ^system.Context_Grants, values: ^syste
 	system.value_put(values, VALUE_MEASURE, u64(measure))
 }
 
-COLUMNS_LIMIT :: 104 // The most columns of a terminal window.
-ROWS_LIMIT :: 32 // The most rows of a terminal window.
+// The cell of the grid of a terminal window, in logical pixels: the cell
+// of the font of the system (graphics.CELL_WIDTH and graphics.CELL_HEIGHT,
+// which package grid_resize checks against these).
+GRID_CELL_WIDTH :: 8
+GRID_CELL_HEIGHT :: 16
+// The largest logical screen: the reference screen, the largest mode that
+// the boot program sets, at the smallest scale, 1536 x 864 logical pixels.
+// The constants stay untyped, so the eighths of the smallest scale are
+// written here and checked against the enum.
+SMALLEST_SCALE_EIGHTHS :: 10
+#assert(SMALLEST_SCALE_EIGHTHS == int(min(scale_factor.Scale)))
+LARGEST_LOGICAL_SCREEN_WIDTH :: reference_screen.WIDTH * scale_factor.EIGHTHS_OF_ONE / SMALLEST_SCALE_EIGHTHS
+LARGEST_LOGICAL_SCREEN_HEIGHT :: reference_screen.HEIGHT * scale_factor.EIGHTHS_OF_ONE / SMALLEST_SCALE_EIGHTHS
+// The most columns and rows of a terminal window: a grid that covers the
+// largest logical screen, so a maximized window is never wider or taller
+// than its grid.
+COLUMNS_LIMIT :: LARGEST_LOGICAL_SCREEN_WIDTH / GRID_CELL_WIDTH
+ROWS_LIMIT :: LARGEST_LOGICAL_SCREEN_HEIGHT / GRID_CELL_HEIGHT
+#assert(COLUMNS_LIMIT == 192 && ROWS_LIMIT == 54)
 
 RING_CAPACITY :: 4096 // The records of each queue of the terminal ring.
 TEXT_PAGES :: 1024 // 4 MiB. A power of two.

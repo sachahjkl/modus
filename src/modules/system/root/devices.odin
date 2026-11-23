@@ -12,6 +12,7 @@ import rd "modus:contract/root_delegation"
 import "modus:pci"
 import "modus:random"
 import "modus:system"
+import "modus:virtio"
 import "modus:contract/timed_stream"
 import "modus:contract/virtio_gpu"
 
@@ -239,11 +240,8 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		system.log_fact(.Error, Device_Unclassified{device = u64(place.device), bus = u64(place.bus), service = module_name_field(service_name)})
 		return nil, 0, .Bad_State
 	}
-	// The identifiers are read again, so a place whose device changed since
-	// the classification does not take the class of the device of before.
-	identity := pci.read_32(place, 0)
-	classified, classified_found := classified_device_at(place)
-	if !classified_found || classified.vendor_id != u16(identity & 0xFFFF) || classified.device_id != u16(identity >> 16) || classified.role != kind.role {
+	identity, identity_found := classified_identity_at(place, kind.role)
+	if !identity_found {
 		if place.bus == 0 {
 			system.log_fact(.Error, Virtio_Device_Absent{device = u64(place.device), service = module_name_field(service_name)})
 		} else {
@@ -276,13 +274,6 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	}
 	driver^ = {}
 
-	// What this service creates here and does not keep.
-	made: [2 + pci.BAR_COUNT]system.Handle
-	defer for handle in made {
-		if handle != 0 {
-			system.close(handle)
-		}
-	}
 	// The slots of a device service are the layout of package pci and of
 	// the ring of its contract: each handle takes its own slot, so a new
 	// handle of the layout cannot take the slot of another in silence.
@@ -290,7 +281,6 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	context_grants: system.Context_Grants
 	values: system.Context_Values
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
-	system.grant_put(&context_grants, pci.GRANT_MACHINE, {machine, {.Physical}})
 
 	// Behind a conventional bridge, the registers of each other device
 	// there: no other service can then drive a device that reaches what
@@ -314,94 +304,15 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 	}
 
-	// The device: no line interrupt, its memory, and its message interrupt.
-	command := pci.read_16(place, pci.OFFSET_COMMAND)
-	pci.write_16(place, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER | pci.COMMAND_MEMORY | pci.COMMAND_NO_LINE_INTERRUPT)
-	bars := pci.bars(place)
-	configuration: [pci.CONFIGURATION_SIZE / 4]u32
-	for &word, index in configuration {
-		word = pci.read_32(place, u32(index * 4))
-	}
-	bytes := transmute([pci.CONFIGURATION_SIZE]u8)configuration
-	table := pci.capability(bytes[:], pci.CAPABILITY_MSI_X)
-	if table == 0 {
-		return nil, 0, .Bad_Operation
-	}
-	table_place := configuration[(table + 4) / 4]
-	pending_place := configuration[(table + 8) / 4]
-	table_bar := table_place & 7
-	if table_bar >= pci.BAR_COUNT || bars[table_bar].size == 0 {
-		return nil, 0, .Bad_Operation
-	}
-	// The message interrupt of this device: the kernel names the device by
-	// the base of the register that holds the table, so with interrupt
-	// remapping no other device can send it.
-	interrupt: system.Handle
-	message: [7]u64
-	interrupt, message, status = device_handle(.Message, bars[table_bar].address, 0)
+	armed: Armed_Device
+	armed, status = device_arm(place, identity, DEVICE_SERVICE_LAYOUT, &context_grants)
 	if status != .Ok {
 		return nil, 0, status
 	}
-	made[0] = interrupt
-	system.grant_put(&context_grants, pci.GRANT_INTERRUPT, {interrupt, {.Read}})
-	{
-		// Entry 0 of the table of the device: the address, the value, not masked.
-		page := (bars[table_bar].address + u64(table_place &~ 7)) &~ (system.PAGE_SIZE - 1)
-		registers, _ := device_handle(.Memory, page, 1) or_return
-		defer system.close(registers)
-		address := system.memory_map(registers, {.Write}) or_return
-		entry := ([^]u32)(uintptr(address) + uintptr((u64(table_place &~ 7)) & (system.PAGE_SIZE - 1)))
-		entry[0] = u32(message[1])
-		entry[1] = u32(message[1] >> 32)
-		entry[2] = u32(message[2])
-		entry[3] = 0
-		system.memory_unmap(address)
-	}
-	control := pci.read_16(place, table + 2)
-	pci.write_16(place, table + 2, control &~ (1 << 14) | 1 << 15) // Enabled, not masked.
-	pci.write_16(place, pci.OFFSET_COMMAND, command | pci.COMMAND_MEMORY | pci.COMMAND_BUS_MASTER | pci.COMMAND_NO_LINE_INTERRUPT)
-	bus_master_armed := true
-	defer if bus_master_armed {
-		current := pci.read_16(place, pci.OFFSET_COMMAND)
-		pci.write_16(place, pci.OFFSET_COMMAND, current &~ pci.COMMAND_BUS_MASTER)
-	}
-
-	// The memory of each BAR, except the BARs of the table of the
-	// interrupts: the device service does not change its interrupt.
-	// The kernel says of each range whether the IOMMU gives the device
-	// device windows; every range of one device names the same device.
-	// No range read: no fact, so the region of the network stays contiguous.
-	windows, read_a_range := true, false
-	for bar, index in bars {
-		if bar.size == 0 || u32(index) == table_bar || u32(index) == pending_place & 7 {
-			continue
-		}
-		memory: system.Handle
-		facts: [7]u64
-		memory, facts, status = device_handle(.Memory, bar.address, (bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-		if status != .Ok {
-			return nil, 0, status
-		}
-		windows &&= .Windows in transmute(op.Device_Memory_Facts)facts[1]
-		read_a_range = true
-		made[2 + index] = memory
-		system.grant_put(&context_grants, pci.GRANT_BAR + index, {memory, {.Read, .Write}})
-	}
+	defer device_arm_handles_close(&armed)
 	if kind.role == .Network_Device {
-		network_device_windows = windows && read_a_range
+		network_device_windows = armed.windows
 	}
-	copied := system.memory_create(1) or_return
-	made[1] = copied
-	{
-		address := system.memory_map(copied, {.Write}) or_return
-		([^][pci.CONFIGURATION_SIZE]u8)(address)[0] = bytes
-		system.memory_unmap(address)
-	}
-	system.grant_put(&context_grants, pci.GRANT_CONFIGURATION, {copied, {.Read}})
-	// The queues: this service keeps the memory until the device stops
-	// using it (driver_end).
-	driver.queues = system.memory_create(pci.QUEUE_PAGES, 0, {.Contiguous}) or_return // The device reads and writes it.
-	system.grant_put(&context_grants, pci.GRANT_QUEUES, {driver.queues, {.Read, .Write}})
 	ring_memory, status = system.memory_create(ring.pages(kind.ring_capacity))
 	if status == .Ok {
 		system.grant_put(&context_grants, kind.ring_role, {ring_memory, {.Read, .Write}})
@@ -416,17 +327,13 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	}
 	if status != .Ok {
 		fresh_bytes_forget(driver)
-		system.close(driver.queues)
+		device_arm_undo(&armed)
 		if ring_memory != 0 {
 			system.close(ring_memory)
 		}
 		driver^ = {}
 		return nil, 0, status
 	}
-	bus_master_armed = false
-	driver.is_driver = true
-	driver.bus_master_active = true
-	driver.device = place
 	if behind_conventional_bridge {
 		driver.bridge_group = group
 	}
@@ -441,8 +348,247 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		system.log_fact(.Info, Bridge_Registers_Held{bus = u64(group.first_bus), other_devices = u64(bridge_device_count), service = module_name_field(kind.name)})
 	}
-	devices_bind_tell(driver, place, identity, bars, u32(message[2]), table_bar, pending_place & 7)
+	device_arm_keep(driver, &armed)
 	return driver, ring_memory, .Ok
+}
+
+// The slots of the context where this service puts a virtio device. A
+// device service has the layout of package pci. The input service keeps the
+// PS/2 controller in the slots of the interrupt, the queues and the machine
+// of that layout, so its tablet takes those three in other slots.
+Device_Context_Layout :: struct {
+	interrupt:     int,
+	queues:        int,
+	machine:       int,
+	configuration: int,
+	first_bar:     int, // first_bar + n: the registers in BAR n.
+}
+
+DEVICE_SERVICE_LAYOUT :: Device_Context_Layout {
+	interrupt     = pci.GRANT_INTERRUPT,
+	queues        = pci.GRANT_QUEUES,
+	machine       = pci.GRANT_MACHINE,
+	configuration = pci.GRANT_CONFIGURATION,
+	first_bar     = pci.GRANT_BAR,
+}
+
+// A device that device_arm armed for a process that is not started yet.
+// Its bus master is on, its message interrupt is entry 0 of its table, and
+// the handles of made are in the context grants of the process.
+Armed_Device :: struct {
+	place:            pci.Place,
+	identity:         u32,
+	bars:             [pci.BAR_COUNT]pci.Bar,
+	interrupt_vector: u32,
+	table_bar:        u32,
+	pending_bar:      u32,
+	// Each memory range of the device has device windows of the IOMMU, and
+	// one range at least was read.
+	windows:          bool,
+	bus_master_on:    bool,
+	// This service keeps the memory of the queues until the device stops
+	// using it (driver_end).
+	queues:           system.Handle,
+	// What this service creates for the start and does not keep: the
+	// interrupt, the copy of the configuration, and the memory of each BAR.
+	made:             [2 + pci.BAR_COUNT]system.Handle,
+}
+
+// classified_identity_at reads the identifiers of the device at a place
+// again, and gives them when the devices service classified that device
+// with a role. A place whose device changed since the classification does
+// not take the class of the device of before.
+classified_identity_at :: proc "contextless" (place: pci.Place, role: rd.Device_Class_Role) -> (identity: u32, found: bool) {
+	if !bus_classified || configuration_open() != .Ok {
+		return 0, false
+	}
+	identity = pci.read_32(place, 0)
+	classified, classified_found := classified_device_at(place)
+	if !classified_found || classified.vendor_id != u16(identity & 0xFFFF) || classified.device_id != u16(identity >> 16) || classified.role != role {
+		return 0, false
+	}
+	return identity, true
+}
+
+// device_arm gives the device at a place its memory and its message
+// interrupt, turns its bus master on, and puts into the context grants of a
+// process its interrupt, the memory of its queues, the machine, a copy of
+// its configuration and the memory of each BAR, at the slots of a layout.
+// On a failure, it leaves the device with no bus master, closes what it
+// made, and puts no grant into the context.
+device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Device_Context_Layout, context_grants: ^system.Context_Grants) -> (armed: Armed_Device, status: system.Status) {
+	armed.place = place
+	armed.identity = identity
+	succeeded := false
+	defer if !succeeded {
+		device_arm_undo(&armed)
+	}
+	// The device: no line interrupt, its memory, and its message interrupt.
+	command := pci.read_16(place, pci.OFFSET_COMMAND)
+	pci.write_16(place, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER | pci.COMMAND_MEMORY | pci.COMMAND_NO_LINE_INTERRUPT)
+	armed.bars = pci.bars(place)
+	configuration: [pci.CONFIGURATION_SIZE / 4]u32
+	for &word, index in configuration {
+		word = pci.read_32(place, u32(index * 4))
+	}
+	bytes := transmute([pci.CONFIGURATION_SIZE]u8)configuration
+	table := pci.capability(bytes[:], pci.CAPABILITY_MSI_X)
+	if table == 0 {
+		return armed, .Bad_Operation
+	}
+	// A virtio device that a process held before keeps the addresses of
+	// its queues in memory that is free now: it is reset before its bus
+	// master goes on, so it writes nowhere until its new holder gives it
+	// queues.
+	if identity & 0xFFFF == pci.VENDOR_VIRTIO && !virtio_device_reset(armed.bars, bytes[:]) {
+		return armed, .Bad_State
+	}
+	table_place := configuration[(table + 4) / 4]
+	pending_place := configuration[(table + 8) / 4]
+	armed.table_bar = table_place & 7
+	armed.pending_bar = pending_place & 7
+	if armed.table_bar >= pci.BAR_COUNT || armed.bars[armed.table_bar].size == 0 {
+		return armed, .Bad_Operation
+	}
+	// The message interrupt of this device: the kernel names the device by
+	// the base of the register that holds the table, so with interrupt
+	// remapping no other device can send it.
+	interrupt: system.Handle
+	message: [7]u64
+	interrupt, message, status = device_handle(.Message, armed.bars[armed.table_bar].address, 0)
+	if status != .Ok {
+		return armed, status
+	}
+	armed.made[0] = interrupt
+	armed.interrupt_vector = u32(message[2])
+	{
+		// Entry 0 of the table of the device: the address, the value, not masked.
+		page := (armed.bars[armed.table_bar].address + u64(table_place &~ 7)) &~ (system.PAGE_SIZE - 1)
+		registers, _ := device_handle(.Memory, page, 1) or_return
+		defer system.close(registers)
+		address := system.memory_map(registers, {.Write}) or_return
+		entry := ([^]u32)(uintptr(address) + uintptr((u64(table_place &~ 7)) & (system.PAGE_SIZE - 1)))
+		entry[0] = u32(message[1])
+		entry[1] = u32(message[1] >> 32)
+		entry[2] = u32(message[2])
+		entry[3] = 0
+		system.memory_unmap(address)
+	}
+	control := pci.read_16(place, table + 2)
+	pci.write_16(place, table + 2, control &~ (1 << 14) | 1 << 15) // Enabled, not masked.
+	pci.write_16(place, pci.OFFSET_COMMAND, command | pci.COMMAND_MEMORY | pci.COMMAND_BUS_MASTER | pci.COMMAND_NO_LINE_INTERRUPT)
+	armed.bus_master_on = true
+
+	// The memory of each BAR, except the BARs of the table of the
+	// interrupts: the process does not change its interrupt.
+	// The kernel says of each range whether the IOMMU gives the device
+	// device windows; every range of one device names the same device.
+	// No range read: no fact, so the region of the network stays contiguous.
+	windows, read_a_range := true, false
+	for bar, index in armed.bars {
+		if bar.size == 0 || u32(index) == armed.table_bar || u32(index) == armed.pending_bar {
+			continue
+		}
+		memory: system.Handle
+		facts: [7]u64
+		memory, facts, status = device_handle(.Memory, bar.address, (bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+		if status != .Ok {
+			return armed, status
+		}
+		windows &&= .Windows in transmute(op.Device_Memory_Facts)facts[1]
+		read_a_range = true
+		armed.made[2 + index] = memory
+	}
+	armed.windows = windows && read_a_range
+	copied := system.memory_create(1) or_return
+	armed.made[1] = copied
+	{
+		address := system.memory_map(copied, {.Write}) or_return
+		([^][pci.CONFIGURATION_SIZE]u8)(address)[0] = bytes
+		system.memory_unmap(address)
+	}
+	armed.queues = system.memory_create(pci.QUEUE_PAGES, 0, {.Contiguous}) or_return // The device reads and writes it.
+	// The grants go into the context only once every handle exists: a
+	// failure then leaves no closed handle in the context.
+	system.grant_put(context_grants, layout.interrupt, {armed.made[0], {.Read}})
+	for index in 0 ..< pci.BAR_COUNT {
+		if armed.made[2 + index] != 0 {
+			system.grant_put(context_grants, layout.first_bar + index, {armed.made[2 + index], {.Read, .Write}})
+		}
+	}
+	system.grant_put(context_grants, layout.configuration, {armed.made[1], {.Read}})
+	system.grant_put(context_grants, layout.queues, {armed.queues, {.Read, .Write}})
+	system.grant_put(context_grants, layout.machine, {machine, {.Physical}})
+	succeeded = true
+	return armed, .Ok
+}
+
+// virtio_device_reset writes the device status 0 in the common
+// configuration of a virtio device and waits, by a count of reads, until
+// the device says 0: the device then forgets its queues and its features.
+// false: the device has no common configuration inside a BAR, or does not
+// finish its reset.
+virtio_device_reset :: proc "contextless" (bars: [pci.BAR_COUNT]pci.Bar, configuration: []u8) -> bool {
+	bar, place, found := virtio.common_place(configuration)
+	if !found || bars[bar].size == 0 || !virtio.region_fits(u64(place), u64(virtio.COMMON_CONFIG_SIZE), bars[bar].size) {
+		return false
+	}
+	start := bars[bar].address + u64(place)
+	first_page := start &~ (system.PAGE_SIZE - 1)
+	last_page := (start + u64(virtio.COMMON_CONFIG_SIZE) - 1) &~ (system.PAGE_SIZE - 1)
+	registers, _, status := device_handle(.Memory, first_page, (last_page - first_page) / system.PAGE_SIZE + 1)
+	if status != .Ok {
+		return false
+	}
+	defer system.close(registers)
+	address, map_status := system.memory_map(registers, {.Write})
+	if map_status != .Ok {
+		return false
+	}
+	defer system.memory_unmap(address)
+	device := virtio.Device{common = uintptr(address) + uintptr(start - first_page)}
+	virtio.status_write(&device, 0)
+	return virtio.reset_done(&device)
+}
+
+// device_arm_handles_close closes the handles that device_arm made for the
+// start: the process holds its own.
+device_arm_handles_close :: proc "contextless" (armed: ^Armed_Device) {
+	for &handle in armed.made {
+		if handle != 0 {
+			system.close(handle)
+			handle = 0
+		}
+	}
+}
+
+// device_arm_undo takes the device back when its process did not start:
+// the bus master goes off before the memory of the queues is freed, so the
+// device never writes to a freed page.
+device_arm_undo :: proc "contextless" (armed: ^Armed_Device) {
+	if armed.bus_master_on {
+		current := pci.read_16(armed.place, pci.OFFSET_COMMAND)
+		pci.write_16(armed.place, pci.OFFSET_COMMAND, current &~ pci.COMMAND_BUS_MASTER)
+		armed.bus_master_on = false
+	}
+	if armed.queues != 0 {
+		system.close(armed.queues)
+		armed.queues = 0
+	}
+	device_arm_handles_close(armed)
+}
+
+// device_arm_keep records the device in the place of its started process:
+// the stop of the process then turns its bus master off and frees its
+// queues (driver_end), and the devices service binds it to the process.
+device_arm_keep :: proc "contextless" (slot: ^Started, armed: ^Armed_Device) {
+	slot.is_driver = true
+	slot.bus_master_active = true
+	slot.device = armed.place
+	slot.queues = armed.queues
+	armed.bus_master_on = false
+	armed.queues = 0
+	devices_bind_tell(slot, armed.place, armed.identity, armed.bars, armed.interrupt_vector, armed.table_bar, armed.pending_bar)
 }
 
 // The display registers of the standard VGA, mapped while the compositor
