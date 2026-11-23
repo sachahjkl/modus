@@ -96,7 +96,16 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, width, height: int
 		gpu_venus_available = venus.values[0] != 0
 		gpu_venus_max_version = u32(venus.values[1])
 	}
-	bytes := virtio_gpu.framebuffer_bytes_with_list(u32(width), u32(height))
+	if width <= 0 || height <= 0 {
+		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(virtio_gpu.Service_Status.Bad_Command)})
+		return
+	}
+	bytes, bytes_ok := virtio_gpu.framebuffer_bytes_with_list(u32(width), u32(height))
+	list_offset, offset_ok := virtio_gpu.present_list_offset(u32(width), u32(height))
+	if !bytes_ok || !offset_ok {
+		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(virtio_gpu.Service_Status.Out_Of_Range)})
+		return
+	}
 	// Contiguous: the device reads the pixels through one backing entry.
 	memory, create_status := system.memory_create((bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE, 0, {.Contiguous})
 	if create_status != .Ok {
@@ -104,19 +113,25 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, width, height: int
 		return
 	}
 	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		system.close(memory)
+		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(map_status)})
+		return
+	}
 	lent, lend_status := system.give(gpu_ring_memory, memory, {.Read})
 	system.close(memory) // The mapping and the handle of the service keep it.
-	if map_status != .Ok || lend_status != .Ok {
-		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(map_status != .Ok ? map_status : lend_status)})
+	if lend_status != .Ok {
+		system.memory_unmap(address)
+		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(lend_status)})
 		return
 	}
 	attached, attached_ok := gpu_call_at_start(.Attach_Framebuffer, {0 = u64(lent), 1 = u64(width), 2 = u64(height), 3 = u64(virtio_gpu.Pixel_Format.B8G8R8X8_Unorm)})
 	if !attached_ok {
+		system.memory_unmap(address)
 		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(attached.kind)})
 		return
 	}
 	gpu_screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
-	list_offset := virtio_gpu.present_list_offset(u32(width), u32(height))
 	gpu_screen_list = ([^]u8)(uintptr(address) + uintptr(list_offset))[:virtio_gpu.PRESENT_LIST_PAGE_BYTES]
 	gpu_attached = true
 	system.log_fact(.Info, Screen_Is_Gpu_Scanout{width = u64(width), height = u64(height), resource_id = attached.values[0]})
@@ -132,15 +147,15 @@ gpu_scanout_put :: proc "contextless" (areas: []Rectangle) {
 		gpu_frames_merged += 1
 		return
 	}
-	gpu_present_send()
+	gpu_present_send(true)
 }
 
 // gpu_present_send copies the damage that waits into the screen memory,
 // writes its list, and sends one Present_Frame. The device reads the
 // screen memory until the answer, so nothing writes it while a present is
-// in flight.
+// in flight. in_draw is true when called inside draw_areas.
 @(private = "file")
-gpu_present_send :: proc "contextless" () {
+gpu_present_send :: proc "contextless" (in_draw: bool) {
 	if gpu_waiting.count == 0 {
 		return
 	}
@@ -161,7 +176,7 @@ gpu_present_send :: proc "contextless" () {
 		return
 	}
 	if virtio_gpu.present_list_encode(gpu_screen_list, rectangles[:count], u32(gpu_screen.width), u32(gpu_screen.height)) != .None {
-		gpu_scanout_end(u64(virtio_gpu.Service_Status.Bad_Command))
+		gpu_scanout_end(u64(virtio_gpu.Service_Status.Bad_Command), in_draw)
 		return
 	}
 	tag := gpu_tag
@@ -169,7 +184,7 @@ gpu_present_send :: proc "contextless" () {
 	if !system.send(&gpu_ring.commands, ring.Record{kind = u32(virtio_gpu.Service_Command.Present_Frame), tag = tag, values = {0 = u64(count)}}) {
 		// The ring of a service that never takes its records: the screen
 		// pages take the frames.
-		gpu_scanout_end(u64(virtio_gpu.Service_Status.Device_Error))
+		gpu_scanout_end(u64(virtio_gpu.Service_Status.Device_Error), in_draw)
 		return
 	}
 	gpu_in_flight = true
@@ -190,17 +205,17 @@ gpu_scanout_poll :: proc "contextless" (now: u64) {
 		}
 		gpu_in_flight = false
 		if record.kind != u32(virtio_gpu.Service_Status.Ok) {
-			gpu_scanout_end(u64(record.kind))
+			gpu_scanout_end(u64(record.kind), false)
 			return
 		}
 		gpu_presents = record.values[0]
 	}
 	if gpu_in_flight && now - gpu_in_flight_since >= system.TEST_HANG_BOUND_MILLISECONDS {
-		gpu_scanout_end(u64(virtio_gpu.Service_Status.Device_Error))
+		gpu_scanout_end(u64(virtio_gpu.Service_Status.Device_Error), false)
 		return
 	}
 	if !gpu_in_flight {
-		gpu_present_send()
+		gpu_present_send(false)
 	}
 }
 
@@ -214,13 +229,31 @@ gpu_scanout_wait :: proc "contextless" (wait: ^system.Wait, deadline: u64) -> u6
 	return min(deadline, gpu_in_flight_since + system.TEST_HANG_BOUND_MILLISECONDS)
 }
 
-// gpu_scanout_end writes why the scanout ended, and puts the next frames
-// on the screen pages, from a whole frame.
+// gpu_scanout_end writes why the scanout ended, releases the screen memory
+// mapping and ring, and puts the screen on the fallback screen pages. Inside
+// draw_areas (in_draw), draw() clears damage immediately after draw_areas
+// returns, so the whole frame goes straight to screen_put without mutating
+// damage; outside draw_areas, damage_whole_screen schedules a full redraw.
 @(private = "file")
-gpu_scanout_end :: proc "contextless" (status: u64) {
+gpu_scanout_end :: proc "contextless" (status: u64, in_draw: bool) {
 	system.log_fact(.Info, Gpu_Present_Refused{status = status, presents = gpu_presents})
 	gpu_attached = false
 	gpu_in_flight = false
 	gpu_waiting = {}
-	damage_whole_screen()
+	if gpu_screen.pixels != nil {
+		system.memory_unmap(gpu_screen.pixels)
+		gpu_screen = {}
+		gpu_screen_list = nil
+	}
+	system.ring_close(&gpu_ring)
+	if gpu_ring_memory != 0 {
+		system.close(gpu_ring_memory)
+		gpu_ring_memory = 0
+	}
+	if in_draw {
+		whole := [1]Rectangle{{0, 0, screen.width, screen.height}}
+		screen_put(whole[:])
+	} else {
+		damage_whole_screen()
+	}
 }

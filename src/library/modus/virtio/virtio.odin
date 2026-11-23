@@ -272,34 +272,38 @@ register_extents :: proc "contextless" (configuration: []u8) -> (extents: [pci.B
 	}
 	offset := u32(configuration[pci.OFFSET_CAPABILITIES]) &~ 3
 	for _ in 0 ..< 48 {
-		if offset < 0x40 || offset > pci.CONFIGURATION_SIZE - 16 {
+		if offset < 0x40 || offset > pci.CONFIGURATION_SIZE - 4 {
 			break
 		}
 		switch configuration[offset] {
 		case CAPABILITY_VIRTIO:
-			kind := configuration[offset + 3]
-			bar := configuration[offset + 4]
-			place := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 8])))
-			length := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 12])))
-			switch kind {
-			case CAPABILITY_COMMON, CAPABILITY_NOTIFY, CAPABILITY_ISR, CAPABILITY_DEVICE:
-				extend(&extents, bar, place, length)
-			case CAPABILITY_SHARED_MEMORY:
-				if configuration[offset + 2] >= SHARED_MEMORY_CAPABILITY_LENGTH && offset + SHARED_MEMORY_CAPABILITY_LENGTH <= pci.CONFIGURATION_SIZE {
-					place |= u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 16]))) << 32
-					length |= u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 20]))) << 32
+			if offset <= pci.CONFIGURATION_SIZE - 16 && configuration[offset + 2] >= 16 {
+				kind := configuration[offset + 3]
+				bar := configuration[offset + 4]
+				place := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 8])))
+				length := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 12])))
+				switch kind {
+				case CAPABILITY_COMMON, CAPABILITY_NOTIFY, CAPABILITY_ISR, CAPABILITY_DEVICE:
 					extend(&extents, bar, place, length)
+				case CAPABILITY_SHARED_MEMORY:
+					if configuration[offset + 2] >= SHARED_MEMORY_CAPABILITY_LENGTH && offset <= pci.CONFIGURATION_SIZE - SHARED_MEMORY_CAPABILITY_LENGTH {
+						place |= u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 16]))) << 32
+						length |= u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 20]))) << 32
+						extend(&extents, bar, place, length)
+					}
 				}
 			}
 		case pci.CAPABILITY_MSI_X:
-			// The table size is the field of 11 bits of the message
-			// control, minus one; each entry is 16 bytes, and each 64
-			// entries one word of 8 bytes of pending bits.
-			entries := u64(intrinsics.unaligned_load((^u16)(&configuration[offset + 2])) & 0x7FF) + 1
-			table := intrinsics.unaligned_load((^u32)(&configuration[offset + 4]))
-			pending := intrinsics.unaligned_load((^u32)(&configuration[offset + 8]))
-			extend(&extents, u8(table & 7), u64(table &~ 7), entries * 16)
-			extend(&extents, u8(pending & 7), u64(pending &~ 7), (entries + 63) / 64 * 8)
+			if offset <= pci.CONFIGURATION_SIZE - 12 {
+				// The table size is the field of 11 bits of the message
+				// control, minus one; each entry is 16 bytes, and each 64
+				// entries one word of 8 bytes of pending bits.
+				entries := u64(intrinsics.unaligned_load((^u16)(&configuration[offset + 2])) & 0x7FF) + 1
+				table := intrinsics.unaligned_load((^u32)(&configuration[offset + 4]))
+				pending := intrinsics.unaligned_load((^u32)(&configuration[offset + 8]))
+				extend(&extents, u8(table & 7), u64(table &~ 7), entries * 16)
+				extend(&extents, u8(pending & 7), u64(pending &~ 7), (entries + 63) / 64 * 8)
+			}
 		}
 		offset = u32(configuration[offset + 1]) &~ 3
 	}

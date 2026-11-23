@@ -85,13 +85,15 @@ firmware_framebuffer_address: u64
 // structure (virtio.register_extents), rounded up to a page, with no write;
 // the BAR of the framebuffer gets no memory. holds_screen false: the device
 // holds no framebuffer, and pci.bars may size it.
-screen_device_bars :: proc "contextless" (place: pci.Place, configuration: []u8) -> (bars: [pci.BAR_COUNT]pci.Bar, holds_screen: bool) {
+screen_device_bars :: proc "contextless" (configuration: []u8) -> (bars: [pci.BAR_COUNT]pci.Bar, holds_screen: bool) {
 	if firmware_framebuffer_address == 0 {
 		return {}, false
 	}
-	for index in 0 ..< pci.BAR_COUNT {
-		if pci.bar_address(place, index) == firmware_framebuffer_address {
+	addresses := pci.bar_addresses(configuration)
+	for address in addresses {
+		if address == firmware_framebuffer_address {
 			holds_screen = true
+			break
 		}
 	}
 	if !holds_screen {
@@ -99,7 +101,7 @@ screen_device_bars :: proc "contextless" (place: pci.Place, configuration: []u8)
 	}
 	extents := virtio.register_extents(configuration)
 	for index in 0 ..< pci.BAR_COUNT {
-		address := pci.bar_address(place, index)
+		address := addresses[index]
 		if address == 0 || address == firmware_framebuffer_address || extents[index] == 0 || extents[index] > max(u64) - system.PAGE_SIZE {
 			continue
 		}
@@ -468,7 +470,7 @@ device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Devic
 		word = pci.read_32(place, u32(index * 4))
 	}
 	bytes := transmute([pci.CONFIGURATION_SIZE]u8)configuration
-	screen_bars, holds_screen := screen_device_bars(place, bytes[:])
+	screen_bars, holds_screen := screen_device_bars(bytes[:])
 	armed.bars = holds_screen ? screen_bars : pci.bars(place)
 	table := pci.capability(bytes[:], pci.CAPABILITY_MSI_X)
 	if table == 0 {

@@ -236,4 +236,73 @@ register_extents_refuse_what_places_no_structure :: proc(t: ^testing.T) {
 	testing.expect_value(t, register_extents(looping[:])[2], u64(0x1800))
 	past := configuration_with_list({{0x40, virtio_capability(CAPABILITY_COMMON, 2, max(u32), max(u32))}})
 	testing.expect_value(t, register_extents(past[:])[2], u64(max(u32)) + u64(max(u32)))
+
+	// A 12-byte MSI-X capability at 0xF4 (past 0xF0) still fits in the
+	// 256-byte configuration.
+	msi_x_tail := make([]u8, 12, context.temp_allocator)
+	msi_x_tail[0] = pci.CAPABILITY_MSI_X
+	(^u16)(&msi_x_tail[2])^ = 0 // One entry.
+	(^u32)(&msi_x_tail[4])^ = 0x0000 | 4
+	(^u32)(&msi_x_tail[8])^ = 0x0400 | 4
+	at_end := configuration_with_list({{0xF4, msi_x_tail}})
+	testing.expect_value(t, register_extents(at_end[:])[4], u64(0x0400 + 8))
+
+	// A 4-byte non-virtio capability at 0xFC links on to a virtio cap.
+	other_tail := make([]u8, 4, context.temp_allocator)
+	other_tail[0] = 0x01 // Power management: 4-byte header at 0xFC.
+	linked_end := configuration_with_list({
+		{0xFC, other_tail},
+		{0x40, virtio_capability(CAPABILITY_COMMON, 2, 0x1000, 0x800)},
+	})
+	testing.expect_value(t, register_extents(linked_end[:])[2], u64(0x1800))
+
+	// A virtio capability with declared length below 16 is ignored.
+	short_virtio := virtio_capability(CAPABILITY_COMMON, 2, 0x1000, 0x800)
+	short_virtio[2] = 15
+	short_cfg := configuration_with_list({{0x40, short_virtio}})
+	testing.expect_value(t, register_extents(short_cfg[:]), [pci.BAR_COUNT]u64{})
+
+	// A 64-bit shared memory capability whose place + length wraps u64
+	// saturates to max(u64).
+	wrap_shared := make([]u8, 24, context.temp_allocator)
+	wrap_shared[0], wrap_shared[2], wrap_shared[3], wrap_shared[4] = CAPABILITY_VIRTIO, 24, CAPABILITY_SHARED_MEMORY, 3
+	(^u32)(&wrap_shared[8])^ = max(u32) - 15
+	(^u32)(&wrap_shared[12])^ = 32
+	(^u32)(&wrap_shared[16])^ = max(u32)
+	(^u32)(&wrap_shared[20])^ = 0
+	wrap_cfg := configuration_with_list({{0x40, wrap_shared}})
+	testing.expect_value(t, register_extents(wrap_cfg[:])[3], max(u64))
+}
+
+// bar_addresses reads 32-bit and 64-bit memory BARs from a configuration
+// copy, skips the upper dword of every 64-bit BAR, skips port BARs, and
+// refuses a 64-bit BAR at the last slot.
+@(test)
+bar_addresses_skip_upper_dword_of_every_64_bit_bar :: proc(t: ^testing.T) {
+	cfg: [pci.CONFIGURATION_SIZE]u8
+	// BAR 0: 32-bit memory BAR at 0x8000_0000.
+	(^u32)(&cfg[pci.OFFSET_BAR + 0])^ = 0x8000_0008
+	// BAR 1: I/O port BAR (bit 0 set).
+	(^u32)(&cfg[pci.OFFSET_BAR + 4])^ = 0x0000_C001
+	// BAR 2+3: 64-bit memory BAR at 0x0000_0001_FE00_0000.
+	(^u32)(&cfg[pci.OFFSET_BAR + 8])^ = 0xFE00_000C
+	(^u32)(&cfg[pci.OFFSET_BAR + 12])^ = 0x0000_0001
+	// BAR 4+5: 64-bit memory BAR at 0x0000_0380_0000_0000.
+	(^u32)(&cfg[pci.OFFSET_BAR + 16])^ = 0x0000_000C
+	(^u32)(&cfg[pci.OFFSET_BAR + 20])^ = 0x0000_0380
+	addresses := pci.bar_addresses(cfg[:])
+	testing.expect_value(t, addresses[0], u64(0x8000_0000))
+	testing.expect_value(t, addresses[1], u64(0))
+	testing.expect_value(t, addresses[2], u64(0x0000_0001_FE00_0000))
+	testing.expect_value(t, addresses[3], u64(0))
+	testing.expect_value(t, addresses[4], u64(0x0000_0380_0000_0000))
+	testing.expect_value(t, addresses[5], u64(0))
+
+	// Short configuration gives zeroes.
+	testing.expect_value(t, pci.bar_addresses(cfg[:pci.CONFIGURATION_SIZE - 1]), [pci.BAR_COUNT]u64{})
+
+	// A 64-bit BAR starting at the last slot (BAR 5) gives 0.
+	last_wide: [pci.CONFIGURATION_SIZE]u8
+	(^u32)(&last_wide[pci.OFFSET_BAR + 20])^ = 0xFE00_0004
+	testing.expect_value(t, pci.bar_addresses(last_wide[:])[5], u64(0))
 }

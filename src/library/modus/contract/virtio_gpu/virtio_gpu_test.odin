@@ -392,15 +392,45 @@ venus_context_blob_and_submit_3d_framing :: proc(t: ^testing.T) {
 }
 
 // The present list sits in the page after the pixels, and the memory of a
-// framebuffer holds that page too.
+// framebuffer holds that page too. Zero and out-of-range dimensions are
+// refused so u64 multiplication never wraps.
 @(test)
 the_present_list_is_the_page_after_the_pixels :: proc(t: ^testing.T) {
-	testing.expect_value(t, present_list_offset(1920, 1080), u64(1920 * 1080 * 4))
-	testing.expect_value(t, present_list_offset(1, 1), u64(PRESENT_LIST_PAGE_BYTES))
-	testing.expect_value(t, present_list_offset(1024, 1), u64(PRESENT_LIST_PAGE_BYTES))
-	testing.expect_value(t, present_list_offset(1025, 1), u64(2 * PRESENT_LIST_PAGE_BYTES))
-	testing.expect_value(t, framebuffer_bytes_with_list(1920, 1080), u64(1920 * 1080 * 4 + PRESENT_LIST_PAGE_BYTES))
-	testing.expect_value(t, present_list_offset(MAX_RESOURCE_DIMENSION, MAX_RESOURCE_DIMENSION), u64(MAX_RESOURCE_DIMENSION) * MAX_RESOURCE_DIMENSION * 4)
+	refused_dims := [?][2]u32{
+		{0, 1},
+		{1, 0},
+		{0, 0},
+		{MAX_RESOURCE_DIMENSION + 1, 1},
+		{1, MAX_RESOURCE_DIMENSION + 1},
+		{max(u32), max(u32)},
+	}
+	for pair in refused_dims {
+		off, off_ok := present_list_offset(pair[0], pair[1])
+		testing.expect(t, !off_ok && off == 0)
+		tot, tot_ok := framebuffer_bytes_with_list(pair[0], pair[1])
+		testing.expect(t, !tot_ok && tot == 0)
+	}
+	off_1920, ok_1920 := present_list_offset(1920, 1080)
+	testing.expect(t, ok_1920)
+	testing.expect_value(t, off_1920, u64(1920 * 1080 * 4))
+	off_1, ok_1 := present_list_offset(1, 1)
+	testing.expect(t, ok_1)
+	testing.expect_value(t, off_1, u64(PRESENT_LIST_PAGE_BYTES))
+	off_1024, ok_1024 := present_list_offset(1024, 1)
+	testing.expect(t, ok_1024)
+	testing.expect_value(t, off_1024, u64(PRESENT_LIST_PAGE_BYTES))
+	off_1025, ok_1025 := present_list_offset(1025, 1)
+	testing.expect(t, ok_1025)
+	testing.expect_value(t, off_1025, u64(2 * PRESENT_LIST_PAGE_BYTES))
+	tot_1920, tot_ok := framebuffer_bytes_with_list(1920, 1080)
+	testing.expect(t, tot_ok)
+	testing.expect_value(t, tot_1920, u64(1920 * 1080 * 4 + PRESENT_LIST_PAGE_BYTES))
+	off_max, ok_max := present_list_offset(MAX_RESOURCE_DIMENSION, MAX_RESOURCE_DIMENSION)
+	testing.expect(t, ok_max)
+	testing.expect_value(t, off_max, u64(MAX_RESOURCE_DIMENSION) * MAX_RESOURCE_DIMENSION * 4)
+	tot_max, tot_max_ok := framebuffer_bytes_with_list(MAX_RESOURCE_DIMENSION, MAX_RESOURCE_DIMENSION)
+	testing.expect(t, tot_max_ok)
+	testing.expect_value(t, tot_max, u64(MAX_RESOURCE_DIMENSION) * MAX_RESOURCE_DIMENSION * 4 + PRESENT_LIST_PAGE_BYTES)
 }
 
 // Each refusal of a present list: a count of 0, one past the capacity and
@@ -410,7 +440,7 @@ the_present_list_is_the_page_after_the_pixels :: proc(t: ^testing.T) {
 @(test)
 a_present_list_refuses_what_is_outside_the_framebuffer :: proc(t: ^testing.T) {
 	list: [PRESENT_LIST_PAGE_BYTES]u8
-	for count in ([]u64{0, PRESENT_RECTANGLE_CAPACITY + 1, max(u64)}) {
+	for count in ([]u64{0, PRESENT_RECTANGLE_CAPACITY + 1, u64(max(u32)), max(u64)}) {
 		_, problem := present_list_decode(list[:], count, 1920, 1080)
 		testing.expect_value(t, problem, Validation_Problem.Present_Count_Out_Of_Range)
 	}

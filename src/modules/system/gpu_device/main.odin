@@ -560,8 +560,12 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 	region_bytes := pages * system.PAGE_SIZE
 	required_bytes := u64(width) * u64(height) * 4
 	// The pixels, then the page of the present list.
-	if needed := virtio_gpu.framebuffer_bytes_with_list(width, height); region_bytes < needed {
-		return .Out_Of_Range, errors.ring_fail(ATTACH, .Too_Small, .Bytes, 1, i64(region_bytes), i64(needed))
+	needed_bytes, needed_ok := virtio_gpu.framebuffer_bytes_with_list(width, height)
+	if !needed_ok {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 2, i64(width), i64(height))
+	}
+	if region_bytes < needed_bytes {
+		return .Out_Of_Range, errors.ring_fail(ATTACH, .Too_Small, .Bytes, 1, i64(region_bytes), i64(needed_bytes))
 	}
 	// The service reads the present list through its own mapping, read
 	// only; the device reads the pixels through the backing.
@@ -663,17 +667,21 @@ present_frame :: proc "contextless" (command: ring.Record) -> (status: virtio_gp
 		return .Out_Of_Range, errors.ring_fail(PRESENT, .Bad_Value, .None, 1, i64(min(count, 1 << 62)), i64(capacity))
 	}
 	list: [virtio_gpu.PRESENT_RECTANGLE_CAPACITY * virtio_gpu.PRESENT_RECTANGLE_BYTES]u8
-	list_place := uintptr(framebuffer_mapping) + uintptr(virtio_gpu.present_list_offset(framebuffer_width, framebuffer_height))
+	list_offset, list_offset_ok := virtio_gpu.present_list_offset(framebuffer_width, framebuffer_height)
+	if !list_offset_ok {
+		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0)
+	}
+	list_place := uintptr(framebuffer_mapping) + uintptr(list_offset)
 	intrinsics.mem_copy_non_overlapping(&list[0], rawptr(list_place), int(count) * virtio_gpu.PRESENT_RECTANGLE_BYTES)
 	rectangles, list_problem := virtio_gpu.present_list_decode(list[:], count, framebuffer_width, framebuffer_height)
 	if list_problem != .None {
 		return .Out_Of_Range, errors.ring_fail(PRESENT, .Out_Of_Range, .None, 1, i64(list_problem))
 	}
 
-	// The requests: the transfer of each rectangle, then its flush, each in
-	// its slot of the request buffer, with its answer in its slot of the
-	// response buffer.
+	// Encode every request of the batch before giving any chain to the
+	// queue, so a failed encode leaves no partial chains queued.
 	requests := 2 * int(count)
+	request_lengths: [2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY]int
 	for index in 0 ..< int(count) {
 		rectangle := rectangles[index]
 		byte_offset := (u64(rectangle.y) * u64(framebuffer_width) + u64(rectangle.x)) * 4
@@ -684,21 +692,28 @@ present_frame :: proc "contextless" (command: ring.Record) -> (status: virtio_gp
 		if transfer_problem != .None || flush_problem != .None {
 			return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(transfer_problem), i64(flush_problem))
 		}
-		batch_request_give(2 * index, transfer_bytes)
-		batch_request_give(2 * index + 1, flush_bytes)
+		request_lengths[2 * index] = transfer_bytes
+		request_lengths[2 * index + 1] = flush_bytes
+	}
+	for slot in 0 ..< requests {
+		batch_request_give(slot, request_lengths[slot])
 	}
 	// The answers of an earlier batch are in the same slots: a device that
 	// writes a short answer must not leave an old Ok there.
 	intrinsics.mem_zero(response_buffer, requests * BATCH_RESPONSE_SLOT_BYTES)
 	// One publish of the index and one notice for the whole frame.
 	virtio.notify(&control_queue)
-	if !batch_answers_wait(requests) {
+	received, answered := batch_answers_wait(requests)
+	if !answered {
 		return .Device_Error, errors.ring_fail(PRESENT, .Device, .None, 0)
 	}
 	for slot in 0 ..< requests {
 		answer: [BATCH_RESPONSE_SLOT_BYTES]u8
-		intrinsics.mem_copy_non_overlapping(&answer[0], &response_buffer[slot * BATCH_RESPONSE_SLOT_BYTES], BATCH_RESPONSE_SLOT_BYTES)
-		decoded, problem := virtio_gpu.nodata_response_decode(answer[:])
+		answer_bytes := int(min(received[slot], BATCH_RESPONSE_SLOT_BYTES))
+		if answer_bytes > 0 {
+			intrinsics.mem_copy_non_overlapping(&answer[0], &response_buffer[slot * BATCH_RESPONSE_SLOT_BYTES], answer_bytes)
+		}
+		decoded, problem := virtio_gpu.nodata_response_decode(answer[:answer_bytes])
 		if problem != .None {
 			if problem == .Device_Error_Response {
 				system.log_fact(.Error, Request_Refused{response_word = u64(decoded.command_type), request = request_field(slot % 2 == 0 ? "TRANSFER_TO_HOST_2D" : "RESOURCE_FLUSH")})
@@ -737,7 +752,7 @@ batch_request_give :: proc "contextless" (slot: int, request_bytes: int) {
 // batch, up to the hang bound. A used chain that is not a head of the
 // batch, or a chain used twice, stops the service: the device then writes
 // where the service does not expect it.
-batch_answers_wait :: proc "contextless" (requests: int) -> bool {
+batch_answers_wait :: proc "contextless" (requests: int) -> (received: [2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY]u32, ok: bool) {
 	used_heads: [2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY]bool
 	used_count := 0
 	deadline := system.time() + DEVICE_ANSWER_BOUND_MILLISECONDS
@@ -748,12 +763,15 @@ batch_answers_wait :: proc "contextless" (requests: int) -> bool {
 			if item.id % 2 != 0 || int(item.id / 2) >= requests || used_heads[item.id / 2] {
 				fail("the device answered a request of a frame that was not given")
 			}
-			// An answer shorter than its header is no answer: the slot
-			// holds zeros, which no response word names.
+			slot := int(item.id / 2)
+			received[slot] = item.length
+			// Keep draining every chain of the batch even on a short answer:
+			// the caller passes received[slot] to nodata_response_decode,
+			// which refuses a short header.
 			if item.length < BATCH_RESPONSE_SLOT_BYTES {
 				system.log_fact(.Error, Request_Refused{response_word = u64(item.length), request = request_field("a short answer of a frame")})
 			}
-			used_heads[item.id / 2] = true
+			used_heads[slot] = true
 			used_count += 1
 		}
 		if used_count == requests {
@@ -768,7 +786,7 @@ batch_answers_wait :: proc "contextless" (requests: int) -> bool {
 		}
 		system.wait_end(&wait, deadline)
 	}
-	return true
+	return received, true
 }
 
 // entry verifies PCI identity (vendor 0x1AF4, device 0x1050), starts the

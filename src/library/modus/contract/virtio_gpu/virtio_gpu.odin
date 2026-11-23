@@ -251,17 +251,23 @@ PRESENT_LIST_PAGE_BYTES :: 4096
 #assert(PRESENT_RECTANGLE_CAPACITY * PRESENT_RECTANGLE_BYTES <= PRESENT_LIST_PAGE_BYTES)
 
 // present_list_offset gives the place of the present list in the memory
-// of a framebuffer: the page after its pixels.
-present_list_offset :: proc "contextless" (width, height: u32) -> u64 {
+// of a framebuffer: the page after its pixels. Dimensions outside
+// dimensions_validate (0 or past MAX_RESOURCE_DIMENSION) return 0, false,
+// so width * height * 4 never wraps u64.
+present_list_offset :: proc "contextless" (width, height: u32) -> (offset: u64, ok: bool) {
+	if dimensions_validate(width, height) != .None {
+		return 0, false
+	}
 	pixels := u64(width) * u64(height) * 4
-	return (pixels + PRESENT_LIST_PAGE_BYTES - 1) / PRESENT_LIST_PAGE_BYTES * PRESENT_LIST_PAGE_BYTES
+	return (pixels + PRESENT_LIST_PAGE_BYTES - 1) / PRESENT_LIST_PAGE_BYTES * PRESENT_LIST_PAGE_BYTES, true
 }
 
 // framebuffer_bytes_with_list gives the bytes that the memory of a
 // framebuffer of Attach_Framebuffer holds: its pixels, then the page of its
-// present list.
-framebuffer_bytes_with_list :: proc "contextless" (width, height: u32) -> u64 {
-	return present_list_offset(width, height) + PRESENT_LIST_PAGE_BYTES
+// present list. Returns 0, false for dimensions outside dimensions_validate.
+framebuffer_bytes_with_list :: proc "contextless" (width, height: u32) -> (bytes: u64, ok: bool) {
+	offset := present_list_offset(width, height) or_return
+	return offset + PRESENT_LIST_PAGE_BYTES, true
 }
 
 // present_list_encode writes rectangles into a present list. It writes
