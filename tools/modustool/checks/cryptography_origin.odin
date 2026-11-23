@@ -42,6 +42,7 @@ cryptography_import_changes := [?][2]string {
 	{"\"core:encoding/endian\"", "endian \"modus:cryptography/compatibility_endian\""},
 	{"\"core:math/bits\"", "bits \"modus:cryptography/compatibility_bits\""},
 	{"\"core:bytes\"", "bytes \"modus:cryptography/compatibility_bytes\""},
+	{"\"core:simd\"", "simd \"modus:cryptography/compatibility_simd\""},
 }
 
 // The start of the declared name of each package of the copy; the name of
@@ -72,6 +73,7 @@ cryptography_packages := [?]Cryptography_Package {
 	{"_blake2", "_blake2"},
 	{"_chacha20", "_chacha20"},
 	{"_chacha20/ref", "chacha20_ref"},
+	{"_chacha20/simd128", "chacha20_simd128"},
 	{"_edwards25519", "_edwards25519"},
 	{"_fiat", "fiat"},
 	{"_fiat/field_curve25519", "field_curve25519"},
@@ -260,6 +262,21 @@ cryptography_adjustments := [?]Cryptography_Adjustment {
 		"core/crypto/_chacha20/chacha20.odin",
 		"\tctr_ok: bool\n\tif ctx._is_ietf_flavor {\n\t\tif intrinsics.unlikely(ctx._s[12] == MAX_CTR_IETF && nr_blocks > 1) {\n\t\t\t// Allow the final block.\n\t\t\tctr_ok = false\n\t\t} else {\n\t\t\tctr_ok = u64(ctx._s[12]) + u64(nr_blocks) <= MAX_CTR_IETF\n\t\t}\n\t} else {\n\t\tctr := (u64(ctx._s[13]) << 32) | u64(ctx._s[12])\n\t\tnew_ctr, carry := bits.add_u64(ctr, u64(nr_blocks), 0)\n\t\tctr_ok = carry == 0 || new_ctr != 0 // Allow the final block.\n\t}\n\n\tensure(ctr_ok, \"crypto/chacha20: maximum (X)ChaCha20 keystream per IV reached\")\n",
 		"\t// The final block is the one with the maximum counter value.\n\t// The counter wraps around after it, so once it is consumed,\n\t// refuse to generate more keystream until `seek` or `init`.\n\tctr_ok, is_final: bool\n\tif ctx._is_ietf_flavor {\n\t\tnew_ctr := u64(ctx._s[12]) + u64(nr_blocks)\n\t\tctr_ok = new_ctr <= MAX_CTR_IETF + 1\n\t\tis_final = new_ctr == MAX_CTR_IETF + 1\n\t} else {\n\t\tctr := (u64(ctx._s[13]) << 32) | u64(ctx._s[12])\n\t\tnew_ctr, carry := bits.add_u64(ctr, u64(nr_blocks), 0)\n\t\tctr_ok = carry == 0 || new_ctr == 0\n\t\tis_final = carry != 0\n\t}\n\n\tensure(ctr_ok && !ctx._is_exhausted, ERR_CTR_EXHAUSTED)\n\tctx._is_exhausted = is_final\n",
+	},
+	{
+		"core/crypto/_chacha20/simd128/chacha20_simd128.odin",
+		"@(require) import \"core:sys/info\"\n",
+		"",
+	},
+	{
+		"core/crypto/_chacha20/simd128/chacha20_simd128.odin",
+		"\tTARGET_SIMD_FEATURES :: \"sse2,ssse3\"\n",
+		"\tTARGET_SIMD_FEATURES :: \"sse2\"\n",
+	},
+	{
+		"core/crypto/_chacha20/simd128/chacha20_simd128.odin",
+		"is_performant :: proc \"contextless\" () -> bool {\n\twhen ODIN_ARCH == .arm64 || ODIN_ARCH == .arm32 || ODIN_ARCH == .amd64 || ODIN_ARCH == .i386 || ODIN_ARCH == .riscv64 {\n\t\twhen ODIN_ARCH == .arm64 || ODIN_ARCH == .arm32 {\n\t\t\treq_features :: info.CPU_Features{.asimd}\n\t\t} else when ODIN_ARCH == .amd64 || ODIN_ARCH == .i386 {\n\t\t\treq_features :: info.CPU_Features{.sse2, .ssse3}\n\t\t} else when ODIN_ARCH == .riscv64 {\n\t\t\treq_features :: info.CPU_Features{.V}\n\t\t}\n\n\t\treturn info.cpu_features() >= req_features\n\t} else when ODIN_ARCH == .wasm64p32 || ODIN_ARCH == .wasm32 {\n\t\treturn intrinsics.has_target_feature(\"simd128\")\n\t} else {\n\t\treturn false\n\t}\n}\n",
+		"is_performant :: proc \"contextless\" () -> bool {\n\treturn ODIN_ARCH == .amd64 || ODIN_ARCH == .arm64\n}\n",
 	},
 }
 
