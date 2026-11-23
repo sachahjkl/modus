@@ -63,6 +63,37 @@ recipe_object_refuses_each_damage :: proc(t: ^testing.T) {
 	testing.expect_value(t, byte_order.read_u32_little_endian(bytes[:], HEAD_COUNTS + 24), u32(2))
 }
 
+// A hash as text: each length but 64, an uppercase digit and a byte that
+// is no digit are refused; 64 lowercase digits give the hash back.
+@(test)
+hash_of_hexadecimal_refusals_then_round_trip :: proc(t: ^testing.T) {
+	digest := blake3.hash([]u8{'h'})
+	name := blob_object_name(digest)
+	digits: [64]u8
+	hex_digits := "0123456789abcdef"
+	for value, index in digest {
+		digits[2 * index] = hex_digits[value >> 4]
+		digits[2 * index + 1] = hex_digits[value & 15]
+	}
+	for length in ([?]int{0, 1, 63}) {
+		_, ok := hash_of_hexadecimal(digits[:length])
+		testing.expect(t, !ok)
+	}
+	longer: [65]u8
+	copy(longer[:], digits[:])
+	_, long_ok := hash_of_hexadecimal(longer[:])
+	testing.expect(t, !long_ok)
+	for bad in ([?]u8{'A', 'g', ' ', 0}) {
+		wrong := digits
+		wrong[10] = bad
+		_, ok := hash_of_hexadecimal(wrong[:])
+		testing.expectf(t, !ok, "the byte %v is refused", bad)
+	}
+	back, ok := hash_of_hexadecimal(digits[:])
+	testing.expect(t, ok && back == digest)
+	testing.expect_value(t, private_object_name_text(&name)[5:], string(digits[:52]))
+}
+
 // The successful case last: a recipe goes through its object whole, with
 // the same recipe hash, and the object of a recipe has one name.
 @(test)

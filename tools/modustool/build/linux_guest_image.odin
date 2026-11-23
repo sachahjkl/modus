@@ -13,14 +13,50 @@ LINUX_GUEST_BUSYBOX_VARIABLE :: "MODUS_LINUX_GUEST_BUSYBOX"
 LINUX_KERNEL_IMAGE_VARIABLE :: "MODUS_LINUX_KERNEL_IMAGE"
 
 // The table of init: install the links of the applets, mount the two file
-// systems of the kernel, write the line that the test waits for, and run a
-// shell on the serial port, again when it ends.
+// systems of the kernel, load the virtio modules, write the line that the
+// test waits for on the console, which is the serial port of the kernel
+// log, and run a shell on hvc0, the virtio console that takes the size of
+// the window, again when it ends (src/md/features/linux_shell.md, "The
+// virtio modules").
 LINUX_GUEST_INITTAB :: `::sysinit:/bin/busybox --install -s /bin
 ::sysinit:/bin/busybox mount -t proc proc /proc
 ::sysinit:/bin/busybox mount -t sysfs sysfs /sys
+::sysinit:/bin/sh /etc/modules.sh
 ::sysinit:/bin/busybox echo modus-guest-ready
-ttyS0::respawn:-/bin/sh
+hvc0::respawn:-/bin/sh
 `
+
+// The start of the script that loads the modules: the words of the command
+// line that declare the windows of the virtio devices, without the name of
+// the module, are the parameters of the transport. The lines that load
+// each module follow, in the order of Linux_Guest_Module.
+LINUX_GUEST_MODULES_SCRIPT_START :: `#!/bin/sh
+devices=""
+for word in $(cat /proc/cmdline); do
+	case "$word" in
+	virtio_mmio.device=*) devices="$devices ${word#virtio_mmio.}" ;;
+	esac
+done
+`
+
+// linux_guest_modules_script gives the script that loads each module, in
+// temporary memory.
+linux_guest_modules_script :: proc() -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, LINUX_GUEST_MODULES_SCRIPT_START)
+	files := LINUX_GUEST_MODULE_FILES
+	for module in Linux_Guest_Module {
+		strings.write_string(&builder, "insmod /")
+		strings.write_string(&builder, LINUX_GUEST_MODULES_FOLDER)
+		strings.write_string(&builder, "/")
+		strings.write_string(&builder, files[module])
+		if module == .Virtio_Mmio {
+			strings.write_string(&builder, " $devices")
+		}
+		strings.write_string(&builder, "\n")
+	}
+	return strings.to_string(builder)
+}
 
 // poweroff: the machine has no device that turns it off, and the power
 // off of Linux then panics; its halt stops the processor, which ends the
@@ -62,9 +98,14 @@ cpio_entry_write :: proc(out: ^[dynamic]u8, entry: Cpio_Entry, inode: int) {
 	}
 }
 
-// linux_guest_initial_archive gives the archive of a static busybox, in
-// temporary memory.
-linux_guest_initial_archive :: proc(busybox: []u8) -> []u8 {
+// linux_guest_initial_archive gives the archive of a static busybox and
+// the virtio modules, in temporary memory.
+linux_guest_initial_archive :: proc(busybox: []u8, modules: [Linux_Guest_Module][]u8) -> []u8 {
+	files := LINUX_GUEST_MODULE_FILES
+	module_entries: [len(Linux_Guest_Module)]Cpio_Entry
+	for module in Linux_Guest_Module {
+		module_entries[int(module)] = {name = strings.concatenate({LINUX_GUEST_MODULES_FOLDER, "/", files[module]}, context.temp_allocator), kind = .File, permissions = 0o644, data = modules[module]}
+	}
 	entries := [?]Cpio_Entry {
 		{name = "bin", kind = .Directory, permissions = 0o755},
 		{name = "dev", kind = .Directory, permissions = 0o755},
@@ -79,15 +120,26 @@ linux_guest_initial_archive :: proc(busybox: []u8) -> []u8 {
 		{name = "init", kind = .Link, permissions = 0o777, data = transmute([]u8)string("bin/busybox")},
 		{name = "sbin/poweroff", kind = .File, permissions = 0o755, data = transmute([]u8)string(LINUX_GUEST_POWEROFF)},
 		{name = "etc/inittab", kind = .File, permissions = 0o644, data = transmute([]u8)string(LINUX_GUEST_INITTAB)},
+		{name = "etc/modules.sh", kind = .File, permissions = 0o755, data = transmute([]u8)linux_guest_modules_script()},
+		{name = "lib", kind = .Directory, permissions = 0o755},
+		{name = LINUX_GUEST_MODULES_FOLDER, kind = .Directory, permissions = 0o755},
 		{name = "dev/console", kind = .Character, permissions = 0o600, major = 5, minor = 1},
 		{name = "dev/ttyS0", kind = .Character, permissions = 0o660, major = 4, minor = 64},
+		// The first virtio console, where the shell runs.
+		{name = "dev/hvc0", kind = .Character, permissions = 0o620, major = 229, minor = 0},
 		{name = "dev/null", kind = .Character, permissions = 0o666, major = 1, minor = 3},
-		{name = "TRAILER!!!", kind = .File},
 	}
 	out := make([dynamic]u8, context.temp_allocator)
-	for entry, index in entries {
-		cpio_entry_write(&out, entry, entry.name == "TRAILER!!!" ? 0 : index + 1)
+	inode := 1
+	for entry in entries {
+		cpio_entry_write(&out, entry, inode)
+		inode += 1
 	}
+	for entry in module_entries {
+		cpio_entry_write(&out, entry, inode)
+		inode += 1
+	}
+	cpio_entry_write(&out, {name = "TRAILER!!!", kind = .File}, 0)
 	return out[:]
 }
 
@@ -110,5 +162,6 @@ linux_guest_image_read :: proc() -> (kernel: []u8, archive: []u8, ok: bool) {
 		fmt.eprintfln("modustool: cannot read the busybox %s, or it is no ELF file", busybox_path)
 		return nil, nil, false
 	}
-	return kernel_bytes, linux_guest_initial_archive(busybox_bytes), true
+	modules := linux_guest_modules_read() or_return
+	return kernel_bytes, linux_guest_initial_archive(busybox_bytes, modules), true
 }

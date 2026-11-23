@@ -1,13 +1,13 @@
-// The keys and the pastes on their way to the serial port of the guest
-// (src/md/features/linux_shell.md, "The keys"). The receive queue of the
-// port holds SERIAL_RECEIVE_BYTES; a paste of the terminal gives up to the
-// limit of the clipboard at once. The bytes wait here, and go to the port
-// as the guest makes room, so no character of a paste is lost.
+// The keys and the pastes on their way to the virtio console of the guest
+// (src/md/features/linux_shell.md, "A paste"). The guest takes what the
+// receive buffers that its driver posted hold; a paste of the terminal
+// gives up to the limit of the clipboard at once. The bytes wait here, and
+// go to the guest as it posts buffers, so no character of a paste is lost.
 package linux_shell
 
 import "modus:contract/guest_os"
 
-// The bytes that wait for room in the port: a whole paste, and the keys
+// The bytes that wait for room in the guest: a whole paste, and the keys
 // typed after it.
 PENDING_INPUT_BYTES :: 8192
 
@@ -35,16 +35,16 @@ pending_push :: proc "contextless" (pending: ^Pending_Input, bytes: []u8) -> boo
 	return true
 }
 
-// pending_feed gives the serial port of the guest the bytes that wait, as
-// many as its receive queue has room for, in order, and gives how many went.
-pending_feed :: proc "contextless" (pending: ^Pending_Input, machine: ^guest_os.Linux_Machine) -> (moved: int) {
+// Input_Taker gives bytes to the guest and gives how many it took.
+Input_Taker :: #type proc "contextless" (machine: ^guest_os.Linux_Machine, bytes: []u8) -> (taken: int)
+
+// pending_feed gives the guest the bytes that wait, in order, as many as it
+// takes, and gives how many went. The bytes past the end of the queue go
+// in a second run.
+pending_feed :: proc "contextless" (pending: ^Pending_Input, machine: ^guest_os.Linux_Machine, take: Input_Taker = guest_os.linux_machine_console_input) -> (moved: int) {
 	for pending.count > 0 {
-		room := guest_os.linux_machine_serial_receive_room(machine)
-		if room <= 0 {
-			break
-		}
-		run := min(pending.count, room, PENDING_INPUT_BYTES - pending.first)
-		taken := guest_os.linux_machine_serial_input(machine, pending.bytes[pending.first:][:run])
+		run := min(pending.count, PENDING_INPUT_BYTES - pending.first)
+		taken := clamp(take(machine, pending.bytes[pending.first:][:run]), 0, run)
 		pending.first = (pending.first + taken) % PENDING_INPUT_BYTES
 		pending.count -= taken
 		moved += taken

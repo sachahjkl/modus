@@ -56,11 +56,22 @@ GUEST_PAGE_BYTES :: u64(4096)
 // Default bound on guest exits when spec.max_guest_exits is left zero.
 DEFAULT_MAX_GUEST_EXITS :: u64(1_000_000)
 
+// The time of the system that one build may take, in seconds, when
+// spec.time_bound_seconds is left zero, and the most that a spec may ask.
+// The bound of the exits counts what the guest does; this one ends a guest
+// that does nothing that exits, as a loop with its interrupts off, which
+// only the timer of the host interrupts. It is a deadline of the contract
+// of a build, not the hang bound of a test.
+DEFAULT_BUILD_TIME_BOUND_SECONDS :: u32(3_600)
+MAX_BUILD_TIME_BOUND_SECONDS :: u32(86_400)
+
 // Wire magic and version for canonical serialized Guest_Build_Spec records.
-// Version 3 uses compact canonical mount encoding: only input_count mounts
-// appear on the wire, followed immediately by command and initial archive.
+// Version 4 holds the time bound of the build in the word after the
+// version, and the compact canonical mount encoding: only input_count
+// mounts appear on the wire, followed immediately by command and initial
+// archive.
 SPEC_WIRE_MAGIC :: [8]u8{'M', 'O', 'D', 'G', 'B', 'S', 'P', '1'}
-SPEC_WIRE_VERSION :: u32(3)
+SPEC_WIRE_VERSION :: u32(4)
 
 // Domain separation string for hashing a canonical Guest_Build_Spec.
 BUILD_SPEC_HASH_DOMAIN :: "modus guest build spec v1"
@@ -72,10 +83,10 @@ BUILD_SPEC_HASH_DOMAIN :: "modus guest build spec v1"
 //   [36..160] path        ([124]u8, zero-padded)
 INPUT_MOUNT_WIRE_SIZE :: blake3.HASH_SIZE + 2 + 2 + MAX_MOUNT_PATH_BYTES
 
-// Compact canonical wire layout of a serialized Guest_Build_Spec (version 3):
+// Compact canonical wire layout of a serialized Guest_Build_Spec (version 4):
 //   [0..8]               magic                 "MODGBSP1"
-//   [8..12]              version               u32 LE (3)
-//   [12..16]             reserved              u32 LE (0)
+//   [8..12]              version               u32 LE (4)
+//   [12..16]             time_bound_seconds    u32 LE (0: the default)
 //   [16..48]             kernel_hash           [32]u8
 //   [48..80]             root_image_hash       [32]u8
 //   [80..88]             frozen_epoch_seconds  u64 LE
@@ -102,6 +113,16 @@ SPEC_WIRE_SIZE :: SPEC_WIRE_MIN_SIZE + MAX_INPUT_MOUNTS * INPUT_MOUNT_WIRE_SIZE
 #assert(SPEC_WIRE_TRAILER_SIZE == 560)
 #assert(SPEC_WIRE_MIN_SIZE == 680)
 #assert(SPEC_WIRE_SIZE == 10920)
+
+// build_time_bound_nanoseconds gives the time of the system that a build of
+// spec may take.
+build_time_bound_nanoseconds :: proc "contextless" (spec: ^Guest_Build_Spec) -> u64 {
+	seconds := spec.time_bound_seconds
+	if seconds == 0 {
+		seconds = DEFAULT_BUILD_TIME_BOUND_SECONDS
+	}
+	return u64(min(seconds, MAX_BUILD_TIME_BOUND_SECONDS)) * 1_000_000_000
+}
 
 // spec_wire_size gives the exact canonical wire length for input_count mounts.
 spec_wire_size :: proc "contextless" (input_count: u32) -> int {
@@ -155,6 +176,7 @@ Guest_Builder_Refusal :: enum u8 {
 	Initial_Archive_Too_Large    = 18, // Past MAX_INITIAL_ARCHIVE_BYTES, the memory of the guest, or the place that the kernel leaves.
 	Initial_Archive_Size_Invalid = 19, // A size with no hash, a hash with no size, or bytes whose count is not the size.
 	Initial_Archive_Mismatch     = 20, // The bytes do not have the hash of the spec.
+	Time_Bound_Past_Most         = 21, // time_bound_seconds is past MAX_BUILD_TIME_BOUND_SECONDS.
 }
 
 // Closed set of block device operations dispatched by the sandbox controller.
@@ -228,6 +250,7 @@ Guest_Build_Spec :: struct {
 	memory_pages:          u64,
 	output_size_bound:     u64,
 	max_guest_exits:       u64,
+	time_bound_seconds:    u32, // The time of the system that the build may take; 0: DEFAULT_BUILD_TIME_BOUND_SECONDS.
 	allow_network:         bool,
 	allow_real_clock:      bool,
 	allow_writable_inputs: bool,
@@ -484,6 +507,9 @@ validate_build_spec :: proc "contextless" (spec: ^Guest_Build_Spec) -> Guest_Bui
 	if spec.memory_pages > MAX_GUEST_MEMORY_PAGES {
 		return .Memory_Past_Bound
 	}
+	if spec.time_bound_seconds > MAX_BUILD_TIME_BOUND_SECONDS {
+		return .Time_Bound_Past_Most
+	}
 	if spec.output_size_bound == 0 || spec.output_size_bound > MAX_OUTPUT_DISK_BYTES {
 		return .Output_Too_Large
 	}
@@ -577,7 +603,7 @@ encode_build_spec :: proc "contextless" (spec: ^Guest_Build_Spec, output_buffer:
 	magic := SPEC_WIRE_MAGIC
 	copy(output_buffer[0:8], magic[:])
 	byte_order.write_u32_little_endian(output_buffer, 8, SPEC_WIRE_VERSION)
-	byte_order.write_u32_little_endian(output_buffer, 12, 0)
+	byte_order.write_u32_little_endian(output_buffer, 12, spec.time_bound_seconds)
 	copy(output_buffer[16:48], spec.kernel_hash[:])
 	copy(output_buffer[48:80], spec.root_image_hash[:])
 	byte_order.write_u64_little_endian(output_buffer, 80, spec.frozen_epoch_seconds)
@@ -623,9 +649,6 @@ decode_build_spec :: proc "contextless" (wire_bytes: []u8) -> (spec: Guest_Build
 	if byte_order.read_u32_little_endian(wire_bytes, 8) != SPEC_WIRE_VERSION {
 		return {}, .Malformed_Disk_Image
 	}
-	if byte_order.read_u32_little_endian(wire_bytes, 12) != 0 {
-		return {}, .Malformed_Disk_Image
-	}
 	if wire_bytes[112] > 1 {
 		return {}, .Network_Forbidden
 	}
@@ -649,6 +672,7 @@ decode_build_spec :: proc "contextless" (wire_bytes: []u8) -> (spec: Guest_Build
 	decoded.memory_pages = byte_order.read_u64_little_endian(wire_bytes, 88)
 	decoded.output_size_bound = byte_order.read_u64_little_endian(wire_bytes, 96)
 	decoded.max_guest_exits = byte_order.read_u64_little_endian(wire_bytes, 104)
+	decoded.time_bound_seconds = byte_order.read_u32_little_endian(wire_bytes, 12)
 	decoded.allow_network = wire_bytes[112] != 0
 	decoded.allow_real_clock = wire_bytes[113] != 0
 	decoded.allow_writable_inputs = wire_bytes[114] != 0

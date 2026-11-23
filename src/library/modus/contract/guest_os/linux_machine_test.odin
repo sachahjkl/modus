@@ -983,3 +983,37 @@ machine_own_page_write_through_the_page_table :: proc(t: ^testing.T) {
 		testing.expectf(t, ram[DATA + 0x10] == 0x88 && ram[DATA + 0x11] == 0x77 && ram[DATA + 0x12] == 0x66 && ram[DATA + 0x13] == 0x55 && ram[DATA + 0x14] == 0, "%s writes its 4 bytes", case_of.about)
 	}
 }
+
+// A resize of the window through the machine: no machine, a size of 0 on
+// either side and a side past 65535 are refused with nothing changed; the
+// largest sides are taken.
+@(test)
+linux_machine_console_resize_edges :: proc(t: ^testing.T) {
+	testing.expect(t, !linux_machine_console_resize(nil, 80, 24))
+	machine := new(Linux_Machine)
+	defer free(machine)
+	linux_machine_start(machine, {}, nil, nil)
+	before := machine.devices[.Console].configuration_generation
+	for size in ([?][2]int{{0, 24}, {80, 0}, {65536, 24}, {80, 65536}, {-1, 24}, {max(int), max(int)}}) {
+		testing.expectf(t, !linux_machine_console_resize(machine, size[0], size[1]), "the size %v is refused", size)
+	}
+	testing.expect_value(t, machine.devices[.Console].configuration_generation, before)
+	testing.expect(t, linux_machine_console_resize(machine, 65535, 65535))
+	testing.expect_value(t, machine.devices[.Console].console_cols, u16(65535))
+	testing.expect_value(t, machine.devices[.Console].console_rows, u16(65535))
+	testing.expect(t, linux_machine_console_resize(machine, 1, 1))
+}
+
+// The input and the output of the virtio console through the machine: no
+// machine and a driver that is not ready take nothing and give nothing.
+@(test)
+linux_machine_console_input_needs_a_ready_driver :: proc(t: ^testing.T) {
+	testing.expect_value(t, linux_machine_console_input(nil, []u8{'a'}), 0)
+	out: [8]u8
+	testing.expect_value(t, linux_machine_console_output_take(nil, out[:]), 0)
+	machine := new(Linux_Machine)
+	defer free(machine)
+	linux_machine_start(machine, {}, nil, nil)
+	testing.expect_value(t, linux_machine_console_input(machine, []u8{'a'}), 0)
+	testing.expect_value(t, linux_machine_console_output_take(machine, out[:]), 0)
+}

@@ -10,21 +10,26 @@ import "base:intrinsics"
 import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding recipes service process: its
-// local object staging and realisation tables, and one guest build at a
-// time (guest_build.odin): the buffers of its disks and of its kernel and
-// initial archive, the memory of its guest and its nested page table. The
-// guest is a second process.
+// The budget that the service asks for: its working memory, and one guest
+// build at a time of a typical guest (guest_build.odin): the buffers of its
+// disks and of its kernel and initial archive, 128 MiB of guest memory, the
+// kernel of a distribution, and its nested page table, and the stack of
+// the build thread past the stack that the tool counts for a thread. The
+// guest is a second process; the build thread is a second thread. The
+// starter decides the grant: a build checks the memory of its guest against
+// what the granted budget has left, so a larger grant runs a larger guest.
 SERVICE_WORKING_PAGES :: u64(1024)
-GUEST_BUFFER_PAGES :: (16 + 16 + 32 + 16 + 16) * 1024 * 1024 / system.PAGE_SIZE
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 59392, processes = 2, threads = 1}
-#assert(59392 == SERVICE_WORKING_PAGES + GUEST_BUFFER_PAGES + GUEST_MEMORY_PAGES_MOST + GUEST_NESTED_TABLE_PAGES)
+TYPICAL_GUEST_MEMORY_PAGES :: u64(32_768)
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 58_544, processes = 2, threads = 2}
+TYPICAL_GUEST_TABLE_PAGES :: TYPICAL_GUEST_MEMORY_PAGES / 512 + 64 // guest_table_pages of the typical guest.
+#assert(58_544 == SERVICE_WORKING_PAGES + GUEST_BUFFER_PAGES + TYPICAL_GUEST_MEMORY_PAGES + TYPICAL_GUEST_TABLE_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -157,7 +162,15 @@ handle_command :: proc "contextless" (command: ring.Record) {
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_spec, rawptr(&service_region_base[spec_offset]), size_of(pr.Recipe_Spec))
-		staged_result = recipes_core.build_with_builders(&service_state, &copied_spec, mode, guest_workspace_for(copied_spec.builder_hash))
+		// A recipe of the guest builder builds on the build thread, which
+		// completes the command at its end (guest_build.odin).
+		if copied_spec.builder_hash == pr.guest_builder_hash() && mode != .Cache_Only {
+			if refusal := guest_build_start({mode = mode, from_ring = true, spec = copied_spec, ring_tag = command.tag, result_offset = result_offset}); refusal != .None {
+				ring.push(&service_ring.completions, ring.Record{kind = u32(pr.Service_Ring_Status.Refused), tag = command.tag, values = {u64(refusal), 0, 0, 0, 0, 0, 0}})
+			}
+			return
+		}
+		staged_result = recipes_core.build_with_builders(&service_state, &copied_spec, mode, nil)
 		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[result_offset]), &staged_result, size_of(pr.Recipe_Build_Result))
 		if staged_result.refusal == .Verify_Disagreement {
 			system.log_fact(.Warning, Realisation_Disagreement{disagreements = service_state.counters.verify_disagreements})
@@ -263,10 +276,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	store_port, store_open := storage_port.bind(ctx)
 	recipes_core.state_init(&service_state, store_port)
+	if store_open {
+		retention_pass()
+	}
 	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0})
 
 	for {
 		wait := system.wait_begin()
+		// The lock of the state: the build thread holds it during a build,
+		// but while its guest runs (guest_build.odin).
+		system.lock(&service_lock)
+		guest_build_end()
 		if export_ok {
 			system.service_run(&export_service)
 			system.service_wait(&wait, &export_service)
@@ -283,6 +303,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			system.wait_records(&wait, &service_ring.commands)
 		}
+		system.unlock(&service_lock)
 		system.wait_end(&wait)
 	}
 }

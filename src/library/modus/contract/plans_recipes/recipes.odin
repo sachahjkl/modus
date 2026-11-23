@@ -40,6 +40,7 @@ Recipe_Build_Outcome :: enum u8 {
 	From_Cache    = 1,
 	Built_Locally = 2,
 	Refused       = 3,
+	Building      = 4, // A guest build runs on the build thread of the service: the history gives its end.
 }
 
 // Closed set of refusal reasons for recipe validation, cache verification,
@@ -78,7 +79,10 @@ Recipe_Refusal :: enum u8 {
 	Damaged_Recipe        = 30, // The recipe does not decode, or its written hash is not the hash of its record.
 	Unsupported_Argument  = 31, // An argument of a kind that a recipe does not take: a recipe, a follow, a store, a plan, a project, or a negative source_date.
 	Output_Too_Large      = 32, // The output passes the size bound of the recipe.
-	Build_Timed_Out       = 33, // The builder reached its hang bound.
+	Build_Timed_Out       = 33, // The builder passed its time bound or the bound of its exits.
+	Builder_Busy          = 34, // The one guest build of the service runs: a second waits for its end.
+	Memory_Past_Bound     = 35, // The guest of the recipe asks for more memory than the budget of the service has left.
+	Put_Quota_Reached     = 36, // The caller put as many objects as a caller may keep while no recipe names them.
 }
 
 // The words of each refusal of a recipe, for the failure of an evaluation
@@ -118,7 +122,10 @@ recipe_refusal_words := [Recipe_Refusal]string {
 	.Damaged_Recipe        = "the recipe does not decode",
 	.Unsupported_Argument  = "an argument of a kind that a recipe does not take",
 	.Output_Too_Large      = "the output passes the size bound of the recipe",
-	.Build_Timed_Out       = "the builder reached its hang bound",
+	.Build_Timed_Out       = "the builder passed its time bound",
+	.Builder_Busy          = "another guest build runs",
+	.Memory_Past_Bound     = "the guest asks for more memory than the service has",
+	.Put_Quota_Reached     = "the caller kept as many objects as it may",
 }
 
 // Closed set of commands accepted on the recipes service ring.

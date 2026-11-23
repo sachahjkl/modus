@@ -5,8 +5,11 @@
 // pure freestanding bridge:
 //   - validates the sandbox invariants and decodes the canonical
 //     guest_builder.Guest_Build_Spec from sandbox.arguments;
-//   - verifies frozen epoch time matches sandbox.frozen_date_unix and output
-//     size bound respects sandbox.output_block_limit;
+//   - verifies frozen epoch time matches sandbox.frozen_date_unix, and
+//     refuses an output size bound past the blocks of the recipe;
+//   - asks the backend to prepare the guest (its kernel and its initial
+//     archive in memory, its memory against the budget) before any input
+//     is read;
 //   - resolves and hash-verifies every read-only recipe input, a Blob as one
 //     file under its name and a Tree as each of its files under its path,
 //     and packs them, sorted, into a sector-aligned read-only MODGBD1 disk;
@@ -50,12 +53,28 @@ Guest_Execute_Proc :: #type proc "contextless" (
 // Callback that keeps one object of the output of a guest build by its
 // hash: a file of the output disk, or a directory node of its tree. A
 // backend that keeps them lets a later build take the output as an input.
+// written is true when the object was not in the store before: only such
+// an object is dropped again when the build fails.
 Guest_Object_Keep_Proc :: #type proc "contextless" (
 	kind: object_cache.Cache_Object_Kind,
 	hash: blake3.Hash,
 	bytes: []u8,
 	user_data: rawptr,
-) -> bool
+) -> (ok: bool, written: bool)
+
+// Callback that removes an object that this build wrote, when the build
+// fails after it: a failed build keeps nothing.
+Guest_Object_Drop_Proc :: #type proc "contextless" (hash: blake3.Hash, user_data: rawptr)
+
+// Callback that prepares the guest of a decoded spec before any input is
+// read: the backend reads the kernel and the initial archive that the spec
+// names, and checks the memory of the guest against what it can pay. Its
+// refusal ends the build with nothing packed and nothing run.
+Guest_Prepare_Proc :: #type proc "contextless" (spec: ^gb.Guest_Build_Spec, user_data: rawptr) -> pr.Recipe_Refusal
+
+// The objects that one guest build may write: each file of its output disk
+// and each directory node of its tree, the root included.
+GUEST_KEPT_OBJECTS_MOST :: 2 * gb.MAX_DISK_ENTRIES + 1
 
 // Caller-supplied zero-allocation workspace and backend for guest builds.
 Guest_Builder_Workspace :: struct {
@@ -69,7 +88,11 @@ Guest_Builder_Workspace :: struct {
 	resolve_input:         Guest_Input_Resolve_Proc,
 	execute_guest:         Guest_Execute_Proc,
 	keep_object:           Guest_Object_Keep_Proc, // nil: the objects of the output are not kept.
+	drop_object:           Guest_Object_Drop_Proc, // With keep_object: removes an object that a failed build wrote.
+	prepare_guest:         Guest_Prepare_Proc, // nil: the backend reads the kernel at its run.
 	user_data:             rawptr,
+	kept:                  [GUEST_KEPT_OBJECTS_MOST]blake3.Hash, // The objects that this build wrote, in order.
+	kept_count:            int,
 	last_refusal:          pr.Recipe_Refusal,
 	last_guest_refusal:    gb.Guest_Builder_Refusal,
 	last_guest_state:      gb.Guest_Build_State,
@@ -239,6 +262,7 @@ Output_Keep :: struct {
 @(private = "file")
 output_object_keep :: proc "contextless" (kind: tree_hash.Tree_Entry_Kind, hash: blake3.Hash, bytes: []u8, user_data: rawptr) -> bool {
 	keep := (^Output_Keep)(user_data)
+	workspace := keep.workspace
 	object_kind := object_cache.Cache_Object_Kind.Blob
 	switch kind {
 	case .Object:
@@ -246,7 +270,29 @@ output_object_keep :: proc "contextless" (kind: tree_hash.Tree_Entry_Kind, hash:
 	case .Tree:
 		object_kind = .Tree
 	}
-	return keep.workspace.keep_object(object_kind, hash, bytes, keep.workspace.user_data)
+	if workspace.kept_count >= len(workspace.kept) {
+		return false
+	}
+	ok, written := workspace.keep_object(object_kind, hash, bytes, workspace.user_data)
+	if written {
+		// Recorded even when the keep failed: a write that failed part way
+		// may have left the object.
+		workspace.kept[workspace.kept_count] = hash
+		workspace.kept_count += 1
+	}
+	return ok
+}
+
+// kept_objects_drop removes each object that this build wrote, last first,
+// so a failed build leaves the store as it found it.
+@(private = "file")
+kept_objects_drop :: proc "contextless" (workspace: ^Guest_Builder_Workspace) {
+	if workspace.drop_object != nil {
+		for index := workspace.kept_count - 1; index >= 0; index -= 1 {
+			workspace.drop_object(workspace.kept[index], workspace.user_data)
+		}
+	}
+	workspace.kept_count = 0
 }
 
 @(private = "file")
@@ -284,7 +330,9 @@ recipe_refusal_of_guest_refusal :: proc "contextless" (
 		return .Malformed_Output
 	case .Nonzero_Guest_Exit:
 		return .Builder_Failed
-	case .Zero_Kernel_Hash, .Zero_Root_Image_Hash, .Empty_Command, .Command_Too_Long, .Invalid_Command_Text, .Too_Many_Inputs, .Duplicate_Input_Mount, .Invalid_Mount_Path, .Memory_Too_Small, .Memory_Past_Bound, .Initial_Archive_Too_Large, .Initial_Archive_Size_Invalid, .Initial_Archive_Mismatch:
+	case .Memory_Past_Bound:
+		return .Memory_Past_Bound
+	case .Zero_Kernel_Hash, .Zero_Root_Image_Hash, .Empty_Command, .Command_Too_Long, .Invalid_Command_Text, .Too_Many_Inputs, .Duplicate_Input_Mount, .Invalid_Mount_Path, .Memory_Too_Small, .Initial_Archive_Too_Large, .Initial_Archive_Size_Invalid, .Initial_Archive_Mismatch, .Time_Bound_Past_Most:
 		return .Damaged_Recipe
 	}
 	return .Builder_Failed
@@ -314,6 +362,7 @@ guest_builder_build :: proc "contextless" (
 	workspace.last_guest_state = {}
 	workspace.last_guest_exit = 0
 	workspace.last_output_disk_hash = {}
+	workspace.kept_count = 0
 
 	fail :: proc "contextless" (workspace: ^Guest_Builder_Workspace, recipe_refusal: pr.Recipe_Refusal, guest_refusal: gb.Guest_Builder_Refusal = .None) -> (int, pr.Recipe_Refusal) {
 		workspace.last_refusal = recipe_refusal
@@ -338,13 +387,13 @@ guest_builder_build :: proc "contextless" (
 	if guest_spec.frozen_epoch_seconds != sandbox.frozen_date_unix {
 		return fail(workspace, .Sandbox_Violation, .Real_Clock_Forbidden)
 	}
-	if sandbox.output_block_limit > 0 {
-		// Check overflow before multiplying block limit by page size.
-		if sandbox.output_block_limit <= max(u64) / gb.GUEST_PAGE_BYTES {
-			block_bound := sandbox.output_block_limit * gb.GUEST_PAGE_BYTES
-			if guest_spec.output_size_bound > block_bound {
-				return fail(workspace, .Output_Too_Large, .Output_Too_Large)
-			}
+	// The blocks of the recipe bound its output: a spec whose output disk
+	// passes them is refused, never cut. A block limit of 0 sets no bound
+	// of the recipe, and the bound of the spec holds alone. A limit whose
+	// bytes pass the range of a u64 holds any spec.
+	if sandbox.output_block_limit > 0 && sandbox.output_block_limit <= max(u64) / gb.GUEST_PAGE_BYTES {
+		if guest_spec.output_size_bound > sandbox.output_block_limit * gb.GUEST_PAGE_BYTES {
+			return fail(workspace, .Output_Too_Large, .Output_Too_Large)
 		}
 	}
 	if u64(len(workspace.output_disk)) < guest_spec.output_size_bound {
@@ -355,6 +404,14 @@ guest_builder_build :: proc "contextless" (
 	// its own would give the guest two sources of one disk.
 	if guest_spec.input_count != 0 {
 		return fail(workspace, .Damaged_Recipe, .Too_Many_Inputs)
+	}
+
+	// The kernel, the initial archive and the memory of the guest, before
+	// any input is read or packed: a build that cannot run costs no disk.
+	if workspace.prepare_guest != nil {
+		if prepared := workspace.prepare_guest(&guest_spec, workspace.user_data); prepared != .None {
+			return fail(workspace, prepared)
+		}
 	}
 
 	// Resolve and hash-verify every input before packing the read-only input disk.
@@ -457,6 +514,7 @@ guest_builder_build :: proc "contextless" (
 		keep := Output_Keep{workspace = workspace}
 		_, kept_digest, keep_refusal := gb.unpack_output_disk_visit(output_slice, guest_spec.output_size_bound, &workspace.unpack_workspace, out_payload, {visit = output_object_keep, user_data = &keep})
 		if keep_refusal != .None || kept_digest != tree_digest {
+			kept_objects_drop(workspace)
 			return fail(workspace, .Store_Failed, keep_refusal)
 		}
 	}

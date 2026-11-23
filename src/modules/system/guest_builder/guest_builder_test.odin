@@ -161,6 +161,38 @@ build_exit_host_interrupts_not_counted :: proc(t: ^testing.T) {
 	testing.expect(t, refusal != .Nonzero_Guest_Exit)
 }
 
+// A guest that never exits by itself, as cli then jmp to itself, gives only
+// exits Interrupted: the time of the system ends the build at the deadline
+// of its spec with Timed_Out, which the bound of the exits never would.
+@(test)
+build_of_interrupts_only_ends_at_its_deadline :: proc(t: ^testing.T) {
+	runner := new(contract.Guest_Sandbox_Runner)
+	defer free(runner)
+	linux := new(guest_os.Linux_Machine)
+	defer free(linux)
+	output: [4096]u8
+	input: [1024]u8
+	reported := u64(0)
+	registers := op.Guest_Registers{rip = 0x1000}
+	test_runner(runner, output[:], 4)
+	guest_os.linux_machine_start(linux, {}, input[:], output[:])
+	START :: u64(1_000_000_000)
+	contract.runner_deadline_from(runner, START)
+	bound := contract.build_time_bound_nanoseconds(&runner.spec)
+	// Many interrupts, each a little later, all before the deadline.
+	for step in u64(0) ..< 10_000 {
+		contract.runner_clock_advance(runner, START + step * (bound / 10_001))
+		if guest_regions.build_exit_handle(runner, linux, &registers, {kind = .Interrupted}, &reported) != .Run_Again {
+			testing.fail_now(t, "an exit before the deadline ended the build")
+		}
+	}
+	contract.runner_clock_advance(runner, START + bound)
+	testing.expect_value(t, guest_regions.build_exit_handle(runner, linux, &registers, {kind = .Interrupted}, &reported), guest_regions.Build_Exit_Action.End)
+	testing.expect_value(t, runner.state, contract.Guest_Build_State.Timed_Out)
+	testing.expect_value(t, runner.guest_exits_handled, u64(0))
+	testing.expect_value(t, runner.guest_runs, u64(10_001))
+}
+
 // Inside the memory of the guest, a fault reaches the process only when the
 // kernel refused it (the kernel switches each page itself): the build fails.
 @(test)

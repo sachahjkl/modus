@@ -433,3 +433,61 @@ virtio_console_resize_refusals_and_change :: proc(t: ^testing.T) {
 	testing.expect_value(t, plain.interrupt_status & VIRTIO_INTERRUPT_CONFIGURATION, u32(0))
 	testing.expect_value(t, plain.console_rows, u16(43))
 }
+// The capture of the console drains in order: a taker of 0 bytes takes
+// nothing, a short taker takes the oldest bytes and leaves the rest, and a
+// device that is no console gives nothing. A capture that the taker
+// empties takes a burst again.
+@(test)
+virtio_console_output_drains_in_order :: proc(t: ^testing.T) {
+	bytes := make([]u8, TEST_VIRTIO_MEMORY)
+	defer delete(bytes)
+	memory := Guest_Memory{bytes}
+	console := virtio_console_device()
+	test_driver_start(&console, memory)
+	copy(bytes[TEST_BUFFERS:], "abcdef")
+	test_submit(&console, memory, 1, {{TEST_BUFFERS, 6, 0, 0}})
+	out: [4]u8
+	testing.expect_value(t, virtio_console_output_take(&console, out[:0]), 0)
+	testing.expect_value(t, virtio_console_output_take(nil, out[:]), 0)
+	disk: [512]u8
+	block := virtio_block_device(disk[:], true, "test")
+	testing.expect_value(t, virtio_console_output_take(&block, out[:]), 0)
+	testing.expect_value(t, virtio_console_output_take(&console, out[:]), 4)
+	testing.expect_value(t, string(out[:]), "abcd")
+	testing.expect_value(t, virtio_console_output_take(&console, out[:]), 2)
+	testing.expect_value(t, string(out[:2]), "ef")
+	testing.expect_value(t, virtio_console_output_take(&console, out[:]), 0)
+	for _ in 0 ..< 4 {
+		test_submit(&console, memory, 1, {{TEST_BUFFERS, 1024, 0, 0}})
+	}
+	testing.expect_value(t, console.console_length, u32(VIRTIO_CONSOLE_CAPTURE_BYTES))
+	testing.expect_value(t, console.console_dropped, u64(0))
+}
+
+// A write past the bound of a writable disk is counted in
+// writes_past_bound and changes no byte; a write inside it serves.
+@(test)
+virtio_output_disk_write_past_bound :: proc(t: ^testing.T) {
+	bytes := make([]u8, TEST_VIRTIO_MEMORY)
+	defer delete(bytes)
+	memory := Guest_Memory{bytes}
+	disk: [4 * VIRTIO_SECTOR_BYTES]u8
+	output := virtio_block_device(disk[:], false, "out")
+	test_driver_start(&output, memory)
+	for &value in bytes[TEST_BUFFERS + 0x1000:][:2 * VIRTIO_SECTOR_BYTES] {
+		value = 0xEE
+	}
+	// The last sector and one past it: past the bound.
+	status := test_block_request(&output, memory, u32(Virtio_Block_Request.Out), 3, u32(2 * VIRTIO_SECTOR_BYTES))
+	testing.expect_value(t, status, u8(Virtio_Block_Status.Io_Error))
+	testing.expect(t, output.writes_past_bound > 0, "the write past the bound is counted")
+	for value in disk {
+		testing.expect_value(t, value, u8(0))
+	}
+	// The last sector alone: inside the bound.
+	past := output.writes_past_bound
+	status = test_block_request(&output, memory, u32(Virtio_Block_Request.Out), 3, u32(VIRTIO_SECTOR_BYTES))
+	testing.expect_value(t, status, u8(Virtio_Block_Status.Ok))
+	testing.expect_value(t, output.writes_past_bound, past)
+	testing.expect_value(t, disk[3 * VIRTIO_SECTOR_BYTES], u8(0xEE))
+}

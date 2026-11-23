@@ -694,6 +694,21 @@ virtio_console_transmit :: proc "contextless" (device: ^Virtio_Device, memory: G
 	return 0, true
 }
 
+// virtio_console_output_take gives the bytes that the guest wrote on the
+// console since the last call, at most len(out), and keeps the rest in
+// order for the next call. A caller that takes them at each exit keeps the
+// capture from filling.
+virtio_console_output_take :: proc "contextless" (device: ^Virtio_Device, out: []u8) -> (count: int) {
+	if device == nil || device.kind != .Console {
+		return 0
+	}
+	count = copy(out, device.console[:device.console_length])
+	rest := int(device.console_length) - count
+	copy(device.console[:rest], device.console[count:device.console_length])
+	device.console_length = u32(rest)
+	return count
+}
+
 // virtio_console_receive gives input bytes to the guest through the
 // receive queue, one chain at a time, and gives the count that the guest
 // had room for. A readable buffer in a chain of the receive queue breaks

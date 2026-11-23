@@ -25,8 +25,9 @@ Build_Exit_Action :: enum u8 {
 	End       = 4, // The run ended: the state of the runner says how.
 }
 
-// build_exit_handle answers one exit of a build: the bound of the exits,
-// the machine of the guest, then the ports of the runner (the frozen clock,
+// build_exit_handle answers one exit of a build: the bounds of the exits
+// and of the time (the caller gives the runner the time of the system
+// first, runner_clock_advance), the machine of the guest, then the ports of the runner (the frozen clock,
 // the exit status, the trap of a network device), the read-only disk, whose
 // first refused write refuses the build, and the bound of the output disk,
 // whose first write past it refuses the build.
@@ -205,14 +206,18 @@ guest_build_run :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, machine
 		return kernel_failed(runner, &outcome, map_status, step)
 	}
 
-	// No bound counts the exits Interrupted: they come from the timer of the
-	// host, and a bound on them refuses on a slow machine a build that a fast
-	// one accepts. The bound of the spec counts the exits of the guest, and
-	// it is the hang bound of a build: the runner ends Timed_Out past it.
+	// Two bounds end a run that does not end by itself: the exits that the
+	// guest causes, which the spec bounds, and the time of the system past
+	// the deadline of the spec, which ends a guest that never exits, as a
+	// loop with its interrupts off that only the timer of the host
+	// interrupts. The exits Interrupted count in no bound of the exits:
+	// their count depends on the speed of the host.
+	gb.runner_deadline_from(runner, system.nanoseconds())
 	input_writes_reported := u64(0)
 	run_loop: for {
 		run_error: errors.Error_Record
 		exit, run_status := system.guest_run(guest, &registers, &run_error)
+		gb.runner_clock_advance(runner, system.nanoseconds())
 		if run_status == .Bad_Operation && run_error.kind == i64(errors.Kind.Unsupported) {
 			_ = system.process_stop(guest)
 			runner.state = .Refused

@@ -1,11 +1,13 @@
 // The private store of the services of the declarations, and the records
 // that they keep in it (src/md/features/declarations.md, "Storage").
 //
-// A service reaches its private store through Private_Store_Port: one read
-// and one write of a whole object by its name. The service binds the port to
-// its storage client; a host test binds it to Memory_Private_Store. Each
-// write of a whole object is one commit of the storage service, so a record
-// that a reader finds is whole or absent.
+// A service reaches its private store through Private_Store_Port: a read
+// and a write of a whole object by its name, the ranges of an object larger
+// than one call, a remove and a list. The service binds the port to its
+// storage client; a host test binds it to Memory_Private_Store. Each write
+// of a whole object, and each write of an object in ranges, is one commit
+// of the storage service, so a record that a reader finds is whole or
+// absent.
 //
 // The plans service keeps, for each principal:
 //
@@ -40,11 +42,117 @@ Private_Store_Status :: enum u8 {
 	Failed    = 3, // The storage service refused the access, or the port has no store.
 }
 
-// The port of a private store: a read and a write of a whole object.
+// The port of a private store. read and write take a whole object of at
+// most range_bytes_most bytes in one call; an object larger than that goes
+// through size, read_range, write_range and commit
+// (private_store_read_large, private_store_write_large).
 Private_Store_Port :: struct {
-	user:  rawptr,
-	read:  proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
-	write: proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
+	user:             rawptr,
+	read:             proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
+	write:            proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
+	size:             proc "contextless" (user: rawptr, name: string) -> (bytes: u64, status: Private_Store_Status),
+	// read_range copies at most len(into) bytes from offset; 0 bytes at the end.
+	read_range:       proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8) -> (count: int, status: Private_Store_Status),
+	// write_range writes data at offset as a pending change: commit makes the
+	// pending changes of the object one commit.
+	write_range:      proc "contextless" (user: rawptr, name: string, offset: u64, data: []u8) -> Private_Store_Status,
+	commit:           proc "contextless" (user: rawptr, name: string) -> Private_Store_Status,
+	remove:           proc "contextless" (user: rawptr, name: string) -> Private_Store_Status,
+	// list gives the names after after ("" from the start), in byte order,
+	// as many as into holds; 0: no more names.
+	list:             proc "contextless" (user: rawptr, after: string, into: []Private_Object_Name) -> (count: int, status: Private_Store_Status),
+	range_bytes_most: int, // The most bytes of one read, write, read_range or write_range.
+}
+
+// private_store_size gives the bytes of the object name.
+private_store_size :: proc "contextless" (port: ^Private_Store_Port, name: string) -> (bytes: u64, status: Private_Store_Status) {
+	if port == nil || port.size == nil {
+		return 0, .Failed
+	}
+	return port.size(port.user, name)
+}
+
+// private_store_read_large reads the object name whole into into, in ranges
+// of at most range_bytes_most bytes: an object larger than one call, as a
+// kernel of a guest. A range of 0 bytes before the end fails: an object
+// that shrinks during the read is never given in part.
+private_store_read_large :: proc "contextless" (port: ^Private_Store_Port, name: string, into: []u8) -> (bytes: []u8, status: Private_Store_Status) {
+	if port == nil || port.size == nil || port.read_range == nil || port.range_bytes_most <= 0 {
+		return nil, .Failed
+	}
+	size: u64
+	size, status = port.size(port.user, name)
+	if status != .Ok {
+		return nil, status
+	}
+	if size > u64(len(into)) {
+		return nil, .Too_Large
+	}
+	done := u64(0)
+	for done < size {
+		want := min(size - done, u64(port.range_bytes_most))
+		count, range_status := port.read_range(port.user, name, done, into[done:][:want])
+		if range_status != .Ok {
+			return nil, range_status == .Absent ? .Failed : range_status
+		}
+		if count <= 0 || u64(count) > want {
+			return nil, .Failed
+		}
+		done += u64(count)
+	}
+	return into[:size], .Ok
+}
+
+// private_store_write_large makes the object name the bytes of data, in one
+// commit: one write when data fits one call, else ranges of at most
+// range_bytes_most bytes and a commit. A failed range or commit removes the
+// object, so no reader finds a part of it.
+private_store_write_large :: proc "contextless" (port: ^Private_Store_Port, name: string, data: []u8) -> Private_Store_Status {
+	if port == nil || port.range_bytes_most <= 0 {
+		return .Failed
+	}
+	if len(data) <= port.range_bytes_most {
+		return private_store_write(port, name, data)
+	}
+	if port.write_range == nil || port.commit == nil {
+		return .Failed
+	}
+	done := 0
+	for done < len(data) {
+		part := data[done:][:min(len(data) - done, port.range_bytes_most)]
+		if port.write_range(port.user, name, u64(done), part) != .Ok {
+			_ = private_store_remove(port, name)
+			return .Failed
+		}
+		done += len(part)
+	}
+	if port.commit(port.user, name) != .Ok {
+		_ = private_store_remove(port, name)
+		return .Failed
+	}
+	return .Ok
+}
+
+// private_store_remove removes the object name. Absent when no object has
+// the name.
+private_store_remove :: proc "contextless" (port: ^Private_Store_Port, name: string) -> Private_Store_Status {
+	if port == nil || port.remove == nil {
+		return .Failed
+	}
+	return port.remove(port.user, name)
+}
+
+// private_store_list gives a page of the names after after.
+private_store_list :: proc "contextless" (port: ^Private_Store_Port, after: string, into: []Private_Object_Name) -> (names: []Private_Object_Name, status: Private_Store_Status) {
+	if port == nil || port.list == nil {
+		return nil, .Failed
+	}
+	count: int
+	count, status = port.list(port.user, after, into)
+	if status != .Ok {
+		return nil, status
+	}
+	return into[:clamp(count, 0, len(into))], .Ok
 }
 
 // private_store_read reads the object name whole into into. A port with no
@@ -72,9 +180,12 @@ private_store_write :: proc "contextless" (port: ^Private_Store_Port, name: stri
 	return port.write(port.user, name, data)
 }
 
-// The objects and the bytes of each object of a memory store.
+// The objects and the bytes of each object of a memory store. One call
+// takes at most MEMORY_PRIVATE_STORE_RANGE_BYTES bytes, as the call region
+// of a storage client bounds one call: an object above it goes in ranges.
 MEMORY_PRIVATE_STORE_OBJECTS :: 64
-MEMORY_PRIVATE_STORE_OBJECT_BYTES :: 8192
+MEMORY_PRIVATE_STORE_OBJECT_BYTES :: 65536
+MEMORY_PRIVATE_STORE_RANGE_BYTES :: 8192
 MEMORY_PRIVATE_STORE_NAME_BYTES :: 64
 
 // One object of a memory store.
@@ -91,16 +202,29 @@ Memory_Private_Object :: struct {
 // ends between two commits.
 Memory_Private_Store :: struct {
 	objects:        [MEMORY_PRIVATE_STORE_OBJECTS]Memory_Private_Object,
-	writes:         int,
+	writes:         int, // Each write and each write_range that succeeded.
 	reads:          int,
-	writes_allowed: int, // The writes that succeed before each write fails; -1: no bound.
+	removes:        int,
+	writes_allowed: int, // The writes and write_ranges that succeed before each fails; -1: no bound.
+	range_short:    int, // A read_range gives at most this many bytes; 0: what it is asked.
 }
 
 // memory_private_store_port gives the port of a memory store, with no bound
 // of the writes.
 memory_private_store_port :: proc "contextless" (store: ^Memory_Private_Store) -> Private_Store_Port {
 	store.writes_allowed = -1
-	return {user = store, read = memory_private_store_read, write = memory_private_store_write}
+	return {
+		user = store,
+		read = memory_private_store_read,
+		write = memory_private_store_write,
+		size = memory_private_store_size,
+		read_range = memory_private_store_read_range,
+		write_range = memory_private_store_write_range,
+		commit = memory_private_store_commit,
+		remove = memory_private_store_remove,
+		list = memory_private_store_list,
+		range_bytes_most = MEMORY_PRIVATE_STORE_RANGE_BYTES,
+	}
 }
 
 // memory_private_store_find gives the object name of a memory store, or nil.
@@ -134,7 +258,7 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 	if store.writes_allowed >= 0 && store.writes >= store.writes_allowed {
 		return .Failed
 	}
-	if len(name) == 0 || len(name) > MEMORY_PRIVATE_STORE_NAME_BYTES || len(data) > MEMORY_PRIVATE_STORE_OBJECT_BYTES {
+	if len(name) == 0 || len(name) > MEMORY_PRIVATE_STORE_NAME_BYTES || len(data) > MEMORY_PRIVATE_STORE_RANGE_BYTES {
 		return .Failed
 	}
 	object := memory_private_store_find(store, name)
@@ -156,6 +280,120 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 	object.length = len(data)
 	store.writes += 1
 	return .Ok
+}
+
+@(private = "file")
+memory_private_store_size :: proc "contextless" (user: rawptr, name: string) -> (bytes: u64, status: Private_Store_Status) {
+	object := memory_private_store_find((^Memory_Private_Store)(user), name)
+	if object == nil {
+		return 0, .Absent
+	}
+	return u64(object.length), .Ok
+}
+
+@(private = "file")
+memory_private_store_read_range :: proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8) -> (count: int, status: Private_Store_Status) {
+	store := (^Memory_Private_Store)(user)
+	store.reads += 1
+	object := memory_private_store_find(store, name)
+	if object == nil {
+		return 0, .Absent
+	}
+	if offset >= u64(object.length) {
+		return 0, .Ok
+	}
+	most := min(len(into), MEMORY_PRIVATE_STORE_RANGE_BYTES)
+	if store.range_short > 0 {
+		most = min(most, store.range_short)
+	}
+	return copy(into[:most], object.bytes[offset:object.length]), .Ok
+}
+
+// A write_range of a memory store changes the object at once: the store
+// has no reader during a write, so a pending change and a commit are one.
+@(private = "file")
+memory_private_store_write_range :: proc "contextless" (user: rawptr, name: string, offset: u64, data: []u8) -> Private_Store_Status {
+	store := (^Memory_Private_Store)(user)
+	if store.writes_allowed >= 0 && store.writes >= store.writes_allowed {
+		return .Failed
+	}
+	if len(name) == 0 || len(name) > MEMORY_PRIVATE_STORE_NAME_BYTES || len(data) > MEMORY_PRIVATE_STORE_RANGE_BYTES {
+		return .Failed
+	}
+	if offset > MEMORY_PRIVATE_STORE_OBJECT_BYTES || u64(len(data)) > MEMORY_PRIVATE_STORE_OBJECT_BYTES - offset {
+		return .Failed
+	}
+	object := memory_private_store_find(store, name)
+	if object == nil {
+		for &candidate in store.objects {
+			if !candidate.used {
+				object = &candidate
+				object^ = {}
+				object.used = true
+				copy(object.name[:], name)
+				object.name_length = len(name)
+				break
+			}
+		}
+	}
+	if object == nil {
+		return .Failed
+	}
+	copy(object.bytes[offset:], data)
+	object.length = max(object.length, int(offset) + len(data))
+	store.writes += 1
+	return .Ok
+}
+
+@(private = "file")
+memory_private_store_commit :: proc "contextless" (user: rawptr, name: string) -> Private_Store_Status {
+	if memory_private_store_find((^Memory_Private_Store)(user), name) == nil {
+		return .Absent
+	}
+	return .Ok
+}
+
+@(private = "file")
+memory_private_store_remove :: proc "contextless" (user: rawptr, name: string) -> Private_Store_Status {
+	store := (^Memory_Private_Store)(user)
+	object := memory_private_store_find(store, name)
+	if object == nil {
+		return .Absent
+	}
+	object^ = {}
+	store.removes += 1
+	return .Ok
+}
+
+// The names of a memory store in byte order: a selection of the next name
+// after the last one given, for each place of into.
+@(private = "file")
+memory_private_store_list :: proc "contextless" (user: rawptr, after: string, into: []Private_Object_Name) -> (count: int, status: Private_Store_Status) {
+	store := (^Memory_Private_Store)(user)
+	last := after
+	for count < len(into) {
+		next: ^Memory_Private_Object
+		for &object in store.objects {
+			if !object.used {
+				continue
+			}
+			name := string(object.name[:object.name_length])
+			if name <= last {
+				continue
+			}
+			if next == nil || name < string(next.name[:next.name_length]) {
+				next = &object
+			}
+		}
+		if next == nil {
+			break
+		}
+		into[count] = {}
+		private_object_name_append(&into[count], string(next.name[:next.name_length]))
+		last = private_object_name_text(&into[count])
+		count += 1
+	}
+	return count, .Ok
 }
 
 // The bounds of the dialog of a difference on the trusted display: a plan
@@ -254,7 +492,7 @@ PLAN_GENERATION_WIRE_MOST :: PLAN_GENERATION_HEAD_SIZE + MAX_PLAN_ENTRIES * PLAN
 PLAN_CURRENT_WIRE_SIZE :: 8 + 3 * 8 + blake3.HASH_SIZE
 
 #assert(PLAN_ENTRY_ROW_WIRE_SIZE == size_of(Plan_Entry_Row))
-#assert(PLAN_GENERATION_WIRE_MOST <= MEMORY_PRIVATE_STORE_OBJECT_BYTES)
+#assert(PLAN_GENERATION_WIRE_MOST <= MEMORY_PRIVATE_STORE_RANGE_BYTES)
 
 // The pointer of the generations of a principal that its current object holds.
 Plan_Current_Record :: struct {
@@ -318,6 +556,30 @@ private_object_name_append_decimal :: proc "contextless" (name: ^Private_Object_
 			name.length += 1
 		}
 	}
+}
+
+// hash_of_hexadecimal reads a hash from 64 lowercase hexadecimal digits,
+// the form of a hash in a name and on the console. Any other text is
+// refused: an uppercase digit, a wrong length, a byte that is no digit.
+hash_of_hexadecimal :: proc "contextless" (digits: []u8) -> (hash: blake3.Hash, ok: bool) {
+	if len(digits) != 2 * blake3.HASH_SIZE {
+		return {}, false
+	}
+	value :: proc "contextless" (digit: u8) -> (number: u8, ok: bool) {
+		switch digit {
+		case '0' ..= '9':
+			return digit - '0', true
+		case 'a' ..= 'f':
+			return digit - 'a' + 10, true
+		}
+		return 0, false
+	}
+	for index in 0 ..< blake3.HASH_SIZE {
+		high := value(digits[2 * index]) or_return
+		low := value(digits[2 * index + 1]) or_return
+		hash[index] = high << 4 | low
+	}
+	return hash, true
 }
 
 // private_object_name_append_hash adds the first digits of a hash, in

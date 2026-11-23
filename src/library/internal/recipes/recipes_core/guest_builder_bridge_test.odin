@@ -19,6 +19,7 @@ Fake_Guest_Mode :: enum {
 	Damaged_Output,
 	Write_Past_Bound,
 	Hang,
+	Interrupts_Only,
 	Write_Input,
 }
 
@@ -32,7 +33,9 @@ Fake_Object :: struct {
 Fake_Guest :: struct {
 	mode:         Fake_Guest_Mode,
 	output_image: []u8,
-	objects:      [8]Fake_Object,
+	objects:      [64]Fake_Object,
+	resolves:     int,
+	lie:          bool, // The backend gives the bytes of the first object for each hash.
 	object_count: int,
 	tamper:       bool, // The backend gives one wrong byte for each object.
 	runs:         int,
@@ -42,17 +45,34 @@ Fake_Guest :: struct {
 	kept_trees:   int,
 	last_tree:    blake3.Hash,
 	keep_refuses: bool, // The store refuses each object of the output.
+	keep_fails_after: int, // The store refuses each object past this count; 0: no bound.
+	keep_known:   bool, // The store holds each object already: no keep writes.
+	dropped:      int,
+	prepared:     int,
+	prepare_refusal: pr.Recipe_Refusal,
 }
 
 @(private = "file")
-fake_keep :: proc "contextless" (kind: object_cache.Cache_Object_Kind, hash: blake3.Hash, bytes: []u8, user_data: rawptr) -> bool {
+fake_drop :: proc "contextless" (hash: blake3.Hash, user_data: rawptr) {
+	(^Fake_Guest)(user_data).dropped += 1
+}
+
+@(private = "file")
+fake_prepare :: proc "contextless" (spec: ^gb.Guest_Build_Spec, user_data: rawptr) -> pr.Recipe_Refusal {
 	fake := (^Fake_Guest)(user_data)
-	if fake.keep_refuses {
-		return false
+	fake.prepared += 1
+	return fake.prepare_refusal
+}
+
+@(private = "file")
+fake_keep :: proc "contextless" (kind: object_cache.Cache_Object_Kind, hash: blake3.Hash, bytes: []u8, user_data: rawptr) -> (ok: bool, written: bool) {
+	fake := (^Fake_Guest)(user_data)
+	if fake.keep_refuses || (fake.keep_fails_after > 0 && fake.kept_blobs + fake.kept_trees >= fake.keep_fails_after) {
+		return false, false
 	}
 	actual, refusal := pr.recipe_hash_output(kind, bytes)
 	if refusal != .None || actual != hash {
-		return false
+		return false, false
 	}
 	switch kind {
 	case .Blob:
@@ -61,12 +81,16 @@ fake_keep :: proc "contextless" (kind: object_cache.Cache_Object_Kind, hash: bla
 		fake.kept_trees += 1
 		fake.last_tree = hash
 	}
-	return true
+	return true, !fake.keep_known
 }
 
 @(private = "file")
 fake_resolve :: proc "contextless" (input: ^pr.Recipe_Input, out_bytes: []u8, user_data: rawptr) -> (written: int, ok: bool) {
 	fake := (^Fake_Guest)(user_data)
+	fake.resolves += 1
+	if fake.lie && fake.object_count > 0 {
+		return copy(out_bytes, fake.objects[0].bytes), len(fake.objects[0].bytes) <= len(out_bytes)
+	}
 	for object in fake.objects[:fake.object_count] {
 		if object.key.hash == input.hash && object.key.kind == input.kind {
 			if len(object.bytes) > len(out_bytes) {
@@ -116,6 +140,13 @@ fake_execute :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, spec: ^gb.
 		gb.runner_report_violation(runner, .Output_Size_Exceeded)
 	case .Hang:
 		for gb.runner_exit_counted(runner, .Cpuid) {
+		}
+	case .Interrupts_Only:
+		// The clock of the system moves; the guest never exits by itself.
+		now := runner.clock_nanoseconds
+		for gb.runner_exit_counted(runner, .Interrupted) {
+			now += 1_000_000_000
+			gb.runner_clock_advance(runner, now)
 		}
 	case .Write_Input:
 		input_disk[DISK_FIRST_PAYLOAD_PROBE] ~= 1
@@ -174,6 +205,8 @@ guest_test_make :: proc(mode: Fake_Guest_Mode) -> ^Guest_Test {
 	test.workspace.resolve_input = fake_resolve
 	test.workspace.execute_guest = fake_execute
 	test.workspace.keep_object = fake_keep
+	test.workspace.drop_object = fake_drop
+	test.workspace.prepare_guest = fake_prepare
 	test.workspace.user_data = test.fake
 
 	copy(test.blobs[0][:], "first file\n")
@@ -270,6 +303,7 @@ guest_builder_bridge_refuses_each_bad_end_of_the_guest :: proc(t: ^testing.T) {
 		{.Damaged_Output, .Malformed_Output},
 		{.Write_Past_Bound, .Output_Too_Large},
 		{.Hang, .Build_Timed_Out},
+		{.Interrupts_Only, .Build_Timed_Out},
 		{.Write_Input, .Sandbox_Violation},
 	}
 	for each in cases {
@@ -384,4 +418,291 @@ guest_builder_bridge_builds_and_keeps_the_realisation :: proc(t: ^testing.T) {
 	testing.expect_value(t, again.outcome, pr.Recipe_Build_Outcome.From_Cache)
 	testing.expect_value(t, again.output_hash, test.expected)
 	testing.expect_value(t, test.fake.runs, 1)
+}
+// A failed keep of the output removes each object that this build wrote,
+// and none that the store held before: a failed build keeps nothing, and
+// takes nothing from another realisation.
+@(test)
+guest_builder_bridge_failed_keep_keeps_nothing :: proc(t: ^testing.T) {
+	{
+		test := guest_test_make(.Success)
+		defer guest_test_end(test)
+		test.fake.keep_fails_after = 2
+		expect_refused(t, test, .Store_Failed)
+		testing.expect_value(t, test.fake.dropped, 2)
+	}
+	{
+		test := guest_test_make(.Success)
+		defer guest_test_end(test)
+		test.fake.keep_fails_after = 2
+		test.fake.keep_known = true
+		expect_refused(t, test, .Store_Failed)
+		testing.expect_value(t, test.fake.dropped, 0)
+	}
+}
+
+// The backend prepares the guest before any input is read: a kernel or an
+// initial archive that the store lacks gives Cache_Miss, and a guest that
+// asks for more memory than the service has gives Memory_Past_Bound, with
+// no input read, nothing packed and no run.
+@(test)
+guest_builder_bridge_prepares_the_guest_before_the_inputs :: proc(t: ^testing.T) {
+	for refusal in ([?]pr.Recipe_Refusal{.Cache_Miss, .Memory_Past_Bound}) {
+		test := guest_test_make(.Success)
+		defer guest_test_end(test)
+		test.fake.prepare_refusal = refusal
+		expect_refused(t, test, refusal)
+		testing.expect_value(t, test.fake.prepared, 1)
+		testing.expect_value(t, test.fake.resolves, 0)
+		testing.expect_value(t, test.fake.runs, 0)
+	}
+	record := recipe_refusal_record(.Memory_Past_Bound, 1)
+	testing.expect_value(t, record.kind, i64(errors.Kind.Over_Limit))
+	record = recipe_refusal_record(.Builder_Busy, 1)
+	testing.expect_value(t, record.kind, i64(errors.Kind.Busy))
+}
+
+// Edge_Test holds the heap buffers of the trees that one edge test makes.
+@(private = "file")
+Edge_Test :: struct {
+	test:    ^Guest_Test,
+	buffers: [dynamic][]u8,
+}
+
+@(private = "file")
+edge_make :: proc(staging_bytes: int = GUEST_TEST_DISK_BYTES, disk_bytes: int = GUEST_TEST_DISK_BYTES) -> ^Edge_Test {
+	edge := new(Edge_Test)
+	edge.test = guest_test_make(.Success)
+	delete(edge.test.workspace.input_staging)
+	delete(edge.test.workspace.input_disk)
+	edge.test.workspace.input_staging = make([]u8, staging_bytes)
+	edge.test.workspace.input_disk = make([]u8, disk_bytes)
+	return edge
+}
+
+@(private = "file")
+edge_end :: proc(edge: ^Edge_Test) {
+	for buffer in edge.buffers {
+		delete(buffer)
+	}
+	delete(edge.buffers)
+	guest_test_end(edge.test)
+	free(edge)
+}
+
+// edge_tree encodes a tree of entries, adds it to the objects of the fake
+// guest, and gives its hash.
+@(private = "file")
+edge_tree :: proc(edge: ^Edge_Test, entries: []tree_hash.Tree_Entry) -> blake3.Hash {
+	bytes := make([]u8, tree_hash.HEADER_SIZE + len(entries) * tree_hash.ENTRY_SIZE)
+	append(&edge.buffers, bytes)
+	written, refusal := tree_hash.tree_encode(entries, bytes)
+	assert(refusal == .None)
+	hash, _ := tree_hash.tree_hash(bytes[:written])
+	fake_object_add(edge.test.fake, {kind = .Tree, hash = hash}, bytes[:written])
+	return hash
+}
+
+@(private = "file")
+edge_blob :: proc(edge: ^Edge_Test, text: string) -> blake3.Hash {
+	bytes := make([]u8, len(text))
+	append(&edge.buffers, bytes)
+	copy(bytes, text)
+	hash := blake3.hash(bytes)
+	fake_object_add(edge.test.fake, {kind = .Blob, hash = hash}, bytes)
+	return hash
+}
+
+// edge_name gives a name of length bytes that sorts by index.
+@(private = "file")
+edge_name :: proc(prefix: string, index: int, length: int) -> string {
+	name := make([]u8, length, context.temp_allocator)
+	for &value in name {
+		value = 'n'
+	}
+	copy(name, prefix)
+	digits := "0123456789"
+	place := length - 1
+	for rest := index; place >= len(prefix); place -= 1 {
+		name[place] = digits[rest % 10]
+		rest /= 10
+	}
+	return string(name)
+}
+
+// edge_inputs makes the recipe take only the inputs given.
+@(private = "file")
+edge_inputs :: proc(edge: ^Edge_Test, inputs: ..pr.Recipe_Input) {
+	spec := &edge.test.spec
+	spec.inputs = {}
+	spec.input_count = u32(len(inputs))
+	for input, index in inputs {
+		spec.inputs[index] = input
+	}
+}
+
+// The depth of the trees of an input: a file in the seventh tree under the
+// input has a path of 8 segments, the most of a disk, and builds; one tree
+// more is refused before the guest runs.
+@(test)
+guest_builder_bridge_input_tree_depth :: proc(t: ^testing.T) {
+	for levels in ([?]int{7, 8}) {
+		edge := edge_make()
+		defer edge_end(edge)
+		blob := edge_blob(edge, "deep\n")
+		file_entry, _ := tree_hash.tree_entry_make(.Object, "f", blob)
+		entries := [1]tree_hash.Tree_Entry{file_entry}
+		hash := edge_tree(edge, entries[:])
+		for _ in 1 ..< levels {
+			dir_entry, _ := tree_hash.tree_entry_make(.Tree, "d", hash)
+			dirs := [1]tree_hash.Tree_Entry{dir_entry}
+			hash = edge_tree(edge, dirs[:])
+		}
+		input, _ := pr.recipe_input_make("s", .Tree, hash)
+		edge_inputs(edge, input)
+		if levels == 7 {
+			result := build_with_builders(edge.test.state, &edge.test.spec, .Build_Only, edge.test.workspace)
+			testing.expect_value(t, result.refusal, pr.Recipe_Refusal.None)
+			testing.expect_value(t, edge.test.fake.input_paths[0], "s/d/d/d/d/d/d/f")
+		} else {
+			expect_refused(t, edge.test, .Invalid_Input_Name)
+			testing.expect_value(t, edge.test.fake.runs, 0)
+		}
+	}
+}
+
+// A tree whose bytes name its own hash cannot exist: its bytes would need
+// that hash. A store that gives such bytes anyway gives bytes that do not
+// have their hash, and the walk ends with Hash_Mismatch at once, with no
+// loop.
+@(test)
+guest_builder_bridge_input_cycle_ends :: proc(t: ^testing.T) {
+	edge := edge_make()
+	defer edge_end(edge)
+	claimed := blake3.hash([]u8{'c', 'y', 'c', 'l', 'e'})
+	self_entry, _ := tree_hash.tree_entry_make(.Tree, "again", claimed)
+	entries := [1]tree_hash.Tree_Entry{self_entry}
+	edge.test.fake.object_count = 0
+	_ = edge_tree(edge, entries[:])
+	edge.test.fake.lie = true
+	input, _ := pr.recipe_input_make("s", .Tree, claimed)
+	edge_inputs(edge, input)
+	expect_refused(t, edge.test, .Hash_Mismatch)
+	testing.expect_value(t, edge.test.fake.resolves, 1)
+	testing.expect_value(t, edge.test.fake.runs, 0)
+}
+
+// The files of one input disk: 4096 build, 4097 are refused. The 4096 are
+// 8 directories that name one tree of 512 files of one blob.
+@(test)
+guest_builder_bridge_input_file_count :: proc(t: ^testing.T) {
+	for extra in ([?]bool{false, true}) {
+		edge := edge_make(4 * 1024 * 1024, 4 * 1024 * 1024)
+		defer edge_end(edge)
+		blob := edge_blob(edge, "x")
+		files: [tree_hash.MAX_TREE_ENTRIES]tree_hash.Tree_Entry
+		for &entry, index in files {
+			entry, _ = tree_hash.tree_entry_make(.Object, edge_name("f", index, 4), blob)
+		}
+		leaf := edge_tree(edge, files[:])
+		dirs: [8]tree_hash.Tree_Entry
+		for &entry, index in dirs {
+			entry, _ = tree_hash.tree_entry_make(.Tree, edge_name("d", index, 2), leaf)
+		}
+		root := edge_tree(edge, dirs[:])
+		tree_input, _ := pr.recipe_input_make("s", .Tree, root)
+		if extra {
+			one_more, _ := pr.recipe_input_make("t", .Blob, blob)
+			edge_inputs(edge, tree_input, one_more)
+			expect_refused(t, edge.test, .Too_Many_Inputs)
+			testing.expect_value(t, edge.test.fake.runs, 0)
+		} else {
+			edge_inputs(edge, tree_input)
+			result := build_with_builders(edge.test.state, &edge.test.spec, .Build_Only, edge.test.workspace)
+			testing.expect_value(t, result.refusal, pr.Recipe_Refusal.None)
+			testing.expect_value(t, edge.test.fake.input_count, gb.MAX_DISK_ENTRIES)
+		}
+	}
+}
+
+// The arena of the paths fills before the count of the files does: 512
+// directories that each name a tree of 512 empty directories with long
+// names make more path bytes than the arena holds, and the walk stops
+// with Too_Many_Inputs, with no file and no run.
+@(test)
+guest_builder_bridge_input_path_arena_full :: proc(t: ^testing.T) {
+	edge := edge_make(4 * 1024 * 1024)
+	defer edge_end(edge)
+	empty := edge_tree(edge, nil)
+	inner: [tree_hash.MAX_TREE_ENTRIES]tree_hash.Tree_Entry
+	for &entry, index in inner {
+		entry, _ = tree_hash.tree_entry_make(.Tree, edge_name("i", index, 60), empty)
+	}
+	middle := edge_tree(edge, inner[:])
+	outer: [tree_hash.MAX_TREE_ENTRIES]tree_hash.Tree_Entry
+	for &entry, index in outer {
+		entry, _ = tree_hash.tree_entry_make(.Tree, edge_name("o", index, 60), middle)
+	}
+	root := edge_tree(edge, outer[:])
+	input, _ := pr.recipe_input_make("s", .Tree, root)
+	edge_inputs(edge, input)
+	expect_refused(t, edge.test, .Too_Many_Inputs)
+	testing.expect_value(t, edge.test.fake.runs, 0)
+	// The arena holds fewer paths than the 262 656 directories of the input.
+	testing.expect(t, edge.test.fake.resolves < INPUT_PATH_ARENA_BYTES / 64, "the walk stops when the arena is full")
+}
+
+// A path of 124 bytes, the most of a disk, builds; 125 bytes are refused.
+@(test)
+guest_builder_bridge_input_path_length :: proc(t: ^testing.T) {
+	for last in ([?]int{57, 58}) {
+		edge := edge_make()
+		defer edge_end(edge)
+		blob := edge_blob(edge, "long\n")
+		file_entry, _ := tree_hash.tree_entry_make(.Object, edge_name("f", 0, last), blob)
+		files := [1]tree_hash.Tree_Entry{file_entry}
+		inner := edge_tree(edge, files[:])
+		dir_entry, _ := tree_hash.tree_entry_make(.Tree, edge_name("d", 0, 64), inner)
+		dirs := [1]tree_hash.Tree_Entry{dir_entry}
+		root := edge_tree(edge, dirs[:])
+		input, _ := pr.recipe_input_make("s", .Tree, root)
+		edge_inputs(edge, input)
+		if last == 57 {
+			result := build_with_builders(edge.test.state, &edge.test.spec, .Build_Only, edge.test.workspace)
+			testing.expect_value(t, result.refusal, pr.Recipe_Refusal.None)
+			testing.expect_value(t, len(edge.test.fake.input_paths[0]), gb.MAX_MOUNT_PATH_BYTES)
+		} else {
+			expect_refused(t, edge.test, .Invalid_Input_Name)
+			testing.expect_value(t, edge.test.fake.runs, 0)
+		}
+	}
+}
+
+// Two inputs that would give one path are two inputs with one name: the
+// recipe is refused before any input is read. A staging too small for an
+// input refuses it as a miss, with no run.
+@(test)
+guest_builder_bridge_input_duplicate_and_full_staging :: proc(t: ^testing.T) {
+	{
+		edge := edge_make()
+		defer edge_end(edge)
+		blob := edge_blob(edge, "same\n")
+		first, _ := pr.recipe_input_make("a", .Blob, blob)
+		other := edge_blob(edge, "other\n")
+		second, _ := pr.recipe_input_make("a", .Blob, other)
+		edge_inputs(edge, first, second)
+		result := build_with_builders(edge.test.state, &edge.test.spec, .Build_Only, edge.test.workspace)
+		testing.expect_value(t, result.refusal, pr.Recipe_Refusal.Duplicate_Input)
+		testing.expect_value(t, edge.test.fake.resolves, 0)
+		testing.expect_value(t, edge.test.fake.runs, 0)
+	}
+	{
+		edge := edge_make(4)
+		defer edge_end(edge)
+		blob := edge_blob(edge, "five!")
+		input, _ := pr.recipe_input_make("a", .Blob, blob)
+		edge_inputs(edge, input)
+		expect_refused(t, edge.test, .Cache_Miss)
+		testing.expect_value(t, edge.test.fake.runs, 0)
+	}
 }

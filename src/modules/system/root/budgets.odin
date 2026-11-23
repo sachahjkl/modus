@@ -83,14 +83,6 @@ budget_exceptions := [?]Budget_Exception {
 	// module. The build writes that request on its line of budgets; a module
 	// that grows asks for more, and this row follows it.
 	{name = "linux", largest = {pages = 34932}},
-	// The holder of Recipes runs one guest build at a time in a guest of its
-	// own (src/md/features/recipes.md, "The guest builder"): 128 MiB of guest
-	// memory, its nested page table, and 96 MiB of buffers for its disks,
-	// its kernel and its initial archive, beside its tables. The pages are
-	// the 59 392 that its source states, its first thread and its module,
-	// with room for its tables of realisations; the build writes the exact
-	// request on its line of budgets, and this row follows it.
-	{name = "recipes", largest = {pages = 63488}},
 	// Its cases reach the limit of processor time: a small limit makes
 	// them short.
 	{name = "limits", processor = 1_500_000},

@@ -24,6 +24,9 @@ SOURCE_FOLDER_INTERNAL :: SOURCE_FOLDER_LIBRARY + "/" + INTERNAL_LIBRARY_NAME //
 // SOURCE_FOLDERS: each reader of that list reads Odin sources, and this
 // folder has none; the C files reach the build through the flake.
 SOURCE_FOLDER_OUTSIDE :: "src/outside"
+// The programs of the system that run inside a guest of Linux, not on
+// modus: the init of a guest build (src/md/features/guest_build_image.md).
+SOURCE_FOLDER_GUEST :: "src/guest"
 
 // Each folder of the sources of the system. A list of the tool that reads
 // a part of them names its folders by their constants, in its own order:

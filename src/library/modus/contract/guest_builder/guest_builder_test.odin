@@ -67,8 +67,8 @@ enum_word_borders_refuse_unknown_values :: proc(t: ^testing.T) {
 		testing.expect(t, ok && got == member)
 	}
 
-	// Guest_Builder_Refusal: 0..20 valid.
-	for bad in ([]u64{21, 22, 255, max(u64)}) {
+	// Guest_Builder_Refusal: 0..21 valid.
+	for bad in ([]u64{22, 23, 255, max(u64)}) {
 		_, ok := guest_builder_refusal_of_word(bad)
 		testing.expectf(t, !ok, "Guest_Builder_Refusal must refuse %d", bad)
 	}
@@ -323,6 +323,24 @@ every_refusal_member_is_triggered :: proc(t: ^testing.T) {
 	// 20: Initial_Archive_Mismatch (one changed byte of the same size)
 	tampered := [6]u8{'0', '7', '0', '7', '0', '2'}
 	record(t, &seen, initial_archive_check(&s, tampered[:]), .Initial_Archive_Mismatch)
+
+	// 21: Time_Bound_Past_Most (one past the most, and the largest word);
+	// the most is taken, and its wire keeps it.
+	for seconds in ([?]u32{MAX_BUILD_TIME_BOUND_SECONDS + 1, max(u32)}) {
+		s = valid_spec()
+		s.time_bound_seconds = seconds
+		record(t, &seen, validate_build_spec(&s), .Time_Bound_Past_Most)
+	}
+	s = valid_spec()
+	s.time_bound_seconds = MAX_BUILD_TIME_BOUND_SECONDS
+	time_wire: [SPEC_WIRE_SIZE]u8
+	time_written, time_refusal := encode_build_spec(&s, time_wire[:])
+	testing.expect_value(t, time_refusal, Guest_Builder_Refusal.None)
+	time_decoded, _ := decode_build_spec(time_wire[:time_written])
+	testing.expect_value(t, time_decoded.time_bound_seconds, MAX_BUILD_TIME_BOUND_SECONDS)
+	byte_order.write_u32_little_endian(time_wire[:], 12, MAX_BUILD_TIME_BOUND_SECONDS + 1)
+	_, past_refusal := decode_build_spec(time_wire[:time_written])
+	testing.expect_value(t, past_refusal, Guest_Builder_Refusal.Time_Bound_Past_Most)
 
 	// Confirm every single enum member of Guest_Builder_Refusal was exercised.
 	for member in Guest_Builder_Refusal {
@@ -660,6 +678,45 @@ frozen_clock_and_rtc_reads_are_deterministic :: proc(t: ^testing.T) {
 	testing.expect_value(t, u8(regs.rax), u8(0x20)) // BCD 20 for 2023.
 }
 
+// A guest that never exits by itself gives only exits Interrupted: the
+// clock of the system ends it at the deadline of its spec, and not one
+// tick before. The clock never goes back, and each exit counts in
+// guest_runs.
+@(test)
+guest_of_interrupts_only_ends_at_its_deadline :: proc(t: ^testing.T) {
+	spec := valid_spec()
+	spec.time_bound_seconds = 2
+	out_disk: [8192]u8
+	runner := new(Guest_Sandbox_Runner, context.temp_allocator)
+	testing.expect_value(t, runner_prepare(runner, &spec, nil, nil, out_disk[:]), Guest_Builder_Refusal.None)
+	START :: u64(5_000_000_000)
+	runner_clock_advance(runner, START)
+	testing.expect_value(t, runner_start(runner), Guest_Builder_Refusal.None)
+	testing.expect_value(t, runner.deadline_nanoseconds, START + 2_000_000_000)
+	regs := op.Guest_Registers{rip = 0x1000}
+	runner_clock_advance(runner, START + 2_000_000_000 - 1)
+	testing.expect(t, runner_handle_exit(runner, &regs, .Interrupted, 0, 0, 0, 0x1000))
+	runner_clock_advance(runner, START) // An earlier time is not taken.
+	testing.expect_value(t, runner.clock_nanoseconds, START + 2_000_000_000 - 1)
+	runner_clock_advance(runner, START + 2_000_000_000)
+	testing.expect(t, !runner_handle_exit(runner, &regs, .Interrupted, 0, 0, 0, 0x1000))
+	testing.expect_value(t, runner.state, Guest_Build_State.Timed_Out)
+	testing.expect_value(t, runner.guest_exits_handled, u64(0))
+	testing.expect_value(t, runner.guest_runs, u64(2))
+	_, written, refusal := runner_finish(runner, new(Disk_Unpack_Workspace, context.temp_allocator), nil)
+	testing.expect_value(t, written, 0)
+	testing.expect_value(t, refusal, Guest_Builder_Refusal.Nonzero_Guest_Exit)
+
+	// The default bound, and a clock near the end of its range: the deadline
+	// saturates and never wraps to a time in the past.
+	spec.time_bound_seconds = 0
+	testing.expect_value(t, runner_prepare(runner, &spec, nil, nil, out_disk[:]), Guest_Builder_Refusal.None)
+	runner_clock_advance(runner, max(u64) - 1)
+	testing.expect_value(t, runner_start(runner), Guest_Builder_Refusal.None)
+	testing.expect_value(t, runner.deadline_nanoseconds, max(u64))
+	testing.expect_value(t, build_time_bound_nanoseconds(&spec), u64(DEFAULT_BUILD_TIME_BOUND_SECONDS) * 1_000_000_000)
+}
+
 // Guest timeout when max_guest_exits is reached transitions to Timed_Out and
 // extracts nothing with a zero output_tree_hash.
 @(test)
@@ -921,4 +978,85 @@ disk_stream_writer_scales_to_thousands_of_entries :: proc(t: ^testing.T) {
 	big_decoded, big_dec := decode_build_spec(big_wire[:big_written])
 	testing.expect_value(t, big_dec, Guest_Builder_Refusal.None)
 	testing.expect_value(t, big_decoded, big_spec)
+}
+// The edges of an output disk: a directory of 512 files, the most of one
+// tree node, unpacks and 513 are refused; 4096 entries unpack and a header
+// that says 4097 is refused; a total size one past the bound of the output
+// is refused, and the bound itself is taken.
+@(test)
+unpack_output_disk_edges :: proc(t: ^testing.T) {
+	workspace := new(Disk_Unpack_Workspace)
+	defer free(workspace)
+	tree_out := make([]u8, UNPACK_NODE_BUFFER_BYTES)
+	defer delete(tree_out)
+	paths := make([]string, MAX_DISK_ENTRIES + 1)
+	defer delete(paths)
+	content := []u8{'x'}
+	files := make([]Disk_File_Input, MAX_DISK_ENTRIES + 1)
+	defer delete(files)
+	image := make([]u8, 1024 * 1024)
+	defer delete(image)
+
+	// One directory of count files.
+	for count in ([?]int{tree_hash.MAX_TREE_ENTRIES, tree_hash.MAX_TREE_ENTRIES + 1}) {
+		for index in 0 ..< count {
+			paths[index] = fmt_path("d/f", index)
+			files[index] = {path = paths[index], content = content}
+		}
+		for &value in image {
+			value = 0
+		}
+		written, pack_refusal := pack_disk_image(.Output_Writable, files[:count], 0, image)
+		testing.expect_value(t, pack_refusal, Guest_Builder_Refusal.None)
+		_, _, refusal := unpack_output_disk(image, u64(len(image)), workspace, tree_out)
+		if count == tree_hash.MAX_TREE_ENTRIES {
+			testing.expect_value(t, refusal, Guest_Builder_Refusal.None)
+		} else {
+			testing.expect_value(t, refusal, Guest_Builder_Refusal.Output_Extraction_Failed)
+		}
+		_ = written
+	}
+
+	// 4096 entries in 8 directories of 512, then a header that says 4097.
+	for index in 0 ..< MAX_DISK_ENTRIES {
+		paths[index] = fmt_path(index < 512 ? "a/f" : index < 1024 ? "b/f" : index < 1536 ? "c/f" : index < 2048 ? "d/f" : index < 2560 ? "e/f" : index < 3072 ? "g/f" : index < 3584 ? "h/f" : "i/f", index)
+		files[index] = {path = paths[index], content = content}
+	}
+	for &value in image {
+		value = 0
+	}
+	written, pack_refusal := pack_disk_image(.Output_Writable, files[:MAX_DISK_ENTRIES], 0, image)
+	testing.expect_value(t, pack_refusal, Guest_Builder_Refusal.None)
+	_, _, refusal := unpack_output_disk(image, u64(len(image)), workspace, tree_out)
+	testing.expect_value(t, refusal, Guest_Builder_Refusal.None)
+	paths[MAX_DISK_ENTRIES] = "j"
+	files[MAX_DISK_ENTRIES] = {path = paths[MAX_DISK_ENTRIES], content = content}
+	_, too_many := pack_disk_image(.Output_Writable, files[:], 0, image)
+	testing.expect_value(t, too_many, Guest_Builder_Refusal.Too_Many_Inputs)
+	byte_order.write_u32_little_endian(image, 16, MAX_DISK_ENTRIES + 1)
+	_, _, header_refusal := unpack_output_disk(image, u64(len(image)), workspace, tree_out)
+	testing.expect(t, header_refusal != .None, "a header of 4097 entries is refused")
+	byte_order.write_u32_little_endian(image, 16, MAX_DISK_ENTRIES)
+
+	// The total size of the image against the bound of the output.
+	_, _, at_bound := unpack_output_disk(image, u64(written), workspace, tree_out)
+	testing.expect_value(t, at_bound, Guest_Builder_Refusal.None)
+	_, _, past_bound := unpack_output_disk(image, u64(written) - 1, workspace, tree_out)
+	testing.expect(t, past_bound != .None, "an image past the bound of the output is refused")
+	byte_order.write_u64_little_endian(image, 32, u64(written) + 1)
+	_, _, past_total := unpack_output_disk(image, u64(written), workspace, tree_out)
+	testing.expect(t, past_total != .None, "a total one past the bound is refused")
+}
+
+@(private = "file")
+fmt_path :: proc(prefix: string, index: int) -> string {
+	digits := "0123456789"
+	bytes := make([]u8, len(prefix) + 4, context.temp_allocator)
+	copy(bytes, prefix)
+	rest := index
+	for place := len(bytes) - 1; place >= len(prefix); place -= 1 {
+		bytes[place] = digits[rest % 10]
+		rest /= 10
+	}
+	return string(bytes)
 }

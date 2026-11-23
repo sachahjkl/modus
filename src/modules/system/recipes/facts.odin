@@ -42,19 +42,49 @@ Guest_Object_Missing :: struct {
 	status: u64,
 }
 
-// A guest build asks for more memory than the service gives a guest.
-@(log_fact = "recipes: the guest build asks for {pages} pages of memory; the service gives a guest at most {most}")
+// A guest build asks for more memory than the budget of the service has
+// left: its guest and its nested page table.
+@(log_fact = "recipes: the guest build was not started: it needs {pages} pages of memory, and the budget of the service has {left} left")
 Guest_Memory_Past_Bound :: struct {
 	pages: u64,
-	most:  u64,
+	left:  u64,
 }
 
 // The guest of a build ran to its end.
-@(log_fact = "recipes: the guest build ended after {exits} exits of the guest, with the exit status {exit_code} and the state {state}")
+@(log_fact = "recipes: the guest build ended after {exits} exits of the guest ({runs} runs), with the exit status {exit_code} and the state {state}")
 Guest_Build_Ended :: struct {
 	exits:     u64,
+	runs:      u64,
 	exit_code: u64,
 	state:     u64,
+}
+
+// A guest build started on the build thread.
+@(log_fact = "recipes: the guest build of the recipe {recipe} started")
+Guest_Build_Started :: struct {
+	recipe: value_kinds.Hash_Field,
+}
+
+// A guest build gave the realisation of its recipe.
+@(log_fact = "recipes: the recipe {recipe} is realised with the output {output}")
+Guest_Recipe_Realised :: struct {
+	recipe: value_kinds.Hash_Field,
+	output: value_kinds.Hash_Field,
+}
+
+// The kernel did not start the build thread: the build is refused.
+@(log_fact = "recipes: the build thread did not start: Thread_Create gave {status_word}")
+Guest_Thread_Refused :: struct {
+	status_word: op.Status_Word,
+}
+
+// One pass of the retention of the store.
+@(log_fact = "recipes: the retention pass kept {kept} objects of {marked} named, and removed {removed} (refusal {refusal})")
+Retention_Passed :: struct {
+	marked:  u64,
+	kept:    u64,
+	removed: u64,
+	refusal: u64,
 }
 
 // A check before the run of the guest refused the build.

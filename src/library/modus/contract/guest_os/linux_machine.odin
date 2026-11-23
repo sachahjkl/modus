@@ -284,6 +284,28 @@ linux_machine_serial_input :: proc "contextless" (machine: ^Linux_Machine, bytes
 	return serial_receive_put(&machine.serial, bytes)
 }
 
+// linux_machine_console_output_take gives the bytes that the guest wrote
+// on its virtio console since the last call: the terminal hvc0 of Linux.
+linux_machine_console_output_take :: proc "contextless" (machine: ^Linux_Machine, out: []u8) -> (count: int) {
+	if machine == nil {
+		return 0
+	}
+	return virtio_console_output_take(&machine.devices[.Console], out)
+}
+
+// linux_machine_console_input gives bytes of a principal to the virtio
+// console of the guest, and gives how many it took: as many as the buffers
+// that the driver of the guest posted hold. The rest waits for the caller,
+// in order; the line of the device rises at once.
+linux_machine_console_input :: proc "contextless" (machine: ^Linux_Machine, bytes: []u8) -> (taken: int) {
+	if machine == nil {
+		return 0
+	}
+	taken = virtio_console_receive(&machine.devices[.Console], machine.memory, bytes)
+	machine_lines_update(machine)
+	return taken
+}
+
 // linux_machine_console_resize propagates a host terminal resize to the
 // VirtIO console device configuration and updates interrupt lines so the
 // guest driver can deliver SIGWINCH.

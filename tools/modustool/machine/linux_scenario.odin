@@ -9,10 +9,13 @@ import "modustool:foundation"
 // one machine. Its data disk holds the private store linux with the
 // bzImage of Nixpkgs and an initial archive with a static busybox, which
 // the tool writes from the two variables of the flake. The start menu
-// starts linux; Linux boots in a guest, its init writes modus-guest-ready,
-// the tool types a command in the terminal window and waits for its output,
-// resizes the window and checks that the guest takes the size and still
-// answers, then types poweroff, and linux ends with the halt of the guest.
+// starts linux; Linux boots in a guest, its init loads the virtio modules
+// and writes modus-guest-ready on the serial port, the log of the kernel,
+// and runs a shell on hvc0, the virtio console. The tool types a command in
+// the terminal window and waits for its output on the lines of the shell,
+// starts a program that waits for SIGWINCH, resizes the window and waits
+// for the size that the program reads from hvc0, then types poweroff, and
+// linux ends with the halt of the guest.
 //
 // Each wait has the hang bound only: the boot of Linux makes many exits, and
 // the waits on the lines of its boot are the progress of the part.
@@ -37,7 +40,9 @@ linux_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		return false
 	}
 	fmt.printfln("modustool: %s: the store linux holds the kernel, %d bytes, and the initial archive, %d bytes", TEST_DISK_LINUX, len(kernel), len(archive))
-	boots := fmt.tprintf("linux: boots the kernel of %d bytes and the initial archive of %d bytes of the store linux, in 32768 pages of guest memory", len(kernel), len(archive))
+	// The memory of the guest comes from the granted budget: the wait names
+	// the objects, which the tool knows, and not the pages.
+	boots := fmt.tprintf("linux: boots the kernel of %d bytes and the initial archive of %d bytes of the store linux, in ", len(kernel), len(archive))
 	gives, reason := host_gives_guest_support()
 	steps := make([dynamic]Step)
 	defer delete(steps)
@@ -63,13 +68,16 @@ linux_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		append(&steps, Step{kind = .Type, text = "echo modus-guest-ok"})
 		// The echo of the command is the line "... # echo modus-guest-ok":
 		// only the output of the command starts with the word.
-		append(&steps, Step{kind = .Wait, text = "linux: guest: modus-guest-ok", fails_on = "linux: the guest stopped with the failure "})
-		// A resize of the window gives the guest its new size: the console
-		// line and the virtio console take it, and the shell still answers.
+		append(&steps, Step{kind = .Wait, text = "linux: shell: modus-guest-ok", fails_on = "linux: the guest stopped with the failure "})
+		// A resize of the window reaches the shell as SIGWINCH: a program in
+		// the foreground of hvc0 waits for it, and prints the size that hvc0
+		// then has. The tool cannot know the rows and the columns of the
+		// window in advance: the fact says that the machine took them, and
+		// the line of the shell says that the program got the signal.
+		append(&steps, Step{kind = .Type, text = "sh -c 'trap \"echo modus-winch $(stty size); exit\" WINCH; while :; do sleep 1; done'"})
 		append(&steps, Step{kind = .Resize, text = "linux", to_x = 880, to_y = 520})
 		append(&steps, Step{kind = .Fact, process = "linux", fact = "linux_shell.Window_Resized", condition = "taken = 1"})
-		append(&steps, Step{kind = .Type, text = "echo modus-guest-resized"})
-		append(&steps, Step{kind = .Wait, text = "linux: guest: modus-guest-resized", fails_on = "linux: the guest stopped with the failure "})
+		append(&steps, Step{kind = .Wait, text = "linux: shell: modus-winch ", fails_on = "linux: the guest stopped with the failure "})
 		append(&steps, Step{kind = .Type, text = "poweroff"})
 		append(&steps, Step{kind = .Wait, text = "linux: the guest halted after ", fails_on = "linux: the guest stopped with the failure "})
 	}

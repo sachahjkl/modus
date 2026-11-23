@@ -79,6 +79,12 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 		return errors.error_make(.Over_Limit, .Bytes, argument, 0, 0, found)
 	case .Build_Timed_Out:
 		return errors.error_make(.No_Answer, .None, argument, 0, 0, found)
+	case .Builder_Busy:
+		return errors.error_make(.Busy, .None, argument, 0, 0, found)
+	case .Memory_Past_Bound:
+		return errors.error_make(.Over_Limit, .Pages, argument, 0, 0, found)
+	case .Put_Quota_Reached:
+		return errors.error_make(.Over_Limit, .Objects, argument, 0, 0, found)
 	}
 	return errors.error_make(.Refused, .None, argument, 0, 0, found)
 }
