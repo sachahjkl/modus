@@ -311,6 +311,29 @@ open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (outlines: Outli
 // fixed range Script_Fonts.
 SCRIPT_FONTS_ADDRESS :: fixed_addresses.SCRIPT_FONTS_ADDRESS
 
+// Where a machine holds the set: the object SCRIPT_FONTS_OBJECT_NAME of the
+// private store SCRIPT_FONTS_STORE_NAME of the machine (principal 0). The
+// root service reads it once at each start, through the delegated service
+// disk_processes, and never writes it.
+SCRIPT_FONTS_STORE_NAME :: "script_fonts"
+SCRIPT_FONTS_OBJECT_NAME :: "script_fonts"
+
+// The most bytes of a set: the root service makes its memory from its own
+// budget before it checks the hash, so the limit bounds what an object of
+// a disk takes from that budget. The set of today is 35 772 620 bytes.
+SCRIPT_FONTS_BYTES_LIMIT :: 64 << 20
+
+// The blocks of the store of the set, as the root service grants the read
+// and as the modus tool writes it: the bytes of the limit, and the blocks
+// of the tree of the object.
+SCRIPT_FONTS_STORE_BLOCKS :: SCRIPT_FONTS_BYTES_LIMIT / 4096 + 1024
+
+// The resource of the boot image that names the set when no plan names
+// one: the 32 bytes of the BLAKE3 hash of the set that the build wrote. The
+// signed system description lists it as each resource, so the default set
+// of a machine is part of its signed system.
+SCRIPT_FONTS_NAME_RESOURCE :: "script_fonts_name"
+
 // script_fonts_check checks a script font set before it is mapped: the
 // border where the object enters, once (the root service, and the tool
 // that writes it). Its bytes give the hash that the plan names, its form is

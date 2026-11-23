@@ -23,6 +23,7 @@ package root
 import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/errors"
+import "modus:contract/font_outlines"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import rd "modus:contract/root_delegation"
@@ -42,6 +43,13 @@ import "modus:system"
 // disk is refused until the machine starts again. A load that reaches
 // Ready sets the count back to zero, so stops far apart never use it up.
 DISK_PROCESSES_RESTART_LIMIT :: 3
+
+// The deadline of the load of the script font set: sixteen times the
+// bytes of a module file, so sixteen times its deadline. It frees the one
+// place of the load when the storage service gives no answer; it is not a
+// measure of the disk.
+SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS :: 16 * disk_process.LOAD_DEADLINE_MILLISECONDS
+#assert(font_outlines.SCRIPT_FONTS_BYTES_LIMIT == 16 * disk_process.FILE_BYTES_LIMIT)
 
 // The time that the service has to answer Cancel with Cancelled. Past it
 // the service is stopped: the core then ends each loan with no wait.
@@ -99,6 +107,10 @@ Disk_Load :: struct {
 	// asked for it, and its end starts it, or the rescue
 	// (start_policy_choice.odin).
 	for_start_policy: bool,
+	// What the load reads: a module file, or the script font set, which no
+	// process asked for either, and which this service keeps
+	// (script_fonts.odin).
+	kind:             rd.Load_Kind,
 }
 
 disk_load: Disk_Load
@@ -306,16 +318,18 @@ disk_load_return_end :: proc "contextless" () {
 }
 
 // disk_load_begin starts a load: the service, the connection of the
-// service to the store module_files of the principal, with the right to
-// read only, and the command Load. The caller checked that no load runs,
-// and writes the line of a failure.
-disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, hash: [disk_process.HASH_SIZE]u8, principal: u64, for_start_policy: bool) -> (failure: Disk_Load_Begin_Failure, status: system.Status) {
+// service to the store of the kind of the load (module_files of the
+// principal, or script_fonts of the machine), with the right to read only,
+// and the command Load. The caller checked that no load runs, and writes
+// the line of a failure.
+disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, hash: [disk_process.HASH_SIZE]u8, principal: u64, for_start_policy: bool, kind: rd.Load_Kind = .Module) -> (failure: Disk_Load_Begin_Failure, status: system.Status) {
 	if !disk_processes_service_start() {
 		return .No_Service, .Bad_State
 	}
 	service_process := disk_processes_process
 	disk_reader = {}
-	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_process.STORE_NAME)
+	store_name := kind == .Script_Fonts ? font_outlines.SCRIPT_FONTS_STORE_NAME : disk_process.STORE_NAME
+	copy(disk_reader.name[:len(disk_reader.name) - 1], store_name)
 	disk_reader.principal = principal
 	storage_name := role_holder_name(.Storage)
 	connection, storage_service, ring_memory, region_memory, open_status := connection_open(&disk_reader, storage_name)
@@ -349,6 +363,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 	disk_processes_next_tag = disk_processes_next_tag == max(u32) ? 1 : disk_processes_next_tag + 1
 	if status == .Ok {
 		disk_load_request = {}
+		disk_load_request.kind = u8(kind)
 		disk_load_request.principal = principal
 		disk_load_request.module_hash = hash
 		disk_load_request.nickname_length = u8(copy(disk_load_request.nickname[:], name))
@@ -386,9 +401,10 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		hash             = hash,
 		principal        = principal,
 		connection       = connection,
-		deadline         = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS,
+		deadline         = system.time() + (kind == .Script_Fonts ? SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS : disk_process.LOAD_DEADLINE_MILLISECONDS),
 		for_start_policy = for_start_policy,
 		storage_handles  = sources,
+		kind             = kind,
 	}
 	return .None, .Ok
 }
@@ -543,10 +559,14 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 		system.send(&load.asker.requests.completions, ring.Record{kind = u32(status), tag = load.tag, values = values})
 	}
 	for_start_policy := load.for_start_policy
+	kind := load.kind
 	load^ = {}
 	disk_processes_stray_allowance = 1
 	if for_start_policy {
 		start_policy_chosen_load_ended(status)
+	}
+	if kind == .Script_Fonts {
+		script_fonts_load_ended(status)
 	}
 	return values
 }
@@ -622,7 +642,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		system.wait_records(wait, &disk_processes_ring.completions)
 		return
 	}
-	if load.asker == nil && !load.for_start_policy {
+	if load.asker == nil && !load.for_start_policy && load.kind == .Module {
 		system.log_fact(.Warning, Disk_Load_Refused_Asker_Stopped{refused_process = disk_load_name_field()})
 		disk_load_end(.Bad_State, disk_load_refused_values())
 		return
@@ -649,7 +669,7 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 	event, known := rd.disk_load_event_of_word(record.kind)
 	intrinsics.mem_copy_non_overlapping(&disk_load_report, &disk_processes_region[rd.EVENT_REPORT_OFFSET], size_of(rd.Event_Report))
 	report := &disk_load_report
-	if !known || !rd.event_report_check(load.step, event, report, load.kept_count, load.candidate_loans) {
+	if !known || !rd.event_report_check(load.kind, load.step, event, report, load.kept_count, load.candidate_loans) {
 		disk_load_service_fault()
 		return
 	}
@@ -703,6 +723,14 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 			head := transmute([4]u64)found
 			system.log_fact(.Warning, Disk_Load_Refused_Hash_Differs{found_hash = value_kinds.Hash_Field(found), hash = value_kinds.Hash_Field(load.hash), refused_process = disk_load_name_field()})
 			disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])))
+			return
+		}
+		// The script font set starts nothing: this service keeps its
+		// bytes, and the load ends here, cleanly.
+		if load.kind == .Script_Fonts {
+			script_fonts_take(&load.module)
+			disk_processes_starts = 0
+			disk_load_end(.Ok, {})
 			return
 		}
 		disk_load_continue(.Module_Checked)
@@ -779,7 +807,13 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = name})
 		disk_load_end(.Bad_State, disk_load_refused_values())
 	case .No_Object:
-		system.log_fact(.Warning, Disk_Load_Refused_No_Object{refused_process = name})
+		// A data disk with no script font set is the usual machine: one
+		// line says what the machine draws, and nothing is refused.
+		if disk_load.kind == .Script_Fonts {
+			script_fonts_not_on_disk()
+		} else {
+			system.log_fact(.Warning, Disk_Load_Refused_No_Object{refused_process = name})
+		}
 		disk_load_end(.Bad_Handle, errors.ring_fail(kind, .Absent, .Objects, 1))
 	case .Read_Refused:
 		// The error record is a fact of its own fields after the line of
@@ -795,8 +829,13 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Malformed, .None, 1))
 	case .Object_Too_Large:
 		size := report.byte_count
-		system.log_fact(.Warning, Disk_Load_Refused_Object_Too_Large{object_bytes = size, file_bytes_limit = u64(disk_process.FILE_BYTES_LIMIT), refused_process = name})
-		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT))
+		limit := rd.load_bytes_limit(disk_load.kind)
+		if disk_load.kind == .Script_Fonts {
+			system.log_fact(.Warning, Script_Fonts_Refused_Too_Large{object_bytes = size, set_bytes_limit = limit})
+		} else {
+			system.log_fact(.Warning, Disk_Load_Refused_Object_Too_Large{object_bytes = size, file_bytes_limit = limit, refused_process = name})
+		}
+		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), i64(limit)))
 	case .No_Byte_At:
 		system.log_fact(.Warning, Disk_Load_Refused_No_Byte_At{received_bytes = report.received_bytes, object_bytes = report.byte_count, refused_process = name})
 		disk_load_end(.Bad_State, disk_load_refused_values())

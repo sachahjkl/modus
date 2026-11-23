@@ -69,6 +69,7 @@ text_settings_create :: proc "contextless" () {
 	if font_outlines_mapping.page_count == 0 {
 		system.log_fact(.Warning, Font_Outlines_Absent{})
 	}
+	script_fonts_name_read()
 }
 
 // text_settings_give adds the settings page and the font outlines,
@@ -94,6 +95,8 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 		mappings[count^].flags = {}
 		count^ += 1
 		system.range_mapped_put(values, .Font_Outlines)
+		// The script font set goes where the font outlines go.
+		script_fonts_give(mappings, count, values)
 	}
 }
 

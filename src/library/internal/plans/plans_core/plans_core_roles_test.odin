@@ -260,6 +260,23 @@ test_plans_roles_set_of_refuses_two_outermost_holders :: proc(t: ^testing.T) {
 	// No plan: the set of the defaults of the image.
 	testing.expect(t, plan_roles_set_of(nil, 0, 2, &set))
 	testing.expect_value(t, set.override_count, u64(0))
+	testing.expect_value(t, set.script_fonts, blake3.Hash{})
+}
+
+// The script font set of a plan travels in the set of its roles, beside
+// its overrides; a plan with none, and a set of the defaults, carry zero.
+@(test)
+test_plans_roles_set_of_carries_the_script_font_set :: proc(t: ^testing.T) {
+	plan := pr.Plan_Spec{principal = 0, entry_count = 2}
+	plan.entries[0], _ = pr.plan_entry_make_role("first", .Assistive, roles_test_hash(1))
+	plan.entries[1], _ = pr.plan_entry_make_script_fonts(roles_test_hash(9))
+	set: rd.Plan_Roles_Set
+	testing.expect(t, plan_roles_set_of(&plan, 3, 0, &set))
+	testing.expect_value(t, set.override_count, u64(1))
+	testing.expect_value(t, set.script_fonts, roles_test_hash(9))
+	plan.entry_count = 1
+	testing.expect(t, plan_roles_set_of(&plan, 3, 0, &set))
+	testing.expect_value(t, set.script_fonts, blake3.Hash{})
 }
 // The answer of a set is lost after the core took it: the port reads the
 // core, gives it the generation of the store, then the set again. The core

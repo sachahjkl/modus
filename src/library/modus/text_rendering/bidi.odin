@@ -13,12 +13,15 @@ import "modus:contract/text_encoding"
 // a text of the system holds none (src/md/data/text_encoding.md).
 
 // The placed glyphs of a line that the pass reorders: the levels of a
-// line live on the stack. A longer text keeps the order of the text: a
-// draw record holds 256 bytes.
-BIDI_GLYPH_LIMIT :: 1024
+// line live on the stack, which a call of the library module keeps under
+// 16 KiB. A longer text keeps the order of the text. A draw record holds
+// 256 bytes: at most 512 glyphs, each character a mark on a dotted circle.
+BIDI_GLYPH_LIMIT :: 512
 
 // placed_character gives the character at the first byte of a placed
-// glyph, and if the placed glyph is a mark: a mark has the advance 0.
+// glyph, and if the placed glyph is a mark: a glyph that the shaper placed
+// on a base (Anchored or Centred), the dots that a font made of a letter
+// too, whose byte is the byte of the letter.
 @(private)
 placed_character :: proc "contextless" (text: []u8, glyph: Placed_Glyph) -> (character: rune, valid, mark: bool) {
 	length: int
@@ -26,8 +29,7 @@ placed_character :: proc "contextless" (text: []u8, glyph: Placed_Glyph) -> (cha
 	if length == 0 {
 		return 0, false, false
 	}
-	mark = valid && glyph.advance == 0 && is_mark(character) && glyph.glyph != FALLBACK_GLYPH_FIRST + u32(DOTTED_CIRCLE)
-	return character, valid, mark
+	return character, valid, glyph.placement != .Base
 }
 
 // is_strong_right says if a class counts as right to left for the
@@ -45,16 +47,75 @@ direction_of :: #force_inline proc "contextless" (class: Bidi_Class) -> Bidi_Cla
 	return .ON
 }
 
-// bidi_levels gives the embedding level of each glyph of a line (rules P2
-// and P3, W1 to W7, N1 and N2, I1 and I2, and L1 for the white space at
-// its end), and the level of the paragraph. rtl is false when the line has
-// no character of right to left: its levels are then all 0.
-bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: []u8, marks: []bool) -> (paragraph: u8, rtl: bool) {
-	count := min(len(placed), len(levels), len(marks), BIDI_GLYPH_LIMIT)
+// The deepest isolate (UAX #9, BD2: max_depth): an isolate past it is a
+// neutral of the level around it.
+BIDI_DEPTH_LIMIT :: 125
+
+// The isolate characters of a line, which link two level runs into one
+// isolating run sequence (BD13).
+@(private)
+ISOLATE_INITIATOR_VALID :: u8(1) // An LRI, RLI or FSI that opened an isolate.
+@(private)
+ISOLATE_END_MATCHED :: u8(2) // A PDI that closed one.
+
+// is_isolate_initiator says if a class opens an isolate.
+@(private)
+is_isolate_initiator :: #force_inline proc "contextless" (class: Bidi_Class) -> bool {
+	return class == .LRI || class == .RLI || class == .FSI
+}
+
+// matching_isolate_end gives the PDI that closes the isolate that the
+// initiator at start opens (BD9), or count when none does.
+@(private)
+matching_isolate_end :: proc "contextless" (classes: []Bidi_Class, start: int) -> int {
+	depth := 0
+	for index in start + 1 ..< len(classes) {
+		switch {
+		case is_isolate_initiator(classes[index]):
+			depth += 1
+		case classes[index] == .PDI:
+			if depth == 0 {
+				return index
+			}
+			depth -= 1
+		}
+	}
+	return len(classes)
+}
+
+// first_strong_level gives the level of the first strong character from
+// start to end, the text inside an isolate left out (P2, P3): 1 for R or
+// AL, 0 for L or none.
+@(private)
+first_strong_level :: proc "contextless" (classes: []Bidi_Class, start, end: int) -> u8 {
+	for index := start; index < end; index += 1 {
+		switch {
+		case classes[index] == .L:
+			return 0
+		case classes[index] == .R || classes[index] == .AL:
+			return 1
+		case is_isolate_initiator(classes[index]):
+			index = matching_isolate_end(classes, index)
+		}
+	}
+	return 0
+}
+
+// bidi_levels gives the embedding level of each glyph of a line, and the
+// level of the paragraph: P2 and P3, the explicit levels of the isolates
+// (X1 to X10 for LRI, RLI, FSI and PDI), then W1 to W7, N1 and N2 on each
+// isolating run sequence, I1 and I2, and L1 for the white space at the end
+// of the line. scratch holds the glyphs of one isolating run sequence at a
+// time. rtl is false when the line has no character of right to left and
+// no isolate of right to left: its levels are then all 0. The embeddings
+// and the overrides (LRE, RLE, LRO, RLO, PDF) are boundary neutrals: a text
+// of the system holds none (src/md/data/text_encoding.md).
+bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: []u8, scratch: []u16) -> (paragraph: u8, rtl: bool) {
+	count := min(len(placed), len(levels), len(scratch), BIDI_GLYPH_LIMIT)
 	classes: [BIDI_GLYPH_LIMIT]Bidi_Class
+	links: [BIDI_GLYPH_LIMIT]u8
 	for index in 0 ..< count {
 		character, valid, mark := placed_character(text, placed[index])
-		marks[index] = mark
 		class := Bidi_Class.ON
 		switch {
 		case mark:
@@ -65,12 +126,12 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 			class = bidi_class_of(character)
 		}
 		switch class {
-		case .LRE, .LRO, .RLE, .RLO, .PDF, .LRI, .RLI, .FSI, .PDI:
+		case .LRE, .LRO, .RLE, .RLO, .PDF:
 			class = .BN
-		case .L, .R, .AL, .EN, .ES, .ET, .AN, .CS, .NSM, .BN, .B, .S, .WS, .ON:
+		case .L, .R, .AL, .EN, .ES, .ET, .AN, .CS, .NSM, .BN, .B, .S, .WS, .ON, .LRI, .RLI, .FSI, .PDI:
 		}
 		classes[index] = class
-		rtl ||= class == .R || class == .AL || class == .AN
+		rtl ||= class == .R || class == .AL || class == .AN || class == .RLI || class == .FSI
 	}
 	if !rtl {
 		for index in 0 ..< count {
@@ -78,27 +139,128 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 		}
 		return 0, false
 	}
-	// P2 and P3: the first strong character.
+	line := classes[:count]
+	paragraph = first_strong_level(line, 0, count)
+	// X1 to X10, the isolates alone: each initiator takes the level around
+	// it and opens the next odd or even level; its PDI closes it.
+	stack: [BIDI_DEPTH_LIMIT + 2]u8
+	depth := 0
+	stack[0] = paragraph
+	overflow_isolates, valid_isolates := 0, 0
 	for index in 0 ..< count {
-		if classes[index] == .L {
-			break
-		}
-		if classes[index] == .R || classes[index] == .AL {
-			paragraph = 1
-			break
+		current := stack[depth]
+		levels[index] = current
+		links[index] = 0
+		class := classes[index]
+		switch {
+		case is_isolate_initiator(class):
+			right_to_left := class == .RLI || class == .FSI && first_strong_level(line, index + 1, matching_isolate_end(line, index)) == 1
+			next := right_to_left ? (current + 1) | 1 : (current + 2) & ~u8(1)
+			if int(next) <= BIDI_DEPTH_LIMIT && overflow_isolates == 0 && depth + 1 < len(stack) {
+				depth += 1
+				stack[depth] = next
+				valid_isolates += 1
+				links[index] = ISOLATE_INITIATOR_VALID
+			} else {
+				overflow_isolates += 1
+			}
+		case class == .PDI:
+			if overflow_isolates > 0 {
+				overflow_isolates -= 1
+			} else if valid_isolates > 0 {
+				depth -= 1
+				valid_isolates -= 1
+				levels[index] = stack[depth]
+				links[index] = ISOLATE_END_MATCHED
+			}
 		}
 	}
-	sos := paragraph == 1 ? Bidi_Class.R : Bidi_Class.L
-	// W1: a mark takes the class of the character before it.
+	// Each isolating run sequence: from a glyph that no glyph of its level
+	// comes before, over each isolate to its matched PDI.
+	for start in 0 ..< count {
+		if links[start] == ISOLATE_END_MATCHED || start > 0 && levels[start - 1] == levels[start] {
+			continue
+		}
+		length := 0
+		for index := start; index < count && length < len(scratch); {
+			scratch[length] = u16(index)
+			length += 1
+			if links[index] == ISOLATE_INITIATOR_VALID {
+				index = matching_isolate_end(line, index)
+				continue
+			}
+			index += 1
+			if index < count && levels[index] != levels[start] {
+				break
+			}
+		}
+		sequence_resolve(line, levels[:count], links[:count], scratch[:length], paragraph)
+	}
+	// I1 and I2.
 	for index in 0 ..< count {
+		level := levels[index]
+		switch classes[index] {
+		case .R:
+			level += level % 2 == 0 ? 1 : 0
+		case .AN, .EN:
+			level += level % 2 == 0 ? 2 : 1
+		case .L:
+			level += level % 2 == 1 ? 1 : 0
+		case .AL, .ES, .ET, .CS, .NSM, .BN, .B, .S, .WS, .ON, .LRE, .LRO, .RLE, .RLO, .PDF, .LRI, .RLI, .FSI, .PDI:
+		}
+		levels[index] = level
+	}
+	// L1: the white space and the isolate characters at the end of the
+	// line take the level of the paragraph.
+	for index := count - 1; index >= 0; index -= 1 {
+		character, valid, _ := placed_character(text, placed[index])
+		class := valid ? bidi_class_of(character) : Bidi_Class.ON
+		switch class {
+		case .WS, .S, .BN, .LRI, .RLI, .FSI, .PDI:
+			levels[index] = paragraph
+			continue
+		case .L, .R, .AL, .EN, .ES, .ET, .AN, .CS, .NSM, .B, .ON, .LRE, .LRO, .RLE, .RLO, .PDF:
+		}
+		break
+	}
+	return paragraph, true
+}
+
+// sequence_resolve resolves the weak and the neutral types of one
+// isolating run sequence (W1 to W7, N1, N2), in the order of its glyphs:
+// the glyphs inside an isolate are not in it, and its initiator and its
+// matched PDI are neutrals next to each other.
+@(private)
+sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, links: []u8, sequence: []u16, paragraph: u8) {
+	if len(sequence) == 0 {
+		return
+	}
+	first, last := int(sequence[0]), int(sequence[len(sequence) - 1])
+	level := levels[first]
+	// sos and eos: the higher of the level of the sequence and of the level
+	// next to it, the paragraph at an edge of the line or after an isolate
+	// that no PDI closes.
+	before := first > 0 ? levels[first - 1] : paragraph
+	after := paragraph
+	if last + 1 < len(levels) && links[last] != ISOLATE_INITIATOR_VALID {
+		after = levels[last + 1]
+	}
+	sos := max(level, before) % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
+	eos := max(level, after) % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
+	// W1: a mark takes the class of the glyph before it; after an isolate
+	// initiator or a PDI, it is a neutral.
+	previous := sos
+	for place in sequence {
+		index := int(place)
 		if classes[index] == .NSM {
-			classes[index] = index == 0 ? sos : classes[index - 1]
+			classes[index] = is_isolate_initiator(previous) || previous == .PDI ? .ON : previous
 		}
+		previous = classes[index]
 	}
-	// W2 and W3: a European number after an Arabic letter is an Arabic
-	// number; an Arabic letter is R.
+	// W2 and W3.
 	last_strong := sos
-	for index in 0 ..< count {
+	for place in sequence {
+		index := int(place)
 		switch classes[index] {
 		case .L, .R, .AL:
 			last_strong = classes[index]
@@ -109,41 +271,43 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 		case .ES, .ET, .AN, .CS, .NSM, .BN, .B, .S, .WS, .ON, .LRE, .LRO, .RLE, .RLO, .PDF, .LRI, .RLI, .FSI, .PDI:
 		}
 	}
-	for index in 0 ..< count {
-		if classes[index] == .AL {
-			classes[index] = .R
+	for place in sequence {
+		if classes[place] == .AL {
+			classes[place] = .R
 		}
 	}
 	// W4: one separator between two numbers of one kind.
-	for index in 1 ..< max(count - 1, 1) {
-		before, after := classes[index - 1], classes[index + 1]
+	for position in 1 ..< max(len(sequence) - 1, 1) {
+		index := int(sequence[position])
+		before_class, after_class := classes[sequence[position - 1]], classes[sequence[position + 1]]
 		switch {
-		case classes[index] == .ES && before == .EN && after == .EN:
+		case classes[index] == .ES && before_class == .EN && after_class == .EN:
 			classes[index] = .EN
-		case classes[index] == .CS && before == after && (before == .EN || before == .AN):
-			classes[index] = before
+		case classes[index] == .CS && before_class == after_class && (before_class == .EN || before_class == .AN):
+			classes[index] = before_class
 		}
 	}
 	// W5: a run of terminators beside a European number.
-	for index := 0; index < count; {
-		if classes[index] != .ET {
-			index += 1
+	for position := 0; position < len(sequence); {
+		if classes[sequence[position]] != .ET {
+			position += 1
 			continue
 		}
-		end := index
-		for end < count && classes[end] == .ET {
+		end := position
+		for end < len(sequence) && classes[sequence[end]] == .ET {
 			end += 1
 		}
-		if index > 0 && classes[index - 1] == .EN || end < count && classes[end] == .EN {
-			for each in index ..< end {
-				classes[each] = .EN
+		if position > 0 && classes[sequence[position - 1]] == .EN || end < len(sequence) && classes[sequence[end]] == .EN {
+			for each in position ..< end {
+				classes[sequence[each]] = .EN
 			}
 		}
-		index = end
+		position = end
 	}
 	// W6 and W7.
 	last_strong = sos
-	for index in 0 ..< count {
+	for place in sequence {
+		index := int(place)
 		switch classes[index] {
 		case .ES, .ET, .CS:
 			classes[index] = .ON
@@ -156,50 +320,27 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 		case .AL, .AN, .NSM, .BN, .B, .S, .WS, .ON, .LRE, .LRO, .RLE, .RLO, .PDF, .LRI, .RLI, .FSI, .PDI:
 		}
 	}
-	// N1 and N2: a run of neutrals takes the direction around it when both
-	// sides agree, else the direction of the paragraph.
-	for index := 0; index < count; {
-		if direction_of(classes[index]) != .ON {
-			index += 1
+	// N1 and N2: a run of neutrals, the isolate characters too, takes the
+	// direction around it when both sides agree, else the direction of the
+	// embedding level.
+	embedding := level % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
+	for position := 0; position < len(sequence); {
+		if direction_of(classes[sequence[position]]) != .ON {
+			position += 1
 			continue
 		}
-		end := index
-		for end < count && direction_of(classes[end]) == .ON {
+		end := position
+		for end < len(sequence) && direction_of(classes[sequence[end]]) == .ON {
 			end += 1
 		}
-		before := index > 0 ? direction_of(classes[index - 1]) : sos
-		after := end < count ? direction_of(classes[end]) : sos
-		resolved := before == after ? before : sos
-		for each in index ..< end {
-			classes[each] = resolved
+		side_before := position > 0 ? direction_of(classes[sequence[position - 1]]) : sos
+		side_after := end < len(sequence) ? direction_of(classes[sequence[end]]) : eos
+		resolved := side_before == side_after ? side_before : embedding
+		for each in position ..< end {
+			classes[sequence[each]] = resolved
 		}
-		index = end
+		position = end
 	}
-	// I1 and I2.
-	for index in 0 ..< count {
-		level := paragraph
-		switch classes[index] {
-		case .R:
-			level += paragraph % 2 == 0 ? 1 : 0
-		case .AN, .EN:
-			level += paragraph % 2 == 0 ? 2 : 1
-		case .L:
-			level += paragraph % 2 == 1 ? 1 : 0
-		case .AL, .ES, .ET, .CS, .NSM, .BN, .B, .S, .WS, .ON, .LRE, .LRO, .RLE, .RLO, .PDF, .LRI, .RLI, .FSI, .PDI:
-		}
-		levels[index] = level
-	}
-	// L1: the white space at the end of the line takes the level of the
-	// paragraph.
-	for index := count - 1; index >= 0; index -= 1 {
-		character, valid, _ := placed_character(text, placed[index])
-		class := valid ? bidi_class_of(character) : Bidi_Class.ON
-		if class != .WS && class != .S && class != .BN {
-			break
-		}
-		levels[index] = paragraph
-	}
-	return paragraph, true
 }
 
 // bidi_line_reorder gives the placed glyphs of a line their places on the
@@ -212,12 +353,13 @@ bidi_line_reorder :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: 
 		return
 	}
 	levels: [BIDI_GLYPH_LIMIT]u8
-	marks: [BIDI_GLYPH_LIMIT]bool
-	_, rtl := bidi_levels(text, placed, levels[:count], marks[:count])
+	// One array: the glyphs of a run sequence for bidi_levels, then the
+	// order of the screen.
+	order: [BIDI_GLYPH_LIMIT]u16
+	_, rtl := bidi_levels(text, placed, levels[:count], order[:count])
 	if !rtl {
 		return
 	}
-	order: [BIDI_GLYPH_LIMIT]u16
 	highest, lowest_odd := u8(0), u8(255)
 	for index in 0 ..< count {
 		order[index] = u16(index)
@@ -242,22 +384,32 @@ bidi_line_reorder :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: 
 			start = end
 		}
 	}
+	// A mark keeps its place from its base: the x of each mark becomes its
+	// offset from the base before it, before the bases move.
+	base := -1
+	for index in 0 ..< count {
+		if !(placed[index].placement != .Base) {
+			base = index
+		} else if base >= 0 {
+			placed[index].x -= placed[base].x
+		}
+	}
 	// The places, in the order of the screen; a mark has none of its own.
 	pen: i64
 	for visual in 0 ..< count {
 		index := int(order[visual])
-		if marks[index] {
+		if (placed[index].placement != .Base) {
 			continue
 		}
 		placed[index].x = i32(pen)
 		pen += i64(placed[index].advance)
 	}
-	base := -1
+	base = -1
 	set := spacing.fonts != nil ? spacing.fonts : &state.font_set
 	for index in 0 ..< count {
-		if marks[index] {
+		if (placed[index].placement != .Base) {
 			if base >= 0 {
-				placed[index].x = placed[base].x
+				placed[index].x += placed[base].x
 			}
 			continue
 		}

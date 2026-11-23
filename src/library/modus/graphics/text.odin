@@ -465,16 +465,30 @@ text_cells_of_face :: proc "contextless" (canvas: Canvas, x, y: int, bytes: []u8
 // mark_draw draws a mark that stays apart, centred on the advance of its
 // base: base is the left of the base in 1/64 of a pixel, base_advance its
 // advance. The height of the mark is the height that its font gives it. A
-// mark that no font has draws the replacement glyph at the base.
+// mark that no font has draws the replacement glyph at the base. A mark
+// that a font made (font not None) is its glyph index in that font.
 @(private)
-mark_draw :: proc "contextless" (face: text_rendering.Face, mark: rune, size: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, base, base_advance: i64, y: int, color: Color, alpha: u32) {
+mark_draw :: proc "contextless" (face: text_rendering.Face, mark: rune, size: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, base, base_advance: i64, y: int, color: Color, alpha: u32, font := text_rendering.Outline_Font.None, index := 0) {
 	centre := (base + base_advance / 2) / text_rendering.SUBPIXEL
-	entry, words, source := text_rendering.glyph(face, mark, size, 0)
+	entry: text_rendering.Glyph_Entry
+	words: [^]u32
+	source: text_rendering.Glyph_Source
+	if font == .None {
+		entry, words, source = text_rendering.glyph(face, mark, size, 0)
+	} else {
+		entry, words, source = text_rendering.glyph_by_index(face, font, index, size, 0)
+	}
 	switch source {
 	case .Private_Cache, .Not_Kept:
 		glyph_words_draw(entry, words, square_root, tables, order, canvas, int(centre) - int(entry.left) - int(entry.width) / 2, y, color, alpha)
 	case .Banded:
-		job, started := text_rendering.glyph_bands(face, mark, size, 0)
+		job: text_rendering.Raster_Job
+		started: bool
+		if font == .None {
+			job, started = text_rendering.glyph_bands(face, mark, size, 0)
+		} else {
+			job, started = text_rendering.glyph_index_bands(face, font, index, size, 0)
+		}
 		if started {
 			glyph_bands_draw(&job, square_root, tables, order, canvas, int(centre) - job.columns / 2 + job.origin_column, y, color, alpha)
 		}
@@ -604,18 +618,37 @@ text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_
 	base_place, base_advance: i64
 	has_base := false
 	for glyph in placed {
+		// A format character that a reader never sees draws nothing.
+		if glyph.glyph == text_rendering.INVISIBLE_GLYPH {
+			continue
+		}
 		replacement := glyph.glyph == text_rendering.REPLACEMENT_GLYPH
 		character: rune
+		// An anchored mark sits glyph.y above the baseline, which the
+		// shaper keeps within one line; the rows of the canvas grow down.
+		glyph_y := y
+		if glyph.placement == .Anchored {
+			glyph_y = y - int((clamp(i64(glyph.y), -i64(size), i64(size)) + text_rendering.SUBPIXEL / 2) >> 6)
+		}
 		if font, index, direct := text_rendering.direct_glyph_parts(glyph.glyph); direct {
-			// A form or a ligature that a substitution gave.
+			// A form or a ligature that a substitution gave, or a mark that
+			// a font made of a letter (the dots of Arabic).
+			if glyph.placement == .Centred {
+				if has_base && base_place > -(i64(text_rendering.WORK_COLUMN_LIMIT) << 6) && base_place < i64(canvas.width) << 6 {
+					mark_draw(face, 0, size, square_root, tables, order, canvas, base_place, base_advance, y, color, alpha, font, index)
+				}
+				continue
+			}
 			pixel, position := text_rendering.position_of(place + i64(glyph.x), position_count)
 			if pixel < -i64(text_rendering.WORK_COLUMN_LIMIT) || pixel > i64(canvas.width) {
 				continue
 			}
-			if !face_index_glyph_draw(face, font, index, size, position, square_root, tables, order, canvas, int(pixel), y, color, alpha) {
-				character_replacement_sized(canvas, int(pixel), y, color, size, alpha)
+			if !face_index_glyph_draw(face, font, index, size, position, square_root, tables, order, canvas, int(pixel), glyph_y, color, alpha) {
+				character_replacement_sized(canvas, int(pixel), glyph_y, color, size, alpha)
 			}
-			base_place, base_advance, has_base = place + i64(glyph.x), i64(glyph.advance), true
+			if glyph.placement == .Base {
+				base_place, base_advance, has_base = place + i64(glyph.x), i64(glyph.advance), true
+			}
 			continue
 		}
 		switch {
@@ -631,13 +664,15 @@ text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_
 			}
 			character = indexed
 		}
-		if !replacement && glyph.advance == 0 && has_base && text_rendering.is_mark(character) {
-			if base_place > -(i64(text_rendering.WORK_COLUMN_LIMIT) << 6) && base_place < i64(canvas.width) << 6 {
+		if !replacement && glyph.placement == .Centred {
+			if has_base && base_place > -(i64(text_rendering.WORK_COLUMN_LIMIT) << 6) && base_place < i64(canvas.width) << 6 {
 				mark_draw(face, character, size, square_root, tables, order, canvas, base_place, base_advance, y, color, alpha)
 			}
 			continue
 		}
-		base_place, base_advance, has_base = place + i64(glyph.x), i64(glyph.advance), true
+		if glyph.placement == .Base {
+			base_place, base_advance, has_base = place + i64(glyph.x), i64(glyph.advance), true
+		}
 		pixel, position := text_rendering.position_of(place + i64(glyph.x), position_count)
 		// A glyph far outside the canvas: its pixel does not fit an int of
 		// the canvas, and it draws nothing. No glyph is wider than the
@@ -645,8 +680,8 @@ text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_
 		if pixel < -i64(text_rendering.WORK_COLUMN_LIMIT) || pixel > i64(canvas.width) {
 			continue
 		}
-		if replacement || !face_glyph_draw(face, character, size, position, square_root, tables, order, canvas, int(pixel), y, color, alpha) {
-			character_replacement_sized(canvas, int(pixel), y, color, size, alpha)
+		if replacement || !face_glyph_draw(face, character, size, position, square_root, tables, order, canvas, int(pixel), glyph_y, color, alpha) {
+			character_replacement_sized(canvas, int(pixel), glyph_y, color, size, alpha)
 		}
 	}
 }

@@ -61,7 +61,8 @@ Font_File :: struct {
 	cff:                 Cff_Font, // The CFF or CFF2 outlines; version 0 for a font of glyf (cff.odin).
 	name, os2, post:     Table, // Read by the tool only.
 	kern:                Table, // The pair adjustments; absent in many fonts (spacing.odin).
-	gsub:                Table, // The substitutions of glyphs; read by the tool only (substitution.odin).
+	gsub:                Table, // The substitutions of glyphs: the forms of a script and its ligatures (substitution.odin).
+	gpos:                Table, // The positions of glyphs: the anchors of the marks (positioning.odin).
 }
 
 // One table of the file: its bytes, checked to be inside the file.
@@ -189,6 +190,8 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 			font.kern = table
 		case "GSUB":
 			font.gsub = table
+		case "GPOS":
+			font.gpos = table
 		case "CFF ":
 			font.cff.table = table
 			font.cff.version = 1
@@ -606,8 +609,9 @@ simple_glyph_add :: proc "contextless" (data: []u8, contours: int, outline: ^Out
 		return .Too_Short
 	}
 	at := 12 + 2 * contours + instructions
-	// The flags, with their repeats.
-	flags: [POINT_LIMIT]u8
+	// The flags, with their repeats. Each flag waits in the y of its point
+	// until its y is read: an array of flags would be 1 KiB on the stack of
+	// a call of the library module text_rendering.
 	for index := 0; index < points; {
 		if at >= len(data) {
 			return .Too_Short
@@ -626,7 +630,7 @@ simple_glyph_add :: proc "contextless" (data: []u8, contours: int, outline: ^Out
 			if index >= points {
 				return .Unknown_Format
 			}
-			flags[index] = flag
+			outline.points[first_point + index] = {y = i32(flag)}
 			index += 1
 		}
 	}
@@ -636,7 +640,8 @@ simple_glyph_add :: proc "contextless" (data: []u8, contours: int, outline: ^Out
 		same_bit := u8(axis == 0 ? 16 : 32)
 		value := 0
 		for index in 0 ..< points {
-			flag := flags[index]
+			point := &outline.points[first_point + index]
+			flag := u8(point.y)
 			switch {
 			case flag & short_bit != 0:
 				if at >= len(data) {
@@ -653,7 +658,6 @@ simple_glyph_add :: proc "contextless" (data: []u8, contours: int, outline: ^Out
 				at += 2
 				value += step
 			}
-			point := &outline.points[first_point + index]
 			if axis == 0 {
 				point.x = i32(value)
 				point.on_curve = flag & 1 != 0

@@ -93,10 +93,30 @@ Small_Band :: struct {
 
 small_band: Small_Band
 
-// outline_of gives an outline over the points of an outline memory: the
-// library module text_rendering opens the fonts of a call with one on its
-// stack.
+// outline_of gives an outline over the points of an outline memory.
 outline_of :: proc "contextless" (memory: ^Outline_Memory) -> vector_font.Outline {
+	return {points = memory.points[:], contour_ends = memory.contours[:]}
+}
+
+// The measures of a font read the outlines of the characters 33 to 126
+// with at most these points and contours, whatever memory the caller
+// gives: so the measures of a font are the same in a process, which gives
+// its outline memory, and in a call of the library module, which gives a
+// measure memory on its stack. The largest of those outlines in the fonts
+// of the system has 142 points and 5 contours (B612); a font with a larger
+// one is refused, in both.
+MEASURE_POINT_LIMIT :: 256
+MEASURE_CONTOUR_LIMIT :: 16
+
+// Measure_Memory: the memory of the outlines of the measures of a font,
+// about 3 KiB, for a caller that only measures.
+Measure_Memory :: struct {
+	points:   [MEASURE_POINT_LIMIT]vector_font.Outline_Point,
+	contours: [MEASURE_CONTOUR_LIMIT]int,
+}
+
+// measure_outline_of gives an outline over a measure memory.
+measure_outline_of :: proc "contextless" (memory: ^Measure_Memory) -> vector_font.Outline {
 	return {points = memory.points[:], contour_ends = memory.contours[:]}
 }
 

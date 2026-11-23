@@ -109,11 +109,12 @@ Outline_Font :: enum u8 {
 	Noto_Sans_Symbols_2, // The geometric shapes, the symbols, the dingbats: CFF outlines.
 	Noto_Emoji, // The emoji, in the color of the text.
 	Noto_Sans_CJK, // The ideographs, the kana and Hangul: CFF2 outlines, a collection.
+	Noto_Sans_Thai, // Thai, whose marks its GPOS places.
 }
 // The fonts of the font outlines of the boot image, and the fonts of the
 // script font set.
 BOOT_FONTS :: Outline_Fonts{.B612, .B612_Bold, .Paper_Mono, .Paper_Mono_Semibold, .Noto_Sans}
-SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK}
+SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai}
 Outline_Fonts :: bit_set[Outline_Font]
 // The font is 4 bits in the key of the private glyph cache.
 #assert(int(max(Outline_Font)) < 1 << 4)
@@ -144,6 +145,8 @@ outline_font_name :: proc "contextless" (font: Outline_Font) -> string {
 		return "noto_emoji"
 	case .Noto_Sans_CJK:
 		return "noto_sans_cjk"
+	case .Noto_Sans_Thai:
+		return "noto_sans_thai"
 	}
 	return ""
 }
@@ -238,6 +241,7 @@ Script :: enum u8 {
 	Symbols, // The geometric shapes, the miscellaneous symbols, the dingbats, the arrows and symbols past them.
 	Han, // The ideographs, the kana, Bopomofo, Hangul, the fullwidth forms.
 	Emoji, // U+1F000 to U+1FAFF.
+	Thai, // U+0E00 to U+0E7F.
 }
 
 // script_name gives the name of a script for the log.
@@ -259,6 +263,8 @@ script_name :: proc "contextless" (script: Script) -> string {
 		return "han"
 	case .Emoji:
 		return "emoji"
+	case .Thai:
+		return "thai"
 	}
 	return ""
 }
@@ -300,6 +306,9 @@ scripts := [Script]Script_Row {
 	.Symbols = {ranges = {0 = {0x25A0, 0x25FF}, 1 = {0x2600, 0x27BF}, 2 = {0x2B00, 0x2BFF}}, range_count = 3, counted = true, chains = {.Interface = {.B612, .Paper_Mono, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}, .Interface_Bold = {.B612_Bold, .Paper_Mono_Semibold, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}, .Cells_Bold = {.Paper_Mono_Semibold, .B612_Bold, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}}},
 	.Han = {ranges = {0 = {0x1100, 0x11FF}, 1 = {0x2E80, 0x33FF}, 2 = {0x3400, 0x4DBF}, 3 = {0x4E00, 0x9FFF}, 4 = {0xAC00, 0xD7AF}, 5 = {0xF900, 0xFAFF}, 6 = {0xFE30, 0xFE4F}, 7 = {0xFF00, 0xFFEF}, 8 = {0x20000, 0x3FFFF}}, range_count = 9, chains = {.Interface = {.Noto_Sans_CJK, .Paper_Mono, .None, .None, .None}, .Interface_Bold = {.Noto_Sans_CJK, .Paper_Mono_Semibold, .None, .None, .None}, .Cells = {.Noto_Sans_CJK, .Paper_Mono, .None, .None, .None}, .Cells_Bold = {.Noto_Sans_CJK, .Paper_Mono_Semibold, .None, .None, .None}}},
 	.Emoji = {ranges = {0 = {0x1F000, 0x1FAFF}}, range_count = 1, chains = {.Interface = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}, .Interface_Bold = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}, .Cells = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}, .Cells_Bold = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}}},
+	// The fonts of the boot image first: Paper Mono draws the baht sign
+	// (U+0E3F) with no script font set.
+	.Thai = {ranges = {0 = {0x0E00, 0x0E7F}}, range_count = 1, counted = true, chains = {.Interface = {.B612, .Noto_Sans, .Paper_Mono, .Noto_Sans_Thai, .None}, .Interface_Bold = {.B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .Noto_Sans_Thai, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Thai, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Thai, .None}}},
 }
 
 // The chain of each face for a character of no script. A proportional
@@ -436,39 +445,54 @@ font_file_open :: proc "contextless" (set: ^Font_Set, font: Outline_Font, bytes:
 	if font == .None {
 		return .Unknown_Format
 	}
+	// The font is read in its place in the set, not in a copy on the
+	// stack: a call of the library module opens its set on a stack of a
+	// worker thread. A refused font is closed again, all zero.
 	opened := &set.fonts[font]
 	opened^ = {}
+	defer if problem != .None {
+		opened^ = {}
+	}
 	// A collection (Noto Sans CJK) opens at its first face.
 	directory: int
 	directory, problem = vector_font.collection_face_offset(bytes, 0)
 	if problem != .None {
 		return problem
 	}
-	file: vector_font.Font_File
-	file, problem = vector_font.font_open(bytes, directory)
+	opened.file, problem = vector_font.font_open(bytes, directory)
 	if problem != .None {
 		return problem
 	}
-	own, stated: vector_font.Font_Measures
-	own, problem = vector_font.font_measures_of_outline(&file, outline)
+	// A font of the boot image is a TrueType subset that the tool writes:
+	// a font with CFF outlines in its place is refused, so a call of the
+	// library module never runs the reader of CFF, whose stack does not
+	// fit beside the font set in a call (CALL_STACK_BOUND).
+	if font in BOOT_FONTS && opened.file.cff.version != 0 {
+		return .Unknown_Format
+	}
+	measure := outline^
+	measure.points = measure.points[:min(len(measure.points), MEASURE_POINT_LIMIT)]
+	measure.contour_ends = measure.contour_ends[:min(len(measure.contour_ends), MEASURE_CONTOUR_LIMIT)]
+	opened.own, problem = vector_font.font_measures_of_outline(&opened.file, &measure)
 	if problem != .None && font in SCRIPT_FONTS {
 		// A font of one script has no Latin letters to measure: the
 		// heights that it states give its frame (it is never the first
 		// font of a face).
-		own, problem = vector_font.font_measures_stated(&file)
+		opened.own, problem = vector_font.font_measures_stated(&opened.file)
 	}
 	if problem != .None {
 		return problem
 	}
-	stated, problem = vector_font.proportional_measures(&file, own)
+	opened.stated, problem = vector_font.proportional_measures(&opened.file, opened.own)
 	if problem != .None {
 		return problem
 	}
-	pairs, pair_problem := vector_font.pair_table_open(&file)
+	pair_problem: vector_font.Font_Problem
+	opened.pairs, pair_problem = vector_font.pair_table_open(&opened.file)
 	if pair_problem != .None {
-		pairs = {}
+		opened.pairs = {}
 	}
-	opened^ = {opened = true, file = file, own = own, stated = stated, pairs = pairs}
+	opened.opened = true
 	return .None
 }
 

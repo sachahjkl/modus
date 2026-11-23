@@ -1,6 +1,7 @@
 #+build !freestanding
 package text_rendering_module
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:testing"
 import "core:time"
@@ -586,4 +587,103 @@ the_time_of_one_call :: proc(t: ^testing.T) {
 		testing.expect_value(t, result, i64(len(LABEL)))
 	}
 	fmt.printfln("text_rendering: one call of shape_text on a label of %v bytes, the fonts of its face opened, the least of 200: %v ns", len(LABEL), least)
+}
+// The stack of one call (CALL_STACK_BOUND): the test paints the 64 KiB of
+// stack below its frame, makes the call, and finds the lowest byte that
+// changed. The calls are the deepest that the module makes: a text of
+// mixed direction long enough for the reorder of each glyph, marks, the
+// breaks of its lines, and its measure. Each export, each face. A byte
+// that a call writes with the paint itself is counted as unused: the bound
+// has room for that.
+@(private = "file")
+STACK_PAINTED :: 64 << 10
+@(private = "file")
+STACK_PAINT :: u8(0xA5)
+// The frame of stack_used_by is below its marker: no call starts above
+// this many bytes under it.
+@(private = "file")
+STACK_FRAME_MARGIN :: 1024
+
+@(private = "file")
+Stack_Call :: struct {
+	outlines: ^Test_Outlines,
+	face:     i64,
+	text:     system.Bytes_To_Read,
+	placed:   system.Table_To_Append(text_rendering.Placed_Glyph),
+	ranges:   system.Table_To_Change(text_rendering.Text_Range),
+	lines:    system.Table_To_Append(text_rendering.Text_Range),
+	export:   int,
+	result:   i64,
+}
+
+@(private = "file")
+stack_call_make :: proc "c" (call: ^Stack_Call) {
+	error: errors.Error_Record
+	switch call.export {
+	case 0:
+		call.result = shape_text(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.placed, &error)
+	case 1:
+		call.result = measure_texts(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, &call.ranges, &error)
+	case:
+		call.result = break_text(&call.outlines.table, call.face, i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE), &call.text, 40 * 64, &call.lines, &error)
+	}
+}
+
+// stack_used_by gives the bytes of stack that one call used, its margin
+// counted as used.
+@(private = "file")
+stack_used_by :: #force_no_inline proc(call: ^Stack_Call) -> int {
+	marker: u8
+	top := uintptr(&marker) - STACK_FRAME_MARGIN
+	bottom := top - STACK_PAINTED
+	for address := bottom; address < top; address += 1 {
+		intrinsics.volatile_store((^u8)(address), STACK_PAINT)
+	}
+	stack_call_make(call)
+	deepest := top
+	for address := bottom; address < top; address += 1 {
+		if intrinsics.volatile_load((^u8)(address)) != STACK_PAINT {
+			deepest = address
+			break
+		}
+	}
+	return int(top - deepest) + STACK_FRAME_MARGIN
+}
+
+@(test)
+one_call_stays_under_its_stack_bound :: proc(t: ^testing.T) {
+	outlines := repository_outlines(t)
+	defer delete(outlines.words)
+	line := "abc \u05D0\u05D1\u05D2 (123) e\u0301 q\u0323\u0302 \u0628\u064A\u062A def "
+	text := make([dynamic]u8)
+	defer delete(text)
+	for len(text) + len(line) < 2 * text_rendering.BIDI_GLYPH_LIMIT {
+		append(&text, line)
+	}
+	placed := make([]text_rendering.Placed_Glyph, 2 * len(text))
+	defer delete(placed)
+	ranges := [4]text_rendering.Text_Range{{start = 0, count = u32(len(line))}, {start = 0, count = u32(len(text))}, {start = 3, count = 40}, {start = 0, count = 0}}
+	lines := make([]text_rendering.Text_Range, len(text))
+	defer delete(lines)
+	most := 0
+	for face in ([?]i64{i64(text_rendering.Face.Interface), i64(text_rendering.Face.Cells_Bold)}) {
+		for export in 0 ..< 3 {
+			call := Stack_Call {
+				outlines = &outlines,
+				face     = face,
+				text     = bytes_to_read(text[:]),
+				placed   = {records = raw_data(placed), capacity = u64(len(placed))},
+				ranges   = {records = raw_data(ranges[:]), count = len(ranges)},
+				lines    = {records = raw_data(lines), capacity = u64(len(lines))},
+				export   = export,
+			}
+			used := stack_used_by(&call)
+			testing.expectf(t, call.result > 0, "the export %d of the face %d answers: %d", export, face, call.result)
+			testing.expectf(t, used <= CALL_STACK_BOUND, "the export %d of the face %d uses %d bytes of stack, past %d", export, face, used, CALL_STACK_BOUND)
+			most = max(most, used)
+		}
+	}
+	when MEASURE {
+		fmt.printfln("one call: at most %d bytes of stack", most)
+	}
 }

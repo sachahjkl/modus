@@ -686,7 +686,7 @@ Do not use: character (for this), letter, glyph (for this).
 
 A combining mark is a character that draws on the character before it, its base: an accent, a dot below, a vowel sign of Hebrew or Arabic.
 
-The shaper reads a base and its marks as one cluster. It composes them to one character by the compositions of Unicode when a font draws the result: `e` then U+0301 is é, and `e` with U+0323 and U+0302, in either order, is ệ. A mark that does not compose is a placed glyph with the advance 0, centred on its base. A mark with no base, at the start of a text or after a space, stands on a dotted circle (U+25CC). In a grid of cells a mark takes no cell.
+The shaper reads a base and its marks as one cluster. It composes them to one character by the compositions of Unicode when a font draws the result: `e` then U+0301 is é, and `e` with U+0323 and U+0302, in either order, is ệ. A mark that does not compose is a placed glyph with the advance 0, placed by the mark anchors of its font, else centred on its base. A mark with no base, at the start of a text or after a space, stands on a dotted circle (U+25CC). In a grid of cells a mark takes no cell.
 
 The design: `src/md/features/written_shaping.md`.
 
@@ -696,7 +696,7 @@ Do not use: accent (for this), diacritic (for the character), zero-width charact
 
 A joining form is the shape that a letter of Arabic takes by its neighbours: isolated, initial, medial or final.
 
-The shaper gives each letter its form from its joining type (Unicode) and the joining types of the letters on each side; a mark between two letters does not break the join. The form is the presentation form that Unicode names when the font has it, else the substitution of the font. Lam then alef is one glyph, their ligature. Example: in بيت the beh is initial, the yeh medial and the teh final.
+The shaper gives each letter its form from its joining type (Unicode) and the joining types of the letters on each side; a mark between two letters does not break the join. The form is the substitution of the font: Noto Sans Arabic makes beh a dotless body and its dot, then the initial, medial or final form of the body, and its mark anchors place the dot. A font that makes no form takes the presentation form that Unicode names. Lam then alef is one glyph, their ligature. Example: in بيت the beh is initial, the yeh medial and the teh final.
 
 The design: `src/md/features/written_shaping.md`.
 
@@ -706,17 +706,27 @@ Do not use: contextual form, positional form, glyph variant.
 
 The line direction is the order on the screen of the runs of one line that mixes left-to-right and right-to-left text, by the rules of UAX #9.
 
-The first strong letter of the text gives the direction of the line; each run of the other direction is reversed in place, numbers keep their order, and a bracket in a right-to-left run draws its mirrored glyph. The shaper changes only the x of each placed glyph: the placed glyphs stay in the order of the text. Example: `abc אבג 123` shows a b c, then 1 2 3, then ג ב א.
+The first strong letter of the text, outside any isolate, gives the direction of the line; each run of the other direction is reversed in place, numbers keep their order, and a bracket in a right-to-left run draws its mirrored glyph. An isolate (LRI, RLI or FSI to PDI) is one unit of the line around it, with its own direction inside; its controls draw nothing. The shaper changes only the x of each placed glyph: the placed glyphs stay in the order of the text. Example: `abc אבג 123` shows a b c, then 1 2 3, then ג ב א.
 
 The design: `src/md/features/written_shaping.md`.
 
 Do not use: bidi (alone), RTL mode, visual order (for the text).
 
+### Mark anchor
+
+A mark anchor is a point that a font gives a glyph, where a mark attaches: the anchor of the mark falls on the anchor of its base, or of the mark before it.
+
+The table `GPOS` of a font holds them (the features `mark` and `mkmk`). The shaper places each mark of a cluster by them, with an x from the origin of its base and a y above the baseline; a mark that no anchor places is centred on its base. The dots of a letter of Arabic, the points of Hebrew and the tone marks of Thai stacked on a vowel are placed so. Example: in ก่ำ the tone mark sits on the NIKHAHIT of SARA AM, which sits on ก.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: attachment point (for this), mark offset, diacritic position.
+
 ### Script font set
 
 The script font set is the fonts of the scripts that the boot image lacks, one data object that a plan names by its hash and that a process opens at a fixed range.
 
-It holds Noto Sans Hebrew, Noto Sans Arabic, Noto Sans Symbols 2, Noto Emoji and Noto Sans CJK, whole, 35.8 MB, so the boot image stays small. `modustool script_fonts` writes it and prints its hash; `font_outlines.script_fonts_check` refuses the whole set when a byte does not give its hash. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
+It holds Noto Sans Hebrew, Noto Sans Arabic, Noto Sans Thai, Noto Sans Symbols 2, Noto Emoji and Noto Sans CJK, whole, 35.9 MB, so the boot image stays small. `modustool script_fonts` writes it and prints its hash; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
 
 The design: `src/md/features/script_fonts.md`.
 

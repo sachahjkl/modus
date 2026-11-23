@@ -20,6 +20,7 @@ package root_delegation
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
+import "modus:contract/font_outlines"
 import module "modus:contract/module"
 
 // The context of the service disk_processes.
@@ -31,6 +32,39 @@ DISK_PROCESSES_VALUE_IMAGE_SIZE :: 0 // The context value with the bytes of the 
 // The most bytes of the module file of a disk process, and of each file
 // of the store that the import scan keeps.
 MODULE_BYTES_LIMIT :: 4 << 20
+
+// What a load reads (Load_Request.kind). Zero is refused at the border.
+Load_Kind :: enum u8 {
+	None         = 0,
+	// The module file of a disk process, from the store module_files, with
+	// the import scan, then Ready.
+	Module       = 1,
+	// The script font set (modus:contract/font_outlines), from its store
+	// of the machine: one object, with no scan. The core ends the load
+	// after Module_Filled, once it checked the bytes, and keeps them.
+	Script_Fonts = 2,
+}
+
+// load_kind_of_word gives the kind of a word, refusing None and each word
+// that names no member.
+load_kind_of_word :: proc "contextless" (word: u8) -> (kind: Load_Kind, ok: bool) {
+	member := enum_word.member_of_word(Load_Kind, u64(word)) or_return
+	return member, member != .None
+}
+
+// load_bytes_limit gives the most bytes of the file that a load of a kind
+// reads: the core lends memory of that size at most.
+load_bytes_limit :: proc "contextless" (kind: Load_Kind) -> u64 {
+	switch kind {
+	case .None:
+		return 0
+	case .Module:
+		return MODULE_BYTES_LIMIT
+	case .Script_Fonts:
+		return font_outlines.SCRIPT_FONTS_BYTES_LIMIT
+	}
+	return 0
+}
 
 // The most files of the store that one load keeps for its imports.
 LOAD_IMPORT_CAPACITY :: 8
@@ -126,6 +160,7 @@ Disk_Load_Refusal :: enum u32 {
 
 // What the core asks the service to load. The core writes it before Load.
 Load_Request :: struct {
+	kind:                  u8, // A Load_Kind word.
 	principal:             u64,
 	module_hash:           blake3.Hash,
 	nickname:              [NICKNAME_CAPACITY]u8,
@@ -241,15 +276,16 @@ packed_name :: proc "contextless" (bytes: ^[NICKNAME_CAPACITY]u8, length: u8) ->
 }
 
 // load_request_check reads a Load_Request at the border of the service.
-// It refuses a request that names no nickname, no hash, no storage module,
-// or more replacements than the table holds.
-load_request_check :: proc "contextless" (request: ^Load_Request) -> (nickname: string, storage_module: string, ok: bool) {
+// It refuses a request of no kind, one that names no nickname, no hash, no
+// storage module, or more replacements than the table holds.
+load_request_check :: proc "contextless" (request: ^Load_Request) -> (kind: Load_Kind, nickname: string, storage_module: string, ok: bool) {
+	kind = load_kind_of_word(request.kind) or_return
 	nickname = packed_name(&request.nickname, request.nickname_length) or_return
 	storage_module = packed_name(&request.storage_module, request.storage_module_length) or_return
 	if request.module_hash == (blake3.Hash{}) || request.replacement_count > LOAD_REPLACEMENT_CAPACITY {
-		return "", "", false
+		return .None, "", "", false
 	}
-	return nickname, storage_module, true
+	return kind, nickname, storage_module, true
 }
 
 // refusal_allowed_at says if the service can end a load with a refusal at
@@ -302,14 +338,23 @@ name_length_valid :: proc "contextless" (bytes: ^[LOAD_FILE_NAME_CAPACITY]u8, le
 // the count of the files that the core keeps for the imports;
 // candidate_loans is the count of the loans of entries of the scan that
 // the load made. Cancelled is never an event of a load that runs: the core
-// reads it apart, with the tag of a load that it ended.
-event_report_check :: proc "contextless" (step: Disk_Load_Step, event: Disk_Load_Event, report: ^Event_Report, kept_count: int, candidate_loans: int) -> bool {
+// reads it apart, with the tag of a load that it ended. kind is the kind of
+// the load: its file is at most load_bytes_limit(kind) bytes, and a load of
+// the script font set has no scan.
+event_report_check :: proc "contextless" (kind: Load_Kind, step: Disk_Load_Step, event: Disk_Load_Event, report: ^Event_Report, kept_count: int, candidate_loans: int) -> bool {
+	if kind == .None {
+		return false
+	}
 	switch event {
 	case .None, .Cancelled:
 		return false
 	case .Memory_Wanted:
 		place, known := enum_word.member_of_word(File_Place, u64(report.place))
-		if !known || report.byte_count == 0 || report.byte_count > MODULE_BYTES_LIMIT {
+		limit := place == .Module ? load_bytes_limit(kind) : MODULE_BYTES_LIMIT
+		if !known || report.byte_count == 0 || report.byte_count > limit {
+			return false
+		}
+		if place == .Candidate && kind != .Module {
 			return false
 		}
 		switch place {

@@ -83,9 +83,10 @@ fuzz_shaping_font_from_input :: proc(face: text_rendering.Face, size: int, witho
 // fuzz_shaping_plain says if a text keeps one placed glyph for each
 // character, in the order of the text: no mark (which composes, or stays
 // apart with the advance 0, or stands on a dotted circle), no character of
-// a right-to-left class (which reorders the line), and no letter that
-// joins (Arabic and its kin). The model of each character holds for such a
-// text only.
+// a right-to-left class (which reorders the line), no letter that joins
+// (Arabic and its kin), and no format character that draws nothing (an
+// isolate of UAX #9, a joiner). The model of each character holds for such
+// a text only.
 @(private = "file")
 fuzz_shaping_plain :: proc(text: []u8) -> bool {
 	for place := 0; place < len(text); {
@@ -94,7 +95,7 @@ fuzz_shaping_plain :: proc(text: []u8) -> bool {
 		if !valid {
 			continue
 		}
-		if text_rendering.is_mark(character) || text_rendering.joining_type_of(character) != .None {
+		if text_rendering.is_mark(character) || text_rendering.joining_type_of(character) != .None || text_rendering.is_invisible_format(character) {
 			return false
 		}
 		#partial switch text_rendering.bidi_class_of(character) {

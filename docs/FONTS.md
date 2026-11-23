@@ -526,7 +526,7 @@ The compositor writes one line for each counted script at its start, with what t
 - `compositor: the script cyrillic: the chain of the interface draws 96 of its 96 characters, the chain of the cells 96`;
 - `compositor: the script box drawing: the chain of the interface draws 160 of its 160 characters, the chain of the cells 160`.
 
-The process `interface_font` shows the Greek letters of B612, box-drawing characters from Paper Mono in the interface font, and writes `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must`, `interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: 7 characters: as it must` and `interface_font: 3 characters that no font of the chain has draw the replacement glyph: as it must`.
+The process `interface_font` shows the Greek letters of B612, box-drawing characters from Paper Mono in the interface font, and writes `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must`, `interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: 7 characters: as it must` and `interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must` (Armenian and Devanagari). It draws a line of Hebrew, Arabic, ideographs, an emoji and ■: with the script font set mapped, it writes `interface_font: the line of Hebrew, Arabic, Thai, the ideographs, an emoji and a geometric shape draws <n> glyphs, with no replacement glyph: as it must`; with none, `interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, the ideographs and an emoji draws the replacement glyph`.
 
 ### 13.3 What stays built at build time
 
@@ -593,7 +593,16 @@ The plan field that names the script font set and the root service that maps it;
 
 ### 13.9 The script font set and the written shaping
 
-The script font set is one data object in the format of the font outlines, outside the boot image: Noto Sans Hebrew (35 508 bytes), Noto Sans Arabic (682 836), Noto Sans Symbols 2 (404 576, CFF), Noto Emoji (1 966 648, monochrome) and Noto Sans CJK (32 682 580, a collection of CFF2, face 0). `modustool script_fonts` writes it to `build/fonts/script_fonts.bin` from `SCRIPT_FONT_SOURCES` and prints its hash. `font_outlines.script_fonts_check` refuses the whole set when its bytes do not give the named hash or a font does not give the hash of its record. A process opens the set at the fixed range `Script_Fonts` when its starter mapped it; with no set, each character of these scripts is the replacement glyph, and nothing waits. The intent is `src/md/features/script_fonts.md`.
+The script font set is one data object in the format of the font outlines, outside the boot image: Noto Sans Hebrew (35 508 bytes), Noto Sans Arabic (682 836), Noto Sans Symbols 2 (404 576, CFF), Noto Emoji (1 966 648, monochrome), Noto Sans CJK (32 682 580, a collection of CFF2, face 0) and Noto Sans Thai (94 872): 35 867 576 bytes. `modustool script_fonts` writes it to `build/fonts/script_fonts.bin` from `SCRIPT_FONT_SOURCES` and prints its hash; `font_outlines.script_fonts_check` refuses the whole set when its bytes do not give the named hash or a font does not give the hash of its record. The build writes the hash beside it as the resource `script_fonts_name` of each boot image: the set of a machine whose plan names none. The plan of principal 0 names another set with an entry `Script_Fonts`.
+
+On a machine, the set is the object `script_fonts` of the store `script_fonts` of the machine, on the data disk. When the machine is usable, the root service reads it once through the delegated service `disk_processes`, checks its hash and its form, and maps it read-only at the fixed range `Script_Fonts` in each process that gets the font outlines and starts after that. Its lines:
+
+- `root: the boot image names the script font set <hash>`;
+- `root: reads the script font set <hash> from the store script_fonts of the machine`;
+- `root: the script font set <hash> (<size>, 6 fonts) is checked: each process that starts from now maps it, read-only`;
+- with no set on the disk: `root: the data disk holds no script font set <hash>: ...`; with a set of other bytes, the refusal of the load, then `root: the script font set was not read: status ...`.
+
+A process that started before the set, and a machine with no set, draw each character of these scripts as the replacement glyph; nothing waits. The part `script_fonts` of the machine test checks both. The intent is `src/md/features/script_fonts.md`.
 
 The shaper (`text_rendering.shape`) reads a text by clusters: a base and its marks.
 
@@ -602,6 +611,9 @@ The shaper (`text_rendering.shape`) reads a text by clusters: a base and its mar
 - **Arabic**: each letter takes its isolated, initial, medial or final form by its joining type, the presentation form that Unicode names when its font has it, else the single substitution of `GSUB`. Lam and an alef make one glyph.
 - **A line of mixed direction**: when every placed glyph fits the table, the places follow UAX #9 for one line, with the mirrored brackets in a right-to-left run. The order of the placed glyphs stays the order of the text.
 - **Wide characters**: an ideograph takes two cells in a face of cells.
+- **Mark anchors**: a mark that stays apart is placed by the anchors of `GPOS` of its font (`mkmk` on the mark before it, else `mark` on its base); with none, the draw centres it. Arabic takes the forms of its font (`ccmp` makes beh a dotless body and its dot), and the presentation forms of Unicode when the font makes none.
+- **Thai**: SARA AM is NIKHAHIT, on the consonant before it, before its tone marks, and SARA AA.
+- **Isolates**: LRI, RLI, FSI and PDI of UAX #9 make a unit of the line, with its own direction; they and the other format characters of no width draw nothing.
 
 The intent is `src/md/features/written_shaping.md`. The tables come from the Unicode Character Database by `modustool unicode_tables`.
 

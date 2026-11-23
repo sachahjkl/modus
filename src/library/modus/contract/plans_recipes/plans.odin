@@ -45,7 +45,15 @@ Plan_Entry_Kind :: enum u8 {
 	Start_Module = 2,
 	Disk_Module  = 3,
 	Store_Grant  = 4,
+	// The script font set of the machine (src/md/features/script_fonts.md):
+	// module_hash is the hash of the data object, and the name is
+	// SCRIPT_FONTS_ENTRY_NAME. Only the plan of principal 0 names one, at
+	// most one; the root service reads it at the next start of the machine.
+	Script_Fonts = 5,
 }
+
+// The name of the one entry Script_Fonts of a plan.
+SCRIPT_FONTS_ENTRY_NAME :: "script_fonts"
 
 // Closed set of store access rights declared in a plan or project console.
 // Zero means unset and is refused at the border.
@@ -98,6 +106,7 @@ Plan_Refusal :: enum u8 {
 	Store_Failed           = 30, // The private store did not take a write: nothing was committed.
 	Store_Damaged          = 31, // A record of the private store does not decode or does not match its hash.
 	Roles_Refused          = 32, // The root service refused the roles of the plan of principal 0: nothing was committed.
+	Machine_Only           = 33, // The entry names a part of the machine, which only the plan of principal 0 names.
 }
 
 // Closed set of completion statuses returned on the recipes and projects
@@ -396,6 +405,29 @@ plan_entry_make_module :: proc "contextless" (
 	return entry, true
 }
 
+// plan_entry_make_script_fonts constructs the Script_Fonts entry that names
+// the script font set by its hash.
+plan_entry_make_script_fonts :: proc "contextless" (set_hash: blake3.Hash) -> (entry: Plan_Entry, ok: bool) {
+	if hash_is_zero(set_hash) {
+		return {}, false
+	}
+	entry.name_length = u8(copy(entry.name_bytes[:], SCRIPT_FONTS_ENTRY_NAME))
+	entry.kind_word = u64(Plan_Entry_Kind.Script_Fonts)
+	entry.module_hash = set_hash
+	return entry, true
+}
+
+// plan_script_fonts gives the hash of the script font set that a plan
+// names, or found false: the plan names none.
+plan_script_fonts :: proc "contextless" (plan: ^Plan_Spec) -> (set_hash: blake3.Hash, found: bool) {
+	for entry in plan.entries[:min(plan.entry_count, MAX_PLAN_ENTRIES)] {
+		if entry.kind_word == u64(Plan_Entry_Kind.Script_Fonts) {
+			return entry.module_hash, true
+		}
+	}
+	return {}, false
+}
+
 // plan_entry_make_store constructs a Store_Grant entry with validated rights.
 plan_entry_make_store :: proc "contextless" (name: string, rights: Plan_Store_Rights) -> (entry: Plan_Entry, ok: bool) {
 	if rights == .None {
@@ -500,6 +532,28 @@ plan_validate :: proc "contextless" (plan: ^Plan_Spec) -> (refusal: Plan_Refusal
 				return .Bad_Start_Grant, index
 			}
 			if _, rights_ok := plan_store_rights_of_word(entry.store_rights_word); !rights_ok {
+				return .Bad_Store_Rights, index
+			}
+		case .Script_Fonts:
+			if plan.principal != 0 {
+				return .Machine_Only, index
+			}
+			if string(entry.name_bytes[:entry.name_length]) != SCRIPT_FONTS_ENTRY_NAME {
+				return .Invalid_Name, index
+			}
+			if entry.role_word != 0 {
+				return .Bad_Role, index
+			}
+			if hash_is_zero(entry.module_hash) {
+				return .Zero_Module_Hash, index
+			}
+			if !hash_is_zero(entry.interposed_over_hash) {
+				return .Bad_Entry_Kind, index
+			}
+			if entry.start_grants_mask != 0 {
+				return .Bad_Start_Grant, index
+			}
+			if entry.store_rights_word != 0 {
 				return .Bad_Store_Rights, index
 			}
 		}
@@ -692,6 +746,9 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 				case .Store_Grant:
 					out_diff.removed_stores += 1
 					out_diff.removed_grants_count += 1
+				case .Script_Fonts:
+				// A change of the script font set grants nothing: its item
+				// says it, and no count holds it.
 				}
 				if item := reserve_diff_item(out_diff); item != nil {
 					item.change = .Removed
@@ -745,6 +802,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 				} else if cur_rights == .Read_Write && prop_rights == .Read_Only {
 					out_diff.removed_grants_count += 1
 				}
+			case .Script_Fonts:
 			}
 
 			if item := reserve_diff_item(out_diff); item != nil {
@@ -800,6 +858,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 			out_diff.added_stores += 1
 			out_diff.added_grants_count += 1
 			out_diff.any_grant_added = true
+		case .Script_Fonts:
 		}
 
 		if item := reserve_diff_item(out_diff); item != nil {

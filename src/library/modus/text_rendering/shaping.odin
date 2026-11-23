@@ -35,6 +35,22 @@ CHARACTER_COUNT :: font_characters.CHARACTER_COUNT // The characters with a char
 // REPLACEMENT_ADVANCE_CHARACTER, and no pair.
 REPLACEMENT_GLYPH :: max(u32)
 REPLACEMENT_ADVANCE_CHARACTER :: '0'
+// The glyph of a format character that a reader never sees: a control of
+// the direction of a line (the isolates of UAX #9, the marks LRM, RLM and
+// ALM), a joiner or a non-joiner, a space or a joiner of no width, a soft
+// hyphen. It has the advance 0, and the reader draws nothing.
+INVISIBLE_GLYPH :: REPLACEMENT_GLYPH - 1
+
+// is_invisible_format says if a character is one of those format
+// characters (is_invisible_format: the default ignorable characters that a
+// line holds, DerivedCoreProperties.txt).
+is_invisible_format :: proc "contextless" (character: rune) -> bool {
+	switch character {
+	case 0x00AD, 0x061C, 0x180E, 0x200B ..= 0x200F, 0x202A ..= 0x202E, 0x2060 ..= 0x2064, 0x2066 ..= 0x2069, 0xFEFF:
+		return true
+	}
+	return false
+}
 // The glyph of a character with no character index that the fallback chain
 // has is FALLBACK_GLYPH_FIRST plus its code point: past each character
 // index, and below REPLACEMENT_GLYPH.
@@ -44,7 +60,7 @@ FALLBACK_GLYPH_FIRST :: u32(1) << 24
 // character: DIRECT_GLYPH_FIRST, the font in bits 16 to 19, the glyph
 // index in bits 0 to 15 (direct_glyph).
 DIRECT_GLYPH_FIRST :: u32(1) << 30
-#assert(u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(DIRECT_GLYPH_FIRST) && u64(DIRECT_GLYPH_FIRST) + 1 << 20 < u64(REPLACEMENT_GLYPH))
+#assert(u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(DIRECT_GLYPH_FIRST) && u64(DIRECT_GLYPH_FIRST) + 1 << 20 < u64(REPLACEMENT_GLYPH) - 1)
 #assert(int(max(Outline_Font)) < 1 << 4)
 
 // direct_glyph gives the placed glyph of a glyph of a font by its index.
@@ -84,16 +100,27 @@ CELL_ADVANCE_LIMIT :: TEXT_SIZE_LIMIT
 #assert(TEXT_LIMIT * (TEXT_SIZE_LIMIT + TEXT_SIZE_LIMIT / 2) < 1 << 31)
 #assert(TEXT_LIMIT * CELL_ADVANCE_LIMIT < 1 << 31)
 
-// Placed_Glyph: one character of a text, placed. x is from the origin of
-// the text; advance includes the pair adjustment with the next character;
-// so the x of a glyph is the sum of the advances before it.
-Placed_Glyph :: struct {
-	glyph:   u32, // The character index of the character (font_characters.character_index); FALLBACK_GLYPH_FIRST plus the code point: a character past them that the fallback chain has; REPLACEMENT_GLYPH: a character that no font of the chain has.
-	x:       i32, // In 1/64 of a pixel.
-	advance: i32, // In 1/64 of a pixel.
-	cluster: u32, // The first byte of the character in the text.
+// How the reader places a glyph (src/md/features/written_shaping.md, "The
+// anchors of the marks").
+Glyph_Placement :: enum u32 {
+	Base     = 0, // A glyph with a place of its own: its origin at x, on the baseline.
+	Anchored = 1, // A mark that the anchors of its font place: its origin at x, y above the baseline.
+	Centred  = 2, // A mark that no anchor places: the reader centres it on the advance of the base before it.
 }
-#assert(size_of(Placed_Glyph) == 16)
+
+// Placed_Glyph: one glyph of a text, placed. x is from the origin of the
+// text; advance includes the pair adjustment with the next glyph; so the x
+// of a base is the sum of the advances before it. A mark has the advance 0
+// and the placement of its kind.
+Placed_Glyph :: struct {
+	glyph:     u32, // The character index of the character (font_characters.character_index); FALLBACK_GLYPH_FIRST plus the code point: a character past them that the fallback chain has; DIRECT_GLYPH_FIRST and a glyph of a font: a form that a substitution gave; REPLACEMENT_GLYPH: a character that no font of the chain has.
+	x:         i32, // In 1/64 of a pixel.
+	y:         i32, // In 1/64 of a pixel, up from the baseline: 0 but for an anchored mark.
+	advance:   i32, // In 1/64 of a pixel.
+	cluster:   u32, // The first byte of the character in the text.
+	placement: Glyph_Placement,
+}
+#assert(size_of(Placed_Glyph) == 24)
 
 // Text_Range: one text of a table of bytes, and its width, which the
 // measure writes.
@@ -153,11 +180,16 @@ glyph_of :: #force_inline proc "contextless" (character: rune) -> u32 {
 // with no pair, and the first byte of its character.
 @(private)
 Resolved :: struct {
-	glyph:   u32, // As Placed_Glyph.glyph.
-	font:    Outline_Font, // None: a cell, or the replacement glyph; neither has a pair.
-	index:   int, // The glyph index in that font.
-	advance: i32, // From 0 to its bound.
-	cluster: u32, // The first byte of its character in the text.
+	glyph:     u32, // As Placed_Glyph.glyph.
+	font:      Outline_Font, // None: a cell, or the replacement glyph; neither has a pair.
+	index:     i32, // The glyph index in that font: 16 bits.
+	advance:   i32, // From 0 to its bound.
+	cluster:   u32, // The first byte of its character in the text.
+	// A mark: its place from the origin of its base, in 1/64 of a pixel,
+	// and how the reader places it.
+	offset_x:  i32,
+	offset_y:  i32,
+	placement: Glyph_Placement,
 }
 
 // The cells of a character in a grid of cells: a mark none, a wide
@@ -179,6 +211,10 @@ resolve :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) 
 		return resolved
 	}
 	set := spacing.fonts != nil ? spacing.fonts : &state.font_set
+	if valid && is_invisible_format(character) {
+		resolved.glyph = INVISIBLE_GLYPH
+		return resolved
+	}
 	font: Outline_Font
 	index: int
 	if valid {
@@ -195,7 +231,7 @@ resolve :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) 
 	} else {
 		resolved.glyph = FALLBACK_GLYPH_FIRST + u32(character)
 	}
-	resolved.font, resolved.index = font, index
+	resolved.font, resolved.index = font, i32(index)
 	resolved.advance, _ = glyph_advance_in(set, spacing.face, font, index, spacing.size)
 	return resolved
 }
@@ -205,7 +241,7 @@ resolve :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) 
 @(private)
 resolve_index :: proc "contextless" (spacing: ^Spacing, font: Outline_Font, index: int) -> (resolved: Resolved) {
 	set := spacing.fonts != nil ? spacing.fonts : &state.font_set
-	resolved = {glyph = direct_glyph(font, index), font = font, index = index}
+	resolved = {glyph = direct_glyph(font, index), font = font, index = i32(index & 0xFFFF)}
 	resolved.advance, _ = glyph_advance_in(set, spacing.face, font, index, spacing.size)
 	return resolved
 }
@@ -218,7 +254,7 @@ pair_of :: proc "contextless" (spacing: ^Spacing, left, right: Resolved) -> i32 
 		return 0
 	}
 	set := spacing.fonts != nil ? spacing.fonts : &state.font_set
-	return glyph_pair_in(set, spacing.face, left.font, left.index, right.index, spacing.size)
+	return glyph_pair_in(set, spacing.face, left.font, int(left.index), int(right.index), spacing.size)
 }
 
 // ---- The clusters (src/md/features/written_shaping.md).
@@ -244,6 +280,77 @@ is_cluster_break :: proc "contextless" (character: rune) -> bool {
 	return class == .WS || class == .S || class == .B
 }
 
+// SARA AM of Thai (U+0E33) and of Lao (U+0EB3) is two parts: NIKHAHIT, a
+// mark on the consonant before it, and SARA AA, a vowel of its own (the
+// OpenType Thai shaper, which HarfBuzz follows). The mark goes before the
+// tone marks and the vowels above that the consonant holds, so that they
+// stack on it.
+@(private)
+SARA_AM_THAI :: rune(0x0E33)
+@(private)
+SARA_AM_LAO :: rune(0x0EB3)
+
+// is_thai_above_mark says if a mark of Thai or Lao is one that NIKHAHIT
+// goes before: a tone mark or a vowel above.
+@(private)
+is_thai_above_mark :: proc "contextless" (character: rune) -> bool {
+	switch character & ~rune(0x0080) {
+	case 0x0E31, 0x0E34 ..= 0x0E37, 0x0E3B, 0x0E47 ..= 0x0E4E:
+		return true
+	}
+	return false
+}
+
+// character_before gives the character that ends at a byte of a text, and
+// its first byte: false at the start of the text and for bytes that end no
+// valid sequence.
+@(private)
+character_before :: proc "contextless" (text: []u8, place: int) -> (character: rune, start: int, ok: bool) {
+	for back in 1 ..= 4 {
+		start = place - back
+		if start < 0 {
+			return 0, 0, false
+		}
+		if text[start] & 0xC0 == 0x80 {
+			continue
+		}
+		decoded, length, valid := text_encoding.character_decode(text, start)
+		return decoded, start, valid && start + length == place
+	}
+	return 0, 0, false
+}
+
+// sara_am_splits says if the SARA AM at a byte of a text is two parts: the
+// fonts of the face draw both, and the characters before it are a base that
+// is no space or separator, then fewer than CLUSTER_MARK_LIMIT marks. Both
+// clusters that it touches ask it, so they agree.
+@(private)
+sara_am_splits :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, place: int) -> bool {
+	sara_am, _, valid := text_encoding.character_decode(text, place)
+	if !valid || sara_am != SARA_AM_THAI && sara_am != SARA_AM_LAO {
+		return false
+	}
+	if !character_drawn(set, face, sara_am + 0x1A) || !character_drawn(set, face, sara_am - 1) {
+		return false
+	}
+	marks := 0
+	at := place
+	for {
+		before, start, found := character_before(text, at)
+		if !found {
+			return false
+		}
+		if !is_mark(before) {
+			return !is_cluster_break(before)
+		}
+		marks += 1
+		if marks >= CLUSTER_MARK_LIMIT {
+			return false
+		}
+		at = start
+	}
+}
+
 // cluster_read reads the cluster that starts at a byte of a text: a base
 // and at most CLUSTER_MARK_LIMIT marks after it, in canonical order, then
 // composes them. has says if the fonts of the caller draw a character: a
@@ -259,6 +366,10 @@ cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, plac
 		cluster.base, cluster.base_valid, cluster.dotted = DOTTED_CIRCLE, true, true
 	} else {
 		cluster.base, cluster.base_valid = character, valid
+		// The vowel of a SARA AM whose NIKHAHIT the cluster before took.
+		if sara_am_splits(set, face, text, place) {
+			cluster.base = character - 1
+		}
 		at += length
 		if !valid || is_cluster_break(character) {
 			cluster.end = at
@@ -276,6 +387,22 @@ cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, plac
 		at += mark_length
 	}
 	cluster.end = at
+	// The NIKHAHIT of a SARA AM after the cluster, before its tone marks
+	// and its vowels above.
+	if !cluster.dotted && sara_am_splits(set, face, text, at) {
+		sara_am, _, _ := text_encoding.character_decode(text, at)
+		position := cluster.mark_count
+		for position > 0 && is_thai_above_mark(cluster.marks[position - 1]) {
+			position -= 1
+		}
+		for index := cluster.mark_count; index > position; index -= 1 {
+			cluster.marks[index] = cluster.marks[index - 1]
+			cluster.mark_places[index] = cluster.mark_places[index - 1]
+		}
+		cluster.marks[position] = sara_am + 0x1A
+		cluster.mark_places[position] = u32(at)
+		cluster.mark_count += 1
+	}
 	if cluster.dotted || cluster.mark_count == 0 {
 		return cluster, true
 	}
@@ -326,6 +453,7 @@ Shaped :: struct {
 	marks:      [CLUSTER_MARK_LIMIT]Resolved,
 	mark_count: int,
 	start, end: int,
+	script:     vector_font.Feature_Tag, // The script of its base in the tables of its font: the anchors of its marks.
 }
 
 // Shaper: the walk over the clusters of a text, with the joining type of
@@ -380,15 +508,99 @@ form_feature :: proc "contextless" (before, after: bool) -> vector_font.Feature_
 	return {'i', 's', 'o', 'l'}
 }
 
-// form_of gives the glyph of the form of a letter in its font, or the
-// glyph of the character when the font has no such form.
+// The most marks that the substitutions of a font make of one letter: the
+// dots of a letter of Arabic.
+FONT_MARK_LIMIT :: vector_font.SEQUENCE_LIMIT
+
+// font_forms shapes a letter of Arabic with the substitutions of its font
+// (src/md/features/written_shaping.md, "The joining of Arabic"): ccmp,
+// which makes some letters a dotless body and its dots, then the feature of
+// its form (init, medi, fina or isol) on the body. It gives the body and
+// the glyphs of the marks that the font made; changed is false when the
+// font changes nothing.
 @(private)
-form_of :: proc "contextless" (set: ^Font_Set, font: Outline_Font, index: int, before, after: bool) -> int {
-	substitute, problem := vector_font.script_single_substitution(&set.fonts[font].file, ARAB, form_feature(before, after), index)
+font_forms :: proc "contextless" (set: ^Font_Set, font: Outline_Font, index: int, before, after: bool, marks: ^[FONT_MARK_LIMIT]int) -> (body, mark_count: int, changed: bool) {
+	file := &set.fonts[font].file
+	parts: [vector_font.SEQUENCE_LIMIT]int
+	part_count, problem := vector_font.script_substitution(file, ARAB, {'c', 'c', 'm', 'p'}, index, parts[:])
 	if problem != .None {
-		return index
+		parts[0], part_count = index, 1
 	}
-	return substitute
+	formed: [vector_font.SEQUENCE_LIMIT]int
+	formed_count: int
+	formed_count, problem = vector_font.script_substitution(file, ARAB, form_feature(before, after), parts[0], formed[:])
+	if problem != .None {
+		formed[0], formed_count = parts[0], 1
+	}
+	body = formed[0]
+	for glyph in formed[1:formed_count] {
+		if mark_count < FONT_MARK_LIMIT {
+			marks[mark_count] = glyph
+			mark_count += 1
+		}
+	}
+	for glyph in parts[1:part_count] {
+		if mark_count < FONT_MARK_LIMIT {
+			marks[mark_count] = glyph
+			mark_count += 1
+		}
+	}
+	return body, mark_count, body != index || mark_count > 0
+}
+
+// opentype_script_of gives the tag of the script of a character in the
+// tables GSUB and GPOS; a font without it takes DFLT (vector_font.layout_lookups).
+@(private)
+opentype_script_of :: proc "contextless" (character: rune) -> vector_font.Feature_Tag {
+	switch character {
+	case 0x0590 ..= 0x05FF, 0xFB1D ..= 0xFB4F:
+		return {'h', 'e', 'b', 'r'}
+	case 0x0600 ..= 0x08FF, 0xFB50 ..= 0xFDFF, 0xFE70 ..= 0xFEFF:
+		return ARAB
+	case 0x0370 ..= 0x03FF, 0x1F00 ..= 0x1FFF:
+		return {'g', 'r', 'e', 'k'}
+	case 0x0400 ..= 0x052F:
+		return {'c', 'y', 'r', 'l'}
+	case 0x0E00 ..= 0x0E7F:
+		return {'t', 'h', 'a', 'i'}
+	case 0x0900 ..= 0x097F:
+		return {'d', 'e', 'v', '2'}
+	}
+	return {'l', 'a', 't', 'n'}
+}
+
+// mark_place places a mark that stayed apart with the anchors of its font
+// (vector_font.mark_anchor_offset): on the mark before it on the same base
+// (mkmk), else on its base (mark). A mark of another font than its base, or
+// with no anchor, stays Centred: the reader centres it.
+@(private)
+mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Shaped, mark: ^Resolved) {
+	font := mark.font
+	if font == .None || font != shaped.base.font || spacing.cell_advance > 0 {
+		return
+	}
+	file := &set.fonts[font].file
+	if file.gpos.length == 0 {
+		return
+	}
+	scale := measures_in_frame_of(set, spacing.face, font).advance
+	limit := i64(spacing.size)
+	if shaped.mark_count > 0 {
+		before := &shaped.marks[shaped.mark_count - 1]
+		if before.font == font && before.placement == .Anchored {
+			if dx, dy, found, problem := vector_font.mark_anchor_offset(file, shaped.script, .Mark, int(before.index), int(mark.index)); problem == .None && found {
+				mark.offset_x = i32(clamp(i64(before.offset_x) + units_at_size(dx, spacing.size, scale), -limit, limit))
+				mark.offset_y = i32(clamp(i64(before.offset_y) + units_at_size(dy, spacing.size, scale), -limit, limit))
+				mark.placement = .Anchored
+				return
+			}
+		}
+	}
+	if dx, dy, found, problem := vector_font.mark_anchor_offset(file, shaped.script, .Base, int(shaped.base.index), int(mark.index)); problem == .None && found {
+		mark.offset_x = i32(clamp(units_at_size(dx, spacing.size, scale), -limit, limit))
+		mark.offset_y = i32(clamp(units_at_size(dy, spacing.size, scale), -limit, limit))
+		mark.placement = .Anchored
+	}
 }
 
 // shaper_next shapes the next cluster of the text; false at its end.
@@ -399,6 +611,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 	spacing := shaper.spacing
 	shaped.base = resolve(spacing, cluster.base, cluster.base_valid)
 	shaped.base.cluster = u32(cluster.start)
+	shaped.script = opentype_script_of(cluster.base)
 	type := cluster.base_valid && !cluster.dotted ? joining_type_of(cluster.base) : .None
 	ligature_cluster: Cluster
 	ligature_made := false
@@ -423,13 +636,33 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 			}
 		}
 		if !ligature_made {
-			// The presentation form that Unicode names, when the font has
-			// it; else the form of the GSUB of the font.
-			if form := arabic_form_of(cluster.base, before, after); form != 0 && character_drawn(shaper.set, spacing.face, form) {
-				shaped.base = resolve(spacing, form, true)
-			} else if font := shaped.base.font; shaper.set.fonts[font].file.gsub.length > 0 {
-				if substitute := form_of(shaper.set, font, shaped.base.index, before, after); substitute != shaped.base.index {
-					shaped.base = resolve_index(spacing, font, substitute)
+			// The forms of the font, with the dots that its anchors place,
+			// when its GSUB makes them and its GPOS places them; else the
+			// presentation form that Unicode names, when the font has it.
+			font := shaped.base.font
+			file := &shaper.set.fonts[font].file
+			made := false
+			if file.gsub.length > 0 && file.gpos.length > 0 {
+				font_marks: [FONT_MARK_LIMIT]int
+				body, font_mark_count, changed := font_forms(shaper.set, font, int(shaped.base.index), before, after, &font_marks)
+				if changed {
+					shaped.base = resolve_index(spacing, font, body)
+					shaped.base.cluster = base_cluster
+					for glyph in font_marks[:min(font_mark_count, CLUSTER_MARK_LIMIT)] {
+						mark := resolve_index(spacing, font, glyph)
+						mark.advance = 0
+						mark.cluster = base_cluster
+						mark.placement = .Centred
+						mark_place(spacing, shaper.set, shaped, &mark)
+						shaped.marks[shaped.mark_count] = mark
+						shaped.mark_count += 1
+					}
+					made = true
+				}
+			}
+			if !made {
+				if form := arabic_form_of(cluster.base, before, after); form != 0 && character_drawn(shaper.set, spacing.face, form) {
+					shaped.base = resolve(spacing, form, true)
 				}
 			}
 			shaped.base.cluster = base_cluster
@@ -458,6 +691,8 @@ marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sha
 		mark := resolve(spacing, cluster.marks[index], true)
 		if mark.glyph != REPLACEMENT_GLYPH || spacing.cell_advance > 0 {
 			mark.advance = 0
+			mark.placement = .Centred
+			mark_place(spacing, set, shaped, &mark)
 		}
 		mark.cluster = cluster.mark_places[index]
 		shaped.marks[shaped.mark_count] = mark
@@ -495,10 +730,22 @@ shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Gly
 			placed[count] = {glyph = current.base.glyph, x = i32(x), advance = glyph_advance, cluster = current.base.cluster}
 		}
 		count += 1
+		base_x := x
 		x += i64(glyph_advance)
 		for &mark in current.marks[:current.mark_count] {
+			// An anchored mark from the origin of its base; a centred mark
+			// at its base, which the reader centres on; the replacement
+			// glyph of a mark that no font has, in its own place.
+			mark_x := x
+			switch mark.placement {
+			case .Base:
+			case .Anchored:
+				mark_x = base_x + i64(mark.offset_x)
+			case .Centred:
+				mark_x = base_x
+			}
 			if count < len(placed) {
-				placed[count] = {glyph = mark.glyph, x = i32(x), advance = mark.advance, cluster = mark.cluster}
+				placed[count] = {glyph = mark.glyph, x = i32(mark_x), y = mark.offset_y, advance = mark.advance, cluster = mark.cluster, placement = mark.placement}
 			}
 			count += 1
 			x += i64(mark.advance)

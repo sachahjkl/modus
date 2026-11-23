@@ -128,6 +128,7 @@ Counters :: struct {
 
 Machine :: struct {
 	stage:             Stage,
+	kind:              rd.Load_Kind, // What the load reads, from its request.
 	environment:       Environment,
 	request:           rd.Load_Request,
 	module_byte_count: u64,
@@ -252,9 +253,11 @@ load_begin :: proc "contextless" (machine: ^Machine, request: ^rd.Load_Request) 
 	machine.counters = counters
 	machine.reading = -1
 	machine.request = request^
-	if _, _, ok := rd.load_request_check(&machine.request); !ok {
+	kind, _, _, ok := rd.load_request_check(&machine.request)
+	if !ok {
 		return command_refused(machine)
 	}
+	machine.kind = kind
 	machine.counters.loads += 1
 	machine.stage = .Module_Size
 	return {kind = .Ask_Size, name = nickname(machine)}
@@ -286,6 +289,11 @@ memory_lent :: proc "contextless" (machine: ^Machine, bytes: []u8) -> Action {
 continue_given :: proc "contextless" (machine: ^Machine) -> Action {
 	#partial switch machine.stage {
 	case .Module_Reported:
+		// The core ends a load of the script font set after Module_Filled:
+		// it starts nothing, so a Continue is not its command.
+		if machine.kind != .Module {
+			return command_refused(machine)
+		}
 		if machine.scan.bound_passed {
 			machine.report = {}
 			return refuse(machine, .Import_Bounds)
@@ -355,7 +363,7 @@ storage_answered :: proc "contextless" (machine: ^Machine, answer: ^Storage_Answ
 
 @(private = "file")
 module_size_answer :: proc "contextless" (machine: ^Machine, size: u64) -> Action {
-	read, answer := disk_process.read_begin(size, rd.MODULE_BYTES_LIMIT)
+	read, answer := disk_process.read_begin(size, rd.load_bytes_limit(machine.kind))
 	switch answer {
 	case .Good:
 	case .Empty:
@@ -420,8 +428,11 @@ bytes_answer :: proc "contextless" (machine: ^Machine, text: []u8) -> Action {
 	}
 	if !candidate {
 		// The imports are noted now: the lent memory goes back with the
-		// event, and the core checks its hash before Continue.
-		walk(machine, machine.lent, -1, 1)
+		// event, and the core checks its hash before Continue. The script
+		// font set is no module and imports nothing.
+		if machine.kind == .Module {
+			walk(machine, machine.lent, -1, 1)
+		}
 		machine.stage = .Module_Reported
 		return send(machine, .Module_Filled, true)
 	}

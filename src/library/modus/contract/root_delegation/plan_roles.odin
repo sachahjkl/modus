@@ -100,6 +100,10 @@ Plan_Roles_Set :: struct {
 	expected_serial: u64,
 	override_count:  u64,
 	overrides:       [PLAN_ROLES_OVERRIDE_CAPACITY]Plan_Role_Override,
+	// The script font set that the plan names (the entry Script_Fonts),
+	// all zero for none: the boot image names the default. The core reads
+	// the set at the next start of the machine (src/md/features/script_fonts.md).
+	script_fonts:    blake3.Hash,
 }
 
 // Why the core refused a set. A refusal changes no override.

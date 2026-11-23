@@ -1,0 +1,3 @@
+type: Added
+
+**Marks placed by their font, Thai, and the isolates of a line**: a combining mark sits where its font puts it, on its letter or on the mark below it, in place of a centre; the letters of Arabic take the forms of their font with their dots, so the extended letters join too and a vowel sign sits above the dots. Thai draws with Noto Sans Thai, its tone marks stacked and SARA AM split as Thai readers expect. A line that holds an isolate of UAX #9 (LRI, RLI, FSI to PDI) keeps it as one unit with its own direction, and the controls of direction, the joiners and the spaces of no width draw nothing in place of a box.

@@ -106,6 +106,12 @@ build_modules :: proc() -> bool {
 	outlines_resource := resources.font_outlines_write() or_return
 	build_measure_step("the font outlines", step_started)
 	step_started = time.tick_now()
+	// The name of the script font set: 32 bytes in the boot image, the
+	// set of a machine whose plan names none. The set itself is an object
+	// of a data disk (script_fonts.odin).
+	script_fonts_name := resources.script_fonts_name_write() or_return
+	build_measure_step("the script font set", step_started)
+	step_started = time.tick_now()
 	// The pages of the links of the documentation of the modules: one more
 	// resource, for the process manual (manual_link_pages.odin).
 	link_pages := build_manual_pages() or_return
@@ -114,6 +120,7 @@ build_modules :: proc() -> bool {
 	all_resources := make([dynamic]resources.Resource_File, context.temp_allocator)
 	append(&all_resources, ..pointer_themes)
 	append(&all_resources, outlines_resource)
+	append(&all_resources, script_fonts_name)
 	append(&all_resources, link_pages)
 	// The start policy reads a list and asks for the starts, and nothing
 	// more: its source is checked before any image holds it.

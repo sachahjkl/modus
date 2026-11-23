@@ -38,11 +38,17 @@ Cff_Font :: struct {
 	version:           int, // 1: CFF, 2: CFF2; 0: none.
 	char_strings:      Cff_Index,
 	global_subrs:      Cff_Index,
-	local_subrs:       [CFF_FONT_DICT_LIMIT]Cff_Index, // Of each font dictionary; the one of the Private dictionary for a font that is not CID.
-	vsindex:           [CFF_FONT_DICT_LIMIT]u8, // The default variation data of each font dictionary (CFF2).
+	// The font dictionaries (FDArray) of a CID font; count 0 for a font
+	// that is not CID, whose Private dictionary is private_size bytes at
+	// private_offset. A glyph reads its Private dictionary when it is drawn
+	// (cff_private_of): the font keeps no table of them, so a font set of
+	// ten fonts stays small on the stack of a call.
+	font_dicts:        Cff_Index,
+	private_size:      i32,
+	private_offset:    i32, // -1: no Private dictionary.
 	font_dict_count:   int,
 	fd_select:         i32, // The place of FDSelect; -1: each glyph takes the dictionary 0.
-	region_counts:     [CFF_REGION_DATA_LIMIT]u16, // The regions of each item variation data (CFF2).
+	variation_store:   i32, // The place of the item variation store (CFF2); -1: none.
 	region_data_count: int,
 }
 
@@ -248,23 +254,48 @@ cff_regions_of :: proc "contextless" (font: ^Font_File, vsindex: int) -> int {
 	if vsindex < 0 || vsindex >= font.cff.region_data_count {
 		return 0
 	}
-	return int(font.cff.region_counts[vsindex])
+	table := cff_table(font)
+	store := int(font.cff.variation_store)
+	offset := read_u32(table, store + 8 + 4 * vsindex) or_else -1
+	if offset < 0 {
+		return 0
+	}
+	return read_u16(table, store + offset + 4) or_else 0
 }
 
 // cff_private_read reads the local subroutines and the variation data of
-// a Private dictionary into the font dictionary number.
+// a Private dictionary.
 @(private)
-cff_private_read :: proc "contextless" (font: ^Font_File, table: []u8, size, offset, number: int) -> Font_Problem {
+cff_private_read :: proc "contextless" (font: ^Font_File, table: []u8, size, offset: int) -> (local: Cff_Index, vsindex: int, problem: Font_Problem) {
 	if size < 0 || offset < 0 || offset > len(table) || size > len(table) - offset {
-		return .Too_Short
+		return {}, 0, .Too_Short
 	}
 	private := cff_dict_read(font, table[offset:][:size]) or_return
-	font.cff.vsindex[number] = u8(clamp(private.vsindex, 0, 255))
+	vsindex = clamp(private.vsindex, 0, 255)
 	if private.subrs > 0 {
-		index, _ := cff_index_read(table, offset + private.subrs, font.cff.version) or_return
-		font.cff.local_subrs[number] = index
+		local, _ = cff_index_read(table, offset + private.subrs, font.cff.version) or_return
 	}
-	return .None
+	return local, vsindex, .None
+}
+
+// cff_private_of reads the Private dictionary of the font dictionary
+// number: its local subroutines, empty when it has none, and its default
+// variation data.
+@(private)
+cff_private_of :: proc "contextless" (font: ^Font_File, table: []u8, number: int) -> (local: Cff_Index, vsindex: int, problem: Font_Problem) {
+	size, offset := int(font.cff.private_size), int(font.cff.private_offset)
+	if font.cff.font_dicts.count > 0 {
+		data, read := cff_item(table, &font.cff.font_dicts, number)
+		if !read {
+			return {}, 0, .Too_Short
+		}
+		font_dict := cff_dict_read(font, data) or_return
+		size, offset = font_dict.private_size, font_dict.private_offset
+	}
+	if offset < 0 {
+		return {}, 0, .None
+	}
+	return cff_private_read(font, table, size, offset)
 }
 
 // cff_open reads the table CFF or CFF2 of a font: its charstrings, its
@@ -274,6 +305,8 @@ cff_open :: proc "contextless" (font: ^Font_File) -> Font_Problem {
 	table := cff_table(font)
 	version := font.cff.version
 	font.cff.fd_select = -1
+	font.cff.variation_store = -1
+	font.cff.private_offset = -1
 	if len(table) < 5 {
 		return .Too_Short
 	}
@@ -321,15 +354,11 @@ cff_open :: proc "contextless" (font: ^Font_File) -> Font_Problem {
 			return .Unknown_Format
 		}
 		font.cff.font_dict_count = int(fonts.count)
+		font.cff.font_dicts = fonts
+		// Each dictionary is read once here, so a font whose dictionary
+		// the reader refuses is refused at its open, not at a glyph.
 		for number in 0 ..< int(fonts.count) {
-			data, read := cff_item(table, &fonts, number)
-			if !read {
-				return .Too_Short
-			}
-			font_dict := cff_dict_read(font, data) or_return
-			if font_dict.private_offset >= 0 {
-				cff_private_read(font, table, font_dict.private_size, font_dict.private_offset, number) or_return
-			}
+			_, _ = cff_private_of(font, table, number) or_return
 		}
 		if dict.fd_select > 0 {
 			if dict.fd_select >= len(table) {
@@ -340,7 +369,8 @@ cff_open :: proc "contextless" (font: ^Font_File) -> Font_Problem {
 	} else {
 		font.cff.font_dict_count = 1
 		if dict.private_offset >= 0 {
-			cff_private_read(font, table, dict.private_size, dict.private_offset, 0) or_return
+			font.cff.private_size, font.cff.private_offset = i32(clamp(dict.private_size, -1, int(max(i32)))), i32(clamp(dict.private_offset, -1, int(max(i32))))
+			_, _ = cff_private_of(font, table, 0) or_return
 		}
 	}
 	return .None
@@ -366,8 +396,8 @@ cff_variation_read :: proc "contextless" (font: ^Font_File, table: []u8, at: int
 		if offset < 0 || regions < 0 {
 			return .Too_Short
 		}
-		font.cff.region_counts[number] = u16(regions)
 	}
+	font.cff.variation_store = i32(store)
 	font.cff.region_data_count = data_count
 	return .None
 }
@@ -447,7 +477,7 @@ Cff_Machine :: struct {
 	font:          ^Font_File,
 	table:         []u8,
 	outline:       ^Outline,
-	local:         ^Cff_Index,
+	local:         Cff_Index,
 	stack:         [CFF_STACK_LIMIT]i64,
 	count:         int,
 	x, y:          i64,
@@ -461,16 +491,25 @@ Cff_Machine :: struct {
 }
 
 // cff_glyph_outline reads the outline of a glyph of a CFF or CFF2 font.
+// Never inlined: its machine, 4 KiB, would join the frame of each caller
+// of glyph_outline, the open of a font set of a call of the library module
+// text_rendering too, which reads no CFF.
 @(private)
-cff_glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Outline) -> Font_Problem {
+cff_glyph_outline :: #force_no_inline proc "contextless" (font: ^Font_File, glyph: int, outline: ^Outline) -> Font_Problem {
 	table := cff_table(font)
 	data, read := cff_item(table, &font.cff.char_strings, glyph)
 	if !read {
 		return .Too_Short
 	}
 	number := cff_font_dict_of(font, table, glyph) or_return
-	machine := Cff_Machine{font = font, table = table, outline = outline, local = &font.cff.local_subrs[number], contour_first = -1, width_done = font.cff.version == 2}
-	machine.regions = cff_regions_of(font, int(font.cff.vsindex[number]))
+	local, vsindex := cff_private_of(font, table, number) or_return
+	// Field by field: a literal of the machine is a second copy of its
+	// operand stack, 4 KiB, on the stack of a drawing thread.
+	machine: Cff_Machine
+	machine.font, machine.table, machine.outline, machine.local = font, table, outline, local
+	machine.contour_first = -1
+	machine.width_done = font.cff.version == 2
+	machine.regions = cff_regions_of(font, vsindex)
 	cff_run(&machine, data, 0)
 	if machine.problem != .None {
 		outline.point_count, outline.contour_count = 0, 0
@@ -749,7 +788,7 @@ cff_run :: proc "contextless" (machine: ^Cff_Machine, data: []u8, depth: int) {
 				cff_fail(machine, .Unknown_Format)
 				return
 			}
-			subrs := code == 10 ? machine.local : &machine.font.cff.global_subrs
+			subrs := code == 10 ? &machine.local : &machine.font.cff.global_subrs
 			number := int(s[n - 1] >> 16) + cff_bias(subrs.count)
 			machine.count -= 1
 			sub, read := cff_item(machine.table, subrs, number)

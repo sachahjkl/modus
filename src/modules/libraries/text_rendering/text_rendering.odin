@@ -43,13 +43,22 @@ import "modus:text_rendering"
 TABLE_LIMIT :: u64(1) << 40
 
 // The fonts of one call, opened from the bytes of the caller, and the
-// memory of one outline for their measures: about 45 KiB on the stack of
-// the call.
+// memory of the outlines of their measures, on the stack of the call. A
+// call runs on the stack of a worker thread of its caller, 64 KiB: the
+// whole call stays under CALL_STACK_BOUND, which a host test measures.
 @(private)
 Call_Fonts :: struct {
 	set:     text_rendering.Font_Set,
-	outline: text_rendering.Outline_Memory,
+	outline: text_rendering.Measure_Memory,
 }
+
+// The most stack that one call uses, its locals and those of each
+// procedure that it calls: a quarter of the stack of a worker thread.
+CALL_STACK_BOUND :: 16 << 10
+// The fonts of a call take less than two thirds of it: the shaper, the
+// order of a line and the open of a font take the rest
+// (one_call_stays_under_its_stack_bound measures the whole call).
+#assert(size_of(Call_Fonts) <= 10 << 10)
 
 // face_and_size_check refuses a face (argument 2) and a text size
 // (argument 3) with an error record.
@@ -90,7 +99,7 @@ call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_
 		errors.fail(error, -1, .Bad_Value, .Bytes, 1, i64(problem.kind), 0, i64(problem.index) + 1)
 		return {}, false
 	}
-	outline := text_rendering.outline_of(&fonts.outline)
+	outline := text_rendering.measure_outline_of(&fonts.outline)
 	// Only the fonts that the chains of the face name: each open reads the
 	// outlines of 94 characters for its measures.
 	_ = text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(face))

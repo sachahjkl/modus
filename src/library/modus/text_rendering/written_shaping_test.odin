@@ -7,6 +7,7 @@ import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/font_characters"
 import "modus:contract/font_outlines"
+import "modus:vector_font"
 
 // The tests of the written shaper (src/md/features/written_shaping.md) and
 // of the script fonts (src/md/features/script_fonts.md). The script fonts
@@ -14,7 +15,7 @@ import "modus:contract/font_outlines"
 // the flake set it.
 
 @(private = "file")
-script_font_names := [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk"}
+script_font_names := [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai"}
 
 // script_fonts_read reads the script fonts that names lists.
 @(private = "file")
@@ -125,15 +126,17 @@ a_mark_composes_with_its_letter :: proc(t: ^testing.T) {
 	testing.expect_value(t, cell_count(transmute([]u8)string("\u0301a")), 2)
 }
 
-// The letters of Arabic join: in بيت (beh, yeh, teh) the beh takes its
-// initial form, the yeh its medial form and the teh its final form, the
-// presentation forms that Unicode names (U+FE91, U+FEF4, U+FE96); in سلام
-// the seen is initial, the lam and the alef are one glyph, the final form
-// of their ligature (U+FEFC), and the meem after the alef, which joins
-// nothing after it, is isolated (U+FEE1). A fatha between two letters is
-// transparent: the beh keeps its initial form, and the fatha is a mark of
-// its own. Each glyph of an Arabic word is at the right of the glyph after
-// it in the text, and the cluster of each form is the byte of its letter.
+// The letters of Arabic join with the forms of their font
+// (src/md/features/written_shaping.md, "The joining of Arabic"). Noto Sans
+// Arabic makes beh, yeh and teh a dotless body and their dots (ccmp), then
+// the form of the body (init, medi, fina): in بيت each letter is the form
+// of its body, a glyph of the font that differs from its isolated body,
+// and one mark of dots, anchored (GPOS) on that body, with the advance 0
+// and the byte of its letter. A fatha after beh is anchored too, at its
+// own byte. In سلام the lam and the alef are one glyph, the ligature U+FEFC,
+// and the meem, for which the font has no isolated form, takes its
+// presentation form U+FEE1. Each base of an Arabic word is at the right of
+// the base after it in the text; each mark draws from a glyph with ink.
 // With no script font, each letter is the replacement glyph, first.
 @(test)
 arabic_letters_join :: proc(t: ^testing.T) {
@@ -151,29 +154,88 @@ arabic_letters_join :: proc(t: ^testing.T) {
 	defer delete(words)
 	defer delete(script_words)
 	testing.expect(t, .Noto_Sans_Arabic not_in missing)
-	Case :: struct {
-		text:  string,
-		forms: [4]rune,
-		count: int,
+	file := &state.fonts[.Noto_Sans_Arabic].file
+	frame_begin()
+	// The bases and the marks of a word, by their placement.
+	Word :: struct {
+		bases, anchored: int,
 	}
-	cases := [?]Case{{"بيت", {0xFE91, 0xFEF4, 0xFE96, 0}, 3}, {"سلام", {0xFEB3, 0xFEFC, 0xFEE1, 0}, 3}, {"بَيت", {0xFE91, 0x064E, 0xFEF4, 0xFE96}, 4}}
-	for each in cases {
-		count, width := shape_text(t, .Interface, each.text, placed[:])
-		if !testing.expectf(t, count == each.count, "%q: %v glyphs: %v", each.text, count, placed[:count]) {
-			continue
-		}
+	word_of :: proc(t: ^testing.T, text: string, placed: []Placed_Glyph) -> (word: Word) {
 		sum: i64
-		for index in 0 ..< count {
-			testing.expectf(t, placed[index].glyph == fallback_glyph(each.forms[index]), "%q: the glyph %v is %x, expected the form U+%04X", each.text, index, placed[index].glyph, int(each.forms[index]))
-			sum += i64(placed[index].advance)
+		last_base_x := i32(max(i32))
+		for item in placed {
+			sum += i64(item.advance)
+			switch item.placement {
+			case .Base:
+				word.bases += 1
+				testing.expectf(t, item.x < last_base_x, "%q: each base is at the left of the base before it: %v", text, placed)
+				last_base_x = item.x
+			case .Anchored:
+				word.anchored += 1
+				testing.expect_value(t, item.advance, i32(0))
+				font, index, direct := direct_glyph_parts(item.glyph)
+				entry: Glyph_Entry
+				source: Glyph_Source
+				if direct {
+					entry, _, source = glyph_by_index(.Interface, font, index, TEXT_SIZE_OF_SCALE_ONE, 0)
+				} else {
+					entry, _, source = glyph(.Interface, rune(item.glyph - FALLBACK_GLYPH_FIRST), TEXT_SIZE_OF_SCALE_ONE, 0)
+				}
+				testing.expectf(t, source == .Private_Cache && entry.row_count > 0, "%q: an anchored mark has ink: %v, %v", text, item, source)
+			case .Centred:
+				testing.expectf(t, false, "%q: a mark that the font places is centred: %v", text, item)
+			}
 		}
-		testing.expect_value(t, width, sum)
-		testing.expectf(t, placed[0].x > placed[count - 1].x, "%q: the first letter is at the right", each.text)
-		testing.expect_value(t, placed[0].cluster, u32(0))
+		return word
 	}
-	// A letter alone, and a letter between two spaces: isolated.
-	count, _ := shape_text(t, .Interface, " ب ", placed[:])
-	testing.expect(t, count == 3 && placed[1].glyph == fallback_glyph(0xFE8F))
+	count, width := shape_text(t, .Interface, "بيت", placed[:])
+	word := word_of(t, "بيت", placed[:count])
+	testing.expectf(t, word.bases == 3 && word.anchored == 3, "بيت: %v bases and %v dots: %v", word.bases, word.anchored, placed[:count])
+	sum: i64
+	for glyph in placed[:count] {
+		sum += i64(glyph.advance)
+	}
+	testing.expect_value(t, width, sum)
+	// Each base is the form of its font, not its isolated body; each dot
+	// has the byte of its letter.
+	Letter :: struct {
+		character: rune,
+		cluster:   u32,
+	}
+	letters := [3]Letter{{0x0628, 0}, {0x064A, 2}, {0x062A, 4}}
+	place := 0
+	for letter in letters {
+		plain, _ := vector_font.glyph_of(file, letter.character)
+		parts: [vector_font.SEQUENCE_LIMIT]int
+		part_count, _ := vector_font.script_substitution(file, ARAB, {'c', 'c', 'm', 'p'}, plain, parts[:])
+		testing.expectf(t, part_count == 2, "U+%04X is a body and its dots in its font", int(letter.character))
+		for place < count && placed[place].placement != .Base {
+			place += 1
+		}
+		font, index, direct := direct_glyph_parts(placed[place].glyph)
+		testing.expectf(t, direct && font == .Noto_Sans_Arabic && index != parts[0] && placed[place].cluster == letter.cluster, "U+%04X: the base %v is a form of its body %v", int(letter.character), placed[place], parts[0])
+		testing.expectf(t, place + 1 < count && placed[place + 1].placement == .Anchored && placed[place + 1].cluster == letter.cluster, "U+%04X: its dots follow it", int(letter.character))
+		place += 1
+	}
+	// A fatha on beh: anchored, at its own byte.
+	count, _ = shape_text(t, .Interface, "بَيت", placed[:])
+	word = word_of(t, "بَيت", placed[:count])
+	testing.expectf(t, word.bases == 3 && word.anchored == 4, "بَيت: %v bases and %v marks: %v", word.bases, word.anchored, placed[:count])
+	fatha_found := false
+	for glyph in placed[:count] {
+		fatha_found ||= glyph.glyph == fallback_glyph(0x064E) && glyph.cluster == 2 && glyph.placement == .Anchored
+	}
+	testing.expect(t, fatha_found, "the fatha is anchored at its byte")
+	// Lam and alef: one glyph; the meem: its presentation form.
+	count, _ = shape_text(t, .Interface, "سلام", placed[:])
+	word = word_of(t, "سلام", placed[:count])
+	testing.expectf(t, word.bases == 3 && placed[count - 2].glyph == fallback_glyph(0xFEFC) && placed[count - 1].glyph == fallback_glyph(0xFEE1), "سلام: %v", placed[:count])
+	_, seen_index, seen_direct := direct_glyph_parts(placed[0].glyph)
+	seen, _ := vector_font.glyph_of(file, 0x0633)
+	testing.expectf(t, seen_direct && seen_index != seen, "the seen is the initial form of its font: %v", placed[0])
+	// A letter between two spaces: its isolated body and its dot.
+	count, _ = shape_text(t, .Interface, " ب ", placed[:])
+	testing.expectf(t, count == 4 && placed[1].placement == .Base && placed[2].placement == .Anchored, "an isolated beh: %v", placed[:count])
 }
 
 // A line of mixed direction (UAX #9). In "abc אבג 123", a line of left to
@@ -264,7 +326,7 @@ the_scripts_of_the_script_fonts :: proc(t: ^testing.T) {
 		set, set_words := resource_of(t, scripts[:])
 		defer delete(set_words)
 		missing := script_fonts_open(&set)
-		testing.expect_value(t, missing, Outline_Fonts{.Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Sans_CJK})
+		testing.expect_value(t, missing, Outline_Fonts{.Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Sans_CJK, .Noto_Sans_Thai})
 		testing.expect_value(t, font_of(.Interface, 0x05D0), Outline_Font.Noto_Sans_Hebrew)
 		testing.expect_value(t, font_of(.Interface, 0x4E00), Outline_Font.None)
 	}
@@ -331,4 +393,182 @@ a_script_font_set_that_does_not_verify :: proc(t: ^testing.T) {
 	_, problem = font_outlines.script_fonts_check(bytes, renamed)
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.Hash_Mismatch)
 	testing.expect_value(t, problem.index, u32(0))
+}
+// A font of the boot image is TrueType: a font with CFF outlines in the
+// place of a font of the boot image is refused, and its slot stays closed
+// and all zero. The same file opens as a script font.
+@(test)
+a_cff_font_in_the_place_of_a_boot_font_is_refused :: proc(t: ^testing.T) {
+	names := [1]string{"noto_sans_symbols_2"}
+	scripts := script_fonts_read(t, names[:])
+	defer {
+		for font in scripts {
+			delete(font.bytes)
+		}
+		delete(scripts)
+	}
+	if len(scripts) != 1 {
+		return
+	}
+	set := new(Font_Set)
+	defer free(set)
+	memory := new(Measure_Memory)
+	defer free(memory)
+	outline := measure_outline_of(memory)
+	for font in BOOT_FONTS {
+		testing.expect_value(t, font_file_open(set, font, scripts[0].bytes, &outline), vector_font.Font_Problem.Unknown_Format)
+		testing.expectf(t, !set.fonts[font].opened && set.fonts[font].file.bytes == nil && set.fonts[font].own == {}, "%v stays closed", font)
+	}
+	testing.expect_value(t, font_file_open(set, .Noto_Sans_Symbols_2, scripts[0].bytes, &outline), vector_font.Font_Problem.None)
+	testing.expect(t, set.fonts[.Noto_Sans_Symbols_2].opened)
+}
+// screen_order gives the glyphs of a line that have a width, by their place
+// on the screen from the left: their indices in the order of the text.
+@(private = "file")
+screen_order :: proc(placed: []Placed_Glyph) -> [dynamic]int {
+	order := make([dynamic]int, context.temp_allocator)
+	for glyph, index in placed {
+		if glyph.advance > 0 {
+			append(&order, index)
+		}
+	}
+	for low in 1 ..< len(order) {
+		for back := low; back > 0 && placed[order[back]].x < placed[order[back - 1]].x; back -= 1 {
+			order[back], order[back - 1] = order[back - 1], order[back]
+		}
+	}
+	return order
+}
+
+// The isolates of UAX #9 (LRI, RLI, FSI, PDI): an isolate is one unit of
+// the line around it, its own direction inside; each isolate character
+// draws nothing and has no advance. RLI with Hebrew in a line of Latin:
+// the Hebrew reversed in its place; a text that starts with an isolate of
+// Latin and then Hebrew: a paragraph of right to left, as its first strong
+// character outside the isolate says; FSI takes the direction of its first
+// strong character; a PDI that closes nothing, and an RLI that no PDI
+// closes, change no place before them; 130 RLIs deep pass the depth of the
+// algorithm and fault nothing.
+@(test)
+the_isolates_of_a_line :: proc(t: ^testing.T) {
+	test_state_take()
+	names := [1]string{"noto_sans_hebrew"}
+	words, script_words, _ := script_set_open(t, names[:])
+	defer delete(words)
+	defer delete(script_words)
+	placed: [256]Placed_Glyph
+	// a b RLI א ב PDI c: a, b, then ב, א, then c.
+	count, _ := shape_text(t, .Interface, "ab\u2067אב\u2069c", placed[:])
+	testing.expect_value(t, count, 7)
+	for index in ([?]int{2, 5}) {
+		testing.expectf(t, placed[index].glyph == INVISIBLE_GLYPH && placed[index].advance == 0, "the isolate character %d draws nothing: %v", index, placed[index])
+	}
+	order := screen_order(placed[:count])
+	testing.expectf(t, slice_equal(order[:], {0, 1, 4, 3, 6}), "an RLI in Latin: %v", order[:])
+	// LRI a b PDI א: the paragraph is right to left; the isolate keeps a b
+	// in order, at the right of the Hebrew letter... at its left: the
+	// isolate is the first unit of a line of right to left.
+	count, _ = shape_text(t, .Interface, "\u2066ab\u2069 א", placed[:])
+	order = screen_order(placed[:count])
+	testing.expectf(t, slice_equal(order[:], {5, 4, 1, 2}), "an LRI first, then Hebrew: %v", order[:])
+	// FSI with Hebrew inside: right to left inside.
+	count, _ = shape_text(t, .Interface, "x\u2068אב\u2069y", placed[:])
+	order = screen_order(placed[:count])
+	testing.expectf(t, slice_equal(order[:], {0, 3, 2, 5}), "an FSI of Hebrew: %v", order[:])
+	// FSI with Latin inside, in a line of right to left: left to right inside.
+	count, _ = shape_text(t, .Interface, "א\u2068xy\u2069ב", placed[:])
+	order = screen_order(placed[:count])
+	testing.expectf(t, slice_equal(order[:], {5, 2, 3, 0}), "an FSI of Latin in Hebrew: %v", order[:])
+	// A PDI that closes nothing, and an RLI that no PDI closes.
+	count, _ = shape_text(t, .Interface, "ab\u2069c", placed[:])
+	order = screen_order(placed[:count])
+	testing.expectf(t, slice_equal(order[:], {0, 1, 3}), "a PDI alone: %v", order[:])
+	count, _ = shape_text(t, .Interface, "ab\u2067אב", placed[:])
+	order = screen_order(placed[:count])
+	testing.expectf(t, slice_equal(order[:], {0, 1, 4, 3}), "an RLI with no PDI: %v", order[:])
+	// Past the depth: each glyph keeps a place, and the width is the sum of
+	// the advances.
+	deep := strings.concatenate({strings.repeat("\u2067", 130, context.temp_allocator), "אab", strings.repeat("\u2069", 130, context.temp_allocator)}, context.temp_allocator)
+	deep_placed := make([]Placed_Glyph, 300)
+	defer delete(deep_placed)
+	width: i64
+	count, width = shape_text(t, .Interface, deep, deep_placed)
+	testing.expect_value(t, count, 263)
+	sum: i64
+	for glyph in deep_placed[:count] {
+		sum += i64(glyph.advance)
+	}
+	testing.expect_value(t, width, sum)
+	// Inside the deepest isolate, of right to left: a b, then א at their
+	// right.
+	order = screen_order(deep_placed[:count])
+	testing.expectf(t, slice_equal(order[:], {131, 132, 130}), "past the depth: %v", order[:])
+}
+
+@(private = "file")
+slice_equal :: proc(a: []int, b: []int) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for value, index in a {
+		if b[index] != value {
+			return false
+		}
+	}
+	return true
+}
+// Thai: a consonant and its marks, which the anchors of Noto Sans Thai
+// place; SARA AM is two parts, NIKHAHIT on the consonant before it, before
+// its tone mark, which then stacks on it, and SARA AA as a vowel of its own
+// at the byte of SARA AM. SARA AM at the start of the text, and after a
+// space, stays one glyph. With no script font, a letter of Thai is the
+// replacement glyph.
+@(test)
+thai_marks_and_sara_am :: proc(t: ^testing.T) {
+	test_state_take()
+	placed: [16]Placed_Glyph
+	{
+		fonts := repository_fonts()
+		_, words := outlines_open(t, fonts[:])
+		defer delete(words)
+		count, _ := shape_text(t, .Interface, "ก", placed[:])
+		testing.expect(t, count == 1 && placed[0].glyph == REPLACEMENT_GLYPH)
+	}
+	names := [1]string{"noto_sans_thai"}
+	words, script_words, missing := script_set_open(t, names[:])
+	defer delete(words)
+	defer delete(script_words)
+	testing.expect(t, .Noto_Sans_Thai not_in missing)
+	testing.expect_value(t, font_of(.Interface, 0x0E01), Outline_Font.Noto_Sans_Thai)
+	// A consonant and a tone mark.
+	count, width := shape_text(t, .Interface, "ก่", placed[:])
+	testing.expectf(t, count == 2 && placed[0].placement == .Base && placed[1].placement == .Anchored && placed[1].glyph == fallback_glyph(0x0E48), "ko and mai ek: %v", placed[:count])
+	testing.expect_value(t, width, i64(placed[0].advance))
+	// SARA AM after a consonant.
+	count, _ = shape_text(t, .Interface, "กำ", placed[:])
+	testing.expectf(t, count == 3, "ko and SARA AM: %v", placed[:count])
+	if count == 3 {
+		testing.expect(t, placed[1].glyph == fallback_glyph(0x0E4D) && placed[1].placement == .Anchored && placed[1].cluster == 3, "NIKHAHIT on ko, at the byte of SARA AM")
+		testing.expect(t, placed[2].glyph == fallback_glyph(0x0E32) && placed[2].placement == .Base && placed[2].cluster == 3, "SARA AA, at the byte of SARA AM")
+		testing.expect(t, placed[2].x == placed[0].x + placed[0].advance)
+	}
+	// SARA AM after a tone mark: NIKHAHIT before it, the tone mark on it.
+	count, _ = shape_text(t, .Interface, "ก่ำ", placed[:])
+	testing.expectf(t, count == 4, "ko, mai ek and SARA AM: %v", placed[:count])
+	if count == 4 {
+		testing.expect(t, placed[1].glyph == fallback_glyph(0x0E4D) && placed[2].glyph == fallback_glyph(0x0E48) && placed[3].glyph == fallback_glyph(0x0E32))
+		testing.expectf(t, placed[2].placement == .Anchored && placed[2].y > placed[1].y, "mai ek stacks on NIKHAHIT: %v %v", placed[1], placed[2])
+	}
+	// SARA AM with nothing to take its NIKHAHIT: one glyph.
+	for text in ([?]string{"ำ", " ำ"}) {
+		count, _ = shape_text(t, .Interface, text, placed[:])
+		last := placed[count - 1]
+		testing.expectf(t, last.glyph == fallback_glyph(0x0E33) && last.placement == .Base, "%q: SARA AM stays whole: %v", text, placed[:count])
+	}
+	// A fit never splits ko from its NIKHAHIT, nor SARA AA from its byte.
+	spacing, _ := spacing_of(.Interface, TEXT_SIZE_OF_SCALE_ONE)
+	ko_width, _ := text_width(&spacing, transmute([]u8)string("ก"))
+	testing.expect_value(t, text_fit(&spacing, transmute([]u8)string("กำ"), ko_width), 3)
+	// The cells of a line of Thai: a mark none, SARA AM one.
+	testing.expect_value(t, cell_count(transmute([]u8)string("ก่ำ")), 2)
 }
