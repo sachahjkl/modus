@@ -11,6 +11,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import "modus:contract/blake3"
 import "modustool:site"
 
 // The address of the site that the page links to and takes the font of the
@@ -27,17 +28,50 @@ STATUS_DEFAULT_DEADLINE :: 5 * time.Second
 // The longest time that the page shows a free space that it read before.
 DISK_FREE_LONGEST_AGE :: 10 * time.Second
 
-// The paths that the listener answers. Any other path is Not_Found.
+// The closed set of path forms that the listener answers
+// (src/md/infrastructure/cache_browser.md, "The paths"). Any other path is
+// Not_Found.
 Status_Path :: enum u8 {
 	Page,
 	Status_Record,
 	Style_Sheet,
+	Tree,
+	Blob,
+	Blob_Raw,
+	Realisation,
+	Releases,
+	Search,
 }
 
+// The fixed paths of the listener, and the prefix of each path that takes a
+// hash.
 status_path_texts := [Status_Path]string {
 	.Page          = "/",
 	.Status_Record = "/status.json",
 	.Style_Sheet   = "/style.css",
+	.Tree          = "/tree/",
+	.Blob          = "/blob/",
+	.Blob_Raw      = "/blob/",
+	.Realisation   = "/realisation/",
+	.Releases      = "/releases",
+	.Search        = "/search",
+}
+
+// What the search query carries: nothing, a checked hexadecimal prefix, or
+// a value that the border refused (which no page repeats).
+Search_Prefix_State :: enum u8 {
+	None,
+	Valid,
+	Refused,
+}
+
+// One parsed request target, produced at the border by status_request_parse.
+Status_Request :: struct {
+	path:         Status_Path,
+	hash:         blake3.Hash,
+	page:         int, // 1-based page for .Tree; 0 for other paths.
+	prefix:       Hash_Prefix,
+	prefix_state: Search_Prefix_State,
 }
 
 // The answers that the listener gives. An answer other than Ok has no body,
@@ -236,33 +270,170 @@ cache_page_site_address_valid :: proc(text: string) -> bool {
 	return true
 }
 
+// status_parse_hash_prefix checks a search prefix: 1 to 64 lowercase
+// hexadecimal digits.
+@(private = "file")
+status_parse_hash_prefix :: proc(text: string) -> (prefix: Hash_Prefix, ok: bool) {
+	if len(text) == 0 || len(text) > 64 {
+		return {}, false
+	}
+	for index in 0 ..< len(text) {
+		ch := text[index]
+		switch {
+		case ch >= '0' && ch <= '9':
+			prefix.digits[index] = ch - '0'
+		case ch >= 'a' && ch <= 'f':
+			prefix.digits[index] = ch - 'a' + 10
+		case:
+			return {}, false
+		}
+	}
+	prefix.count = len(text)
+	return prefix, true
+}
+
+// status_parse_tree_page parses the page number of ?page=<n>: 2 to 9999 in
+// decimal digits with no leading zero. Page 1 has its own address with no
+// query, so ?page=1 is refused.
+@(private = "file")
+status_parse_tree_page :: proc(text: string) -> (page: int, ok: bool) {
+	if len(text) == 0 || len(text) > 4 || text[0] == '0' {
+		return 0, false
+	}
+	value := 0
+	for index in 0 ..< len(text) {
+		ch := text[index]
+		if ch < '0' || ch > '9' {
+			return 0, false
+		}
+		value = value * 10 + int(ch - '0')
+	}
+	if value < 2 {
+		return 0, false
+	}
+	return value, true
+}
+
+// status_target_parse is the single border that turns a request target into
+// a closed Status_Request. It never percent-decodes and never joins the
+// target to a path on disk: any hash is decoded into 32 bytes here, and the
+// store builds paths only from those bytes.
+status_target_parse :: proc(target: string) -> (request: Status_Request, ok: bool) {
+	switch target {
+	case "/":
+		return Status_Request{path = .Page}, true
+	case "/status.json":
+		return Status_Request{path = .Status_Record}, true
+	case "/style.css":
+		return Status_Request{path = .Style_Sheet}, true
+	case "/releases":
+		return Status_Request{path = .Releases}, true
+	case "/search":
+		return Status_Request{path = .Search, prefix_state = .None}, true
+	}
+
+	if strings.has_prefix(target, "/search?") {
+		query := target[len("/search?"):]
+		// Only one parameter, h=<value>, with no second parameter.
+		if !strings.has_prefix(query, "h=") || strings.index_byte(query, '&') >= 0 {
+			return {}, false
+		}
+		value := query[2:]
+		if len(value) == 0 {
+			return Status_Request{path = .Search, prefix_state = .None}, true
+		}
+		if prefix, valid := status_parse_hash_prefix(value); valid {
+			return Status_Request{path = .Search, prefix = prefix, prefix_state = .Valid}, true
+		}
+		return Status_Request{path = .Search, prefix_state = .Refused}, true
+	}
+
+	if strings.has_prefix(target, "/tree/") {
+		rest := target[len("/tree/"):]
+		hash_text := rest
+		page := 1
+		if query_start := strings.index_byte(rest, '?'); query_start >= 0 {
+			hash_text = rest[:query_start]
+			query := rest[query_start + 1:]
+			if !strings.has_prefix(query, "page=") {
+				return {}, false
+			}
+			parsed_page, page_ok := status_parse_tree_page(query[len("page="):])
+			if !page_ok {
+				return {}, false
+			}
+			page = parsed_page
+		}
+		if !hex_hash_valid(hash_text) {
+			return {}, false
+		}
+		digest, decode_ok := decode_hex_32(hash_text)
+		if !decode_ok {
+			return {}, false
+		}
+		return Status_Request{path = .Tree, hash = digest, page = page}, true
+	}
+
+	if strings.has_prefix(target, "/blob/") {
+		rest := target[len("/blob/"):]
+		is_raw := false
+		hash_text := rest
+		if strings.has_suffix(rest, "/raw") {
+			is_raw = true
+			hash_text = rest[:len(rest) - len("/raw")]
+		}
+		if !hex_hash_valid(hash_text) {
+			return {}, false
+		}
+		digest, decode_ok := decode_hex_32(hash_text)
+		if !decode_ok {
+			return {}, false
+		}
+		return Status_Request{path = is_raw ? .Blob_Raw : .Blob, hash = digest}, true
+	}
+
+	if strings.has_prefix(target, "/realisation/") {
+		hash_text := target[len("/realisation/"):]
+		if !hex_hash_valid(hash_text) {
+			return {}, false
+		}
+		digest, decode_ok := decode_hex_32(hash_text)
+		if !decode_ok {
+			return {}, false
+		}
+		return Status_Request{path = .Realisation, hash = digest}, true
+	}
+
+	return {}, false
+}
+
 // status_request_parse reads one whole head, from the request line to the
-// empty line included, and gives the path that it asks for. It refuses
-// before it reads any field: a byte that no head holds, a line end that is
-// not CR LF. Then the form of the request line, then each header line, then
-// a header that announces a body, then the method, then the path.
-status_request_parse :: proc(head: []u8) -> (path: Status_Path, answer: Status_Answer) {
+// empty line included, and gives the parsed request. It refuses before it
+// reads any field: a byte that no head holds, a line end that is not CR LF.
+// Then the form of the request line, then each header line, then a header
+// that announces a body, then the method, then the path.
+status_request_parse :: proc(head: []u8) -> (request: Status_Request, answer: Status_Answer) {
 	for index in 0 ..< len(head) {
 		character := head[index]
 		switch {
 		case character == '\r':
 			if index + 1 >= len(head) || head[index + 1] != '\n' {
-				return .Page, .Bad_Request
+				return {}, .Bad_Request
 			}
 		case character == '\n':
 			if index == 0 || head[index - 1] != '\r' {
-				return .Page, .Bad_Request
+				return {}, .Bad_Request
 			}
 		case character == '\t':
 		case character >= 0x20 && character <= 0x7E:
 		case:
-			return .Page, .Bad_Request
+			return {}, .Bad_Request
 		}
 	}
 	text := string(head)
 	end := strings.index(text, "\r\n\r\n")
 	if end < 0 || end + 4 != len(text) {
-		return .Page, .Bad_Request
+		return {}, .Bad_Request
 	}
 	text = text[:end]
 	request_line := text
@@ -274,26 +445,26 @@ status_request_parse :: proc(head: []u8) -> (path: Status_Path, answer: Status_A
 
 	first_space := strings.index_byte(request_line, ' ')
 	if first_space <= 0 {
-		return .Page, .Bad_Request
+		return {}, .Bad_Request
 	}
 	method := request_line[:first_space]
 	after_method := request_line[first_space + 1:]
 	second_space := strings.index_byte(after_method, ' ')
 	if second_space <= 0 {
-		return .Page, .Bad_Request
+		return {}, .Bad_Request
 	}
 	target := after_method[:second_space]
 	version := after_method[second_space + 1:]
 	if version != "HTTP/1.1" && version != "HTTP/1.0" {
-		return .Page, .Bad_Request
+		return {}, .Bad_Request
 	}
 	for index in 0 ..< len(method) {
 		if method[index] < 'A' || method[index] > 'Z' {
-			return .Page, .Bad_Request
+			return {}, .Bad_Request
 		}
 	}
 	if strings.index_byte(target, '\t') >= 0 {
-		return .Page, .Bad_Request
+		return {}, .Bad_Request
 	}
 
 	remaining := header_lines
@@ -308,34 +479,31 @@ status_request_parse :: proc(head: []u8) -> (path: Status_Path, answer: Status_A
 		// A line that starts with a space continues the line before: an old
 		// form that two readers can split in two ways.
 		if len(line) == 0 || line[0] == ' ' || line[0] == '\t' {
-			return .Page, .Bad_Request
+			return {}, .Bad_Request
 		}
 		colon := strings.index_byte(line, ':')
 		if colon <= 0 {
-			return .Page, .Bad_Request
+			return {}, .Bad_Request
 		}
 		name := line[:colon]
 		if strings.index_byte(name, ' ') >= 0 || strings.index_byte(name, '\t') >= 0 {
-			return .Page, .Bad_Request
+			return {}, .Bad_Request
 		}
 		// A GET has no body. A body that the server does not read can hide a
 		// second request from the proxy in front of it.
 		if strings.equal_fold(name, "content-length") || strings.equal_fold(name, "transfer-encoding") {
-			return .Page, .Bad_Request
+			return {}, .Bad_Request
 		}
 	}
 
 	if method != "GET" {
-		return .Page, .Method_Not_Allowed
+		return {}, .Method_Not_Allowed
 	}
-	// The path is compared whole: it is never decoded and never joined to a
-	// folder, so '..', '%2e' and a query name no file.
-	for candidate in Status_Path {
-		if target == status_path_texts[candidate] {
-			return candidate, .Ok
-		}
+	parsed, target_ok := status_target_parse(target)
+	if !target_ok {
+		return {}, .Not_Found
 	}
-	return .Page, .Not_Found
+	return parsed, .Ok
 }
 
 // The one deadline of a connection, taken at its accept: it bounds the read
@@ -511,7 +679,7 @@ cache_status_disk_free :: proc(status_listener: ^Cache_Status_Listener) -> (byte
 }
 
 @(private = "file")
-status_answer_write :: proc(socket: net.TCP_Socket, deadline: Status_Deadline, answer: Status_Answer, content_type: string, cache_control: string, security_policy: string, body: []u8) -> bool {
+status_answer_write :: proc(socket: net.TCP_Socket, deadline: Status_Deadline, answer: Status_Answer, content_type: string, cache_control: string, security_policy: string, body: []u8, content_disposition := "") -> bool {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "HTTP/1.1 %s\r\nContent-Length: %d\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n", status_answer_line(answer), len(body))
 	if answer == .Method_Not_Allowed {
@@ -525,6 +693,9 @@ status_answer_write :: proc(socket: net.TCP_Socket, deadline: Status_Deadline, a
 	}
 	if security_policy != "" {
 		fmt.sbprintf(&b, "Content-Security-Policy: %s\r\n", security_policy)
+	}
+	if content_disposition != "" {
+		fmt.sbprintf(&b, "Content-Disposition: %s\r\n", content_disposition)
 	}
 	strings.write_string(&b, "\r\n")
 	// An answer with no body is a head of less than 200 bytes, which the
@@ -596,11 +767,11 @@ status_connection_answer :: proc(status_listener: ^Cache_Status_Listener, socket
 	if read_answer != .Ok {
 		return status_answer_write(socket, deadline, read_answer, "", "", "", nil)
 	}
-	path, answer := status_request_parse(buffer[:head_length])
+	request, answer := status_request_parse(buffer[:head_length])
 	if answer != .Ok {
 		return status_answer_write(socket, deadline, answer, "", "", "", nil)
 	}
-	switch path {
+	switch request.path {
 	case .Page:
 		snapshot := cache_status_snapshot(&status_listener.server.status)
 		disk_free, disk_free_known := cache_status_disk_free(status_listener)
@@ -613,6 +784,24 @@ status_connection_answer :: proc(status_listener: ^Cache_Status_Listener, socket
 		return status_answer_write(socket, deadline, .Ok, "application/json", "no-store", "default-src 'none'; frame-ancestors 'none'", transmute([]u8)record)
 	case .Style_Sheet:
 		return status_answer_write(socket, deadline, .Ok, "text/css; charset=utf-8", "max-age=3600", "", transmute([]u8)status_listener.style_sheet)
+	case .Tree:
+		reply := cache_browse_tree(status_listener.server, status_listener.page, request.hash, request.page)
+		return status_answer_write(socket, deadline, reply.status, reply.content_type, reply.cache_control, reply.security_policy, reply.body, reply.content_disposition)
+	case .Blob:
+		reply := cache_browse_blob(status_listener.server, status_listener.page, request.hash)
+		return status_answer_write(socket, deadline, reply.status, reply.content_type, reply.cache_control, reply.security_policy, reply.body, reply.content_disposition)
+	case .Blob_Raw:
+		reply := cache_browse_blob_raw(status_listener.server, request.hash)
+		return status_answer_write(socket, deadline, reply.status, reply.content_type, reply.cache_control, reply.security_policy, reply.body, reply.content_disposition)
+	case .Realisation:
+		reply := cache_browse_realisation(status_listener.server, status_listener.page, request.hash)
+		return status_answer_write(socket, deadline, reply.status, reply.content_type, reply.cache_control, reply.security_policy, reply.body, reply.content_disposition)
+	case .Releases:
+		reply := cache_browse_releases(status_listener.server, status_listener.page)
+		return status_answer_write(socket, deadline, reply.status, reply.content_type, reply.cache_control, reply.security_policy, reply.body, reply.content_disposition)
+	case .Search:
+		reply := cache_browse_search(status_listener.server, status_listener.page, request.prefix, request.prefix_state)
+		return status_answer_write(socket, deadline, reply.status, reply.content_type, reply.cache_control, reply.security_policy, reply.body, reply.content_disposition)
 	}
 	return false
 }

@@ -38,6 +38,7 @@ Site_Column_Kind :: enum {
 	Date, // A date and a time: never broken.
 	Number, // A number: never broken, aligned right.
 	List, // Several names, one value each (site_value_list): broken between the names, never inside one.
+	Hash, // A hash or a key in hexadecimal: one line, as wide as the room that the other columns leave, cut by the browser.
 	Any, // A column of a table of a document, whose kind the tool does not know.
 }
 
@@ -49,6 +50,7 @@ site_column_classes := [Site_Column_Kind]string {
 	.Date   = "column-date",
 	.Number = "column-number",
 	.List   = "column-list",
+	.Hash   = "column-hash",
 	.Any    = "column-any",
 }
 
@@ -100,10 +102,19 @@ site_column_value_kind :: proc(column_kind: Site_Column_Kind, stated: value_kind
 // are all of one kind (values, by the place of the column; .None for a
 // column of another sort) shows the icon of that kind once, in its head,
 // and its cells keep the font and the color of the kind: no row repeats
-// the icon (docs/SITE.md, "The kinds of values").
+// the icon (docs/SITE.md, "The kinds of values"). A table with a column
+// of hashes takes the whole width of its box: a hash shows more of its
+// digits in the room that a table of its natural width leaves empty
+// (docs/SITE.md, "The tables").
 site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column, values: []value_kinds.Value_Kind = nil) -> Site_Table {
 	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator), classes = make([]string, len(columns), context.temp_allocator), headers = make([]string, len(columns), context.temp_allocator)}
-	strings.write_string(b, "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
+	whole_width := false
+	for column in columns {
+		if column.kind == .Hash {
+			whole_width = true
+		}
+	}
+	strings.write_string(b, whole_width ? "<div class=\"table table-whole-width\" role=\"region\" tabindex=\"0\" aria-label=\"" : "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
 	foundation.html_escape(b, name)
 	strings.write_string(b, "\"><table>\n<thead><tr>")
 	for column, index in columns {

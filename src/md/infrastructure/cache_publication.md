@@ -34,7 +34,8 @@ A key of its own, an Ed25519 key pair, separate from the signing key and from th
 ### What a release publishes
 
 1. **Each file of the release boot image** (`build/boot_volume_release.image`, the signed image of the release volume): each module and each resource, as a blob, under the BLAKE3 hash that its entry states, the hash by which the loader finds it. The tool checks each hash against the bytes before any upload: a damaged image uploads nothing. The resources are published too: a machine that takes a system by its hashes needs the system description and the start list as much as the modules.
-2. **The realisation of the cache test recipe**, its input and its output.
+2. **The realisation of the cache test recipe**, its recipe object, its input and its output.
+3. **The release tree and its signed release pointer**: a tree `files` naming each file of the boot image, a release tree naming `boot.image` (by hash) and `files`, and a signed `Release_Pointer` under the name `release` with the release number ([cache_browser.md](cache_browser.md), "The release pointers").
 
 The cache test recipe is a recipe of the inputs tree builder with one input: the blob `cache_test`, a fixed text of the tool ("modus object cache test v1"). Its output is a tree of one entry. The realisation says "this recipe gave this tree", signed with the cache signing key.
 

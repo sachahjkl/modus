@@ -15,7 +15,7 @@ An address that a person finds in a plan, in a log or in a search must say what 
 
 ### One program
 
-`modustool cache-serve --status-listen <host:port>` starts a second listener on its own thread. It answers three paths, and only `GET`:
+`modustool cache-serve --status-listen <host:port>` starts a second listener on its own thread. It answers these three paths and the paths of the browser ([cache_browser.md](cache_browser.md)), and only `GET`:
 
 | Path | Answer |
 |---|---|
@@ -54,7 +54,7 @@ The page is a public address behind a proxy, so its reader is the border of a ho
 - One request on one connection. The answer says `Connection: close`, and the server closes after it: bytes after the first head get no answer.
 - **One deadline for each connection**, 5 seconds by default (a parameter, so that a test sets it short), taken at the accept. It bounds the read of the head, the write of the answer and the read that drops the bytes after the answer, together: each read and each send waits at most the time that remains. A client that never reads, or reads a few bytes at a time, holds the thread for the deadline at most. Refused: a timeout of each send, which a client that reads one byte before each timeout stretches to minutes. Each send is one call of the system, because `net.send_tcp` calls again after a partial send with the whole timeout. An answer that the deadline cuts ends with a reset (`SO_LINGER` of 0), so the system drops the megabytes that it still holds for the slow client. An error answer is a head of less than 200 bytes with no body: it goes in one send of at most a millisecond, also after the deadline, so a `408` reaches the client.
 - The head is at most 4096 bytes and ends with an empty line within the deadline. A longer head is `431`; a head with no end in time is `408`.
-- The request line is `GET <path> HTTP/1.1` or `HTTP/1.0`. Another method is `405` with `Allow: GET`. A path outside the three, a query, a path with `..` or `%2e` is `404`: the path is compared whole with the three, never decoded and never joined to a folder, so no path reaches a file.
+- The request line is `GET <path> HTTP/1.1` or `HTTP/1.0`. Another method is `405` with `Allow: GET`. A path outside the closed set of forms, a query that its form does not take, a path with `..` or `%2e` is `404`: the path is parsed whole at one border, never decoded and never joined to a folder, so no path reaches a file by its text ([cache_browser.md](cache_browser.md), "The paths").
 - A NUL byte, a control byte other than the end of a line and a tab, a byte past ASCII, a line with no colon in the headers, a `Content-Length` or a `Transfer-Encoding` is `400`. A `GET` has no body, and a body that the server does not read is a way to hide a second request from the proxy.
 - No answer repeats a byte of the request. An error answer has no body.
 - After its answer the server ends its side, then reads and drops what the client still sends, at most 16 KiB, until the client closes or the deadline passes: a close with bytes unread makes the system send a reset, which can remove the answer before the client reads it.
@@ -62,7 +62,7 @@ The page is a public address behind a proxy, so its reader is the border of a ho
 - **This protection assumes a proxy in front that reads the whole head before it opens a connection to the server**, as the TLS proxy of the deployment does. Exposed with no such proxy, a client that opens one connection after another holds the page for one deadline each: the page then waits, and the protocol does not.
 - A refused accept that passes (a connection aborted before the accept, an interrupt, a lack of resources) does not end the thread: it ends only when the server stops or its listener is closed. The stop ends the side of the listener, joins the thread, and only then closes the listener, so the thread never waits on a descriptor that the system gave to another file.
 
-Refused: a library of HTTP for three paths; keep-alive, which makes the reader a loop over hostile heads.
+Refused: a library of HTTP for a closed set of paths; keep-alive, which makes the reader a loop over hostile heads.
 
 ### The look
 
@@ -81,7 +81,7 @@ Each fact once, in this order:
 3. **The signer keys**: the hexadecimal form of each key of `--authorized-key` and `--signer-key`, whole. These are the keys whose uploads the host accepts. The page says that this list is no reason to trust a key: a client takes the key of a publisher from the publisher.
 4. **The endpoint and the protocol**: the endpoint, what the server speaks today (binary frames `MOCQ` and `MOCR` over TCP), a link to the entry "Object cache" of the glossary on the site, the lines of a substitution policy that name this host, and the command that runs an object cache of one's own.
 5. **The store now**: objects, realisations, bytes, free space, the last write, the start of the server.
-6. **The last 10 realisations**: the recipe hash, the output hash and its kind, the signer, the time. Each hash shows its first 12 digits; the whole value is in the `title` of its element and in `status.json`. The column of the signer is shown only when the rows name more than one signer: with one, each row repeats one key, which the list of the keys already gives. The heads of the hash columns carry the icon of the kind Version, as the head of the column of the time carries the icon of Time: a column whose cells are all of one kind shows its icon once, in its head ([`docs/SITE.md`](../../../docs/SITE.md), "The kinds of values").
+6. **The last 10 realisations**: the recipe hash, the output hash and its kind, the signer, the time. The recipe hash links to the page of the realisation, and the output hash to the page of its object ([cache_browser.md](cache_browser.md)). A line under the heading links to the release pointers and to the search. The table takes the whole width of its card: each hash column is of the column kind Hash of the site ([`docs/SITE.md`](../../../docs/SITE.md), "The tables"), so the hashes take the room that the kind and the time leave. The server writes each hash whole; the browser shows the digits that its column holds and cuts the rest with an ellipsis, so a copy of the cell takes the whole hash, its `title` shows it, and on a wide screen it shows whole when it fits. A cut on the server to 12 digits was refused: the table took a part of the card, most of the card was empty, and no hash could be read or copied from the page. The column of the signer is shown only when the rows name more than one signer: with one, each row repeats one key, which the list of the keys already gives. The heads of the hash columns carry the icon of the kind Version, as the head of the column of the time carries the icon of Time: a column whose cells are all of one kind shows its icon once, in its head ([`docs/SITE.md`](../../../docs/SITE.md), "The kinds of values").
 
 The lines of the policy follow the fields of `Substitution` (`sources`, `signers`, `mode`; [../features/declarations.md](../features/declarations.md), "A record literal is typed by its use") and the table `keys` of the publisher keys that a principal trusts. The literal of a source is not fixed yet ("Open questions").
 
@@ -90,7 +90,7 @@ The lines of the policy follow the fields of `Substitution` (`sources`, `signers
 - **The page lists keys and is not signed.** A reader who takes a key from the page trusts the host. So the page says where a key comes from, and the client trusts the key of the publisher, not the list.
 - **A realisation written again** for one recipe replaces the file, does not change the count of the realisations, and takes the top of the list of the last realisations.
 - **The times of the list after a start** are the times of the files; after the start, the time of each write.
-- **The thread of the page reads no file.** The style sheet, the keys and the counts are in memory; the one call to the system is the `statfs` of the free space.
+- **The page `/` reads no file.** The style sheet, the keys and the counts are in memory; the one call to the system is the `statfs` of the free space. A page of the browser reads the files of the one thing that it shows ([cache_browser.md](cache_browser.md), "Subtle points").
 
 ## Open questions
 

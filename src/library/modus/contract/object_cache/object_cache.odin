@@ -72,6 +72,36 @@ MAX_RESPONSE_BODY_BYTES :: GET_OBJECT_RESPONSE_HEADER_SIZE + MAX_OBJECT_PAYLOAD_
 // Domain separation prefixes for Ed25519 signatures.
 REALISATION_SIGNING_DOMAIN :: "modus realisation v1"
 PUT_OBJECT_SIGNING_DOMAIN :: "modus object put v1"
+RELEASE_POINTER_SIGNING_DOMAIN :: "modus release pointer v1"
+
+// The bytes of the name of a release pointer: the bound of a tree entry
+// name, so that a name of a pointer is also a name of a tree.
+RELEASE_POINTER_NAME_CAPACITY :: tree_hash.ENTRY_NAME_CAPACITY
+
+//   Release pointer (208 bytes), on the wire and in a store:
+//     [0..32]    publisher_public_key
+//     [32]       name_length (1 ..= 64)
+//     [33..40]   reserved, 0
+//     [40..104]  name, UTF-8, zero bytes after it
+//     [104..112] number (u64 LE), 1 or more
+//     [112..144] tree_hash
+//     [144..208] signature
+RELEASE_POINTER_WIRE_SIZE :: PUBLIC_KEY_SIZE + 1 + 7 + RELEASE_POINTER_NAME_CAPACITY + 8 + blake3.HASH_SIZE + SIGNATURE_SIZE
+
+//   Get_Release_Pointer body (104 bytes): the first 104 bytes of a pointer,
+//   the publisher key and the name.
+GET_RELEASE_POINTER_BODY_SIZE :: PUBLIC_KEY_SIZE + 1 + 7 + RELEASE_POINTER_NAME_CAPACITY
+
+//   Release pointer signing bytes (168 bytes):
+//     [0..24]    "modus release pointer v1"
+//     [24]       0x00 separator
+//     [25]       name_length
+//     [26..32]   0, reserved
+//     [32..96]   name, zero bytes after it
+//     [96..104]  number (u64 LE)
+//     [104..136] tree_hash
+//     [136..168] publisher_public_key
+RELEASE_POINTER_SIGNING_BYTES_SIZE :: len(RELEASE_POINTER_SIGNING_DOMAIN) + 1 + 1 + 6 + RELEASE_POINTER_NAME_CAPACITY + 8 + blake3.HASH_SIZE + PUBLIC_KEY_SIZE
 
 // Exact canonical sizes of the signable payloads.
 //   Realisation signing bytes (120 bytes):
@@ -102,14 +132,19 @@ PUT_OBJECT_SIGNING_BYTES_SIZE :: len(PUT_OBJECT_SIGNING_DOMAIN) + 1 + 1 + 3 + bl
 #assert(GET_OBJECT_RESPONSE_HEADER_SIZE == 8)
 #assert(REALISATION_SIGNING_BYTES_SIZE == 120)
 #assert(PUT_OBJECT_SIGNING_BYTES_SIZE == 96)
+#assert(RELEASE_POINTER_WIRE_SIZE == 208)
+#assert(GET_RELEASE_POINTER_BODY_SIZE == 104)
+#assert(RELEASE_POINTER_SIGNING_BYTES_SIZE == 168)
 
 // Closed set of request kinds on the object cache wire protocol.
 Cache_Request_Kind :: enum u8 {
 	Has             = 1,
 	Get_Object      = 2,
 	Get_Realisation = 3,
-	Put_Object      = 4,
-	Put_Realisation = 5,
+	Put_Object          = 4,
+	Put_Realisation     = 5,
+	Put_Release_Pointer = 6, // A signed release pointer; the signer must be a key of the host.
+	Get_Release_Pointer = 7, // The pointer of a publisher and a name with the highest number.
 }
 
 // Closed set of response statuses returned by an object cache server.
@@ -162,6 +197,8 @@ Wire_Refusal :: enum u8 {
 	Bad_Count           = 10,
 	Buffer_Too_Small    = 11,
 	Reserved_Nonzero    = 12,
+	Bad_Name            = 13, // A name of a release pointer that is not a valid tree entry name.
+	Zero_Number         = 14, // A release pointer with the number 0: the first number is 1.
 }
 
 // Signed record binding a recipe hash to its output hash and object kind.
@@ -173,8 +210,22 @@ Realisation_Record :: struct {
 	signature:         [SIGNATURE_SIZE]u8,
 }
 
+// A release pointer: the record that a publisher signs for a name, with a
+// number that only grows and the hash of a tree
+// (src/md/infrastructure/cache_browser.md, "The release pointers").
+Release_Pointer :: struct {
+	publisher_public_key: [PUBLIC_KEY_SIZE]u8,
+	name_length:          u8,
+	name:                 [RELEASE_POINTER_NAME_CAPACITY]u8,
+	number:               u64,
+	tree_hash:            blake3.Hash,
+	signature:            [SIGNATURE_SIZE]u8,
+}
+
 // Decoded or buildable request message for the object cache wire protocol.
 // For Put_Object, payload borrows directly from the input frame during decode.
+// Put_Release_Pointer carries a whole pointer; Get_Release_Pointer carries
+// the publisher key and the name of release_pointer only.
 Cache_Request :: struct {
 	kind:                Cache_Request_Kind,
 	hash_count:          u8,
@@ -186,6 +237,7 @@ Cache_Request :: struct {
 	uploader_signature:  [SIGNATURE_SIZE]u8,
 	payload:             []u8,
 	realisation:         Realisation_Record,
+	release_pointer:     Release_Pointer,
 }
 
 // Decoded or buildable response message for the object cache wire protocol.
@@ -195,8 +247,9 @@ Cache_Response :: struct {
 	status:         Cache_Response_Status,
 	present_bitset: u64,
 	object_kind:    Cache_Object_Kind,
-	payload:        []u8,
-	realisation:    Realisation_Record,
+	payload:         []u8,
+	realisation:     Realisation_Record,
+	release_pointer: Release_Pointer,
 }
 
 // Policy governing whether a principal trusts a fetched object or realisation.
@@ -399,6 +452,142 @@ decode_realisation_record :: proc "contextless" (input: []u8) -> (record: Realis
 	return record, .None
 }
 
+// release_pointer_name gives the name of a pointer.
+release_pointer_name :: proc "contextless" (pointer: ^Release_Pointer) -> string {
+	length := min(int(pointer.name_length), RELEASE_POINTER_NAME_CAPACITY)
+	return string(pointer.name[:length])
+}
+
+// release_pointer_name_check checks the publisher key and the name of a
+// pointer: the part that Get_Release_Pointer carries. The name is a valid
+// tree entry name with zero bytes after it.
+release_pointer_name_check :: proc "contextless" (pointer: ^Release_Pointer) -> Wire_Refusal {
+	if bytes_all_zero(pointer.publisher_public_key[:]) {
+		return .Zero_Hash
+	}
+	length := int(pointer.name_length)
+	if length == 0 || length > RELEASE_POINTER_NAME_CAPACITY {
+		return .Bad_Name
+	}
+	if tree_hash.tree_name_validate(pointer.name[:length]) != .None {
+		return .Bad_Name
+	}
+	if !bytes_all_zero(pointer.name[length:]) {
+		return .Bad_Name
+	}
+	return .None
+}
+
+// release_pointer_check checks each field of a pointer but its signature.
+release_pointer_check :: proc "contextless" (pointer: ^Release_Pointer) -> Wire_Refusal {
+	if name_refusal := release_pointer_name_check(pointer); name_refusal != .None {
+		return name_refusal
+	}
+	if pointer.number == 0 {
+		return .Zero_Number
+	}
+	if hash_is_zero(pointer.tree_hash) {
+		return .Zero_Hash
+	}
+	return .None
+}
+
+// release_pointer_make gives an unsigned pointer, or the refusal of its
+// fields.
+release_pointer_make :: proc "contextless" (publisher_public_key: [PUBLIC_KEY_SIZE]u8, name: string, number: u64, tree: blake3.Hash) -> (pointer: Release_Pointer, refusal: Wire_Refusal) {
+	if len(name) == 0 || len(name) > RELEASE_POINTER_NAME_CAPACITY {
+		return {}, .Bad_Name
+	}
+	pointer.publisher_public_key = publisher_public_key
+	pointer.name_length = u8(len(name))
+	copy(pointer.name[:], name)
+	pointer.number = number
+	pointer.tree_hash = tree
+	if check_refusal := release_pointer_check(&pointer); check_refusal != .None {
+		return {}, check_refusal
+	}
+	return pointer, .None
+}
+
+// release_pointer_signing_bytes gives the bytes that the publisher signs.
+release_pointer_signing_bytes :: proc "contextless" (pointer: ^Release_Pointer) -> (signing_bytes: [RELEASE_POINTER_SIGNING_BYTES_SIZE]u8, ok: bool) {
+	if pointer == nil || release_pointer_check(pointer) != .None {
+		return {}, false
+	}
+	domain := RELEASE_POINTER_SIGNING_DOMAIN
+	copy(signing_bytes[0:len(domain)], domain)
+	signing_bytes[24] = 0
+	signing_bytes[25] = pointer.name_length
+	copy(signing_bytes[32:96], pointer.name[:])
+	byte_order.write_u64_little_endian(signing_bytes[:], 96, pointer.number)
+	copy(signing_bytes[104:136], pointer.tree_hash[:])
+	copy(signing_bytes[136:168], pointer.publisher_public_key[:])
+	return signing_bytes, true
+}
+
+// encode_release_pointer writes a checked pointer in its 208 bytes. A
+// refused call leaves output unchanged.
+encode_release_pointer :: proc "contextless" (pointer: ^Release_Pointer, output: []u8) -> (written: int, refusal: Wire_Refusal) {
+	if pointer == nil {
+		return 0, .Bad_Name
+	}
+	if check_refusal := release_pointer_check(pointer); check_refusal != .None {
+		return 0, check_refusal
+	}
+	if len(output) < RELEASE_POINTER_WIRE_SIZE {
+		return 0, .Buffer_Too_Small
+	}
+	release_pointer_head_write(pointer, output)
+	byte_order.write_u64_little_endian(output, 104, pointer.number)
+	copy(output[112:144], pointer.tree_hash[:])
+	copy(output[144:208], pointer.signature[:])
+	return RELEASE_POINTER_WIRE_SIZE, .None
+}
+
+// The first 104 bytes of a pointer: its publisher key and its name, which
+// are also the body of Get_Release_Pointer.
+@(private)
+release_pointer_head_write :: proc "contextless" (pointer: ^Release_Pointer, output: []u8) {
+	copy(output[0:32], pointer.publisher_public_key[:])
+	output[32] = pointer.name_length
+	for index in 33 ..< 40 {
+		output[index] = 0
+	}
+	copy(output[40:104], pointer.name[:])
+}
+
+@(private)
+release_pointer_head_read :: proc "contextless" (input: []u8, pointer: ^Release_Pointer) -> Wire_Refusal {
+	if !bytes_all_zero(input[33:40]) {
+		return .Reserved_Nonzero
+	}
+	copy(pointer.publisher_public_key[:], input[0:32])
+	pointer.name_length = input[32]
+	copy(pointer.name[:], input[40:104])
+	return release_pointer_name_check(pointer)
+}
+
+// decode_release_pointer decodes exactly 208 bytes, and refuses a field
+// that release_pointer_check refuses. It does not check the signature.
+decode_release_pointer :: proc "contextless" (input: []u8) -> (pointer: Release_Pointer, refusal: Wire_Refusal) {
+	if len(input) < RELEASE_POINTER_WIRE_SIZE {
+		return {}, .Truncated
+	}
+	if len(input) > RELEASE_POINTER_WIRE_SIZE {
+		return {}, .Trailing_Bytes
+	}
+	if head_refusal := release_pointer_head_read(input, &pointer); head_refusal != .None {
+		return {}, head_refusal
+	}
+	pointer.number = byte_order.read_u64_little_endian(input, 104)
+	copy(pointer.tree_hash[:], input[112:144])
+	copy(pointer.signature[:], input[144:208])
+	if check_refusal := release_pointer_check(&pointer); check_refusal != .None {
+		return {}, check_refusal
+	}
+	return pointer, .None
+}
+
 // validate_request checks all fields of request and returns the exact wire body
 // length required to encode it.
 @(private)
@@ -454,6 +643,16 @@ validate_request :: proc "contextless" (request: ^Cache_Request) -> (checked_kin
 			return {}, 0, .Bad_Object_Kind
 		}
 		return kind, REALISATION_WIRE_SIZE, .None
+	case .Put_Release_Pointer:
+		if pointer_refusal := release_pointer_check(&request.release_pointer); pointer_refusal != .None {
+			return {}, 0, pointer_refusal
+		}
+		return kind, RELEASE_POINTER_WIRE_SIZE, .None
+	case .Get_Release_Pointer:
+		if name_refusal := release_pointer_name_check(&request.release_pointer); name_refusal != .None {
+			return {}, 0, name_refusal
+		}
+		return kind, GET_RELEASE_POINTER_BODY_SIZE, .None
 	}
 	return {}, 0, .Bad_Request_Kind
 }
@@ -520,6 +719,13 @@ encode_request :: proc "contextless" (request: ^Cache_Request, output: []u8) -> 
 		if record_refusal != .None {
 			return 0, record_refusal
 		}
+	case .Put_Release_Pointer:
+		_, pointer_refusal := encode_release_pointer(&request.release_pointer, body)
+		if pointer_refusal != .None {
+			return 0, pointer_refusal
+		}
+	case .Get_Release_Pointer:
+		release_pointer_head_write(&request.release_pointer, body)
 	}
 	return total_size, .None
 }
@@ -663,6 +869,22 @@ decode_request :: proc "contextless" (frame: []u8) -> (request: Cache_Request, r
 			return {}, record_refusal
 		}
 		request.realisation = record
+	case .Put_Release_Pointer:
+		pointer, pointer_refusal := decode_release_pointer(body)
+		if pointer_refusal != .None {
+			return {}, pointer_refusal
+		}
+		request.release_pointer = pointer
+	case .Get_Release_Pointer:
+		if len(body) < GET_RELEASE_POINTER_BODY_SIZE {
+			return {}, .Truncated
+		}
+		if len(body) > GET_RELEASE_POINTER_BODY_SIZE {
+			return {}, .Trailing_Bytes
+		}
+		if head_refusal := release_pointer_head_read(body, &request.release_pointer); head_refusal != .None {
+			return {}, head_refusal
+		}
 	}
 	return request, .None
 }
@@ -709,6 +931,13 @@ validate_response :: proc "contextless" (response: ^Cache_Response) -> (checked_
 		return kind, status, 0, .None
 	case .Put_Realisation:
 		return kind, status, 0, .None
+	case .Put_Release_Pointer:
+		return kind, status, 0, .None
+	case .Get_Release_Pointer:
+		if pointer_refusal := release_pointer_check(&response.release_pointer); pointer_refusal != .None {
+			return {}, {}, 0, pointer_refusal
+		}
+		return kind, status, RELEASE_POINTER_WIRE_SIZE, .None
 	}
 	return {}, {}, 0, .Bad_Request_Kind
 }
@@ -764,6 +993,13 @@ encode_response :: proc "contextless" (response: ^Cache_Response, output: []u8) 
 		// No response body on Ok.
 	case .Put_Realisation:
 		// No response body on Ok.
+	case .Put_Release_Pointer:
+		// No response body on Ok.
+	case .Get_Release_Pointer:
+		_, pointer_refusal := encode_release_pointer(&response.release_pointer, body)
+		if pointer_refusal != .None {
+			return 0, pointer_refusal
+		}
 	}
 	return total_size, .None
 }
@@ -866,10 +1102,16 @@ decode_response :: proc "contextless" (frame: []u8) -> (response: Cache_Response
 		if len(body) > 0 {
 			return {}, .Trailing_Bytes
 		}
-	case .Put_Realisation:
+	case .Put_Realisation, .Put_Release_Pointer:
 		if len(body) > 0 {
 			return {}, .Trailing_Bytes
 		}
+	case .Get_Release_Pointer:
+		pointer, pointer_refusal := decode_release_pointer(body)
+		if pointer_refusal != .None {
+			return {}, pointer_refusal
+		}
+		response.release_pointer = pointer
 	}
 	return response, .None
 }

@@ -5,11 +5,14 @@ package cache_server
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import info "modus:contract/boot_info"
 import "modus:contract/blake3"
 import "modus:contract/object_cache"
 import "modus:contract/plans_recipes"
+import "modus:contract/release"
+import "modus:contract/tree_hash"
 import crypto_compat "modus:cryptography/compatibility_crypto"
 import "modus:cryptography/ed25519"
 import "modustool:foundation"
@@ -31,6 +34,10 @@ Cache_Test_Recipe :: struct {
 	output_hash:  blake3.Hash,
 	output_bytes: [CACHE_TEST_OUTPUT_BYTES_MOST]u8,
 	output_size:  int,
+	// The recipe object: the blob from which a reader computes the recipe
+	// hash again (src/md/infrastructure/cache_browser.md, "A realisation
+	// and its recipe").
+	object:       []u8,
 }
 
 // cache_test_recipe computes the recipe, its output tree and its output hash
@@ -52,6 +59,12 @@ cache_test_recipe :: proc() -> (recipe: Cache_Test_Recipe, ok: bool) {
 		return {}, false
 	}
 	recipe.recipe_hash = recipe_digest
+	object := make([]u8, plans_recipes.MAX_RECIPE_OBJECT_BYTES, context.temp_allocator)
+	object_written, object_refusal := plans_recipes.recipe_object_encode(spec, object)
+	if object_refusal != .None {
+		return {}, false
+	}
+	recipe.object = object[:object_written]
 	sandbox, sandbox_refusal := plans_recipes.builder_sandbox_prepare(spec)
 	if sandbox_refusal != .None {
 		return {}, false
@@ -130,6 +143,107 @@ Cache_Publish_Report :: struct {
 	bytes_put:      int,
 	recipe_hash:    blake3.Hash,
 	output_hash:    blake3.Hash,
+	release_tree:   blake3.Hash,
+	release_number: u64,
+}
+
+// The name of the release pointer of each release of the system.
+CACHE_RELEASE_POINTER_NAME :: "release"
+
+// The names of the two entries of a release tree.
+CACHE_RELEASE_IMAGE_ENTRY :: "boot.image"
+CACHE_RELEASE_FILES_ENTRY :: "files"
+
+// release_number_value gives the number of a release pointer for a release
+// number a.b.c: a × 1 000 000 + b × 1 000 + c, so a later release has a
+// higher number. Each part is digits with no leading zero, and b and c are
+// below 1000.
+release_number_value :: proc(text: string) -> (number: u64, ok: bool) {
+	parts: [3]u64
+	part := 0
+	digits := 0
+	for index in 0 ..< len(text) {
+		character := text[index]
+		switch {
+		case character == '.':
+			if digits == 0 || part == 2 {
+				return 0, false
+			}
+			part += 1
+			digits = 0
+		case character >= '0' && character <= '9':
+			if digits == 1 && parts[part] == 0 {
+				return 0, false
+			}
+			if digits == 6 {
+				return 0, false
+			}
+			parts[part] = parts[part] * 10 + u64(character - '0')
+			digits += 1
+		case:
+			return 0, false
+		}
+	}
+	if part != 2 || digits == 0 || parts[1] >= 1000 || parts[2] >= 1000 {
+		return 0, false
+	}
+	number = parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2]
+	return number, number > 0
+}
+
+// The two trees of a release: the files of its boot image by their names,
+// and the release tree, which names the whole image and that tree.
+Cache_Release_Trees :: struct {
+	files:        []u8,
+	files_hash:   blake3.Hash,
+	release:      []u8,
+	release_hash: blake3.Hash,
+}
+
+// cache_release_trees makes the two trees of a release. A name that is not
+// a tree entry name, two files of one name, or more files than a tree
+// holds, refuses the image whole.
+cache_release_trees :: proc(image: []u8, allocator := context.temp_allocator) -> (trees: Cache_Release_Trees, problem: string) {
+	modules, resources, valid := info.image_tables(image)
+	if !valid {
+		return {}, "it is not a boot image: its header or its tables are wrong"
+	}
+	entries := make([dynamic]tree_hash.Tree_Entry, 0, len(modules) + len(resources), allocator)
+	for table in ([2][]info.Image_Entry{modules, resources}) {
+		for &entry in table {
+			name_end := 0
+			for name_end < len(entry.name) && entry.name[name_end] != 0 {
+				name_end += 1
+			}
+			name := string(entry.name[:name_end])
+			item, refusal := tree_hash.tree_entry_make(.Object, name, entry.hash)
+			if refusal != .None {
+				return {}, fmt.tprintf("the file %q has a name that a tree does not take: %v", name, refusal)
+			}
+			append(&entries, item)
+		}
+	}
+	if len(entries) > tree_hash.MAX_TREE_ENTRIES {
+		return {}, fmt.tprintf("the boot image holds %d files, more than the %d of one tree", len(entries), tree_hash.MAX_TREE_ENTRIES)
+	}
+	slice.sort_by(entries[:], proc(left, right: tree_hash.Tree_Entry) -> bool {
+		left_copy, right_copy := left, right
+		return tree_hash.compare_name_bytes(transmute([]u8)tree_hash.tree_entry_name(&left_copy), transmute([]u8)tree_hash.tree_entry_name(&right_copy)) < 0
+	})
+	trees.files = make([]u8, tree_hash.tree_encoded_size(len(entries)), allocator)
+	if _, refusal := tree_hash.tree_encode(entries[:], trees.files); refusal != .None {
+		return {}, fmt.tprintf("the tree of the files of the boot image was refused: %v", refusal)
+	}
+	trees.files_hash, _ = tree_hash.tree_hash(trees.files)
+	image_entry, _ := tree_hash.tree_entry_make(.Object, CACHE_RELEASE_IMAGE_ENTRY, blake3.hash(image))
+	files_entry, _ := tree_hash.tree_entry_make(.Tree, CACHE_RELEASE_FILES_ENTRY, trees.files_hash)
+	release_entries := [2]tree_hash.Tree_Entry{image_entry, files_entry}
+	trees.release = make([]u8, tree_hash.tree_encoded_size(2), allocator)
+	if _, refusal := tree_hash.tree_encode(release_entries[:], trees.release); refusal != .None {
+		return {}, fmt.tprintf("the release tree was refused: %v", refusal)
+	}
+	trees.release_hash, _ = tree_hash.tree_hash(trees.release)
+	return trees, ""
 }
 
 @(private = "file")
@@ -179,6 +293,9 @@ cache_publish_release :: proc(client: ^Cache_Client, signer: ^ed25519.Private_Ke
 	if _, outcome := cache_client_put_object(client, signer, .Blob, recipe.input); outcome != .Done {
 		return report, fmt.tprintf("the input of the cache test recipe was not put: %s", cache_client_outcome_text(outcome, client.server_status))
 	}
+	if _, outcome := cache_client_put_object(client, signer, .Blob, recipe.object); outcome != .Done {
+		return report, fmt.tprintf("the recipe object of the cache test recipe was not put: %s", cache_client_outcome_text(outcome, client.server_status))
+	}
 	if _, outcome := cache_client_put_object(client, signer, .Tree, recipe.output_bytes[:recipe.output_size]); outcome != .Done {
 		return report, fmt.tprintf("the output of the cache test recipe was not put: %s", cache_client_outcome_text(outcome, client.server_status))
 	}
@@ -189,6 +306,31 @@ cache_publish_release :: proc(client: ^Cache_Client, signer: ^ed25519.Private_Ke
 	if outcome := cache_client_put_realisation(client, record); outcome != .Done {
 		return report, fmt.tprintf("the realisation of the cache test recipe was not put: %s", cache_client_outcome_text(outcome, client.server_status))
 	}
+	// The trees of the release, then its pointer last: a reader who finds
+	// the pointer finds the trees that it names.
+	trees, trees_problem := cache_release_trees(image)
+	if trees_problem != "" {
+		return report, fmt.tprintf("the release tree was not made: %s", trees_problem)
+	}
+	if _, outcome := cache_client_put_object(client, signer, .Tree, trees.files); outcome != .Done {
+		return report, fmt.tprintf("the tree of the files of the boot image was not put: %s", cache_client_outcome_text(outcome, client.server_status))
+	}
+	if _, outcome := cache_client_put_object(client, signer, .Tree, trees.release); outcome != .Done {
+		return report, fmt.tprintf("the release tree was not put: %s", cache_client_outcome_text(outcome, client.server_status))
+	}
+	number, number_ok := release_number_value(release.RELEASE_NUMBER)
+	if !number_ok {
+		return report, fmt.tprintf("the release number %s gives no number of a release pointer", release.RELEASE_NUMBER)
+	}
+	pointer, signed_pointer := cache_client_release_pointer_sign(signer, CACHE_RELEASE_POINTER_NAME, number, trees.release_hash)
+	if !signed_pointer {
+		return report, "the release pointer was not signed"
+	}
+	if outcome := cache_client_put_release_pointer(client, pointer); outcome != .Done {
+		return report, fmt.tprintf("the release pointer %d was not put: %s", number, cache_client_outcome_text(outcome, client.server_status))
+	}
+	report.release_tree = trees.release_hash
+	report.release_number = number
 	return report, ""
 }
 
@@ -237,7 +379,42 @@ cache_verify_release :: proc(client: ^Cache_Client, trusted_signer: [object_cach
 	if _, recipe_problem := cache_verify_test_recipe(client, trusted_signer); recipe_problem != "" {
 		return files, recipe_problem
 	}
+	if pointer_problem := cache_verify_release_pointer(client, trusted_signer, image); pointer_problem != "" {
+		return files, pointer_problem
+	}
 	return files, ""
+}
+
+// cache_verify_release_pointer gets the release pointer of the trusted
+// signer and checks it against the release tree computed again from the
+// image. A pointer of a later release is no fault: the cache moved on.
+cache_verify_release_pointer :: proc(client: ^Cache_Client, trusted_signer: [object_cache.PUBLIC_KEY_SIZE]u8, image: []u8) -> (problem: string) {
+	trees, trees_problem := cache_release_trees(image)
+	if trees_problem != "" {
+		return fmt.tprintf("the release tree was not made: %s", trees_problem)
+	}
+	number, number_ok := release_number_value(release.RELEASE_NUMBER)
+	if !number_ok {
+		return fmt.tprintf("the release number %s gives no number of a release pointer", release.RELEASE_NUMBER)
+	}
+	pointer, outcome := cache_client_get_release_pointer(client, trusted_signer, CACHE_RELEASE_POINTER_NAME)
+	if outcome != .Done {
+		return fmt.tprintf("the release pointer was not taken: %s", cache_client_outcome_text(outcome, client.server_status))
+	}
+	if pointer.number < number {
+		return fmt.tprintf("the release pointer has the number %d, lower than the %d of this release", pointer.number, number)
+	}
+	if pointer.number == number && pointer.tree_hash != trees.release_hash {
+		return fmt.tprintf("the release pointer %d names the tree %s, and this image gives %s", number, hash_text(pointer.tree_hash), hash_text(trees.release_hash))
+	}
+	for tree in ([2]blake3.Hash{trees.release_hash, trees.files_hash}) {
+		payload, get_outcome := cache_client_get_object(client, .Tree, tree, context.temp_allocator)
+		_ = payload
+		if get_outcome != .Done {
+			return fmt.tprintf("the tree %s of the release was not taken: %s", hash_text(tree), cache_client_outcome_text(get_outcome, client.server_status))
+		}
+	}
+	return ""
 }
 
 // read_signer_private_key_file reads a seed file of 64 hexadecimal digits

@@ -7,6 +7,7 @@
 package plans_recipes
 
 import "modus:contract/blake3"
+import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 import "modus:contract/object_cache"
 import "modus:contract/tree_hash"
@@ -315,16 +316,148 @@ sort_recipe_input_indices :: proc "contextless" (spec: ^Recipe_Spec, order: ^[MA
 // recipe_hash validates spec and computes its canonical, input-order-independent
 // domain-separated BLAKE3 digest under RECIPE_HASH_DOMAIN ("modus recipe v1").
 recipe_hash :: proc "contextless" (spec: ^Recipe_Spec) -> (digest: blake3.Hash, refusal: Recipe_Refusal) {
+	canonical_buffer: [MAX_RECIPE_CANONICAL_BYTES]u8
+	written, canonical_refusal := recipe_canonical_write(spec, canonical_buffer[:])
+	if canonical_refusal != .None {
+		return {}, canonical_refusal
+	}
+	return blake3.derive_key(RECIPE_HASH_DOMAIN, canonical_buffer[:written]), .None
+}
+
+// The magic of a recipe object: a blob that holds a recipe
+// (src/md/infrastructure/cache_browser.md, "A realisation and its recipe").
+RECIPE_OBJECT_MAGIC :: [8]u8{'M', 'O', 'D', 'R', 'C', 'P', '0', '1'}
+
+// The largest recipe object: the magic and the largest canonical bytes.
+MAX_RECIPE_OBJECT_BYTES :: len(RECIPE_OBJECT_MAGIC) + MAX_RECIPE_CANONICAL_BYTES
+
+// recipe_object_encode writes the recipe object of spec: the magic, then
+// the canonical bytes over which recipe_hash is computed. So the recipe
+// hash of an object is computed from the object alone.
+recipe_object_encode :: proc "contextless" (spec: ^Recipe_Spec, output: []u8) -> (written: int, refusal: Recipe_Refusal) {
+	magic := RECIPE_OBJECT_MAGIC
+	if len(output) < len(magic) {
+		return 0, .Buffer_Too_Small
+	}
+	canonical_written, canonical_refusal := recipe_canonical_write(spec, output[len(magic):])
+	if canonical_refusal != .None {
+		return 0, canonical_refusal
+	}
+	copy(output[:len(magic)], magic[:])
+	return len(magic) + canonical_written, .None
+}
+
+// recipe_object_decode reads a recipe object into spec and gives its recipe
+// hash. It refuses bytes with no magic, a field past its bound, an input
+// kind or an output kind that names no kind, bytes after the arguments, and
+// bytes that are not the canonical form: the inputs out of the order of
+// their names. So one recipe has one object.
+recipe_object_decode :: proc "contextless" (input: []u8, spec: ^Recipe_Spec) -> (digest: blake3.Hash, refusal: Recipe_Refusal) {
+	magic := RECIPE_OBJECT_MAGIC
+	if spec == nil || len(input) < len(magic) || len(input) > MAX_RECIPE_OBJECT_BYTES {
+		return {}, .Damaged_Recipe
+	}
+	for index in 0 ..< len(magic) {
+		if input[index] != magic[index] {
+			return {}, .Damaged_Recipe
+		}
+	}
+	canonical := input[len(magic):]
+	spec^ = {}
+	position := 0
+	take :: proc "contextless" (canonical: []u8, position: ^int, count: int) -> (bytes: []u8, ok: bool) {
+		if count < 0 || len(canonical) - position^ < count {
+			return nil, false
+		}
+		bytes = canonical[position^:position^ + count]
+		position^ += count
+		return bytes, true
+	}
+	builder, builder_ok := take(canonical, &position, blake3.HASH_SIZE)
+	if !builder_ok {
+		return {}, .Damaged_Recipe
+	}
+	copy(spec.builder_hash[:], builder)
+	head, head_ok := take(canonical, &position, 1 + 8 + 8 + 4)
+	if !head_ok {
+		return {}, .Damaged_Recipe
+	}
+	output_kind, output_kind_ok := object_cache.cache_object_kind_of_word(u64(head[0]))
+	if !output_kind_ok {
+		return {}, .Bad_Output_Kind
+	}
+	spec.output_kind = output_kind
+	spec.source_date_unix = byte_order.read_u64_little_endian(head, 1)
+	spec.output_block_limit = byte_order.read_u64_little_endian(head, 9)
+	input_count := byte_order.read_u32_little_endian(head, 17)
+	if input_count > MAX_RECIPE_INPUTS {
+		return {}, .Too_Many_Inputs
+	}
+	spec.input_count = input_count
+	for index in 0 ..< int(input_count) {
+		length_bytes, length_ok := take(canonical, &position, 4)
+		if !length_ok {
+			return {}, .Damaged_Recipe
+		}
+		name_length := byte_order.read_u32_little_endian(length_bytes, 0)
+		if name_length == 0 || name_length > MAX_ENTRY_NAME_BYTES {
+			return {}, .Invalid_Input_Name
+		}
+		name, name_ok := take(canonical, &position, int(name_length))
+		kind_and_hash, rest_ok := take(canonical, &position, 1 + blake3.HASH_SIZE)
+		if !name_ok || !rest_ok {
+			return {}, .Damaged_Recipe
+		}
+		input_kind, input_kind_ok := object_cache.cache_object_kind_of_word(u64(kind_and_hash[0]))
+		if !input_kind_ok {
+			return {}, .Bad_Input_Kind
+		}
+		item := &spec.inputs[index]
+		copy(item.name_bytes[:], name)
+		item.name_length = u8(name_length)
+		item.kind = input_kind
+		copy(item.hash[:], kind_and_hash[1:])
+	}
+	arguments_length_bytes, arguments_length_ok := take(canonical, &position, 4)
+	if !arguments_length_ok {
+		return {}, .Damaged_Recipe
+	}
+	arguments_length := byte_order.read_u32_little_endian(arguments_length_bytes, 0)
+	if arguments_length > MAX_RECIPE_ARG_BYTES {
+		return {}, .Arguments_Too_Large
+	}
+	arguments, arguments_ok := take(canonical, &position, int(arguments_length))
+	if !arguments_ok || position != len(canonical) {
+		return {}, .Damaged_Recipe
+	}
+	copy(spec.arguments[:], arguments)
+	spec.arguments_length = arguments_length
+	// The form written again must be the bytes read: inputs in another order
+	// give the same recipe hash and are not its object.
+	again: [MAX_RECIPE_CANONICAL_BYTES]u8
+	written, again_refusal := recipe_canonical_write(spec, again[:])
+	if again_refusal != .None {
+		return {}, again_refusal
+	}
+	if !bytes_equal(again[:written], canonical) {
+		return {}, .Damaged_Recipe
+	}
+	return blake3.derive_key(RECIPE_HASH_DOMAIN, canonical), .None
+}
+
+// recipe_canonical_write validates spec and writes the bytes that its
+// recipe hash is computed over: the inputs in the order of their names.
+@(private = "file")
+recipe_canonical_write :: proc "contextless" (spec: ^Recipe_Spec, output: []u8) -> (written: int, refusal: Recipe_Refusal) {
 	validation_refusal, _ := recipe_validate(spec)
 	if validation_refusal != .None {
-		return {}, validation_refusal
+		return 0, validation_refusal
 	}
 
 	order: [MAX_RECIPE_INPUTS]u32
 	sort_recipe_input_indices(spec, &order)
 
-	canonical_buffer: [MAX_RECIPE_CANONICAL_BYTES]u8
-	encoder := Canonical_Encoder{buffer = canonical_buffer[:]}
+	encoder := Canonical_Encoder{buffer = output}
 	encoder_raw_bytes(&encoder, spec.builder_hash[:])
 	encoder_byte(&encoder, u8(spec.output_kind))
 	encoder_u64(&encoder, spec.source_date_unix)
@@ -338,9 +471,9 @@ recipe_hash :: proc "contextless" (spec: ^Recipe_Spec) -> (digest: blake3.Hash, 
 	}
 	encoder_bytes(&encoder, spec.arguments[:spec.arguments_length])
 	if encoder.overflow {
-		return {}, .Buffer_Too_Small
+		return 0, .Buffer_Too_Small
 	}
-	return blake3.derive_key(RECIPE_HASH_DOMAIN, canonical_buffer[:encoder.position]), .None
+	return encoder.position, .None
 }
 
 // builder_sandbox_prepare derives the deterministic, zero-network sandbox

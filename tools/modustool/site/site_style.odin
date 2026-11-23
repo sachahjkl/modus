@@ -242,6 +242,12 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .search input { width: 224px; height: 24px; padding: 0 8px; font-family: var(--mono); font-size: 14px; color: var(--text); background: var(--track); border: 1px solid var(--track); border-radius: 0; }
 .search input::placeholder { color: var(--placeholder); opacity: 1; }
 .search input:focus-visible { outline: 2px solid var(--line); outline-offset: 0; }
+.search-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 16px; }
+.search-form input { flex: 1 1 280px; min-width: 0; height: 32px; padding: 0 8px; font-family: var(--mono); font-size: 14px; color: var(--text); background: var(--track); border: 1px solid var(--line); border-radius: 0; }
+.search-form input::placeholder { color: var(--placeholder); opacity: 1; }
+.search-form button { height: 32px; padding: 0 16px; font-family: var(--mono); font-size: 14px; color: var(--text); background: var(--track); border: 1px solid var(--line); border-radius: 0; cursor: pointer; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0; font-family: var(--mono); font-size: 14px; }
+.blob-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--track); }
 .search-panel { position: absolute; right: 0; top: 32px; z-index: 10; width: 640px; max-width: calc(100vw - 32px); padding: 4px; background: var(--card-bottom); border: 1px solid var(--line); }
 .search-hint, .search-detail { margin: 0; padding: 0 4px; font-family: var(--mono); font-size: 12px; line-height: 20px; color: var(--dim); }
 .search-detail:empty { display: none; }
@@ -445,6 +451,14 @@ ol.labelled > li > * { text-indent: 0; }
    passes the page, the browser wraps the columns of prose first; they
    keep a small least width. */
 .table { margin: 0 0 16px; overflow-x: auto; border-left: 2px solid transparent; border-right: 2px solid transparent; }
+/* A table with a column of hashes takes the whole width of its box, and
+   its other columns keep their natural width: the room goes to the
+   hashes. A hash cell has no least width of its own (max-width: 0 in the
+   automatic layout), holds the whole hash for a copy, and the browser
+   cuts what its column does not hold with an ellipsis. */
+.table-whole-width table { width: 100%; }
+.table-whole-width th:not(.column-hash) { width: 1%; white-space: nowrap; }
+td.column-hash { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
 table { border-collapse: collapse; }
 th.column-prose, th.column-line { min-width: 12em; }
@@ -651,6 +665,7 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .table tr > :first-child, .table tbody tr:nth-child(odd) > :first-child { position: static; background: none; font-weight: 600; }
   .table td { padding: 2px 0; white-space: normal; overflow-wrap: anywhere; text-align: left; }
   .table td:empty { display: none; }
+  .table td.column-hash { max-width: none; white-space: nowrap; overflow-wrap: normal; }
   .table td[data-label]::before { content: attr(data-label); display: block; color: var(--dim); font-size: 12px; line-height: 16px; font-weight: 400; font-family: var(--reading); }
   /* The bar: the mark at the left, the button at the right; the open menu
      lies over the page under the bar, the sections one under the other,

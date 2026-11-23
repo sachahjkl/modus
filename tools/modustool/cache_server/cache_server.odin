@@ -5,6 +5,8 @@
 //   objects/<64-lowercase-hex-blake3>        raw blob or canonical tree bytes
 //   realisations/<64-lowercase-hex-recipe>   canonical 164-byte Realisation_Record
 //   tmp/<hex>.<sequence>.tmp                 staging area for atomic rename
+//   recipes/<64-lowercase-hex-recipe>        a recipe object, by its recipe hash
+//   release_pointers/<64-lowercase-hex>      a release pointer, by the hash of its 208 bytes
 //
 // Security invariants enforced on every request:
 //   - Every Put_Object and Put_Realisation requires an authorized Ed25519
@@ -27,6 +29,7 @@ import "core:sync"
 import "core:time"
 import "modus:contract/blake3"
 import "modus:contract/object_cache"
+import "modus:contract/plans_recipes"
 import crypto_compat "modus:cryptography/compatibility_crypto"
 import "modus:cryptography/ed25519"
 import "modustool:foundation"
@@ -36,9 +39,14 @@ DEFAULT_LISTEN_ADDRESS :: "127.0.0.1:7200"
 
 // Closed set of subdirectories managed inside a cache store root.
 Store_Directory :: enum u8 {
-	Objects      = 1,
-	Realisations = 2,
-	Temp         = 3,
+	Objects          = 1,
+	Realisations     = 2,
+	Temp             = 3,
+	// A copy of each recipe object under its recipe hash, so that a
+	// realisation finds its recipe by the hash that it holds
+	// (src/md/infrastructure/cache_browser.md, "A realisation and its recipe").
+	Recipes          = 4,
+	Release_Pointers = 5, // Each release pointer, by the hash of its record.
 }
 
 // Running state of an on-disk object cache store.
@@ -60,7 +68,7 @@ Cache_Serve_Options :: struct {
 	page:                   Cache_Page_Settings,
 }
 
-@(private = "file")
+@(private)
 HEX_DIGITS :: "0123456789abcdef"
 
 // hash_to_hex formats a 32-byte hash as 64 lowercase ASCII hexadecimal bytes.
@@ -99,6 +107,10 @@ store_directory_name :: proc(directory: Store_Directory) -> string {
 		return "realisations"
 	case .Temp:
 		return "tmp"
+	case .Recipes:
+		return "recipes"
+	case .Release_Pointers:
+		return "release_pointers"
 	}
 	return ""
 }
@@ -165,6 +177,7 @@ cache_server_destroy :: proc(server: ^Cache_Server, allocator := context.allocat
 	}
 	delete(server.root_directory, allocator)
 	delete(server.authorized_signers)
+	cache_status_destroy(&server.status)
 	server.root_directory = ""
 	server.authorized_signers = nil
 }
@@ -475,7 +488,14 @@ cache_server_handle_frame :: proc(
 			}
 			return encode_response_alloc(&response, allocator)
 		}
-		cache_status_record_object(&server.status, u64(len(request.payload)), added, time.now())
+		cache_status_record_object(&server.status, request.object_hash, u64(len(request.payload)), added, time.now())
+		// A blob that is a recipe object is also kept under its recipe
+		// hash. A copy that fails to write changes nothing that a client
+		// relies on: the object is written, and the page says that the
+		// host does not hold the recipe.
+		if request.object_kind == .Blob {
+			recipe_object_index(server, request.payload)
+		}
 		response := object_cache.Cache_Response {
 			request_kind = .Put_Object,
 			status       = .Ok,
@@ -527,6 +547,44 @@ cache_server_handle_frame :: proc(
 		response := object_cache.Cache_Response {
 			request_kind = .Put_Realisation,
 			status       = .Ok,
+		}
+		return encode_response_alloc(&response, allocator)
+
+	case .Put_Release_Pointer:
+		pointer := request.release_pointer
+		response := object_cache.Cache_Response{request_kind = .Put_Release_Pointer}
+		if !object_cache.signer_is_trusted(server.authorized_signers[:], pointer.publisher_public_key) {
+			response.status = .Unauthorized
+			return encode_response_alloc(&response, allocator)
+		}
+		signing_bytes, sign_ok := object_cache.release_pointer_signing_bytes(&pointer)
+		if !sign_ok {
+			response.status = .Refused
+			return encode_response_alloc(&response, allocator)
+		}
+		if !cache_server_verify_ed25519(pointer.publisher_public_key, signing_bytes[:], pointer.signature) {
+			response.status = .Bad_Signature
+			return encode_response_alloc(&response, allocator)
+		}
+		encoded: [object_cache.RELEASE_POINTER_WIRE_SIZE]u8
+		if _, encode_refusal := object_cache.encode_release_pointer(&pointer, encoded[:]); encode_refusal != .None {
+			response.status = .Refused
+			return encode_response_alloc(&response, allocator)
+		}
+		switch cache_status_release_pointer_put(server, pointer, encoded[:], time.now()) {
+		case .Added, .Held_Already:
+			response.status = .Ok
+		case .Number_Not_Higher, .Not_Written:
+			response.status = .Refused
+		}
+		return encode_response_alloc(&response, allocator)
+
+	case .Get_Release_Pointer:
+		response := object_cache.Cache_Response{request_kind = .Get_Release_Pointer, status = .Not_Found}
+		asked := request.release_pointer
+		if pointer, found := cache_status_release_pointer_highest(&server.status, asked.publisher_public_key, object_cache.release_pointer_name(&asked)); found {
+			response.status = .Ok
+			response.release_pointer = pointer
 		}
 		return encode_response_alloc(&response, allocator)
 	}
@@ -695,6 +753,22 @@ cache_server_serve :: proc(options: Cache_Serve_Options) -> bool {
 
 	cache_server_serve_listener(&server, listener)
 	return true
+}
+
+// recipe_object_index keeps a copy of a blob that is a recipe object under
+// its recipe hash. A blob that does not start with the magic is not tried.
+recipe_object_index :: proc(server: ^Cache_Server, payload: []u8) {
+	magic := plans_recipes.RECIPE_OBJECT_MAGIC
+	if len(payload) < len(magic) || len(payload) > plans_recipes.MAX_RECIPE_OBJECT_BYTES || string(payload[:len(magic)]) != string(magic[:]) {
+		return
+	}
+	spec := new(plans_recipes.Recipe_Spec, context.temp_allocator)
+	recipe_digest, refusal := plans_recipes.recipe_object_decode(payload, spec)
+	if refusal != .None {
+		return
+	}
+	recipe_hex := hash_to_hex(recipe_digest)
+	_, _ = store_write_atomic(server, .Recipes, string(recipe_hex[:]), payload)
 }
 
 @(private)

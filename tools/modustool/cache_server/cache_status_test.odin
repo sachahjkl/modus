@@ -18,7 +18,7 @@ import "modustool:foundation"
 @(private = "file")
 SHORT_DEADLINE :: 500 * time.Millisecond
 
-@(private = "file")
+@(private)
 Status_Test :: struct {
 	directory: string,
 	server:    Cache_Server,
@@ -30,7 +30,7 @@ Status_Test :: struct {
 // test takes the place of the style sheet of the site before the thread
 // starts, so a test can make an answer larger than the buffers of the
 // system.
-@(private = "file")
+@(private)
 status_test_start :: proc(t: ^testing.T, authorized: [][object_cache.PUBLIC_KEY_SIZE]u8, deadline := foundation.HANG_BOUND, style_sheet := "") -> ^Status_Test {
 	test := new(Status_Test)
 	test.directory = make_temp_store_dir(t)
@@ -53,7 +53,7 @@ status_test_start :: proc(t: ^testing.T, authorized: [][object_cache.PUBLIC_KEY_
 	return test
 }
 
-@(private = "file")
+@(private)
 status_test_stop :: proc(test: ^Status_Test) {
 	sync.atomic_store(&test.server.stop, true)
 	cache_status_stop(test.running)
@@ -88,7 +88,7 @@ status_read_to_end :: proc(client: net.TCP_Socket) -> string {
 
 // status_exchange sends bytes on one connection, then reads the whole answer
 // until the server closes. With end_send, the client also ends its side.
-@(private = "file")
+@(private)
 status_exchange :: proc(t: ^testing.T, test: ^Status_Test, request: []u8, end_send := false) -> string {
 	client := status_dial(t, test)
 	defer net.close(client)
@@ -101,19 +101,19 @@ status_exchange :: proc(t: ^testing.T, test: ^Status_Test, request: []u8, end_se
 	return status_read_to_end(client)
 }
 
-@(private = "file")
+@(private)
 answer_line :: proc(answer: string) -> string {
 	end := strings.index(answer, "\r\n")
 	return end < 0 ? answer : answer[:end]
 }
 
-@(private = "file")
+@(private)
 answer_body :: proc(answer: string) -> string {
 	end := strings.index(answer, "\r\n\r\n")
 	return end < 0 ? "" : answer[end + 4:]
 }
 
-@(private = "file")
+@(private)
 head_bytes :: proc(text: string) -> []u8 {
 	return transmute([]u8)text
 }
@@ -187,15 +187,15 @@ status_parse_refuses_each_malformed_head :: proc(t: ^testing.T) {
 		testing.expectf(t, answer == item.answer, "%q: %v, expected %v", item.head, answer, item.answer)
 	}
 	// The three paths, last: with a header, with HTTP/1.0, with no header.
-	path, answer := status_request_parse(head_bytes("GET / HTTP/1.1\r\nHost: cache.example\r\nAccept: */*\r\n\r\n"))
+	request, answer := status_request_parse(head_bytes("GET / HTTP/1.1\r\nHost: cache.example\r\nAccept: */*\r\n\r\n"))
 	testing.expect_value(t, answer, Status_Answer.Ok)
-	testing.expect_value(t, path, Status_Path.Page)
-	path, answer = status_request_parse(head_bytes("GET /status.json HTTP/1.0\r\n\r\n"))
+	testing.expect_value(t, request.path, Status_Path.Page)
+	request, answer = status_request_parse(head_bytes("GET /status.json HTTP/1.0\r\n\r\n"))
 	testing.expect_value(t, answer, Status_Answer.Ok)
-	testing.expect_value(t, path, Status_Path.Status_Record)
-	path, answer = status_request_parse(head_bytes("GET /style.css HTTP/1.1\r\n\r\n"))
+	testing.expect_value(t, request.path, Status_Path.Status_Record)
+	request, answer = status_request_parse(head_bytes("GET /style.css HTTP/1.1\r\n\r\n"))
 	testing.expect_value(t, answer, Status_Answer.Ok)
-	testing.expect_value(t, path, Status_Path.Style_Sheet)
+	testing.expect_value(t, request.path, Status_Path.Style_Sheet)
 }
 
 @(test)
@@ -399,7 +399,7 @@ status_drain_ends_at_its_bound_and_at_the_deadline :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(status_exchange(t, short, head_bytes("GET /status.json HTTP/1.1\r\n\r\n")), "HTTP/1.1 "))
 }
 
-@(private = "file")
+@(private)
 put_frame :: proc(t: ^testing.T, server: ^Cache_Server, request: ^object_cache.Cache_Request) -> object_cache.Cache_Response_Status {
 	frame := encode_req_alloc(t, request)
 	defer delete(frame)
@@ -670,7 +670,7 @@ status_page_shows_the_signer_only_for_several_signers :: proc(t: ^testing.T) {
 	one_page := cache_page_html(&server, settings, one, 0, false)
 	testing.expect(t, !strings.contains(one_page, ">Signer<"))
 	first_hex := hash_to_hex(first_public)
-	testing.expect_value(t, strings.count(one_page, string(first_hex[:CACHE_PAGE_HASH_DIGITS])), 1)
+	testing.expect_value(t, strings.count(one_page, string(first_hex[:])), 1)
 
 	// A second signer in the rows: the column comes back.
 	two := one
@@ -708,7 +708,13 @@ status_answers_the_page_the_record_and_the_style_sheet :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(body, "<h1>public object cache</h1>"))
 	testing.expect(t, strings.contains(body, string(key_hex[:])))
 	testing.expect(t, strings.contains(body, "cache.example:5010"))
-	testing.expect(t, strings.contains(body, string(recipe_hex[:CACHE_PAGE_HASH_DIGITS])))
+	// The whole hash, in the cell and in its title, in a table of the
+	// whole width with a column of hashes; the browser cuts it, not the
+	// server.
+	testing.expect(t, strings.contains(body, strings.concatenate({"<a href=\"/realisation/", string(recipe_hex[:]), "\" title=\"", string(recipe_hex[:]), "\"><code class=\"value value-version\">", string(recipe_hex[:]), "</code></a>"}, context.temp_allocator)))
+	testing.expect(t, strings.contains(body, "<div class=\"table table-whole-width\""))
+	testing.expect(t, strings.contains(body, "<td class=\"column-hash value value-version\">"))
+	testing.expect(t, !strings.contains(body, "…</code>"))
 	testing.expect(t, !strings.contains(body, "<script"))
 	testing.expect(t, !strings.contains(body, "Modus"))
 	// The host is an object cache, never "the cache"; "the cache protocol"

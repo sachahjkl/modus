@@ -400,6 +400,21 @@ site_tables_with_kinds :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, strings.count(html, "role=\"region\""), 1)
 	testing.expect_value(t, strings.count(html, "class=\"column-"), 4 + 8)
+	// A table with no column of hashes keeps its natural width.
+	testing.expect(t, !strings.contains(html, "table-whole-width"))
+
+	// A column of hashes: the table takes the whole width of its box, once,
+	// whatever the count of its hash columns, and each hash cell has its
+	// class.
+	hashes := strings.builder_make(context.temp_allocator)
+	hash_table := site_table_start(&hashes, "Hashes", {{"Recipe", .Hash}, {"Kind", .Short}, {"Output", .Hash}}, {.Version, .None, .Version})
+	strings.write_string(&hashes, "<tr><td>a</td><td>blob</td><td>b</td></tr>\n")
+	site_table_end(&hashes, hash_table)
+	hash_html := strings.to_string(hashes)
+	testing.expect(t, strings.has_prefix(hash_html, "<div class=\"table table-whole-width\" role=\"region\""))
+	testing.expect_value(t, strings.count(hash_html, "table-whole-width"), 1)
+	testing.expect(t, strings.contains(hash_html, "<th scope=\"col\" class=\"column-hash value-head value-icon value-version\">Recipe</th>"))
+	testing.expect(t, strings.contains(hash_html, "<td class=\"column-hash value value-version\">a</td><td data-label=\"Kind\" class=\"column-short\">blob</td><td data-label=\"Output\" class=\"column-hash value value-version\">b</td>"))
 
 	testing.expect_value(t, site_cell_kind("42"), Site_Column_Kind.Number)
 	testing.expect_value(t, site_cell_kind("1 024"), Site_Column_Kind.Number)
