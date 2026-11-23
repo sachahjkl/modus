@@ -245,6 +245,18 @@ Values_Drawn :: struct {
 	scale:           [8]u8,
 }
 
+// The context names no private store that this process can open: the
+// root service gave none, or the storage service is not a valid module.
+// Each change is then refused: a change is kept in the store first.
+@(log_fact = "settings: no private store: each change is refused")
+No_Store :: struct {}
+
+// A change that the private store did not keep: the page keeps the values
+// before, and the call fails (change_decision). Store_Refused or No_Store
+// says why.
+@(log_fact = "settings: a change that the store did not keep: the page keeps the values before")
+Change_Not_Kept :: struct {}
+
 // The context names no settings page that this process can map: the
 // status of the map, which a reader writes by the name of its member.
 @(log_fact = "settings: no settings page: status {status}")

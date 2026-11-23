@@ -202,7 +202,7 @@ with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Set
 
 // keep writes the record of the values and the zone to the private store:
 // one object, one commit. It gives false, with a log line, when the store
-// refuses.
+// refuses; with no store (No_Store at the start), it gives false at once.
 keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
 	if !has_store {
 		return false
@@ -294,17 +294,45 @@ page_choice :: proc "contextless" () -> (choice: settings.Choice, ok: bool) {
 	return choice, ok
 }
 
-// change keeps the values, the zone and the language list, then writes
-// them on the page and wakes the compositor and the process `date`.
+// The step of a change after the keep (change_decision): the page takes a
+// change only when the private store kept it.
+Change_Decision :: struct {
+	write_page: bool, // The page takes the change, and the compositor and `date` wake.
+	kept:       bool, // The change holds: the caller reports success.
+}
+
+// change_decision decides a change from what it changes and from the keep:
+// a change that changes nothing writes nothing and holds; a change that the
+// store kept goes to the page; a change that the store refused leaves the
+// page as it was and fails. A change is written to the private store
+// first, then to the page (src/md/features/settings_window.md, "One writer,
+// the store first"): the page never shows a value that the next boot loses.
+change_decision :: proc "contextless" (changes_nothing, kept: bool) -> Change_Decision {
+	if changes_nothing {
+		return {write_page = false, kept = true}
+	}
+	return {write_page = kept, kept = kept}
+}
+
+// change keeps the values, the zone and the language list in the private
+// store, then writes them on the page and wakes the compositor and the
+// process `date`. A change that the store refuses changes nothing on the
+// page: it writes its fact, and gives false (change_decision).
 change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
 	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
 	values_same := current_ok && settings.values_of(current) == settings.values_of(choice)
 	languages_same := current_ok && current.languages == choice.languages
-	if values_same && languages_same && current.zone_offset_minutes == zone {
-		return true
+	changes_nothing := values_same && languages_same && current.zone_offset_minutes == zone
+	if changes_nothing {
+		return change_decision(true, true).kept
 	}
 	kept := keep(choice, zone)
+	decision := change_decision(false, kept)
+	if !decision.write_page {
+		system.log_fact(.Warning, Change_Not_Kept{})
+		return decision.kept
+	}
 	if !values_same {
 		system.log_fact(.Info, Values_Changed{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), scale = value_field(choice, .Scale), store = store_field(kept)})
 	}
@@ -317,7 +345,7 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32)
 		system.log_fact(.Info, Languages_Changed{languages = value_kinds.text_field(languages_text(choice.languages, languages_buffer[:LANGUAGES_FIELD_BYTES - 1]), LANGUAGES_FIELD_BYTES), store = store_field(kept)})
 	}
 	page_write(choice, zone)
-	return kept
+	return decision.kept
 }
 
 // languages_text writes the canonical tags of a list in its order, joined
@@ -392,8 +420,8 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 // - `Absent` (-2): the call gives no setting.
 // - `Bad_Value` (-3): a value that names no member of the enum of its setting; the record names the argument and
 //   holds the value. No setting changes.
-// - `Refused` (-4): the store did not keep the values. The page changed all the same, so the windows show the new
-//   values until the next start of the machine.
+// - `Refused` (-4): the store did not keep the values. The page keeps the values before: a change is kept in the
+//   store first, so no window shows a value that the next start of the machine loses.
 //
 // Example: `settings.set(font = .spleen)`, then `settings.font()` gives `.spleen`.
 @(export, link_name = "set", enum_getters = "font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale", optional_parameters = "font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale")
@@ -488,7 +516,7 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 // - `No_Grant` (-1): the caller does not act for the principal.
 // - `Too_Long` (-3): the zone has more than 32 bytes.
 // - `Bad_Value` (-3): the text is no zone: "+8:00", "+08:10", "+15:00", "UTC".
-// - `Refused` (-4): the store did not keep the zone. The page changed all the same.
+// - `Refused` (-4): the store did not keep the zone. The page keeps the zone before.
 //
 // Example: `settings.set_time_zone("+08:00")`, then `settings.time_zone()` gives "+08:00".
 @(export, link_name = "set_time_zone")
@@ -556,8 +584,7 @@ Language_Row :: struct {
 // - `Bad_Value` (-3): a record that names no locale in its canonical form, or the root locale `und`; value: the
 //   word of its `language_tag.Locale_Problem`, 0 for the root locale; found: the record, from 1.
 // - `Exists` (-3): a language that the table holds in an earlier record; found: the record, from 1.
-// - `Refused` (-4): the store did not keep the list. The page changed all the same, so the windows use the new list
-//   until the next start of the machine.
+// - `Refused` (-4): the store did not keep the list. The page keeps the list before.
 //
 // Example: `settings.set_languages([language("fr"), language("en")])`, then `settings.languages()` gives fr, then en.
 @(export, link_name = "set_languages")
@@ -900,6 +927,15 @@ SCALE_STOP_GAP :: 4
 // The widest label of the scale, whose measure gives the room of the
 // label of the scale in force beside its track.
 SCALE_LABEL_SAMPLE :: "187.5 %"
+// The label of each stop of the track: its percent, rounded half up. A stop
+// of a narrow window has room for three digits where it has none for
+// "187.5 %", so each stop says its value at each width that the window
+// takes; the name of the element keeps the whole value.
+SCALE_STOP_LABELS := [?]string{"100", "113", "125", "138", "150", "163", "175", "188", "200"}
+#assert(len(SCALE_STOP_LABELS) == len(scale_factor.Scale))
+// The widest label of a stop, with the room on each side of it.
+SCALE_STOP_SAMPLE :: "188"
+SCALE_STOP_LABEL_PADDING :: 4
 // The bytes of one line of the list of the zones: "UTC+05:30  India, Sri Lanka".
 ZONE_LINE_BYTES :: 64
 // The bytes of one line of the list of the languages: "8  French (Canada)".
@@ -1188,11 +1224,11 @@ section_add :: proc "contextless" (builder: ^Layout_Builder, boxes: ^Settings_Bo
 		setting_boxes := &boxes.setting_boxes[setting]
 		setting_boxes.title, setting_boxes.explanation = setting_header_add(builder, table, setting_texts[setting].explanation, room)
 		if setting == .Scale {
-			// The track of the stops, each with its percentage when the
-			// widest one fits in a stop; else the scale in force beside a
+			// The track of the stops, each with its percent; a stop too
+			// narrow for three digits leaves the scale in force beside a
 			// track of bare stops.
 			builder_open(builder, {size = {.X = layout.fill(), .Y = layout.px(BUTTON_HEIGHT)}, child_axis = .X, gap = i32(gap)})
-			if scale_stop_width(room) < button_width(table, SCALE_LABEL_SAMPLE) {
+			if scale_stop_width(room) < interface.text_measured_width(table, interface.FONT_INTERFACE, SCALE_STOP_SAMPLE) + 2 * SCALE_STOP_LABEL_PADDING {
 				boxes.scale_value = builder_add(builder, fixed_box(interface.text_measured_width(table, interface.FONT_INTERFACE_BOLD, SCALE_LABEL_SAMPLE), BUTTON_HEIGHT))
 			}
 			boxes.scale_track = builder_add(builder, line_box(BUTTON_HEIGHT))
@@ -1345,9 +1381,11 @@ scale_stop_width :: proc "contextless" (track_width: int) -> int {
 }
 
 // scale_track_draw draws the track of the scale: one stop for each member
-// of the enum, from 100 % to 200 %, the stop in force marked, each with its
-// percentage when labels_inside. A press on a stop, or Enter with the focus
-// on it, sets the scale.
+// of the enum, from 100 % to 200 %, each with its percent when
+// labels_inside. The stop in force is filled, with its label in the colour
+// of a chosen value; the focus is the outline alone, on a stop that keeps
+// its fill, so a stop with the focus never looks chosen. A press on a stop,
+// or Enter with the focus on it, sets the scale.
 scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, choice: settings.Choice, labels_inside: bool, focus_area: ^interface.Area) {
 	stop_width := scale_stop_width(area.width)
 	for member, place in scale_factor.Scale {
@@ -1358,13 +1396,7 @@ scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface
 		result := interface.element_interact(frame, element, stop, .Button)
 		interface.element_name(frame, stop, label)
 		in_use := member == choice.scale
-		color := graphics.Color(graphics.colors.track)
-		switch {
-		case in_use:
-			color = graphics.colors.chosen
-		case result.focused || result.under_pointer:
-			color = graphics.shade(graphics.colors.title, 60)
-		}
+		color := in_use ? graphics.Color(graphics.colors.chosen) : graphics.Color(graphics.colors.track)
 		states := accessibility.Element_States{.Focusable}
 		if result.focused {
 			states += {.Focused}
@@ -1372,7 +1404,10 @@ scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface
 		interface.draw_element_push(frame.table, stop, u32(element), .Button, {toggle = in_use ? .True : .False, states = states, actions = {.Press, .Focus}, name = label})
 		interface.draw_rectangle(frame.table, stop.x, stop.y, stop.width, stop.height, color, u32(element))
 		if labels_inside {
-			interface.draw_text(frame.table, stop.x + BUTTON_LABEL_PADDING, label_y, label, in_use ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE, u32(element))
+			short := SCALE_STOP_LABELS[place]
+			font := in_use ? interface.FONT_INTERFACE_BOLD : interface.FONT_INTERFACE
+			label_x := stop.x + max((stop.width - interface.text_measured_width(frame.table, font, short)) / 2, 0)
+			interface.draw_text(frame.table, label_x, label_y, short, in_use ? graphics.COLOR_WHITE : graphics.colors.text, font, u32(element))
 		}
 		if result.focused {
 			interface.draw_focus_ring(frame.table, stop, u32(element))
@@ -1632,6 +1667,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page = (^settings.Page)(address)
 	date_page = date.page_of(ctx)
 	store, has_store = storage.open(ctx)
+	if !has_store {
+		system.log_fact(.Warning, No_Store{})
+	}
 	pass, pass_ok := settings.pass_of_word(ctx.values[settings.VALUE_PASS])
 	if !pass_ok {
 		system.log_fact(.Warning, Pass_Refused{word = ctx.values[settings.VALUE_PASS]})
