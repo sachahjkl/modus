@@ -93,7 +93,7 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argu
 			error.operation = 0
 			error.argument = refusal.argument == MEMORY_MAP_ARGUMENT_MEMORY ? argument : 0
 			if refusal.kind == i64(errors.Kind.None) {
-				error^ = errors.error_make(.Refused, found = i64(status))
+				error^ = errors.error_make(.Refused, .Kernel_Status, found = i64(status))
 			}
 		}
 		return nil, false

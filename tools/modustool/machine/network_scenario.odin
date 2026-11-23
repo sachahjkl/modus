@@ -163,9 +163,9 @@ scenario_network := [?]Step {
 	// A Text, from a service that starts at the first connection.
 	{kind = .Call, text = "storage.stores()", expected = " blocks in use"},
 	// Failures: the sentence of the error record of the service.
-	{kind = .Call, text = "monitor.count(\"nothing\")", outcome = .Failed, expected = "error: monitor.count: the argument name names nothing that exists (-3)"},
-	{kind = .Call, text = "storage.size(0, \"note\")", outcome = .Failed, expected = "error: storage.size: the caller has no grant for this: a private store (-1)"},
-	{kind = .Call, text = "manual.exports(\"nothing\")", outcome = .Failed, expected = "error: manual.exports: the argument name names none of the modules (-1)"},
+	{kind = .Call, text = "monitor.count(\"nothing\")", outcome = .Failed, expected = "error: monitor.count: the argument name names nothing that exists"},
+	{kind = .Call, text = "storage.size(0, \"note\")", outcome = .Failed, expected = "error: storage.size: the caller has no grant for this: a private store"},
+	{kind = .Call, text = "manual.exports(\"nothing\")", outcome = .Failed, expected = "error: manual.exports: the argument name names none of the modules"},
 	// The tool checks the arguments against the description before it sends.
 	{kind = .Call, text = "monitor.count(4)", outcome = .Wrong, expected = "error: the parameter name of monitor.count is a Text, the argument is an Integer"},
 	// The transport (docs/QUIC.md, section 7). Two calls at one time, on two
@@ -201,18 +201,18 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "[console] remote   acts_for_principal  held"},
 	{kind = .Type, text = "revoke(\"remote\", \"acts_for_principal\")"},
 	{kind = .Wait, text = "root: revoked the grant acts_for_principal of remote, connections changed: 5"},
-	{kind = .Call, text = "inspect.mappings(\"remote\")", outcome = .Failed, expected = "error: inspect.mappings: the caller has no grant for this: to act for the principal (-1)"},
-	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the principal (-1)"},
-	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the principal (-1)"},
-	{kind = .Call, text = "monitor.processes()", outcome = .Failed, expected = "error: monitor.processes: the caller has no grant for this: to act for the principal (-1)"},
+	{kind = .Call, text = "inspect.mappings(\"remote\")", outcome = .Failed, expected = "error: inspect.mappings: the caller has no grant for this: to act for the principal"},
+	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the principal"},
+	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the principal"},
+	{kind = .Call, text = "monitor.processes()", outcome = .Failed, expected = "error: monitor.processes: the caller has no grant for this: to act for the principal"},
 	// The place of the pointer is a fact of the screen: the
 	// tool moves the pointer with no confirmation again.
-	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the principal (-1)"},
+	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the principal"},
 	// The window of inspect covers the windows under it: it closes now.
 	{kind = .Close, text = "inspect"},
 	{kind = .Wait, text = "root: inspect stopped: a holder"},
-	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal (-3)"},
-	{kind = .Call, text = "storage.stores()", outcome = .Failed, expected = "error: storage.stores: the caller has no grant for this: to act for the principal (-10)"},
+	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal"},
+	{kind = .Call, text = "storage.stores()", outcome = .Failed, expected = "error: storage.stores: the caller has no grant for this: to act for the principal"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	// The principal revokes the key of the client while its connection is

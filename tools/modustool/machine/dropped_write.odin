@@ -63,7 +63,7 @@ scenario_dropped_write_first := [?]Step {
 	// The disk dropped one block of that commit: the read back finds it
 	// before the root, and the service goes on from the commit before.
 	{kind = .Wait, text = "storage: the read back of the commit of generation {generation+2} found 1 block with other bytes: the disk did not keep it; the commit is refused before its root, and the service goes on from generation {generation+1}"},
-	{kind = .Wait, text = "[console] error: storage.write: the disk did not keep 1 block of the commit: the commit is refused, and the store keeps its state before it (-6)"},
+	{kind = .Wait, text = "[console] error: storage.write: the disk did not keep 1 block of the commit: the commit is refused, and the store keeps its state before it"},
 	// The same machine, with no restart: the object is its first version.
 	{kind = .Type, text = "storage.read(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
 	{kind = .Wait, text = "[console] " + DROPPED_WRITE_FIRST_VERSION, fails_on = "[console] " + DROPPED_WRITE_MARKER},
@@ -71,7 +71,7 @@ scenario_dropped_write_first := [?]Step {
 	// its root. The read back of the root refuses it.
 	{kind = .Type, text = "storage.write(0, \"" + DROPPED_WRITE_OBJECT + "\", \"" + DROPPED_WRITE_ROOT_MARKER + "\")"},
 	{kind = .Wait, text = "storage: the read back of the root of the commit of generation {generation+4} found other bytes: the disk did not keep it; the commit is refused, and the service goes on from generation {generation+3}"},
-	{kind = .Wait, text = "[console] error: storage.write: the disk did not keep 1 block of the commit: the commit is refused, and the store keeps its state before it (-6)"},
+	{kind = .Wait, text = "[console] error: storage.write: the disk did not keep 1 block of the commit: the commit is refused, and the store keeps its state before it"},
 	{kind = .Type, text = "storage.read(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
 	{kind = .Wait, text = "[console] " + DROPPED_WRITE_FIRST_VERSION, fails_on = "[console] " + DROPPED_WRITE_ROOT_MARKER},
 	// The hidden write: the read back passes, and the commit is taken. It

@@ -663,12 +663,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 1036"},
 	// An export that fails gives an error record in a direct call too.
 	{kind = .Type, text = "square_root(1000000) + square_root(-4)"},
-	{kind = .Wait, text = "[console] error: square_root: the argument value has -4; it must have at least 0 (-1)"},
+	{kind = .Wait, text = "[console] error: square_root: the argument value has -4; it must have at least 0"},
 	{kind = .Type, text = "number(\"41\") + fibonacci(10)"},
 	{kind = .Wait, text = "[console] 96"},
 	// Above 2^40 the search refuses with a record, not with the answer 0.
 	{kind = .Type, text = "next_prime(1099511627777)"},
-	{kind = .Wait, text = "[console] error: next_prime: the argument from has the value 1099511627777, which the call refuses; it takes at most 1099511627776 (-1)"},
+	{kind = .Wait, text = "[console] error: next_prime: the argument from has the value 1099511627777, which the call refuses; it takes at most 1099511627776"},
 	{kind = .Type, text = "next_prime(\"x\")"},
 	{kind = .Wait, text = "error: next_prime: argument 1 is Integer, not Text"},
 	{kind = .Type, text = "clear()"},
@@ -1056,7 +1056,7 @@ scenario := [?]Step {
 	// An export that fails gives its error record, not a bare negative
 	// number: with no earlier hold in this process, look has no mapping.
 	{kind = .Type, text = "look()"},
-	{kind = .Wait, text = "[console] error: look: the call names none of the mappings (-1)"},
+	{kind = .Wait, text = "[console] error: look: the call names none of the mappings"},
 	// An export with nine parameters in a direct call: the numbers 7 and 8,
 	// the label and the error record are on the stack. Each number has its
 	// own weight, so a word in the wrong place gives another sum.
@@ -1499,7 +1499,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   commands   5"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "monitor.count(\"processors\")"},
-	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
+	{kind = .Wait, text = "[console] error: monitor.count: the kernel refused an operation of the call: a handle names no object of the kind that the operation needs"},
 	{kind = .Type, text = "where(help(), name = \"paint.write\")"},
 	// The help table fits the window of the console, so the signature
 	// breaks between two words, in its own column.
@@ -1620,13 +1620,13 @@ scenario := [?]Step {
 	{kind = .Type, text = "manual.signature(\"tally\", 1)"},
 	{kind = .Wait, text = "[console] add(amount: Integer, note: Text) -> Integer"},
 	{kind = .Type, text = "manual.show(\"nothing\")"},
-	{kind = .Wait, text = "[console] error: manual.show: the argument name names none of the modules (-1)"},
+	{kind = .Wait, text = "[console] error: manual.show: the argument name names none of the modules"},
 	// A name or a number that names nothing gives an error record, not an
 	// empty text: the caller tells a failure from an empty answer.
 	{kind = .Type, text = "manual.about(\"nothing\")"},
-	{kind = .Wait, text = "[console] error: manual.about: the argument name names none of the modules (-1)"},
+	{kind = .Wait, text = "[console] error: manual.about: the argument name names none of the modules"},
 	{kind = .Type, text = "manual.signature(\"tally\", 9)"},
-	{kind = .Wait, text = "[console] error: manual.signature: the argument export has the value 9, which the call refuses; it takes at most 5 (-2)"},
+	{kind = .Wait, text = "[console] error: manual.signature: the argument export has the value 9, which the call refuses; it takes at most 5"},
 	{kind = .Type, text = "manual.show(\"tally\")"},
 	{kind = .Wait, text = "manual: tally: a module with an entry, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
@@ -1843,7 +1843,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "rows(manual.exports(\"\")) - rows(manual.exporters(\"show\"))"},
 	{kind = .Wait, text = "[console] "},
 	{kind = .Type, text = "manual.exports(\"nothing\")"},
-	{kind = .Wait, text = "[console] error: manual.exports: the argument name names none of the modules (-1)"},
+	{kind = .Wait, text = "[console] error: manual.exports: the argument name names none of the modules"},
 	{kind = .Type, text = "where(manual.modules(), code = \"large\")"},
 	{kind = .Wait, text = "[console] error: where: the field code is Integer, the value is Text"},
 	{kind = .Type, text = "manual.overview()"},
@@ -2341,7 +2341,7 @@ scenario := [?]Step {
 	// and 2 (30 and 60, by 3, stay under 200), then refuses the reading 3
 	// (90 by 3 is 270): with the changes, the sum would be 480.
 	{kind = .Type, text = "scale_values_up_to(t, 3, 200)"},
-	{kind = .Wait, text = "[console] error: scale_values_up_to: the argument factor has the value 3, which the call refuses; it takes at most 2 (-1)"},
+	{kind = .Wait, text = "[console] error: scale_values_up_to: the argument factor has the value 3, which the call refuses; it takes at most 2"},
 	{kind = .Type, text = "sum_values(t)"},
 	{kind = .Wait, text = "[console] 300"},
 	// An export with nine parameters in an isolated call: the receiver
@@ -2506,7 +2506,7 @@ scenario := [?]Step {
 	// The limit of the store: one more object needs one more block: its one
 	// block of data.
 	{kind = .Type, text = "storage.write(0, \"second\", \"one block more\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks (-2)"},
+	{kind = .Wait, text = "[console] error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks"},
 	// A change of the object at the limit: the version of its state before
 	// does not fit, and the same commit thins it.
 	// Each line commits the line history after it: the base and 1 after
@@ -2520,9 +2520,9 @@ scenario := [?]Step {
 	{kind = .Record, process = "storage", level = "Info", text = "storage: the store console is at its limit of 3 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(0, \"\", \"x\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)"},
+	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes"},
 	{kind = .Type, text = "storage.read(0, \"nothing\")"},
-	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name (-7)"},
+	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name"},
 	{kind = .Type, text = "storage.size(0, \"greeting\")"},
 	{kind = .Wait, text = "[console] 20"},
 	{kind = .Type, text = "storage.stores()"},
@@ -2539,7 +2539,7 @@ scenario := [?]Step {
 	{kind = .Fact, process = "root", fact = "root.Grant_Revoked_Connections", condition = "holder = \"console\"", any_order = true},
 	{kind = .Record, process = "root", level = "Info", text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
+	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "where(grants(\"console\"), state = \"lost\")"},
@@ -2589,7 +2589,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "storage.version(1, \"note_000001\", {generation})", expected = "a second line"},
 	{kind = .Call, text = "storage.compare(1, \"note_000001\", {generation}, {generation+1})", expected = "1 rows of Byte_Range"},
 	// The generation 1 is the format of the disk: no object has it.
-	{kind = .Call, text = "storage.version(1, \"note_000001\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1 (-9)"},
+	{kind = .Call, text = "storage.version(1, \"note_000001\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1"},
 	{kind = .Call, text = "storage.restore(1, \"note_000001\", {generation})", expected = "{generation+2}"},
 	{kind = .Call, text = "storage.clone(1, \"note_000001\", \"copy\")", expected = "{generation+3}"},
 	// A second note, and the first again.
@@ -2782,7 +2782,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "inspect.mappings(\"console\")", expected = " rows of Mapping"},
 	{kind = .Call, text = "inspect.threads(\"threads\")", expected = " rows of Thread"},
 	{kind = .Call, text = "inspect.modules(\"console\")", expected = "console "},
-	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument process names none of the processes (-2)"},
+	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument process names none of the processes"},
 	// A table from the host: rows of field values go into the call region
 	// of the monitor. A Change table is refused by the tool: its rows would
 	// not come back. The service sample is not reachable from the network
@@ -3042,7 +3042,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(font = .comic)", outcome = .Wrong, expected = "error: the parameter font of settings.set is the enum Font, which has no member comic: its members are .vector, .spleen"},
 	{kind = .Call, text = "settings.set(font = .french)", outcome = .Wrong, expected = "which has no member french"},
 	{kind = .Call, text = "settings.set(colour = .red)", outcome = .Wrong, expected = "error: settings.set has no parameter colour"},
-	{kind = .Call, text = "settings.set()", outcome = .Failed, expected = "(-2)"},
+	{kind = .Call, text = "settings.set()", outcome = .Failed, expected = "error: settings.set: the call names nothing that exists"},
 	// Three settings in one call.
 	{kind = .Call, text = "settings.set(subpixel_order = .red_green_blue, pointer_theme = .of_the_owner, grid_fit = .on)", expected = "1"},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
@@ -3186,7 +3186,7 @@ scenario := [?]Step {
 	{kind = .Appearance_Auto, text = "settings: the appearance in force is ", expected = "28800"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; the appearance in force light; the time zone +08:00; "},
 	{kind = .Call, text = "settings.time_zone()", expected = "+08:00"},
-	{kind = .Call, text = "settings.set_time_zone(\"+8:00\")", outcome = .Failed, expected = "(-3)"},
+	{kind = .Call, text = "settings.set_time_zone(\"+8:00\")", outcome = .Failed, expected = "error: settings.set_time_zone: the argument zone "},
 	// Back to UTC: the night again, before the next pictures.
 	{kind = .Call, text = "settings.set_time_zone(\"+00:00\")", expected = "1"},
 	{kind = .Wait, text = "settings: time zone +00:00; kept in the store"},

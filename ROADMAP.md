@@ -6,6 +6,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **The words of the windows and the notifications.** Each window, notification, dialog and status line says the problem, the cause and what to do, in the words of `docs/WRITING.md`: no "invalid", no "failed" alone, buttons that name their action, and "you" where a window says "principal".
+- **A check of the display texts of the modules.** `modustool check` refuses a display text, a description of a setting and a label of a module file that uses a word that `docs/WRITING.md` refuses, that is not in sentence case, or that has a wrong end period, so a new text keeps the guide with no review.
 - **A machine test of the exact release boot image.** The machine of Secure Boot with the test keys boots the release boot image, with no test module, so the image that a release ships is the image that a machine test ran. [Design](src/md/infrastructure/release_image.md)
 - **Notes as an application.** `notes` moves from the demonstrations to the group `applications` when it is a real program, beside `assistant`, and the start menu shows it at the top. [Design](src/md/infrastructure/repository_layout.md)
 - **The service `recipes`.** A recipe names how each output is made, and `recipes.build` takes its realisation from the cache or builds it in a sandbox. [Design](src/md/features/recipes.md)

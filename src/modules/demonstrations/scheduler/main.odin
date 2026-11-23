@@ -1891,7 +1891,7 @@ strategy_set :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	}
 	before, status := system.strategy_set(machine, wanted)
 	if status != .Ok {
-		return errors.fail(error, -1, .Refused, .None, 0, 0, 0, i64(status))
+		return errors.fail(error, -1, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	if before != wanted {
 		system.log_fact(.Info, Strategy_Changed{strategy = strategy_field(wanted), previous_strategy = strategy_field(before)})

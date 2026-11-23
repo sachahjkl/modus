@@ -45,6 +45,17 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 - `modustool ship` makes a release: it assembles the fragments, commits, makes the signed tag `v<number>` and pushes both. The tag starts the release workflow, which publishes the signed release image (`src/md/infrastructure/releases.md`, `src/md/infrastructure/release_image.md`).
 - `modustool changelog check` checks the fragments and the file; `modustool check` runs it.
 
+## The words of the system
+
+- Each screen text (`docs/glossary/project.md`) follows `docs/WRITING.md`: an error sentence, a notification, the text of a dialog, a label, a button, the description of a setting or of an export, a status line.
+- An error sentence says "the problem: what did not happen, and to which object", then "the cause, when the system knows it", then "what the reader can do, when the system knows it".
+- "A part that the system does not know is left out."
+- "A code, a status number or the result of a call is never the message." "The negative result of a failed export is not shown at all."
+- Do not use "invalid", "illegal", "fatal", "please", "sorry", a contraction, "Error" as a title, or "failed" with nothing after it (`docs/WRITING.md`, section 2).
+- "On one screen, a title, a sentence, a label and a button do not repeat the same fact."
+- A confirmation dialog "names the action on its buttons".
+- The name of the system is `modus`, in lower case.
+
 ## Work
 
 - Documents, code and comments are in English, so that one term keeps one concept. The conversation is in the language of the owner.

@@ -47,5 +47,5 @@ the_stores_without_the_grant :: proc(t: ^testing.T) {
 	writer := Writer{buffer = buffer[:]}
 	record := errors.error_make(.No_Grant, .Acts_For_Principal)
 	error_text(&writer, &record, "storage.stores", "")
-	testing.expect_value(t, written(&writer), "storage.stores: the caller has no grant for this: to act for the principal")
+	testing.expect_value(t, written(&writer), "storage.stores: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant")
 }

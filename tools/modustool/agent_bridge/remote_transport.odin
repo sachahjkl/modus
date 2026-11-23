@@ -296,7 +296,7 @@ remote_transport_eval_lex :: proc(
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
 		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error)
-		return {}, fmt.aprintf("%s (%d)", sentence.written(&writer), answer.value, allocator = allocator), false
+		return {}, strings.clone(sentence.written(&writer), allocator), false
 	}
 
 	return decode_remote_call_result(&call, answer, result_bytes, allocator)

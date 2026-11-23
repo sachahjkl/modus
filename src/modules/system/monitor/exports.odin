@@ -124,7 +124,7 @@ processes :: proc "c" (result: ^[]Process, error: ^errors.Error_Record) -> i64 {
 	}
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
-		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
+		return errors.fail(error, ERROR_REFUSED, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	total := 0
 	for slot in 1 ..< report.process_slots {
@@ -195,7 +195,7 @@ counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)
 	if status != .Ok {
-		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
+		return errors.fail(error, ERROR_REFUSED, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	copy(result^, rows[:total])
 	return i64(total)
@@ -229,7 +229,7 @@ count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)
 	if status != .Ok {
-		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
+		return errors.fail(error, ERROR_REFUSED, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	for &row in rows[:total] {
 		if system.name_of(row.name[:]) == string(wanted[:copied]) {
@@ -264,7 +264,7 @@ counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), details: ^sy
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)
 	if status != .Ok {
-		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
+		return errors.fail(error, ERROR_REFUSED, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	first_absent: errors.Error_Record
 	absent_count := 0

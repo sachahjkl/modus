@@ -148,7 +148,7 @@ DEBUGGER_WINDOW_PLACE_FIELD :: "the debug place"
 // refuses, by its name (src/library/modus/contract/start_grant): the name goes between the
 // two parts.
 DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this process: the grant "
-REFUSES_THE_DEBUG_ACCESS :: " of the process refuses it (-4)"
+REFUSES_THE_DEBUG_ACCESS :: " of the process refuses it"
 
 @(rodata)
 scenario_debugger_commands := [?]Step {
@@ -399,9 +399,9 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	// The detach needs no grant; the session ended already.
 	{kind = .Type, text = "detach()"},
-	{kind = .Wait, text = "debugger.detach: the call names none of the processes that the debugger service debugs for this caller (-2)"},
+	{kind = .Wait, text = "debugger.detach: the call names none of the processes that the debugger service debugs for this caller"},
 	{kind = .Type, text = "debug(\"debug_target\")"},
-	{kind = .Wait, text = "debugger.attach: the caller has no grant for this: to act for the principal (-1)"},
+	{kind = .Wait, text = "debugger.attach: the caller has no grant for this: to act for the principal"},
 
 	// From the host, through the service remote: the same exports.
 	// debug_target has no grant; notes has a private store.
@@ -421,7 +421,7 @@ scenario_debugger_commands := [?]Step {
 	// The machine has no source text: the tool reads the line in the
 	// repository, because the file has the hash of the build.
 	{kind = .Call, text = "debugger.source(0, 0)", expected = "source: " + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + ": " + DEBUG_TARGET_TEXT_OF_THE_STORE},
-	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: no free place: the table has its 1 processes that the debugger service debugs for this caller (-3)"},
+	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: the receiver has no free place: the table has its 1 processes that the debugger service debugs for this caller"},
 	{kind = .Call, text = "debugger.detach()", expected = "1 rows of Detached"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: " + DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Store" + REFUSES_THE_DEBUG_ACCESS},

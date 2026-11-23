@@ -36,6 +36,7 @@ write_field_type :: sentence.write_field_type
 direction_name :: sentence.direction_name
 error_text :: sentence.error_text
 kernel_error_text :: sentence.kernel_error_text
+kernel_status_text :: sentence.kernel_status_text
 export_error_text :: sentence.export_error_text
 ring_error_text :: sentence.ring_error_text
 wrapper_error_text :: sentence.wrapper_error_text

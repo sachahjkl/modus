@@ -308,9 +308,9 @@ G
 > storage.read(0, "greeting")
 kept on the disk
 > storage.write(0, "second", "one block more")
-error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks (-2)
+error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks
 > storage.write(0, "", "x")
-error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)
+error: storage.write: the argument name is empty; it must have 1 to 64 bytes
 > storage.stores()
 console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection
 ```

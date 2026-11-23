@@ -83,7 +83,7 @@ scenario_principals_first := [?]Step {
 	// the console acts for principal 0, so the store of notes of alice is
 	// neither listed nor opened.
 	{kind = .Type, text = "storage.open_store(\"notes.principal.1\")"},
-	{kind = .Wait, text = "[console] error: storage.open_store: the caller has no grant for this: to act for the principal (-10)"},
+	{kind = .Wait, text = "[console] error: storage.open_store: the caller has no grant for this: to act for the principal"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console.history: ", any_order = true},
 	// The lines of stores() all come before the answer of the next line: a

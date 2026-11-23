@@ -42,19 +42,20 @@ debug_access_refused_with_no_grant_named :: proc(t: ^testing.T) {
 
 // A number that names no start grant: the record came from a root service
 // that has a start grant more, or from a process that wrote any value. The
-// sentence gives the number and writes no name.
+// sentence says so, and writes no name and no number: the number is on the
+// detail lines.
 @(test)
 debug_access_refused_by_a_grant_with_no_name :: proc(t: ^testing.T) {
 	buffer: [256]u8
 	writer := Writer{buffer = buffer[:]}
 	record := errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, 2 + i64(max(start_grant.Grant)))
 	error_text(&writer, &record, "debugger.attach", "process")
-	testing.expect_value(t, written(&writer), fmt.tprintf("debugger.attach: the caller has no grant for this: the debug access to this process: a grant of the process refuses it, the start grant number %d, which this process does not know", 1 + i64(max(start_grant.Grant))))
+	testing.expect_value(t, written(&writer), "debugger.attach: the caller has no grant for this: the debug access to this process: a start grant of the process that this process does not know refuses it")
 
 	writer = Writer{buffer = buffer[:]}
 	record = errors.error_make(.No_Grant, .Debug_Access, 1, 0, 0, -5)
 	error_text(&writer, &record, "debugger.attach", "process")
-	testing.expect_value(t, written(&writer), "debugger.attach: the caller has no grant for this: the debug access to this process: a grant of the process refuses it, the start grant number -6, which this process does not know")
+	testing.expect_value(t, written(&writer), "debugger.attach: the caller has no grant for this: the debug access to this process: a start grant of the process that this process does not know refuses it")
 }
 
 // Each start grant has a name, and the name is one word with no space: a

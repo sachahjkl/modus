@@ -6,6 +6,25 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 
+// A failed line that ends with the result of the export in parentheses is
+// found; a sentence that ends with words, or a number that is part of a
+// sentence, is not.
+@(test)
+a_bare_number_at_the_end_of_a_failed_line_is_found :: proc(t: ^testing.T) {
+	testing.expect(t, ends_with_a_bare_number("error: manual.show: the argument name names none of the modules (-1)"))
+	testing.expect(t, ends_with_a_bare_number(" (-10)"))
+	testing.expect(t, ends_with_a_bare_number(" (3)"))
+	testing.expect(t, !ends_with_a_bare_number("error: manual.show: the argument name names none of the modules"))
+	testing.expect(t, !ends_with_a_bare_number(""))
+	testing.expect(t, !ends_with_a_bare_number(")"))
+	testing.expect(t, !ends_with_a_bare_number(" ()"))
+	testing.expect(t, !ends_with_a_bare_number(" (-)"))
+	testing.expect(t, !ends_with_a_bare_number("(-1)"))
+	testing.expect(t, !ends_with_a_bare_number("x(-1)"))
+	testing.expect(t, !ends_with_a_bare_number("the argument has the value 9 (part 3)"))
+	testing.expect(t, !ends_with_a_bare_number("it takes at most 36"))
+}
+
 // nine_parameter_module gives a module file with one export, combine: nine
 // parameters, Integers and Texts, a Text result and an error record. It has
 // the tables that a call from the host reads, and no code.
