@@ -63,10 +63,14 @@ scenario_persist_second := [?]Step {
 	// The setting of the machine before: the desktop draws in Spleen 8x16.
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
-	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
+	// The compositor and the console each read the setting of the boot pass
+	// in their own loop, so their two lines come in either order: neither
+	// wait moves the place of the log past the other line.
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},
 	// The console read the page before the boot pass, and may have made its
 	// surface after the compositor told the windows: it reads the setting
-	// itself, and draws its interface text in Spleen cells.
+	// itself at its first frame, and draws its interface text in Spleen
+	// cells; its first frame can come before the line of the compositor.
 	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	// The vector font again, for the machines after this one.
 	{kind = .Launch, text = "settings"},
