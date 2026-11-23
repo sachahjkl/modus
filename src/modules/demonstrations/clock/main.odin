@@ -106,7 +106,10 @@ calendar_month: int
 work: interface.Background_Work
 // An end that waits for the worker: a job of an earlier end still runs.
 notification_due: bool
-// The duration of the timer that ended, copied for the job.
+// The duration of the timer at its last end, kept by the window.
+ended_duration: u64
+// The duration that the job writes on its card: the job owns it from the
+// ask to the take.
 notification_duration: u64
 Notifier :: struct {
 	tried:      bool,
@@ -582,12 +585,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// sleep: the end is told once.
 		if clock_model.timer_step(&timer, now) {
 			system.log_fact(.Info, Timer_Ended{duration_seconds = timer.duration / 1000})
+			// The duration of this end: a reset and a new duration before
+			// the job is asked do not change the text of its card.
 			notification_due = true
+			ended_duration = timer.duration
 		}
 		// The job of an earlier end is taken first; an end waits for it.
 		interface.background_work_take(&work)
 		if notification_due && work.started && !interface.background_work_busy(&work) {
-			notification_duration = timer.duration
+			notification_duration = ended_duration
 			notification_due = !interface.background_work_ask(&work, notification_job, nil)
 		}
 		draw(&window, now, milliseconds, known, zone)

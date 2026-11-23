@@ -397,11 +397,10 @@ History :: struct {
 
 // The memory that a step needs on its way into and out of the arena, which
 // the caller keeps: the pixels of a box as one block, and its compressed
-// form. The compressed form has room for a picture file too, so a caller
-// reads and writes a file there with no array of its own.
+// form.
 History_Scratch :: struct {
 	pixels:     [PICTURE_PIXELS]graphics.Color,
-	compressed: [FILE_BYTES_LIMIT]u8,
+	compressed: [PICTURE_BYTES + PICTURE_BYTES / 255 + 16]u8,
 	hash_table: lz4.Hash_Table,
 }
 
@@ -453,7 +452,11 @@ history_drop_oldest :: proc "contextless" (history: ^History) -> (freed: int) {
 	}
 	first := history.steps[0]
 	freed = first.before_bytes + first.after_bytes
-	intrinsics.mem_copy(raw_data(history.arena), &history.arena[freed], history.used - freed)
+	// One step can fill the arena exactly: then nothing follows it, and
+	// the place after it is past the arena.
+	if history.used > freed {
+		intrinsics.mem_copy(raw_data(history.arena), &history.arena[freed], history.used - freed)
+	}
 	history.used -= freed
 	for index in 1 ..< history.count {
 		step := history.steps[index]
@@ -530,10 +533,11 @@ history_step_apply :: proc "contextless" (picture: ^Picture, step: History_Step,
 	if refused != .None || written != wanted {
 		return false
 	}
-	box_unpack(picture.pixels, box, scratch.pixels[:])
 	// The extent never shrinks while the history lives, so the box is in
-	// it; grow it in each case, so the pixels that the step wrote show.
+	// it; grow it first in each case: a growth paints paper, which must not
+	// cover the pixels that the step writes.
 	picture_extend(picture, box.right, box.bottom)
+	box_unpack(picture.pixels, box, scratch.pixels[:])
 	picture_changed(picture)
 	return true
 }
@@ -566,20 +570,25 @@ history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratc
 	return true
 }
 
-// The picture file: a header of FILE_HEADER_BYTES, then the LZ4 block of
-// the pixels of the extent, row after row, 4 bytes each (0x00RRGGBB, little
-// endian).
+// The picture file: a header of FILE_HEADER_BYTES, then the rows of the
+// picture, FILE_ROW_PIXELS pixels each, 4 bytes for a pixel (0x00RRGGBB,
+// little endian), from row 0 to the height. A row of the picture is at one
+// place of the file whatever the extent: a keep writes the rows that
+// changed, and the store keeps the other blocks (src/md/features/
+// paint_application.md, "The keep writes the changed rows").
 //
 //   offset  size  field
 //        0     4  the magic "MPIC"
-//        4     4  the version, 1
+//        4     4  the version, 2
 //        8     4  the width: 1 to PICTURE_WIDTH_LIMIT
 //       12     4  the height: 1 to PICTURE_HEIGHT_LIMIT
-//       16     4  the bytes of the block: the rest of the file
+//       16     4  the pixels of a row of the file: FILE_ROW_PIXELS
 FILE_MAGIC :: "MPIC"
-FILE_VERSION :: u32(1)
+FILE_VERSION :: u32(2)
 FILE_HEADER_BYTES :: 20
-FILE_BYTES_LIMIT :: FILE_HEADER_BYTES + PICTURE_BYTES + PICTURE_BYTES / 255 + 16
+FILE_ROW_PIXELS :: PICTURE_WIDTH_LIMIT
+FILE_ROW_BYTES :: FILE_ROW_PIXELS * size_of(graphics.Color)
+FILE_BYTES_LIMIT :: FILE_HEADER_BYTES + PICTURE_HEIGHT_LIMIT * FILE_ROW_BYTES
 
 File_Problem :: enum u8 {
 	None        = 0, // The file is read.
@@ -587,8 +596,9 @@ File_Problem :: enum u8 {
 	Bad_Magic   = 2, // The first 4 bytes are not "MPIC".
 	Bad_Version = 3, // The version is not FILE_VERSION.
 	Bad_Size    = 4, // The width or the height is 0 or past the largest picture.
-	Bad_Length  = 5, // The bytes of the block are not the rest of the file.
-	Bad_Block   = 6, // The block is not LZ4, or does not give width x height pixels.
+	Bad_Row     = 5, // A row of the file is not FILE_ROW_PIXELS pixels.
+	Bad_Length  = 6, // The file is not the header and the rows of its height.
+	Bad_Pixel   = 7, // A pixel has a top byte that is not 0.
 }
 
 @(private)
@@ -604,31 +614,60 @@ word_write :: proc "contextless" (bytes: []u8, offset: int, value: u32) {
 	bytes[offset + 3] = u8(value >> 24)
 }
 
-// picture_encode writes the file of the extent of a picture into a buffer
-// of at least FILE_BYTES_LIMIT bytes, and gives its bytes. ok is false for
-// a picture with an empty extent or a buffer too small.
-picture_encode :: proc "contextless" (picture: ^Picture, file: []u8, scratch: ^History_Scratch) -> (bytes: []u8, ok: bool) {
-	if picture.width <= 0 || picture.height <= 0 || len(file) < FILE_BYTES_LIMIT {
-		return nil, false
-	}
-	block := box_pack(picture.pixels, {0, 0, picture.width, picture.height}, scratch.pixels[:])
-	written, refused := lz4.compress_block(block, file[FILE_HEADER_BYTES:], &scratch.hash_table)
-	if refused != .None {
-		return nil, false
-	}
-	copy(file[:4], FILE_MAGIC)
-	word_write(file, 4, FILE_VERSION)
-	word_write(file, 8, u32(picture.width))
-	word_write(file, 12, u32(picture.height))
-	word_write(file, 16, u32(written))
-	return file[:FILE_HEADER_BYTES + written], true
+// file_size gives the bytes of the file of a picture of a height.
+file_size :: proc "contextless" (height: int) -> int {
+	return FILE_HEADER_BYTES + clamp(height, 0, PICTURE_HEIGHT_LIMIT) * FILE_ROW_BYTES
 }
 
-// picture_decode reads a file into a picture. The fields are checked
-// before any pixel changes: on a problem, the picture is as before. On
-// success the extent is the size of the file, and the pixels outside it
+// file_row_offset gives the place of a row in the file.
+file_row_offset :: proc "contextless" (row: int) -> int {
+	return FILE_HEADER_BYTES + row * FILE_ROW_BYTES
+}
+
+// file_header_write writes the header of a picture into the first
+// FILE_HEADER_BYTES of a buffer. ok is false for an empty extent or a
+// buffer too small.
+file_header_write :: proc "contextless" (picture: ^Picture, bytes: []u8) -> (header: []u8, ok: bool) {
+	if picture.width <= 0 || picture.height <= 0 || len(bytes) < FILE_HEADER_BYTES {
+		return nil, false
+	}
+	copy(bytes[:4], FILE_MAGIC)
+	word_write(bytes, 4, FILE_VERSION)
+	word_write(bytes, 8, u32(picture.width))
+	word_write(bytes, 12, u32(picture.height))
+	word_write(bytes, 16, u32(FILE_ROW_PIXELS))
+	return bytes[:FILE_HEADER_BYTES], true
+}
+
+// file_rows_copy copies the rows top ..< bottom of a picture into a buffer,
+// as the file holds them, and gives their bytes. ok is false for rows
+// outside the extent or a buffer too small.
+file_rows_copy :: proc "contextless" (picture: ^Picture, top, bottom: int, bytes: []u8) -> (rows: []u8, ok: bool) {
+	if top < 0 || bottom > picture.height || top >= bottom || len(bytes) < (bottom - top) * FILE_ROW_BYTES {
+		return nil, false
+	}
+	count := (bottom - top) * FILE_ROW_BYTES
+	intrinsics.mem_copy_non_overlapping(raw_data(bytes), &picture.pixels[top * PICTURE_WIDTH_LIMIT], count)
+	return bytes[:count], true
+}
+
+// picture_encode writes the whole file of a picture: the header and each
+// row of its extent. The first keep of a new picture writes it.
+picture_encode :: proc "contextless" (picture: ^Picture, file: []u8) -> (bytes: []u8, ok: bool) {
+	if _, header_ok := file_header_write(picture, file); !header_ok {
+		return nil, false
+	}
+	if _, rows_ok := file_rows_copy(picture, 0, picture.height, file[FILE_HEADER_BYTES:]); !rows_ok {
+		return nil, false
+	}
+	return file[:file_size(picture.height)], true
+}
+
+// picture_decode reads a file into a picture. Each field and each pixel is
+// checked before any pixel changes: on a problem, the picture is as before.
+// On success the extent is the size of the file, and the pixels outside it
 // are paper.
-picture_decode :: proc "contextless" (file: []u8, picture: ^Picture, scratch: ^History_Scratch) -> File_Problem {
+picture_decode :: proc "contextless" (file: []u8, picture: ^Picture) -> File_Problem {
 	if len(file) < FILE_HEADER_BYTES {
 		return .Too_Short
 	}
@@ -642,22 +681,103 @@ picture_decode :: proc "contextless" (file: []u8, picture: ^Picture, scratch: ^H
 	if width < 1 || width > PICTURE_WIDTH_LIMIT || height < 1 || height > PICTURE_HEIGHT_LIMIT {
 		return .Bad_Size
 	}
-	block_bytes := int(word_read(file, 16))
-	if block_bytes != len(file) - FILE_HEADER_BYTES {
+	if word_read(file, 16) != u32(FILE_ROW_PIXELS) {
+		return .Bad_Row
+	}
+	if len(file) != file_size(height) {
 		return .Bad_Length
 	}
-	wanted := width * height * size_of(graphics.Color)
-	written, refused := lz4.decompress_block(file[FILE_HEADER_BYTES:], ([^]u8)(raw_data(scratch.pixels[:]))[:PICTURE_BYTES])
-	if refused != .None || written != wanted {
-		return .Bad_Block
+	rows := file[FILE_HEADER_BYTES:]
+	// The top byte of each pixel, little endian: the fourth byte of each
+	// four. A pixel of the screen has none.
+	for place := 3; place < len(rows); place += 4 {
+		if rows[place] != 0 {
+			return .Bad_Pixel
+		}
 	}
 	for &pixel in picture.pixels[:PICTURE_PIXELS] {
 		pixel = COLOR_PAPER
 	}
-	box_unpack(picture.pixels, {0, 0, width, height}, scratch.pixels[:])
+	intrinsics.mem_copy_non_overlapping(raw_data(picture.pixels), raw_data(rows), len(rows))
 	picture.width, picture.height = width, height
 	picture_changed(picture)
 	return .None
+}
+
+// The keep of the changed rows.
+
+KEEP_PAUSE_MILLISECONDS :: 1000 // The pause of the changes after which the picture is kept.
+
+// The rows of the picture that changed since the last keep, and when.
+Changed_Rows :: struct {
+	top, bottom:  int, // The band of changed rows: top included, bottom excluded. Empty when bottom <= top.
+	changed:      bool, // A change waits for a keep.
+	whole:        bool, // The object has none of the rows yet: the keep writes all of them.
+	last_change:  u64, // The time of the system of the last change, in milliseconds.
+}
+
+// changed_rows_add adds the rows of a box to the band, at a time of the
+// system. An empty box changes nothing.
+changed_rows_add :: proc "contextless" (rows: ^Changed_Rows, box: Box, now: u64) {
+	if box_empty(box) {
+		return
+	}
+	if rows.bottom <= rows.top {
+		rows.top, rows.bottom = box.top, box.bottom
+	} else {
+		rows.top, rows.bottom = min(rows.top, box.top), max(rows.bottom, box.bottom)
+	}
+	rows.changed = true
+	rows.last_change = now
+}
+
+// changed_rows_mark marks a change of the header alone: a wider extent
+// changes no byte of a row of the file, only its width.
+changed_rows_mark :: proc "contextless" (rows: ^Changed_Rows, now: u64) {
+	rows.changed = true
+	rows.last_change = now
+}
+
+// keep_due says if the changes wait for a keep at a time of the system: a
+// pause of KEEP_PAUSE_MILLISECONDS since the last one. A time before the
+// last change is no pause.
+keep_due :: proc "contextless" (rows: ^Changed_Rows, now: u64) -> bool {
+	return rows.changed && now >= rows.last_change && now - rows.last_change >= KEEP_PAUSE_MILLISECONDS
+}
+
+// keep_band gives the rows that a keep writes, cut to the height of the
+// picture: all of them for an object that has none yet.
+keep_band :: proc "contextless" (rows: ^Changed_Rows, height: int) -> (top, bottom: int) {
+	if rows.whole {
+		return 0, height
+	}
+	return clamp(rows.top, 0, height), clamp(rows.bottom, 0, height)
+}
+
+// keep_taken empties the band when a keep took it.
+keep_taken :: proc "contextless" (rows: ^Changed_Rows) {
+	rows.top, rows.bottom, rows.changed, rows.whole = 0, 0, false, false
+}
+
+// The drag of the pointer.
+
+// A change of the picture from the press to the release: it holds a copy
+// of the picture before it, for its step of undo.
+Drag :: struct {
+	active:  bool,
+	paper:   bool, // The right button: the color is the paper.
+	from_x:  int, // Where the press was, on the picture.
+	from_y:  int,
+	last_x:  int, // Where the pointer is now, on the picture.
+	last_y:  int,
+	changed: Box, // The pixels that the change touched so far.
+}
+
+// picture_replace_allowed says if the window can replace its picture, or
+// change it by an undo, a redo or a clear: never during a drag, whose copy
+// of before belongs to the picture that it changes.
+picture_replace_allowed :: proc "contextless" (drag: ^Drag) -> bool {
+	return !drag.active
 }
 
 // The names of the pictures.
@@ -719,6 +839,32 @@ picture_name_of_object :: proc "contextless" (object: string) -> (name: string, 
 		return "", false
 	}
 	return name, true
+}
+
+// first_free_name gives the first name picture-1, picture-2, ... that a
+// list of names does not hold, written into a room. ok is false when each
+// of the first PICTURE_NAMES_TRIED names is taken.
+PICTURE_NAMES_TRIED :: 1000
+first_free_name :: proc "contextless" (taken: []string, room: ^[NAME_LIMIT]u8) -> (name: string, ok: bool) {
+	for number in 1 ..= PICTURE_NAMES_TRIED {
+		count := copy(room[:], "picture-")
+		digits: [8]u8
+		digit_count := 0
+		for rest := number; rest > 0; rest /= 10 {
+			digits[len(digits) - 1 - digit_count] = u8('0' + rest % 10)
+			digit_count += 1
+		}
+		count += copy(room[count:], digits[len(digits) - digit_count:])
+		candidate := string(room[:count])
+		free := true
+		for other in taken {
+			free &&= other != candidate
+		}
+		if free {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // The colors.

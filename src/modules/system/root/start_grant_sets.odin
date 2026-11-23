@@ -506,6 +506,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// to a caller that acts for the principal: log.follow carries the
 	// records of the whole log.
 	{name = "log_follower", grants = {.Root_Ring, .Acts_For_Principal}},
+	// The test of the border of compositor.notify: a connection to the
+	// compositor that does not act for the principal, and the boot image
+	// for the description of its exports (src/md/features/tray_widgets.md,
+	// "The export notify").
+	{name = "notify_border_of_the_compositor", grants = {.Connect, .Image}, terms = {callable = {0 = "compositor"}}},
 	// A side that writes its own words in its wiring ring, past the
 	// library: it needs no grant either.
 	{name = "output_side"},

@@ -19,13 +19,12 @@ Window_Stays_Fixed :: struct {
 @(log_fact = "paint: no store: the pictures cannot be saved")
 No_Store :: struct {}
 
-// A picture is in the private store.
-@(log_fact = "paint: the picture is saved: {width} x {height} pixels in {bytes} bytes as {name}")
-Picture_Saved :: struct {
-	width:  u64,
-	height: u64,
-	bytes:  u64,
-	name:   [40]u8,
+// The store kept the changed rows of the open picture, in one commit.
+@(log_fact = "paint: the store keeps the picture: {rows} rows in {bytes} bytes of {name}")
+Picture_Kept :: struct {
+	rows:  u64,
+	bytes: u64,
+	name:  [40]u8,
 }
 
 // A picture of the private store is the picture of the window.

@@ -1264,6 +1264,13 @@ scenario := [?]Step {
 	{kind = .Shot, text = "clock_notification"},
 	{kind = .Close, text = "clock"},
 	{kind = .Wait, text = "root: clock stopped"},
+	// The border of notify for a caller that does not act for the
+	// principal: the rate, the bound of 3 cards with Full and their count,
+	// and the label of a name of 31 bytes, the longest that a process has.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"notify_border_of_the_compositor\")"},
+	{kind = .Wait, text = "notify_border_of_the_compositor: ok, the cards of a caller stop at 3 with Full and their count"},
+	{kind = .Wait, text = "root: notify_border_of_the_compositor stopped"},
 
 	// Several processors: the kernel says that the four processors ran
 	// threads of one process at the same time. Then 1, 2 and 4 threads

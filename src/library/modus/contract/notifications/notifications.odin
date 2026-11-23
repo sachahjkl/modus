@@ -62,13 +62,34 @@ Notification :: struct {
 	label_len:    u8,
 }
 
+// The sources whose last post the queue keeps for its rate: a source keeps
+// its own slot, never a slot of another source. A full table gives the slot
+// of the oldest post to a new source.
+RATE_SOURCES :: 64
+
 Notification_Queue :: struct {
 	items:               [MAX_NOTIFICATIONS]Notification,
 	next_id:             u64,
 	do_not_disturb:      bool,
 	min_interval_ms:     u64,
-	last_source_id:      [16]u64,
-	last_source_time_ms: [16]u64,
+	rate_sources:        [RATE_SOURCES]u64, // The source of each slot; 0 is a free slot.
+	rate_times_ms:       [RATE_SOURCES]u64, // The time of the last post of the source of the slot.
+}
+
+// rate_slot gives the slot of a source in the table of the rate, or the
+// slot that a post of the source would take: a free one, else the one of
+// the oldest post. found is false for a source with no slot.
+rate_slot :: proc "contextless" (q: ^Notification_Queue, source_id: u64) -> (slot: int, found: bool) {
+	oldest := 0
+	for place in 0 ..< RATE_SOURCES {
+		if q.rate_sources[place] == source_id && source_id != 0 {
+			return place, true
+		}
+		if q.rate_sources[place] == 0 && q.rate_sources[oldest] != 0 || q.rate_sources[place] != 0 && q.rate_sources[oldest] != 0 && q.rate_times_ms[place] < q.rate_times_ms[oldest] {
+			oldest = place
+		}
+	}
+	return oldest, false
 }
 
 queue_init :: proc "contextless" (q: ^Notification_Queue, min_interval_ms: u64 = 1_000) {
@@ -136,14 +157,13 @@ queue_post :: proc "contextless" (
 	if cards_limit > 0 && source_card_count(q, source_id) >= cards_limit {
 		return 0, .Source_Full
 	}
-	// Rate-limit non-critical notifications per source_id.
-	if urgency != .Critical && q.min_interval_ms > 0 {
-		slot_idx := int(source_id % 16)
-		if q.last_source_id[slot_idx] == source_id && now_ms >= q.last_source_time_ms[slot_idx] && now_ms - q.last_source_time_ms[slot_idx] < q.min_interval_ms {
-			return 0, .Rate_Limited
-		}
-		q.last_source_id[slot_idx] = source_id
-		q.last_source_time_ms[slot_idx] = now_ms
+	// Rate-limit non-critical notifications per source_id. The check only
+	// reads: the time of the post is kept after the last refusal, so a
+	// refused post costs the source nothing.
+	rated := urgency != .Critical && q.min_interval_ms > 0
+	slot, has_slot := rate_slot(q, source_id)
+	if rated && has_slot && now_ms >= q.rate_times_ms[slot] && now_ms - q.rate_times_ms[slot] < q.min_interval_ms {
+		return 0, .Rate_Limited
 	}
 	free_idx := -1
 	for &it, i in q.items {
@@ -154,6 +174,9 @@ queue_post :: proc "contextless" (
 	}
 	if free_idx < 0 {
 		return 0, .Queue_Full
+	}
+	if rated {
+		q.rate_sources[slot], q.rate_times_ms[slot] = source_id, now_ms
 	}
 	assigned := q.next_id
 	q.next_id += 1

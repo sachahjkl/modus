@@ -31,6 +31,9 @@ Background_State :: enum u32 {
 // The stack of the worker: the calls of a job copy their arguments on it.
 BACKGROUND_STACK_PAGES :: 64
 
+// A work lives as long as its process: its thread holds the address of the
+// record and never stops, so the record is a global variable, never a
+// local of a call that ends (src/md/features/background_work.md).
 Background_Work :: struct {
 	state:     u32, // The word of a Background_State.
 	asked:     system.Event, // The window wakes the worker.
@@ -39,7 +42,10 @@ Background_Work :: struct {
 	parameter: rawptr,
 	thread:    system.Thread,
 	started:   bool,
-	jobs_done: u64, // The jobs that the worker ran: a measure, and a check of a test.
+	// The jobs that the worker ran: a measure, and a check of a test. The
+	// worker writes it before the store of Done; the window reads it only
+	// after a take, which the state word orders after that write.
+	jobs_done: u64,
 }
 
 // background_state gives the state of the work. The word is written only

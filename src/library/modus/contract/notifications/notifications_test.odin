@@ -87,3 +87,35 @@ a_labelled_source_stops_at_its_bound_of_cards :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// A full queue refuses a post and changes nothing: no card, and no time of
+// the rate of its source. The rate is kept by source: two sources that
+// share a remainder of 16 keep two slots.
+@(test)
+a_full_queue_changes_nothing_and_the_rate_is_by_source :: proc(t: ^testing.T) {
+	q: Notification_Queue
+	queue_init(&q, min_interval_ms = 500)
+	title := transmute([]u8)string("card")
+	for source in 1 ..= MAX_NOTIFICATIONS {
+		_, posted := queue_post(&q, u64(source), .Normal, 1000, 8000, title, nil)
+		testing.expect_value(t, posted, Notification_Refusal.None)
+	}
+	NEW :: u64(1000)
+	_, full := queue_post(&q, NEW, .Normal, 2000, 8000, title, nil)
+	testing.expect_value(t, full, Notification_Refusal.Queue_Full)
+	_, kept_slot := rate_slot(&q, NEW)
+	testing.expect(t, !kept_slot, "a refused post keeps no time")
+	testing.expect_value(t, queue_dismiss(&q, 1), Notification_Refusal.None)
+	_, again := queue_post(&q, NEW, .Normal, 2000, 8000, title, nil)
+	testing.expect_value(t, again, Notification_Refusal.None)
+
+	other: Notification_Queue
+	queue_init(&other, min_interval_ms = 500)
+	_, first := queue_post(&other, 1, .Normal, 0, 8000, title, nil)
+	_, shared_remainder := queue_post(&other, 17, .Normal, 0, 8000, title, nil)
+	testing.expect(t, first == .None && shared_remainder == .None)
+	_, soon := queue_post(&other, 1, .Normal, 100, 8000, title, nil)
+	testing.expect_value(t, soon, Notification_Refusal.Rate_Limited)
+	_, later := queue_post(&other, 1, .Normal, 600, 8000, title, nil)
+	testing.expect_value(t, later, Notification_Refusal.None)
+}

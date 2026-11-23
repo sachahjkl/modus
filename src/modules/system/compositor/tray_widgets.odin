@@ -177,9 +177,9 @@ tray_part_do :: proc "contextless" (part: bar.Tray_Part) {
 // tray_notification_keep copies a notification that the desktop showed
 // into the history: the dot of the bell and an open notification center
 // show it.
-tray_notification_keep :: proc "contextless" (title, body: []u8) {
+tray_notification_keep :: proc "contextless" (title, body: []u8, source: u64, source_limit := 0) {
 	seconds, dated := tray_local_seconds(system.time())
-	if bar.notification_history_add(&notification_history, string(title), string(body), seconds, dated) {
+	if bar.notification_history_add(&notification_history, string(title), string(body), seconds, dated, source, source_limit) {
 		damage_bar()
 		if tray_state.open == .Notifications {
 			tray_card_damage(.Notifications)

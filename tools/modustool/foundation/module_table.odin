@@ -228,6 +228,7 @@ module_builds := [?]Module_Build {
 	{name = "plan_applier", source = TEST_MODULE_SOURCES + "plan_applier", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "settings_stand_in", source = TEST_MODULE_SOURCES + "settings_stand_in", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
+	{name = "notify_border_of_the_compositor", source = TEST_MODULE_SOURCES + "notify_border_of_the_compositor", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},
 	{name = "output_side", source = TEST_MODULE_SOURCES + "output_side", entry = true, image = true},
 	{name = "output_counter", source = TEST_MODULE_SOURCES + "output_counter", entry = true, image = true},

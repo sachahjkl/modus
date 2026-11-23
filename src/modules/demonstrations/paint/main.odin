@@ -118,16 +118,7 @@ drawn: i64 // The lines that calls drew since the last clear.
 
 // The change of the picture that the pointer makes, from the press to the
 // release.
-Drag :: struct {
-	active:  bool,
-	paper:   bool, // The right button: the color is the paper.
-	from_x:  int, // Where the press was, on the picture.
-	from_y:  int,
-	last_x:  int, // Where the pointer is now, on the picture.
-	last_y:  int,
-	changed: paint_model.Box, // The pixels that the change touched so far.
-}
-drag: Drag
+drag: paint_model.Drag
 
 // Where the canvas is in the window, from the last frame: a press inside it
 // paints.
@@ -136,8 +127,8 @@ pointer_on_canvas: bool
 pointer_x, pointer_y: int // On the picture.
 
 // The store runs on the worker thread of the window: each call is a job
-// (src/md/features/background_work.md). The client, the rows of a list and
-// the request belong to the job from the ask to the take.
+// (src/md/features/background_work.md). The client, the rows of a list, the
+// file buffer and the request belong to the job from the ask to the take.
 work: interface.Background_Work
 process_context: ^system.Context
 client: storage.Client
@@ -146,36 +137,65 @@ PICTURE_LIST_CAPACITY :: 64
 listed_rows: [PICTURE_LIST_CAPACITY]storage.Listed
 listed_name_bytes: [PICTURE_LIST_CAPACITY * (paint_model.NAME_LIMIT + len(paint_model.OBJECT_SUFFIX))]u8
 
+// The open picture: its name, and if the store holds an object of it. The
+// store keeps it as it changes: no save action (src/md/features/
+// paint_application.md, "No save action").
+current_name: [paint_model.NAME_LIMIT]u8
+current_name_count: int
+current_written: bool
+changed_rows: paint_model.Changed_Rows
+
 Store_Act :: enum u8 {
-	Open = 0, // Open the store, then list it.
-	List = 1, // List the pictures.
-	Save = 2, // Write the file, then list.
-	Read = 3, // Read a file.
+	Open   = 0, // Open the store, then list it.
+	Keep   = 1, // Write the header and the changed rows of the open picture, then commit.
+	Read   = 2, // Read a picture.
+	Rename = 3, // Rename the object of the open picture, then list.
+	Delete = 4, // Remove a picture, then list.
+	List   = 5, // List the pictures.
 }
 
 @(rodata)
 STORE_ACT_NAMES := [Store_Act]string {
-	.Open = "open",
-	.List = "list",
-	.Save = "write",
-	.Read = "read",
+	.Open   = "open",
+	.Keep   = "keep",
+	.Read   = "read",
+	.Rename = "rename",
+	.Delete = "delete",
+	.List   = "list",
 }
 
 // What the window asks of the store, and what the job gives back.
 Store_Request :: struct {
 	act:          Store_Act,
-	name:         [paint_model.NAME_LIMIT]u8, // The picture, a copy that the job owns.
+	name:         [paint_model.NAME_LIMIT]u8, // The picture of the act; Rename: the new name.
 	name_count:   int,
-	width:        int, // Save: the size of the picture, for the line of the log.
-	height:       int,
-	file_count:   int, // Save: the bytes of the file to write. Read: the bytes read.
+	old_name:     [paint_model.NAME_LIMIT]u8, // Rename: the name before.
+	old_count:    int,
+	// Keep: the header is file_bytes[:FILE_HEADER_BYTES], the rows follow it.
+	row_offset:   int, // The place of the rows in the object.
+	row_bytes:    int, // The bytes of the rows, 0 for the header alone.
+	size:         int, // The size of the object after the keep.
 	// The results.
 	opened:       bool, // Open: the store is open.
-	failed:       bool, // A call of the store failed: the log has its status.
+	act_failed:   bool, // The act failed: the log has the status of its call.
+	list_failed:  bool, // The list after the act failed: the names stay as they were.
 	found:        bool, // Read: the object exists.
+	file_count:   int, // Read: the bytes read.
 	listed_count: int, // The rows of the list.
 }
 store_request: Store_Request
+
+// An act of the panel waits for the keep of the open picture before it.
+Pending :: enum u8 {
+	None   = 0,
+	Read   = 1,
+	New    = 2,
+	Rename = 3,
+	Delete = 4,
+}
+pending: Pending
+pending_name: [paint_model.NAME_LIMIT]u8
+pending_count: int
 
 // The names of the pictures, copied from the rows of the last list at the
 // take: the window draws them while a new job writes its rows.
@@ -221,7 +241,7 @@ line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_R
 		return errors.fail(error, -1, .Bad_Value, .None, 5, color, paint_model.PALETTE_COUNT - 1)
 	}
 	limit :: paint_model.COORDINATE_LIMIT
-	paint_model.segment_draw(&picture, int(clamp(from_x, -limit, limit)), int(clamp(from_y, -limit, limit)), int(clamp(to_x, -limit, limit)), int(clamp(to_y, -limit, limit)), EXPORT_LINE_WIDTH, paint_model.PALETTE[color])
+	picture_changed_rows(paint_model.segment_draw(&picture, int(clamp(from_x, -limit, limit)), int(clamp(from_y, -limit, limit)), int(clamp(to_x, -limit, limit)), int(clamp(to_y, -limit, limit)), EXPORT_LINE_WIDTH, paint_model.PALETTE[color]))
 	drawn += 1
 	return drawn
 }
@@ -250,6 +270,8 @@ write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Re
 	}
 	graphics.text(paint_model.picture_canvas(&picture), int(x), int(y), text^, paint_model.PALETTE[color])
 	paint_model.picture_changed(&picture)
+	// The rows of one line of the font of the system.
+	picture_changed_rows(paint_model.box_cut(&picture, {0, int(y), picture.width, int(y) + graphics.LINE_HEIGHT}))
 	return i64(len(text))
 }
 
@@ -260,6 +282,7 @@ write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Re
 @(export, link_name = "clear")
 clear :: proc "c" () {
 	paint_model.picture_clear(&picture)
+	picture_changed_rows({0, 0, picture.width, picture.height})
 	drawn = 0
 }
 
@@ -279,6 +302,7 @@ change_begin :: proc "contextless" () {
 
 // change_end keeps the step of undo of the pixels that a change touched.
 change_end :: proc "contextless" (changed: paint_model.Box) {
+	picture_changed_rows(changed)
 	switch paint_model.history_record(&history, backup_pixels[:], picture_pixels[:], changed, &history_scratch) {
 	case .Kept, .Empty:
 	case .Too_Large:
@@ -288,56 +312,94 @@ change_end :: proc "contextless" (changed: paint_model.Box) {
 
 // picture_clear_as_step clears the extent of the picture as a step of undo.
 picture_clear_as_step :: proc "contextless" () {
+	if !paint_model.picture_replace_allowed(&drag) {
+		message = "finish the stroke first"
+		return
+	}
 	change_begin()
 	paint_model.picture_clear(&picture)
 	change_end({0, 0, picture.width, picture.height})
 	drawn = 0
 }
 
+// undo and redo are refused during a drag: the drag holds the copy of
+// the picture before its change, which an undo would make old.
 undo :: proc "contextless" () {
-	message = paint_model.history_undo(&history, &picture, &history_scratch) ? "" : "nothing to undo"
+	if !paint_model.picture_replace_allowed(&drag) {
+		message = "finish the stroke first"
+		return
+	}
+	if !paint_model.history_can_undo(&history) {
+		message = "nothing to undo"
+		return
+	}
+	box := history.steps[history.done - 1].box
+	message = paint_model.history_undo(&history, &picture, &history_scratch) ? "" : "this step of undo is damaged"
+	picture_changed_rows(box)
 }
 
 redo :: proc "contextless" () {
-	message = paint_model.history_redo(&history, &picture, &history_scratch) ? "" : "nothing to redo"
+	if !paint_model.picture_replace_allowed(&drag) {
+		message = "finish the stroke first"
+		return
+	}
+	if !paint_model.history_can_redo(&history) {
+		message = "nothing to redo"
+		return
+	}
+	box := history.steps[history.done].box
+	message = paint_model.history_redo(&history, &picture, &history_scratch) ? "" : "this step of redo is damaged"
+	picture_changed_rows(box)
 }
 
 // store_job runs the request of the window on the worker thread: the
 // calls of the store wait for the storage service.
 store_job :: proc "contextless" (parameter: rawptr) {
 	request := &store_request
-	request.failed = false
+	request.act_failed, request.list_failed = false, false
+	request.listed_count = -1
+	room: paint_model.Object_Name
+	object, valid := paint_model.object_name(&room, string(request.name[:request.name_count]))
 	switch request.act {
 	case .Open:
 		opened: bool
 		if client, opened = storage.open(process_context); !opened {
 			system.log_fact(.Info, No_Store{})
-			request.failed = true
+			request.act_failed = true
 			return
 		}
 		request.opened = true
 		store_list(request)
-	case .List:
-		store_list(request)
-	case .Save:
-		room: paint_model.Object_Name
-		object, valid := paint_model.object_name(&room, string(request.name[:request.name_count]))
+	case .Keep:
 		if !valid {
-			request.failed = true
+			request.act_failed = true
 			return
 		}
+		// One commit: the header, the changed rows, the size.
 		error: errors.Error_Record
-		if _, status := storage.write(&client, storage.ROOT, object, file_bytes[:request.file_count], &error); status != .Ok {
+		if _, status := storage.write_range(&client, storage.ROOT, object, 0, file_bytes[:paint_model.FILE_HEADER_BYTES], &error); status != .Ok {
 			store_failed(request, u64(status))
 			return
 		}
-		system.log_fact(.Info, Picture_Saved{width = u64(request.width), height = u64(request.height), bytes = u64(request.file_count), name = value_kinds.text_field(string(request.name[:request.name_count]), 40)})
-		store_list(request)
+		if request.row_bytes > 0 {
+			rows := file_bytes[paint_model.FILE_HEADER_BYTES:][:request.row_bytes]
+			if _, status := storage.write_range(&client, storage.ROOT, object, u64(request.row_offset), rows, &error); status != .Ok {
+				store_failed(request, u64(status))
+				return
+			}
+		}
+		if status := storage.set_size(&client, storage.ROOT, object, u64(request.size), &error); status != .Ok {
+			store_failed(request, u64(status))
+			return
+		}
+		if _, status := storage.commit(&client, storage.ROOT, object, &error); status != .Ok {
+			store_failed(request, u64(status))
+			return
+		}
+		system.log_fact(.Info, Picture_Kept{rows = u64(request.row_bytes / paint_model.FILE_ROW_BYTES), bytes = u64(request.row_bytes + paint_model.FILE_HEADER_BYTES), name = value_kinds.text_field(string(request.name[:request.name_count]), 40)})
 	case .Read:
-		room: paint_model.Object_Name
-		object, valid := paint_model.object_name(&room, string(request.name[:request.name_count]))
 		if !valid {
-			request.failed = true
+			request.act_failed = true
 			return
 		}
 		bytes, found, status := storage.read(&client, storage.ROOT, object, file_bytes[:])
@@ -346,14 +408,40 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			return
 		}
 		request.found, request.file_count = found, len(bytes)
+	case .Rename:
+		old_room: paint_model.Object_Name
+		old_object, old_valid := paint_model.object_name(&old_room, string(request.old_name[:request.old_count]))
+		if !valid || !old_valid {
+			request.act_failed = true
+			return
+		}
+		if _, status := storage.rename(&client, storage.ROOT, old_object, storage.ROOT, object); status != .Ok {
+			store_failed(request, u64(status))
+			return
+		}
+		store_list(request)
+	case .Delete:
+		if !valid {
+			request.act_failed = true
+			return
+		}
+		if _, status := storage.remove(&client, storage.ROOT, object); status != .Ok {
+			store_failed(request, u64(status))
+			return
+		}
+		store_list(request)
+	case .List:
+		store_list(request)
 	}
 }
 
-// store_list lists the store into the rows of the job.
+// store_list lists the store into the rows of the job. A failed list
+// leaves the names of the window as they were; the act before it stands.
 store_list :: proc "contextless" (request: ^Store_Request) {
 	page, status := storage.list(&client, storage.ROOT, "", listed_rows[:], listed_name_bytes[:])
 	if status != .Ok {
-		store_failed(request, u64(status))
+		system.log_fact(.Warning, Store_Call_Failed{status = u64(status), act = value_kinds.text_field("list", 16)})
+		request.list_failed = true
 		return
 	}
 	request.listed_count = len(page)
@@ -361,24 +449,104 @@ store_list :: proc "contextless" (request: ^Store_Request) {
 
 store_failed :: proc "contextless" (request: ^Store_Request, status: u64) {
 	system.log_fact(.Warning, Store_Call_Failed{status = status, act = value_kinds.text_field(STORE_ACT_NAMES[request.act], 16)})
-	request.failed = true
+	request.act_failed = true
 }
 
-// store_ask gives the store a request. false: a job runs, and the status
-// line says so.
-store_ask :: proc "contextless" (act: Store_Act, name: string = "") -> bool {
-	if interface.background_work_busy(&work) {
-		message = "the store is busy"
-		return false
-	}
+// store_ask gives the store a request: the caller checked that no job runs.
+store_ask :: proc "contextless" (act: Store_Act, name: string) -> bool {
 	store_request.act = act
 	store_request.name_count = copy(store_request.name[:], name)
 	return interface.background_work_ask(&work, store_job, nil)
 }
 
+current_picture_name :: proc "contextless" () -> string {
+	return string(current_name[:current_name_count])
+}
+
+// picture_changed_rows adds the rows of a change of the picture to the
+// band that the next keep writes.
+picture_changed_rows :: proc "contextless" (box: paint_model.Box) {
+	paint_model.changed_rows_add(&changed_rows, box, system.time())
+}
+
+// keep_ask copies the header and the changed rows of the open picture into
+// the file of the job, and asks the job to write them in one commit.
+keep_ask :: proc "contextless" () {
+	changed_rows.whole ||= !current_written
+	top, bottom := paint_model.keep_band(&changed_rows, picture.height)
+	if _, ok := paint_model.file_header_write(&picture, file_bytes[:]); !ok {
+		return
+	}
+	row_bytes := 0
+	if bottom > top {
+		rows, ok := paint_model.file_rows_copy(&picture, top, bottom, file_bytes[paint_model.FILE_HEADER_BYTES:])
+		if !ok {
+			return
+		}
+		row_bytes = len(rows)
+	}
+	store_request.row_offset = paint_model.file_row_offset(top)
+	store_request.row_bytes = row_bytes
+	store_request.size = paint_model.file_size(picture.height)
+	paint_model.keep_taken(&changed_rows)
+	store_ask(.Keep, current_picture_name())
+}
+
+// store_drive asks for the next job when none runs: a keep that is due, or
+// that an act of the panel waits for, then that act.
+store_drive :: proc "contextless" (now: u64) {
+	if !store_open || interface.background_work_busy(&work) || current_name_count == 0 {
+		return
+	}
+	if changed_rows.changed && (paint_model.keep_due(&changed_rows, now) || pending != .None) {
+		keep_ask()
+		return
+	}
+	name := string(pending_name[:pending_count])
+	switch pending {
+	case .None:
+		return
+	case .Read:
+		store_ask(.Read, name)
+	case .New:
+		// The open picture is kept: a new one starts, written at its first
+		// change.
+		picture_start_new(name)
+		message = "new picture"
+	case .Rename:
+		if current_written {
+			store_request.old_count = copy(store_request.old_name[:], current_picture_name())
+			store_ask(.Rename, name)
+		} else {
+			current_name_count = copy(current_name[:], name)
+			message = "renamed"
+		}
+	case .Delete:
+		store_ask(.Delete, name)
+	}
+	pending = .None
+}
+
+// picture_start_new makes the picture of the window a new picture with a
+// name: paper, the extent of the canvas, no history.
+picture_start_new :: proc "contextless" (name: string) {
+	paint_model.picture_clear(&picture)
+	picture.width, picture.height = 0, 0
+	paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height)
+	paint_model.history_clear(&history)
+	current_name_count = copy(current_name[:], name)
+	current_written = false
+	changed_rows = {}
+	drawn = 0
+}
+
 // store_result_take reads the result of a job that is done, on the thread
-// of the window.
-store_result_take :: proc "contextless" () {
+// of the window. A picture that a job read waits for the end of a drag:
+// the drag holds a copy of the picture that it changes.
+store_result_take :: proc "contextless" (now: u64) {
+	if interface.background_work_busy(&work) && store_request.act == .Read && !paint_model.picture_replace_allowed(&drag) {
+		return
+	}
 	if !interface.background_work_take(&work) {
 		return
 	}
@@ -387,19 +555,42 @@ store_result_take :: proc "contextless" () {
 	case .Open:
 		store_open = request.opened
 		pictures_copy(request)
-	case .List:
-		pictures_copy(request)
-	case .Save:
-		message = request.failed ? "the store refused the picture" : "saved"
-		pictures_copy(request)
+		// The open picture of a start is new, with the first free name.
+		room: [paint_model.NAME_LIMIT]u8
+		if name, ok := paint_model.first_free_name(picture_names[:picture_name_count], &room); ok && store_open {
+			current_name_count = copy(current_name[:], name)
+		}
+	case .Keep:
+		if request.act_failed {
+			// The rows go back to the band: the next keep writes them.
+			changed_rows.whole = true
+			paint_model.changed_rows_add(&changed_rows, {0, 0, picture.width, picture.height}, now)
+			message = "the store refused to keep the picture"
+		} else {
+			current_written = true
+		}
 	case .Read:
 		picture_decode_taken(request)
+	case .Rename:
+		if !request.act_failed {
+			current_name_count = copy(current_name[:], string(request.name[:request.name_count]))
+			message = "renamed"
+		} else {
+			message = "the store refused the name"
+		}
+		pictures_copy(request)
+	case .Delete:
+		message = request.act_failed ? "the store refused the delete" : "deleted"
+		pictures_copy(request)
+	case .List:
+		pictures_copy(request)
 	}
 }
 
 // pictures_copy keeps the names of the pictures of the rows of a list.
 pictures_copy :: proc "contextless" (request: ^Store_Request) {
-	if request.failed {
+	// No list ran (a failed act stops before its list), or it failed.
+	if request.listed_count < 0 || request.list_failed {
 		return
 	}
 	picture_name_count = 0
@@ -417,71 +608,86 @@ pictures_copy :: proc "contextless" (request: ^Store_Request) {
 	picture_choice = clamp(picture_choice, 0, max(picture_name_count - 1, 0))
 }
 
-// picture_save encodes the picture into the file of the job, then asks the
-// job to write it under the name of the field.
-picture_save :: proc "contextless" () {
-	name := string(name_text[:name_count])
-	switch paint_model.name_check(name) {
-	case .None:
-	case .Empty:
-		message = "a name has at least one character"
-		return
-	case .Too_Long:
-		message = "a name has at most 32 characters"
-		return
-	case .Bad_Character:
-		message = "a name has a-z, 0-9, - and _ only"
-		return
+// picture_listed says if the last list holds a name.
+picture_listed :: proc "contextless" (name: string) -> bool {
+	for listed in picture_names[:picture_name_count] {
+		if listed == name {
+			return true
+		}
 	}
-	if !store_open {
-		message = "no store: the picture cannot be saved"
-		return
-	}
-	if interface.background_work_busy(&work) {
-		message = "the store is busy"
-		return
-	}
-	// The file belongs to the window until the ask: the encode runs once
-	// for the act of the principal, never in a frame.
-	bytes, encoded := paint_model.picture_encode(&picture, file_bytes[:], &history_scratch)
-	if !encoded {
-		message = "the picture cannot be written"
-		return
-	}
-	store_request.file_count = len(bytes)
-	store_request.width, store_request.height = picture.width, picture.height
-	if store_ask(.Save, name) {
-		message = "saving"
-	}
+	return false
 }
 
-// picture_open asks the job to read the chosen picture of the list.
-picture_open :: proc "contextless" () {
-	if picture_choice < 0 || picture_choice >= picture_name_count || !store_open {
+// panel_act asks for an act of the panel: it waits for the keep of the open
+// picture and for the job that runs. The name of the field gives a new
+// picture or a new name; the list gives a picture to open or to delete.
+panel_act :: proc "contextless" (act: Pending, name: string) {
+	switch act {
+	case .None:
+		return
+	case .New, .Rename:
+		switch paint_model.name_check(name) {
+		case .None:
+		case .Empty:
+			message = "a name has at least one character"
+			return
+		case .Too_Long:
+			message = "a name has at most 32 characters"
+			return
+		case .Bad_Character:
+			message = "a name has a-z, 0-9, - and _ only"
+			return
+		}
+		if picture_listed(name) || name == current_picture_name() {
+			message = "a picture has this name"
+			return
+		}
+	case .Read:
+		if name == current_picture_name() {
+			message = "this picture is open"
+			return
+		}
+	case .Delete:
+		if name == current_picture_name() {
+			message = "the open picture cannot be deleted"
+			return
+		}
+	}
+	if !store_open {
+		message = "no store: nothing is kept"
 		return
 	}
-	if store_ask(.Read, picture_names[picture_choice]) {
-		message = "reading"
+	if pending != .None {
+		message = "an act of the panel waits already"
+		return
 	}
+	pending = act
+	pending_count = copy(pending_name[:], name)
+	message = changed_rows.changed || interface.background_work_busy(&work) ? "waits for the keep" : ""
 }
 
 // picture_decode_taken decodes the file that a job read. A damaged file
 // leaves the picture as it was.
 picture_decode_taken :: proc "contextless" (request: ^Store_Request) {
 	name := string(request.name[:request.name_count])
-	if request.failed || !request.found {
+	if request.act_failed || !request.found {
 		message = "the store has no such picture"
 		return
 	}
-	if problem := paint_model.picture_decode(file_bytes[:request.file_count], &picture, &history_scratch); problem != .None {
+	if problem := paint_model.picture_decode(file_bytes[:request.file_count], &picture); problem != .None {
 		system.log_fact(.Warning, Picture_Refused{problem = u64(problem), name = value_kinds.text_field(name, 40)})
 		message = "the file of this picture is damaged"
 		return
 	}
-	// The picture holds at least the canvas: the rest is paper.
-	paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height)
+	// The picture holds at least the canvas: the rest is paper, which the
+	// next keep writes.
+	height_before := picture.height
+	if paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height) {
+		paint_model.changed_rows_add(&changed_rows, {0, height_before, picture.width, picture.height}, system.time())
+	}
 	paint_model.history_clear(&history)
-	name_count = copy(name_text[:], name)
+	current_name_count = copy(current_name[:], name)
+	current_written = true
 	system.log_fact(.Info, Picture_Opened{width = u64(picture.width), height = u64(picture.height), name = value_kinds.text_field(name, 40)})
 	message = "opened"
 }
@@ -489,8 +695,8 @@ picture_decode_taken :: proc "contextless" (request: ^Store_Request) {
 // panel_toggle opens a panel, or closes it when it is open.
 panel_toggle :: proc "contextless" (wanted: Panel) {
 	panel = panel == wanted ? .None : wanted
-	if panel == .Pictures && store_open {
-		store_ask(.List)
+	if panel == .Pictures && store_open && !interface.background_work_busy(&work) {
+		store_ask(.List, "")
 	}
 	if panel == .Color {
 		room: paint_model.Color_Text
@@ -674,8 +880,9 @@ color_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.Area
 	}
 }
 
-// pictures_panel draws the field of the name with the button save, the
-// list of the pictures of the store, and the button open.
+// pictures_panel draws the field of a name with the buttons new and
+// rename, the list of the pictures of the store, and the buttons open and
+// delete. No button saves: the store keeps the open picture as it changes.
 pictures_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
 	x, y := area.x, area.y
 	if !store_open {
@@ -683,18 +890,29 @@ pictures_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.A
 		interface.cell_text(frame, {x, y, area.width, ROW_HEIGHT}, opening ? "the store opens" : "no store: nothing is kept", graphics.colors.dim)
 		return
 	}
-	SAVE_WIDTH :: 64
-	field := interface.Area{x, y, area.width - SAVE_WIDTH - GAP, ROW_HEIGHT}
-	entered := interface.text_input(frame, field, interface.identity("picture name"), name_text[:], &name_count, "name").activated
-	if interface.button(frame, {field.x + field.width + GAP, y, SAVE_WIDTH, ROW_HEIGHT}, interface.identity("save"), "save").activated || entered {
-		picture_save()
+	BUTTON_WIDTH :: 72
+	field := interface.Area{x, y, area.width - 2 * (BUTTON_WIDTH + GAP), ROW_HEIGHT}
+	interface.text_input(frame, field, interface.identity("picture name"), name_text[:], &name_count, "name")
+	name := string(name_text[:name_count])
+	if interface.button(frame, {field.x + field.width + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("new"), "new").activated {
+		panel_act(.New, name)
+	}
+	if interface.button(frame, {field.x + field.width + 2 * GAP + BUTTON_WIDTH, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("rename"), "rename").activated {
+		panel_act(.Rename, name)
 	}
 	y += ROW_HEIGHT + 2 * GAP
 	list := interface.Area{x, y, area.width, max(area.y + area.height - y - ROW_HEIGHT - 2 * GAP, interface.TABLE_LINE)}
-	chosen := interface.list_with_choice(frame, list, interface.identity("pictures"), picture_names[:picture_name_count], &picture_choice, {empty_text = "no picture saved", name = "pictures"}).activated
+	chosen := interface.list_with_choice(frame, list, interface.identity("pictures"), picture_names[:picture_name_count], &picture_choice, {empty_text = "no picture in the store", name = "pictures"}).activated
 	y = list.y + list.height + 2 * GAP
-	if picture_name_count > 0 && (interface.button(frame, {x, y, 64, ROW_HEIGHT}, interface.identity("open"), "open").activated || chosen) {
-		picture_open()
+	if picture_name_count == 0 {
+		return
+	}
+	chosen_name := picture_names[clamp(picture_choice, 0, picture_name_count - 1)]
+	if interface.button(frame, {x, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("open"), "open").activated || chosen {
+		panel_act(.Read, chosen_name)
+	}
+	if interface.button(frame, {x + BUTTON_WIDTH + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("delete"), "delete").activated {
+		panel_act(.Delete, chosen_name)
 	}
 }
 
@@ -749,10 +967,15 @@ preview_draw :: proc "contextless" (frame: ^interface.Frame) {
 	}
 }
 
-// status_text writes the status line: the tool, the size, the color, the
-// place of the pointer on the picture, and the last message.
+// status_text writes the status line: the name of the open picture, the
+// tool, the size, the color, the place of the pointer on the picture, and
+// the last message.
 status_text :: proc "contextless" (builder: ^interface.Text_Builder) -> string {
 	builder.count = 0
+	if current_name_count > 0 {
+		interface.text_put(builder, current_picture_name())
+		interface.text_put(builder, ", ")
+	}
 	interface.text_put(builder, paint_model.TOOL_NAMES[tool])
 	interface.text_put(builder, ", ")
 	interface.text_put_number(builder, u64(paint_model.BRUSH_SIZES[size_index]))
@@ -781,8 +1004,15 @@ frame_build :: proc "contextless" (window: ^display.Window) -> (bar_result: inte
 	interface.background(&frame, {0, 0, width, height})
 	panel_room := panel != .None ? PANEL_WIDTH + 2 * GAP : 0
 	canvas_area = {0, CANVAS_TOP, max(width - panel_room, 1), max(height - CANVAS_TOP - STATUS_HEIGHT, 1)}
-	// A larger window grows the picture; a smaller one keeps it.
-	paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height)
+	// A larger window grows the picture; a smaller one keeps it. A growth
+	// is a change that the next keep writes: the new rows, and the header.
+	width_before, height_before := picture.width, picture.height
+	if paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height) {
+		picture_changed_rows({0, height_before, picture.width, picture.height})
+		if picture.height == height_before && picture.width != width_before {
+			paint_model.changed_rows_mark(&changed_rows, system.time())
+		}
+	}
 	tools_row(&frame)
 	palette_row(&frame)
 	shown := graphics.Canvas{pixels = raw_data(picture_pixels[:]), width = min(picture.width, canvas_area.width), height = min(picture.height, canvas_area.height), stride = paint_model.PICTURE_WIDTH_LIMIT}
@@ -939,13 +1169,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The store opens on the worker thread: the window draws at once.
 	process_context = ctx
 	if interface.background_work_start(&work) == .Ok {
-		store_ask(.Open)
+		store_ask(.Open, "")
 	} else {
 		system.log_fact(.Info, No_Store{})
 	}
 	system.log_fact(.Info, Running{})
 	for {
-		store_result_take()
+		now := system.time()
+		store_result_take(now)
+		store_drive(now)
 		bar_result := frame_build(&window)
 		if bar_result.ran {
 			key_run(bar_result.run)
@@ -954,8 +1186,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
-		ready := interface.background_work_wait(&wait, &work)
-		system.wait_end(&wait, ready ? system.time() : system.WAIT_FOREVER)
+		// A read that waits for the end of a drag is no reason to wake:
+		// the release of the pointer wakes the loop.
+		ready := interface.background_work_wait(&wait, &work) && !(store_request.act == .Read && drag.active)
+		// The keep of the picture is due after the pause of its changes.
+		deadline := system.WAIT_FOREVER
+		if changed_rows.changed {
+			deadline = changed_rows.last_change + paint_model.KEEP_PAUSE_MILLISECONDS
+		}
+		system.wait_end(&wait, ready ? system.time() : deadline)
 		system.service_run(&service)
 		events_take(&window)
 	}

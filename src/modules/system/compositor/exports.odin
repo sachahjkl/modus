@@ -345,10 +345,19 @@ screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64
 // title, and holds at most 3 cards at once
 // (src/md/features/tray_widgets.md, "The export notify").
 //
-// The error kinds: Empty (an empty title), Full (the caller shows 3 cards
-// already: unit Requests, its limit and the count found), Bad_Value (a title,
-// a body or a name too long, a post within 500 ms of the last one of the
-// caller, or the notifications off).
+// The error kinds:
+//
+// - Empty: an empty title (argument 1), or a caller whose connection has
+//   no name (argument 0).
+// - Too_Long: a title past 96 bytes (argument 1) or a body past 256 bytes
+//   (argument 2).
+// - Full, unit Requests: the caller shows 3 cards already; limit 3, found
+//   the cards that it shows.
+// - Full, unit Records: the desktop shows 64 cards already; limit 64.
+// - Busy, unit Milliseconds: a post within 500 ms of the last one of the
+//   caller; limit 500.
+// - Refused: the notifications are off (do not disturb), or the desktop
+//   is not ready.
 //
 // **Grant**: a connection to the compositor.
 @(export, link_name = "notify")
@@ -361,9 +370,12 @@ notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_R
 	cards_limit := 0
 	if !acts_for_principal() {
 		// The name of the connection, as the root service gave it: never
-		// a text of the caller.
+		// a text of the caller. A card with no name would name nobody.
 		caller := system.service_caller()
 		name := system.name_of(caller.caller[:])
+		if len(name) == 0 {
+			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 0, 0, notifications.MAX_LABEL_BYTES)
+		}
 		source = notifications.source_of_caller_name(name)
 		label = transmute([]u8)name
 		cards_limit = notifications.CARDS_PER_SOURCE_LIMIT
@@ -376,12 +388,22 @@ notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_R
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Requests, 0, 0, notifications.CARDS_PER_SOURCE_LIMIT, i64(notifications.source_card_count(&desktop_notifications, source)))
 	case .Empty_Title:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+	case .Title_Too_Long:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(title^)), notifications.MAX_TITLE_BYTES)
 	case .Body_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 2, i64(len(body^)), notifications.MAX_BODY_BYTES)
-	case .Nil_Queue, .Title_Too_Long, .Rate_Limited, .Suppressed, .Queue_Full, .Not_Found, .Label_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 2, i64(len(body^)), notifications.MAX_BODY_BYTES)
+	case .Label_Too_Long:
+		// The root service names a process in 32 bytes at most: no name
+		// of a connection is longer.
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 0, i64(len(label)), notifications.MAX_LABEL_BYTES)
+	case .Queue_Full:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Records, 0, 0, notifications.MAX_NOTIFICATIONS, notifications.MAX_NOTIFICATIONS)
+	case .Rate_Limited:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Milliseconds, 0, 0, i64(desktop_notifications.min_interval_ms))
+	case .Suppressed, .Nil_Queue, .Not_Found:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
+	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
 }
 
 // magnifier sets the desktop viewport magnifier zoom factor in eighths

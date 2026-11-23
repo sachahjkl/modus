@@ -1054,14 +1054,16 @@ desktop_notification_post :: proc "contextless" (source_id: u64, urgency: notifi
 	// The history shows the label too: "clock: the timer ended". The
 	// label comes from the connection, so a card of the history names its
 	// process as the banner does.
+	// A labelled source keeps at most bar.NOTIFICATION_RECORDS_PER_SOURCE_LIMIT
+	// records in the history: it cannot push the cards of the principal out.
 	if len(label) == 0 {
-		tray_notification_keep(title, body) // tray_widgets.odin
+		tray_notification_keep(title, body, source_id) // tray_widgets.odin
 	} else {
 		labelled: [notifications.MAX_LABEL_BYTES + 2 + notifications.MAX_TITLE_BYTES]u8
 		count := copy(labelled[:], label)
 		count += copy(labelled[count:], ": ")
 		count += copy(labelled[count:], title)
-		tray_notification_keep(labelled[:count], body)
+		tray_notification_keep(labelled[:count], body, source_id, bar.NOTIFICATION_RECORDS_PER_SOURCE_LIMIT)
 	}
 	return id, .None
 }

@@ -15,11 +15,13 @@ A process with a window draws on one thread, the thread of the window. A call th
 - **A state word and two events.** The state is `Idle`, `Asked`, `Running` or `Done`, in one word that each side changes with an atomic store. The window wakes the worker with the event `asked`; the worker wakes the window with the event `done`. A side reads the count of an event before it reads the state, so no wake is lost (`system.Event`).
 - **The memory of a job is its own.** A job reads what the window wrote before the ask and writes its result into memory that the window does not touch until `background_work_take` gives true. Then the window reads the result, on its own thread, and the state is `Idle`.
 - **The loop of the window** adds the event `done` to its wait list with `background_work_wait`, which says when a result is ready already, so the loop does not sleep over it.
+- **A work lives as long as its process.** Its thread is never stopped and the record is never freed: the thread holds the address of the record. A process keeps its work in a global variable, never on a stack that a call ends.
+- **The count of the jobs** (`jobs_done`) is written by the worker and read by the window only after a take: the state word orders the two.
 - **The pure steps** (`background_work_ask`, `background_work_step` that the thread runs, `background_work_take`) are procedures with host tests; the thread entry is a loop over `background_work_step` and `system.event_wait`.
 
 ## The users
 
-- `paint` opens its store, lists, reads and writes its pictures in jobs. The window encodes a picture into the file buffer of the job before the ask, and decodes it after the take: the work in proportion to a picture runs once for each act of the principal, never in a frame. While a job runs, the principal draws on.
+- `paint` opens its store, keeps the changed rows of its picture, reads, creates, renames, deletes and lists its pictures in jobs. The window copies the rows into the file buffer of the job before the ask, and decodes a read picture after the take: the work in proportion to a picture runs once for each act, never in a frame. While a job runs, the principal draws on.
 - `clock` asks the root service for its connection to the compositor, and calls `compositor.notify`, in a job at the end of its timer. An end while a job runs waits, and is asked at the next turn of the loop.
 
 ## Refused forms
