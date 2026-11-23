@@ -564,3 +564,95 @@ a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 	expect_refusal(t, space_open_for(no_store, &console, &source_text, &output_text, &terms, &error), ERROR_STORE, error, .Device, .Store)
 	testing.expect_value(t, wide_grants.space_count(&no_store.store), 0)
 }
+
+// Fresh authority key passed through context value slots verifies a minted
+// wide grant in collector_core, while another key, a tampered grant, or a
+// zero key is refused. Act outputs of all four producers wire to principal-
+// isolated audit spaces at the grant and stop recording on revocation.
+@(test)
+wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
+
+	fresh_key := blake3.hash(transmute([]u8)string("fresh-start-key-1"))
+	other_key := blake3.hash(transmute([]u8)string("fresh-start-key-2"))
+	verifier := blake3.hash(transmute([]u8)string("passphrase-verified"))
+
+	auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&auth, fresh_key, .Entropy))
+	key_words, words_ok := wide_grants.authority_context_words(&auth)
+	testing.expect(t, words_ok)
+	collector_key := wide_grants.authority_key_from_words(key_words)
+
+	manager := new(collector_core.Wide_Grant_Manager)
+	defer free(manager)
+	testing.expect(t, !collector_core.manager_init(manager, PRINCIPAL, {}), "zero key must be refused")
+	testing.expect(t, collector_core.manager_init(manager, PRINCIPAL, collector_key))
+
+	terms := wide_grants.Wide_Grant_Terms {
+		principal_id          = PRINCIPAL,
+		grantee_identity_hash = blake3.hash(transmute([]u8)string("agent-key-1")),
+		authorities_word      = wide_grants.wide_authorities_to_word({.View_Screen, .Send_Input}),
+		target_window_count   = 1,
+		target_window_ids     = {0 = 101},
+		duration_ms           = wide_grants.DEFAULT_WIDE_GRANT_DURATION_MS,
+		survives_restart      = false,
+	}
+	testing.expect_value(t, wide_grants.wide_grant_terms_seal(&terms), wide_grants.Wide_Grant_Refusal.None)
+
+	// Proof from another key is refused.
+	other_auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&other_auth, other_key, .Processor))
+	wrong_proof, _ := wide_grants.authority_mint_proof(&other_auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 100)
+	_, wrong_refusal := collector_core.manager_create_grant(manager, &terms, &wrong_proof, 100)
+	testing.expect_value(t, wrong_refusal, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
+
+	// Proof from fresh key is accepted; tampered proof is refused.
+	good_proof, mint_r := wide_grants.authority_mint_proof(&auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 200)
+	testing.expect_value(t, mint_r, wide_grants.Wide_Grant_Refusal.None)
+	tampered := good_proof
+	tampered.proof_tag[3] ~= 0x80
+	_, tampered_r := collector_core.manager_create_grant(manager, &terms, &tampered, 200)
+	testing.expect_value(t, tampered_r, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
+
+	serial, created_r := collector_core.manager_create_grant(manager, &terms, &good_proof, 200)
+	testing.expect_value(t, created_r, wide_grants.Wide_Grant_Refusal.None)
+	testing.expect_value(t, serial, u64(1))
+
+	// Wire all four act spaces at grant, verify producer isolation, and revoke.
+	router: wide_grants.Grant_Act_Router
+	testing.expect_value(t, wide_grants.act_wiring_attach(&router, &service.store, serial, PRINCIPAL, {.View_Screen, .Send_Input}, terms.duration_ms, 200), wide_grants.Act_Wiring_Refusal.None)
+	_, emit_r := wide_grants.act_wiring_emit(&router, &service.store, {
+		grant_serial     = serial,
+		principal_id     = PRINCIPAL,
+		timestamp_ms     = 210,
+		producer_word    = u64(wide_grants.Act_Producer.Trusted_Display),
+		act_kind_word    = u64(wide_grants.Act_Kind.Key_Injected),
+		target_window_id = 101,
+		detail_word_0    = 3,
+	})
+	testing.expect_value(t, emit_r, wide_grants.Act_Wiring_Refusal.None)
+
+	// A producer cannot read its own audit space; the principal's reader can.
+	compositor_caller := connection_of(PRINCIPAL, true, "compositor")
+	principal_reader := connection_of(PRINCIPAL, true, "auditor")
+	heads: [4]wide_grants.Kept_Record_Head
+	bytes: [4 * size_of(wide_grants.Act_Stream_Record)]u8
+	error: errors.Error_Record
+	expect_refusal(t, read_all(service, &compositor_caller, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+	testing.expect_value(t, read_all(service, &principal_reader, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error), i64(1))
+
+	// Revocation ends recording cleanly.
+	testing.expect_value(t, collector_core.manager_revoke_grant(manager, serial, 300, .Principal_Revoked), wide_grants.Wide_Grant_Refusal.None)
+	testing.expect_value(t, wide_grants.act_wiring_revoke(&router, &service.store, serial, .Principal_Revoked, 300), wide_grants.Act_Wiring_Refusal.None)
+	_, post_revoke := wide_grants.act_wiring_emit(&router, &service.store, {
+		grant_serial     = serial,
+		principal_id     = PRINCIPAL,
+		timestamp_ms     = 310,
+		producer_word    = u64(wide_grants.Act_Producer.Remote_Service),
+		act_kind_word    = u64(wide_grants.Act_Kind.Frame_Read),
+		target_window_id = 101,
+	})
+	testing.expect_value(t, post_revoke, wide_grants.Act_Wiring_Refusal.Grant_Revoked)
+}

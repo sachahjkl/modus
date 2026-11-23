@@ -25,6 +25,7 @@ import "modus:interface"
 import "internal:compositor/bar"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:contract/wide_grants"
 import "modus:key_path"
 import "modus:system"
 
@@ -133,6 +134,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		send(client, .Capture_Size, {0 = u64(screen.width), 1 = u64(screen.height)})
 	case .Capture_Open:
 		capture_open(index, record)
+		_, _ = wide_grant_act_emit(.Frame_Read, 0, 1, u64(index))
 	case .Capture_Taken:
 		if capture.client != index || capture.held < 0 || record.values[0] != u64(capture.held) {
 			capture_refuse(client, "a Capture_Taken of a picture that the process does not hold")
@@ -144,6 +146,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 	case .Capture_Close:
 		if capture.client == index {
+			_, _ = wide_grant_act_emit(.Frame_Read, 0, 0, u64(index))
 			capture_end("the service closed it")
 		}
 	case .Capture_Viewers:
@@ -181,6 +184,9 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		case clipboard_key(character, u32(modifiers), pressed != 0):
 		case order_count > 0:
 			in_front := order[order_count - 1]
+			if _, dropped_full := wide_grant_act_emit(.Key_Injected, u64(in_front + 1), code, modifiers); dropped_full {
+				return
+			}
 			send(&clients[in_front], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
 		}
 	case .Remote_Pointer:
@@ -191,6 +197,13 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		capture.remote_pointers += 1
 		viewer_slot := capture_record_viewer_input(record)
+		if wide_grant_display.active {
+			target_win := order_count > 0 ? u64(order[order_count - 1] + 1) : 1
+			act_kind := buttons != 0 ? wide_grants.Act_Kind.Pointer_Clicked : wide_grants.Act_Kind.Pointer_Moved
+			if _, dropped_full := wide_grant_act_emit(act_kind, target_win, x, y); dropped_full {
+				return
+			}
+		}
 		wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 		before_x, before_y := pointer_x, pointer_y
 		// A viewer sees the pixels of the screen: its place goes to the

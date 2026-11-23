@@ -142,11 +142,14 @@ GRANT_VALUE_FILE_SIZE :: 2
 // The value 3 of a process with the grant Store: the size in bytes of the
 // file of the storage service, which its client reads (package storage).
 GRANT_VALUE_STORAGE_FILE_SIZE :: 3
-// The value 4 of the module file service `module_files`: the principal of its
-// store (modus:disk_process).
+// The value 4 of a per-principal service (`module_files`, `collector`): the
+// principal of its store (modus:disk_process; modus:contract/wide_grants).
 GRANT_VALUE_SERVICE_PRINCIPAL :: 4
 // The value 4 of a terminal: its columns.
 GRANT_VALUE_TERMINAL_COLUMNS :: 4
+// The values 5 to 8 of the collector: the authority key of the wide grants
+// (modus:contract/wide_grants), four words of 64 bits in little-endian order.
+GRANT_VALUE_WIDE_GRANT_AUTHORITY_KEY :: 5
 // The value 5 of `unlock`: what this start does, the word of an
 // Unlock_Mode (modus:principals).
 GRANT_VALUE_UNLOCK_MODE :: 5

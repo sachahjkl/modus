@@ -147,7 +147,7 @@ import "base:intrinsics"
 // 4050 + 10 + 9 + 3 + 2 + 1647 + 2144 + 2144 + 708 = 10717. A screen whose
 // frame and background the budget cannot pay is named on one line, and the
 // compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10717, processes = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10721, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.

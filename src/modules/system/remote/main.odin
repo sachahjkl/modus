@@ -99,7 +99,7 @@ import "modus:system"
 // pages. And the glyph memory of the copy of the text rendering of the
 // drawing module, which draws its text: 354 pages
 // (display.TEXT_MEMORY_PAGES). 3067 + 354 = 3421.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3421, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3425, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---

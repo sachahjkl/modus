@@ -43,6 +43,7 @@ Chain_Verification_Report :: struct {
 
 // Package-level BSS state so large tables stay off the thread stack.
 manager_state: collector_core.Wide_Grant_Manager
+grant_act_router: wide_grants.Grant_Act_Router
 service_ring: ring.Ring
 service_region_base: [^]u8
 service_region_bytes: u64
@@ -267,6 +268,34 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			)
 			return
 		}
+		// Wire the four wide-grant act audit spaces at grant creation. No wide
+		// grant exists before its act records have a reader: a collector with
+		// no store, or a store that cannot hold the audit spaces, refuses it.
+		{
+			// A grant that this one replaces ends its wiring first, with its record.
+			if grant_act_router.state == .Wired && grant_act_router.grant_serial != grant_serial {
+				_ = wide_grants.act_wiring_revoke(&grant_act_router, &space_service.store, grant_act_router.grant_serial, .Replaced_By_Newer_Grant, now_ms)
+			}
+			authorities, _ := wide_grants.wide_authorities_from_word(copied_create_request.terms.authorities_word)
+			attach_refusal := wide_grants.Act_Wiring_Refusal.Store_Refused
+			if space_service.store.store_port.write != nil {
+				attach_refusal = wide_grants.act_wiring_attach(&grant_act_router, &space_service.store, grant_serial, manager_state.principal_id, authorities, copied_create_request.terms.duration_ms, now_ms)
+			}
+			if attach_refusal != .None {
+				_ = collector_core.manager_revoke_grant(&manager_state, grant_serial, now_ms, .Principal_Revoked)
+				system.log_fact(.Warning, Wide_Grant_Action_Refused{refusal_code = u64(wide_grants.Wide_Grant_Refusal.Act_Log_Full), grant_serial = grant_serial})
+				status_code := attach_refusal == .Audit_Space_Full ? u32(wide_grants.Collector_Ring_Status.Busy) : u32(wide_grants.Collector_Ring_Status.Refused)
+				ring.push(
+					&service_ring.completions,
+					ring.Record{
+						kind   = status_code,
+						tag    = command.tag,
+						values = {u64(wide_grants.Wide_Grant_Refusal.Act_Log_Full), 0, u64(manager_state.collector.count), 0, 0, 0, 0},
+					},
+				)
+				return
+			}
+		}
 		ring.push(
 			&service_ring.completions,
 			ring.Record{
@@ -290,6 +319,9 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			return
 		}
 		refusal := collector_core.manager_revoke_grant(&manager_state, grant_serial, now_ms, reason)
+		if refusal == .None && grant_act_router.state == .Wired && grant_act_router.grant_serial == grant_serial {
+			_ = wide_grants.act_wiring_revoke(&grant_act_router, &space_service.store, grant_serial, reason, now_ms)
+		}
 		status_code := refusal == .None ? u32(wide_grants.Collector_Ring_Status.Ok) : u32(wide_grants.Collector_Ring_Status.Refused)
 		ring.push(
 			&service_ring.completions,
@@ -524,6 +556,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	authority_key := wide_grants.authority_key_from_words(
 		{ctx.values[first_key_slot], ctx.values[first_key_slot + 1], ctx.values[first_key_slot + 2], ctx.values[first_key_slot + 3]},
 	)
+	// Erase the authority key words from the context page immediately after reading.
+	intrinsics.mem_zero_volatile(&ctx.values[first_key_slot], wide_grants.CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT * size_of(u64))
 	if !collector_core.manager_init(&manager_state, principal_id, authority_key) {
 		// Without the key of the unlock authority, no proof can be checked: the
 		// act store still serves its reader, and each wide grant is refused.
@@ -552,6 +586,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait := system.wait_begin()
 		now_ms := system.time()
 		if expired := collector_core.manager_expire_grants(&manager_state, now_ms); expired > 0 {
+			if grant_act_router.state == .Wired {
+				if grant_state, expires_ms, found := collector_core.manager_grant_state(&manager_state, grant_act_router.grant_serial); found && grant_state == .Expired {
+					_ = wide_grants.act_wiring_expire(&grant_act_router, &space_service.store, grant_act_router.grant_serial, expires_ms, now_ms)
+				}
+			}
 			system.log_fact(.Info, Grants_Expired{expired_grants = u64(expired)})
 		}
 

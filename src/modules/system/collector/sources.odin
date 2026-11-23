@@ -136,6 +136,19 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 		case .Ok:
 			switch item.kind {
 			case .Record:
+				// Wide-grant `acts` streams must carry a valid Act_Stream_Record
+				// matching the wired producer and an active wide grant; stale or
+				// post-revocation records close the source ring fail-closed.
+				if space := wide_grants.space_of(&space_service.store, link.space); space != nil && wide_grants_space_is_acts(space) {
+					act_rec, decoded := wide_grants.act_stream_record_decode(source_record[:item.record_size])
+					expected_producer, producer_ok := wide_grants.act_producer_from_source_name(wide_grants_name_slice(&space.source))
+					if !decoded || !producer_ok || wide_grants.act_wiring_accepts_stream_record(&grant_act_router, &act_rec, expected_producer) != .None {
+						system.log_fact(.Warning, Source_Refused{wiring_number = u64(link.tag), refusal_code = u64(wide_grants.Space_Refusal.Bad_Kind)})
+						system.input_close(&sources, link.tag)
+						wide_grants.link_close(link, errors.error_make(.Bad_Value, .Records, 0, i64(wide_grants.Space_Refusal.Bad_Kind), i64(link.record_size), i64(link.tag)))
+						return
+					}
+				}
 				step, refusal := wide_grants.link_keep(&space_service.store, link, source_record[:item.record_size], system.time())
 				switch step {
 				case .Kept:
@@ -244,6 +257,20 @@ sources_wait :: proc "contextless" (waiting: ^system.Wait) -> (not_waited: bool)
 	not_waited = system.wait_input_records(waiting, &sources, source_rings) > 0
 	not_waited ||= system.wait_output_room(waiting, &forward, pair_rings) > 0
 	return not_waited
+}
+
+@(private = "file")
+wide_grants_name_slice :: proc "contextless" (field: ^[wide_grants.SPACE_NAME_BYTES]u8) -> []u8 {
+	length := 0
+	for length < len(field) && field[length] != 0 {
+		length += 1
+	}
+	return field[:length]
+}
+
+@(private = "file")
+wide_grants_space_is_acts :: proc "contextless" (space: ^wide_grants.Collector_Space) -> bool {
+	return string(wide_grants_name_slice(&space.output)) == wide_grants.ACT_OUTPUT_NAME
 }
 
 #assert(system.INPUT_RECORDS_WAIT_WORDS == system.OUTPUT_ROOM_WAIT_WORDS)

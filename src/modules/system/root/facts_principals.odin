@@ -241,3 +241,16 @@ Image_Check_Failed_Outside_Image :: struct {
 	found_hash:    value_kinds.Hash_Field,
 	checked_entry: value_kinds.Module_Name_Field,
 }
+
+// A fresh authority key for wide grants was generated from strong entropy at
+// boot and stays inside the unlock authority and the collector only.
+@(log_fact = "root: generated fresh authority key for wide grants")
+Wide_Grant_Authority_Key_Ready :: struct {}
+
+// No authority key for wide grants was generated at boot because the seed was
+// too weak or zero: the collector receives a zero key and refuses every wide
+// grant.
+@(log_fact = "root: refused wide grant authority key at boot: status {status_code}")
+Wide_Grant_Authority_Key_Refused :: struct {
+	status_code: u64,
+}

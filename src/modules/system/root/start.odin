@@ -4,6 +4,7 @@ package root
 // tables of this service give the name, the services that the start grant set needs,
 // and one context whose handles each take their own slot.
 
+import "base:intrinsics"
 import "internal:root/role_policy"
 import info "modus:contract/boot_info"
 import "modus:contract/fixed_addresses"
@@ -376,6 +377,10 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	switch work.name {
 	case "unlock":
 		unlock_values_write(&work.values)
+	case "collector":
+		// The collector receives its principal and the fresh wide-grant
+		// authority key in slots 4 and 5..8.
+		wide_grant_authority_values_write(work)
 	case "module_files":
 		// The module file service serves the callers of the principal of
 		// its store only, and learns that principal here.
@@ -647,7 +652,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		held_entry = &work.slot.held_entry
 		work.slot.held_for_replay = true
 	}
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
+	seeded_values := random.values_with_seed(&process_generator, work.values.values)
+	defer {
+		intrinsics.mem_zero_volatile(&seeded_values, size_of(seeded_values))
+		intrinsics.mem_zero_volatile(&work.values.values, size_of(work.values.values))
+	}
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.

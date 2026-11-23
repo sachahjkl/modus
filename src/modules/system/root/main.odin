@@ -744,6 +744,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	principals_start()
 	// The random seed of the system: before the first process starts.
 	random_seed_make()
+	// The fresh authority key for wide grants: generated from strong entropy
+	// before any process starts and given only to the collector in its context.
+	wide_grant_authority_start()
 	// The settings page and the font outlines, before the first window.
 	text_settings_create()
 	date_page_create()
@@ -1098,9 +1101,11 @@ display_holder_start :: proc "contextless" () -> system.Status {
 		return .Bad_State
 	}
 	// The compositor imports the drawing module: its load needs the boot
-	// image as the source of its imports.
+	// image as the source of its imports. Pass Start_Wiring so its `acts`
+	// record output receives a wiring ring for wide-grant auditing.
 	display_holder_load_error: module.Load_Error
-	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
+	display_wiring: system.Start_Wiring
+	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring)
 	if status != .Ok {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -1114,12 +1119,16 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	served.process = display_holder
 	served.process_slot, served.process_serial, _ = system.process_place(display_holder)
 	served.start_grant_set = start_grant_set
+	served.wiring_memory = display_wiring.wiring_memory
 	copy(served.name[:len(served.name) - 1], display_name)
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == display_name {
 			served.module_offset = item.offset
 			served.module_size = item.size
 		}
+	}
+	if wiring_process != nil {
+		wiring_register_process(served)
 	}
 	started_log(display_name, principals.MACHINE, false)
 	return .Ok

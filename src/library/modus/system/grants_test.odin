@@ -149,6 +149,14 @@ values_put_writes_all_the_words_or_none :: proc(t: ^testing.T) {
 	testing.expect(t, values_put(&name, GRANT_VALUE_TERMINAL_NAME, words[:]))
 	testing.expect_value(t, name.values[GRANT_VALUE_TERMINAL_NAME + 3], max(u64))
 	testing.expect(t, !value_put(&name, GRANT_VALUE_TERMINAL_NAME + 3, 0))
+	// Collector context values (Serve + Store + principal + 4 authority key words) must never collide.
+	collector_values: Context_Values
+	testing.expect(t, value_put(&collector_values, GRANT_VALUE_SERVICE_PRINCIPAL, 1))
+	testing.expect(t, values_put(&collector_values, GRANT_VALUE_WIDE_GRANT_AUTHORITY_KEY, words[:]))
+	testing.expect(t, value_put(&collector_values, GRANT_VALUE_STORAGE_FILE_SIZE, 4096))
+	testing.expect(t, value_put(&collector_values, GRANT_VALUE_FILE_ADDRESS, 0x10000))
+	testing.expect(t, value_put(&collector_values, GRANT_VALUE_FILE_SIZE, 8192))
+	testing.expect(t, !collector_values.refusal.refused)
 }
 
 // The decision of a starter before its start: a refused handle comes

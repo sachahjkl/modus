@@ -48,9 +48,16 @@ Powerbox_Prompt_State :: struct {
 Wide_Grant_Display_State :: struct {
 	active:       bool,
 	grant_id:     u64,
+	principal_id: u64,
 	authorities:  wide_grants.Wide_Authorities,
 	revoked_once: bool,
+	dropped_acts: u64,
 }
+
+// Wide-grant act records emitted by the trusted display: agent input target
+// window changes, key/pointer acts, and view open/close
+// (src/md/features/wide_grants.md, "The record of each act").
+acts: system.Record_Output(wide_grants.Act_Stream_Record)
 
 powerbox_prompt: Powerbox_Prompt_State
 wide_grant_display: Wide_Grant_Display_State
@@ -323,6 +330,36 @@ wide_grant_mark_set :: proc "contextless" (active: bool, grant_id: u64) {
 		wide_grant_display.authorities = {}
 	}
 	damage_bar()
+}
+
+// wide_grant_act_emit writes one trusted-display act record onto `acts`
+// without blocking while a wide grant is active. If the audit ring is full,
+// it increments dropped_acts and returns dropped_full == true so the caller
+// drops the agent input rather than running it unrecorded.
+wide_grant_act_emit :: proc "contextless" (kind: wide_grants.Act_Kind, target_window_id: u64, detail_0: u64 = 0, detail_1: u64 = 0) -> (recorded: bool, dropped_full: bool) {
+	if !wide_grant_display.active || wide_grant_display.grant_id == 0 || kind == .None {
+		return false, false
+	}
+	record := wide_grants.Act_Stream_Record {
+		grant_serial     = wide_grant_display.grant_id,
+		principal_id     = wide_grant_display.principal_id,
+		timestamp_ms     = system.time(),
+		producer_word    = u64(wide_grants.Act_Producer.Trusted_Display),
+		act_kind_word    = u64(kind),
+		target_window_id = target_window_id,
+		detail_word_0    = detail_0,
+		detail_word_1    = detail_1,
+	}
+	switch system.output_write(&acts, record, wait = false) {
+	case .Ok:
+		return true, false
+	case .Full:
+		wide_grant_display.dropped_acts += 1
+		return false, true
+	case .No_Reader, .No_Writer, .Ended, .Bad_Record, .No_Record:
+		return false, false
+	}
+	return false, false
 }
 
 powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, modifiers: u32) -> bool {

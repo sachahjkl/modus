@@ -759,6 +759,20 @@ manager_get_grant :: proc "contextless" (manager: ^Wide_Grant_Manager, grant_ser
 	return manager.grants[slot_index], true
 }
 
+// manager_grant_state returns the current lifecycle state and expiry time of
+// grant_serial, or found == false when no slot holds that serial.
+manager_grant_state :: proc "contextless" (manager: ^Wide_Grant_Manager, grant_serial: u64) -> (state: wide_grants.Wide_Grant_State, expires_ms: u64, found: bool) {
+	if !manager.initialized {
+		return .None, 0, false
+	}
+	slot_index, ok := find_grant_slot_by_serial(manager, grant_serial)
+	if !ok {
+		return .None, 0, false
+	}
+	slot := &manager.grants[slot_index]
+	return slot.state, slot.expires_ms, true
+}
+
 // manager_verify_chain verifies the full hash-chained act log held by manager.
 manager_verify_chain :: proc "contextless" (manager: ^Wide_Grant_Manager) -> (refusal: wide_grants.Wide_Grant_Refusal, failing_index: u64) {
 	if !manager.initialized {
