@@ -52,6 +52,7 @@ DISK_PROCESSES_RESTART_LIMIT :: 3
 // the one place of the load when the storage service gives no answer; it
 // is not a measure of the disk.
 SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS :: (font_outlines.SCRIPT_FONTS_BYTES_LIMIT + disk_process.FILE_BYTES_LIMIT - 1) / disk_process.FILE_BYTES_LIMIT * disk_process.LOAD_DEADLINE_MILLISECONDS
+#assert(disk_process.LOAD_DEADLINE_MILLISECONDS == system.ANSWER_BOUND_MILLISECONDS)
 
 // The time that the service has to answer Cancel with Cancelled. Past it
 // the service is stopped: the core then ends each loan with no wait.

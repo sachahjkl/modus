@@ -140,14 +140,19 @@ roles_loaded_tell :: proc "contextless" (outcome: rd.Plan_Roles_Load_Outcome, ge
 	system.log_fact(.Info, Plan_Roles_Loaded{outcome_code = u64(outcome), generation = generation, answered = answered ? 1 : 0})
 }
 
-// The pause before a set that a full service ring refused goes again: the
-// services read their rings meanwhile.
-ROLES_BUSY_PAUSE_MILLISECONDS :: 10
+// Computed: divides system.ANSWER_BOUND_MILLISECONDS across
+// ROLES_BUSY_RESEND_BOUND retries so the retry window spans the full hang
+// bound rather than giving up prematurely on a loaded host.
+ROLES_BUSY_PAUSE_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS / plans_core.ROLES_BUSY_RESEND_BOUND
 
-// roles_pause waits ROLES_BUSY_PAUSE_MILLISECONDS, on no word.
+// roles_pause waits up to ROLES_BUSY_PAUSE_MILLISECONDS, waking early if a
+// completion arrives on the root ring.
 @(private = "file")
 roles_pause :: proc "contextless" (user: rawptr) {
 	wait := system.wait_begin()
+	if root_requests.ring.head != nil {
+		system.wait_records(&wait, &root_requests.ring.completions)
+	}
 	system.wait_end(&wait, system.time() + ROLES_BUSY_PAUSE_MILLISECONDS)
 }
 

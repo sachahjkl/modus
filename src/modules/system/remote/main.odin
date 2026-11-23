@@ -184,7 +184,10 @@ EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS :: 50
 RECEIVE_PLACES :: 64 // Places 0 to 63: datagrams that arrive. The others: datagrams to send.
 #assert(CAPACITY <= quic_server.MAX_CAPACITY)
 
-CALL_LIMIT :: 5000 // Milliseconds: an isolated call that takes longer ends the connection to its service.
+// Format property: matches system.ANSWER_BOUND_MILLISECONDS (60 s hang bound)
+// so a slow host never fails a live service call prematurely; a stopped
+// service ends the wait immediately.
+CALL_LIMIT :: system.ANSWER_BOUND_MILLISECONDS
 // serve gives it for a request whose connection is not ready yet.
 SERVE_PENDING :: -1
 LOG_REFUSALS :: 16 // The refusals that this process writes on the log; it counts the others.
@@ -1530,13 +1533,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for {
 			if has_window {
 				draw(&window)
-				display.wait(&window, system.time() + 1000)
+				display.wait(&window, system.WAIT_FOREVER)
 				for event in interface.window_next_event(&window_memory.drawing, &window) {
 					_ = event
 				}
 			} else {
 				wait: system.Wait
-				system.wait_end(&wait, system.time() + 1000)
+				system.wait_end(&wait, system.WAIT_FOREVER)
 			}
 		}
 	}

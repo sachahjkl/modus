@@ -88,10 +88,10 @@ FILE_BYTES_LIMIT :: 64 << 20
 // refuses it with a line of the log, and the attach goes on with no names.
 DEBUG_OBJECT_BYTES_LIMIT :: 2 * FILE_BYTES_LIMIT
 
-// The deadline of one load, from the command to the start of the process.
+// Hang bound of one load, matching system.ANSWER_BOUND_MILLISECONDS (60 s).
 // It frees the one place of the load when the storage service gives no
 // answer; it is not a measure of the disk.
-LOAD_DEADLINE_MILLISECONDS :: 30_000
+LOAD_DEADLINE_MILLISECONDS :: 60_000
 
 // The value of the context of the module file service, the module
 // `module_files`, that holds the number of its principal: its private store
