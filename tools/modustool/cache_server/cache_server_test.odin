@@ -15,7 +15,7 @@ import "modus:contract/tree_hash"
 import "modus:cryptography/ed25519"
 import "modustool:foundation"
 
-@(private = "file")
+@(private)
 make_test_keypair :: proc(seed_byte: u8) -> (private_key: ed25519.Private_Key, public_bytes: [object_cache.PUBLIC_KEY_SIZE]u8, seed: [ed25519.PRIVATE_KEY_SIZE]u8) {
 	for index in 0 ..< len(seed) {
 		seed[index] = seed_byte + u8(index * 11)
@@ -26,14 +26,14 @@ make_test_keypair :: proc(seed_byte: u8) -> (private_key: ed25519.Private_Key, p
 	return private_key, public_bytes, seed
 }
 
-@(private = "file")
+@(private)
 make_temp_store_dir :: proc(t: ^testing.T) -> string {
 	dir, err := os.make_directory_temp("", "modus_cache_test_*", context.allocator)
 	testing.expect_value(t, err, nil)
 	return dir
 }
 
-@(private = "file")
+@(private)
 encode_req_alloc :: proc(t: ^testing.T, req: ^object_cache.Cache_Request) -> []u8 {
 	size, size_ref := object_cache.encoded_request_size(req)
 	testing.expect_value(t, size_ref, object_cache.Wire_Refusal.None)
@@ -44,7 +44,7 @@ encode_req_alloc :: proc(t: ^testing.T, req: ^object_cache.Cache_Request) -> []u
 	return frame
 }
 
-@(private = "file")
+@(private)
 make_signed_put_object_request :: proc(
 	kind: object_cache.Cache_Object_Kind,
 	object_hash: blake3.Hash,
@@ -65,7 +65,7 @@ make_signed_put_object_request :: proc(
 	return req
 }
 
-@(private = "file")
+@(private)
 make_signed_realisation_record :: proc(
 	recipe_hash: blake3.Hash,
 	output_hash: blake3.Hash,
@@ -85,7 +85,7 @@ make_signed_realisation_record :: proc(
 	return record
 }
 
-@(private = "file")
+@(private)
 modus_ed25519_verify_cb :: proc "contextless" (
 	public_key: [object_cache.PUBLIC_KEY_SIZE]u8,
 	message: []u8,
@@ -96,7 +96,7 @@ modus_ed25519_verify_cb :: proc "contextless" (
 	return cache_server_verify_ed25519(public_key, message, signature)
 }
 
-@(private = "file")
+@(private)
 make_test_tree :: proc(buffer: []u8) -> (encoded: []u8, h: blake3.Hash) {
 	e1, r1 := tree_hash.tree_entry_make(.Object, "kernel.module", blake3.hash(transmute([]u8)string("k")))
 	e2, r2 := tree_hash.tree_entry_make(.Object, "root.module", blake3.hash(transmute([]u8)string("r")))
@@ -469,7 +469,8 @@ path_traversal_and_corrupt_wire_frames_rejected :: proc(t: ^testing.T) {
 		testing.expect(t, !path_ok)
 		_, _, read_ok := store_read_by_hex(&server, .Objects, bad)
 		testing.expect(t, !read_ok)
-		testing.expect(t, !store_write_atomic(&server, .Objects, bad, transmute([]u8)string("x")))
+		written, added := store_write_atomic(&server, .Objects, bad, transmute([]u8)string("x"))
+		testing.expect(t, !written && !added)
 	}
 
 	// Corrupt wire frames passed to cache_server_handle_frame produce clean Refused / Too_Large responses.
