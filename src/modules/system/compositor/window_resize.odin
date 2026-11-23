@@ -302,6 +302,14 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 		client.resizes_refused += 1
 		return
 	}
+	// The release of the first surface before its first Present: an open
+	// that failed (display.open). The window ends, as if no Surface_Create
+	// came, so no window stays behind and the next open makes one.
+	if serial == 1 && client.surface_serial == 1 && client.presents == 0 && client.resize_pictures == nil {
+		window_unmade(index) // main.odin
+		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Released), 1 = serial})
+		return
+	}
 	// A drag of the edges of this window ends here, with no Resized: the
 	// window has no surface that a resize could replace, and a request
 	// would wait for an answer that the window cannot give.

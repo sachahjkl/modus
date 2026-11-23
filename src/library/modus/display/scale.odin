@@ -375,6 +375,12 @@ rescale_take :: proc "contextless" (window: ^Window, input: Rescale_Input) {
 		system.log_fact(.Warning, Surface_Refused{serial = input.serial, scale = u64(offered.scale), window = window_fact_title(window)})
 	}
 	asked := window.asked_surface
+	// A Taken of another serial, or in another phase, answers an older
+	// request: the copy of the surface that it names is closed.
+	taken_now := resize_end == .Keep_New || input.kind == .Taken && offered.phase == .Offered && input.serial == offered.serial
+	if !taken_now {
+		surface_answer_close(window, input.memory)
+	}
 	switch resize_end {
 	case .None:
 	case .Keep_New:

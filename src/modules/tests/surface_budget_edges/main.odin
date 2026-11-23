@@ -95,6 +95,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the revocation of the window ended holdings of its surface; the count", ended)
 	}
 	system.log_fact(.Info, Surface_Made_By_The_Compositor{width = u64(screen_width), height = u64(screen_height)})
+	// The measure of the end of a budget: the compositor closes the last
+	// handle of the budget of a surface right after it made the surface, on
+	// its interface thread, and the kernel then walks the tables of the
+	// objects, the processes, the threads and the budgets (budget_release).
+	// The same close here: a budget that pays one object of the surface.
+	// A measure, with no bound.
+	measured := budget_make(pages)
+	picture_pages := (u64(screen_width * screen_height * size_of(graphics.Color) * display.PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	object, object_status := system.memory_create(picture_pages, measured)
+	if object_status != .Ok {
+		wrong("the object of the measure was not made; the status word", u64(object_status))
+	}
+	start := system.nanoseconds()
+	system.close(measured)
+	spent := system.nanoseconds() - start
+	system.close(object)
+	system.log_fact(.Info, Budget_End_Measured{nanoseconds = spent})
 	// The window stays, so the scenario sees its surface; it waits until
 	// the scenario stops it, and at the hang bound it stops with a WRONG line.
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS

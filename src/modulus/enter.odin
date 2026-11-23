@@ -543,7 +543,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		// The marks and the commits of the pages change under the lock of the
 		// object: each page is checked under it before the first byte, so a
-		// refusal writes nothing, and the copy reads the pages that it checked.
+		// refusal writes nothing.
 		lock_take(&region_locks[slot.object], .Region)
 		for page in first_page ..< end_page {
 			value := intrinsics.atomic_load(region_slot(region, page))
@@ -552,6 +552,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_State
 			}
 		}
+		// The copy runs with the lock of the object free, so a first use of
+		// a page by another processor does not wait for a copy of 1 MiB. No
+		// frame that the check saw can leave the object meanwhile: the
+		// caller holds its process lock, so its handle, which keeps the
+		// object, cannot close, and a revocation of it waits for that lock;
+		// a decommit needs the object alone in one process, and the handle
+		// of the caller names it beside the one of its maker, and the caller
+		// runs no other command meanwhile; and a frame never moves to another
+		// slot. A mark that another holder sets meanwhile changes the right
+		// of a mapping, not the frame: the copy reads the bytes of the moment
+		// of the check, as a read that came just before the mark.
+		lock_free(&region_locks[slot.object], .Region)
 		copied: u64
 		for copied < length {
 			place := offset + copied
@@ -561,7 +573,6 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			user_copy_to_process(address + copied, direct(frame + within, u8), part)
 			copied += part
 		}
-		lock_free(&region_locks[slot.object], .Region)
 		results[0] = copied
 		return .Ok
 

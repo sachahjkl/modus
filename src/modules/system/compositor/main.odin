@@ -1273,6 +1273,30 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if client.ring_memory != memory {
 			continue
 		}
+		window_leave(index)
+		if client.commands_refused != 0 {
+			system.log_fact(.Info, Window_Closed_After_Refused_Commands{window = window_field(client.title[:]), refused = client.commands_refused})
+		}
+		clipboard_client_remove(index) // clipboard.odin
+		if capture.client == index {
+			capture_end("its service stopped") // capture.odin
+		}
+		quality_window_gone(index) // quality_measures.odin
+		window_queue_close(index) // window_events.odin
+		system.ring_close(&client.ring)
+		system.close(client.ring_memory)
+		client = {}
+		window_left_tell()
+		return
+	}
+}
+
+// window_leave takes the window of a client out of the screen and of each
+// list that names it, and lets its surfaces go: the part of client_remove
+// that is about the window, which window_unmade shares.
+window_leave :: proc "contextless" (index: int) {
+	client := &clients[index]
+	{
 		for position in 0 ..< order_count {
 			if order[position] == index {
 				copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
@@ -1300,32 +1324,46 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			resizing = -1
 		}
 		keyboard_window_gone(index) // keyboard_desktop.odin
-		damage_window(&client)
+		damage_window(client)
 		damage_focus()
 		surface_memory_end(&client.pictures, &client.pictures_memory) // window_resize.odin
 		surface_memory_end(&client.resize_pictures, &client.resize_memory)
-		if client.commands_refused != 0 {
-			system.log_fact(.Info, Window_Closed_After_Refused_Commands{window = window_field(client.title[:]), refused = client.commands_refused})
-		}
-		clipboard_client_remove(index) // clipboard.odin
-		if capture.client == index {
-			capture_end("its service stopped") // capture.odin
-		}
 		desktop_window_closed(index) // desktop_features.odin
-		quality_window_gone(index) // quality_measures.odin
-		window_queue_close(index) // window_events.odin
-		system.ring_close(&client.ring)
-		system.close(client.ring_memory)
 		if client.created {
 			window_grants_window_closed(system.name_of(client.title[:])) // powerbox_dialog.odin
 		}
-		client = {}
-		windows_declined_tell() // scale.odin: a window that declined the scale left.
-		palette_entries_refresh() // A window left.
-		taskbar_preview_dismiss()
-		windows_menu_rows_build() // start_menu.odin
-		return
 	}
+}
+
+// window_left_tell tells the parts of the desktop that a window left.
+window_left_tell :: proc "contextless" () {
+	windows_declined_tell() // scale.odin: a window that declined the scale left.
+	palette_entries_refresh() // A window left.
+	taskbar_preview_dismiss()
+	windows_menu_rows_build() // start_menu.odin
+}
+
+// window_unmade ends a window that its process released before its first
+// Present: an open that failed (display.open, the answer of Surface_Create
+// came too late, or its surface did not map). The window leaves the screen
+// and each list, its surfaces go, and the client is again as Client_Add
+// made it, with no window: so a failed open leaves no window behind, and
+// the next Surface_Create of the process makes one again.
+window_unmade :: proc "contextless" (index: int) {
+	window_leave(index)
+	client := &clients[index]
+	kept := Client {
+		ring_memory      = client.ring_memory,
+		ring             = client.ring,
+		capture_allowed  = client.capture_allowed,
+		from_disk        = client.from_disk,
+		nickname         = client.nickname,
+		hash_prefix      = client.hash_prefix,
+		answer_due       = client.answer_due,
+		commands_refused = client.commands_refused,
+	}
+	client^ = kept
+	window_left_tell()
 }
 
 surface_create :: proc "contextless" (index: int, record: ring.Record) {

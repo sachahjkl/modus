@@ -753,6 +753,7 @@ Window :: struct {
 	// waited for it: next_event gives them first, in their order.
 	early_records: [EARLY_RECORD_CAPACITY]Event_Record,
 	early_first, early_count: int,
+	early_records_dropped: u64, // The records past early_records: the compositor sends none (EARLY_RECORD_CAPACITY).
 	presented_serial: u64, // The surface serial of the last Present: 0 before the first one (picture_owed).
 	canvas:      graphics.Canvas, // Where the drawing module draws now, in pixels of the screen. A process that draws by hand draws in a logical picture of its own (interface.Hand_Picture).
 	pictures:    [2]graphics.Canvas, // The two pictures of the surface, in pixels of the screen.
@@ -878,51 +879,114 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		kind = u32(Command.Surface_Create),
 		values = {u64(granted) | u64(scale) << SURFACE_CREATE_SCALE_SHIFT, u64(width), u64(height), name[0], name[1], name[2], name[3]},
 	}
+	// An answer of a surface that waits already is no answer of this
+	// open: an open before it failed, and the compositor answered late.
+	surface_answers_stale_close(&window)
 	system.send(&window.ring.commands, command)
-	memory, answered := surface_create_answer_wait(&window, system.time() + SURFACE_CREATE_ANSWER_BOUND_MILLISECONDS)
-	if !answered {
-		errors.fail(error, 0, .Refused, .None, 0)
-		return {}, false
-	}
-	if !surface_answer_map(&window, memory, screen_width, screen_height) {
-		errors.fail(error, 0, .Refused, .None, 0, 1)
+	memory, outcome := surface_create_answer_wait(&window, system.time() + SURFACE_CREATE_ANSWER_DEADLINE_MILLISECONDS)
+	mapped := outcome == .Taken && surface_answer_map(&window, memory, screen_width, screen_height)
+	if !mapped {
+		// The compositor may hold a window for this record (a late answer,
+		// a surface that did not map): the release of serial 1 before any
+		// Present ends it there, so a failed open leaves no window behind.
+		if outcome != .Refused {
+			system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Release), values = {0 = 1}})
+		}
+		system.ring_close(&window.ring)
+		errors.fail(error, 0, .Refused, .None, 0, i64(outcome))
 		return {}, false
 	}
 	return window, true
 }
 
-// surface_create_answer_wait waits for the answer of Surface_Create, until
-// deadline, and gives the copy of the surface that the compositor made. It
-// keeps each other record that comes first in the early records of the
-// window, which next_event gives first: an event that the compositor sends
-// a new window before its answer is not lost. answered is false for
-// Create_Refused, a record past EARLY_RECORD_CAPACITY, and the deadline.
+// What the wait of open for the answer of Surface_Create found.
+Create_Outcome :: enum u8 {
+	Taken, // Create_Taken: the compositor made the surface.
+	Refused, // Create_Refused: the compositor holds nothing.
+	Late, // No answer before the deadline.
+}
+
+// surface_answer_close closes the copy of a surface that an answer names
+// when it answers no request of the window: an answer that came late, or
+// of another serial. A number that came through no gift of the ring is no
+// handle of the window to close.
 @(private)
-surface_create_answer_wait :: proc "contextless" (window: ^Window, deadline: u64) -> (memory: system.Handle, answered: bool) {
+surface_answer_close :: proc "contextless" (window: ^Window, memory: system.Handle) {
+	if memory == 0 {
+		return
+	}
+	if _, _, through := system.handle_state(memory, window.ring_memory); through {
+		system.close(memory)
+	}
+}
+
+// surface_answers_stale_close reads the records that wait before open sends
+// Surface_Create: an answer of a surface among them answers an open before
+// it, and its surface is closed; each other record is kept in order.
+@(private)
+surface_answers_stale_close :: proc "contextless" (window: ^Window) {
+	for record in system.receive(&window.ring.completions) {
+		if event, ok := event_of_record(record); ok && event.kind == .Surface_Answer {
+			surface_answer_close(window, event.surface_memory)
+			continue
+		}
+		early_record_keep(window, record)
+	}
+}
+
+// early_record_keep keeps a record that came before the answer of
+// Surface_Create, for next_event. A record past EARLY_RECORD_CAPACITY,
+// which the rule of the answer slot of the compositor never sends, is
+// counted, and the wait goes on.
+@(private)
+early_record_keep :: proc "contextless" (window: ^Window, record: Event_Record) {
+	if window.early_count == EARLY_RECORD_CAPACITY {
+		window.early_records_dropped += 1
+		return
+	}
+	window.early_records[(window.early_first + window.early_count) % EARLY_RECORD_CAPACITY] = record
+	window.early_count += 1
+}
+
+// surface_create_answer_wait waits for the answer of Surface_Create, until
+// deadline, and gives the copy of the surface that the compositor made.
+// Each other record that comes first is kept in order (early_record_keep),
+// which next_event gives first, so no event of a new window is lost; the
+// wait ends only at the answer or at the deadline.
+@(private)
+surface_create_answer_wait :: proc "contextless" (window: ^Window, deadline: u64) -> (memory: system.Handle, outcome: Create_Outcome) {
+	defer if window.early_records_dropped > 0 {
+		system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": ", window.early_records_dropped, " records came before the answer of the compositor, past the records that the window keeps: they are lost")
+	}
 	for {
 		record, received := system.receive(&window.ring.completions)
 		if !received {
 			if system.time() >= deadline {
-				return 0, false
+				return 0, .Late
 			}
 			list: system.Wait
 			system.wait_records(&list, &window.ring.completions)
 			system.wait_end(&list, deadline)
 			continue
 		}
-		if event, read_ok := event_of_record(record); read_ok && event.kind == .Surface_Answer && event.surface_serial == 1 {
-			#partial switch event.surface_answer {
+		event, read_ok := event_of_record(record)
+		if read_ok && event.kind == .Surface_Answer {
+			switch event.surface_answer {
 			case .Create_Taken:
-				return event.surface_memory, true
+				if event.surface_serial == 1 {
+					return event.surface_memory, .Taken
+				}
 			case .Create_Refused:
-				return 0, false
+				if event.surface_serial == 1 {
+					return 0, .Refused
+				}
+			case .Released, .Rescale_Taken, .Rescale_Refused, .Resize_Taken, .Resize_Refused:
+				// A window with no surface made no request that these answer.
 			}
+			surface_answer_close(window, event.surface_memory)
+			continue
 		}
-		if window.early_count == EARLY_RECORD_CAPACITY {
-			return 0, false
-		}
-		window.early_records[(window.early_first + window.early_count) % EARLY_RECORD_CAPACITY] = record
-		window.early_count += 1
+		early_record_keep(window, record)
 	}
 }
 
@@ -937,18 +1001,21 @@ OPEN_ARGUMENTS := [?]string{"ctx", "width", "height", "title"}
 PICTURE_COUNT :: 2
 
 // The records that open keeps while it waits for the answer of
-// Surface_Create: the events that the compositor sends a new window before
-// that answer (the scale, the work area) are a few.
-EARLY_RECORD_CAPACITY :: 16
+// Surface_Create. The compositor sends an answer of a surface to the ring,
+// or to the one answer slot of the window, which goes before each other
+// waiting event when the ring has room (bar.Answer_Slot): so no more
+// records than the ring holds come before the answer.
+EARLY_RECORD_CAPACITY :: ring.CAPACITY
 
 // A record of the ring of a window: the field ring of Window hides the
 // package inside the record.
 Event_Record :: ring.Record
 
-// The bound of the wait of open for the answer of Surface_Create. The
-// compositor answers in its next turn; the bound only ends a hang of a
+// The deadline of the wait of open for the answer of Surface_Create: a
+// deadline of the display contract, not a bound of a test. The compositor
+// answers in its next turn; the deadline only ends the wait for a
 // compositor that stopped.
-SURFACE_CREATE_ANSWER_BOUND_MILLISECONDS :: 10_000
+SURFACE_CREATE_ANSWER_DEADLINE_MILLISECONDS :: 10_000
 
 // surface_budget_pages gives the pages of a budget that pays the surface
 // of a size in pixels of the screen: its two pictures, and the frame list
@@ -1343,11 +1410,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			case .Create_Taken, .Create_Refused:
 				// open took the answer of its Surface_Create: a second one
 				// answers no request. A copy that it names is closed.
-				if read.surface_memory != 0 {
-					if _, _, through := system.handle_state(read.surface_memory, window.ring_memory); through {
-						system.close(read.surface_memory)
-					}
-				}
+				surface_answer_close(window, read.surface_memory)
 				continue
 			case .Released:
 				kind = .Released

@@ -1365,10 +1365,11 @@ Operation :: enum u32 {
 	// trusted display reads the difference of a plan, a palette table) cannot trust its pages: their
 	// maker can make the object Uncommitted and leave pages with no frame, or revoke the handle while
 	// the reader reads, and a read through a mapping then faults and stops the reader. The kernel copies
-	// the range under the lock of the object and under the process lock of the caller: a revocation
+	// the range under the process lock of the caller: a revocation
 	// takes that process lock, so it comes before the call or after it, and a page that is not
 	// committed is a status. Each page of the range is checked under the lock of the object before the
-	// first byte is copied, so the copy is whole or nothing.
+	// first byte is copied, so the copy is whole or nothing; the copy itself runs with that lock free,
+	// since no frame that the check saw can leave the object while the caller holds its process lock.
 	//
 	// **Arguments**
 	//

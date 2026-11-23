@@ -203,6 +203,8 @@ scenario_plan_and_audit_first := [?]Step {
 	{kind = .Wait, text = "surface_budget_edges: the compositor refused a budget one page short, a revoked copy and a budget with no Spend: as it must", fails_on = SURFACE_BUDGET_EDGES_WRONG},
 	{kind = .Wait, text = "surface_budget_edges: the compositor made the surface of ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
 	{kind = .Wait, text = "compositor: surface surface_budget_edges ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
+	// The cost of the end of the budget of a surface, as a measure.
+	{kind = .Wait, text = "surface_budget_edges: the end of the budget of a surface took ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
 	{kind = .Type, text = "stop(\"surface_budget_edges\")"},
 	{kind = .Wait, text = "root: surface_budget_edges stopped: ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
 	{kind = .Type, text = "shutdown()"},
