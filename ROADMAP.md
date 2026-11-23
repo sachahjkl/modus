@@ -6,7 +6,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **A machine test of the store picker.** A machine test opens the store picker of the trusted display, reads the stores of the principal through the powerbox and the picker ring, scrolls past a page and picks one, so the path from the root service to the storage service and back is proved on a machine. [Design](src/md/features/powerbox.md)
 - **The words of the windows and the notifications.** Each window, notification, dialog and status line says the problem, the cause and what to do, in the words of `docs/WRITING.md`: no "invalid", no "failed" alone, buttons that name their action, and "you" where a window says "principal".
 - **A check of the display texts of the modules.** `modustool check` refuses a display text, a description of a setting and a label of a module file that uses a word that `docs/WRITING.md` refuses, that is not in sentence case, or that has a wrong end period, so a new text keeps the guide with no review.
 - **The cache signing key authorised, and the first publication to the cache.** The deployment of `cache.modus.systems` names `resources/keys/cache_signing_key.public` in `--authorized-key`, and the next release fills the public object cache, which `cache-get cache.modus.systems:5010 test-recipe` then proves; until then the job `cache` of a release fails and the release is published. [Design](src/md/infrastructure/cache_publication.md)

@@ -1383,3 +1383,15 @@ ASSISTIVE_KIND_FIELD_BYTES :: 16
 entry_field :: proc "contextless" (name: string) -> [ENTRY_NAME_FIELD_BYTES]u8 {
 	return value_kinds.text_field(name, ENTRY_NAME_FIELD_BYTES)
 }
+
+// The store picker of the trusted display received the first page of the
+// stores of the principal from the powerbox: the count of the whole list.
+@(log_fact = "compositor: the store picker lists {stores} stores of the principal")
+Store_Picker_Listed :: struct {
+	stores: u64,
+}
+
+// The store picker received no list: no powerbox runs, the root service
+// gave no connection, or the storage service did not answer.
+@(log_fact = "compositor: the store picker received no list of stores")
+Store_Picker_No_List :: struct {}

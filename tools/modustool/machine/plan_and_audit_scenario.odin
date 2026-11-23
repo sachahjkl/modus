@@ -24,7 +24,12 @@ import "modustool:foundation"
 //      it through the pair of collector.forward. The console reads the two
 //      audit spaces, checks each chain and the refusal of a space that
 //      does not exist, stops the collector, and finds both spaces whole in
-//      the collector that the next connection starts.
+//      the collector that the next connection starts. Last, the store
+//      picker: `store_asker` asks the trusted display for a store, the
+//      picker lists the stores of principal 0 through the powerbox, the
+//      principal picks one, and the one grant of the windows is the grant
+//      of store_asker; `store_stranger` gets No_Grant for the grants and
+//      for a picker of its own.
 //   2. The same disk: the plans service gives the roles of the stored plan
 //      before the start policy, so the row "settings" of the start list
 //      starts settings_stand_in, with the boot pass, and never
@@ -46,6 +51,11 @@ AUDIT_SPACES_LOADED_LINE :: "collector: read 2 audit spaces with 40 records from
 // service that refuses the roles of the two plans that the principal
 // accepts.
 PLAN_APPLIER_WRONG :: "plan_applier: WRONG"
+
+// The failures of the store picker: the asker found a fault, or the
+// picker received no list.
+STORE_ASKER_WRONG :: "store_asker: WRONG"
+STORE_PICKER_NO_LIST_LINE :: "compositor: the store picker received no list of stores"
 
 scenario_plan_and_audit_first := [?]Step {
 	// The plans service reads the store before the start policy, and finds
@@ -128,6 +138,33 @@ scenario_plan_and_audit_first := [?]Step {
 	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "collector.space_verify(2)"},
 	{kind = .Wait, text = "[console] 0"},
+	// The store picker (src/md/features/powerbox.md, "The picker ring"):
+	// principal 0 holds several stores on this disk by now (those of the
+	// console, plans, the collector and settings_stand_in). store_asker
+	// asks the trusted display for a store and sees no list; the picker
+	// lists the stores that the storage service gives through the
+	// powerbox; the principal picks one, and the one grant of the windows
+	// is the grant of store_asker. store_stranger, which does not act for
+	// the principal, gets neither that grant nor a list.
+	{kind = .Type, text = "start(\"store_asker\")"},
+	{kind = .Wait, text = "store_asker: the trusted display shows the store picker for request ", fails_on = STORE_ASKER_WRONG},
+	{kind = .Wait, text = "compositor: the store picker lists ", fails_on = STORE_PICKER_NO_LIST_LINE, any_order = true},
+	{kind = .Key, text = "down"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: store_asker holds the grant ", fails_on = STORE_ASKER_WRONG},
+	{kind = .Type, text = "connect(\"compositor\")"},
+	{kind = .Wait, text = "[console]   module     compositor"},
+	{kind = .Type, text = "compositor.window_grants()"},
+	{kind = .Wait, text = "store_asker"},
+	{kind = .Wait, text = "[console] 1 row of Window_Grant_Row"},
+	{kind = .Type, text = "start(\"store_stranger\")"},
+	{kind = .Wait, text = "store_stranger: the display refused window_grants and powerbox_pick_store with No_Grant: this process sees no store of the principal, as it must", fails_on = "store_stranger: WRONG"},
+	{kind = .Wait, text = "root: store_stranger stopped: itself, done"},
+	// The grant of store_asker held while the stranger asked: still one row.
+	{kind = .Type, text = "compositor.window_grants()"},
+	{kind = .Wait, text = "[console] 1 row of Window_Grant_Row"},
+	{kind = .Type, text = "stop(\"store_asker\")"},
+	{kind = .Wait, text = "root: store_asker stopped: ", fails_on = STORE_ASKER_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

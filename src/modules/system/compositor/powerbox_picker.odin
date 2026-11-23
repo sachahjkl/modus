@@ -72,6 +72,9 @@ picker_send :: proc "contextless" (command: powerbox.Picker_Ring_Command, values
 powerbox_picker_open :: proc "contextless" (principal: u64) {
 	picker = {}
 	picker.stage = picker_send(.Open, {0 = principal}) ? .Opening : .No_List
+	if picker.stage == .No_List {
+		system.log_fact(.Warning, Store_Picker_No_List{})
+	}
 }
 
 // powerbox_picker_total gives the count of the whole list.
@@ -155,6 +158,7 @@ powerbox_picker_step :: proc "contextless" () {
 		case .None, .Ready, .No_List:
 		case .Opening, .Paging:
 			if !ok {
+				system.log_fact(.Warning, Store_Picker_No_List{})
 				picker.stage = .No_List
 				break
 			}
@@ -164,6 +168,9 @@ powerbox_picker_step :: proc "contextless" () {
 			if refusal != .None || page.dialog_serial != record.values[1] || (picker.stage == .Paging && page.dialog_serial != picker.serial) {
 				picker.stage = .No_List
 				break
+			}
+			if picker.stage == .Opening {
+				system.log_fact(.Info, Store_Picker_Listed{stores = u64(page.total)})
 			}
 			picker.page = page
 			picker.serial = page.dialog_serial

@@ -232,6 +232,8 @@ module_builds := [?]Module_Build {
 	{name = "audit_asker", source = TEST_MODULE_SOURCES + "audit_asker", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "plan_applier", source = TEST_MODULE_SOURCES + "plan_applier", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "settings_stand_in", source = TEST_MODULE_SOURCES + "settings_stand_in", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "store_asker", source = TEST_MODULE_SOURCES + "store_asker", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "store_stranger", source = TEST_MODULE_SOURCES + "store_stranger", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
 	{name = "notify_border_of_the_compositor", source = TEST_MODULE_SOURCES + "notify_border_of_the_compositor", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},
