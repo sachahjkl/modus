@@ -386,6 +386,13 @@ Thread :: struct #align (64) {
 #assert(PROCESSOR_CAPACITY <= op.PLACEMENT_PROCESSOR_CAPACITY)
 #assert(offset_of(Thread, frame) == 64)
 
+// word_in_device_memory says if a word of a process is in a memory object
+// of a device (Device_Create). The caller holds the process lock.
+word_in_device_memory :: proc "contextless" (process: ^Process, address: u64) -> bool {
+	mapping := mapping_at(process, address)
+	return mapping != nil && regions[mapping.region].device
+}
+
 // word_address gives the physical address of a 32-bit word of a process,
 // or 0 if the process cannot read it, or with write, cannot write it. A
 // wait reads its word; a wake is a signal to the waiters of the word, so it
@@ -397,8 +404,13 @@ Thread :: struct #align (64) {
 // (word_table.word_physical): an entry with no frame would give the offset
 // alone, which a page of another process gives too. The caller holds the
 // process lock, so the entry stays between the two.
+//
+// A word of device memory is refused: no service waits on a register, and
+// the frames of devices past the memory of the machine share a few buckets
+// of the wait table (word_table.DEVICE_BUCKETS), where the words of one
+// process would lengthen each wake of another.
 word_address :: proc "contextless" (process: ^Process, address: u64, write := false) -> u64 {
-	if address & 3 != 0 || !user_range(process, address, 4, write) {
+	if address & 3 != 0 || word_in_device_memory(process, address) || !user_range(process, address, 4, write) {
 		return 0
 	}
 	entry := page_entry(process.table, address)
@@ -1538,6 +1550,12 @@ chosen_address :: proc "contextless" (process: ^Process, count: u64, alignment: 
 // entry then is freed after that shoot-down. The caller holds the process
 // lock.
 unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
+	// A thread of the process that waits on a word of the mapping wakes
+	// first, while the entries still name the frames: the frames can leave
+	// with the object after this unmap, and a wait that names a frame that
+	// serves another process would take the wakes of that process and get
+	// them. The process lock keeps its threads from a new wait meanwhile.
+	waiters_on_pages_wake(process, mapping.address, mapping.page_count)
 	origin_detach(holding_of_mapping(process, mapping))
 	self := processor_self()
 	walked_present_pages: u64

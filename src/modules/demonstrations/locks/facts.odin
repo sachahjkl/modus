@@ -211,6 +211,23 @@ Read_Only_Wake_Refused :: struct {
 	verdict:     [16]u8,
 }
 
+// One wake of the last word of a bucket that holds the words of a frame.
+@(log_fact = "locks: a wake of a word of a frame whose {words} words a thread waits on woke {woken} thread in {time} (a measure)")
+Full_Frame_Wake :: struct {
+	words: u64,
+	woken: u64,
+	time:  value_kinds.Time_In_Microseconds,
+}
+
+// The unmap of a waited object wakes its waiter; the next user of frames
+// wakes its own waiter alone.
+@(log_fact = "locks: a thread that waits on a word of an object that its process unmaps and closes was woken by the unmap: {unmap_woke}; another process that takes frames woke {other_woken} thread with its own wake: {verdict}")
+Unmap_Wakes_Waiter :: struct {
+	unmap_woke:  u64,
+	other_woken: u64,
+	verdict:     [16]u8,
+}
+
 // Two processes wait each on a word of a page that they never touched.
 @(log_fact = "locks: two processes wait each on a word of a page that they never touched: the wake of one counted {woken} thread, and the other still waits: {other_waits}: {verdict}")
 Untouched_Page_Waits :: struct {

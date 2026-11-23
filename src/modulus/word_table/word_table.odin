@@ -19,8 +19,10 @@ PAGE_SIZE :: 4096
 // The distinct words of 32 bits in one frame: the most first entries in
 // one bucket.
 WORDS_OF_A_FRAME :: PAGE_SIZE / 4
-// The buckets past the frames of the machine: a word in the memory of a
-// device has a frame past them, and shares these by its frame.
+// The buckets past the frames of the machine. The kernel refuses a wait on
+// a word of device memory (word_address), so only a frame past the memory
+// map that is no device reaches these; they keep the table whole for any
+// address that a caller gives.
 DEVICE_BUCKETS :: 64
 
 // One word of the wait of one thread. 64 bytes on each target, also where

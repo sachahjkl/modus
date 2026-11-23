@@ -3,6 +3,7 @@ package kernel
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:mapping_order"
+import "modulus:word_table"
 
 // The virtual memory of a process (docs/ARCHITECTURE.md, "The virtual
 // memory of a process"): commit and decommit the pages of an uncommitted
@@ -191,13 +192,18 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 // one pass over its 262 144 slots, 2 MiB read in order.
 WAITING_WORD_CAPACITY :: 256
 
-waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region, ranges: []op.Page_Range) {
-	Waiting_Word :: struct {
-		page:   u64, // The frame of the word.
-		thread: u32,
-	}
-	words: [WAITING_WORD_CAPACITY]Waiting_Word
-	count := 0
+// One registered word of a thread of a process, by the frame of its page.
+@(private = "file")
+Waiting_Word :: struct {
+	page:   u64, // The frame of the word.
+	thread: u32, // 0: woken already.
+}
+
+// waiting_words_collect gives the words of the threads of a process,
+// sorted by frame. A thread with more words than the table holds is woken
+// now. The caller holds the process lock of the process.
+@(private = "file")
+waiting_words_collect :: proc "contextless" (process: ^Process, words: ^[WAITING_WORD_CAPACITY]Waiting_Word) -> (count: int) {
 	index := index_of_process(process)
 	for &thread, slot in threads[1:] {
 		if thread.process != index || thread.word_count == 0 {
@@ -212,13 +218,42 @@ waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region
 			count += 1
 		}
 	}
-	if count == 0 {
-		return
-	}
 	for at in 1 ..< count {
 		for back := at; back > 0 && words[back - 1].page > words[back].page; back -= 1 {
 			words[back - 1], words[back] = words[back], words[back - 1]
 		}
+	}
+	return count
+}
+
+// waiting_words_wake_frame wakes each thread with a word in a frame, once,
+// and gives the words that it woke.
+@(private = "file")
+waiting_words_wake_frame :: proc "contextless" (words: []Waiting_Word, frame: u64) -> (matched: int) {
+	low, high := 0, len(words)
+	for low < high {
+		middle := (low + high) / 2
+		if words[middle].page < frame {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	for at := low; at < len(words) && words[at].page == frame; at += 1 {
+		if words[at].thread != 0 {
+			thread_words_wake(&threads[words[at].thread])
+			words[at].thread = 0
+			matched += 1
+		}
+	}
+	return matched
+}
+
+waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region, ranges: []op.Page_Range) {
+	words: [WAITING_WORD_CAPACITY]Waiting_Word
+	count := waiting_words_collect(process, &words)
+	if count == 0 {
+		return
 	}
 	remaining := count
 	frames_seen: u64
@@ -230,25 +265,44 @@ waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region
 				continue
 			}
 			frames_seen += 1
-			low, high := 0, count
-			for low < high {
-				middle := (low + high) / 2
-				if words[middle].page < frame {
-					low = middle + 1
-				} else {
-					high = middle
-				}
-			}
-			for at := low; at < count && words[at].page == frame; at += 1 {
-				if words[at].thread != 0 {
-					thread_words_wake(&threads[words[at].thread])
-					words[at].thread = 0
-					remaining -= 1
-				}
-			}
+			remaining -= waiting_words_wake_frame(words[:count], frame)
 			if remaining == 0 || !region.contiguous && frames_seen >= frames {
 				return
 			}
+		}
+	}
+}
+
+// waiters_on_pages_wake wakes each thread of a process that has a word in
+// a frame that the page table of the process names for the pages from
+// address: the frames of a mapping that ends, or the frames of point copies
+// that return to the history. It reads the entries, not the slots of the
+// object, so a frame that the process maps in place of the frame of the
+// object (a point copy) is matched too. Its caller frees no such frame
+// before: a thread that waits names the frame, and the next user of the
+// frame would take its wakes and give it theirs. The caller holds the
+// process lock of the process. With no word waited in the process it reads
+// no entry.
+waiters_on_pages_wake :: proc "contextless" (process: ^Process, address: u64, page_count: u64) {
+	words: [WAITING_WORD_CAPACITY]Waiting_Word
+	count := waiting_words_collect(process, &words)
+	if count == 0 {
+		return
+	}
+	remaining := count
+	for page in u64(0) ..< page_count {
+		virtual := address + page * PAGE_SIZE
+		entry := page_entry(process.table, virtual)
+		if entry == nil {
+			continue
+		}
+		frame, ok := word_table.word_physical(entry^, virtual)
+		if !ok {
+			continue
+		}
+		remaining -= waiting_words_wake_frame(words[:count], frame)
+		if remaining == 0 {
+			return
 		}
 	}
 }

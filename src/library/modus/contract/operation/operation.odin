@@ -794,10 +794,13 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `No_Slot`: the entry would hold more words than the thread has room for.
+	// - Each refusal leaves the entry with no wait, also on the words that the commands before it in the
+	//   same entry registered.
 	// - `Bad_Operation`: a word that the entry holds already, at the same address: the entry then
 	//   does not wait, and its error record names the place of that word in the command. A thread holds
 	//   each word once, so the list of a word never grows with one thread.
-	// - `Bad_Address`: the process cannot read the table or a word, or a word is not a multiple of 4. The
+	// - `Bad_Address`: the process cannot read the table or a word, a word is not a multiple of 4, or a
+	//   word is in device memory (its record has `found` 2): no wait takes a register of a device. The
 	//   entry then does not wait.
 	//
 	// ```odin
@@ -818,8 +821,9 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Address`: the process cannot write the word, or its address is not a multiple of 4. The
-	//   error record names the word; its `found` is 1 when the process can read the word and not write it.
+	// - `Bad_Address`: the process cannot write the word, its address is not a multiple of 4, or it is in
+	//   device memory. The error record names the word; its `found` is 1 when the process can read the
+	//   word and not write it, 2 when the word is in device memory.
 	//
 	// ```odin
 	// system.word_wake(&ready)

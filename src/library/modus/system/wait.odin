@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "base:intrinsics"
@@ -325,6 +326,15 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 		if !ends_at_once {
 			commands = {wait_command(words[:kept])}
 			now, _ = commands_call(commands[:], completions[:], max(deadline, 1))
+			// The kernel compares frames, this search addresses: two
+			// mappings of one frame are two addresses of one word. The record
+			// names the place of that word, and the words before it hold no
+			// word twice: the wait takes them until its deadline, never a
+			// loop with no wait.
+			if completions[0].kind == u32(Status.Bad_Operation) {
+				commands = {wait_command(words[:words_before_refused(completions[0], kept)])}
+				now, _ = commands_call(commands[:], completions[:], max(deadline, 1))
+			}
 		}
 	}
 	// The thread does not wait now: the other side does not need to wake it.
@@ -345,6 +355,20 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 // wait_twice_told: the line of a list that named a word twice is on the log.
 @(private = "file")
 wait_twice_told: bool
+
+// words_before_refused gives the words of a list before the word that the
+// kernel refused as named twice: the place that the error record of the
+// completion names (Bad_Value of the unit Words), at most the count of the
+// list. A record of another kind gives 0 words: the wait then waits on no
+// word, until its deadline. A pure part of wait_end, so the host tests it.
+@(private = "package")
+words_before_refused :: proc "contextless" (completion: ring.Record, count: int) -> int {
+	record := transmute(errors.Error_Record)completion.values
+	if record.kind != i64(errors.Kind.Bad_Value) || record.unit != i64(errors.Unit.Words) || record.value < 0 {
+		return 0
+	}
+	return int(min(u64(record.value), u64(count)))
+}
 
 // words_once keeps the first place of each word of a list, in its order,
 // and gives the count kept. ends_at_once: one word named with two values,

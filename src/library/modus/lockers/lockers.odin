@@ -41,6 +41,13 @@ ROOM_WAITED :: 100
 // slot when its wait ends. Each adds 1 to `done`, then waits for its stop.
 ROLE_UNTOUCHED_WAIT :: 3
 UNTOUCHED_OFFSET :: 0x10
+// A locker of the case of the unmap: a thread waits on a word of a memory
+// object of its own; the first thread unmaps the object and closes it, then
+// waits until the waiter ends. The waiter writes 1 in `limit` of its slot
+// when its wait ended before its deadline: only the unmap ended it, as no
+// one changes or wakes the word. Then `done` gets 1, and the process waits
+// for its stop.
+ROLE_UNMAP_WAIT :: 4
 
 LOCKER_CAPACITY :: 4 // The lockers that `locks` starts.
 FAULT_PAGES :: 256 // The pages of one memory object in the measure of the pages on first use.

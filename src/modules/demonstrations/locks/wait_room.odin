@@ -2,6 +2,7 @@ package locks
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modus:contract/ring"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:lockers"
@@ -128,6 +129,60 @@ room_long_wait :: proc "contextless" () -> (status: system.Status, microseconds:
 	return status, (system.nanoseconds() - start) / 1000
 }
 
+// The frame of the measure of a full bucket: each of its 1024 words is
+// waited on by one thread, so the bucket of the frame holds 1024 distinct
+// words; the word 0 is the first registered, the last of the bucket.
+full_frame_memory: rawptr
+
+full_frame_waiter :: proc "c" (parameter: rawptr) -> ! {
+	words: [WORDS_OF_A_FRAME]op.Word
+	frame := ([^]u32)(full_frame_memory)
+	for &word, index in words {
+		word = {address = u64(uintptr(&frame[index])), value = 0}
+	}
+	if _, status := room_ask(0, WORDS_OF_A_FRAME, nil); status != .Ok {
+		system.thread_stop()
+	}
+	commands := [1]ring.Record{{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&words[0])), 1 = len(words)}}}
+	completions: [1]ring.Record
+	system.commands_call(commands[:], completions[:], system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+	system.thread_stop()
+}
+
+WORDS_OF_A_FRAME :: system.PAGE_SIZE / 4
+
+// full_frame_wake measures one wake of the last word of a bucket that holds
+// the 1024 distinct words of one frame: the most that a wake reads before
+// it finds its word. The time is a measure; the count woken a condition.
+full_frame_wake :: proc "contextless" () -> (woken: u64, microseconds: u64) {
+	memory, memory_status := system.memory_create(1)
+	if memory_status != .Ok {
+		return 0, 0
+	}
+	defer system.close(memory)
+	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		return 0, 0
+	}
+	defer system.memory_unmap(address)
+	full_frame_memory = address
+	waiter, started := system.thread_start(full_frame_waiter, nil)
+	if started != .Ok {
+		return 0, 0
+	}
+	defer system.thread_wait(waiter)
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		states, _ := system.call(.Thread_State, u64(waiter.handle))
+		if op.Process_State(states[0]) == .Waiting {
+			break
+		}
+		system.sleep(system.time() + 1)
+	}
+	start := system.nanoseconds()
+	woken = system.word_wake((^u32)(address), system.WAKE_ALL)
+	return woken, (system.nanoseconds() - start) / 1000
+}
+
 wait_room_case :: proc "contextless" (image: []u8) {
 	words: [ROOM_WORDS_HELD + 1]op.Word
 	for &word, index in words {
@@ -204,4 +259,6 @@ wait_room_case :: proc "contextless" (image: []u8) {
 	})
 	long_status, long_time := room_long_wait()
 	system.log_fact(.Info, Wait_Room_Long{words = op.WORD_WAIT_MOST, status = op.Status_Word(long_status), time = value_kinds.Time_In_Microseconds(long_time)})
+	full_woken, full_time := full_frame_wake()
+	system.log_fact(.Info, Full_Frame_Wake{words = WORDS_OF_A_FRAME, woken = full_woken, time = value_kinds.Time_In_Microseconds(full_time)})
 }

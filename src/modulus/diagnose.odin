@@ -216,6 +216,15 @@ read_machine_full :: proc "contextless" () -> (full: Machine_Full) {
 	return full
 }
 
+// read_device_word says if a word of a process is in device memory. Lock:
+// the process lock.
+@(private = "file")
+read_device_word :: proc "contextless" (process: ^Process, address: u64) -> bool {
+	at, taken := caller_lock(process)
+	defer process_unlock(at, taken)
+	return word_in_device_memory(process, address)
+}
+
 // read_word says if a process can wait on a word, or with write, wake it.
 // Lock: the process lock.
 @(private = "file")
@@ -1015,18 +1024,23 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 				return false // Unmapped since: the cause is not known now.
 			}
 			if !read_word(process, word.address) {
-				record_set(record, .Bad_Address, .Bytes, 1, word.address, 4, 0)
+				// found 2: the word is in device memory, which no wait takes.
+				record_set(record, .Bad_Address, .Bytes, 1, word.address, 4, read_device_word(process, word.address) ? 2 : 0)
 				return true
 			}
 		}
 		return false
 	case .Word_Wake:
 		// A wake needs Write on its word: found is 1 for a word that the
-		// process can read and not write.
+		// process can read and not write, 2 for a word of device memory.
 		if read_word(process, v[0], write = true) {
 			return false
 		}
-		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, u64(read_word(process, v[0])))
+		found := u64(read_word(process, v[0]))
+		if read_device_word(process, v[0]) {
+			found = 2
+		}
+		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, found)
 	case .Inspect:
 		size: u64
 		if kind, kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1]); kind_known {

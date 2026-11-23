@@ -695,6 +695,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	wait_room_case(image) // wait_room.odin
 	untouched_page_case(image) // untouched_page.odin
 	read_only_wake_case() // read_only_wake.odin
+	unmap_wait_case(image) // unmap_wait.odin
 	for kind in op.Lock_Kind {
 		system.log_fact(.Info, Entry_Lock_Waits{waits = entry_locks[kind].waits, takes = entry_locks[kind].takes, lock = lock_field(kind)})
 	}

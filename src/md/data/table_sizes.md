@@ -88,6 +88,18 @@ The kernel names a waited word by its physical address. A page that the process 
 
 The case `locks` starts two processes that each wait on the word at one offset of a page that they never touched: the wake of the first counts one thread, and the waiter of the second still waits.
 
+## A wait never names a frame that left its process
+
+A wait names frames, and does not keep them: an unmap, a decommit, a revocation or the end of a point copy of a record can give the frame of a waited word back to the free frames while a thread still waits on it. The next process that takes the frame would then take the wakes of that thread with its own wakes of count 1, and give it its own. So each path that takes a frame from a process wakes the threads of the process that wait on a word of it first, while the page tables still name the frame (`waiters_on_frames_wake` for a decommit and a revocation, by the slots of the object; `waiters_on_pages_wake` for an unmap and the end of point copies, by the entries of the process, which name a point copy too). A wake changes the wait serial of the thread, so its entries that stay until its next kernel entry are leftovers that count no wake. The end of a thread takes its entries out of the table. A process waits only on a page that it maps, and its mapping holds the object, so no other path frees a waited frame. The case `locks` makes a process wait on its object, unmap it and close it: the unmap wakes its thread, and the next process that takes frames wakes its own waiter alone.
+
+A refused `Word_Wait` leaves the entry with no wait, also when a command before it in the entry, or a chunk before it, registered words: a thread never waits on a list that the kernel refused in part.
+
+A word of device memory is refused (`Bad_Address`, `found` 2): no module waits on a register (the device services wait on their rings, their completions and their interrupt events, all in memory of the machine), and the frames of devices past the memory map share the few device buckets, where the words of one process would lengthen each wake of another.
+
+**The two bounds of a shared frame.** A frame that two processes map is one bucket: a wake on it reads the distinct words that the two wait on in that frame, at most 1024, as a process can make it read the words of any page that it maps. And a reader of a shared word can take a wake of count 1 that the writer meant for another reader: a wake names a word, not a thread, which is why the library wakes each waiter of a shared queue (`wake_one` counts its waiters, and the next reader passes the wake on). The case `locks` prints the time of a wake of the last of the 1024 words of a frame.
+
+When the library repairs a list that the kernel refused for a word named twice, it compares addresses, and the kernel compares frames: two mappings of one frame are two addresses of one word. After a second refusal it waits until its deadline on the words before the place that the record names, which hold no word twice: never a loop with no wait.
+
 **Refused: 64 buckets for the machine.** A bucket held the words of every thread whose words had its hash, so one process with a large room made each wake of the machine walk its entries.
 
 **Refused: a hash table with a key.** The kernel has no secret to key it with at its start, and a process that knows the hash puts its words in the bucket of another word. A bucket for each frame needs no key: a process can put only the 1024 words of one frame in one bucket. So no service refuses a client, a start or a ring for its wait. A list that does not fit anyway (the kernel refused the room for the budget) is refused past the 64 words, ends only at its deadline, and writes one line: no loop turns with no wait.

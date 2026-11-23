@@ -239,15 +239,18 @@ WORD_WAIT_CHUNK :: 1024
 // as chunks of the list, each one with the process lock. The checks of the
 // whole list come first, so a list that the room cannot hold, or whose
 // addresses wrap, registers nothing. A chunk that fails ends the command
-// with its status; the words of the chunks before stay registered, as a
-// list that fails at a word does in one chunk, and the entry does not wait.
-// Between two chunks a decommit of a frame of a word finds the words
-// registered so far, and wakes the thread, which then does not wait: the
-// same as a decommit before the entry.
+// with its status and sets word_changed: the words of the chunks before
+// stay registered until the next entry, as a list that fails at a word
+// does in one chunk, and the entry does not wait. Between two chunks, a
+// decommit, a revocation or an unmap of a frame of a word finds the words
+// registered so far and wakes the thread before the frame can leave
+// (waiters_on_frames_wake, waiters_on_pages_wake), so the thread does not
+// wait on a frame that serves another process.
 word_wait_in_chunks :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> Operation_Outcome {
 	thread := &threads[index]
 	address, count := command.values[0], command.values[1]
 	if count > u64(wait_capacity(thread) - thread.word_count) {
+		thread.word_changed = true
 		return .No_Slot
 	}
 	if address > max(u64) - count * size_of(op.Word) {
@@ -262,6 +265,7 @@ word_wait_in_chunks :: proc "contextless" (index: u32, command: ring.Record, res
 		operation.word_wait_refused_place = first
 		outcome := execute_locked(index, chunk, results)
 		if outcome != .Ok {
+			thread.word_changed = true
 			return outcome
 		}
 	}
@@ -883,11 +887,17 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Word_Wait:
+		// A refused command leaves the entry with no wait: the words that
+		// it or a command before it registered stay until the next entry,
+		// but the thread does not wait on a list that the kernel refused
+		// in part (word_changed).
 		thread := &threads[index]
 		if v[1] > u64(wait_capacity(thread) - thread.word_count) {
+			thread.word_changed = true
 			return .No_Slot
 		}
 		if !user_range(process, v[0], v[1] * size_of(op.Word), false) {
+			thread.word_changed = true
 			return .Bad_Address
 		}
 		for index in 0 ..< v[1] {

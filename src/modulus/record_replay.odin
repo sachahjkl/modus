@@ -500,6 +500,16 @@ point_copies_teardown :: proc "contextless" (target_index: u32, rec: ^Process_Re
 		return
 	}
 	target := &processes[target_index]
+	// A thread that waits on a word of a point copy names the copy frame,
+	// which returns to the history below and can serve another process:
+	// it wakes first, while the entry still names the copy.
+	if target.table != 0 {
+		for index in u32(0) ..< rec.point_copy_count {
+			if pc := &rec.point_copies[index]; pc.active {
+				waiters_on_pages_wake(target, pc.virtual_address, 1)
+			}
+		}
+	}
 	self := processor_self()
 	restored_any := false
 	for index in u32(0) ..< rec.point_copy_count {
