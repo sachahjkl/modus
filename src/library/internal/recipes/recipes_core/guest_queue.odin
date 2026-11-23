@@ -52,8 +52,7 @@ Guest_Queue :: struct {
 Guest_Cancel :: enum u8 {
 	Removed   = 1, // The build waited: it left the queue.
 	Requested = 2, // The build runs: it ends at the next exit of its guest.
-	Absent    = 3, // The queue holds no build of this recipe.
-	Not_Yours = 4, // The build is of another principal.
+	Absent    = 3, // The queue holds no build of this recipe of this principal: a build of another principal is not told apart.
 }
 
 // guest_queue_push adds a build at the end of the queue. Builder_Busy when
@@ -131,16 +130,19 @@ guest_queue_end :: proc "contextless" (queue: ^Guest_Queue) {
 }
 
 // guest_queue_cancel cancels the build of recipe_hash of principal: the
-// waiting one first, else the running one.
+// waiting one first, else the running one. The principal of the ring is
+// no caller: it cancels nothing. A build of another principal is Absent,
+// as no build: a caller learns nothing of the builds of others.
 guest_queue_cancel :: proc "contextless" (queue: ^Guest_Queue, principal: u64, recipe_hash: blake3.Hash) -> Guest_Cancel {
-	other := false
+	if principal == GUEST_QUEUE_RING_PRINCIPAL {
+		return .Absent
+	}
 	for state in ([2]Guest_Job_State{.Waiting, .Running}) {
 		for &place in queue.jobs {
 			if place.state != state || place.recipe_hash != recipe_hash {
 				continue
 			}
 			if place.principal != principal {
-				other = true
 				continue
 			}
 			if state == .Waiting {
@@ -151,7 +153,7 @@ guest_queue_cancel :: proc "contextless" (queue: ^Guest_Queue, principal: u64, r
 			return .Requested
 		}
 	}
-	return other ? .Not_Yours : .Absent
+	return .Absent
 }
 
 // guest_queue_count gives the builds that wait and that run.

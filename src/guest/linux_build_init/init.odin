@@ -67,6 +67,8 @@ MAP_PRIVATE_ANONYMOUS :: 0x02 | 0x20
 PROTECT_READ_WRITE :: 0x1 | 0x2
 SEEK_END :: 2
 ERROR_EXISTS :: -17
+ERROR_NO_CHILD :: -10
+ERROR_INTERRUPTED :: -4
 BLOCK_DEVICE_MODE :: 0o060000 | 0o600
 
 // The bytes of one path that a system call takes, with its zero byte.
@@ -420,7 +422,7 @@ run :: proc "contextless" (arguments: []uintptr, environment: []uintptr, folder:
 		if result == child {
 			break
 		}
-		if result != -4 { // EINTR
+		if result != ERROR_INTERRUPTED {
 			return 0, false
 		}
 	}
@@ -667,6 +669,20 @@ build :: proc "contextless" (stack: rawptr) -> u32 {
 	// Each process that the command left ends before init reads /outputs:
 	// none changes a file between the walk and the read.
 	_ = linux_call(uintptr(Linux_Call.Kill), ~uintptr(0), 9)
+	// The kill is sent, not done: init waits for each child until none is
+	// left (ECHILD), so no process of the command runs during the walk.
+	// A process that the command left gets init as its parent, so init
+	// waits for it too.
+	for {
+		result := linux_call(uintptr(Linux_Call.Wait4), ~uintptr(0), 0, 0, 0)
+		if result == ERROR_NO_CHILD {
+			break
+		}
+		if result < 0 && result != ERROR_INTERRUPTED {
+			say("linux_build_init: the output was not written: the processes of the command did not end")
+			return INIT_FAILED_STATUS
+		}
+	}
 	if !ran {
 		return INIT_FAILED_STATUS
 	}

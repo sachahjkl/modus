@@ -135,7 +135,6 @@ inputs_tree_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out
 	return written, true
 }
 
-@(private)
 history_add :: proc "contextless" (registry: ^Recipe_Registry, result: ^pr.Recipe_Build_Result, mode: pr.Build_Mode) {
 	registry.history[registry.builds_total % MAX_BUILD_HISTORY] = pr.recipe_build_row_of(result, mode)
 	registry.builds_total += 1

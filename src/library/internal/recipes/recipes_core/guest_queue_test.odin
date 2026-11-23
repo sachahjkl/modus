@@ -49,15 +49,20 @@ guest_queue_handoff :: proc(t: ^testing.T) {
 	waiting, runs = guest_queue_count(queue)
 	testing.expect(t, waiting == GUEST_QUEUE_MOST - 1 && runs == 1)
 
-	// Cancel: another principal, an absent build, a waiting build, the
-	// running build.
-	testing.expect_value(t, guest_queue_cancel(queue, 3, blake3.hash([]u8{'b'})), Guest_Cancel.Not_Yours)
+	// Cancel: the build of another principal answers as no build, an absent
+	// build too, and the principal of the ring cancels nothing: its build
+	// stays. Then the running build of the caller, then a waiting one.
+	testing.expect_value(t, guest_queue_cancel(queue, 3, blake3.hash([]u8{'b'})), Guest_Cancel.Absent)
 	testing.expect_value(t, guest_queue_cancel(queue, 1, blake3.hash([]u8{'q'})), Guest_Cancel.Absent)
-	testing.expect_value(t, guest_queue_cancel(queue, GUEST_QUEUE_RING_PRINCIPAL, blake3.hash([]u8{100})), Guest_Cancel.Removed)
+	testing.expect_value(t, guest_queue_cancel(queue, GUEST_QUEUE_RING_PRINCIPAL, blake3.hash([]u8{100})), Guest_Cancel.Absent)
 	waiting, _ = guest_queue_count(queue)
-	testing.expect_value(t, waiting, GUEST_QUEUE_MOST - 2)
+	testing.expect_value(t, waiting, GUEST_QUEUE_MOST - 1)
 	testing.expect_value(t, guest_queue_cancel(queue, 1, blake3.hash([]u8{'b'})), Guest_Cancel.Requested)
 	testing.expect(t, guest_queue_running(queue).cancel_requested, "the running build is asked to end")
 	guest_queue_end(queue)
 	testing.expect(t, guest_queue_running(queue) == nil)
+	testing.expect_value(t, guest_queue_push(queue, job_of(1, 'w')), pr.Recipe_Refusal.None)
+	testing.expect_value(t, guest_queue_cancel(queue, 1, blake3.hash([]u8{'w'})), Guest_Cancel.Removed)
+	waiting, _ = guest_queue_count(queue)
+	testing.expect_value(t, waiting, GUEST_QUEUE_MOST - 1)
 }

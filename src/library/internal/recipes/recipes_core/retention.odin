@@ -239,11 +239,31 @@ retention_name_key :: proc "contextless" (text: string) -> (key: [RETENTION_NAME
 // marks what each realisation object and each recipe object of the store,
 // each recipe of registry and each hash of extra names, then removes each
 // object blob_ that is not marked. extra holds the objects that put kept
-// in this run of the service, which a recipe may name later.
-retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, extra: []blake3.Hash, workspace: ^Retention_Workspace) -> (result: Retention_Result) {
+// in the recent windows, which a recipe may name later, and queue the
+// guest builds that wait or run, whose specs name what they will read.
+retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, extra: []blake3.Hash, workspace: ^Retention_Workspace, queue: ^Guest_Queue = nil) -> (result: Retention_Result) {
 	workspace.marks = {}
 	workspace.mark_count = 0
 	port := &state.store
+	// Each build of the queue names its inputs, its kernel and its archive:
+	// a build that waits must find them when it runs. A build of the ring
+	// holds its spec; another build names a recipe of the registry.
+	if queue != nil {
+		for &job in queue.jobs {
+			spec: ^pr.Recipe_Spec
+			switch job.state {
+			case .Free:
+			case .Waiting, .Running:
+				spec = job.from_ring ? &job.spec : (registry != nil ? registered_recipe(registry, job.recipe_hash) : nil)
+			}
+			if spec != nil {
+				if refusal := retention_mark_recipe(workspace, port, spec); refusal != .None {
+					result.refusal = refusal
+					return result
+				}
+			}
+		}
+	}
 	// A put names an object of any kind: a tree is walked, so its children
 	// stay while the put stays.
 	for hash in extra {

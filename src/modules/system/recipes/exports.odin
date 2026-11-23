@@ -18,7 +18,6 @@ ERROR_ACTS_FOR_PRINCIPAL :: i64(-2) // No_Grant, Acts_For_Principal: the caller 
 ERROR_NOT_READY :: i64(-3) // State, Requests: the service has not started its tables.
 ERROR_RECIPE :: i64(-4) // The recipe is refused: the value found is the Recipe_Refusal.
 ERROR_BUILD :: i64(-5) // The build is refused: the value found is the Recipe_Refusal.
-ERROR_CANCEL :: i64(-6) // No_Grant: the build to cancel is of another principal.
 
 // The registered recipes and the history of the builds.
 service_registry: recipes_core.Recipe_Registry
@@ -246,9 +245,10 @@ build_stored :: proc "c" (recipe: ^system.Bytes_To_Read, mode: i64, result: ^[]p
 //
 // The result is 1 when the build left the queue, 2 when the running build
 // was asked to end, or a negative number with an error record:
-// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, ERROR_BUILD
-// with Unknown_Recipe (no build of this recipe waits or runs, or the text is
-// not a hash), or ERROR_CANCEL (the build is of another principal).
+// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or ERROR_BUILD
+// with Unknown_Recipe: no build of this recipe of the principal of the
+// caller waits or runs, or the text is not a hash. A build of another
+// principal gets the same answer, so a caller learns nothing of it.
 @(export, link_name = "build_cancel")
 build_cancel :: proc "c" (recipe: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
 	if failure, ok := caller_check(true, error); !ok {
@@ -274,8 +274,6 @@ build_cancel :: proc "c" (recipe: ^system.Bytes_To_Read, error: ^errors.Error_Re
 		return 2
 	case .Absent:
 		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
-	case .Not_Yours:
-		return errors.fail(error, ERROR_CANCEL, .No_Grant, .None, 1)
 	}
 	return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
 }

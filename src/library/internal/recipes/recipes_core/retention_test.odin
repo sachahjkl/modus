@@ -202,3 +202,39 @@ retention_walks_a_put_tree_that_a_recipe_names :: proc(t: ^testing.T) {
 		testing.expect(t, has_blob(test, tree), "the put tree stays")
 	}
 }
+
+// A build that waits in the queue keeps what it will read: the inputs and
+// the kernel of a build of the ring, which no registry holds, and the
+// inputs of a registered recipe, while no realisation names them. With no
+// queue, the pass removes them.
+@(test)
+retention_keeps_what_the_queue_will_read :: proc(t: ^testing.T) {
+	for with_queue in ([?]bool{true, false}) {
+		test := retention_test_make()
+		defer retention_test_end(test)
+		input, kernel := []u8{'i', 'n'}, []u8{'k', 'e'}
+		put_object(test, input)
+		put_object(test, kernel)
+		guest: gb.Guest_Build_Spec
+		guest.kernel_hash = blake3.hash(kernel)
+		guest.root_image_hash = blake3.hash([]u8{2})
+		guest.memory_pages = 16_384
+		guest.output_size_bound = 8192
+		gb.build_spec_set_command(&guest, "true")
+		queue := new(Guest_Queue)
+		defer free(queue)
+		job := Guest_Queue_Job{principal = GUEST_QUEUE_RING_PRINCIPAL, from_ring = true, mode = .Build_Only}
+		job.spec.builder_hash = pr.guest_builder_hash()
+		job.spec.output_kind = .Tree
+		job.spec.input_count = 1
+		job.spec.inputs[0], _ = pr.recipe_input_make("in", .Blob, blake3.hash(input))
+		written, _ := gb.encode_build_spec(&guest, job.spec.arguments[:])
+		job.spec.arguments_length = u32(written)
+		job.recipe_hash, _ = pr.recipe_hash(&job.spec)
+		assert(guest_queue_push(queue, job) == .None)
+		result := retention_collect(test.state, test.registry, nil, test.workspace, with_queue ? queue : nil)
+		testing.expect_value(t, result.refusal, Retention_Refusal.None)
+		testing.expectf(t, has_blob(test, blake3.hash(input)) == with_queue, "the input of a queued build stays: %v", with_queue)
+		testing.expectf(t, has_blob(test, blake3.hash(kernel)) == with_queue, "the kernel of a queued build stays: %v", with_queue)
+	}
+}

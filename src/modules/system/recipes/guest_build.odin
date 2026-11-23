@@ -259,8 +259,12 @@ guest_build_next :: proc "contextless" () {
 			// The build ends refused: the next one may find the room.
 			system.log_fact(.Warning, Guest_Thread_Refused{status_word = op.Status_Word(status)})
 			guest_job_result = {outcome = .Refused, refusal = .Builder_Failed, recipe_hash = guest_job.recipe_hash}
+			service_state.counters.total_refusals += 1
 			if guest_job.from_ring {
 				ring_build_answer(guest_job.ring_tag, guest_job.result_offset, &guest_job_result)
+			} else {
+				// The caller got Building: the history gives it the end.
+				recipes_core.history_add(&service_registry, &guest_job_result, guest_job.mode)
 			}
 			recipes_core.guest_queue_end(&guest_queue)
 			continue
@@ -327,7 +331,7 @@ guest_build_thread :: proc "c" (parameter: rawptr) -> ! {
 // service_lock (src/md/features/recipes.md, "The retention of the store").
 retention_pass :: proc "contextless" () {
 	recipes_core.put_ledger_age(&put_ledger, system.time() / 1000)
-	result := recipes_core.retention_collect(&service_state, &service_registry, recipes_core.put_hashes(&put_ledger, &put_hashes_now), &retention_workspace)
+	result := recipes_core.retention_collect(&service_state, &service_registry, recipes_core.put_hashes(&put_ledger, &put_hashes_now), &retention_workspace, &guest_queue)
 	system.log_fact(.Info, Retention_Passed{marked = u64(result.marked), kept = u64(result.kept), removed = u64(result.removed), refusal = u64(result.refusal)})
 }
 
