@@ -1103,6 +1103,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// sent before the call: a caller that reads "nothing waits" then
 		// knows that the screen shows what the processes sent.
 		system.service_run(&service)
+		plan_difference_asker_check()
 		pointer_update(now) // After each change of what is under the pointer.
 		if second_of_bar(now) != shown_second {
 			shown_second = second_of_bar(now)

@@ -3,6 +3,7 @@ package bar
 
 import "core:strings"
 import "core:testing"
+import pr "modus:contract/plans_recipes"
 
 @(test)
 plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^testing.T) {
@@ -62,7 +63,7 @@ plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_key(&dialog, .Next, 1000), Plan_Difference_Decision.Pending)
 	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
 	// Enter at the show, and one millisecond before the arm: no act.
-	for now in ([?]u64{0, 1000, 1000 + PLAN_DIFFERENCE_ARM_MILLISECONDS - 1}) {
+	for now in ([?]u64{0, 1000, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS - 1}) {
 		testing.expect_value(t, plan_difference_key(&dialog, .Act, now), Plan_Difference_Decision.Pending)
 		testing.expect(t, dialog.open)
 	}
@@ -76,7 +77,7 @@ plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_key(&dialog, .Other, 9000), Plan_Difference_Decision.Pending)
 	testing.expect(t, dialog.open)
 	// At the arm time, Enter on Accept accepts.
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + PLAN_DIFFERENCE_ARM_MILLISECONDS), Plan_Difference_Decision.Accepted)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS), Plan_Difference_Decision.Accepted)
 	testing.expect(t, !dialog.open)
 	testing.expect_value(t, dialog.decision, Plan_Difference_Decision.Accepted)
 	// A closed dialog takes no act.

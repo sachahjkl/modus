@@ -97,11 +97,13 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 	}
 }
 
-// settings_boot_pass_start starts `settings` for its boot pass: it reads
-// the settings kept in its private store, writes the page, and stops. The
-// storage service starts first, with the block service of the data disk.
-// A machine with no data disk keeps the defaults. A start policy asks for
-// it, as the row settings of its list, and gets the status.
+// settings_boot_pass_start starts the holder of the role Settings for its
+// boot pass: `settings` reads the settings kept in its private store,
+// writes the page, and stops. The storage service starts first, with the
+// block service of the data disk. A machine with no data disk keeps the
+// defaults. A start policy asks for it, as the row settings of its list,
+// and gets the status. The row names the role, so it reaches the holder
+// that the plan of principal 0 gave, as each other row of a role does.
 settings_boot_pass_start :: proc "contextless" () -> system.Status {
 	decision, status := settings_pass_start(.Boot, principals.MACHINE)
 	switch decision {
@@ -129,7 +131,7 @@ settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64) 
 		return decision, .Ok
 	}
 	place: ^Started
-	status = start("settings", principal, place = &place)
+	status = start(role_holder_name(.Settings), principal, place = &place)
 	if status == .Ok && place != nil {
 		settings_pass_process_serial = place.process_serial
 		settings_pass_running_pass = pass
@@ -142,7 +144,7 @@ settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64) 
 // press of the principal is not lost.
 settings_window_start :: proc "contextless" (principal: u64) {
 	if settings_start_decide(principal, .Desktop) == .Start {
-		start("settings", principal)
+		start(role_holder_name(.Settings), principal)
 	}
 }
 
@@ -150,7 +152,7 @@ settings_window_start :: proc "contextless" (principal: u64) {
 // apart (it has the name of its process), and the pass that it runs.
 settings_running :: proc "contextless" () -> (item: ^Started, pass: settings.Pass) {
 	for &candidate in started {
-		if candidate.process == 0 || candidate.is_terminal || system.name_of(candidate.name[:]) != "settings" {
+		if candidate.process == 0 || candidate.is_terminal || !is_role_holder(system.name_of(candidate.name[:]), .Settings) {
 			continue
 		}
 		if settings_pass_process_serial != 0 && candidate.process_serial == settings_pass_process_serial {
@@ -243,7 +245,7 @@ settings_start_due_step :: proc "contextless" () {
 		return
 	}
 	settings_start_due = false
-	if status := start("settings", settings_start_due_principal); status != .Ok {
+	if status := start(role_holder_name(.Settings), settings_start_due_principal); status != .Ok {
 		system.log_fact(.Warning, Settings_Due_Start_Failed{status = status})
 	}
 }

@@ -9,6 +9,7 @@
 package compositor
 
 import "internal:compositor/bar"
+import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
 import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
@@ -169,8 +170,32 @@ plan_difference_show :: proc "contextless" (plan_name, added, removed: string) -
 	}
 	system.log_fact(.Info, Plan_Difference_Shown{added = u64(plan_difference_dialog.added_count), removed = u64(plan_difference_dialog.removed_count), plan = value_kinds.text_field(plan_name, PLAN_NAME_FIELD_BYTES)})
 	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
+	plan_difference_asker = system.service_caller()
 	damage_whole_screen()
 	return
+}
+
+// The connection that asked for the dialog of a plan that shows: nil when
+// the compositor itself asked.
+plan_difference_asker: ^system.Connection
+
+// plan_difference_asker_check closes the dialog of a plan when the grant of
+// its asker no longer lets it ask: the root service wrote the grant again
+// after a change of the roles, and the module that asked lost the role
+// Plans, or its connection ended. The principal never answers a dialog for
+// a module that holds no role to receive the answer. It runs after each
+// pass of the service, which applies each Grant before the next call.
+plan_difference_asker_check :: proc "contextless" () {
+	if !plan_difference_dialog.open || plan_difference_asker == nil {
+		return
+	}
+	asker := plan_difference_asker
+	if asker.calls.head != nil && pr.plan_display_caller_allowed(asker.grant) {
+		return
+	}
+	plan_difference_asker = nil
+	system.log_fact(.Warning, Plan_Difference_Asker_Lost{plan = value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)})
+	plan_difference_answer(bar.plan_difference_key(&plan_difference_dialog, .Escape, system.time()))
 }
 
 // plan_difference_answer records the decision of the principal, if the

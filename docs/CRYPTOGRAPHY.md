@@ -77,11 +77,13 @@ A new file comes with `modustool cryptography-take <origin> <file>`, which write
 
 A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/modustool/checks/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and the adjustment must be read again. The first line of an adjusted file says so.
 
-There are two groups of adjustments.
+There are three groups of adjustments.
 
 **Argon2id takes no allocator.** Three adjustments of `argon2id/argon2id.odin`: its import of `core:mem` goes to `compatibility_memory`; the parameter `allocator` of `derive` becomes `work_memory`, the blocks that the caller supplies; the allocation of the blocks becomes a check that `work_memory` has the bytes that the parameters ask and is aligned on 8 bytes, else the result `Out_Of_Memory` before any work. The code of a module, with an entry or with no entry, has no allocator. The origin erases the blocks at its end.
 
 **One correction of ChaCha20**, as five adjustments of `_chacha20/chacha20.odin` and four lines of the system's own `chacha20/chacha20_implementation_portable.odin`. The fault of the origin: `check_counter_limit` refused the block with the counter 2^32 - 1, which RFC 8439 allows, and its branch for the counter of 64 bits allowed a call that wraps the counter. QUIC header protection (RFC 9001, section 5.4.4) takes the counter from the ciphertext of a packet, so a peer could stop a process with one datagram. The correction allows a call that ends on the last block, refuses a call that goes past it, refuses each call after it until `seek` or `init`, and puts back the first word of the IV that the 64-bit increment of the implementation carried into. It is offered to Odin as its pull request 8329. When the release that the flake pins has it, the adjustments go.
+
+**The table of the base point of edwards25519 is read where it is used.** One adjustment of `_edwards25519/edwards25519_table.odin` removes the package variable `GE_BASEPOINT_TABLE := &Gen_Multiply_Table_edwards25519_lo[0]`, and two adjustments of `_edwards25519/edwards25519_scalar_mul.odin` pass `&Gen_Multiply_Table_edwards25519_lo[0]` in its place. The compiler writes the address of such a variable at the start of a program, which a module with an entry never runs (`MODULE_CONTRACT.md`, "Package variables are constant data at the load"), and `modustool rule-checks` refuses such a variable. The library module `cryptography` passes the Ed25519 vectors on the machine with the variable: how its load filled it is not proven, so the adjustment makes the code depend on no start.
 
 ## 5. The primitives, and their tests
 

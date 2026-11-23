@@ -79,34 +79,6 @@ DISPLAY_RING_FACE_PALETTE :: Required_Ring_Face {
 }
 
 @(private = "file", rodata)
-display_required_exports := [3]Required_Export {
-	{
-		name               = DISPLAY_EXPORT_POINTER,
-		parameters         = nil,
-		result             = .Table,
-		result_record_name = "Pointer",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-	{
-		name               = DISPLAY_EXPORT_WINDOWS,
-		parameters         = nil,
-		result             = .Table,
-		result_record_name = "Window",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-	{
-		name               = DISPLAY_EXPORT_SCREEN,
-		parameters         = nil,
-		result             = .Table,
-		result_record_name = "Screen",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-}
-
-@(private = "file", rodata)
 display_required_ring_faces := [4]Required_Ring_Face {
 	DISPLAY_RING_FACE_WINDOW,
 	DISPLAY_RING_FACE_CONTROL,
@@ -114,12 +86,37 @@ display_required_ring_faces := [4]Required_Ring_Face {
 	DISPLAY_RING_FACE_PALETTE,
 }
 
-@(private = "file")
+@(private = "file", rodata)
 display_required_faces := [5]Required_Face {
 	{
 		kind    = .Exports,
 		name    = "display_exports",
-		exports = display_required_exports[:],
+		exports = {
+			{
+				name               = DISPLAY_EXPORT_POINTER,
+				parameters         = nil,
+				result             = .Table,
+				result_record_name = "Pointer",
+				has_error_record   = true,
+				error_record_name  = "Error_Record",
+			},
+			{
+				name               = DISPLAY_EXPORT_WINDOWS,
+				parameters         = nil,
+				result             = .Table,
+				result_record_name = "Window",
+				has_error_record   = true,
+				error_record_name  = "Error_Record",
+			},
+			{
+				name               = DISPLAY_EXPORT_SCREEN,
+				parameters         = nil,
+				result             = .Table,
+				result_record_name = "Screen",
+				has_error_record   = true,
+				error_record_name  = "Error_Record",
+			},
+		},
 	},
 	{
 		kind      = .Ring,

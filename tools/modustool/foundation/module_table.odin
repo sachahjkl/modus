@@ -223,6 +223,9 @@ module_builds := [?]Module_Build {
 	{name = "log_flood", source = TEST_MODULE_SOURCES + "log_flood", entry = true, image = true},
 	{name = "generic_wiring", source = TEST_MODULE_SOURCES + "generic_wiring", entry = true, image = true},
 	{name = "generic_source", source = TEST_MODULE_SOURCES + "generic_source", entry = true, image = true},
+	{name = "audit_asker", source = TEST_MODULE_SOURCES + "audit_asker", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "plan_applier", source = TEST_MODULE_SOURCES + "plan_applier", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "settings_stand_in", source = TEST_MODULE_SOURCES + "settings_stand_in", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},
 	{name = "output_side", source = TEST_MODULE_SOURCES + "output_side", entry = true, image = true},
@@ -464,6 +467,12 @@ BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
 // modules of the boot image, and the two modules of the test of the
 // restarts, which only it holds.
 BOOT_IMAGE_MISSING_CONSOLE :: BUILD_FOLDER + "/boot_missing_console.image"
+
+// The boot image of the test of the plan of principal 0 and of the audit of
+// the collector: the modules of the boot image, and the three test modules
+// of that test, which only it holds, so a release never holds a plan
+// applier, a stand-in holder of Settings or their grants.
+BOOT_IMAGE_PLAN_AND_AUDIT :: BUILD_FOLDER + "/boot_plan_and_audit.image"
 
 OPERATION_FUZZING_MODULE :: "operation_fuzzing"
 

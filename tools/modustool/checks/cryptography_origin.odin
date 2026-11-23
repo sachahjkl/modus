@@ -198,7 +198,29 @@ Cryptography_Adjustment :: struct {
 // not, has no allocator. A supply that is smaller than the parameters ask, or
 // not aligned on 8 bytes, is the result Out_Of_Memory before any work. The
 // helpers of core:mem come from the compatibility layer.
+//
+// The adjustments of _edwards25519 remove a package variable that holds
+// the address of the table of the base point: the compiler writes such an
+// address at the start of a program, which a module with an entry never
+// runs (docs/MODULE_CONTRACT.md, "Package variables are constant data at
+// the load"). The two calls that read it take the address of the table
+// themselves, so the code depends on no start.
 cryptography_adjustments := [?]Cryptography_Adjustment {
+	{
+		"core/crypto/_edwards25519/edwards25519_table.odin",
+		"\n\tGE_BASEPOINT_TABLE := &Gen_Multiply_Table_edwards25519_lo[0]\n",
+		"\n",
+	},
+	{
+		"core/crypto/_edwards25519/edwards25519_scalar_mul.odin",
+		"\t\t\tmul_bp_tbl_add(&tmp, GE_BASEPOINT_TABLE, hi_b, &tmp_add, &tmp_bp_addend, true)\n",
+		"\t\t\tmul_bp_tbl_add(&tmp, &Gen_Multiply_Table_edwards25519_lo[0], hi_b, &tmp_add, &tmp_bp_addend, true)\n",
+	},
+	{
+		"core/crypto/_edwards25519/edwards25519_scalar_mul.odin",
+		"\t\t\tmul_bp_tbl_add(&tmp, GE_BASEPOINT_TABLE, lo_b, &tmp_add, &tmp_bp_addend, true)\n",
+		"\t\t\tmul_bp_tbl_add(&tmp, &Gen_Multiply_Table_edwards25519_lo[0], lo_b, &tmp_add, &tmp_bp_addend, true)\n",
+	},
 	{
 		"core/crypto/argon2id/argon2id.odin",
 		"import \"core:mem\"\n",

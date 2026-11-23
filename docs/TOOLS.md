@@ -841,7 +841,7 @@ The list of the image `missing_console` has a row of the console that names a mo
 
 ## The rules that a check holds
 
-Four rules of the system are checked when the tool builds, not only read.
+These rules of the system are checked when the tool builds, not only read.
 
 **The count of the kernel operations.** `PROPERTIES.md` states how many operations the kernel has, in the sentence "The kernel has <number> operations". The enumeration `Operation` of `src/library/modus/contract/operation/operation.odin` declares them. The tool counts the members of the enumeration, without `None`, and compares the two numbers. A new operation is then refused until the property states the new count, with its reason.
 
@@ -904,7 +904,22 @@ What the check does not see: a `#partial switch`, a constant declared inside a p
 modustool: src/modules/system/console/main.odin:12: names the field image_checks of system.Load_Source, which only the root service gives (src/modules/system/root/main.odin)
 ```
 
-**When they run.** `modustool check` runs the four after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same four conditions on the sources of the repository.
+**A package variable is constant data.** A module with an entry has no start of the runtime: the loader maps its data as the file holds it (`MODULE_CONTRACT.md`, "Package variables are constant data at the load"). `global_initializer_check` (`tools/modustool/checks/global_initializer_check.odin`) parses each source of the kernel, of the boot program, of the modules and of the source library that is not a test and not for the host alone, one folder as one package. It reads the bodies of the `when` blocks too, and not the body of a procedure literal, which runs when it is called. It refuses a package variable whose initializer holds:
+
+- a slice expression (`params[:]`), or the operator `&`;
+- the name of a package variable of the same package, in any of its files;
+- a name of another package that starts with a small letter (`system.serving`): a variable or a procedure, which the check cannot tell apart; the constants and the types of the system start with a capital letter;
+- a call, except a conversion to a type and the built-ins that the compiler folds (`size_of`, `align_of`, `offset_of`, `len`, `min`, `max`) and a directive (`#load`);
+- a literal of a map or of a dynamic array;
+- a value of the type `any`.
+
+The compiler makes each of these a step of the start of a program, and the variable stays zero on the machine. What the check does not see: a constant of another package whose name starts with a small letter (refused, though constant), a call of a procedure that the compiler folds and that is not in the list, a variable of a `when` block of another file whose condition is false on the machine, and a source that is a host test by its name alone. A refused variable stops the check with its place:
+
+```
+modustool: src/library/modus/contract/root_delegation/role_catalog.odin:368: the package variable settings_faces has in its initializer a slice expression: the compiler makes it a step of the start of a program, which a module never runs, so it stays zero on the machine; write the slices as literals inside the table (docs/MODULE_CONTRACT.md, "Package variables are constant data at the load")
+```
+
+**When they run.** `modustool check` runs the seven after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same four conditions on the sources of the repository.
 
 ## The reuse list
 
@@ -1261,7 +1276,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `similarity`, `similarity near <file>:<line>`, `similarity pair <file>:<line> <file>:<line>` | Measures how similar the code pieces of `src/` and `tools/` are: families with their factoring template, ranked by the nodes that a factoring saves, in `build/similarity/`; or the procedures most similar to one; or the score of two procedures ("The similarity finder") |
 | `library-imports` | Checks that each import of each source file of `src/` follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of `core:` starts with `#+build !freestanding` ("The imports of the sources of the system") |
-| `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, that no cast of a word to an enum skips its border, that no stop word skips its border, and that only the loader and the root service name the field `image_checks` ("The rules that a check holds") |
+| `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, that no cast of a word to an enum skips its border, that no stop word skips its border, that no source outside the one file of the seed uses `rdrand` or `rdseed`, that only the loader and the root service name the field `image_checks`, and that no package variable needs a start of the runtime ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot \| desktop \| console \| program]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4`, `build/films/<name>.webm` and the cue file `build/films/<name>.cues` ("The film", "The film cues"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 
@@ -1399,7 +1414,7 @@ The table is in the tool (`test_parts`, `tools/modustool/machine/test_parts.odin
 | `hierarchy` | The machines of the hierarchy of storage | `main` |
 | `tablet` | The four machines of the virtio tablet: at its place (`virtio-tablet-pci` at 0x15) the root service gives it to the input service, a report of the tablet presses the maximize button of the console and then its restore button, a double press on the title maximizes it, a drag of the title restores it under the pointer, Control+Shift+Up during a drag of an edge asks for no second size, and after a stop of the input service the start policy starts it again and the tablet works again; another virtio device at its place, and a tablet at another place, leave the PS/2 mouse only; with no PS/2 controller the input service goes on with the tablet | `main` |
 | `power` | The loss of power: of the storage, of the settings, of the ranges, the write that the disk drops, and the disk that stops to answer | `main` |
-| `persist` | The eight machines of the persistence of the storage on one disk, which the tool cuts and damages between two machines | `main` |
+| `persist` | The eight machines of the persistence of the storage on one disk, which the tool cuts and damages between two machines; then two machines on a new disk: a plan of principal 0 that names the holder of Settings, which the start policy reaches from the first start after the restart, and the audit spaces of the collector, whose pair gives each record of its source and whose chains hold after a stop of the collector and after the restart | `main`, `plan_and_audit` |
 | `extended_state` | The three machines of the extended state | `main` |
 | `return_fault` | The machine of the return to a process | `main`, `without_return_check` |
 | `kernel_events` | The machine of the kernel events, then the thread counters on the same machine: `counters` counts a loop of 1 000 000 turns (at least one instruction retired for each turn, the one count that the test checks) and the same reads of 2 MiB in order and by page, as measures. After the machine, the tool reads the last boot line "kernel: performance counters" of the test machine; a line with counters must say that the first processor passed the trial of the registers. When the kernel found no counters, or a processor refused their trial, it checks only that the commands gave `Unsupported`, and it writes what the host gives as the explanation (`ARCHITECTURE.md`, "The counters of a thread") | `main` |
@@ -1417,7 +1432,7 @@ The table is in the tool (`test_parts`, `tools/modustool/machine/test_parts.odin
 | `guest` | The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp); `Memory_Protect` refuses a read-only protection and a part of a switching mapping, and an instruction that writes the page that holds it ends the run with the exit `Writes_Own_Page` and the address that it writes. The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, "A guest") | `main` |
 | `linux` | The machine of a shell of Linux: its data disk holds the private store `linux` with the bzImage of Nixpkgs and an initial archive with a static busybox. The start menu starts `linux`, Linux boots in a guest on the serial console, the tool types `echo modus-guest-ok` in the terminal window and waits for the output, then types `poweroff`, and `linux` ends with the halt of the guest. On a host that gives the test machine no SVM, the machine checks only that `linux` says that no guest runs | `main` |
 | `no_pit` | The machine with no time base: no 8254 (`-machine q35,pit=off`) and a processor whose CPUID states no frequency of its cycle counter; the kernel writes its line and stops with the code 1 | `main` |
-| `fails` | The machine of a start that fails: a boot image with no start policy, so the rescue start policy is absent too, and the boot display shows the cause | `fails` |
+| `fails` | The machine of a start that fails: a boot image with no start policy, so the rescue start policy is absent too, and the boot display shows the cause; then the tool compares the hash of each role contract that the root service writes at its start with the hash that the host computes | `fails` |
 | `start_policy` | The eight machines of the start policy (`ARCHITECTURE.md`, "The start policy"): the key R on the serial line, the console input of the firmware with no screen; a start list whose row of the console names a module that does not exist, so the rescue takes over, and the rescue list of that image restarts a row that stops with Failed until its count ends, and no row that stops with Refused; three machines with one variable store: the boot program writes the boot entry `modus (rescue)`, `BootNext` to that entry starts the rescue, and the entry with a word that names no start request stops the boot program; then three machines with a software TPM and Secure Boot on: principal 0 chooses a start policy from the disk, the next start runs it and PCR 12 holds its hash, and a chosen start policy that fails gives way to the rescue, with PCR 12 after two extends | `main`, `missing_console`, `secure_boot` |
 | `shortage` | The machine of the shortage of frames | `shortage` |
 | `operation_sequences` | The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence ("The operation sequences") | `operation_sequences` |
@@ -1701,7 +1716,7 @@ A damaged record is never an error. The tool decides for a module after its impo
 
 **When no record is written.** The tool writes no record for a module when the compiler gave no list, or when it cannot prove that the hash and the build read the same bytes: an input file must be older than the start of the build by one second, and its size and its time must be the same after the build. The conversion reads the sources too, so the rule holds for a module that was only converted: its record of the conversion is removed. A file that was saved during the build, or in the last second before it, costs one more build of its modules.
 
-**The boot volumes.** The build has 26 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
+**The boot volumes.** The build has 27 boot volumes. Each one has its own boot program, because the boot program holds its boot image and its kernel (`#load`).
 
 | Volume | Its boot image | What differs from the main volume |
 |---|---|---|
@@ -1709,6 +1724,7 @@ A damaged record is never an error. The tool decides for a module after its impo
 | `fails` | `boot_fails.image`: no `start_policy` | The start must fail: no start policy, and no rescue |
 | `shortage` | `boot_shortage.image`: no input service, and `shortage`, which no other image holds: it takes nearly every page and stops the machine | Its start list and its rescue list start only the process `shortage` |
 | `missing_console` | `boot_missing_console.image`: every module, and `stops_refused` and `stops_failed` | Its start list has a row of the console that names no module: the rescue takes over, and its rescue list tests the restarts after `Refused` and `Failed` |
+| `plan_and_audit` | `boot_plan_and_audit.image`: every module, and `plan_applier`, `settings_stand_in` and `audit_asker`, which no other image holds | The machines of the plan of principal 0 and of the audit of the collector in the part `persist` |
 | `operation_sequences` | `boot_operation_sequences.image`: every module, and `operation_fuzzing` and `operation_sequence_runner`, which no other image holds | Its start list and its rescue list start only the process `operation_fuzzing` ("The operation sequences") |
 | `operation_fuzzing` | `boot_operation_sequences.image` | The counted kernel `kernel_edge_counters`, for `fuzz operations` only ("The fuzzing of the kernel operations") |
 | `measure` | `boot_measure.image`: every module, and the resource `measure_run` | A measure run ("A check by count, a measure by time") |

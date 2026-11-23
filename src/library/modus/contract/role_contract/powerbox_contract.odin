@@ -46,36 +46,33 @@ POWERBOX_RING_FACE_TRUSTED_DISPLAY :: Required_Ring_Face {
 }
 
 @(private = "file", rodata)
-powerbox_required_exports := [2]Required_Export {
-	{
-		name              = POWERBOX_EXPORT_PENDING_COUNT,
-		parameters        = nil,
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-	{
-		name               = POWERBOX_EXPORT_STATUS,
-		parameters         = nil,
-		result             = .Record,
-		result_record_name = "Powerbox_Status",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-}
-
-@(private = "file", rodata)
 powerbox_required_ring_faces := [2]Required_Ring_Face {
 	POWERBOX_RING_FACE_GRANT_REQUEST,
 	POWERBOX_RING_FACE_TRUSTED_DISPLAY,
 }
 
-@(private = "file")
+@(private = "file", rodata)
 powerbox_required_faces := [3]Required_Face {
 	{
 		kind    = .Exports,
 		name    = "powerbox_exports",
-		exports = powerbox_required_exports[:],
+		exports = {
+			{
+				name              = POWERBOX_EXPORT_PENDING_COUNT,
+				parameters        = nil,
+				result            = .Integer,
+				has_error_record  = true,
+				error_record_name = "Error_Record",
+			},
+			{
+				name               = POWERBOX_EXPORT_STATUS,
+				parameters         = nil,
+				result             = .Record,
+				result_record_name = "Powerbox_Status",
+				has_error_record   = true,
+				error_record_name  = "Error_Record",
+			},
+		},
 	},
 	{
 		kind      = .Ring,

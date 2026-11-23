@@ -24,6 +24,10 @@ Test_Core :: struct {
 	lose_answer:   bool,
 	reads:         int,
 	read_fails:    bool,
+	// Refuse this many sets with Grants_Busy before the rules above, as a
+	// root service whose service rings are full.
+	busy:          int,
+	pauses:        int,
 }
 
 @(private = "file")
@@ -33,6 +37,10 @@ test_core_replace :: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, 
 		core.steps[core.calls] = step
 	}
 	core.calls += 1
+	if core.busy > 0 {
+		core.busy -= 1
+		return .Grants_Busy
+	}
 	if refusal, _ := rd.plan_roles_set_check(set, step, core.serial); refusal != .None {
 		return refusal
 	}
@@ -72,10 +80,15 @@ role_plan :: proc(principal: u64, role: role_contract.Role, tag: u8) -> pr.Plan_
 }
 
 @(private = "file")
+test_core_pause :: proc "contextless" (user: rawptr) {
+	(^Test_Core)(user).pauses += 1
+}
+
+@(private = "file")
 roles_state :: proc(core: ^Test_Core) -> (state: ^Plans_State, store: ^pr.Memory_Private_Store) {
 	state = new(Plans_State)
 	store = plans_test_state_init(state, 0)
-	roles_port_bind(state, {user = core, replace = test_core_replace, read = test_core_read})
+	roles_port_bind(state, {user = core, replace = test_core_replace, read = test_core_read, pause = test_core_pause})
 	return state, store
 }
 
@@ -708,4 +721,43 @@ test_plans_rollback_changes_no_role_holder_before_the_principal_accepts :: proc(
 	testing.expect_value(t, core.in_force.generation, u64(1))
 	testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(1))
 	testing.expect_value(t, core.steps[core.calls - 1], rd.Plan_Roles_Step.Rollback)
+}
+
+// A full service ring refuses the set with nothing changed: the set goes
+// again after a pause, up to the bound. Past the bound the plan commits
+// nothing, and the refusal names the full rings.
+@(test)
+test_plans_roles_busy_past_the_bound_commit_nothing :: proc(t: ^testing.T) {
+	core := Test_Core{busy = ROLES_BUSY_RESEND_BOUND + 1}
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	plan := role_plan(0, .Storage, 1)
+	record, refusal := apply_now(state, &plan, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.Roles_Refused)
+	testing.expect_value(t, state.roles_refusal, rd.Plan_Roles_Refusal.Grants_Busy)
+	testing.expect_value(t, state.roles_busy_resends, u32(ROLES_BUSY_RESEND_BOUND))
+	testing.expect_value(t, core.pauses, ROLES_BUSY_RESEND_BOUND)
+	testing.expect_value(t, record, pr.Applied_Plan_Record{})
+	testing.expect_value(t, highest_generation(state, 0), u64(0))
+	testing.expect_value(t, core.serial, u64(0))
+	current_name := pr.plan_object_name(0, 0, true)
+	testing.expect(t, pr.memory_private_store_find(store, pr.private_object_name_text(&current_name)) == nil)
+}
+
+@(test)
+test_plans_roles_busy_up_to_the_bound_commit :: proc(t: ^testing.T) {
+	for busy in ([]int{0, 1, ROLES_BUSY_RESEND_BOUND}) {
+		core := Test_Core{busy = busy}
+		state, store := roles_state(&core)
+		plan := role_plan(0, .Storage, 1)
+		record, refusal := apply_now(state, &plan, {})
+		testing.expectf(t, refusal == .None, "busy %d: the refusal %v", busy, refusal)
+		testing.expect_value(t, record.generation, u64(1))
+		testing.expect_value(t, state.roles_busy_resends, u32(busy))
+		testing.expect_value(t, core.pauses, busy)
+		testing.expect_value(t, core.serial, u64(1))
+		free(state)
+		free(store)
+	}
 }

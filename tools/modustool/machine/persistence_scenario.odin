@@ -368,7 +368,8 @@ persistence_run :: proc(part: ^Test_Part_Run) -> bool {
 	object_damage(TEST_PERSIST_DISK, "persistence_check", "note") or_return
 	machine_test(part, scenario_persist_older[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 7), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	first_root_cut(TEST_PERSIST_DISK) or_return
-	return machine_test(part, scenario_persist_first_cut[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 8), exit_status = 0, data_disk = TEST_PERSIST_DISK})
+	machine_test(part, scenario_persist_first_cut[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 8), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
+	return plan_and_audit_run(part)
 }
 
 // A binary of the tool runs the test part persist only when it holds this file

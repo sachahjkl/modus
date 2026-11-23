@@ -536,6 +536,30 @@ Plan_Roles_Refused :: struct {
 	serial:         u64,
 }
 
+// One hash of the role contracts, as the root service computes it at its
+// start (root_delegation.role_contracts_digest): encoded counts the
+// contracts that pass their canonical encoding.
+@(log_fact = "root: the role contracts: {encoded} of {contracts} encoded, digest {digest}")
+Role_Contracts_Digest :: struct {
+	contracts: u64,
+	encoded:   u64,
+	digest:    value_kinds.Hash_Field,
+}
+
+// A module that a plan names as the holder of a role does not fill the
+// contract of the role: the result of the check, so a reader sees which
+// face, export and parameter differ (role_contract.Contract_Check_Result).
+@(log_fact = "root: {holder} does not fill the contract of the role {role_code}: refusal {refusal_code}, difference {difference_code}, face {face}, export {export}, parameter {parameter}")
+Plan_Role_Contract_Not_Filled :: struct {
+	role_code:       u64,
+	refusal_code:    u64,
+	difference_code: u64,
+	face:            u64,
+	export:          u64,
+	parameter:       u64,
+	holder:          value_kinds.Module_Name_Field,
+}
+
 // The fields of a name: the writers of the facts above fill them with the
 // procedures of the contract, whose host tests give the edges of a cut.
 module_name_field :: value_kinds.module_name_field

@@ -12,7 +12,7 @@
   "hierarchy": ["hierarchy_scenario.odin"],
   "tablet": ["tablet_scenario.odin"],
   "power": ["power_loss.odin", "dropped_write.odin", "silent_disk.odin"],
-  "persist": ["persistence_scenario.odin"],
+  "persist": ["persistence_scenario.odin", "plan_and_audit_scenario.odin"],
   "extended_state": ["extended_state_scenario.odin"],
   "return_fault": ["return_fault_scenario.odin"],
   "kernel_events": ["kernel_events_scenario.odin"],

@@ -475,6 +475,21 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// Stop are commands of the root ring. Its writer needs no grant.
 	{name = "generic_wiring", grants = {.Root_Ring}},
 	{name = "generic_source"},
+	// The asker of the test of the audit of the collector: Start, Wire and
+	// Connect are commands of the root ring. It starts the collector and
+	// wires the pair of an audit to itself, and asks the holder of Display
+	// for the dialog of a plan, which it must refuse: the boot image gives
+	// the description of its exports.
+	{name = "audit_asker", grants = {.Root_Ring, .Image}, terms = {callable = {0 = "display"}}},
+	// The applier of the test of the plan of principal 0: a connection to
+	// the holder of Plans and to no other service, the boot image for the
+	// description of its exports and for the hash of the holder that the
+	// plan names, and the grant to act for the principal, which plans.apply
+	// asks.
+	{name = "plan_applier", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	// The holder of Settings that the plan of that test names: it writes
+	// its line and stops, and needs no grant.
+	{name = "settings_stand_in"},
 	// The writer of the test of the record output log: its end comes in
 	// its context before its first instruction, and it needs no grant. Its
 	// log budget holds 0 records (budgets.odin).

@@ -4,8 +4,15 @@
 //
 // Each role contract is described strictly in terms of required exports, ring
 // faces, and record streams, then hashed canonically by role_contract.contract_hash.
+//
+// Each table is constant data, with its slices as literals inside it: a
+// table whose initializer slices another variable needs the start of a
+// program, which a module never runs, and stays zero on the machine
+// (docs/MODULE_CONTRACT.md, "Package variables are constant data at the
+// load").
 package root_delegation
 
+import "modus:contract/blake3"
 import op "modus:contract/operation"
 import "modus:contract/palette_table"
 import "modus:contract/role_contract"
@@ -38,7 +45,7 @@ READ_ONLY_RIGHTS :: u32(1) << u32(op.Right.Read)
 READ_WRITE_RIGHTS :: (u32(1) << u32(op.Right.Read)) | (u32(1) << u32(op.Right.Write))
 
 // --- Input ---
-@(private = "file")
+@(private = "file", rodata)
 input_faces := [1]role_contract.Required_Face {
 	{
 		kind = .Ring,
@@ -56,19 +63,16 @@ input_faces := [1]role_contract.Required_Face {
 
 // --- Console ---
 @(private = "file", rodata)
-console_exports := [1]role_contract.Required_Export {
-	{
-		name              = "status",
-		parameters        = nil,
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-}
-
-@(private = "file")
 console_faces := [2]role_contract.Required_Face {
-	{kind = .Exports, name = "console_exports", exports = console_exports[:]},
+	{kind = .Exports, name = "console_exports", exports = {
+		{
+			name              = "status",
+			parameters        = nil,
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+	}},
 	{
 		kind = .Ring,
 		name = "palette_ring",
@@ -84,7 +88,7 @@ console_faces := [2]role_contract.Required_Face {
 }
 
 // --- Terminal ---
-@(private = "file")
+@(private = "file", rodata)
 terminal_faces := [1]role_contract.Required_Face {
 	{
 		kind = .Ring,
@@ -101,7 +105,7 @@ terminal_faces := [1]role_contract.Required_Face {
 }
 
 // --- Start_Policy ---
-@(private = "file")
+@(private = "file", rodata)
 start_policy_faces := [2]role_contract.Required_Face {
 	{
 		kind = .Ring,
@@ -128,57 +132,45 @@ start_policy_faces := [2]role_contract.Required_Face {
 
 // --- Storage ---
 @(private = "file", rodata)
-storage_read_params := [3]role_contract.Required_Parameter {
-	{type = .Integer, direction = .Read},
-	{type = .Text, direction = .Read},
-	{type = .Bytes, direction = .Change},
-}
-
-@(private = "file", rodata)
-storage_write_params := [3]role_contract.Required_Parameter {
-	{type = .Integer, direction = .Read},
-	{type = .Text, direction = .Read},
-	{type = .Bytes, direction = .Read},
-}
-
-@(private = "file", rodata)
-storage_remove_params := [2]role_contract.Required_Parameter {
-	{type = .Integer, direction = .Read},
-	{type = .Text, direction = .Read},
-}
-
-@(private = "file")
-storage_exports := [3]role_contract.Required_Export {
-	{
-		name              = "read",
-		parameters        = storage_read_params[:],
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-	{
-		name              = "write",
-		parameters        = storage_write_params[:],
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-	{
-		name              = "remove",
-		parameters        = storage_remove_params[:],
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-}
-
-@(private = "file")
 storage_faces := [1]role_contract.Required_Face {
-	{kind = .Exports, name = "storage_exports", exports = storage_exports[:]},
+	{kind = .Exports, name = "storage_exports", exports = {
+		{
+			name              = "read",
+			parameters        = {
+				{type = .Integer, direction = .Read},
+				{type = .Text, direction = .Read},
+				{type = .Bytes, direction = .Change},
+			},
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+		{
+			name              = "write",
+			parameters        = {
+				{type = .Integer, direction = .Read},
+				{type = .Text, direction = .Read},
+				{type = .Bytes, direction = .Read},
+			},
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+		{
+			name              = "remove",
+			parameters        = {
+				{type = .Integer, direction = .Read},
+				{type = .Text, direction = .Read},
+			},
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+	}},
 }
 
 // --- Network ---
-@(private = "file")
+@(private = "file", rodata)
 network_faces := [2]role_contract.Required_Face {
 	{
 		kind = .Ring,
@@ -207,7 +199,7 @@ network_faces := [2]role_contract.Required_Face {
 }
 
 // --- Remote_Display ---
-@(private = "file")
+@(private = "file", rodata)
 remote_display_faces := [2]role_contract.Required_Face {
 	{
 		kind = .Ring,
@@ -237,20 +229,17 @@ remote_display_faces := [2]role_contract.Required_Face {
 
 // --- Disk_Processes ---
 @(private = "file", rodata)
-disk_processes_exports := [1]role_contract.Required_Export {
-	{
-		name               = "status",
-		parameters         = nil,
-		result             = .Record,
-		result_record_name = "Disk_Processes_Status",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-}
-
-@(private = "file")
 disk_processes_faces := [2]role_contract.Required_Face {
-	{kind = .Exports, name = "disk_processes_exports", exports = disk_processes_exports[:]},
+	{kind = .Exports, name = "disk_processes_exports", exports = {
+		{
+			name               = "status",
+			parameters         = nil,
+			result             = .Record,
+			result_record_name = "Disk_Processes_Status",
+			has_error_record   = true,
+			error_record_name  = "Error_Record",
+		},
+	}},
 	{
 		kind = .Ring,
 		name = "disk_processes_ring",
@@ -267,20 +256,17 @@ disk_processes_faces := [2]role_contract.Required_Face {
 
 // --- Principals ---
 @(private = "file", rodata)
-principals_exports := [1]role_contract.Required_Export {
-	{
-		name               = "status",
-		parameters         = nil,
-		result             = .Record,
-		result_record_name = "Principals_Status",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-}
-
-@(private = "file")
 principals_faces := [2]role_contract.Required_Face {
-	{kind = .Exports, name = "principals_exports", exports = principals_exports[:]},
+	{kind = .Exports, name = "principals_exports", exports = {
+		{
+			name               = "status",
+			parameters         = nil,
+			result             = .Record,
+			result_record_name = "Principals_Status",
+			has_error_record   = true,
+			error_record_name  = "Error_Record",
+		},
+	}},
 	{
 		kind = .Ring,
 		name = "principals_ring",
@@ -297,20 +283,17 @@ principals_faces := [2]role_contract.Required_Face {
 
 // --- Devices ---
 @(private = "file", rodata)
-devices_exports := [1]role_contract.Required_Export {
-	{
-		name               = "status",
-		parameters         = nil,
-		result             = .Record,
-		result_record_name = "Devices_Status",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-}
-
-@(private = "file")
 devices_faces := [2]role_contract.Required_Face {
-	{kind = .Exports, name = "devices_exports", exports = devices_exports[:]},
+	{kind = .Exports, name = "devices_exports", exports = {
+		{
+			name               = "status",
+			parameters         = nil,
+			result             = .Record,
+			result_record_name = "Devices_Status",
+			has_error_record   = true,
+			error_record_name  = "Error_Record",
+		},
+	}},
 	{
 		kind = .Ring,
 		name = "devices_ring",
@@ -326,68 +309,62 @@ devices_faces := [2]role_contract.Required_Face {
 }
 
 // --- Settings ---
+// The getters give a member of a closed set (settings.Font,
+// settings.Appearance, scale_factor.Scale): their result is an Enum, as the
+// module file of `settings` describes it.
 @(private = "file", rodata)
-settings_zone_params := [1]role_contract.Required_Parameter {
-	{type = .Text, direction = .Read},
-}
-
-@(private = "file")
-settings_exports := [4]role_contract.Required_Export {
-	{
-		name              = "set_time_zone",
-		parameters        = settings_zone_params[:],
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-	{
-		name              = "font",
-		parameters        = nil,
-		result            = .Integer,
-		has_error_record  = false,
-	},
-	{
-		name              = "appearance",
-		parameters        = nil,
-		result            = .Integer,
-		has_error_record  = false,
-	},
-	{
-		name              = "scale",
-		parameters        = nil,
-		result            = .Integer,
-		has_error_record  = false,
-	},
-}
-
-@(private = "file")
 settings_faces := [1]role_contract.Required_Face {
-	{kind = .Exports, name = "settings_exports", exports = settings_exports[:]},
+	{kind = .Exports, name = "settings_exports", exports = {
+		{
+			name              = "set_time_zone",
+			parameters        = {
+				{type = .Text, direction = .Read},
+			},
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+		{
+			name              = "font",
+			parameters        = nil,
+			result            = .Enum,
+			has_error_record  = false,
+		},
+		{
+			name              = "appearance",
+			parameters        = nil,
+			result            = .Enum,
+			has_error_record  = false,
+		},
+		{
+			name              = "scale",
+			parameters        = nil,
+			result            = .Enum,
+			has_error_record  = false,
+		},
+	}},
 }
 
 // --- Plans ---
-@(private = "file")
-plans_exports := [2]role_contract.Required_Export {
-	{
-		name               = "status",
-		parameters         = nil,
-		result             = .Record,
-		result_record_name = "Plans_Status",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-	{
-		name              = "current_generation",
-		parameters        = nil,
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-}
-
-@(private = "file")
+@(private = "file", rodata)
 plans_faces := [2]role_contract.Required_Face {
-	{kind = .Exports, name = "plans_exports", exports = plans_exports[:]},
+	{kind = .Exports, name = "plans_exports", exports = {
+		{
+			name               = "status",
+			parameters         = nil,
+			result             = .Record,
+			result_record_name = "Plans_Status",
+			has_error_record   = true,
+			error_record_name  = "Error_Record",
+		},
+		{
+			name              = "current_generation",
+			parameters        = nil,
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+	}},
 	{
 		kind = .Ring,
 		name = "plans_service_ring",
@@ -404,20 +381,17 @@ plans_faces := [2]role_contract.Required_Face {
 
 // --- Recipes ---
 @(private = "file", rodata)
-recipes_exports := [1]role_contract.Required_Export {
-	{
-		name               = "status",
-		parameters         = nil,
-		result             = .Record,
-		result_record_name = "Recipes_Status",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-}
-
-@(private = "file")
 recipes_faces := [2]role_contract.Required_Face {
-	{kind = .Exports, name = "recipes_exports", exports = recipes_exports[:]},
+	{kind = .Exports, name = "recipes_exports", exports = {
+		{
+			name               = "status",
+			parameters         = nil,
+			result             = .Record,
+			result_record_name = "Recipes_Status",
+			has_error_record   = true,
+			error_record_name  = "Error_Record",
+		},
+	}},
 	{
 		kind = .Ring,
 		name = "recipes_service_ring",
@@ -434,27 +408,24 @@ recipes_faces := [2]role_contract.Required_Face {
 
 // --- Projects ---
 @(private = "file", rodata)
-projects_exports := [2]role_contract.Required_Export {
-	{
-		name               = "status",
-		parameters         = nil,
-		result             = .Record,
-		result_record_name = "Projects_Status",
-		has_error_record   = true,
-		error_record_name  = "Error_Record",
-	},
-	{
-		name              = "active_console_count",
-		parameters        = nil,
-		result            = .Integer,
-		has_error_record  = true,
-		error_record_name = "Error_Record",
-	},
-}
-
-@(private = "file")
 projects_faces := [2]role_contract.Required_Face {
-	{kind = .Exports, name = "projects_exports", exports = projects_exports[:]},
+	{kind = .Exports, name = "projects_exports", exports = {
+		{
+			name               = "status",
+			parameters         = nil,
+			result             = .Record,
+			result_record_name = "Projects_Status",
+			has_error_record   = true,
+			error_record_name  = "Error_Record",
+		},
+		{
+			name              = "active_console_count",
+			parameters        = nil,
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+	}},
 	{
 		kind = .Ring,
 		name = "projects_service_ring",
@@ -523,4 +494,27 @@ role_contract_by_role :: proc "contextless" (role: role_contract.Role) -> (contr
 role_contract_hash_by_role :: proc "contextless" (role: role_contract.Role) -> (hash: role_contract.Contract_Hash, ok: bool) {
 	contract := role_contract_by_role(role) or_return
 	return role_contract.contract_hash(contract)
+}
+
+// role_contracts_digest gives one hash of the contracts of each role, in
+// the order of the roles: for each role with a contract, its number, 1
+// when its contract passes its canonical encoding, and its hash. The root
+// service writes it at its start and the tool computes it on the host: a
+// contract that a machine reads in another form gives another digest.
+role_contracts_digest :: proc "contextless" () -> (digest: blake3.Hash, contracts: u64, encoded: u64) {
+	bytes: [len(role_contract.Role) * (2 + blake3.HASH_SIZE)]u8
+	written := 0
+	for role in role_contract.Role {
+		if _, known := role_contract_by_role(role); !known {
+			continue
+		}
+		hash, hashed := role_contract_hash_by_role(role)
+		bytes[written] = u8(role)
+		bytes[written + 1] = hashed ? 1 : 0
+		copy(bytes[written + 2:][:blake3.HASH_SIZE], hash[:])
+		written += 2 + blake3.HASH_SIZE
+		contracts += 1
+		encoded += hashed ? 1 : 0
+	}
+	return blake3.hash(bytes[:written]), contracts, encoded
 }

@@ -24,6 +24,10 @@ BOOT_IMAGE_SHORTAGE :: foundation.BOOT_IMAGE_SHORTAGE
 // with a start list whose row of the console names no module, and a rescue
 // list with the two rows of the test of the restarts (start_lists.odin).
 BOOT_IMAGE_MISSING_CONSOLE :: foundation.BOOT_IMAGE_MISSING_CONSOLE
+// The boot image of the test of the plan of principal 0 and of the audit
+// of the collector: the modules of the boot image, and its three test
+// modules, with the default lists.
+BOOT_IMAGE_PLAN_AND_AUDIT :: foundation.BOOT_IMAGE_PLAN_AND_AUDIT
 // The boot image of a measure run: the usual one, with one resource more,
 // which the root service looks for (docs/TOOLS.md, "A check by count, a measure by time").
 BOOT_IMAGE_MEASURE :: foundation.BUILD_FOLDER + "/boot_measure.image"
@@ -119,8 +123,9 @@ build_modules :: proc() -> bool {
 	// process shortage (the test of the shortage of frames).
 	// The fifth holds the module of the operation sequences, which no
 	// other image holds. The sixth has a start list whose row of the
-	// console names no module: the rescue takes over.
-	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, foundation.START_POLICY_MODULE, all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(foundation.BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_MISSING_CONSOLE, "", all_resources[:])
+	// console names no module: the rescue takes over. The seventh holds the
+	// test modules of the plan of principal 0 and of the audit.
+	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, foundation.START_POLICY_MODULE, all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(foundation.BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_MISSING_CONSOLE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_PLAN_AND_AUDIT, "", all_resources[:])
 	if images_built {
 		// The fourth is the image of a measure run: the same modules and one
 		// resource more, so a measure runs the code that a test checked.
@@ -132,7 +137,7 @@ build_modules :: proc() -> bool {
 		append(&all_resources, resources.Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
 		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
 	}
-	build_measure_step("the six boot images", step_started)
+	build_measure_step("the seven boot images", step_started)
 	return images_built
 }
 
