@@ -171,8 +171,8 @@ when WRITTEN_SHAPING_COMPILED_IN {
 		module_process_fonts_open :: proc "c" (held: ^system.Table_To_Append(Held_Font), error: ^errors.Error_Record) -> i64 ---
 		@(link_name = "line_shape")
 		module_line_shape :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(Placed_Glyph), error: ^errors.Error_Record) -> i64 ---
-		@(link_name = "line_width")
-		module_line_width :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 ---
+		@(link_name = "line_widths")
+		module_line_widths :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, ranges: ^system.Table_To_Change(Text_Range), error: ^errors.Error_Record) -> i64 ---
 		@(link_name = "line_fit")
 		module_line_fit :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, room: i64, error: ^errors.Error_Record) -> i64 ---
 		@(link_name = "glyph_find")
@@ -222,12 +222,9 @@ when WRITTEN_SHAPING_COMPILED_IN {
 		bytes := text_to_read(text)
 		error: errors.Error_Record
 		if len(placed) == 0 {
-			width = module_line_width(i64(spacing.face), i64(spacing.size), &bytes, &error)
-			if width < 0 {
-				return 0, 0, false
-			}
 			// The count is not asked: a caller with no room reads the width.
-			return 0, width, true
+			width, called = module_width(spacing, text)
+			return 0, width, called
 		}
 		table := system.Table_To_Append(Placed_Glyph){records = raw_data(placed), capacity = u64(len(placed))}
 		total := module_line_shape(i64(spacing.face), i64(spacing.size), &bytes, &table, &error)
@@ -241,8 +238,22 @@ when WRITTEN_SHAPING_COMPILED_IN {
 			}
 			return count, width, true
 		}
-		width = module_line_width(i64(spacing.face), i64(spacing.size), &bytes, &error)
-		return count, max(width, 0), width >= 0
+		width, called = module_width(spacing, text)
+		return count, width, called
+	}
+
+	// module_width gives the width of a line through the module: one range
+	// of the whole text, whose width the export writes.
+	@(private)
+	module_width :: proc "contextless" (spacing: ^Spacing, text: []u8) -> (width: i64, called: bool) {
+		bytes := text_to_read(text)
+		ranges := [1]Text_Range{{start = 0, count = u32(len(text))}}
+		table := system.Table_To_Change(Text_Range){records = &ranges[0], count = 1, capacity = 1}
+		error: errors.Error_Record
+		if module_line_widths(i64(spacing.face), i64(spacing.size), &bytes, &table, &error) != 1 {
+			return 0, false
+		}
+		return ranges[0].width, true
 	}
 
 	@(private)

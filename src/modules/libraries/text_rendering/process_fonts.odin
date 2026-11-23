@@ -2,6 +2,7 @@ package text_rendering_module
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import "modus:system"
 import "modus:text_rendering"
@@ -37,17 +38,63 @@ process_records_room: font_outlines.Record_Room
 @(private)
 process_scripts_mapped: bool
 
-// process_fonts_open_from opens the fonts of the process into the state of
-// this copy: the font outlines, then the script font set when scripts is
-// not nil. A host test calls it with outlines of its own; a freestanding
-// build reads the fixed ranges of the process (process_fonts_open).
-process_fonts_open_from :: proc "contextless" (outlines: ^font_outlines.Outlines, scripts: ^font_outlines.Outlines) {
-	_ = text_rendering.open(outlines)
-	if scripts != nil {
-		_ = text_rendering.script_fonts_open(scripts)
-		process_scripts_mapped = true
+// The place of a resource of fonts in the process: where its starter
+// mapped it, the span of its range, and whether it mapped it.
+@(private)
+Resource_Place :: struct {
+	range:  fixed_addresses.Address_Range,
+	mapped: bool,
+}
+
+when ODIN_OS == .Freestanding {
+	// process_places gives the fixed ranges of the font outlines and of the
+	// script font set of the calling process.
+	@(private)
+	process_places :: proc "contextless" () -> (boot, scripts: Resource_Place) {
+		mapped := fixed_addresses.ranges_mapped(&system.context_record().values)
+		boot_range := fixed_addresses.range_of(.Font_Outlines)
+		set_range := fixed_addresses.range_of(.Script_Fonts)
+		boot = {range = boot_range, mapped = .Font_Outlines in mapped}
+		scripts = {range = set_range, mapped = .Script_Fonts in mapped}
+		return
 	}
-	intrinsics.atomic_store_explicit(&process_fonts_stage, .Open, .Release)
+} else {
+	// A host test gives the places of its resources, as a starter maps them,
+	// so the export runs the path of a process.
+	@(private)
+	process_places_of_test: [2]Resource_Place
+	@(private)
+	process_places :: proc "contextless" () -> (boot, scripts: Resource_Place) {
+		return process_places_of_test[0], process_places_of_test[1]
+	}
+}
+
+// process_fonts_open_at opens the fonts of the process into the state of
+// this copy: the font outlines, then the script font set when its starter
+// mapped one. One room holds the records of each in turn, so the fonts of
+// the boot image are opened before the room takes the records of the set:
+// an open reads the records that its validation copied. A record of the
+// set named as a font of the boot image is not read: the set opens the
+// fonts of the script font set only.
+@(private)
+process_fonts_open_at :: proc "contextless" (boot, scripts: Resource_Place) {
+	if !boot.mapped {
+		return
+	}
+	outlines, problem := font_outlines.validate_at(uintptr(boot.range.address), boot.range.span, process_records_room[:])
+	if problem.kind != .None {
+		return
+	}
+	_ = text_rendering.open(&outlines)
+	if !scripts.mapped {
+		return
+	}
+	set, set_problem := font_outlines.validate_at(uintptr(scripts.range.address), scripts.range.span, process_records_room[:])
+	if set_problem.kind != .None {
+		return
+	}
+	_ = text_rendering.script_fonts_open(&set)
+	process_scripts_mapped = true
 }
 
 // process_fonts_ready gives the spacing of a face at a size over the fonts
@@ -105,31 +152,27 @@ process_text :: proc "contextless" (text: ^system.Bytes_To_Read, argument: i64, 
 	return text.bytes[:count], true
 }
 
-// process_fonts_open opens the fonts of the calling process for the written part, once: the font outlines that its starter mapped, and the script font set when the starter mapped one, with the caches of the walk of their tables. It appends one record for each font of the script font set when the starter mapped a set: Open (its measures and its glyph count), Missing, or Refused (its tables of GSUB and GPOS pass the bound of their read). A second call opens nothing and appends the same records. The result is the count of records of the full answer, or -1 with an error record: a table over 2^40 records (argument 1, Too_Long), or another thread of the process that opens them now (Absent).
+// process_fonts_open opens the fonts of the calling process for the written part, once: the font outlines that its starter mapped, and the script font set when the starter mapped one, with the caches of the walk of their tables. It appends one record for each font of the script font set when the starter mapped a set: Open (its measures and its glyph count), Missing, or Refused (its tables of GSUB and GPOS pass the bound of their read). A second call opens nothing and appends the same records; a call while another thread of the process opens them waits for the end of that open, whose reads are bounded. The result is the count of records of the full answer, or -1 with an error record: a table over 2^40 records (argument 1, Too_Long).
 @(export, link_name = "process_fonts_open")
 process_fonts_open :: proc "c" (held: ^system.Table_To_Append(text_rendering.Held_Font), error: ^errors.Error_Record) -> i64 {
 	capacity, held_count := held.capacity, held.count
 	if capacity > TABLE_LIMIT || held_count > TABLE_LIMIT {
 		return errors.fail(error, -1, .Too_Long, .Records, 1, i64(min(max(capacity, held_count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 	}
-	if _, opening := intrinsics.atomic_compare_exchange_strong_explicit(&process_fonts_stage, .Closed, .Opening, .Acquire, .Acquire); opening {
-		when ODIN_OS == .Freestanding {
-			values := &system.context_record().values
-			if outlines, problem := font_outlines.open(values, process_records_room[:]); problem.kind == .None {
-				scripts, script_problem := font_outlines.script_fonts_open(values, process_records_room[:])
-				// The boot fonts are opened before the room holds the
-				// records of the set.
-				_ = text_rendering.open(&outlines)
-				if script_problem.kind == .None {
-					_ = text_rendering.script_fonts_open(&scripts)
-					process_scripts_mapped = true
-				}
+	// One thread opens; a thread that comes during the open waits for its
+	// end, as the open is bounded by the reads of each font.
+	for stage := intrinsics.atomic_load_explicit(&process_fonts_stage, .Acquire); stage != .Open; stage = intrinsics.atomic_load_explicit(&process_fonts_stage, .Acquire) {
+		switch stage {
+		case .Closed:
+			if _, opening := intrinsics.atomic_compare_exchange_strong_explicit(&process_fonts_stage, .Closed, .Opening, .Acquire, .Acquire); opening {
+				boot, scripts := process_places()
+				process_fonts_open_at(boot, scripts)
+				intrinsics.atomic_store_explicit(&process_fonts_stage, .Open, .Release)
 			}
+		case .Opening:
+			intrinsics.cpu_relax()
+		case .Open:
 		}
-		intrinsics.atomic_store_explicit(&process_fonts_stage, .Open, .Release)
-	}
-	if intrinsics.atomic_load_explicit(&process_fonts_stage, .Acquire) != .Open {
-		return errors.fail(error, -1, .Absent, .None, 0)
 	}
 	found: u64
 	if process_scripts_mapped {
@@ -168,19 +211,29 @@ line_shape :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, place
 	return i64(placed.count)
 }
 
-// line_width gives the width of a UTF-8 text of one line in a face at a text size, over the fonts of the calling process, in 1/64 of a pixel: the sum of the advances of its placed glyphs (line_shape). A width can be below 0, when the pairs of a font take more than the advances; a refusal is told by the error record, with the result -1: a face (argument 1), a size (argument 2) or a text (argument 3) as for line_shape, or fonts of the process that are not open (Absent).
-@(export, link_name = "line_width")
-line_width :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+// line_widths writes the width of each text of a table of ranges into one table of bytes, in a face at a text size, over the fonts of the calling process, in 1/64 of a pixel: the sum of the advances of its placed glyphs (line_shape). A width is a field of its range, so a width below 0, when the pairs of a font take more than the advances, is told apart from a refusal. The result is the count of ranges, or -1 with an error record: a face (argument 1) or a size (argument 2) as for line_shape, a table of bytes (argument 3) or of ranges (argument 4) over 2^40, a range past the end of the bytes (Out_Of_Range: its end, the count of bytes, the number of the range from 1), a range of more than 65536 bytes (Too_Long: its count, the limit, the number of the range from 1), or fonts of the process that are not open (Absent). The ranges before the one that fails have their width; it and the ranges after it are not written.
+@(export, link_name = "line_widths")
+line_widths :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, ranges: ^system.Table_To_Change(text_rendering.Text_Range), error: ^errors.Error_Record) -> i64 {
 	spacing, ok := process_spacing(face, size, error)
 	if !ok {
 		return -1
 	}
-	bytes, text_ok := process_text(text, 3, error)
-	if !text_ok {
-		return -1
+	text_count, range_count := text.count, ranges.count
+	if text_count > TABLE_LIMIT {
+		return errors.fail(error, -1, .Too_Long, .Bytes, 3, i64(min(text_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 	}
-	width, _ := text_rendering.text_width(&spacing, bytes)
-	return width
+	if range_count > TABLE_LIMIT {
+		return errors.fail(error, -1, .Too_Long, .Records, 4, i64(min(range_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+	}
+	problem, index, end := text_rendering.measure_ranges(&spacing, text.bytes[:text_count], ranges.records[:range_count])
+	switch problem {
+	case .Past_The_Text:
+		return errors.fail(error, -1, .Out_Of_Range, .Bytes, 4, i64(end), i64(text_count), i64(index + 1))
+	case .Too_Long:
+		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(end), text_rendering.TEXT_LIMIT, i64(index + 1))
+	case .None:
+	}
+	return i64(range_count)
 }
 
 // line_fit gives the bytes of the longest start of a UTF-8 text in a face at a text size, over the fonts of the calling process, whose width is at most room, in 1/64 of a pixel: whole clusters, so a cut never splits a character, a letter from its marks or a syllable. 0 for a room below the first advance. The result is the bytes, or -1 with an error record: a face (argument 1), a size (argument 2) or a text (argument 3) as for line_shape, or fonts of the process that are not open (Absent).
@@ -217,7 +270,7 @@ glyph_find :: proc "c" (face: i64, character: i64, error: ^errors.Error_Record) 
 	return i64(font) << 16 | i64(index & 0xFFFF)
 }
 
-// glyph_outline appends the outline of a glyph of a font of the chain of a face, over the fonts of the calling process: its points, in units of the font, and the index after the last point of each contour. The result is the advance of the glyph in units of the font, or -1 with an error record: a face that is not 1 to 5 (argument 1), a font that the face does not name or that is not open (argument 2), a glyph index past the font (argument 3), points (argument 4) or contours (argument 5) that do not fit their table (Full), an outline that the reader refuses (Bad_Value: value the vector_font.Font_Problem), or fonts of the process that are not open (Absent). The tables of the caller start empty: the count on entry is 0.
+// glyph_outline appends the outline of a glyph of a font of the chain of a face, over the fonts of the calling process: its points, in units of the font, and the index after the last point of each contour. The result is the advance of the glyph in units of the font, or -1 with an error record: a face that is not 1 to 5 (argument 1), a font that the face does not name or that is not open (argument 2), a glyph index past the font (argument 3), points (argument 4) or contours (argument 5) that do not fit their table (Full), an outline that the reader refuses (Bad_Value: value the vector_font.Font_Problem), or fonts of the process that are not open (Absent). The tables of the caller start empty: the count on entry is 0. On a refusal both counts stay 0, so the caller reads no record; the reader may have written records past them, in the capacity of the tables, before it refused the outline.
 @(export, link_name = "glyph_outline")
 glyph_outline :: proc "c" (face: i64, font: i64, glyph: i64, points: ^system.Table_To_Append(text_rendering.Outline_Word), contours: ^system.Table_To_Append(text_rendering.Contour_End), error: ^errors.Error_Record) -> i64 {
 	face_checked, face_ok := text_rendering.face_of_word(face)

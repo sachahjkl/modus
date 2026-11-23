@@ -78,9 +78,11 @@ a_separator_and_the_space_before_it_take_the_paragraph_level :: proc(t: ^testing
 // The bounds of N0: 63 openings nested in a line of left to right after a
 // letter of right to left pair with their closings, so the closing of the
 // outer pair takes R; 64 openings fill the stack, the search stops there as
-// BD16 says, no pair is found, and N1 gives that closing L. 63 pairs one
-// after the other resolve; 64 are refused visibly: the line keeps the
-// order of its text, every level 0.
+// BD16 says, no pair is found, and N1 gives that closing L. Pairs one
+// after the other keep the order of the line: 63, 64, and 169, the most
+// that a line of BIDI_GLYPH_LIMIT glyphs holds with a letter in each. The
+// table of the pairs holds each pair that a line can have: 255 and 256
+// pairs, 256 the most in BIDI_GLYPH_LIMIT glyphs, are kept.
 @(test)
 the_bounds_of_the_bracket_pairs :: proc(t: ^testing.T) {
 	test_state_take()
@@ -102,17 +104,22 @@ the_bounds_of_the_bracket_pairs :: proc(t: ^testing.T) {
 		paired := depth <= BIDI_BRACKET_STACK_LIMIT
 		testing.expectf(t, closing == (paired ? 1 : 0), "%d openings: the last closing at the level %d", depth, closing)
 	}
-	for pairs in ([2]int{BIDI_BRACKET_PAIR_LIMIT, BIDI_BRACKET_PAIR_LIMIT + 1}) {
+	for pairs in ([3]int{63, 64, (BIDI_GLYPH_LIMIT - 4) / 3}) {
 		text := strings.concatenate({"x א", strings.repeat("(ב)", pairs, context.temp_allocator), "a"}, context.temp_allocator)
 		levels, count, rtl := levels_at(t, text, placed)
-		if pairs <= BIDI_BRACKET_PAIR_LIMIT {
-			testing.expectf(t, rtl && levels[count - 2] == 1, "%d pairs: the last closing at %d", pairs, levels[count - 2])
-		} else {
-			all_zero := true
-			for level in levels[:count] {
-				all_zero &&= level == 0
-			}
-			testing.expectf(t, !rtl && all_zero, "%d pairs: the line keeps the order of its text", pairs)
+		testing.expectf(t, count <= BIDI_GLYPH_LIMIT && rtl && levels[count - 2] == 1, "%d pairs: the last closing at %d", pairs, levels[count - 2])
+	}
+	for pairs in ([2]int{BIDI_BRACKET_PAIR_LIMIT - 1, BIDI_BRACKET_PAIR_LIMIT}) {
+		text := strings.repeat("()", pairs, context.temp_allocator)
+		count := 2 * pairs
+		classes := make([]Bidi_Class, count, context.temp_allocator)
+		sequence := make([]u16, count, context.temp_allocator)
+		brackets := make([]Placed_Glyph, count, context.temp_allocator)
+		for index in 0 ..< count {
+			classes[index] = .ON
+			sequence[index] = u16(index)
+			brackets[index] = {cluster = u32(index), placement = .Base}
 		}
+		testing.expectf(t, count <= BIDI_GLYPH_LIMIT && brackets_resolve(classes, sequence, .R, .R, transmute([]u8)text, brackets), "%d pairs are kept", pairs)
 	}
 }

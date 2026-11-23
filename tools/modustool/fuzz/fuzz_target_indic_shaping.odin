@@ -39,9 +39,12 @@ fuzz_indic_fonts: ^text_rendering.Font_Set
 fuzz_indic_words: []u64
 
 fuzz_indic_shaping_start :: proc() -> bool {
+	// With no Noto Sans Devanagari the target has nothing to shape: it does
+	// not start, so the run counts no execution as a pass.
+	// fuzz_script_font_file said why on the error output.
 	devanagari, found := fuzz_script_font_file("noto_sans_devanagari")
 	if !found {
-		return true // fuzz_script_font_file said why; each execution passes.
+		return false
 	}
 	fonts := [6]font_outlines.Font_Input {
 		{"b612", #load("../../../resources/fonts/b612.ttf")},
@@ -95,8 +98,9 @@ fuzz_indic_text :: proc(input: []u8) -> []u8 {
 }
 
 fuzz_indic_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
+	// The start opened the fonts, or the target did not start.
 	if fuzz_indic_fonts == nil {
-		return FUZZ_PASSED
+		return fuzz_broken(.Contract, "the target runs with no fonts: its start did not open Noto Sans Devanagari")
 	}
 	head: Fuzz_Indic_Head
 	copy(mem.ptr_to_bytes(&head), input)

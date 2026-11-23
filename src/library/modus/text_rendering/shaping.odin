@@ -551,16 +551,16 @@ FONT_MARK_LIMIT :: vector_font.SEQUENCE_LIMIT
 // the glyphs of the marks that the font made; changed is false when the
 // font changes nothing.
 @(private)
-font_forms :: proc "contextless" (set: ^Font_Set, font: Outline_Font, index: int, before, after: bool, marks: ^[FONT_MARK_LIMIT]int) -> (body, mark_count: int, changed: bool) {
+font_forms :: proc "contextless" (set: ^Font_Set, font: Outline_Font, index: int, before, after: bool, marks: ^[FONT_MARK_LIMIT]int, budget: ^vector_font.Layout_Budget) -> (body, mark_count: int, changed: bool) {
 	file := &font_at(set, font).file
 	parts: [vector_font.SEQUENCE_LIMIT]int
-	part_count, problem := vector_font.script_substitution(file, ARAB, {'c', 'c', 'm', 'p'}, index, parts[:])
+	part_count, problem := vector_font.script_substitution(file, ARAB, {'c', 'c', 'm', 'p'}, index, parts[:], budget)
 	if problem != .None {
 		parts[0], part_count = index, 1
 	}
 	formed: [vector_font.SEQUENCE_LIMIT]int
 	formed_count: int
-	formed_count, problem = vector_font.script_substitution(file, ARAB, form_feature(before, after), parts[0], formed[:])
+	formed_count, problem = vector_font.script_substitution(file, ARAB, form_feature(before, after), parts[0], formed[:], budget)
 	if problem != .None {
 		formed[0], formed_count = parts[0], 1
 	}
@@ -606,7 +606,7 @@ opentype_script_of :: proc "contextless" (character: rune) -> vector_font.Featur
 // (mkmk), else on its base (mark). A mark of another font than its base, or
 // with no anchor, stays Centred: the reader centres it.
 @(private)
-mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Shaped, mark: ^Resolved) {
+mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Shaped, mark: ^Resolved, budget: ^vector_font.Layout_Budget) {
 	font := mark.font
 	if font == .None || font != shaped.base.font || spacing.cell_advance > 0 {
 		return
@@ -620,7 +620,7 @@ mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sh
 	if shaped.mark_count > 0 {
 		before := &shaped.marks[shaped.mark_count - 1]
 		if before.font == font && before.placement == .Anchored {
-			if dx, dy, found, problem := vector_font.mark_anchor_offset(file, shaped.script, .Mark, int(before.index), int(mark.index)); problem == .None && found {
+			if dx, dy, found, problem := vector_font.mark_anchor_offset(file, shaped.script, .Mark, int(before.index), int(mark.index), budget); problem == .None && found {
 				mark.offset_x = i32(clamp(i64(before.offset_x) + units_at_size(dx, spacing.size, scale), -limit, limit))
 				mark.offset_y = i32(clamp(i64(before.offset_y) + units_at_size(dy, spacing.size, scale), -limit, limit))
 				mark.placement = .Anchored
@@ -628,7 +628,7 @@ mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sh
 			}
 		}
 	}
-	if dx, dy, found, problem := vector_font.mark_anchor_offset(file, shaped.script, .Base, int(shaped.base.index), int(mark.index)); problem == .None && found {
+	if dx, dy, found, problem := vector_font.mark_anchor_offset(file, shaped.script, .Base, int(shaped.base.index), int(mark.index), budget); problem == .None && found {
 		mark.offset_x = i32(clamp(units_at_size(dx, spacing.size, scale), -limit, limit))
 		mark.offset_y = i32(clamp(units_at_size(dy, spacing.size, scale), -limit, limit))
 		mark.placement = .Anchored
@@ -695,7 +695,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 			made := false
 			if file.gsub.length > 0 && file.gpos.length > 0 {
 				font_marks: [FONT_MARK_LIMIT]int
-				body, font_mark_count, changed := font_forms(shaper.set, font, int(shaped.base.index), before, after, &font_marks)
+				body, font_mark_count, changed := font_forms(shaper.set, font, int(shaped.base.index), before, after, &font_marks, &shaper.budget)
 				if changed {
 					shaped.base = resolve_index(spacing, font, body)
 					shaped.base.cluster = base_cluster
@@ -704,7 +704,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 						mark.advance = 0
 						mark.cluster = base_cluster
 						mark.placement = .Centred
-						mark_place(spacing, shaper.set, shaped, &mark)
+						mark_place(spacing, shaper.set, shaped, &mark, &shaper.budget)
 						shaped.marks[shaped.mark_count] = mark
 						shaped.mark_count += 1
 					}
@@ -731,14 +731,14 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 		shaper.after_letter = cluster.mark_count > 0
 	}
 	shaper.place = cluster.end
-	marks_add(spacing, shaper.set, shaped, &cluster)
+	marks_add(spacing, shaper.set, shaped, &cluster, &shaper.budget)
 	if ligature_made {
 		shaped.end = ligature_cluster.end
 		shaper.place = ligature_cluster.end
 		// The cluster after the ligature learns from the alef, the last
 		// cluster read, whether its SARA AM lost its NIKHAHIT.
 		shaper.sara_am_taken = ligature_cluster.sara_am_taken
-		marks_add(spacing, shaper.set, shaped, &ligature_cluster)
+		marks_add(spacing, shaper.set, shaped, &ligature_cluster, &shaper.budget)
 	}
 	return true
 }
@@ -747,7 +747,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 // the advance 0, or the replacement glyph and its advance when no font has
 // it, so that a reader sees it.
 @(private)
-marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Shaped, cluster: ^Cluster) {
+marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Shaped, cluster: ^Cluster, budget: ^vector_font.Layout_Budget) {
 	for index in 0 ..< cluster.mark_count {
 		if shaped.mark_count >= CLUSTER_MARK_LIMIT {
 			return
@@ -756,7 +756,7 @@ marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sha
 		if mark.glyph != REPLACEMENT_GLYPH || spacing.cell_advance > 0 {
 			mark.advance = 0
 			mark.placement = .Centred
-			mark_place(spacing, set, shaped, &mark)
+			mark_place(spacing, set, shaped, &mark, budget)
 		}
 		mark.cluster = cluster.mark_places[index]
 		shaped.marks[shaped.mark_count] = mark
@@ -769,12 +769,16 @@ marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sha
 // branches:
 //   - shaper_next, with the cluster that it reads, the cluster after a lam
 //     (lam-alef), the marks of the forms of a letter of Arabic, then under
-//     it mark_place and mark_anchor_offset with its Layout_Lookups;
+//     it mark_place and mark_anchor_offset with its pool of walked
+//     indices, or the lookups of a walk before it (font_forms reads the
+//     same, one at a time);
 //   - indic_shaped, never inlined into shaper_next, with its syllable, its
-//     buffer of the engine, its sources and its clusters: in a call of the
-//     library module it returns before the engine, as a call opens the
-//     fonts of the boot image only and indic_shaped takes a font of the
-//     script font set only;
+//     buffer of the engine, its sources and the glyphs of its clusters;
+//     under it indic_shape with its work (Indic_Work), then either the
+//     tests of a feature on exact glyphs (layout_would_substitute) or a
+//     stage of the engine with its nested levels
+//     (vector_font.ENGINE_DEEPEST_RECORDS_BYTES): a call over the fonts of
+//     the process runs them;
 //   - bidi_line_reorder with its levels and its order, then bidi_levels
 //     with its classes, its links and the stack of its isolates, then
 //     brackets_resolve with its openings and its pairs.
@@ -782,11 +786,11 @@ marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sha
 // against its stack bound: the freestanding build runs on no host, so its
 // frames are bounded by these sizes; the host test measures a whole call.
 @(private)
-SHAPER_NEXT_RECORDS_BYTES :: 2 * size_of(Cluster) + FONT_MARK_LIMIT * size_of(int) + size_of(vector_font.Layout_Lookups)
+SHAPER_NEXT_RECORDS_BYTES :: 2 * size_of(Cluster) + FONT_MARK_LIMIT * size_of(int) + vector_font.SUBSTITUTION_LOOKUP_LIMIT * size_of(u16) + size_of(vector_font.Layout_Lookups)
 @(private)
-INDIC_SHAPED_RECORDS_BYTES :: size_of(Indic_Syllable) + size_of(vector_font.Engine_Buffer) + INDIC_SYLLABLE_LIMIT + vector_font.ENGINE_GLYPH_LIMIT * size_of(u32)
+INDIC_SHAPED_RECORDS_BYTES :: size_of(Indic_Syllable) + size_of(vector_font.Engine_Buffer) + INDIC_SYLLABLE_LIMIT + vector_font.ENGINE_GLYPH_LIMIT * size_of(u32) + size_of(Indic_Work) + max(vector_font.ENGINE_DEEPEST_RECORDS_BYTES, vector_font.WOULD_SUBSTITUTE_RECORDS_BYTES)
 @(private)
-BIDI_RECORDS_BYTES :: BIDI_GLYPH_LIMIT * (size_of(u8) + size_of(u16)) + BIDI_GLYPH_LIMIT * (size_of(Bidi_Class) + size_of(u8)) + (BIDI_DEPTH_LIMIT + 2) + BIDI_BRACKET_STACK_LIMIT * (size_of(rune) + size_of(u16) + 2 * size_of(u16))
+BIDI_RECORDS_BYTES :: BIDI_GLYPH_LIMIT * (size_of(u8) + size_of(u16)) + BIDI_GLYPH_LIMIT * (size_of(Bidi_Class) + size_of(u8)) + (BIDI_DEPTH_LIMIT + 2) + BIDI_BRACKET_STACK_LIMIT * (size_of(rune) + size_of(u16)) + BIDI_BRACKET_PAIR_LIMIT * 2 * size_of(u16)
 SHAPE_STACK_RECORDS_BYTES :: 2 * size_of(Shaped) + max(SHAPER_NEXT_RECORDS_BYTES, INDIC_SHAPED_RECORDS_BYTES, BIDI_RECORDS_BYTES)
 
 // shape places the characters of a text: it writes the placed glyphs that

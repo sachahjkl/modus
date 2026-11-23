@@ -128,13 +128,13 @@ So the boot image holds three copies of the written part, where it held one for 
 
 **A mark apart goes to the module.** A text in NFC holds é as one character. A mark after its letter (e then U+0301) needs the compositions, the combining classes and the anchors of GPOS: 16 KB of tables and the walk of GPOS, for a form that a text of the system rarely has. So a mark is not simple, and its line goes to the module.
 
-**One call for a line.** The fast part calls the module for a whole text that it does not place: `line_shape` for the placed glyphs, `line_width` for the width, `line_fit` for the longest start that fits. The reorder of UAX #9 needs the whole line, and the pairs and the syllables cross clusters, so the border is the line. A call checks its face, its size and its text at the border, as the other exports do.
+**One call for a line.** The fast part calls the module for a whole text that it does not place: `line_shape` for the placed glyphs, `line_widths` for the widths, each a field of its range, so a width below 0 is told apart from a refusal, `line_fit` for the longest start that fits. The reorder of UAX #9 needs the whole line, and the pairs and the syllables cross clusters, so the border is the line. A call checks its face, its size and its text at the border, as the other exports do.
 
-**The fonts of a process are data of the module.** The loader gives each process one copy of the data of a module, and puts each module in a process once. `process_fonts_open` opens that copy once, from the fixed ranges of the process: the fonts of the boot image and the script font set, with the caches of the walk. `display.text_settings_load` calls it after it opens the fast part, so before the first frame. A call of a line before that open is refused, and the fast part then places the line one character at a time. After the open the state of the module is only read, so two threads of a process shape at once with no lock.
+**The fonts of a process are data of the module.** The loader gives each process one copy of the data of a module, and puts each module in a process once. `process_fonts_open` opens that copy once, from the fixed ranges of the process: the fonts of the boot image and the script font set, with the caches of the walk. `display.text_settings_load` calls it after it opens the fast part, so before the first frame. A call of a line before that open is refused, and the fast part then places the line one character at a time. A second thread that calls during the open waits for its end. The open reads the font outlines, opens the fonts of the boot image, and only then reads the records of the set into the same room, as `display.fallback_load` does: a record of the set never stands for a font of the boot image. After the open the state of the module is only read, so two threads of a process shape at once with no lock.
 
 **The draw of a glyph of the set.** The rasterizer and the private glyph cache stay in the fast part. A placed glyph of a font of the set takes its outline from the module (`glyph_outline`), with the measures of its font in the frame of the face, so the reader of CFF stays in the module. A cell of a grid (the terminal) whose cluster is not simple is read by the module (`cluster_read`), and a character that the fast part finds in no font of the boot image is found by the module (`glyph_find`).
 
-**The stack and the work.** The fast part has no engine: its work is one lookup of the character map, one advance and one pair for each character. A call of the module runs the written part with the budget of one call ([written_shaping.md](written_shaping.md), "One budget of work for one call"), on the stack of the caller. Its fonts are in its data, not on its stack, so its deepest path is the records of the shaper; the host test of the module measures the stack of each export with a line of Devanagari, of Arabic and of mixed direction, against `CALL_STACK_BOUND`.
+**The stack and the work.** The fast part has no engine: its work is one lookup of the character map, one advance and one pair for each character. A call of the module runs the written part with the budget of one call ([written_shaping.md](written_shaping.md), "One budget of work for one call"), on the stack of the caller. Its fonts are in its data, not on its stack, so its deepest path is the records of the shaper; the host test of the module measures the stack of each export with a line of Devanagari, of Arabic and of mixed direction, against `CALL_STACK_BOUND`: 13 815 bytes in a debug build. The freestanding build counts the records of its deepest path at the depth at which they run together (`SHAPE_STACK_RECORDS_BYTES`): 5 273 bytes; its frames are not measured.
 
 **A set of the caller.** A candidate font and a set of a test are not the fonts of the process, which the module holds. In a module without the written part, the fast part places such a set one character at a time.
 
@@ -150,14 +150,14 @@ So the boot image holds three copies of the written part, where it held one for 
 
 | | The written part in each module | The two parts |
 |---|---|---|
-| `boot.image` | 37 622 008 bytes | 30 978 296 bytes |
-| The debug image | 37 861 359 bytes | 30 599 151 bytes |
+| `boot.image` | 37 622 008 bytes | 30 994 680 bytes |
+| The debug image | 37 861 359 bytes | 30 631 919 bytes |
 | The volume of 64 MiB | 19 of 27 volumes do not fit | each of the 27 fits, 5.5 MB free |
 | `text_rendering` and `vector_font` in `tally` | 74 KB and 57 KB of code, 50 KB of tables | 23 KB and 9 KB of code, 7 KB of tables |
 
-With the two parts, the file of the library module `text_rendering` has 208 896 bytes and the file of the drawing module 329 659 bytes; each holds the written part once.
+With the two parts, the file of the library module `text_rendering` has 212 992 bytes and the file of the drawing module 330 523 bytes; each holds the written part once.
 
-The boot image of the last build before the written shaping held 28 938 488 bytes. The 2.0 MB past it are the three copies of the written part, the fast part in each module, and the code of the other steps since then. The tables that stay in each module are the simple characters (1.5 KB), the marks for the widths of the cells (2.9 KB), the widths of the cells and the scripts of the chains. The cluster breaks of a cell are the 27 characters of the classes WS, S and B, written in the code, so the table of the bidirectional classes, 10 KB, stays in the written part.
+The boot image of the last build before the written shaping held 28 938 488 bytes. The 2.1 MB past it are the three copies of the written part, the fast part in each module, and the code of the other steps since then. The tables that stay in each module are the simple characters (1.5 KB), the marks for the widths of the cells (2.9 KB), the widths of the cells and the scripts of the chains. The cluster breaks of a cell are the 27 characters of the classes WS, S and B, written in the code, so the table of the bidirectional classes, 10 KB, stays in the written part.
 
 ### The cache
 

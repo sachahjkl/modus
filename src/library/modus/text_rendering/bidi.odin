@@ -365,12 +365,12 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 // past them, the search stops, and the pairs found so far stay, as the
 // algorithm says.
 BIDI_BRACKET_STACK_LIMIT :: 63
-// The pairs of brackets that N0 keeps for one isolating run sequence: a
-// sequence with more is refused whole, and its line keeps the order of its
-// text, visibly, as a line past BIDI_GLYPH_LIMIT does. More room would sit
-// on the stack of a call of the library module, which this part of the
-// shaper bounds (SHAPE_STACK_RECORDS_BYTES).
-BIDI_BRACKET_PAIR_LIMIT :: 63
+// The pairs of brackets that N0 keeps for one isolating run sequence: each
+// pair takes two glyphs, so a line within BIDI_GLYPH_LIMIT never has more,
+// and no line loses its order for its brackets. The check of the bound
+// stays: a sequence with more would keep the order of its text, visibly,
+// as a line past BIDI_GLYPH_LIMIT does.
+BIDI_BRACKET_PAIR_LIMIT :: BIDI_GLYPH_LIMIT / 2
 
 
 // brackets_resolve applies N0 to one isolating run sequence: each pair of

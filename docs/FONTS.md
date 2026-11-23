@@ -376,14 +376,16 @@ A module (property 10: shared code with exports), with batch exports whose param
 |---|---|---|
 | `process_fonts_open` | the fonts of the set (Append: one `Held_Font` for each font of the script font set, Open, Missing or Refused, with its measures and its glyph count), the error record | the count of records of the full answer, or -1 |
 | `line_shape` | the face, the text size, the text, the placed glyphs (Append), the error record | the count of placed glyphs of the full answer, or -1 |
-| `line_width` | the face, the text size, the text, the error record | the width in 1/64 of a pixel; a refusal has the error record |
+| `line_widths` | the face, the text size, one table of bytes, the ranges (Change: the export writes the `width` of each), the error record | the count of ranges, or -1 |
 | `line_fit` | the face, the text size, the text, the room, the error record | the bytes of the longest start that fits, or -1 |
 | `glyph_find` | the face, the character, the error record | the font times 65536 plus the glyph index, 0 for no font, or -1 |
 | `glyph_outline` | the face, the font, the glyph index, the points (Append, `Outline_Word`), the contour ends (Append), the error record | the advance in units of the font, or -1 |
 | `cell_cluster_read` | the face, the text, the byte, the byte of a SARA AM taken, the cluster (Append), its marks (Append), the error record | 1, 0 at the end of the text, or -1 |
 
 - **Before the open**, each export is refused with `Absent`, and the fast part places a line one character at a time. `display.text_settings_load` opens the fonts of the process before its first frame.
-- **The written part** runs in the call: the marks, Arabic, Thai, the scripts of India, the order of a line of mixed direction, with the work budget of one call. The fonts are in the data of the module, not on the stack: the deepest call takes 16 039 bytes of stack in a debug build and 14 735 bytes with `-o:speed`, under `CALL_STACK_BOUND` (16 KiB).
+- **The written part** runs in the call: the marks, Arabic, Thai, the scripts of India, the order of a line of mixed direction, with the work budget of one call. The fonts are in the data of the module, not on the stack: the deepest call takes 13 815 bytes of stack on the host in a debug build and 13 055 bytes with `-o:speed`, under `CALL_STACK_BOUND` (16 KiB). The freestanding build runs on no host: there the bound is the sum of the records of the deepest path, 5 273 bytes of the 14 336 that the assert allows, and the frames take the rest. A call over bytes takes 12 215 and 12 703 bytes on the host, and 8 545 bytes of records.
+- **A call while another thread opens the fonts** waits for the end of that open, which the reads of each font bound; it never stays refused for the life of the process.
+- **An outline that the reader refuses** leaves the counts of both tables at 0: the reader may have written records past them before it refused.
 - **The drawing module and the root service** compile the written part in: a library module has no import slot, and the root service has no loader for imports.
 
 **The design before the code:**

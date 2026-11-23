@@ -72,15 +72,24 @@ script_single_substitution :: proc "contextless" (font: ^Font_File, script, tag:
 // len(out) keeps its first len(out) glyphs. Noto Sans Arabic makes beh a
 // dotless body and a dot below by the feature ccmp, then the form of the
 // body by init, medi or fina.
-script_substitution :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyph: int, out: []int) -> (count: int, problem: Font_Problem) {
+script_substitution :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyph: int, out: []int, budget: ^Layout_Budget) -> (count: int, problem: Font_Problem) {
 	if len(out) == 0 {
 		return 0, .Too_Short
 	}
-	lookups: Layout_Lookups
-	layout_lookups(font, font.gsub, script, {'D', 'F', 'L', 'T'}, tag, &lookups) or_return
+	// One feature: at most SUBSTITUTION_LOOKUP_LIMIT lookups, as a walk gives.
+	walked: [SUBSTITUTION_LOOKUP_LIMIT]u16
+	indices, _ := layout_feature_indices(font, font.gsub, script, {'D', 'F', 'L', 'T'}, tag, walked[:]) or_return
 	out[0] = glyph
 	count = 1
-	for lookup in lookups.parts[:lookups.count] {
+	for index in indices {
+		lookup := layout_lookup_of(font, font.gsub, int(index)) or_else nil
+		if lookup == nil {
+			return 0, .Too_Short
+		}
+		// A lookup and each of its subtables take from the work of the call.
+		if !layout_budget_take(budget, 1 + (read_u16(lookup, 4) or_else 0)) {
+			return 0, .Too_Much_Work
+		}
 		substitute: int
 		found := lookup_single_substitution(lookup, out[0], &substitute) or_return
 		if found {

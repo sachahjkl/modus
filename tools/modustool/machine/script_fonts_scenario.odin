@@ -7,6 +7,7 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import "modustool:build"
 import "modustool:foundation"
+import "modus:text_rendering"
 import "modustool:resources"
 
 // The script font set on a machine (src/md/features/script_fonts.md): two
@@ -19,6 +20,9 @@ import "modustool:resources"
 //      its hash and its form, and maps it; interface_font, started after,
 //      draws a line of Hebrew, Arabic, Thai, Devanagari, ideographs, an emoji and a
 //      geometric shape with no replacement glyph, each base glyph with ink.
+//      interface_font draws by hand, with no drawing module, and compiles
+//      the fast part of the text only: the library module text_rendering
+//      shapes that line and holds each font of the set.
 //   2. The object has one changed byte: the root service refuses it by
 //      its hash, maps nothing, and interface_font says that no set is
 //      mapped: the box stays, and nothing faults.
@@ -96,6 +100,10 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Launch, text = "interface_font"},
 		{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
 		{kind = .Wait, text = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws ", fails_on = "interface_font: the script font set is mapped, and the character "},
+		// interface_font draws its window by hand, with the fast part of the
+		// text only: the library module shaped the line and drew its glyphs
+		// of the set from their outlines.
+		{kind = .Wait, text = fmt.tprintf("interface_font: the library module text_rendering shaped the line and holds the %d fonts of the set", card(text_rendering.SCRIPT_FONTS)), fails_on = "interface_font: WRONG: the font "},
 		{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 		{kind = .Shot, text = "interface_font_script_fonts"},
 		{kind = .Front, text = "console"},

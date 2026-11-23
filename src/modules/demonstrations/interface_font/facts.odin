@@ -106,6 +106,21 @@ Script_Line_Drawn :: struct {
 	glyphs: u64,
 }
 
+// This module compiles the fast part of the text only: the library module
+// text_rendering shaped the line, and gave the outline of each glyph of a
+// font of the set.
+@(log_fact = "interface_font: the library module text_rendering shaped the line and holds the {fonts} fonts of the set, as this module compiles no written part")
+Script_Line_Through_Module :: struct {
+	fonts: u64,
+}
+
+// A font of the set is open in this module but not held by the library
+// module: the fast part would have opened a script font itself.
+@(log_fact = "interface_font: WRONG: the font {font} of the script font set is open in this module, not held by the library module text_rendering")
+Script_Font_Not_Held :: struct {
+	font: u64,
+}
+
 // A character of the line of the script font set is the replacement glyph
 // with the set mapped.
 @(log_fact = "interface_font: the script font set is mapped, and the character {character} of its line draws the replacement glyph")

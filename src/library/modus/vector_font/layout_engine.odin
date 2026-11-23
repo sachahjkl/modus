@@ -31,17 +31,22 @@ Layout_Budget :: struct {
 	limit: int,
 }
 
-// The units of work of one byte of a text, and of any text: the words of
-// the scripts of India take, on the fonts of the script font set, at most
-// 519 units for each byte (the_scripts_of_india_shape_as_harfbuzz prints
-// it); the bound is 63 times that, and still a linear bound of the call.
-LAYOUT_WORK_PER_BYTE :: 1 << 15
-LAYOUT_WORK_FLOOR :: 1 << 18
+// The units of work of one byte of a text, of any text, and of the
+// longest: the words of the scripts of India, Arabic and Thai take, on the
+// fonts of the script font set, at most the units for each byte that
+// the_scripts_of_india_shape_as_harfbuzz prints (519); the bound for each
+// byte is four times that. The floor holds the tests of a short word, and
+// the cap bounds the work of a whole call: a text of 64 KiB at twice the
+// measured need, about 0.1 s of work at 1 ns a unit. A call past its
+// budget draws the rest of its text with the plain glyphs.
+LAYOUT_WORK_PER_BYTE :: 1 << 11
+LAYOUT_WORK_FLOOR :: 1 << 16
+LAYOUT_WORK_CAP :: 1 << 26
 
 // layout_budget_of_text gives the budget of a call that shapes a text of
 // a count of bytes.
 layout_budget_of_text :: proc "contextless" (bytes: int) -> Layout_Budget {
-	return {limit = LAYOUT_WORK_FLOOR + max(bytes, 0) * LAYOUT_WORK_PER_BYTE}
+	return {limit = min(LAYOUT_WORK_FLOOR + clamp(bytes, 0, LAYOUT_WORK_CAP) * LAYOUT_WORK_PER_BYTE, LAYOUT_WORK_CAP)}
 }
 
 // layout_budget_take takes units of work; false when the budget is spent.
@@ -57,6 +62,25 @@ layout_budget_spent :: #force_inline proc "contextless" (budget: ^Layout_Budget)
 // The features of one stage: the presentation stage of the scripts of
 // India names eleven.
 ENGINE_STAGE_FEATURE_LIMIT :: 16
+// The lookup indices of one stage of a font that keeps no cache of its
+// walk: a font of a test or of a fuzz target. A font of a process keeps a
+// cache (layout_cache.odin), and its stage reads the indices there. A
+// stage of a font with no cache past this many is Too_Much_Work.
+ENGINE_STAGE_WALK_LIMIT :: 256
+
+// The records on the stack of the engine, for the bound of a call of the
+// library module text_rendering (SHAPE_STACK_RECORDS_BYTES): a stage, with
+// the lists of its features and its pool of walked indices; one level of a
+// contextual lookup, with the places of its input, the three sequences of a
+// chaining rule, the head of a nested lookup and the sequence of a multiple
+// substitution. A stage runs ENGINE_NESTING_LIMIT levels at most; before
+// them, the walk of a feature of a font with no cache holds its lookups.
+ENGINE_STAGE_RECORDS_BYTES :: size_of(Engine) + ENGINE_STAGE_FEATURE_LIMIT * (size_of([]u16) + size_of(int)) + ENGINE_STAGE_WALK_LIMIT * size_of(u16)
+ENGINE_LEVEL_RECORDS_BYTES :: ENGINE_GLYPH_LIMIT * size_of(u8) + 3 * size_of(Sequence) + size_of(Lookup_Head) + SEQUENCE_LIMIT * size_of(int)
+ENGINE_DEEPEST_RECORDS_BYTES :: ENGINE_STAGE_RECORDS_BYTES + max(ENGINE_NESTING_LIMIT * ENGINE_LEVEL_RECORDS_BYTES, size_of(Layout_Lookups))
+// layout_would_substitute: its engine and its pool of walked indices, or
+// the lookups of a walk before them.
+WOULD_SUBSTITUTE_RECORDS_BYTES :: size_of(Engine) + SUBSTITUTION_LOOKUP_LIMIT * size_of(u16) + size_of(Layout_Lookups)
 
 // One glyph of the buffer.
 Engine_Glyph :: struct {
@@ -142,29 +166,31 @@ engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script:
 		return .Too_Much_Work
 	}
 	// The lookups of each feature, in the order of the lookup list; the
-	// stage merges them, so it has no bound of its own past the lookups of
-	// each feature.
-	indices: [ENGINE_STAGE_FEATURE_LIMIT][SUBSTITUTION_LOOKUP_LIMIT]u16
-	counts, cursors: [ENGINE_STAGE_FEATURE_LIMIT]int
+	// stage merges them. A font of the state reads them from the cache of
+	// its walk, in place; a font with no cache (a test, a fuzz target) walks
+	// each feature into one pool of ENGINE_STAGE_WALK_LIMIT indices.
+	indices: [ENGINE_STAGE_FEATURE_LIMIT][]u16
+	cursors: [ENGINE_STAGE_FEATURE_LIMIT]int
+	walked: [ENGINE_STAGE_WALK_LIMIT]u16
+	walked_count := 0
 	place := kind == .Substitution ? font.gsub : font.gpos
 	feature_count := min(len(features), ENGINE_STAGE_FEATURE_LIMIT)
 	for feature, number in features[:feature_count] {
-		lookups: Layout_Lookups
-		problem := layout_lookups(font, place, script, {'D', 'F', 'L', 'T'}, feature.tag, &lookups)
+		found, used, problem := layout_feature_indices(font, place, script, {'D', 'F', 'L', 'T'}, feature.tag, walked[walked_count:])
 		if problem == .No_Feature {
 			continue
 		}
 		if problem != .None {
 			return problem
 		}
-		copy(indices[number][:], lookups.indices[:lookups.count])
-		counts[number] = lookups.count
+		indices[number] = found
+		walked_count += used
 	}
 	engine := Engine{font = font, place = place, kind = kind, gdef = gdef_of(font), buffer = buffer, budget = budget}
 	for !layout_budget_spent(budget) {
 		next := max(int)
 		for number in 0 ..< feature_count {
-			if cursors[number] < counts[number] {
+			if cursors[number] < len(indices[number]) {
 				next = min(next, int(indices[number][cursors[number]]))
 			}
 		}
@@ -173,7 +199,7 @@ engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script:
 		}
 		mask: u32
 		for number in 0 ..< feature_count {
-			if cursors[number] < counts[number] && int(indices[number][cursors[number]]) == next {
+			if cursors[number] < len(indices[number]) && int(indices[number][cursors[number]]) == next {
 				mask |= features[number].mask
 				cursors[number] += 1
 			}
@@ -1020,12 +1046,15 @@ layout_would_substitute :: proc "contextless" (font: ^Font_File, script, tag: Fe
 	if len(glyphs) == 0 || len(glyphs) > ENGINE_GLYPH_LIMIT || layout_budget_spent(budget) {
 		return false
 	}
-	lookups: Layout_Lookups
-	if layout_lookups(font, font.gsub, script, {'D', 'F', 'L', 'T'}, tag, &lookups) != .None {
+	// One feature: at most SUBSTITUTION_LOOKUP_LIMIT lookups, as a walk gives.
+	walked: [SUBSTITUTION_LOOKUP_LIMIT]u16
+	indices, _, problem := layout_feature_indices(font, font.gsub, script, {'D', 'F', 'L', 'T'}, tag, walked[:])
+	if problem != .None {
 		return false
 	}
 	engine := Engine{font = font, place = font.gsub, kind = .Substitution, gdef = gdef_of(font), budget = budget}
-	for lookup in lookups.parts[:lookups.count] {
+	for index in indices {
+		lookup := layout_lookup_of(font, font.gsub, int(index)) or_continue
 		head := lookup_head(lookup, 7) or_continue
 		for number in 0 ..< head.subtables {
 			if !layout_budget_take(engine.budget) {

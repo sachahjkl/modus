@@ -23,17 +23,27 @@ Mark_Attachment :: enum u8 {
 // attaches to, in units of the font: the anchor of that glyph less the
 // anchor of the mark, both from the origin of their glyph. found is false
 // when the font has no such feature or no anchor for the pair.
-mark_anchor_offset :: proc "contextless" (font: ^Font_File, script: Feature_Tag, attachment: Mark_Attachment, attach_to, mark: int) -> (dx, dy: int, found: bool, problem: Font_Problem) {
+mark_anchor_offset :: proc "contextless" (font: ^Font_File, script: Feature_Tag, attachment: Mark_Attachment, attach_to, mark: int, budget: ^Layout_Budget) -> (dx, dy: int, found: bool, problem: Font_Problem) {
 	tag := attachment == .Base ? Feature_Tag{'m', 'a', 'r', 'k'} : Feature_Tag{'m', 'k', 'm', 'k'}
 	wanted := attachment == .Base ? 4 : 6
-	lookups: Layout_Lookups
-	if lookup_problem := layout_lookups(font, font.gpos, script, {'D', 'F', 'L', 'T'}, tag, &lookups); lookup_problem != .None {
+	// One feature: at most SUBSTITUTION_LOOKUP_LIMIT lookups, as a walk gives.
+	walked: [SUBSTITUTION_LOOKUP_LIMIT]u16
+	indices, _, lookup_problem := layout_feature_indices(font, font.gpos, script, {'D', 'F', 'L', 'T'}, tag, walked[:])
+	if lookup_problem != .None {
 		return 0, 0, false, lookup_problem == .No_Feature ? .None : lookup_problem
 	}
-	for lookup in lookups.parts[:lookups.count] {
+	for index in indices {
+		lookup, lookup_found := layout_lookup_of(font, font.gpos, int(index))
+		if !lookup_found {
+			return 0, 0, false, .Too_Short
+		}
 		subtable_count, count_read := read_u16(lookup, 4)
 		if !count_read {
 			return 0, 0, false, .Too_Short
+		}
+		// A lookup and each of its subtables take from the work of the call.
+		if !layout_budget_take(budget, 1 + min(subtable_count, SUBSTITUTION_SUBTABLE_LIMIT)) {
+			return 0, 0, false, .Too_Much_Work
 		}
 		for number in 0 ..< min(subtable_count, SUBSTITUTION_SUBTABLE_LIMIT) {
 			subtable, taken := lookup_subtable(lookup, number, wanted, 9) or_return

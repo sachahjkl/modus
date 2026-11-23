@@ -43,21 +43,18 @@ import "modus:text_rendering"
 @(private)
 TABLE_LIMIT :: u64(1) << 40
 
-// The fonts of one call, opened from the bytes of the caller, and the
-// memory of the outlines of their measures, on the stack of the call. A
-// call runs on the stack of a worker thread of its caller, 64 KiB: the
-// whole call stays under CALL_STACK_BOUND, which a host test measures.
+// The fonts of one call, opened from the bytes of the caller, on the stack
+// of the call. A call runs on the stack of a worker thread of its caller,
+// 64 KiB: the whole call stays under CALL_STACK_BOUND, which a host test
+// measures. The records of the outlines and the memory of the outlines of
+// the measures serve the open only: they are on the frame of call_spacing,
+// which ends before the shaping.
 @(private)
 Call_Fonts :: struct {
-	set:     text_rendering.Font_Set,
+	set:  text_rendering.Font_Set,
 	// The room of the set: a call opens the fonts of the boot image only,
 	// so a script font takes none of the stack of a call.
-	room:    [text_rendering.BOOT_FONT_COUNT]text_rendering.Font,
-	// The room of the records of the outlines of the caller: the font
-	// outlines of a boot image hold the fonts of the boot image. A
-	// resource with more records is refused (font_outlines.No_Room).
-	records: [CALL_RECORD_LIMIT]font_outlines.Font_Record,
-	outline: text_rendering.Measure_Memory,
+	room: [text_rendering.BOOT_FONT_COUNT]text_rendering.Font,
 }
 
 // The records of the outlines of a caller that a call takes: the fonts of
@@ -71,6 +68,9 @@ CALL_STACK_BOUND :: 16 << 10
 // order of a line and the open of a font take the rest
 // (one_call_stays_under_its_stack_bound measures the whole call).
 #assert(size_of(Call_Fonts) <= 10 << 10)
+// The open of the fonts of a call: the fonts, and on the frame of
+// call_spacing the records of the outlines and the memory of the measures.
+#assert(size_of(Call_Fonts) + CALL_RECORD_LIMIT * size_of(font_outlines.Font_Record) + size_of(text_rendering.Measure_Memory) <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
 // The records of the deepest path of shape, counted by the depth at which
 // they run together (text_rendering.SHAPE_STACK_RECORDS_BYTES), with the
 // fonts and the outlines of a call, leave an eighth of the bound, 2 KiB,
@@ -117,19 +117,24 @@ face_and_size_check :: proc "contextless" (face_word, size: i64, error: ^errors.
 // bytes than TABLE_LIMIT (Too_Long), and for outlines with no first font of
 // the face (Absent: value the text_rendering.Outline_Font).
 @(private)
-call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_To_Read, face: text_rendering.Face, size: i64, error: ^errors.Error_Record) -> (spacing: text_rendering.Spacing, ok: bool) {
+call_spacing :: #force_no_inline proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_To_Read, face: text_rendering.Face, size: i64, error: ^errors.Error_Record) -> (spacing: text_rendering.Spacing, ok: bool) {
+	// The room of the records of the outlines of the caller: the font
+	// outlines of a boot image hold the fonts of the boot image. A resource
+	// with more records is refused (font_outlines.No_Room).
+	records: [CALL_RECORD_LIMIT]font_outlines.Font_Record
+	measure: text_rendering.Measure_Memory
 	count := outlines.count
 	if count > TABLE_LIMIT {
 		errors.fail(error, -1, .Too_Long, .Bytes, 1, i64(min(count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 		return {}, false
 	}
-	resource, problem := font_outlines.validate(outlines.bytes[:count], fonts.records[:])
+	resource, problem := font_outlines.validate(outlines.bytes[:count], records[:])
 	if problem.kind != .None {
 		errors.fail(error, -1, .Bad_Value, .Bytes, 1, i64(problem.kind), 0, i64(problem.index) + 1)
 		return {}, false
 	}
 	fonts.set.room = fonts.room[:]
-	outline := text_rendering.measure_outline_of(&fonts.outline)
+	outline := text_rendering.measure_outline_of(&measure)
 	// Only the fonts that the chains of the face name: each open reads the
 	// outlines of 94 characters for its measures.
 	_ = text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(face))

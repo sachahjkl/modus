@@ -239,6 +239,15 @@ script_line_tell :: proc "contextless" (face: text_rendering.Face) {
 			system.log_fact(.Info, Script_Fonts_Not_Mapped{})
 			return
 		}
+		// This module has the fast part only: the library module holds
+		// each font of the set (src/md/features/text_rendering.md, "Where
+		// the written shaping lives").
+		when !text_rendering.WRITTEN_SHAPING_COMPILED_IN {
+			if !text_rendering.font_at(&text_rendering.state.font_set, font).held {
+				system.log_fact(.Error, Script_Font_Not_Held{font = u64(font)})
+				return
+			}
+		}
 	}
 	text := transmute([]u8)string(SCRIPT_LINE)
 	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
@@ -275,6 +284,9 @@ script_line_tell :: proc "contextless" (face: text_rendering.Face) {
 		}
 	}
 	system.log_fact(.Info, Script_Line_Drawn{glyphs = u64(count)})
+	when !text_rendering.WRITTEN_SHAPING_COMPILED_IN {
+		system.log_fact(.Info, Script_Line_Through_Module{fonts = u64(card(text_rendering.SCRIPT_FONTS))})
+	}
 }
 
 // line_width gives the width of a text in 1/64 of a pixel.

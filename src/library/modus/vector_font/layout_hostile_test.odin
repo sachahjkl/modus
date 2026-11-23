@@ -428,7 +428,10 @@ chain_rule :: proc(record_count, real_records: int) -> []u8 {
 // A rule that names 65 535 records, of which its bytes hold two: each
 // record that the engine skips takes from the budget, so a budget of 1 000
 // ends the stage with Too_Much_Work, and the stage after it does no work.
-// With the budget of a call, the first record applies.
+// The floor of a budget, 65 536 units, does not hold the 65 535 records
+// and their rule either: the stage keeps the glyph of the first record and
+// ends with Too_Much_Work; a budget of a call of 64 bytes does, and the
+// first record applies.
 @(test)
 a_rule_of_65535_records_takes_from_the_budget :: proc(t: ^testing.T) {
 	scripts := []Script_Of{{DFLT, true, {0}}}
@@ -441,8 +444,14 @@ a_rule_of_65535_records_takes_from_the_budget :: proc(t: ^testing.T) {
 	before := budget.work
 	testing.expect_value(t, engine_stage(&font, .Substitution, DFLT, again[:], &buffer, &budget), Font_Problem.Too_Much_Work)
 	testing.expect_value(t, budget.work, before)
-	buffer, problem, budget = stage_of(&font, .Substitution, {5})
-	testing.expectf(t, problem == .None && buffer.glyphs[0].glyph == 6 && budget.work >= 65535, "the budget of a call: %v, the glyph %d, %d units", problem, buffer.glyphs[0].glyph, budget.work)
+	buffer, problem, budget = stage_of(&font, .Substitution, {5}, layout_budget_of_text(0).limit)
+	testing.expectf(t, problem == .Too_Much_Work && layout_budget_spent(&budget), "the floor of a budget: %v, the glyph %d, %d units", problem, buffer.glyphs[0].glyph, budget.work)
+	buffer, problem, budget = stage_of(&font, .Substitution, {5}, layout_budget_of_text(64).limit)
+	testing.expectf(t, problem == .None && buffer.glyphs[0].glyph == 6 && budget.work >= 65535, "the budget of a call of 64 bytes: %v, the glyph %d, %d units", problem, buffer.glyphs[0].glyph, budget.work)
+	// The cap: no text gives a call more than LAYOUT_WORK_CAP.
+	testing.expect_value(t, layout_budget_of_text(max(int)).limit, LAYOUT_WORK_CAP)
+	testing.expect_value(t, layout_budget_of_text(-1).limit, LAYOUT_WORK_FLOOR)
+	testing.expect_value(t, layout_budget_of_text(0).limit, LAYOUT_WORK_FLOOR)
 }
 
 // A stage of 32 glyphs, each with a rule of 200 records: 32 times 201

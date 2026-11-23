@@ -148,6 +148,7 @@ a_mark_composes_with_its_letter :: proc(t: ^testing.T) {
 // With no script font, each letter is the replacement glyph, first.
 @(test)
 arabic_letters_join :: proc(t: ^testing.T) {
+	test_budget := vector_font.Layout_Budget{limit = vector_font.LAYOUT_WORK_CAP}
 	test_state_take()
 	placed: [16]Placed_Glyph
 	{
@@ -215,7 +216,7 @@ arabic_letters_join :: proc(t: ^testing.T) {
 	for letter in letters {
 		plain, _ := vector_font.glyph_of(file, letter.character)
 		parts: [vector_font.SEQUENCE_LIMIT]int
-		part_count, _ := vector_font.script_substitution(file, ARAB, {'c', 'c', 'm', 'p'}, plain, parts[:])
+		part_count, _ := vector_font.script_substitution(file, ARAB, {'c', 'c', 'm', 'p'}, plain, parts[:], &test_budget)
 		testing.expectf(t, part_count == 2, "U+%04X is a body and its dots in its font", int(letter.character))
 		for place < count && placed[place].placement != .Base {
 			place += 1

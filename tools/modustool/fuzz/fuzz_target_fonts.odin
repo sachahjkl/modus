@@ -146,8 +146,9 @@ fuzz_vector_font_seeds :: proc(seeds: ^[dynamic][]u8) {
 }
 
 // fuzz_script_font_file reads a script font that SCRIPT_FONT_SOURCES names.
-// With none, it says so on the error output: the target then runs without
-// that font and its seeds, which a reader of the run must know.
+// With none, it says so on the error output: a target that shapes with the
+// font does not start, and a target that takes seeds from it runs without
+// them, which a reader of the run must know.
 fuzz_script_font_file :: proc(name: string) -> (bytes: []u8, found: bool) {
 	sources := os.get_env("SCRIPT_FONT_SOURCES", context.temp_allocator)
 	rest := sources
@@ -161,7 +162,7 @@ fuzz_script_font_file :: proc(name: string) -> (bytes: []u8, found: bool) {
 			return read, error == nil
 		}
 	}
-	fmt.eprintfln("modustool: fuzz: SCRIPT_FONT_SOURCES names no %s (run in the development shell); the target runs without it and its seeds", name)
+	fmt.eprintfln("modustool: fuzz: SCRIPT_FONT_SOURCES names no %s (run in the development shell): a target that shapes with it does not start, and a target that only takes seeds from it runs without them", name)
 	return nil, false
 }
 
@@ -216,7 +217,7 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 		for tag in fuzz_layout_features {
 			for glyph in usable {
 				out: [vector_font.SEQUENCE_LIMIT]int
-				count, problem := vector_font.script_substitution(font, script, tag, glyph, out[:])
+				count, problem := vector_font.script_substitution(font, script, tag, glyph, out[:], &budget)
 				if problem == .None {
 					if count < 1 || count > len(out) {
 						return fuzz_broken(.Contract, "script_substitution gives %d glyphs", count)
@@ -231,7 +232,7 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 		}
 		for glyph in usable {
 			for attachment in vector_font.Mark_Attachment {
-				_, _, _, problem := vector_font.mark_anchor_offset(font, script, attachment, usable[0], glyph)
+				_, _, _, problem := vector_font.mark_anchor_offset(font, script, attachment, usable[0], glyph, &budget)
 				if problem > max(vector_font.Font_Problem) {
 					return fuzz_broken(.Contract, "mark_anchor_offset gives a problem out of its enumeration")
 				}

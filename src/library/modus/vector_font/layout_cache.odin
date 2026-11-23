@@ -138,9 +138,29 @@ layout_cache_find :: proc "contextless" (cache: ^Layout_Cache, kind: Layout_Kind
 // walks it.
 @(private)
 layout_cache_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag, out: ^Layout_Lookups) -> (problem: Font_Problem, found: bool) {
+	indices: []u16
+	indices, problem, found = layout_cache_indices(font, place, script, other_script, tag)
+	if !found || problem != .None {
+		return problem, found
+	}
+	out.count = 0
+	for index in indices[:min(len(indices), SUBSTITUTION_LOOKUP_LIMIT)] {
+		lookup := layout_lookup_of(font, place, int(index)) or_return
+		out.indices[out.count] = index
+		out.parts[out.count] = lookup
+		out.count += 1
+	}
+	return .None, true
+}
+
+// layout_cache_indices gives the lookup indices of a feature from the cache
+// of a font, in place: found is false when the cache does not hold the
+// table, and the caller walks it.
+@(private)
+layout_cache_indices :: proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag) -> (indices: []u16, problem: Font_Problem, found: bool) {
 	cache := font.layout_cache
 	if cache == nil {
-		return .None, false
+		return nil, .None, false
 	}
 	kind: Layout_Kind
 	if place == font.gsub {
@@ -148,10 +168,10 @@ layout_cache_lookups :: proc "contextless" (font: ^Font_File, place: Table, scri
 	} else if place == font.gpos {
 		kind = .Positioning
 	} else {
-		return .None, false
+		return nil, .None, false
 	}
 	if !cache.complete[kind] || place.length == 0 {
-		return .None, false
+		return nil, .None, false
 	}
 	chosen: Feature_Tag
 	has := false
@@ -167,18 +187,38 @@ layout_cache_lookups :: proc "contextless" (font: ^Font_File, place: Table, scri
 		}
 	}
 	if !has {
-		return .No_Feature, true
+		return nil, .No_Feature, true
 	}
 	entry := layout_cache_find(cache, kind, chosen, tag)
 	if entry == nil {
-		return .No_Feature, true
+		return nil, .No_Feature, true
 	}
-	out.count = 0
-	for index in cache.indices[entry.first:][:entry.count] {
-		lookup := layout_lookup_of(font, place, int(index)) or_return
-		out.indices[out.count] = index
-		out.parts[out.count] = lookup
-		out.count += 1
+	return cache.indices[entry.first:][:entry.count], .None, true
+}
+
+// layout_feature_indices gives the lookup indices of a feature, in the
+// order of the lookup list: from the cache of the font in place, else
+// walked into room; used is the part of room that they take.
+layout_feature_indices :: proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag, room: []u16) -> (indices: []u16, used: int, problem: Font_Problem) {
+	if cached, cached_problem, found := layout_cache_indices(font, place, script, other_script, tag); found {
+		return cached, 0, cached_problem
 	}
-	return .None, true
+	return layout_feature_indices_walked(font, place, script, other_script, tag, room)
+}
+
+// layout_feature_indices_walked walks a feature into room. Its lookups are
+// on its own frame, which ends before the caller applies them.
+@(private)
+layout_feature_indices_walked :: #force_no_inline proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag, room: []u16) -> (indices: []u16, used: int, problem: Font_Problem) {
+	lookups: Layout_Lookups
+	reads := 0
+	problem = layout_lookups_walk(font, place, script, other_script, tag, &lookups, &reads)
+	if problem != .None {
+		return nil, 0, problem
+	}
+	if lookups.count > len(room) {
+		return nil, 0, .Too_Much_Work
+	}
+	copy(room, lookups.indices[:lookups.count])
+	return room[:lookups.count], lookups.count, .None
 }
