@@ -545,7 +545,9 @@ Root_Command :: enum u32 {
 	// service then reads the peak of the budget of the sender, writes it
 	// with the floor of its start as a fact, and closes the ready ring
 	// (src/md/features/module_budget_request.md, "The first state of
-	// work"). No completion comes.
+	// work"). One completion comes after the read, with the tag of the
+	// record: Succeeded, or Argument_Refused for another record. A process
+	// that stops waits for it (system.ready_at_end); another reads none.
 	Ready = 39,
 }
 

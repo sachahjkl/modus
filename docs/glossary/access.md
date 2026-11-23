@@ -378,7 +378,7 @@ Do not use: high-water mark, maximum use.
 
 The first state of work of a process is the moment when its start is done and it waits for its work: the console shows its prompt, a service waits for its first call.
 
-The process says it once with `system.ready`, on its ready ring; the library says it at the first present of a window and at the first wait of a service. The process alone knows it, so no kernel guess and no idle wait stands for it. The floor holds what the process needs up to it, and the root service checks the peak of its budget there.
+The process says it once with `system.ready`, on its ready ring; the library says it at the first present of a window, at the first wait of a service, and at the stop of a process that never said it, whose whole life was its start. The process alone knows it, so no kernel guess and no idle wait stands for it. The floor holds what the process needs up to it, and the root service checks the peak of its budget there.
 
 Do not use: ready state, startup end.
 
@@ -386,7 +386,7 @@ Do not use: ready state, startup end.
 
 The ready ring is the ring of the smallest capacity at the handle 19 of the context of a process, on which it says its first state of work once, with the record `Ready`.
 
-The root service makes it at the start of each process that has a floor, from the budget of the process, and closes it at its one record or at the stop. It is no root ring: it carries no command and no completion, and a process with no root ring has one too. `system.ready` takes its handle out of the context with one atomic exchange, so two copies of the library in one process say it once.
+The root service makes it at the start of each process that has a floor, from the budget of the process, and closes it at its one record or at the stop. It is no root ring: it carries no command and one completion, and a process with no root ring has one too. `system.ready` takes its handle out of the context with one atomic exchange, so two copies of the library in one process say it once.
 
 Do not use: ready channel, ready command ring.
 

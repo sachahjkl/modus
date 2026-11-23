@@ -1,8 +1,10 @@
 package root
 
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/reference_screen"
+import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
@@ -471,33 +473,44 @@ start_budget_note :: proc "contextless" (slot: ^Started, budget: Start_Budget) {
 // build, and a second one, Budget_Floor_Passed, when the peak passed the
 // floor, which the machine test refuses
 // (src/md/features/module_budget_request.md, "The first state of work").
-// Then it closes the ring: the process says it once, and no handle or
+// Then it sends the one completion of the ring, which a process that stops
+// waits for (system.ready_at_end), and closes the ring: no handle or
 // mapping of this service stays for it. Another record ends the ring with
-// one line and no peak. A process whose start noted no floor ends its ring
-// with no line.
+// one line and no peak. A process whose start noted no floor, or that
+// stopped already, so that its budget ended, gives no line.
 ready_ring_serve :: proc "contextless" (item: ^Started) {
 	record, received := system.receive(&item.ready.mapped.commands)
 	if !received {
 		return
 	}
-	system.ready_ring_close(&item.ready)
-	name := system.name_of(item.name[:])
+	outcome := call_outcome.Call_Outcome.Succeeded
 	if root_ring.ready_record_refused(record) {
-		system.log_fact(.Warning, Ready_Record_Refused{kind = u64(record.kind), ready_process = module_name_field(name)})
-		return
+		outcome = .Argument_Refused
+		system.log_fact(.Warning, Ready_Record_Refused{kind = u64(record.kind), ready_process = module_name_field(system.name_of(item.name[:]))})
+	} else {
+		ready_peak_log(item)
 	}
+	system.send(&item.ready.mapped.completions, ring.Record{kind = u32(outcome), tag = record.tag})
+	system.ready_ring_close(&item.ready)
+}
+
+// ready_peak_log writes the peak of the budget of a process that said its
+// first state of work, with the floor of its start.
+@(private = "file")
+ready_peak_log :: proc "contextless" (item: ^Started) {
 	if item.floor_pages == 0 {
 		return
 	}
 	slot, serial, place_status := system.process_place(item.process)
-	report: op.Process_Report
 	if place_status != .Ok {
 		return
 	}
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report)); status != .Ok || report.process_serial != serial {
+	report: op.Process_Report
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report)); status != .Ok || report.process_serial != serial || report.state == .Stopped {
 		return
 	}
 	peak := item.budget_pages - min(item.budget_pages, report.budget_least_pages)
+	name := system.name_of(item.name[:])
 	system.log_fact(.Info, Budget_Peak_At_Ready{peak_pages = peak, floor_pages = item.floor_pages, ready_process = module_name_field(name)})
 	if peak > item.floor_pages {
 		system.log_fact(.Warning, Budget_Floor_Passed{peak_pages = peak, floor_pages = item.floor_pages, ready_process = module_name_field(name)})
