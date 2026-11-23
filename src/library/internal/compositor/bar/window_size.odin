@@ -207,26 +207,31 @@ surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Su
 // the two borders, and the title bar with the bottom border.
 //
 // sizes must hold the size of start (the compositor checks both); when
-// they do not, the size is cut to them.
+// they do not, the size is cut to them. Each size is also cut to the work
+// area less the frame, as the clamp of the compositor (window_fit): a
+// window partly off the screen would else grow past the screen, by the
+// room of the edge that it holds, which counts from a place off the screen.
 resize_drag :: proc "contextless" (start: Resize_Start, pointer_x, pointer_y: int, sizes: Size_Range, frame_width, frame_height, screen_width, screen_height: int) -> (x, y, width, height: int) {
 	x, y, width, height = start.x, start.y, start.width, start.height
+	work_width := max(screen_width - frame_width, 0)
+	work_height := max(screen_height - HEIGHT - frame_height, 0)
 	step_x := pointer_x - start.pointer_x
 	step_y := pointer_y - start.pointer_y
 	right := start.x + frame_width + start.width
 	bottom := start.y + frame_height + start.height
 	if .Right in start.edges {
-		room := max(screen_width - start.x - frame_width, start.width)
+		room := min(max(screen_width - start.x - frame_width, start.width), work_width)
 		width = clamp(start.width + step_x, sizes.least_width, min(sizes.largest_width, room))
 	} else if .Left in start.edges {
-		room := max(right - frame_width, start.width)
+		room := min(max(right - frame_width, start.width), work_width)
 		width = clamp(start.width - step_x, sizes.least_width, min(sizes.largest_width, room))
 		x = right - frame_width - width
 	}
 	if .Bottom in start.edges {
-		room := max(screen_height - start.y - frame_height, start.height)
+		room := min(max(screen_height - start.y - frame_height, start.height), work_height)
 		height = clamp(start.height + step_y, sizes.least_height, min(sizes.largest_height, room))
 	} else if .Top in start.edges {
-		room := max(bottom - frame_height - HEIGHT, start.height)
+		room := min(max(bottom - frame_height - HEIGHT, start.height), work_height)
 		height = clamp(start.height - step_y, sizes.least_height, min(sizes.largest_height, room))
 		y = bottom - frame_height - height
 	}

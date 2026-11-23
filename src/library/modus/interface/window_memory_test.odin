@@ -9,6 +9,7 @@ import "core:testing"
 // table must say that it is full, so the next frame is drawn whole.
 @(test)
 a_window_memory_refuses_a_record_and_a_text_past_its_capacity :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Window_Memory(1, 4)
 	drawing := window_memory_drawing(&memory)
 	testing.expect_value(t, len(drawing.now.records), 1)

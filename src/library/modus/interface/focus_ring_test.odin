@@ -143,6 +143,7 @@ the_outline_of_a_list_is_outside_its_clip :: proc(t: ^testing.T) {
 // none, though its text is in the strong color.
 @(test)
 the_outline_of_a_text_input_with_the_focus :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	AREA :: Area{6, 6, 160, 28}
 	for focused in ([2]bool{false, true}) {
 		memory: Focus_Tables

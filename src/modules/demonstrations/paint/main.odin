@@ -1328,8 +1328,11 @@ events_take :: proc "contextless" (window: ^display.Window) {
 		event := display.next_event(window) or_break
 		switch event.kind {
 		case .Pointer:
-			pointer_paint(event)
-			interface.input_add(&drawing.input, event)
+			// The canvas is in the coordinates of the layout, which the
+			// window scrolls when it does not fit the work area; over a
+			// scroll bar of the window the place is on no canvas.
+			place, _, _ := interface.window_scroll_event(drawing, window, event)
+			pointer_paint(place)
 		case .Key:
 			interface.input_add(&drawing.input, event)
 		case .Resized:

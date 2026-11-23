@@ -261,6 +261,12 @@ Client :: struct {
 	// asked, or asked a fixed window, and the window scrolls its layout in
 	// the smaller surface (src/md/features/window_scroll.md).
 	resize_asked_clamp: bool,
+	// The size of the request before the cut to the work area: the window
+	// wants it once it takes the request.
+	resize_asked_wanted_width, resize_asked_wanted_height: int,
+	// The clamps that ended with no new surface, in a row: the compositor
+	// asks a clamp again at most CLAMP_ASKS_MOST times (window_resize.odin).
+	clamp_asks: int,
 	resize_edges: bar.Resize_Edges, // The edges that the drag of the request held.
 	// The size of the surface that the window opened with, or that the
 	// principal asked last and the window took: the fit to the work area
@@ -1182,6 +1188,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 			// first, and gets the scale when its fit request ends (scale.odin).
 			if rescaled && client.created {
 				client.scale_due, client.fit_due = true, true
+				client.clamp_asks = 0
 			}
 			if !window_scale_step(&client) {
 				settings_changed_send(&client)
@@ -1396,7 +1403,14 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	work_area_send(client)
 	// A window larger than the work area gets at most the work area from its
 	// first surface, and scrolls its layout (src/md/features/window_scroll.md).
-	window_fit_now(client) // scale.odin
+	// A window of another scale releases its surface at the Settings_Changed
+	// above, and a window between two surfaces declines a request: its fit
+	// waits for its surface of the scale in force (window_fit_after_scale).
+	if surface_scale != scale {
+		client.fit_after_scale = true
+	} else {
+		window_fit_now(client) // scale.odin
+	}
 	palette_entries_refresh() // A window appeared.
 	taskbar_preview_dismiss()
 	windows_menu_rows_build() // start_menu.odin

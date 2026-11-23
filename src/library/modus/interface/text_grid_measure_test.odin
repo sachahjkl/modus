@@ -318,6 +318,7 @@ canvases_equal :: proc(a, b: []graphics.Color) -> (equal: bool, first_diff: int)
 // invalid code points) and all terminal workloads including 1920x1080.
 @(test)
 text_grid_equals_text_runs_pixel_for_pixel :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	_ = blend_table()
 
 	// Edge cases first: 0 rows, 1x1 plain/filled/reverse, stride > columns, control rune.

@@ -1,6 +1,7 @@
 #+build !freestanding
 package display
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
@@ -342,6 +343,29 @@ surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
 		status := surface_resize(&window, each.width, each.height)
 		testing.expectf(t, status == each.status, "case %d gives %v, not %v", index, status, each.status)
 		testing.expectf(t, window == before, "case %d changed the window", index)
+	}
+}
+
+// The error record of a size past the largest limit of a resizable window
+// names the axis that passes it: the argument 2 for the width, also a
+// width of 0, and 3 for the height. A size below the least size is a clamp
+// of the compositor, which the window takes: no error names it.
+@(test)
+surface_resize_names_the_axis_past_the_largest_limit :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	cases := [?]struct {
+		width, height, argument: int,
+	}{{1217, 384, 2}, {0, 384, 2}, {880, 641, 3}}
+	for each in cases {
+		for &value in ring_memory {
+			value = 0
+		}
+		window := resizable_window_of_test(ring_memory)
+		window.resize_asked_width, window.resize_asked_height = each.width, each.height
+		error: errors.Error_Record
+		status := surface_resize(&window, each.width, each.height, &error)
+		testing.expectf(t, status == .Bad_Operation && error.argument == i64(each.argument), "%dx%d gives %v with the argument %d", each.width, each.height, status, error.argument)
 	}
 }
 

@@ -391,6 +391,7 @@ the_writers_inside_the_pixels_refuse_what_the_border_refuses :: proc(t: ^testing
 // graphics.text_scaled with that alpha, which differ from the opaque ones.
 @(test)
 a_text_with_alpha_blends_its_ink :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	_ = blend_table()
 	memory := new(Edges_Tables)
 	defer free(memory)

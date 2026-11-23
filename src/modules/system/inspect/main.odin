@@ -59,6 +59,7 @@ import "modus:contract/value_kinds"
 import "internal:inspect/addresses"
 import "modus:display"
 import "modus:graphics"
+import "modus:interface"
 import "modus:layout"
 import "modus:system"
 
@@ -456,7 +457,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					key(event)
 					changed = true
 				} else if event.kind == .Pointer && event.buttons & display.BUTTON_LEFT != 0 {
-					if position, inside := list_place(event.x, event.y); inside {
+					// The list is in the coordinates of the layout, which the
+					// window scrolls when it does not fit the work area.
+					place, _, _ := interface.window_scroll_event(&window_memory.drawing, &window, event)
+					if position, inside := list_place(place.x, place.y); inside {
 						choose(position)
 						changed = true
 					}

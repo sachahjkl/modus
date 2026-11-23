@@ -23,6 +23,7 @@ semantic_table_of :: proc(m: ^Semantic_Test_Memory) -> Draw_Table {
 // semantic_tree_audit with zero findings.
 @(test)
 interface_widgets_produce_valid_zero_audit_semantic_tree :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory := new(Semantic_Test_Memory)
 	defer free(memory)
 	table := semantic_table_of(memory)
@@ -135,6 +136,7 @@ interface_widgets_produce_valid_zero_audit_semantic_tree :: proc(t: ^testing.T) 
 // bar updates while emitting nothing for protected field edits.
 @(test)
 interface_widget_interactions_emit_semantic_diff_events :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	mem_a := new(Semantic_Test_Memory)
 	mem_b := new(Semantic_Test_Memory)
 	tree_a := new(accessibility.Semantic_Tree)

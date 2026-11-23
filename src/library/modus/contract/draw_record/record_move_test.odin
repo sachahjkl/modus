@@ -72,3 +72,61 @@ the_points_of_a_path_move_together :: proc(t: ^testing.T) {
 	testing.expect(t, points == before)
 	testing.expect(t, path_points_move(points[:0], 0, max(i32)))
 }
+
+// The kinds whose fields hold no place move their box only: a push of a
+// clip and of an element, a picture, a grid, a path, whose points the text
+// table holds. Their fields stay as they were, the move and the move back
+// give the record, and a box past the limit is refused for each kind.
+@(test)
+a_move_moves_the_box_alone_of_the_kinds_with_no_place_in_their_fields :: proc(t: ^testing.T) {
+	Case :: struct {
+		name:      string,
+		primitive: Draw_Primitive,
+		element:   u32,
+	}
+	cases := [?]Case{
+		{"clip push", Draw_Clip_Push{}, 0},
+		{"element push", Draw_Element_Push{name_first = 0, name_count = 4}, 9},
+		{"picture", Draw_Picture{memory = 0, format = .Opaque, first = 0, stride = 10, generation = 3}, 0},
+		{"text grid", Draw_Text_Grid{first = 0, count = 32, columns = 2, size = 1024}, 0},
+		{"path", Draw_Path{first = 0, count = 24, fill_color = 0xFF102030}, 0},
+	}
+	for each in cases {
+		record := record_of(each.primitive, each.element, 640, 19200, 1280, 20480)
+		_, read_problem := read(record)
+		testing.expectf(t, read_problem == .None, "%s: the record is not read (%v)", each.name, read_problem)
+		moved, ok := record_moved(record, 64, STEP_UP)
+		testing.expectf(t, ok && moved.left == 704 && moved.right == 1344 && moved.top == 0 && moved.bottom == 1280, "%s: the box is %d,%d,%d,%d", each.name, moved.left, moved.top, moved.right, moved.bottom)
+		testing.expectf(t, moved.fields == record.fields && moved.kind == record.kind && moved.element == record.element, "%s: the fields changed", each.name)
+		back, back_ok := record_moved(moved, -64, -STEP_UP)
+		testing.expectf(t, back_ok && back == record, "%s: the move back differs", each.name)
+		past := record_of(each.primitive, each.element, 0, 0, COORDINATE_UNIT_LIMIT, 64)
+		refused, refused_ok := record_moved(past, 64, 0)
+		testing.expectf(t, !refused_ok && refused == past, "%s: a box past the limit is moved", each.name)
+	}
+}
+
+// A record whose move is refused draws nothing in its place: a push keeps
+// its kind with an empty box, so the order of the clips and of the
+// elements stays whole; a pop stays a pop; each other kind becomes
+// Draw_Nothing. A record that read refuses stays as it is.
+@(test)
+a_hidden_record_draws_nothing_and_keeps_the_order_of_the_clips :: proc(t: ^testing.T) {
+	push := record_hidden(record_of(Draw_Clip_Push{}, 0, 640, 640, 1280, 1280))
+	primitive, problem := read(push)
+	_, is_push := primitive.(Draw_Clip_Push)
+	testing.expect(t, problem == .None && is_push && push.left == 0 && push.top == 0 && push.right == 0 && push.bottom == 0)
+	element := record_hidden(record_of(Draw_Element_Push{name_count = 4}, 9, 640, 640, 1280, 1280))
+	primitive, problem = read(element)
+	_, is_element := primitive.(Draw_Element_Push)
+	testing.expect(t, problem == .None && is_element && element.element == 9 && element.right == 0)
+	pop := record_of(Draw_Clip_Pop{}, 0, 0, 0, 0, 0)
+	testing.expect(t, record_hidden(pop) == pop)
+	for each in ([?]Draw_Primitive{Draw_Rectangle{color = 0xFF102030}, Draw_Text{first = 0, count = 1, color = 0xFFFFFFFF, origin_x = 640, font = .Cells_8x16, weight = .Regular, size = 1024}, Draw_Path{first = 0, count = 24, fill_color = 0xFF102030}}) {
+		hidden := record_hidden(record_of(each, 3, 640, 640, 1280, 1280))
+		testing.expectf(t, hidden == record_of(Draw_Nothing{}, 0, 0, 0, 0, 0), "%v is not hidden", each)
+	}
+	unknown := record_of(Draw_Rectangle{color = 0xFF102030}, 0, 0, 0, 64, 64)
+	unknown.kind = 255
+	testing.expect(t, record_hidden(unknown) == unknown)
+}

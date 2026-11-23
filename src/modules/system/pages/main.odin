@@ -307,7 +307,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.log_fact(.Info, Kernel_Guard_Absent{})
 			}
 		}
-		for _ in display.next_event(&window) {}
-		system.sleep(system.time() + INTERVAL)
+		// The wait reads the events: the scroll of a window that does not
+		// fit the work area follows them at once.
+		interface.hand_picture_wait_until(&hand_picture, &window, system.time() + INTERVAL)
 	}
 }

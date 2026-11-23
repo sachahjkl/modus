@@ -235,12 +235,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The action bar takes the pointer from the input of the
 				// next frame; a press on it, or while its list is open, is
 				// not a press on a square.
-				interface.input_add(&window_memory.drawing.input, event)
-				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
+				// The squares are in the coordinates of the layout, which
+				// the window scrolls when it does not fit the work area.
+				place, _, _ := interface.window_scroll_event(&window_memory.drawing, &window, event)
+				if interface.action_bar_takes_pointer(&bar, place.x, place.y) {
 					continue
 				}
 				for center, index in centers {
-					if abs(event.x - center.x) > NODE_SIZE / 2 || abs(event.y - center.y) > NODE_SIZE / 2 {
+					if abs(place.x - center.x) > NODE_SIZE / 2 || abs(place.y - center.y) > NODE_SIZE / 2 {
 						continue
 					}
 					if pressed & display.BUTTON_LEFT != 0 {

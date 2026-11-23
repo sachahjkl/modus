@@ -58,6 +58,26 @@ record_moved :: proc "contextless" (record: Draw_Record, step_x, step_y: i32) ->
 	return record_of(primitive, record.element, left, top, right, bottom), true
 }
 
+// record_hidden gives the record that draws nothing in place of a record
+// whose move record_moved refuses, or whose path points would pass the
+// limit: a Draw_Nothing. A push of a clip or of an element keeps its kind
+// with an empty box, and a pop stays a pop, so the order of the clips and of
+// the elements, which the kind word alone gives, stays whole; a clip of an
+// empty box hides the records under it. A record that read refuses stays as
+// it is: the border refused it before the move the same way.
+record_hidden :: proc "contextless" (record: Draw_Record) -> Draw_Record {
+	primitive, problem := read(record)
+	if problem != .None {
+		return record
+	}
+	switch _ in primitive {
+	case Draw_Clip_Push, Draw_Element_Push, Draw_Clip_Pop, Draw_Element_Pop:
+		return record_of(primitive, record.element, 0, 0, 0, 0)
+	case Draw_Nothing, Draw_Rectangle, Draw_Gradient, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Path:
+	}
+	return record_of(Draw_Nothing{}, 0, 0, 0, 0, 0)
+}
+
 // path_points_move moves each point of a path by (step_x, step_y), in
 // place. When a point would pass COORDINATE_LIMIT, no point moves and ok is
 // false: a path never has some points moved and others not.

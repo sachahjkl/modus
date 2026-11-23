@@ -69,47 +69,147 @@ window_scroll_page :: proc "contextless" (scroll, inner, line: int, down: bool) 
 	return down ? scroll + step : scroll - step
 }
 
+// The place of the pointer while it is over a bar strip of a window that
+// scrolls, for the elements of the frame: no element of a layout reaches
+// it, so an element under the bar takes no press, no wheel and no hover.
+WINDOW_POINTER_AWAY :: -(1 << 24)
+
+// The gap that the focus into view leaves past the element.
+WINDOW_SCROLL_GAP :: 8
+
+// layout_point_of_view gives the place in the layout of a place of the
+// view, for a view of a layout and its scroll. in_layout is false over a
+// bar strip: the place is then WINDOW_POINTER_AWAY on each axis. A place
+// past the view, as a drag held past the edge, maps as a place inside it.
+@(private)
+layout_point_of_view :: proc "contextless" (view: Window_Scroll_View, scroll_x, scroll_y, view_width, view_height, x, y: int) -> (layout_x, layout_y: int, in_layout: bool) {
+	over_vertical := view.scrolls_y && x >= view.inner_width && x < view_width && y >= 0 && y < view_height
+	over_horizontal := view.scrolls_x && y >= view.inner_height && y < view_height && x >= 0 && x < view_width
+	if over_vertical || over_horizontal {
+		return WINDOW_POINTER_AWAY, WINDOW_POINTER_AWAY, false
+	}
+	return x + scroll_x, y + scroll_y, true
+}
+
+// window_layout_point gives the place in the layout of a window of a place
+// of its view: the place of a pointer event. A process that tests the
+// places of its raw events against its layout calls it for each event
+// (src/md/features/window_scroll.md, "A process that reads its events").
+// in_layout is false over a scroll bar of the window: the event belongs to
+// the bar, and the place is WINDOW_POINTER_AWAY. A window that fits its
+// view gives the place as it is. It reads no button: a drag that a press
+// in the layout started stays in the layout over a bar in
+// window_scroll_event.
+window_layout_point :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, view_x, view_y: int) -> (x, y: int, in_layout: bool) {
+	view_width, view_height := display.view_size(window)
+	view := window_scroll_view_of(window.width, window.height, view_width, view_height)
+	scroll_x := window_scroll_clamp(drawing.scroll_x, view.most_x)
+	scroll_y := window_scroll_clamp(drawing.scroll_y, view.most_y)
+	return layout_point_of_view(view, scroll_x, scroll_y, view_width, view_height, view_x, view_y)
+}
+
+// window_scroll_event takes an event that a process read itself with
+// display.next_event, for a window that draws through a Window_Drawing
+// with no window_events: a hand picture, or a frame that the process
+// builds from its own loop. The pointer, and PageUp and PageDown when the
+// layout scrolls, go to the input of the next frame, where the bars and the
+// keys of the window take them. It gives the event with its place in the
+// coordinates of the layout, which the process tests its elements against,
+// in_layout false over a bar, except for a drag that a press in the layout
+// started, and show_due when the scroll needs a frame: a wheel, a press, a release,
+// a pointer over a bar or a lit or held bar, or a page key. A process that
+// draws only when its own state changes then draws.
+window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, event: display.Event) -> (layout_event: display.Event, in_layout: bool, show_due: bool) {
+	layout_event, in_layout = event, true
+	view_width, view_height := display.view_size(window)
+	view := window_scroll_view_of(window.width, window.height, view_width, view_height)
+	scrolls := view.scrolls_x || view.scrolls_y
+	switch event.kind {
+	case .Pointer:
+		scroll_x := window_scroll_clamp(drawing.scroll_x, view.most_x)
+		scroll_y := window_scroll_clamp(drawing.scroll_y, view.most_y)
+		held_before := drawing.input.button_held
+		_, _, press_in_layout := layout_point_of_view(view, scroll_x, scroll_y, view_width, view_height, drawing.input.press_x, drawing.input.press_y)
+		_ = input_add(&drawing.input, event)
+		held := event.buttons & display.BUTTON_LEFT != 0
+		layout_event.x, layout_event.y, in_layout = layout_point_of_view(view, scroll_x, scroll_y, view_width, view_height, event.x, event.y)
+		// A drag that a press in the layout started stays in the layout
+		// over a bar: a selection follows the pointer to the edge.
+		if !in_layout && held && held_before && press_in_layout {
+			layout_event.x, layout_event.y, in_layout = event.x + scroll_x, event.y + scroll_y, true
+		}
+		show_due = scrolls && (event.wheel != 0 || !in_layout || held != held_before || drawing.state.scroll_bar_lit != 0 || drawing.state.scroll_bar_part != .None)
+	case .Key:
+		if scrolls && event.pressed && (event.code == display.KEY_PAGE_UP || event.code == display.KEY_PAGE_DOWN) {
+			show_due = input_add(&drawing.input, event)
+		}
+	case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Surface_Answer, .Work_Area:
+		// The window layer reads no other event here: a new surface is
+		// drawn whole by its serial (window_frame_begin_at).
+	}
+	return
+}
+
 // window_scroll_begin moves the input of the frame into the coordinates of
-// the layout of a window that scrolls. focus_before is the focus before Tab
-// moved it in this frame: a moved focus comes into the view.
+// the layout of a window that scrolls, and hides the pointer from the
+// elements of the frame while it is over a bar strip: the bars take it at
+// the end of the frame (window_scroll_end). focus_before is the focus
+// before Tab moved it in this frame: a moved focus comes into the view. An
+// input that a frame left moved, with no end, comes back first.
 @(private)
 window_scroll_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, focus_before: Element_Identity) {
+	window_input_unshift(drawing)
 	drawing.focus_before = focus_before
-	drawing.bar_first, drawing.bar_end = 0, 0
+	drawing.bar_first = -1
 	view_width, view_height := display.view_size(window)
 	view := window_scroll_view_of(window.width, window.height, view_width, view_height)
 	drawing.scroll_x = window_scroll_clamp(drawing.scroll_x, view.most_x)
 	drawing.scroll_y = window_scroll_clamp(drawing.scroll_y, view.most_y)
-	drawing.input_shift_x, drawing.input_shift_y = drawing.scroll_x, drawing.scroll_y
+	if !view.scrolls_x && !view.scrolls_y {
+		return
+	}
 	input := &drawing.input
-	input.pointer_x += drawing.input_shift_x
-	input.pointer_y += drawing.input_shift_y
-	input.press_x += drawing.input_shift_x
-	input.press_y += drawing.input_shift_y
+	drawing.view_pointer_x, drawing.view_pointer_y = input.pointer_x, input.pointer_y
+	drawing.view_press_x, drawing.view_press_y = input.press_x, input.press_y
+	drawing.input_moved = true
+	press_in_layout, pointer_in_layout: bool
+	input.press_x, input.press_y, press_in_layout = layout_point_of_view(view, drawing.scroll_x, drawing.scroll_y, view_width, view_height, input.press_x, input.press_y)
+	input.pointer_x, input.pointer_y, pointer_in_layout = layout_point_of_view(view, drawing.scroll_x, drawing.scroll_y, view_width, view_height, input.pointer_x, input.pointer_y)
+	// A drag that a press in the layout started stays in the layout over a
+	// bar: the element that holds it follows the pointer.
+	if !pointer_in_layout && input.button_held && press_in_layout {
+		input.pointer_x, input.pointer_y = drawing.view_pointer_x + drawing.scroll_x, drawing.view_pointer_y + drawing.scroll_y
+	}
 }
 
-// window_input_unshift gives the input back its place in the view: an
-// event between two frames comes in the coordinates of the surface.
+// window_input_unshift gives the input back its places in the view: the
+// bars of the window take it so, and an event between two frames comes in
+// the coordinates of the surface.
 @(private)
 window_input_unshift :: proc "contextless" (drawing: ^Window_Drawing) {
+	if !drawing.input_moved {
+		return
+	}
 	input := &drawing.input
-	input.pointer_x -= drawing.input_shift_x
-	input.pointer_y -= drawing.input_shift_y
-	input.press_x -= drawing.input_shift_x
-	input.press_y -= drawing.input_shift_y
-	drawing.input_shift_x, drawing.input_shift_y = 0, 0
+	input.pointer_x, input.pointer_y = drawing.view_pointer_x, drawing.view_pointer_y
+	input.press_x, input.press_y = drawing.view_press_x, drawing.view_press_y
+	drawing.input_moved = false
 }
 
-// window_scroll_input ends the scroll of a frame of a window that scrolls:
+// window_scroll_end ends the scroll of a frame of a window that scrolls:
 // PageUp and PageDown that no element took move the view by a page; a focus
-// that moved in this frame comes into the view; then the scroll bar of each
-// axis that does not fit, at the edge of the view where the input of the
-// frame was (input_shift), takes the press and the wheel that no view of
-// the window took. drawing.scroll is then the scroll of the layout in this
-// frame. The records of the bars are bar_first ..< bar_end.
+// that moved in this frame comes into the view. With bars, it then closes
+// the clips that the frame left open, gives the input back its places in
+// the view, and draws the scroll bar of each axis that does not fit, in the
+// coordinates of the view, after each record of the frame: each takes the
+// press and the wheel that no view of the window took. drawing.scroll is
+// then the scroll of the layout in this frame, and the records before
+// drawing.bar_first move by it (window_scroll_move). A frame that draws
+// into a hand picture has no bars: the frame that shows the picture draws
+// them (hand_picture_show).
 @(private)
-window_scroll_input :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) {
-	drawing.bar_first, drawing.bar_end = 0, 0
+window_scroll_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window, bars: bool) {
+	drawing.bar_first = -1
 	view_width, view_height := display.view_size(window)
 	view := window_scroll_view_of(window.width, window.height, view_width, view_height)
 	if !view.scrolls_x && !view.scrolls_y {
@@ -127,7 +227,8 @@ window_scroll_input :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Fra
 			continue
 		}
 		key.taken = true
-		drawing.scroll_y = window_scroll_page(drawing.scroll_y, view.inner_height, LINE, key.code == display.KEY_PAGE_DOWN)
+		drawing.scroll_y = window_scroll_clamp(window_scroll_page(drawing.scroll_y, view.inner_height, LINE, key.code == display.KEY_PAGE_DOWN), view.most_y)
+		system.log(.Info, "interface: ", title, ": the keys move the view to ", u64(drawing.scroll_x), ",", u64(drawing.scroll_y))
 	}
 	if frame.state.focus != drawing.focus_before && frame.focus_area_known {
 		area := frame.focus_area
@@ -146,54 +247,52 @@ window_scroll_input :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Fra
 	}
 	drawing.scroll_x = window_scroll_clamp(drawing.scroll_x, view.most_x)
 	drawing.scroll_y = window_scroll_clamp(drawing.scroll_y, view.most_y)
-	// The bars lie at the edge of the view that the input of the frame
-	// saw, so a press lands on the part of the bar under the pointer.
-	left, top := drawing.input_shift_x, drawing.input_shift_y
-	inner := Area{left, top, view.inner_width, view.inner_height}
+	if !bars {
+		return
+	}
+	// A bar inside a clip of the frame would be cut by it.
+	draw_clips_close(frame.table)
+	window_input_unshift(drawing)
+	inner := Area{0, 0, view.inner_width, view.inner_height}
 	drawing.bar_first = frame.table.record_count
 	if view.scrolls_y {
-		bar := scroll_bar(frame, {left + view.inner_width, top, SCROLL_BAR_THICKNESS, view.inner_height}, identity("interface: the vertical scroll bar of the window"), .Vertical, {total = window.height, visible = view.inner_height, first = drawing.scroll_y}, {line = LINE}, "the window", inner)
+		bar := scroll_bar(frame, {view.inner_width, 0, SCROLL_BAR_THICKNESS, view.inner_height}, identity("interface: the vertical scroll bar of the window"), .Vertical, {total = window.height, visible = view.inner_height, first = drawing.scroll_y}, {line = LINE}, "the window", inner)
 		drawing.scroll_y = window_scroll_clamp(bar.first, view.most_y)
 	}
 	if view.scrolls_x {
-		bar := scroll_bar(frame, {left, top + view.inner_height, view.inner_width, SCROLL_BAR_THICKNESS}, identity("interface: the horizontal scroll bar of the window"), .Horizontal, {total = window.width, visible = view.inner_width, first = drawing.scroll_x}, {line = LINE}, "the window", inner)
+		bar := scroll_bar(frame, {0, view.inner_height, view.inner_width, SCROLL_BAR_THICKNESS}, identity("interface: the horizontal scroll bar of the window"), .Horizontal, {total = window.width, visible = view.inner_width, first = drawing.scroll_x}, {line = LINE}, "the window", inner)
 		drawing.scroll_x = window_scroll_clamp(bar.first, view.most_x)
 	}
 	if view.scrolls_x && view.scrolls_y {
-		draw_rectangle(frame.table, left + view.inner_width, top + view.inner_height, SCROLL_BAR_THICKNESS, SCROLL_BAR_THICKNESS, graphics.colors.background)
+		draw_rectangle(frame.table, view.inner_width, view.inner_height, SCROLL_BAR_THICKNESS, SCROLL_BAR_THICKNESS, graphics.colors.background)
 	}
-	drawing.bar_end = frame.table.record_count
 }
 
-// The gap that the focus into view leaves past the element.
-WINDOW_SCROLL_GAP :: 8
-
-// window_scroll_move moves each record of the frame into the view: the
-// records of the bars by the scroll that placed them, each other one by the
-// scroll of the layout, and the points of each path with its record. A
-// window that fits its view moves nothing.
+// window_scroll_move moves each record of the frame before its bars into
+// the view by the scroll of the layout, and the points of each path with
+// its record. A record that the move would take past the coordinate limit,
+// and a path whose points would, draws nothing in its place
+// (draw_record.record_hidden): a record half moved would draw at a place
+// of the layout that the view does not show. A window that fits its view
+// moves nothing.
 @(private)
 window_scroll_move :: proc "contextless" (drawing: ^Window_Drawing) {
 	table := &drawing.now
-	if drawing.scroll_x == 0 && drawing.scroll_y == 0 && drawing.input_shift_x == 0 && drawing.input_shift_y == 0 {
+	if drawing.scroll_x == 0 && drawing.scroll_y == 0 {
 		return
 	}
-	for &record, index in table.records[:table.record_count] {
-		step_x, step_y := drawing.scroll_x, drawing.scroll_y
-		if index >= drawing.bar_first && index < drawing.bar_end {
-			step_x, step_y = drawing.input_shift_x, drawing.input_shift_y
-		}
-		units_x, units_y := -draw_record.units_of_pixels(step_x), -draw_record.units_of_pixels(step_y)
+	end := drawing.bar_first >= 0 ? min(drawing.bar_first, table.record_count) : table.record_count
+	units_x, units_y := -draw_record.units_of_pixels(drawing.scroll_x), -draw_record.units_of_pixels(drawing.scroll_y)
+	for &record in table.records[:end] {
 		moved, ok := draw_record.record_moved(record, units_x, units_y)
-		if !ok {
-			continue
-		}
-		if primitive, problem := draw_record.read(record); problem == .None {
-			if path, is_path := primitive.(draw_record.Draw_Path); is_path && !path_points_of_table_move(table, path, units_x, units_y) {
-				continue
+		if ok {
+			if primitive, problem := draw_record.read(record); problem == .None {
+				if path, is_path := primitive.(draw_record.Draw_Path); is_path {
+					ok = path_points_of_table_move(table, path, units_x, units_y)
+				}
 			}
 		}
-		record = moved
+		record = ok ? moved : draw_record.record_hidden(record)
 	}
 }
 

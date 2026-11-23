@@ -236,6 +236,7 @@ interface_text_record_of :: proc(fields: draw_record.Text_Fields, left, top, rig
 // places, with no box.
 @(test)
 no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	font := test_interface_font(t)
 	LONG :: "a name far too long for its box, WWWWW MMMMM, and more text after it"
 	Element_Case :: struct {
@@ -302,6 +303,7 @@ no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
 // limit, it is a text of the font of the cells, measured as one.
 @(test)
 the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	font := test_interface_font(t)
 	with_font, without_font := new(Font_Tables), new(Font_Tables)
 	defer free(with_font)

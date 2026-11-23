@@ -835,6 +835,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if event.kind == .Settings_Changed {
 				picture_owed = true
 			}
+			// The scroll of a window that does not fit the work area: its
+			// bars, the wheel and the page keys need a picture.
+			if _, _, show_due := interface.window_scroll_event(&hand_picture.drawing, &window, event); show_due {
+				picture_owed = true
+			}
 		}
 		// This service never waits for the compositor: while the
 		// compositor did not take the last picture, the window owes its

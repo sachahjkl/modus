@@ -10,6 +10,7 @@ import "core:testing"
 // was written has no place of its name, or another rectangle.
 @(test)
 the_element_names_of_a_frame :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	records: [128]Draw_Record
 	characters: [4096]u8
 	table := Draw_Table{records = records[:], text = characters[:]}

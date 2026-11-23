@@ -195,8 +195,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 			case .Pointer:
-				x, y := event.x / CELL, event.y / CELL
-				if event.buttons & display.BUTTON_LEFT != 0 && event.x >= 0 && event.y >= 0 && x < COLUMNS && y < ROWS {
+				// The board is in the coordinates of the layout, which the
+				// window scrolls when it does not fit the work area.
+				place, in_layout, _ := interface.window_scroll_event(&window_memory.drawing, &window, event)
+				x, y := place.x / CELL, place.y / CELL
+				if event.buttons & display.BUTTON_LEFT != 0 && in_layout && place.x >= 0 && place.y >= 0 && x < COLUMNS && y < ROWS {
 					cells[shown][y][x] = 1
 					board_generation += 1
 				}

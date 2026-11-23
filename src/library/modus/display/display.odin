@@ -1006,7 +1006,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 		errors.fail(error, 0, .State, .None, 2, i64(width), i64(window.resize_asked_width), i64(height))
 		return .Bad_Operation
 	case window.resizable && (width < 1 || height < 1 || width > window.size_limits.largest_width || height > window.size_limits.largest_height):
-		errors.fail(error, 0, .Out_Of_Range, .None, width < window.size_limits.least_width || width > window.size_limits.largest_width ? 2 : 3, i64(width), i64(window.size_limits.largest_width), i64(height))
+		errors.fail(error, 0, .Out_Of_Range, .None, width < 1 || width > window.size_limits.largest_width ? 2 : 3, i64(width), i64(window.size_limits.largest_width), i64(height))
 		return .Bad_Operation
 	case ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands):
 		// The ring has one writer, this thread: the room seen here stays.

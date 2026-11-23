@@ -63,11 +63,13 @@ resizable_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 	serial := record.values[3]
 	refused :: proc "contextless" (client: ^Client, serial: u64) {
+		was_clamp := client.resize_asked && client.resize_asked_clamp
 		client.resizes_refused += 1
 		client.resize_asked, client.resize_edges = false, {}
 		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Refused), 1 = serial})
 		desktop_restore_size_after_answer(client) // desktop_features.odin
 		_ = window_scale_step(client) // scale.odin: the end of a fit request
+		clamp_ask_again(client, was_clamp)
 	}
 	// The process wrote the number of the handle: it can name any handle of
 	// the compositor. A number with no proof of this process is neither used
@@ -133,11 +135,10 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 	client.resize_logical_width, client.resize_logical_height = client.resize_asked_width, client.resize_asked_height
 	client.resize_scale, client.resize_serial = surface_scale, serial
 	client.resize_pending_edges = client.resize_edges
-	// A size of the principal that no clamp cut is the size that the window
-	// wants from now on.
-	if !client.resize_asked_clamp {
-		client.wanted_width, client.wanted_height = client.resize_asked_width, client.resize_asked_height
-	}
+	// The size before the cut to the work area is the size that the window
+	// wants from now on: it gets it back when the work area grows.
+	client.wanted_width, client.wanted_height = client.resize_asked_wanted_width, client.resize_asked_wanted_height
+	client.clamp_asks = 0
 	client.resize_asked, client.resize_edges = false, {}
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Taken), 1 = serial})
 	// The scale after the answer: the window rescales its new surface.
@@ -153,10 +154,32 @@ resize_declined_take :: proc "contextless" (client: ^Client) {
 		client.resizes_refused += 1
 		return
 	}
+	was_clamp := client.resize_asked_clamp
 	client.resize_asked, client.resize_edges = false, {}
 	system.log_fact(.Info, Window_Keeps_Size{width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
 	desktop_restore_size_after_answer(client) // desktop_features.odin
 	_ = window_scale_step(client) // scale.odin: the end of a fit request
+	clamp_ask_again(client, was_clamp)
+}
+
+// CLAMP_ASKS_MOST bounds the asks of a clamp that end with no new surface,
+// in a row. A window declines a request while it is between two surfaces,
+// so one decline is no answer of the process; a process that declines each
+// clamp, as one that never takes Resized, keeps its larger surface after
+// the last ask, and the compositor never asks it without end.
+CLAMP_ASKS_MOST :: 3
+
+// clamp_ask_again asks a clamp again at the end of a request that gave the
+// window no new surface (a refusal or a decline): the fit to the work area,
+// at once when the window shows a surface of the scale in force, or else
+// when it shows one (window_fit_after_scale).
+clamp_ask_again :: proc "contextless" (client: ^Client, was_clamp: bool) {
+	if !was_clamp || client.clamp_asks >= CLAMP_ASKS_MOST {
+		return
+	}
+	client.clamp_asks += 1
+	client.fit_after_scale = true
+	window_fit_after_scale(client) // scale.odin
 }
 
 // size_range_of gives the limits of a window as the pure procedures of the
@@ -451,6 +474,7 @@ window_size_ask :: proc "contextless" (client: ^Client, width, height: int, edge
 	}
 	client.resize_asked, client.resize_asked_clamp = true, clamp
 	client.resize_asked_width, client.resize_asked_height = asked_width, asked_height
+	client.resize_asked_wanted_width, client.resize_asked_wanted_height = width, height
 	client.resize_edges = edges
 	send(client, .Resized, {0 = u64(asked_width), 1 = u64(asked_height)})
 	system.log_fact(.Info, Draw_Size_Asked{width = u64(asked_width), height = u64(asked_height), window = window_field(client.title[:])})

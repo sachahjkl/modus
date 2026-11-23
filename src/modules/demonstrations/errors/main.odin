@@ -1367,9 +1367,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 			case .Pointer:
+				// The cases are in the coordinates of the layout, which the
+				// window scrolls when it does not fit the work area.
+				place, in_layout, _ := interface.window_scroll_event(&window_memory.drawing, &window, event)
 				down := event.buttons & 1 != 0
-				if down && !pressed {
-					chosen = case_at(event.y)
+				if down && !pressed && in_layout {
+					chosen = case_at(place.y)
 				}
 				pressed = down
 			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Surface_Answer, .Work_Area:

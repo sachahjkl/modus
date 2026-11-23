@@ -294,6 +294,7 @@ a_scaled_table_drawn_in_parts_is_the_table_drawn_whole :: proc(t: ^testing.T) {
 // ink inside it.
 @(test)
 a_text_of_the_cells_draws_inside_its_box_on_the_screen :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	scaled_test_start()
 	UNITS :: draw_record.UNITS_PER_PIXEL
 	for scale in scale_factor.Scale {

@@ -89,7 +89,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, Running{})
 		}
 		frame += 1
-		for _ in display.next_event(&window) {}
+		for event in display.next_event(&window) {
+			_, _, _ = interface.window_scroll_event(&drawing, &window, event)
+		}
 		next += FRAME_INTERVAL
 		system.sleep(next)
 	}

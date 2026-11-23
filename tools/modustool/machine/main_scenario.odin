@@ -3261,6 +3261,26 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(scale = .sixteen_eighths)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 2; "},
 	{kind = .Wait, text = " windows shows a surface at 16 eighths", fails_on = "declined the scale"},
+	// A fixed window whose layout is larger than its view: interface_elements
+	// lays out at 816 x 560, past the room under its frame at 2. The
+	// compositor clamps its surface, display takes the clamp, and the window
+	// layer scrolls the layout in the view. PageDown, which no element takes
+	// with no focus, moves the view by a page. Alt+Tab gives the keys back to
+	// the console.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "interface_elements"},
+	{kind = .Wait, text = " for \"interface_elements\": interface_elements (module)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette starts interface_elements"},
+	{kind = .Wait, text = "compositor: window interface_elements resized from 816x560 to 816x", fails_on = "no surface of"},
+	{kind = .Wait, text = "interface: interface_elements: the layout of 816x560 scrolls in a view of 816x"},
+	{kind = .Key, text = "pgdn"},
+	{kind = .Wait, text = "interface: interface_elements: the keys move the view to "},
+	{kind = .Key, text = "alt-tab"},
+	{kind = .Wait, text = "compositor: the window switcher brought console to the front"},
+	{kind = .Type, text = "stop(\"interface_elements\")"},
+	{kind = .Wait, text = "root: interface_elements stopped"},
 	{kind = .Type, text = "stop(\"settings\")"},
 	{kind = .Wait, text = "root: settings stopped"},
 	{kind = .Key, text = "meta_l"},
