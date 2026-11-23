@@ -87,19 +87,19 @@ The client waits on the state word beside its call ring, in the same wait. One b
 1. The holder stops. At the reap, the root service writes the stop cause and the stop outcome, then `Holder_Stopped` with a release, and wakes the client.
 2. The starter starts a new holder, or does not.
 3. With a new holder, the root service gives it each connection of the role, then writes the new holder serial and `Held`, and wakes the client.
-4. With no new holder (the bound is past, the stop was `Done` or `Refused`, or the starter itself stopped), the root service writes `Ended` and ends the connection. Each call that waits gets the library status `Ended`, with the stop cause and the stop outcome.
+4. With no new holder (the bound is past, the stop was `Done` or `Refused`, or the starter itself stopped), the root service writes `Ended` and ends the connection. Each call that waits gets the call outcome `Connection_Ended_During_The_Call`, or `Callee_Unavailable` when it did not leave, with the stop cause and the stop outcome in its error record.
 
 A page and a state are new mechanism, so they must be the smallest form. A second fact on the end page of a wiring was refused: "one end word for each end page, ever" is the rule that keeps a stream end true, and a connection changes its holder many times.
 
 **The calls in flight.** The library keeps, for each connection, the tag of each call that it wrote and whose completion it did not read, with the holder serial at the time of the write. The call ring continues across the restart: the new holder copies its counters and checks them, as each side of a ring does. A call that the old holder did not take is still in the command queue, and the new holder serves it. A completion that the old holder wrote is valid, and the client reads it. A call that the old holder took and did not answer is **in doubt**: it ran, or it did not.
 
-**The replay.** At the new holder serial, the library writes each call in doubt again, in its order, with the same arguments, which are still in the call region. A call in doubt is written again once only. If the holder stops again while the replayed call is in flight, the library gives that call to its caller with the status `Holder_Stopped`, and replays it no more. A call that a holder cannot survive then costs at most two restarts, and the restart bound sees the loop.
+**The replay.** At the new holder serial, the library writes each call in doubt again, in its order, with the same arguments, which are still in the call region. A call in doubt is written again once only. If the holder stops again while the replayed call is in flight, the library gives that call to its caller with the call outcome `Callee_Stopped_During_The_Call` ([../api/call_outcome.md](../api/call_outcome.md)), and replays it no more. A call that a holder cannot survive then costs at most two restarts, and the restart bound sees the loop.
 
-**What a caller sees.** A blocking call waits across the restart, within its own deadline, and returns the answer of the new holder. A caller that asked for no wait gets `Holder_Stopped` while the state says so. A call whose deadline passes during the stop gets `No_Answer`, and stays in doubt for the library: its replay can still run it, so the caller that set the deadline must treat it as one that ran or did not.
+**What a caller sees.** A blocking call waits across the restart, within its own deadline, and returns the answer of the new holder. A caller that asked for no wait gets `Callee_Unavailable` while the state says so: its call did not leave. A call whose deadline passes during the stop gets `Deadline_Passed_During_The_Call`, and stays in doubt for the library: its replay can still run it, so the caller that set the deadline must treat it as one that ran or did not.
 
 ### The rule that makes a replay safe
 
-A replay is safe when the second run of a call gives the effect and the answer of one run. Two forms give this, and the description of each export names its form. An export that names neither is never replayed: a call of it in doubt gets `Holder_Stopped`. That is the zero value, so an export that a developer did not mark is safe, and only less available.
+A replay is safe when the second run of a call gives the effect and the answer of one run. Two forms give this, and the description of each export names its form. An export that names neither is never replayed: a call of it in doubt gets `Callee_Stopped_During_The_Call`. That is the zero value, so an export that a developer did not mark is safe, and only less available.
 
 - **An idempotent export.** A second run changes nothing more, and gives the same answer: a read, a `size`, a `list`, a `set_size` to one size. The description marks it with the attribute `idempotent`. The library replays it with no other step. The tool cannot prove the claim; the test of the role that stops the holder in each call checks it.
 - **A request serial.** Each call of an export that is not idempotent carries a request serial: a number that the library gives, which grows by 1 on each connection. The holder writes the request serial and the completion record of the call in the same commit as its effect. At its start, the holder reads the serials that its store keeps for each connection. A call whose serial is at or below the kept serial is not run again: the holder gives the kept completion. A serial above it runs.
@@ -188,7 +188,7 @@ The rules:
 
 - **See the restarts of a holder.** `restarts("storage")`: a row for each stop of the run, with the stop cause, the stop outcome, the time on the clock of the system, and the count left in the window.
 - **Give a row a window.** A start row with `restarts = 5` and `restart_window = 60`: at most 5 restarts in 60 seconds.
-- **See the calls that a client sent again.** `connections("console")`: a row for each connection, with its holder serial, its state, and its counts of calls replayed and of calls given `Holder_Stopped`.
+- **See the calls that a client sent again.** `connections("console")`: a row for each connection, with its holder serial, its state, and its counts of calls replayed and of calls given `Callee_Stopped_During_The_Call`.
 - **Make a holder stop, to test its restart.** `stop("storage")` from a console that holds the grant `Stop`. The starter starts it again with the stop outcome `Stopped_On_Request`, as for each stop that a holder did not choose.
 
 ## State
