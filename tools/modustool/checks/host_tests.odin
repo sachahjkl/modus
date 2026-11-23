@@ -454,6 +454,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/settings/appearance_rule",
 	foundation.SOURCE_FOLDER_CONTRACT + "/venus_vulkan",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/device_stop",
+	foundation.SOURCE_FOLDER_INTERNAL + "/root/principal_unlock_flow",
+	foundation.SOURCE_FOLDER_INTERNAL + "/log/scope_rules",
 	foundation.SOURCE_FOLDER_PUBLIC + "/quic_server",
 	foundation.SOURCE_FOLDER_PUBLIC + "/ssh_client",
 	foundation.SOURCE_FOLDER_INTERNAL + "/terminal/grid_resize",

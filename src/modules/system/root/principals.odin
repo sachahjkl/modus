@@ -1,6 +1,7 @@
 package root
 
 import "base:intrinsics"
+import "internal:root/principal_unlock_flow"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
 import "modus:contract/isolated"
@@ -373,35 +374,21 @@ principal_storage_key :: proc "contextless" (values: ^[7]u64, completion: ^[7]u6
 	kind := u32(root_ring.Root_Command.Principal_Storage_Key)
 	defer intrinsics.mem_zero_volatile(values, size_of(values^))
 	number := values[4]
-	for index in 5 ..< len(values) {
-		if values[index] != 0 {
-			completion^ = root_ring.word_refusal(.Principal_Storage_Key, i64(index) + 1, values[index], 0)
-			return .Argument_Refused
-		}
-	}
-	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent || principal_records[number].state == .Creating || principals.identifier_is_zero(principal_records[number].identifier[:]) {
-		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 5, i64(min(number, 1 << 62)))
-	}
-	// A key comes for a locked principal only, once before its unlock.
-	if principal_records[number].state != .Locked || storage_key_awaiting[number] {
-		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 5, i64(number))
-	}
-	// The erase of a lock before is still owed: the storage service would
-	// refuse a second key. unlock tries again.
-	if storage_erase_owed[number] {
-		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
-	}
-	if values[0] == 0 && values[1] == 0 && values[2] == 0 && values[3] == 0 {
-		return root_ring.refuse(completion, .Argument_Refused, kind, .Empty, .Bytes, 1)
+	record_state := principals.Session_State.Absent
+	identifier_zero := true
+	if number < principals.PRINCIPAL_CAPACITY {
+		record_state = principal_records[number].state
+		identifier_zero = principals.identifier_is_zero(principal_records[number].identifier[:])
 	}
 	holder := storage_holder()
-	if holder == nil {
-		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Services)
+	ring_free: u32
+	if holder != nil {
+		ring_free = ring.capacity(&holder.service.commands) - ring.count(&holder.service.commands)
 	}
-	// Both records or none: a ring with room for one only refuses the
-	// unlock, which `unlock` says.
-	if ring.capacity(&holder.service.commands) - ring.count(&holder.service.commands) < 2 {
-		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
+	decision := principal_unlock_flow.storage_key_check(&storage_key_flow, values^, record_state, identifier_zero, holder != nil, ring_free)
+	if !decision.send {
+		completion^ = decision.refusal
+		return decision.outcome
 	}
 	// The identity first: a key with no identity before it is refused by
 	// the storage service, and an identity with no key opens nothing. The
@@ -411,32 +398,26 @@ principal_storage_key :: proc "contextless" (values: ^[7]u64, completion: ^[7]u6
 	key_record := ring.Record{kind = u32(isolated.Service_Command.Principal_Storage_Key), values = {values[0], values[1], values[2], values[3], number, 0, 0}}
 	defer intrinsics.mem_zero_volatile(&key_record, size_of(key_record))
 	identity_sent := system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Identity), values = {identifier[0], identifier[1], identifier[2], identifier[3], number, 0, 0}})
-	if !identity_sent || !system.send(&holder.service.commands, key_record) {
-		if identity_sent {
+	key_sent := identity_sent && system.send(&holder.service.commands, key_record)
+	succeeded, owe_erase := principal_unlock_flow.storage_key_sent(&storage_key_flow, number, identity_sent, key_sent)
+	if !succeeded {
+		if owe_erase {
 			storage_erase_owe(number)
 		}
 		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
 	}
-	storage_key_awaiting[number] = true
 	return .Succeeded
 }
 
-// The slots whose storage key the storage service holds, or will take, and
-// whose session did not start yet: a refused or abandoned unlock owes the
-// erase of that key.
-storage_key_awaiting: [principals.PRINCIPAL_CAPACITY]bool
-
-// The slots whose keys the storage service must erase: the lock, or an
-// unlock that did not start its session after the key was sent. The erase
-// is sent again at each pass until the ring of the storage service takes
-// it (storage_erase_step).
-storage_erase_owed: [principals.PRINCIPAL_CAPACITY]bool
+// The tracking of awaiting storage keys and owed erases for each principal
+// slot: a lock or a failed or abandoned unlock owes the erase, which the
+// main loop sends again until the storage ring takes it.
+storage_key_flow: principal_unlock_flow.Flow
 
 // storage_erase_owe owes the erase of the keys of a slot, and sends it now
 // if the ring has room.
 storage_erase_owe :: proc "contextless" (number: u64) {
-	storage_key_awaiting[number] = false
-	storage_erase_owed[number] = true
+	principal_unlock_flow.erase_owe(&storage_key_flow, number)
 	if !storage_erase_send(number) {
 		system.log_fact(.Warning, Storage_Lock_Not_Sent{principal = number})
 	}
@@ -447,11 +428,8 @@ storage_erase_owe :: proc "contextless" (number: u64) {
 @(private = "file")
 storage_erase_send :: proc "contextless" (number: u64) -> bool {
 	holder := storage_holder()
-	if holder == nil || system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Locked), values = {4 = number}}) {
-		storage_erase_owed[number] = false
-		return true
-	}
-	return false
+	sent := holder != nil && system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Locked), values = {4 = number}})
+	return principal_unlock_flow.erase_attempt(&storage_key_flow, number, holder != nil, sent)
 }
 
 // storage_erase_step sends each owed erase again, and waits for room in the
@@ -459,7 +437,7 @@ storage_erase_send :: proc "contextless" (number: u64) -> bool {
 // it at each pass.
 storage_erase_step :: proc "contextless" (wait: ^system.Wait) {
 	still_owed := false
-	for owed, number in storage_erase_owed {
+	for owed, number in storage_key_flow.erase_owed {
 		if owed && !storage_erase_send(u64(number)) {
 			still_owed = true
 		}
@@ -490,12 +468,8 @@ principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) ->
 	outcome := principal_unlock_checked(values, completion)
 	// The storage key of this unlock was sent: a session that did not start
 	// leaves no key in the storage service.
-	if number < principals.PRINCIPAL_CAPACITY && storage_key_awaiting[number] {
-		if outcome == .Succeeded {
-			storage_key_awaiting[number] = false
-		} else {
-			storage_erase_owe(number)
-		}
+	if principal_unlock_flow.unlock_finished(&storage_key_flow, number, outcome == .Succeeded) {
+		storage_erase_owe(number)
 	}
 	return outcome
 }
@@ -504,22 +478,18 @@ principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) ->
 principal_unlock_checked :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Principal_Unlock)
 	number := values[4]
-	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent {
-		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
-	}
-	// The session of the principal runs: it is not unlocked twice.
-	if principal_records[number].state != .Locked {
-		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
-	}
-	// A record with no identifier names no principal on the disk: its
-	// session does not start.
-	if principals.identifier_is_zero(principal_records[number].identifier[:]) {
-		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
+	record_state := principals.Session_State.Absent
+	identifier_zero := true
+	if number < principals.PRINCIPAL_CAPACITY {
+		record_state = principal_records[number].state
+		identifier_zero = principals.identifier_is_zero(principal_records[number].identifier[:])
 	}
 	// The seat before the key: a seat that refuses the session takes no key
 	// of it.
-	if _, seat_ok := principals.seat_next(seat, .Session_Unlocked, number); !seat_ok {
-		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
+	precheck := principal_unlock_flow.unlock_precheck(number, record_state, identifier_zero, seat)
+	if !precheck.ok {
+		completion^ = precheck.refusal
+		return precheck.outcome
 	}
 	if outcome := principal_key_take(number, values, completion); outcome != .Succeeded {
 		return outcome
@@ -603,8 +573,8 @@ unlock_stopped :: proc "contextless" () {
 	asked := unlock_run.stage == .Stop_Asked
 	unlock_run.stage = .Stopped
 	// An unlock that stopped between its key and its session owes its erase.
-	for awaiting, number in storage_key_awaiting {
-		if awaiting {
+	for owed, number in principal_unlock_flow.unlock_stopped_collect(&storage_key_flow) {
+		if owed {
 			storage_erase_owe(u64(number))
 		}
 	}

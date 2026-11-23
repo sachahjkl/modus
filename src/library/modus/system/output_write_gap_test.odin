@@ -637,4 +637,13 @@ a_write_of_a_principal_reaches_the_rings_of_that_principal_only :: proc(t: ^test
 	testing.expect_value(t, stream.state.scoped[0].next_serial, u32(1))
 	// A live count sees the ring of each principal.
 	testing.expect_value(t, output_reader_count(&stream), 3)
+	// Ending the output writes each principal's own serial in its end record,
+	// never the serial of another principal or of the whole output.
+	testing.expect_value(t, output_end(&stream, deadline = 0), output.Stream_Status.Ok)
+	end_kind_m, end_serial_m, _, end_ok_m := host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	testing.expect(t, end_ok_m && end_kind_m == .End)
+	testing.expect_value(t, end_serial_m, u32(1))
+	end_kind_n, end_serial_n, _, end_ok_n := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
+	testing.expect(t, end_ok_n && end_kind_n == .End)
+	testing.expect_value(t, end_serial_n, u32(5))
 }

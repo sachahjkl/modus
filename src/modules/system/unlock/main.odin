@@ -337,7 +337,11 @@ object_versions_erase :: proc "contextless" (object: string) {
 // waits for its completion.
 root_command :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
 	request_tag += 1
-	if !system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_tag, values = values}) {
+	command_record := ring.Record{kind = u32(kind), tag = request_tag, values = values}
+	sent := system.send(&requests.commands, command_record)
+	// Key commands carry secrets in values: leave no copy on this stack.
+	erase(([^]u8)(&command_record)[:size_of(command_record)])
+	if !sent {
 		return {}, false
 	}
 	limit := system.time() + ROOT_ANSWER_LIMIT

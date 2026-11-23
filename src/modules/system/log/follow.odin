@@ -1,6 +1,7 @@
 package log
 
 import "base:intrinsics"
+import "internal:log/scope_rules"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:system"
@@ -135,25 +136,21 @@ follow_pump :: proc "contextless" () {
 		}
 		record, whole := record_copy(follow_next)
 		row, row_ok := follow_row_of(place.scope_number, &record)
-		if !whole || !row_ok {
+		action, target := scope_rules.follow_record_decide(settled, place.known, place.principal, whole, row_ok)
+		switch action {
+		case .Skip:
+			follow_next += 1
+		case .Emit_Gap:
 			// Written over after the pass, or a byte that names no member:
-			// a loss of its principal.
-			follow_lost(place.principal)
+			// a loss of its principal only.
+			follow_lost(target)
 			follow_next += 1
-			continue
-		}
-		switch system.output_write_principal(&follow, place.principal, row, wait = false, deadline = system.time()) {
-		case .Ok, .No_Reader:
-			follow_next += 1
-		case .Full:
-			// The same record at the next pass: its place is kept.
-			return
-		case .Ended:
-			// follow never ends: a call that gives Ended names no ring.
-			return
-		case .No_Writer, .Bad_Record, .No_Record:
-			// No write gives them; the record is passed, never written
-			// twice.
+		case .Write:
+			status := system.output_write_principal(&follow, target, row, wait = false, deadline = system.time())
+			if !scope_rules.follow_after_write(status) {
+				// The same record at the next pass: its place is kept.
+				return
+			}
 			follow_next += 1
 		}
 	}

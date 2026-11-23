@@ -46,11 +46,11 @@ Command_Answer :: struct {
 // ring since the last pass.
 root_ring_serve :: proc "contextless" (item: ^Started) {
 	for {
-		record := system.receive(&item.requests.commands) or_break
+		record := system.receive_erasing(&item.requests.commands) or_break
 		answer := root_command_answer(item, &record)
 		tag := record.tag
-		// Machine_Key and Principal_Unlock carry a key in their values: no
-		// copy of a record stays in this frame.
+		// Key commands carry secrets in their values: no copy of a record
+		// stays in this frame.
 		intrinsics.mem_zero_volatile(&record, size_of(record))
 		if answer.held {
 			continue
@@ -98,7 +98,7 @@ root_command_answer :: proc "contextless" (item: ^Started, record: ^ring.Record)
 	// The values of a key are no name: they are not unpacked, so no copy of
 	// the key stays in the name bytes of this frame.
 	name_bytes: system.Name
-	if record.kind != u32(root_ring.Root_Command.Machine_Key) && record.kind != u32(root_ring.Root_Command.Principal_Unlock) {
+	if record.kind != u32(root_ring.Root_Command.Machine_Key) && record.kind != u32(root_ring.Root_Command.Principal_Unlock) && record.kind != u32(root_ring.Root_Command.Principal_Storage_Key) {
 		name_bytes = system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 	}
 	raw_name := system.name_of(name_bytes[:])
@@ -131,7 +131,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	// A copy for the commands that read the record by value. A key command
 	// reads the record of the caller through the pointer, never this copy.
 	record: ring.Record
-	if command != .Machine_Key && command != .Principal_Unlock {
+	if command != .Machine_Key && command != .Principal_Unlock && command != .Principal_Storage_Key {
 		record = record_place^
 	}
 	defer intrinsics.mem_zero_volatile(&record, size_of(record))

@@ -1195,10 +1195,12 @@ writer_end_close_with_record :: proc "contextless" (state: ^Output_State, end: ^
 			state.rings_broken += 1
 			break
 		}
+		cs := counts_of(state, {reader_principal = end.reader_principal})
+		serial := cs != nil ? cs.next_serial : state.next_serial
 		if !end.joined {
-			end.joined = compartment_push_to(end, .Joined, state.next_serial)
+			end.joined = compartment_push_to(end, .Joined, serial)
 		}
-		if end.joined && compartment_push_to(end, .End, state.next_serial, error = error) {
+		if end.joined && compartment_push_to(end, .End, serial, error = error) {
 			counters_wake_reader(end.queue.commands.counters)
 			break
 		}

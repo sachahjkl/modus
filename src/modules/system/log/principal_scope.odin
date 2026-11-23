@@ -1,6 +1,7 @@
 package log
 
 import "base:intrinsics"
+import "internal:log/scope_rules"
 import module "modus:contract/module"
 import "modus:contract/log_scope"
 import op "modus:contract/operation"
@@ -58,14 +59,7 @@ scope_counts: [principals.PRINCIPAL_CAPACITY]u64
 // principal of its first part, its key, and the part that comes next. A
 // part that does not follow it, or a loss in the pass, closes it: the parts
 // after a lost one name no principal.
-Root_Fact :: struct {
-	open:      bool,
-	principal: u64,
-	key:       u64,
-	next_part: u8,
-	parts:     u8,
-}
-root_fact: Root_Fact
+root_fact: scope_rules.Root_Fact
 
 // session_table_open maps the session table, and reads the principal of
 // the window.
@@ -91,13 +85,13 @@ principals_settle :: proc "contextless" () -> (deadline: u64) {
 	next, lost := op.log_first_kept(settled_next, written)
 	settle_lost += lost
 	if lost != 0 {
-		root_fact.open = false
+		scope_rules.root_fact_reset(&root_fact)
 	}
 	for ; next < written; next += 1 {
 		record, whole := record_copy(next)
 		if !whole {
 			settle_lost += 1
-			root_fact.open = false
+			scope_rules.root_fact_reset(&root_fact)
 			continue
 		}
 		principal, decision := record_settle(&record)
@@ -142,24 +136,11 @@ record_settle :: proc "contextless" (record: ^op.Log_Record) -> (principal: u64,
 root_record_principal :: proc "contextless" (record: ^op.Log_Record) -> (principal: u64, decision: log_scope.Settle_Decision) {
 	form, form_known := op.log_record_form(record)
 	if !form_known || form != .Fact {
-		root_fact.open = false
-		return principals.MACHINE, .Known
+		return scope_rules.root_fact_step(&root_fact, false, 0, 0, 0, principals.MACHINE)
 	}
 	fact := op.log_record_fact(record)
-	if fact.part != 0 {
-		// A later part takes the principal of the first part of the same
-		// fact, read right before it in this pass; else it names none.
-		if !root_fact.open || fact.key != root_fact.key || fact.part != root_fact.next_part || fact.part_count != root_fact.parts {
-			root_fact.open = false
-			return 0, .No_Principal
-		}
-		root_fact.next_part += 1
-		root_fact.open = root_fact.next_part < root_fact.parts
-		return root_fact.principal, .Known
-	}
-	principal = fact_principal_field(fact)
-	root_fact = {open = fact.part_count > 1, principal = principal, key = fact.key, next_part = 1, parts = fact.part_count}
-	return principal, .Known
+	first_principal := fact.part == 0 ? fact_principal_field(fact) : principals.MACHINE
+	return scope_rules.root_fact_step(&root_fact, true, fact.key, fact.part, fact.part_count, first_principal)
 }
 
 // fact_principal_field reads the Integer field "principal" of the first
