@@ -97,15 +97,6 @@ Boot_Image_Agrees :: struct {
 	check_time:      value_kinds.Time_In_Microseconds,
 }
 
-// No boot program checked the files: the starter of the machine gave the
-// hash of the system description, nothing verified its signature, and this
-// service hashed each file at its start.
-@(log_fact = "root: no boot program verified the system description: its hash is the one of the boot record, and nothing verified its signature; this service checked its {checked_entries} modules and resources at its start, in {check_time}")
-Image_Checked_At_Start :: struct {
-	checked_entries: u64,
-	check_time:      value_kinds.Time_In_Microseconds,
-}
-
 // No boot program checked the files: this service checked the table of
 // the boot image and its own module at its start, and hashes each other
 // file at its first use.

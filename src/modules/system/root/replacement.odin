@@ -98,12 +98,12 @@ replacement_table_change :: proc "contextless" (asker: ^Started, name: string, b
 }
 
 // replacement_list_bytes gives the resource replacement_list of the boot
-// image, or nil when it has none. The check of the boot image at the start
-// compared its hash with the system description, and no process writes
-// the pages of the boot image.
+// image, or nil when it has none, and nil when its bytes do not have the
+// hash of its entry (image_entry_give, which names the file on the log):
+// a damaged list allows no replacement.
 replacement_list_bytes :: proc "contextless" () -> []u8 {
 	entry := system.image_resource_find(image, replacement_list.RESOURCE_NAME)
-	if entry == nil {
+	if entry == nil || !image_entry_give(entry) {
 		return nil
 	}
 	return image[entry.offset:][:entry.size]

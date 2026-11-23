@@ -174,3 +174,43 @@ the_load_options_refuse_a_tagged_record_that_is_wrong :: proc(t: ^testing.T) {
 		testing.expect_value(t, request, member)
 	}
 }
+
+// Each refusal of a trust record, then the two records that can have
+// happened: the boot program that hashed the files with its verifier, and
+// a record with no verifier whose files the root service checks at first use.
+@(test)
+the_trust_decision_refuses_each_record_that_cannot_have_happened :: proc(t: ^testing.T) {
+	Case :: struct {
+		file_check: u64,
+		verifier:   u64,
+		decision:   Trust_Decision,
+	}
+	cases := [?]Case {
+		{u64(File_Check.None), u64(Verifier.Boot_Program), .No_File_Check},
+		{u64(File_Check.None), u64(Verifier.None), .No_File_Check},
+		{u64(max(File_Check)) + 1, u64(Verifier.Boot_Program), .Unknown_File_Check},
+		{max(u64), u64(Verifier.None), .Unknown_File_Check},
+		{u64(File_Check.Boot_Program), u64(max(Verifier)) + 1, .Unknown_Verifier},
+		{u64(File_Check.Root_Service_At_Load), max(u64), .Unknown_Verifier},
+		{u64(File_Check.Boot_Program), u64(Verifier.None), .Boot_Program_Without_Verifier},
+		{u64(File_Check.Root_Service_At_Load), u64(Verifier.Boot_Program), .Verifier_Without_Boot_Program},
+		{u64(File_Check.Root_Service_At_Load), u64(Verifier.Firmware_And_Boot_Program), .Verifier_Without_Boot_Program},
+	}
+	for item in cases {
+		_, _, decision := trust_decision({file_check = item.file_check, verifier = item.verifier})
+		testing.expectf(t, decision == item.decision, "file check %d, verifier %d: %v, expected %v", item.file_check, item.verifier, decision, item.decision)
+	}
+	for verifier in ([]Verifier{.Boot_Program, .Firmware_And_Boot_Program}) {
+		check, named, decision := trust_decision({file_check = u64(File_Check.Boot_Program), verifier = u64(verifier)})
+		testing.expect_value(t, decision, Trust_Decision.Accepted)
+		testing.expect_value(t, check, File_Check.Boot_Program)
+		testing.expect_value(t, named, verifier)
+	}
+	check, named, decision := trust_decision({file_check = u64(File_Check.Root_Service_At_Load)})
+	testing.expect_value(t, decision, Trust_Decision.Accepted)
+	testing.expect_value(t, check, File_Check.Root_Service_At_Load)
+	testing.expect_value(t, named, Verifier.None)
+	for sentence in trust_decision_sentences {
+		testing.expect(t, sentence != "")
+	}
+}

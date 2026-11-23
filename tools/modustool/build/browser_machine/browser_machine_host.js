@@ -57,7 +57,7 @@ export const BOOT_INFO_SIZE = 440;
 // word of File_Check that it writes there. A host test of the tool compares
 // each one with the contract.
 export const BOOT_TRUST_OFFSETS = { description_hash: 48, file_check: 216 };
-export const FileCheck = { None: 0, Boot_Program: 1, Root_Service_At_Start: 2, Root_Service_At_Load: 3 };
+export const FileCheck = { None: 0, Boot_Program: 1, Root_Service_At_Load: 2 };
 Object.freeze(FileCheck);
 export const FRAMEBUFFER_OFFSETS = { address: 0, width: 8, height: 12, pixels_per_line: 16, format: 20 };
 export const MEMORY_RANGE_OFFSETS = { start: 0, page_count: 8, kind: 16, reserved: 20 };
@@ -600,7 +600,6 @@ export const ROOT_SERVICE_STAGE_LINE = "kernel: boot: kernel: root service: ";
 // one from its fact type.
 export const BOOT_STAGE_FACT_TAGS = {
   "root::Boot_Image_Agrees": "9bf297",
-  "root::Image_Checked_At_Start": "877ebf",
   "root::Image_Checked_At_Load": "671a58",
   "root::Process_Started": "526e32",
   "root::Process_Started_With_Terminal": "a29438",
@@ -640,7 +639,7 @@ export class BootStageTracker {
     const named = (name) => BOOT_STAGE_FACT_TAGS[name] === tag && name.startsWith(process + "::");
     // The end of the check of the root service at its start, in each form
     // of the check (boot_info.File_Check).
-    if (named("root::Boot_Image_Agrees") || named("root::Image_Checked_At_Start") || named("root::Image_Checked_At_Load")) this.enter(BootStage.Services);
+    if (named("root::Boot_Image_Agrees") || named("root::Image_Checked_At_Load")) this.enter(BootStage.Services);
     else if (this.desktop && named("root::Process_Started") && values === hexadecimalOf("compositor")) this.enter(BootStage.Desktop);
     else if (!this.desktop && named("root::Process_Started_With_Terminal") && values === hexadecimalOf("console")) this.enter(BootStage.Console);
     else if (this.desktop && named("compositor::First_Frame")) this.enter(BootStage.Ready);

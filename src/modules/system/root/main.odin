@@ -1015,6 +1015,11 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	mapping_count := 0
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == display_name && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			file_mapping, given := image_entry_mapping(&item, isolated.FILE_ADDRESS)
+			if !given {
+				served^ = {}
+				return .Bad_Operation
+			}
 			served.service_memory, served.service, status = system.ring_create()
 			if status != .Ok {
 				system.log_fact(.Warning, Compositor_Service_Ring_Failed{status = status})
@@ -1024,7 +1029,7 @@ display_holder_start :: proc "contextless" () -> system.Status {
 			system.grant_put(&context_grants, system.GRANT_SERVICE, {served.service_memory, {.Read, .Write}})
 			system.value_put(&values, COMPOSITOR_VALUE_FILE_ADDRESS, isolated.FILE_ADDRESS)
 			system.value_put(&values, COMPOSITOR_VALUE_FILE_SIZE, item.size)
-			mappings[0] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+			mappings[0] = file_mapping
 			mapping_count = 1
 			served.hash = item.hash
 		}

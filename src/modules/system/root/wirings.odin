@@ -666,7 +666,11 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 	child_offset, child_size: u64
 	for &entry in system.image_entries(image) {
 		if system.name_of(entry.name[:]) == name && entry.offset <= u64(len(image)) && entry.size <= u64(len(image)) - entry.offset {
-			child_offset, child_size = entry.offset, entry.size
+			// The wiring service reads the module at this offset: its bytes
+			// have the hash of their entry first.
+			if image_entry_give(&entry) {
+				child_offset, child_size = entry.offset, entry.size
+			}
 			break
 		}
 	}

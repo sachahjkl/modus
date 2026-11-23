@@ -25,13 +25,12 @@ resource_mapping :: proc "contextless" (name: string, address: u64, receiver: st
 	if entry == nil {
 		return {}, 0, false
 	}
-	if !system.image_entry_check(image, &image_checks, entry) {
-		system.log_fact(.Warning, Image_File_Hash_Wrong{file = module_name_field(name)})
+	given: bool
+	if mapping, given = image_entry_mapping(entry, address); !given {
 		return {}, 0, false
 	}
 	system.log_fact(.Info, Resource_Given{resource_size = value_kinds.Size_In_Bytes(entry.size), resource = text_field(name, 32), receiver = module_name_field(receiver)})
-	// No flag: the mapping has the right Read only.
-	return {memory = image_memory, address = address, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}, entry.size, true
+	return mapping, entry.size, true
 }
 
 // pointer_theme_choice gives the names of the pointer theme files that the

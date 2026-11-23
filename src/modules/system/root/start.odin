@@ -161,8 +161,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		if system.name_of(item.name[:]) == name && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			// The bytes have the hash of their entry before any read of
 			// them (trust.odin, image_checks).
-			if !system.image_entry_check(image, &image_checks, &item) {
-				system.log_fact(.Error, Image_File_Hash_Wrong{file = module_name_field(name)})
+			if !image_entry_give(&item) {
 				return .Bad_Operation
 			}
 			work.file = image[item.offset:][:item.size]
@@ -405,8 +404,12 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	start_grant_put(work, .Storage_Service, {storage_service.process, {.Read}})
 	for &item in system.image_entries(image) {
 		if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
+			if !given {
+				return .Bad_Operation
+			}
 			system.value_put(&work.values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
-			start_mapping_add(work, "the file of the storage service", {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE})
+			start_mapping_add(work, "the file of the storage service", mapping)
 		}
 	}
 	return .Ok
@@ -589,12 +592,16 @@ start_service_give :: proc "contextless" (work: ^Start_Work) -> (status: system.
 		work.mappings_full = true
 		return .Ok
 	}
+	file_mapping, given := image_entry_mapping(entry, isolated.FILE_ADDRESS)
+	if !given {
+		return .Bad_Operation
+	}
 	slot := work.slot
 	slot.service_memory, slot.service = system.ring_create() or_return
 	start_grant_put(work, .Service_Ring, {slot.service_memory, {.Read, .Write}})
 	system.value_put(&work.values, system.GRANT_VALUE_FILE_ADDRESS, isolated.FILE_ADDRESS)
 	system.value_put(&work.values, system.GRANT_VALUE_FILE_SIZE, entry.size)
-	start_mapping_add(work, "the file of the service", {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE})
+	start_mapping_add(work, "the file of the service", file_mapping)
 	return .Ok
 }
 

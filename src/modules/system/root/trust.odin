@@ -16,8 +16,6 @@ import "modus:system"
 // - Boot_Program: the boot program verified the description signature and
 //   every hash before the kernel. This service checks every module and
 //   resource again, once, before it starts the first process.
-// - Root_Service_At_Start: nothing checked the files before the kernel;
-//   this service checks every one, once, before the first process.
 // - Root_Service_At_Load (a browser machine): nothing checked the files;
 //   this service checks the table of the image against the description,
 //   and its own module, then hashes each other file at its first load or
@@ -35,6 +33,30 @@ trust_boot_report: op.Boot_Report
 // every entry after the check at the start, or each one at its first use.
 // The loads of this service (load_source) and resource_mapping read it.
 image_checks: system.Image_Checks
+
+// image_entry_give says whether the pages of an entry of the boot image
+// may go to a process, or its offset and size to a service: its bytes have
+// the hash of the entry (image_checks hashes it at its first use, once).
+// Each give of pages of the image goes through it. A refusal names the file
+// on the log.
+image_entry_give :: proc "contextless" (entry: ^info.Image_Entry) -> bool {
+	if system.image_entry_check(image, &image_checks, entry) {
+		return true
+	}
+	system.log_fact(.Error, Image_File_Hash_Wrong{file = module_name_field(system.name_of(entry.name[:]))})
+	return false
+}
+
+// image_entry_mapping gives the read-only mapping of the pages of an entry
+// at an address of a process, after image_entry_give; ok false: the entry
+// is refused, and no mapping is made.
+image_entry_mapping :: proc "contextless" (entry: ^info.Image_Entry, address: u64) -> (mapping: system.Mapping, ok: bool) {
+	if !image_entry_give(entry) {
+		return {}, false
+	}
+	// No flag: the mapping has the right Read only.
+	return {memory = image_memory, address = address, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}, true
+}
 
 // own_module_check hashes the module of this service, by its name in the
 // boot image, and keeps it as checked. A failure is the check of the file
@@ -63,8 +85,7 @@ image_file_checked :: proc "contextless" (name: string) -> []u8 {
 		if system.name_of(entry.name[:]) != name {
 			continue
 		}
-		if !system.image_entry_check(image, &image_checks, &entry) {
-			system.log_fact(.Error, Image_File_Hash_Wrong{file = module_name_field(name)})
+		if !image_entry_give(&entry) {
 			return nil
 		}
 		return image[entry.offset:][:entry.size]
@@ -76,28 +97,12 @@ trust_check :: proc "contextless" () {
 	report := &trust_boot_report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(report)), size_of(op.Boot_Report))
 	trust := &report.trust
-	file_check, file_check_ok := info.file_check_of_word(trust.file_check)
-	if !file_check_ok || file_check == .None {
-		fail("the boot record names no check of the files of the boot image", .Bad_State)
-	}
-	verifier, verifier_ok := info.verifier_of_word(trust.verifier)
-	if !verifier_ok {
-		fail("the boot record names no verifier of the system description", .Bad_State)
-	}
 	// The record says what happened: a boot program that hashed the files
 	// verified the description, and a record whose files nothing hashed
-	// names no verifier.
-	switch file_check {
-	case .Boot_Program:
-		if verifier == .None {
-			fail("the boot program did not verify the system description", .Bad_State)
-		}
-	case .Root_Service_At_Start, .Root_Service_At_Load:
-		if verifier != .None {
-			fail("the boot record names a verifier of the system description, and no check of its files before the kernel", .Bad_State)
-		}
-	case .None:
-		// Refused above.
+	// names no verifier (info.trust_decision, with its host tests).
+	file_check, verifier, decision := info.trust_decision(trust^)
+	if decision != .Accepted {
+		fail(info.trust_decision_sentences[decision], .Bad_State)
 	}
 	description, _, found := system_description.trust_resources(image)
 	if !found {
@@ -156,12 +161,18 @@ trust_check :: proc "contextless" () {
 	checked_entries := u64(max(len(list), 1) - 1)
 	check_time := value_kinds.Time_In_Microseconds(spent / 1000)
 	switch file_check {
-	case .Boot_Program, .Root_Service_At_Start:
-		for place in 0 ..< min(len(system.image_entries(image)) + len(system.image_resources(image)), system.IMAGE_CHECK_CAPACITY) {
+	case .Boot_Program:
+		// The entries that image_check hashed: each module and each resource
+		// but the two last, the description, which it hashed apart, and its
+		// signature, which it does not read.
+		listed := len(system.image_entries(image)) + max(len(system.image_resources(image)) - 2, 0)
+		for place in 0 ..< min(listed, system.IMAGE_CHECK_CAPACITY) {
 			image_checks.checked[place] = true
 		}
-	case .Root_Service_At_Load, .None:
+	case .Root_Service_At_Load:
 		// Each file at its first use.
+	case .None:
+		fail(info.trust_decision_sentences[.No_File_Check], .Bad_State)
 	}
 	switch file_check {
 	case .Boot_Program:
@@ -181,12 +192,10 @@ trust_check :: proc "contextless" () {
 		} else {
 			system.log_fact(.Info, Verified_By_Firmware{})
 		}
-	case .Root_Service_At_Start:
-		system.log_fact(.Warning, Image_Checked_At_Start{checked_entries = checked_entries, check_time = check_time})
 	case .Root_Service_At_Load:
 		system.log_fact(.Warning, Image_Checked_At_Load{checked_entries = checked_entries, check_time = check_time})
 	case .None:
-		// Refused above.
+		fail(info.trust_decision_sentences[.No_File_Check], .Bad_State)
 	}
 	measure, measure_ok := info.measure_state_of_word(trust.measure)
 	if !measure_ok {

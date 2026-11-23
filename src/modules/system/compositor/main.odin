@@ -439,8 +439,9 @@ bar_in_interface_font: bool
 // bar_measure writes once in the log the time of one whole frame of the
 // bar with the start menu open, built and drawn, in the font of
 // the cells and in the interface font: the least of 20 rounds, so that a
-// round that the host stops in its middle does not count. It runs before
-// the first frame, which draws the whole screen after it.
+// round that the host stops in its middle does not count. It runs after
+// the first frame of a measure run only (start_measures_run), and the
+// frame after it draws the whole screen.
 bar_measure :: proc "contextless" () {
 	ROUNDS :: 20
 	font := display.interface_font_of()

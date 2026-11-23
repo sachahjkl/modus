@@ -766,7 +766,7 @@ browser_machine_host_names_the_key_tags_of_the_stage_facts :: proc(t: ^testing.T
 		}
 		testing.expectf(t, declared, "the module %s declares no fact type %s", package_name, type_name)
 	}
-	testing.expect_value(t, count, 6)
+	testing.expect_value(t, count, 5)
 }
 
 // stage_fact_row_parse reads one row of BOOT_STAGE_FACT_TAGS of the host:

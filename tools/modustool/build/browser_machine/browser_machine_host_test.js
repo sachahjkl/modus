@@ -84,7 +84,7 @@ const tracker = (desktop) => {
 }
 
 // Each form of the check of the root service ends the stage of the check.
-for (const name of ["root::Image_Checked_At_Start", "root::Image_Checked_At_Load"]) {
+for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   const { value, seen } = tracker(false);
   value.serialLine(host.ROOT_SERVICE_STAGE_LINE + "1 us");
   value.serialLine("[root] #3d2ffd19:" + tag(name) + " 10");

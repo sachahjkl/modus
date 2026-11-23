@@ -1189,6 +1189,11 @@ run_check :: proc(args: []string) -> int {
 	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() {
 		return foundation.EXIT_FAILURE
 	}
+	// The stage tracker of the host of the browser machine, in Node: the
+	// stages that a page shows come from it.
+	if !build.browser_machine_host_tests_run() {
+		return foundation.EXIT_FAILURE
+	}
 	host_test_folders := checks.HOST_TEST_FOLDERS
 	if !checks.host_tests_run(host_test_folders[:]) {
 		return foundation.EXIT_FAILURE

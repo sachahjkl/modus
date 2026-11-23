@@ -692,9 +692,43 @@ browser_machine_console_write :: proc() -> bool {
 	return browser_machine_page_image_write(BOOT_IMAGE, .Console)
 }
 
-// The tests of the stage tracker of the host, which browser-machine boot
-// runs in Node before the machine.
+// The tests of the stage tracker of the host, which modustool check and
+// browser-machine boot run in Node.
 BROWSER_MACHINE_HOST_TEST_TEXT :: #load("browser_machine/browser_machine_host_test.js", string)
+
+// The folder where browser_machine_host_tests_run writes the host that the
+// tests import: a check of the flake has no folder of the page.
+BROWSER_MACHINE_HOST_TEST_FOLDER :: foundation.BUILD_FOLDER + "/browser_machine_host_test"
+
+// browser_machine_host_tests_run runs the tests of the stage tracker in
+// Node on the host as the tool holds it, and says whether they passed. A
+// host with no node fails: the development shell and the checks of the
+// flake give it.
+browser_machine_host_tests_run :: proc() -> bool {
+	if error := os.make_directory_all(BROWSER_MACHINE_HOST_TEST_FOLDER); error != nil && error != .Exist {
+		fmt.eprintfln("modustool: cannot make %s: %v", BROWSER_MACHINE_HOST_TEST_FOLDER, error)
+		return false
+	}
+	host_path := strings.concatenate({BROWSER_MACHINE_HOST_TEST_FOLDER, "/", BROWSER_MACHINE_HOST_FILE}, context.temp_allocator)
+	host_text := ""
+	files := BROWSER_MACHINE_PAGE_FILES
+	for file in files {
+		if file.name == BROWSER_MACHINE_HOST_FILE {
+			host_text = file.text
+		}
+	}
+	if error := os.write_entire_file(host_path, transmute([]u8)host_text); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", host_path, error)
+		return false
+	}
+	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_HOST_TEST_TEXT, host_path}}, context.temp_allocator)
+	if error != nil || !state.success {
+		fmt.eprintfln("modustool: the tests of the stage tracker of %s failed (code %d, %v): %s%s", BROWSER_MACHINE_HOST_FILE, state.exit_code, error, string(output), string(error_output))
+		return false
+	}
+	foundation.test_passed_print("the stage tracker of the host: %s", strings.trim_space(string(output)))
+	return true
+}
 
 // The console page: the host of the page with the second serial port as
 // its terminal. The site publishes the desktop page only.
@@ -855,13 +889,8 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 	}
 	// The stage tracker of the host first: the stages that the page shows
 	// come from it.
-	{
-		state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_HOST_TEST_TEXT, BROWSER_MACHINE_HOST_PATH}}, context.temp_allocator)
-		if error != nil || !state.success {
-			fmt.eprintfln("modustool: the tests of the stage tracker of %s failed (code %d): %s%s", BROWSER_MACHINE_HOST_PATH, state.exit_code, string(output), string(error_output))
-			return false
-		}
-		foundation.test_passed_print("the stage tracker of the host: %s", strings.trim_space(string(output)))
+	if !browser_machine_host_tests_run() {
+		return false
 	}
 	trust_hash_hex := ""
 	if boot_image != "" {
