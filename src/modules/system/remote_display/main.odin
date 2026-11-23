@@ -138,8 +138,6 @@ LOG_LIMIT :: 50 // Lines of connections and of refusals in one second at most.
 // The viewer frames of a small damage that one measure line takes: the median of
 // 21, as the other measures of the system.
 SMALL_VIEWER_FRAME_SAMPLES :: 21
-// A viewer frame of a small damage: at most this many pixels.
-SMALL_VIEWER_FRAME_PIXELS :: 64 * 64
 
 process_generator: random.Generator
 server: quic.Server
@@ -568,7 +566,10 @@ viewer_frame_taken :: proc "contextless" (viewer: ^Viewer) {
 		viewer.whole_logged = true
 		system.log_fact(.Info, Whole_Screen_Measured{width = u64(screen.width), height = u64(screen.height), screen_pieces = u64(viewer.viewer_frame_pieces), piece_bytes = value_kinds.Size_In_Bytes(viewer.viewer_frame_bytes), pixel_bytes = value_kinds.Size_In_Bytes(viewer.viewer_frame_pixels * 4), coded_time = value_kinds.Time_In_Microseconds(viewer.viewer_frame_coded_time / 1000), taken_time = value_kinds.Time_In_Microseconds(spent / 1000)})
 	}
-	if viewer.viewer_frame_pixels > 0 && viewer.viewer_frame_pixels <= SMALL_VIEWER_FRAME_PIXELS && small_viewer_frame_count < SMALL_VIEWER_FRAME_SAMPLES {
+	// A share of the screen, not a fixed count of pixels: the clock of the
+	// bar grows with the scale (protocol.small_damage_pixels).
+	small_pixels := protocol.small_damage_pixels(screen.width, screen.height)
+	if viewer.viewer_frame_pixels > 0 && viewer.viewer_frame_pixels <= small_pixels && small_viewer_frame_count < SMALL_VIEWER_FRAME_SAMPLES {
 		small_viewer_frame_bytes[small_viewer_frame_count] = viewer.viewer_frame_bytes
 		small_viewer_frame_times[small_viewer_frame_count] = spent
 		small_viewer_frame_count += 1
@@ -577,7 +578,7 @@ viewer_frame_taken :: proc "contextless" (viewer: ^Viewer) {
 		small_viewer_frames_logged = true
 		median_sort(small_viewer_frame_bytes[:])
 		median_sort(small_viewer_frame_times[:])
-		system.log_fact(.Info, Small_Damage_Measured{pixels = u64(SMALL_VIEWER_FRAME_PIXELS), frames = u64(SMALL_VIEWER_FRAME_SAMPLES), median_size = value_kinds.Size_In_Bytes(small_viewer_frame_bytes[SMALL_VIEWER_FRAME_SAMPLES / 2]), median_time = value_kinds.Time_In_Microseconds(small_viewer_frame_times[SMALL_VIEWER_FRAME_SAMPLES / 2] / 1000), least_size = value_kinds.Size_In_Bytes(small_viewer_frame_bytes[0]), least_time = value_kinds.Time_In_Microseconds(small_viewer_frame_times[0] / 1000)})
+		system.log_fact(.Info, Small_Damage_Measured{pixels = small_pixels, frames = u64(SMALL_VIEWER_FRAME_SAMPLES), median_size = value_kinds.Size_In_Bytes(small_viewer_frame_bytes[SMALL_VIEWER_FRAME_SAMPLES / 2]), median_time = value_kinds.Time_In_Microseconds(small_viewer_frame_times[SMALL_VIEWER_FRAME_SAMPLES / 2] / 1000), least_size = value_kinds.Size_In_Bytes(small_viewer_frame_bytes[0]), least_time = value_kinds.Time_In_Microseconds(small_viewer_frame_times[0] / 1000)})
 	}
 }
 

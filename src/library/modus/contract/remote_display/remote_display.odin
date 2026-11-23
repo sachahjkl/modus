@@ -683,6 +683,20 @@ pointer_picture_record_write :: proc "contextless" (out: []u8, shape: pointer_pi
 // The screen pieces of a rectangle: a rectangle of the damage goes as screen pieces of
 // SCREEN_PIECE_WIDTH x SCREEN_PIECE_HEIGHT at most, from its top left corner, row after
 // row.
+// A viewer frame of a small damage holds at most this share of the screen
+// (1 / SMALL_DAMAGE_SCREEN_DIVISOR): the service and the tests measure such
+// frames apart from the whole screen. The clock of the bar, the small damage
+// that comes each second, is 304 by 32 pixels at the largest scale, 2.0,
+// and fits a screen of 1280 by 800 by this share (16000 pixels); a window
+// of 400 by 300 does not.
+SMALL_DAMAGE_SCREEN_DIVISOR :: 64
+
+// small_damage_pixels gives the most pixels of a viewer frame of a small
+// damage on a screen of this size.
+small_damage_pixels :: proc "contextless" (width, height: u32) -> u64 {
+	return u64(width) * u64(height) / SMALL_DAMAGE_SCREEN_DIVISOR
+}
+
 screen_piece_count :: proc "contextless" (width, height: u32) -> u32 {
 	return ((width + SCREEN_PIECE_WIDTH - 1) / SCREEN_PIECE_WIDTH) * ((height + SCREEN_PIECE_HEIGHT - 1) / SCREEN_PIECE_HEIGHT)
 }

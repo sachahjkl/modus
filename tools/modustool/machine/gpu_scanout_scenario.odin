@@ -11,9 +11,9 @@ import "modustool:foundation"
 // scanout, and the first frame goes to the device in one batch. Then a
 // viewer of remote_display rebuilds the screen from the frames of the
 // compositor, and the tool compares it with a picture of QEMU of the same
-// moment, which reads what the transfers of the scanout wrote: the first
-// whole frame, then the frames of a small damage of a line typed in the
-// console before the viewer came.
+// moment, which reads what the transfers of the scanout wrote: after the
+// whole screen, after the small frames of the clock, and after the frames
+// of a line typed in the console.
 
 TEST_OUTPUT_GPU_SCANOUT :: foundation.BUILD_FOLDER + "/test_output_gpu_scanout.txt"
 
@@ -27,9 +27,6 @@ scenario_gpu_scanout := [?]Step {
 	{kind = .Wait, text = "compositor: the screen is the scanout of the virtual GPU, resource "},
 	{kind = .Wait, text = "gpu_device: the first frame of resource ", any_order = true, fails_on = GPU_SCANOUT_ENDED},
 	{kind = .Wait, text = "compositor: surface console", fails_on = GPU_SCANOUT_ENDED},
-	// A line in the console: frames of a small damage, each one batch of
-	// its rectangles, before any viewer.
-	{kind = .Type, text = "1 + 1"},
 	{kind = .Type, text = "start(\"remote_display\")"},
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: an endpoint for remote_display: UDP, the listen port 7101", any_order = true},
@@ -37,11 +34,17 @@ scenario_gpu_scanout := [?]Step {
 	{kind = .Wait, text = "remote_display: listening on the UDP port 7101, for the host 10.0.2.2 only, and for the viewer keys that a principal allowed", any_order = true},
 	{kind = .Type, text = "remote_display_allow(\"{viewer key}\", \"view\")"},
 	{kind = .Wait, text = " for the remote display: view"},
-	// The whole screen of the compositor, with the line and its answer
-	// that small frames put on the scanout: the screen that the viewer
-	// rebuilt is the picture of QEMU.
+	// The whole screen, then a frame of its damage: the screen that the
+	// viewer rebuilt is the picture of QEMU.
 	{kind = .Remote_Display_Case, text = "view"},
 	{kind = .Wait, text = "compositor: the capture face is open: a copy of ", any_order = true},
+	{kind = .Remote_Display_Case, text = "compare"},
+	// The clock of the bar: small frames, each one batch of its rectangle.
+	{kind = .Remote_Display_Case, text = "small frames"},
+	{kind = .Wait, text = "remote_display: a measure: viewer frames of a small damage", any_order = true, fails_on = GPU_SCANOUT_ENDED},
+	// A line in the console: frames of a small damage, and the screen is
+	// still the picture of QEMU.
+	{kind = .Type, text = "1 + 1"},
 	{kind = .Remote_Display_Case, text = "compare"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0", fails_on = GPU_SCANOUT_ENDED},
