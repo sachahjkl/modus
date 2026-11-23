@@ -8,12 +8,18 @@ import "core:strings"
 // takes part.
 //
 // Layout: 32 reserved sectors, two tables, then the clusters. A cluster is
-// one sector. A folder is one cluster: at most 16 entries.
+// one sector. A folder is one cluster: at most 16 entries. The size of the
+// volume is computed from its files (volume_layout_of): at least
+// VOLUME_SECTORS_LEAST, and more when the files need more, so a boot image
+// and a debug image of any size fit.
 
-VOLUME_SECTOR :: 512
-VOLUME_SECTORS :: 131072 // 64 MiB. FAT32 needs at least 65525 clusters.
+VOLUME_SECTOR :: 512 // Format property: the sector of the disk.
+// Format property: FAT32 needs at least 65525 clusters. 64 MiB holds them
+// with its tables, and a volume of small files keeps this layout.
+VOLUME_SECTORS_LEAST :: 131072
+VOLUME_TABLE_SECTORS_LEAST :: 1024 // The tables of VOLUME_SECTORS_LEAST: 128 entries in a sector, one for each cluster.
+VOLUME_TABLE_ENTRIES_OF_A_SECTOR :: VOLUME_SECTOR / 4 // Format property: an entry of FAT32 has 4 bytes.
 VOLUME_RESERVED :: 32
-VOLUME_TABLE_SECTORS :: 1024 // 128 entries in a sector: one entry for each cluster.
 VOLUME_TABLES :: 2
 VOLUME_FIRST_CLUSTER :: 2
 VOLUME_FOLDER_ENTRIES :: VOLUME_SECTOR / 32
@@ -65,23 +71,54 @@ volume_name :: proc(name: string) -> (short: [11]u8, ok: bool) {
 	return short, true
 }
 
-volume_cluster_offset :: proc(cluster: u32) -> int {
-	return (VOLUME_RESERVED + VOLUME_TABLES * VOLUME_TABLE_SECTORS + int(cluster) - VOLUME_FIRST_CLUSTER) * VOLUME_SECTOR
+// The sectors of a volume and of each of its tables.
+Volume_Layout :: struct {
+	sectors:       int,
+	table_sectors: int,
+}
+
+// volume_layout_of gives the layout of a volume that holds the files: the
+// layout of VOLUME_SECTORS_LEAST when they fit it, else the clusters that
+// they need, with one folder for each slash of each path, and the tables of
+// those clusters.
+volume_layout_of :: proc(files: []Volume_File) -> Volume_Layout {
+	clusters := 1 // The root folder.
+	for file in files {
+		clusters += strings.count(file.path, "/") + (len(file.data) + VOLUME_SECTOR - 1) / VOLUME_SECTOR
+	}
+	least := Volume_Layout{sectors = VOLUME_SECTORS_LEAST, table_sectors = VOLUME_TABLE_SECTORS_LEAST}
+	if clusters <= volume_clusters_of(least) {
+		return least
+	}
+	// The tables never shrink below those of the least volume, so a volume
+	// that holds more clusters is always larger.
+	table_sectors := max((clusters + VOLUME_FIRST_CLUSTER + VOLUME_TABLE_ENTRIES_OF_A_SECTOR - 1) / VOLUME_TABLE_ENTRIES_OF_A_SECTOR, VOLUME_TABLE_SECTORS_LEAST)
+	return {sectors = VOLUME_RESERVED + VOLUME_TABLES * table_sectors + clusters, table_sectors = table_sectors}
+}
+
+// volume_clusters_of gives the clusters of the data of a layout.
+volume_clusters_of :: proc(layout: Volume_Layout) -> int {
+	return layout.sectors - VOLUME_RESERVED - VOLUME_TABLES * layout.table_sectors
+}
+
+volume_cluster_offset :: proc(layout: Volume_Layout, cluster: u32) -> int {
+	return (VOLUME_RESERVED + VOLUME_TABLES * layout.table_sectors + int(cluster) - VOLUME_FIRST_CLUSTER) * VOLUME_SECTOR
 }
 
 // volume_encode gives the bytes of a volume that holds the files.
 volume_encode :: proc(files: []Volume_File, allocator := context.allocator) -> (image: []u8, ok: bool) {
-	image = make([]u8, VOLUME_SECTORS * VOLUME_SECTOR, allocator)
+	layout := volume_layout_of(files)
+	image = make([]u8, layout.sectors * VOLUME_SECTOR, allocator)
 	next: u32 = VOLUME_FIRST_CLUSTER
-	limit := u32(VOLUME_SECTORS - VOLUME_RESERVED - VOLUME_TABLES * VOLUME_TABLE_SECTORS) + VOLUME_FIRST_CLUSTER
+	limit := u32(volume_clusters_of(layout)) + VOLUME_FIRST_CLUSTER
 
-	table_set :: proc(image: []u8, cluster: u32, value: u32) {
+	table_set :: proc(image: []u8, layout: Volume_Layout, cluster: u32, value: u32) {
 		for table in 0 ..< VOLUME_TABLES {
-			put(image, (VOLUME_RESERVED + table * VOLUME_TABLE_SECTORS) * VOLUME_SECTOR + int(cluster) * 4, u64(value), 4)
+			put(image, (VOLUME_RESERVED + table * layout.table_sectors) * VOLUME_SECTOR + int(cluster) * 4, u64(value), 4)
 		}
 	}
 	// allocate takes a run of clusters and links them.
-	allocate :: proc(image: []u8, next: ^u32, limit: u32, count: u32) -> (first: u32, ok: bool) {
+	allocate :: proc(image: []u8, layout: Volume_Layout, next: ^u32, limit: u32, count: u32) -> (first: u32, ok: bool) {
 		if count == 0 {
 			return 0, true
 		}
@@ -90,16 +127,16 @@ volume_encode :: proc(files: []Volume_File, allocator := context.allocator) -> (
 		}
 		first = next^
 		for i in 0 ..< count {
-			table_set(image, first + i, i + 1 == count ? VOLUME_CHAIN_END : first + i + 1)
+			table_set(image, layout, first + i, i + 1 == count ? VOLUME_CHAIN_END : first + i + 1)
 		}
 		next^ += count
 		return first, true
 	}
-	entry_add :: proc(image: []u8, folder: ^Folder, short: [11]u8, attribute: u8, cluster: u32, size: int) -> bool {
+	entry_add :: proc(image: []u8, layout: Volume_Layout, folder: ^Folder, short: [11]u8, attribute: u8, cluster: u32, size: int) -> bool {
 		if folder.count == VOLUME_FOLDER_ENTRIES {
 			return false
 		}
-		offset := volume_cluster_offset(folder.cluster) + folder.count * 32
+		offset := volume_cluster_offset(layout, folder.cluster) + folder.count * 32
 		short := short
 		copy(image[offset:], short[:])
 		image[offset + 11] = attribute
@@ -125,8 +162,8 @@ volume_encode :: proc(files: []Volume_File, allocator := context.allocator) -> (
 		boot[21] = 0xF8 // A fixed disk.
 		put(boot, 24, 63, 2)
 		put(boot, 26, 255, 2)
-		put(boot, 32, VOLUME_SECTORS, 4)
-		put(boot, 36, VOLUME_TABLE_SECTORS, 4)
+		put(boot, 32, u64(layout.sectors), 4)
+		put(boot, 36, u64(layout.table_sectors), 4)
 		put(boot, 44, VOLUME_FIRST_CLUSTER, 4) // The root folder.
 		put(boot, 48, 1, 2) // The information sector.
 		put(boot, 50, 6, 2) // The copy of the boot sector.
@@ -144,11 +181,11 @@ volume_encode :: proc(files: []Volume_File, allocator := context.allocator) -> (
 		put(information, 492, 0xFFFF_FFFF, 4)
 		put(information, 508, 0xAA55_0000, 4)
 	}
-	table_set(image, 0, 0x0FFF_FFF8)
-	table_set(image, 1, VOLUME_CHAIN_END)
+	table_set(image, layout, 0, 0x0FFF_FFF8)
+	table_set(image, layout, 1, VOLUME_CHAIN_END)
 
 	folders := make([dynamic]Folder, context.temp_allocator)
-	root, _ := allocate(image, &next, limit, 1)
+	root, _ := allocate(image, layout, &next, limit, 1)
 	append(&folders, Folder{cluster = root})
 
 	for file in files {
@@ -168,15 +205,15 @@ volume_encode :: proc(files: []Volume_File, allocator := context.allocator) -> (
 			}
 			if found < 0 {
 				short := volume_name(rest[:slash]) or_return
-				cluster := allocate(image, &next, limit, 1) or_return
-				entry_add(image, &folders[parent], short, VOLUME_ATTRIBUTE_FOLDER, cluster, 0) or_return
+				cluster := allocate(image, layout, &next, limit, 1) or_return
+				entry_add(image, layout, &folders[parent], short, VOLUME_ATTRIBUTE_FOLDER, cluster, 0) or_return
 				folder := Folder{path = path, cluster = cluster}
 				// The two first entries of a folder: itself, and its parent. 0 names the root.
 				dot: [11]u8 = ' '
 				dot[0] = '.'
-				entry_add(image, &folder, dot, VOLUME_ATTRIBUTE_FOLDER, cluster, 0)
+				entry_add(image, layout, &folder, dot, VOLUME_ATTRIBUTE_FOLDER, cluster, 0)
 				dot[1] = '.'
-				entry_add(image, &folder, dot, VOLUME_ATTRIBUTE_FOLDER, parent == 0 ? 0 : folders[parent].cluster, 0)
+				entry_add(image, layout, &folder, dot, VOLUME_ATTRIBUTE_FOLDER, parent == 0 ? 0 : folders[parent].cluster, 0)
 				append(&folders, folder)
 				found = len(folders) - 1
 			}
@@ -184,10 +221,10 @@ volume_encode :: proc(files: []Volume_File, allocator := context.allocator) -> (
 			rest = rest[slash + 1:]
 		}
 		short := volume_name(rest) or_return
-		cluster := allocate(image, &next, limit, u32((len(file.data) + VOLUME_SECTOR - 1) / VOLUME_SECTOR)) or_return
-		entry_add(image, &folders[parent], short, VOLUME_ATTRIBUTE_FILE, cluster, len(file.data)) or_return
+		cluster := allocate(image, layout, &next, limit, u32((len(file.data) + VOLUME_SECTOR - 1) / VOLUME_SECTOR)) or_return
+		entry_add(image, layout, &folders[parent], short, VOLUME_ATTRIBUTE_FILE, cluster, len(file.data)) or_return
 		if cluster != 0 {
-			copy(image[volume_cluster_offset(cluster):], file.data)
+			copy(image[volume_cluster_offset(layout, cluster):], file.data)
 		}
 	}
 	return image, true

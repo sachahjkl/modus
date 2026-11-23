@@ -153,7 +153,7 @@ Each fact that the two runs proved is proved by the one run of the flake: the bu
 - The pictures come from the boot image of the flake, which has the pointer theme of the system only ([release_image.md](release_image.md)): the pointer in the pictures is the pointer of a release.
 - `build/flake_check` is a root of the garbage collector of Nix: the output of the last check stays in the store until the next one.
 - The pictures come from the host that built the check. When Nix takes the output from a binary cache (a cache that the check workflow filled, for example), the pictures and the logs are those of that host: on a host with no SVM or no counters for the test machine, the pictures of `guest` and `kernel_events` show the form with no support. The measure runs stay of the host of `screenshots`. The measure record names the host of `screenshots`, not of the check.
-- The output holds every picture of the test, so it is tens of megabytes. The test inputs hold every boot volume of 64 MiB, so each new `testInputs` is a few gigabytes of the store until the collector of Nix removes it.
+- The output holds every picture of the test, so it is tens of megabytes. The test inputs hold every boot volume, of 64 MiB or more, so each new `testInputs` is a few gigabytes of the store until the collector of Nix removes it.
 - The pictures and the logs of a part that Nix takes from the store are those of its earlier run. The pictures show a clock, so the time in a picture can be older than the commit of the measure record.
 
 ## State

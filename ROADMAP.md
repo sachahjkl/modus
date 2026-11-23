@@ -4,7 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-
 ## Next
 
 - **The largest budget set by the plan of the principal.** The plan of principal 0 gives the share of the machine that one process gets through the border that the root service has for it (`budget_share_take`), in place of the default quarter, and a row of the plan gives a module a limit of processor time in place of a row in the code of the root service. [Design](src/md/features/module_budget_request.md)
@@ -45,7 +44,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 - **The address of the network from the network.** The network service takes the prefix length of its interface as a field and checks it; DHCP, or the plan, then gives the address, the gateway and the prefix of a real network in place of the network of QEMU.
 - **The blocks that a wrong release keeps are freed on a disk larger than the memory.** A recount of each leaf of the count tree, in runs, frees the blocks under a wrong release list or a wrong node of a release, which stay in use in the form Count_Tree until an open of the form Tables. [Design](src/md/data/storage_capacity.md)
-- **A reader waits on each of its rings.** A reader of more rings than one wait of 64 words holds waits on part of them and reads the others on a period, and the collector logs these wakes. With the wait room of `work/limits_kernel_and_budgets` merged, each reader waits on all of its rings and nothing is read on a period. [Design](src/md/features/module_outputs.md)
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)
@@ -75,7 +73,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Processes of NT.** A process of NT runs through Wine inside the Linux guest, with no work of its own in the system. [Design](src/md/features/foreign_systems.md)
 - **Acceleration by the virtual GPU of the test machine.** A back end of the drawing module draws the draw table through the WebGPU subset of the system, over Vulkan to the host through Venus. The GPU then draws the windows and the pictures, and not the processor. [Design](src/md/features/gpu_access.md)
 - **The answers of the Vulkan of the host through Venus.** The system reads the replies of the Vulkan of the host and streams its commands through the shared ring of the virtual GPU of the test machine, checked by an opt-in machine test under QEMU with Venus. [Design](src/md/features/gpu_access.md)
-- **Several principals on one machine.** More than one named principal uses a machine, each with its own session and its own stores. A design comes first: `unlock` keeps one file of a principal in its store and asks for one passphrase, the root service gives the record of principal 1 only, and a creation during the session of another principal can stop between the write of its file and its record ([tpm_sealed_principal_keys.md](src/md/features/tpm_sealed_principal_keys.md)).
+- **Several principals on one machine.** More than one named principal uses a machine, each with its own session and its own stores. A design comes first: `unlock` keeps one file of a principal in its store and asks for one passphrase, the root service gives the record of principal 1 only, and a creation during the session of another principal can stop between the write of its file and its record. [Design](src/md/features/tpm_sealed_principal_keys.md)
 - **One identity for each machine.** The machine identity key comes from the machine key, so the TPM roots it, and `remote` and `remote_display` present it in place of a key for each start. A client then pins one key for the life of the machine. [Design](src/md/features/several_machines.md)
 - **Two machines paired by a code.** A principal shows a pairing code on one machine and types it on the other, and each machine then accepts the other by its identity key, with no discovery on the network. [Design](src/md/features/several_machines.md)
 - **Several frames of an object in flight.** The client of an object cache sends the requests of several frames before it reads their answers, so a round trip of 50 ms no longer bounds one connection to 20 MiB/s. [Design](src/md/features/recipes.md)
