@@ -441,6 +441,32 @@ pending_drop_of :: proc "contextless" (holder: system.Handle) {
 	}
 }
 
+// pending_drop_slot volatile-zeroes and drops every pending pool that holds
+// pending objects for any store belonging to principal `slot`.
+pending_drop_slot :: proc "contextless" (slot: u64) {
+	for &pool in pending_pools {
+		if pool.holder == 0 {
+			continue
+		}
+		owns := false
+		for pending := pool.objects; pending != nil; pending = pending.next {
+			if owned_slot(system.name_of(pending.store[:])) == slot {
+				owns = true
+				break
+			}
+		}
+		if !owns {
+			continue
+		}
+		for pending := pool.objects; pending != nil; pending = pending.next {
+			for block := pending.first_block; block != nil; block = block.next {
+				intrinsics.mem_zero_volatile(&block.bytes, size_of(block.bytes))
+			}
+		}
+		pool_end(&pool)
+	}
+}
+
 // pending_take gives a new pending object of a connection.
 pending_take :: proc "contextless" (holder: system.Handle, limit: u64, path: ^Path, name: Entry_Name, base_generation: u64, size: u64, error: ^errors.Error_Record) -> (pending: ^Pending_Object, outcome: call_outcome.Call_Outcome) {
 	pool, taken := pool_take(holder, limit, error)
@@ -523,16 +549,18 @@ changes_sort :: proc "contextless" (changes: []block_tree.Change) {
 // The object of a call on ranges: its entry as the last commit gives it,
 // and the pending changes of the caller.
 Ranged :: struct {
-	named:   Named,
-	state:   State_Of_Object, // The state of the last commit: no root and size 0 for a name with no entry.
-	exists:  bool,
-	pending: ^Pending_Object,
+	named:       Named,
+	store_index: int, // -1 when the store does not exist yet.
+	state:       State_Of_Object, // The state of the last commit: no root and size 0 for a name with no entry.
+	exists:      bool,
+	pending:     ^Pending_Object,
 }
 
 // ranged_of finds the object of a call on ranges. A name with no entry is
 // an object of no byte, when the caller has pending changes for it or makes
 // a change.
 ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_Record, change: bool) -> (ranged: Ranged, result: call_outcome.Call_Outcome) {
+	ranged.store_index = -1
 	ranged.named, result = named_of(place, name, error, 1, change)
 	if result != .Succeeded {
 		return ranged, result
@@ -540,8 +568,9 @@ ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_
 	if ranged.named.caller.connection != nil {
 		ranged.pending = pending_find(ranged.named.caller.connection.ring_memory, &ranged.named.path, ranged.named.name.key)
 	}
-	_, value, located := object_locate(ranged.named.path.store.name, path_names(&ranged.named.path), ranged.named.name, error, 2)
+	store_index, value, located := object_locate(ranged.named.path.store.name, path_names(&ranged.named.path), ranged.named.name, error, 2)
 	if located == .Succeeded {
+		ranged.store_index = store_index
 		ranged.state = current_state(&value)
 		ranged.exists = true
 		return ranged, .Succeeded
@@ -549,14 +578,15 @@ ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_
 	if located == .Nothing_Has_That_Name && (change || ranged.pending != nil) {
 		// A name that is a tree is refused: the lookup of the name as an
 		// object gives Absent for it too, so look at its entry.
-		if store_index := store_find(ranged.named.path.store.name); store_index >= 0 {
-			if entry, outcome := entry_of(store_index, path_names(&ranged.named.path), ranged.named.name.key); outcome == .Found && entry.kind != u64(format.Entry_Kind.Object) {
+		if found_store := store_find(ranged.named.path.store.name); found_store >= 0 {
+			ranged.store_index = found_store
+			if entry, outcome := entry_of(found_store, path_names(&ranged.named.path), ranged.named.name.key); outcome == .Found && entry.kind != u64(format.Entry_Kind.Object) {
 				return ranged, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 			} else if outcome == .Wrong || outcome == .Device {
 				return ranged, lookup_refusal(outcome, error, 2)
 			} else if outcome == .Absent && len(path_names(&ranged.named.path)) != 0 {
 				// The tree of the place: it must exist for a new object.
-				if _, tree_outcome := tree_of(store_index, path_names(&ranged.named.path)); tree_outcome == .Absent {
+				if _, tree_outcome := tree_of(found_store, path_names(&ranged.named.path)); tree_outcome == .Absent {
 					return ranged, refuse(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
 				} else if tree_outcome != .Found {
 					return ranged, lookup_refusal(tree_outcome, error, 1)
@@ -584,7 +614,7 @@ ranged_read :: proc "contextless" (ranged: ^Ranged, offset: u64, result: []u8, e
 	count := min(u64(len(result)), size - offset)
 	pending := ranged.pending
 	if pending == nil {
-		return state_read(ranged.state, offset, result[:count], error, 2)
+		return state_read(ranged.store_index, ranged.state, offset, result[:count], error, 2)
 	}
 	for at := offset; at < offset + count; {
 		index := at / BLOCK_SIZE
@@ -612,7 +642,7 @@ base_read :: proc "contextless" (ranged: ^Ranged, at: u64, into: []u8, error: ^e
 		return 0, .Succeeded
 	}
 	kept := min(u64(len(into)), cut - at)
-	return state_read(ranged.state, at, into[:kept], error, 2)
+	return state_read(ranged.store_index, ranged.state, at, into[:kept], error, 2)
 }
 
 // pending_block_take gives the pending block `index` of a pending object:

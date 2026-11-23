@@ -1147,13 +1147,20 @@ compaction_of_sparse_leaves :: proc(t: ^testing.T) {
 		leaf.count = 1
 		leaf.entries[0] = entry_of(u64(index + 1))
 	}
-	testing.expect(t, version_leaves_full(format.VERSION_INDEX_CAPACITY, 85) && !version_leaves_full(format.VERSION_INDEX_CAPACITY, 1))
+	testing.expect(t, version_leaves_full(format.VERSION_INDEX_CAPACITY, format.VERSION_LEAF_CAPACITY) && !version_leaves_full(format.VERSION_INDEX_CAPACITY, 1))
 	used := version_leaves_compact(leaves[:])
-	testing.expect_value(t, used, 3) // 254 entries: 85, 85, 84.
-	testing.expect_value(t, leaves[0].count, 85)
-	testing.expect_value(t, leaves[1].count, 85)
-	testing.expect_value(t, leaves[2].count, 84)
-	testing.expect_value(t, leaves[3].count, 0)
+	full_leaves := format.VERSION_INDEX_CAPACITY / format.VERSION_LEAF_CAPACITY
+	remainder := format.VERSION_INDEX_CAPACITY % format.VERSION_LEAF_CAPACITY
+	expected_used := full_leaves + (remainder != 0 ? 1 : 0)
+	testing.expect_value(t, used, expected_used)
+	for i in 0 ..< full_leaves {
+		testing.expect_value(t, leaves[i].count, u64(format.VERSION_LEAF_CAPACITY))
+	}
+	if remainder != 0 {
+		testing.expect_value(t, leaves[full_leaves].count, u64(remainder))
+		testing.expect_value(t, leaves[full_leaves].entries[remainder], format.Version_Entry{})
+	}
+	testing.expect_value(t, leaves[used].count, 0)
 	generation: u64 = 1
 	for &leaf in leaves[:used] {
 		for entry in leaf.entries[:leaf.count] {
@@ -1161,7 +1168,6 @@ compaction_of_sparse_leaves :: proc(t: ^testing.T) {
 			generation += 1
 		}
 	}
-	testing.expect_value(t, leaves[2].entries[84], format.Version_Entry{})
 }
 
 // A model of the version index of one object, with the rule of the engine

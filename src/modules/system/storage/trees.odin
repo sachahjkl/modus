@@ -10,6 +10,7 @@ import "internal:storage/storage_mount"
 import block_tree "internal:storage/storage_object"
 import tree "internal:storage/storage_tree"
 import "modus:contract/enum_word"
+import "internal:storage/store_encryption"
 import "modus:system"
 
 // The trees of a store (docs/STORAGE.md): each tree is its own B+ tree
@@ -65,7 +66,7 @@ node_read :: proc "contextless" (_: ^tree.Source, pointer: Pointer, into: ^tree.
 	if pointer.block < 2 || pointer.block >= disk_size {
 		return .Wrong
 	}
-	switch read_single(pointer, into) {
+	switch read_tree_node(pointer, into) {
 	case .Good:
 		return .Good
 	case .Wrong:
@@ -83,7 +84,7 @@ node_writer := tree.Writer {
 }
 
 node_write :: proc "contextless" (_: ^tree.Writer, bytes: ^tree.Block) -> Pointer {
-	pointer := plan_write(bytes)
+	pointer := plan_write_tree_node(bytes)
 	if pointer.block != 0 {
 		cache_later(pointer, bytes)
 	}
@@ -334,22 +335,26 @@ state_blocks_of :: proc "contextless" (root: Pointer, size: u64) -> u64 {
 // confirmations of one lookup.
 HASH_CONFIRMATION_LIMIT :: 4
 
-root_by_hash :: proc "contextless" (store_index: int, hash: [32]u8, size: u64) -> Pointer {
+root_by_hash :: proc "contextless" (store_index: int, hash: [32]u8, size: u64) -> (root: Pointer, data_check: u64) {
 	search := storage_mount.hash_search_begin(&opened, hash, size, store_index)
 	for _ in 0 ..< HASH_CONFIRMATION_LIMIT {
 		candidate, found := storage_mount.hash_index_next(&opened, &search)
 		if !found {
-			return {}
+			return {}, 0
 		}
 		if state_damaged(candidate) || size > format.OBJECT_SIZE_LIMIT {
 			storage_mount.hash_index_hide(&opened, candidate)
 			continue
 		}
-		confirmed, outcome := block_tree.state_hash(&object_source, {root = candidate, size = size}, &object_hash_room)
+		candidate_data_check: u64
+		if rec := storage_mount.hash_index_record(&opened, candidate.block); rec != nil {
+			candidate_data_check = rec.data_check
+		}
+		confirmed, outcome := block_tree.state_hash(&object_source, {root = candidate, size = size, data_check = candidate_data_check}, &object_hash_room)
 		switch outcome {
 		case .Device:
 			plan.device = true
-			return {}
+			return {}, 0
 		case .Wrong:
 			// A block under the root went wrong since the open: the state is
 			// damaged, as a read finds it.
@@ -359,11 +364,11 @@ root_by_hash :: proc "contextless" (store_index: int, hash: [32]u8, size: u64) -
 		case .Good:
 		}
 		if confirmed == hash {
-			return candidate
+			return candidate, candidate_data_check
 		}
 		storage_mount.hash_index_rekey(&opened, candidate, confirmed)
 	}
-	return {}
+	return {}, 0
 }
 
 // current_blocks_change changes the count of the blocks of the current
@@ -481,9 +486,11 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	slot := owned_slot(store.name)
 	owner: format.Store_Owner
 	owned_field: [NAME_CAPACITY]u8
+	new_store_keys: store_encryption.Store_Keys
+	defer intrinsics.mem_zero_volatile(&new_store_keys, size_of(new_store_keys))
 	if slot != 0 {
 		made: bool
-		owner, owned_field, made = owned_make(slot, store.name, error)
+		owner, owned_field, new_store_keys, made = owned_make(slot, store.name, error)
 		if !made {
 			if principal_keys_held(slot) == nil {
 				return -1, refuse(error, .Wrong_State, .State, .Stores)
@@ -511,6 +518,12 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	if slot != 0 {
 		plan_cell().name = owned_field
 		format.store_owner_set(&plan.store_block, owner)
+		plan.encrypted = true
+		plan.owner_slot = slot
+		plan.store_keys = new_store_keys
+		active_store_keys = &plan.store_keys
+		active_store_index = store_index
+		object_source.encrypted = true
 	} else {
 		copy(plan_cell().name[:NAME_CAPACITY - 1], store.name)
 	}
@@ -621,17 +634,18 @@ State_Of_Object :: struct {
 	time:       u64,
 	date:       u64,
 	root:       Pointer, // The root of its block tree.
+	data_check: u64, // Plaintext value_check for a 1-block encrypted object; 0 otherwise.
 	hash:       [32]u8,
 	has_hash:   bool, // A version keeps no hash: a restore computes it from the values of its block tree.
 	current:    bool,
 }
 
 current_state :: proc "contextless" (entry: ^Entry) -> State_Of_Object {
-	return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.pointer, hash = entry.hash, has_hash = true, current = true}
+	return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.pointer, data_check = entry.data_check, hash = entry.hash, has_hash = true, current = true}
 }
 
 tree_state :: proc "contextless" (state: State_Of_Object) -> block_tree.State {
-	return {root = state.root, size = state.size}
+	return {root = state.root, size = state.size, data_check = state.data_check}
 }
 
 // The work of a commit on one object (src/library/internal/storage/storage_object): the copies
@@ -694,7 +708,16 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	if (kind == .Restore || kind == .Clone) && !source.has_hash {
 		// A version keeps no hash: its block tree gives it, from the values
 		// on the path of its last block.
+		hash_store := store_find(store.name)
+		if hash_store < 0 {
+			return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Objects, name_argument)
+		}
+		hash_scope, hash_crypto_ok := store_crypto_enter(hash_store)
+		if !hash_crypto_ok {
+			return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
+		}
 		hash, outcome := block_tree.state_hash(&object_source, tree_state(source), &object_hash_room)
+		store_crypto_leave(hash_scope)
 		switch outcome {
 		case .Device:
 			return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
@@ -795,7 +818,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		// A damaged state is not kept: the change replaces it whole.
 		before := block_tree.State{}
 		if existed && !damaged_before {
-			before = {root = old.pointer, size = old.size}
+			before = {root = old.pointer, size = old.size, data_check = old.data_check}
 		}
 		block_tree.work_begin(&object_work, &object_source, &object_counter, before, changes, plan.slot_pages)
 		block_tree.work_cut(&object_work, cut)
@@ -817,8 +840,9 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			return plan_refusal(error)
 		}
 		same_bytes_root: Pointer
+		same_data_check: u64
 		if looks_up && finished.root_new {
-			same_bytes_root = root_by_hash(store_index, finished.hash, size)
+			same_bytes_root, same_data_check = root_by_hash(store_index, finished.hash, size)
 			if plan_refused() {
 				return plan_refusal(error)
 			}
@@ -830,6 +854,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			// entry names the found root.
 			block_tree.work_drop(&object_work)
 			next.pointer = same_bytes_root
+			next.data_check = same_data_check
 			state_name(same_bytes_root)
 			new_blocks = state_blocks_of(same_bytes_root, size)
 		} else {
@@ -839,6 +864,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 				return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, name_argument)
 			}
 			next.pointer = finished.root
+			next.data_check = finished.data_check
 			new_blocks = finished.blocks
 			if !finished.root_new {
 				state_name(finished.root) // The new entry names a root of the state before.
@@ -856,9 +882,11 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		// the same bytes the entry names, so that a version keeps no copy
 		// alive after it is thinned.
 		state_root := source.root
+		state_data_check := source.data_check
 		if looks_up && state_root.block != 0 {
-			if same_bytes_root := root_by_hash(store_index, source.hash, source.size); same_bytes_root.block != 0 {
+			if same_bytes_root, same_dc := root_by_hash(store_index, source.hash, source.size); same_bytes_root.block != 0 {
 				state_root = same_bytes_root
+				state_data_check = same_dc
 			}
 			if plan_refused() {
 				return plan_refusal(error)
@@ -866,6 +894,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		}
 		next.size = source.size
 		next.pointer = state_root
+		next.data_check = state_data_check
 		next.hash = source.hash
 		state_name(next.pointer)
 		new_blocks = state_blocks_of(state_root, source.size)
@@ -884,7 +913,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	if existed && damaged_before {
 		state_release(old.pointer, old.size)
 	} else if existed {
-		version_add(index, {generation = old.generation, size = old.size, time = old.time, date = old.date, root = old.pointer})
+		version_add(index, {generation = old.generation, size = old.size, time = old.time, date = old.date, root = old.pointer, data_check = old.data_check})
 		retention(index, now)
 	}
 	return commit_at_limit(store, error, name_argument + 1)
@@ -1214,7 +1243,7 @@ removal_waits :: proc "contextless" () -> bool {
 		return false
 	}
 	for index in 0 ..< store_numbers() {
-		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
+		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] && owned_unlocked(index) {
 			return true
 		}
 	}
@@ -1231,7 +1260,7 @@ removal_step :: proc "contextless" () -> bool {
 	}
 	store_index := -1
 	for index in 0 ..< store_numbers() {
-		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
+		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] && owned_unlocked(index) {
 			store_index = index
 			break
 		}
@@ -1252,6 +1281,7 @@ removal_step :: proc "contextless" () -> bool {
 	queued: Entry
 	if !tree.first_from(&queue.work, first[:], false, queued_name[:], entry_bytes(&queued)) {
 		removal_failed(store_index, .No_First_Tree)
+		plan_drop()
 		return true
 	}
 	if queued.kind == u64(format.Entry_Kind.Release) {
@@ -1259,7 +1289,7 @@ removal_step :: proc "contextless" () -> bool {
 		// list again with what is left, or the next list of the chain, or no
 		// entry after the last part of the last list.
 		list := &plan_fixed.step_list
-		outcome := read_single(queued.pointer, (^Block)(list))
+		outcome := read_release_list(queued.pointer, list)
 		if outcome == .Device {
 			plan.device = true
 		} else if outcome == .Wrong || !format.release_list_valid(list) {
@@ -1282,7 +1312,7 @@ removal_step :: proc "contextless" () -> bool {
 				tree.remove(&queue.work, queued_name[:])
 				plan.store_block.removing -= 1
 			} else {
-				queued.pointer = plan_write((^Block)(list))
+				queued.pointer = plan_write_release_list(list)
 				tree.put(&queue.work, queued_name[:], entry_bytes(&queued), true)
 			}
 			queue.changed = true
@@ -1295,6 +1325,7 @@ removal_step :: proc "contextless" () -> bool {
 		plan.store_block.trees -= 1
 	} else {
 		if plan.tree_count >= PLAN_TREE_CAPACITY {
+			plan_drop()
 			return false
 		}
 		freed := plan.tree_count
@@ -1319,7 +1350,7 @@ removal_step :: proc "contextless" () -> bool {
 			// versions would pass it; that object starts the next step.
 			if versions := removal_values[number].versions; removal_values[number].kind == u64(format.Entry_Kind.Object) && versions.block != 0 {
 				index_block: Version_Index
-				if read_single(versions, (^Block)(&index_block)) == .Good && number > 0 && plan.leaf_count + int(min(index_block.leaf_count, format.VERSION_INDEX_CAPACITY)) > LEAF_WORK_CAPACITY {
+				if read_version_index(versions, &index_block) == .Good && number > 0 && plan.leaf_count + int(min(index_block.leaf_count, format.VERSION_INDEX_CAPACITY)) > LEAF_WORK_CAPACITY {
 					break
 				}
 			}
@@ -1450,11 +1481,11 @@ oldest_visit :: proc "contextless" (_: ^tree.Walk, key: []u8, value: []u8) {
 			return
 		}
 		index: Version_Index
-		if read_single(entry.versions, (^Block)(&index)) != .Good || index.leaf_count == 0 || index.leaf_count > format.VERSION_INDEX_CAPACITY {
+		if read_version_index(entry.versions, &index) != .Good || index.leaf_count == 0 || index.leaf_count > format.VERSION_INDEX_CAPACITY {
 			return
 		}
 		leaf: Version_Leaf
-		if read_single(index.leaves[0], (^Block)(&leaf)) != .Good || leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
+		if read_version_leaf(index.leaves[0], &leaf) != .Good || leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
 			return
 		}
 		if leaf.entries[0].generation < oldest.generation {
@@ -1521,6 +1552,11 @@ reading_outcome :: proc "contextless" (store_index: int) -> Lookup {
 
 // tree_of gives the root of the tree at a path of a store.
 tree_of :: proc "contextless" (store_index: int, path: []Entry_Name) -> (root_node: Pointer, outcome: Lookup) {
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return {}, .Wrong
+	}
+	defer store_crypto_leave(scope)
 	tree.pool_reset(&reading_pool)
 	root_node = store_blocks[store_index].tree
 	for step in path {
@@ -1540,6 +1576,11 @@ tree_of :: proc "contextless" (store_index: int, path: []Entry_Name) -> (root_no
 
 // entry_of gives the entry of a name in the tree at a path of a store.
 entry_of :: proc "contextless" (store_index: int, path: []Entry_Name, name: Entry_Name) -> (value: Entry, outcome: Lookup) {
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return {}, .Wrong
+	}
+	defer store_crypto_leave(scope)
 	root_node, found := tree_of(store_index, path)
 	if found != .Found {
 		return {}, found
@@ -1587,6 +1628,11 @@ tree_usage_walks: [NESTING_LIMIT + 1]tree.Walk
 
 // tree_usage counts the tree at a path of a store.
 tree_usage :: proc "contextless" (store_index: int, path: []Entry_Name) -> (counts: Tree_Usage, outcome: Lookup) {
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return {}, .Wrong
+	}
+	defer store_crypto_leave(scope)
 	root_node, found := tree_of(store_index, path)
 	if found != .Found {
 		return {}, found
@@ -1664,7 +1710,7 @@ tree_usage_record :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) 
 				break
 			}
 			index: Version_Index
-			if read_single(entry.versions, (^Block)(&index)) != .Good || index.leaf_count > format.VERSION_INDEX_CAPACITY {
+			if read_version_index(entry.versions, &index) != .Good || index.leaf_count > format.VERSION_INDEX_CAPACITY {
 				tree_usage_state.failed = true
 				break
 			}
@@ -1715,10 +1761,15 @@ object_locate :: proc "contextless" (store_name: string, path: []Entry_Name, nam
 // checked, into result, up to its size. It gives the count of bytes, or
 // failure(.Disk), failure(.Damaged). A wrong block stays known: the state is
 // damaged, and a write of the object does not keep it as a version.
-state_read :: proc "contextless" (state: State_Of_Object, offset: u64, result: []u8, error: ^errors.Error_Record, argument: i64) -> (value: i64, outcome: call_outcome.Call_Outcome) {
+state_read :: proc "contextless" (store_index: int, state: State_Of_Object, offset: u64, result: []u8, error: ^errors.Error_Record, argument: i64) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	if state_damaged(state.root) {
 		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, argument)
 	}
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
+	}
+	defer store_crypto_leave(scope)
 	count, read := block_tree.range_read(&object_source, tree_state(state), offset, result, &read_room, &object_node)
 	switch read {
 	case .Device:
@@ -1738,13 +1789,18 @@ listed: [format.VERSIONS_LIMIT]Version_Entry
 listed_count: int
 
 // versions_list reads the versions of an object into `listed`.
-versions_list :: proc "contextless" (object: ^Entry, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
+versions_list :: proc "contextless" (store_index: int, object: ^Entry, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	listed_count = 0
 	if object.versions.block == 0 {
 		return 0, .Succeeded
 	}
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
+	}
+	defer store_crypto_leave(scope)
 	index: Version_Index
-	switch read_single(object.versions, (^Block)(&index)) {
+	switch read_version_index(object.versions, &index) {
 	case .Device:
 		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	case .Wrong:
@@ -1769,6 +1825,9 @@ versions_list :: proc "contextless" (object: ^Entry, error: ^errors.Error_Record
 		}
 		for place in 0 ..< len(part) {
 			intrinsics.mem_copy_non_overlapping(&leaf, raw_data(slot(u64(place))), BLOCK_SIZE)
+			if active_store_keys != nil && !store_encryption.version_leaf_open(active_store_keys, part[place].block, part[place].check, &leaf) {
+				return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, 2)
+			}
 			if leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
 				return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, 2)
 			}
@@ -1785,16 +1844,16 @@ versions_list :: proc "contextless" (object: ^Entry, error: ^errors.Error_Record
 
 // state_at gives the state of an object at a generation: its current
 // version, or the version with that generation.
-state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, error: ^errors.Error_Record) -> (state: State_Of_Object, result: call_outcome.Call_Outcome) {
+state_at :: proc "contextless" (store_index: int, object: ^Entry, generation: i64, argument: i64, error: ^errors.Error_Record) -> (state: State_Of_Object, result: call_outcome.Call_Outcome) {
 	if generation == i64(object.generation) {
 		return current_state(object), .Succeeded
 	}
-	if _, listed_outcome := versions_list(object, error); listed_outcome != .Succeeded {
+	if _, listed_outcome := versions_list(store_index, object, error); listed_outcome != .Succeeded {
 		return {}, listed_outcome
 	}
 	for entry in listed[:listed_count] {
 		if i64(entry.generation) == generation {
-			return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.root}, .Succeeded
+			return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.root, data_check = entry.data_check}, .Succeeded
 		}
 	}
 	return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Versions, argument, generation)
@@ -1802,10 +1861,15 @@ state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, 
 
 // own_blocks gives the blocks that only one state holds: its root, when no
 // other state names it, and under it each block that no other node names.
-own_blocks :: proc "contextless" (root: Pointer, size: u64) -> u64 {
+own_blocks :: proc "contextless" (store_index: int, root: Pointer, size: u64) -> u64 {
 	if root.block == 0 || root.block >= opened.capacity || storage_mount.block_count(&opened, root.block) != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
 		return 0
 	}
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return 0
+	}
+	defer store_crypto_leave(scope)
 	return own_under({block = root.block, check = root.check}, format.object_levels(size))
 }
 
@@ -1814,7 +1878,7 @@ own_under :: proc "contextless" (child: Object_Child, level: int) -> u64 {
 		return 1
 	}
 	node := &object_nodes[level - 1]
-	if read_single({block = child.block, check = child.check}, (^Block)(node)) != .Good {
+	if read_object_node({block = child.block, check = child.check}, node) != .Good {
 		return 1
 	}
 	count: u64 = 1

@@ -96,10 +96,11 @@ ROOT_MAGIC :: u64(0x37454741524F5453) // The bytes "STORAGE7": a paged store tab
 OLDER_ROOT_MAGIC :: u64(0x36454741524F5453) // The bytes "STORAGE6".
 // The first byte of the name field of a cell of a store of a named
 // principal: its name tag follows (src/md/features/store_encryption.md,
-// "What is encrypted"). A name of a store is text with no control
+// "The owner of a store"). A name of a store is text with no control
 // character, so no name starts with it.
 OWNED_CELL_MARK :: u8(0x01)
 OWNER_FIELD_SIZE :: 32 // Format property: a principal identifier, a salt, a key check, a sealed name.
+MAC_SIZE :: 16 // Format property: 128-bit SIV authentication tag of a metadata block of an encrypted store.
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
 
 // The blocks of a disk: at least the two places of the root, and at most
@@ -212,13 +213,13 @@ COUNTS_OF_A_PAGE :: 512
 COUNT_DIRECTORY_FANOUT :: 128
 COUNT_PAGE_MAGIC :: u32(0x53544E43) // The bytes "CNTS".
 // A list of the states that one commit gave to the removal queue
-// (Entry_Kind.Release): one block of up to 127 states, which names the next
+// (Entry_Kind.Release): one block of up to 126 states, which names the next
 // list of the same commit, so a commit that releases any count of large
 // states makes one entry of the queue. A block of the store, counted as
 // each block of its store; the list before names it, and the entry names
 // the first.
 RELEASE_LIST_MAGIC :: u32(0x534C4552) // The bytes "RELS".
-RELEASES_OF_A_LIST :: 127
+RELEASES_OF_A_LIST :: 126
 
 // One state of a release list. 32 bytes.
 Release_State :: struct {
@@ -233,8 +234,9 @@ Release_List :: struct {
 	magic:   u32, // RELEASE_LIST_MAGIC.
 	count:   u32, // The states: 1 ..= RELEASES_OF_A_LIST.
 	next:    Pointer, // The next list of the commit: no block and the check 0 for the last.
+	mac:     [MAC_SIZE]u8, // 128-bit SIV tag for encrypted stores; zero for clear stores.
 	states:  [RELEASES_OF_A_LIST]Release_State,
-	padding: [BLOCK_SIZE - 24 - RELEASES_OF_A_LIST * size_of(Release_State)]u8, // 0.
+	padding: [BLOCK_SIZE - 40 - RELEASES_OF_A_LIST * size_of(Release_State)]u8, // 0.
 }
 #assert(size_of(Release_List) == BLOCK_SIZE)
 
@@ -354,12 +356,14 @@ Store_Block :: struct {
 	// The owner of a store of a named principal (src/md/features/store_encryption.md,
 	// "The keys"), each all zero for a store of principal 0. In clear: the
 	// open reads them with no key.
-	owner:          [OWNER_FIELD_SIZE]u8, // The principal identifier of the owner.
-	salt:           [OWNER_FIELD_SIZE]u8, // 32 random bytes of the store: its key comes from them.
-	key_check:      [OWNER_FIELD_SIZE]u8, // The key check of the key of the store: a wrong key opens nothing.
-	name_sealed:    [OWNER_FIELD_SIZE]u8, // The name of the store, encrypted under the key of the store.
-	reserved:       [4]u64, // 0.
-	padding:        [BLOCK_SIZE - 240]u8, // 0.
+	owner:            [OWNER_FIELD_SIZE]u8, // The principal identifier of the owner.
+	salt:             [OWNER_FIELD_SIZE]u8, // 32 random bytes of the store: its key comes from them.
+	key_check:        [OWNER_FIELD_SIZE]u8, // The key check of the key of the store: a wrong key opens nothing.
+	name_sealed:      [OWNER_FIELD_SIZE]u8, // The name of the store, encrypted under the key of the store.
+	store_generation: u64, // Root generation of this store's last commit (at least 1 for encrypted stores; 0 for clear stores).
+	mac:              [MAC_SIZE]u8, // 128-bit SIV tag over the store block for encrypted stores; zero for clear stores.
+	reserved:         [4]u64, // 0.
+	padding:          [BLOCK_SIZE - 264]u8, // 0.
 }
 
 // Store_Owner is the owner fields of a store block, which a commit keeps.
@@ -414,20 +418,21 @@ Entry_Name :: [ENTRY_NAME_STORAGE]u8
 //
 // The record of a leaf, after its name. The storage service writes it at a
 // commit, and gives its fields to a process as the state of an object or of
-// a tree. 104 bytes. See [entry](term:entry).
+// a tree. 112 bytes. See [entry](term:entry).
 Entry :: struct {
 	kind:       u64, // An object or a tree: the word of an Entry_Kind, read through entry_kind_of_word.
 	size:       u64, // An object: its bytes. A tree: its entries.
-	generation: u64, // The commit of its last change.
-	time:       u64, // The time since the format at that commit, in milliseconds.
-	date:       u64, // The date of that commit, in seconds since 1970 (UTC). 0: not known.
-	hash:       [32]u8, // An object: the hash of its bytes (docs/STORAGE.md, "The hash of an object"), its name in the model. A tree: zero.
+	generation: u64, // The commit of its last change. Encrypted in owned stores.
+	time:       u64, // The time since the format at that commit, in milliseconds. Encrypted in owned stores.
+	date:       u64, // The date of that commit, in seconds since 1970 (UTC). 0: not known. Encrypted in owned stores.
+	hash:       [32]u8, // An object: the hash of its bytes (docs/STORAGE.md, "The hash of an object"), its name in the model. A tree: zero. Encrypted in owned stores.
+	data_check: u64, // For a 1-block encrypted object: value_check of its plaintext data block. Zero for clear stores, trees, empty objects, and multi-block objects. Encrypted in owned stores.
 	pointer:    Pointer, // An object: the root of its block tree (object_levels), no block when each of its bytes is zero. A tree: its root node (no block when it is empty).
 	versions:   Pointer, // An object: its version index. No block: no version.
 }
 
 #assert(size_of(Entry_Name) == 256)
-#assert(size_of(Entry) == 104)
+#assert(size_of(Entry) == 112)
 
 // A node: the header, then `count` records. A record of a leaf is a name
 // and its value; a record of a branch is a name and the Pointer of a child.
@@ -446,7 +451,7 @@ Tree_Header :: struct {
 	count:    u32, // The records in use.
 	magic:    u32, // NODE_MAGIC: a block of another kind is damage.
 	reserved: u32, // 0.
-	unused:   [2]u64, // 0.
+	mac:      [MAC_SIZE]u8, // 128-bit SIV tag for encrypted stores; zero for clear stores.
 }
 #assert(size_of(Tree_Header) == TREE_HEADER_SIZE)
 
@@ -458,34 +463,38 @@ BRANCH_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size
 // One version of an object: its state at the commit of `generation`.
 //
 // The service adds one at each commit that changes the object, and the
-// retention rule removes old ones (docs/STORAGE.md). 48 bytes.
+// retention rule removes old ones (docs/STORAGE.md). 56 bytes.
 Version_Entry :: struct {
-	generation: u64, // The commit of the state.
 	size:       u64, // The bytes of the object in that state.
-	time:       u64, // The time since the format, in milliseconds.
-	date:       u64, // Seconds since 1970 (UTC). 0: not known.
 	root:       Pointer, // The root of the block tree of the state. No block: each of its bytes was zero.
+	generation: u64, // The commit of the state. Encrypted in owned stores.
+	time:       u64, // The time since the format, in milliseconds. Encrypted in owned stores.
+	date:       u64, // Seconds since 1970 (UTC). 0: not known. Encrypted in owned stores.
+	data_check: u64, // For a 1-block encrypted object: value_check of its plaintext data block. Zero otherwise. Encrypted in owned stores.
 }
-#assert(size_of(Version_Entry) == 48)
+#assert(size_of(Version_Entry) == 56)
 
-VERSION_LEAF_CAPACITY :: 85 // The version entries of 48 bytes that fit in one block after the 16 bytes of the head of a leaf.
-VERSION_INDEX_CAPACITY :: 254 // The pointers of 16 bytes that fit in one block after the 32 bytes of the head of an index.
-VERSIONS_LIMIT :: VERSION_LEAF_CAPACITY * VERSION_INDEX_CAPACITY // 21590 versions of one object.
+VERSION_LEAF_CAPACITY :: 72 // The version entries of 56 bytes that fit in one block after the 32 bytes of the head of a leaf.
+VERSION_INDEX_CAPACITY :: 253 // The pointers of 16 bytes that fit in one block after the 48 bytes of the head of an index.
+VERSIONS_LIMIT :: VERSION_LEAF_CAPACITY * VERSION_INDEX_CAPACITY // 18216 versions of one object.
 
 // One block of version entries of one object. 4096 bytes.
 Version_Leaf :: struct {
 	count:    u64, // The entries in use, from 1.
 	reserved: u64, // 0.
+	mac:      [MAC_SIZE]u8, // 128-bit SIV tag for encrypted stores; zero for clear stores.
 	entries:  [VERSION_LEAF_CAPACITY]Version_Entry, // The oldest first; count of them are used.
+	padding:  [BLOCK_SIZE - 32 - VERSION_LEAF_CAPACITY * size_of(Version_Entry)]u8, // 0.
 }
 
 // The block that names the version leaves of one object: the entry of the
 // object names it in `versions`. 4096 bytes.
 Version_Index :: struct {
 	leaf_count:     u64, // The leaves in use.
-	version_count:  u64, // The entries of all its leaves.
-	retention_time: u64, // The time since the format of the last application of the retention rule to this object.
+	version_count:  u64, // The entries of all its leaves. Encrypted in owned stores.
+	retention_time: u64, // The time since the format of the last application of the retention rule to this object. Encrypted in owned stores.
 	reserved:       u64, // 0.
+	mac:            [MAC_SIZE]u8, // 128-bit SIV tag for encrypted stores; zero for clear stores.
 	leaves:         [VERSION_INDEX_CAPACITY]Pointer, // The oldest leaf first; leaf_count of them are used. No leaf is empty.
 }
 

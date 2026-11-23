@@ -102,7 +102,7 @@ walk_all :: proc(disk: ^Test_Disk, root: Pointer) -> (keys: [dynamic]u64, nodes:
 the_sizes_of_the_format :: proc(t: ^testing.T) {
 	testing.expect_value(t, format.LEAF_CAPACITY, 11)
 	testing.expect_value(t, format.BRANCH_CAPACITY, 14)
-	testing.expect_value(t, record_size(TREE_SHAPE, 0), 360)
+	testing.expect_value(t, record_size(TREE_SHAPE, 0), 368)
 	testing.expect_value(t, record_size(TREE_SHAPE, 1), 272)
 	testing.expect(t, HEADER_SIZE + TREE_SHAPE.leaf_capacity * record_size(TREE_SHAPE, 0) <= BLOCK_SIZE)
 	testing.expect(t, HEADER_SIZE + TREE_SHAPE.branch_capacity * record_size(TREE_SHAPE, 1) <= BLOCK_SIZE)

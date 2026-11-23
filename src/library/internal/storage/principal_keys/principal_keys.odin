@@ -11,7 +11,7 @@ import "base:intrinsics"
 import "modus:contract/isolated"
 import format "modus:contract/store"
 import "modus:principals"
-import "modus:store_encryption"
+import "internal:storage/store_encryption"
 
 Principal_Storage :: struct {
 	identity_set: bool,

@@ -17,8 +17,8 @@
 // `storage.write(0, "greeting", "kept on the disk")` and `storage.read(0, "greeting")`.
 //
 // **What it proves**: a process keeps its state across a stop of the machine with no file system, no path and no
-// save action, and it reaches no store but its own. It does not prove secrecy against a reader of the disk: the
-// blocks are not encrypted.
+// save action, and it reaches no store but its own. Stores of named principals are encrypted under keys derived
+// from the unlock key of the principal and authenticated on every block read; stores of principal 0 stay in clear.
 //
 // The design: `docs/STORAGE.md`; the large objects: [read_range](storage.read_range) and the exports after it.
 package storage_service
@@ -593,6 +593,11 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 	if store_damaged[store_index] {
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 	}
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
+	}
+	defer store_crypto_leave(scope)
 	root_node, lookup := tree_of(store_index, path_names(&path))
 	if lookup != .Found {
 		if lookup == .Absent {
@@ -970,19 +975,19 @@ versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^err
 	if refused != .Succeeded {
 		return refused, 0
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
-	if _, listed_outcome := versions_list(&object, error); listed_outcome != .Succeeded {
+	if _, listed_outcome := versions_list(store_index, &object, error); listed_outcome != .Succeeded {
 		return listed_outcome, 0
 	}
 	rows := listed_count + 1
 	// The blocks that only one state holds: the walk of each state goes
 	// down the nodes that only it names.
 	for row in 0 ..< min(rows, len(result)) {
-		entry := row < listed_count ? listed[row] : Version_Entry{generation = object.generation, size = object.size, time = object.time, date = object.date, root = object.pointer}
-		result[row] = {generation = i64(entry.generation), time = i64(entry.time), date = i64(entry.date), bytes = i64(entry.size), own_blocks = i64(own_blocks(entry.root, entry.size)), current = i64(row == listed_count)}
+		entry := row < listed_count ? listed[row] : Version_Entry{generation = object.generation, size = object.size, time = object.time, date = object.date, root = object.pointer, data_check = object.data_check}
+		result[row] = {generation = i64(entry.generation), time = i64(entry.time), date = i64(entry.date), bytes = i64(entry.size), own_blocks = i64(own_blocks(store_index, entry.root, entry.size)), current = i64(row == listed_count)}
 	}
 	return .Succeeded, i64(rows)
 }
@@ -1002,11 +1007,11 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, re
 	if refused != .Succeeded {
 		return refused, 0
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
-	state, state_refused := state_at(&object, generation, 3, error)
+	state, state_refused := state_at(store_index, &object, generation, 3, error)
 	if state_refused != .Succeeded {
 		return state_refused, 0
 	}
@@ -1020,7 +1025,7 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, re
 	if count == 0 {
 		return .Succeeded, 0
 	}
-	value, outcome = state_read(state, u64(offset), result^[:count], error, 2)
+	value, outcome = state_read(store_index, state, u64(offset), result^[:count], error, 2)
 	return
 }
 
@@ -1038,7 +1043,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 	if named.caller.read_only {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Changes)
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
@@ -1047,7 +1052,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 		// damage, and say that the object is whole.
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 2)
 	}
-	state, state_refused := state_at(&object, generation, 3, error)
+	state, state_refused := state_at(store_index, &object, generation, 3, error)
 	if state_refused != .Succeeded {
 		return state_refused, 0
 	}
@@ -1097,13 +1102,18 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 	if refused != .Succeeded {
 		return refused, 0
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
+	scope, crypto_ok := store_crypto_enter(store_index)
+	if !crypto_ok {
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
+	}
+	defer store_crypto_leave(scope)
 	states: [2]State_Of_Object
 	for generation, index in ([2]i64{first, second}) {
-		state, state_refused := state_at(&object, generation, 3 + i64(index), error)
+		state, state_refused := state_at(store_index, &object, generation, 3 + i64(index), error)
 		if state_refused != .Succeeded {
 			return state_refused, 0
 		}
@@ -1156,7 +1166,7 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 				if here[side].block == 0 {
 					continue
 				}
-				if _, block_outcome := block_tree.block_check(&object_source, here[side], next, &compare_blocks[side]); block_outcome != .Good {
+				if block_outcome := block_tree.block_read(&object_source, trees[side], next, &compare_blocks[side], &object_node); block_outcome != .Good {
 					return call_outcome.fail(error, block_outcome == .Device ? .Callee_Unavailable : .Data_Damaged, block_outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
 				}
 			}

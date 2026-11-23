@@ -37,7 +37,7 @@ The design grows in five layers, from a machine with no principal to one princip
 |---|---|---|
 | 1 | No principal: the root service is the only source of grants. A caller acts for the principal or not (`acts_for_principal`) | Built |
 | 2 | Principal 0 is the machine: its record holds the measure of the system | Built in part: the record, the measure, the machine key sealed by the TPM with its recovery key, and the machine passphrase with the TPM. Its attestation key in the TPM is not built |
-| 3 | One named principal: a passphrase unlocks its session, and the lock ends it | Built in part: the record, the unlock, the session, the stores, the lock, the seal of its keys by the TPM with its passphrase, with a recovery key, and the change of the passphrase and of the recovery key. Not built: the encryption of its stores, a recovery key on a machine with no TPM |
+| 3 | One named principal: a passphrase unlocks its session, and the lock ends it | Built in part: the record, the unlock, the session, the encrypted stores, the lock, the seal of its keys by the TPM with its passphrase, with a recovery key, and the change of the passphrase and of the recovery key. Not built: a recovery key on a machine with no TPM |
 | 4 | Several named principals on one machine | Not built: design in section 9 |
 | 5 | One principal on several machines; signed grants between principals | Not built: design in section 9 |
 
@@ -72,7 +72,7 @@ A named principal has the number 1. The root service holds two records: principa
 | Key | Algorithm | Use |
 |---|---|---|
 | The signing key | Ed25519 | Signs the grants of the principal. No signed grant is built yet |
-| The unlock key | X25519 | Unlocks the documents of the principal. Its storage key, at the unlock, opens the stores of the principal in the storage service; no block is encrypted yet |
+| The unlock key | X25519 | Unlocks the documents of the principal. Its storage key, at the unlock, opens, decrypts, and authenticates the stores of the principal in the storage service |
 
 The process `unlock` makes the two secret keys from its random generator, which the root service seeded from the sources of the processor (`RANDOMNESS.md`). A seed weaker than the generator of the processor is refused, and no principal is made.
 
@@ -256,7 +256,7 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 - When the seal opens, `unlock` checks that the two secret keys give the two public keys of the file, erases them, tells the root service (`Principal_Unlock`), and stops. The root service starts the session.
 - On a machine with no screen, `unlock` gets no window. A machine key that the TPM releases needs none. When a key must be typed, `unlock` writes one line that starts with "unlock: no screen: ", names what cannot be typed and what stays absent, and stops with the stop outcome `Done`; the root service does not start it again while the screen is absent (`ARCHITECTURE.md`, "U4. Device services").
 
-**The keys are not kept after the unlock.** `unlock` gives the root service two keys, derived from the unlock key: the storage key of the principal (`Principal_Storage_Key`), which the root service passes to the storage service with the principal identifier and keeps no copy of, and the key of the tag of the disk grant table of the principal (section 5, "The disk grant table of a named principal"). Then it erases the secret keys. The storage service finds, makes and lists the stores of the principal with its storage key; the lock erases it there (`src/md/features/store_encryption.md`). No block is encrypted yet, and no grant is signed.
+**The keys are not kept after the unlock.** `unlock` gives the root service two keys, derived from the unlock key: the storage key of the principal (`Principal_Storage_Key`), which the root service passes to the storage service with the principal identifier and keeps no copy of, and the key of the tag of the disk grant table of the principal (section 5, "The disk grant table of a named principal"). Then it erases the secret keys. The storage service finds, makes, lists, encrypts, decrypts, and authenticates the stores of the principal with its storage key; the lock erases its keys, cached blocks, hash-index records, pending pools, and transient buffers there (`src/md/features/store_encryption.md`). No grant is signed yet.
 
 **The lock** (`lock()` in the console): the root service stops each process of the session and its terminals, marks the principal locked, and starts `unlock` again. The processes stop; they are not frozen: a frozen process needs a kernel operation that does not exist. A process that keeps its state in its store at each change (`notes`) loses nothing.
 
@@ -638,7 +638,6 @@ A refusal is an error record with the unit `Principals`: a second named principa
 - **The key of principal 0**: the attestation key of the TPM.
 - **A seal to the measure of the next system.** A signed policy of the publisher of the system, with the version floor of the TPM (`TRUSTED_BOOT.md`, "10. The TPM floors") so that an older system opens nothing: an update then needs no recovery key.
 - **A change and a removal of the machine passphrase, and a change of the recovery key.**
-- **The encryption of the stores of a principal** with its unlock key. Today the data of a principal is on the disk in clear, as each store.
 - **The desktop while locked.** The desktop stays: processes of principal 0 run and can be started. A desktop that shows only `unlock` while a named principal is locked is not built.
 - **Several named principals (layer 4).** The design: one record for each principal in the root service; one file for each in the store of `unlock`; one session at a time on the desktop, or one desktop for each session. Each principal has disjoint stores by the name of the store, and disjoint grants by the principal of each process. No kernel change.
 - **One principal on several machines (layer 5).** The design is `src/md/features/several_machines.md`: the machine identity key from the machine key, a pairing by a code, a paired machine as a row of the client table, the keys of the principal made and sealed by the TPM of each of its machines, a principal root key that stays offline and signs the machine list, a role held on another machine, and the exchange of a store with a merge. A machine with no TPM, or with Secure Boot off, refuses the join of a named principal unless a setting of principal 0 accepts it. A signed grant to another principal names its principal root key and is signed by the signing key of the giver, with a life of at most one day or a revocation list.

@@ -3,7 +3,6 @@ package scope_rules
 
 import "core:testing"
 import "modus:contract/log_scope"
-import "modus:contract/output"
 import "modus:principals"
 
 @(test)

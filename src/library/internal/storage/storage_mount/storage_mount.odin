@@ -630,7 +630,7 @@ damaged_under_set :: proc "contextless" (state: ^State, number: u64) {
 // Wrong when a block under the root is wrong (then, or at its first name),
 // and the blocks that the state holds. `named` counts the blocks of the
 // store that this name counted first.
-reference_state :: proc "contextless" (state: ^State, reader: ^Block_Reader, root: format.Pointer, size: u64, store_index: int, result: ^Mount, named: ^u64) -> (outcome: Read, held: u64) {
+reference_state :: proc "contextless" (state: ^State, reader: ^Block_Reader, root: format.Pointer, size: u64, store_index: int, result: ^Mount, named: ^u64, encrypted := false) -> (outcome: Read, held: u64) {
 	if root.block == 0 {
 		return .Good, 0
 	}
@@ -643,7 +643,7 @@ reference_state :: proc "contextless" (state: ^State, reader: ^Block_Reader, roo
 	}
 	levels := format.object_levels(size)
 	first: bool
-	outcome, first, held, _ = reference_object_child(state, reader, {block = root.block, check = root.check}, levels, 0, size, false, store_index, result, named)
+	outcome, first, held, _ = reference_object_child(state, reader, {block = root.block, check = root.check}, levels, 0, size, false, store_index, result, named, encrypted)
 	if first || outcome != .Good || levels == 0 || state.form == .Count_Tree {
 		// The form Count_Tree does not count the blocks of a state: the store
 		// block holds them.
@@ -667,22 +667,22 @@ reference_state :: proc "contextless" (state: ^State, reader: ^Block_Reader, roo
 // root, and each node still holds the names of its children from the
 // block of data at the cursor. A child whose blocks are all before the
 // cursor was freed by a step: no name. A cursor of 0 is a whole state.
-reference_release :: proc "contextless" (state: ^State, reader: ^Block_Reader, root: format.Pointer, size: u64, cursor: u64, store_index: int, result: ^Mount, named: ^u64) -> Read {
+reference_release :: proc "contextless" (state: ^State, reader: ^Block_Reader, root: format.Pointer, size: u64, cursor: u64, store_index: int, result: ^Mount, named: ^u64, encrypted := false) -> Read {
 	levels := format.object_levels(min(size, format.OBJECT_SIZE_LIMIT))
 	if cursor == 0 || levels == 0 || size > format.OBJECT_SIZE_LIMIT || root.block == 0 {
 		// A state that no step started, or that no step can have cut: whole,
 		// the safe direction (a block named too many times stays in use).
-		outcome, _ := reference_state(state, reader, root, size, store_index, result, named)
+		outcome, _ := reference_state(state, reader, root, size, store_index, result, named, encrypted)
 		return outcome
 	}
-	return reference_part(state, reader, {block = root.block, check = root.check}, levels, 0, size, cursor, store_index, result, named)
+	return reference_part(state, reader, {block = root.block, check = root.check}, levels, 0, size, cursor, store_index, result, named, encrypted)
 }
 
 // reference_part counts one name of a node of the state of a release that
 // a step cut, and the names that it still holds: of each child from the
 // cursor, whole, and of the child that holds the cursor, in part.
 @(private)
-reference_part :: proc "contextless" (state: ^State, reader: ^Block_Reader, child: format.Object_Child, level: int, base: u64, size: u64, cursor: u64, store_index: int, result: ^Mount, named: ^u64) -> Read {
+reference_part :: proc "contextless" (state: ^State, reader: ^Block_Reader, child: format.Object_Child, level: int, base: u64, size: u64, cursor: u64, store_index: int, result: ^Mount, named: ^u64, encrypted := false) -> Read {
 	if child.block < 2 || child.block >= state.disk_size {
 		result.wrong += 1
 		return .Wrong
@@ -698,7 +698,7 @@ reference_part :: proc "contextless" (state: ^State, reader: ^Block_Reader, chil
 		return .Device
 	}
 	result.checked += 1
-	if check_of_block(reader, child.block, ([^]u8)(node)[:BLOCK_SIZE]) != child.check || !block_tree.node_valid(node, level, base, size) {
+	if check_of_block(reader, child.block, ([^]u8)(node)[:BLOCK_SIZE]) != child.check || !block_tree.node_valid(node, level, base, size, encrypted) {
 		result.wrong += 1
 		wrong_block_set(state, child.block)
 		damaged_under_set(state, child.block)
@@ -715,9 +715,9 @@ reference_part :: proc "contextless" (state: ^State, reader: ^Block_Reader, chil
 		}
 		one: Read
 		if child_base >= cursor || level == 1 {
-			one, _, _, _ = reference_object_child(state, reader, item, level - 1, child_base, size, true, store_index, result, named)
+			one, _, _, _ = reference_object_child(state, reader, item, level - 1, child_base, size, true, store_index, result, named, encrypted)
 		} else {
-			one = reference_part(state, reader, item, level - 1, child_base, size, cursor, store_index, result, named)
+			one = reference_part(state, reader, item, level - 1, child_base, size, cursor, store_index, result, named, encrypted)
 		}
 		switch one {
 		case .Device:
@@ -735,7 +735,7 @@ reference_part :: proc "contextless" (state: ^State, reader: ^Block_Reader, chil
 // walks under it at its first name. value_known: the parent holds the
 // value of the child, and the walk compares it. It gives the blocks of the
 // child and its value.
-reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Reader, child: format.Object_Child, level: int, base: u64, size: u64, value_known: bool, store_index: int, result: ^Mount, named: ^u64) -> (outcome: Read, first: bool, blocks: u64, value: format.Block_Value) {
+reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Reader, child: format.Object_Child, level: int, base: u64, size: u64, value_known: bool, store_index: int, result: ^Mount, named: ^u64, encrypted := false) -> (outcome: Read, first: bool, blocks: u64, value: format.Block_Value) {
 	if child.block < 2 || child.block >= state.disk_size {
 		result.wrong += 1
 		return .Wrong, false, child.blocks, child.value
@@ -753,6 +753,15 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 			return .Device, true, 1, {}
 		}
 		result.checked += 1
+		if encrypted {
+			if check_of_block(reader, child.block, bytes[:]) != child.check {
+				result.wrong += 1
+				wrong_block_set(state, child.block)
+				damaged_under_set(state, child.block)
+				return .Wrong, true, 1, {}
+			}
+			return .Good, true, 1, {}
+		}
 		value = value_of_block(reader, child.block, base, bytes)
 		if format.value_check(value) != child.check || (value_known && value != child.value) || block_tree.is_zero(bytes[:]) {
 			result.wrong += 1
@@ -767,7 +776,7 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 		return .Device, true, child.blocks, child.value
 	}
 	result.checked += 1
-	if check_of_block(reader, child.block, ([^]u8)(node)[:BLOCK_SIZE]) != child.check || !block_tree.node_valid(node, level, base, size) {
+	if check_of_block(reader, child.block, ([^]u8)(node)[:BLOCK_SIZE]) != child.check || !block_tree.node_valid(node, level, base, size, encrypted) {
 		result.wrong += 1
 		wrong_block_set(state, child.block)
 		damaged_under_set(state, child.block)
@@ -778,7 +787,7 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 	damaged := false
 	if level == 1 {
 		// The blocks of data that no state named before, read in one request;
-		// each one is checked by its value at its place.
+		// each one is checked by its value (clear) or on-disk check (encrypted).
 		unread_numbers: [format.OBJECT_FANOUT]u64
 		unread_places: [format.OBJECT_FANOUT]int
 		unread_count := 0
@@ -809,7 +818,8 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 			for number in 0 ..< unread_count {
 				item := &node.children[unread_places[number]]
 				bytes := (^block_tree.Block)(raw_data(scratch_block(state, number)))
-				if value_of_block(reader, item.block, base + u64(unread_places[number]), bytes) != item.value || block_tree.is_zero(bytes[:]) {
+				bad_block := encrypted ? (check_of_block(reader, item.block, bytes[:]) != item.check) : (value_of_block(reader, item.block, base + u64(unread_places[number]), bytes) != item.value || block_tree.is_zero(bytes[:]))
+				if bad_block {
 					result.wrong += 1
 					wrong_block_set(state, item.block)
 					damaged_under_set(state, item.block)
@@ -824,13 +834,13 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 			if item.block == 0 {
 				continue
 			}
-			child_outcome, child_first, child_blocks, child_value := reference_object_child(state, reader, item, level - 1, base + u64(place) * span, size, true, store_index, result, named)
+			child_outcome, child_first, child_blocks, child_value := reference_object_child(state, reader, item, level - 1, base + u64(place) * span, size, true, store_index, result, named, encrypted)
 			if child_outcome == .Device {
 				return .Device, true, blocks, {}
 			}
 			if child_outcome == .Wrong {
 				damaged = true
-			} else if child_first && (child_blocks != item.blocks || child_value != item.value) {
+			} else if child_first && (child_blocks != item.blocks || (!encrypted && child_value != item.value)) {
 				// A node that gives another count or another value than what
 				// it names: a rule of the format.
 				result.wrong += 1
@@ -841,7 +851,7 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 			blocks += item.blocks
 		}
 	}
-	value = block_tree.node_value(node)
+	value = encrypted ? {} : block_tree.node_value(node)
 	if damaged {
 		damaged_under_set(state, child.block)
 		return .Wrong, true, blocks, value
@@ -1080,10 +1090,11 @@ Store_Walk :: struct {
 	named:       u64, // The distinct blocks of the store.
 	counts:      Store_Counts, // What the walk counted.
 	nesting:     int, // The level of the tree that is walked: 0 for the tree of the store.
-	in_removals: bool, // The walk is in the removal queue: its entries are trees to free.
-	complete:    bool, // Each block of the store was read: its counts are known.
-	device:      bool, // The device reported an error.
-	broken:      bool, // A node or an entry breaks a rule: the store is damaged.
+	in_removals:       bool, // The walk is in the removal queue: its entries are trees to free.
+	encrypted:         bool, // Owned store: keys and secret entry metadata are ciphertext during keyless walk.
+	complete:          bool, // Each block of the store was read: its counts are known.
+	device:            bool, // The device reported an error.
+	broken:            bool, // A node or an entry breaks a rule: the store is damaged.
 	entry_count_wrong: bool, // An entry of a tree gives another count of entries than its tree has.
 }
 
@@ -1409,6 +1420,18 @@ store_page_read :: proc "contextless" (state: ^State, reader: ^Block_Reader, poi
 	read := (^format.Store_Table_Page)(raw_data(scratch_block(state, 0)))
 	valid := read.magic == format.STORE_TABLE_MAGIC && read.reserved == 0 && read.unused == 0
 	for &cell in read.cells {
+		if cell.name[0] == format.OWNED_CELL_MARK {
+			// Owned store cell: mark byte followed by 31 binary name-tag bytes.
+			tag_nonzero := false
+			for byte in cell.name[1:] {
+				if byte != 0 {
+					tag_nonzero = true
+					break
+				}
+			}
+			valid &&= tag_nonzero
+			continue
+		}
 		ended := false
 		for byte in cell.name {
 			if ended && byte != 0 {
@@ -1460,6 +1483,7 @@ walk_store :: proc "contextless" (state: ^State, reader: ^Block_Reader, store: ^
 		result      = result,
 		store_index = index,
 		named       = named,
+		encrypted   = store.name[0] == format.OWNED_CELL_MARK,
 		complete    = true,
 	}
 	roots := [2]format.Pointer{block.tree, block.removals}
@@ -1523,6 +1547,7 @@ walk_one_tree :: proc "contextless" (walking: ^Store_Walk, root: format.Pointer,
 	one.visit_node = visit_node_of_store
 	one.visit_record = visit_entry_of_store
 	one.data = walking
+	one.encrypted = walking.encrypted
 	one.nodes, one.records = 0, 0
 	before := walking.nesting
 	walking.nesting = nesting
@@ -1587,7 +1612,7 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 		// known, so their blocks are free, and a step drops the entry, as the
 		// service does at run time. The rest of the store is whole.
 		walking.counts.removing += 1
-		if entry.size != 0 || entry.generation != 0 || entry.versions.block != 0 {
+		if entry.size != 0 || (!walking.encrypted && entry.generation != 0) || entry.versions.block != 0 {
 			walking.broken = true
 			one.failure = .Damaged
 			return
@@ -1620,7 +1645,7 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 				return
 			}
 			for released in list.states[:list.count] {
-				switch reference_release(state, walking.reader, released.root, released.size, released.cursor, index, result, &walking.named) {
+				switch reference_release(state, walking.reader, released.root, released.size, released.cursor, index, result, &walking.named, walking.encrypted) {
 				case .Device:
 					walking.device = true
 					one.failure = .Device
@@ -1652,7 +1677,7 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 	switch kind {
 	case .Object:
 		walking.counts.objects += 1
-		outcome, held := reference_state(state, walking.reader, entry.pointer, entry.size, index, result, &walking.named)
+		outcome, held := reference_state(state, walking.reader, entry.pointer, entry.size, index, result, &walking.named, walking.encrypted)
 		walking.counts.current_blocks += held
 		switch outcome {
 		case .Device:
@@ -1667,7 +1692,8 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 		}
 		// Each entry is counted, a damaged one too, so that a commit that
 		// replaces it takes its count back; a lookup skips a damaged root.
-		if hash_index_name(state, entry.hash, entry.pointer, entry.size) {
+		// Encrypted entries hold ciphertext hashes during keyless mount.
+		if !walking.encrypted && hash_index_name(state, entry.hash, entry.pointer, entry.size) {
 			result.repeated_hashes += 1
 		}
 		if entry.versions.block != 0 && !walk_versions(walking, entry.versions) {
@@ -1679,7 +1705,7 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 		walking.counts.trees += 1
 		// A root with no block is an empty tree only with the check 0: the
 		// commits of the service refuse any other check as damage.
-		if entry.versions.block != 0 || entry.hash != {} || entry.pointer.block == 0 && (entry.size != 0 || entry.pointer.check != 0) {
+		if entry.versions.block != 0 || (!walking.encrypted && entry.hash != {}) || entry.pointer.block == 0 && (entry.size != 0 || entry.pointer.check != 0) {
 			walking.broken = true
 			one.failure = .Damaged
 			return
@@ -1755,7 +1781,7 @@ walk_versions :: proc "contextless" (walking: ^Store_Walk, versions: format.Poin
 		for &entry in leaf.entries[:leaf.count] {
 			result.versions += 1
 			state.store_versions[index] += 1
-			outcome, _ := reference_state(state, reader, entry.root, entry.size, index, result, &walking.named)
+			outcome, _ := reference_state(state, reader, entry.root, entry.size, index, result, &walking.named, walking.encrypted)
 			switch outcome {
 			case .Device:
 				return false

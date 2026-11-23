@@ -496,7 +496,7 @@ The shared file system (property 8) is one case. This property lists the other c
 
 ## 21. Principals: who acts, without users
 
-Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design. Built: layer 1; layer 2 in part (the record of the machine and its measure, the machine key sealed by the TPM with a recovery key, not its attestation key in the TPM); layer 3 in part (one named principal, its unlock by a passphrase, its keys sealed by the TPM with the passphrase and a recovery key on a machine with a TPM and Secure Boot on, its session, its stores, the lock; not its encrypted stores, and no recovery on a machine with no TPM). Layers 4 and 5: not built (`PRINCIPALS.md`).
+Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design. Built: layer 1; layer 2 in part (the record of the machine and its measure, the machine key sealed by the TPM with a recovery key, not its attestation key in the TPM); layer 3 in part (named principals, unlock by a passphrase, keys sealed by the TPM with the passphrase and a recovery key on a machine with a TPM and Secure Boot on, sessions, encrypted stores, lock; no recovery on a machine with no TPM). Layers 4 and 5: not built (`PRINCIPALS.md`).
 
 **In short.** The system has no users. A process acts with the handles that it holds, and a principal, a key pair, is the one for whom it acts. Data belong to a principal, and an unlock of its key opens them.
 

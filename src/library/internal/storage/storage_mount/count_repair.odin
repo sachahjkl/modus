@@ -574,7 +574,9 @@ repair_object_node :: proc "contextless" (state: ^State, reader: ^Block_Reader, 
 		return false
 	}
 	// A wrong node: the blocks under it are not known, as at the open.
-	if check_of_block(reader, pointer.block, ([^]u8)(node)[:BLOCK_SIZE]) != pointer.check || !block_tree.node_valid(node, level, base, object.size) {
+	store_page, store_cell := format.store_place(repair.store)
+	encrypted := state.store_pages[store_page].cells[store_cell].name[0] == format.OWNED_CELL_MARK
+	if check_of_block(reader, pointer.block, ([^]u8)(node)[:BLOCK_SIZE]) != pointer.check || !block_tree.node_valid(node, level, base, object.size, encrypted) {
 		return true
 	}
 	span := format.object_span(level - 1)

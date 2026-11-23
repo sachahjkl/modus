@@ -212,28 +212,36 @@ hash_part :: proc "contextless" (walk: ^Hash_Walk, first: u64, end: u64) -> Valu
 // The source of the blocks of the block trees.
 Source :: struct {
 	// read_node reads an object node and compares it with the check of its
-	// Pointer (the hash of its block).
-	read_node:  proc "contextless" (source: ^Source, pointer: Pointer, into: ^Block) -> Read,
+	// Pointer (the hash of its block). For encrypted stores, read_node also
+	// opens and authenticates the node before returning .Good.
+	read_node:            proc "contextless" (source: ^Source, pointer: Pointer, into: ^Block) -> Read,
 	// read_block reads a block with no check: Good or Device, and Wrong for
 	// a number that names no block of the disk.
-	read_block: proc "contextless" (source: ^Source, number: u64, into: ^Block) -> Read,
+	read_block:           proc "contextless" (source: ^Source, number: u64, into: ^Block) -> Read,
+	// read_encrypted_block verifies the ciphertext check of pointer, reads
+	// and decrypts an encrypted data block using data_check.
+	read_encrypted_block: proc "contextless" (source: ^Source, pointer: Pointer, data_check: u64, into: ^Block) -> Read,
 	// value gives the value of a block of data that read_block gave, at the
 	// block `index` of its object. nil: block_value. The modus tool gives
 	// the value that it computed before for the same bytes.
-	value:      proc "contextless" (source: ^Source, number: u64, index: u64, bytes: ^Block) -> Value,
-	data:       rawptr, // The state of the caller.
+	value:                proc "contextless" (source: ^Source, number: u64, index: u64, bytes: ^Block) -> Value,
+	data:                 rawptr, // The state of the caller.
+	encrypted:            bool, // True when reading an encrypted store: data block checks are ciphertext checks.
 }
 
 // One state of an object: the root of its block tree and its size. An entry
 // names its current state; a version entry names an older one.
 State :: struct {
-	root: Pointer, // The root of the block tree: an object node, the one block of data, or no block when each byte is zero.
-	size: u64, // The bytes of the object.
+	root:       Pointer, // The root of the block tree: an object node, the one block of data, or no block when each byte is zero.
+	size:       u64, // The bytes of the object.
+	data_check: u64, // For a 1-block encrypted object: value_check of its plaintext data block; 0 otherwise.
 }
 
 // node_valid checks the rules of the format for an object node of `level`
 // that covers the blocks from `base`, in a state of `size` bytes.
-node_valid :: proc "contextless" (node: ^Node, level: int, base: u64, size: u64) -> bool {
+// For encrypted stores, child.check at level 1 is the on-disk ciphertext
+// check, not value_check(child.value).
+node_valid :: proc "contextless" (node: ^Node, level: int, base: u64, size: u64, encrypted := false) -> bool {
 	head := &node.header
 	if head.magic != format.OBJECT_NODE_MAGIC || int(head.level) != level || level < 1 || level > LEVEL_LIMIT {
 		return false
@@ -251,7 +259,7 @@ node_valid :: proc "contextless" (node: ^Node, level: int, base: u64, size: u64)
 		if base + u64(index) * span >= count || child.block < 2 || child.blocks == 0 || (level == 1 && child.blocks != 1) || (level > 1 && child.blocks < 2) {
 			return false
 		}
-		if level == 1 && child.check != format.value_check(child.value) {
+		if !encrypted && level == 1 && child.check != format.value_check(child.value) {
 			return false
 		}
 		present += 1
@@ -262,58 +270,84 @@ node_valid :: proc "contextless" (node: ^Node, level: int, base: u64, size: u64)
 // node_load reads an object node and checks it.
 node_load :: proc "contextless" (source: ^Source, pointer: Pointer, level: int, base: u64, size: u64, into: ^Node) -> Read {
 	outcome := source.read_node(source, pointer, (^Block)(into))
-	if outcome == .Good && !node_valid(into, level, base, size) {
+	if outcome == .Good && !node_valid(into, level, base, size, source.encrypted) {
 		return .Wrong
 	}
 	return outcome
 }
 
 // block_check reads a block of data and checks it: its value at its place
-// has the check of its Pointer, and it is not a hole.
-block_check :: proc "contextless" (source: ^Source, pointer: Pointer, index: u64, into: ^Block) -> (value: Value, outcome: Read) {
+// matches its check (and expected_value when known), and it is not a hole.
+block_check :: proc "contextless" (source: ^Source, pointer: Pointer, index: u64, into: ^Block, data_check: u64 = 0, expected_value: Value = {}, value_known := false) -> (value: Value, outcome: Read) {
+	if source.encrypted {
+		if source.read_encrypted_block == nil {
+			return {}, .Wrong
+		}
+		outcome = source.read_encrypted_block(source, pointer, data_check, into)
+		if outcome != .Good {
+			return {}, outcome
+		}
+		value = source.value != nil ? source.value(source, pointer.block, index, into) : block_value(into, index)
+		if format.value_check(value) != data_check || (value_known && value != expected_value) || is_zero(into[:]) {
+			intrinsics.mem_zero_volatile(into, size_of(Block))
+			return {}, .Wrong
+		}
+		return value, .Good
+	}
 	outcome = source.read_block(source, pointer.block, into)
 	if outcome != .Good {
 		return {}, outcome
 	}
 	value = source.value != nil ? source.value(source, pointer.block, index, into) : block_value(into, index)
-	if format.value_check(value) != pointer.check || is_zero(into[:]) {
+	if format.value_check(value) != pointer.check || (value_known && value != expected_value) || is_zero(into[:]) {
 		return value, .Wrong
 	}
 	return value, .Good
 }
 
-// block_child gives the Pointer of the block `index` of a state: no block
-// for a hole. node is the room of the descent.
-block_child :: proc "contextless" (source: ^Source, state: State, index: u64, node: ^Node) -> (pointer: Pointer, outcome: Read) {
+// block_target locates the data block `index` of a state, returning its
+// Pointer, plaintext data_check, and full expected Value when under a node.
+@(private)
+block_target :: proc "contextless" (source: ^Source, state: State, index: u64, node: ^Node) -> (pointer: Pointer, data_check: u64, expected_value: Value, value_known: bool, outcome: Read) {
 	if state.root.block == 0 || index >= format.object_blocks(state.size) {
-		return {}, .Good
+		return {}, 0, {}, false, .Good
 	}
 	levels := format.object_levels(state.size)
 	if levels == 0 {
-		return state.root, .Good
+		return state.root, state.data_check, {}, false, .Good
 	}
 	pointer = state.root
 	base: u64
 	for level := levels; level >= 1; level -= 1 {
 		if outcome = node_load(source, pointer, level, base, state.size, node); outcome != .Good {
-			return {}, outcome
+			return {}, 0, {}, false, outcome
 		}
 		span := format.object_span(level - 1)
 		place := (index - base) / span
 		child := node.children[place]
 		if child.block == 0 {
-			return {}, .Good
+			return {}, 0, {}, false, .Good
 		}
 		pointer = {block = child.block, check = child.check}
+		if level == 1 {
+			return pointer, format.value_check(child.value), child.value, true, .Good
+		}
 		base += place * span
 	}
-	return pointer, .Good
+	return pointer, 0, {}, false, .Good
+}
+
+// block_child gives the Pointer of the block `index` of a state: no block
+// for a hole. node is the room of the descent.
+block_child :: proc "contextless" (source: ^Source, state: State, index: u64, node: ^Node) -> (pointer: Pointer, outcome: Read) {
+	pointer, _, _, _, outcome = block_target(source, state, index, node)
+	return pointer, outcome
 }
 
 // block_read reads the block `index` of a state, checked: zero bytes for a
 // hole and past the size.
 block_read :: proc "contextless" (source: ^Source, state: State, index: u64, into: ^Block, node: ^Node) -> Read {
-	pointer, outcome := block_child(source, state, index, node)
+	pointer, data_check, expected_value, value_known, outcome := block_target(source, state, index, node)
 	if outcome != .Good {
 		return outcome
 	}
@@ -321,7 +355,7 @@ block_read :: proc "contextless" (source: ^Source, state: State, index: u64, int
 		into^ = {}
 		return .Good
 	}
-	_, outcome = block_check(source, pointer, index, into)
+	_, outcome = block_check(source, pointer, index, into, data_check, expected_value, value_known)
 	return outcome
 }
 

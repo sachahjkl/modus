@@ -126,7 +126,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 	switch command {
 	case .None:
 		return false
-	case .Principal_Record, .Principal_Unlock, .Machine_Key, .Principal_Change_End, .Wide_Grant_Proof:
+	case .Principal_Record, .Principal_Identifier, .Principal_Storage_Key, .Principal_Unlock, .Machine_Key, .Principal_Change_End, .Wide_Grant_Proof:
 		return .Principals in start_grant_set
 	case .Debug, .Debug_Store, .Debug_Start:
 		return .Debugger in start_grant_set
