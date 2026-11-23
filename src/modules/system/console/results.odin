@@ -263,7 +263,7 @@ value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Valu
 			sink.write(sink, console_language.hash_format(hash, &buf), .Version)
 			sink.end_line(sink)
 		}
-	case .None, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+	case .None, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// run_line draws a Stream one row at a time, with no lock held
 		// while it waits (stream_draw).
 	}
@@ -301,7 +301,7 @@ list_inline :: proc "contextless" (value: Value, depth: int) -> bool {
 			if !list_inline(item, depth + 1) {
 				return false
 			}
-		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			return false
 		}
 	}
@@ -343,7 +343,7 @@ list_inline_write :: proc "contextless" (sink: ^console_results.Sink, value: Val
 			}
 		case .List:
 			list_inline_write(sink, item, depth + 1)
-		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		}
 	}
 	sink.write(sink, "]", .Plain)

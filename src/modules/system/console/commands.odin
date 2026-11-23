@@ -2005,7 +2005,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 			integers[index] = u64(uintptr(&argument.text))
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
-		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// The check of the line gave each other kind its integer: a
 			// handle is its number, a member its value or the absent word,
 			// and a Table or Bytes parameter took its place above. An export
@@ -2075,7 +2075,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 	case .Table:
 		return table_take(item, &table, results[0])
-	case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+	case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// None gives no value; callable_by_console refuses an export with
 		// a Handle or a Bytes result, and no export gives a Stream.
 	}
@@ -2581,7 +2581,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
 				case .Enum:
 					return enum_result(item, i64(completion.values[0]))
-				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 					// None gives no value; callable_by_console refuses an
 					// export with a Handle or a Bytes result, and no export
 					// gives a Stream.
@@ -3700,7 +3700,7 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 		case .List:
 			system.write_part(&value_writer, i64(value.detail))
 			system.write_part(&value_writer, value.detail == 1 ? " item" : " items")
-		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// No value, and bytes with no description: the cell stays empty.
 			// No variable keeps a Stream or a member not typed.
 		case .Integer:

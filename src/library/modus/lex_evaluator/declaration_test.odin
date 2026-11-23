@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
+import "modus:contract/plans_recipes"
 
 @(private = "file")
 DECL_TEST_STACK :: 2 * 1024 * 1024
@@ -402,7 +403,8 @@ declaration_end_to_end_pins_project_and_plan :: proc(t: ^testing.T) {
 	testing.expect_value(t, console_hdr.status, declaration_eval.Output_Status.Ok)
 
 	src_res := declaration_evaluate(ws, project_source, "source", cfg)
-	testing.expect(t, src_res.ok && src_res.value.kind == .Hash)
+	// here() is a tree, an input that names its kind.
+	testing.expect(t, src_res.ok && src_res.value.kind == .Tree_Ref)
 	got_src, _ := hash_of(&ws.evaluation, src_res.value)
 	testing.expect_value(t, got_src, here_hash)
 
@@ -432,4 +434,104 @@ declaration_end_to_end_pins_project_and_plan :: proc(t: ^testing.T) {
 	len_b, ok_b := declaration_evaluate_to_buffer(ws, "{ c = 3, a = 1, b = 2 }", "", cfg, out_b[:])
 	testing.expect(t, ok_a && ok_b && len_a == len_b)
 	testing.expect_value(t, blake3.hash(out_a[declaration_eval.OUTPUT_HEADER_BYTES:len_a]), blake3.hash(out_b[declaration_eval.OUTPUT_HEADER_BYTES:len_b]))
+}
+
+// declaration takes a tree: declaration(here()) reads the declaration of
+// the source tree, as the guides show it, and the hash of one exact
+// declaration still names one. A module file and a text name no
+// declaration, and are refused.
+@(test)
+a_declaration_is_read_from_a_tree :: proc(t: ^testing.T) {
+	ws := new_workspace()
+	here_hash, _ := hash_literal_of("the source tree of a project")
+	_, module_lit := hash_literal_of("a module file")
+	declaration_source := "{\n  name = \"kernel\",\n}\n"
+	bundle_buf: [4096]u8
+	entries := [1]declaration_eval.Bundle_Input_Entry {
+		{kind = .Declaration_Hash, hash = here_hash, content = declaration_source},
+	}
+	written, bundle_refusal := declaration_eval.bundle_write(bundle_buf[:], entries[:], true, here_hash)
+	testing.expect_value(t, bundle_refusal, declaration_eval.Bundle_Refusal.None)
+	bundle_slice := bundle_buf[:written]
+	cfg := Declaration_Config{loader = bundle_loader(&bundle_slice), has_here = true, here_hash = here_hash, stack_bytes = DECL_TEST_STACK}
+
+	res := declaration_evaluate(ws, strings.concatenate({"declaration(module(", module_lit, ")).name"}, context.temp_allocator), "", cfg)
+	testing.expect(t, !res.ok && res.failure_kind == .Type_Error && res.detail == "declaration", "a module file is no declaration")
+	res = declaration_evaluate(ws, "declaration(\"kernel\").name", "", cfg)
+	testing.expect(t, !res.ok && res.failure_kind == .Type_Error && res.detail == "declaration", "a text is no declaration")
+
+	res = declaration_evaluate(ws, "declaration(here()).name", "", cfg)
+	testing.expect(t, res.ok && res.value.kind == .Text && res.value.text == "kernel", "declaration(here()) reads the source tree")
+}
+
+// A refusal of the conversion of a recipe is the failure Recipe_Refused,
+// with the words of that refusal: a bare hash in the arguments, a tree
+// below the first level, a source_date that is a text. A builder given by
+// a bare hash is a type error of recipe.
+@(test)
+a_refused_recipe_says_why :: proc(t: ^testing.T) {
+	ws := new_workspace()
+	here_hash, here_lit := hash_literal_of("collatz source")
+	_, builder_lit := hash_literal_of("the C builder")
+	cfg := Declaration_Config{has_here = true, here_hash = here_hash, stack_bytes = DECL_TEST_STACK}
+	Case :: struct {
+		arguments: string,
+		refusal:   plans_recipes.Recipe_Refusal,
+	}
+	cases := [?]Case {
+		{strings.concatenate({"{ source = ", here_lit, " }"}, context.temp_allocator), .Untyped_Hash},
+		{"{ deep = { source = here() } }", .Nested_Input},
+		{"{ source = here(), source_date = \"today\" }", .Unsupported_Argument},
+	}
+	for item in cases {
+		source := strings.concatenate({"recipe(module(", builder_lit, "), ", item.arguments, ")"}, context.temp_allocator)
+		res := declaration_evaluate(ws, source, "", cfg)
+		testing.expectf(t, !res.ok && res.failure_kind == .Recipe_Refused, "%s: %v", item.arguments, res.failure_kind)
+		testing.expect_value(t, res.detail, plans_recipes.recipe_refusal_words[item.refusal])
+	}
+	res := declaration_evaluate(ws, strings.concatenate({"recipe(", builder_lit, ", { source = here() })"}, context.temp_allocator), "", cfg)
+	testing.expect(t, !res.ok && res.failure_kind == .Type_Error && res.detail == "recipe", "a builder by a bare hash is refused")
+}
+
+// The buffer of the written arguments holds the largest recipe that
+// converts: MAX_RECIPE_INPUTS module files under names of the largest
+// length, and argument bytes of exactly MAX_RECIPE_ARG_BYTES. One more byte
+// of the text is refused with the words of a recipe too large, not as a
+// fault of a pool.
+@(test)
+the_largest_recipe_fits_its_written_arguments :: proc(t: ^testing.T) {
+	ws := new_workspace()
+	_, builder_lit := hash_literal_of("the C builder")
+	recipe_source :: proc(builder_lit: string, text_bytes: int) -> string {
+		parts := make([dynamic]string, context.temp_allocator)
+		append(&parts, "recipe(module(", builder_lit, "), {\n")
+		for index in 0 ..< plans_recipes.MAX_RECIPE_INPUTS {
+			name := make([]u8, plans_recipes.MAX_ENTRY_NAME_BYTES, context.temp_allocator)
+			for &item in name {
+				item = 'n'
+			}
+			name[0] = 'a' + u8(index / 26)
+			name[1] = 'a' + u8(index % 26)
+			_, module_lit := hash_literal_of(string(name))
+			append(&parts, "  ", string(name), " = module(", module_lit, "),\n")
+		}
+		text := make([]u8, text_bytes, context.temp_allocator)
+		for &item in text {
+			item = 'x'
+		}
+		append(&parts, "  t = \"", string(text), "\",\n})\n")
+		return strings.concatenate(parts[:], context.temp_allocator)
+	}
+	// The record of the other fields: its head (5 bytes), the name "t" (5),
+	// the tag (1) and the length of the text (4), then the text.
+	text_bytes := plans_recipes.MAX_RECIPE_ARG_BYTES - 15
+	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = 64 * 1024}
+	res := declaration_evaluate(ws, recipe_source(builder_lit, text_bytes), "", cfg)
+	testing.expectf(t, res.ok && res.value.kind == .Recipe_Ref, "the largest recipe converts: %v %s", res.failure_kind, res.detail)
+	testing.expect_value(t, ws.recipe_spec.input_count, u32(plans_recipes.MAX_RECIPE_INPUTS))
+	testing.expect_value(t, ws.recipe_spec.arguments_length, u32(plans_recipes.MAX_RECIPE_ARG_BYTES))
+
+	res = declaration_evaluate(ws, recipe_source(builder_lit, text_bytes + 1), "", cfg)
+	testing.expect(t, !res.ok && res.failure_kind == .Recipe_Refused, "one more byte is refused")
+	testing.expect_value(t, res.detail, plans_recipes.recipe_refusal_words[.Arguments_Too_Large])
 }

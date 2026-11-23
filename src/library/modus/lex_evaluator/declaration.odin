@@ -12,6 +12,7 @@ package lex_evaluator
 
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
+import "modus:contract/plans_recipes"
 import "modus:console_language"
 import "modus:lex_parser"
 
@@ -131,6 +132,10 @@ Declaration_Workspace :: struct {
 	host_failure_kind:   declaration_eval.Failure_Kind,
 	host_failure_detail: string,
 	host_failure_place:  lex_parser.Place,
+	// The written arguments of a recipe and its record, kept here and not on
+	// the bounded stack of the evaluation: the record is about 7 KiB.
+	recipe_arguments:    [plans_recipes.MAX_RECIPE_ARGUMENT_VALUE_BYTES]u8,
+	recipe_spec:         plans_recipes.Recipe_Spec,
 	evaluation:          Evaluation,
 }
 
@@ -669,7 +674,9 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 			decl_host_fail(ws, .Pool_Exhausted, "here", {})
 			return {}, false
 		}
-		return {kind = .Hash, detail = idx}, true
+		// A tree, not a bare hash: an input of a recipe names its kind
+		// (src/md/features/application_projects.md, "One identity for a recipe").
+		return {kind = .Tree_Ref, detail = idx}, true
 
 	case "follow":
 		if len(arguments) != 2 || arguments[0].kind != .Hash || arguments[1].kind != .Text {
@@ -734,7 +741,8 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 			return {}, false
 		}
 		builder_hash, builder_ok := hash_of(&ws.evaluation, arguments[0])
-		if !builder_ok || (arguments[0].kind != .Hash && arguments[0].kind != .Module_Ref) {
+		// The builder is a module file: a bare hash names no kind.
+		if !builder_ok || arguments[0].kind != .Module_Ref {
 			decl_host_fail(ws, .Type_Error, "recipe", {})
 			return {}, false
 		}
@@ -742,20 +750,33 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 			decl_host_fail(ws, .Pool_Exhausted, "recipe", {})
 			return {}, false
 		}
-		// Compute a deterministic recipe hash over domain tag + builder hash +
-		// canonical serialized arguments (forging nothing, running no build).
-		hash_buf: [4096]u8
-		h_writer := declaration_eval.Output_Writer{buffer = hash_buf[:]}
-		declaration_eval.output_write_bytes(&h_writer, transmute([]u8)string("modus-recipe-v1:"))
-		bh := builder_hash
-		declaration_eval.output_write_bytes(&h_writer, bh[:])
-		if ser_err := serialize_value_into(ws, &h_writer, arguments[1], 0); ser_err != .None || h_writer.overflow {
+		// The hash of the recipe is the hash of the record that the service
+		// recipes builds, made from the written arguments by the one
+		// conversion of the contract (src/md/features/application_projects.md,
+		// "One identity for a recipe"); it builds nothing.
+		a_writer := declaration_eval.Output_Writer{buffer = ws.recipe_arguments[:]}
+		ser_err := serialize_value_into(ws, &a_writer, arguments[1], 0)
+		if ser_err != .None {
 			if !refused(&ws.evaluation) && ws.host_failure_kind == .None {
-				decl_host_fail(ws, ser_err != .None ? ser_err : .Pool_Exhausted, "recipe", {})
+				decl_host_fail(ws, ser_err, "recipe", {})
 			}
 			return {}, false
 		}
-		recipe_hash := blake3.hash(hash_buf[:h_writer.written])
+		// The buffer holds the largest value that converts, so a value that
+		// does not fit is one that the conversion refuses as too large.
+		if a_writer.overflow {
+			decl_host_fail(ws, .Recipe_Refused, plans_recipes.recipe_refusal_words[.Arguments_Too_Large], {})
+			return {}, false
+		}
+		if refusal := plans_recipes.recipe_spec_of_arguments(builder_hash, ws.recipe_arguments[:a_writer.written], &ws.recipe_spec); refusal != .None {
+			decl_host_fail(ws, .Recipe_Refused, plans_recipes.recipe_refusal_words[refusal], {})
+			return {}, false
+		}
+		recipe_hash, hash_refusal := plans_recipes.recipe_hash(&ws.recipe_spec)
+		if hash_refusal != .None {
+			decl_host_fail(ws, .Recipe_Refused, plans_recipes.recipe_refusal_words[hash_refusal], {})
+			return {}, false
+		}
 		idx := ws.evaluation.recipe_count
 		ws.evaluation.recipes[idx] = {
 			recipe_hash  = recipe_hash,
@@ -778,7 +799,10 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 		return decl_import_path(ws, path)
 
 	case "declaration":
-		if len(arguments) != 1 || arguments[0].kind != .Hash {
+		// A declaration is a tree: here(), or the hash of one exact
+		// declaration, whose kind this function names
+		// (src/md/features/application_projects.md, "declaration takes a tree").
+		if len(arguments) != 1 || (arguments[0].kind != .Tree_Ref && arguments[0].kind != .Hash) {
 			decl_host_fail(ws, .Type_Error, "declaration", {})
 			return {}, false
 		}
@@ -1006,7 +1030,7 @@ collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value
 			return false
 		}
 		return collect_lazy_record_fields(evaluation, evaluation.tagged_records[idx], names, count, depth + 1)
-	case .None, .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref:
+	case .None, .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref:
 		return false
 	}
 	return false
@@ -1057,6 +1081,13 @@ serialize_value_into :: proc "contextless" (ws: ^Declaration_Workspace, writer: 
 			return .Unserializable_Value
 		}
 		declaration_eval.output_write_module_ref(writer, h)
+		return .None
+	case .Tree_Ref:
+		h, ok := hash_of(&ws.evaluation, value)
+		if !ok {
+			return .Unserializable_Value
+		}
+		declaration_eval.output_write_tree(writer, h)
 		return .None
 	case .Recipe_Ref:
 		idx := int(value.integer)

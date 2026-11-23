@@ -538,7 +538,7 @@ An option of a command is a named argument, never a `with` after the call: `reci
 
 ### Sources and the identity of a source
 
-The identity of a source is the hash of a tree in a store. `here()` gives the tree of the current version of the store of the source of the current project, as a hash, so the source of a project is an object with a hash. The versions of property 9 give the history of a source.
+The identity of a source is the hash of a tree in a store. `here()` gives the tree of the current version of the store of the source of the current project, as a tree reference: a typed value that holds its tree hash and says that it is a tree, so the source of a project is a tree with a hash. A bare hash names no kind, and the field `source` of a project refuses it ([application_projects.md](application_projects.md), "One identity for a recipe"). The versions of property 9 give the history of a source.
 
 Git is an import format and an export format, never a dependency:
 

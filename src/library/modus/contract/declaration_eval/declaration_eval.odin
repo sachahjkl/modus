@@ -319,6 +319,7 @@ Failure_Kind :: enum u8 {
 	Import_Not_Found     = 14,
 	Pool_Exhausted       = 15,
 	Unserializable_Value = 16,
+	Recipe_Refused       = 17, // The conversion of a recipe refused it: the detail is the words of its refusal (plans_recipes.recipe_refusal_words).
 }
 
 // Canonical value tags in the output buffer.
@@ -336,6 +337,7 @@ Value_Tag :: enum u8 {
 	Record     = 11,
 	Plan       = 12,
 	Project    = 13,
+	Tree_Ref   = 14, // A tree by its hash, as here() gives it: an input of a recipe that names its kind.
 }
 
 // Why an output buffer is refused by a reader.
@@ -460,6 +462,13 @@ output_write_member :: proc "contextless" (writer: ^Output_Writer, member_name: 
 
 output_write_module_ref :: proc "contextless" (writer: ^Output_Writer, hash: blake3.Hash) {
 	output_write_u8(writer, u8(Value_Tag.Module_Ref))
+	h := hash
+	output_write_bytes(writer, h[:])
+}
+
+// output_write_tree writes a tree by its hash, as here() gives it.
+output_write_tree :: proc "contextless" (writer: ^Output_Writer, hash: blake3.Hash) {
+	output_write_u8(writer, u8(Value_Tag.Tree_Ref))
 	h := hash
 	output_write_bytes(writer, h[:])
 }
@@ -640,7 +649,7 @@ output_validate_value :: proc "contextless" (reader: ^Output_Reader, depth: int)
 	case .Text, .Member:
 		_, refusal = output_read_string(reader)
 		return refusal
-	case .Hash, .Module_Ref:
+	case .Hash, .Module_Ref, .Tree_Ref:
 		_, refusal = output_read_hash(reader)
 		return refusal
 	case .Recipe_Ref:

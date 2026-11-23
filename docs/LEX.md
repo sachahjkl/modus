@@ -99,8 +99,9 @@ Every value of Lex carries one explicit kind (`lex_evaluator.Kind`).
 | `Handle` | Export or built-in result | Kernel capability handle with its object kind and rights. |
 | `Bytes` | `bytes(memory, offset, count)` | Raw untyped bytes. Accepted by `Bytes` parameters; never stored in a console variable. |
 | `Stream` / `Record_Input` | Typed name: `server.requests`, `server.orders` | Console mode only. A `Stream` wires on its first read and closes when the line ends. |
-| `Module_Ref` | `module(blake3:...)` | Exact content-addressed module reference in declarations. |
-| `Recipe_Ref` | `recipe(builder, args)` | Lazy build specification identified by its deterministic recipe hash. Forcing it does not run a build. |
+| `Module_Ref` | `module(blake3:...)` | Exact content-addressed module file in declarations: an object. |
+| `Tree_Ref` | `here()` | A tree reference: the tree hash of the source tree of the current project, typed as a tree. A bare `Hash` names no kind, so only a `Tree_Ref` or a `Module_Ref` is an input of a recipe. |
+| `Recipe_Ref` | `recipe(module(blake3:...), args)` | Lazy build specification identified by its recipe hash. Forcing it does not run a build. |
 | `Follow_Ref` | `follow(publisher, name)` | Publisher-signed release pointer input in a declaration. |
 | `Store_Ref` | `store("kernel", .Read, .Write)` | Store grant specification inside a project console or plan. |
 | `Plan_Value` / `Project_Value` | `plan { ... }`, `project { ... }` | Tagged lazy record values passed to `plans` and `projects` services. |
@@ -204,13 +205,13 @@ Declarations describe a whole system, session, or project as one lazy value in a
 | Form | Meaning in mode `declaration` |
 |---|---|
 | `module(blake3:...)` | Exact content-addressed module reference |
-| `declaration(blake3:...)` | Loads another declaration tree by BLAKE3 hash from the read-only bundle |
+| `declaration(here())`, `declaration(blake3:...)` | Loads a declaration tree from the read-only bundle: a tree reference, or the hash of one exact declaration. A module file or a text is refused |
 | `import("path.lex")` | Loads a relative `.lex` file inside the current tree; refuses `..`, leading `/`, `\\`, and non-`.lex` paths |
-| `recipe(builder, args)` | Lazy build value whose canonical `recipe_hash` binds builder hash, sorted inputs, and canonical arguments |
+| `recipe(module(blake3:...), args)` | Lazy build value. The builder is a module file; a bare hash is refused. Each field of `args` that is a tree reference or a module file is an input under its name; the other fields are the arguments; an integer `source_date` of 0 or more is the date of the recipe. Its `recipe_hash` binds the builder, the output kind (a tree), the date, the inputs sorted by name, and the argument record. A bare hash, a tree or module file below the first level, and a `source_date` that is not such an integer are refused with `Recipe_Refused` and the words of the refusal |
 | `plan { ... }` | Tagged plan record consumed by the `plans` service |
 | `project { ... }` | Tagged project record with `source`, `inputs`, `outputs`, and `console` |
 | `follow(publisher, name)` | Release pointer input signed by a trusted publisher key from `keys` |
-| `here()` | Content-addressed tree hash of the current project source tree |
+| `here()` | A tree reference (`Tree_Ref`): the tree hash of the current project source tree |
 | `store(name, .Read, .Write)` | Store access grant declared for a project console or plan |
 
 ### Writing a project (`project.lex`) and its pins (`pins.lex`)
@@ -421,6 +422,7 @@ error: Rectangle has no field widht; its fields are x, y, width, height
 | `Division_By_Zero` / `Overflow` | `10 / 0` or `9223372036854775807 + 1` | Zero divisor or signed 64-bit arithmetic overflow | Guard divisors with `if d = 0` and keep arithmetic within signed 64-bit bounds |
 | `Import_Path_Refused` / `Import_Not_Found` | `import("../other.lex")` or `import("missing.lex")` | Path escapes tree, lacks `.lex` suffix, or is absent from the input bundle | Use a relative path inside the tree ending in `.lex` and include it in the project tree |
 | `Pool_Exhausted` (`Calls_Full`, `Lists_Full`, `With_Pairs_Full`, `Imports_Full`) | Too many calls, list items, `with` pairs, or imported files in one evaluation | Fixed zero-allocation workspace pool filled | Reduce collection size or split the declaration |
+| `Recipe_Refused` | `recipe(module(blake3:...), { source = blake3:... })` | The arguments of a recipe do not convert to the record of the service `recipes`; the detail gives the words of the refusal | Give each input as `here()` or `module(...)` at the first level of the arguments, and `source_date` as an integer of 0 or more |
 | `Unserializable_Value` | Declaration evaluating to a bare `Function` | Requested output cannot cross the canonical declaration border | Select a concrete field (integer, boolean, text, hash, list, record, plan, or project) |
 
 ## 8. Frequent tasks reference

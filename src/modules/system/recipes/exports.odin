@@ -26,6 +26,7 @@ service_registry: recipes_core.Recipe_Registry
 copied_head: pr.Recipe_Head
 copied_inputs: [pr.MAX_RECIPE_INPUTS]pr.Recipe_Input_Row
 copied_arguments: [pr.MAX_RECIPE_ARG_BYTES]u8
+copied_output: [recipes_core.MAX_RECIPE_OUTPUT_BYTES]u8 // The output of an evaluation of the call, copied once out of the call region.
 copied_reference: pr.Recipe_Reference
 export_spec: pr.Recipe_Spec
 export_result: pr.Recipe_Build_Result
@@ -52,32 +53,10 @@ caller_check :: proc "contextless" (acts: bool, error: ^errors.Error_Record) -> 
 // contract, with the refusal as the value found.
 @(private = "file")
 recipe_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: i64, refusal: pr.Recipe_Refusal, argument: i64 = 0, bad_index: u32 = 0) -> i64 {
-	found := i64(refusal)
-	switch refusal {
-	case .None:
-		return errors.fail(error, result, .Refused, .None, argument, 0, 0, found)
-	case .Zero_Builder_Hash, .Bad_Output_Kind, .Bad_Build_Mode, .Invalid_Input_Name, .Zero_Input_Hash, .Duplicate_Input, .Bad_Input_Kind, .Nonzero_Padding, .Bad_Head_Value:
-		return errors.fail(error, result, .Bad_Value, .None, argument, i64(bad_index), 0, found)
-	case .Too_Many_Inputs:
-		return errors.fail(error, result, .Over_Limit, .Records, argument, 0, pr.MAX_RECIPE_INPUTS, found)
-	case .Arguments_Too_Large:
-		return errors.fail(error, result, .Too_Long, .Bytes, argument, 0, pr.MAX_RECIPE_ARG_BYTES, found)
-	case .Cache_Miss, .Unknown_Recipe:
-		return errors.fail(error, result, .Absent, .Objects, argument, 0, 0, found)
-	case .Store_Full, .Recipe_Limit_Reached, .Buffer_Too_Small:
-		return errors.fail(error, result, .Full, .Objects, argument, 0, 0, found)
-	case .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement:
-		return errors.fail(error, result, .Not_Authentic, .Objects, argument, 0, 0, found)
-	case .Builder_Failed, .Sandbox_Violation:
-		return errors.fail(error, result, .Refused, .None, argument, 0, 0, found)
-	case .Builder_Needs_Sandbox:
-		return errors.fail(error, result, .Unsupported, .None, argument, 0, 0, found)
-	case .Store_Failed:
-		return errors.fail(error, result, .Device, .Store, argument, 0, 0, found)
-	case .Store_Damaged:
-		return errors.fail(error, result, .Damaged, .Store, argument, 0, 0, found)
+	if error != nil {
+		error^ = recipes_core.recipe_refusal_record(refusal, argument, bad_index)
 	}
-	return errors.fail(error, result, .Refused, .None, argument, 0, 0, found)
+	return result
 }
 
 // register keeps a recipe by its hash, so build and cache_lookup name it
@@ -132,6 +111,48 @@ register :: proc "c" (head: ^pr.Recipe_Head, inputs: ^system.Table_To_Read(pr.Re
 	recipe_hash, register_refusal := recipes_core.register_recipe(&service_registry, &export_spec)
 	if register_refusal != .None {
 		return recipe_refusal_fail(error, ERROR_RECIPE, register_refusal, 1)
+	}
+	if len(result^) > 0 {
+		result[0] = {recipe_hash = value_kinds.Hash_Field(recipe_hash)}
+	}
+	return 1
+}
+
+// register_evaluation keeps the recipe that a declaration names, from the
+// output of its evaluation: outputs.default of a project, as the evaluator
+// wrote it (src/md/features/application_projects.md, "The export of the
+// service"). The service copies the bytes into its own memory before it
+// reads them, converts them with the one conversion of the contract, and
+// registers the record under the hash that the evaluator wrote.
+//
+// - **output**: the output of the evaluation, whose value is a recipe.
+// - **result**: one row: the recipe hash.
+//
+// The result is 1, or a negative number with an error record:
+// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
+// ERROR_RECIPE with the refusal as the value found: a bare hash, an input
+// below the first level, a value that is no recipe, a damaged output, too
+// many inputs, arguments too large.
+@(export, link_name = "register_evaluation")
+register_evaluation :: proc "c" (output: ^system.Bytes_To_Read, result: ^[]pr.Recipe_Reference, error: ^errors.Error_Record) -> i64 {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure
+	}
+	if output == nil {
+		return errors.fail(error, ERROR_RECIPE, .Bad_Address, .None, 1)
+	}
+	count := intrinsics.volatile_load(&output.count)
+	if count > recipes_core.MAX_RECIPE_OUTPUT_BYTES {
+		return errors.fail(error, ERROR_RECIPE, .Too_Long, .Bytes, 1, 0, recipes_core.MAX_RECIPE_OUTPUT_BYTES, i64(count))
+	}
+	// A private copy: the caller can change its memory during the call, and
+	// the conversion reads the bytes more than once.
+	if count > 0 {
+		intrinsics.mem_copy_non_overlapping(&copied_output[0], output.bytes, int(count))
+	}
+	recipe_hash, refusal := recipes_core.register_evaluation(&service_registry, copied_output[:count], &export_spec)
+	if refusal != .None {
+		return recipe_refusal_fail(error, ERROR_RECIPE, refusal, 1)
 	}
 	if len(result^) > 0 {
 		result[0] = {recipe_hash = value_kinds.Hash_Field(recipe_hash)}
