@@ -10,12 +10,13 @@ import "modus:system"
 // it: the table Budget of its file, which the build writes from the
 // constant MODULE_BUDGET of its source and the pages that the tool counts
 // (docs/MODULE_CONTRACT.md, "The budget that a module asks for"). This
-// service decides: it accepts the request up to the largest
-// budget of a process, limits a request above it, and keeps one table of
-// exceptions, each with its reason. The budget of a process of the boot
-// image comes from the budget of this service; the budget of a disk
-// process comes from the one budget of the disk processes. It returns when
-// the process stops.
+// service decides: it accepts the request up to the largest budget of a
+// process, which is a share of the memory of the machine, and limits a
+// request above it. A short table holds the limits in time of a few
+// modules, each with its reason. The budget of a process of the boot image
+// comes from the budget of this service; the budget of a disk process
+// comes from the one budget of the disk processes. It returns when the
+// process stops.
 
 // The budget of a module that asks for nothing, and of each part of a
 // request that is 0. A module with a window states its size, and the tool
@@ -24,11 +25,26 @@ import "modus:system"
 // least budget does not grow with the scale.
 LEAST_BUDGET :: system.Budget_Request{pages = 2048, processes = 1, threads = 1}
 
-// The most that a process of the boot image with no exception gets, from
-// the module contract, which a module that sizes its memory to it reads too.
-// A request above it starts with this. A disk process has a smaller largest
-// budget of its own (disk_process.LARGEST_BUDGET).
-LARGEST_BUDGET :: module.LARGEST_BUDGET
+// The most that a process of the boot image gets on this machine: one share
+// of the pages that this service held at its start
+// (module.largest_budget_of_machine). A request above it starts with this.
+// Until budgets_start reads the budget, the least largest budget.
+largest_budget: system.Budget_Request = module.LARGEST_BUDGET_LEAST
+// The budget of the disk processes and the most that one of them gets, from
+// the same share (disk_process.processes_budget_of, largest_budget_of).
+disk_processes_shared: system.Budget_Request = disk_process.PROCESSES_BUDGET_LEAST
+disk_process_largest: system.Budget_Request = disk_process.LARGEST_BUDGET_LEAST
+
+// budgets_start reads the pages of this service once, before the first
+// start, and decides the largest budgets of this machine from them. The
+// pages of a later read are lower by what the processes hold, so the share
+// is of the machine, not of what is left.
+budgets_start :: proc "contextless" () {
+	own, _ := system.budget_read()
+	largest_budget = module.largest_budget_of_machine(own.pages)
+	disk_processes_shared = disk_process.processes_budget_of(largest_budget)
+	disk_process_largest = disk_process.largest_budget_of(disk_processes_shared)
+}
 
 // The processor time of a process is one processor for each of its threads.
 PROCESSOR_OF_A_THREAD :: 1_000_000
@@ -56,33 +72,17 @@ LOG_RECORDS_OF_LIMITS :: 40 // Its burst of 100 reaches the limit.
 LOG_RECORDS_OF_LOG_FLOOD :: 0
 #assert(LOG_RECORDS_OF_LOG_FLOOD <= LOG_RECORDS_OF_A_PROCESS)
 
-// An exception of this table: one process of the boot image that gets
-// another largest budget, or another limit of processor time. A part that
-// is 0 keeps the rule of each process.
-Budget_Exception :: struct {
+// One process of the boot image that gets another limit of processor time
+// than one processor for each thread. A request holds no limit in time, so
+// these rows are the one place of such a limit. No row gives pages: the
+// largest budget of a process is the share of the machine for each one.
+Processor_Exception :: struct {
 	name:      string,
-	largest:   system.Budget_Request, // In place of LARGEST_BUDGET, for each part that is not 0.
 	processor: u64, // In place of one processor for each thread.
 }
 
 @(rodata)
-budget_exceptions := [?]Budget_Exception {
-	// It maps 64 MiB of large pages and two ranges of 1 GiB with their page
-	// tables: the test of the address space needs them, and no other
-	// process asks for that much. And its window draws its text, whose
-	// glyph memory is 354 pages more.
-	{name = "address_space", largest = {pages = 42338}},
-	// The memory of its Linux guest is 128 MiB: a kernel of a distribution
-	// unpacks into about 56 MiB above its place at 16 MiB, and its initial
-	// archive and the copy of its image wait above it
-	// (src/md/features/linux_shell.md, "The machine"). The pages are the
-	// request of its table Budget: the 34 816 pages that its source states
-	// (32 768 of guest memory, 2 048 for the nested page table of the guest
-	// and its buffers), the 72 pages of its first thread (its stack, its
-	// context, its thread area, its own log ring), and the 44 pages of its
-	// module. The build writes that request on its line of budgets; a module
-	// that grows asks for more, and this row follows it.
-	{name = "linux", largest = {pages = 34932}},
+processor_exceptions := [?]Processor_Exception {
 	// Its cases reach the limit of processor time: a small limit makes
 	// them short.
 	{name = "limits", processor = 1_500_000},
@@ -103,15 +103,16 @@ log_records_exceptions := [?]Log_Records_Exception {
 	{"log_flood", LOG_RECORDS_OF_LOG_FLOOD},
 }
 
-// budget_exception_of gives the exception of a process of the boot image,
-// by its name. A disk process never asks: its name gives nothing.
-budget_exception_of :: proc "contextless" (name: string) -> (exception: Budget_Exception, found: bool) {
-	for item in budget_exceptions {
+// processor_of gives the limit of processor time of a process of the boot
+// image, by its name, or false: one processor for each thread. A disk
+// process never asks: its name gives nothing.
+processor_of :: proc "contextless" (name: string) -> (processor: u64, found: bool) {
+	for item in processor_exceptions {
 		if item.name == name {
-			return item, true
+			return item.processor, true
 		}
 	}
-	return {}, false
+	return 0, false
 }
 
 // log_records_of gives the log records of each second of a process of the
@@ -143,29 +144,23 @@ budget_decided :: proc "contextless" (file: []u8, name: string, largest: system.
 }
 
 // budget_of gives the budget of a process of the boot image from the
-// request of its module file, with the exception of its name.
+// request of its module file, up to the largest budget of this machine.
 budget_of :: proc "contextless" (file: []u8, name: string) -> system.Budget_Amounts {
-	largest := LARGEST_BUDGET
-	exception, has_exception := budget_exception_of(name)
-	if has_exception {
-		largest.pages = exception.largest.pages != 0 ? exception.largest.pages : largest.pages
-		largest.processes = exception.largest.processes != 0 ? exception.largest.processes : largest.processes
-		largest.threads = exception.largest.threads != 0 ? exception.largest.threads : largest.threads
-	}
-	granted := budget_decided(file, name, largest, "a process")
+	exception_processor, has_exception := processor_of(name)
+	granted := budget_decided(file, name, largest_budget, "a process")
 	own, _ := system.budget_read()
 	amounts := system.Budget_Amounts {
 		pages    = granted.pages,
 		processes = granted.processes,
 		threads  = granted.threads,
 	}
-	processor := has_exception && exception.processor != 0 ? exception.processor : granted.threads * PROCESSOR_OF_A_THREAD
+	processor := has_exception ? exception_processor : granted.threads * PROCESSOR_OF_A_THREAD
 	amounts.processor = min(processor, own.processor)
 	amounts.log_records = log_records_of(name)
 	return amounts
 }
 
-// The one budget that pays each disk process (disk_process.PROCESSES_BUDGET).
+// The one budget that pays each disk process (disk_processes_shared).
 // 0 until the first disk process: a machine that starts none keeps its
 // pages. It stays after its processes stop: what they held returns to it.
 disk_processes_budget: system.Handle
@@ -177,7 +172,7 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 		return disk_processes_budget, .Ok
 	}
 	own, _ := system.budget_read()
-	shared := disk_process.PROCESSES_BUDGET
+	shared := disk_processes_shared
 	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
 	if status != .Ok {
 		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = status})
@@ -189,10 +184,10 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 }
 
 // disk_budget_of gives the budget of a disk process from the request of
-// its module file: at most disk_process.LARGEST_BUDGET, with no exception,
+// its module file: at most disk_process_largest, with no exception,
 // and limits in time that the budget of the disk processes bounds.
 disk_budget_of :: proc "contextless" (file: []u8, name: string, disk_processes: system.Handle) -> system.Budget_Amounts {
-	granted := budget_decided(file, name, disk_process.LARGEST_BUDGET, "a disk process")
+	granted := budget_decided(file, name, disk_process_largest, "a disk process")
 	holds, _ := system.budget_read(disk_processes)
 	return {
 		pages = granted.pages,

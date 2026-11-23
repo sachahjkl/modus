@@ -1,0 +1,3 @@
+type: Changed
+
+**A machine runs hundreds of processes, and a large program gets a share of the memory.** The largest budget of a process of the boot image is a quarter of the memory of the machine, at least 64 MiB, in place of 64 MiB for every machine, and the budget of the disk processes follows it. The kernel holds 256 processes, 1024 threads, 16384 memory objects and 1024 budgets, and each process holds 1024 handles, 1024 mappings and waits on 256 words. The root service starts 255 processes and holds 256 connections, the compositor holds 128 windows, and a start list holds 256 rows. The tables of the kernel take about 50 MiB of a machine of 1 GiB.

@@ -26,7 +26,8 @@ WAKE_ALL :: max(u64)
 // The list of the words of one wait, built by `wait_begin` and the
 // `wait_` procedures, ended by `wait_end`. It lives on the stack of the
 // thread for one turn of its loop; it holds at most `op.WORD_WAIT_CAPACITY`
-// words, the `waits` flags of the queues included.
+// words, the `waits` flags of the queues included: about 12 KiB of the
+// stack, which a thread of 16 pages holds.
 Wait :: struct {
 	words:   [op.WORD_WAIT_CAPACITY]op.Word, // The words, and the value that each one holds while the thread waits.
 	flags:   [op.WORD_WAIT_CAPACITY]^u32, // The `waits` word of a queue: wait_end sets it.

@@ -416,11 +416,15 @@ connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
 	return grant_for(connection.caller, connection.service)
 }
 
-CONNECTION_CAPACITY :: 32
+// The connections that this service holds: each client of each service,
+// at one time.
+CONNECTION_CAPACITY :: 256
 
 connections: [CONNECTION_CAPACITY]Connection
 
-STARTED_CAPACITY :: 48
+// The processes that this service starts: each process slot of the
+// kernel but its own.
+STARTED_CAPACITY :: op.PROCESS_SLOTS_OF_THE_MACHINE - 1
 
 machine: system.Handle
 image: []u8
@@ -741,6 +745,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The boot image against the system description, before any process
 	// starts (trust.odin).
 	trust_check()
+	// The largest budgets of this machine, from the pages of this service
+	// before any process holds a part of them.
+	budgets_start()
 	principals_start()
 	// The random seed of the system: before the first process starts.
 	random_seed_make()

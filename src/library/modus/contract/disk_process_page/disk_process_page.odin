@@ -1,5 +1,5 @@
 // The disk process page (src/md/features/processes_from_a_disk.md, "The
-// grants of a disk process"): one page that the root service writes, with
+// grants of a disk process"): PAGE_PAGES pages that the root service writes, with
 // one row for each disk process that runs: its process slot, its process
 // serial, its nickname and the whole hash of its file. The root service
 // maps it with the right Read only, at PAGE_ADDRESS, into each process that
@@ -32,10 +32,10 @@ import op "modus:contract/operation"
 
 PAGE_ADDRESS :: fixed_addresses.DISK_PROCESS_PAGE_ADDRESS // Where a process maps the disk process page.
 
-// The rows of the page: the root service starts 48 processes at most, and a
-// row is the place of the slot of the process in its table of started
-// processes.
-ROW_CAPACITY :: 48
+// The rows of the page: the root service starts a process in each process
+// slot but its own, and a row is the place of the slot of the process in its
+// table of started processes.
+ROW_CAPACITY :: op.PROCESS_SLOTS_OF_THE_MACHINE - 1
 
 // The most bytes of a nickname: three words of a row, with a zero byte
 // after it, as the root ring carries it.
@@ -59,7 +59,9 @@ Page :: struct {
 	change_count: u64, // Even when the page is stable. Each change adds 2.
 	rows:         [ROW_CAPACITY]Row,
 }
-#assert(size_of(Page) <= 4096)
+// The pages of the disk process page: a row is 72 bytes, so the rows of
+// every process slot take 5 pages.
+PAGE_PAGES :: (size_of(Page) + 4095) / 4096
 
 // page_of gives the disk process page of a process, or nil.
 page_of :: proc "contextless" (ctx: ^op.Context) -> ^Page {

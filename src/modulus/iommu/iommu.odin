@@ -567,17 +567,17 @@ queue_tail_register :: proc "contextless" (index: u32) -> u64 {
 }
 
 // The device addresses of the objects that are not contiguous
-// (src/md/infrastructure/iommu.md, "Device addresses"): the window of the
-// memory object of the slot n starts at WINDOW_BASE + n * WINDOW_SIZE, and
-// maps its pages in their order. A contiguous object, and a reserved memory
+// (src/md/infrastructure/iommu.md, "Device addresses"): the window n of
+// a memory object starts at WINDOW_BASE + n * WINDOW_SIZE, and maps its
+// pages in their order. The kernel gives a declared object its window. A contiguous object, and a reserved memory
 // range, has its physical address as its device address, and must end at
 // or below WINDOW_BASE.
 WINDOW_BASE :: u64(1) << 38
 WINDOW_SIZE :: u64(1) << 27 // 128 MiB: the largest object that is not contiguous that a device gets.
 WINDOW_PAGES :: WINDOW_SIZE / 4096
 
-// window_address gives the device address of the first page of the memory
-// object of a slot that is not contiguous.
+// window_address gives the device address of the first page of a window
+// of a memory object that is not contiguous.
 window_address :: proc "contextless" (slot: u32) -> u64 {
 	return WINDOW_BASE + u64(slot) * WINDOW_SIZE
 }

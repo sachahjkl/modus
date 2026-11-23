@@ -3,6 +3,7 @@ package kernel
 import info "modus:contract/boot_info"
 import "modus:contract/bridge_requester"
 import "modulus:iommu"
+import "modulus:slot_set"
 import op "modus:contract/operation"
 import "base:intrinsics"
 
@@ -46,9 +47,35 @@ IOMMU_DEVICES_OF_A_SERVICE :: 4
 IOMMU_STANDING_CAPACITY :: 8
 IOMMU_STANDING_DOMAIN_FIRST :: IOMMU_DEVICE_CAPACITY + 1
 
-// Every window of a memory object ends where a domain of 39 bits ends, so
-// the slot of an object always names a window that the tables can map.
-#assert(REGION_CAPACITY * iommu.WINDOW_SIZE <= iommu.WINDOW_BASE)
+// The windows of the memory objects that are not contiguous and that a
+// device reaches: the window n starts at iommu.window_address(n), and every
+// window ends where a domain of 39 bits ends. A window is not the slot of
+// its object: only the objects that a service declares need one, and the
+// table of the memory objects is larger than the windows that a domain
+// holds. An object takes a window at its first declaration and keeps it
+// until it ends (region_release), so a window serves a new object only
+// after region_end_for took the pages of the old one out of each domain.
+// The window 0 is never given: 0 is no window. Frame lock.
+IOMMU_WINDOW_CAPACITY :: int(iommu.WINDOW_BASE / iommu.WINDOW_SIZE)
+#assert(u64(IOMMU_WINDOW_CAPACITY) * iommu.WINDOW_SIZE <= iommu.WINDOW_BASE)
+iommu_windows_taken: slot_set.Slot_Set(IOMMU_WINDOW_CAPACITY)
+
+// iommu_window_take gives a memory object that is not contiguous its
+// window, once. false: each window is taken. The caller holds the frame lock.
+@(private = "file")
+iommu_window_take :: proc "contextless" (region: ^Region) -> bool {
+	if region.window != 0 {
+		return true
+	}
+	for window in u32(1) ..< u32(IOMMU_WINDOW_CAPACITY) {
+		if !slot_set.has(&iommu_windows_taken, window) {
+			slot_set.add(&iommu_windows_taken, window)
+			region.window = window
+			return true
+		}
+	}
+	return false
+}
 
 // The vendor of the units: two vendors are a closed set. Each place where
 // they differ reads it, in a switch or in a test of one vendor, with no
@@ -1816,7 +1843,7 @@ tables_free :: proc "contextless" (table: u64, level: u32) -> (count: u64) {
 @(private = "file")
 device_address :: proc "contextless" (region_index: u32) -> u64 {
 	region := &regions[region_index]
-	return region.contiguous ? region.physical : iommu.window_address(region_index)
+	return region.contiguous ? region.physical : iommu.window_address(region.window)
 }
 
 // object_pages_change changes the entries of the pages of a memory object
@@ -2178,6 +2205,9 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 	_, write_held := holds_with(process, region_index, nil)
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
+	if !region.contiguous && !iommu_window_take(region) {
+		return 0, .No_Slot
+	}
 	added, write_allowed, changed, made: u32
 	status = .Ok
 	for requester, index in requesters[:count] {
@@ -2253,6 +2283,13 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 iommu_region_end_held :: proc "contextless" (region_index: u32) {
 	if iommu_in_use {
 		invalidate_slots(region_end_for(region_index, max(u32)), 0)
+	}
+	// The pages left each domain and the invalidation ran: the window can
+	// serve another object.
+	region := &regions[region_index]
+	if region.window != 0 {
+		slot_set.remove(&iommu_windows_taken, region.window)
+		region.window = 0
 	}
 }
 

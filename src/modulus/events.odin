@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:slot_set"
 
 // Kernel events (docs/ARCHITECTURE.md, "Kernel events"). Four fixed event
 // points in the kernel (an operation of a kernel entry, a switch of threads,
@@ -72,13 +73,13 @@ Event_Rule_In_Kernel :: struct {
 
 // The event table of the machine. owner 0: no table. Fact 3 above.
 Event_Table :: struct {
-	// For each kind, the process slots that its rules name: bit n for the
-	// process slot n, and bit 0 for a rule for every process (slot 0 is the
-	// kernel and never names a process: PROCESS_CAPACITY is 64, one word).
-	// An event point reads it after the observed kinds said that the kind
-	// has a rule, and before it reads the cycle counter: a rule for another
-	// process costs this process one load and one branch more.
-	processes:     [op.Event_Kind]u64,
+	// For each kind, the process slots that its rules name: the slot n for
+	// the process slot n, and the slot 0 for a rule for every process (slot 0
+	// is the kernel and never names a process). An event point reads it
+	// after the observed kinds said that the kind has a rule, and before it
+	// reads the cycle counter: a rule for another process costs this process
+	// two loads and two branches more.
+	processes:     [op.Event_Kind]Process_Set,
 	rule_count:   u32,
 	rules:        [op.EVENT_RULE_CAPACITY]Event_Rule_In_Kernel,
 	observed:     u32, // The bits of the kinds that have a rule.
@@ -91,7 +92,6 @@ Event_Table :: struct {
 
 event_table: Event_Table
 
-#assert(PROCESS_CAPACITY <= 64) // The process slots fit in one word of Event_Table.processes.
 
 // Why a table ends, for its line of the log.
 Event_Table_End :: enum {
@@ -135,7 +135,8 @@ event_wanted :: #force_inline proc "contextless" (cpu: ^Processor, bit: u32, kin
 	if !event_observed(cpu, bit) {
 		return false
 	}
-	return event_table.processes[kind] & (1 | u64(1) << process) != 0
+	set := &event_table.processes[kind]
+	return slot_set.has(set, 0) || slot_set.has(set, process)
 }
 
 // event_record writes one kernel event of this processor into its event
@@ -281,7 +282,7 @@ events_set :: proc "contextless" (process_index: u32, v: [7]u64, results: ^[7]u6
 		kept := event_rule_check(process, rule) or_return
 		table.rules[rule_index] = kept
 		table.observed |= u32(1) << u32(kept.kind)
-		table.processes[kept.kind] |= kept.process == 0 ? 1 : u64(1) << kept.process
+		slot_set.add(&table.processes[kept.kind], kept.process)
 	}
 	if event_table.owner != 0 && !owned {
 		return .Bad_State // Another process observes the kernel: one table at a time.

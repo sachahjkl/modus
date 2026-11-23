@@ -56,8 +56,10 @@ VALUE_LIST_SIZE :: 0
 LIST_MAGIC :: u64(0x54534C5452415453)
 LIST_VERSION :: 3
 // The rows of one list at most: a list is read into a table of this size,
-// on the stack of the start policy.
-ROW_CAPACITY :: 32
+// in the memory of the start policy. A session that starts its services
+// and its programs at once has more than a few dozen; each process slot but
+// the root service and the start policy can hold a row.
+ROW_CAPACITY :: 256
 // The wiring rows of one list at most: the start policy is the asker of
 // each, and holds each wiring until both of its sides end.
 WIRING_ROW_CAPACITY :: output.WIRINGS_OF_AN_ASKER_MOST

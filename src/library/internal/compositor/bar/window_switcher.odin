@@ -14,7 +14,7 @@ import "modus:display"
 SWITCHER_ALT_KEY :: 0x38
 
 // The windows that the card lists at most: the clients of the compositor.
-SWITCHER_WINDOW_CAPACITY :: 64
+SWITCHER_WINDOW_CAPACITY :: WINDOW_CAPACITY
 
 // The card of the switcher: one line for each window, under a padding.
 SWITCHER_LINE_HEIGHT :: 28

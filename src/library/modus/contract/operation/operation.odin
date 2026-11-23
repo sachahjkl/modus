@@ -1868,8 +1868,11 @@ Word :: struct {
 }
 
 // The words of the wait of one kernel entry, in all its `Word_Wait`
-// commands. One more gives `No_Slot`.
-WORD_WAIT_CAPACITY :: 64
+// commands. One more gives `No_Slot`. A server that waits on the rings of
+// many clients holds 3 words for each ring; the root service waits on the
+// rings of each process that it started. A `system.Wait` holds this many
+// words on the stack of its thread: 256 words take about 12 KiB of it.
+WORD_WAIT_CAPACITY :: 256
 
 // What the kernel tells a thread: the kernel adds 1 to the `events` word of
 // the thread record and wakes the thread, when
@@ -3204,11 +3207,12 @@ Process_Mapping :: struct {
 }
 #assert(size_of(Process_Mapping) == 64)
 
-MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
+MAPPING_REPORT_CAPACITY :: 1024 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
 // HANDLE_CAPACITY of the kernel: the places of the handle table of one process. The place 0 holds no handle,
 // so a process holds `HANDLE_TABLE_CAPACITY - 1` handles at most, and one more gives `No_Slot` with the
-// record `Full` of the unit `Handles`.
-HANDLE_TABLE_CAPACITY :: 128
+// record `Full` of the unit `Handles`. A server with a ring and a region for each of hundreds of clients
+// holds that many handles.
+HANDLE_TABLE_CAPACITY :: 1024
 
 // The mappings of one process, in the order of their addresses. `Inspect`
 // with the kind `Process_Mappings` writes it; the developer tools show the
@@ -3407,8 +3411,10 @@ LOG_RECORDS_OF_THE_KERNEL :: 64
 // The log records of each second of a process of normal use: what the root
 // service gives each process that it starts.
 LOG_RECORDS_OF_A_PROCESS :: 1000
-// The process slots of the kernel.
-PROCESS_SLOTS_OF_THE_MACHINE :: 64
+// The process slots of the kernel. A log record keeps the slot of its
+// process in one byte (`Log_Record.process`), so the slots are 256 at most.
+PROCESS_SLOTS_OF_THE_MACHINE :: 256
+#assert(PROCESS_SLOTS_OF_THE_MACHINE <= 1 << 8)
 // The bytes of the name of a process (`Process_Create`). The kernel keeps
 // the name with a zero byte after it.
 PROCESS_NAME_BYTES_MOST :: 31
@@ -3451,9 +3457,10 @@ Log_Head :: struct {
 // principal the records of those two numbers only, numbered by `own_number`
 // (modus:contract/log_scope), from the own log ring of its process
 // (`Log_Read`): the kernel writes each record of a process in the whole log
-// and in that ring. The slots have one byte each: the kernel has
-// at most 256 process slots and 256 thread slots, which leaves room for the
-// two numbers in 256 bytes. See [log record](term:log-record).
+// and in that ring. The process slot and the number of the thread
+// in its process have one byte each: the kernel has at most 256 process
+// slots and a process at most 256 threads, which leaves room for the two
+// numbers in 256 bytes. See [log record](term:log-record).
 //
 // Example: the line `[console] started` on the serial port is one record
 // with `name = "console"`, `level = .Info`, `text_count = 7`.
@@ -3461,7 +3468,7 @@ Log_Record :: struct {
 	sequence:       u64, // The number of the record in the whole log, from 0.
 	time:           u64, // Microseconds since the start of the machine.
 	process:        u8, // The process slot. 0: the kernel.
-	thread:         u8, // The slot of the thread. 0: the kernel.
+	thread:         u8, // The number of the thread in its process: its thread area. 0 for a record of the kernel, whose process is 0.
 	level:          Log_Level, // The level that the writer gave.
 	more:           u8, // 1: the text continues in the next record.
 	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
@@ -3475,6 +3482,7 @@ Log_Record :: struct {
 }
 
 #assert(size_of(Log_Record) == 256)
+#assert(THREAD_CAPACITY <= 1 << 8) // The number of a thread in its process fits Log_Record.thread.
 #assert(offset_of(Log_Record, name) == 32)
 #assert(offset_of(Log_Record, runs) == 64)
 

@@ -23,10 +23,10 @@ import "modus:random"
 import "modus:system"
 
 // The process slots that a round reads: the slot 0 holds no process.
-PROCESS_SLOT_LIMIT :: 64
+PROCESS_SLOT_LIMIT :: op.PROCESS_SLOTS_OF_THE_MACHINE
 // The places of the thread table of the kernel: the low half of a machine
 // number is the place of its thread.
-THREAD_PLACE_LIMIT :: 256
+THREAD_PLACE_LIMIT :: 1024
 // Milliseconds between two rounds. A round is a slow path by its design:
 // the kernel applies the weights at each tick, and the round only follows
 // the threads that start, end and block.
