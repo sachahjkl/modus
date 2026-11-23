@@ -16,8 +16,14 @@ import "modus:contract/value_kinds"
 import "internal:powerbox/powerbox_core"
 import "modus:system"
 
-// Working memory budget for the freestanding powerbox service process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256, processes = 1, threads = 1}
+// The pages of the arena that holds the tables of the powerbox: the stores
+// of the principals for the picker and the grants that processes hold. The
+// rows of each table are what its half of the arena holds.
+TABLE_PAGES :: 1024
+
+// Working memory budget for the freestanding powerbox service process: its
+// tables and the rest of its data.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = TABLE_PAGES + 256, processes = 1, threads = 1}
 
 // Status record returned by the status() export required by Role.Powerbox.
 Powerbox_Status :: struct {
@@ -41,6 +47,31 @@ service_region_bytes: u64
 copied_batch: powerbox.Request_Batch
 copied_answer: powerbox.Grant_Answer
 outbound_dialog: powerbox.Dialog_Record
+copied_page_request: powerbox.Picker_Page_Request
+outbound_page: powerbox.Picker_Page
+table_arena: system.Arena
+
+// tables_make takes the tables of the powerbox from its arena: half of it
+// for the stores, half for the held grants.
+@(private = "file")
+tables_make :: proc "contextless" () -> (tables: powerbox_core.Powerbox_Tables, ok: bool) {
+	status: system.Status
+	table_arena, status = system.arena_create(TABLE_PAGES)
+	if status != .Ok {
+		return {}, false
+	}
+	half := u64(TABLE_PAGES) * system.PAGE_SIZE / 2
+	store_rows := half / size_of(powerbox_core.Session_Store)
+	grant_rows := half / size_of(powerbox_core.Held_Grant)
+	stores, store_status := system.arena_push(&table_arena, store_rows * size_of(powerbox_core.Session_Store), align_of(powerbox_core.Session_Store))
+	grants, grant_status := system.arena_push(&table_arena, grant_rows * size_of(powerbox_core.Held_Grant), align_of(powerbox_core.Held_Grant))
+	if store_status != .Ok || grant_status != .Ok {
+		return {}, false
+	}
+	tables.stores = ([^]powerbox_core.Session_Store)(stores)[:store_rows]
+	tables.held_grants = ([^]powerbox_core.Held_Grant)(grants)[:grant_rows]
+	return tables, true
+}
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
@@ -162,7 +193,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) -> (dis
 					ring.Record{
 						kind   = u32(outbound_dialog.action_word),
 						tag    = command.tag,
-						values = {outbound_dialog.dialog_serial, outbound_dialog.request_serial, dialog_offset, u64(outbound_dialog.item_count), u64(outbound_dialog.picker_candidate_count), 0, 0},
+						values = {outbound_dialog.dialog_serial, outbound_dialog.request_serial, dialog_offset, u64(outbound_dialog.item_count), u64(outbound_dialog.picker_candidate_count), u64(outbound_dialog.picker_candidate_total), 0},
 					},
 				)
 				display_notified = true
@@ -236,6 +267,38 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) -> (dis
 			},
 		)
 		return false
+	case .Picker_Page:
+		// values[0]: the offset of the request in the region, values[1]: the
+		// offset of the page, values[2]: the slot of the trusted display.
+		request_offset := command.values[0]
+		page_offset := command.values[1]
+		if !region_range_valid(request_offset, size_of(powerbox.Picker_Page_Request)) || !region_range_valid(page_offset, size_of(powerbox.Picker_Page)) {
+			ring.push(
+				&service_ring.completions,
+				ring.Record{
+					kind   = u32(powerbox.Service_Ring_Status.Bad_Command),
+					tag    = command.tag,
+					values = errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 1, i64(request_offset), i64(service_region_bytes)),
+				},
+			)
+			return false
+		}
+		// Copy once out of shared memory before the check.
+		intrinsics.mem_copy_non_overlapping(&copied_page_request, rawptr(&service_region_base[request_offset]), size_of(powerbox.Picker_Page_Request))
+		refusal := powerbox_core.picker_page_take(&service_state, u32(command.values[2]), &copied_page_request, &outbound_page)
+		if refusal == .None {
+			intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[page_offset]), &outbound_page, size_of(powerbox.Picker_Page))
+		}
+		status_word := refusal == .None ? u32(powerbox.Service_Ring_Status.Ok) : u32(powerbox.Service_Ring_Status.Refused)
+		ring.push(
+			&service_ring.completions,
+			ring.Record{
+				kind   = status_word,
+				tag    = command.tag,
+				values = {u64(refusal), copied_page_request.dialog_serial, u64(outbound_page.candidate_count), u64(outbound_page.next), u64(outbound_page.total), outbound_page.more ? 1 : 0, 0},
+			},
+		)
+		return false
 	case .Query_Counts:
 		counters := service_state.counters
 		ring.push(
@@ -292,7 +355,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	display_slot := u32(ctx.values[powerbox.CONTEXT_VALUE_DISPLAY_SLOT])
-	powerbox_core.state_init(&service_state, display_slot)
+	tables, tables_ok := tables_make()
+	if !tables_ok {
+		fail("no memory for the tables of the powerbox")
+	}
+	powerbox_core.state_init(&service_state, display_slot, tables)
 
 	contract_digest := declared_contract_hash()
 	_ = contract_digest

@@ -818,7 +818,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		}
 		if outcome == u64(palette_table.Outcome.Candidates_Ready) && palette_panel.state == .Arguments {
 			form := &palette_panel.form
-			palette.form_candidates_set(form, palette_main_table, record.values[2], record.values[1], record.values[3])
+			palette.form_candidates_set(form, palette_main_table, record.values[2], record.values[1], record.values[3], record.values[4], record.values[5])
 			system.log_fact(.Info, Palette_Candidates_Ready{candidates = u64(form.candidate_count), field = u64(form.current), buttons_words = value_kinds.text_field(palette.field_control(form, form.current) == .Buttons ? BUTTONS_WORDS : "", BUTTONS_WORDS_FIELD_BYTES)})
 			// Tab that came before the candidates acts now, on them.
 			if palette_tab_waits {
@@ -1150,7 +1150,13 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		panel.state = state_next
 		palette_refresh()
 	case .Field_Edit:
+		text_before_hash := palette_table.name_hash(palette.field_text(&panel.form, panel.form.current))
 		drawn, leave := palette.form_field_edit(panel, key, character)
+		// A list that the page does not hold whole is narrowed by the
+		// provider: the text of the field goes with a new request.
+		if !leave && panel.form.candidate_total > 0 && !palette.form_candidates_whole(&panel.form) && palette_table.name_hash(palette.field_text(&panel.form, panel.form.current)) != text_before_hash {
+			palette_candidates_ask()
+		}
 		if leave {
 			palette.form_close(panel)
 			panel.state = .Search
@@ -1190,7 +1196,12 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		}
 		palette_refresh()
 	case .Candidate_Previous, .Candidate_Next:
-		if palette.form_candidate_move(&panel.form, action == .Candidate_Next ? 1 : -1) {
+		step := action == .Candidate_Next ? 1 : -1
+		// Past the edge of a page that does not end the list, the next page
+		// comes: the list has any count of candidates.
+		if first, wanted := palette.form_candidate_page_wanted(&panel.form, step); wanted {
+			palette_candidates_ask(first, step < 0)
+		} else if palette.form_candidate_move(&panel.form, step) {
 			palette_refresh()
 		}
 	case .Submit, .Submit_All:
@@ -1270,10 +1281,12 @@ palette_form_send :: proc "contextless" () {
 	palette_refresh()
 }
 
-// palette_candidates_ask asks the provider for the values that the field
-// of the form that has the caret can take. The answer comes on the ring;
-// the form shows its fields at once.
-palette_candidates_ask :: proc "contextless" () {
+// palette_candidates_ask asks the provider for one page of the values that
+// the field of the form that has the caret can take: the page from the
+// place first of the list of the candidates that the text of the field
+// matches. The text goes as an Argument of the same tag. The answer comes
+// on the ring; the form shows its fields at once.
+palette_candidates_ask :: proc "contextless" (first: int = 0, choose_last: bool = false) {
 	form := &palette_panel.form
 	if palette_provider_ring.head == nil || !form.active {
 		return
@@ -1283,9 +1296,17 @@ palette_candidates_ask :: proc "contextless" () {
 		palette_tags = 1
 	}
 	palette_candidates_awaited = palette_tags
+	form.candidate_choose_last = choose_last
+	text := palette.field_text(form, form.current)
+	if len(text) > 0 && len(text) <= palette_table.ARGUMENT_TEXT_CAPACITY {
+		if !system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = palette_tags, values = palette_table.argument_pack(form.current, .Text, 0, text)}) {
+			form.candidates_pending = false
+			return
+		}
+	}
 	// Until the answer, Tab waits (palette.form_tab). A ring that takes
 	// no record gives no answer: Tab then does not wait.
-	form.candidates_pending = system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Candidates), tag = palette_tags, values = {0 = u64(form.generation), 1 = u64(form.entry.number), 2 = palette_table.name_hash(palette.entry_name(&form.entry)), 3 = u64(form.current)}})
+	form.candidates_pending = system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Candidates), tag = palette_tags, values = {0 = u64(form.generation), 1 = u64(form.entry.number), 2 = palette_table.name_hash(palette.entry_name(&form.entry)), 3 = u64(form.current), 4 = u64(max(first, 0))}})
 }
 
 // palette_entry_send sends a chosen entry with no parameter to the

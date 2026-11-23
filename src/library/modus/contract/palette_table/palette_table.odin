@@ -38,7 +38,7 @@ import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 8 // A new field or a new meaning of a field is a new version. 8: Header.byte_length and dynamically sized entry region with no fixed entry cap.
+VERSION :: 9 // A new field or a new meaning of a field is a new version. 9: the candidates of a parameter come by pages, with a cursor and a search text.
 
 INITIAL_ENTRY_CAPACITY :: 256 // Initial allocation hint for a new table; not a protocol limit.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
@@ -50,7 +50,7 @@ RESULT_LINE_CAPACITY :: 12 // The lines of a result that the panel shows.
 RESULT_COLUMN_CAPACITY :: 76 // The cells of one line of a result that the panel shows.
 PARAMETER_NAME_CAPACITY :: 16 // The bytes of the name of a parameter. A longer name is absent.
 ARGUMENT_TEXT_CAPACITY :: 48 // The bytes of a Text argument that the panel sends: 6 values of a ring record.
-CANDIDATE_CAPACITY :: 96 // The candidates of one parameter: the modules of a boot image fit.
+CANDIDATE_CAPACITY :: 96 // The candidates of one page: a parameter has any count of candidates, which come by pages.
 CANDIDATE_NAME_CAPACITY :: 31 // The bytes of the name of a candidate.
 ACT_NAME_CAPACITY :: 32 // The bytes of the act name of an entry: what it acts on, as an element of a window names it ("settings.set:font").
 SETTING_NAME_CAPACITY :: 24 // The bytes of the name of the row of a Provider_Setting entry: the name of its setting row.
@@ -239,9 +239,14 @@ Command :: enum u32 {
 	// values[3]: a Choose_Mode. values[4]: with Run_With_Arguments, the
 	// count of the Argument commands of the same tag before it.
 	Choose = 1,
-	// Candidates asks for the values that one parameter of an entry can
-	// take. values[0..2]: as Choose. values[3]: the number of the
-	// parameter, from 0. The answer is Candidates_Ready.
+	// Candidates asks for one page of the values that one parameter of an
+	// entry can take. values[0..2]: as Choose. values[3]: the number of the
+	// parameter, from 0. values[4]: the cursor, the place in the list of
+	// the matching candidates where the page starts. An Argument command of
+	// the same tag before it, of the same parameter and of the kind Text,
+	// gives the search text: the list holds the candidates whose names it
+	// matches (line_editor.fuzzy_match); with none, each candidate. The
+	// answer is Candidates_Ready.
 	Candidates = 2,
 	// Argument gives one typed value for the Choose of the same tag that
 	// follows. values[0]: the number of the parameter in its low byte, the
@@ -276,7 +281,7 @@ Outcome :: enum u64 {
 	Failed           = 3, // The line failed: the result area holds its error.
 	Refused          = 4, // The provider did not run the entry: the table changed, or the choice names no entry that it can run. The result area holds the sentence.
 	Edit_Opened      = 5, // The edit line of the provider holds the entry.
-	Candidates_Ready = 6, // The candidate area holds the candidates. values[1]: a Candidate_Kind. values[2]: their count. values[3]: CANDIDATES_CLOSED when they are the only values of the parameter, else 0.
+	Candidates_Ready = 6, // The candidate area holds one page of the candidates. values[1]: a Candidate_Kind. values[2]: the count of the page, CANDIDATE_CAPACITY at most. values[3]: CANDIDATES_CLOSED when they are the only values of the parameter, else 0. values[4]: the count of the whole list that matches. values[5]: the cursor where the page starts.
 	Manual_Opened    = 7, // The window of the manual shows the page.
 	Table_Replaced   = 8, // The provider moved its entry table into a larger memory object: values[1] is the read-only memory handle given through the palette ring, values[2] is its byte capacity.
 }
@@ -753,4 +758,14 @@ argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argum
 		// "." and checks the name against the enum when the line runs.
 	}
 	return 0, {}, false
+}
+
+// candidate_page_valid checks the numbers of a page of candidates that a
+// provider answered: a page inside the whole list, with no more candidates
+// than the area holds, and a page that ends the list or is full.
+candidate_page_valid :: proc "contextless" (count, total, first: u64) -> bool {
+	if count > CANDIDATE_CAPACITY || first > total || count > total - first {
+		return false
+	}
+	return first + count == total || count == CANDIDATE_CAPACITY
 }

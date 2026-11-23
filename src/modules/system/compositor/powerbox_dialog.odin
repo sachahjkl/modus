@@ -21,7 +21,8 @@ import "modus:system"
 POWERBOX_DIALOG_WIDTH :: 440
 POWERBOX_DIALOG_HEIGHT :: 160
 POWERBOX_TEXT_LIMIT :: 96
-POWERBOX_PICKER_SLOTS :: 4
+POWERBOX_PICKER_SLOTS :: 4 // The rows of the list that show at once: the list scrolls past them.
+POWERBOX_PICKER_STAND_IN_STORES :: 4 // The stores of the stand-in list, until the powerbox service gives its pages.
 POWERBOX_TITLE_HEIGHT :: 30 // The title plate, inside the two lines of the frame.
 POWERBOX_MARGIN :: 16 // From the frame to the texts, the list and the buttons.
 POWERBOX_PICKER_LINE :: 24
@@ -39,8 +40,9 @@ Powerbox_Prompt_State :: struct {
 	resource_text:   [POWERBOX_TEXT_LIMIT]u8,
 	resource_len:    int,
 	picker_selected: int,
+	picker_first:    int, // The first row of the list that shows: the list follows the chosen row.
 	picker_count:    int,
-	picker_stores:   [POWERBOX_PICKER_SLOTS]string,
+	picker_stores:   [POWERBOX_PICKER_STAND_IN_STORES]string,
 	chosen_store:    string,
 	last_decision:   powerbox.Item_Decision,
 }
@@ -87,8 +89,9 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 		// Candidate stores presented ONLY to the principal on the trusted display;
 		// the requesting process never sees this list and receives a share of the chosen store only.
 		powerbox_prompt.picker_stores = {"documents", "notes", "projects", "downloads"}
-		powerbox_prompt.picker_count = 4
+		powerbox_prompt.picker_count = POWERBOX_PICKER_STAND_IN_STORES
 		powerbox_prompt.picker_selected = 0
+		powerbox_prompt.picker_first = 0
 	}
 	copy(powerbox_prompt.process_name[:powerbox_prompt.process_len], process_name[:powerbox_prompt.process_len])
 	copy(powerbox_prompt.resource_text[:powerbox_prompt.resource_len], resource_text[:powerbox_prompt.resource_len])
@@ -325,6 +328,19 @@ wide_grant_mark_set :: proc "contextless" (active: bool, grant_id: u64) {
 	damage_bar()
 }
 
+// powerbox_picker_follow_choice moves the view of the list so that it holds
+// the chosen store.
+powerbox_picker_follow_choice :: proc "contextless" () {
+	prompt := &powerbox_prompt
+	if prompt.picker_selected < prompt.picker_first {
+		prompt.picker_first = prompt.picker_selected
+	}
+	if prompt.picker_selected >= prompt.picker_first + POWERBOX_PICKER_SLOTS {
+		prompt.picker_first = prompt.picker_selected - POWERBOX_PICKER_SLOTS + 1
+	}
+	prompt.picker_first = clamp(prompt.picker_first, 0, max(prompt.picker_count - POWERBOX_PICKER_SLOTS, 0))
+}
+
 powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, modifiers: u32) -> bool {
 	if !pressed {
 		return false
@@ -338,8 +354,16 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 	if plan_difference_dialog.open {
 		key: bar.Plan_Difference_Key
 		switch code {
-		case display.KEY_TAB, display.KEY_LEFT, display.KEY_RIGHT, display.KEY_UP, display.KEY_DOWN:
+		case display.KEY_TAB, display.KEY_LEFT, display.KEY_RIGHT:
 			key = .Next
+		case display.KEY_UP:
+			key = .Line_Previous
+		case display.KEY_DOWN:
+			key = .Line_Next
+		case display.KEY_PAGE_UP:
+			key = .Page_Previous
+		case display.KEY_PAGE_DOWN:
+			key = .Page_Next
 		case display.KEY_ENTER:
 			key = .Act
 		case display.KEY_ESCAPE:
@@ -348,8 +372,9 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 			key = .Other
 		}
 		focus := plan_difference_dialog.focus
+		first_line := plan_difference_dialog.first_line
 		plan_difference_answer(bar.plan_difference_key(&plan_difference_dialog, key, system.time()))
-		if plan_difference_dialog.open && plan_difference_dialog.focus != focus {
+		if plan_difference_dialog.open && (plan_difference_dialog.focus != focus || plan_difference_dialog.first_line != first_line) {
 			damage_whole_screen()
 		}
 		return true
@@ -361,12 +386,14 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 	case display.KEY_UP:
 		if powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
 			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + powerbox_prompt.picker_count - 1) % powerbox_prompt.picker_count
+			powerbox_picker_follow_choice()
 			damage_whole_screen()
 		}
 		return true
 	case display.KEY_DOWN:
 		if powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
 			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + 1) % powerbox_prompt.picker_count
+			powerbox_picker_follow_choice()
 			damage_whole_screen()
 		}
 		return true
@@ -414,8 +441,10 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		list_width, list_height := text_room, POWERBOX_PICKER_SLOTS * POWERBOX_PICKER_LINE + 2
 		interface.draw_rectangle(table, list_x, list_y, list_width, list_height, graphics.colors.recess)
 		interface.draw_outline(table, list_x, list_y, list_width, list_height, 1, graphics.colors.track)
-		for i in 0 ..< powerbox_prompt.picker_count {
-			ry := list_y + 1 + i * POWERBOX_PICKER_LINE
+		// Only the rows of the view: the list has any count of stores.
+		visible_end := min(powerbox_prompt.picker_first + POWERBOX_PICKER_SLOTS, powerbox_prompt.picker_count)
+		for i in powerbox_prompt.picker_first ..< visible_end {
+			ry := list_y + 1 + (i - powerbox_prompt.picker_first) * POWERBOX_PICKER_LINE
 			sel := i == powerbox_prompt.picker_selected
 			if sel {
 				interface.draw_vertical_gradient(table, list_x + 1, ry, list_width - 2, POWERBOX_PICKER_LINE, graphics.colors.chosen, graphics.shade(graphics.colors.chosen, 86))
@@ -485,32 +514,31 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	text_offset := (bar.PLAN_DIFFERENCE_LINE - graphics.CELL_HEIGHT) / 2
 	name_x := interface.draw_text(table, text_x, line_y + text_offset, name_label, graphics.colors.dim, interface.FONT_INTERFACE) + bar.PLAN_DIFFERENCE_GAP
 	interface.draw_text(table, name_x, line_y + text_offset, interface.text_fit(table, interface.FONT_INTERFACE_BOLD, bar.plan_difference_name(dialog), x + width - bar.PLAN_DIFFERENCE_MARGIN - name_x), graphics.colors.text_strong, interface.FONT_INTERFACE_BOLD)
-	line_y += bar.PLAN_DIFFERENCE_LINE
-	sides := [2]struct {
-		heading, sign: string,
-		items:         []bar.Plan_Difference_Item,
-		color:         graphics.Color,
-	} {
-		{add_heading, "+", dialog.added[:dialog.added_count], graphics.colors.process},
-		{"removes", "-", dialog.removed[:dialog.removed_count], graphics.colors.failed},
-	}
-	for &side in sides {
-		if len(side.items) == 0 {
-			continue
+	line_y += bar.PLAN_DIFFERENCE_LINE + bar.PLAN_DIFFERENCE_GAP
+	// The lines of the view only: the body scrolls over each change of the
+	// difference.
+	visible := bar.plan_difference_visible_lines(dialog)
+	for index in dialog.first_line ..< dialog.first_line + visible {
+		line, ok := bar.plan_difference_line(dialog, index)
+		if !ok {
+			break
 		}
-		line_y += bar.PLAN_DIFFERENCE_GAP
-		interface.draw_text(table, text_x, line_y + text_offset, side.heading, graphics.colors.dim, interface.FONT_CAPTION)
+		color := line.added ? graphics.colors.process : graphics.colors.failed
+		if line.heading {
+			interface.draw_text(table, text_x, line_y + text_offset, line.added ? add_heading : "removes", graphics.colors.dim, interface.FONT_CAPTION)
+		} else {
+			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, line.added ? "+" : "-", color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
+			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(line.item), text_x + text_room - item_x)
+			interface.draw_text(table, item_x, line_y + text_offset, shown, color, item_font)
+		}
 		line_y += bar.PLAN_DIFFERENCE_LINE
-		for &item in side.items {
-			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, side.sign, side.color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
-			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(&item), text_x + text_room - item_x)
-			interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, item_font)
-			line_y += bar.PLAN_DIFFERENCE_LINE
-		}
 	}
 	accept_x, button_y, button_width, button_height := bar.plan_difference_button_place(x, y, width, height, .Accept)
 	refuse_x, _, _, _ := bar.plan_difference_button_place(x, y, width, height, .Refuse)
-	interface.draw_text(table, text_x, button_y + (button_height - graphics.CELL_HEIGHT) / 2, "Tab: move", graphics.colors.dim, interface.FONT_INTERFACE)
+	// Until the view showed the last line, the hint says how to reach it:
+	// the accept counts only after.
+	hint := dialog.seen_through ? "Tab: move" : "Down: read all"
+	interface.draw_text(table, text_x, button_y + (button_height - graphics.CELL_HEIGHT) / 2, hint, graphics.colors.dim, interface.FONT_INTERFACE)
 	plan_difference_button_records(table, accept_x, button_y, button_width, button_height, accept, "Enter", true, dialog.focus == .Accept)
 	plan_difference_button_records(table, refuse_x, button_y, button_width, button_height, "Refuse", "Esc", false, dialog.focus == .Refuse)
 }

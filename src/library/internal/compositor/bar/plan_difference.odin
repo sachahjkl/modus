@@ -9,9 +9,14 @@ import pr "modus:contract/plans_recipes"
 
 PLAN_DIFFERENCE_NAME_BYTES :: 48
 PLAN_DIFFERENCE_ITEM_BYTES :: 48
-// The items of one side: each fits on the reference screen with no scroll,
-// so the principal never accepts a line that it did not see.
-PLAN_DIFFERENCE_ITEM_CAPACITY :: 8
+// The items of one side: each change that a difference holds. The body
+// scrolls past PLAN_DIFFERENCE_VISIBLE_LINES, and the accept counts only once
+// the view showed the last row, so the principal never accepts a line that
+// it did not see.
+PLAN_DIFFERENCE_ITEM_CAPACITY :: pr.PLAN_DISPLAY_ITEM_CAPACITY
+// The lines of the body that show at once: the headings and the items. They
+// fit the reference screen with the title and the buttons.
+PLAN_DIFFERENCE_VISIBLE_LINES :: 12
 
 // The places of the dialog, in pixels.
 PLAN_DIFFERENCE_WIDTH :: 480
@@ -50,6 +55,10 @@ Plan_Difference_Button :: enum u8 {
 Plan_Difference_Key :: enum u8 {
 	Other, // The dialog takes it and does nothing.
 	Next, // The focus moves to the other button.
+	Line_Previous, // The body scrolls one line up.
+	Line_Next, // The body scrolls one line down.
+	Page_Previous, // The body scrolls one view up.
+	Page_Next, // The body scrolls one view down.
 	Act, // The button that has the focus acts, after the arm time.
 	Escape, // Refuses at any time: a refusal gives nothing.
 }
@@ -96,6 +105,10 @@ Plan_Difference_Dialog :: struct {
 	armed_from_milliseconds: u64, // An act counts from this time on: the show, plus the arm time; on the act face, the last move of the focus too.
 	focus:                Plan_Difference_Button,
 	decision:             Plan_Difference_Decision, // Of the last dialog.
+	first_line:           int, // The first line of the body that shows.
+	// The view showed the last line of the body: only then does an accept
+	// count. A body that fits shows it at once.
+	seen_through:         bool,
 }
 
 // plan_difference_open shows the difference of a plan: its name, and the
@@ -136,6 +149,8 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	dialog.armed_from_milliseconds = now_milliseconds
 	dialog.focus = .Refuse
 	dialog.decision = .Pending
+	dialog.first_line = 0
+	dialog.seen_through = plan_difference_body_lines(dialog) <= PLAN_DIFFERENCE_VISIBLE_LINES
 	return dialog.serial, .None, 0
 }
 
@@ -176,6 +191,8 @@ plan_difference_act_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog,
 	dialog.armed_from_milliseconds = now_milliseconds
 	dialog.focus = .Refuse
 	dialog.decision = .Pending
+	dialog.first_line = 0
+	dialog.seen_through = true
 	return dialog.serial, .None, 0
 }
 
@@ -307,6 +324,14 @@ plan_difference_key :: proc "contextless" (dialog: ^Plan_Difference_Dialog, key:
 	case .Other:
 	case .Next:
 		plan_difference_focus_move(dialog, dialog.focus == .Refuse ? .Accept : .Refuse, now_milliseconds)
+	case .Line_Previous:
+		plan_difference_scroll(dialog, -1)
+	case .Line_Next:
+		plan_difference_scroll(dialog, 1)
+	case .Page_Previous:
+		plan_difference_scroll(dialog, -(PLAN_DIFFERENCE_VISIBLE_LINES - 1))
+	case .Page_Next:
+		plan_difference_scroll(dialog, PLAN_DIFFERENCE_VISIBLE_LINES - 1)
 	case .Escape:
 		return plan_difference_decide(dialog, .Refused)
 	case .Act:
@@ -317,10 +342,80 @@ plan_difference_key :: proc "contextless" (dialog: ^Plan_Difference_Dialog, key:
 		case .Refuse:
 			return plan_difference_decide(dialog, .Refused)
 		case .Accept:
+			// A difference with lines that the principal did not see yet is
+			// no act: the view must reach its last line first.
+			if !dialog.seen_through {
+				return .Pending
+			}
 			return plan_difference_decide(dialog, .Accepted)
 		}
 	}
 	return .Pending
+}
+
+// plan_difference_body_lines gives the lines of the body: the heading and
+// the items of each side that has items.
+plan_difference_body_lines :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> int {
+	lines := 0
+	if dialog.added_count > 0 {
+		lines += 1 + dialog.added_count
+	}
+	if dialog.removed_count > 0 {
+		lines += 1 + dialog.removed_count
+	}
+	return lines
+}
+
+// The line of the body at an index: a heading of a side, or an item.
+Plan_Difference_Line :: struct {
+	heading: bool,
+	added:   bool, // The side: the additions, or the removals.
+	item:    ^Plan_Difference_Item, // nil on a heading.
+}
+
+// plan_difference_line gives the line of the body at an index, from 0.
+plan_difference_line :: proc "contextless" (dialog: ^Plan_Difference_Dialog, index: int) -> (line: Plan_Difference_Line, ok: bool) {
+	rest := index
+	if dialog.added_count > 0 {
+		if rest == 0 {
+			return {heading = true, added = true}, true
+		}
+		if rest <= dialog.added_count {
+			return {added = true, item = &dialog.added[rest - 1]}, true
+		}
+		rest -= 1 + dialog.added_count
+	}
+	if dialog.removed_count > 0 && rest >= 0 {
+		if rest == 0 {
+			return {heading = true}, true
+		}
+		if rest <= dialog.removed_count {
+			return {item = &dialog.removed[rest - 1]}, true
+		}
+	}
+	return {}, false
+}
+
+// plan_difference_visible_lines gives the lines of the body that the view
+// shows: all of them, up to PLAN_DIFFERENCE_VISIBLE_LINES.
+plan_difference_visible_lines :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> int {
+	return min(plan_difference_body_lines(dialog), PLAN_DIFFERENCE_VISIBLE_LINES)
+}
+
+// plan_difference_scroll moves the view of the body by lines, inside the
+// body. When the view shows the last line, the accept counts from then on.
+// It gives true when the view moved.
+plan_difference_scroll :: proc "contextless" (dialog: ^Plan_Difference_Dialog, lines: int) -> bool {
+	if !dialog.open {
+		return false
+	}
+	last_first := max(plan_difference_body_lines(dialog) - PLAN_DIFFERENCE_VISIBLE_LINES, 0)
+	before := dialog.first_line
+	dialog.first_line = clamp(dialog.first_line + lines, 0, last_first)
+	if dialog.first_line == last_first {
+		dialog.seen_through = true
+	}
+	return dialog.first_line != before
 }
 
 // plan_difference_place gives the place of the dialog: in the middle of
@@ -328,14 +423,11 @@ plan_difference_key :: proc "contextless" (dialog: ^Plan_Difference_Dialog, key:
 // of the windows, so it never covers the bar.
 plan_difference_place :: proc "contextless" (dialog: ^Plan_Difference_Dialog, screen_width, work_top, work_bottom: int) -> (x, y, width, height: int) {
 	width = PLAN_DIFFERENCE_WIDTH
-	// The title plate, the name of the plan, each side with its heading,
-	// then the buttons.
+	// The title plate, the name of the plan, the view of the body with at
+	// most PLAN_DIFFERENCE_VISIBLE_LINES lines, then the buttons.
 	height = 2 + PLAN_DIFFERENCE_TITLE_HEIGHT + 1 + PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_LINE
-	if dialog.added_count > 0 {
-		height += PLAN_DIFFERENCE_GAP + (1 + dialog.added_count) * PLAN_DIFFERENCE_LINE
-	}
-	if dialog.removed_count > 0 {
-		height += PLAN_DIFFERENCE_GAP + (1 + dialog.removed_count) * PLAN_DIFFERENCE_LINE
+	if visible := plan_difference_visible_lines(dialog); visible > 0 {
+		height += PLAN_DIFFERENCE_GAP + visible * PLAN_DIFFERENCE_LINE
 	}
 	height += PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_BUTTON_HEIGHT + PLAN_DIFFERENCE_MARGIN
 	x = max(0, (screen_width - width) / 2)

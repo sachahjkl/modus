@@ -26,8 +26,10 @@ import "modus:contract/remote"
 // The header of each mesh frame. The body follows it: exactly body_bytes.
 FRAME_HEADER_SIZE :: 16
 
-// The largest body of a frame: an object response with the largest object.
-FRAME_BODY_LIMIT :: OBJECT_RESPONSE_HEADER_SIZE + OBJECT_BYTES_LIMIT
+// The largest body of a frame: an object response with the largest piece
+// of an object. A larger object, and a version of a store with more entries
+// than one frame holds, cross in pieces and pages.
+FRAME_BODY_LIMIT :: OBJECT_RESPONSE_HEADER_SIZE + OBJECT_CHUNK_BYTES
 // The bytes of a whole frame at most. remote.REQUEST_LIMIT holds it, so the
 // stream buffer of remote takes each frame whole.
 FRAME_LIMIT :: FRAME_HEADER_SIZE + FRAME_BODY_LIMIT

@@ -17,10 +17,13 @@ import "modus:contract/object_cache"
 import "modus:contract/remote"
 import "modus:contract/role_contract"
 
-OBJECT_CAPACITY :: 8 // The objects by hash that a peer keeps: a few small objects, in the data of the process.
-OBJECT_BYTES_LIMIT :: 16 * 1024
-OBJECT_REQUEST_SIZE :: 8 + blake3.HASH_SIZE // The kind, a zero word, the hash.
-OBJECT_RESPONSE_HEADER_SIZE :: 8 + blake3.HASH_SIZE // The kind, the count of bytes, the hash.
+// The bytes of an object that one frame carries at most: an object of any
+// size crosses in pieces of this size, each one request and one answer.
+OBJECT_CHUNK_BYTES :: 16 * 1024
+OBJECT_REQUEST_SIZE :: 8 + blake3.HASH_SIZE + 8 // The kind, a zero word, the hash, the offset of the piece.
+// The kind, the count of bytes of the piece, the hash, the size of the
+// whole object, the offset of the piece.
+OBJECT_RESPONSE_HEADER_SIZE :: 8 + blake3.HASH_SIZE + 16
 CHANNEL_BINDING_DOMAIN :: "modus mesh channel binding v1"
 
 PAIRING_ELEMENT_SIZE :: machine_mesh.CPACE_PUBLIC_ELEMENT_SIZE + machine_mesh.PUBLIC_KEY_SIZE
@@ -106,16 +109,28 @@ Peer :: struct {
 	revocations:       machine_mesh.Revocation_List,
 	has_revocations:   bool,
 	objects:           machine_sync.Object_Store,
-	object_rows:       [OBJECT_CAPACITY]machine_sync.Stored_Object,
-	object_bytes:      [OBJECT_BYTES_LIMIT]u8,
-	stores:            [EXCHANGED_STORE_CAPACITY]Exchanged_Store,
+	stores:            []Exchanged_Store,
 	machine_grants:    [machine_mesh.MAX_PAIRED_MACHINES]Machine_Grant,
 	relay:             Relay_Table,
 }
 
-// peer_init takes the public identity key of this machine and empties the
-// state. ok is false for a zero key or no signature check.
-peer_init :: proc "contextless" (peer: ^Peer, identity_public_key: [machine_mesh.PUBLIC_KEY_SIZE]u8, services: Peer_Services) -> bool {
+// The memory of a peer that grows with the principal: the objects by hash
+// that it keeps, and the stores that the plan exchanges with the memory of
+// their versions. The process sizes each table from its budget, so no count
+// of objects, of stores or of entries is a constant of the contract. The
+// entries and the conflicts are divided among the stores.
+Peer_Memory :: struct {
+	object_rows:     []machine_sync.Stored_Object,
+	object_bytes:    []u8,
+	stores:          []Exchanged_Store,
+	store_entries:   []Store_Entry,
+	store_conflicts: []Store_Conflict,
+}
+
+// peer_init takes the public identity key of this machine, binds its
+// tables to memory, and empties the state. ok is false for a zero key, no
+// signature check, or no memory for the objects.
+peer_init :: proc "contextless" (peer: ^Peer, identity_public_key: [machine_mesh.PUBLIC_KEY_SIZE]u8, services: Peer_Services, memory: Peer_Memory) -> bool {
 	if peer == nil || services.signature_verify == nil || services.fill_random == nil {
 		return false
 	}
@@ -127,7 +142,16 @@ peer_init :: proc "contextless" (peer: ^Peer, identity_public_key: [machine_mesh
 	peer.identity = identity
 	peer.has_identity = true
 	peer.services = services
-	return machine_sync.object_store_init(&peer.objects, peer.object_rows[:], peer.object_bytes[:])
+	peer.stores = memory.stores
+	if store_count := len(memory.stores); store_count > 0 {
+		entry_share := len(memory.store_entries) / store_count
+		conflict_share := len(memory.store_conflicts) / store_count
+		for &store, index in memory.stores {
+			store = {}
+			store_exchange_memory_bind(&store, memory.store_entries[index * entry_share:][:entry_share], memory.store_conflicts[index * conflict_share:][:conflict_share])
+		}
+	}
+	return machine_sync.object_store_init(&peer.objects, memory.object_rows, memory.object_bytes)
 }
 
 // channel_binding_of_identities binds a pairing to the two identity keys
@@ -438,7 +462,10 @@ pairing_confirmed_accept :: proc "contextless" (peer: ^Peer, server_identity: [m
 
 // ---- Objects by hash ----
 
-object_request_write :: proc "contextless" (output: []u8, kind: object_cache.Cache_Object_Kind, hash: blake3.Hash) -> []u8 {
+// object_request_write asks for the piece of an object that starts at
+// offset: 0 for its first piece, then the offset that
+// object_response_accept gives.
+object_request_write :: proc "contextless" (output: []u8, kind: object_cache.Cache_Object_Kind, hash: blake3.Hash, offset: u64 = 0) -> []u8 {
 	body, ok := frame_begin(output, .Object_Request, OBJECT_REQUEST_SIZE)
 	if !ok {
 		return nil
@@ -446,7 +473,8 @@ object_request_write :: proc "contextless" (output: []u8, kind: object_cache.Cac
 	request_hash := hash
 	byte_order.write_u32_little_endian(body, 0, u32(kind))
 	byte_order.write_u32_little_endian(body, 4, 0)
-	copy(body[8:], request_hash[:])
+	copy(body[8:40], request_hash[:])
+	byte_order.write_u64_little_endian(body, 40, offset)
 	return frame_bytes(output, body)
 }
 
@@ -460,19 +488,28 @@ serve_object_request :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_C
 		return refusal_write(output, .Malformed, 0)
 	}
 	hash: blake3.Hash
-	copy(hash[:], body[8:])
+	copy(hash[:], body[8:40])
+	offset := byte_order.read_u64_little_endian(body, 40)
 	bytes, held_kind, found := machine_sync.object_store_lookup(&peer.objects, hash)
 	if !found || held_kind != kind {
 		return refusal_write(output, .Object_Absent, 0)
 	}
-	reply, ok := frame_begin(output, .Object_Response, OBJECT_RESPONSE_HEADER_SIZE + len(bytes))
+	// An offset past the end is refused; an offset at the end of an empty
+	// object gives its one empty piece.
+	if offset > u64(len(bytes)) || (offset == u64(len(bytes)) && len(bytes) != 0) {
+		return refusal_write(output, .Malformed, 0)
+	}
+	piece := bytes[offset:][:min(len(bytes) - int(offset), OBJECT_CHUNK_BYTES)]
+	reply, ok := frame_begin(output, .Object_Response, OBJECT_RESPONSE_HEADER_SIZE + len(piece))
 	if !ok {
 		return refusal_write(output, .Malformed, 0)
 	}
 	byte_order.write_u32_little_endian(reply, 0, u32(kind))
-	byte_order.write_u32_little_endian(reply, 4, u32(len(bytes)))
-	copy(reply[8:], hash[:])
-	copy(reply[OBJECT_RESPONSE_HEADER_SIZE:], bytes)
+	byte_order.write_u32_little_endian(reply, 4, u32(len(piece)))
+	copy(reply[8:40], hash[:])
+	byte_order.write_u64_little_endian(reply, 40, u64(len(bytes)))
+	byte_order.write_u64_little_endian(reply, 48, offset)
+	copy(reply[OBJECT_RESPONSE_HEADER_SIZE:], piece)
 	return frame_bytes(output, reply)
 }
 
@@ -497,46 +534,76 @@ Object_Fetch_Status :: enum u8 {
 	Hash_Mismatch  = 6, // The bytes do not hash to the requested hash: nothing was kept.
 	Full           = 7,
 	Too_Large      = 8,
+	Partial        = 9, // A piece was kept: the next piece is wanted at the offset given.
 }
 
-// object_response_accept keeps the object of an answer to a request of
-// this machine, only when its bytes hash to the requested hash: the hash is
-// computed again before any byte is kept.
-object_response_accept :: proc "contextless" (peer: ^Peer, kind: object_cache.Cache_Object_Kind, requested_hash: blake3.Hash, answer: []u8) -> (status: Object_Fetch_Status, reason: Refusal_Reason) {
+// object_response_accept takes one piece of an object that this machine
+// asked for at requested_offset. The first piece names the size of the
+// whole object, and starts its assembly; each piece must start where the
+// object ends now. The object is kept only when it is whole and its bytes
+// hash to the requested hash: the hash is computed again before the object
+// counts. Partial gives the offset of the next piece to ask for.
+object_response_accept :: proc "contextless" (peer: ^Peer, kind: object_cache.Cache_Object_Kind, requested_hash: blake3.Hash, answer: []u8, requested_offset: u64 = 0) -> (status: Object_Fetch_Status, reason: Refusal_Reason, next_offset: u64) {
 	body, refusal, _, ok := answer_expect(answer, .Object_Response)
 	if !ok {
 		if refusal == .Malformed || refusal == .Unexpected_Message {
-			return .Malformed, refusal
+			return .Malformed, refusal, 0
 		}
-		return .Refused, refusal
+		return .Refused, refusal, 0
 	}
 	if len(body) < OBJECT_RESPONSE_HEADER_SIZE {
-		return .Malformed, .None
+		return .Malformed, .None, 0
 	}
 	count := u64(byte_order.read_u32_little_endian(body, 4))
-	if count != u64(len(body) - OBJECT_RESPONSE_HEADER_SIZE) {
-		return .Malformed, .None
+	total := byte_order.read_u64_little_endian(body, 40)
+	offset := byte_order.read_u64_little_endian(body, 48)
+	if count != u64(len(body) - OBJECT_RESPONSE_HEADER_SIZE) || count > OBJECT_CHUNK_BYTES || offset != requested_offset || offset > total || count > total - offset || (count == 0 && total != 0) {
+		return .Malformed, .None, 0
 	}
 	answer_kind, kind_ok := object_cache.cache_object_kind_of_word(u64(byte_order.read_u32_little_endian(body, 0)))
 	answer_hash: blake3.Hash
-	copy(answer_hash[:], body[8:OBJECT_RESPONSE_HEADER_SIZE])
+	copy(answer_hash[:], body[8:40])
 	if !kind_ok || answer_kind != kind || answer_hash != requested_hash {
-		return .Other_Object, .None
+		return .Other_Object, .None, 0
 	}
-	switch machine_sync.object_store_accept(&peer.objects, kind, requested_hash, body[OBJECT_RESPONSE_HEADER_SIZE:]) {
+	if offset == 0 {
+		if total > u64(max(int)) {
+			return .Too_Large, .None, 0
+		}
+		switch machine_sync.object_store_begin(&peer.objects, kind, requested_hash, int(total)) {
+		case .Stored:
+		case .Already_Stored:
+			return .Already_Stored, .None, 0
+		case .Refused_Full:
+			return .Full, .None, 0
+		case .Refused_Too_Large:
+			return .Too_Large, .None, 0
+		case .Refused_Hash_Mismatch, .Refused_Malformed, .Refused_Nil_Input:
+			return .Malformed, .None, 0
+		}
+	} else if !peer.objects.assembly.active || peer.objects.assembly.hash != requested_hash || u64(peer.objects.assembly.total) != total {
+		return .Malformed, .None, 0
+	}
+	if machine_sync.object_store_write(&peer.objects, requested_hash, int(offset), body[OBJECT_RESPONSE_HEADER_SIZE:]) != .Stored {
+		return .Malformed, .None, 0
+	}
+	if !machine_sync.object_store_whole(&peer.objects) {
+		return .Partial, .None, offset + count
+	}
+	switch machine_sync.object_store_finish(&peer.objects) {
 	case .Stored:
-		return .Stored, .None
+		return .Stored, .None, 0
 	case .Already_Stored:
-		return .Already_Stored, .None
+		return .Already_Stored, .None, 0
 	case .Refused_Hash_Mismatch:
-		return .Hash_Mismatch, .None
+		return .Hash_Mismatch, .None, 0
 	case .Refused_Full:
-		return .Full, .None
+		return .Full, .None, 0
 	case .Refused_Too_Large:
-		return .Too_Large, .None
+		return .Too_Large, .None, 0
 	case .Refused_Malformed, .Refused_Nil_Input:
 	}
-	return .Malformed, .None
+	return .Malformed, .None, 0
 }
 
 // ---- Signed grants ----
@@ -598,19 +665,20 @@ grant_accepted_read :: proc "contextless" (answer: []u8) -> (serial: u64, expire
 
 @(private)
 serve_store_offer :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, body: []u8, output: []u8) -> []u8 {
-	if len(body) < STORE_OFFER_HEADER_SIZE {
+	if len(body) < STORE_PAGE_HEADER_SIZE {
 		return refusal_write(output, .Store_Refused, u32(Store_Status.Refused_Bad_Count))
 	}
 	identifier: blake3.Hash
 	copy(identifier[:], body[:blake3.HASH_SIZE])
-	store := store_exchange_find(&peer.stores, identifier)
+	store := store_exchange_find(peer.stores, identifier)
 	if store == nil {
 		return refusal_write(output, .Store_Refused, u32(Store_Status.Refused_Unknown_Store))
 	}
 	if !machine_mesh.keys_equal_constant_time(store.partner_identity, serve_context.peer_identity) {
 		return refusal_write(output, .Store_Refused, u32(Store_Status.Refused_Not_Partner))
 	}
-	// The whole offer is read and merged before the store changes.
+	// Each page is read before the store changes, and the whole offer is
+	// merged before the versions change.
 	frame, status := store_offer_answer(store, body, output)
 	if status != .Ok {
 		return refusal_write(output, .Store_Refused, u32(status))

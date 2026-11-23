@@ -129,7 +129,11 @@ make_grant_answer :: proc(
 @(private = "file")
 make_test_state :: proc() -> ^Powerbox_State {
 	state := new(Powerbox_State, context.temp_allocator)
-	state_init(state, TRUSTED_DISPLAY_SLOT)
+	tables := Powerbox_Tables {
+		stores      = make([]Session_Store, 512, context.temp_allocator),
+		held_grants = make([]Held_Grant, 512, context.temp_allocator),
+	}
+	state_init(state, TRUSTED_DISPLAY_SLOT, tables)
 	return state
 }
 
@@ -558,4 +562,128 @@ never_ask_again_and_process_stop_withdrawal :: proc(t: ^testing.T) {
 	res_late := resolve_answer(state, &late_ans, 100_400)
 	testing.expect_value(t, res_late.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
+}
+
+// A principal with 300 stores: the dialog carries the first page and the
+// count of the whole list, the trusted display pages and searches the rest,
+// and a pick of the 251st store gives a share of that store only. A pick
+// after the list changed, a page asked by another process, and a full
+// table are refused.
+@(test)
+picker_pages_reach_each_store_of_a_long_list :: proc(t: ^testing.T) {
+	state := make_test_state()
+	COUNT :: 300
+	name_buffer: [16]u8
+	for index in 0 ..< COUNT {
+		name := store_name(name_buffer[:], index)
+		testing.expect(t, register_session_store(state, 1, name, u64(1000 + index)))
+	}
+	testing.expect(t, register_session_store(state, 2, "other principal", 9))
+
+	batch := make_batch(1, 91, 1, .Disk_Module, 0x91, "gallery", make_store_item(.Read_Only, .This_Run))
+	sub, dlg, has_dlg := submit_batch(state, &batch, 1000)
+	testing.expect_value(t, sub.refusal, powerbox.Powerbox_Refusal.None)
+	testing.expect(t, has_dlg)
+	testing.expect_value(t, dlg.picker_candidate_total, u32(COUNT))
+	testing.expect_value(t, dlg.picker_candidate_count, u32(powerbox.PICKER_PAGE_CANDIDATES))
+
+	// Each page from the first to the last: each store once, in order.
+	request := powerbox.Picker_Page_Request{dialog_serial = dlg.dialog_serial}
+	page: powerbox.Picker_Page
+	seen := 0
+	for {
+		testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT, &request, &page), powerbox.Powerbox_Refusal.None)
+		page_refusal, _ := powerbox.picker_page_validate(&page)
+		testing.expect_value(t, page_refusal, powerbox.Powerbox_Refusal.None)
+		for candidate in page.candidates[:page.candidate_count] {
+			testing.expect_value(t, candidate.list_index, u32(seen))
+			testing.expect_value(t, candidate.store_id, u64(1000 + seen))
+			seen += 1
+		}
+		if !page.more {
+			break
+		}
+		request.first = page.next
+	}
+	testing.expect_value(t, seen, COUNT)
+
+	// The search finds the 251st store, past the 32 of one page.
+	request = {dialog_serial = dlg.dialog_serial}
+	wanted := store_name(name_buffer[:], 250)
+	request.query_length = u8(copy(request.query_bytes[:], wanted))
+	testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT, &request, &page), powerbox.Powerbox_Refusal.None)
+	testing.expect_value(t, page.candidate_count, u32(1))
+	chosen := page.candidates[0]
+	testing.expect_value(t, chosen.list_index, u32(250))
+
+	// A page for another holder is refused, and a page of a serial that is
+	// not pending.
+	testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT + 1, &request, &page), powerbox.Powerbox_Refusal.Untrusted_Answer)
+	unknown := request
+	unknown.dialog_serial += 100
+	testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT, &unknown, &page), powerbox.Powerbox_Refusal.Untrusted_Answer)
+
+	testing.expect_value(t, mark_dialog_shown(state, dlg.dialog_serial, TRUSTED_DISPLAY_SLOT, 1100), powerbox.Powerbox_Refusal.None)
+	answer := make_grant_answer(&dlg, 1100, 1400, 1400, .Granted, .This_Run)
+	answer.items[0].picker_selected = true
+	answer.items[0].picker_index = chosen.list_index
+	answer.items[0].picker_change_count = dlg.picker_change_count
+	// A pick with the hash of another name is refused, with no grant.
+	answer.items[0].picker_name_hash = dlg.picker_candidates[0].name_hash
+	bad := resolve_answer(state, &answer, 1400)
+	testing.expect_value(t, bad.refusal, powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
+	testing.expect_value(t, active_grant_count(state), u32(0))
+
+	answer.items[0].picker_name_hash = chosen.name_hash
+	good := resolve_answer(state, &answer, 1400)
+	testing.expect_value(t, good.refusal, powerbox.Powerbox_Refusal.None)
+	grant, found := lookup_issued_grant(state, good.items[0].granted_handle_id)
+	testing.expect(t, found)
+	testing.expect_value(t, grant.store_id, u64(1250))
+}
+
+@(private = "file")
+store_name :: proc(buffer: []u8, index: int) -> string {
+	text := "store 000"
+	length := copy(buffer, text)
+	buffer[6] = u8('0' + index / 100)
+	buffer[7] = u8('0' + index / 10 % 10)
+	buffer[8] = u8('0' + index % 10)
+	return string(buffer[:length])
+}
+
+// The list changes between the dialog and the answer: the places of the
+// dialog name other stores, so the pick is refused.
+@(test)
+picker_pick_after_the_list_changed_is_refused :: proc(t: ^testing.T) {
+	state := make_test_state()
+	testing.expect(t, register_session_store(state, 1, "documents", 101))
+	batch := make_batch(1, 92, 1, .Disk_Module, 0x92, "gallery", make_store_item(.Read_Only, .This_Run))
+	_, dlg, has_dlg := submit_batch(state, &batch, 1000)
+	testing.expect(t, has_dlg)
+	testing.expect(t, register_session_store(state, 1, "photos", 202))
+	request := powerbox.Picker_Page_Request{dialog_serial = dlg.dialog_serial}
+	page: powerbox.Picker_Page
+	testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT, &request, &page), powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
+	testing.expect_value(t, mark_dialog_shown(state, dlg.dialog_serial, TRUSTED_DISPLAY_SLOT, 1100), powerbox.Powerbox_Refusal.None)
+	answer := make_grant_answer(&dlg, 1100, 1400, 1400, .Granted, .This_Run)
+	answer.items[0].picker_selected = true
+	answer.items[0].picker_change_count = dlg.picker_change_count
+	answer.items[0].picker_name_hash = dlg.picker_candidates[0].name_hash
+	result := resolve_answer(state, &answer, 1400)
+	testing.expect_value(t, result.refusal, powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
+	testing.expect_value(t, active_grant_count(state), u32(0))
+}
+
+// The tables have the size that the caller gave: none refuses each store,
+// one row takes one store.
+@(test)
+powerbox_tables_refuse_at_their_own_size :: proc(t: ^testing.T) {
+	state := new(Powerbox_State, context.temp_allocator)
+	state_init(state, TRUSTED_DISPLAY_SLOT, {})
+	testing.expect(t, !register_session_store(state, 1, "documents", 101))
+	one: [1]Session_Store
+	state_init(state, TRUSTED_DISPLAY_SLOT, {stores = one[:]})
+	testing.expect(t, register_session_store(state, 1, "documents", 101))
+	testing.expect(t, !register_session_store(state, 1, "photos", 202))
 }

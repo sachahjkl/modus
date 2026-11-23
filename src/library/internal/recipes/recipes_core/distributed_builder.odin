@@ -47,8 +47,9 @@ import "modus:contract/role_contract"
 
 DAG_RECIPE_CAPACITY :: 32
 DISTRIBUTED_PEER_CAPACITY :: 4
-// The bytes of one output at most: an object that one mesh frame carries.
-DISTRIBUTED_OUTPUT_LIMIT :: machine_wire.OBJECT_BYTES_LIMIT
+// The bytes of one output at most, in the tables of the builder. An output
+// crosses the mesh in pieces of machine_wire.OBJECT_CHUNK_BYTES.
+DISTRIBUTED_OUTPUT_LIMIT :: machine_wire.OBJECT_CHUNK_BYTES
 // The arguments of a remote build: the head, then each input, then the
 // argument record of the recipe.
 REMOTE_BUILD_HEADER_SIZE :: blake3.HASH_SIZE + 8 + 8 + 4 + 4 + 4 + 4
@@ -936,34 +937,49 @@ realisation_check :: proc "contextless" (policy: ^Distributed_Policy, wire: []u8
 // link broke.
 @(private = "file")
 object_fetch :: proc "contextless" (builder: ^Distributed_Builder, policy: ^Distributed_Policy, peer_index: int, kind: object_cache.Cache_Object_Kind, hash: blake3.Hash, target: []u8, now_ms: u64) -> (count: int, refusal: Distributed_Refusal, lost: bool) {
-	request := machine_wire.object_request_write(builder.request[:], kind, hash)
-	if request == nil {
-		return 0, .Malformed_Realisation, false
+	// The pieces of the object come in order, each one request, into
+	// target; the size of the first piece names the whole object.
+	total: u64 = 0
+	received: u64 = 0
+	for {
+		request := machine_wire.object_request_write(builder.request[:], kind, hash, received)
+		if request == nil {
+			return 0, .Malformed_Realisation, false
+		}
+		exchange := machine_wire.mesh_exchange(&builder.links[peer_index], policy.transport, request, now_ms, policy.bound_ms, builder.answer[:])
+		switch exchange.outcome {
+		case .Answered:
+		case .Refused:
+			return 0, .Output_Absent, false
+		case .None, .Unknown_Outcome, .Unreachable:
+			return 0, .None, true
+		}
+		body := exchange.body
+		if len(body) < machine_wire.OBJECT_RESPONSE_HEADER_SIZE {
+			return 0, .Output_Absent, false
+		}
+		answer_kind, kind_ok := object_cache.cache_object_kind_of_word(u64(byte_order.read_u32_little_endian(body, 0)))
+		length := u64(byte_order.read_u32_little_endian(body, 4))
+		answer_hash: blake3.Hash
+		copy(answer_hash[:], body[8:40])
+		piece_total := byte_order.read_u64_little_endian(body, 40)
+		offset := byte_order.read_u64_little_endian(body, 48)
+		bytes := body[machine_wire.OBJECT_RESPONSE_HEADER_SIZE:]
+		if !kind_ok || answer_kind != kind || answer_hash != hash || length != u64(len(bytes)) || offset != received || (received > 0 && piece_total != total) || length > piece_total - min(offset, piece_total) || (length == 0 && piece_total != 0) {
+			return 0, .Output_Absent, false
+		}
+		total = piece_total
+		if total > u64(len(target)) {
+			return 0, .Output_Too_Large, false
+		}
+		copy(target[received:], bytes)
+		received += length
+		if received == total {
+			break
+		}
 	}
-	exchange := machine_wire.mesh_exchange(&builder.links[peer_index], policy.transport, request, now_ms, policy.bound_ms, builder.answer[:])
-	switch exchange.outcome {
-	case .Answered:
-	case .Refused:
-		return 0, .Output_Absent, false
-	case .None, .Unknown_Outcome, .Unreachable:
-		return 0, .None, true
-	}
-	body := exchange.body
-	if len(body) < machine_wire.OBJECT_RESPONSE_HEADER_SIZE {
-		return 0, .Output_Absent, false
-	}
-	answer_kind, kind_ok := object_cache.cache_object_kind_of_word(u64(byte_order.read_u32_little_endian(body, 0)))
-	length := u64(byte_order.read_u32_little_endian(body, 4))
-	answer_hash: blake3.Hash
-	copy(answer_hash[:], body[8:machine_wire.OBJECT_RESPONSE_HEADER_SIZE])
-	bytes := body[machine_wire.OBJECT_RESPONSE_HEADER_SIZE:]
-	if !kind_ok || answer_kind != kind || answer_hash != hash || length != u64(len(bytes)) {
-		return 0, .Output_Absent, false
-	}
-	if len(bytes) > len(target) {
-		return 0, .Output_Too_Large, false
-	}
-	// The hash is computed again before any byte is kept.
+	bytes := target[:total]
+	// The hash is computed again before the object counts.
 	switch object_cache.verify_object_content(kind, hash, bytes) {
 	case .Trust_By_Hash:
 	case .Refuse_Hash_Mismatch:
@@ -971,7 +987,7 @@ object_fetch :: proc "contextless" (builder: ^Distributed_Builder, policy: ^Dist
 	case .Refuse_Malformed, .Refuse_Untrusted_Signer, .Refuse_Bad_Signature, .Trust_By_Signer:
 		return 0, .Hash_Mismatch, false
 	}
-	return copy(target, bytes), .None, false
+	return int(total), .None, false
 }
 
 @(private = "file")

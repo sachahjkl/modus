@@ -225,14 +225,6 @@ test_plans_apply_request_refuses_each_bad_input_and_asks_nothing :: proc(t: ^tes
 	_, no_display := apply_request(state, nil, "home", &plan, {}, &difference, &lists)
 	testing.expect_value(t, no_display, pr.Plan_Refusal.Consent_Required)
 
-	// A plan whose additions do not fit the dialog: nine entries.
-	nine := pr.Plan_Spec{principal = 0, entry_count = 9}
-	names := [9]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
-	for name, index in names {
-		nine.entries[index], _ = pr.plan_entry_make_module(.Disk_Module, name, trusted_test_hash(u8(index + 1)), 0)
-	}
-	_, too_many := apply_request(state, &port, "home", &nine, {}, &difference, &lists)
-	testing.expect_value(t, too_many, pr.Plan_Refusal.Display_Refused)
 	// An item past the bytes of an item: a name of 48 bytes after "disk ".
 	long_entry := pr.Plan_Spec{principal = 0, entry_count = 1}
 	long_entry.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, strings.repeat("m", 44, context.temp_allocator), trusted_test_hash(1), 0)
@@ -587,4 +579,30 @@ test_plans_rollback_waits_for_the_decision_of_the_principal :: proc(t: ^testing.
 	current_generation_is(t, state, 2)
 	testing.expect_value(t, pending_ticket(state, 3), u64(0))
 	testing.expect_value(t, highest_generation(state, 3), u64(3))
+}
+
+// A plan with the most entries that a plan holds: each addition is an item
+// of the dialog, past the 8 of the dialog that did not scroll, and none is
+// dropped.
+@(test)
+test_plans_apply_shows_each_entry_of_the_largest_plan :: proc(t: ^testing.T) {
+	state := new(Plans_State)
+	defer free(state)
+	store := plans_test_state_init(state, 5)
+	defer free(store)
+	display: Test_Display
+	port := test_display_port(&display)
+	difference: pr.Plan_Difference
+	lists := new(Plan_Display_Lists)
+	defer free(lists)
+	largest := pr.Plan_Spec{principal = 0, entry_count = pr.MAX_PLAN_ENTRIES}
+	for index in 0 ..< pr.MAX_PLAN_ENTRIES {
+		name := strings.concatenate({"module_", strings.repeat("x", index % 7 + 1, context.temp_allocator), "_", string([]u8{u8('a' + index % 26), u8('a' + index / 26)})}, context.temp_allocator)
+		largest.entries[index], _ = pr.plan_entry_make_module(.Disk_Module, name, trusted_test_hash(u8(index + 1)), 0)
+	}
+	ticket, refusal := apply_request(state, &port, "home", &largest, {}, &difference, lists)
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	testing.expect(t, ticket != 0)
+	testing.expect_value(t, lists.added_count, pr.MAX_PLAN_ENTRIES)
+	testing.expect_value(t, strings.count(display.added, ", "), pr.MAX_PLAN_ENTRIES - 1)
 }

@@ -29,6 +29,45 @@ import "modus:system"
 
 // The state of the mesh: in the data of the process, never on a stack.
 mesh: machine_wire.Peer
+// The tables of the mesh that grow with the principal live in an arena of
+// the budget of remote (MODULE_BUDGET): the objects by hash and the
+// exchanged stores with the versions of each. The contract fixes no count:
+// these pages are the budget, and a full table is a refusal.
+MESH_OBJECT_PAGES :: 1024 // 4 MiB of objects by hash; an object crosses in pieces.
+MESH_STORE_PAGES :: 1536 // The versions of the exchanged stores.
+MESH_TABLE_PAGES :: MESH_OBJECT_PAGES + MESH_STORE_PAGES
+MESH_EXCHANGED_STORES :: 8 // The rows of the stores; the pages of the versions are shared among them.
+mesh_arena: system.Arena
+
+// mesh_memory_make takes the tables of the mesh from its arena.
+@(private = "file")
+mesh_memory_make :: proc "contextless" () -> (memory: machine_wire.Peer_Memory, ok: bool) {
+	status: system.Status
+	mesh_arena, status = system.arena_create(MESH_TABLE_PAGES)
+	if status != .Ok {
+		return {}, false
+	}
+	object_bytes := u64(MESH_OBJECT_PAGES) * system.PAGE_SIZE
+	// One row of an object for each 4 KiB of objects: a row is 48 bytes.
+	object_rows := object_bytes / system.PAGE_SIZE
+	store_bytes := u64(MESH_STORE_PAGES) * system.PAGE_SIZE - object_rows * size_of(machine_sync.Stored_Object) - MESH_EXCHANGED_STORES * size_of(machine_wire.Exchanged_Store)
+	// A conflict for each eight entries.
+	entry_count := store_bytes * 8 / (8 * size_of(machine_wire.Store_Entry) + size_of(machine_wire.Store_Conflict))
+	conflict_count := entry_count / 8
+	push :: proc "contextless" ($T: typeid, count: u64) -> (slice: []T, ok: bool) {
+		address, status := system.arena_push(&mesh_arena, max(count, 1) * size_of(T), align_of(T))
+		if status != .Ok {
+			return nil, false
+		}
+		return ([^]T)(address)[:count], true
+	}
+	memory.object_bytes = push(u8, object_bytes) or_return
+	memory.object_rows = push(machine_sync.Stored_Object, object_rows) or_return
+	memory.stores = push(machine_wire.Exchanged_Store, MESH_EXCHANGED_STORES) or_return
+	memory.store_entries = push(machine_wire.Store_Entry, entry_count) or_return
+	memory.store_conflicts = push(machine_wire.Store_Conflict, conflict_count) or_return
+	return memory, true
+}
 // The answer of one mesh frame, before it goes to the buffer of its stream,
 // which still holds the request.
 mesh_answer: [machine_wire.FRAME_LIMIT]u8
@@ -67,7 +106,11 @@ mesh_identity_set :: proc "contextless" (public_key: [32]u8, error: ^errors.Erro
 		signature_verify = mesh_signature_verify,
 		fill_random      = mesh_fill_random,
 	}
-	if !machine_wire.peer_init(&mesh, public_key, services) {
+	memory, memory_ok := mesh_memory_make()
+	if !memory_ok {
+		return errors.fail(error, -1, .Budget, .Pages, 0, 0, MESH_TABLE_PAGES)
+	}
+	if !machine_wire.peer_init(&mesh, public_key, services, memory) {
 		return errors.fail(error, -1, .Bad_Value, .None, 1)
 	}
 	return 0
@@ -307,9 +350,9 @@ mesh_object_accept :: proc "contextless" (
 	case .Refused_Malformed:
 		return errors.fail(error, -1, .Bad_Value, .None, 4, 0, 0, i64(status))
 	case .Refused_Full:
-		return errors.fail(error, -1, .Full, .Objects, 0, 0, machine_wire.OBJECT_CAPACITY)
+		return errors.fail(error, -1, .Full, .Objects, 0, 0, i64(len(mesh.objects.objects)))
 	case .Refused_Too_Large:
-		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(len(payload)), i64(machine_wire.OBJECT_BYTES_LIMIT - mesh.objects.bytes_used))
+		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(len(payload)), i64(len(mesh.objects.bytes) - mesh.objects.bytes_used))
 	case .Refused_Nil_Input:
 		return errors.fail(error, -1, .State, .None, 0)
 	}

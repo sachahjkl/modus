@@ -666,11 +666,13 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 	return 1
 }
 
-// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes, or more than 8 items on one side); Bad_Value (-1, an empty item in a list).
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes, or more items on one side than a plan difference holds); Bad_Value (-1, an empty item in a list).
 //
 // **The act.** The focus starts on Refuse. An act counts 500 ms after the
-// dialog showed: Enter acts on the button that has the focus, Tab and the
-// arrows move it, a press on a button acts on it. Escape refuses at once.
+// dialog showed: Enter acts on the button that has the focus, Tab, Left and
+// Right move it, a press on a button acts on it. Escape refuses at once.
+// Up, Down, Page Up and Page Down scroll the items; with more items than the
+// view holds, Accept counts only once the view showed the last one.
 // While the dialog shows, no window receives a key or a press.
 //
 // **Grant**: the caller must be the holder of the role Plans, which the

@@ -159,11 +159,14 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 }
 
 // The bounds of the dialog of a difference on the trusted display: a plan
-// name, an item of a side, and the items of one side. The compositor checks
-// its own bounds against these.
+// name, an item of a side, and the items of one side. A side holds each
+// change that a difference holds, so no difference is refused for its count
+// of items: the dialog scrolls, and its accept counts only after the
+// principal saw its last row. The compositor checks its own bounds against
+// these.
 PLAN_DISPLAY_NAME_BYTES :: 48
 PLAN_DISPLAY_ITEM_BYTES :: 48
-PLAN_DISPLAY_ITEM_CAPACITY :: 8
+PLAN_DISPLAY_ITEM_CAPACITY :: MAX_PLAN_DIFF_CHANGES
 
 // The arm time of the dialog of a difference: the trusted display takes a
 // decision only this long after it showed the difference, so a key or a

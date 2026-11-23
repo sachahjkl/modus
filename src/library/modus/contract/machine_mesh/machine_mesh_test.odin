@@ -1189,6 +1189,7 @@ sync_wire_roundtrip_and_strict_refusals :: proc(t: ^testing.T) {
 		object_hash = blob_h,
 		object_kind = .Blob,
 		payload     = payload,
+		object_total_bytes = u64(len(payload)),
 	}
 	written, ref = sync_frame_encode(&send, frame_buf[:])
 	testing.expect_value(t, ref, Sync_Wire_Refusal.None)
@@ -1391,6 +1392,7 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 	session, begin_ok := sync_session_begin_receive(store_id, true, base_h, local_h, remote_h, missing[:])
 	testing.expect(t, begin_ok)
 	testing.expect_value(t, session.state, Sync_Session_State.Waiting_Objects)
+	sync_assembly: [256]u8
 
 	// Corrupted blob payload is refused with Hash_Mismatch and does not corrupt session state.
 	corrupt_payload := [len("note paragraph from laptop")]u8{}
@@ -1402,8 +1404,9 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 		object_hash = blob_hash,
 		object_kind = .Blob,
 		payload     = corrupt_payload[:],
+		object_total_bytes = u64(len(corrupt_payload[:])),
 	}
-	reason, recv_ok := sync_session_receive_object(&session, &bad_send)
+	reason, recv_ok := sync_session_receive_object(&session, &bad_send, sync_assembly[:])
 	testing.expect(t, !recv_ok)
 	testing.expect_value(t, reason, Sync_Refusal_Reason.Hash_Mismatch)
 	testing.expect_value(t, session.received_mask, u64(0))
@@ -1416,8 +1419,9 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 		object_hash = blob_hash,
 		object_kind = .Version_Node,
 		payload     = blob_payload,
+		object_total_bytes = u64(len(blob_payload)),
 	}
-	reason, recv_ok = sync_session_receive_object(&session, &blob_as_version)
+	reason, recv_ok = sync_session_receive_object(&session, &blob_as_version, sync_assembly[:])
 	testing.expect(t, !recv_ok)
 	testing.expect_value(t, reason, Sync_Refusal_Reason.Protocol_Error)
 	testing.expect_value(t, session.received_mask, u64(0))
@@ -1428,8 +1432,9 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 		object_hash = version_hash,
 		object_kind = .Blob,
 		payload     = version_payload,
+		object_total_bytes = u64(len(version_payload)),
 	}
-	reason, recv_ok = sync_session_receive_object(&session, &version_as_blob)
+	reason, recv_ok = sync_session_receive_object(&session, &version_as_blob, sync_assembly[:])
 	testing.expect(t, !recv_ok)
 	testing.expect_value(t, reason, Sync_Refusal_Reason.Protocol_Error)
 	testing.expect_value(t, session.received_mask, u64(0))
@@ -1438,7 +1443,7 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 	wrong_store := bad_send
 	wrong_store.store_id = make_hash(0xFF)
 	wrong_store.payload = blob_payload
-	reason, recv_ok = sync_session_receive_object(&session, &wrong_store)
+	reason, recv_ok = sync_session_receive_object(&session, &wrong_store, sync_assembly[:])
 	testing.expect(t, !recv_ok)
 	testing.expect_value(t, reason, Sync_Refusal_Reason.Unknown_Store)
 
@@ -1449,13 +1454,14 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 		object_hash = blob_hash,
 		object_kind = .Blob,
 		payload     = blob_payload,
+		object_total_bytes = u64(len(blob_payload)),
 	}
-	_, recv_ok = sync_session_receive_object(&session, &good_blob)
+	_, recv_ok = sync_session_receive_object(&session, &good_blob, sync_assembly[:])
 	testing.expect(t, recv_ok)
 	testing.expect_value(t, session.state, Sync_Session_State.Waiting_Objects)
 
 	// Duplicate delivery of already-received blob refused.
-	reason, recv_ok = sync_session_receive_object(&session, &good_blob)
+	reason, recv_ok = sync_session_receive_object(&session, &good_blob, sync_assembly[:])
 	testing.expect(t, !recv_ok)
 	testing.expect_value(t, reason, Sync_Refusal_Reason.Protocol_Error)
 
@@ -1466,8 +1472,9 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 		object_hash = computed_tree_hash,
 		object_kind = .Tree,
 		payload     = tree_bytes,
+		object_total_bytes = u64(len(tree_bytes)),
 	}
-	_, recv_ok = sync_session_receive_object(&session, &good_tree)
+	_, recv_ok = sync_session_receive_object(&session, &good_tree, sync_assembly[:])
 	testing.expect(t, recv_ok)
 	testing.expect_value(t, session.state, Sync_Session_State.Waiting_Objects)
 
@@ -1478,11 +1485,101 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 		object_hash = version_hash,
 		object_kind = .Version_Node,
 		payload     = version_payload,
+		object_total_bytes = u64(len(version_payload)),
 	}
-	_, recv_ok = sync_session_receive_object(&session, &good_version)
+	_, recv_ok = sync_session_receive_object(&session, &good_version, sync_assembly[:])
 	testing.expect(t, recv_ok)
 	testing.expect_value(t, session.state, Sync_Session_State.Reconciled)
 	testing.expect_value(t, session.reconcile_result.outcome, Reconcile_Outcome.Conflict_Fork)
 	testing.expect_value(t, session.reconcile_result.conflict_fork.local_head_hash, local_h)
 	testing.expect_value(t, session.reconcile_result.conflict_fork.remote_head_hash, remote_h)
+}
+
+// A blob of 200 KiB, past the 64 KiB of one frame, crosses in four pieces
+// that the frame border reads back; a piece out of order, a piece past the
+// size, an object larger than the buffer, and a changed byte are refused,
+// and the object is received only whole.
+@(test)
+sync_object_of_200_kibibytes_crosses_in_pieces :: proc(t: ^testing.T) {
+	SIZE :: 200 * 1024
+	blob := make([]u8, SIZE, context.temp_allocator)
+	for index in 0 ..< SIZE {
+		blob[index] = u8(index * 13 + index / 509)
+	}
+	hash := blake3.hash(blob)
+	store_id := blake3.hash(transmute([]u8)string("store of a large note"))
+	missing := [1]Expected_Sync_Object{{kind = .Blob, hash = hash}}
+	local_h, remote_h := blake3.hash([]u8{1}), blake3.hash([]u8{2})
+	assembly := make([]u8, SIZE, context.temp_allocator)
+	wire := make([]u8, MAX_SYNC_BODY_BYTES + SYNC_FRAME_HEADER_SIZE, context.temp_allocator)
+
+	piece :: proc(store_id, hash: blake3.Hash, blob: []u8, offset: int) -> Sync_Frame {
+		end := min(offset + SYNC_CHUNK_BYTES, len(blob))
+		return Sync_Frame{kind = .Send_Object, store_id = store_id, object_hash = hash, object_kind = .Blob, object_total_bytes = u64(len(blob)), chunk_offset = u64(offset), payload = blob[offset:end]}
+	}
+
+	// The border: a piece past the bound of a frame, a piece past the size,
+	// an offset past the size, an empty piece of an object that is not empty.
+	too_big := piece(store_id, hash, blob, 0)
+	too_big.payload = blob[:SYNC_CHUNK_BYTES + 1]
+	_, refusal := sync_frame_encoded_size(&too_big)
+	testing.expect_value(t, refusal, Sync_Wire_Refusal.Too_Large)
+	past := piece(store_id, hash, blob, SIZE - 10)
+	past.payload = blob[SIZE - 10 - 5:SIZE - 5 + 1]
+	_, refusal = sync_frame_encoded_size(&past)
+	testing.expect_value(t, refusal, Sync_Wire_Refusal.Bad_Count)
+	empty := piece(store_id, hash, blob, 0)
+	empty.payload = nil
+	_, refusal = sync_frame_encoded_size(&empty)
+	testing.expect_value(t, refusal, Sync_Wire_Refusal.Bad_Count)
+
+	session, begin_ok := sync_session_begin_receive(store_id, false, {}, local_h, remote_h, missing[:])
+	testing.expect(t, begin_ok)
+	// An object larger than the buffer of the receiver.
+	first := piece(store_id, hash, blob, 0)
+	reason, ok := sync_session_receive_object(&session, &first, assembly[:SIZE - 1])
+	testing.expect(t, !ok && reason == .Object_Too_Large)
+	// A piece that is not the first starts nothing.
+	second := piece(store_id, hash, blob, SYNC_CHUNK_BYTES)
+	reason, ok = sync_session_receive_object(&session, &second, assembly)
+	testing.expect(t, !ok && reason == .Protocol_Error)
+	// The pieces in order, each one encoded and decoded, with one byte
+	// changed in the third: the whole object is refused at its end.
+	pieces := 0
+	for offset := 0; offset < SIZE; offset += SYNC_CHUNK_BYTES {
+		frame := piece(store_id, hash, blob, offset)
+		written, encode_refusal := sync_frame_encode(&frame, wire)
+		testing.expect_value(t, encode_refusal, Sync_Wire_Refusal.None)
+		if pieces == 2 {
+			wire[written - 1] ~= 1
+		}
+		decoded, decode_refusal := sync_frame_decode(wire[:written])
+		testing.expect_value(t, decode_refusal, Sync_Wire_Refusal.None)
+		testing.expect_value(t, decoded.chunk_offset, u64(offset))
+		testing.expect_value(t, decoded.object_total_bytes, u64(SIZE))
+		reason, ok = sync_session_receive_object(&session, &decoded, assembly)
+		pieces += 1
+		if offset + SYNC_CHUNK_BYTES < SIZE {
+			testing.expect(t, ok)
+		} else {
+			testing.expect(t, !ok && reason == .Hash_Mismatch)
+		}
+	}
+	testing.expect_value(t, pieces, 4)
+	testing.expect_value(t, session.state, Sync_Session_State.Waiting_Objects)
+	// A piece out of order in the middle ends the object.
+	frame := piece(store_id, hash, blob, 0)
+	_, ok = sync_session_receive_object(&session, &frame, assembly)
+	testing.expect(t, ok)
+	frame = piece(store_id, hash, blob, 2 * SYNC_CHUNK_BYTES)
+	reason, ok = sync_session_receive_object(&session, &frame, assembly)
+	testing.expect(t, !ok && reason == .Protocol_Error)
+	// The true pieces: the object is received, and the session reconciles.
+	for offset := 0; offset < SIZE; offset += SYNC_CHUNK_BYTES {
+		frame = piece(store_id, hash, blob, offset)
+		_, ok = sync_session_receive_object(&session, &frame, assembly)
+		testing.expect(t, ok)
+	}
+	testing.expect_value(t, session.state, Sync_Session_State.Reconciled)
+	testing.expect(t, string(assembly) == string(blob))
 }

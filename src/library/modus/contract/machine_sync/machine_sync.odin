@@ -144,14 +144,29 @@ Stored_Object :: struct {
 	length: int,
 }
 
-// A bounded store of objects that came from a paired machine, by hash. The
-// caller gives the rows and the bytes, so the store allocates nothing. It
-// never evicts: a full store refuses, and the caller fetches again later.
+// An object that arrives in pieces: its hash, its kind, its size, and the
+// bytes received so far, past the bytes in use of the store. The store
+// keeps it only when it is whole and its bytes hash to its hash.
+Object_Assembly :: struct {
+	active:   bool,
+	hash:     [HASH_BYTES]u8,
+	kind:     object_cache.Cache_Object_Kind,
+	total:    int,
+	received: int,
+}
+
+// A store of objects that came from a paired machine, by hash. The caller
+// gives the rows and the bytes, sized from its budget, so the store
+// allocates nothing. It never evicts: a full store refuses, and the caller
+// fetches again later. An object larger than one frame arrives in pieces
+// (object_store_begin, object_store_write, object_store_finish), one object
+// at a time.
 Object_Store :: struct {
 	objects:    []Stored_Object,
 	bytes:      []u8,
 	count:      int,
 	bytes_used: int,
+	assembly:   Object_Assembly,
 }
 
 Object_Store_Status :: enum u8 {
@@ -199,6 +214,9 @@ object_store_accept :: proc "contextless" (
 	if store == nil || store.count < 0 || store.count > len(store.objects) || store.bytes_used < 0 || store.bytes_used > len(store.bytes) {
 		return .Refused_Nil_Input
 	}
+	// A whole object takes the free bytes that an assembly writes into: the
+	// assembly ends.
+	store.assembly = {}
 	switch object_cache.verify_object_content(kind, requested_hash, payload) {
 	case .Trust_By_Hash:
 	case .Refuse_Hash_Mismatch:
@@ -224,3 +242,76 @@ object_store_accept :: proc "contextless" (
 	return .Stored
 }
 
+
+// object_store_begin starts an object that arrives in pieces: total bytes
+// with this hash and kind. An object that the store holds already is
+// Already_Stored, and no assembly starts. An object larger than the free
+// bytes is Refused_Too_Large, and a store with no free row Refused_Full:
+// the caller asks for nothing more of it. A new begin ends an assembly
+// that was not whole.
+object_store_begin :: proc "contextless" (store: ^Object_Store, kind: object_cache.Cache_Object_Kind, hash: [HASH_BYTES]u8, total: int) -> Object_Store_Status {
+	if store == nil || store.count < 0 || store.count > len(store.objects) || store.bytes_used < 0 || store.bytes_used > len(store.bytes) || total < 0 {
+		return .Refused_Nil_Input
+	}
+	store.assembly = {}
+	if _, held_kind, found := object_store_lookup(store, hash); found {
+		if held_kind != kind {
+			return .Refused_Malformed
+		}
+		return .Already_Stored
+	}
+	if total > len(store.bytes) - store.bytes_used {
+		return .Refused_Too_Large
+	}
+	if store.count >= len(store.objects) {
+		return .Refused_Full
+	}
+	store.assembly = {active = true, hash = hash, kind = kind, total = total}
+	return .Stored
+}
+
+// object_store_write adds the bytes of the object in assembly at offset.
+// The pieces come in order: a piece that does not start where the object
+// ends now, or that passes its size, ends the assembly and is refused.
+object_store_write :: proc "contextless" (store: ^Object_Store, hash: [HASH_BYTES]u8, offset: int, bytes: []u8) -> Object_Store_Status {
+	if store == nil || !store.assembly.active || store.assembly.hash != hash {
+		return .Refused_Nil_Input
+	}
+	assembly := &store.assembly
+	if offset != assembly.received || len(bytes) > assembly.total - assembly.received {
+		store.assembly = {}
+		return .Refused_Malformed
+	}
+	copy(store.bytes[store.bytes_used + assembly.received:][:len(bytes)], bytes)
+	assembly.received += len(bytes)
+	return .Stored
+}
+
+// object_store_whole says if the object in assembly has all its bytes.
+object_store_whole :: proc "contextless" (store: ^Object_Store) -> bool {
+	return store.assembly.active && store.assembly.received == store.assembly.total
+}
+
+// object_store_finish keeps the object in assembly when it is whole and
+// its bytes hash to its hash (BLAKE3 for a blob, the tree hash for a tree).
+// The bytes in use grow only then: a refused object leaves the store as it
+// was before its first piece.
+object_store_finish :: proc "contextless" (store: ^Object_Store) -> Object_Store_Status {
+	if store == nil || !object_store_whole(store) {
+		return .Refused_Nil_Input
+	}
+	assembly := store.assembly
+	store.assembly = {}
+	bytes := store.bytes[store.bytes_used:][:assembly.total]
+	switch object_cache.verify_object_content(assembly.kind, assembly.hash, bytes) {
+	case .Trust_By_Hash:
+	case .Refuse_Hash_Mismatch:
+		return .Refused_Hash_Mismatch
+	case .Trust_By_Signer, .Refuse_Untrusted_Signer, .Refuse_Bad_Signature, .Refuse_Malformed:
+		return .Refused_Malformed
+	}
+	store.objects[store.count] = Stored_Object{hash = assembly.hash, kind = assembly.kind, offset = store.bytes_used, length = assembly.total}
+	store.count += 1
+	store.bytes_used += assembly.total
+	return .Stored
+}

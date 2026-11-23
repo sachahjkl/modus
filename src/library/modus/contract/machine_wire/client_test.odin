@@ -77,7 +77,7 @@ client_machine_make :: proc(seed: u8) -> ^Client_Machine {
 	machine := new(Client_Machine)
 	machine.seed = seed
 	_, public_key := client_key_pair(seed)
-	ok := peer_init(&machine.peer, public_key, Peer_Services{signature_verify = client_verify, fill_random = client_random, role_holder = client_role_holder, user_data = machine})
+	ok := peer_init(&machine.peer, public_key, Peer_Services{signature_verify = client_verify, fill_random = client_random, role_holder = client_role_holder, user_data = machine}, test_peer_memory())
 	assert(ok)
 	return machine
 }
@@ -505,8 +505,8 @@ client_syncs_a_store_and_repeats_a_lost_offer :: proc(t: ^testing.T) {
 	transport := network_transport(network)
 	testing.expect(t, join_by_link(t, home, laptop, network, buffers))
 	store_identifier := blake3.hash(transmute([]u8)string("notes"))
-	laptop_store, laptop_status := store_exchange_add(&laptop.peer.stores, store_identifier, client_identity(home))
-	home_store, home_status := store_exchange_add(&home.peer.stores, store_identifier, client_identity(laptop))
+	laptop_store, laptop_status := store_exchange_add(laptop.peer.stores, store_identifier, client_identity(home))
+	home_store, home_status := store_exchange_add(home.peer.stores, store_identifier, client_identity(laptop))
 	testing.expect(t, laptop_status == .Ok && home_status == .Ok)
 	object := blake3.hash(transmute([]u8)string("a page"))
 	content := blake3.hash(transmute([]u8)string("its text"))

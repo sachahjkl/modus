@@ -7,6 +7,7 @@ import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/machine_mesh"
+import "modus:contract/machine_sync"
 import "modus:contract/machine_wire"
 import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
@@ -157,7 +158,7 @@ sim_machine_make :: proc(seed: u8, builder: bool) -> ^Sim_Machine {
 	public_key: [32]u8
 	machine.private_key, public_key = sim_key(seed)
 	machine.signer_key, machine.signer_public = sim_key(seed + 0x80)
-	ok := machine_wire.peer_init(&machine.peer, public_key, machine_wire.Peer_Services{signature_verify = sim_verify, fill_random = sim_random, role_holder = sim_role_holder, user_data = machine})
+	ok := machine_wire.peer_init(&machine.peer, public_key, machine_wire.Peer_Services{signature_verify = sim_verify, fill_random = sim_random, role_holder = sim_role_holder, user_data = machine}, machine_wire.Peer_Memory{object_rows = make([]machine_sync.Stored_Object, 16, context.temp_allocator), object_bytes = make([]u8, 4 * machine_wire.OBJECT_CHUNK_BYTES, context.temp_allocator)})
 	assert(ok)
 	machine.host = Remote_Recipes_Host{lookup = sim_lookup, publish = sim_publish, user_data = machine}
 	if builder {

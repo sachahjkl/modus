@@ -503,20 +503,30 @@ mesh_fetch_object :: proc "contextless" (
 	request_buffer: []u8,
 	answer_buffer: []u8,
 ) -> (result: Mesh_Object_Fetch) {
-	request := object_request_write(request_buffer, kind, hash)
-	if request == nil {
-		result.exchange.status = .Refused_Bad_Request
+	// One request for each piece: an object of any size crosses in pieces
+	// of OBJECT_CHUNK_BYTES, and each answer gives the offset of the next.
+	offset: u64 = 0
+	for {
+		request := object_request_write(request_buffer, kind, hash, offset)
+		if request == nil {
+			result.exchange.status = .Refused_Bad_Request
+			return result
+		}
+		result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
+		switch result.exchange.outcome {
+		case .Answered:
+			next: u64
+			result.fetch, _, next = object_response_accept(peer, kind, hash, result.exchange.answer, offset)
+			if result.fetch == .Partial {
+				offset = next
+				continue
+			}
+		case .Refused:
+			result.fetch = .Refused
+		case .None, .Unknown_Outcome, .Unreachable:
+		}
 		return result
 	}
-	result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
-	switch result.exchange.outcome {
-	case .Answered:
-		result.fetch, _ = object_response_accept(peer, kind, hash, result.exchange.answer)
-	case .Refused:
-		result.fetch = .Refused
-	case .None, .Unknown_Outcome, .Unreachable:
-	}
-	return result
 }
 
 // The end of one role call on a link.
@@ -585,8 +595,9 @@ Mesh_Store_Sync :: struct {
 }
 
 // mesh_sync_store offers the version of an exchanged store to its partner,
-// and merges the reply. A lost reply keeps the offer in flight: the next
-// call sends the same snapshot, which the partner answers again.
+// page by page, and merges the reply, which comes page by page. A lost
+// answer keeps the offer in flight: the next call sends the same snapshot
+// from its first page, which the partner answers again.
 mesh_sync_store :: proc "contextless" (
 	peer: ^Peer,
 	link: ^Mesh_Link,
@@ -597,7 +608,7 @@ mesh_sync_store :: proc "contextless" (
 	request_buffer: []u8,
 	answer_buffer: []u8,
 ) -> (result: Mesh_Store_Sync) {
-	store := store_exchange_find(&peer.stores, store_identifier)
+	store := store_exchange_find(peer.stores, store_identifier)
 	if store == nil {
 		result.store = .Refused_Unknown_Store
 		result.exchange.status = .Refused_Bad_Request
@@ -609,25 +620,32 @@ mesh_sync_store :: proc "contextless" (
 		return result
 	}
 	request := store_offer_begin(store, request_buffer)
-	if request == nil {
-		result.store = .Refused_Full
-		result.exchange.status = .Refused_Bad_Request
+	for {
+		if request == nil {
+			result.store = .Refused_Full
+			result.exchange.status = .Refused_Bad_Request
+			return result
+		}
+		result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
+		switch result.exchange.outcome {
+		case .Answered:
+			more: bool
+			result.store, _, _, more = store_offer_reply_accept(store, result.exchange.answer)
+			if result.store == .Ok && more {
+				request = store_offer_next(store, request_buffer)
+				continue
+			}
+		case .Refused:
+			result.store = .Refused_Nil_Input
+			if result.exchange.reason == .Store_Refused {
+				if status, known := enum_word.member_of_word(Store_Status, u64(result.exchange.detail)); known {
+					result.store = status
+				}
+			}
+		case .None, .Unknown_Outcome, .Unreachable:
+		}
 		return result
 	}
-	result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
-	switch result.exchange.outcome {
-	case .Answered:
-		result.store, _, _ = store_offer_reply_accept(store, result.exchange.answer)
-	case .Refused:
-		result.store = .Refused_Nil_Input
-		if result.exchange.reason == .Store_Refused {
-			if status, known := enum_word.member_of_word(Store_Status, u64(result.exchange.detail)); known {
-				result.store = status
-			}
-		}
-	case .None, .Unknown_Outcome, .Unreachable:
-	}
-	return result
 }
 
 // The end of a pairing that this machine joins.

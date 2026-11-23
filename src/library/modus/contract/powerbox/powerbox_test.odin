@@ -115,6 +115,7 @@ make_valid_dialog :: proc(origin: Module_Origin = .Disk_Module) -> Dialog_Record
 		allow_always_duration = origin == .Disk_Module,
 		item_count            = 3,
 		picker_change_count   = 9,
+		picker_candidate_total = 2,
 		picker_candidate_count = 2,
 	}
 	set_label(&dialog.asker_label_bytes, &dialog.asker_label_length, "notes_app")
@@ -125,6 +126,7 @@ make_valid_dialog :: proc(origin: Module_Origin = .Disk_Module) -> Dialog_Record
 	c0, ok0 := picker_candidate_make("documents", 101)
 	c1, ok1 := picker_candidate_make("photos", 202)
 	assert(ok0 && ok1)
+	c1.list_index = 1
 	dialog.picker_candidates[0] = c0
 	dialog.picker_candidates[1] = c1
 	refusal := dialog_record_seal(&dialog)
@@ -211,7 +213,7 @@ border_enum_parsers_refuse_zero_out_of_range_and_max_words :: proc(t: ^testing.T
 		_, ok := network_endpoint_rights_from_word(bad)
 		testing.expect(t, !ok)
 	}
-	for bad in ([?]u32{0, u32(Service_Ring_Command.Query_Counts) + 1, max(u32)}) {
+	for bad in ([?]u32{0, u32(Service_Ring_Command.Picker_Page) + 1, max(u32)}) {
 		_, ok := service_ring_command_from_word(bad)
 		testing.expect(t, !ok)
 	}
@@ -592,4 +594,89 @@ plan_difference_dialog_enforces_whole_accept_or_refuse :: proc(t: ^testing.T) {
 	with_dur.items[0].duration_word = u64(Grant_Duration.This_Run)
 	refusal, _ = answer_record_validate(&dialog, &with_dur, TRUSTED_DISPLAY_SLOT)
 	testing.expect_value(t, refusal, Powerbox_Refusal.Invalid_Duration)
+}
+
+// The dialog carries the first page of a long list and the count of the
+// whole list: a pick past the first page is in range, a pick past the
+// whole list is refused, and a page or a request that breaks its bounds is
+// refused at its border.
+@(test)
+picker_pages_of_a_long_list_are_checked_at_their_border :: proc(t: ^testing.T) {
+	TRUSTED_DISPLAY_SLOT :: u32(3)
+	dialog := make_valid_dialog()
+	dialog.picker_candidate_total = 300
+	testing.expect_value(t, dialog_record_seal(&dialog), Powerbox_Refusal.None)
+
+	answer := Grant_Answer {
+		dialog_serial            = dialog.dialog_serial,
+		request_serial           = dialog.request_serial,
+		dialog_record_hash       = dialog.record_hash,
+		display_holder_slot      = TRUSTED_DISPLAY_SLOT,
+		input_origin_word        = u64(Input_Origin.Local_Machine),
+		item_count               = dialog.item_count,
+	}
+	for index in 0 ..< 3 {
+		answer.items[index] = {decision_word = u64(Item_Decision.Granted), duration_word = u64(Grant_Duration.This_Run)}
+	}
+	// A pick of the 200th store, past the 64 of the old picker: in range.
+	answer.items[1].picker_selected = true
+	answer.items[1].picker_index = 199
+	answer.items[1].picker_change_count = dialog.picker_change_count
+	answer.items[1].picker_name_hash = make_hash(0x77)
+	refusal, _ := answer_record_validate(&dialog, &answer, TRUSTED_DISPLAY_SLOT)
+	testing.expect_value(t, refusal, Powerbox_Refusal.None)
+	// The last place, then one past it, then the largest value.
+	answer.items[1].picker_index = 299
+	refusal, _ = answer_record_validate(&dialog, &answer, TRUSTED_DISPLAY_SLOT)
+	testing.expect_value(t, refusal, Powerbox_Refusal.None)
+	for bad in ([?]u32{300, max(u32)}) {
+		answer.items[1].picker_index = bad
+		refusal, _ = answer_record_validate(&dialog, &answer, TRUSTED_DISPLAY_SLOT)
+		testing.expect_value(t, refusal, Powerbox_Refusal.Picker_Selection_Invalid)
+	}
+	// A pick on the first page with the hash of another name is refused.
+	answer.items[1].picker_index = 1
+	refusal, _ = answer_record_validate(&dialog, &answer, TRUSTED_DISPLAY_SLOT)
+	testing.expect_value(t, refusal, Powerbox_Refusal.Picker_Selection_Invalid)
+
+	// A first page with more candidates than the whole list is refused.
+	small := make_valid_dialog()
+	small.picker_candidate_total = 1
+	testing.expect(t, dialog_record_seal(&small) != .None)
+
+	// A page: places that do not grow, a place before its first, a count
+	// past its capacity.
+	page := Picker_Page{dialog_serial = 5, first = 40, next = 42, total = 300, candidate_count = 2}
+	c0, _ := picker_candidate_make("documents", 101)
+	c1, _ := picker_candidate_make("photos", 202)
+	c0.list_index, c1.list_index = 40, 41
+	page.candidates[0], page.candidates[1] = c0, c1
+	page_refusal, _ := picker_page_validate(&page)
+	testing.expect_value(t, page_refusal, Powerbox_Refusal.None)
+	page.candidates[1].list_index = 40
+	page_refusal, _ = picker_page_validate(&page)
+	testing.expect_value(t, page_refusal, Powerbox_Refusal.Picker_Selection_Invalid)
+	page.candidates[1].list_index = 41
+	page.candidates[0].list_index = 39
+	page_refusal, _ = picker_page_validate(&page)
+	testing.expect_value(t, page_refusal, Powerbox_Refusal.Picker_Selection_Invalid)
+	page.candidates[0].list_index = 40
+	page.candidate_count = PICKER_PAGE_CANDIDATES + 1
+	page_refusal, _ = picker_page_validate(&page)
+	testing.expect_value(t, page_refusal, Powerbox_Refusal.Picker_Selection_Invalid)
+
+	request := Picker_Page_Request{}
+	testing.expect_value(t, picker_page_request_validate(&request), Powerbox_Refusal.Untrusted_Answer)
+	request.dialog_serial = 5
+	request.query_length = MAX_NAME_BYTES + 1
+	testing.expect_value(t, picker_page_request_validate(&request), Powerbox_Refusal.Invalid_Host)
+	request.query_length = 1
+	request.query_bytes[0] = 0xFF
+	testing.expect_value(t, picker_page_request_validate(&request), Powerbox_Refusal.Invalid_Host)
+	request.query_bytes[0] = 'd'
+	testing.expect_value(t, picker_page_request_validate(&request), Powerbox_Refusal.None)
+
+	testing.expect(t, picker_name_matches(transmute([]u8)string("Documents"), transmute([]u8)string("CUM")))
+	testing.expect(t, picker_name_matches(transmute([]u8)string("a"), nil))
+	testing.expect(t, !picker_name_matches(transmute([]u8)string("ab"), transmute([]u8)string("abc")))
 }

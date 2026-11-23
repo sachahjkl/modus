@@ -619,3 +619,19 @@ concurrent_seqlock_writer_never_causes_torn_read_refusal :: proc(t: ^testing.T) 
 		}
 	}
 }
+
+// The numbers of a page of candidates: the edges first, then pages that
+// a list of 300 candidates gives.
+@(test)
+candidate_pages_stay_inside_their_list :: proc(t: ^testing.T) {
+	testing.expect(t, candidate_page_valid(0, 0, 0))
+	testing.expect(t, !candidate_page_valid(0, 0, 1))
+	testing.expect(t, candidate_page_valid(1, 1, 0))
+	testing.expect(t, !candidate_page_valid(1, 2, 0), "a short page that does not end its list")
+	testing.expect(t, candidate_page_valid(CANDIDATE_CAPACITY, 300, 0))
+	testing.expect(t, candidate_page_valid(300 - 3 * CANDIDATE_CAPACITY, 300, 3 * CANDIDATE_CAPACITY))
+	testing.expect(t, !candidate_page_valid(CANDIDATE_CAPACITY + 1, 300, 0))
+	testing.expect(t, !candidate_page_valid(CANDIDATE_CAPACITY, 300, 299))
+	testing.expect(t, !candidate_page_valid(1, max(u64), max(u64)))
+	testing.expect(t, !candidate_page_valid(max(u64), max(u64), 0))
+}

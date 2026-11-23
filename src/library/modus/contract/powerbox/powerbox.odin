@@ -21,9 +21,12 @@ import "modus:contract/text_encoding"
 // item before acting.
 MAX_REQUEST_ITEMS :: 16
 
-// Maximum store candidates passed to the trusted display for a Store_Share
-// picker. Candidate names are never returned to the asking process.
-MAX_PICKER_CANDIDATES :: 32
+// The store candidates of one page of a Store_Share picker. The list of a
+// principal has any count of stores: the dialog carries its first page and
+// the count of the whole list, and the trusted display reads the other
+// pages with a cursor and a search text (picker_page_request_validate).
+// Candidate names are never returned to the asking process.
+PICKER_PAGE_CANDIDATES :: 32
 
 // Maximum byte length of a service name, store name, or asker label.
 MAX_NAME_BYTES :: 64
@@ -167,6 +170,7 @@ Service_Ring_Command :: enum u32 {
 	Display_Answer  = 3,
 	Withdraw_Dialog = 4,
 	Query_Counts    = 5,
+	Picker_Page     = 6, // The trusted display reads one page of the candidates of a pending dialog.
 }
 
 // Completion statuses returned on the powerbox service ring.
@@ -241,6 +245,34 @@ Picker_Candidate :: struct {
 	name_length: u8,
 	name_hash:   blake3.Hash,
 	store_id:    u64,
+	// The place of the candidate in the whole list of the principal, from
+	// 0. A pick names this place, whatever page showed it.
+	list_index:  u32,
+}
+
+// A request of the trusted display for one page of the candidates of a
+// pending dialog: the place in the whole list where the page starts, and a
+// search text that each candidate name of the page holds (ASCII case
+// folded; empty: each name).
+Picker_Page_Request :: struct {
+	dialog_serial: u64,
+	first:         u32,
+	query_bytes:   [MAX_NAME_BYTES]u8,
+	query_length:  u8,
+}
+
+// One page of the candidates of a pending dialog. next is the place of the
+// whole list where the next page starts; more is false when no candidate
+// that matches follows.
+Picker_Page :: struct {
+	dialog_serial:   u64,
+	change_count:    u64,
+	first:           u32,
+	next:            u32,
+	total:           u32,
+	more:            bool,
+	candidate_count: u32,
+	candidates:      [PICKER_PAGE_CANDIDATES]Picker_Candidate,
 }
 
 // Dialog payload sent from the powerbox to the trusted Display role holder.
@@ -260,8 +292,9 @@ Dialog_Record :: struct {
 	item_count:             u32,
 	items:                  [MAX_REQUEST_ITEMS]Request_Item,
 	picker_change_count:    u64,
-	picker_candidate_count: u32,
-	picker_candidates:      [MAX_PICKER_CANDIDATES]Picker_Candidate,
+	picker_candidate_total: u32, // The candidates of the whole list.
+	picker_candidate_count: u32, // The candidates of the first page, below.
+	picker_candidates:      [PICKER_PAGE_CANDIDATES]Picker_Candidate,
 	record_hash:            blake3.Hash,
 }
 
@@ -270,7 +303,7 @@ Item_Answer :: struct {
 	decision_word:       u64,
 	duration_word:       u64,
 	picker_selected:     bool,
-	picker_index:        u32,
+	picker_index:        u32, // The place of the pick in the whole list.
 	picker_change_count: u64,
 	picker_name_hash:    blake3.Hash,
 }
@@ -816,7 +849,7 @@ dialog_record_hash :: proc "contextless" (dialog: ^Dialog_Record) -> (digest: bl
 	if dialog.item_count > MAX_REQUEST_ITEMS {
 		return {}, .Too_Many_Items
 	}
-	if dialog.picker_candidate_count > MAX_PICKER_CANDIDATES {
+	if dialog.picker_candidate_count > PICKER_PAGE_CANDIDATES {
 		return {}, .Picker_Selection_Invalid
 	}
 	if int(dialog.asker_label_length) > MAX_NAME_BYTES {
@@ -860,6 +893,7 @@ dialog_record_hash :: proc "contextless" (dialog: ^Dialog_Record) -> (digest: bl
 	}
 
 	hash_write_u64(&writer, dialog.picker_change_count)
+	hash_write_u32(&writer, dialog.picker_candidate_total)
 	hash_write_u32(&writer, dialog.picker_candidate_count)
 	for index in u32(0) ..< dialog.picker_candidate_count {
 		candidate := &dialog.picker_candidates[index]
@@ -869,6 +903,7 @@ dialog_record_hash :: proc "contextless" (dialog: ^Dialog_Record) -> (digest: bl
 		hash_write_slice(&writer, candidate.name_bytes[:candidate.name_length])
 		hash_write_slice(&writer, candidate.name_hash[:])
 		hash_write_u64(&writer, candidate.store_id)
+		hash_write_u32(&writer, candidate.list_index)
 	}
 
 	if writer.overflow {
@@ -940,7 +975,7 @@ dialog_record_validate :: proc "contextless" (dialog: ^Dialog_Record) -> (refusa
 		if dialog.item_count > MAX_REQUEST_ITEMS {
 			return .Too_Many_Items, 0
 		}
-		if dialog.picker_candidate_count > MAX_PICKER_CANDIDATES {
+		if dialog.picker_candidate_count > PICKER_PAGE_CANDIDATES || dialog.picker_candidate_count > dialog.picker_candidate_total {
 			return .Picker_Selection_Invalid, 0
 		}
 
@@ -950,7 +985,7 @@ dialog_record_validate :: proc "contextless" (dialog: ^Dialog_Record) -> (refusa
 			if dialog.allow_per_item_ticks || dialog.allow_duration_choice || dialog.allow_always_duration {
 				return .Invalid_Duration, 0
 			}
-			if dialog.picker_candidate_count != 0 {
+			if dialog.picker_candidate_count != 0 || dialog.picker_candidate_total != 0 {
 				return .Picker_Selection_Invalid, 0
 			}
 		}
@@ -975,18 +1010,8 @@ dialog_record_validate :: proc "contextless" (dialog: ^Dialog_Record) -> (refusa
 			}
 		}
 
-		for cand_index in u32(0) ..< dialog.picker_candidate_count {
-			cand := &dialog.picker_candidates[cand_index]
-			if cand.store_id == 0 || int(cand.name_length) == 0 || int(cand.name_length) > MAX_NAME_BYTES {
-				return .Picker_Selection_Invalid, cand_index
-			}
-			if !text_encoding.display_text_valid(cand.name_bytes[:cand.name_length]) {
-				return .Picker_Selection_Invalid, cand_index
-			}
-			expected_name_hash := blake3.hash(cand.name_bytes[:cand.name_length])
-			if cand.name_hash != expected_name_hash {
-				return .Picker_Selection_Invalid, cand_index
-			}
+		if candidates_refusal, cand_index := picker_candidates_validate(dialog.picker_candidates[:dialog.picker_candidate_count], 0, dialog.picker_candidate_total); candidates_refusal != .None {
+			return candidates_refusal, cand_index
 		}
 
 		expected_hash, hash_refusal := dialog_record_hash(dialog)
@@ -1098,15 +1123,19 @@ answer_record_validate :: proc "contextless" (dialog: ^Dialog_Record, answer: ^G
 					if !item_ans.picker_selected {
 						return .Picker_Selection_Invalid, index
 					}
-					if dialog.picker_candidate_count == 0 || item_ans.picker_index >= dialog.picker_candidate_count {
+					if dialog.picker_candidate_total == 0 || item_ans.picker_index >= dialog.picker_candidate_total {
 						return .Picker_Selection_Invalid, index
 					}
 					if item_ans.picker_change_count != dialog.picker_change_count {
 						return .Picker_Selection_Invalid, index
 					}
-					chosen := &dialog.picker_candidates[item_ans.picker_index]
-					if item_ans.picker_name_hash != chosen.name_hash {
-						return .Picker_Selection_Invalid, index
+					// A pick on the first page is checked here; a pick on a later
+					// page is checked by the holder of the whole list against its
+					// copy, with the same index, change count and name hash.
+					for &shown in dialog.picker_candidates[:dialog.picker_candidate_count] {
+						if shown.list_index == item_ans.picker_index && item_ans.picker_name_hash != shown.name_hash {
+							return .Picker_Selection_Invalid, index
+						}
 					}
 				case .Network_Endpoint, .Service_Connection:
 					if item_ans.picker_selected {
@@ -1118,4 +1147,66 @@ answer_record_validate :: proc "contextless" (dialog: ^Dialog_Record, answer: ^G
 		return .None, 0
 	}
 	return .Untrusted_Answer, 0
+}
+
+// picker_candidates_validate checks the candidates of one page: each a store,
+// a name of display text with its hash, and places in the whole list that
+// grow, from first on, under total.
+picker_candidates_validate :: proc "contextless" (candidates: []Picker_Candidate, first: u32, total: u32) -> (refusal: Powerbox_Refusal, index: u32) {
+	previous: u32 = 0
+	for &cand, position in candidates {
+		cand_index := u32(position)
+		if cand.store_id == 0 || int(cand.name_length) == 0 || int(cand.name_length) > MAX_NAME_BYTES {
+			return .Picker_Selection_Invalid, cand_index
+		}
+		if !text_encoding.display_text_valid(cand.name_bytes[:cand.name_length]) {
+			return .Picker_Selection_Invalid, cand_index
+		}
+		if cand.name_hash != blake3.hash(cand.name_bytes[:cand.name_length]) {
+			return .Picker_Selection_Invalid, cand_index
+		}
+		if cand.list_index < first || cand.list_index >= total || (position > 0 && cand.list_index <= previous) {
+			return .Picker_Selection_Invalid, cand_index
+		}
+		previous = cand.list_index
+	}
+	return .None, 0
+}
+
+// picker_page_request_validate checks a request for a page at the border:
+// a dialog serial, and a search text of UTF-8 no longer than a name.
+picker_page_request_validate :: proc "contextless" (request: ^Picker_Page_Request) -> Powerbox_Refusal {
+	if request.dialog_serial == 0 {
+		return .Untrusted_Answer
+	}
+	if int(request.query_length) > MAX_NAME_BYTES || !text_encoding.text_valid(request.query_bytes[:request.query_length]) {
+		return .Invalid_Host
+	}
+	return .None
+}
+
+// picker_page_validate checks a page that the trusted display reads: its
+// counts against its capacity and the whole list, and each candidate.
+picker_page_validate :: proc "contextless" (page: ^Picker_Page) -> (refusal: Powerbox_Refusal, index: u32) {
+	if page.dialog_serial == 0 || page.candidate_count > PICKER_PAGE_CANDIDATES || page.first > page.total || page.next > page.total || page.next < page.first {
+		return .Picker_Selection_Invalid, 0
+	}
+	return picker_candidates_validate(page.candidates[:page.candidate_count], page.first, page.total)
+}
+
+// picker_name_matches says if a candidate name holds the search text, with
+// the case of ASCII folded. An empty search text matches each name.
+picker_name_matches :: proc "contextless" (name: []u8, query: []u8) -> bool {
+	if len(query) == 0 {
+		return true
+	}
+	if len(query) > len(name) {
+		return false
+	}
+	for start in 0 ..= len(name) - len(query) {
+		if ascii_bytes_equal_case_insensitive(name[start:][:len(query)], query) {
+			return true
+		}
+	}
+	return false
 }

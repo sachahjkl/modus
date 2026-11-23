@@ -10,7 +10,8 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 	dialog: Plan_Difference_Dialog
 	long_name := strings.repeat("n", PLAN_DIFFERENCE_NAME_BYTES + 1, context.temp_allocator)
 	long_item := strings.repeat("i", PLAN_DIFFERENCE_ITEM_BYTES + 1, context.temp_allocator)
-	nine := "a, b, c, d, e, f, g, h, i"
+	// One item past the capacity of a side.
+	past_capacity := items_text(PLAN_DIFFERENCE_ITEM_CAPACITY + 1)
 	cases := [?]struct {
 		name, added, removed: string,
 		refusal:              Plan_Difference_Refusal,
@@ -25,7 +26,7 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 		{"home", ",a", "", .Empty_Item, 2},
 		{"home", "a", " , ", .Empty_Item, 3},
 		{"home", long_item, "", .Item_Too_Long, 2},
-		{"home", "", nine, .Too_Many_Items, 3},
+		{"home", "", past_capacity, .Too_Many_Items, 3},
 	}
 	for test_case in cases {
 		serial, refusal, argument := plan_difference_open(&dialog, test_case.name, test_case.added, test_case.removed, 1000)
@@ -38,14 +39,14 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 	// most items.
 	edge_name := strings.repeat("n", PLAN_DIFFERENCE_NAME_BYTES, context.temp_allocator)
 	edge_item := strings.repeat("i", PLAN_DIFFERENCE_ITEM_BYTES, context.temp_allocator)
-	serial, refusal, _ := plan_difference_open(&dialog, edge_name, edge_item, "a, b, c, d, e, f, g, h", 1000)
+	serial, refusal, _ := plan_difference_open(&dialog, edge_name, edge_item, items_text(PLAN_DIFFERENCE_ITEM_CAPACITY), 1000)
 	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
 	testing.expect_value(t, serial, 1)
 	testing.expect_value(t, plan_difference_name(&dialog), edge_name)
 	testing.expect_value(t, dialog.added_count, 1)
 	testing.expect_value(t, plan_difference_item_text(&dialog.added[0]), edge_item)
 	testing.expect_value(t, dialog.removed_count, PLAN_DIFFERENCE_ITEM_CAPACITY)
-	testing.expect_value(t, plan_difference_item_text(&dialog.removed[7]), "h")
+	testing.expect_value(t, plan_difference_item_text(&dialog.removed[PLAN_DIFFERENCE_ITEM_CAPACITY - 1]), "item 63")
 	// A second difference while one shows is refused, and the first stays.
 	serial, refusal, _ = plan_difference_open(&dialog, "other", "x", "", 1200)
 	testing.expect_value(t, serial, 0)
@@ -146,8 +147,13 @@ plan_difference_grows_with_its_items_and_stays_in_the_room :: proc(t: ^testing.T
 	dialog.open = false
 	plan_difference_open(&dialog, "home", "a, b, c, d, e, f, g, h", "a, b, c, d, e, f, g, h", 0)
 	_, y, _, most := plan_difference_place(&dialog, 1280, 32, 768)
-	testing.expect_value(t, most - one, 7 * PLAN_DIFFERENCE_LINE + PLAN_DIFFERENCE_GAP + 9 * PLAN_DIFFERENCE_LINE)
-	// The most items fit the room of the windows of the reference screen.
+	// The view grows with the lines of the body, up to its visible lines.
+	testing.expect_value(t, most - one, (PLAN_DIFFERENCE_VISIBLE_LINES - 2) * PLAN_DIFFERENCE_LINE)
+	dialog.open = false
+	plan_difference_open(&dialog, "home", items_text(PLAN_DIFFERENCE_ITEM_CAPACITY), items_text(PLAN_DIFFERENCE_ITEM_CAPACITY), 0)
+	_, _, _, largest := plan_difference_place(&dialog, 1280, 32, 768)
+	testing.expect_value(t, largest, most)
+	// The view fits the room of the windows of the reference screen.
 	testing.expect(t, y >= 32 && y + most <= 768)
 	// A bar at the bottom: the room starts at 0.
 	_, bottom_y, _, _ := plan_difference_place(&dialog, 1280, 0, 736)
@@ -393,4 +399,80 @@ plan_difference_act_cancel_closes_the_dialog_of_its_asker_only :: proc(t: ^testi
 	testing.expect_value(t, dialog.decision, Plan_Difference_Decision.Refused)
 	closed, _ = plan_difference_act_cancel(&dialog, asker, i64(serial))
 	testing.expect(t, !closed)
+}
+
+// items_text gives a list of count distinct names that commas separate.
+@(private = "file")
+items_text :: proc(count: int) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	for index in 0 ..< count {
+		if index > 0 {
+			strings.write_string(&builder, ", ")
+		}
+		strings.write_string(&builder, "item ")
+		strings.write_int(&builder, index)
+	}
+	return strings.to_string(builder)
+}
+
+// A difference with more lines than the view: accept is no act until the
+// view reached the last line, whatever the time; the view stays inside the
+// body; each line of the body is a heading or an item, in order.
+@(test)
+plan_difference_accept_counts_only_after_the_last_line_showed :: proc(t: ^testing.T) {
+	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	dialog: Plan_Difference_Dialog
+	// A body of exactly the visible lines needs no scroll.
+	plan_difference_open(&dialog, "home", items_text(PLAN_DIFFERENCE_VISIBLE_LINES - 1), "", 0)
+	testing.expect(t, dialog.seen_through)
+	testing.expect(t, !plan_difference_scroll(&dialog, 1))
+	plan_difference_key(&dialog, .Escape, 0)
+
+	// One line more needs one line of scroll.
+	plan_difference_open(&dialog, "home", items_text(PLAN_DIFFERENCE_VISIBLE_LINES), "", 0)
+	testing.expect(t, !dialog.seen_through)
+	plan_difference_key(&dialog, .Next, 0)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, ARM), Plan_Difference_Decision.Pending)
+	testing.expect(t, dialog.open)
+	testing.expect_value(t, plan_difference_key(&dialog, .Line_Next, ARM), Plan_Difference_Decision.Pending)
+	testing.expect(t, dialog.seen_through)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, ARM), Plan_Difference_Decision.Accepted)
+
+	// The largest difference: 64 additions and 64 removals.
+	plan_difference_open(&dialog, "home", items_text(PLAN_DIFFERENCE_ITEM_CAPACITY), items_text(PLAN_DIFFERENCE_ITEM_CAPACITY), 1000)
+	body := plan_difference_body_lines(&dialog)
+	testing.expect_value(t, body, 2 + 2 * PLAN_DIFFERENCE_ITEM_CAPACITY)
+	testing.expect_value(t, plan_difference_visible_lines(&dialog), PLAN_DIFFERENCE_VISIBLE_LINES)
+	// The lines: the heading of the additions, the 64 items, the heading of
+	// the removals, its 64 items, then no line.
+	first, _ := plan_difference_line(&dialog, 0)
+	testing.expect(t, first.heading && first.added)
+	last_added, _ := plan_difference_line(&dialog, PLAN_DIFFERENCE_ITEM_CAPACITY)
+	testing.expect_value(t, plan_difference_item_text(last_added.item), "item 63")
+	removals, _ := plan_difference_line(&dialog, PLAN_DIFFERENCE_ITEM_CAPACITY + 1)
+	testing.expect(t, removals.heading && !removals.added)
+	last, last_ok := plan_difference_line(&dialog, body - 1)
+	testing.expect(t, last_ok && !last.added)
+	testing.expect_value(t, plan_difference_item_text(last.item), "item 63")
+	_, past := plan_difference_line(&dialog, body)
+	testing.expect(t, !past)
+
+	// The view never leaves the body: up from the top, down past the end.
+	testing.expect(t, !plan_difference_scroll(&dialog, -1))
+	testing.expect_value(t, dialog.first_line, 0)
+	plan_difference_key(&dialog, .Next, 1000)
+	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
+	// Each page short of the end: accept is no act.
+	for dialog.first_line + PLAN_DIFFERENCE_VISIBLE_LINES < body - (PLAN_DIFFERENCE_VISIBLE_LINES - 1) {
+		plan_difference_key(&dialog, .Page_Next, 1000)
+		testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + ARM), Plan_Difference_Decision.Pending)
+		testing.expect(t, dialog.open)
+	}
+	testing.expect(t, plan_difference_scroll(&dialog, max(int) / 2))
+	testing.expect_value(t, dialog.first_line, body - PLAN_DIFFERENCE_VISIBLE_LINES)
+	testing.expect(t, dialog.seen_through)
+	// Back up: what was seen stays seen.
+	plan_difference_key(&dialog, .Page_Previous, 1000)
+	testing.expect(t, dialog.seen_through)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + ARM), Plan_Difference_Decision.Accepted)
 }

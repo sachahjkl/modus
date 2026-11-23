@@ -165,7 +165,7 @@ Refused forms:
 
 ## Any count of entries
 
-The list of the panel draws only the visible viewport window (`first_visible ..< first_visible + LIST_ROWS`), so drawing cost per frame is O(`LIST_ROWS`) regardless of entry count. The provider protocol (`modus:contract/palette_table`, version 8) removes the fixed 256-entry cap:
+The list of the panel draws only the visible viewport window (`first_visible ..< first_visible + LIST_ROWS`), so drawing cost per frame is O(`LIST_ROWS`) regardless of entry count. The provider protocol (`modus:contract/palette_table`, since version 8) has no fixed cap of entries:
 
 - `Header` carries `entry_count` and `byte_length`, checked strictly at the border (`header_read` and `snapshot_take`): `byte_length` must equal `ENTRIES_OFFSET + entry_count * size_of(Entry)` without overflow and must fit within the mapped region. Truncated regions and malformed headers are refused with no state change.
 - `Snapshot` holds a caller-sized `entries: []Entry` slice instead of a fixed array. When a provider's entry count exceeds its current shared memory object, it allocates a memory object sized for the entries, writes the table, gives a read-only handle through the palette ring, and sends `Outcome.Table_Replaced`; the compositor proves the handle, checks the header, maps it read-only, and replaces the old mapping.
@@ -173,6 +173,17 @@ The list of the panel draws only the visible viewport window (`first_visible ..<
 - Viewport scroll offset clamping (`list_first_row`) clamps `first_row` to `0 ..= max(row_count - LIST_ROWS, 0)` across drawing, hit testing, and scrolling so top, middle, bottom, and past-end offsets always show a valid viewport.
 
 Refused: a larger fixed table, which moves the bound and costs its memory on each machine; pages of entries asked on a scroll, which make each scroll a request to the provider. Built.
+
+## The candidates of a field, by pages
+
+A parameter has any count of candidates: the modules of a large image, the processes of a busy machine, the members of a large enum. The candidate area of the table holds one page (`palette_table.CANDIDATE_CAPACITY`), and the list goes by pages (version 9 of the table):
+
+- **The request names a cursor and a search text.** `Candidates` carries the place in the list where the page starts; an `Argument` of the same tag before it carries the text of the field. The provider counts each name that the text matches (`line_editor.fuzzy_match`), writes the names of the page, and answers the count of the page, the count of the whole list that matches, and the cursor of the page.
+- **The panel checks the page against its list** (`palette_table.candidate_page_valid`): a page inside the list, no more names than the area holds, and a page that ends the list or is full. A page that fails gives no candidate.
+- **A page that holds the whole list** is narrowed by the panel itself, as each key types, with no request. **A page that does not** asks the provider again at each change of the text: the provider holds the whole list.
+- **A move of the choice past the edge of a page** asks for the page after, or the page before with its last candidate chosen when it comes. Tab waits for that page, as it waits for the first.
+
+Refused: a candidate area that grows with the list in the table of the provider, which moves the entries at each request; a search in the panel only, which never finds a name past the first page.
 
 ## The film
 

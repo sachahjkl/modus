@@ -31,12 +31,6 @@ MAX_TOTAL_PENDING_DIALOGS :: MAX_SESSIONS * MAX_PENDING_DIALOGS
 // Maximum distinct asking processes tracked for frequency and refusal bounds.
 MAX_ASKERS :: 32
 
-// Maximum registered session stores across all sessions.
-MAX_SESSION_STORES :: 32
-
-// Maximum active held grants tracked across all processes.
-MAX_HELD_GRANTS :: 128
-
 // Maximum powerbox-requested grants held concurrently by one process.
 MAX_REQUESTED_GRANTS_PER_PROCESS :: 32
 
@@ -172,24 +166,42 @@ Powerbox_Counters :: struct {
 	total_expired_dialogs:  u64,
 }
 
-// Complete fixed-capacity state of the powerbox policy engine.
+// The tables of the powerbox that grow with the principal: its stores and
+// the grants that processes hold. They are memory of the caller, which sizes
+// them from its budget (docs/PROPERTIES.md, "14. Memory is supplied by the
+// caller"); a full table is a refusal, a value.
+Powerbox_Tables :: struct {
+	stores:      []Session_Store,
+	held_grants: []Held_Grant,
+}
+
+// The state of the powerbox policy engine.
 Powerbox_State :: struct {
 	trusted_display_slot: u32,
 	next_dialog_serial:   u64,
 	next_handle_id:       u64,
 	picker_change_count:  u64,
-	stores:               [MAX_SESSION_STORES]Session_Store,
+	stores:               []Session_Store,
 	pending:              [MAX_TOTAL_PENDING_DIALOGS]Pending_Dialog,
 	askers:               [MAX_ASKERS]Asker_Record,
-	held_grants:          [MAX_HELD_GRANTS]Held_Grant,
+	held_grants:          []Held_Grant,
 	always_rows:          [MAX_ALWAYS_ROWS]Always_Grant_Row,
 	counters:             Powerbox_Counters,
 }
 
-// state_init resets a Powerbox_State and binds the trusted Display role holder
-// slot. Only answers originating from this slot can resolve dialogs.
-state_init :: proc "contextless" (state: ^Powerbox_State, trusted_display_slot: u32) {
+// state_init resets a Powerbox_State, binds its tables to memory of the
+// caller, and binds the trusted Display role holder slot. Only answers
+// originating from this slot can resolve dialogs.
+state_init :: proc "contextless" (state: ^Powerbox_State, trusted_display_slot: u32, tables: Powerbox_Tables) {
 	state^ = {}
+	for &store in tables.stores {
+		store = {}
+	}
+	for &grant in tables.held_grants {
+		grant = {}
+	}
+	state.stores = tables.stores
+	state.held_grants = tables.held_grants
 	state.trusted_display_slot = trusted_display_slot
 	state.next_dialog_serial = 1
 	state.next_handle_id = 1
@@ -779,18 +791,23 @@ submit_batch :: proc "contextless" (
 	}
 
 	if need_picker {
+		// The dialog carries the first page and the count of the whole
+		// list; the trusted display reads the other pages (picker_page_take).
 		dialog.picker_change_count = state.picker_change_count
 		cand_count: u32 = 0
+		total: u32 = 0
 		for &store in state.stores {
 			if !store.active || store.principal != batch.asker_principal {
 				continue
 			}
-			if cand_count >= powerbox.MAX_PICKER_CANDIDATES {
-				break
+			if cand_count < powerbox.PICKER_PAGE_CANDIDATES {
+				dialog.picker_candidates[cand_count] = store.candidate
+				dialog.picker_candidates[cand_count].list_index = total
+				cand_count += 1
 			}
-			dialog.picker_candidates[cand_count] = store.candidate
-			cand_count += 1
+			total += 1
 		}
+		dialog.picker_candidate_total = total
 		dialog.picker_candidate_count = cand_count
 	}
 
@@ -967,14 +984,32 @@ resolve_answer :: proc "contextless" (
 		return resolution
 	}
 
-	// Two-phase commit pre-check: ensure capacity for every granted item before
-	// minting any handle so a refusal never leaks partial grants.
+	// Two-phase commit pre-check: ensure capacity for every granted item, and
+	// find each store that a pick names in the whole list, before minting any
+	// handle so a refusal never leaks partial grants.
 	grants_needed := 0
+	picked_stores: [powerbox.MAX_REQUEST_ITEMS]u64
 	for index in u32(0) ..< answer.item_count {
 		dec, _ := powerbox.item_decision_from_word(answer.items[index].decision_word)
-		if dec == .Granted {
-			grants_needed += 1
+		if dec != .Granted {
+			continue
 		}
+		grants_needed += 1
+		kind, _ := powerbox.request_item_kind_from_word(entry.dialog.items[index].kind_word)
+		if kind != .Store_Share {
+			continue
+		}
+		// The list changed since the dialog: its places name other stores.
+		if state.picker_change_count != entry.dialog.picker_change_count {
+			resolution.refusal = .Picker_Selection_Invalid
+			return resolution
+		}
+		picked := principal_store_at(state, entry.dialog.session_principal, answer.items[index].picker_index)
+		if picked == nil || picked.candidate.name_hash != answer.items[index].picker_name_hash {
+			resolution.refusal = .Picker_Selection_Invalid
+			return resolution
+		}
+		picked_stores[index] = picked.candidate.store_id
 	}
 	if grants_needed > 0 {
 		existing_count := count_requested_grants_of_process(state, entry.dialog.asker_process_slot)
@@ -1036,8 +1071,7 @@ resolve_answer :: proc "contextless" (
 			case .Store_Share:
 				// Picker isolation: mint an attenuated handle for ONLY the
 				// single store chosen by the principal.
-				chosen := &entry.dialog.picker_candidates[item_ans.picker_index]
-				store_id = chosen.store_id
+				store_id = picked_stores[dialog_idx]
 				store_access, _ = powerbox.store_access_mode_from_word(req_item.store_access_word)
 			case .Service_Connection:
 			case .Plan_Difference:
@@ -1179,4 +1213,74 @@ active_grant_count :: proc "contextless" (state: ^Powerbox_State) -> u32 {
 		}
 	}
 	return count
+}
+
+// principal_store_at gives the store at a place of the list of a principal,
+// in the order of the table, or nil past its end.
+principal_store_at :: proc "contextless" (state: ^Powerbox_State, principal: u64, list_index: u32) -> ^Session_Store {
+	place: u32 = 0
+	for &store in state.stores {
+		if !store.active || store.principal != principal {
+			continue
+		}
+		if place == list_index {
+			return &store
+		}
+		place += 1
+	}
+	return nil
+}
+
+// picker_page_take writes one page of the candidates of a pending dialog
+// for the trusted display: the stores of the principal of the dialog from
+// the place request.first on, whose names hold the search text of the
+// request. Only the trusted display reads a page, and the asking process
+// never sees one. A list that changed since the dialog is refused: its
+// places name other stores, and the principal asks again.
+picker_page_take :: proc "contextless" (state: ^Powerbox_State, display_holder_slot: u32, request: ^powerbox.Picker_Page_Request, page: ^powerbox.Picker_Page) -> powerbox.Powerbox_Refusal {
+	page^ = {}
+	if state.trusted_display_slot == 0 || display_holder_slot != state.trusted_display_slot {
+		return .Untrusted_Answer
+	}
+	if refusal := powerbox.picker_page_request_validate(request); refusal != .None {
+		return refusal
+	}
+	entry: ^Pending_Dialog
+	for &candidate in state.pending {
+		if (candidate.state == .Queued || candidate.state == .Shown) && candidate.dialog.dialog_serial == request.dialog_serial {
+			entry = &candidate
+			break
+		}
+	}
+	if entry == nil || entry.dialog.picker_candidate_total == 0 {
+		return .Untrusted_Answer
+	}
+	if state.picker_change_count != entry.dialog.picker_change_count {
+		return .Picker_Selection_Invalid
+	}
+	query := request.query_bytes[:request.query_length]
+	page.dialog_serial = request.dialog_serial
+	page.change_count = entry.dialog.picker_change_count
+	page.first = min(request.first, entry.dialog.picker_candidate_total)
+	page.total = entry.dialog.picker_candidate_total
+	page.next = page.total
+	place: u32 = 0
+	for &store in state.stores {
+		if !store.active || store.principal != entry.dialog.session_principal {
+			continue
+		}
+		defer place += 1
+		if place < page.first || !powerbox.picker_name_matches(store.candidate.name_bytes[:store.candidate.name_length], query) {
+			continue
+		}
+		if page.candidate_count == powerbox.PICKER_PAGE_CANDIDATES {
+			page.next = place
+			page.more = true
+			break
+		}
+		page.candidates[page.candidate_count] = store.candidate
+		page.candidates[page.candidate_count].list_index = place
+		page.candidate_count += 1
+	}
+	return .None
 }
