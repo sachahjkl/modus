@@ -343,6 +343,7 @@ frames_on_the_shown_page: u64 // The frames written into the screen page that th
 frame: graphics.Canvas // The picture that the compositor builds, then copies to the screen.
 frame_memory_handle: system.Handle
 background: graphics.Canvas
+background_memory_handle: system.Handle
 background_appearance: graphics.Appearance // The appearance of the pixels of `background` and of the mark of the bar.
 clients: [CLIENT_CAPACITY]Client
 order: [CLIENT_CAPACITY]int // The clients that have a surface, from back to front. The last one has focus.
@@ -648,34 +649,45 @@ damage_bar :: proc "contextless" () {
 	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
 }
 
+// canvas_create_with_handle makes a picture of the size of the screen at
+// the start: with no memory for it, the compositor stops.
 canvas_create_with_handle :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, handle: system.Handle) {
+	made, memory, ok := canvas_try_create(width, height)
+	if !ok {
+		system.log_fact(.Info, No_Memory{})
+		system.stop(.Failed)
+	}
+	return made, memory
+}
+
+// canvas_try_create makes a picture in one memory object, in contiguous
+// pages when the kernel has them. ok is false with no memory: nothing is
+// kept.
+canvas_try_create :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, handle: system.Handle, ok: bool) {
 	pages := (u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory, status := system.memory_create(pages, 0, {.Contiguous})
 	if status != .Ok {
 		memory, status = system.memory_create(pages)
 	}
-	address: rawptr
-	if status == .Ok {
-		address, status = system.memory_map(memory)
-	}
 	if status != .Ok {
-		system.log_fact(.Info, No_Memory{})
-		system.stop(.Failed)
+		return {}, 0, false
 	}
-	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}, memory
+	address, map_status := system.memory_map(memory)
+	if map_status != .Ok {
+		system.close(memory)
+		return {}, 0, false
+	}
+	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}, memory, true
 }
 
-canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
-	memory, status := system.memory_create((u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-	address: rawptr
-	if status == .Ok {
-		address, status = system.memory_map(memory)
+// canvas_free unmaps and closes a picture of canvas_try_create.
+canvas_free :: proc "contextless" (canvas: graphics.Canvas, handle: system.Handle) {
+	if canvas.pixels != nil {
+		system.memory_unmap(canvas.pixels)
 	}
-	if status != .Ok {
-		system.log_fact(.Info, No_Memory{})
-		system.stop(.Failed)
+	if handle != 0 {
+		system.close(handle)
 	}
-	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
 }
 
 // screen_pages_open finds the second screen page: the memory of the
@@ -758,17 +770,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
 	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
 	// The same test as the root service makes before it starts this
-	// process: the two never disagree on a screen.
-	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
+	// process: the two never disagree on a screen. With no framebuffer and
+	// a size, the frame is a screen of memory (screen_of_memory.odin).
+	form := screen_presence.screen_form(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT])
+	if form == .None {
 		system.log_fact(.Info, No_Framebuffer{})
 		system.stop(.Failed)
 	}
+	screen_of_memory = form == .Memory
 	if input_status != .Ok || control_status != .Ok {
 		system.log_fact(.Info, No_Input_Or_Control_Ring{})
 		system.stop(.Failed)
 	}
-	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
-	screen_pages_open(ctx)
+	if screen_of_memory {
+		// No pixel of a device: the frame is the screen, and screen_put
+		// copies nothing.
+		screen = {width = width, height = height, stride = width}
+	} else {
+		screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
+		screen_pages_open(ctx)
+	}
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
 	// The frame and the background have the size of the screen, and the
 	// budget is counted at the reference screen: a firmware that kept a
@@ -783,8 +804,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	frame, frame_memory_handle = canvas_create_with_handle(width, height)
-	gpu_scanout_open(ctx, frame_memory_handle, width, height)
-	background = canvas_create(width, height)
+	if !screen_of_memory {
+		gpu_scanout_open(ctx, frame_memory_handle, width, height)
+	}
+	background, background_memory_handle = canvas_create_with_handle(width, height)
+	if screen_of_memory {
+		system.log_fact(.Info, Screen_Of_Memory_Started{width = u64(width), height = u64(height)})
+	}
 	// The layout at the default scale until the settings page is read
 	// below: a page that the root service created holds it. The first take
 	// sets up the features of the desktop at that logical screen.
@@ -1113,7 +1139,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					clipboard_answer_take(index, .Copy_Declined, record)
 				case .Paste_Taken:
 					clipboard_answer_take(index, .Paste_Taken, record)
-				case .Capture_Size_Ask, .Capture_Open, .Capture_Taken, .Capture_Close, .Capture_Viewers, .Remote_Key, .Remote_Pointer:
+				case .Capture_Size_Ask, .Capture_Open, .Capture_Taken, .Capture_Close, .Capture_Viewers, .Remote_Key, .Remote_Pointer, .Screen_Size_Set:
 					capture_command(index, command, record) // capture.odin
 				}
 			}
@@ -1804,6 +1830,10 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 // page that it showed owes the damage of this frame. A page that is not
 // known (the start, a refused flip) is copied whole.
 screen_put :: proc "contextless" (areas: []Rectangle) {
+	// A screen of memory is the frame: there is nothing to copy.
+	if screen_of_memory {
+		return
+	}
 	if screen_page_count < bochs_display.PAGE_COUNT {
 		for area in areas {
 			screen_copy(screen_pages[0], area)

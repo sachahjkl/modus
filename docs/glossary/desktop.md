@@ -240,6 +240,16 @@ The design: `src/md/features/remote_display.md`, "The service".
 
 Do not use: screen grab, framebuffer read.
 
+### Screen of memory
+
+The screen of memory is the frame of the compositor in its own memory, which is the screen of a machine with no screen of a device.
+
+The row `display` of a start list gives its size, and a viewer of the remote display with the input can ask another size, which the compositor takes or refuses with a cause. The machine parts page still says that the machine has no screen: no process reads the screen of memory as a display device, and the compositor names it in its line at its start. It is how a server shows its desktop through the remote display.
+
+The design: `src/md/features/screen_of_memory.md`.
+
+Do not use: virtual display, headless screen, dummy framebuffer.
+
 ### Mark of a viewer
 
 The mark of a viewer is the box of the bar that shows, while the capture face is open, the word viewer, the start of the key of each viewer, and which ones have the input.

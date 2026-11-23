@@ -477,3 +477,21 @@ a_machine_key_report_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) 
 		testing.expect_value(t, report.state, state)
 	}
 }
+
+// The word of a screen of memory: 0 is none; a side of 0, one past each
+// bound and the largest word are refused; the least and the largest size
+// read back.
+@(test)
+a_screen_of_memory_word_at_its_edges :: proc(t: ^testing.T) {
+	width, height, ok := screen_of_memory_of_word(0)
+	testing.expect(t, ok && width == 0 && height == 0)
+	refused := [?]u64{screen_of_memory_word(1920, 0), screen_of_memory_word(0, 1080), screen_of_memory_word(319, 240), screen_of_memory_word(320, 239), screen_of_memory_word(7681, 4320), screen_of_memory_word(7680, 4321), max(u64)}
+	for word in refused {
+		_, _, taken := screen_of_memory_of_word(word)
+		testing.expectf(t, !taken, "the word %x was taken", word)
+	}
+	for size in ([?][2]u32{{320, 240}, {1920, 1080}, {7680, 4320}}) {
+		width, height, ok = screen_of_memory_of_word(screen_of_memory_word(size[0], size[1]))
+		testing.expect(t, ok && width == size[0] && height == size[1])
+	}
+}

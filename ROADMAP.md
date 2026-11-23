@@ -51,7 +51,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
-- **A screen of memory for a machine with no screen.** The root service starts the compositor with no screen, and the compositor draws into a screen of memory of the size of its start row or of a viewer with the input, so a machine with no screen has a desktop that a remote viewer sees and uses. [Design](src/md/features/remote_display.md)
 - **The address of the network from the network.** The network service takes the prefix length of its interface as a field and checks it; DHCP, or the plan, then gives the address, the gateway and the prefix of a real network in place of the network of QEMU.
 
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)

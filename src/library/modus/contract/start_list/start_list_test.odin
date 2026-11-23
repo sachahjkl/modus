@@ -4,6 +4,7 @@ package start_list
 import "base:intrinsics"
 import "core:testing"
 import "modus:contract/errors"
+import "modus:contract/memory_screen"
 import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/output"
@@ -637,4 +638,72 @@ a_stop_takes_its_step :: proc(t: ^testing.T) {
 	step, _ = row_stop_step(&windowed, &timed, .None, clock_of_test)
 	testing.expect_value(t, step, Row_Stop_Step.Restarted)
 	testing.expect_value(t, clock_reads, 3)
+}
+
+// A list of a row display and a row console, with the size of a screen of
+// memory on the row display, and its bytes.
+@(private = "file")
+display_rows :: proc(width, height: u32) -> (rows: [2]Start_Row, bytes: []u8) {
+	display, display_made := row_make("display", {.Screen}, .Not_Started, .Not_Needed, 0, 0, width, height)
+	console, console_made := row_make("console", {.Screen}, .Not_Started, .Needed)
+	assert(display_made && console_made)
+	rows = {display, console}
+	bytes = make([]u8, list_size(2), context.temp_allocator)
+	_, written := list_write(rows[:], nil, bytes)
+	assert(written)
+	return
+}
+
+// The size of a screen of memory at its edges: one side 0, one past each
+// bound, the largest word, on the row display; any size on another row.
+// Then 0 x 0, the least and the largest size, which the border takes.
+@(test)
+a_screen_of_memory_past_its_bounds_is_refused :: proc(t: ^testing.T) {
+	_, bytes := display_rows(1920, 1080)
+	refused_sizes := [?]proc(record: ^Row_Record) {
+		proc(record: ^Row_Record) {record.screen_of_memory_width = 0},
+		proc(record: ^Row_Record) {record.screen_of_memory_height = 0},
+		proc(record: ^Row_Record) {record.screen_of_memory_width = memory_screen.MIN_WIDTH - 1},
+		proc(record: ^Row_Record) {record.screen_of_memory_height = memory_screen.MIN_HEIGHT - 1},
+		proc(record: ^Row_Record) {record.screen_of_memory_width = memory_screen.MAX_WIDTH + 1},
+		proc(record: ^Row_Record) {record.screen_of_memory_height = memory_screen.MAX_HEIGHT + 1},
+		proc(record: ^Row_Record) {record.screen_of_memory_width = max(u32)},
+	}
+	for change in refused_sizes {
+		expect_refused(t, record_change(bytes, 0, change), .Screen_Size_Refused, 0)
+	}
+	expect_refused(t, record_change(bytes, 1, proc(record: ^Row_Record) {record.screen_of_memory_width, record.screen_of_memory_height = 1920, 1080}), .Screen_Size_Not_Display, 1)
+	expect_refused(t, record_change(bytes, 1, proc(record: ^Row_Record) {record.screen_of_memory_height = 1}), .Screen_Size_Not_Display, 1)
+	for size in ([?][2]u32{{0, 0}, {memory_screen.MIN_WIDTH, memory_screen.MIN_HEIGHT}, {memory_screen.MAX_WIDTH, memory_screen.MAX_HEIGHT}}) {
+		_, sized := display_rows(size[0], size[1])
+		list: List
+		problem, _, _ := list_read(sized, &list)
+		testing.expectf(t, problem == .None, "%v was refused: %v", size, problem)
+		width, height := screen_of_memory_of_list(&list)
+		testing.expect(t, width == size[0] && height == size[1])
+	}
+}
+
+// The rows see a screen on a machine with no screen only when the row
+// display gives a size; the start of the row display carries the size only
+// then. A machine with a screen keeps its parts, and its start carries no
+// size.
+@(test)
+a_screen_of_memory_gives_the_rows_a_screen :: proc(t: ^testing.T) {
+	_, sized := display_rows(1920, 1080)
+	list: List
+	problem, _, _ := list_read(sized, &list)
+	testing.expect(t, problem == .None)
+	testing.expect_value(t, parts_for_rows(&list, {.Screen}), Machine_Parts{.Screen})
+	width, height := row_screen_of_memory(&list, &list.rows[0])
+	testing.expect(t, width == 0 && height == 0, "a machine with a screen got a screen of memory")
+	testing.expect_value(t, parts_for_rows(&list, {.Network_Device}), Machine_Parts{.Network_Device, .Screen})
+	width, height = row_screen_of_memory(&list, &list.rows[0])
+	testing.expect(t, width == 1920 && height == 1080)
+	width, height = row_screen_of_memory(&list, &list.rows[1])
+	testing.expect(t, width == 0 && height == 0, "the row console carries a size")
+	_, unsized := display_rows(0, 0)
+	problem, _, _ = list_read(unsized, &list)
+	testing.expect(t, problem == .None)
+	testing.expect_value(t, parts_for_rows(&list, {}), Machine_Parts{})
 }

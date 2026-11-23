@@ -486,7 +486,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 // lends it as the reader of a later wiring row.
 // written: the procedure wrote the error record of its refusal, and the
 // dispatch must not write over it.
-start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool, held: ^bool) -> system.Status {
+start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool, held: ^bool, screen_of_memory: [2]u32 = {}) -> system.Status {
 	// The checks before any start (start_policy_rules.start_step, with its
 	// host tests): a list for a part of the system, whose procedure takes
 	// none; a start policy, a name that runs, and a process of a test
@@ -525,7 +525,7 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	case .Input:
 		status = input_start()
 	case .Display:
-		status = display_holder_start()
+		status = display_holder_start(screen_of_memory)
 	case .Shortage:
 		status = shortage_start()
 	case .Operation_Fuzzing:

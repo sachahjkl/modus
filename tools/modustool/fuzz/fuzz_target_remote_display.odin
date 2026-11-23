@@ -1,6 +1,7 @@
 package fuzz
 
 import "core:slice"
+import "modus:contract/memory_screen"
 import protocol "modus:contract/remote_display"
 
 // The fuzz target of the remote display (src/md/infrastructure/fuzzing.md,
@@ -86,8 +87,11 @@ fuzz_remote_display_viewer_check :: proc(header: protocol.Record_Header, body: [
 	}
 	same := false
 	switch record.kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp, .Screen_Size_Refused:
 		return fuzz_broken(.Contract, "viewer_record_check takes the kind %v", record.kind)
+	case .Screen_Size_Ask:
+		ask := record.screen_size_ask
+		same = fuzz_remote_display_rewrite(record.kind, ask, body) && memory_screen.size_in_bounds(u64(ask.width), u64(ask.height))
 	case .Session_Start:
 		same = fuzz_remote_display_rewrite(record.kind, record.session_start, body) && record.session_start.version == protocol.PROTOCOL_VERSION
 	case .Viewer_Frame_Taken:
@@ -119,8 +123,13 @@ fuzz_remote_display_service_check :: proc(header: protocol.Record_Header, body: 
 		return FUZZ_PASSED
 	}
 	switch record.kind {
-	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
+	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start, .Screen_Size_Ask:
 		return fuzz_broken(.Contract, "service_record_check takes the kind %v", record.kind)
+	case .Screen_Size_Refused:
+		refused := record.screen_size_refused
+		if protocol.screen_problem({refused.width, refused.height}) != .None || record.refusal == .None || u32(record.refusal) != refused.refusal || refused.reserved != 0 || !fuzz_remote_display_rewrite(record.kind, refused, body) {
+			return fuzz_broken(.Round_Trip, "service_record_check takes a bad Screen_Size_Refused: %v", refused)
+		}
 	case .Screen_Size:
 		if protocol.screen_problem({record.screen_size.width, record.screen_size.height}) != .None || !fuzz_remote_display_rewrite(record.kind, record.screen_size, body) {
 			return fuzz_broken(.Round_Trip, "service_record_check takes the screen %v", record.screen_size)
@@ -199,6 +208,10 @@ fuzz_remote_display_seeds :: proc(seeds: ^[dynamic][]u8) {
 	bytes, _ = protocol.record_write(out[:], .Screen_Piece_Request, protocol.Screen_Piece_Request_Body{x = 10, y = 20, width = 30, height = 40})
 	add(&seed, bytes, true)
 	bytes, _ = protocol.record_write(out[:], .Screen_Size, protocol.Screen_Size_Body{1280, 800})
+	add(&seed, bytes, false)
+	bytes, _ = protocol.record_write(out[:], .Screen_Size_Ask, protocol.Screen_Size_Body{2560, 1440})
+	add(&seed, bytes, true)
+	bytes, _ = protocol.record_write(out[:], .Screen_Size_Refused, protocol.Screen_Size_Refused_Body{width = 2560, height = 1440, refusal = u32(memory_screen.Resize_Refusal.Device_Screen)})
 	add(&seed, bytes, false)
 	bytes, _ = protocol.record_write(out[:], .Pointer_Shape, protocol.Pointer_Shape_Body{shape = 1, form = 0, size = 24, hot_spot_x = 11, hot_spot_y = 11})
 	add(&seed, bytes, false)

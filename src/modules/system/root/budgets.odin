@@ -48,12 +48,16 @@ budgets_start :: proc "contextless" () {
 }
 
 // screen_in_force gives the size of the screen of this machine: the screen
-// of the firmware, or with none, the screen of memory that the compositor
-// draws into, whose size is the reference screen until a viewer asks for
-// another one (src/md/features/remote_display.md, "The screen of memory").
+// of the firmware, or with none, the size of the screen of memory at the
+// start of the compositor, else the reference screen. A size that a viewer
+// asks later is paid from the pages that each budget has left
+// (src/md/features/screen_of_memory.md).
 screen_in_force :: proc "contextless" () -> (width, height: u64) {
 	if root_screen_values[0] != 0 && root_screen_values[1] != 0 {
 		return root_screen_values[0], root_screen_values[1]
+	}
+	if screen_of_memory_size[0] != 0 && screen_of_memory_size[1] != 0 {
+		return u64(screen_of_memory_size[0]), u64(screen_of_memory_size[1])
 	}
 	return reference_screen.WIDTH, reference_screen.HEIGHT
 }

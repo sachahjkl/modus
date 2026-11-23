@@ -262,3 +262,59 @@ memory_screen_takes_screens_up_to_8k_within_its_byte_budget :: proc(t: ^testing.
 	_, tall := geometry_validate(1920, MAX_HEIGHT + 1, 1920 * BYTES_PER_PIXEL, max(u64))
 	testing.expect_value(t, tall, Validation_Error.Above_Maximum)
 }
+
+// The border of a cause refuses None and each word past the members, and
+// takes each member.
+@(test)
+resize_refusal_words_at_their_edges :: proc(t: ^testing.T) {
+	for word in ([?]u64{0, 5, 6, u64(max(u32)), max(u64)}) {
+		_, ok := resize_refusal_of_word(word)
+		testing.expectf(t, !ok, "the word %d was taken as a cause", word)
+	}
+	for member in Resize_Refusal {
+		if member == .None {
+			continue
+		}
+		refusal, ok := resize_refusal_of_word(u64(member))
+		testing.expect(t, ok && refusal == member)
+		testing.expect(t, RESIZE_REFUSAL_SENTENCES[member] != "")
+	}
+}
+
+// The decision of the compositor: a screen of a device first, then each
+// side at its bounds, then the size in force, then the budget at its
+// edge; a size that fits comes last.
+@(test)
+resize_decide_refuses_at_each_edge :: proc(t: ^testing.T) {
+	refusal, same := resize_decide(false, 1920, 1080, 1920, 1080, max(u64))
+	testing.expect(t, refusal == .Device_Screen && !same)
+	sizes_out := [?][2]u64{{0, 1080}, {1920, 0}, {MIN_WIDTH - 1, 1080}, {1920, MIN_HEIGHT - 1}, {MAX_WIDTH + 1, 1080}, {1920, MAX_HEIGHT + 1}, {max(u64), max(u64)}}
+	for size in sizes_out {
+		refusal, same = resize_decide(true, size[0], size[1], 1920, 1080, max(u64))
+		testing.expectf(t, refusal == .Outside_Bounds && !same, "%v gave %v", size, refusal)
+	}
+	refusal, same = resize_decide(true, 1920, 1080, 1920, 1080, 0)
+	testing.expect(t, refusal == .None && same, "the size in force is no change, whatever the budget")
+	needed := COMPOSITOR_PICTURES * picture_pages(2560, 1440)
+	testing.expect_value(t, needed, 7200)
+	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, needed - 1)
+	testing.expect(t, refusal == .Compositor_Budget && !same)
+	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, needed)
+	testing.expect(t, refusal == .None && !same)
+	for size in ([?][2]u64{{MIN_WIDTH, MIN_HEIGHT}, {MAX_WIDTH, MAX_HEIGHT}}) {
+		refusal, same = resize_decide(true, size[0], size[1], 1920, 1080, max(u64))
+		testing.expect(t, refusal == .None && !same)
+	}
+}
+
+// The decision of the service: the bounds, then its pages at the edge,
+// with a sum that would wrap.
+@(test)
+service_resize_decide_refuses_at_each_edge :: proc(t: ^testing.T) {
+	testing.expect_value(t, service_resize_decide(MAX_WIDTH + 1, 1080, 1, 0, max(u64)), Resize_Refusal.Outside_Bounds)
+	testing.expect_value(t, service_resize_decide(2560, 1440, 1000, 400, 599), Resize_Refusal.Service_Budget)
+	testing.expect_value(t, service_resize_decide(2560, 1440, 1000, max(u64), max(u64)), Resize_Refusal.Service_Budget)
+	testing.expect_value(t, service_resize_decide(2560, 1440, 1000, 400, 600), Resize_Refusal.None)
+	testing.expect_value(t, picture_pages(MAX_WIDTH + 1, 1080), 0)
+	testing.expect_value(t, picture_pages(1920, 1080), 2025)
+}

@@ -3,6 +3,7 @@ package build
 import debug_object "modus:contract/debug_object"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
+import "modus:contract/memory_screen"
 import module "modus:contract/module"
 import "modus:contract/storage_status"
 import op "modus:contract/operation"
@@ -393,6 +394,11 @@ the_late_facts_of_the_device_services_write_the_lines_of_before :: proc(t: ^test
 	for count in counts {
 		other := max(u64) - count
 		facts_expect_line(t, fact_test_render(t, tpm, "tpm_device_service", "Count_Limits", {{"lockout_failures", count}, {"forgive_interval_seconds", other}, {"counted_failures", count}, {"lockout_recovery_seconds", other}}), line_of_before("tpm: the count limits of the TPM: a lockout after ", count, " wrong authorization values, one forgiven each ", other, " seconds; ", count, " counted now; the lockout hierarchy waits ", other, " seconds after a wrong value of its own"))
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Changed", {{"width", count}, {"height", other}, {"viewers", count}}), line_of_before("remote_display: the screen is now ", count, " x ", other, ": ", count, " viewers receive its size and the whole screen"))
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Size_Refusal_Refused", {{"width", count}, {"height", other}, {"refusal_word", count}}), line_of_before("remote_display: refused an answer of the compositor: a refusal of ", count, " x ", other, " with the word ", count, ", which no ask in flight names or which names no cause"))
+		for cause in memory_screen.RESIZE_REFUSAL_SENTENCES {
+			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Size_Ask_Refused", {{"width", count}, {"height", other}, {"viewer_key_head", "0123456789abcdef"}, {"resize_refusal", cause}}), line_of_before("remote_display: refused the screen of ", count, " x ", other, " that the viewer 0123456789abcdef asked: ", cause))
+		}
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Past_Largest", {{"width", count}, {"height", other}}), line_of_before("remote_display: the screen of ", count, "x", other, " is past the largest screen of the protocol, 7680x4320: no capture face"))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Face_Opened", {{"width", count}, {"height", other}}), line_of_before("remote_display: the capture face is open: a copy of ", count, "x", other))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Viewers_Ended_With_No_Screen", {{"viewers", count}}), line_of_before("remote_display: ended ", count, " viewers with the code Screen_Not_Held: the capture face of the screen in force was refused"))

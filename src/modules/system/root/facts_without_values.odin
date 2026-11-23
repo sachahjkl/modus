@@ -38,7 +38,7 @@ Entropy_Service_Stopped :: struct {}
 @(log_fact = "root: the boot display shows the failure")
 Failure_Shown :: struct {}
 
-@(log_fact = "root: no screen: no console, no window; the other services start")
+@(log_fact = "root: no screen: a console and windows only on a screen of memory that the start list gives; the other services start")
 No_Screen :: struct {}
 
 @(log_fact = "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on")

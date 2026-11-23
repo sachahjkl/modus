@@ -36,6 +36,9 @@ ERROR_CODE_FIELD_BYTES :: 24
 // The bytes of the Text field of the step that a viewer did not do in its
 // bound: the longest sentence of VIEWER_BOUND_SENTENCES has 59 bytes.
 MISSED_STEP_FIELD_BYTES :: 64
+// The bytes of the Text field of the cause of a refused size: the longest
+// sentence of memory_screen.RESIZE_REFUSAL_SENTENCES has 79 bytes.
+RESIZE_REFUSAL_FIELD_BYTES :: 88
 
 // The handshake refused a viewer key.
 @(log_fact = "remote_display: refused the viewer key {viewer_key}: no principal allowed it for the view, or the session of its principal is locked; the handshake ends before any viewer frame")
@@ -199,6 +202,35 @@ Capture_Memory_Refused :: struct {
 // the code Screen_Not_Held, so it does not wait with no screen.
 @(log_fact = "remote_display: ended {viewers} viewers with the code Screen_Not_Held: the capture face of the screen in force was refused")
 Viewers_Ended_With_No_Screen :: struct {
+	viewers: u64,
+}
+
+// The size that a viewer asked was refused: by the budget of this process,
+// or by the compositor. The viewer gets the record Screen_Size_Refused and
+// keeps its session.
+@(log_fact = "remote_display: refused the screen of {width} x {height} that the viewer {viewer_key_head} asked: {resize_refusal}")
+Screen_Size_Ask_Refused :: struct {
+	width:           u64,
+	height:          u64,
+	viewer_key_head: [24]u8,
+	resize_refusal:  [88]u8,
+}
+
+// The compositor gave a refusal of a size that no ask in flight named, or
+// a cause that names no member: the event changes nothing.
+@(log_fact = "remote_display: refused an answer of the compositor: a refusal of {width} x {height} with the word {refusal_word}, which no ask in flight names or which names no cause")
+Capture_Size_Refusal_Refused :: struct {
+	width:        u64,
+	height:       u64,
+	refusal_word: u64,
+}
+
+// The screen of memory changed size: each viewer receives the new size
+// and the whole screen.
+@(log_fact = "remote_display: the screen is now {width} x {height}: {viewers} viewers receive its size and the whole screen")
+Screen_Changed :: struct {
+	width:   u64,
+	height:  u64,
 	viewers: u64,
 }
 

@@ -855,6 +855,30 @@ One_Screen_Page :: struct {}
 @(log_fact = "compositor: no framebuffer")
 No_Framebuffer :: struct {}
 
+// The context gives no framebuffer and the size of a screen of memory: the
+// frame is the screen (src/md/features/screen_of_memory.md).
+@(log_fact = "compositor: no screen: a screen of memory of {width} x {height}")
+Screen_Of_Memory_Started :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// A viewer asked a size of the screen of memory, and the compositor took it.
+@(log_fact = "compositor: the screen of memory is now {width} x {height}, which a viewer asked: {windows} windows fit it again")
+Screen_Of_Memory_Resized :: struct {
+	width:   u64,
+	height:  u64,
+	windows: u64,
+}
+
+// A viewer asked a size of the screen, and the compositor refused it.
+@(log_fact = "compositor: refused a screen of {width} x {height} that a viewer asked: {resize_refusal}")
+Screen_Of_Memory_Refused :: struct {
+	width:          u64,
+	height:         u64,
+	resize_refusal: [88]u8,
+}
+
 // The context gives no input ring or no control ring.
 @(log_fact = "compositor: no input ring or no control ring")
 No_Input_Or_Control_Ring :: struct {}

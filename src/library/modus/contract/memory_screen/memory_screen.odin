@@ -419,3 +419,91 @@ screen_apply_resize :: proc "contextless" (
 	_, _ = screen_commit_resize(screen)
 	return .None
 }
+
+// Why a size of the screen of memory that a viewer asked was refused
+// (src/md/features/screen_of_memory.md). The words cross the ring of the
+// capture face and the protocol of the remote display: a word that names
+// no member is refused at each border (resize_refusal_of_word).
+Resize_Refusal :: enum u32 {
+	None              = 0, // Not a refusal: refused at a border.
+	Device_Screen     = 1, // The machine has a screen of a device, whose size the system does not set.
+	Outside_Bounds    = 2, // The size is outside MIN_WIDTH x MIN_HEIGHT to MAX_WIDTH x MAX_HEIGHT.
+	Compositor_Budget = 3, // The pages left in the budget of the compositor do not pay a new frame and a new background.
+	Service_Budget    = 4, // The pages left in the budget of the service of the remote display do not pay its copies.
+}
+
+// The words of each cause in a line of the log.
+@(rodata)
+RESIZE_REFUSAL_SENTENCES := [Resize_Refusal]string {
+	.None              = "no cause",
+	.Device_Screen     = "the machine has a screen of a device, whose size the system does not set",
+	.Outside_Bounds    = "the size is outside 320 x 240 to 7680 x 4320",
+	.Compositor_Budget = "the budget of the compositor does not pay a frame and a background of that size",
+	.Service_Budget    = "the budget of remote_display does not pay its copies of that size",
+}
+
+// resize_refusal_of_word is the border of a word of Resize_Refusal: a word
+// that names no member, or None, is refused.
+resize_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: Resize_Refusal, ok: bool) {
+	member := enum_word.member_of_word(Resize_Refusal, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// size_in_bounds says if a width and a height are a size of a screen of
+// memory: each side inside its bounds.
+size_in_bounds :: proc "contextless" (width, height: u64) -> bool {
+	return width >= MIN_WIDTH && width <= MAX_WIDTH && height >= MIN_HEIGHT && height <= MAX_HEIGHT
+}
+
+// picture_pages gives the pages of one picture of a screen, 4 bytes a
+// pixel, the last page whole. A size past the bounds gives 0.
+picture_pages :: proc "contextless" (width, height: u64) -> u64 {
+	if !size_in_bounds(width, height) {
+		return 0
+	}
+	return (width * height * BYTES_PER_PIXEL + PAGE_SIZE - 1) / PAGE_SIZE
+}
+
+// The pictures of the compositor that a size of the screen pays: the frame,
+// which is the screen of memory, and the background.
+COMPOSITOR_PICTURES :: 2
+
+// resize_decide decides a size that a viewer asked, in the compositor:
+// memory says if its screen is a screen of memory, current is the size in
+// force, and pages_left the pages that its budget has left. The new frame
+// and the new background are made before the old ones are freed, so the
+// pages left pay both. same: the size is the size in force, and nothing
+// changes.
+//
+// Example: a screen of memory of 1920 x 1080 with 10 000 pages left takes
+// 2560 x 1440 (2 x 3600 pages); with 7199 left it refuses Compositor_Budget.
+resize_decide :: proc "contextless" (memory: bool, width, height: u64, current_width, current_height: u32, pages_left: u64) -> (refusal: Resize_Refusal, same: bool) {
+	switch {
+	case !memory:
+		return .Device_Screen, false
+	case !size_in_bounds(width, height):
+		return .Outside_Bounds, false
+	case width == u64(current_width) && height == u64(current_height):
+		return .None, true
+	case pages_left < COMPOSITOR_PICTURES * picture_pages(width, height):
+		return .Compositor_Budget, false
+	}
+	return .None, false
+}
+
+// service_resize_decide decides a size in the service of the remote
+// display, before it asks the compositor: it frees its copies of today
+// before it makes the new ones, so the pages left and the pages that it
+// holds pay the pages that it needs.
+service_resize_decide :: proc "contextless" (width, height: u64, pages_needed, pages_held, pages_left: u64) -> Resize_Refusal {
+	switch {
+	case !size_in_bounds(width, height):
+		return .Outside_Bounds
+	case pages_held > max(u64) - pages_left || pages_left + pages_held < pages_needed:
+		return .Service_Budget
+	}
+	return .None
+}

@@ -19,6 +19,7 @@ package root_ring
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
+import "modus:contract/memory_screen"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
 
@@ -57,7 +58,9 @@ Root_Command :: enum u32 {
 	// values[5]: a Start_Answer. With Process_Handle, values[0] of
 	// the completion is a handle of the process with the right Read, which
 	// a Wire names; values[1..6] are the rings of the rows whose reader is
-	// the sender, in the order of the rows. values[6] is 0.
+	// the sender, in the order of the rows. values[6] is 0, or, from a start
+	// policy for the holder of Display on a machine with no screen, the size
+	// of a screen of memory (screen_of_memory_word).
 	Start      = 1,
 	// Stop the process with this name. The compositor and the terminal are
 	// refused with `Reserved`; a name that runs no process with `Absent`.
@@ -549,6 +552,28 @@ Start_Answer :: enum u64 {
 // start_answer_of_word is the border of values[5] of a Start.
 start_answer_of_word :: proc "contextless" (word: u64) -> (answer: Start_Answer, ok: bool) {
 	return enum_word.member_of_word(Start_Answer, word)
+}
+
+// screen_of_memory_word gives values[6] of the Start of the holder of
+// Display on a machine with no screen: the width in the low 32 bits and the
+// height in the high 32 bits (src/md/features/screen_of_memory.md). 0: no
+// screen of memory.
+screen_of_memory_word :: proc "contextless" (width, height: u32) -> u64 {
+	return u64(width) | u64(height) << 32
+}
+
+// screen_of_memory_of_word is the border of values[6] of a Start: 0 is no
+// screen of memory, and any other word is a size inside the bounds of the
+// contract memory_screen, or refused.
+screen_of_memory_of_word :: proc "contextless" (word: u64) -> (width, height: u32, ok: bool) {
+	if word == 0 {
+		return 0, 0, true
+	}
+	width, height = u32(word), u32(word >> 32)
+	if !memory_screen.size_in_bounds(u64(width), u64(height)) {
+		return 0, 0, false
+	}
+	return width, height, true
 }
 
 // The enumerations below are words of the root ring: each value is the

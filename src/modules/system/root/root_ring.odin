@@ -26,6 +26,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
+import "modus:contract/start_list"
 import "internal:root/start_policy_rules"
 import "modus:principals"
 import "modus:system"
@@ -236,13 +237,18 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 	command := root_ring.Root_Command.Start
 	list, list_ok := root_ring.start_wiring_list_of_word(record.values[4])
 	answer, answer_ok := root_ring.start_answer_of_word(record.values[5])
+	// The size of a screen of memory: only from a start policy, only for
+	// the holder of Display, and only on a machine with no screen
+	// (src/md/features/screen_of_memory.md).
+	memory_width, memory_height, memory_ok := root_ring.screen_of_memory_of_word(record.values[6])
+	memory_allowed := .Start_Policy in item.start_grant_set.grants && start_list.root_procedure_of(name) == .Display && no_screen_at_the_start
 	refusal: [7]u64
 	switch {
 	case !list_ok:
 		refusal = root_ring.word_refusal(command, 2, record.values[4], u64(max(root_ring.Start_Wiring_List)))
 	case !answer_ok:
 		refusal = root_ring.word_refusal(command, 3, record.values[5], u64(max(root_ring.Start_Answer)))
-	case record.values[6] != 0:
+	case !memory_ok || record.values[6] != 0 && !memory_allowed:
 		refusal = root_ring.word_refusal(command, 4, record.values[6], 0)
 	}
 	if refusal != ([7]u64{}) {
@@ -253,7 +259,7 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		return .Bad_Operation
 	}
 	if .Start_Policy in item.start_grant_set.grants {
-		return start_policy_start(item, record.tag, name, list, values, written, held)
+		return start_policy_start(item, record.tag, name, list, values, written, held, {memory_width, memory_height})
 	}
 	// A process that a process starts belongs to the session of the
 	// process that asks, and the asker of its start is that process.

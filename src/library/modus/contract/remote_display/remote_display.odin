@@ -27,6 +27,7 @@ package remote_display
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
+import "modus:contract/memory_screen"
 import "modus:contract/pointer_pictures"
 
 // The UDP port of the listen grant of the service, on the address of the
@@ -106,6 +107,7 @@ Record_Kind :: enum u32 {
 	Pointer_Shape        = 6, // Pointer_Shape_Body: pointer shape, form, size, and hot spot.
 	Pointer_Picture      = 7, // Pointer_Picture_Header, then size * size * 4 RGBA pixels.
 	Pointer_Warp         = 8, // Pointer_Warp_Body: machine-initiated pointer move and input echo count.
+	Screen_Size_Refused  = 9, // Screen_Size_Refused_Body: the size that a Screen_Size_Ask named, and the cause of its refusal.
 	Viewer_Frame_Taken   = 16, // Viewer_Frame_Taken_Body.
 	Screen_Piece_Request = 17, // Screen_Piece_Request_Body.
 	Key                  = 18, // Key_Body.
@@ -114,11 +116,16 @@ Record_Kind :: enum u32 {
 	// stream. The service writes nothing before it, and refuses it a
 	// second time.
 	Session_Start        = 20,
+	// Screen_Size_Body: a size of the screen of memory that a viewer with the
+	// input asks (src/md/features/screen_of_memory.md). The service answers
+	// with Screen_Size_Refused, or with a Screen_Size of that size between
+	// two viewer frames.
+	Screen_Size_Ask      = 21,
 }
 
 // The version of the protocol that Session_Start names. A viewer of
 // another version is refused.
-PROTOCOL_VERSION :: 2
+PROTOCOL_VERSION :: 3
 
 // The allowed pixel side of a pointer picture in protocol version 2.
 POINTER_SIZE_MINIMUM :: 24
@@ -147,6 +154,16 @@ Screen_Size_Body :: struct {
 	width:  u32,
 	height: u32,
 }
+
+// The refusal of a Screen_Size_Ask: the size that it named, the cause, a
+// reserved word. The viewer keeps its session.
+Screen_Size_Refused_Body :: struct {
+	width:    u32,
+	height:   u32,
+	refusal:  u32, // memory_screen.Resize_Refusal, not None.
+	reserved: u32, // 0.
+}
+#assert(size_of(Screen_Size_Refused_Body) == 16)
 
 Viewer_Frame_Start_Body :: struct {
 	serial:             u64, // One more for each viewer frame of the session, from 1.
@@ -275,11 +292,13 @@ BODY_SIZES := #sparse[Record_Kind]u32 {
 	.Pointer_Shape        = size_of(Pointer_Shape_Body),
 	.Pointer_Picture      = size_of(Pointer_Picture_Header),
 	.Pointer_Warp         = size_of(Pointer_Warp_Body),
+	.Screen_Size_Refused  = size_of(Screen_Size_Refused_Body),
 	.Viewer_Frame_Taken   = size_of(Viewer_Frame_Taken_Body),
 	.Screen_Piece_Request = size_of(Screen_Piece_Request_Body),
 	.Key                  = size_of(Key_Body),
 	.Pointer              = size_of(Pointer_Body),
 	.Session_Start        = size_of(Session_Start_Body),
+	.Screen_Size_Ask      = size_of(Screen_Size_Body),
 }
 
 // The bound of the length of a record of each direction. A record of the
@@ -418,9 +437,9 @@ record_length_problem :: proc "contextless" (header: Record_Header, direction: D
 // kind_direction gives the direction of a kind.
 kind_direction :: proc "contextless" (kind: Record_Kind) -> Direction {
 	switch kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp, .Screen_Size_Refused:
 		return .To_Viewer
-	case .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
+	case .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start, .Screen_Size_Ask:
 		return .To_Service
 	}
 	return .To_Viewer
@@ -435,6 +454,7 @@ Viewer_Record :: struct {
 	screen_piece_request: Screen_Piece_Request_Body,
 	key:          Key_Body,
 	pointer:      Pointer_Body,
+	screen_size_ask: Screen_Size_Body,
 }
 
 // viewer_record_check is the border of a whole record from the viewer: the
@@ -449,9 +469,17 @@ viewer_record_check :: proc "contextless" (header: Record_Header, body: []u8, sc
 	}
 	record.kind = header.kind
 	switch header.kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp, .Screen_Size_Refused:
 		// record_length_problem took only a kind of this direction.
 		return {}, .Wrong_Direction
+	case .Screen_Size_Ask:
+		// A size of a screen of memory: each side inside the bounds of
+		// memory_screen, whatever the screen of the session.
+		ask := body_read(body, Screen_Size_Body)
+		if !memory_screen.size_in_bounds(u64(ask.width), u64(ask.height)) {
+			return {}, .Outside_Screen
+		}
+		record.screen_size_ask = ask
 	case .Session_Start:
 		start := body_read(body, Session_Start_Body)
 		if start.version != PROTOCOL_VERSION || start.reserved != 0 {
@@ -503,6 +531,8 @@ Service_Record :: struct {
 	pointer_form_member:  pointer_pictures.Pointer_Form,
 	pointer_pixels:       []u8, // A Pointer_Picture: its size * size * 4 pixel bytes, in the body that the caller gave.
 	pointer_warp:         Pointer_Warp_Body,
+	screen_size_refused:  Screen_Size_Refused_Body,
+	refusal:              memory_screen.Resize_Refusal, // A Screen_Size_Refused: its cause, a member.
 }
 
 // pointer_shape_fields_check validates the closed shape and form members,
@@ -535,9 +565,20 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 	}
 	record.kind = header.kind
 	switch header.kind {
-	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
+	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start, .Screen_Size_Ask:
 		// record_length_problem took only a kind of this direction.
 		return {}, .Wrong_Direction
+	case .Screen_Size_Refused:
+		refused := body_read(body, Screen_Size_Refused_Body)
+		if problem = screen_problem({refused.width, refused.height}); problem != .None {
+			return {}, problem
+		}
+		refusal, refusal_ok := memory_screen.resize_refusal_of_word(u64(refused.refusal))
+		if !refusal_ok || refused.reserved != 0 {
+			return {}, .Bad_Field
+		}
+		record.screen_size_refused = refused
+		record.refusal = refusal
 	case .Screen_Size:
 		size := body_read(body, Screen_Size_Body)
 		if problem = screen_problem({size.width, size.height}); problem != .None {

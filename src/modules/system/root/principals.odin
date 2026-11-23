@@ -362,7 +362,7 @@ unlock_for_a_locked_principal :: proc "contextless" () {
 	}
 	// With no screen nobody can type the passphrase: the `unlock` of the
 	// boot said so in its line, and a new one would say it again.
-	if screen_absent {
+	if desktop_absent() {
 		return
 	}
 	// A full table is not counted: a slot comes free only with a stop, and

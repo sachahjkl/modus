@@ -177,6 +177,11 @@ Command :: enum u32 {
 	// offers the next serial at the next scale. values: the serial of the
 	// offer, one past the serial released, and the word of the scale.
 	Surface_Declined = 21,
+	// The capture face: a size of a screen of memory that a viewer with the
+	// input asked (src/md/features/screen_of_memory.md). The compositor
+	// answers with the event Capture_Size: the new size, or with values[2]
+	// the cause of its refusal. values: width, height.
+	Screen_Size_Set  = 22,
 }
 
 // The place of the capture flag in the values of Client_Add.
@@ -495,9 +500,12 @@ Event_Kind :: enum u32 {
 	// handle (in this process), the Clipboard_Kind, the count of bytes,
 	// the serial of the key, never 0.
 	Pasted           = 7,
-	// The capture face (Command.Capture_Size_Ask): the size of the screen.
-	// values: width, height. Only a client of the capture face gets it; a
-	// window refuses it (event_of_record).
+	// The capture face (Command.Capture_Size_Ask, Screen_Size_Set): the size
+	// of the screen. values: width, height, and 0, or the cause
+	// (memory_screen.Resize_Refusal) of a refused Screen_Size_Set with the
+	// size that it asked. The compositor sends it again after a change of
+	// the size of a screen of memory. Only a client of the capture face gets
+	// it; a window refuses it (event_of_record).
 	Capture_Size     = 8,
 	// The capture face: the compositor wrote a picture and its header.
 	// values: the picture, the count of its rectangles, the serial of the

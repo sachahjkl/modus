@@ -74,7 +74,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for &state, index in states[:count] {
 		state = {row = list.rows[index]} // A row reads only the states of the rows before it.
 		name := start_list.row_name(&state.row)
-		if missing := state.row.needs - parts; missing != {} && state.row.absent_rule == .Not_Started {
+		if missing := state.row.needs - start_list.parts_for_rows(&list, parts); missing != {} && state.row.absent_rule == .Not_Started {
 			system.log_fact(.Info, Row_Not_Started{row_process = value_kinds.module_name_field(name), missing_part = value_kinds.text_field(start_list.PART_NAMES[start_list.first_part(missing)], PART_FIELD_BYTES)})
 			continue
 		}
@@ -144,7 +144,7 @@ row_start :: proc "contextless" (index: int) -> bool {
 	}
 	wiring := prepared.outcome == .Listed ? root_ring.Start_Wiring_List.In_The_List_Page : .None
 	packed := system.name_pack(start_list.row_name(&state.row))
-	status, values := command_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(wiring), 0, 0})
+	status, values := command_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(wiring), 0, root_ring.screen_of_memory_word(start_list.row_screen_of_memory(&list, &state.row))})
 	if status != .Ok {
 		system.log_fact(.Warning, Row_Start_Refused{status = status, row_process = row_process})
 		return false

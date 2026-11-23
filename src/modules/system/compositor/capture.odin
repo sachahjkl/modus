@@ -19,6 +19,7 @@ package compositor
 // service draws from its own state: the service names its viewers, and
 // cannot hide the mark.
 
+import "modus:contract/memory_screen"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -134,6 +135,11 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 	case .Capture_Open:
 		capture_open(index, record)
 	case .Capture_Taken:
+		// A Capture_Taken of the pictures of the size before a change of the
+		// screen of memory crossed the change: it is dropped, not refused.
+		if capture.client == index && capture.mapped == nil {
+			return
+		}
 		if capture.client != index || capture.held < 0 || record.values[0] != u64(capture.held) {
 			capture_refuse(client, "a Capture_Taken of a picture that the process does not hold")
 			return
@@ -194,8 +200,20 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 			in_front := order[order_count - 1]
 			send(&clients[in_front], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
 		}
+	case .Screen_Size_Set:
+		if capture.client != index {
+			capture_refuse(client, "a size of the screen with no capture face")
+			return
+		}
+		screen_of_memory_resize(client, record.values[0], record.values[1]) // screen_of_memory.odin
 	case .Remote_Pointer:
 		x, y, buttons := record.values[0], record.values[1], record.values[2]
+		// A pointer that a viewer sent before a change of the size of a
+		// screen of memory reached it can name a place of the old size: it
+		// goes to the nearest place of the screen.
+		if screen_of_memory && x < memory_screen.MAX_WIDTH && y < memory_screen.MAX_HEIGHT {
+			x, y = min(x, u64(screen.width - 1)), min(y, u64(screen.height - 1))
+		}
 		if capture.client != index || x >= u64(screen.width) || y >= u64(screen.height) || buttons & ~u64(display.BUTTON_LEFT | display.BUTTON_RIGHT) != 0 {
 			capture_refuse(client, "a pointer outside the screen, or with no capture face")
 			return
@@ -231,8 +249,11 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 	}
 	width, height := record.values[1], record.values[2]
 	pages, size_status := system.memory_size(memory)
+	// The client of a face whose pictures a change of the size of a screen
+	// of memory left gives the memory of the new size.
+	reopen := capture.client == index && capture.mapped == nil
 	switch {
-	case capture.client >= 0:
+	case capture.client >= 0 && !reopen:
 		capture_refuse(client, "a second capture face")
 	case kind != .Memory || .Read not_in rights || .Write not_in rights:
 		capture_refuse(client, "the memory is not memory with Read and Write")
@@ -246,7 +267,12 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 			capture_refuse(client, "the memory does not map")
 			break
 		}
-		capture = {client = index, memory = memory, mapped = address, held = -1, last_written = 1}
+		if !reopen {
+			capture = {client = index, held = -1, last_written = 1}
+		}
+		// A face opened again keeps its viewers, its counts and the mark of
+		// the bar.
+		capture.memory, capture.mapped, capture.held, capture.last_written = memory, address, -1, 1
 		capture.header = (^display.Capture_Header)(address)
 		pixels := ([^]graphics.Color)(rawptr(uintptr(address) + display.CAPTURE_HEADER_PAGES * system.PAGE_SIZE))
 		for &picture, place in capture.pictures {
@@ -267,6 +293,28 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		return
 	}
 	system.close(memory)
+}
+
+// capture_pictures_leave stops the face from writing its pictures at a
+// change of the size of a screen of memory: they have the old size. It
+// unmaps and closes them, and keeps the client of the face, its viewers and
+// the mark of the bar: the mark never leaves the bar while a viewer looks.
+// The client gives the memory of the new size with Capture_Open.
+capture_pictures_leave :: proc "contextless" () {
+	if capture.client < 0 {
+		return
+	}
+	if capture.mapped != nil {
+		system.memory_unmap(capture.mapped)
+	}
+	if capture.memory != 0 {
+		system.close(capture.memory)
+	}
+	capture.memory, capture.mapped, capture.header = 0, nil, nil
+	capture.pictures = {}
+	capture.debts = {}
+	capture.changed = {}
+	capture.held, capture.last_written = -1, 1
 }
 
 // capture_end closes the capture face: the memory is unmapped and closed,
@@ -310,7 +358,7 @@ capture_frame_due :: proc "contextless" () {
 // the frame, so the frame draws the rectangle of the pointer again, and
 // the copy finds it with no pointer.
 capture_before_frame :: proc "contextless" () {
-	if capture.client < 0 || capture.held >= 0 || !pointer_drawn_valid {
+	if capture.client < 0 || capture.mapped == nil || capture.held >= 0 || !pointer_drawn_valid {
 		return
 	}
 	debt := &capture.debts[1 - capture.last_written]
@@ -327,7 +375,9 @@ capture_before_frame :: proc "contextless" () {
 // of the screen with no pointer. It owes them to both pictures, and writes
 // the picture that the service does not hold.
 capture_after_draw :: proc "contextless" (areas: []Rectangle) {
-	if capture.client < 0 {
+	// No pictures between a change of the size of a screen of memory and
+	// the Capture_Open of the new size: the next one is the whole screen.
+	if capture.client < 0 || capture.mapped == nil {
 		return
 	}
 	for area in areas {

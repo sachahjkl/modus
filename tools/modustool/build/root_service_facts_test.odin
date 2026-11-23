@@ -226,6 +226,7 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		for part in BUDGET_PARTS {
 			for who in LARGEST_OF {
 				expect(t, render(t, file, "Budget_Part_Limited", {{"asked", count}, {"largest", max(u64) - count}, {"granted", count}, {"started_process", process}, {"budget_part", part}, {"largest_of", who}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " ", part, ", and ", who, " gets at most ", max(u64) - count, ": it starts with ", count))
+				expect(t, render(t, file, "Compositor_On_Screen_Of_Memory", {{"width", count}, {"height", max(u64) - count}}), line_of_before("root: the compositor starts on a screen of memory of ", count, " x ", max(u64) - count, ": the machine has no screen"))
 				expect(t, render(t, file, "Budget_Screen_Pictures_Refused", {{"screen_pictures", count}, {"started_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen"))
 			}
 			for holder in PAYING_BUDGETS {
@@ -471,7 +472,7 @@ the_facts_with_no_field_of_the_root_service_write_the_lines_of_before :: proc(t:
 		{"Standard_Vga_Mode_Unknown", "root: the display registers of the standard VGA do not say the mode of the framebuffer of the firmware with two screen pages: the compositor writes the screen page that the display shows"},
 		{"Entropy_Service_Stopped", "root: the entropy service stopped: no more fresh bytes for the running processes"},
 		{"Failure_Shown", "root: the boot display shows the failure"},
-		{"No_Screen", "root: no screen: no console, no window; the other services start"},
+		{"No_Screen", "root: no screen: a console and windows only on a screen of memory that the start list gives; the other services start"},
 		{"Compositor_Stopped", "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on"},
 		{"Console_Renderer_Serial", "root: no compositor in the boot image: the console writes to the second serial port through serial_terminal"},
 		{"Console_Renderer_Grid", "root: no compositor in the boot image: the console draws a text grid on the screen through grid_terminal"},

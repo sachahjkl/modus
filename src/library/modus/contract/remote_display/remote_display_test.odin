@@ -3,6 +3,7 @@ package remote_display
 
 import "core:math/rand"
 import "core:testing"
+import "modus:contract/memory_screen"
 import "modus:contract/pointer_pictures"
 
 // The screen of the tests: the screen of the test machine.
@@ -36,7 +37,7 @@ service_check :: proc(kind: Record_Kind, body: $T) -> (Service_Record, Record_Pr
 // of the kind.
 @(test)
 record_length_problem_refuses_each_header_that_breaks_a_rule :: proc(t: ^testing.T) {
-	unknown := [?]u32{u32(Record_Kind.None), u32(Record_Kind.Pointer_Warp) + 1, u32(Record_Kind.Viewer_Frame_Taken) - 1, u32(max(Record_Kind)) + 1, 1 << 31, max(u32)}
+	unknown := [?]u32{u32(Record_Kind.None), u32(Record_Kind.Screen_Size_Refused) + 1, u32(Record_Kind.Viewer_Frame_Taken) - 1, u32(max(Record_Kind)) + 1, 1 << 31, max(u32)}
 	for word in unknown {
 		for direction in Direction {
 			problem := record_length_problem({kind = Record_Kind(word), length = 8}, direction)
@@ -487,4 +488,55 @@ protocol_v2_records_refuse_edges_and_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, tracker.last_echo_count, u64(5))
 	testing.expect_value(t, input_echo_check(&tracker, 10, 10), Record_Problem.None)
 	testing.expect_value(t, tracker.last_echo_count, u64(10))
+}
+
+// A Screen_Size_Ask: each side at its bounds, whatever the screen of the
+// session, and the kind in the other direction; then the least and the
+// largest size, which the border takes.
+@(test)
+a_screen_size_ask_at_its_edges :: proc(t: ^testing.T) {
+	refused := [?]Screen_Size_Body{{0, 0}, {0, 1080}, {1920, 0}, {319, 240}, {320, 239}, {7681, 4320}, {7680, 4321}, {max(u32), max(u32)}}
+	for size in refused {
+		record, problem := viewer_check(.Screen_Size_Ask, size)
+		testing.expectf(t, problem == .Outside_Screen && record.kind == .None, "%v gave %v", size, problem)
+	}
+	_, wrong_way := service_check(.Screen_Size_Ask, Screen_Size_Body{1920, 1080})
+	testing.expect_value(t, wrong_way, Record_Problem.Wrong_Direction)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Size_Ask, length = 9}, .To_Service), Record_Problem.Wrong_Length)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Size_Ask, length = 7}, .To_Service), Record_Problem.Wrong_Length)
+	for size in ([?]Screen_Size_Body{{320, 240}, {2560, 1440}, {7680, 4320}}) {
+		record, problem := viewer_check(.Screen_Size_Ask, size)
+		testing.expect(t, problem == .None && record.kind == .Screen_Size_Ask && record.screen_size_ask == size)
+	}
+}
+
+// A Screen_Size_Refused: a cause of None and one past the last member, a
+// reserved word, a size past the limit of a screen, the other direction;
+// then each cause, which the border takes.
+@(test)
+a_screen_size_refused_at_its_edges :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		body:    Screen_Size_Refused_Body,
+		problem: Record_Problem,
+	} {
+		{{2560, 1440, 0, 0}, .Bad_Field},
+		{{2560, 1440, u32(max(memory_screen.Resize_Refusal)) + 1, 0}, .Bad_Field},
+		{{2560, 1440, max(u32), 0}, .Bad_Field},
+		{{2560, 1440, 1, 1}, .Bad_Field},
+		{{0, 1440, 1, 0}, .Outside_Screen},
+		{{SCREEN_WIDTH_LIMIT + 1, 1440, 1, 0}, .Outside_Screen},
+	}
+	for item in cases {
+		record, problem := service_check(.Screen_Size_Refused, item.body)
+		testing.expectf(t, problem == item.problem && record.kind == .None, "%v gave %v", item.body, problem)
+	}
+	_, wrong_way := viewer_check(.Screen_Size_Refused, Screen_Size_Refused_Body{2560, 1440, 1, 0})
+	testing.expect_value(t, wrong_way, Record_Problem.Wrong_Direction)
+	for cause in memory_screen.Resize_Refusal {
+		if cause == .None {
+			continue
+		}
+		record, problem := service_check(.Screen_Size_Refused, Screen_Size_Refused_Body{2560, 1440, u32(cause), 0})
+		testing.expect(t, problem == .None && record.refusal == cause && record.screen_size_refused.width == 2560)
+	}
 }

@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "modus:contract/module"
 import "modus:contract/output"
+import "modus:contract/reference_screen"
 import "modus:contract/start_list"
 import "modustool:foundation"
 import "modustool:resources"
@@ -27,6 +28,10 @@ Start_List_Row :: struct {
 	usable_mark:            start_list.Usable_Mark,
 	restart_count:          u32,
 	restart_window_seconds: u32, // 0: the count holds for the whole run.
+	// The row display only: the size of a screen of memory on a machine with
+	// no screen (src/md/features/screen_of_memory.md); 0 x 0 for none.
+	screen_of_memory_width:  u32,
+	screen_of_memory_height: u32,
 }
 
 // One wiring row of a list, as this table writes it: the record output of
@@ -59,10 +64,13 @@ INPUT_RESTART_WINDOW_SECONDS :: 60
 // seed and the keys of the machine need them before any start policy.
 @(rodata)
 DEFAULT_START_LIST := [?]Start_List_Row {
-	// With no screen, no window reads a key. An absent PS/2 controller with
-	// no tablet is the line of the input service itself, which stops.
+	// With no screen and no screen of memory, no window reads a key. An
+	// absent PS/2 controller with no tablet is the line of the input service
+	// itself, which stops.
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started, restart_count = INPUT_RESTARTS, restart_window_seconds = INPUT_RESTART_WINDOW_SECONDS},
-	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
+	// A machine with no screen draws the desktop into a screen of memory of
+	// the reference screen, which a viewer of remote_display sees.
+	{name = "display", needs = {.Screen}, absent_rule = .Not_Started, screen_of_memory_width = reference_screen.WIDTH, screen_of_memory_height = reference_screen.HEIGHT},
 	{name = "date", absent_rule = .Not_Started},
 	// A failure of the console no longer stops the machine: the start
 	// policy stops before Machine_Usable, and the rescue starts.
@@ -87,7 +95,9 @@ DEFAULT_START_WIRINGS := [?]Start_List_Wiring{{writer = "wired_writer", record_o
 @(rodata)
 DEFAULT_RESCUE_LIST := [?]Start_List_Row {
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started, restart_count = INPUT_RESTARTS, restart_window_seconds = INPUT_RESTART_WINDOW_SECONDS},
-	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
+	// A machine with no screen draws the desktop into a screen of memory of
+	// the reference screen, which a viewer of remote_display sees.
+	{name = "display", needs = {.Screen}, absent_rule = .Not_Started, screen_of_memory_width = reference_screen.WIDTH, screen_of_memory_height = reference_screen.HEIGHT},
 	{name = "console", needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
 	{name = "remote", needs = {.Network_Device}, absent_rule = .Not_Started},
 }
@@ -191,7 +201,7 @@ start_list_bytes :: proc(rows: []Start_List_Row, wirings: []start_list.Wiring_Ro
 	}
 	written := make([]start_list.Start_Row, len(rows), context.temp_allocator)
 	for row, index in rows {
-		made, ok := start_list.row_make(row.name, row.needs, row.absent_rule, row.usable_mark, row.restart_count, row.restart_window_seconds)
+		made, ok := start_list.row_make(row.name, row.needs, row.absent_rule, row.usable_mark, row.restart_count, row.restart_window_seconds, row.screen_of_memory_width, row.screen_of_memory_height)
 		if !ok {
 			return nil, {}, fmt.tprintf("the row %d names %q, which is not a module name", index, row.name)
 		}

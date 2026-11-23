@@ -55,11 +55,13 @@ A start row holds:
 - whether the machine is usable without it (the mark `needed`);
 - the count of the restarts after a stop, 0 by default; a stop with the stop outcome `Done` or `Refused` starts no restart (below, "The subtle points");
 - the restart window, in seconds of the clock of the system, 0 by default: with 0 the count holds for the whole run of the machine, and with a window it holds inside each window, as the restart intensity of Erlang (5 restarts in 60 seconds). The design is [supervision.md](supervision.md), "The restart bound". A window on a row with no restart bounds nothing, and the border refuses it;
-- for the compositor, the size of a screen of memory when the machine has no screen ([remote_display.md](remote_display.md), "The screen of memory"). This field comes with the screen of memory, in a new version of the format: the version 3 has no such field, because no code would read it, and its border refuses a list of another version.
+- for the row `display`, the size of a screen of memory when the machine has no screen, 0 × 0 for none ([screen_of_memory.md](screen_of_memory.md)). The border refuses a size on another row, a size with one side 0, and a size outside 320 × 240 to 7680 × 4320. The format is the version 4; its border refuses a list of another version.
+
+A list whose row `display` gives a size gives the machine a screen for its rows: on a machine with no screen, the start policy adds the part Screen to its own set of parts, so each row that needs a screen starts, and it sends the size in the `Start` of the row `display`. The machine parts page still says "no screen".
 
 Each field is a word, and the border of the contract `start_list` reads each one: a name of 1 to 31 bytes of `a`-`z`, `0`-`9` and `_`, the needs as a word of `Machine_Part` bits, the rule of an absent part (`Not_Started`, `Started_Anyway`), the mark (`Not_Needed`, `Needed`), at most 16 restarts, and a restart window of any count of seconds on a row with restarts. Two rows of one module are refused: one start of each name.
 
-After the start rows, the list holds at most 8 **wiring rows**: each one joins a record output of a start row to a record input of an earlier start row. The start policy applies the wiring rows of a row at the start of that row, the writer, before its first instruction, so the reader loses no record. The format is the version 3: the header counts the start rows and the wiring rows, and the word of a start row that the version 2 kept reserved is its restart window. The design, the refusals of the border and the checks of the tool are in [module_outputs.md](module_outputs.md), "The wiring rows of a start list". A start policy that wires pays from a fixed reserve of its budget, `start_list.WIRING_PAGES_RESERVE`.
+After the start rows, the list holds at most 8 **wiring rows**: each one joins a record output of a start row to a record input of an earlier start row. The start policy applies the wiring rows of a row at the start of that row, the writer, before its first instruction, so the reader loses no record. The header counts the start rows and the wiring rows, and the word of a start row that the version 2 kept reserved is its restart window. The design, the refusals of the border and the checks of the tool are in [module_outputs.md](module_outputs.md), "The wiring rows of a start list". A start policy that wires pays from a fixed reserve of its budget, `start_list.WIRING_PAGES_RESERVE`.
 
 The default start policy starts each row in its order, and waits for the completion of each `Start` before the next one. It writes one line for each row that it does not start, with its cause. When each row with the mark `needed` runs, or is not started because its part is absent, it sends `Machine_Usable`. Then it stays, and starts a row again at its stop, within its restart bound, unless the row stopped itself with `Done` or `Refused`. A needed row past its bound stops the start policy with `Failed`, after one line that names the row, its count and its window: the machine is no longer usable without it ([supervision.md](supervision.md), "A holder that stops in a loop, and the escalation").
 
@@ -74,7 +76,7 @@ The default list keeps the behaviour of today, with one change: the console.
 | Row | Needs | Absent part | `needed` | Today |
 |---|---|---|---|---|
 | `input` | a screen | no start, one line; an absent PS/2 controller is the line of the input service, which stops | no | started by the root service |
-| `compositor` | a screen | a screen of memory, when the row gives a size; else no start, one line | no | started by the root service |
+| `display` | a screen | a screen of memory of 1920 × 1080, the size of the row | no | started by the root service |
 | `date` | | | no | a failure writes "root: cannot start date: the system has no date" |
 | `console` | a screen | no start, one line | yes | a failure stops the machine (`fail`) |
 | `settings` | | | no | the pass of the kept settings |
@@ -219,9 +221,10 @@ Built with the wiring rows: the version 2 of the start list with its wiring rows
 
 Built with the restart window: the version 3 of the start list with the restart window of each start row, the pure rule `start_list.restart_window_take` with its host tests (the clock as an argument, the window and its edges, a clock that goes back), the restart bound of the default start policy, which reads the clock only for a row with a window, and the stop of the start policy with `Failed` when a needed row is past its bound after `Machine_Usable`.
 
+Built with the screen of memory: the version 4 of the start list with the size of a screen of memory on the row `display`, its border with its host tests, the part Screen that such a list gives its rows, and the size in the `Start` of that row ([screen_of_memory.md](screen_of_memory.md)).
+
 Left:
 
-- the size of a screen of memory in a start row, with the screen of memory;
 - the restart window of the command `Start` of a start policy from the disk ([supervision.md](supervision.md), "The restart bound");
 - the rescue when the start policy stops after `Machine_Usable`: the root service writes one line today, and the processes that the start policy asked for run on with no starter;
 - the attestation that reads PCR 12.

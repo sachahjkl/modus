@@ -441,7 +441,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // window server: there, a process with no terminal starts with no window.
 start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
 	terminal_wanted := .Terminal in work.start_grant_set.grants
-	if screen_absent && !(terminal_wanted && !role_policy.console_renderer_needs_screen(console_renderer)) {
+	if desktop_absent() && !(terminal_wanted && !role_policy.console_renderer_needs_screen(console_renderer)) {
 		return terminal_wanted ? .Bad_State : .Ok
 	}
 	if terminal_wanted {

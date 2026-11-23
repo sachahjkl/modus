@@ -15,6 +15,14 @@ import "modus:contract/value_kinds"
 // A Text field is [N]u8 with N written out, as the tool reads it, and N is
 // a multiple of 8, so the record has no padding.
 
+// The holder of Display starts on a machine with no screen, on the screen
+// of memory that its start row gives (src/md/features/screen_of_memory.md).
+@(log_fact = "root: the compositor starts on a screen of memory of {width} x {height}: the machine has no screen")
+Compositor_On_Screen_Of_Memory :: struct {
+	width:  u64,
+	height: u64,
+}
+
 // A process gets less of one part of its budget than its module asks for:
 // the starter gives it the largest budget of that part.
 @(log_fact = "root: {started_process} asks for {asked} {budget_part}, and {largest_of} gets at most {largest}: it starts with {granted}")
