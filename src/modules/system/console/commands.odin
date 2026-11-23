@@ -204,6 +204,7 @@ debug_names: system.Debug_Names // The debug image and the verdicts of its objec
 requests: ring.Ring
 requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
+abandoned_connects: system.Abandoned_Connects
 
 // The names of the commands of services: "process.export".
 names: [16384]u8
@@ -1837,12 +1838,14 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	// of an answer ends this wait, never a time of a start.
 	completion, answered := request_record(.Connect, sandbox.name, 0, system.ANSWER_BOUND_MILLISECONDS, stoppable = true)
 	if !answered {
-		// The root service can still answer: it would keep the connection
-		// and refuse the next Connect, and its handles would stay here.
+		// Do not block on the root service after Escape or the hang bound:
+		// send Disconnect and record connect_tag so the next drain of the
+		// root ring closes any late Connect handles without holding the
+		// console.
 		if requests.head != nil {
 			connect_tag := request_count
 			request_count += 1
-			system.connect_give_up(&requests, connect_tag, request_count, system.name_pack(sandbox.name))
+			system.connect_abandon(&requests, &abandoned_connects, connect_tag, request_count, system.name_pack(sandbox.name))
 		}
 		return .Bad_State
 	}
@@ -1875,9 +1878,9 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	// The service maps the call ring when it reads the Connect of the root
 	// service, which can be after its start on demand: a lend before the
 	// ready completion has no receiver (src/md/api/call_ring_ready.md).
-	intrinsics.atomic_store(&work.call_stoppable, 1)
+	call_stoppable_enter()
 	ready := system.connection_ready_wait(&sandbox.ring, sandbox.process, &work.cancel)
-	intrinsics.atomic_store(&work.call_stoppable, 0)
+	call_stoppable_leave()
 	if ready != .Ready {
 		service_disconnect(sandbox)
 		if not_ready != nil {
@@ -2266,9 +2269,9 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	// The first completion of the call host says if it loaded the module.
 	// With Load_Failed, the record of the failure is in the call region:
 	// the console copies it, and reads it as values.
-	intrinsics.atomic_store(&work.call_stoppable, 1)
+	call_stoppable_enter()
 	ready := system.connection_ready_wait(&sandbox.ring, sandbox.process, &work.cancel)
-	intrinsics.atomic_store(&work.call_stoppable, 0)
+	call_stoppable_leave()
 	switch ready {
 	case .Ready:
 		return .Ok
@@ -2457,8 +2460,8 @@ fault_kind_text :: proc "contextless" (kind: op.Fault_Kind) -> string {
 call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
 	// From here to the return, Escape stops this call: outside a call,
 	// Escape is a key of the next line.
-	intrinsics.atomic_store(&work.call_stoppable, 1)
-	defer intrinsics.atomic_store(&work.call_stoppable, 0)
+	call_stoppable_enter()
+	defer call_stoppable_leave()
 	sandbox := &sandboxes[item.sandbox - 1]
 	if sandbox.process != 0 {
 		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
@@ -2692,14 +2695,14 @@ request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string
 	// with no way out. A wait outside a line reads no Escape.
 	deadline := system.time() + time_limit
 	if stoppable {
-		intrinsics.atomic_store(&work.call_stoppable, 1)
+		call_stoppable_enter()
 	}
 	defer if stoppable {
-		intrinsics.atomic_store(&work.call_stoppable, 0)
+		call_stoppable_leave()
 	}
 	for {
 		wait := system.wait_begin()
-		if record, came, done := system.root_answer_step(&requests, request_count, system.time(), deadline); done {
+		if record, came, done := system.root_answer_step(&requests, request_count, system.time(), deadline, &abandoned_connects); done {
 			return record, came
 		}
 		if stoppable {
@@ -3098,18 +3101,14 @@ disk_request :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64
 	}
 	request_count += 1
 	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = values})
-	limit := system.time() + time_limit
+	deadline := system.time() + time_limit
 	for {
-		for record in system.receive(&requests.completions) {
-			if record.tag == request_count {
-				return record, true
-			}
+		wait := system.wait_begin()
+		if record, came, done := system.root_answer_step(&requests, request_count, system.time(), deadline, &abandoned_connects); done {
+			return record, came
 		}
-		wait: system.Wait
 		system.wait_records(&wait, &requests.completions)
-		if system.wait_end(&wait, limit) >= limit {
-			return {}, false
-		}
+		system.wait_end(&wait, deadline)
 	}
 }
 
@@ -3488,17 +3487,15 @@ change_request :: proc "contextless" (change: root_ring.Principal_Change) -> Val
 	if requests.head == nil {
 		return fail_no_answer()
 	}
-	intrinsics.atomic_store(&work.call_stoppable, 1)
-	defer intrinsics.atomic_store(&work.call_stoppable, 0)
+	call_stoppable_enter()
+	defer call_stoppable_leave()
 	request_count += 1
 	system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Principal_Change), tag = request_count, values = {4 = u64(change)}})
 	for {
 		// A completion with another tag answers a command that this
-		// process waits for no more.
-		for record in system.receive(&requests.completions) {
-			if record.tag != request_count {
-				continue
-			}
+		// process waits for no more; an abandoned Connect closes its
+		// handles here.
+		if record, came, _ := system.root_answer_step(&requests, request_count, 0, system.WAIT_FOREVER, &abandoned_connects); came {
 			if system.Status(record.kind) != .Ok {
 				return fail_root("", record)
 			}

@@ -105,3 +105,44 @@ call_host_ready_step_takes_a_late_load_failure :: proc(t: ^testing.T) {
 	testing.expect(t, done)
 	testing.expect_value(t, reading, isolated.Ready_Reading.Load_Failed)
 }
+
+@(private = "file")
+abandoned_closed_count: int
+@(private = "file")
+abandoned_closed_tag: u32
+@(private = "file")
+abandoned_closed_handles: [3]u64
+
+@(private = "file")
+test_abandoned_close :: proc "contextless" (record: ring.Record) {
+	abandoned_closed_count += 1
+	abandoned_closed_tag = record.tag
+	abandoned_closed_handles = {record.values[0], record.values[1], record.values[2]}
+}
+
+// An abandoned Connect (Escape during Connect) closes its late handles on
+// the next drain of the root ring without blocking, and leaves an unrelated
+// tag alone. A second record with the same tag is not closed twice.
+@(test)
+root_answer_step_closes_abandoned_connect_on_drain :: proc(t: ^testing.T) {
+	made := test_requests_make(t)
+	defer delete(made.memory)
+	abandoned: Abandoned_Connects
+	abandoned_closed_count = 0
+	abandoned_closed_tag = 0
+	abandoned_closed_handles = {}
+	abandoned_connect_add(&abandoned, 0) // Tag 0 is ignored.
+	abandoned_connect_add(&abandoned, 5)
+	abandoned_connect_add(&abandoned, 5) // Duplicate is ignored.
+	testing.expect(t, ring.push(&made.root.completions, ring.Record{kind = 0, tag = 4, values = {0 = 10, 1 = 11, 2 = 12}}))
+	testing.expect(t, ring.push(&made.root.completions, ring.Record{kind = 0, tag = 5, values = {0 = 20, 1 = 21, 2 = 22}}))
+	testing.expect(t, ring.push(&made.root.completions, ring.Record{kind = 0, tag = 6, values = {0 = 30, 1 = 31, 2 = 32}}))
+	record, came, done := root_answer_step(&made.caller, 6, 0, answer_deadline(0), &abandoned, test_abandoned_close)
+	testing.expect(t, done && came)
+	testing.expect_value(t, record.values[0], u64(30))
+	testing.expect_value(t, abandoned_closed_count, 1)
+	testing.expect_value(t, abandoned_closed_tag, u32(5))
+	testing.expect_value(t, abandoned_closed_handles, [3]u64{20, 21, 22})
+	// Tag 5 was removed once taken: a later record with tag 5 is not closed again.
+	testing.expect(t, !abandoned_connect_take(&abandoned, 5))
+}

@@ -593,6 +593,7 @@ probes_case :: proc "contextless" () {
 	if connect_status != .Ok {
 		wrong("the connection to the log service gave the status", u64(connect_status))
 	}
+	defer system.call_connection_end(&connection)
 	service_number := u32(connection.process)
 	not_acting := [1]u32{lend(second_reader)}
 	status, answer = wire(row(.Connected, service_number, 1, .Started, 1, READER_PROBES), not_acting[:])

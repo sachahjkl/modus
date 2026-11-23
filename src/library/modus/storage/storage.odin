@@ -139,12 +139,15 @@ open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) 
 	}
 	address, map_status := system.memory_map(client.region_memory)
 	if map_status != .Ok {
+		system.ring_close(&client.calls)
 		return {}, false
 	}
 	client.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
 	file_address := uintptr(FILE_ADDRESS)
 	client.file = ([^]u8)(file_address)[:ctx.values[VALUE_FILE_SIZE]]
 	if module.validate(client.file) != .None {
+		system.ring_close(&client.calls)
+		system.memory_unmap(raw_data(client.region))
 		return {}, false
 	}
 	// The root service made this connection: no call before the storage
@@ -578,6 +581,7 @@ open_mapped :: proc "contextless" (ring_memory, region_memory: system.Handle, se
 	}
 	address, map_status := system.memory_map(region_memory)
 	if map_status != .Ok {
+		system.ring_close(&client.calls)
 		return {}, false
 	}
 	client.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]

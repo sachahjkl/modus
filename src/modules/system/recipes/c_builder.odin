@@ -76,6 +76,7 @@ c_builder_bind :: proc "contextless" (ctx: ^system.Context) {
 	compiler := system.image_find(image, "c_compiler")
 	assembler := system.image_find(image, "assemble")
 	if len(compiler) == 0 || len(assembler) == 0 {
+		system.memory_unmap(address)
 		return
 	}
 	c_builder = {

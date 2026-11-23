@@ -18,7 +18,8 @@ import "modus:system"
 
 // Working memory budget for the freestanding recipes service process, including
 // local object staging and realisation tables.
-// The pages of the native C builder: its two memory objects of 64 KiB,
+// The pages of the native C builder: the memory objects of one build
+// (source up to 256 KiB, assembly text up to 1 MiB, module up to 64 KiB),
 // and the call hosts of the compiler and of the assembler, one at a time.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4096, processes = 2, threads = 2}
 

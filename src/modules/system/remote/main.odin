@@ -596,6 +596,12 @@ service_connections_of_ended_grants :: proc "contextless" () {
 	ended := 0
 	in_use := 0
 	for &item in service_connections {
+		if item.state == .Refused {
+			if !remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
+				item = {}
+			}
+			continue
+		}
 		// A connection that is not ready yet reaches Ready or Refused in the
 		// loop first; this check ends it on its next pass.
 		if item.state != .Ready {
@@ -931,8 +937,12 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 	address, map_status := system.memory_map(connection.region_memory)
 	region_pages, size_status := system.memory_size(connection.region_memory)
 	if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
+		if map_status == .Ok {
+			system.memory_unmap(address)
+		}
 		refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
-		connection_refuse(connection, false, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
+		// Root returned Ok for Connect, so root holds the connection until told.
+		connection_refuse(connection, true, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
 		return
 	}
 	connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
@@ -962,7 +972,8 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 			if record.tag == 0 || connection.connect_tag != record.tag {
 				continue
 			}
-			#partial switch connection.state {
+			switch connection.state {
+			case .Free, .Ready, .Readying, .Refused:
 			case .Connecting:
 				connection_answer(&connection, record, now)
 				changed = true
@@ -1013,7 +1024,66 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 			call.service_pending = false
 		}
 	}
+	service_connections_reclaim_refused()
 	return changed
+}
+
+// service_connections_reclaim_refused frees each Refused slot whose client
+// grant ended or for which no live waiting call matches (name, row, serial).
+@(private = "file")
+service_connections_reclaim_refused :: proc "contextless" () {
+	has_refused := false
+	for &item in service_connections {
+		if item.state == .Refused {
+			has_refused = true
+			break
+		}
+	}
+	if !has_refused {
+		return
+	}
+	waiting: [CALL_COUNT]remote.Service_Slot_Key
+	waiting_count := 0
+	for &call, index in calls {
+		if call.phase != .Waiting {
+			continue
+		}
+		place := index / STREAMS_PER_CONNECTION
+		if !records[place].in_use || records[place].generation != call.generation {
+			continue
+		}
+		client := &record_clients[place]
+		if !client.bound || client.generation != records[place].generation || client.mesh_only {
+			continue
+		}
+		stream := quic.stream_of(&quic_connections[place], call.identifier)
+		if stream == nil || stream.reset_received || stream.reset_sent {
+			continue
+		}
+		if machine_wire.stream_is_mesh(call_buffers[index][:call.received]) {
+			continue
+		}
+		request, _, _, ok := remote.request_check(call_buffers[index][:call.received], remote.REGION_SIZE)
+		if !ok {
+			continue
+		}
+		waiting[waiting_count] = {
+			name   = request.service,
+			row    = client.row,
+			serial = client.serial,
+		}
+		waiting_count += 1
+	}
+	for &item in service_connections {
+		if item.state != .Refused {
+			continue
+		}
+		grant_holds := remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls)
+		slot := remote.Service_Slot_Key{name = item.name, row = item.row, serial = item.serial}
+		if remote.refused_slot_reclaimable(slot, grant_holds, waiting[:waiting_count]) {
+			item = {}
+		}
+	}
 }
 
 // connections_wait adds to a wait what the connections that move wait for,

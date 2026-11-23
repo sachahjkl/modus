@@ -878,8 +878,8 @@ stream_collect :: proc "contextless" (command: string, value: Value, wanted: int
 		return {}
 	}
 	breaker := console_stream.follow_loop_breaker_make(stream.is_log_follow ? console_own_process_slot() : 0)
-	intrinsics.atomic_store(&work.call_stoppable, 1)
-	defer intrinsics.atomic_store(&work.call_stoppable, 0)
+	call_stoppable_enter()
+	defer call_stoppable_leave()
 	record: [module.RECORD_SIZE_LIMIT]u8
 	read: for {
 		switch console_stream.collect_step_of(kept, wanted, row_size, capacity) {
@@ -961,8 +961,8 @@ stream_counts :: proc "contextless" (arguments: []Value) -> Value {
 	if !stream_wire(stream) {
 		return {}
 	}
-	intrinsics.atomic_store(&work.call_stoppable, 1)
-	defer intrinsics.atomic_store(&work.call_stoppable, 0)
+	call_stoppable_enter()
+	defer call_stoppable_leave()
 	record: [module.RECORD_SIZE_LIMIT]u8
 	item, status, escaped := stream_read_next(stream, record[:stream.size])
 	if escaped {
@@ -1056,8 +1056,8 @@ stream_draw :: proc "contextless" (value: Value) {
 		console_results.draw_stream_head(&sink, &columns, value.file)
 		output_continuation = 0
 	}
-	intrinsics.atomic_store(&work.call_stoppable, 1)
-	defer intrinsics.atomic_store(&work.call_stoppable, 0)
+	call_stoppable_enter()
+	defer call_stoppable_leave()
 	record: [module.RECORD_SIZE_LIMIT]u8
 	row: [module.RECORD_SIZE_LIMIT]u8
 	row_size := stream_row_size(stream)
