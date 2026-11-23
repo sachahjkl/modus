@@ -1,6 +1,7 @@
 #+build !freestanding
 package paint_model
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:strings"
@@ -148,60 +149,142 @@ the_borders_of_a_rectangle_and_an_ellipse :: proc(t: ^testing.T) {
 	testing.expect_value(t, pixel_at(&picture, 5, 5), graphics.Color(0x00FF00))
 }
 
+@(private = "file")
+fill_test_grow :: proc "contextless" (memory: ^Fill_Memory, wanted: int) -> bool {
+	context = runtime.default_context()
+	spans := make([]Fill_Span, max(2 * wanted, 16), runtime.heap_allocator())
+	copy(spans, memory.spans)
+	delete(memory.spans, runtime.heap_allocator())
+	memory.spans = spans
+	return true
+}
+
+// fill_test_memory gives a fill a stack that grows from the heap.
+@(private = "file")
+fill_test_memory :: proc() -> ^Fill_Memory {
+	memory := new(Fill_Memory)
+	memory.grow = fill_test_grow
+	return memory
+}
+
+@(private = "file")
+fill_test_memory_free :: proc(memory: ^Fill_Memory) {
+	delete(memory.spans, runtime.heap_allocator())
+	free(memory)
+}
+
+// flood_reference paints a region pixel by pixel, with a queue of every
+// pixel: slow and plain, the answer that the span fill must give.
+@(private = "file")
+flood_reference :: proc(picture: ^Picture, x, y: int, color: graphics.Color) {
+	target := pixel_at(picture, x, y)
+	if target == color {
+		return
+	}
+	queue := make([dynamic][2]int)
+	defer delete(queue)
+	append(&queue, [2]int{x, y})
+	picture.pixels[y * picture.width + x] = color
+	for head := 0; head < len(queue); head += 1 {
+		point := queue[head]
+		for step in ([4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+			next := [2]int{point[0] + step[0], point[1] + step[1]}
+			if next[0] < 0 || next[1] < 0 || next[0] >= picture.width || next[1] >= picture.height || pixel_at(picture, next[0], next[1]) != target {
+				continue
+			}
+			picture.pixels[next[1] * picture.width + next[0]] = color
+			append(&queue, next)
+		}
+	}
+}
+
 // A fill outside the picture, and a fill of a region that has the color,
-// change nothing; a fill stops at the edges of its region.
+// change nothing; a fill stops at the edges of its region, and leaves the
+// generation of the picture to its caller.
 @(test)
 a_fill_stays_in_its_region :: proc(t: ^testing.T) {
 	picture := picture_make(64, 64)
 	defer delete(picture.pixels)
-	memory := new(Fill_Memory)
-	defer free(memory)
+	memory := fill_test_memory()
+	defer fill_test_memory_free(memory)
 	generation := picture.generation
-	// A bitmap one word short of the picture fills nothing.
-	memory.visited = make([]u64, fill_visited_words(64 * 64) - 1)
-	testing.expect(t, box_empty(fill_region(&picture, 3, 3, 0xFF0000, memory)))
-	testing.expect_value(t, picture.generation, generation)
-	delete(memory.visited)
-	memory.visited = make([]u64, fill_visited_words(64 * 64))
-	defer delete(memory.visited)
 	for point in ([][2]int{{-1, 0}, {0, -1}, {64, 0}, {0, 64}, {max(int), 0}, {min(int), min(int)}}) {
-		testing.expectf(t, box_empty(fill_region(&picture, point[0], point[1], 0, memory)), "the point %v is refused", point)
+		box, outcome := fill_region(&picture, point[0], point[1], 0, memory)
+		testing.expectf(t, box_empty(box) && outcome == .Done, "the point %v is refused", point)
 	}
-	testing.expect(t, box_empty(fill_region(&picture, 3, 3, COLOR_PAPER, memory)))
-	testing.expect_value(t, picture.generation, generation)
+	box, outcome := fill_region(&picture, 3, 3, COLOR_PAPER, memory)
+	testing.expect(t, box_empty(box) && outcome == .Done)
 	rectangle_draw(&picture, 10, 10, 30, 30, 1, 0x000000)
-	box := fill_region(&picture, 20, 20, 0xFF0000, memory)
+	generation = picture.generation
+	box, outcome = fill_region(&picture, 20, 20, 0xFF0000, memory)
+	testing.expect_value(t, outcome, Fill_Outcome.Done)
 	testing.expect_value(t, box, Box{11, 11, 30, 30})
+	testing.expect_value(t, memory.painted, 19 * 19)
+	testing.expect_value(t, picture.generation, generation)
 	testing.expect_value(t, pixel_at(&picture, 11, 11), graphics.Color(0xFF0000))
 	testing.expect_value(t, pixel_at(&picture, 10, 10), graphics.Color(0x000000))
 	testing.expect_value(t, pixel_at(&picture, 5, 5), COLOR_PAPER)
-	testing.expect_value(t, memory.scans, 0)
+	// A picture of one pixel, and a region of one pixel at each corner.
+	one := picture_make(1, 1)
+	defer delete(one.pixels)
+	box, outcome = fill_region(&one, 0, 0, 0x123456, memory)
+	testing.expect(t, box == Box{0, 0, 1, 1} && outcome == .Done && pixel_at(&one, 0, 0) == 0x123456)
 }
 
-// A region whose seeds pass the capacity of the stack is filled whole: the
-// scan of the reached pixels finds the seeds that found no room.
+// The span fill paints what a plain flood of each pixel paints, on random
+// pictures of three colors, from each kind of seed: the runs that leak
+// past their parent on the left and on the right, the edges, the holes.
 @(test)
-a_fill_past_the_capacity_of_its_stack_fills_the_whole_region :: proc(t: ^testing.T) {
-	// The seeds that wait pass FILL_STACK_CAPACITY: 256 rows of 256 seeds.
+a_fill_paints_the_region_of_a_flood :: proc(t: ^testing.T) {
+	WIDTH :: 61
+	HEIGHT :: 47
+	memory := fill_test_memory()
+	defer fill_test_memory_free(memory)
+	picture := picture_make(WIDTH, HEIGHT)
+	defer delete(picture.pixels)
+	expected := picture_make(WIDTH, HEIGHT)
+	defer delete(expected.pixels)
+	state := u32(12345)
+	for round in 0 ..< 200 {
+		// Fewer walls in some rounds: large regions with many leaks.
+		walls := u32(round % 4 + 1)
+		for &pixel in picture.pixels {
+			state = state * 1_664_525 + 1_013_904_223
+			pixel = (state >> 16) % 8 < walls ? graphics.Color((state >> 8) % 2 + 1) : COLOR_PAPER
+		}
+		copy(expected.pixels, picture.pixels)
+		state = state * 1_664_525 + 1_013_904_223
+		x, y := int(state >> 8) % WIDTH, int(state >> 20) % HEIGHT
+		flood_reference(&expected, x, y, 0xABCDEF)
+		_, outcome := fill_region(&picture, x, y, 0xABCDEF, memory)
+		testing.expect_value(t, outcome, Fill_Outcome.Done)
+		same := string(transmute([]u8)picture.pixels) == string(transmute([]u8)expected.pixels)
+		testing.expectf(t, same, "round %d from (%d, %d): the fill differs from the flood", round, x, y)
+		if !same {
+			break
+		}
+	}
+}
+
+// A maze of walls at each odd pixel of each odd row is filled whole: its
+// stack grows past the 16384 seeds of the fixed stack of before.
+@(test)
+a_fill_of_a_maze_grows_its_stack :: proc(t: ^testing.T) {
 	WIDTH :: 512
 	HEIGHT :: 512
 	picture := picture_make(WIDTH, HEIGHT)
 	defer delete(picture.pixels)
-	memory := new(Fill_Memory)
-	defer free(memory)
-	memory.visited = make([]u64, fill_visited_words(WIDTH * HEIGHT))
-	defer delete(memory.visited)
+	memory := fill_test_memory()
+	defer fill_test_memory_free(memory)
 	WALL :: graphics.Color(0x000000)
-	// Each odd row has a wall at each odd column: each even row pushes a
-	// seed for each pixel of the rows around it.
 	for row := 1; row < HEIGHT; row += 2 {
 		for column := 1; column < WIDTH; column += 2 {
 			picture.pixels[row * WIDTH + column] = WALL
 		}
 	}
-	box := fill_region(&picture, 0, 0, 0xFF0000, memory)
+	box, outcome := fill_region(&picture, 0, 0, 0xFF0000, memory)
+	testing.expect_value(t, outcome, Fill_Outcome.Done)
 	testing.expect_value(t, box, Box{0, 0, WIDTH, HEIGHT})
-	testing.expect(t, memory.scans >= 1, "the stack overflowed and a scan ran")
 	left := 0
 	for row in 0 ..< HEIGHT {
 		for column in 0 ..< WIDTH {
@@ -210,6 +293,99 @@ a_fill_past_the_capacity_of_its_stack_fills_the_whole_region :: proc(t: ^testing
 		}
 	}
 	testing.expect_value(t, left, 0)
+	testing.expect_value(t, memory.painted, WIDTH * HEIGHT - (WIDTH / 2) * (HEIGHT / 2))
+}
+
+// A stack that cannot grow stops the fill with No_Memory, and the box of
+// what it painted; that box from the copy gives the picture back.
+@(test)
+a_fill_whose_stack_cannot_grow_stops :: proc(t: ^testing.T) {
+	WIDTH :: 64
+	picture := picture_make(WIDTH, WIDTH)
+	defer delete(picture.pixels)
+	for row := 1; row < WIDTH; row += 2 {
+		for column := 1; column < WIDTH; column += 2 {
+			picture.pixels[row * WIDTH + column] = 0
+		}
+	}
+	before := make([]graphics.Color, WIDTH * WIDTH)
+	defer delete(before)
+	copy(before, picture.pixels)
+	spans: [3]Fill_Span
+	memory := Fill_Memory{spans = spans[:]}
+	box, outcome := fill_region(&picture, 0, 0, 0xFF0000, &memory)
+	testing.expect_value(t, outcome, Fill_Outcome.No_Memory)
+	testing.expect(t, !box_empty(box), "a part was painted")
+	picture_box_restore(&picture, before, box)
+	testing.expect(t, string(transmute([]u8)picture.pixels) == string(transmute([]u8)before), "the box from the copy gives the picture back")
+	// No room for the two first spans: nothing is painted.
+	none := Fill_Memory{}
+	box, outcome = fill_region(&picture, 0, 0, 0xFF0000, &none)
+	testing.expect(t, box_empty(box) && outcome == .No_Memory)
+	// A box past the picture is cut to it.
+	picture_box_restore(&picture, before, {-5, -5, WIDTH + 5, WIDTH + 5})
+}
+
+@(private = "file")
+cancelling_grow :: proc "contextless" (memory: ^Fill_Memory, wanted: int) -> bool {
+	// The window asks to cancel while the fill runs: here, at the first
+	// growth past the first 16 spans.
+	if wanted > 16 {
+		intrinsics.atomic_store(&memory.cancel, true)
+	}
+	return fill_test_grow(memory, wanted)
+}
+
+// A cancel stops the fill at its next span; the box from the copy gives
+// the picture back. A record that is cancelled keeps no step, and the
+// steps before it stay.
+@(test)
+a_cancel_stops_a_fill_and_a_record :: proc(t: ^testing.T) {
+	WIDTH :: 64
+	picture := picture_make(WIDTH, WIDTH)
+	defer delete(picture.pixels)
+	// A maze, so the stack grows while the fill runs.
+	for row := 1; row < WIDTH; row += 2 {
+		for column := 1; column < WIDTH; column += 2 {
+			picture.pixels[row * WIDTH + column] = 0
+		}
+	}
+	before := make([]graphics.Color, WIDTH * WIDTH)
+	defer delete(before)
+	copy(before, picture.pixels)
+	memory := new(Fill_Memory)
+	defer fill_test_memory_free(memory)
+	memory.grow = cancelling_grow
+	box, outcome := fill_region(&picture, 30, 30, 0xFF0000, memory)
+	testing.expect_value(t, outcome, Fill_Outcome.Cancelled)
+	testing.expect(t, !box_empty(box) && memory.painted < WIDTH * WIDTH, "a part was painted")
+	picture_box_restore(&picture, before, box)
+	testing.expect(t, string(transmute([]u8)picture.pixels) == string(transmute([]u8)before))
+	// A cancel asked before the fill paints nothing.
+	box, outcome = fill_region(&picture, 30, 30, 0xFF0000, memory)
+	testing.expect(t, box_empty(box) && outcome == .Cancelled)
+	memory.cancel = false
+
+	bound := WIDTH * WIDTH * size_of(graphics.Color)
+	history := History{ring = make([]u8, bound)}
+	defer delete(history.ring)
+	scratch := new(History_Scratch)
+	defer free(scratch)
+	copy(before, picture.pixels)
+	first := segment_draw(&picture, 5, 0, 5, 63, 1, 0x00FF00)
+	testing.expect_value(t, history_record(&history, before, picture.pixels, WIDTH, first, bound, scratch), Record_Outcome.Kept)
+	testing.expect_value(t, scratch.strips_done, history_record_strips(first))
+	copy(before, picture.pixels)
+	second := segment_draw(&picture, 9, 0, 9, 63, 1, 0x0000FF)
+	scratch.cancel = true
+	testing.expect_value(t, history_record(&history, before, picture.pixels, WIDTH, second, bound, scratch), Record_Outcome.Cancelled)
+	scratch.cancel = false
+	testing.expect_value(t, history.count, 1)
+	picture_box_restore(&picture, before, second)
+	undone_box, undone := history_undo(&history, &picture, scratch)
+	testing.expect(t, undone && undone_box == first, "the step before the cancel undoes")
+	testing.expect_value(t, pixel_at(&picture, 5, 10), COLOR_PAPER)
+	testing.expect_value(t, pixel_at(&picture, 9, 10), COLOR_PAPER)
 }
 
 @(private = "file")
@@ -1414,9 +1590,10 @@ a_fill_on_a_photo_undoes :: proc(t: ^testing.T) {
 	before := make([]graphics.Color, WIDTH * HEIGHT)
 	defer delete(before)
 	copy(before, photo.pixels)
-	memory := Fill_Memory{visited = make([]u64, fill_visited_words(WIDTH * HEIGHT))}
-	defer delete(memory.visited)
-	box := fill_region(&photo, 0, 0, 0x228B22, &memory)
+	memory := Fill_Memory{grow = fill_test_grow}
+	defer delete(memory.spans, runtime.heap_allocator())
+	box, filled := fill_region(&photo, 0, 0, 0x228B22, &memory)
+	testing.expect_value(t, filled, Fill_Outcome.Done)
 	testing.expect_value(t, box, Box{0, 0, WIDTH, HEIGHT})
 	bound := WIDTH * HEIGHT * size_of(graphics.Color)
 	history := History{grow = heap_ring_grow, grow_data = rawptr(uintptr(bound))}

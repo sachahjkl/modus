@@ -279,153 +279,177 @@ ellipse_draw :: proc "contextless" (picture: ^Picture, from_x, from_y, to_x, to_
 	return box
 }
 
-// The fill.
+// The fill (src/md/features/paint_application.md, "The fill"): a scanline
+// fill of spans. Each span of the stack is a run of a row that the fill
+// painted, with the row next to it to read; a pop reads that row under the
+// run, paints each run of the region that it finds in one pass, and pushes
+// it. A painted pixel has the new color, so it is never painted twice, and
+// no bitmap of the reached pixels is needed. The stack is in the memory of
+// the caller, which grows.
 
-FILL_STACK_CAPACITY :: 16384 // The seeds that the fill keeps at once; past it, a scan of the visited pixels finds the rest.
-
-// fill_visited_words gives the words of the bitmap of a fill of a number of
-// pixels: one bit for each pixel.
-fill_visited_words :: proc "contextless" (pixels: int) -> int {
-	return (max(pixels, 0) + 63) / 64
+// A run of the row of a span: columns left to right of the row next to
+// row in the direction (1 down, -1 up) are the ones to read.
+Fill_Span :: struct {
+	left:      i32,
+	right:     i32,
+	row:       i32,
+	direction: i32,
 }
 
-// The memory of a fill, which the caller keeps: the bitmap of the pixels
-// that the fill reached, in memory of the caller that grows with the
-// picture (fill_visited_words), and the stack of its seeds.
+// Fill_Grow makes the stack of a fill hold at least wanted spans: it sets
+// spans to a longer slice that keeps the spans before it. false: the memory
+// cannot grow.
+Fill_Grow :: #type proc "contextless" (memory: ^Fill_Memory, wanted: int) -> bool
+
+// The memory of a fill, which the caller keeps. painted and cancel are read
+// and written by two threads: the fill runs on a worker, and the window
+// reads the progress and asks to cancel (atomic loads and stores).
 Fill_Memory :: struct {
-	visited:      []u64,
-	stack:        [FILL_STACK_CAPACITY][2]i32,
-	stack_count:  int,
-	overflowed:   bool, // A seed found no room: a scan of the visited pixels must follow.
-	scans:        int, // The scans of the visited pixels of the last fill: a measure of the cost.
+	spans:     []Fill_Span,
+	grow:      Fill_Grow, // nil: the stack is fixed.
+	grow_data: rawptr,
+	count:     int, // The spans that wait.
+	peak:      int, // The most spans that waited in the last fill: a measure of its memory.
+	painted:   int, // The pixels that the last fill painted so far.
+	cancel:    bool, // Set by the window: the fill stops at its next span.
 }
 
-@(private)
-visited_get :: #force_inline proc "contextless" (memory: ^Fill_Memory, index: int) -> bool {
-	return memory.visited[index >> 6] & (u64(1) << uint(index & 63)) != 0
+Fill_Outcome :: enum u8 {
+	Done      = 0, // The region is painted whole.
+	Cancelled = 1, // The window asked to stop: the box is the part painted.
+	No_Memory = 2, // The stack cannot grow: the box is the part painted.
 }
 
+// span_push pushes the run left to right of a row, to read the row next to
+// it in a direction, when that row is in the picture. false: the stack
+// cannot grow.
 @(private)
-visited_set :: #force_inline proc "contextless" (memory: ^Fill_Memory, index: int) {
-	memory.visited[index >> 6] |= u64(1) << uint(index & 63)
-}
-
-@(private)
-seed_push :: proc "contextless" (memory: ^Fill_Memory, x, y: int) {
-	if memory.stack_count >= FILL_STACK_CAPACITY {
-		memory.overflowed = true
-		return
+span_push :: proc "contextless" (memory: ^Fill_Memory, left, right, row, direction, height: int) -> bool {
+	next := row + direction
+	if next < 0 || next >= height {
+		return true
 	}
-	memory.stack[memory.stack_count] = {i32(x), i32(y)}
-	memory.stack_count += 1
-}
-
-// fill_memory_holds says if the bitmap of a fill holds a bit for each
-// pixel of the extent of a picture.
-fill_memory_holds :: proc "contextless" (memory: ^Fill_Memory, picture: ^Picture) -> bool {
-	return len(memory.visited) >= fill_visited_words(picture.width * picture.height)
+	if memory.count >= len(memory.spans) && (memory.grow == nil || !memory.grow(memory, memory.count + 1) || memory.count >= len(memory.spans)) {
+		return false
+	}
+	memory.spans[memory.count] = {i32(left), i32(right), i32(row), i32(direction)}
+	memory.count += 1
+	memory.peak = max(memory.peak, memory.count)
+	return true
 }
 
 // fill_region paints the 4-connected region of one color that holds a
 // point with another color, and gives the box that changed. A point
-// outside the picture, a region that has the color already, and a bitmap
-// that does not hold the picture (fill_memory_holds) change nothing: the
-// box is empty.
-fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics.Color, memory: ^Fill_Memory) -> Box {
-	if x < 0 || y < 0 || x >= picture.width || y >= picture.height || !fill_memory_holds(memory, picture) {
-		return {}
+// outside the picture, and a region that has the color already, change
+// nothing: the box is empty. A fill that is cancelled, or whose stack
+// cannot grow, stops: its box is the part that it painted, which the
+// caller puts back from its copy. The fill does not change the generation
+// of the picture: it can run on a worker, and the window raises it
+// (picture_changed) when it takes the result.
+fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics.Color, memory: ^Fill_Memory) -> (changed: Box, outcome: Fill_Outcome) {
+	memory.count, memory.peak = 0, 0
+	intrinsics.atomic_store(&memory.painted, 0)
+	if x < 0 || y < 0 || x >= picture.width || y >= picture.height {
+		return {}, .Done
 	}
 	pixels := picture.pixels
-	stride := picture.width
-	target := pixels[y * stride + x]
+	width, height := picture.width, picture.height
+	target := pixels[y * width + x]
 	if target == color {
-		return {}
+		return {}, .Done
 	}
-	for &word in memory.visited[:fill_visited_words(picture.width * picture.height)] {
-		word = 0
+	painted := 0
+	// paint_run paints one run of a row, and adds it to the box.
+	paint_run :: #force_inline proc "contextless" (pixels: []graphics.Color, base, left, right, row: int, color: graphics.Color, changed: ^Box, painted: ^int) {
+		for &pixel in pixels[base + left:base + right + 1] {
+			pixel = color
+		}
+		changed^ = box_union(changed^, {left, row, right + 1, row + 1})
+		painted^ += right - left + 1
 	}
-	memory.stack_count, memory.overflowed, memory.scans = 0, false, 0
-	changed: Box
-	seed_push(memory, x, y)
-	// The pixel at index is in the region and not reached yet.
-	open :: #force_inline proc "contextless" (pixels: []graphics.Color, memory: ^Fill_Memory, index: int, target: graphics.Color) -> bool {
-		return pixels[index] == target && !visited_get(memory, index)
+	// The row under the seed first, then the seed row through its parent row
+	// below it.
+	if !span_push(memory, x, x, y, 1, height) || !span_push(memory, x, x, y + 1, -1, height) {
+		return {}, .No_Memory
 	}
-	for {
-		for memory.stack_count > 0 {
-			memory.stack_count -= 1
-			seed := memory.stack[memory.stack_count]
-			seed_x, seed_y := int(seed[0]), int(seed[1])
-			row := seed_y * stride
-			if !open(pixels, memory, row + seed_x, target) {
-				continue
-			}
-			left, right := seed_x, seed_x
-			for left > 0 && open(pixels, memory, row + left - 1, target) {
-				left -= 1
-			}
-			for right + 1 < picture.width && open(pixels, memory, row + right + 1, target) {
-				right += 1
-			}
-			for column in left ..= right {
-				visited_set(memory, row + column)
-				pixels[row + column] = color
-			}
-			changed = box_union(changed, {left, seed_y, right + 1, seed_y + 1})
-			// One seed for each run of the region in the rows above and
-			// below the span.
-			for next_y in ([2]int{seed_y - 1, seed_y + 1}) {
-				if next_y < 0 || next_y >= picture.height {
-					continue
-				}
-				next_row := next_y * stride
-				in_run := false
-				for column in left ..= right {
-					if open(pixels, memory, next_row + column, target) {
-						if !in_run {
-							seed_push(memory, column, next_y)
-						}
-						in_run = true
-					} else {
-						in_run = false
-					}
-				}
-			}
+	for memory.count > 0 {
+		if intrinsics.atomic_load(&memory.cancel) {
+			return changed, .Cancelled
 		}
-		if !memory.overflowed {
-			break
-		}
-		// The stack was full: a seed was lost. Each pixel of the region
-		// that was not reached touches a reached one, so a scan of the
-		// reached pixels finds a seed of each part that is left.
-		memory.overflowed = false
-		memory.scans += 1
-		for row_index in changed.top ..< changed.bottom {
-			for column in changed.left ..< changed.right {
-				index := row_index * stride + column
-				if !visited_get(memory, index) {
-					continue
-				}
-				if column > 0 && open(pixels, memory, index - 1, target) {
-					seed_push(memory, column - 1, row_index)
-				}
-				if column + 1 < picture.width && open(pixels, memory, index + 1, target) {
-					seed_push(memory, column + 1, row_index)
-				}
-				if row_index > 0 && open(pixels, memory, index - stride, target) {
-					seed_push(memory, column, row_index - 1)
-				}
-				if row_index + 1 < picture.height && open(pixels, memory, index + stride, target) {
-					seed_push(memory, column, row_index + 1)
-				}
+		memory.count -= 1
+		span := memory.spans[memory.count]
+		direction := int(span.direction)
+		row := int(span.row) + direction
+		left, right := int(span.left), int(span.right)
+		base := row * width
+		column := left
+		if pixels[base + column] == target {
+			// The run that holds the left end of the parent may pass it on the
+			// left: that part leaks into the row of the parent too.
+			run_left := column
+			for run_left > 0 && pixels[base + run_left - 1] == target {
+				run_left -= 1
 			}
+			run_right := column
+			for run_right + 1 < width && pixels[base + run_right + 1] == target {
+				run_right += 1
+			}
+			paint_run(pixels, base, run_left, run_right, row, color, &changed, &painted)
+			ok := span_push(memory, run_left, run_right, row, direction, height)
+			if run_left < left {
+				ok &&= span_push(memory, run_left, left - 1, row, -direction, height)
+			}
+			if run_right > right {
+				ok &&= span_push(memory, right + 1, run_right, row, -direction, height)
+			}
+			if !ok {
+				return changed, .No_Memory
+			}
+			column = run_right + 2
+		} else {
+			column += 1
 		}
-		if memory.stack_count == 0 {
-			break
+		// The other runs under the parent start inside it, so only their
+		// right end can leak.
+		for column <= right {
+			for column <= right && pixels[base + column] != target {
+				column += 1
+			}
+			if column > right {
+				break
+			}
+			run_right := column
+			for run_right + 1 < width && pixels[base + run_right + 1] == target {
+				run_right += 1
+			}
+			paint_run(pixels, base, column, run_right, row, color, &changed, &painted)
+			ok := span_push(memory, column, run_right, row, direction, height)
+			if run_right > right {
+				ok &&= span_push(memory, right + 1, run_right, row, -direction, height)
+			}
+			if !ok {
+				return changed, .No_Memory
+			}
+			column = run_right + 2
 		}
+		intrinsics.atomic_store(&memory.painted, painted)
 	}
-	picture_changed(picture)
-	return changed
+	return changed, .Done
+}
+
+// picture_box_restore copies the box of a copy of the picture, of the same
+// stride, back into the picture: a change that stops puts back what it
+// painted. A box outside either memory is cut to them.
+picture_box_restore :: proc "contextless" (picture: ^Picture, copy_pixels: []graphics.Color, box: Box) {
+	left, top := max(box.left, 0), max(box.top, 0)
+	right, bottom := min(box.right, picture.width), min(box.bottom, picture.height)
+	if right <= left || bottom <= top || bottom * picture.width > min(len(picture.pixels), len(copy_pixels)) {
+		return
+	}
+	for row in top ..< bottom {
+		start := row * picture.width
+		copy(picture.pixels[start + left:start + right], copy_pixels[start + left:start + right])
+	}
 }
 // The history of undo and redo (src/md/features/paint_application.md,
 // "The memory of the history"): a ring of steps in the memory of the
@@ -490,16 +514,33 @@ History :: struct {
 
 // The memory that a strip needs on its way into and out of the ring,
 // which the caller keeps: the pixels of one strip, and its compressed form.
+// strips_done and cancel are read and written by two threads: a record can
+// run on a worker, and the window reads its progress and asks to cancel
+// (atomic loads and stores).
 History_Scratch :: struct {
-	pixels:     [HISTORY_STRIP_PIXELS]graphics.Color,
-	compressed: [HISTORY_STRIP_BYTES + HISTORY_STRIP_BYTES / 255 + 16]u8,
-	hash_table: lz4.Hash_Table,
+	pixels:      [HISTORY_STRIP_PIXELS]graphics.Color,
+	compressed:  [HISTORY_STRIP_BYTES + HISTORY_STRIP_BYTES / 255 + 16]u8,
+	hash_table:  lz4.Hash_Table,
+	strips_done: int, // The strips that the last record compressed so far, of history_record_strips.
+	cancel:      bool, // Set by the window: the record stops at its next strip.
+}
+
+// history_record_strips gives the strips that a record of a box compresses
+// at most: each part measured, then written. A part past the bound stops
+// sooner.
+history_record_strips :: proc "contextless" (box: Box) -> int {
+	if box_empty(box) {
+		return 0
+	}
+	rows := strip_rows(box)
+	return 4 * ((box.bottom - box.top + rows - 1) / rows)
 }
 
 Record_Outcome :: enum u8 {
-	Kept    = 0, // The change can be undone.
-	Empty   = 1, // The box is empty: no change to keep.
-	Refused = 2, // The box is outside the memory of the picture: the history is cleared.
+	Kept      = 0, // The change can be undone.
+	Empty     = 1, // The box is empty: no change to keep.
+	Refused   = 2, // The box is outside the memory of the picture: the history is cleared.
+	Cancelled = 3, // The window asked to stop: the step is not kept; the steps before it stay, but those that went for its room.
 }
 
 // history_clear forgets each step, and keeps the ring and its growth.
@@ -579,7 +620,11 @@ strip_of :: proc "contextless" (box: Box, top: int) -> Box {
 history_part_write :: proc "contextless" (history: ^History, pixels: []graphics.Color, stride: int, box: Box, offset: int, scratch: ^History_Scratch) -> (bytes: int, ok: bool) {
 	at := offset
 	for top := box.top; top < box.bottom; top += strip_rows(box) {
+		if intrinsics.atomic_load(&scratch.cancel) {
+			return 0, false
+		}
 		written, refused := lz4.compress_block(box_pack(pixels, stride, strip_of(box, top), scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
+		intrinsics.atomic_add(&scratch.strips_done, 1)
 		if refused != .None || at + HISTORY_BLOCK_HEAD_BYTES + written > len(history.ring) {
 			return 0, false
 		}
@@ -611,7 +656,11 @@ history_drop_oldest :: proc "contextless" (history: ^History) {
 @(private)
 history_part_measure :: proc "contextless" (pixels: []graphics.Color, stride: int, box: Box, ceiling: int, scratch: ^History_Scratch) -> (bytes: int, ok: bool) {
 	for top := box.top; top < box.bottom; top += strip_rows(box) {
+		if intrinsics.atomic_load(&scratch.cancel) {
+			return 0, false
+		}
 		written, refused := lz4.compress_block(box_pack(pixels, stride, strip_of(box, top), scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
+		intrinsics.atomic_add(&scratch.strips_done, 1)
 		if refused != .None {
 			return 0, false
 		}
@@ -692,9 +741,15 @@ history_record :: proc "contextless" (history: ^History, before, after: []graphi
 		history_head(history, history.newest).next = NO_STEP
 		history.count = history.done
 	}
+	intrinsics.atomic_store(&scratch.strips_done, 0)
 	room := bound - size_of(History_Head)
 	before_bytes, before_ok := history_part_measure(before, stride, box, room, scratch)
 	after_bytes, after_ok := history_part_measure(after, stride, box, room - before_bytes, scratch)
+	// A cancel stops the measure: the step is not kept, and the history is
+	// the one before it, less the steps that redo would give.
+	if intrinsics.atomic_load(&scratch.cancel) {
+		return .Cancelled
+	}
 	place := 0
 	placed := false
 	if before_ok && after_ok {
@@ -708,6 +763,11 @@ history_record :: proc "contextless" (history: ^History, before, after: []graphi
 	}
 	written_before, wrote_before := history_part_write(history, before, stride, box, place + size_of(History_Head), scratch)
 	written_after, wrote_after := history_part_write(history, after, stride, box, place + size_of(History_Head) + before_bytes, scratch)
+	// A cancel during the write leaves the step unlinked: the ring keeps
+	// the steps before it, but those that went for its room.
+	if intrinsics.atomic_load(&scratch.cancel) {
+		return .Cancelled
+	}
 	// The compression gives the same bytes for the same pixels: a write
 	// that differs from its measure is a fault of the ring, and the history
 	// keeps nothing of it.

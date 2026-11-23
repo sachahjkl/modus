@@ -34,6 +34,7 @@
 // blue, violet, pink, brown, sand, navy, paper.
 package paint
 
+import "base:intrinsics"
 import "internal:paint/paint_model"
 import "modus:contract/accessibility"
 import "modus:contract/draw_record"
@@ -57,7 +58,7 @@ LEAST_HEIGHT :: 360
 LARGEST_WIDTH :: 1920
 LARGEST_HEIGHT :: 1080
 // The budget of paint. The tool counts the module pages (the code, the data
-// and the tables below), the stacks of the two threads and the two pictures
+// and the tables below), the stacks of the three threads and the two pictures
 // of the window at its largest size; the source states the working memory.
 //
 // The window: 1920 x 1080 logical pixels at the largest scale, cut on each
@@ -69,20 +70,21 @@ LARGEST_HEIGHT :: 1080
 // the least budget of 2048 pages less a window of 480 x 320 (300 pages):
 // 1748 pages for the stack, the tables and the glyph memory; the glyph
 // memory of the copy of the text rendering of the drawing module, 354
-// pages (display.TEXT_MEMORY_PAGES); and 48 pages, the stack of the worker
-// thread past the 16 pages that the tool counts for a thread: 6200 pages.
+// pages (display.TEXT_MEMORY_PAGES); and 48 pages for each of the two
+// worker threads (the store, and the long changes), its stack past the 16
+// pages that the tool counts for a thread: 6248 pages.
 //
-// The picture: its pixels, its copy before a stroke, the bitmap of a fill
+// The picture: its pixels, its copy before a stroke, the stack of a fill
 // and the history are arenas that the budget pays, sized to the picture
 // (src/md/features/paint_application.md, "The memory of a picture" and "The
 // memory of the history"). The budget states the picture of a photo of a
 // phone of 24 MP, 6000 x 4000: three arenas of 23438 pages (the picture,
-// its copy, and the history at its bound of one copy), the bitmap of 733
-// pages, and the frame lists of the four reservations, at most 480 pages. A
-// budget that pays less holds a smaller picture: a picture past it is
-// refused, and paint says so. 6200 + 3 * 23438 + 733 + 480 = 77727. The tool
-// reads the literal; a check below ties it to these parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 77727, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
+// its copy, and the history at its bound of one copy), the stack of a fill
+// of 733 pages, and the frame lists of the four reservations, at most 640
+// pages. A budget that pays less holds a smaller picture: a picture past it
+// is refused, and paint says so. 6248 + 3 * 23438 + 733 + 640 = 77935. The
+// tool reads the literal; a check below ties it to these parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 77935, threads = 3, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
 PAGE_BYTES :: 4096
 // The rule of the tool (scale_factor.window_surface_largest), from the same
@@ -98,12 +100,20 @@ WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + PAGE_BYTES
 STATED_PICTURE_WIDTH :: 6000
 STATED_PICTURE_HEIGHT :: 4000
 STATED_PICTURE_PAGES :: (STATED_PICTURE_WIDTH * STATED_PICTURE_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
-STATED_VISITED_PAGES :: ((STATED_PICTURE_WIDTH * STATED_PICTURE_HEIGHT + 63) / 64 * 8 + PAGE_BYTES - 1) / PAGE_BYTES
-// The frame list of a reservation costs 8 bytes for each page of it: three
-// reservations of the whole budget, rounded up, and a smaller one.
-FRAME_LIST_PAGES :: 480
-#assert(FRAME_LIST_PAGES >= 3 * ((MODULE_BUDGET.working_memory_pages + 512) * 8 / PAGE_BYTES + 1) + 8)
-#assert(MODULE_BUDGET.working_memory_pages == WINDOW_PAGES + 1748 + display.TEXT_MEMORY_PAGES + 48 + 3 * STATED_PICTURE_PAGES + STATED_VISITED_PAGES + FRAME_LIST_PAGES)
+// The stack of spans of a fill: 733 pages, 187 600 spans of 16 bytes. A
+// fill of the sky of the stated photo holds 5 spans at most; a maze of the
+// stated photo (a wall at each odd pixel of each odd row), the worst case
+// that was measured, holds 5 995 004 (96 MB, a copy of the picture): it
+// takes the pages of the budget that the history does not use, or it is
+// refused, and the picture stays.
+STATED_FILL_PAGES :: 733
+// The frame list of a reservation costs 8 bytes for each page of it: four
+// reservations of the whole budget, rounded up.
+FRAME_LIST_PAGES :: 640
+// The stack of a worker thread past the 16 pages that the tool counts.
+WORKER_STACK_PAGES :: 48
+#assert(FRAME_LIST_PAGES >= 4 * ((MODULE_BUDGET.working_memory_pages + 512) * 8 / PAGE_BYTES + 1) + 8)
+#assert(MODULE_BUDGET.working_memory_pages == WINDOW_PAGES + 1748 + display.TEXT_MEMORY_PAGES + 2 * WORKER_STACK_PAGES + 3 * STATED_PICTURE_PAGES + STATED_FILL_PAGES + FRAME_LIST_PAGES)
 
 GAP :: 4
 ROW_HEIGHT :: 28 // The row of the tools.
@@ -122,14 +132,15 @@ Panel :: enum u8 {
 	Color    = 2,
 }
 
-// The picture and its memory. The pixels of the picture, its copy before a
-// stroke and the bitmap of a fill are arenas of the budget that grow with
-// the picture (picture_memory_hold), and the ring of the history an arena
-// that grows at a record, up to one copy of the picture (history_ring_grow);
-// the other arrays are in the module pages, which the tool counts.
+// The picture and its memory. The pixels of the picture and its copy before
+// a stroke are arenas of the budget that grow with the picture
+// (picture_memory_hold); the ring of the history an arena that grows at a
+// record, up to one copy of the picture (history_ring_grow); the stack of
+// spans of a fill an arena that grows as the fill needs (fill_stack_grow).
+// The other arrays are in the module pages, which the tool counts.
 picture_arena: system.Arena
 backup_arena: system.Arena
-visited_arena: system.Arena
+fill_arena: system.Arena
 history_arena: system.Arena
 backup_pixels: []graphics.Color // The picture before the change in progress: the memory of backup_arena.
 history_scratch: paint_model.History_Scratch
@@ -358,7 +369,7 @@ clear :: proc "c" () {
 //
 // The result is the pixels of the picture after the call. It fails with -1 and an error record: Bad_Value when a
 // side is outside its range, or the pixels past their bound (the record names the argument); Busy when a stroke,
-// a keep or a read of a picture runs, as the picture must not move then; Budget, in pages, when the budget does
+// a long change (a fill, or the step of undo of a large change), a keep or a read of a picture runs, as the picture must not move then; Budget, in pages, when the budget does
 // not pay the memory of the picture, which stays as it was.
 //
 // Example: paint.extend(6000, 4000).
@@ -369,7 +380,7 @@ extend :: proc "c" (width, height: i64, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, -1, .Bad_Value, .None, 1, width, paint_model.PICTURE_SIDE_LIMIT)
 	case height < 1 || height > paint_model.PICTURE_SIDE_LIMIT:
 		return errors.fail(error, -1, .Bad_Value, .None, 2, height, paint_model.PICTURE_SIDE_LIMIT)
-	case drag.active || keep.keeping || keep.reading || !paint_model.change_allowed(&keep):
+	case drag.active || keep.keeping || keep.reading || change_running() || !paint_model.change_allowed(&keep):
 		return errors.fail(error, -1, .Busy, .None)
 	}
 	switch picture_grow(int(width), int(height)) {
@@ -403,15 +414,131 @@ change_begin :: proc "contextless" () {
 }
 
 // change_end keeps the step of undo of the pixels that a change touched.
+// A large box is compressed on the worker of the changes, and the window
+// stays responsive ("A long change runs on a worker").
 change_end :: proc "contextless" (changed: paint_model.Box) {
+	if (changed.right - changed.left) * (changed.bottom - changed.top) > RECORD_ON_THE_WINDOW_PIXELS {
+		change_ask({kind = .Record, box = changed})
+		return
+	}
 	picture_changed_rows(changed)
-	// The bound of the history: one copy of the picture.
-	bound := picture.width * picture.height * size_of(graphics.Color)
-	switch paint_model.history_record(&history, backup_pixels, picture.pixels, picture.width, changed, bound, &history_scratch) {
-	case .Kept, .Empty:
+	switch paint_model.history_record(&history, backup_pixels, picture.pixels, picture.width, changed, history_bound(), &history_scratch) {
+	case .Kept, .Empty, .Cancelled:
 	case .Refused:
 		message = "this change cannot be undone: its box is outside the picture"
 	}
+}
+
+// history_bound gives the bound of the history: one copy of the picture.
+history_bound :: proc "contextless" () -> int {
+	return picture.width * picture.height * size_of(graphics.Color)
+}
+
+// The long changes (src/md/features/paint_application.md, "A long change
+// runs on a worker"): a fill, then the record of its step; or the record
+// of the step of a change with a large box. Their work grows with the
+// picture, past one frame on a large one, so they run on the worker of the
+// changes, and the window draws their progress and takes Escape. While one
+// runs, nothing else reads or writes the picture, its copy, the history or
+// the stack of the fill: a stroke, an undo, a growth, the store and the
+// calls of the console wait (change_running).
+Change_Kind :: enum u8 {
+	Fill   = 0,
+	Record = 1,
+}
+
+Change_Job :: struct {
+	kind:           Change_Kind,
+	picture:        paint_model.Picture, // A copy of the record of the picture: its pixels are the picture's.
+	x, y:           int, // Fill: the point.
+	color:          graphics.Color, // Fill: the color.
+	bound:          int, // The bound of the history.
+	box:            paint_model.Box, // Record: the box of the change; Fill: the box that it painted.
+	fill_outcome:   paint_model.Fill_Outcome,
+	record_outcome: paint_model.Record_Outcome,
+	recording:      bool, // Set by the worker when the record starts (atomic): the progress line reads it.
+}
+
+// The pixels of a box whose record runs on the window: LZ4 compresses
+// about 22.8 million pixels in 34 to 42 ms (measured, an optimized build),
+// so 262 144 pixels take under half a millisecond, far inside a frame.
+RECORD_ON_THE_WINDOW_PIXELS :: 1 << 18
+// The wake of the loop while a change runs: its progress line moves.
+PROGRESS_WAKE_MILLISECONDS :: 100
+
+change_work: interface.Background_Work
+change_worker: bool // The worker of the changes started.
+change_job: Change_Job
+
+change_running :: proc "contextless" () -> bool {
+	return interface.background_work_busy(&change_work)
+}
+
+// change_job_run runs a long change, on the worker of the changes; with
+// no worker, on the window.
+change_job_run :: proc "contextless" (parameter: rawptr) {
+	job := &change_job
+	if job.kind == .Fill {
+		job.box, job.fill_outcome = paint_model.fill_region(&job.picture, job.x, job.y, job.color, &fill_memory)
+		if job.fill_outcome != .Done || paint_model.box_empty(job.box) {
+			return
+		}
+	}
+	intrinsics.atomic_store(&job.recording, true)
+	job.record_outcome = paint_model.history_record(&history, backup_pixels, job.picture.pixels, job.picture.width, job.box, job.bound, &history_scratch)
+}
+
+// change_ask starts a long change: on the worker of the changes, or on
+// the window when there is no worker. The caller made the copy before it
+// (change_begin).
+change_ask :: proc "contextless" (job: Change_Job) {
+	change_job = job
+	change_job.picture = picture
+	change_job.bound = history_bound()
+	intrinsics.atomic_store(&fill_memory.cancel, false)
+	intrinsics.atomic_store(&history_scratch.cancel, false)
+	intrinsics.atomic_store(&fill_memory.painted, 0)
+	intrinsics.atomic_store(&history_scratch.strips_done, 0)
+	if change_worker && interface.background_work_ask(&change_work, change_job_run, nil) {
+		return
+	}
+	change_job_run(nil)
+	change_taken()
+}
+
+// change_cancel asks the long change that runs to stop: the window puts
+// its box back at the take.
+change_cancel :: proc "contextless" () {
+	intrinsics.atomic_store(&fill_memory.cancel, true)
+	intrinsics.atomic_store(&history_scratch.cancel, true)
+}
+
+// change_taken takes the result of a long change, on the window. A fill
+// or a record that stopped puts the box back from the copy before it: the
+// picture is as before the change, and the history keeps no step of it.
+change_taken :: proc "contextless" () {
+	job := &change_job
+	stopped := job.kind == .Fill && job.fill_outcome != .Done || job.record_outcome == .Cancelled
+	switch {
+	case stopped:
+		paint_model.picture_box_restore(&picture, backup_pixels, job.box)
+		if job.kind == .Fill && job.fill_outcome == .No_Memory {
+			message = "this fill needs more memory than the budget of paint pays: the picture stays"
+		} else {
+			message = "cancelled: the picture stays"
+		}
+	case paint_model.box_empty(job.box):
+	case:
+		picture_changed_rows(job.box)
+		if job.record_outcome == .Refused {
+			message = "this change cannot be undone: its box is outside the picture"
+		}
+	}
+	paint_model.picture_changed(&picture)
+	// A cancel asked for this change ends with it: a record on the window
+	// after it must not read it.
+	intrinsics.atomic_store(&fill_memory.cancel, false)
+	intrinsics.atomic_store(&history_scratch.cancel, false)
 }
 
 // picture_clear_as_step clears the extent of the picture as a step of undo.
@@ -729,6 +856,19 @@ picture_changed_rows :: proc "contextless" (box: paint_model.Box) {
 	paint_model.changed_rows_add(&keep.rows, box, system.time())
 }
 
+// fill_stack_grow grows the stack of spans of a fill in its arena, to twice
+// its spans, or to the spans that the fill wants when the budget does not
+// pay twice. It runs on the worker of the changes, which alone uses that
+// arena. false: the budget does not pay the spans.
+fill_stack_grow :: proc "contextless" (memory: ^paint_model.Fill_Memory, wanted: int) -> bool {
+	status := arena_hold(&fill_arena, max(wanted, 2 * len(memory.spans)) * size_of(paint_model.Fill_Span))
+	if status != .Ok {
+		status = arena_hold(&fill_arena, wanted * size_of(paint_model.Fill_Span))
+	}
+	memory.spans = ([^]paint_model.Fill_Span)(fill_arena.base)[:fill_arena.used_bytes / size_of(paint_model.Fill_Span)]
+	return status == .Ok
+}
+
 // history_ring_grow grows the ring of the history to the bytes that a
 // record asks, in its arena: the ring keeps its base and its bytes. false:
 // the budget does not pay them, and the history keeps the ring it has.
@@ -755,15 +895,14 @@ arena_hold :: proc "contextless" (arena: ^system.Arena, bytes: int) -> system.St
 picture_memory_take :: proc "contextless" () {
 	picture.pixels = ([^]graphics.Color)(picture_arena.base)[:picture_arena.used_bytes / size_of(graphics.Color)]
 	backup_pixels = ([^]graphics.Color)(backup_arena.base)[:backup_arena.used_bytes / size_of(graphics.Color)]
-	fill_memory.visited = ([^]u64)(visited_arena.base)[:visited_arena.used_bytes / size_of(u64)]
 	picture_memories[0] = picture.pixels
 }
 
-// picture_memory_hold grows the three arenas to hold a picture of a count
+// picture_memory_hold grows the two arenas to hold a picture of a count
 // of pixels. false: the budget does not pay them; the picture keeps its
 // extent and its pixels, in what the arenas hold.
 picture_memory_hold :: proc "contextless" (pixels: int) -> bool {
-	held := arena_hold(&picture_arena, pixels * size_of(graphics.Color)) == .Ok && arena_hold(&backup_arena, pixels * size_of(graphics.Color)) == .Ok && arena_hold(&visited_arena, paint_model.fill_visited_words(pixels) * size_of(u64)) == .Ok
+	held := arena_hold(&picture_arena, pixels * size_of(graphics.Color)) == .Ok && arena_hold(&backup_arena, pixels * size_of(graphics.Color)) == .Ok
 	picture_memory_take()
 	return held
 }
@@ -806,6 +945,10 @@ picture_grow :: proc "contextless" (width, height: int) -> paint_model.Extend_Ou
 // the first open is not taken yet, or a read of another picture runs; each
 // would replace the change.
 change_refused :: proc "contextless" () -> bool {
+	// A long change holds the picture: the status line says its progress.
+	if change_running() {
+		return true
+	}
 	if paint_model.change_allowed(&keep) {
 		return false
 	}
@@ -838,6 +981,11 @@ keep_ask :: proc "contextless" () {
 // store_drive asks for the job that the keep state gives: a keep, or the
 // act that waits.
 store_drive :: proc "contextless" (now: u64) {
+	// A long change holds the picture: a keep would read rows that it
+	// writes, and each act of the panel replaces or names the picture.
+	if change_running() {
+		return
+	}
 	switch paint_model.keep_step(&keep, now, interface.background_work_busy(&work), drag.active) {
 	case .Nothing:
 		return
@@ -901,7 +1049,7 @@ picture_start_new :: proc "contextless" (name: string) {
 // of the window. A picture that a job read waits for the end of a drag:
 // the drag holds a copy of the picture that it changes.
 store_result_take :: proc "contextless" (now: u64) {
-	if interface.background_work_busy(&work) && store_request.act == .Read && !paint_model.picture_replace_allowed(&drag) {
+	if interface.background_work_busy(&work) && store_request.act == .Read && (!paint_model.picture_replace_allowed(&drag) || change_running()) {
 		return
 	}
 	if !interface.background_work_take(&work) {
@@ -961,8 +1109,8 @@ store_result_take :: proc "contextless" (now: u64) {
 }
 
 // check_taken reads the answer of the store about a free name, and does the
-// act that asked it. A new picture whose open picture changed, or is drawn,
-// while the answer came waits for its keep and asks again: the change must
+// act that asked it. A new picture whose open picture changed, or is drawn
+// or filled, while the answer came waits for its keep and asks again: the change must
 // be kept before the picture goes.
 check_taken :: proc "contextless" (request: ^Store_Request) {
 	name := string(request.name[:request.name_count])
@@ -971,7 +1119,7 @@ check_taken :: proc "contextless" (request: ^Store_Request) {
 		message = "the store did not say if the name is free"
 	case !request.name_free:
 		message = "a picture has this name"
-	case request.check_for == .New && (drag.active || keep.named && keep.rows.changed):
+	case request.check_for == .New && (drag.active || change_running() || keep.named && keep.rows.changed):
 		pending_count = copy(pending_name[:], name)
 		if !paint_model.pending_ask(&keep, .New) {
 			message = "an act of the panel waits already"
@@ -1177,6 +1325,11 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		return
 	}
 	if press.code == display.KEY_ESCAPE {
+		// Escape cancels a long change first, then closes a panel.
+		if change_running() {
+			change_cancel()
+			return
+		}
 		panel = .None
 		return
 	}
@@ -1449,7 +1602,22 @@ status_text :: proc "contextless" (builder: ^interface.Text_Builder) -> string {
 		interface.text_put(builder, " y ")
 		interface.text_put_number(builder, u64(max(pointer_y, 0)))
 	}
-	if message != "" {
+	// A long change that runs says its progress in place of the message: a
+	// stroke, an undo or a call waits for it, and this line says why.
+	if change_running() {
+		interface.text_put(builder, " | ")
+		if intrinsics.atomic_load(&change_job.recording) {
+			interface.text_put(builder, "keeping the step of undo: ")
+			done := intrinsics.atomic_load(&history_scratch.strips_done)
+			interface.text_put_number(builder, u64(min(done * 100 / max(paint_model.history_record_strips(change_job.box), 1), 100)))
+			interface.text_put(builder, " %")
+		} else {
+			interface.text_put(builder, "filling: ")
+			interface.text_put_number(builder, u64(intrinsics.atomic_load(&fill_memory.painted)))
+			interface.text_put(builder, " pixels")
+		}
+		interface.text_put(builder, ", Escape cancels")
+	} else if message != "" {
 		interface.text_put(builder, " | ")
 		interface.text_put(builder, message)
 	}
@@ -1469,7 +1637,7 @@ frame_build :: proc "contextless" (window: ^display.Window) -> (bar_result: inte
 	// is a change that the next keep writes. It waits while a stroke, a keep
 	// or a read runs: each holds places in the picture, and a read grows
 	// the arena of the copy on the worker thread.
-	if !drag.active && !keep.keeping && !keep.reading {
+	if !drag.active && !keep.keeping && !keep.reading && !change_running() {
 		picture_grow(canvas_area.width, canvas_area.height)
 	}
 	tools_row(&frame)
@@ -1558,7 +1726,9 @@ pointer_paint :: proc "contextless" (event: display.Event) {
 	change_begin()
 	switch tool {
 	case .Fill:
-		change_end(paint_model.fill_region(&picture, x, y, drag_color(paper), &fill_memory))
+		// A fill reaches a region of a size that it learns as it runs: it
+		// always runs as a long change.
+		change_ask({kind = .Fill, x = x, y = y, color = drag_color(paper)})
 	case .Brush, .Eraser:
 		drag = {active = true, paper = paper, from_x = x, from_y = y, last_x = x, last_y = y}
 		drag.changed = paint_model.segment_draw(&picture, x, y, x, y, size, drag_color(paper))
@@ -1639,11 +1809,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if picture_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
 		if backup_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
 			if history_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
-				visited_arena, arena_status = system.arena_create(system.arena_reservation_pages(own.pages / 32 + 1))
+				fill_arena, arena_status = system.arena_create(reservation)
 			}
 		}
 	}
 	history.grow = history_ring_grow
+	fill_memory.grow = fill_stack_grow
 	if arena_status != .Ok || picture_grow(WIDTH, HEIGHT - CANVAS_TOP - STATUS_HEIGHT) != .Grown {
 		system.log_fact(.Warning, Picture_Memory_Refused{width = WIDTH, height = HEIGHT - CANVAS_TOP - STATUS_HEIGHT})
 		system.stop(.Failed)
@@ -1652,6 +1823,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window_memory.drawing.before.picture_memories = picture_memories[:]
 	// The store opens on the worker thread: the window draws at once.
 	process_context = ctx
+	// The worker of the long changes: with none, a change runs on the window.
+	change_worker = interface.background_work_start(&change_work) == .Ok
 	if interface.background_work_start(&work) == .Ok {
 		store_ask(.Open, "")
 	} else {
@@ -1664,6 +1837,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Running{})
 	for {
 		now := system.time()
+		if interface.background_work_take(&change_work) {
+			change_taken()
+		}
 		store_result_take(now)
 		store_drive(now)
 		bar_result := frame_build(&window)
@@ -1676,22 +1852,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The calls of the console change the picture: while it must not
 		// change, they wait in their ring, and the loop does not wake for
 		// them.
-		if paint_model.change_allowed(&keep) {
+		// A long change holds the picture: the calls wait for it too.
+		running := change_running()
+		if paint_model.change_allowed(&keep) && !running {
 			system.service_wait(&wait, &service)
 		}
-		// A read that waits for the end of a drag is no reason to wake:
-		// the release of the pointer wakes the loop.
-		ready := interface.background_work_wait(&wait, &work) && !(store_request.act == .Read && drag.active)
+		// A read that waits for the end of a drag or of a long change is no
+		// reason to wake: their end wakes the loop.
+		store_ready := interface.background_work_wait(&wait, &work) && !(store_request.act == .Read && (drag.active || running))
+		change_ready := interface.background_work_wait(&wait, &change_work)
+		ready := store_ready || change_ready
 		// The keep of the picture is due after the pause of its changes:
-		// the loop wakes for it only when a turn can then ask for it.
+		// the loop wakes for it only when a turn can then ask for it, so not
+		// while a long change runs; then the loop wakes for its progress.
 		deadline := system.WAIT_FOREVER
-		if time, due := paint_model.keep_wake(&keep, interface.background_work_busy(&work)); due {
+		if running {
+			deadline = now + PROGRESS_WAKE_MILLISECONDS
+		} else if time, due := paint_model.keep_wake(&keep, interface.background_work_busy(&work)); due {
 			deadline = time
 		}
 		system.wait_end(&wait, ready ? system.time() : deadline)
 		// The calls of the console change the picture: they wait in their
-		// ring while a read of another picture would replace it.
-		if paint_model.change_allowed(&keep) {
+		// ring while a read of another picture would replace it, and while
+		// a long change runs.
+		if paint_model.change_allowed(&keep) && !change_running() {
 			system.service_run(&service)
 		}
 		events_take(&window)
