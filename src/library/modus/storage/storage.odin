@@ -167,11 +167,53 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 	return !client.gone
 }
 
+// The most milliseconds that a call waits while the storage service
+// repairs the counts of the blocks of its disk, and the time between two
+// tries. Past the bound the caller gets the refusal Busy, unit Count_Repair,
+// whose sentence gives the progress of the repair.
+REPAIR_WAIT_BOUND_MILLISECONDS :: 60_000
+REPAIR_RETRY_MILLISECONDS :: 100
+
+// repair_retry says if a call that the storage service answered is made
+// again: a refusal Busy with the unit Count_Repair (the service makes no
+// change while it repairs its counts) before the bound. wait is the time
+// to the next try.
+repair_retry :: proc "contextless" (status: storage_status.Status, value: i64, record: ^errors.Error_Record, waited_milliseconds: u64) -> (retry: bool, wait_milliseconds: u64) {
+	if status != .Failed || value != i64(Export_Error.Busy) {
+		return false, 0
+	}
+	if record.kind != i64(errors.Kind.Busy) || record.unit != i64(errors.Unit.Count_Repair) {
+		return false, 0
+	}
+	if waited_milliseconds >= REPAIR_WAIT_BOUND_MILLISECONDS {
+		return false, 0
+	}
+	return true, min(REPAIR_RETRY_MILLISECONDS, REPAIR_WAIT_BOUND_MILLISECONDS - waited_milliseconds)
+}
+
 // call makes one isolated call of the export with a name. For a Text result,
 // text has the bytes in the call region: copy them before the next call.
 // When the export answers a negative number, the status is Failed and error
-// has its error record, as the storage service wrote it.
+// has its error record, as the storage service wrote it. A change that the
+// service refuses while it repairs the counts of its disk is made again,
+// up to REPAIR_WAIT_BOUND_MILLISECONDS (repair_retry).
 call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status) {
+	local: errors.Error_Record
+	record := error != nil ? error : &local
+	start := system.time()
+	for {
+		value, text, status = call_once(client, name, arguments, record)
+		retry, wait := repair_retry(status, value, record, system.time() - start)
+		if !retry {
+			return value, text, status
+		}
+		system.sleep(system.time() + wait)
+	}
+}
+
+// call_once makes one isolated call and waits for its answer.
+@(private)
+call_once :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record) -> (value: i64, text: []u8, status: storage_status.Status) {
 	sent: Sent_Call
 	if sent, status = call_send(client, name, arguments); status != .Ok {
 		return 0, nil, status

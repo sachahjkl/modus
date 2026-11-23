@@ -340,7 +340,7 @@ Count_Leaves_Repaired :: struct {}
 
 // Leaves of the count tree have a wrong check: the service enters the
 // repair state.
-@(log_fact = "storage: {leaves} leaves of the count tree have a wrong check: the service makes no change until it has counted the names of their blocks again, and serves the reads")
+@(log_fact = "storage: the count tree has a wrong check in {leaves} of its leaves: the service makes no change until it has counted the names of their blocks again, and serves the reads")
 Count_Repair_Started :: struct {
 	leaves: u64,
 }

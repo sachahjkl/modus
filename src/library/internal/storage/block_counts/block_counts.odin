@@ -59,17 +59,26 @@ Counts :: struct {
 	failure:      Read, // The first failure of a read since counts_failure_clear.
 	failed_block: u64,
 	// The leaves found wrong: their counts are not known until a repair
-	// counts them again. The search of a free block passes them.
+	// counts them again. The search of a free block passes them. A wrong
+	// directory of level 1 makes each leaf under it wrong: its pointers to
+	// them are not known.
 	wrong_leaves:      [WRONG_LEAVES_MOST]u64, // The first block of each one.
 	wrong_leaf_count:  int,
-	wrong_leaves_full: bool, // More leaves were wrong than the list holds.
-	// The leaves that a repair counted again, until a commit writes them:
-	// their counts come from here, not from their pages.
+	wrong_leaves_full: bool, // More leaves were wrong than the list holds, or a directory above level 1 is wrong: the damage is not known whole.
+	// The directories of level 1 found wrong: the commit of their repair
+	// makes each of them again from its repaired leaves.
+	wrong_directories:      [WRONG_DIRECTORIES_MOST]u64, // The first block under each one.
+	wrong_directory_count:  int,
+	// The leaves that a repair counted again, until a commit writes them,
+	// in the order of their first block: their counts come from here, not
+	// from their pages.
 	repaired:          []Repaired_Leaf,
 }
 
-// The wrong leaves that the counts keep, and that one repair counts again.
-WRONG_LEAVES_MOST :: 16
+// The wrong leaves that the counts keep: the leaves of two directories.
+WRONG_LEAVES_MOST :: 2 * format.COUNT_DIRECTORY_FANOUT
+// The wrong directories of level 1 that the counts keep.
+WRONG_DIRECTORIES_MOST :: 2
 
 // A leaf that a repair counted again.
 Repaired_Leaf :: struct {
@@ -91,12 +100,103 @@ leaf_is_wrong :: proc "contextless" (counts: ^Counts, first: u64) -> bool {
 // leaf_repaired gives the counts of a leaf that a repair counted again, or
 // nil.
 leaf_repaired :: proc "contextless" (counts: ^Counts, first: u64) -> ^Repaired_Leaf {
-	for &leaf in counts.repaired {
-		if leaf.first == first {
-			return &leaf
+	return repaired_find(counts.repaired, first)
+}
+
+// repaired_find finds a leaf in repaired leaves in the order of their first
+// block, or nil: the walk of a repair asks it at each name.
+repaired_find :: proc "contextless" (leaves: []Repaired_Leaf, first: u64) -> ^Repaired_Leaf {
+	low, high := 0, len(leaves)
+	for low < high {
+		middle := (low + high) / 2
+		if leaves[middle].first < first {
+			low = middle + 1
+		} else {
+			high = middle
 		}
 	}
+	if low < len(leaves) && leaves[low].first == first {
+		return &leaves[low]
+	}
 	return nil
+}
+
+// directory_is_wrong says if a directory of level 1 is in the list of the
+// wrong directories.
+directory_is_wrong :: proc "contextless" (counts: ^Counts, first: u64) -> bool {
+	for wrong in counts.wrong_directories[:counts.wrong_directory_count] {
+		if wrong == first {
+			return true
+		}
+	}
+	return false
+}
+
+// leaf_wrong_note keeps a leaf in the list of the wrong leaves.
+@(private)
+leaf_wrong_note :: proc "contextless" (counts: ^Counts, first: u64) {
+	if leaf_is_wrong(counts, first) {
+		return
+	}
+	if counts.wrong_leaf_count < WRONG_LEAVES_MOST {
+		counts.wrong_leaves[counts.wrong_leaf_count] = first
+		counts.wrong_leaf_count += 1
+	} else {
+		counts.wrong_leaves_full = true
+	}
+}
+
+// directory_wrong_note keeps a wrong directory: one of level 1 and each
+// leaf under it, which a repair counts and makes again; one above level 1
+// has more leaves than a repair holds, and its damage is not known whole.
+@(private)
+directory_wrong_note :: proc "contextless" (counts: ^Counts, level: int, first: u64) {
+	if level != 1 {
+		counts.wrong_leaves_full = true
+		return
+	}
+	if directory_is_wrong(counts, first) {
+		return
+	}
+	if counts.wrong_directory_count >= WRONG_DIRECTORIES_MOST {
+		counts.wrong_leaves_full = true
+		return
+	}
+	counts.wrong_directories[counts.wrong_directory_count] = first
+	counts.wrong_directory_count += 1
+	for leaf := first; leaf < min(first + format.count_span(1), counts.disk_blocks); leaf += format.COUNTS_OF_A_PAGE {
+		leaf_wrong_note(counts, leaf)
+	}
+}
+
+// directories_written forgets the wrong directories that a commit made
+// again: each leaf under them was repaired.
+directories_written :: proc "contextless" (counts: ^Counts) {
+	kept := 0
+	for index in 0 ..< counts.wrong_directory_count {
+		first := counts.wrong_directories[index]
+		whole := true
+		for leaf := first; leaf < min(first + format.count_span(1), counts.disk_blocks); leaf += format.COUNTS_OF_A_PAGE {
+			whole &&= leaf_repaired(counts, leaf) != nil
+		}
+		if !whole {
+			counts.wrong_directories[kept] = first
+			kept += 1
+		}
+	}
+	counts.wrong_directory_count = kept
+}
+
+// span_has_repaired says if a part of the disk holds a leaf that a repair
+// counted: the free counts of the directories above it are not known.
+@(private)
+span_has_repaired :: proc "contextless" (counts: ^Counts, first: u64, span: u64) -> bool {
+	for &leaf in counts.repaired {
+		if leaf.first >= first && leaf.first - first < span {
+			return true
+		}
+	}
+	return false
 }
 
 // counts_bind gives a count tree its memory and its root. The frames hold
@@ -243,6 +343,11 @@ page_get :: proc "contextless" (counts: ^Counts, level: int, first: u64) -> (fra
 		found.referenced = true
 		return found, .Good
 	}
+	// A wrong directory is not read again: its pointers stay unknown.
+	if level == 1 && directory_is_wrong(counts, first) {
+		counts_fail(counts, .Wrong, 0)
+		return nil, .Wrong
+	}
 	pointer: Pointer
 	if level == counts.levels {
 		if first != 0 {
@@ -278,13 +383,10 @@ page_get :: proc "contextless" (counts: ^Counts, level: int, first: u64) -> (fra
 	}
 	if format.check(frame.bytes[:]) != pointer.check || !page_valid(&frame.bytes, level, first) {
 		counts_fail(counts, .Wrong, pointer.block)
-		if level == 0 && !leaf_is_wrong(counts, first) {
-			if counts.wrong_leaf_count < WRONG_LEAVES_MOST {
-				counts.wrong_leaves[counts.wrong_leaf_count] = first
-				counts.wrong_leaf_count += 1
-			} else {
-				counts.wrong_leaves_full = true
-			}
+		if level == 0 {
+			leaf_wrong_note(counts, first)
+		} else {
+			directory_wrong_note(counts, level, first)
 		}
 		return nil, .Wrong
 	}
@@ -335,9 +437,19 @@ free_search :: proc "contextless" (counts: ^Counts, from: u64, taken: Taken, dat
 			}
 			leaf_first := page_first(0, number)
 			leaf_end := min(leaf_first + format.COUNTS_OF_A_PAGE, end)
-			// A wrong leaf, or one that a repair counted and no commit wrote
-			// yet, is passed: its blocks wait for the repair.
-			if leaf_is_wrong(counts, leaf_first) || leaf_repaired(counts, leaf_first) != nil {
+			// A leaf that a repair counted and no commit wrote yet gives its
+			// counts from the memory of the repair: the commit of the repair
+			// takes its pages there too, on a disk with no other free block.
+			if repaired := leaf_repaired(counts, leaf_first); repaired != nil {
+				for ; number < leaf_end; number += 1 {
+					if number >= 2 && repaired.counts[number - leaf_first] == 0 && (taken == nil || !taken(data, number)) {
+						return number
+					}
+				}
+				continue
+			}
+			// A wrong leaf is passed: its blocks wait for the repair.
+			if leaf_is_wrong(counts, leaf_first) {
 				number = leaf_end
 				continue
 			}
@@ -366,6 +478,10 @@ free_search :: proc "contextless" (counts: ^Counts, from: u64, taken: Taken, dat
 @(private)
 free_skip :: proc "contextless" (counts: ^Counts, number: u64) -> u64 {
 	for level := counts.levels; level >= 1; level -= 1 {
+		// A wrong directory is not read again.
+		if level == 1 && directory_is_wrong(counts, page_first(1, number)) {
+			return number
+		}
 		directory, outcome := page_get(counts, level, page_first(level, number))
 		if outcome != .Good || directory == nil {
 			return number
@@ -373,6 +489,11 @@ free_skip :: proc "contextless" (counts: ^Counts, number: u64) -> u64 {
 		page := (^format.Count_Directory)(&directory.bytes)
 		place := (number - page.first) / format.count_span(level - 1)
 		child := page.children[place]
+		// The free count of a child with a repaired leaf under it is the
+		// count before the repair: the level below decides.
+		if span_has_repaired(counts, page.first + place * format.count_span(level - 1), format.count_span(level - 1)) {
+			continue
+		}
 		if child.free == 0 && (child.block != 0 || format.count_free_blocks(level - 1, page.first + place * format.count_span(level - 1), counts.disk_blocks) == 0) {
 			return page.first + (place + 1) * format.count_span(level - 1)
 		}

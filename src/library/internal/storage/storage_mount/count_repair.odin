@@ -9,8 +9,8 @@ import block_tree "internal:storage/storage_object"
 // src/md/data/storage_capacity.md, "The repair state"). While it runs, the
 // service makes no change and no commit, so the trees do not change
 // between two steps. Each step reads at most REPAIR_NODES_PER_STEP nodes,
-// and the walk resumes where the step before stopped: by the names of its
-// path in the trees of the store, by its place in the entry (the current
+// and the walk resumes where the step before stopped: by its path in the
+// trees of the store, by its place in the entry (the current
 // state, a version, a state of a release list), and by the first block of
 // data of the state that it did not count yet. It counts the names of the
 // blocks of the wrong leaves only, in memory, and records each node that
@@ -18,7 +18,12 @@ import block_tree "internal:storage/storage_object"
 // that several states name is walked once, and no set fills. When the walk
 // ends, the service writes the counted leaves in one commit.
 
-// The nodes that one step of a repair reads at most.
+// The leaves that one run of a repair counts: the leaves of one wrong
+// directory of level 1. More wrong leaves wait for the next run.
+REPAIR_LEAVES_MOST :: format.COUNT_DIRECTORY_FANOUT
+
+// The reads and the writes that one step of a repair makes at most: nodes
+// of trees and of objects, versions, lists, and pages of the scratch.
 REPAIR_NODES_PER_STEP :: 4096
 
 // What the service gives to a repair: the state of the last commit, never
@@ -54,11 +59,22 @@ Repair_Phase :: enum u8 {
 	Release_State = 5, // The next state of the list.
 }
 
-// One tree on the path of the walk.
+// One node on the path of the walk in a tree, and the next of its records
+// that the walk takes.
+Repair_Level :: struct {
+	pointer: format.Pointer,
+	place:   int,
+}
+
+// One tree on the path of the walk: the path from its root to the node of
+// its next entry. Only the tree on top has its nodes in memory
+// (repair.nodes); a tree under it reads its path again when the walk comes
+// back to it.
 Repair_Frame :: struct {
-	root:       format.Pointer,
-	cursor:     format.Entry_Name, // The name of the last entry that the walk took.
-	has_cursor: bool,
+	root:   format.Pointer,
+	levels: int, // The nodes of the path: 0 before the root is read, and at the end.
+	done:   bool, // The walk of the tree ended.
+	path:   [format.TREE_DEPTH_LIMIT + 1]Repair_Level,
 }
 
 // The state of an object that the walk counts.
@@ -121,6 +137,7 @@ Scratch :: struct {
 	frames:     [SCRATCH_FRAMES]Scratch_Frame,
 	hand:       int,
 	next_block: u64, // The scratch takes free blocks in their order, so never one twice.
+	in_memory:  bool, // Each page of the scratch fits in its frames: no page goes to the disk, and no block is taken.
 	run:        u64, // The runs of the repair since the open: a page of a run before is not taken.
 }
 
@@ -130,14 +147,15 @@ Repair :: struct {
 	wait_for_call:  bool, // A step failed on the device: the next one waits for a call.
 	no_room:        bool, // The scratch found no free block: the repair waits for a commit.
 	leaf_count:     int,
-	leaves:         [block_counts.WRONG_LEAVES_MOST]block_counts.Repaired_Leaf,
+	leaves:         [REPAIR_LEAVES_MOST]block_counts.Repaired_Leaf, // In the order of their first block.
 	store:          int, // The store that the walk is in: -1 before the first.
 	stores_walked:  u64,
 	stores_total:   u64,
 	in_removals:    bool, // The walk is in the removal queue of the store.
 	depth:          int,
 	frames:         [format.NESTING_LIMIT + 1]Repair_Frame,
-	nodes:          [format.TREE_DEPTH_LIMIT + 1][BLOCK_SIZE]u8, // One node of a tree for each level of the walk.
+	nodes:          [format.TREE_DEPTH_LIMIT + 1][BLOCK_SIZE]u8, // The nodes of the path of the tree on top.
+	loaded:         bool, // nodes holds the path of the tree on top.
 	entry_active:   bool,
 	entry:          format.Entry,
 	phase:          Repair_Phase,
@@ -151,7 +169,8 @@ Repair :: struct {
 	lists:          u64, // The lists of the release that the walk read: a loop of lists ends at the blocks of the disk.
 	store_failed:   bool, // A tree of the store has a wrong node: the walk of the store ends.
 	failure:        Repair_Outcome,
-	step_reads:     int,
+	step_reads:     int, // The reads and the writes of the step: nodes, lists, versions and pages of the scratch.
+	reads:          u64, // The reads and the writes of the run: a measure.
 	nodes_per_step: int, // REPAIR_NODES_PER_STEP; a host test takes a smaller one.
 	shape:          Scratch_Shape, // The shape of the scratch of the next run.
 	scratch:        Scratch,
@@ -196,15 +215,12 @@ repair_commit_came :: proc "contextless" (state: ^State) {
 // repair counts again.
 repair_name :: proc "contextless" (state: ^State, number: u64, owner: u16) {
 	first := number - number % format.COUNTS_OF_A_PAGE
-	for &leaf in state.repair.leaves[:state.repair.leaf_count] {
-		if leaf.first == first {
-			place := number - first
-			if u64(leaf.counts[place]) < REFERENCE_LIMIT {
-				leaf.counts[place] += 1
-			}
-			leaf.owners[place] = owner
-			return
+	if leaf := block_counts.repaired_find(state.repair.leaves[:state.repair.leaf_count], first); leaf != nil {
+		place := number - first
+		if u64(leaf.counts[place]) < REFERENCE_LIMIT {
+			leaf.counts[place] += 1
 		}
+		leaf.owners[place] = owner
 	}
 }
 
@@ -212,12 +228,7 @@ repair_name :: proc "contextless" (state: ^State, number: u64, owner: u16) {
 @(private)
 repair_in_range :: proc "contextless" (state: ^State, number: u64) -> bool {
 	first := number - number % format.COUNTS_OF_A_PAGE
-	for &leaf in state.repair.leaves[:state.repair.leaf_count] {
-		if leaf.first == first {
-			return true
-		}
-	}
-	return false
+	return block_counts.repaired_find(state.repair.leaves[:state.repair.leaf_count], first) != nil
 }
 
 @(private)
@@ -240,9 +251,14 @@ scratch_reset :: proc "contextless" (state: ^State) {
 	}
 	pages := (state.disk_size + scratch.shape.page_bits - 1) / scratch.shape.page_bits
 	scratch.levels = 0
+	all_pages := pages
 	for cover := scratch.shape.children; cover < pages; cover *= scratch.shape.children {
 		scratch.levels += 1
+		all_pages += (pages + cover - 1) / cover
 	}
+	// A small disk keeps its scratch in memory: a repair whose wrong leaves
+	// cover the whole disk knows no free block for it.
+	scratch.in_memory = all_pages <= u64(scratch.shape.frame_count)
 	scratch.top = {}
 	for &frame in scratch.frames {
 		frame.used = false
@@ -288,9 +304,13 @@ scratch_evict :: proc "contextless" (state: ^State, disk: ^Repair_Disk) -> int {
 			frame.referenced = false
 			continue
 		}
-		if frame.dirty && !disk.write(disk, frame.block, (^[BLOCK_SIZE]u8)(&frame.page)) {
-			repair_fail(state, .Device)
-			return -1
+		if frame.dirty {
+			state.repair.step_reads += 1
+			state.repair.reads += 1
+			if !disk.write(disk, frame.block, (^[BLOCK_SIZE]u8)(&frame.page)) {
+				repair_fail(state, .Device)
+				return -1
+			}
 		}
 		frame.used = false
 		return index
@@ -319,7 +339,9 @@ scratch_frame :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk:
 			return nil
 		}
 		block = scratch.top[index]
-		if block == 0 {
+		if scratch.in_memory {
+			fresh = true
+		} else if block == 0 {
 			block = scratch_take(state)
 			if block == 0 {
 				return nil
@@ -334,7 +356,9 @@ scratch_frame :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk:
 		}
 		slot := &parent.page.words[index % scratch.shape.children]
 		block = slot^
-		if block == 0 {
+		if scratch.in_memory {
+			fresh = true
+		} else if block == 0 {
 			block = scratch_take(state)
 			if block == 0 {
 				return nil
@@ -355,6 +379,8 @@ scratch_frame :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk:
 		frame.page = {header = header}
 	} else {
 		numbers := [1]u64{block}
+		state.repair.step_reads += 1
+		state.repair.reads += 1
 		if !reader.read(reader, numbers[:], ([^]u8)(&frame.page)[:BLOCK_SIZE]) {
 			repair_fail(state, .Device)
 			return nil
@@ -393,6 +419,7 @@ repair_first :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: 
 @(private)
 repair_read :: proc "contextless" (state: ^State, reader: ^Block_Reader, pointer: format.Pointer, into: rawptr) -> Read {
 	state.repair.step_reads += 1
+	state.repair.reads += 1
 	_, outcome := read_checked(state, reader, {pointer}, 0)
 	switch outcome {
 	case .Good:
@@ -409,30 +436,30 @@ LEAF_RECORD_SIZE :: size_of(format.Entry_Name) + size_of(format.Entry)
 @(private)
 BRANCH_RECORD_SIZE :: size_of(format.Entry_Name) + size_of(format.Pointer)
 
+// repair_tree_node_take counts the one name of a node of a tree, and says
+// if the walk walks it: a node that the walk took before (a tree named two
+// times, a fault of the engine) is not walked again, so a store whose trees
+// name one tree again and again ends its walk.
 @(private)
-name_compare :: proc "contextless" (left, right: ^format.Entry_Name) -> int {
-	for index in 0 ..< len(left) {
-		if left[index] != right[index] {
-			return left[index] < right[index] ? -1 : 1
-		}
-	}
-	return 0
-}
-
-// repair_next finds the first entry of a tree after a name (or the first
-// entry), and counts the nodes on its way that are in a wrong leaf, once.
-// A wrong node ends the walk of the store. found is false at the end of
-// the tree.
-@(private)
-repair_next :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^Repair_Disk, pointer: format.Pointer, level: int, cursor: ^format.Entry_Name, has_cursor: bool, key: ^format.Entry_Name, entry: ^format.Entry) -> (found: bool) {
+repair_tree_node_take :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^Repair_Disk, pointer: format.Pointer) -> bool {
 	repair := &state.repair
 	if pointer.block == 0 {
 		return false
 	}
-	if level > format.TREE_DEPTH_LIMIT {
+	if pointer.block < 2 || pointer.block >= state.disk_size {
 		repair.store_failed = true
 		return false
 	}
+	repair_name(state, pointer.block, u16(repair.store + 1))
+	return repair_first(state, reader, disk, pointer.block)
+}
+
+// repair_tree_read reads a node of a tree into the node of its level of the
+// path, with its check and its form: a node under a branch has the level
+// below it. A wrong node ends the walk of the store.
+@(private)
+repair_tree_read :: proc "contextless" (state: ^State, reader: ^Block_Reader, level: int, pointer: format.Pointer) -> bool {
+	repair := &state.repair
 	node := &repair.nodes[level]
 	switch repair_read(state, reader, pointer, node) {
 	case .Good:
@@ -447,48 +474,86 @@ repair_next :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^
 		repair.store_failed = true
 		return false
 	}
-	// A node of a tree has one name: it is counted at its first read.
-	if repair_in_range(state, pointer.block) && repair_first(state, reader, disk, pointer.block) {
-		repair_name(state, pointer.block, u16(repair.store + 1))
-	}
-	if repair.failure != .Running {
+	if level > 0 && u32(header.level) + 1 != u32((^format.Tree_Header)(&repair.nodes[level - 1]).level) {
+		repair.store_failed = true
 		return false
 	}
-	if header.level == 0 {
-		count := min(int(header.count), format.LEAF_CAPACITY)
-		for place in 0 ..< count {
-			record := node[format.TREE_HEADER_SIZE + place * LEAF_RECORD_SIZE:]
-			name := (^format.Entry_Name)(raw_data(record))
-			if !has_cursor || name_compare(name, cursor) > 0 {
-				key^ = name^
-				intrinsics.mem_copy_non_overlapping(entry, &record[size_of(format.Entry_Name)], size_of(format.Entry))
-				return true
-			}
-		}
-		return false
+	return true
+}
+
+// repair_tree_start puts the root of a tree of a store on the path: the
+// store block names it.
+@(private)
+repair_tree_start :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^Repair_Disk, root: format.Pointer) {
+	repair := &state.repair
+	repair.depth = 0
+	repair.frames[0] = {}
+	repair.loaded = false
+	if repair_tree_node_take(state, reader, disk, root) {
+		repair.frames[0].root = root
 	}
-	count := min(int(header.count), format.BRANCH_CAPACITY)
-	// The child of the cursor: the last whose name (from record 1) is at
-	// most the cursor; then the children after it.
-	first_child := 0
-	if has_cursor {
-		for place in 1 ..< count {
-			name := (^format.Entry_Name)(&node[format.TREE_HEADER_SIZE + place * BRANCH_RECORD_SIZE])
-			if name_compare(name, cursor) <= 0 {
-				first_child = place
-			}
-		}
-	}
-	for place in first_child ..< count {
-		// A deeper call reads into the node of its own level.
-		child := (^format.Pointer)(&repair.nodes[level][format.TREE_HEADER_SIZE + place * BRANCH_RECORD_SIZE + size_of(format.Entry_Name)])^
-		if repair_next(state, reader, disk, child, level + 1, cursor, has_cursor, key, entry) {
-			return true
-		}
-		if repair.failure != .Running || repair.store_failed {
+}
+
+// repair_tree_next gives the next entry of the tree on top of the path. The
+// path of the last entry stays, so the entries of one leaf cost one read,
+// and each node of the tree is read once; a tree under it reads its path
+// again only when the walk comes back to it. found is false at the end of
+// the tree, at a wrong node, or at a failure.
+@(private)
+repair_tree_next :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^Repair_Disk, entry: ^format.Entry) -> (found: bool) {
+	repair := &state.repair
+	frame := &repair.frames[repair.depth]
+	if frame.levels == 0 {
+		if frame.root.block == 0 || frame.done {
 			return false
 		}
+		if !repair_tree_read(state, reader, 0, frame.root) {
+			return false
+		}
+		frame.path[0] = {pointer = frame.root}
+		frame.levels = 1
+		repair.loaded = true
 	}
+	if !repair.loaded {
+		for level in 0 ..< frame.levels {
+			if !repair_tree_read(state, reader, level, frame.path[level].pointer) {
+				return false
+			}
+		}
+		repair.loaded = true
+	}
+	for frame.levels > 0 && repair.failure == .Running && !repair.store_failed {
+		top := frame.levels - 1
+		node := &repair.nodes[top]
+		header := (^format.Tree_Header)(node)
+		at := &frame.path[top]
+		if header.level == 0 {
+			if at.place < min(int(header.count), format.LEAF_CAPACITY) {
+				record := node[format.TREE_HEADER_SIZE + at.place * LEAF_RECORD_SIZE:]
+				intrinsics.mem_copy_non_overlapping(entry, &record[size_of(format.Entry_Name)], size_of(format.Entry))
+				at.place += 1
+				return true
+			}
+		} else if at.place < min(int(header.count), format.BRANCH_CAPACITY) {
+			child := (^format.Pointer)(&node[format.TREE_HEADER_SIZE + at.place * BRANCH_RECORD_SIZE + size_of(format.Entry_Name)])^
+			at.place += 1
+			if !repair_tree_node_take(state, reader, disk, child) {
+				continue
+			}
+			if frame.levels > format.TREE_DEPTH_LIMIT {
+				repair.store_failed = true
+				return false
+			}
+			if !repair_tree_read(state, reader, frame.levels, child) {
+				return false
+			}
+			frame.path[frame.levels] = {pointer = child}
+			frame.levels += 1
+			continue
+		}
+		frame.levels -= 1
+	}
+	frame.done = frame.levels == 0
 	return false
 }
 
@@ -503,6 +568,7 @@ repair_object_node :: proc "contextless" (state: ^State, reader: ^Block_Reader, 
 	node := &state.object_nodes[level - 1]
 	numbers := [1]u64{pointer.block}
 	repair.step_reads += 1
+	repair.reads += 1
 	if !reader.read(reader, numbers[:], ([^]u8)(node)[:BLOCK_SIZE]) {
 		repair_fail(state, .Device)
 		return false
@@ -588,7 +654,7 @@ repair_object_walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, 
 // repair_entry_begin takes an entry of a tree: an object or a release goes
 // on in its phases, a tree goes on the path of the walk.
 @(private)
-repair_entry_begin :: proc "contextless" (state: ^State, entry: ^format.Entry, queued: bool) {
+repair_entry_begin :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^Repair_Disk, entry: ^format.Entry, queued: bool) {
 	repair := &state.repair
 	kind, ok := format.entry_kind_of_word(entry.kind)
 	if !ok {
@@ -602,15 +668,16 @@ repair_entry_begin :: proc "contextless" (state: ^State, entry: ^format.Entry, q
 		repair.phase = .Current
 		repair.object = {root = entry.pointer, size = entry.size, set = true}
 	case .Tree:
-		if entry.pointer.block == 0 {
-			return
-		}
 		if repair.depth >= format.NESTING_LIMIT {
 			repair.store_failed = true
 			return
 		}
+		if !repair_tree_node_take(state, reader, disk, entry.pointer) {
+			return
+		}
 		repair.depth += 1
 		repair.frames[repair.depth] = {root = entry.pointer}
+		repair.loaded = false
 	case .Release:
 		if !queued {
 			return
@@ -733,24 +800,22 @@ repair_store_walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, d
 			repair.entry_active = false
 			continue
 		}
-		frame := &repair.frames[repair.depth]
-		key: format.Entry_Name
 		entry: format.Entry
-		if repair_next(state, reader, disk, frame.root, 0, &frame.cursor, frame.has_cursor, &key, &entry) {
-			frame.cursor = key
-			frame.has_cursor = true
-			repair_entry_begin(state, &entry, repair.in_removals && repair.depth == 0)
+		if repair_tree_next(state, reader, disk, &entry) {
+			repair_entry_begin(state, reader, disk, &entry, repair.in_removals && repair.depth == 0)
 			continue
 		}
 		if repair.failure != .Running || repair.store_failed {
 			break
 		}
-		// The tree is done: back to its parent, or to the removal queue.
+		// The tree is done: back to its parent, which reads its path again,
+		// or to the removal queue.
 		if repair.depth > 0 {
 			repair.depth -= 1
+			repair.loaded = false
 		} else if !repair.in_removals {
 			repair.in_removals = true
-			repair.frames[0] = {root = disk.heads[repair.store].removals}
+			repair_tree_start(state, reader, disk, disk.heads[repair.store].removals)
 		} else {
 			return true
 		}
@@ -777,9 +842,35 @@ repair_store_numbers :: proc "contextless" (disk: ^Repair_Disk) -> int {
 @(private)
 repair_begin :: proc "contextless" (state: ^State, disk: ^Repair_Disk) {
 	repair := &state.repair
-	repair.leaf_count = state.counts.wrong_leaf_count
-	for index in 0 ..< repair.leaf_count {
-		repair.leaves[index] = {first = state.counts.wrong_leaves[index]}
+	counts := &state.counts
+	repair.leaf_count = 0
+	// The leaves of a wrong directory come whole, first: the commit makes
+	// the directory again from each of them. Then the other wrong leaves,
+	// while they fit; the others wait for the next run.
+	for directory in counts.wrong_directories[:counts.wrong_directory_count] {
+		end := min(directory + format.count_span(1), counts.disk_blocks)
+		if repair.leaf_count + int((end - directory + format.COUNTS_OF_A_PAGE - 1) / format.COUNTS_OF_A_PAGE) > REPAIR_LEAVES_MOST {
+			continue
+		}
+		for leaf := directory; leaf < end; leaf += format.COUNTS_OF_A_PAGE {
+			repair.leaves[repair.leaf_count] = {first = leaf}
+			repair.leaf_count += 1
+		}
+	}
+	for leaf in counts.wrong_leaves[:counts.wrong_leaf_count] {
+		if repair.leaf_count >= REPAIR_LEAVES_MOST {
+			break
+		}
+		if !block_counts.directory_is_wrong(counts, block_counts.page_first(1, leaf)) {
+			repair.leaves[repair.leaf_count] = {first = leaf}
+			repair.leaf_count += 1
+		}
+	}
+	// In the order of their first block, for the search at each name.
+	for index in 1 ..< repair.leaf_count {
+		for at := index; at > 0 && repair.leaves[at - 1].first > repair.leaves[at].first; at -= 1 {
+			repair.leaves[at - 1].first, repair.leaves[at].first = repair.leaves[at].first, repair.leaves[at - 1].first
+		}
 	}
 	repair.store = -1
 	repair.stores_walked, repair.stores_total = 0, 0
@@ -790,6 +881,7 @@ repair_begin :: proc "contextless" (state: ^State, disk: ^Repair_Disk) {
 	}
 	repair.entry_active = false
 	repair.object = {}
+	repair.reads = 0
 	scratch_reset(state)
 	repair.running = true
 }
@@ -830,8 +922,11 @@ repair_step :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk: ^
 		repair.in_removals, repair.depth, repair.store_failed = false, 0, false
 		repair.entry_active = false
 		repair.object = {}
-		repair.frames[0] = {root = disk.heads[repair.store].tree}
 		repair_name(state, store_cell(state, repair.store).store.block, u16(repair.store + 1))
+		repair_tree_start(state, reader, disk, disk.heads[repair.store].tree)
+		if repair.failure != .Running {
+			break
+		}
 		if repair.step_reads >= repair.nodes_per_step {
 			break
 		}
@@ -901,6 +996,7 @@ repair_count_pages :: proc "contextless" (state: ^State, level: int, first: u64)
 // is found again by the reads.
 repair_written :: proc "contextless" (state: ^State) {
 	counts := &state.counts
+	block_counts.directories_written(counts)
 	kept := 0
 	for index in 0 ..< counts.wrong_leaf_count {
 		first := counts.wrong_leaves[index]

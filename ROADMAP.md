@@ -45,6 +45,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **The blocks that a wrong release keeps are freed on a disk larger than the memory.** A recount of each leaf of the count tree, in runs, frees the blocks under a wrong release list or a wrong node of a release, which stay in use in the form Count_Tree until an open of the form Tables. [Design](src/md/data/storage_capacity.md)
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)
@@ -129,7 +130,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Acts of an agent that ask each time.** A scope set to ask each time makes each act of the agent wait for the principal in a grant dialog, as the stop of a process or the change of a store. [Design](src/md/features/wide_grants.md)
 - **The screen, the keys and the pointer in the lines of an agent.** An agent sees a frame of the screen, types and points in the windows that the principal picked, and waits for the next frame of a window, each as a line of a step. [Design](src/md/features/agent_code_mode.md)
 - **An agent edits, builds and runs a project.** An agent reads a source of a project, replaces a text in it, builds an output, runs it and reads its log, in a loop of steps, within the stores and the processes that the principal picked. [Design](src/md/features/agent_code_mode.md)
-
 
 ## Maybe
 

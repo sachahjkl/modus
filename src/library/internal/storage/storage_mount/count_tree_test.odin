@@ -894,6 +894,8 @@ a_repair_with_no_room_for_its_scratch :: proc(t: ^testing.T) {
 	defer free(state)
 	testing.expect(t, !mount(state, &disk, 520).failed)
 	leaf_zero_damage(t, state, &disk, root, 520)
+	// A scratch of more pages than its frames, so that it needs blocks.
+	state.repair.shape = {page_bits = 8, children = 2, frame_count = 1}
 	repair := test_repair_make(state, &disk)
 	defer free(repair)
 	outcome := repair_step(state, &disk, &repair.repair_disk)
@@ -999,4 +1001,315 @@ a_wrong_release_list_drops_its_entry_only :: proc(t: ^testing.T) {
 	list.count = format.RELEASES_OF_A_LIST - 1
 	list.states[format.RELEASES_OF_A_LIST - 1].size = 1
 	testing.expect(t, !format.release_list_valid(&list))
+}
+
+// The commit of a repair in the host model: the leaves that the repair
+// counted, their directories, and blocks for the new pages from the free
+// search, as the commit of the service makes them.
+@(private = "file")
+Repair_Commit_Model :: struct {
+	counts:   ^block_counts.Counts,
+	taken:    map[u64]bool,
+	released: map[u64]bool,
+}
+
+@(private = "file")
+model_taken :: proc "contextless" (data: rawptr, number: u64) -> bool {
+	context = runtime.default_context()
+	return (^Repair_Commit_Model)(data).taken[number]
+}
+
+@(private = "file")
+model_after :: proc "contextless" (commit: ^block_counts.Commit, number: u64) -> (count: u32, owner: u16) {
+	model := (^Repair_Commit_Model)(commit.data)
+	context = runtime.default_context()
+	if model.taken[number] {
+		return 1, COUNT_TREE_OWNER
+	}
+	if model.released[number] {
+		return 0, 0
+	}
+	count, owner, _ = block_counts.count_get(model.counts, number)
+	return count, owner
+}
+
+@(private = "file")
+model_take :: proc "contextless" (commit: ^block_counts.Commit) -> u64 {
+	model := (^Repair_Commit_Model)(commit.data)
+	context = runtime.default_context()
+	number := block_counts.free_search(model.counts, 2, model_taken, model)
+	if number != 0 {
+		model.taken[number] = true
+		block_counts.commit_leaf_add(commit, number)
+	}
+	return number
+}
+
+@(private = "file")
+model_release :: proc "contextless" (commit: ^block_counts.Commit, number: u64) {
+	model := (^Repair_Commit_Model)(commit.data)
+	context = runtime.default_context()
+	model.released[number] = true
+	block_counts.commit_leaf_add(commit, number)
+}
+
+// repair_commit_model writes the commit of the repaired leaves on the test
+// disk and makes its root name the new count tree. It gives the blocks
+// that the commit took.
+@(private = "file")
+repair_commit_model :: proc(t: ^testing.T, state: ^State, disk: ^Test_Disk) -> (taken: [dynamic]u64, made: bool) {
+	model := Repair_Commit_Model{counts = &state.counts}
+	defer delete(model.taken)
+	defer delete(model.released)
+	// As plan_reset of the service: the read that found the wrong page
+	// is not a failure of this commit.
+	block_counts.counts_failure_clear(&state.counts)
+	commit := &state.count_commit
+	testing.expect(t, block_counts.commit_begin(commit, &state.counts, state.count_staging, state.count_staged_slots))
+	commit.after, commit.take, commit.release = model_after, model_take, model_release
+	commit.data = &model
+	for &leaf in state.counts.repaired {
+		block_counts.commit_leaf_add(commit, leaf.first)
+	}
+	root: format.Pointer
+	root, made = block_counts.commit_finish(commit)
+	commit.data = nil
+	if !made {
+		block_counts.commit_drop(commit)
+		return
+	}
+	for &page in commit.staging[:commit.staged] {
+		copy(disk.bytes[page.block * BLOCK_SIZE:][:BLOCK_SIZE], page.bytes[:])
+	}
+	for number in model.taken {
+		append(&taken, number)
+	}
+	block_counts.commit_install(commit, root)
+	root_counts_set(disk, root, 1)
+	return
+}
+
+// A hostile store: eleven entries on each of six levels name one tree
+// inside, so its walk by paths meets the leaf under them 11^6 times. The
+// repair walks each node of a tree once, whatever leaf of the count tree
+// it is in, counts each name, and ends in a few reads, with the counts of
+// the walk of the tables.
+@(test)
+a_repair_walks_a_repeated_tree_once :: proc(t: ^testing.T) {
+	disk := disk_make(1100)
+	defer delete(disk.bytes)
+	object := disk_object(&disk)
+	under := disk_leaf(&disk, {{"a", object_entry(object, {})}})
+	for _ in 0 ..< 6 {
+		names := [11]string{"t00", "t01", "t02", "t03", "t04", "t05", "t06", "t07", "t08", "t09", "t10"}
+		entries: [11]Named_Entry
+		for &item, place in entries {
+			item = {names[place], {kind = u64(format.Entry_Kind.Tree), size = 11, pointer = under}}
+		}
+		under = disk_leaf(&disk, entries[:])
+	}
+	block: format.Store_Block
+	block.tree = under
+	disk_root(&disk, disk_put(&disk, &block), 10)
+	state, memory, tables := leaf_zero_break(t, &disk, 1100)
+	defer delete(memory)
+	defer free(state)
+	defer test_state_free(tables)
+	repair := test_repair_make(state, &disk)
+	defer free(repair)
+	repair_until_done(t, state, &disk, repair)
+	testing.expectf(t, state.repair.reads < 50, "the repair read %d blocks", state.repair.reads)
+	counts_expect(t, state, tables, "repeated trees")
+}
+
+// disk_folder writes a tree of a store of entries named in their order,
+// each one an object, in leaves of 11 entries under branches of 14: the
+// form of the writer of the service. It gives its root and its nodes.
+@(private = "file")
+disk_folder :: proc(disk: ^Test_Disk, entries: int, object: Object_Blocks) -> (root: format.Pointer, nodes: int) {
+	pointers := make([dynamic]format.Pointer)
+	names := make([dynamic]format.Entry_Name)
+	defer delete(pointers)
+	defer delete(names)
+	entry := object_entry(object, {})
+	for first := 0; first < entries; first += format.LEAF_CAPACITY {
+		node: [BLOCK_SIZE]u8
+		count := min(format.LEAF_CAPACITY, entries - first)
+		header := (^format.Tree_Header)(&node)
+		header^ = {magic = format.NODE_MAGIC, count = u32(count)}
+		for index in 0 ..< count {
+			record := node[format.TREE_HEADER_SIZE + index * LEAF_RECORD_SIZE:]
+			name := (^format.Entry_Name)(raw_data(record))
+			value := first + index
+			for digit in 0 ..< 8 {
+				name[7 - digit] = u8('0' + value % 10)
+				value /= 10
+			}
+			copy(record[size_of(format.Entry_Name):], ([^]u8)(&entry)[:size_of(format.Entry)])
+			if index == 0 {
+				append(&names, name^)
+			}
+		}
+		append(&pointers, disk_put(disk, &node))
+	}
+	nodes = len(pointers)
+	for level := u32(1); len(pointers) > 1; level += 1 {
+		above_pointers := make([dynamic]format.Pointer)
+		above_names := make([dynamic]format.Entry_Name)
+		for first := 0; first < len(pointers); first += format.BRANCH_CAPACITY {
+			node: [BLOCK_SIZE]u8
+			count := min(format.BRANCH_CAPACITY, len(pointers) - first)
+			header := (^format.Tree_Header)(&node)
+			header^ = {magic = format.NODE_MAGIC, level = level, count = u32(count)}
+			for index in 0 ..< count {
+				record := node[format.TREE_HEADER_SIZE + index * BRANCH_RECORD_SIZE:]
+				(^format.Entry_Name)(raw_data(record))^ = names[first + index]
+				(^format.Pointer)(&record[size_of(format.Entry_Name)])^ = pointers[first + index]
+			}
+			append(&above_names, names[first])
+			append(&above_pointers, disk_put(disk, &node))
+		}
+		nodes += len(above_pointers)
+		delete(pointers)
+		delete(names)
+		pointers, names = above_pointers, above_names
+	}
+	return pointers[0], nodes
+}
+
+// REPAIR_LARGE_FOLDER runs the repair of a folder of 500 000 entries, a
+// disk of 200 MB in memory: opt-in (-define:REPAIR_LARGE_FOLDER=true).
+REPAIR_LARGE_FOLDER :: #config(REPAIR_LARGE_FOLDER, false)
+
+// The repair keeps the path of the last entry of a tree: each node of the
+// tree is read once, and the entries of one leaf share its read. The reads
+// of the run are the nodes of the folder, a few blocks more, never one
+// path for each entry. It prints the measure.
+@(test)
+a_repair_reads_each_node_of_a_large_folder_once :: proc(t: ^testing.T) {
+	entries := REPAIR_LARGE_FOLDER ? 500_000 : 20_000
+	blocks := u64(entries / format.LEAF_CAPACITY * 11 / 10 + 1100)
+	disk := disk_make(int(blocks))
+	defer delete(disk.bytes)
+	object := disk_object(&disk)
+	tree, nodes := disk_folder(&disk, entries, object)
+	block: format.Store_Block
+	block.tree = tree
+	block.objects = u64(entries)
+	disk_root(&disk, disk_put(&disk, &block), u64(nodes + 2))
+	state, memory, tables := leaf_zero_break(t, &disk, blocks)
+	defer delete(memory)
+	defer free(state)
+	defer test_state_free(tables)
+	testing.expect_value(t, tables.references[object.root.block], u32(entries))
+	repair := test_repair_make(state, &disk)
+	defer free(repair)
+	steps := repair_until_done(t, state, &disk, repair)
+	fmt.printfln("the repair of a folder of %d entries in %d nodes: %d reads and writes, %d steps", entries, nodes, state.repair.reads, steps)
+	testing.expectf(t, state.repair.reads <= u64(nodes) + 16, "%d reads for %d nodes", state.repair.reads, nodes)
+	counts_expect(t, state, tables, "a large folder")
+}
+
+// A disk nearly full: past the wrong leaf, one free block, which the
+// scratch takes. The commit of the repair takes the blocks of its pages in
+// the repaired leaf, from the counts of the repair, and the open of its
+// root in the form Tables finds each leaf whole.
+@(test)
+the_commit_of_a_repair_on_a_full_disk :: proc(t: ^testing.T) {
+	disk := disk_make(520)
+	defer delete(disk.bytes)
+	object := disk_large_object(&disk)
+	table := disk_store(&disk, object, {})
+	disk_root(&disk, table, 5)
+	tables := test_state_make(520)
+	defer test_state_free(tables)
+	_ = mount(tables, &disk, 520)
+	// Each block past leaf 0 in use but the last: the count tree says so.
+	for number in u64(format.COUNTS_OF_A_PAGE) ..< 519 {
+		tables.references[number] = 1
+		tables.owner[number] = 1
+	}
+	root := count_tree_write(t, tables, &disk)
+	root_counts_set(&disk, root, 1)
+	state, memory := tree_state_make(520)
+	defer delete(memory)
+	defer free(state)
+	testing.expect(t, !mount(state, &disk, 520).failed)
+	leaf_zero_damage(t, state, &disk, root, 520)
+	repair := test_repair_make(state, &disk)
+	defer free(repair)
+	repair_until_done(t, state, &disk, repair)
+	testing.expect_value(t, len(state.counts.repaired), 1)
+	taken, made := repair_commit_model(t, state, &disk)
+	defer delete(taken)
+	testing.expect(t, made, "the commit finds blocks for its pages")
+	in_leaf := 0
+	for number in taken {
+		in_leaf += int(number < format.COUNTS_OF_A_PAGE)
+	}
+	testing.expect(t, in_leaf > 0, "the commit took a block of the repaired leaf")
+	// The new tree, in the form Tables: whole, and it holds the walk. The
+	// blocks past leaf 0 are in use in the tree only: the walk does not
+	// name them.
+	check := test_state_make(520)
+	defer test_state_free(check)
+	result := mount(check, &disk, 520)
+	testing.expect(t, !result.failed && !result.count_tree_damaged)
+	page, outcome := block_counts.page_get(&check.counts, 0, 0)
+	testing.expect(t, outcome == .Good && page != nil, "leaf 0 reads whole")
+}
+
+// The top directory of the count tree is wrong: its pointers to the leaves
+// are lost, so each leaf under it is wrong. The repair counts them all,
+// and its commit makes the directory again from them; the open of the new
+// root in the form Tables finds the counts of its walk. The old leaves,
+// which no page names now, are free.
+@(test)
+a_wrong_directory_is_made_again :: proc(t: ^testing.T) {
+	disk := disk_make(1100)
+	defer delete(disk.bytes)
+	object := disk_deep_object(&disk, 3)
+	table := disk_store(&disk, object, {})
+	disk_root(&disk, table, 9)
+	tables := test_state_make(1100)
+	defer test_state_free(tables)
+	_ = mount(tables, &disk, 1100)
+	root := count_tree_write(t, tables, &disk)
+	root_counts_set(&disk, root, 1)
+	testing.expect_value(t, mount(tables, &disk, 1100).count_leaves_differ, u64(0))
+	testing.expect_value(t, format.count_tree_levels(1100), 1)
+	state, memory := tree_state_make(1100)
+	defer delete(memory)
+	defer free(state)
+	testing.expect(t, !mount(state, &disk, 1100).failed)
+	disk.bytes[root.block * BLOCK_SIZE + 100] ~= 1
+	testing.expect(t, block_counts.counts_bind(&state.counts, &state.count_source, root, 1100, state.counts.frames, state.counts.slots))
+	_, _, outcome := block_counts.count_get(&state.counts, 5)
+	testing.expect_value(t, outcome, block_counts.Read.Wrong)
+	testing.expect_value(t, state.counts.wrong_directory_count, 1)
+	testing.expect_value(t, state.counts.wrong_leaf_count, 3)
+	repair := test_repair_make(state, &disk)
+	defer free(repair)
+	repair_until_done(t, state, &disk, repair)
+	testing.expect_value(t, len(state.counts.repaired), 3)
+	// The counts of the walk, but for the pages of the count tree under the
+	// wrong directory: no page names them, so the repair gives them none.
+	for number in u64(0) ..< 1100 {
+		count, _, _ := block_counts.count_get(&state.counts, number)
+		expected := tables.references[number]
+		if tables.owner[number] == COUNT_TREE_OWNER && number != root.block {
+			expected = 0
+		}
+		testing.expectf(t, count == expected, "block %d: %d, not %d", number, count, expected)
+	}
+	_, made := repair_commit_model(t, state, &disk)
+	testing.expect(t, made, "the commit makes the directory again")
+	repair_written(state)
+	testing.expect_value(t, state.counts.wrong_directory_count, 0)
+	testing.expect_value(t, state.counts.wrong_leaf_count, 0)
+	check := test_state_make(1100)
+	defer test_state_free(check)
+	result := mount(check, &disk, 1100)
+	testing.expect(t, !result.failed && !result.count_tree_damaged)
+	testing.expect_value(t, result.count_leaves_differ, u64(0))
 }

@@ -73,6 +73,10 @@ stage :: proc "contextless" (commit: ^Commit, level: int, first: u64) {
 		old_block: u64
 		if at == commit.counts.levels {
 			old_block = commit.counts.root.block
+		} else if at == 0 && directory_is_wrong(commit.counts, page_first(1, page)) {
+			// The block of a leaf under a wrong directory is not known: it
+			// keeps its name, a block lost, not a block named twice.
+			old_block = 0
 		} else if commit.counts.root.block != 0 {
 			parent, outcome := page_get(commit.counts, at + 1, page_first(at + 1, page))
 			switch outcome {
@@ -186,7 +190,19 @@ directory_fill :: proc "contextless" (commit: ^Commit, frame: ^Frame) -> bool {
 	counts := commit.counts
 	span := format.count_span(frame.level - 1)
 	before: ^Frame
-	if counts.root.block != 0 {
+	// A wrong directory is made again from its leaves: the commit of its
+	// repair holds each of them, as a missing child would make each count
+	// under it 0.
+	rebuilt := frame.level == 1 && directory_is_wrong(counts, frame.first)
+	if rebuilt {
+		for place in 0 ..< format.COUNT_DIRECTORY_FANOUT {
+			child_first := frame.first + u64(place) * span
+			if child_first < counts.disk_blocks && commit_staged(commit, 0, child_first) == nil {
+				commit_fail(commit, .Wrong)
+				return false
+			}
+		}
+	} else if counts.root.block != 0 {
 		outcome: Read
 		before, outcome = page_get(counts, frame.level, frame.first)
 		if outcome != .Good {

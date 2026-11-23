@@ -94,7 +94,7 @@ Do not use: deferred free, orphan, zombie state.
 
 The repair state is the time during which the storage service counts again the names of the blocks of the leaves of its count tree that have a wrong check, and makes no change.
 
-The service serves each read in the repair state, and refuses each change with `Busy`, unit `Count_Repair`: the call can be made again after the repair, and the record gives the stores that the repair walked and the stores in all. No commit runs, so the trees do not change while the repair walks them in steps between the calls. The repair records the nodes that it walked in a scratch on free blocks of the disk, which no root names. One commit writes the leaves that it counted and ends the repair state. A repair state is not a fault of the store: no data is lost, and a loss of power starts the repair again at the next open.
+The service serves each read in the repair state, and refuses each change with `Busy`, unit `Count_Repair`, whose record gives the stores that the repair walked and the stores in all. The client of the storage service makes such a call again until the repair ends, up to 60 seconds. No commit runs, so the trees do not change while the repair walks them in steps between the calls. The repair records the nodes that it walked in a scratch on free blocks of the disk, which no root names. One commit writes the leaves that it counted and ends the repair state. A repair state is not a fault of the store: no data is lost, and a loss of power starts the repair again at the next open.
 
 The design: `src/md/data/storage_capacity.md`, "The repair state".
 

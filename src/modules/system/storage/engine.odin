@@ -623,9 +623,6 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	}
 	disk_size = opened.disk_size
 	service_started = system.time()
-	// The pages of the scratch of a repair carry it: a page that a start
-	// before wrote is not taken for a page of this start.
-	repair_disk.nonce = date_now() ~ (service_started << 20) ~ (u64(disk_tag) << 40)
 	if result.failed {
 		return result
 	}
@@ -1984,8 +1981,12 @@ repair_commit :: proc "contextless" () -> bool {
 	root = plan.next
 	root_place = place
 	commits += 1
-	// The commit changes the counts of the pages of the count tree only.
+	// The commit changes the counts of the pages of the count tree only;
+	// the form Count_Tree has no table to change.
 	for at in plan.delta_places[:plan.delta_count] {
+		if opened.form != .Tables {
+			break
+		}
 		number := plan.delta_blocks[at]
 		after := i64(storage_mount.block_count(&opened, number)) + i64(plan.delta_values[at])
 		storage_mount.block_set(&opened, number, u32(max(after, 0)), after <= 0 ? 0 : owner_after(number))
@@ -2278,6 +2279,37 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		}
 		return refusal
 	}
+	// The shared blocks of the store after the commit, from the counts
+	// before it, read now: after the root, a read of a leaf that the commit
+	// replaced would read the tree before, and a wrong page there would
+	// start a repair of a leaf that the commit wrote.
+	shared_change: i64
+	for at in plan.delta_places[:plan.delta_count] {
+		number := plan.delta_blocks[at]
+		before := i64(storage_mount.block_count(&opened, number))
+		after := before + i64(plan.delta_values[at])
+		if owner_after(number) <= u16(format.STORE_CAPACITY) {
+			if before < 2 && after >= 2 {
+				shared_change += 1
+			} else if before >= 2 && after < 2 {
+				shared_change -= 1
+			}
+		}
+	}
+	switch opened.counts.failure {
+	case .Good:
+	case .Device:
+		block_counts.commit_drop(&opened.count_commit)
+		plan_drop()
+		return errors.fail(error, failure(.Disk), .Device)
+	case .Wrong:
+		block_counts.commit_drop(&opened.count_commit)
+		plan_drop()
+		if busy, result := repair_refusal(error); busy {
+			return result
+		}
+		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
+	}
 	place, refusal, written := plan_write_with_root(error)
 	if !written {
 		return refusal
@@ -2296,19 +2328,15 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.dropped_versions != 0 {
 		system.log_fact(.Warning, Versions_Dropped_At_Commit{generation = root.generation, dropped = plan.dropped_versions, store = store_field(store_name_of(plan.store_index))})
 	}
-	for place in plan.delta_places[:plan.delta_count] {
-		number := plan.delta_blocks[place]
-		before := i64(storage_mount.block_count(&opened, number))
-		after := before + i64(plan.delta_values[place]) // From 0 to REFERENCE_LIMIT: delta_add refused the commit else.
-		owner := owner_after(number)
-		if owner <= u16(format.STORE_CAPACITY) {
-			if before < 2 && after >= 2 {
-				opened.store_shared[plan.store_index] += 1
-			} else if before >= 2 && after < 2 {
-				opened.store_shared[plan.store_index] -= 1
-			}
+	opened.store_shared[plan.store_index] = u64(i64(opened.store_shared[plan.store_index]) + shared_change)
+	// The tables of the form Tables; in the form Count_Tree the leaves of
+	// the commit hold the counts, and no page is read here.
+	if opened.form == .Tables {
+		for at in plan.delta_places[:plan.delta_count] {
+			number := plan.delta_blocks[at]
+			after := i64(storage_mount.block_count(&opened, number)) + i64(plan.delta_values[at]) // From 0 to REFERENCE_LIMIT: delta_add refused the commit else.
+			storage_mount.block_set(&opened, number, u32(after), after == 0 ? 0 : owner_after(number))
 		}
-		storage_mount.block_set(&opened, number, u32(after), after == 0 ? 0 : owner)
 	}
 	// The leaves and the directories of the count tree: the new tree of the
 	// root. In the form Count_Tree the counts come from them from now on.

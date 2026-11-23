@@ -1270,10 +1270,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Error, No_Seed{})
 		system.stop(.Refused)
 	}
-	slot_key: [8]u8
+	// The nonce of the scratch of a repair of the count tree comes from the
+	// same draw: a page that a start before wrote is not taken for a page of
+	// this start, with a date or with none.
+	slot_key: [16]u8
 	random.fill(&slot_key_generator, slot_key[:])
 	slot_key_generator = {}
 	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
+	repair_disk.nonce = intrinsics.unaligned_load((^u64)(&slot_key[8]))
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {
 		system.log_fact(.Error, No_Service_Ring{})
