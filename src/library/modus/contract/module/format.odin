@@ -510,12 +510,30 @@ Budget_Request :: struct {
 }
 #assert(size_of(Budget_Request) == 24)
 
-// The most that the root service gives a process of the boot image with no
-// exception: a request above it starts with this. A module that sizes its
-// memory to the cap checks its sum against these pages at compile time, so
-// the root service and the module read one value.
-LARGEST_BUDGET_PAGES :: 16384
-LARGEST_BUDGET :: Budget_Request{pages = LARGEST_BUDGET_PAGES, processes = 8, threads = 32}
+// The largest budget of a process of the boot image is a share of the
+// memory of the machine: a request above it starts with the largest
+// budget (largest_budget_of_machine). The share is one quarter, so the
+// largest process of a machine leaves three quarters to the others; a
+// machine of 1 GiB gives about 190 MiB to one process.
+LARGEST_BUDGET_SHARE_OF_THE_MACHINE :: 4
+// The least largest budget: what a process of the boot image can always
+// get, on the smallest machine that the system supports. A module that
+// sizes its memory to run on any machine checks its sum against these
+// pages at compile time.
+LARGEST_BUDGET_LEAST_PAGES :: 16384
+LARGEST_BUDGET_LEAST :: Budget_Request{pages = LARGEST_BUDGET_LEAST_PAGES, processes = 8, threads = 32}
+
+// largest_budget_of_machine gives the largest budget of a process of the
+// boot image on a machine whose root service holds machine_pages pages at
+// its start: one share of them, and never less than LARGEST_BUDGET_LEAST.
+//
+// Example: 200 000 pages (a machine of 1 GiB, less the kernel) give 50 000
+// pages; 0 pages, and 60 000 pages, give 16 384.
+largest_budget_of_machine :: proc "contextless" (machine_pages: u64) -> Budget_Request {
+	largest := LARGEST_BUDGET_LEAST
+	largest.pages = max(machine_pages / LARGEST_BUDGET_SHARE_OF_THE_MACHINE, LARGEST_BUDGET_LEAST_PAGES)
+	return largest
+}
 
 // The rebase table is not indexed. It is a sequence of 64-bit words in the
 // RELR form, and it names the 8-byte locations that hold a memory offset:

@@ -390,15 +390,15 @@ Do not use: default budget, minimum budget.
 
 The largest budget is the most that a starter gives to one process for each part of a budget request.
 
-A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 processes and 32 threads for a process of the boot image (`LARGEST_BUDGET` in `src/modules/system/root/budgets.odin`). A disk process, and a module of another project, has a smaller one, 8192 pages, one process and 4 threads, and one budget of the root service pays all of them together (`src/library/modus/disk_process/budget.odin`).
+A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service for a process of the boot image is a quarter of the pages of the machine, never less than 16384 pages, with 8 processes and 32 threads (`module.largest_budget_of_machine`). A disk process, and a module of another project, has a smaller one, half of the pages of the one budget of the disk processes, one process and 4 threads; that budget pays all of them together, and holds as many pages as the largest budget of a process of the boot image (`src/library/modus/disk_process/budget.odin`).
 
 Do not use: maximum budget, cap, ceiling.
 
 ### Budget exception
 
-A budget exception is a row of a starter that gives one process, by its name, another largest budget or other limits in time, with the reason beside it.
+A budget exception is a row of a starter that gives one process, by its name, other limits in time, with the reason beside it.
 
-A row with a larger amount widens a request, a row with a smaller amount limits it. The root service has two (`budget_exceptions` in `src/modules/system/root/budgets.odin`). The name of a disk process never selects a row: a name gives nothing.
+A row gives a limit in time that a request cannot hold: the root service has one, a limit of processor time (`processor_exceptions` in `src/modules/system/root/budgets.odin`), and one table of limits of log records. No row gives pages: the largest budget is the share of the machine for each process. The name of a disk process never selects a row: a name gives nothing.
 
 Do not use: budget override, special case.
 

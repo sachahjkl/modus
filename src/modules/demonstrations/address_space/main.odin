@@ -60,8 +60,9 @@ import "modus:system"
 // a child: 40530 pages. And the glyph memory of the copy of the text
 // rendering of the drawing module, which draws its text: 354 pages
 // (display.TEXT_MEMORY_PAGES). 40530 + 354 = 40884. With the counted
-// parts, the pages are above the largest budget of a process: the root
-// service has an exception for it (src/modules/system/root/budgets.odin).
+// parts, the pages are above the least largest budget of a process, so it
+// runs on a machine whose share for one process holds them: a machine of
+// 1 GiB does (module.largest_budget_of_machine).
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40884, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 960
@@ -126,8 +127,15 @@ fail :: proc "contextless" (what: string) {
 	right = false
 }
 
-own_mappings :: proc "contextless" () -> (report: op.Process_Mapping_Report) {
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process_Mappings), self_index, u64(uintptr(&report)), size_of(report))
+// The last report of the mappings of this process: 64 KiB, which a stack
+// does not hold.
+own_mappings_report: op.Process_Mapping_Report
+
+// own_mappings reads the mappings of this process into the one report, and
+// gives it. A second call writes over the first.
+own_mappings :: proc "contextless" () -> ^op.Process_Mapping_Report {
+	report := &own_mappings_report
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process_Mappings), self_index, u64(uintptr(report)), size_of(report^))
 	return report
 }
 
@@ -142,7 +150,7 @@ mapping_at :: proc "contextless" (report: ^op.Process_Mapping_Report, address: u
 
 // find_self finds the slot of this process by its name in the reports.
 find_self :: proc "contextless" () {
-	for index in u64(1) ..< 64 {
+	for index in u64(1) ..< op.PROCESS_SLOTS_OF_THE_MACHINE {
 		report: op.Process_Report
 		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Ok {
 			continue
@@ -242,7 +250,7 @@ sparse :: proc "contextless" () {
 		words[chosen * 512] = chosen
 	}
 	report := own_mappings()
-	if mapping := mapping_at(&report, u64(uintptr(address))); mapping != nil {
+	if mapping := mapping_at(report, u64(uintptr(address))); mapping != nil {
 		sparse_committed, sparse_present = mapping.committed, mapping.present
 		if .Uncommitted not_in mapping.flags {
 			fail("the sparse table: the report does not say Uncommitted")
@@ -358,7 +366,7 @@ protection :: proc "contextless" () {
 		system.thread_wait(threads[index])
 	}
 	report := own_mappings()
-	if mapping := mapping_at(&report, u64(uintptr(address))); mapping == nil || .Protected not_in mapping.flags {
+	if mapping := mapping_at(report, u64(uintptr(address))); mapping == nil || .Protected not_in mapping.flags {
 		fail("the protection: the report does not say Protected")
 	}
 }
@@ -441,7 +449,7 @@ large_pages :: proc "contextless" () {
 	defer system.memory_unmap(large)
 	defer system.memory_unmap(small)
 	report := own_mappings()
-	large_mapping, small_mapping := mapping_at(&report, LARGE_ADDRESS), mapping_at(&report, SMALL_ADDRESS)
+	large_mapping, small_mapping := mapping_at(report, LARGE_ADDRESS), mapping_at(report, SMALL_ADDRESS)
 	large_flags_right = large_mapping != nil && small_mapping != nil && .Large in large_mapping.flags && .Large not_in small_mapping.flags && large_mapping.present == LARGE_OBJECT_PAGES
 	if !large_flags_right {
 		fail("the large pages: the report")
@@ -657,7 +665,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
 		address, status := system.memory_map(memory)
 		report := own_mappings()
-		mapping := mapping_at(&report, u64(uintptr(address)))
+		mapping := mapping_at(report, u64(uintptr(address)))
 		edge_case_results[2] = status == .Ok && mapping != nil && .Large in mapping.flags
 		system.memory_unmap(address)
 		system.close(memory)
@@ -1377,7 +1385,7 @@ page_tables_return :: proc "contextless" () {
 		address, status := system.memory_map(memory, {.Write}, 0, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
 		mapped, _ := system.budget_read()
 		report := own_mappings()
-		mapping := mapping_at(&report, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
+		mapping := mapping_at(report, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
 		large := mapping != nil && .Large in mapping.flags
 		if status == .Ok {
 			intrinsics.volatile_store((^u64)(address), 1)

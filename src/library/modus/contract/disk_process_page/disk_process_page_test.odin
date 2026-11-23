@@ -1,6 +1,7 @@
 #+build !freestanding
 package disk_process_page
 
+import op "modus:contract/operation"
 import "core:testing"
 
 // A row that the root service writes is found by its process slot and its
@@ -60,4 +61,26 @@ the_nickname_and_the_hash_prefix :: proc(t: ^testing.T) {
 	prefix: [HASH_PREFIX_DIGITS]u8
 	hash_prefix_write(&prefix, hash_head(hash))
 	testing.expect_value(t, string(prefix[:]), "5f0c0000000000a9")
+}
+
+// The page has a row for each place of the table of the root service: the
+// last place holds a row; a write at the capacity, one past it, or at a
+// negative place changes nothing.
+@(test)
+a_write_past_the_rows_changes_nothing :: proc(t: ^testing.T) {
+	page := new(Page)
+	defer free(page)
+	testing.expect(t, ROW_CAPACITY == op.PROCESS_SLOTS_OF_THE_MACHINE - 1)
+	testing.expect(t, PAGE_PAGES * 4096 >= size_of(Page))
+	for place in ([?]int{-1, ROW_CAPACITY, ROW_CAPACITY + 1, max(int)}) {
+		row_write(page, place, row_of(7, 1, "outside", {}))
+		testing.expect_value(t, page.change_count, u64(0))
+	}
+	_, outside := row_find(page, 7, 1)
+	testing.expect(t, !outside)
+	row_write(page, ROW_CAPACITY - 1, row_of(255, 4, "last", {}))
+	found, ok := row_find(page, 255, 4)
+	testing.expect(t, ok)
+	nickname := nickname_of(found.nickname)
+	testing.expect_value(t, nickname_text(&nickname), "last")
 }

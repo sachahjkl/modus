@@ -119,7 +119,7 @@ present_in :: proc "contextless" (address: rawptr, pages: u64) -> (count: u64) {
 
 // report_of gives the report of the process that runs with this name.
 report_of :: proc "contextless" (name: string) -> (report: op.Process_Report, found: bool) {
-	for slot in 1 ..< u64(64) {
+	for slot in u64(1) ..< op.PROCESS_SLOTS_OF_THE_MACHINE {
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
 		if report.state != .None && report.state != .Stopped && system.name_of(report.name[:]) == name {
 			return report, true

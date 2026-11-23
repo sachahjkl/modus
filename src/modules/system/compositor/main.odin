@@ -132,22 +132,28 @@ import "base:intrinsics"
 //   logical pixels at the largest scale, 2) of 8 bytes for two pictures,
 //   is 128 MiB, whose mapping takes at most 65 page tables of 2 MiB (its
 //   start need not be on a 2 MiB edge) and 2 page directories (it can
-//   cross a 1 GiB edge): 67 pages. 32 clients: 32 x 67 = 2144 pages. These
-//   two parts were the 2255 pages counted at the scale 1, with surfaces of
-//   2048 x 2048 and 19 pages each: 2255 - 32 x 19 = 1647;
+//   cross a 1 GiB edge): 67 pages. 128 clients (CLIENT_CAPACITY): 128 x 67
+//   = 8576 pages. With 32 clients these two parts were the 2255 pages
+//   counted at the scale 1, with surfaces of 2048 x 2048 and 19 pages each:
+//   2255 - 32 x 19 = 1647;
 // - a resize maps the new surface of a window beside its old one until
 //   its Present (src/md/features/window_resize.md): one more such mapping
-//   for each client, 2144 pages. A rescale holds one surface at a time:
+//   for each client, 8576 pages. A rescale holds one surface at a time:
 //   the window releases the old one first;
 // - the glyph memory of its two copies of the text rendering, its own
 //   (its bar, its menus, its titles) and the one of the drawing module:
 //   each draws every glyph of its text into its own private glyph cache,
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
-// 4050 + 10 + 9 + 3 + 2 + 1647 + 2144 + 2144 + 708 = 10717. A screen whose
-// frame and background the budget cannot pay is named on one line, and the
-// compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10717, processes = 1, threads = 2}
+// 4050 + 10 + 9 + 3 + 2 + 1647 + 8576 + 8576 + 708 = 23581: the bound of
+// 128 windows at the largest surface, more than the least largest budget
+// of a process, and less than the share of a machine of 1 GiB. Page tables
+// are paid as the windows map, so a machine with a smaller share still runs
+// the desktop, with fewer such windows. A screen whose frame and background
+// the budget cannot pay is named on one line, and the compositor stops
+// (entry).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 23581, processes = 1, threads = 2}
+#assert(MODULE_BUDGET.working_memory_pages == 4050 + 10 + 9 + 3 + 2 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708)
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -173,7 +179,7 @@ BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
 TITLE_ICON_X :: 8 // The icon of the module in the title bar, from the corner of the frame.
 TITLE_TEXT_X :: TITLE_ICON_X + bar.ICON_SIZE + 6 // The title, after the icon.
-CLIENT_CAPACITY :: 32 // The root service starts 32 processes at most.
+CLIENT_CAPACITY :: bar.WINDOW_CAPACITY // The windows of the desktop at one time.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: bar.CLOCK_WIDTH // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
 

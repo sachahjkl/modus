@@ -22,7 +22,7 @@ disk_process_page: ^process_page.Page
 
 disk_process_page_create :: proc "contextless" () {
 	status: system.Status
-	disk_process_page_memory, status = system.memory_create(1)
+	disk_process_page_memory, status = system.memory_create(process_page.PAGE_PAGES)
 	address: rawptr
 	if status == .Ok {
 		address, status = system.memory_map(disk_process_page_memory)
@@ -43,7 +43,7 @@ disk_process_page_give :: proc "contextless" (mappings: []system.Mapping, count:
 		mapping_dropped_log("the disk process page", len(mappings))
 		return
 	}
-	mappings[count^] = {memory = disk_process_page_memory, address = process_page.PAGE_ADDRESS, first = 0, page_count = 1, flags = {}}
+	mappings[count^] = {memory = disk_process_page_memory, address = process_page.PAGE_ADDRESS, first = 0, page_count = process_page.PAGE_PAGES, flags = {}}
 	count^ += 1
 	system.range_mapped_put(values, .Disk_Process_Page)
 }

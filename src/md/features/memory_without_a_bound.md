@@ -68,7 +68,7 @@ Property 14 held as it was written: this form applies its second rule. Its field
 - **The step of the growth.** The proposal: 16 pages, then the double of the last step, up to 512 pages. A measure of the commits of a large page of the web decides it.
 - **The scratch arena.** Whether it gives back its pages past a mark, and when: never, after a number of frames below the mark, or at a request of the process.
 - **Large pages.** The kernel refuses `Uncommitted` with `Large_Pages`, so an arena has 4 KiB pages only. Large pages in an arena need a commit by whole runs of 2 MiB, a change of the kernel that waits for a measure of an arena with many random reads ([desktop_to_browser.md](desktop_to_browser.md), "Large pages for large buffers").
-- **The largest budget.** The largest budget of the root service is 16384 pages (64 MiB) for a process of the boot image and 8192 pages for a disk process. A browser needs more. A larger budget for one process is a budget exception, or a grant of the principal; the choice comes with the first process that needs it.
+- **The largest budget.** The largest budget of the root service for a process of the boot image is a quarter of the pages of the machine, 16384 pages (64 MiB) at least, and a disk process gets half of the budget of the disk processes, which holds as many pages ([module_budget_request.md](module_budget_request.md)). A share set by the plan of the principal, in place of the fixed quarter, is planned work.
 
 ## The subtle points
 

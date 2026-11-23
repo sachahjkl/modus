@@ -5,6 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:slot_set"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
@@ -157,7 +158,7 @@ Operation_In_Progress :: struct {
 	control: bool, // The operation holds the control lock.
 	// The stops that the operation made (stop_wait).
 	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
-	stopped_processes: u64, // Bit n: process n had a thread on a processor; its serial is in Processor.stopped_serials.
+	stopped_processes: Process_Set, // The processes that had a thread on a processor; the serial of each is in Processor.stopped_serials.
 	// The part and the value that a write of Thread_Control refused: the
 	// error record takes them from here, not from a second read of the
 	// memory of the caller, which the caller can change between the two
@@ -234,9 +235,7 @@ stop_wait :: proc "contextless" (cpu: ^Processor) {
 		}
 		operation.stopped_thread = 0
 	}
-	for operation.stopped_processes != 0 {
-		index := u32(intrinsics.count_trailing_zeros(operation.stopped_processes))
-		operation.stopped_processes &~= 1 << index
+	for index in slot_set.take(&operation.stopped_processes) {
 		process := &processes[index]
 		for intrinsics.atomic_load(&process.serial) == cpu.stopped_serials[index] && intrinsics.atomic_load(&process.holds) & (HOLDS_STOPPED - 1) != 0 && !intrinsics.atomic_load(&self.stop_requested) {
 			sync_acknowledge(cpu)

@@ -116,22 +116,29 @@ The fixed sizes of the tables, from `src/modulus/process.odin`, `src/modulus/pro
 
 | Table | Capacity | Why a fixed size is enough |
 |---|---|---|
-| Processes | 64 (`PROCESS_CAPACITY`) | A process slot is also a bit in the sets of the kernel events ("Kernel events", section 7) |
-| Handles of one process | 128 (`HANDLE_CAPACITY`) | A process holds what its grants name, not one handle for each piece of data |
-| Mappings of one process | 128 (`MAPPING_CAPACITY`) | One mapping covers a range of any size, also a reserved range with no pages paid |
-| Threads of the machine | 256 (`THREAD_TABLE_CAPACITY`); 32 for one process (`THREAD_CAPACITY`) | The extended state area of each thread is a field of its slot ("The extended state of the processor", section 2) |
-| Memory objects | 2048 (`REGION_CAPACITY`) | |
-| Budgets | 128 (`BUDGET_CAPACITY`) | |
+| Processes | 256 (`PROCESS_CAPACITY`) | A log record keeps the process slot in one byte (`op.Log_Record`). A set of process slots is an array of words (`modulus:slot_set`) |
+| Handles of one process | 1024 (`HANDLE_CAPACITY`) | A server with a ring and a region for each of hundreds of clients |
+| Mappings of one process | 1024 (`MAPPING_CAPACITY`) | One mapping covers a range of any size, also a reserved range with no pages paid |
+| Threads of the machine | 1024 (`THREAD_TABLE_CAPACITY`); 32 for one process (`THREAD_CAPACITY`) | The extended state area of each thread is a field of its slot ("The extended state of the processor", section 2). A log record names a thread by its number in its process, so this table has no bound of one byte |
+| Memory objects | 16384 (`REGION_CAPACITY`) | An IOMMU window is not the slot of its object: only a declared object takes one of the 2047 windows (`IOMMU_WINDOW_CAPACITY`) |
+| Budgets | 1024 (`BUDGET_CAPACITY`) | |
 | Processors | 64 (`PROCESSOR_CAPACITY`) | |
+| Words of one wait | 256 (`op.WORD_WAIT_CAPACITY`) | A `system.Wait` holds them on the stack of its thread: about 12 KiB |
 
 A full table is a status of the operation that asks for one more entry (`No_Slot`), never a failure of the kernel.
+
+### The tables of the kernel
+
+The tables are memory of the kernel, in its writable data: no budget pays them, so the root budget holds the free memory less their size. Measured on the object of the kernel: about 50 MiB in all, of which 23 MiB are the process records (each with its handle table and its mappings, about 90 KiB), 8 MiB the origin tree (a link for each handle and mapping of each process), 6 MiB the records of a recorded process, 5.5 MiB the thread records (each with its extended state area and its waited words) and 3 MiB the links of the word wait. A test machine of 1 GiB keeps more than 900 MiB for the budgets. A record of the size of a process is never a composite literal: the kernel stack, 64 KiB, cannot hold its copy, so the kernel writes it in place (`process_reset`).
+
+The sizes are bounds of the tables, not budgets. A process gets its slot, its threads and its pages from a budget that its starter divides (`PROPERTIES.md`, "20. No ambient access: the other holes to close", line 16). The tables that grow with the memory of the machine, in a reserve of addresses that the kernel sizes at its start, are planned work (`ROADMAP.md`).
 
 ### K1. Handle table
 
 The handle table is how the kernel knows who can do what. A process names an object only by a handle, and the handle carries the rights that the process has on it.
 
 - **Does**: Keeps, per process, the table of handles. Checks the kind and the rights of each handle that a kernel operation receives: a wrong kind gives the status `Bad_Handle`, a missing right `No_Right`. Copies handles between processes with a part of their rights (`Handle_Give`), ends them (`Handle_Close`), and ends every copy that came from one handle (`Handle_Revoke`).
-- **Owns**: one table of objects for each object kind; one handle table per process, of 128 handles (`HANDLE_CAPACITY` in `src/modulus/process.odin`).
+- **Owns**: one table of objects for each object kind; one handle table per process, of 1024 handles (`HANDLE_CAPACITY` in `src/modulus/process.odin`).
 - **A handle** (`op.Handle`) is one value of 32 bits: the low 16 bits are the slot in the handle table of the process, from 1; the high 16 bits are the generation of the slot. A close adds 1 to the generation, so an old handle number never names the next object of its slot. The value 0 names no object.
 - **Object kinds** (`op.Object_Kind`):
 
@@ -657,7 +664,7 @@ The terms are in `glossary/access.md`: uncommitted object, committed page, decom
 An example of the whole cycle, as a process writes it with the system library:
 
 1. `Memory_Create` with the flag `Uncommitted` and 262144 pages (1 GiB, the most for one object): the budget pays the frame list only, and at least one page.
-2. `Memory_Map` maps the whole object at one address: one of the 128 mappings of the process.
+2. `Memory_Map` maps the whole object at one address: one of the 1024 mappings of the process.
 3. `Memory_Commit` with a table of one `Page_Range` of 16 pages: the budget pays 16 pages; each one gets its frame at its first touch.
 4. `Memory_Protect` with `No_Access` on the last page of a stack: a guard page. A touch there is a fault, which the process receives in its fault ring if it named a fault handler.
 5. `Memory_Commit` with the flag `Decommit`: the 16 pages return to the budget, and their content is lost.
@@ -666,7 +673,7 @@ An example of the whole cycle, as a process writes it with the system library:
 
 | Need | Form | Why this form |
 |---|---|---|
-| Reserve a range of addresses with no memory behind it | `Memory_Create` with the flag `Uncommitted`, then `Memory_Map` | An uncommitted object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 128 mappings of a process are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
+| Reserve a range of addresses with no memory behind it | `Memory_Create` with the flag `Uncommitted`, then `Memory_Map` | An uncommitted object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 1024 mappings of a process are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
 | Commit and decommit pages | the operation `Memory_Commit` (memory, address of a table of `Page_Range`, count, flags): the flag `Decommit` takes pages back | A new operation: the existing ones create an object, map it, unmap it; none changes what the budget pays for some pages of an object that lives. One operation for the two ways, as `Handle_Give` and `Handle_Close` are not one: here the two ways change the same three counts (budget, reserved pages, frames) in opposite directions over the same table |
 | Change the protection of pages | the operation `Memory_Protect` (address of a table of `Address_Range`, count, `Map_Flags`) | The protection of a mapping is set by `Memory_Map` for all its pages; changing it for some pages of a mapping that lives is a new act. `Map_Flags` has the flag `No_Access` for it |
 | Large pages | `Memory_Create` with the flag `Large_Pages` (contiguous, a whole number of 2 MiB, aligned on 2 MiB); `Memory_Map` uses large pages for each 2 MiB that is aligned in the mapping | No new operation: the process asks for an object whose frames can be large pages; the kernel uses them where the mapping allows it |
@@ -742,7 +749,7 @@ A process can take rights away from pages that it already maps: make them read-o
 - For an object with a frame list, a part of a mapping takes away from the protection of its mapping now, as marks in the slots of its pages ("The state of a page"). A part that gets the protection of its mapping has no mark, and a whole mapping clears the marks of its pages. A page that gets its frame later gets the protection of its slot.
 - For a contiguous object (device memory, large pages) the protection is of the whole mapping: a range must cover the mapping.
 
-**Why the marks are in the object, not in the mapping.** While an object has marks (`marked_pages`), it is not mapped again and not given (`Bad_State`, kind `Object_Marked`): the marks are of the object, so they would reach another mapping. The other form, the marks in each mapping (a table of ranges in the mapping), lets an object with parts protected be shared. It costs a table in each of the 128 mappings of each process, or a second table to allocate, for a case that no process needs now. The count is one word, and the slots stay the one place of the state of a page.
+**Why the marks are in the object, not in the mapping.** While an object has marks (`marked_pages`), it is not mapped again and not given (`Bad_State`, kind `Object_Marked`): the marks are of the object, so they would reach another mapping. The other form, the marks in each mapping (a table of ranges in the mapping), lets an object with parts protected be shared. It costs a table in each of the 1024 mappings of each process, or a second table to allocate, for a case that no process needs now. The count is one word, and the slots stay the one place of the state of a page.
 
 **The shoot-down.** The page table entries that exist are rewritten; then one `processor_sync` goes to the processors whose page table is the one of the process, for all the ranges of the call. A processor answers it at its next kernel entry, its idle wait or its wait for a lock, and reloads its page table: it keeps no old translation. The operation returns after each of them answered. The cost is measured with 1, 2 and 4 processors running threads of the process.
 
@@ -756,7 +763,7 @@ An object made with `Large_Pages` takes its frames in one run aligned on 2 MiB (
 
 When a process maps an object with no address, the kernel picks the lowest free range from a fixed base. So the addresses of a process stay few and stable, and a process that maps and unmaps in a loop does not walk through its address space.
 
-A mapping with no address takes the lowest address from `CHOSEN_BASE` where its pages fit with one page with no mapping before and after them: the first gap between the mappings of the process (`chosen_address`, at most 129 passes over the 128 mappings). So the range of a mapping that ended serves again: a process that maps and unmaps at each call uses the same few addresses. `address_space` maps and unmaps one object 100 000 times and its budget is the same after as after the first time.
+A mapping with no address takes the lowest address from `CHOSEN_BASE` where its pages fit with one page with no mapping before and after them: the first gap between the mappings of the process (`chosen_address`, at most 1025 passes over the 1024 mappings). So the range of a mapping that ended serves again: a process that maps and unmaps at each call uses the same few addresses. `address_space` maps and unmaps one object 100 000 times and its budget is the same after as after the first time.
 
 ### The page tables of a process
 
@@ -1469,7 +1476,7 @@ One event ring for each processor, in one contiguous memory object that the call
 ### 7. The work at an event point
 
 - **With no rule of its kind**: one load of `observed_kinds`, a word in the first line of the processor record (the line that each kernel entry reads already: `current`), and one branch. No call, no lock, no other memory. The event points of an operation and of a lock wait read the cycle counter at the start only when the event is wanted; their end tests a local value (0: no start).
-- **With a rule of its kind for other processes only**: after the first branch, one load of the set of the process slots of the kind (`Event_Table.processes`, one word for each kind: bit n for the process slot n, bit 0 for a rule for every process; the machine has 64 process slots), a mask (`1 | 1 << process`), and one branch. No read of the cycle counter, no call (`event_wanted`). The set is a part of the table, published with it under the rule of section 8: it is read only after the acquire load of the word said that the kind has a rule. The event point of a lock wait finds its process through `current` and its thread only after the first branch.
+- **With a rule of its kind for other processes only**: after the first branch, two loads of the set of the process slots of the kind (`Event_Table.processes`, one set of 256 bits for each kind: the slot n for the process slot n, the slot 0 for a rule for every process), and two branches. No read of the cycle counter, no call (`event_wanted`). The set is a part of the table, published with it under the rule of section 8: it is read only after the acquire load of the word said that the kind has a rule. The event point of a lock wait finds its process through `current` and its thread only after the first branch.
 - **With rules**: a call of `event_record`. It loads the word again (a wait for a lock between the start and the end answers `processor_sync`: section 8), tests the rules (at most 16, each a few compares; a rule with "one in N" adds 1 to its count with an atomic addition and divides), and writes one record of 64 bytes and the count `written` of its ring. No lock, no wait, no call of the scheduler, no address of a process.
 - **"One in N" is exact across processors**: one count for each rule, in its own line, with an atomic addition. This is the one place where two processors can write one line on an event point: only for a rule with "one in N", and only when the events of that rule come on two processors at one time. A count for each processor would keep the lines apart, but "one in N" would then mean one in N on each processor, and N events of one thread that moves between processors would not give N / 10 records.
 

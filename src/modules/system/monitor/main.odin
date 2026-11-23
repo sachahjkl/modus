@@ -113,7 +113,7 @@ GAUGE_HIGHLIGHT_ALPHA :: 70
 // A zebra band of the table: the recess at this alpha, on every second row.
 ZEBRA_ALPHA :: 150
 
-PROCESS_SLOTS :: 64
+PROCESS_SLOTS :: op.PROCESS_SLOTS_OF_THE_MACHINE
 
 // The title of a card, and the one number of a metric card.
 FONT_CARD_TITLE :: interface.Font{kind = .Interface, size = graphics.TEXT_CAPTION * interface.TEXT_SIZE_UNITS, weight = .Bold}

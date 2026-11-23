@@ -66,7 +66,7 @@ import "modus:system"
 SAMPLE_INTERVAL :: 250 // Milliseconds.
 KEY_TAB :: 0x0F
 FILTER_CAPACITY :: 24
-PROCESS_SLOTS :: 64 // The process slots of the kernel (System_Report.process_slots).
+PROCESS_SLOTS :: op.PROCESS_SLOTS_OF_THE_MACHINE // The process slots of the kernel (System_Report.process_slots).
 
 Entry :: struct {
 	slot:           u64,

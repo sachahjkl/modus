@@ -1,6 +1,6 @@
 package root
 
-// The tables of this service: its mappings and its handles, 128 places of
+// The tables of this service: its mappings and its handles, 1024 places of
 // each, as each process (op.MAPPING_REPORT_CAPACITY,
 // op.HANDLE_TABLE_CAPACITY). This service holds handles for each process
 // that it starts, each service of the system and each part of the table of

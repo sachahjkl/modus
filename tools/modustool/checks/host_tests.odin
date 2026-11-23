@@ -289,6 +289,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_KERNEL + "/stolen_time",
 	foundation.SOURCE_FOLDER_KERNEL + "/time_base",
 	foundation.SOURCE_FOLDER_KERNEL + "/delivery_count",
+	foundation.SOURCE_FOLDER_KERNEL + "/slot_set",
 	foundation.SOURCE_FOLDER_KERNEL + "/replay_filter",
 	foundation.SOURCE_FOLDER_KERNEL + "/software_exit",
 	foundation.SOURCE_FOLDER_KERNEL + "/process_memory",

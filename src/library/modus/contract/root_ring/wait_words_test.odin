@@ -12,7 +12,7 @@ import op "modus:contract/operation"
 @(test)
 a_queue_past_the_wait_of_the_root_service_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, ROOT_WAIT_FIXED_WORDS, 12)
-	testing.expect_value(t, ROOT_WAITED_QUEUES_MOST, 26)
+	testing.expect_value(t, ROOT_WAITED_QUEUES_MOST, 122)
 	Case :: struct {
 		running, added: int,
 	}
@@ -22,14 +22,14 @@ a_queue_past_the_wait_of_the_root_service_is_refused :: proc(t: ^testing.T) {
 		words := ROOT_WAIT_FIXED_WORDS + (item.running + item.added) * ROOT_WAIT_WORDS_OF_A_QUEUE
 		testing.expect_value(t, errors.completion_record(values), errors.Error_Record{kind = i64(errors.Kind.Full), unit = i64(errors.Unit.Words), operation = i64(Root_Command.Start), value = i64(words), limit = op.WORD_WAIT_CAPACITY})
 	}
-	// 27 queues: the first count past the bound, with each command.
+	// 123 queues: the first count past the bound, with each command.
 	values, refused := waited_queues_refusal(.Wire, ROOT_WAITED_QUEUES_MOST, 1)
 	testing.expect(t, refused)
-	testing.expect_value(t, errors.completion_record(values), errors.Error_Record{kind = i64(errors.Kind.Full), unit = i64(errors.Unit.Words), operation = i64(Root_Command.Wire), value = 66, limit = 64})
+	testing.expect_value(t, errors.completion_record(values), errors.Error_Record{kind = i64(errors.Kind.Full), unit = i64(errors.Unit.Words), operation = i64(Root_Command.Wire), value = 258, limit = 256})
 }
 
 // No queue added is never refused, even past the bound; a start that
-// brings no queue passes; the bound itself, 26, passes last.
+// brings no queue passes; the bound itself, 122, passes last.
 @(test)
 the_queues_up_to_the_wait_of_the_root_service_pass :: proc(t: ^testing.T) {
 	for running in ([?]int{0, ROOT_WAITED_QUEUES_MOST, ROOT_WAITED_QUEUES_MOST + 5}) {
