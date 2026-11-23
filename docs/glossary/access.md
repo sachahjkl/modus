@@ -642,11 +642,11 @@ Do not use: permission, entitlement, OAuth scope.
 
 ### Agent console
 
-An agent console is a console that the root service starts for a wide grant, whose lines an agent sends and whose start grant set is the union of the wide scopes that the principal kept.
+An agent console is a console that the root service starts for the client key of an agent, whose lines the agent sends and whose start grant set is its reach: the read-only list for a key with the use `Calls`, or the union of the wide scopes that a wide grant kept.
 
-It runs in the session of the principal and reaches only what its scopes give: no command that changes a grant, no command of the principals. Each line is an act record before it runs. It stops at the end of its wide grant. It is not the console of the principal, whose start grant set holds each grant of a console.
+It runs in the session of the principal and reaches only what its start grant set gives: no command that changes a grant, no command of the principals. `remote` carries the lines of the agent into its line ring and reads none. Each line is an act record before it runs. A change of its reach starts a new agent console. It is not the console of the principal, whose start grant set holds each grant of a console.
 
-The design: `src/md/features/wide_grants.md`, "The wide scopes".
+The design: `src/md/features/wide_grants.md`, "The wide scopes", and `src/md/features/agent_code_mode.md`.
 
 Do not use: agent shell, bot session.
 
@@ -659,6 +659,26 @@ The root service, the agent console, `remote` and the trusted display each write
 The design: `src/md/features/wide_grants.md`, "The record of each act".
 
 Do not use: audit log, activity log.
+
+### Agent step
+
+An agent step is an ordered list of 1 to 16 console lines of Lex that an agent sends at once, and that its agent console runs, each to its typed result.
+
+A line can bind a name, which the later lines and steps of the same request read. The step ends at its last line, at the first line that fails, or at a bound: its calls, its time, its result size. A call that asks the principal holds the step until the answer. Each step, line and call is an act record. It is not a text that a process gives another process to parse: the agent writes it, and only the agent console reads it.
+
+The design: `src/md/features/agent_code_mode.md`, "The language of a step: Lex, run by an agent console".
+
+Do not use: code mode (for this), script, agent program, tool call.
+
+### Agent loop
+
+An agent loop is the series of agent steps that one request of the principal becomes, each written by the agent after it read the typed results of the step before.
+
+It ends at the final answer of the agent, at a bound of 16 steps, at a step that repeats the step before, at a stop of the principal, or at the end of the reach. Its end cause is one member of a closed set, which the window of the agent shows once. It is not a loop of Lex: Lex has no loop.
+
+The design: `src/md/features/agent_code_mode.md`, "The loop".
+
+Do not use: agentic loop, ReAct loop, iteration (for this).
 
 ### Guest
 

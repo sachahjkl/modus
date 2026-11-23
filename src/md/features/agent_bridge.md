@@ -70,6 +70,8 @@ What is not on it, and why:
 
 A new entry must read only. The host test `test_lex_line_classification_is_a_strict_read_only_allowlist` refuses an entry whose name says that it writes.
 
+**This path is not lasting.** The read-only agent console ([agent_code_mode.md](agent_code_mode.md)) takes the place of the single calls of `Eval_Lex`: the read-only list becomes the reach of that console, checked on the machine at each call, and `lex_line_classify` and the single-call path go in the same layer. One mechanism runs the lines of an agent, and nothing stays for compatibility before 1.0.
+
 ### Host stdio JSON-RPC adapter (`modustool agent-bridge`)
 
 On the host, `tools/modustool/agent_bridge` provides a line-delimited JSON-RPC 2.0 adapter (`modustool agent-bridge`) that:
@@ -104,4 +106,4 @@ On the host, `tools/modustool/agent_bridge` provides a line-delimited JSON-RPC 2
 
 ## State
 
-Built: the freestanding contract package `src/library/modus/contract/agent_bridge` (`"MODAB1"` binary framing, closed enums, `bridge_authorize_command`, the read-only list of `Eval_Lex`, and adversarial host tests), the host JSON-RPC stdio adapter `tools/modustool/agent_bridge` (pluggable `Machine_Transport`, real `remote` QUIC call transport adapter, append-only BLAKE3 act collector verification, and comprehensive host tests), and the CLI command `modustool agent-bridge`. Live `remote_display` frame/input streaming over the peer relay and end-to-end machine tests remain.
+Built: the freestanding contract package `src/library/modus/contract/agent_bridge` (`"MODAB1"` binary framing, closed enums, `bridge_authorize_command`, the read-only list of `Eval_Lex`, and adversarial host tests), the host JSON-RPC stdio adapter `tools/modustool/agent_bridge` (pluggable `Machine_Transport`, real `remote` QUIC call transport adapter, append-only BLAKE3 act collector verification, and comprehensive host tests), and the CLI command `modustool agent-bridge`. Live `remote_display` frame/input streaming over the peer relay and end-to-end machine tests remain. The single-call path of `Eval_Lex` and its classifier are removed when the read-only agent console runs the lines of an agent.
