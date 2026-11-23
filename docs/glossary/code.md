@@ -196,7 +196,7 @@ Do not use: GOT entry, import address, stub, slot (alone).
 
 The load source is what a loader can read: the files that its process was granted, each named by its hash, and the replacements that the starter of the process gives.
 
-The load source closes the hole of a global library directory. A loader finds an import only there, and checks the hash and the tables of each file before it uses it; the root service also gives the table of the entries of its boot image whose hash it already checked, so that no entry is hashed twice. The root service and the console give the boot image; a call host receives a list of files from the console. For a disk process, the root service adds the files that an import scan found. A file that the load source does not hold gives the load error Find.
+The load source closes the hole of a global library directory. A loader finds an import only there, and checks the hash and the tables of each file before it uses it; the root service also gives the table of its image entries already checked, so no entry is hashed twice. A call host receives a list of files from the console; a disk process gets the files of its import scan. A file that the load source does not hold gives the load error Find.
 
 The rule: `docs/PROPERTIES.md`, "20. No ambient access: the other holes to close".
 
