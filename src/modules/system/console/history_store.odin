@@ -36,10 +36,11 @@ import "modus:storage"
 import "modus:system"
 
 HISTORY_OBJECT_NAME :: "line_history"
-// The time that the console waits for the connection at its start: the
-// storage service mounts the data disk at boot, which takes longer than a
-// call of the root ring.
-HISTORY_CONNECT_TIME :: 30_000
+// The bound of the wait for the connection at the start of the console:
+// the storage service mounts the data disk at boot first, and a loaded host
+// makes that many times longer. So the bound only ends a hang: the hang
+// bound of an answer, never a time of a mount.
+HISTORY_CONNECT_TIME :: system.ANSWER_BOUND_MILLISECONDS
 
 history_client: storage.Client
 history_connected: bool

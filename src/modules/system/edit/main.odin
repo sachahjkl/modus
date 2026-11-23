@@ -391,6 +391,9 @@ group_commit :: proc "contextless" () {
 		return
 	}
 	versions_stale = true
+	// One line for each group of changes: a reader of the object, a build,
+	// knows from it that the store holds the text.
+	system.log_fact(.Info, Text_Kept{length = value_kinds.Size_In_Bytes(len(text_model.text_bytes(&text))), generation = u64(generation)})
 }
 
 // line_of_caret gives the line that holds the caret.

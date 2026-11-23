@@ -300,35 +300,20 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	values[isolated.VALUE_FILE_SIZE] = offset
 	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = 512, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:count + 1]) or_return
 	// The first completion says if the call host loaded the module.
-	limit := time() + 5000
-	for {
-		wait := wait_begin()
-		state, _, _ := process_state(connection.process)
-		for _ in 0 ..< ring.CAPACITY {
-			completion, has := receive(&connection.calls.completions)
-			if !has {
-				break
-			}
-			if completion.tag != 0 {
-				continue
-			}
-			if completion.kind == u32(isolated.Status.Ok) {
-				return connection, .Ok
-			}
-			if load_error != nil {
-				intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
-			}
-			return connection, .Bad_State
+	switch connection_ready_wait(&connection.calls, connection.process) {
+	case .Ready:
+		return connection, .Ok
+	case .Load_Failed:
+		if load_error != nil {
+			intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
 		}
-		if state == .Stopped {
-			return connection, .Bad_State
-		}
-		wait_records(&wait, &connection.calls.completions)
-		if wait_end(&wait, limit) >= limit {
-			return connection, .Bad_State
-		}
+		return connection, .Bad_State
+	case .Refused:
+		return connection, .Bad_State
 	}
+	return connection, .Bad_State
 }
+
 
 // service_connection asks the root service for a connection to the
 // service with a name, through a ring to the root service (GRANT_ROOT): a
@@ -338,33 +323,45 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 	if !send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
 		return {}, .No_Slot
 	}
-	limit := time() + 5000
-	for {
-		for record in receive(&requests.completions) {
-			if record.tag != tag {
-				continue
-			}
-			if record.kind != u32(Status.Ok) {
-				refused, _ := status_of_word(record.kind)
-				return {}, refused
-			}
-			connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
-			connection.module_hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
-			defer if status != .Ok {
-				call_connection_end(&connection)
-			}
-			connection.calls = ring_open(connection.ring_memory, receive_handles = true) or_return
-			region_pages := memory_size(connection.region_memory) or_return
-			address := memory_map(connection.region_memory) or_return
-			connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
-			return connection, .Ok
-		}
-		wait: Wait
-		wait_records(&wait, &requests.completions)
-		if wait_end(&wait, limit) >= limit {
-			return {}, .Bad_State
-		}
+	// The root service can start the service first: only the hang bound
+	// ends this wait.
+	record, answered := root_answer_wait(requests, tag)
+	if !answered {
+		return {}, .Bad_State
 	}
+	if record.kind != u32(Status.Ok) {
+		refused, _ := status_of_word(record.kind)
+		return {}, refused
+	}
+	connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
+	connection.module_hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
+	defer if status != .Ok {
+		call_connection_end(&connection)
+	}
+	connection.calls = ring_open(connection.ring_memory, receive_handles = true) or_return
+	region_pages := memory_size(connection.region_memory) or_return
+	address := memory_map(connection.region_memory) or_return
+	connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
+	// The service maps the ring when it reads the Connect of the root
+	// service, which can be after its start on demand: no call before.
+	if connection_ready_wait(&connection.calls, connection.process) != .Ready {
+		service_disconnection(requests, tag, packed)
+		return connection, .Bad_State
+	}
+	return connection, .Ok
+}
+
+// service_disconnection asks the root service to end its side of a
+// connection that this process gives up: else the root service keeps it,
+// and refuses the next Connect of this caller to the service. It waits for
+// the answer, so that no answer with the tag stays in the ring for a later
+// request that uses the same tag.
+@(private = "file")
+service_disconnection :: proc "contextless" (requests: ^ring.Ring, tag: u32, packed: [4]u64) {
+	if !send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+		return
+	}
+	root_answer_wait(requests, tag)
 }
 
 // call_connection_end closes what this process holds of a connection. A

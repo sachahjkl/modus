@@ -161,7 +161,10 @@ RECEIVE_PLACES :: 64 // Places 0 to 63: datagrams that arrive. The others: datag
 #assert(CAPACITY <= quic_server.MAX_CAPACITY)
 
 CALL_LIMIT :: 5000 // Milliseconds: an isolated call that takes longer ends the connection to its service.
-CONNECT_LIMIT :: 10_000 // Milliseconds for the root service to make a connection: it can start the service first.
+// Milliseconds for the root service to make a connection. It can start the
+// service first, which a loaded host makes many times longer: the bound only
+// ends a hang (src/md/api/call_ring_ready.md).
+CONNECT_LIMIT :: system.ANSWER_BOUND_MILLISECONDS
 LOG_REFUSALS :: 16 // The refusals that this process writes on the log; it counts the others.
 LOG_LIMIT :: 50 // Lines of connections and of streams in one second at most: a host that opens many must not fill the log limit of the process.
 
@@ -878,6 +881,14 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused))
 			}
 			connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
+			// The service maps the call ring when it reads the Connect of the
+			// root service, which can be after its start on demand: a call of
+			// the client that lends a handle before the ready completion has no
+			// receiver (src/md/api/call_ring_ready.md).
+			if system.connection_ready_wait(&connection.calls, connection.process) != .Ready {
+				connection_end(connection, true)
+				return nil, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
+			}
 			system.log_fact(.Info, Service_Connected{principal = client.principal, service = value_kinds.module_name_field(name)})
 			return connection, {}
 		}

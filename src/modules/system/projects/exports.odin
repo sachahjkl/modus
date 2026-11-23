@@ -9,6 +9,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/value_kinds"
+import "modus:disk_process"
 import "modus:system"
 
 // The bytes of the evaluation of a project.lex that load takes.
@@ -150,6 +151,58 @@ load :: proc "c" (tree_name: ^string, project_evaluation: ^system.Bytes_To_Read,
 		return project_refusal_fail(error, refusal, argument)
 	}
 	return i64(pin_count)
+}
+
+// new makes a project of the principal of the caller with no project.lex
+// (src/md/features/program_loop.md, "The loop, line by line"): its source
+// is the empty tree, and its console has the store of its name, with Read
+// and Write, which holds its source. The project is kept as each loaded
+// project is, in the private store of the service. Its name has the rules
+// of a nickname of a disk process, so its module can have its name in the
+// store module_files.
+//
+// - **project_name**: 1 to 23 bytes, with no zero byte and no /; not
+//   module_files and not grant_table; and a Lex name.
+//
+// The result is 0, or a negative number with an error record:
+// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
+// ERROR_PROJECT: Empty, Too_Long, Bad_Byte or Reserved for the name, or the
+// refusal of the project as the value found.
+//
+// Example: `projects.new("hello")`.
+@(export, link_name = "new")
+new_project :: proc "c" (project_name: ^string, error: ^errors.Error_Record) -> i64 {
+	principal, failure, allowed := caller_principal(true, error)
+	if !allowed {
+		return failure
+	}
+	name, name_failure, name_ok := name_copy(project_name, copied_project_name[:], 1, error)
+	if !name_ok {
+		return name_failure
+	}
+	problem, offset := disk_process.name_problem(string(name))
+	switch problem {
+	case .None:
+	case .Empty:
+		return errors.fail(error, ERROR_PROJECT, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
+	case .Too_Long:
+		return errors.fail(error, ERROR_PROJECT, .Too_Long, .Bytes, 1, i64(len(name)), disk_process.NAME_LIMIT)
+	case .Bad_Byte:
+		return errors.fail(error, ERROR_PROJECT, .Bad_Byte, .Bytes, 1, i64(offset), 0, i64(name[offset]))
+	case .Store_Name, .Table_Name:
+		return errors.fail(error, ERROR_PROJECT, .Reserved, .None, 1)
+	}
+	evaluation: [pr.PROJECT_NEW_EVALUATION_BYTES]u8
+	written, written_ok := pr.project_new_evaluation(string(name), evaluation[:])
+	if !written_ok {
+		return project_refusal_fail(error, .Bad_Evaluation, 1)
+	}
+	if _, refusal := projects_core.load_project(&loaded_projects, &service_state, principal, name, evaluation[:written], nil); refusal != .None {
+		system.log_fact(.Warning, Project_Command_Refused{refusal_code = u64(refusal)})
+		return project_refusal_fail(error, refusal, 1)
+	}
+	system.log_fact(.Info, Project_Made{project = value_kinds.module_name_field(string(name)), principal = principal})
+	return 0
 }
 
 // update moves one input of a loaded project of the principal of the caller

@@ -606,3 +606,20 @@ facts_row_write :: proc "contextless" (row: []u8, columns: []Column, fields: Log
 		copy(row[column.offset:][:width], values[column.from:][:width])
 	}
 }
+
+// run called the export main of the module of a project, in a call host
+// with no grant.
+@(log_fact = "console: ran {project}, module {module_hash}: main gave {result}")
+Program_Ran :: struct {
+	result:      i64,
+	module_hash: value_kinds.Hash_Field,
+	project:     value_kinds.Module_Name_Field,
+}
+
+// run refused a grant that the project does not declare: no call host
+// started. The name of the grant is a text view, the last field.
+@(log_fact = "console: refused the run of {project} with the grant {grant}: the project declares no such grant")
+Program_Grant_Refused :: struct {
+	project: value_kinds.Module_Name_Field,
+	grant:   value_kinds.Text_View,
+}

@@ -408,28 +408,10 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	if !caller_allowed() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	// The call region stays writable by the caller during the call: copy
-	// each text one time, then check and use the copy only.
-	nickname_text := nickname^
 	name_copy: [disk_process.NAME_LIMIT]u8
-	name_length := copy(name_copy[:], nickname_text)
-	if len(nickname_text) > disk_process.NAME_LIMIT {
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(nickname_text)), disk_process.NAME_LIMIT)
-	}
-	name := string(name_copy[:name_length])
-	problem, offset := disk_process.name_problem(name)
-	switch problem {
-	case .None:
-	case .Empty:
-		return errors.fail(error, ERROR_NAME, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
-	case .Too_Long:
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(name_length), disk_process.NAME_LIMIT)
-	case .Bad_Byte:
-		return errors.fail(error, ERROR_NAME, .Bad_Byte, .Bytes, 1, i64(offset), 0, i64(name_copy[offset]))
-	case .Store_Name, .Table_Name:
-		// The disk grant table of the principal is an object of this
-		// store: no file is written over it.
-		return errors.fail(error, ERROR_NAME, .Reserved, .None, 1)
+	name, name_failure := nickname_check(nickname, &name_copy, error)
+	if name_failure != 0 {
+		return name_failure
 	}
 	path_text := path^
 	path_copy: [PATH_LIMIT]u8

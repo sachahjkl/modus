@@ -250,8 +250,10 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// rollback"). Its callers act for their principal; it acts for nobody.
 	{name = "plans", grants = {.Serve, .Store, .Image, .Connect, .Plans}, terms = {callable = {0 = "display"}, on_demand = true}},
 	// The holder of the role Recipes: the cache of the realisations and the
-	// recipes in its private store (src/md/features/recipes.md).
-	{name = "recipes", grants = {.Serve, .Store}, terms = {on_demand = true}},
+	// recipes in its private store (src/md/features/recipes.md), and the boot
+	// image, whose modules c_compiler and assemble its native C builder starts
+	// in call hosts with no grant (src/md/features/program_loop.md).
+	{name = "recipes", grants = {.Serve, .Store, .Image}, terms = {on_demand = true}},
 	// The holder of the role Projects: the pins of each project in its
 	// private store (src/md/features/declarations.md).
 	{name = "projects", grants = {.Serve, .Store}, terms = {on_demand = true}},

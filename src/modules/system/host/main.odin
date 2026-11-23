@@ -109,7 +109,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	base := space.modules[index].base
 	system.log_fact(.Info, Ready{exports = u64(module.count(file, .Exports) - 1)})
-	system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Ok)})
+	system.send(&queue.completions, isolated.ready_record())
 
 	for {
 		for _ in 0 ..< ring.CAPACITY {

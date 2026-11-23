@@ -134,6 +134,15 @@ Get_Failed :: struct {
 	path:    value_kinds.Text_View,
 }
 
+// A module file that a caller gave in memory, stored under its nickname,
+// with the hash of its bytes.
+@(log_fact = "module_files: put {nickname}: {size}, the BLAKE3 hash of its bytes {file_hash}")
+File_Put :: struct {
+	size:      value_kinds.Size_In_Bytes,
+	file_hash: value_kinds.Hash_Field,
+	nickname:  value_kinds.Module_Name_Field,
+}
+
 // A module file fetched whole and stored under its nickname, with the hash
 // of its bytes. The path of the request is a text view, the last field.
 @(log_fact = "module_files: stored {nickname} from {request_path}: {size}, the BLAKE3 hash of its bytes {file_hash}")

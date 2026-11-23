@@ -1040,6 +1040,26 @@ commands_start :: proc "contextless" () {
 	// - `name`: name of the new isolated module in the console.
 	// - `source`: C source code whose exported functions become callable commands.
 	command("compile_c", {.Text, .Text}, .Record, "compile C source into an isolated module and load its exports", compile_c_command)
+	// Builds the C source `file` of the store of a project with the native C
+	// builder (recipes.build_c), and puts the module in the store
+	// module_files under the name of the project. An unchanged source is
+	// substituted: no compile runs. A C error builds nothing, and the log
+	// names the byte of the source (src/md/features/program_loop.md).
+	//
+	// ```
+	// > build("hello", "hello.c")
+	// hello: module 3f1c…
+	// ```
+	command("build", {.Text, .Text}, .Text, "build a C source of a project into its module", build_program)
+	// Runs the module of a project: it reads the module from the store
+	// module_files, isolates it in a call host with no grant, and calls its
+	// export main. A grant that the project does not declare is refused.
+	//
+	// ```
+	// > run("hello")
+	// 42
+	// ```
+	command("run", {.Text, .Text}, .Integer, "run the module of a project: its export main", run_program, optional_last = true)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin
@@ -1762,8 +1782,12 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	if fresh || sandbox.process == 0 {
 		refused: ring.Record
-		if status := service_connect(sandbox, &refused); status != .Ok {
+		not_ready: bool
+		if status := service_connect(sandbox, &refused, &not_ready); status != .Ok {
 			sandbox^ = {}
+			if not_ready {
+				return fail("cannot connect to ", name, ": the service stopped, or did not open the connection before the hang bound of ", i64(system.ANSWER_BOUND_MILLISECONDS / 1000), " s")
+			}
 			if refused.kind == 0 {
 				return fail("cannot connect to ", name, ": ", status == .Bad_State ? "the root service did not answer" : "the call ring or the call region does not map")
 			}
@@ -1804,11 +1828,14 @@ root_refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) 
 }
 
 // service_connect asks the root service for a connection to the service of
-// a sandbox, and maps the call ring and the call region that it gives.
-// refused: the completion of a refusal of the root service, if the caller
-// asks for it.
-service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil) -> system.Status {
-	completion, answered := request_record(.Connect, sandbox.name)
+// a sandbox, maps the call ring and the call region that it gives, and
+// waits for the ready completion of the service. refused: the completion of
+// a refusal of the root service, if the caller asks for it. not_ready: set
+// when the service stopped or sent no ready completion within the bound.
+service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil, not_ready: ^bool = nil) -> system.Status {
+	// The root service can start the service first: only the hang bound
+	// of an answer ends this wait, never a time of a start.
+	completion, answered := request_record(.Connect, sandbox.name, 0, system.ANSWER_BOUND_MILLISECONDS)
 	if !answered {
 		return .Bad_State
 	}
@@ -1838,6 +1865,16 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 		service_disconnect(sandbox)
 		return .Bad_Operation
 	}
+	// The service maps the call ring when it reads the Connect of the root
+	// service, which can be after its start on demand: a lend before the
+	// ready completion has no receiver (src/md/api/call_ring_ready.md).
+	if system.connection_ready_wait(&sandbox.ring, sandbox.process) != .Ready {
+		service_disconnect(sandbox)
+		if not_ready != nil {
+			not_ready^ = true
+		}
+		return .Bad_State
+	}
 	sandbox.hash = hash
 	return .Ok
 }
@@ -1845,7 +1882,7 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 // service_disconnect ends the connection of a sandbox. The service
 // continues.
 service_disconnect :: proc "contextless" (sandbox: ^Sandbox) {
-	request_record(.Disconnect, sandbox.name)
+	request_record(.Disconnect, sandbox.name, 0, system.ANSWER_BOUND_MILLISECONDS)
 	if sandbox.ring.head != nil {
 		system.ring_close(&sandbox.ring)
 	}
@@ -2219,36 +2256,15 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	// The first completion of the call host says if it loaded the module.
 	// With Load_Failed, the record of the failure is in the call region:
 	// the console copies it, and reads it as values.
-	limit := system.time() + 5000
-	for {
-		wait := system.wait_begin()
-		// The state first: a call host that stopped wrote its completion before.
-		state, _, _ := system.process_state(sandbox.process)
-		for _ in 0 ..< ring.CAPACITY {
-			completion, has_completion := system.receive(&sandbox.ring.completions)
-			if !has_completion {
-				break
-			}
-			if completion.tag != 0 {
-				continue
-			}
-			if isolated.Status(completion.kind) == .Ok {
-				return .Ok
-			}
-			intrinsics.mem_copy_non_overlapping(&load_error, raw_data(sandbox.region), size_of(load_error))
-			sandbox_end(sandbox)
-			return .Bad_State
-		}
-		if state == .Stopped {
-			sandbox_end(sandbox)
-			return .Bad_State
-		}
-		system.wait_records(&wait, &sandbox.ring.completions)
-		if system.wait_end(&wait, limit) >= limit {
-			sandbox_end(sandbox)
-			return .Bad_State
-		}
+	switch system.connection_ready_wait(&sandbox.ring, sandbox.process) {
+	case .Ready:
+		return .Ok
+	case .Load_Failed:
+		intrinsics.mem_copy_non_overlapping(&load_error, raw_data(sandbox.region), size_of(load_error))
+	case .Refused:
 	}
+	sandbox_end(sandbox)
+	return .Bad_State
 }
 
 // load_error is the record of the last load that failed. The console owns
@@ -2656,20 +2672,16 @@ request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string
 	packed := system.name_pack(name)
 	request_count += 1
 	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = value}})
-	limit := system.time() + time_limit
+	// A completion with another tag answers a command that this process
+	// waits for no more: root_answer_step skips it.
+	deadline := system.time() + time_limit
 	for {
-		// A completion with another tag answers a command that this
-		// process waits for no more.
-		for record in system.receive(&requests.completions) {
-			if record.tag == request_count {
-				return record, true
-			}
+		wait := system.wait_begin()
+		if record, came, done := system.root_answer_step(&requests, request_count, system.time(), deadline); done {
+			return record, came
 		}
-		wait: system.Wait
 		system.wait_records(&wait, &requests.completions)
-		if system.wait_end(&wait, limit) >= limit {
-			return {}, false
-		}
+		system.wait_end(&wait, deadline)
 	}
 }
 

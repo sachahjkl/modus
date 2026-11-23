@@ -18,7 +18,9 @@ import "modus:system"
 
 // Working memory budget for the freestanding recipes service process, including
 // local object staging and realisation tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, processes = 1, threads = 1}
+// The pages of the native C builder: its two memory objects of 64 KiB,
+// and the call hosts of the compiler and of the assembler, one at a time.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4096, processes = 2, threads = 2}
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -257,6 +259,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	store_port, store_open := storage_port.bind(ctx)
 	recipes_core.state_init(&service_state, store_port)
+	c_builder_bind(ctx)
 	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0})
 
 	for {
