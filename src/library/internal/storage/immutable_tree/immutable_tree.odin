@@ -92,7 +92,25 @@ Freeze_Frame :: struct {
 }
 
 // Caller-owned fixed workspace for freeze_tree (zero dynamic allocation).
+// The size of the nodes of a frozen folder: the entries of a node of
+// entries and the parts of a node of parts. A folder has one form for one
+// shape. The service freezes with FOLDER_SHAPE, the bounds of the format;
+// a host test takes small nodes, so that its folders of a few dozen entries
+// reach each path of the cut (src/md/data/storage_capacity.md, "A folder of
+// more than 4096 entries is a tree of several nodes").
+Folder_Shape :: struct {
+	node_entries: int, // 2 ..= tree_hash.MAX_TREE_ENTRIES.
+	part_fanout:  int, // 2 ..= tree_hash.PART_FANOUT.
+}
+FOLDER_SHAPE :: Folder_Shape{node_entries = tree_hash.MAX_TREE_ENTRIES, part_fanout = tree_hash.PART_FANOUT}
+
+// folder_shape_valid says if a shape fits the bounds of the format.
+folder_shape_valid :: proc "contextless" (shape: Folder_Shape) -> bool {
+	return shape.node_entries >= 2 && shape.node_entries <= tree_hash.MAX_TREE_ENTRIES && shape.part_fanout >= 2 && shape.part_fanout <= tree_hash.PART_FANOUT
+}
+
 Freeze_Work :: struct {
+	shape:         Folder_Shape, // The shape of the freeze in progress.
 	frames:        [format.NESTING_LIMIT + 1]Freeze_Frame,
 	entries:       [FREEZE_ENTRY_POOL_CAPACITY]tree_hash.Tree_Entry,
 	entry_top:     int,
@@ -217,19 +235,19 @@ part_of :: proc "contextless" (first: ^tree_hash.Tree_Entry, hash: blake3.Hash) 
 
 // part_add adds a part to a level of a tree. A level that holds a whole
 // node of parts already becomes that node first, whose part goes one level
-// up: a node is whole only when one more comes, so a level of exactly
-// PART_FANOUT parts at the end stays the last node of its level. The run of
+// up: a node is whole only when one more comes, so a level of a whole node
+// of parts at the end stays the last node of its level. The run of
 // the level is on top of the pool: each level below it has just ended.
 @(private)
 part_add :: proc "contextless" (work: ^Freeze_Work, frame: ^Freeze_Frame, backend: ^Store_Backend, level: int, part: tree_hash.Tree_Entry) -> Tree_Store_Status {
 	if level > tree_hash.PART_LEVEL_LIMIT {
 		return .Too_Many_Entries
 	}
-	if frame.level_counts[level] == tree_hash.PART_FANOUT {
-		run := work.parts[work.part_top - tree_hash.PART_FANOUT:work.part_top]
+	if frame.level_counts[level] == work.shape.part_fanout {
+		run := work.parts[work.part_top - work.shape.part_fanout:work.part_top]
 		hash := node_write(work, backend, run) or_return
 		upper := part_of(&run[0], hash)
-		work.part_top -= tree_hash.PART_FANOUT
+		work.part_top -= work.shape.part_fanout
 		frame.level_counts[level] = 0
 		part_add(work, frame, backend, level + 1, upper) or_return
 	}
@@ -246,7 +264,7 @@ part_add :: proc "contextless" (work: ^Freeze_Work, frame: ^Freeze_Frame, backen
 // entries already writes that node first, as a part of level 1.
 @(private)
 entry_add :: proc "contextless" (work: ^Freeze_Work, frame: ^Freeze_Frame, backend: ^Store_Backend, entry: tree_hash.Tree_Entry) -> Tree_Store_Status {
-	if frame.entry_count == tree_hash.MAX_TREE_ENTRIES {
+	if frame.entry_count == work.shape.node_entries {
 		node := work.entries[frame.entry_start:][:frame.entry_count]
 		hash := node_write(work, backend, node) or_return
 		part_add(work, frame, backend, 1, part_of(&node[0], hash)) or_return
@@ -307,6 +325,7 @@ freeze_tree :: proc "contextless" (
 	root_pointer: format.Pointer,
 	backend: ^Store_Backend,
 	max_depth: int = format.NESTING_LIMIT,
+	shape: Folder_Shape = FOLDER_SHAPE,
 ) -> (root_hash: blake3.Hash, status: Tree_Store_Status) {
 	if work == nil || tree_source == nil || tree_pool == nil || backend == nil || backend.has_object == nil || backend.write_object == nil {
 		return {}, .Damaged
@@ -314,6 +333,10 @@ freeze_tree :: proc "contextless" (
 	if max_depth < 0 || max_depth > format.NESTING_LIMIT {
 		return {}, .Depth_Exceeded
 	}
+	if !folder_shape_valid(shape) {
+		return {}, .Damaged
+	}
+	work.shape = shape
 	work.entry_top = 0
 	work.part_top = 0
 	work.stats = {}
@@ -436,7 +459,10 @@ tree_read :: proc "contextless" (backend: ^Store_Backend, hash: blake3.Hash, buf
 }
 
 // tree_entry looks up a single entry by name inside the immutable tree root_hash.
-tree_entry :: proc "contextless" (backend: ^Store_Backend, root_hash: blake3.Hash, name: string, scratch: []u8) -> (entry: tree_hash.Tree_Entry, status: Tree_Store_Status) {
+tree_entry :: proc "contextless" (backend: ^Store_Backend, root_hash: blake3.Hash, name: string, scratch: []u8, shape: Folder_Shape = FOLDER_SHAPE) -> (entry: tree_hash.Tree_Entry, status: Tree_Store_Status) {
+	if !folder_shape_valid(shape) {
+		return {}, .Damaged
+	}
 	if name_refusal := tree_hash.tree_name_validate(transmute([]u8)name); name_refusal != .None {
 		return {}, .Invalid_Name
 	}
@@ -454,7 +480,7 @@ tree_entry :: proc "contextless" (backend: ^Store_Backend, root_hash: blake3.Has
 			return {}, .Corrupt_Tree
 		}
 		part, index, count, found := tree_hash.tree_part_find(canonical, name)
-		if is_root && count < 2 {
+		if is_root && count < 2 || count > shape.part_fanout {
 			return {}, .Corrupt_Tree
 		}
 		if !found {
@@ -469,10 +495,14 @@ tree_entry :: proc "contextless" (backend: ^Store_Backend, root_hash: blake3.Has
 		if !first_ok || first.name_length != part.name_length || first.name != part.name {
 			return {}, .Corrupt_Tree
 		}
-		whole := tree_hash.tree_holds_parts(canonical) ? tree_hash.PART_FANOUT : tree_hash.MAX_TREE_ENTRIES
+		whole := tree_hash.tree_holds_parts(canonical) ? shape.part_fanout : shape.node_entries
 		if index < count - 1 && tree_hash.tree_entry_count(canonical) != whole {
 			return {}, .Corrupt_Tree
 		}
+	}
+	// A node of entries holds at most the entries of a node of the shape.
+	if tree_hash.tree_entry_count(canonical) > shape.node_entries {
+		return {}, .Corrupt_Tree
 	}
 	found_entry, found, lookup_refusal := tree_hash.tree_lookup(canonical, name)
 	if lookup_refusal != .None {
@@ -492,6 +522,7 @@ tree_walk_path :: proc "contextless" (
 	path: []string,
 	scratch: []u8,
 	max_depth: int = format.NESTING_LIMIT,
+	shape: Folder_Shape = FOLDER_SHAPE,
 ) -> (entry: tree_hash.Tree_Entry, status: Tree_Store_Status) {
 	if len(path) == 0 {
 		return {}, .Invalid_Name
@@ -501,7 +532,7 @@ tree_walk_path :: proc "contextless" (
 	}
 	current := root_hash
 	for component, step in path {
-		found_entry, step_status := tree_entry(backend, current, component, scratch)
+		found_entry, step_status := tree_entry(backend, current, component, scratch, shape)
 		if step_status != .Ok {
 			return {}, step_status
 		}

@@ -128,7 +128,7 @@ large_node :: proc(env: ^Large_Env, hash: blake3.Hash) -> []u8 {
 expect_parts :: proc(t: ^testing.T, env: ^Large_Env, root: blake3.Hash, children: []int, child_holds_parts: bool, label: string) {
 	bytes := large_node(env, root)
 	testing.expectf(t, tree_hash.tree_holds_parts(bytes), "%s: the root holds parts", label)
-	testing.expectf(t, tree_hash.tree_entry_count(bytes) == len(children), "%s: the root holds %d parts, not %d", label, len(children), tree_hash.tree_entry_count(bytes))
+	testing.expectf(t, tree_hash.tree_entry_count(bytes) == len(children), "%s: the root holds %d parts, not %d", label, tree_hash.tree_entry_count(bytes), len(children))
 	offset := tree_hash.HEADER_SIZE
 	for expected, place in children {
 		part, next, ok := tree_hash.tree_entry_next(bytes, offset)
@@ -140,66 +140,130 @@ expect_parts :: proc(t: ^testing.T, env: ^Large_Env, root: blake3.Hash, children
 	}
 }
 
-// The edges of a folder of several nodes: 4096 entries are one node, as
-// before; 4097 are two nodes of entries under a root of two parts; 4096 *
-// 64 are 64 whole nodes under one root; one more makes a level of parts
-// more. Each lookup finds its name, and a name between two parts, before
-// the first, or after the last is absent.
-@(test)
-a_folder_of_more_than_one_node_freezes_in_parts :: proc(t: ^testing.T) {
+@(private = "file")
+large_freeze :: proc(t: ^testing.T, env: ^Large_Env, shape: Folder_Shape) -> blake3.Hash {
+	hash, status := freeze_tree(&env.work, &env.source, &env.pool, env.root, &env.backend, shape = shape)
+	testing.expect_value(t, status, Tree_Store_Status.Ok)
+	return hash
+}
+
+// Each lookup finds its name, and a name between two parts, before the
+// first, or after the last is absent.
+@(private = "file")
+large_lookups :: proc(t: ^testing.T, env: ^Large_Env, root: blake3.Hash, scratch: []u8, shape: Folder_Shape, label: string) {
+	for number in ([?]int{0, 1, shape.node_entries - 1, shape.node_entries, env.count / 2, env.count - 1}) {
+		if number >= env.count {
+			continue
+		}
+		entry, status := tree_entry(&env.backend, root, large_name(number), scratch, shape)
+		testing.expectf(t, status == .Ok && entry.kind == .Object && tree_hash.tree_entry_name(&entry) == large_name(number), "%s: the entry %d is found", label, number)
+	}
+	for absent in ([?]string{"a", "entry-0000000x", "entry-9999999", "z"}) {
+		_, status := tree_entry(&env.backend, root, absent, scratch, shape)
+		testing.expectf(t, status == .Absent, "%s: %s is absent, not %v", label, absent, status)
+	}
+}
+
+// The cut of a folder at the edges of a shape: a whole node is one node of
+// entries; one entry more is two nodes under a root of two parts; a whole
+// level of parts is one root; one entry more makes a level of parts more.
+@(private = "file")
+folder_edges :: proc(t: ^testing.T, shape: Folder_Shape, label: string) {
 	env := large_env_make()
 	defer large_env_free(env)
 	scratch := make([]u8, tree_hash.MAX_ENCODED_TREE_BYTES)
 	defer delete(scratch)
-	freeze :: proc(t: ^testing.T, env: ^Large_Env) -> blake3.Hash {
-		hash, status := freeze_tree(&env.work, &env.source, &env.pool, env.root, &env.backend)
-		testing.expect_value(t, status, Tree_Store_Status.Ok)
-		return hash
-	}
-	lookups :: proc(t: ^testing.T, env: ^Large_Env, root: blake3.Hash, scratch: []u8, label: string) {
-		for number in ([?]int{0, 1, tree_hash.MAX_TREE_ENTRIES - 1, tree_hash.MAX_TREE_ENTRIES, env.count / 2, env.count - 1}) {
-			if number >= env.count {
-				continue
-			}
-			entry, status := tree_entry(&env.backend, root, large_name(number), scratch)
-			testing.expectf(t, status == .Ok && entry.kind == .Object && tree_hash.tree_entry_name(&entry) == large_name(number), "%s: the entry %d is found", label, number)
-		}
-		for absent in ([?]string{"a", "entry-0000000x", "entry-9999999", "z"}) {
-			_, status := tree_entry(&env.backend, root, absent, scratch)
-			testing.expectf(t, status == .Absent, "%s: %s is absent, not %v", label, absent, status)
-		}
-	}
+	whole := shape.node_entries
 
-	whole :: tree_hash.MAX_TREE_ENTRIES
 	large_grow(env, whole)
-	one_node := freeze(t, env)
+	one_node := large_freeze(t, env, shape)
 	bytes := large_node(env, one_node)
-	testing.expect(t, !tree_hash.tree_holds_parts(bytes) && tree_hash.tree_entry_count(bytes) == whole, "4096 entries are one node of entries")
-	lookups(t, env, one_node, scratch, "4096")
+	testing.expectf(t, !tree_hash.tree_holds_parts(bytes) && tree_hash.tree_entry_count(bytes) == whole, "%s: a whole node is one node of entries", label)
+	large_lookups(t, env, one_node, scratch, shape, label)
 
 	large_grow(env, whole + 1)
-	two_nodes := freeze(t, env)
-	expect_parts(t, env, two_nodes, {whole, 1}, false, "4097")
-	lookups(t, env, two_nodes, scratch, "4097")
-	// The freeze is the same form for the same folder: no other hash.
-	testing.expect_value(t, freeze(t, env), two_nodes)
+	two_nodes := large_freeze(t, env, shape)
+	expect_parts(t, env, two_nodes, {whole, 1}, false, label)
+	large_lookups(t, env, two_nodes, scratch, shape, label)
+	// The same folder has the same form: no other hash.
+	testing.expect_value(t, large_freeze(t, env, shape), two_nodes)
 
-	full := whole * tree_hash.PART_FANOUT
+	full := whole * shape.part_fanout
 	large_grow(env, full)
-	level_one := freeze(t, env)
-	children: [tree_hash.PART_FANOUT]int
+	level_one := large_freeze(t, env, shape)
+	children := make([]int, shape.part_fanout, context.temp_allocator)
 	for &count in children {
 		count = whole
 	}
-	expect_parts(t, env, level_one, children[:], false, "4096 * 64")
-	lookups(t, env, level_one, scratch, "4096 * 64")
+	expect_parts(t, env, level_one, children, false, label)
+	large_lookups(t, env, level_one, scratch, shape, label)
 
 	large_grow(env, full + 1)
-	level_two := freeze(t, env)
-	expect_parts(t, env, level_two, {tree_hash.PART_FANOUT, 1}, true, "4096 * 64 + 1")
-	lookups(t, env, level_two, scratch, "4096 * 64 + 1")
+	level_two := large_freeze(t, env, shape)
+	expect_parts(t, env, level_two, {shape.part_fanout, 1}, true, label)
+	large_lookups(t, env, level_two, scratch, shape, label)
 	testing.expect_value(t, env.work.part_top, 0)
 	testing.expect_value(t, env.work.entry_top, 0)
+	// A lookup with another shape than the freeze sees a form that is not
+	// canonical for it.
+	if shape != FOLDER_SHAPE {
+		_, status := tree_entry(&env.backend, two_nodes, large_name(0), scratch)
+		testing.expect_value(t, status, Tree_Store_Status.Corrupt_Tree)
+	}
+}
+
+// The paths of the cut with nodes of 8 entries and of 8 parts: the same
+// code as nodes of 4096 and 64, on folders of at most 65 entries.
+@(test)
+a_folder_of_more_than_one_node_freezes_in_parts :: proc(t: ^testing.T) {
+	folder_edges(t, {node_entries = 8, part_fanout = 8}, "nodes of 8")
+}
+
+// The bound of the levels of parts: with nodes of 8 entries and of 2 parts,
+// 8 * 2^PART_LEVEL_LIMIT entries freeze, and one more is refused.
+@(test)
+the_levels_of_parts_have_a_bound :: proc(t: ^testing.T) {
+	shape := Folder_Shape{node_entries = 8, part_fanout = 2}
+	most := 8
+	for _ in 0 ..< tree_hash.PART_LEVEL_LIMIT {
+		most *= 2
+	}
+	env := large_env_make()
+	defer large_env_free(env)
+	large_grow(env, most)
+	_ = large_freeze(t, env, shape)
+	large_grow(env, most + 1)
+	_, status := freeze_tree(&env.work, &env.source, &env.pool, env.root, &env.backend, shape = shape)
+	testing.expect_value(t, status, Tree_Store_Status.Too_Many_Entries)
+}
+
+// A shape out of the bounds of the format is refused, at the freeze and
+// at the lookup.
+@(test)
+a_shape_out_of_the_format_is_refused :: proc(t: ^testing.T) {
+	env := large_env_make()
+	defer large_env_free(env)
+	scratch := make([]u8, 1024)
+	defer delete(scratch)
+	refused := [?]Folder_Shape{{0, 8}, {1, 8}, {8, 1}, {8, 0}, {tree_hash.MAX_TREE_ENTRIES + 1, 8}, {8, tree_hash.PART_FANOUT + 1}, {-1, -1}}
+	for shape in refused {
+		_, status := freeze_tree(&env.work, &env.source, &env.pool, env.root, &env.backend, shape = shape)
+		testing.expectf(t, status == .Damaged, "the shape %v is refused at the freeze", shape)
+		_, lookup := tree_entry(&env.backend, {}, "a", scratch, shape)
+		testing.expectf(t, lookup == .Damaged, "the shape %v is refused at the lookup", shape)
+	}
+}
+
+// The same edges at the size of the format (4096 entries, 64 parts:
+// 262 145 entries), opt-in: a B+ tree of that size takes minutes to build.
+// It runs with -define:FULL_SIZE_FOLDERS=true.
+FULL_SIZE_FOLDERS :: #config(FULL_SIZE_FOLDERS, false)
+
+@(test)
+opt_in_a_folder_of_the_format_size_freezes_in_parts :: proc(t: ^testing.T) {
+	when FULL_SIZE_FOLDERS {
+		folder_edges(t, FOLDER_SHAPE, "nodes of 4096")
+	}
 }
 
 // A node of parts that is not the canonical form is refused at a lookup: a

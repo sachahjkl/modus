@@ -63,6 +63,7 @@ A commit writes at most 4096 pages of the count tree; a commit of pending change
 - **The tables of a commit go back before its pool ends.** The commit takes the fixed tables again (`plan_tables_fixed`) before `pool_rewind`; a later `plan_reset` clears the counts through the tables that it holds, and the memory of a pool is gone after its end.
 - **A part has the first name under it**, not the last: a lookup takes the last part whose name is at most the name, so a name before the first part is absent with no read.
 - **A node of parts stays small**: 64 parts of 289 bytes. A reader keeps one for each level and one node of entries.
+- **The size of the nodes is a parameter of the freeze and of the lookup** (`immutable_tree.Folder_Shape`): the service passes the bounds of the format (`FOLDER_SHAPE`, 4096 and 64); the host tests pass nodes of 8 entries and of 8 or 2 parts, so that folders of a few dozen entries take each path of the cut and the bound of the levels in milliseconds. The test at the size of the format is opt-in (`-define:FULL_SIZE_FOLDERS=true`): its B+ tree of 262 145 entries takes minutes.
 - **The guest disk image has its own bound of a path**: a path of a file of the image holds one name of the store whole (255 bytes); a mount path keeps its 124 bytes, which the wire of a mount holds.
 
 ## State
