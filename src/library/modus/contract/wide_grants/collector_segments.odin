@@ -109,17 +109,23 @@ SPACE_INDEX_ROW_ANCHOR_LINK_AT :: SPACE_INDEX_ROW_ANCHOR_SEGMENT_AT + blake3.HAS
 SPACE_INDEX_ROW_STATE_AT :: SPACE_INDEX_ROW_ANCHOR_LINK_AT + blake3.HASH_SIZE
 SPACE_INDEX_ROW_NEXT_SERIAL_AT :: SPACE_INDEX_ROW_STATE_AT + 8
 SPACE_INDEX_ROW_LAST_LINK_AT :: SPACE_INDEX_ROW_NEXT_SERIAL_AT + 8
-SPACE_INDEX_ROW_BYTES :: SPACE_INDEX_ROW_LAST_LINK_AT + blake3.HASH_SIZE
+// The date of the close, in milliseconds since 1970; 0 until a pass of
+// the collector knows a date.
+SPACE_INDEX_ROW_CLOSED_AT_AT :: SPACE_INDEX_ROW_LAST_LINK_AT + blake3.HASH_SIZE
+SPACE_INDEX_ROW_BYTES :: SPACE_INDEX_ROW_CLOSED_AT_AT + 8
 
 // The state of a space in a row of the index.
+// Removing: the retention of a closed space ended, and its objects are
+// being removed. Removed: they are, the place is free, and the row says
+// so to a reader until a new space takes the place; it holds no field.
 Space_Index_State :: enum u32 {
-	Open   = 1,
-	Closed = 2,
+	Open     = 1,
+	Closed   = 2,
+	Removing = 3,
+	Removed  = 4,
 }
-SPACE_INDEX_BYTES_MOST :: SPACE_INDEX_HEAD_BYTES + SPACE_CAPACITY * SPACE_INDEX_ROW_BYTES + blake3.HASH_SIZE
 
-#assert(SPACE_INDEX_ROW_BYTES == 204)
-#assert(SPACE_INDEX_BYTES_MOST <= pr.MEMORY_PRIVATE_STORE_OBJECT_BYTES)
+#assert(SPACE_INDEX_ROW_BYTES == 212)
 
 // The bytes of the name of a segment object: "collector_space_<n>_segment_<k>".
 SEGMENT_OBJECT_NAME_BYTES :: 48
@@ -525,20 +531,34 @@ segment_index_of :: proc "contextless" (bytes: []u8) -> (segment: u64, ok: bool)
 }
 
 // space_index_persist writes the index of the audit spaces of store, as the
-// memory holds them now.
+// memory holds them now, with a row Removed for each place whose space was
+// removed and that no space took again.
 space_index_persist :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
-	bytes := store.index_bytes[:]
+	if !space_index_buffer_ensure(store, space_index_bytes_of(len(store.spaces))) {
+		return .Memory_Refused
+	}
+	bytes := store.index_bytes
 	copy(bytes[SPACE_INDEX_MAGIC_AT:][:8], SPACE_INDEX_MAGIC)
 	byte_order.write_u32_little_endian(bytes, SPACE_INDEX_VERSION_AT, SPACE_INDEX_VERSION)
 	byte_order.write_u64_little_endian(bytes, SPACE_INDEX_PRINCIPAL_AT, store.principal)
 	count: u32 = 0
 	at := SPACE_INDEX_HEAD_BYTES
 	for &space, index in store.spaces {
-		if !space.active || space.kind != .Audit {
+		listed := space.active && space.kind == .Audit || !space.active && space.place_removed
+		if !listed {
 			continue
 		}
 		row := bytes[at:][:SPACE_INDEX_ROW_BYTES]
+		for &value in row {
+			value = 0
+		}
 		byte_order.write_u32_little_endian(row, SPACE_INDEX_ROW_SPACE_AT, u32(index + 1))
+		count += 1
+		at += SPACE_INDEX_ROW_BYTES
+		if !space.active {
+			byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_STATE_AT, u64(Space_Index_State.Removed))
+			continue
+		}
 		byte_order.write_u32_little_endian(row, SPACE_INDEX_ROW_KIND_AT, u32(space.kind))
 		byte_order.write_u32_little_endian(row, SPACE_INDEX_ROW_FORWARDING_AT, u32(space.forwarding))
 		byte_order.write_u32_little_endian(row, SPACE_INDEX_ROW_BOUND_AT, space.bound)
@@ -548,19 +568,15 @@ space_index_persist :: proc "contextless" (store: ^Space_Store) -> Space_Refusal
 		byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_KEPT_FIRST_AT, space.kept_first_serial)
 		copy(row[SPACE_INDEX_ROW_ANCHOR_SEGMENT_AT:][:blake3.HASH_SIZE], space.anchor_segment_hash[:])
 		copy(row[SPACE_INDEX_ROW_ANCHOR_LINK_AT:][:blake3.HASH_SIZE], space.anchor_link[:])
-		closed_next_serial: u64
-		closed_last_link: blake3.Hash
 		state := Space_Index_State.Open
 		if space.closed {
-			state = .Closed
-			closed_next_serial = space.next_serial
-			closed_last_link = space.last_hash
+			state = space.removing ? .Removing : .Closed
+			byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_NEXT_SERIAL_AT, space.next_serial)
+			last_link := space.last_hash
+			copy(row[SPACE_INDEX_ROW_LAST_LINK_AT:][:blake3.HASH_SIZE], last_link[:])
+			byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_CLOSED_AT_AT, u64(max(space.closed_at_ms, 0)))
 		}
 		byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_STATE_AT, u64(state))
-		byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_NEXT_SERIAL_AT, closed_next_serial)
-		copy(row[SPACE_INDEX_ROW_LAST_LINK_AT:][:blake3.HASH_SIZE], closed_last_link[:])
-		count += 1
-		at += SPACE_INDEX_ROW_BYTES
 	}
 	byte_order.write_u32_little_endian(bytes, SPACE_INDEX_COUNT_AT, count)
 	index_hash := blake3.derive_key(SPACE_INDEX_HASH_DOMAIN, bytes[:at])
@@ -572,25 +588,44 @@ space_index_persist :: proc "contextless" (store: ^Space_Store) -> Space_Refusal
 	return .None
 }
 
+// space_index_read reads the index object whole: the buffer grows while
+// the object is larger, as the budget pays.
+@(private = "file")
+space_index_read :: proc "contextless" (store: ^Space_Store) -> (bytes: []u8, refusal: Space_Refusal) {
+	if !space_index_buffer_ensure(store, space_index_bytes_of(max(len(store.spaces), 1))) {
+		return nil, .Memory_Refused
+	}
+	for {
+		status: pr.Private_Store_Status
+		bytes, status = pr.private_store_read(&store.store_port, SPACE_INDEX_OBJECT_NAME, store.index_bytes)
+		switch status {
+		case .Ok:
+			return bytes, .None
+		case .Absent:
+			return nil, .None
+		case .Too_Large:
+			if !space_index_buffer_ensure(store, 2 * len(store.index_bytes)) {
+				return nil, .Memory_Refused
+			}
+		case .Failed:
+			return nil, .Store_Failed
+		}
+	}
+}
+
 // space_index_load reads the index and makes each audit space that it names
 // active, with its terms and no record. A missing index names no space.
 @(private = "file")
 space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
-	bytes, status := pr.private_store_read(&store.store_port, SPACE_INDEX_OBJECT_NAME, store.index_bytes[:])
-	switch status {
-	case .Ok:
-	case .Absent:
-		return .None
-	case .Too_Large:
-		return .Store_Damaged
-	case .Failed:
-		return .Store_Failed
+	bytes, read_refusal := space_index_read(store)
+	if read_refusal != .None || bytes == nil {
+		return read_refusal
 	}
 	if len(bytes) < SPACE_INDEX_HEAD_BYTES + blake3.HASH_SIZE {
 		return .Store_Damaged
 	}
 	count := byte_order.read_u32_little_endian(bytes, SPACE_INDEX_COUNT_AT)
-	if count > SPACE_CAPACITY || len(bytes) != SPACE_INDEX_HEAD_BYTES + int(count) * SPACE_INDEX_ROW_BYTES + blake3.HASH_SIZE {
+	if (len(bytes) - SPACE_INDEX_HEAD_BYTES - blake3.HASH_SIZE) / SPACE_INDEX_ROW_BYTES < int(count) || len(bytes) != space_index_bytes_of(int(count)) {
 		return .Store_Damaged
 	}
 	hash_at := len(bytes) - blake3.HASH_SIZE
@@ -604,15 +639,44 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	if byte_order.read_u64_little_endian(bytes, SPACE_INDEX_PRINCIPAL_AT) != store.principal {
 		return .Store_Damaged
 	}
+	// The last row names the most places: the table grows to them first.
+	// The buffer of the index does not move with it.
+	if count > 0 {
+		last_number := byte_order.read_u32_little_endian(bytes[SPACE_INDEX_HEAD_BYTES + (int(count) - 1) * SPACE_INDEX_ROW_BYTES:], SPACE_INDEX_ROW_SPACE_AT)
+		if last_number < count {
+			return .Store_Damaged
+		}
+		if !space_places_ensure(store, int(last_number)) {
+			return .Memory_Refused
+		}
+	}
 	previous_number: u32 = 0
 	for row_index in 0 ..< int(count) {
 		row := bytes[SPACE_INDEX_HEAD_BYTES + row_index * SPACE_INDEX_ROW_BYTES:][:SPACE_INDEX_ROW_BYTES]
 		space_number := byte_order.read_u32_little_endian(row, SPACE_INDEX_ROW_SPACE_AT)
 		// The rows go up by their number, so no number comes twice.
-		if space_number <= previous_number || space_number > SPACE_CAPACITY {
+		if space_number <= previous_number || int(space_number) > len(store.spaces) {
 			return .Store_Damaged
 		}
 		previous_number = space_number
+		state, state_ok := enum_word.member_of_word(Space_Index_State, byte_order.read_u64_little_endian(row, SPACE_INDEX_ROW_STATE_AT))
+		if !state_ok {
+			return .Store_Damaged
+		}
+		space := &store.spaces[space_number - 1]
+		space^ = {}
+		if state == .Removed {
+			// A removed place holds its number and its state, nothing else.
+			for value, at in row {
+				in_number := at < SPACE_INDEX_ROW_SPACE_AT + 4
+				in_state := at >= SPACE_INDEX_ROW_STATE_AT && at < SPACE_INDEX_ROW_STATE_AT + 8
+				if !in_number && !in_state && value != 0 {
+					return .Store_Damaged
+				}
+			}
+			space.place_removed = true
+			continue
+		}
 		kind, kind_ok := collector_space_kind_from_word(u64(byte_order.read_u32_little_endian(row, SPACE_INDEX_ROW_KIND_AT)))
 		if !kind_ok || kind != .Audit {
 			return .Store_Damaged
@@ -638,8 +702,6 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		if !name_field_valid(source) || !name_field_valid(output) {
 			return .Store_Damaged
 		}
-		space := &store.spaces[space_number - 1]
-		space^ = {}
 		space.active = true
 		space.kind = kind
 		space.forwarding = forwarding
@@ -655,29 +717,29 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		copy(space.anchor_link[:], row[SPACE_INDEX_ROW_ANCHOR_LINK_AT:][:blake3.HASH_SIZE])
 		space.window_link = space.anchor_link
 		space.last_hash = space.anchor_link
-		state, state_ok := enum_word.member_of_word(Space_Index_State, byte_order.read_u64_little_endian(row, SPACE_INDEX_ROW_STATE_AT))
-		if !state_ok {
-			return .Store_Damaged
-		}
 		closed_next_serial := byte_order.read_u64_little_endian(row, SPACE_INDEX_ROW_NEXT_SERIAL_AT)
 		closed_last_link: blake3.Hash
 		copy(closed_last_link[:], row[SPACE_INDEX_ROW_LAST_LINK_AT:][:blake3.HASH_SIZE])
+		closed_at := byte_order.read_u64_little_endian(row, SPACE_INDEX_ROW_CLOSED_AT_AT)
 		switch state {
 		case .Open:
 			// An open space finds its next serial and its last link in its
 			// segments: the row holds none.
-			if closed_next_serial != 0 || closed_last_link != {} {
+			if closed_next_serial != 0 || closed_last_link != {} || closed_at != 0 {
 				return .Store_Damaged
 			}
-		case .Closed:
-			if closed_next_serial < kept_first || closed_next_serial - kept_first > u64(bound) {
+		case .Closed, .Removing:
+			if closed_next_serial < kept_first || closed_next_serial - kept_first > u64(bound) || closed_at > u64(max(i64)) {
 				return .Store_Damaged
 			}
 			space.closed = true
+			space.removing = state == .Removing
+			space.closed_at_ms = i64(closed_at)
 			space.next_serial = closed_next_serial
 			space.first_serial = closed_next_serial
 			space.last_hash = closed_last_link
 			space.window_link = closed_last_link
+		case .Removed:
 		}
 	}
 	return .None
@@ -985,7 +1047,24 @@ space_store_ready :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	store.damaged_space = 0
 	store.load_reads = 1
 	refusal := space_index_load(store)
-	for space_number in u32(1) ..= SPACE_CAPACITY {
+	// The place after the last one that the index names holds no slot map:
+	// a new space takes the first free place, so an index that was lost,
+	// or an older one, leaves a map there.
+	if refusal == .None {
+		name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+		probe: [1]u8
+		_, status := pr.private_store_read(&store.store_port, slot_map_object_name(&name_place, u32(len(store.spaces) + 1)), probe[:])
+		store.load_reads += 1
+		switch status {
+		case .Absent:
+		case .Ok, .Too_Large:
+			store.damaged_space = u32(len(store.spaces) + 1)
+			refusal = .Store_Damaged
+		case .Failed:
+			refusal = .Store_Failed
+		}
+	}
+	for space_number in u32(1) ..= u32(len(store.spaces)) {
 		if refusal != .None {
 			break
 		}
@@ -1000,10 +1079,13 @@ space_store_ready :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	}
 	// A read that stopped in the middle leaves no part of a space, and no
 	// window.
-	for space_number in u32(1) ..= SPACE_CAPACITY {
+	for space_number in u32(1) ..= u32(len(store.spaces)) {
 		space_window_give(store, space_number)
 	}
-	store.spaces = {}
+	// The places stay in the memory of the port, empty.
+	for &space in store.spaces {
+		space = {}
+	}
 	switch refusal {
 	case .Store_Damaged:
 		store.load_state = .Damaged
@@ -1012,9 +1094,119 @@ space_store_ready :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		// The budget pays fewer windows than the open spaces of the index:
 		// the next step reads again.
 		return .Memory_Refused
-	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Space_Full, .Forward_Full, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Store_Failed, .Space_Held, .Space_Closed:
+	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Space_Full, .Forward_Full, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Store_Failed, .Space_Held, .Space_Closed, .Space_Removed:
 	}
 	return .Store_Failed
+}
+
+// space_closed_pass dates each closed space that has no date yet, and
+// removes each closed space whose retention ended at date_ms
+// (src/md/features/wide_grants.md, "The end of a closed audit space"). The
+// row says Removing in the index before the first object goes, so a stop in
+// the middle goes on at the next pass; then the segments of its kept
+// records and its slot map go, and the row says Removed. A date that is
+// not known dates nothing and removes nothing; a date before the close
+// removes nothing. A refused write or remove stops the pass, and the next
+// pass goes on. It gives the spaces removed in this pass.
+space_closed_pass :: proc "contextless" (store: ^Space_Store, date_ms: i64, date_known: bool, retention_ms: i64) -> (removed: int, refusal: Space_Refusal) {
+	if ready := space_store_ready(store); ready != .None {
+		return 0, ready
+	}
+	if store.index_dirty {
+		if refusal = space_index_persist(store); refusal != .None {
+			return 0, refusal
+		}
+		store.index_dirty = false
+	}
+	dated := false
+	for &space, index in store.spaces {
+		if !space.active || !space.closed {
+			continue
+		}
+		if space.closed_at_ms == 0 {
+			if date_known && date_ms > 0 {
+				space.closed_at_ms = date_ms
+				dated = true
+			}
+			continue
+		}
+		if !space.removing {
+			if !date_known || date_ms < space.closed_at_ms || date_ms - space.closed_at_ms < max(retention_ms, 0) {
+				continue
+			}
+			space.removing = true
+			if refusal = space_index_persist(store); refusal != .None {
+				space.removing = false
+				return removed, refusal
+			}
+			dated = false
+		}
+		if refusal = space_objects_remove(store, u32(index + 1), &space); refusal != .None {
+			return removed, refusal
+		}
+		space = {place_removed = true}
+		removed += 1
+		store.index_dirty = true
+	}
+	if dated || store.index_dirty {
+		if refusal = space_index_persist(store); refusal != .None {
+			store.index_dirty = true
+			return removed, refusal
+		}
+		store.index_dirty = false
+	}
+	return removed, .None
+}
+
+// space_objects_remove removes the segments of the kept records of a space
+// and its slot map. An object that is absent was removed before.
+@(private = "file")
+space_objects_remove :: proc "contextless" (store: ^Space_Store, space_number: u32, space: ^Collector_Space) -> Space_Refusal {
+	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+	if space.next_serial > space.kept_first_serial {
+		first := space.kept_first_serial / SPACE_SEGMENT_RECORDS
+		last := (space.next_serial - 1) / SPACE_SEGMENT_RECORDS
+		for segment in first ..= min(last, first + SPACE_SEGMENT_SLOTS - 1) {
+			switch pr.private_store_remove(&store.store_port, segment_object_name(&name_place, space_number, segment)) {
+			case .Ok, .Absent:
+			case .Too_Large, .Failed:
+				return .Store_Failed
+			}
+		}
+	}
+	switch pr.private_store_remove(&store.store_port, slot_map_object_name(&name_place, space_number)) {
+	case .Ok, .Absent:
+	case .Too_Large, .Failed:
+		return .Store_Failed
+	}
+	return .None
+}
+
+// space_closed_next_due gives when space_closed_pass has work next: the
+// earliest end of a retention, at once for a removal that stopped or a
+// write that waits, and soon for a closed space with no date yet.
+space_closed_next_due :: proc "contextless" (store: ^Space_Store, retention_ms: i64) -> (due_date_ms: i64, dated_due: bool, at_once: bool, undated: bool) {
+	at_once = store.index_dirty
+	for &space in store.spaces {
+		if !space.active || !space.closed {
+			continue
+		}
+		switch {
+		case space.removing:
+			at_once = true
+		case space.closed_at_ms == 0:
+			undated = true
+		case:
+			end := space.closed_at_ms + max(retention_ms, 0)
+			if end < space.closed_at_ms {
+				end = max(i64)
+			}
+			if !dated_due || end < due_date_ms {
+				due_date_ms, dated_due = end, true
+			}
+		}
+	}
+	return due_date_ms, dated_due, at_once, undated
 }
 
 // space_segments_verify reads each kept segment of an audit space from the
@@ -1055,7 +1247,7 @@ space_segments_verify :: proc "contextless" (store: ^Space_Store, space_number: 
 	case .None:
 	case .Store_Failed:
 		return .Store_Failed, 0
-	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed:
+	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed:
 		return .Chain_Broken, after * SPACE_SEGMENT_RECORDS
 	}
 	return .None, 0

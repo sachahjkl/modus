@@ -14,6 +14,7 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/settings"
+import "modus:contract/wide_grants"
 import "modus:disk_process"
 import "modus:display"
 import "modus:pci"
@@ -648,6 +649,13 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	load_error: module.Load_Error
 	process_budget := budget_of(work.file, name)
+	// The collector of principal 0 keeps the audits of the start list: this
+	// service pays their memory (start_policy.odin, start_list_audits). The
+	// largest budget of one process bounds it, as each part.
+	if name == wide_grants.COLLECTOR_MODULE_NAME && work.principal == principals.MACHINE && start_list_audits > 0 {
+		widened := process_budget.pages + start_list_audits * wide_grants.SPACE_AUDIT_PAGES
+		process_budget.pages = min(widened, module.LARGEST_BUDGET_PAGES)
+	}
 	status: system.Status
 	// The start of the measure of the start of a window: the load of the
 	// module, its hash and Process_Start are in it

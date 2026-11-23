@@ -486,6 +486,19 @@ row_of_record :: proc "contextless" (record: ^Row_Record) -> (row: Start_Row, pr
 // wiring row that output.wiring_row_check refuses gives its error record
 // too. A refused list gives no row: a start policy never starts half of a
 // list.
+// list_audit_count gives the wiring rows of a list that carry the terms of
+// an audit space: the audits that the collector of the start policy keeps,
+// whose memory its starter pays (src/md/features/wide_grants.md, "The
+// starter pays for the audits"). A list that its border refuses has none.
+list_audit_count :: proc "contextless" (list: ^List) -> (count: int) {
+	for wiring in list.wirings[:list.wiring_count] {
+		if wiring.wiring.terms_count == START_LIST_TERMS_BYTES {
+			count += 1
+		}
+	}
+	return count
+}
+
 list_read :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: List_Problem, place: int, refusal: errors.Error_Record) {
 	list^ = {}
 	problem, place, refusal = list_read_rows(bytes, list)

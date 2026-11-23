@@ -102,7 +102,9 @@ Link_Fixture :: struct {
 
 @(private = "file")
 link_fixture_start :: proc(fixture: ^Link_Fixture) {
-	space_store_init(&fixture.store, LINK_PRINCIPAL, pr.memory_private_store_port(&fixture.memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
+	// A budget of 16 windows: 13 beside the three of the act spaces.
+	port, _ := space_memory_heap(16)
+	space_store_init(&fixture.store, LINK_PRINCIPAL, pr.memory_private_store_port(&fixture.memory), port)
 	fixture.links = {}
 }
 
@@ -142,7 +144,7 @@ a_source_that_breaks_a_rule_opens_no_link :: proc(t: ^testing.T) {
 	// The windows of the budget, less the three of the act spaces, hold
 	// the space above and twelve more; the next one is refused.
 	names := [?]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"}
-	#assert(len(names) + 1 + ACT_SPACES_RESERVED == SPACE_WINDOWS_STATED)
+	#assert(len(names) + 1 + ACT_SPACES_RESERVED == 16)
 	for name, index in names {
 		_, each := link_open(&fixture.links, &fixture.store, u32(10 + index), bytes_of(name), bytes_of("log"), link_terms(.Keep, 4, .Keeps), LINK_RECORD_SIZE)
 		testing.expect_value(t, each, Space_Refusal.None)

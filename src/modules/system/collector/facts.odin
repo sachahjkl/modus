@@ -1,5 +1,7 @@
 package collector_service
 
+import "modus:contract/wide_grants"
+
 // Log facts emitted by the freestanding collector service. Field names avoid
 // the reserved log table header names (number, time, process, level).
 
@@ -14,12 +16,23 @@ Service_Ready :: struct {
 
 // The audit spaces that a start read back from the private store, each
 // segment checked.
-// The windows of the spaces that the budget of the collector pays at its
-// start: the bound of its open spaces.
-@(log_fact = "collector: its budget pays {windows} windows of spaces, of {stated} stated")
+// The windows of the spaces that the budget of the collector held at its
+// start: the most of its open spaces, while the budget still pays them.
+@(log_fact = "collector: its budget pays {windows} windows of spaces")
 Space_Windows_Paid :: struct {
 	windows: u64,
-	stated:  u64,
+}
+
+// A pass removed closed audit spaces whose retention ended.
+@(log_fact = "collector: removed {spaces} closed audit spaces whose retention ended")
+Closed_Spaces_Removed :: struct {
+	spaces: u64,
+}
+
+// A pass on the closed audit spaces was refused: it goes on at the next.
+@(log_fact = "collector: the removal of closed audit spaces stopped: {refusal}; the next pass goes on")
+Closed_Spaces_Pass_Refused :: struct {
+	refusal: wide_grants.Space_Refusal,
 }
 
 @(log_fact = "collector: read {spaces} audit spaces with {records} records from its store, in {objects} objects")

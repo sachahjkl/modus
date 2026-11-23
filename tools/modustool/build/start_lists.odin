@@ -372,28 +372,41 @@ start_list_wiring_records :: proc(rows: []Start_List_Row, wirings: []Start_List_
 		append(&written, record)
 		append(&sizes, described.size)
 	}
-	if problem := start_list_audits_problem(wirings); problem != "" {
+	if problem := start_list_audits_problem(wirings, collector_request_pages(files)); problem != "" {
 		append(&found, problem)
 	}
 	return written[:], sizes[:], found[:]
 }
 
-// start_list_audits_problem refuses a list that declares more audits than
-// the stated budget of the collector pays windows for, beside the act
-// spaces of a wide grant (src/md/features/wide_grants.md, "The memory of
-// the spaces"): those audits would be refused at the start of the machine.
-start_list_audits_problem :: proc(wirings: []Start_List_Wiring) -> string {
-	audits := 0
+// start_list_audits_problem refuses a list whose audits would widen the
+// budget of the collector past the largest budget of one process: the root
+// service widens it by SPACE_AUDIT_PAGES for each audit, over the pages
+// that the collector asks (src/md/features/wide_grants.md, "The starter
+// pays for the audits"), and gives no process more than the largest
+// budget. collector_pages: what the module file of the collector asks.
+start_list_audits_problem :: proc(wirings: []Start_List_Wiring, collector_pages: u64) -> string {
+	audits: u64 = 0
 	for wiring in wirings {
 		if wiring.audit_bound != 0 {
 			audits += 1
 		}
 	}
-	room := int(wide_grants.SPACE_WINDOWS_STATED - wide_grants.ACT_SPACES_RESERVED)
-	if audits > room {
-		return fmt.tprintf("the list declares %d audits of servers, and the stated budget of the collector pays windows for %d beside the %d act spaces of a wide grant: raise SPACE_WINDOWS_STATED or audit fewer outputs", audits, room, wide_grants.ACT_SPACES_RESERVED)
+	needed := collector_pages + audits * wide_grants.SPACE_AUDIT_PAGES
+	if needed > module.LARGEST_BUDGET_PAGES {
+		return fmt.tprintf("the list declares %d audits of servers: the collector would need %d pages, %d for its own and %d for each audit, past the largest budget of one process, %d pages", audits, needed, collector_pages, wide_grants.SPACE_AUDIT_PAGES, module.LARGEST_BUDGET_PAGES)
 	}
 	return ""
+}
+
+// collector_request_pages gives the pages that the module file of the
+// collector asks, or 0 with no file.
+collector_request_pages :: proc(files: Module_Files) -> u64 {
+	file, found := files[wide_grants.COLLECTOR_MODULE_NAME]
+	if !found || module.validate(file) != .None {
+		return 0
+	}
+	request, _ := module.budget_request(file)
+	return request.pages
 }
 
 // start_list_problems gives each fault of a list against the modules of an

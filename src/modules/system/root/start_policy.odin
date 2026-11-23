@@ -68,6 +68,28 @@ start_policy_deadline: u64 = system.WAIT_FOREVER // Running: the time of the han
 // unlock_start takes the name of unlock.
 start_policy_starting: bool
 
+// The wiring rows with audit terms of the list of the start policy that
+// started: the collector of principal 0 keeps them, and this service, its
+// starter, widens its budget for each (src/md/features/wide_grants.md, "The
+// starter pays for the audits").
+start_list_audits: u64
+
+// The list that start_list_audits_of reads: a table of this service, not
+// a frame of its stack.
+start_list_for_audits: start_list.List
+
+// start_list_audits_of counts the audits of a list of the boot image. A
+// list that its border refuses has none: the start policy refuses it.
+start_list_audits_of :: proc "contextless" (entry: ^info.Image_Entry) -> u64 {
+	if !image_entry_give(entry) {
+		return 0
+	}
+	if problem, _, _ := start_list.list_read(image[entry.offset:][:entry.size], &start_list_for_audits); problem != .None {
+		return 0
+	}
+	return u64(start_list.list_audit_count(&start_list_for_audits))
+}
+
 // The machine parts page: written once, before the start policy starts.
 machine_parts_memory: system.Handle
 machine_parts: start_list.Machine_Parts
@@ -275,6 +297,7 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	}
 	if list_entry := system.image_resource_find(image, START_POLICY_LIST_NAMES[list]); list_entry != nil {
 		list_hash = list_entry.hash
+		start_list_audits = start_list_audits_of(list_entry)
 	}
 	// A start policy of the boot image starts unmeasured, with the line of
 	// the cause: it is signed and measured with the system in PCR 11.

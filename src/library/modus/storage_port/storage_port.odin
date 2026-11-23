@@ -21,7 +21,7 @@ bind :: proc "contextless" (ctx: ^system.Context) -> (port: pr.Private_Store_Por
 	if !ok {
 		return {}, false
 	}
-	return {user = &store_client, read = read, write = write}, true
+	return {user = &store_client, read = read, write = write, remove = remove}, true
 }
 
 @(private = "file")
@@ -51,6 +51,20 @@ read :: proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: i
 		return 0, .Failed
 	}
 	return len(bytes), .Ok
+}
+
+@(private = "file")
+remove :: proc "contextless" (user: rawptr, name: string) -> pr.Private_Store_Status {
+	client := (^storage.Client)(user)
+	error: errors.Error_Record
+	generation, status := storage.remove(client, storage.ROOT, name, &error)
+	if storage.export_failed_with(status, generation, .Absent) {
+		return .Absent
+	}
+	if status != .Ok || generation < 0 {
+		return .Failed
+	}
+	return .Ok
 }
 
 @(private = "file")

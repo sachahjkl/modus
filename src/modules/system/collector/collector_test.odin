@@ -53,7 +53,7 @@ fixture_restart :: proc(fixture: ^Service_Fixture) {
 	port := pr.memory_private_store_port(&fixture.memory)
 	fixture.memory.writes_allowed = writes_allowed
 	fixture.service = {}
-	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, port, wide_grants.space_window_heap_port(), wide_grants.SPACE_WINDOWS_STATED)
+	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, port, wide_grants.space_window_heap_port())
 }
 
 @(private = "file")
@@ -115,7 +115,7 @@ a_wrong_principal_reads_and_lists_nothing :: proc(t: ^testing.T) {
 		expected := caller == nil ? ERROR_NO_CALLER : ERROR_NOT_PRINCIPAL
 		unit := caller == nil ? errors.Unit.Connection : errors.Unit.Acts_For_Principal
 
-		rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
+		rows: [64]wide_grants.Space_Row
 		row_slice := rows[:]
 		error = {}
 		expect_refusal(t, spaces_for(service, caller, &row_slice, &error), expected, error, .No_Grant, unit)
@@ -179,7 +179,7 @@ a_source_never_reads_or_erases_its_own_audit :: proc(t: ^testing.T) {
 	testing.expect(t, row == {}, "the source read the state of its own audit")
 
 	// The source lists the space of another source, never its own.
-	rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
+	rows: [64]wide_grants.Space_Row
 	row_slice := rows[:]
 	testing.expect_value(t, spaces_for(service, &source, &row_slice, &error), i64(1))
 	testing.expect_value(t, rows[0].space, other)
@@ -253,7 +253,8 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 	}
 	error = {}
 	expect_refusal(t, record_append_for(service, &console, other, nil, 1, &error), ERROR_SPACE, error, .Bad_Address, .None)
-	for number in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_CAPACITY, wide_grants.SPACE_CAPACITY + 1, max(i64)}) {
+	places := i64(len(service.store.spaces))
+	for number in ([?]i64{min(i64), -1, 0, places + 1, i64(max(u32)), i64(max(u32)) + 1, max(i64)}) {
 		error = {}
 		expect_refusal(t, append_value(service, &console, number, 1, &error), ERROR_SPACE, error, .Absent, .Records)
 	}
@@ -511,7 +512,7 @@ a_damaged_segment_refuses_each_export_after_a_restart :: proc(t: ^testing.T) {
 			expect_refusal(t, space_verify_for(service, &console, space, &error), ERROR_STORE, error, .Damaged, .Store)
 			error = {}
 			expect_refusal(t, record_count_for(service, &console, &error), ERROR_STORE, error, .Damaged, .Store)
-			rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
+			rows: [64]wide_grants.Space_Row
 			row_slice := rows[:]
 			error = {}
 			expect_refusal(t, spaces_for(service, &console, &row_slice, &error), ERROR_STORE, error, .Damaged, .Store)
@@ -558,7 +559,7 @@ a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 
 	no_store := new(Space_Service)
 	defer free(no_store)
-	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {}, wide_grants.space_window_heap_port(), wide_grants.SPACE_WINDOWS_STATED)
+	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {}, wide_grants.space_window_heap_port())
 	source_text, output_text, terms := "server", "orders", terms_of(.Audit, 4)
 	error = {}
 	expect_refusal(t, space_open_for(no_store, &console, &source_text, &output_text, &terms, &error), ERROR_STORE, error, .Device, .Store)

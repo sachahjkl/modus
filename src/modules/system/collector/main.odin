@@ -8,6 +8,7 @@ package collector_service
 
 import "base:intrinsics"
 import "internal:collector/collector_core"
+import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -18,10 +19,14 @@ import "modus:system"
 // The pages of the tables of the collector, its code and its fixed state.
 COLLECTOR_TABLE_PAGES :: 160
 
-// The working memory of the collector: its tables, and the stated windows
-// of its spaces, which it commits as each space opens (space_window_memory.odin).
-// modustool checks the audits of the start lists against the stated windows.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = COLLECTOR_TABLE_PAGES + wide_grants.SPACE_WINDOWS_STATED * wide_grants.SPACE_WINDOW_PAGES, processes = 1, threads = 1}
+// The working memory of the collector: its tables, and the window, the
+// place and the row of the index of each of the three act spaces of a wide
+// grant, which it commits as each space opens (space_window_memory.odin).
+// The root service widens the budget by wide_grants.SPACE_AUDIT_PAGES for
+// each audit that its start list declares (src/md/features/wide_grants.md,
+// "The starter pays for the audits").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1}
+#assert(181 == COLLECTOR_TABLE_PAGES + wide_grants.ACT_SPACES_RESERVED * wide_grants.SPACE_AUDIT_PAGES)
 
 // Maximum act records returned in one shared-region query response.
 QUERY_STAGING_CAPACITY :: 64
@@ -633,9 +638,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A process with no grant Store gets a port with no procedure: each step
 	// of the spaces is then refused, so no audit space lives in memory alone.
 	store_port, store_open := storage_port.bind(ctx)
-	windows_port, windows_paid := space_windows_reserve() // space_window_memory.odin
-	wide_grants.space_store_init(&space_service.store, principal_id, store_port, windows_port, windows_paid)
-	system.log_fact(.Info, Space_Windows_Paid{windows = u64(windows_paid), stated = wide_grants.SPACE_WINDOWS_STATED})
+	memory_port, windows := space_memory_reserve() // space_window_memory.odin
+	wide_grants.space_store_init(&space_service.store, principal_id, store_port, memory_port)
+	system.log_fact(.Info, Space_Windows_Paid{windows = u64(windows)})
+	closed_date_page = date.page_of(ctx)
 
 	system.log_fact(.Info, Service_Ready{principal_id = principal_id, act_capacity = u64(manager_state.collector.capacity), store = store_open ? 1 : 0})
 	if store_open {
@@ -690,8 +696,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// that the wait holds are the rings that this pass read.
 		pending := sources_pass()
 		not_waited := sources_wait(&wait)
+		closed_deadline := store_open ? closed_spaces_pass(now_ms) : system.WAIT_FOREVER // spaces.odin
 		if manager_state.counters.active_grants > 0 || pending || not_waited || grant_ended_pending.grant_serial != 0 {
-			system.wait_end(&wait, now_ms + PENDING_RETRY_MILLISECONDS)
+			system.wait_end(&wait, min(now_ms + PENDING_RETRY_MILLISECONDS, closed_deadline))
+		} else if closed_deadline != system.WAIT_FOREVER {
+			system.wait_end(&wait, closed_deadline)
 		} else {
 			system.wait_end(&wait)
 		}

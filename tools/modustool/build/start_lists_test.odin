@@ -1,5 +1,6 @@
 package build
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modus:contract/module"
@@ -202,20 +203,29 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, audited_list.wirings[0].terms, audited_records[0].terms)
 	}
 
-	// The audits that the stated windows of the collector pay beside the
-	// act spaces: at the room, taken; one past it, refused.
-	room := int(wide_grants.SPACE_WINDOWS_STATED - wide_grants.ACT_SPACES_RESERVED)
+	// The audits widen the collector up to the largest budget of one
+	// process: twenty audits pass; at the largest budget, taken; one audit
+	// past it, refused.
+	COLLECTOR_PAGES :: u64(181)
+	twenty := make([]Start_List_Wiring, 20, context.temp_allocator)
+	for &audit in twenty {
+		audit = {audit_bound = 1}
+	}
+	testing.expect_value(t, start_list_audits_problem(twenty, COLLECTOR_PAGES), "")
+	testing.expect_value(t, start_list_audits_problem(twenty[:0], COLLECTOR_PAGES), "")
+	room := int((module.LARGEST_BUDGET_PAGES - COLLECTOR_PAGES) / wide_grants.SPACE_AUDIT_PAGES)
 	audits := make([]Start_List_Wiring, room + 1, context.temp_allocator)
 	for &audit in audits {
 		audit = {audit_bound = 1}
 	}
-	testing.expect_value(t, start_list_audits_problem(audits[:room]), "")
-	testing.expect_value(t, start_list_audits_problem(audits[:0]), "")
-	past := start_list_audits_problem(audits)
-	testing.expectf(t, strings.contains(past, "declares 14 audits of servers"), "the list past the room: %q", past)
+	testing.expect_value(t, start_list_audits_problem(audits[:room], COLLECTOR_PAGES), "")
+	past := start_list_audits_problem(audits, COLLECTOR_PAGES)
+	testing.expectf(t, strings.contains(past, fmt.tprintf("declares %d audits of servers", room + 1)), "the list past the largest budget: %q", past)
 	// Rows with no audit count for nothing.
 	plain := make([]Start_List_Wiring, room + 1, context.temp_allocator)
-	testing.expect_value(t, start_list_audits_problem(plain), "")
+	testing.expect_value(t, start_list_audits_problem(plain, COLLECTOR_PAGES), "")
+	// No module file of the collector: its pages count as none.
+	testing.expect_value(t, collector_request_pages(nil), u64(0))
 
 	// The default start list, with module files that declare its pair as
 	// the two modules of the pair declare it.

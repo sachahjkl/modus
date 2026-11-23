@@ -189,7 +189,7 @@ link_retry :: proc "contextless" (store: ^Space_Store, link: ^Source_Link) -> (s
 		return .Kept, .None
 	case .Space_Full, .Forward_Full, .Store_Failed, .Store_Damaged:
 		return .Held, refusal
-	case .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed:
+	case .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed:
 		return .Refused, refusal
 	}
 	return .Refused, refusal
@@ -229,7 +229,25 @@ link_close :: proc "contextless" (link: ^Source_Link, error: errors.Error_Record
 // pair never came (the pair becomes Gone, so links_settle frees the link
 // and its space is no longer held).
 forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, port: Forward_Port) -> Forward_Step {
-	held: [SPACE_CAPACITY + 1]bool
+	// The spaces whose pair waits, skipped for the rest of the pass: only a
+	// space that a link feeds forwards, so the links bound them.
+	held: [SOURCE_LINKS_MOST]u32
+	held_count := 0
+	is_held :: proc "contextless" (held: []u32, space: u32) -> bool {
+		for number in held {
+			if number == space {
+				return true
+			}
+		}
+		return false
+	}
+	held_add :: proc "contextless" (held: []u32, count: int, space: u32) -> int {
+		if count >= len(held) || is_held(held[:count], space) {
+			return count
+		}
+		held[count] = space
+		return count + 1
+	}
 	moved, full, waiting := false, false, false
 	offset := u32(0)
 	for {
@@ -237,7 +255,7 @@ forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, p
 		if item == nil {
 			break
 		}
-		if item.space <= SPACE_CAPACITY && held[item.space] {
+		if is_held(held[:held_count], item.space) {
 			offset += 1
 			continue
 		}
@@ -260,12 +278,12 @@ forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, p
 			forward_remove_at(store, offset, .Forwarded)
 			moved = true
 		case .Full:
-			held[item.space] = true
+			held_count = held_add(held[:], held_count, item.space)
 			full = true
 			offset += 1
 		case .No_Ring:
 			if link.pair == .Waiting && link.state == .Open {
-				held[item.space] = true
+				held_count = held_add(held[:], held_count, item.space)
 				waiting = true
 				offset += 1
 				continue

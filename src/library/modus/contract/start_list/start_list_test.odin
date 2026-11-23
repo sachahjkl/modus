@@ -254,6 +254,11 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	reader_restarts := record_change(bytes, 0, proc(record: ^Row_Record) {record.restart_count = RESTART_LIMIT})
 	problem, _, _ := list_read(reader_restarts, &list)
 	testing.expect_value(t, problem, List_Problem.None)
+	// A list with no terms declares no audit.
+	plain_list: List
+	plain_problem, _, _ := list_read(bytes, &plain_list)
+	testing.expect_value(t, plain_problem, List_Problem.None)
+	testing.expect_value(t, list_audit_count(&plain_list), 0)
 	// Terms that name no audit that keeps what leaves a server: each field
 	// at its edges, and bytes that are no terms.
 	audit :: wide_grants.Space_Terms{kind_word = i64(wide_grants.Collector_Space_Kind.Audit), bound_records = 1, forwarding_word = i64(wide_grants.Space_Forwarding.Keeps), record_size = 1}
@@ -289,6 +294,7 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		with_terms.terms = transmute([START_LIST_TERMS_BYTES]u8)terms
 		problem, _, _ = list_read(wiring_change(bytes, 4, 1, with_terms), &list)
 		testing.expect_value(t, problem, List_Problem.None)
+		testing.expect_value(t, list_audit_count(&list), 1)
 		testing.expect_value(t, list.wirings[1].wiring.terms_count, u32(START_LIST_TERMS_BYTES))
 		testing.expect_value(t, list.wirings[1].terms, with_terms.terms)
 	}

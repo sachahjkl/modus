@@ -45,6 +45,9 @@ Private_Store_Port :: struct {
 	user:  rawptr,
 	read:  proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
 	write: proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
+	// Removes the object name, in one commit; Absent when no object has the
+	// name. nil: the port removes nothing, and each remove fails.
+	remove: proc "contextless" (user: rawptr, name: string) -> Private_Store_Status,
 }
 
 // private_store_read reads the object name whole into into. A port with no
@@ -98,11 +101,21 @@ Memory_Private_Store :: struct {
 	writes_allowed: int, // The writes that succeed before each write fails; -1: no bound.
 }
 
+// private_store_remove removes the object name, in one commit. Absent: no
+// object has the name, which a caller that removes an object again takes
+// as done.
+private_store_remove :: proc "contextless" (port: ^Private_Store_Port, name: string) -> Private_Store_Status {
+	if port == nil || port.remove == nil {
+		return .Failed
+	}
+	return port.remove(port.user, name)
+}
+
 // memory_private_store_port gives the port of a memory store, with no bound
 // of the writes.
 memory_private_store_port :: proc "contextless" (store: ^Memory_Private_Store) -> Private_Store_Port {
 	store.writes_allowed = -1
-	return {user = store, read = memory_private_store_read, write = memory_private_store_write}
+	return {user = store, read = memory_private_store_read, write = memory_private_store_write, remove = memory_private_store_remove}
 }
 
 // memory_private_store_find gives the object name of a memory store, or nil.
@@ -156,6 +169,22 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 	object.name_length = len(name)
 	copy(object.bytes[:], data)
 	object.length = len(data)
+	store.writes += 1
+	return .Ok
+}
+
+// A remove counts as a write, under the same bound of the writes.
+@(private = "file")
+memory_private_store_remove :: proc "contextless" (user: rawptr, name: string) -> Private_Store_Status {
+	store := (^Memory_Private_Store)(user)
+	if store.writes_allowed >= 0 && store.writes >= store.writes_allowed {
+		return .Failed
+	}
+	object := memory_private_store_find(store, name)
+	if object == nil {
+		return .Absent
+	}
+	object^ = {}
 	store.writes += 1
 	return .Ok
 }
