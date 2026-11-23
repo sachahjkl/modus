@@ -294,11 +294,25 @@ a_declined_scale_waits_for_another_scale :: proc(t: ^testing.T) {
 	action, _ = rescale_step(&machine, {kind = .Refused, serial = 4})
 	testing.expect_value(t, action, Rescale_Action.None)
 	testing.expect_value(t, machine.phase, Rescale_Phase.Released)
+	// The declined scale named again, as each change of another setting
+	// names it: no offer, the machine stays as it is.
+	declined := machine
+	for _ in 0 ..< 3 {
+		action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+		testing.expect_value(t, action, Rescale_Action.None)
+		testing.expect_value(t, machine, declined)
+	}
 	// Another scale: the offer of the next serial.
 	action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Twelve_Eighths})
 	testing.expect_value(t, action, Rescale_Action.Offer)
 	testing.expect_value(t, machine.serial, 5)
 	testing.expect_value(t, machine.scale, scale_factor.Scale.Twelve_Eighths)
+	testing.expect(t, !machine.declined)
+	// Back to the declined scale after the other one: an offer again, as
+	// the budget may pay it now.
+	_, _ = rescale_step(&machine, {kind = .Taken, serial = 5})
+	action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect_value(t, action, Rescale_Action.Release)
 	for phase in ([?]Rescale_Phase{.Steady, .Releasing, .Released, .Resizing}) {
 		other := Rescale_Machine{phase = phase, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 7}
 		before := other

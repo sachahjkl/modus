@@ -145,8 +145,9 @@ the_facts_of_settings_write_the_lines_of_before :: proc(t: ^testing.T) {
 		facts_expect_line(t, render(t, file, "Records_Repeated", {{"records", count}}), line_of_before("settings: kept ", count, " records, one commit each"))
 	}
 	// The scale is written by the name of its value: "1.375", "1.625" and
-	// "1.875" are the longest, 5 bytes.
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"scale", u32(len("1.375"))}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}, {"languages", 111}, {"cause", 63}))
+	// "1.875" are the longest, 5 bytes. The next appearance of the Control
+	// Center names two values of the appearance, "light" the longest.
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"scale", u32(len("1.375"))}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}, {"languages", 111}, {"cause", 63}, {"before", u32(len("light"))}, {"after", u32(len("light"))}))
 }
 
 // The facts of inspect: the counts at their edges, the longest process
@@ -583,13 +584,6 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["pointer_form"] = u32(len("light"))
 	most["shape_name"] = u32(len("resize_top_left_bottom_right"))
 	most["limits_problem"] = u32(len("a least size is below the least size of a resizable surface"))
-	// The window stays fixed: the sentence of a problem of its limits, or of
-	// a full command ring.
-	most["cause"] = u32(len("a least size is below the least size of a resizable surface"))
-	// The next appearance of the Control Center: the names of two values of
-	// the setting appearance.
-	most["before"] = u32(len("light"))
-	most["after"] = u32(len("light"))
 	most["local_time"] = 19
 	most["zone"] = 6
 	for setting_field in ([7]string{"font", "subpixel_order", "pointer_theme", "grid_fit", "keyboard_layout", "appearance", "in_force"}) {

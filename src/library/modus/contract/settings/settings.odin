@@ -83,6 +83,35 @@ pass_of_word :: proc "contextless" (word: u64) -> (pass: Pass, ok: bool) {
 	return enum_word.member_of_word(Pass, word)
 }
 
+// The answer of the root service to an ask that starts `settings`. The
+// process `settings` is the one writer of the page; a pass writes it and
+// stops, with no window to raise.
+Start_Answer :: enum u8 {
+	Start            = 0, // No process `settings` runs, or a window runs and the ask is a window: start.
+	Raise_Window     = 1, // A window runs and the ask is the next appearance: the compositor raises it at the appearance.
+	Refuse_Pass_Runs = 2, // A pass runs: refused; the pass writes the page and stops.
+}
+
+// start_answer decides an ask of the pass `asked` for `settings`, with
+// `running` true when a process `settings` runs, in the pass `running_pass`.
+start_answer :: proc "contextless" (asked: Pass, running: bool, running_pass: Pass) -> Start_Answer {
+	if !running {
+		return .Start
+	}
+	switch running_pass {
+	case .Boot, .Appearance_Next:
+		return .Refuse_Pass_Runs
+	case .Window:
+		switch asked {
+		case .Appearance_Next:
+			return .Raise_Window
+		case .Window, .Boot:
+			return .Start
+		}
+	}
+	return .Refuse_Pass_Runs
+}
+
 // appearance_next gives the appearance after one press on the tile of the
 // Control Center: auto, then dark, then light, then auto again.
 appearance_next :: proc "contextless" (appearance: Appearance) -> Appearance {

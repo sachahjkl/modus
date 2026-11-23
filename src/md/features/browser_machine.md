@@ -306,7 +306,7 @@ An object needs no trust: it checks itself against its hash, and a realisation a
 ### The display and the scale
 
 - **The size.** The screen has the size of the canvas in device pixels, read with `ResizeObserver` and its `devicePixelContentBoxSize`, so one pixel of the system is one pixel of the display, with no blur.
-- **The scale factor** is the eighth of the system nearest to `devicePixelRatio` among the scales that exist ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). A ratio of 2 gives the largest scale until the scales past 1.375 exist.
+- **The scale factor** is the eighth of the system nearest to `devicePixelRatio` among the scales that exist ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). A ratio of 2 gives the scale 2, the largest.
 - **A resize of the canvas after the start** is a change of the mode of the display, which the class protocol of the display gives ([device_services.md](device_services.md), "The open points"). A fixed size at the start is not enough: a page that the reader resizes, or turns on a phone, then shows a screen of the wrong size. So the browser machine comes after the class protocol of the display, and each resize of the canvas is a change of the mode.
 - **The present.** At each animation frame, the thread of the document copies the screen page that the display registers name into a texture of WebGL2, and a shader swaps the blue and the red. The copy is whole: the display has no damage. Its cost is a measure. The first page draws the framebuffer of the boot record on a canvas 2D, and swaps the bytes in JavaScript ("The page and its host").
 

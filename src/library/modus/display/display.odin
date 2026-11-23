@@ -498,10 +498,16 @@ Control :: enum u32 {
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 	Client_Started          = 7,
 	// compositor to root: the tile Appearance of the Control Center was
-	// pressed. The root service starts `settings` for the pass of the next
-	// appearance (settings.Pass.Appearance_Next), unless a process
-	// `settings` runs: that one is the one writer of the page. No values.
+	// pressed. The root service decides (settings.start_answer): it starts
+	// `settings` for the pass of the next appearance, or sends
+	// Settings_Raise for the window of `settings` that runs, or refuses
+	// while a pass runs. No values.
 	Appearance_Next         = 8,
+	// root to compositor: the answer to Appearance_Next while a window of
+	// `settings` runs. values: the handle of Client_Add of that window. The
+	// root service names the window by the process that it started, so no
+	// other window can take the press.
+	Settings_Raise          = 9,
 }
 
 // The ring from the input service to the compositor.

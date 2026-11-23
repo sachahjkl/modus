@@ -318,7 +318,8 @@ surface_rescale_take :: proc "contextless" (client: ^Client, record: ring.Record
 // moves the serial released to the serial of the offer, so the next
 // Surface_Rescale of the window names the serial after it; the frame of
 // the window keeps the background; the count of the windows that declined
-// the scale goes to each window. A refused record changes nothing, and is
+// the scale goes to each window. A second decline of the same scale is no
+// news (bar.surface_decline_is_news): no fact, no count. A refused record changes nothing, and is
 // counted with the refused resizes.
 surface_declined_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 	serial := record.values[0]
@@ -336,6 +337,9 @@ surface_declined_take :: proc "contextless" (client: ^Client, record: ring.Recor
 		return
 	}
 	client.surface_serial = serial
+	if !bar.surface_decline_is_news(client.declined, client.declined_scale, scale) {
+		return
+	}
 	client.declined, client.declined_scale = true, scale
 	system.log_fact(.Warning, Window_Declined_Scale{scale = u64(scale), window = window_field(client.title[:])})
 	windows_declined_tell() // scale.odin

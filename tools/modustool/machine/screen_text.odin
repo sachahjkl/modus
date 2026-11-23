@@ -140,6 +140,11 @@ screen_text_read :: proc(machine: ^Machine, owner, element: string, index: int) 
 	// on the surface at the same scale; the glyph is in the middle of its
 	// cell.
 	cells := spleen_cells_of(MACHINE_SCALE)
+	if cells.spleen_scale != 1 {
+		// cells_text compares each glyph of Spleen at its scale 1.
+		fmt.eprintfln("modustool: test failed: step %d: the scale of the machine draws Spleen at %d, and the read of a text takes only its scale 1", index + 1, cells.spleen_scale)
+		return "", false
+	}
 	surface_x, _ := screen_place_of_logical(window_x + WINDOW_BORDER, MACHINE_SCALE)
 	surface_y, _ := screen_place_of_logical(window_y + WINDOW_TITLE_HEIGHT, MACHINE_SCALE)
 	in_surface_x, _ := screen_place_of_logical(element_x, MACHINE_SCALE)

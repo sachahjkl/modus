@@ -280,6 +280,12 @@ Appearance_Next_Kept :: struct {
 }
 #assert(size_of(Appearance_Next_Kept{}.before) == VALUE_NAME_FIELD_BYTES && size_of(Appearance_Next_Kept{}.store) == STORE_WORDS_FIELD_BYTES)
 
+// The tile of the Control Center, with a page that the reader refused: the
+// pass keeps nothing, since the defaults would take the place of the kept
+// record of each other setting.
+@(log_fact = "settings: the next appearance of the Control Center keeps nothing: the settings page holds a value that its setting does not have, or was never stable")
+Appearance_Next_Page_Refused :: struct {}
+
 // The window cannot be resized: the limits that this process gave were
 // refused, or the command ring of the window was full.
 @(log_fact = "settings: the window stays fixed: {cause}")

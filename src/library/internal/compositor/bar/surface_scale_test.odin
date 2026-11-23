@@ -334,3 +334,19 @@ surface_declined_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	testing.expect_value(t, surface_declined_refusal({scale_word = max(u64), serial = 5, created = true, released = true, released_serial = 4, scale = .Sixteen_Eighths}), Surface_Declined_Refusal.Other_Scale)
 	testing.expect_value(t, surface_declined_refusal(held()), Surface_Declined_Refusal.None)
 }
+
+// A window that declines the scale in force again, at the next serial,
+// is taken (the serial moved), and is no news: the compositor writes no
+// second fact. A decline of a new scale is news again.
+@(test)
+a_second_decline_at_the_same_scale_is_no_news :: proc(t: ^testing.T) {
+	facts := Surface_Declined_Facts{scale_word = u64(scale_factor.Scale.Sixteen_Eighths), serial = 5, created = true, released = true, released_serial = 4, scale = .Sixteen_Eighths}
+	testing.expect(t, surface_decline_is_news(false, .Eight_Eighths, facts.scale))
+	// The compositor took it: the released serial is the serial of the decline.
+	facts.released_serial, facts.serial = 5, 6
+	testing.expect_value(t, surface_declined_refusal(facts), Surface_Declined_Refusal.None)
+	testing.expect(t, !surface_decline_is_news(true, .Sixteen_Eighths, facts.scale))
+	for scale in scale_factor.Scale {
+		testing.expect_value(t, surface_decline_is_news(true, scale, .Sixteen_Eighths), scale != .Sixteen_Eighths)
+	}
+}

@@ -610,6 +610,24 @@ the_pass_of_a_word :: proc(t: ^testing.T) {
 	}
 }
 
+// A pass that runs refuses each ask, the start of a window first; a window
+// that runs is raised for the next appearance; with none, each ask starts.
+@(test)
+the_answer_to_a_start_of_settings :: proc(t: ^testing.T) {
+	for asked in Pass {
+		for running_pass in ([?]Pass{.Boot, .Appearance_Next}) {
+			testing.expect_value(t, start_answer(asked, true, running_pass), Start_Answer.Refuse_Pass_Runs)
+		}
+	}
+	testing.expect_value(t, start_answer(.Appearance_Next, true, .Window), Start_Answer.Raise_Window)
+	testing.expect_value(t, start_answer(.Window, true, .Window), Start_Answer.Start)
+	for asked in Pass {
+		for running_pass in Pass {
+			testing.expect_value(t, start_answer(asked, false, running_pass), Start_Answer.Start)
+		}
+	}
+}
+
 // The tile cycles the three appearances: three presses come back to the
 // first, and no two presses in a row give one appearance.
 @(test)

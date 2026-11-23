@@ -30,9 +30,9 @@ VALUE_POINTER_THEME_SIZE :: 7
 POINTER_THEME_VALUES := [2][2]int{{VALUE_POINTER_THEME_ADDRESS, VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
 // The nominal size of the pointer in logical pixels. The compositor asks
 // for it in pixels of the screen at the scale: the smallest size of the
-// theme that is at least that one. The theme of the system has a size for
-// each scale that the setting takes: 30 at 1.25, 33 at 1.375
-// (resources/pointers/system.manifest).
+// theme that is at least that one. The theme of the system has 24, 30, 33
+// and 48 (resources/pointers/system.manifest): a scale with no size of its
+// own gets the next larger one, 30 at 1.125 and 48 at 1.5 to 1.875.
 POINTER_NOMINAL_SIZE :: 24
 
 // pointer_size_asked gives the nominal size in pixels of the screen at the

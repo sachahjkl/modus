@@ -147,6 +147,15 @@ surface_declined_refusal :: proc "contextless" (facts: Surface_Declined_Facts) -
 	return .None
 }
 
+// surface_decline_is_news says whether a taken Surface_Declined changes
+// what the compositor knows of the window: a window that declined the
+// scale in force and declines it again, at the next serial, changes
+// nothing, so it writes no fact and tells no window. Without this rule a
+// window fills the log with one warning per record.
+surface_decline_is_news :: proc "contextless" (was_declined: bool, declined_scale: scale_factor.Scale, scale: scale_factor.Scale) -> bool {
+	return !was_declined || declined_scale != scale
+}
+
 // surface_rescale_refusal decides a Surface_Rescale from its facts. A size
 // 1 pixel off on either axis is another size: the surface must be exactly
 // the logical size of the window at the scale, so the logical size that

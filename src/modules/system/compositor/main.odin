@@ -863,6 +863,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				palette_provider_remove()
 			case .Client_Started:
 				quality_window_started(system.Handle(record.values[0]), record.values[1])
+			case .Settings_Raise:
+				settings_raise(system.Handle(record.values[0])) // tray_widgets.odin
 			case .None, .Start, .Stop, .Appearance_Next:
 				// The border refused None above. Start, Stop and
 				// Appearance_Next go from the compositor to the root service,

@@ -56,14 +56,19 @@ Windows_At_Scale :: struct {
 	scale:   u64,
 }
 
-// A press on the tile Appearance of the Control Center, with a window of
-// settings open: the compositor raised it, with the focus on the
-// appearance in force.
+// The root service answered a press on the tile Appearance with
+// Settings_Raise: the compositor raised the window of settings, with the
+// focus on the appearance in force.
 @(log_fact = "compositor: the tile appearance raises the window settings, with the focus on the appearance in force")
 Appearance_Tile_Goes_To_Settings :: struct {}
 
-// A press on the tile Appearance, with no window of settings: the root
-// service starts settings for the next appearance.
+// Settings_Raise named a window that closed since the answer of the root
+// service: nothing is raised, and a next press asks again.
+@(log_fact = "compositor: the root service asked to raise the window settings, and no window has its ring")
+Settings_Raise_Without_Window :: struct {}
+
+// A press on the tile Appearance: the compositor asks the root service,
+// which knows the process settings.
 @(log_fact = "compositor: the tile appearance asks for the next appearance")
 Appearance_Tile_Asks_Next :: struct {}
 

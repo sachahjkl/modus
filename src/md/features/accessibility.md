@@ -175,9 +175,9 @@ Each is a value of the settings page, written by the process `settings` and read
 
 **Text size.** Two levers.
 
-- **The scale factor** enlarges everything, so no layout breaks: 1.25 and 1.375 today, up to 2 when each window fits ("The scales from 1.5 to 2" of `ROADMAP.md`).
+- **The scale factor** enlarges everything, so no layout breaks: each eighth from 1 to 2.
 - **The text sizes alone**, a step that raises each text size token (the body from 16 to 20, 24, 32), waits for the layout from the size of the content ("Layout from the size of the content" of `ROADMAP.md`): a window of fixed sizes cuts a larger text, and the text box rule then wraps it past its window ([text_box.md](text_box.md)).
-- Text twice as large as the default (WCAG 2.2, success criterion 1.4.4) needs the scale 2.5 on the reference screen, whose logical screen of 768 × 432 is smaller than the window bound. Until the layout from the content exists, the magnifier is the answer past the scale 2: a gap that this design states.
+- Text twice as large as the default (WCAG 2.2, success criterion 1.4.4) needs the scale 2.5 on the reference screen, whose logical screen of 768 × 432 is shorter than the least work area and a bar (`scale_factor.WORK_AREA_LEAST_HEIGHT`). Until the layout from the content exists, the magnifier is the answer past the scale 2: a gap that this design states.
 
 **Reduced motion.** The setting `motion`: `.full`, `.reduced`. The desktop has few animations, by its rules ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "2. Forms"): with `.reduced`, the process `heron` shows the still heron and plays an animation only when a key asks for it, as the home of the site does for a visitor who asks for reduced motion; an animated pointer shape shows its first frame. Each later animation of the system reads the setting, and a host test of each one checks the still form.
 

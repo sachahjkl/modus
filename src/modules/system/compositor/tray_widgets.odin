@@ -6,7 +6,6 @@
 package compositor
 
 import "internal:compositor/bar"
-import "internal:compositor/palette"
 import "modus:contract/accessibility"
 import "modus:contract/date"
 import "modus:contract/ring"
@@ -481,25 +480,32 @@ APPEARANCE_ACT_NAME :: "settings.set:appearance"
 
 // appearance_next_ask takes a press on the tile Appearance: the next
 // appearance, auto, dark, light. The page has one writer, the process
-// settings: with its window open, the compositor raises that window and
-// puts the focus on the appearance in force, where Enter on another value
-// sets it; with none, it asks the root service to start settings for the
-// pass of the next appearance, which writes the page. The tile shows the
-// new appearance when the page changes.
+// settings, and only the root service knows which process that is: an act
+// name is a claim that any window can make. So the compositor always asks
+// the root service, which starts settings for the pass of the next
+// appearance, or answers Settings_Raise for the window of settings that
+// runs. The tile shows the new appearance when the page changes.
 appearance_next_ask :: proc "contextless" () {
-	hash := display.act_name_hash(APPEARANCE_ACT_NAME)
-	for position := order_count - 1; position >= 0; position -= 1 {
-		index := order[position]
-		if palette.act_name_set_has(&clients[index].act_names, hash) {
-			raise(position)
-			send(&clients[index], .Go_To, {0 = u64(hash)})
-			system.log_fact(.Info, Appearance_Tile_Goes_To_Settings{})
-			return
-		}
-	}
 	if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Appearance_Next)}) {
 		system.log_fact(.Warning, Appearance_Tile_Ring_Full{})
 		return
 	}
 	system.log_fact(.Info, Appearance_Tile_Asks_Next{})
+}
+
+// settings_raise takes Settings_Raise of the root service: it raises the
+// window of settings that the root service started and puts the focus on
+// the appearance in force, where Enter on another value sets it. A handle
+// that names no window is refused: the window closed since the answer.
+settings_raise :: proc "contextless" (ring_memory: system.Handle) {
+	for position := order_count - 1; position >= 0; position -= 1 {
+		index := order[position]
+		if clients[index].ring_memory == ring_memory {
+			raise(position)
+			send(&clients[index], .Go_To, {0 = u64(display.act_name_hash(APPEARANCE_ACT_NAME))})
+			system.log_fact(.Info, Appearance_Tile_Goes_To_Settings{})
+			return
+		}
+	}
+	system.log_fact(.Info, Settings_Raise_Without_Window{})
 }

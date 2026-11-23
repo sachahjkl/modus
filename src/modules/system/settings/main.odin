@@ -32,8 +32,9 @@
 // and for date-page changes, and updates the appearance in force itself.
 //
 // At boot the root service starts this process for one pass with no window
-// (the context value VALUE_BOOT_PASS): it reads the record of its store,
-// writes the page, and stops.
+// (the context value VALUE_PASS, the pass Boot): it reads the record of its
+// store, writes the page, and stops. The tile Appearance of the Control
+// Center starts it for the pass Appearance_Next.
 //
 // **What it is for.** It shows that a choice of the principal is state like
 // any other: kept in a private store with no save action, and seen by every
@@ -657,11 +658,17 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 
 // appearance_next_pass is the pass of the tile of the Control Center: the
 // appearance after the one of the page, kept in the store and written on
-// the page, as a press on its button in the window does. The compositor
-// asks for it only while no window of settings runs, so this process is the
-// one writer of the page.
+// the page, as a press on its button in the window does. The root service
+// starts it only while no other process settings runs
+// (settings.start_answer), so this process is the one writer of the page.
+// A refused page stops the pass with Failed: the defaults of the reader
+// would take the place of the kept record of each other setting.
 appearance_next_pass :: proc "contextless" () -> ! {
-	choice, _ := settings.read(page)
+	choice, read_ok := settings.read(page)
+	if !read_ok {
+		system.log_fact(.Warning, Appearance_Next_Page_Refused{})
+		system.stop(.Failed)
+	}
 	before := choice.appearance
 	choice.appearance = settings.appearance_next(before)
 	kept := change(choice, choice.zone_offset_minutes)

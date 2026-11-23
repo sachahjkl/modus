@@ -63,6 +63,10 @@ Rescale_Machine :: struct {
 	scale:  scale_factor.Scale, // The scale of the surface of the window: the one that it draws, or that it offered.
 	wanted: scale_factor.Scale, // The scale of the newest Settings_Changed.
 	serial: u64, // The surface serial of that surface.
+	// In Released: the budget of the window did not pay its surface at
+	// scale. A Scale_Named of that scale offers nothing: the budget would
+	// fail the same way, and the compositor counts the window as declined.
+	declined: bool,
 }
 
 // What the window does after a step.
@@ -70,6 +74,7 @@ Rescale_Action :: enum u8 {
 	None,
 	Release, // Send Surface_Release with the serial of the machine.
 	Offer, // Let the old surface go, make a surface of the scale of the machine with its serial, and send Surface_Rescale.
+	Decline, // Send Surface_Declined with the serial and the scale of the machine: the budget did not pay the offer.
 }
 
 // The inputs of the machine.
@@ -113,6 +118,9 @@ rescale_step :: proc "contextless" (machine: ^Rescale_Machine, input: Rescale_In
 				return .Release, false
 			}
 		case .Released:
+			if machine.declined && machine.wanted == machine.scale {
+				return .None, false
+			}
 			return rescale_offer(machine), false
 		case .Releasing, .Offered, .Resizing:
 			// The answer of the request comes first: one request at a time.
@@ -168,6 +176,7 @@ rescale_offer :: proc "contextless" (machine: ^Rescale_Machine) -> Rescale_Actio
 	machine.phase = .Offered
 	machine.scale = machine.wanted
 	machine.serial += 1
+	machine.declined = false
 	return .Offer
 }
 
@@ -362,7 +371,17 @@ rescale_due_run :: proc "contextless" (window: ^Window) {
 			return
 		}
 	case .Offer:
-		rescale_offer_send(window)
+		if !rescale_offer_send(window) {
+			// The budget did not pay: the decline is the due action, so
+			// the change of the scale settles even if the ring is full now.
+			window.rescale_due = .Decline
+			rescale_due_run(window)
+			return
+		}
+	case .Decline:
+		if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Declined), values = {0 = window.rescale.serial, 1 = u64(window.rescale.scale)}}) {
+			return
+		}
 	}
 	window.rescale_due = .None
 }
@@ -371,9 +390,9 @@ rescale_due_run :: proc "contextless" (window: ^Window) {
 // longer maps, makes the surface of the logical size of the window at the
 // scale of the machine, from the budget of the window, gives it to the
 // compositor with Read and sends Surface_Rescale. A surface that the budget
-// cannot pay declines the scale (rescale_decline).
+// cannot pay declines the scale (rescale_decline), and gives false.
 @(private)
-rescale_offer_send :: proc "contextless" (window: ^Window) {
+rescale_offer_send :: proc "contextless" (window: ^Window) -> (sent: bool) {
 	if window.surface != 0 {
 		system.memory_unmap(rawptr(window.pictures[0].pixels))
 		system.close(window.surface)
@@ -385,33 +404,35 @@ rescale_offer_send :: proc "contextless" (window: ^Window) {
 	if status != .Ok {
 		system.log_fact(.Warning, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = op.Status_Word(status), window = window_fact_title(window)})
 		rescale_decline(window)
-		return
+		return false
 	}
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Rescale), values = {0 = u64(granted), 1 = u64(screen_width), 2 = u64(screen_height), 3 = u64(scale), 4 = window.rescale.serial}})
 	surface_take(window, memory, address, screen_width, screen_height)
 	rescale_first_picture(window)
+	return true
 }
 
 // rescale_decline ends an offer that the budget could not pay: the machine
 // goes to Released with the serial of the offer, so the next scale offers
 // the serial after it, and the window holds no picture that a process
-// could draw into. Surface_Declined tells the compositor, which counts the
-// window as one that declined the scale in force. A full ring sends
-// nothing: the compositor then waits for the window as for a slow one.
+// could draw into. Its caller makes Surface_Declined the due action, which
+// tells the compositor; that counts the window as one that declined the
+// scale in force. A full ring keeps the decline due until it has room.
 @(private)
 rescale_decline :: proc "contextless" (window: ^Window) {
 	rescale_declined_step(&window.rescale)
 	window.pictures = {}
 	window.canvas = {}
-	_ = system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Declined), values = {0 = window.rescale.serial, 1 = u64(window.rescale.scale)}})
 }
 
-// rescale_declined_step moves a machine in Offered to Released: the offer
-// was never sent. It changes nothing in another phase. A host test drives
+// rescale_declined_step moves a machine in Offered to Released, declined:
+// the offer was never sent, and a Scale_Named of the same scale offers
+// nothing. It changes nothing in another phase. A host test drives
 // it with rescale_step.
 rescale_declined_step :: proc "contextless" (machine: ^Rescale_Machine) {
 	if machine.phase == .Offered {
 		machine.phase = .Released
+		machine.declined = true
 	}
 }
 

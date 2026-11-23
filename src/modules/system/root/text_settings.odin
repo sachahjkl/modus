@@ -1,7 +1,10 @@
 package root
 
 import "modus:contract/font_outlines"
+import "modus:contract/ring"
 import "modus:contract/settings"
+import "modus:display"
+import "modus:principals"
 import "modus:system"
 
 // The text of the system and the settings of the system (docs/FONTS.md):
@@ -25,6 +28,10 @@ font_outlines_mapping: system.Mapping
 // The pass of the next start of `settings`: start() gives it in the value
 // VALUE_PASS. Window for each start that opens its window.
 settings_pass: settings.Pass
+// The process of the last pass that this service started, by its serial:
+// a slot of the table is used again, a serial is not. 0: none.
+settings_pass_process_serial: u64
+settings_pass_running_pass: settings.Pass
 
 // text_settings_create makes the settings page and finds the font
 // outlines. It writes the initial defaults before any process starts and
@@ -96,30 +103,73 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 // A machine with no data disk keeps the defaults. A start policy asks for
 // it, as the row settings of its list, and gets the status.
 settings_boot_pass_start :: proc "contextless" () -> system.Status {
-	settings_pass = .Boot
-	status := start("settings")
-	settings_pass = .Window
+	status := settings_pass_start(.Boot, principals.MACHINE)
 	if status != .Ok {
 		system.log_fact(.Warning, Settings_Boot_Pass_Failed{status = status})
 	}
 	return status
 }
-// settings_appearance_next_start starts `settings` for the next appearance
-// that the tile of the Control Center asks, in the session of the desktop.
-// A process `settings` that runs is the one writer of the page: the start
-// is refused, with its fact, and the compositor raises that window in place
-// of the ask.
+// settings_pass_start starts `settings` for a pass and keeps the serial
+// of its process, so that settings_running finds the pass that runs.
+settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64) -> system.Status {
+	place: ^Started
+	settings_pass = pass
+	status := start("settings", principal, place = &place)
+	settings_pass = .Window
+	if status == .Ok && place != nil {
+		settings_pass_process_serial = place.process_serial
+		settings_pass_running_pass = pass
+	}
+	return status
+}
+
+// settings_running finds the process `settings` that runs, a terminal
+// apart (it has the name of its process), and the pass that it runs.
+settings_running :: proc "contextless" () -> (item: ^Started, pass: settings.Pass) {
+	for &candidate in started {
+		if candidate.process == 0 || candidate.is_terminal || system.name_of(candidate.name[:]) != "settings" {
+			continue
+		}
+		if settings_pass_process_serial != 0 && candidate.process_serial == settings_pass_process_serial {
+			return &candidate, settings_pass_running_pass
+		}
+		item, pass = &candidate, .Window
+	}
+	return
+}
+
+// settings_window_start_allowed takes Control.Start of `settings`: a pass
+// that runs is the one writer of the page, and the start waits for its end.
+settings_window_start_allowed :: proc "contextless" () -> bool {
+	item, pass := settings_running()
+	switch settings.start_answer(.Window, item != nil, pass) {
+	case .Start, .Raise_Window:
+		return true
+	case .Refuse_Pass_Runs:
+		system.log_fact(.Info, Settings_Start_Refused_Pass_Runs{})
+	}
+	return false
+}
+
+// settings_appearance_next_start takes the press on the tile Appearance
+// of the Control Center (settings.start_answer): it starts `settings` for
+// the next appearance in the session of the desktop, or asks the
+// compositor to raise the window of `settings` that runs, the one writer
+// of the page, or refuses while a pass runs.
 settings_appearance_next_start :: proc "contextless" () {
-	for &item in started {
-		if item.process != 0 && system.name_of(item.name[:]) == "settings" {
-			system.log_fact(.Info, Appearance_Next_Refused_Settings_Runs{})
+	item, pass := settings_running()
+	switch settings.start_answer(.Appearance_Next, item != nil, pass) {
+	case .Refuse_Pass_Runs:
+		system.log_fact(.Info, Appearance_Next_Refused_Pass_Runs{})
+	case .Raise_Window:
+		if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Settings_Raise), values = {0 = u64(item.client)}}) {
+			system.log_fact(.Warning, Appearance_Next_Raise_Ring_Full{})
 			return
 		}
-	}
-	settings_pass = .Appearance_Next
-	status := start("settings", desktop_principal())
-	settings_pass = .Window
-	if status != .Ok {
-		system.log_fact(.Warning, Appearance_Next_Not_Started{status = status})
+		system.log_fact(.Info, Appearance_Next_Raises_Settings{})
+	case .Start:
+		if status := settings_pass_start(.Appearance_Next, desktop_principal()); status != .Ok {
+			system.log_fact(.Warning, Appearance_Next_Not_Started{status = status})
+		}
 	}
 }
