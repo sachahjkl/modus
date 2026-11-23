@@ -70,10 +70,11 @@ plan_roles_load_outcome_of_word :: proc "contextless" (word: u64) -> (outcome: P
 // plan_roles_refusal_of_content says if a refusal names the content of the
 // set: the same set is refused again on each send, so the holder falls back
 // to the roles of the image instead of a retry. Stale_Serial names the
-// order of the sets: a read of the core and a new send can pass.
+// order of the sets, and Grants_Busy the room of a service ring: a read of
+// the core and a new send can pass.
 plan_roles_refusal_of_content :: proc "contextless" (refusal: Plan_Roles_Refusal) -> bool {
 	switch refusal {
-	case .None, .Stale_Serial:
+	case .None, .Stale_Serial, .Grants_Busy:
 		return false
 	case .Not_Machine, .Too_Many_Overrides, .Unknown_Role, .Role_Not_Replaceable, .Zero_Module_Hash, .Duplicate_Role, .Zero_Generation, .Not_In_Image, .Contract_Not_Filled, .Bytes_After_Set:
 		return true
@@ -115,6 +116,9 @@ Plan_Roles_Refusal :: enum u8 {
 	Not_In_Image         = 9, // The hash names no module of the boot image.
 	Contract_Not_Filled  = 10, // The module does not fill the contract of the role.
 	Bytes_After_Set      = 11, // An override after override_count is not zero bytes.
+	// A service ring has no room for the new grants of the connections that
+	// the set changes: nothing changed, and a later send can pass.
+	Grants_Busy          = 12,
 }
 
 // plan_roles_step_of_word is the border of values[0] of a Plan_Roles: None

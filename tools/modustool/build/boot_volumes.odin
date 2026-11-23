@@ -61,7 +61,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 19 fixed ones and one
+// boot_volumes gives every boot volume of the build: 20 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -72,6 +72,9 @@ boot_volumes :: proc() -> []Boot_Volume {
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_FAILS, image = BOOT_IMAGE_FAILS, kernel = "kernel"})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SHORTAGE, image = BOOT_IMAGE_SHORTAGE, kernel = "kernel"})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_MISSING_CONSOLE, image = BOOT_IMAGE_MISSING_CONSOLE, kernel = "kernel"})
+	// The image of the test modules of the plan of principal 0 and of the
+	// audit of the collector.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_PLAN_AND_AUDIT, image = BOOT_IMAGE_PLAN_AND_AUDIT, kernel = "kernel"})
 	// The operation sequences on the kernel that ships: the image that
 	// holds the module operation_fuzzing and its runner.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_OPERATION_SEQUENCES, image = foundation.BOOT_IMAGE_OPERATION_SEQUENCES, kernel = "kernel"})
@@ -914,6 +917,10 @@ BOOT_VOLUME_SHORTAGE :: foundation.BUILD_FOLDER + "/boot_volume_shortage.img"
 // The volume of the test of the rescue: its start list names a console
 // that does not exist (start_lists.odin).
 BOOT_VOLUME_MISSING_CONSOLE :: foundation.BUILD_FOLDER + "/boot_volume_missing_console.img"
+
+// The volume of the test of the plan of principal 0 and of the audit of
+// the collector (plan_and_audit_scenario.odin).
+BOOT_VOLUME_PLAN_AND_AUDIT :: foundation.BUILD_FOLDER + "/boot_volume_plan_and_audit.img"
 
 BOOT_VOLUME_MEASURE :: foundation.BUILD_FOLDER + "/boot_volume_measure.img" // The boot image of a measure run: `modustool measure`.
 

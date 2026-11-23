@@ -35,12 +35,13 @@ plan_roles_load_outcome_border :: proc(t: ^testing.T) {
 	}
 }
 
-// Only None and Stale_Serial are no refusal of the content of a set: each
-// other refusal comes again on each send of the same set.
+// Only None, Stale_Serial and Grants_Busy are no refusal of the content of
+// a set: the order of the sets and the room of a service ring change, and
+// each other refusal comes again on each send of the same set.
 @(test)
 plan_roles_refusal_of_content_names_each_refusal :: proc(t: ^testing.T) {
 	for refusal in Plan_Roles_Refusal {
-		expected := refusal != .None && refusal != .Stale_Serial
+		expected := refusal != .None && refusal != .Stale_Serial && refusal != .Grants_Busy
 		testing.expectf(t, plan_roles_refusal_of_content(refusal) == expected, "refusal %v", refusal)
 	}
 }

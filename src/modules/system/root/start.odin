@@ -100,9 +100,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		hold                 = hold,
 	}
 	defer start_handles_close(&work)
-	// The process `settings` is the one writer of the settings page: each
+	// The holder of Settings is the one writer of the settings page: each
 	// start of it, by any caller, is decided here (text_settings.odin).
-	if name == "settings" && settings_start_decide(principal, .Other) != .Start {
+	if is_role_holder(name, .Settings) && settings_start_decide(principal, .Other) != .Start {
 		return .Bad_State
 	}
 	// The handles of the start are free before any is made: the table of
@@ -539,6 +539,12 @@ start_handles_of_the_start_grant_set_give :: proc "contextless" (work: ^Start_Wo
 	}
 	if .Settings in grants {
 		start_grant_put(work, .Settings_Page, {settings_memory, {.Read, .Write}})
+	}
+	// The pass goes to the holder of Settings in force: a holder that a
+	// plan gave has no grant Settings and no page, and still learns which
+	// pass started it. A service that the start of the holder starts first
+	// (the storage service) gets no value.
+	if is_role_holder(work.name, .Settings) {
 		system.value_put(&work.values, settings.VALUE_PASS, u64(settings_pass))
 	}
 	if .Clock in grants {

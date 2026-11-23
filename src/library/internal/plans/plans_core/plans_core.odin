@@ -94,6 +94,10 @@ Roles_Port :: struct {
 	// read gives the serial and the generation of the set in force in the
 	// core (the step Page). ok is false with no answer.
 	read:         proc "contextless" (user: rawptr) -> (serial, generation: u64, ok: bool),
+	// pause waits a short time before a set that a full service ring
+	// refused (Grants_Busy) is sent again, so the services read their rings
+	// meanwhile. nil: no wait, as in a host test.
+	pause:        proc "contextless" (user: rawptr),
 	// The serial and the generation of the set in force in the core, as
 	// this service last knew them.
 	serial:       u64,
@@ -107,6 +111,12 @@ Roles_Port :: struct {
 
 // The principal whose plan names the roles of the machine.
 MACHINE_PRINCIPAL :: 0
+
+// The sends again of one set that a full service ring refused
+// (Grants_Busy). Past them the set is refused with Roles_Refused, and the
+// service writes its own line: the rings of the services stayed full for
+// each pause.
+ROLES_BUSY_RESEND_BOUND :: 8
 
 // The most commands Page with no answer whose tags the service keeps.
 LATE_PAGE_TAG_CAPACITY :: 4
@@ -155,6 +165,10 @@ Plans_State :: struct {
 	// A compensation of the core failed since the service last read this:
 	// the log names it, and the next set reconciles first.
 	roles_compensation_failed: bool,
+	// The sends again of the last set that a full service ring refused:
+	// ROLES_BUSY_RESEND_BOUND with the refusal Grants_Busy is a set that
+	// the bound refused, which the service logs.
+	roles_busy_resends:   u32,
 	// The refusal of the core for the roles of the current generation of
 	// principal 0 in the store, when it names their content: the boot image
 	// cannot hold them, and the core holds the roles of the image. None
@@ -297,7 +311,17 @@ roles_send :: proc "contextless" (state: ^Plans_State, plan: ^pr.Plan_Spec, gene
 		state.roles_refusal = .Duplicate_Role
 		return .Roles_Refused
 	}
+	// A full service ring refuses the set with nothing changed: the set is
+	// sent again, after a pause, at most ROLES_BUSY_RESEND_BOUND times.
 	refusal := state.roles.replace(state.roles.user, &state.roles_set, step)
+	state.roles_busy_resends = 0
+	for refusal == .Grants_Busy && state.roles_busy_resends < ROLES_BUSY_RESEND_BOUND {
+		if state.roles.pause != nil {
+			state.roles.pause(state.roles.user)
+		}
+		state.roles_busy_resends += 1
+		refusal = state.roles.replace(state.roles.user, &state.roles_set, step)
+	}
 	state.roles_refusal = refusal
 	if refusal != .None {
 		if refusal == .Stale_Serial {

@@ -1306,6 +1306,13 @@ Plan_Difference_Accepted :: struct {
 	plan: [56]u8,
 }
 
+// The asker of the dialog of a plan lost the grant to ask: the dialog is
+// refused and closes.
+@(log_fact = "compositor: the difference of the plan {plan} closes: its asker no longer holds the role Plans")
+Plan_Difference_Asker_Lost :: struct {
+	plan: [56]u8,
+}
+
 // The principal refused the difference of a plan.
 @(log_fact = "compositor: the difference of the plan {plan} is refused")
 Plan_Difference_Refused :: struct {

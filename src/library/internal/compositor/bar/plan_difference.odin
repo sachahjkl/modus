@@ -5,9 +5,8 @@
 // A plan is applied whole: the dialog has no tick, only accept and refuse.
 package bar
 
-// The arm time: an act counts only this long after the dialog showed, so a
-// key or a press meant for a window does not accept the plan.
-PLAN_DIFFERENCE_ARM_MILLISECONDS :: 500
+import pr "modus:contract/plans_recipes"
+
 PLAN_DIFFERENCE_NAME_BYTES :: 48
 PLAN_DIFFERENCE_ITEM_BYTES :: 48
 // The items of one side: each fits on the reference screen with no scroll,
@@ -169,7 +168,7 @@ plan_difference_item_text :: proc "contextless" (item: ^Plan_Difference_Item) ->
 
 // plan_difference_armed reports whether an act counts at a time.
 plan_difference_armed :: proc "contextless" (dialog: ^Plan_Difference_Dialog, now_milliseconds: u64) -> bool {
-	return dialog.open && now_milliseconds >= dialog.shown_at_milliseconds + PLAN_DIFFERENCE_ARM_MILLISECONDS
+	return dialog.open && now_milliseconds >= dialog.shown_at_milliseconds + pr.PLAN_DISPLAY_ARM_MILLISECONDS
 }
 
 // plan_difference_decide closes the dialog with a decision.

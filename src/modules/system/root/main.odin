@@ -214,18 +214,28 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 		return isolated.caller_grant_make(disk_store_limit(caller, service), caller.principal, false)
 	}
 	start_grant_set := &caller.start_grant_set
-	amount: u64
-	if .Store in start_grant_set.grants && .Store not_in caller.revoked && is_role_holder(system.name_of(service.name[:]), .Storage) {
-		amount = start_grant_set_store_blocks(start_grant_set)
-	}
+	service_name := system.name_of(service.name[:])
 	acts := .Acts_For_Principal in start_grant_set.grants && .Acts_For_Principal not_in caller.revoked
-	grant := isolated.caller_grant_make(amount, caller.principal, acts)
-	// The grant to erase versions is a right over the private store: it goes
-	// with the store, to the storage service only.
-	if amount != 0 && .Versions_Erase in start_grant_set.grants {
-		grant |= isolated.CALLER_ERASES_VERSIONS
+	// The amount has the meaning that its service gives it: the limit of
+	// the private store for the holder of Storage, and for the holder of
+	// Display whether the caller holds the role Plans, which acts for
+	// nobody and is shown the difference of a plan. A change of the roles
+	// writes the grant again (plan_roles.odin).
+	if is_role_holder(service_name, .Storage) {
+		amount: u64
+		if .Store in start_grant_set.grants && .Store not_in caller.revoked {
+			amount = start_grant_set_store_blocks(start_grant_set)
+		}
+		grant := isolated.caller_grant_make(amount, caller.principal, acts)
+		// The grant to erase versions is a right over the private store: it
+		// goes with the store.
+		if amount != 0 && .Versions_Erase in start_grant_set.grants {
+			grant |= isolated.CALLER_ERASES_VERSIONS
+		}
+		return grant
 	}
-	return grant
+	amount := role_policy.display_caller_amount(&role_holder_names, service_name, system.name_of(caller.name[:]))
+	return isolated.caller_grant_make(amount, caller.principal, acts)
 }
 
 // own_records_amount_of gives the amount of the grant of a connection to
@@ -753,6 +763,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The renderer of the terminal of the console, before any start that
 	// names the roles Display or Terminal (role_holders.odin).
 	console_renderer_choose_at_start(screen_at_the_start)
+	// The hash of each role contract as this process computes it: the tool
+	// compares each with the hash on the host (plan_roles.odin).
+	role_contract_hashes_log()
 	// The devices service classifies the bus before any device service
 	// starts (devices_delegation.odin).
 	bus_classify()
@@ -1205,7 +1218,9 @@ control_ring_serve :: proc "contextless" () {
 		case .Start:
 			// The desktop starts a process in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
-			if system.name_of(name[:]) == "settings" {
+			// The name of the role, or of the module that holds it, reaches
+			// the holder of Settings in force.
+			if resolved, has_holder := role_target_resolve_strict(system.name_of(name[:])); has_holder && is_role_holder(resolved, .Settings) {
 				settings_window_start(desktop_principal()) // text_settings.odin: waits for a pass that runs
 			} else {
 				start(system.name_of(name[:]), desktop_principal())

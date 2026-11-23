@@ -29,6 +29,7 @@ package plans_recipes
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/isolated"
 import "modus:contract/object_cache"
 
 // The outcome of one access of the private store.
@@ -163,6 +164,31 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 PLAN_DISPLAY_NAME_BYTES :: 48
 PLAN_DISPLAY_ITEM_BYTES :: 48
 PLAN_DISPLAY_ITEM_CAPACITY :: 8
+
+// The arm time of the dialog of a difference: the trusted display takes a
+// decision only this long after it showed the difference, so a key or a
+// press meant for a window does not accept the plan. A caller of apply
+// knows from it when a key of the principal counts.
+PLAN_DISPLAY_ARM_MILLISECONDS :: 500
+
+// The amount (isolated.CALLER_AMOUNT_MASK) of the grant of a connection to
+// the holder of Display whose caller holds the role Plans now. Each service
+// gives the amount its own meaning; the root service writes this one, and
+// writes the grant of each such connection again when the roles change, so
+// a module that lost the role Plans loses it. The holder of Plans acts for
+// nobody: this amount, not the grant to act for the principal, lets the
+// display show it a difference.
+DISPLAY_AMOUNT_PLANS_HOLDER :: u64(1)
+
+// plan_display_caller_allowed says if the trusted display serves
+// plan_diff_ask and plan_diff_poll to a connection with this grant: the
+// holder of Plans, or a caller that acts for its principal.
+//
+// Example: `plan_display_caller_allowed(DISPLAY_AMOUNT_PLANS_HOLDER)` is
+// true; `plan_display_caller_allowed(0)` is false.
+plan_display_caller_allowed :: proc "contextless" (grant: u64) -> bool {
+	return grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0 || grant & isolated.CALLER_AMOUNT_MASK == DISPLAY_AMOUNT_PLANS_HOLDER
+}
 
 // The decision of the trusted display on the difference of a plan, as the
 // export plan_diff_poll of the Display role gives it. The values cross the

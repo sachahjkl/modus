@@ -112,8 +112,9 @@ roles_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) -> bool {
 		roles_loaded_tell(.Core_Unread, 0)
 		return false
 	}
-	plans_core.roles_port_bind(state, {replace = roles_replace, read = roles_read, serial = serial, generation = generation})
+	plans_core.roles_port_bind(state, {replace = roles_replace, read = roles_read, pause = roles_pause, serial = serial, generation = generation})
 	outcome := plans_core.roles_start(state)
+	roles_busy_tell(state)
 	switch outcome {
 	case .None, .No_Plan, .Applied:
 	case .Plan_Refused:
@@ -133,6 +134,28 @@ roles_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) -> bool {
 roles_loaded_tell :: proc "contextless" (outcome: rd.Plan_Roles_Load_Outcome, generation: u64) {
 	_, answered := roles_command(.Loaded, u64(outcome))
 	system.log_fact(.Info, Plan_Roles_Loaded{outcome_code = u64(outcome), generation = generation, answered = answered ? 1 : 0})
+}
+
+// The pause before a set that a full service ring refused goes again: the
+// services read their rings meanwhile.
+ROLES_BUSY_PAUSE_MILLISECONDS :: 10
+
+// roles_pause waits ROLES_BUSY_PAUSE_MILLISECONDS, on no word.
+@(private = "file")
+roles_pause :: proc "contextless" (user: rawptr) {
+	wait := system.wait_begin()
+	system.wait_end(&wait, system.time() + ROLES_BUSY_PAUSE_MILLISECONDS)
+}
+
+// roles_busy_tell writes the line of a set that the bound of the sends
+// again refused: the rings of the services stayed full at each pause, and
+// nothing changed.
+roles_busy_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
+	if state.roles_refusal != .Grants_Busy || state.roles_busy_resends < plans_core.ROLES_BUSY_RESEND_BOUND {
+		return
+	}
+	state.roles_busy_resends = 0
+	system.log_fact(.Warning, Plan_Roles_Busy{resends = plans_core.ROLES_BUSY_RESEND_BOUND, pause = ROLES_BUSY_PAUSE_MILLISECONDS})
 }
 
 // roles_compensation_tell writes the line of a compensation of the core that

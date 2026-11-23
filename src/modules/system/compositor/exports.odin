@@ -123,6 +123,15 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
+// plan_display_caller says if the caller of the export that runs may ask
+// for the dialog of a difference and read its decision: the holder of Plans
+// acts for nobody, and the root service names it in the amount of its grant
+// (src/md/features/declarations.md, "The trusted display of a plan").
+plan_display_caller :: proc "contextless" () -> bool {
+	caller := system.service_caller()
+	return caller == nil || pr.plan_display_caller_allowed(caller.grant)
+}
+
 // pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, the state of the palette, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
 //
 // **What it is for.** A caller that drives the desktop from outside, as
@@ -613,8 +622,9 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 // arrows move it, a press on a button acts on it. Escape refuses at once.
 // While the dialog shows, no window receives a key or a press.
 //
-// **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// **Grant**: the caller must be the holder of the role Plans, which the
+// root service names in the amount of its grant, or **act for the
+// principal**; else the error kind `No_Grant`, with the result -1.
 //
 // ```
 // connect("compositor")
@@ -622,7 +632,7 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 // ```
 @(export, link_name = "plan_diff_ask")
 plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^string, error: ^errors.Error_Record) -> i64 {
-	if !acts_for_principal() {
+	if !plan_display_caller() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	serial, refusal, argument := plan_difference_show(plan_name^, added^, removed^)
@@ -660,8 +670,9 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 // it on the trusted display. The dialog keeps the decision of the last
 // dialog only.
 //
-// **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// **Grant**: the caller must be the holder of the role Plans, which the
+// root service names in the amount of its grant, or **act for the
+// principal**; else the error kind `No_Grant`, with the result -1.
 //
 // ```
 // connect("compositor")
@@ -669,7 +680,7 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 // ```
 @(export, link_name = "plan_diff_poll")
 plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
-	if !acts_for_principal() {
+	if !plan_display_caller() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if serial < 1 {

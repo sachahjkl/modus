@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_table.odin; only its package name and its imports changed (src/library/modus/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_table.odin; its package name and its imports changed, and the adjustments that tools/modustool/checks/cryptography_origin.odin lists (src/library/modus/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package modus__edwards25519
 
 /*
@@ -4944,5 +4944,4 @@ when crypto.COMPACT_IMPLS == false {
 		},
 	}
 
-	GE_BASEPOINT_TABLE := &Gen_Multiply_Table_edwards25519_lo[0]
 }

@@ -1,6 +1,11 @@
 package machine
 
+import "core:fmt"
+import "core:strings"
+import rd "modus:contract/root_delegation"
+import "modus:contract/system_description"
 import "modustool:build"
+import "modustool:foundation"
 
 // A start that fails: the boot image has no start policy. The boot display
 // stays on the screen with the failure, and the machine does not stop.
@@ -29,7 +34,35 @@ scenario_fails := [?]Step {
 
 // A start that fails ends when the tool ends QEMU: status 0.
 fails_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario_fails[:], {volume = build.BOOT_VOLUME_FAILS, output = TEST_OUTPUT_FAILS, exit_status = 0})
+	machine_test(part, scenario_fails[:], {volume = build.BOOT_VOLUME_FAILS, output = TEST_OUTPUT_FAILS, exit_status = 0}) or_return
+	return role_contract_hashes_check(TEST_OUTPUT_FAILS)
+}
+
+// role_contract_hashes_check compares the hash of the role contracts that
+// the root service wrote at its start with the hash that the same
+// procedure gives on the host: a contract that a machine reads in another
+// form is refused before any plan names a holder of its role.
+role_contract_hashes_check :: proc(output: string) -> bool {
+	text, readable := log_file_rendered(output)
+	if !readable {
+		return false
+	}
+	digest, contracts, encoded := rd.role_contracts_digest()
+	if encoded != contracts {
+		fmt.eprintfln("modustool: test failed: %d of the %d role contracts pass their canonical encoding on the host", encoded, contracts)
+		return false
+	}
+	digits := system_description.hexadecimal(digest)
+	wanted := fmt.tprintf("root: the role contracts: %d of %d encoded, digest %s", encoded, contracts, string(digits[:]))
+	if !strings.contains(text, wanted) {
+		marker := "root: the role contracts: "
+		at := strings.index(text, marker)
+		found := at < 0 ? "no line" : text[at:][:min(len(text) - at, len(marker) + 120)]
+		fmt.eprintfln("modustool: test failed: the root service computes the role contracts in another form than the host: %s; the host: %s", found, wanted)
+		return false
+	}
+	foundation.test_passed_print("the root service computes the hash of each of the %d role contracts as the host does", contracts)
+	return true
 }
 
 // A binary of the tool runs the test part fails only when it holds this file

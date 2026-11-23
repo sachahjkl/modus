@@ -87,3 +87,13 @@ Plan_Command_Refused :: struct {
 	principal:    u64,
 	refusal_code: u64,
 }
+
+// A set of the roles that the root service refused with Grants_Busy at each
+// send, past the bound of the sends again: nothing changed, and the apply
+// or the rollback is refused with Roles_Refused
+// (src/md/features/declarations.md, "The trusted display of a plan").
+@(log_fact = "plans: the root service had no room in the rings of the services for the grants of the roles after {resends} sends again, each after a pause of {pause} ms: nothing changed")
+Plan_Roles_Busy :: struct {
+	resends: u64,
+	pause:   u64,
+}

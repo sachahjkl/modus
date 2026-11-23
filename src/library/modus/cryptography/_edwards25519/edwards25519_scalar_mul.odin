@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_scalar_mul.odin; only its package name and its imports changed (src/library/modus/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_scalar_mul.odin; its package name and its imports changed, and the adjustments that tools/modustool/checks/cryptography_origin.odin lists (src/library/modus/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package modus__edwards25519
 
 import crypto "modus:cryptography/compatibility_crypto"
@@ -73,7 +73,7 @@ ge_double_scalarmult_basepoint_vartime :: proc "contextless" (
 		when crypto.COMPACT_IMPLS == true {
 			mul_tbl_add(&tmp, &G_tbl, hi_b, &tmp_add, &tmp_addend, true)
 		} else {
-			mul_bp_tbl_add(&tmp, GE_BASEPOINT_TABLE, hi_b, &tmp_add, &tmp_bp_addend, true)
+			mul_bp_tbl_add(&tmp, &Gen_Multiply_Table_edwards25519_lo[0], hi_b, &tmp_add, &tmp_bp_addend, true)
 		}
 
 		ge_double(&tmp, &tmp, &tmp_dbl)
@@ -84,7 +84,7 @@ ge_double_scalarmult_basepoint_vartime :: proc "contextless" (
 		when crypto.COMPACT_IMPLS == true {
 			mul_tbl_add(&tmp, &G_tbl, lo_b, &tmp_add, &tmp_addend, true)
 		} else {
-			mul_bp_tbl_add(&tmp, GE_BASEPOINT_TABLE, lo_b, &tmp_add, &tmp_bp_addend, true)
+			mul_bp_tbl_add(&tmp, &Gen_Multiply_Table_edwards25519_lo[0], lo_b, &tmp_add, &tmp_bp_addend, true)
 		}
 	}
 

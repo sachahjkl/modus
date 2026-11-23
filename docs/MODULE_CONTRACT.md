@@ -916,6 +916,16 @@ A mapping that does not fit in the 12 mappings of a start is dropped with one li
 
 Not built: the key of the TPM. The size of a store from the budget that the module asks for. The hash of a disk process in the exports of the monitor.
 
+### Package variables are constant data at the load
+
+A module with an entry has no start of the runtime. The loader maps the data of its file as the file holds it, rebases each address of it, and the entry runs first. Nothing runs the procedure `__$startup_runtime`, in which the Odin compiler puts each initializer of a package variable that it cannot make constant data. The rule holds for each source of the system, the library modules too: a library module (`cryptography`) passes its vectors with such a variable, and how its load fills it is not proven, so no code depends on it.
+
+So a package variable whose initializer takes a slice or the address of another variable (`faces := [1]Face{{exports = exports[:]}}`), or reads another package variable, stays zero on the machine. The same code gives the right value in a host test, which starts as a program and runs that procedure. Such a fault passes each host test and shows only on a machine.
+
+A table of nested slices writes each slice as a literal inside the table: `faces := [1]Face{{exports = {{name = "status"}}}}`. The compiler makes it constant data, with a rebase for each address. Mark such a table `@(rodata)`: the compiler then refuses an initializer that is not constant, with "Variables declared with @(rodata) must have constant initialization" (Odin dev-2026-11a, for `[1][]int{params[:]}` and for `&table[0]`). `modustool rule-checks` refuses the forms that need a start (`docs/TOOLS.md`, "The rules that a check holds").
+
+The role contracts were the first such fault: their tables of faces sliced the tables of exports, the root service read each contract with exports as zero, and refused each holder that a plan named.
+
 ## 3. Static is dynamic
 
 A module can link a library into its own file (static) or find it at load (dynamic). Here the two are one mechanism: each call to another module goes through an import slot, and the only difference is when the import slot is filled. Static linking is not built: no tool merges modules today, and every import is bound at load.
