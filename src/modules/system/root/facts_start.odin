@@ -27,6 +27,14 @@ Budget_Part_Limited :: struct {
 	largest_of:      [16]u8,
 }
 
+// A module asks for more pictures of the screen than a module may: the
+// starter gives it no page for its screen pictures.
+@(log_fact = "root: {started_process} asks for {screen_pictures} pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen")
+Budget_Screen_Pictures_Refused :: struct {
+	screen_pictures: u64,
+	started_process: value_kinds.Module_Name_Field,
+}
+
 // The one budget of the disk processes, made at the first of them.
 @(log_fact = "root: the disk processes share one budget of {pages}, {processes} processes and {threads} threads")
 Disk_Processes_Budget_Made :: struct {

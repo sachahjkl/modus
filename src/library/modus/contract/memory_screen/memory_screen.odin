@@ -20,14 +20,20 @@ BYTES_PER_PIXEL :: 4
 PAGE_SIZE :: 4096
 
 // Minimum and maximum dimensions of a headless memory screen, in pixels.
-// The maximum matches the reference screen because the compositor budget and
-// window bounds are sized for it.
+// The maximum is the largest screen of the remote display, 8K UHD: the
+// screen of memory follows the size that its start row or a viewer asks,
+// and the compositor pays it as its screen pictures, at the size in force
+// (module.budget_request_of_screen). The byte budget of the caller bounds
+// a size that its budget does not pay. With no size asked, the screen of
+// memory has the size of the reference screen.
 MIN_WIDTH :: 320
 MIN_HEIGHT :: 240
-MAX_WIDTH :: reference_screen.WIDTH
-MAX_HEIGHT :: reference_screen.HEIGHT
+MAX_WIDTH :: 7680
+MAX_HEIGHT :: 4320
+DEFAULT_WIDTH :: reference_screen.WIDTH
+DEFAULT_HEIGHT :: reference_screen.HEIGHT
 
-// Maximum framebuffer size in bytes and pages (1920 x 1080 x 4 = 8,294,400 B).
+// Maximum framebuffer size in bytes and pages (7680 x 4320 x 4 = 132,710,400 B).
 MAX_FRAMEBUFFER_BYTES :: u64(MAX_WIDTH) * u64(MAX_HEIGHT) * BYTES_PER_PIXEL
 MAX_FRAMEBUFFER_PAGES :: (MAX_FRAMEBUFFER_BYTES + PAGE_SIZE - 1) / PAGE_SIZE
 

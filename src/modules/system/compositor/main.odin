@@ -115,13 +115,16 @@ import "modus:contract/value_kinds"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
-// working memory is the sum of these parts, at the reference screen of
-// 1920 x 1080:
-// - the frame and the background, each the size of the screen: 2 x 2025
-//   pages, and 2 x 5 page tables (8.1 MB need 4 tables of 2 MiB, and one
-//   more when the start is not on a 2 MiB edge);
-// - the two screen pages: device memory, which costs no page, but 15.8
-//   MiB of it need up to 9 page tables;
+// frame and the background are each the size of the screen: two screen
+// pictures (screen_pictures), which the root service pays at the size of
+// the screen of the machine, 2 x 2025 pages at 1920 x 1080 and 2 x 32 400
+// at 7680 x 4320. The working memory is the sum of these parts, at the
+// largest screen of 7680 x 4320, so a screen of any size up to it maps:
+// - the page tables of the frame and the background: 2 x 65 (132.7 MB need
+//   64 tables of 2 MiB, and one more when the start is not on a 2 MiB
+//   edge);
+// - the two screen pages: device memory, which costs no page, but 265 MB
+//   of it need up to 128 page tables;
 // - each of these three spans can cross a 1 GiB edge, and then needs a
 //   second page directory: 3 pages;
 // - the page of the display registers: a page table and a page directory,
@@ -145,15 +148,15 @@ import "base:intrinsics"
 //   each draws every glyph of its text into its own private glyph cache,
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
-// 4050 + 10 + 9 + 3 + 2 + 1647 + 8576 + 8576 + 708 = 23581: the bound of
+// 130 + 128 + 3 + 2 + 1647 + 8576 + 8576 + 708 = 19770: the bound of
 // 128 windows at the largest surface, more than the least largest budget
 // of a process, and less than the share of a machine of 1 GiB. Page tables
 // are paid as the windows map, so a machine with a smaller share still runs
 // the desktop, with fewer such windows. A screen whose frame and background
 // the budget cannot pay is named on one line, and the compositor stops
 // (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 23581, processes = 1, threads = 2}
-#assert(MODULE_BUDGET.working_memory_pages == 4050 + 10 + 9 + 3 + 2 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708)
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 19770, processes = 1, threads = 2, screen_pictures = 2}
+#assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708)
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.

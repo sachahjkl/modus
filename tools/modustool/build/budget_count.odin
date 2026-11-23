@@ -97,7 +97,12 @@ budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memo
 	add(&pages, counted.module_pages) or_return
 	add(&pages, counted.thread_pages) or_return
 	add(&pages, counted.window_pages) or_return
-	counted.request = {pages = pages, processes = stated.processes, threads = stated.threads}
+	// The screen pictures are a part of their own: the build cannot know the
+	// screen, so the starter adds their pages.
+	if stated.screen_pictures > module.SCREEN_PICTURES_LIMIT {
+		return {}, false
+	}
+	counted.request = {pages = pages, processes = stated.processes, threads = stated.threads, screen_pictures = stated.screen_pictures}
 	return counted, true
 }
 
@@ -147,5 +152,5 @@ budget_import_memory_sizes :: proc(build: foundation.Module_Build) -> (sizes: []
 // budget_count_line gives the parts of a request in words, for a line of
 // the tests and of the measure of a build.
 budget_count_line :: proc(counted: Budget_Count) -> string {
-	return fmt.tprintf("%d pages (%d of working memory, %d of the module and its imports, %d of its threads, %d of the pictures of its window), %d processes, %d threads", counted.request.pages, counted.working_memory_pages, counted.module_pages, counted.thread_pages, counted.window_pages, counted.request.processes, counted.request.threads)
+	return fmt.tprintf("%d pages (%d of working memory, %d of the module and its imports, %d of its threads, %d of the pictures of its window), %d processes, %d threads, %d pictures of the screen", counted.request.pages, counted.working_memory_pages, counted.module_pages, counted.thread_pages, counted.window_pages, counted.request.processes, counted.request.threads, counted.request.screen_pictures)
 }

@@ -149,7 +149,8 @@ TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the ca
 @(private = "file")
 TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 2288 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
 @(private = "file")
-TABLE_PROBLEM_OLDER_FORMAT :: "the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify"
+TABLE_PROBLEM_OLDER_FORMAT_CAUSE :: "it has the format of an older system (1008, 1136 or 1168 bytes), and no version of it can be restored to verify"
+TABLE_OLDER_FORMAT_TO_DO :: "to use a client again, pair it again with remote_allow, or remote_display_allow for a viewer, from a console of the principal; give each disk process its grants again"
 @(private = "file")
 TABLE_PROBLEM_BAD_ROW :: "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero"
 @(private = "file")
@@ -225,6 +226,7 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		for part in BUDGET_PARTS {
 			for who in LARGEST_OF {
 				expect(t, render(t, file, "Budget_Part_Limited", {{"asked", count}, {"largest", max(u64) - count}, {"granted", count}, {"started_process", process}, {"budget_part", part}, {"largest_of", who}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " ", part, ", and ", who, " gets at most ", max(u64) - count, ": it starts with ", count))
+				expect(t, render(t, file, "Budget_Screen_Pictures_Refused", {{"screen_pictures", count}, {"started_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen"))
 			}
 			for holder in PAYING_BUDGETS {
 				expect(t, render(t, file, "Start_Refused_Budget_Part", {{"needed", count}, {"held", max(u64) - count}, {"refused_process", process}, {"budget_part", part}, {"paying_budget", holder}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": it gets ", count, " ", part, ", and the budget of ", holder, " holds ", max(u64) - count))
@@ -843,7 +845,6 @@ the_table_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		{"Client_Key_Allowed_Kept", "; the disk grant table of the principal keeps the key across a restart"},
 	}
 	long_problems := [?][2]string {
-		{"Older_Format", TABLE_PROBLEM_OLDER_FORMAT},
 		{"Bad_Row", TABLE_PROBLEM_BAD_ROW},
 		{"Bad_Client_Keys", TABLE_PROBLEM_BAD_CLIENT_KEYS},
 	}
@@ -863,6 +864,12 @@ the_table_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 				expect(t, render(t, file, strings.concatenate({"Table_Refused_", problem[0], "_Written_Over"}, context.temp_allocator), {{"principal", principal}, {"new_record", record}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem[1], "; it gives no grant, and the table of ", record, " is written over it"))
 			}
 		}
+		// A table of an older format: the problem, its cause, and what the
+		// principal does to use its clients again.
+		for record in NEW_RECORDS {
+			expect(t, render(t, file, "Table_Refused_Older_Format_Written_Over", {{"principal", principal}, {"new_record", record}}), line_of_before("root: the disk grant table of principal ", principal, " in the store module_files was not read: ", TABLE_PROBLEM_OLDER_FORMAT_CAUSE, "; its client keys and disk grants do not hold, and the table of ", record, " is written over it; ", TABLE_OLDER_FORMAT_TO_DO))
+		}
+		expect(t, render(t, file, "Table_Refused_Older_Format_Kept", {{"principal", principal}}), line_of_before("root: the disk grant table of principal ", principal, " in the store module_files was not read: ", TABLE_PROBLEM_OLDER_FORMAT_CAUSE, "; its client keys and disk grants do not hold, and the table is kept: no change is written over it; ", TABLE_OLDER_FORMAT_TO_DO))
 		for problem in TABLE_PROBLEMS_IN_A_FIELD {
 			expect(t, render(t, file, "Table_Refused_Kept", {{"principal", principal}, {"table_problem", problem}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem, "; it gives no grant, and it is kept: no change is written over it"))
 		}

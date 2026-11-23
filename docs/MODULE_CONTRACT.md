@@ -275,20 +275,22 @@ The model is the BTF format of Linux, changed so that all records have a fixed s
 
 ### The budget that a module asks for
 
-The table `Budget` holds one record at index 1, `module.Budget_Request` (24 bytes): the pages, the processes and the threads that the module asks for its process. It is a request, never a grant: the starter of the process decides. No loader reads it.
+The table `Budget` holds one record at index 1, `module.Budget_Request` (32 bytes): the pages, the processes, the threads and the screen pictures that the module asks for its process. It is a request, never a grant: the starter of the process decides. No loader reads it.
 
 | Part | What it counts |
 |---|---|
 | `pages` | The pages of memory: the modules, the stacks, the pictures and the working memory of the process |
 | `processes` | The process itself, and each child that runs at one time |
 | `threads` | Each thread that runs at one time, the first one included, and the threads of the children |
+| `screen_pictures` | Pictures of the size of the screen in force, 4 bytes a pixel, that the process holds: the frame and the background of the compositor, the copy and the capture pictures of the remote display. 4 at most (`module.SCREEN_PICTURES_LIMIT`). The build cannot know the screen, so the starter adds their pages for the screen of the machine (`module.budget_request_of_screen`): a machine of a 4K screen pays a 4K screen, and a machine of 1080p does not. A row of the plan of principal 0 may lower those pages, never raise them: the cost of the screen is a machine policy. A request past 4 gets no page for its screen, with one line |
 
 ```byte-layout module.Budget_Request
-module.Budget_Request, 24 bytes: the record 1 of the table Budget
-offset  size  field      type
-     0     8  pages      u64
-     8     8  processes  u64
-    16     8  threads    u64
+module.Budget_Request, 32 bytes: the record 1 of the table Budget
+offset  size  field            type
+     0     8  pages            u64
+     8     8  processes        u64
+    16     8  threads          u64
+    24     8  screen_pictures  u64
 ```
 
 - **No table.** A module with no table `Budget` asks for the least budget of its starter.
@@ -308,6 +310,7 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, threads = 1, 
 | `processes` | The `processes` of the request | The least |
 | `threads` | The `threads` of the request | The least |
 | `window_width`, `window_height` | The size of its window in pixels, as it passes it to `display.open`: an integer literal, or the name of a constant of the package whose value is one integer literal | No window |
+| `screen_pictures` | The `screen_pictures` of the request, 1 to 4: the tool refuses 5 and more, and adds no page for them | No screen picture |
 | `window_least_width`, `window_least_height` | The least size of a resizable window: each the name of the constant that the source passes as `least_width` and `least_height` to `display.resizable_set`, a constant of one integer literal, no larger than the window. The tool refuses names that differ from those of a call of `resizable_set` in the package, and least parts with no such call | No cut: the window pages are counted at the full largest scale |
 
 **The tool counts the other pages**, and the table holds the sum: `pages = working memory + module pages + thread pages + window pages`.

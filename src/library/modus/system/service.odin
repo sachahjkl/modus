@@ -64,6 +64,11 @@ Service :: struct {
 	calls:       u64, // The calls that this process executed.
 }
 
+// The service ring and the call ring of each caller, two words each, take
+// at most half of one wait: the other half is for the other words of the
+// service.
+#assert(2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) <= op.WORD_WAIT_CAPACITY / 2)
+
 // service_open opens the service ring of this process (`GRANT_SERVICE`) and
 // the file of its exports (`GRANT_VALUE_FILE_ADDRESS`). ok is false, and the
 // service is all zero, for a process with no grant to serve, or a ring that

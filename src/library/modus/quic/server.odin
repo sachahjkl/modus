@@ -80,9 +80,10 @@ Server_Limits :: struct {
 	initial_checks_depth:                  int, // The depth of the shared budget of Initial checks.
 	initial_checks_per_address_per_second: int, // The rate of the budget of Initial checks of one address whose token opened (`SERVER_ADDRESS_BUDGETS`): it is taken before the shared budget.
 	initial_checks_per_address_depth:      int, // The depth of the budget of Initial checks of one address: the Initial packets that a new client can have opened at once.
-	source_range_attempts_per_second:      int, // The rate of the per-/24 source-range admission budget: new-connection Initial attempts admitted per second for one IPv4 /24 range.
-	source_range_burst:                    int, // The burst depth of the per-/24 source-range admission budget.
-	handshakes_per_source_range:           int, // The most records in the handshake that one IPv4 /24 source range holds at once.
+	source_range_attempts_per_second:      int, // The rate of the admission budget of a source range: new-connection Initial attempts admitted per second for one range.
+	source_range_burst:                    int, // The burst depth of the admission budget of a source range.
+	handshakes_per_source_range:           int, // The most records in the handshake that one source range holds at once.
+	source_range_prefix_length:            u8, // The bits of an address that name its source range: 24, an IPv4 /24, by default (SOURCE_RANGE_PREFIX_LENGTH).
 }
 
 // The limits of quic_echo, and of the tests: a table of 16 records. The
@@ -124,6 +125,7 @@ SERVER_LIMITS_DEFAULT :: Server_Limits {
 	source_range_attempts_per_second      = 32,
 	source_range_burst                    = 64,
 	handshakes_per_source_range           = 4,
+	source_range_prefix_length            = SOURCE_RANGE_PREFIX_LENGTH,
 }
 
 // The remote of a datagram: the address and the port that it came from, or
@@ -179,8 +181,8 @@ Server_Counters :: struct {
 	over_budget:                  u64, // Datagrams of unknown identifiers dropped over a shared budget (Retries, token checks, Initial checks), before any cryptography.
 	over_address_budget:            u64, // Initials with a valid token dropped over the budget of Initial checks of their address, before the Initial is opened.
 	address_table_full:             u64, // Initials with a valid token of a new address, dropped because no place of the table of address budgets was free or full again.
-	over_source_budget:             u64, // Initials dropped because their /24 source range spent its admission budget or carried a backwards timestamp.
-	refused_source_handshake_limit: u64, // Initials refused because their /24 source range holds its most records in the handshake.
+	over_source_budget:             u64, // Initials dropped because their source range spent its admission budget or carried a backwards timestamp.
+	refused_source_handshake_limit: u64, // Initials refused because their source range holds its most records in the handshake.
 	tokens_used_again:            u64, // A valid token whose record was taken before.
 	used_tokens_forgotten:        u64, // A used token that the full table forgot before it expired: it can take a record again.
 	other_remote:                 u64, // A known identifier from another remote.
@@ -248,7 +250,7 @@ Server :: struct {
 	negotiation_second: u64, // The second of the clock in which the last Version Negotiation packet was asked for.
 	negotiation_count:  int, // The Version Negotiation packets written in that second.
 	work_buckets:       [Server_Work]Work_Bucket, // The shared budgets of work: one token bucket for each kind of work.
-	source_budgets:     Source_Budget_Table, // The per-/24 source-range admission budgets for new-connection Initial packets.
+	source_budgets:     Source_Budget_Table, // The admission budgets of the source ranges for new-connection Initial packets.
 	address_budgets:    [SERVER_ADDRESS_BUDGETS]Server_Address_Budget, // The table of address budgets: the Initial checks of each address whose token opened.
 	used_tokens:        [SERVER_USED_TOKENS]Server_Used_Token, // The Retry tokens that took a record, kept for their lifetime: each token takes a record once.
 	retry_key:          [RETRY_TOKEN_KEY_SIZE]u8, // The key that seals the Retry tokens, made at `server_init` from the generator: the tokens of another start of the server do not open.
@@ -308,6 +310,12 @@ server_init :: proc "contextless" (server: ^Server, connections: []Connection, r
 	}
 	if len(streams) < len(connections) || len(streams) % len(connections) != 0 {
 		errors.fail(error, -1, .Bad_Value, .Records, 4, i64(len(streams)), i64(len(connections)), 0)
+		return false
+	}
+	if limits.source_range_prefix_length == 0 || limits.source_range_prefix_length > 32 {
+		// A range of no bit groups each source together; past 32 bits names
+		// no prefix of an IPv4 address.
+		errors.fail(error, -1, .Out_Of_Range, .None, 8, i64(limits.source_range_prefix_length), 32, 0)
 		return false
 	}
 	if configuration.idle_timeout_milliseconds == 0 {
@@ -612,10 +620,11 @@ server_work_take :: proc "contextless" (server: ^Server, work: Server_Work, now:
 // bytes of a Retry in `answer`, or 0.
 @(private)
 server_source_range_handshakes :: proc "contextless" (server: ^Server, address: u32) -> int {
-	prefix := source_range_prefix(address)
+	length := server.limits.source_range_prefix_length
+	prefix := source_range_prefix(address, length)
 	count := 0
 	for record, place in server.records {
-		if record.in_use && server.connections[place].state == .Handshake && source_range_prefix(record.remote.address) == prefix {
+		if record.in_use && server.connections[place].state == .Handshake && source_range_prefix(record.remote.address, length) == prefix {
 			count += 1
 		}
 	}
@@ -632,11 +641,12 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 		attempts_per_second     = server.limits.source_range_attempts_per_second,
 		burst                   = server.limits.source_range_burst,
 		active_handshakes_limit = server.limits.handshakes_per_source_range,
+		prefix_length           = server.limits.source_range_prefix_length,
 	}
 	switch source_budget_take(&server.source_budgets, remote.address, source_limits, now, server_source_range_handshakes(server, remote.address)) {
 	case .Admitted:
 	case .Table_Full:
-		// All 64 per-/24 slots hold active or throttled ranges: keep them
+		// Each slot of the table holds an active or a throttled range: keep them
 		// pinned (never evict) and let the global Work_Bucket and validated
 		// Retry/address_budgets layers police the distributed flood.
 	case .Over_Rate_Budget, .Backwards_Time, .Invalid_Limits:

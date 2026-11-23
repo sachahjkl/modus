@@ -95,12 +95,14 @@ import "modus:system"
 // 32 QUIC connections of about 89 KiB each, 4 streams of about 130 KiB for
 // each, and a buffer of a request or an answer of about 64 KiB for each
 // stream: 6912 pages (TABLE_PAGES), in one mapping of the process
-// (docs/QUIC.md, section 7); the call rings and call regions of its 72
-// connections to services, about 94 pages each: 6768 pages; and the glyph
-// memory of the copy of the text rendering of the drawing module, which
-// draws its text: 354 pages (display.TEXT_MEMORY_PAGES).
-// 6912 + 6768 + 354 = 14034, under the largest budget of a process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 14034, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// (docs/QUIC.md, section 7); the mappings of the call ring and the call
+// region of each of its 432 connections to services, which the root
+// service makes and pays: up to 4 page tables and directories each, 1728
+// pages; and the glyph memory of the copy of the text rendering of the
+// drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 6912 + 1728 + 354 = 8994, under the least
+// largest budget of a process.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8994, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -135,7 +137,7 @@ BUFFER_BYTES :: CALL_COUNT * CALL_BUFFER_SIZE
 TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + BUFFER_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 // The connections and their streams fit in the stated budget beside the
 // connections to services and the text memory.
-#assert(TABLE_PAGES + 94 * SERVICE_CONNECTION_CAPACITY + display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
+#assert(TABLE_PAGES + 4 * SERVICE_CONNECTION_CAPACITY + display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
 // The bounds of a call stream, in milliseconds of the machine. Each one

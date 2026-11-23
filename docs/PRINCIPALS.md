@@ -360,7 +360,7 @@ root: the client key 6a1f0c2d9e8b7a65 of remote holds again for principal 0: pri
 ```
 
 - A key that a principal allowed before its table was read, and that the table does not hold, ends at the read, as each change made before the key of the table came.
-- A table of 1008, 1136 or 1168 bytes is a table of the format 1, 2 or 3, from a build before 32 client keys with their uses. It is refused as an older format that this system does not read, and no version of it can be restored to verify: the disk grants of that principal stay absent on that disk.
+- A table of 1008, 1136 or 1168 bytes is a table of the format 1, 2 or 3, from a build before 32 client keys with their uses. It is refused as an older format that this system does not read, and no version of it can be restored to verify: the disk grants of that principal stay absent on that disk. The line of the refusal names the principal and says what to do: pair each client again (`remote_allow`, or `remote_display_allow` for a viewer, from a console of the principal) and give each disk process its grants again. A key is never lost with no line.
 - A writer of the disk who kept an older table can restore it, and a revoked key comes back. A counter of the TPM that only grows ends it; it is not built (`ROADMAP.md`).
 
 **What it does not do.** A row is a grant of this machine; a grant signed by the key of a principal for another machine is layer 5 (section 9). `remote` holds the table: a fault of `remote` could use each row whose grant holds, never a principal with no row.

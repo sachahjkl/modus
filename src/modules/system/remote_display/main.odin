@@ -64,15 +64,18 @@ import "modus:quic_server"
 import "modus:random"
 import "modus:system"
 
-// The memory follows the screen in force: the copy of the screen, the two
-// pictures and the header of the capture face, the 8 QUIC connections and
-// their streams (about 437 pages), and the page tables of these mappings.
-// The budget states a screen of 2560 x 1440: 3600 + 7201 + 437 + about 60 =
-// 11298. A screen of 1920 x 1080 uses 6513 pages of it. A larger screen,
-// as 3840 x 2160 (24 739 pages) or 7680 x 4320 (about 98 000 pages), needs
-// a larger budget than the largest budget of a process: the face is then
-// refused with its line, and the service runs on.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11300, processes = 1, threads = 1}
+// The memory follows the screen in force. The copy of the screen and the
+// two pictures of the capture face are three screen pictures
+// (screen_pictures), which the root service pays at the size of the screen
+// of the machine: 3 x 2025 pages at 1920 x 1080, 3 x 8100 at 3840 x 2160,
+// 3 x 32 400 at 7680 x 4320. The working memory is the rest: the 8 QUIC
+// connections and their streams, 438 pages (TABLE_PAGES); the header of
+// the capture face, 1 page; the page tables of the three pictures at the
+// largest screen, 3 x 65; and the page tables of the other mappings, 66.
+// 438 + 1 + 195 + 66 = 700. A machine whose share of a process is smaller
+// than the screen gets less, and the face is refused with its line; the
+// service runs on.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 700, processes = 1, threads = 1, screen_pictures = 3}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -137,9 +140,11 @@ RECEIVE_PLACES :: 64
 #assert(CAPACITY <= display.CAPTURE_VIEWER_CAPACITY)
 // A viewer frame takes the rectangles of the damage of its viewer.
 #assert(interface.DAMAGE_CAPACITY <= protocol.VIEWER_FRAME_RECTANGLE_LIMIT)
-// The QUIC tables and a copy and the pictures of a screen of 2560 x 1440
-// fit the stated budget.
-#assert(TABLE_PAGES + (2560 * 1440 * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE * 3 + display.CAPTURE_HEADER_PAGES <= MODULE_BUDGET.working_memory_pages)
+// The QUIC tables, the header of the face and the page tables of three
+// pictures of the largest screen fit the stated working memory; the
+// pictures themselves are screen pictures.
+#assert(TABLE_PAGES + display.CAPTURE_HEADER_PAGES + 3 * 65 <= MODULE_BUDGET.working_memory_pages)
+#assert(MODULE_BUDGET.screen_pictures == 3) // The copy and the two pictures of capture_size_take.
 
 // The records to the compositor that its ring did not take: the commands of
 // the capture face, and the keys and the pointer of the viewers. While it is

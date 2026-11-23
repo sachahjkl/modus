@@ -40,7 +40,11 @@ import "modus:quic"
 import "modus:quic_server"
 import "modus:system"
 
-MESH_LINK_CAPACITY :: 2
+// The outbound links at one time: the paired machines of a principal (a
+// laptop, a desktop, builders) that this machine reaches together. A link
+// holds its connection, its streams and its request frames, about 740 KiB,
+// in the data of the process, which its budget pays as module pages.
+MESH_LINK_CAPACITY :: 8
 MESH_STREAMS_PER_LINK :: machine_wire.MESH_REQUESTS_AT_ONCE
 MESH_HANDSHAKE_BOUND_MILLISECONDS :: 10_000
 MESH_REQUEST_BOUND_MILLISECONDS :: 10_000

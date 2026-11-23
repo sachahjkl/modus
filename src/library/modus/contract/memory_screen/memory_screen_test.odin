@@ -240,3 +240,25 @@ viewer_resize_transitions_are_atomic_and_last_valid_holds :: proc(t: ^testing.T)
 	testing.expect_value(t, screen.geometry.width, u32(640))
 	testing.expect_value(t, screen.geometry.height, u32(480))
 }
+
+// The screen of memory follows the screen in force: 1440p, 4K, 5K and 8K
+// pass with the bytes of their size, one pixel past 8K is refused, and a
+// byte budget one byte short of a size refuses it.
+@(test)
+memory_screen_takes_screens_up_to_8k_within_its_byte_budget :: proc(t: ^testing.T) {
+	testing.expect_value(t, MAX_WIDTH, 7680)
+	testing.expect_value(t, MAX_HEIGHT, 4320)
+	testing.expect_value(t, DEFAULT_WIDTH, 1920)
+	sizes := [?][2]u64{{1920, 1080}, {2560, 1440}, {3840, 2160}, {5120, 2880}, {7680, 4320}}
+	for size in sizes {
+		bytes := size[0] * size[1] * BYTES_PER_PIXEL
+		geo, err := geometry_validate(size[0], size[1], size[0] * BYTES_PER_PIXEL, bytes)
+		testing.expectf(t, err == .None && geo.byte_size == bytes, "%v gave %v", size, err)
+		_, short := geometry_validate(size[0], size[1], size[0] * BYTES_PER_PIXEL, bytes - 1)
+		testing.expectf(t, short == .Over_Byte_Budget, "%v one byte short gave %v", size, short)
+	}
+	_, wide := geometry_validate(MAX_WIDTH + 1, 1080, (MAX_WIDTH + 1) * BYTES_PER_PIXEL, max(u64))
+	testing.expect_value(t, wide, Validation_Error.Above_Maximum)
+	_, tall := geometry_validate(1920, MAX_HEIGHT + 1, 1920 * BYTES_PER_PIXEL, max(u64))
+	testing.expect_value(t, tall, Validation_Error.Above_Maximum)
+}

@@ -107,9 +107,10 @@ REGION_PAGES :: PLACE_COUNT * frame.PLACE_SIZE / system.PAGE_SIZE
 
 // The endpoints of the processes: one for each process that holds a grant
 // of the network. The loop waits on the command queue of each endpoint, two
-// words of the wait each, beside the frame ring and the control ring: the
-// count is the most that one wait of the kernel watches.
-ENDPOINT_CAPACITY :: 28
+// words of the wait each, beside the frame ring and the control ring, so
+// the count fits one wait of the kernel (op.WORD_WAIT_CAPACITY); the tags
+// of the read regions in the frame ring leave room for 100.
+ENDPOINT_CAPACITY :: 96
 RECEIVE_CAPACITY :: 128 // The Receive requests of one endpoint that wait at the same time.
 PORT_FIRST :: 49152 // The local UDP port of endpoint n is PORT_FIRST + n.
 TCP_PORT_FIRST :: 50176 // A client grant of endpoint n: the local TCP ports from TCP_PORT_FIRST + n * datagram.PORT_BLOCK.

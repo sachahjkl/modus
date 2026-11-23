@@ -152,7 +152,11 @@ REGION_PAGES :: 16
 //               Bit 63 (CALLER_ACTS_FOR_PRINCIPAL): the caller acts for that
 //               principal, and can see what the service holds for all
 //               callers. A caller without it sees what is its own only.
-SERVICE_CONNECTION_CAPACITY :: 8 // The callers of one service.
+// The callers of one service at one time: tools, consoles, agents through
+// `remote` and other services. A service waits on the call ring of each
+// one, two words of a wait each, and keeps half of a wait of the kernel
+// (op.WORD_WAIT_CAPACITY) for its other words.
+SERVICE_CONNECTION_CAPACITY :: 48
 CALLER_AMOUNT_MASK :: u64(1) << 46 - 1 // The bits of the amount in values[6]: bits 0 to 45.
 CALLER_ERASES_VERSIONS :: u64(1) << 46 // The bit of values[6] set when the caller may erase the versions of its objects.
 CALLER_READS_ONLY :: u64(1) << 47 // The bit of values[6] set when the connection reads only.

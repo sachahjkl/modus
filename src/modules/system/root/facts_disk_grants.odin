@@ -387,7 +387,7 @@ Table_Refused_Written_Over :: struct {
 	table_problem: [104]u8,
 }
 
-@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify; it gives no grant, and the table of {new_record} is written over it")
+@(log_fact = "root: the disk grant table of principal {principal} in the store module_files was not read: it has the format of an older system (1008, 1136 or 1168 bytes), and no version of it can be restored to verify; its client keys and disk grants do not hold, and the table of {new_record} is written over it; to use a client again, pair it again with remote_allow, or remote_display_allow for a viewer, from a console of the principal; give each disk process its grants again")
 Table_Refused_Older_Format_Written_Over :: struct {
 	principal:  u64,
 	new_record: [32]u8,
@@ -412,7 +412,7 @@ Table_Refused_Kept :: struct {
 	table_problem: [104]u8,
 }
 
-@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify; it gives no grant, and it is kept: no change is written over it")
+@(log_fact = "root: the disk grant table of principal {principal} in the store module_files was not read: it has the format of an older system (1008, 1136 or 1168 bytes), and no version of it can be restored to verify; its client keys and disk grants do not hold, and the table is kept: no change is written over it; to use a client again, pair it again with remote_allow, or remote_display_allow for a viewer, from a console of the principal; give each disk process its grants again")
 Table_Refused_Older_Format_Kept :: struct {
 	principal: u64,
 }

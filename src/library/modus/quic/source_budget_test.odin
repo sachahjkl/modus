@@ -7,7 +7,7 @@ import "core:testing"
 // timestamps: every refusal must leave table state completely unchanged.
 @(test)
 source_budget_refuses_invalid_limits_and_backwards_time_without_mutation :: proc(t: ^testing.T) {
-	valid_limits := Source_Budget_Limits{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2}
+	valid_limits := Source_Budget_Limits{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH}
 	testing.expect_value(t, source_budget_take(nil, 0x0A00_0101, valid_limits, 1_000_000), Source_Budget_Result.Invalid_Limits)
 	testing.expect(t, !source_budget_handshake_end(nil, 0x0A00_0101))
 	testing.expect_value(t, source_budget_active_handshakes(nil, 0x0A00_0101), 0)
@@ -15,11 +15,14 @@ source_budget_refuses_invalid_limits_and_backwards_time_without_mutation :: proc
 	table: Source_Budget_Table
 	source_budget_table_init(&table)
 	invalid_cases := [?]Source_Budget_Limits {
-		{attempts_per_second = 10, burst = 0, active_handshakes_limit = 2},
-		{attempts_per_second = 10, burst = -1, active_handshakes_limit = 2},
-		{attempts_per_second = -1, burst = 4, active_handshakes_limit = 2},
+		{attempts_per_second = 10, burst = 0, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH},
+		{attempts_per_second = 10, burst = -1, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH},
+		{attempts_per_second = -1, burst = 4, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH},
 		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 0},
 		{attempts_per_second = 10, burst = 4, active_handshakes_limit = -5},
+		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = 0},
+		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = 33},
+		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = 255},
 	}
 	for bad in invalid_cases {
 		before := table
@@ -47,14 +50,14 @@ source_budget_refuses_invalid_limits_and_backwards_time_without_mutation :: proc
 source_budget_isolates_flooding_range_and_refills_monotonically :: proc(t: ^testing.T) {
 	table: Source_Budget_Table
 	source_budget_table_init(&table)
-	limits := Source_Budget_Limits{attempts_per_second = 2, burst = 5, active_handshakes_limit = 2}
+	limits := Source_Budget_Limits{attempts_per_second = 2, burst = 5, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH}
 	now: u64 = 10_000_000
 
 	// Prefix masking checks: edges 0, 1, 255, and max u32.
-	testing.expect_value(t, source_range_prefix(0x0A00_0100), u32(0x0A00_0100))
-	testing.expect_value(t, source_range_prefix(0x0A00_0101), u32(0x0A00_0100))
-	testing.expect_value(t, source_range_prefix(0x0A00_01FF), u32(0x0A00_0100))
-	testing.expect_value(t, source_range_prefix(max(u32)), u32(0xFFFF_FF00))
+	testing.expect_value(t, source_range_prefix(0x0A00_0100, SOURCE_RANGE_PREFIX_LENGTH), u32(0x0A00_0100))
+	testing.expect_value(t, source_range_prefix(0x0A00_0101, SOURCE_RANGE_PREFIX_LENGTH), u32(0x0A00_0100))
+	testing.expect_value(t, source_range_prefix(0x0A00_01FF, SOURCE_RANGE_PREFIX_LENGTH), u32(0x0A00_0100))
+	testing.expect_value(t, source_range_prefix(max(u32), SOURCE_RANGE_PREFIX_LENGTH), u32(0xFFFF_FF00))
 
 	// Five attempts from distinct hosts in 10.0.1.0/24 spend the burst.
 	for host in 1 ..= 5 {
@@ -98,7 +101,7 @@ source_budget_isolates_flooding_range_and_refills_monotonically :: proc(t: ^test
 source_budget_full_table_evicts_oldest_cleanly :: proc(t: ^testing.T) {
 	table: Source_Budget_Table
 	source_budget_table_init(&table)
-	limits := Source_Budget_Limits{attempts_per_second = 1, burst = 2, active_handshakes_limit = 2}
+	limits := Source_Budget_Limits{attempts_per_second = 1, burst = 2, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH}
 	now: u64 = 1_000_000
 
 	// Exhaust 10.0.1.0/24 so it is actively throttled.
@@ -225,4 +228,33 @@ server_source_range_handshake_cap_blocks_same_range_and_admits_other_range :: pr
 	// Meanwhile 10.0.2.5 connects and completes its echo immediately.
 	ended := harness_run(t, harness, 4096, 10_000_000)
 	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
+}
+
+// The prefix length names the range: on a /16, two /24 of one /16 share one
+// bucket, and an address of another /16 has its own; on a /32, each address
+// is its own range. The table holds at least 1024 ranges.
+@(test)
+source_ranges_follow_their_prefix_length :: proc(t: ^testing.T) {
+	testing.expect(t, SOURCE_BUDGET_CAPACITY >= 1024)
+	testing.expect_value(t, source_range_prefix(0x0A01_0203, 16), u32(0x0A01_0000))
+	testing.expect_value(t, source_range_prefix(0x0A01_0203, 32), u32(0x0A01_0203))
+	testing.expect_value(t, source_range_prefix(0x0A01_0203, 1), u32(0x0000_0000))
+	testing.expect_value(t, source_range_prefix(0x8A01_0203, 1), u32(0x8000_0000))
+	table: Source_Budget_Table
+	source_budget_table_init(&table)
+	wide := Source_Budget_Limits{attempts_per_second = 1, burst = 2, active_handshakes_limit = 4, prefix_length = 16}
+	now := u64(1_000_000)
+	testing.expect_value(t, source_budget_take(&table, 0x0A01_0101, wide, now), Source_Budget_Result.Admitted)
+	testing.expect_value(t, source_budget_take(&table, 0x0A01_0201, wide, now), Source_Budget_Result.Admitted)
+	testing.expect_value(t, source_budget_take(&table, 0x0A01_0301, wide, now), Source_Budget_Result.Over_Rate_Budget)
+	testing.expect_value(t, source_budget_take(&table, 0x0A02_0101, wide, now), Source_Budget_Result.Admitted)
+	narrow := wide
+	narrow.prefix_length = 32
+	narrow_table: Source_Budget_Table
+	source_budget_table_init(&narrow_table)
+	for host in u32(0) ..< 3 {
+		testing.expect_value(t, source_budget_take(&narrow_table, 0x0A01_0100 + host, narrow, now), Source_Budget_Result.Admitted)
+		testing.expect_value(t, source_budget_take(&narrow_table, 0x0A01_0100 + host, narrow, now), Source_Budget_Result.Admitted)
+		testing.expect_value(t, source_budget_take(&narrow_table, 0x0A01_0100 + host, narrow, now), Source_Budget_Result.Over_Rate_Budget)
+	}
 }
