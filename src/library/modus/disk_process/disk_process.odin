@@ -46,6 +46,8 @@
 // See [disk process](term:disk-process).
 package disk_process
 
+import "modus:contract/store"
+
 // The store whose root tree holds the module files: one entry for each
 // module, its name the name of the module. For a named principal the
 // root service adds the principal to this name, as for each store.
@@ -57,27 +59,34 @@ STORE_NAME :: "module_files"
 TABLE_OBJECT_NAME :: "grant_table"
 
 // The limit of blocks of the store `module_files`, as the root service grants
-// it and as the modus tool writes it: 16 MiB. The two numbers are one
-// constant, so the grant of a read never differs from the limit on the
-// disk.
-STORE_BLOCKS_LIMIT :: 4096
+// it and as the modus tool writes it: each block that the storage service
+// uses on its disk. The installed programs of a principal take what the
+// disk holds, and a full disk refuses the next write with its error record;
+// no smaller quota of the code refuses a program first. The two numbers
+// are one constant, so the grant of a read never differs from the limit on
+// the disk.
+STORE_BLOCKS_LIMIT :: store.DISK_BLOCKS_LIMIT
 
 // The bytes of the name of a disk process: three values of a record of
 // the root ring, with a zero byte after it. The other four values of the
 // record hold the hash.
 NAME_LIMIT :: 23
 
-// The most bytes of the module file of a disk process. The root service
-// reads the file into memory of its own budget before it checks the hash:
-// the limit bounds what a file of a disk takes from that budget.
-FILE_BYTES_LIMIT :: 4 << 20
+// The most bytes of the module file of a disk process: 64 MiB, a program
+// with its libraries linked in. The root service reads the file by ranges
+// into memory of its own budget before it checks the hash, so the limit
+// bounds what one file of a disk takes from that budget; a budget that
+// cannot pay a file refuses its load with its error record. The module file
+// service streams a file into the store by pieces and holds no whole file.
+FILE_BYTES_LIMIT :: 64 << 20
 
-// The most bytes of the debug object of a module file of the store. The
-// debugger service reads the object into memory of its own budget: the
-// limit bounds what an object of a disk takes from that budget. A debug
-// object is often larger than its module: it holds the names of the
-// procedures, the line table, the types and the variables.
-DEBUG_OBJECT_BYTES_LIMIT :: 8 << 20
+// The most bytes of the debug object of a module file of the store: twice
+// the largest module file, as a debug object is often larger than its
+// module: it holds the names of the procedures, the line table, the types
+// and the variables. The debugger service reads the object into memory of
+// its own budget, of the size of the object: a budget that cannot pay it
+// refuses it with a line of the log, and the attach goes on with no names.
+DEBUG_OBJECT_BYTES_LIMIT :: 2 * FILE_BYTES_LIMIT
 
 // The deadline of one load, from the command to the start of the process.
 // It frees the one place of the load when the storage service gives no
@@ -222,6 +231,29 @@ debug_object_name_is :: proc "contextless" (name: string) -> bool {
 }
 
 #assert(HASH_DIGITS > NAME_LIMIT)
+
+// The prefix of the name of a staging object: the object of the store
+// module_files that a file is written into before its nickname names it
+// (src/md/features/processes_from_a_disk.md, "How the file reaches the
+// disk"). The prefix alone passes NAME_LIMIT, so a staging object is never
+// a name that can run, and a load never takes a file that is half written.
+STAGING_PREFIX :: "module_files_staging_of_"
+STAGING_NAME_LIMIT :: len(STAGING_PREFIX) + NAME_LIMIT
+
+#assert(len(STAGING_PREFIX) > NAME_LIMIT)
+
+// staging_name_write writes the name of the staging object of a nickname.
+staging_name_write :: proc "contextless" (out: ^[STAGING_NAME_LIMIT]u8, nickname: string) -> string {
+	length := copy(out[:], STAGING_PREFIX)
+	length += copy(out[length:], nickname)
+	return string(out[:length])
+}
+
+// staging_name_is says if the name of an object of the store is the name
+// of a staging object.
+staging_name_is :: proc "contextless" (name: string) -> bool {
+	return len(name) > len(STAGING_PREFIX) && name[:len(STAGING_PREFIX)] == STAGING_PREFIX
+}
 
 // The read of one file: the size that the storage service gave, and the
 // bytes that came. The root service keeps one for the load that runs.

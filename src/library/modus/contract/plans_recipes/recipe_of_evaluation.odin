@@ -21,7 +21,7 @@ INPUT_FIELD_BYTES_MOST :: 4 + MAX_ENTRY_NAME_BYTES + 1 + blake3.HASH_SIZE
 // record is MAX_RECIPE_ARG_BYTES with its head. A writer of the arguments
 // sizes its buffer by it, so a value that converts always fits.
 MAX_RECIPE_ARGUMENT_VALUE_BYTES :: MAX_RECIPE_ARG_BYTES + MAX_RECIPE_INPUTS * INPUT_FIELD_BYTES_MOST
-#assert(MAX_RECIPE_ARGUMENT_VALUE_BYTES == 7328)
+#assert(MAX_RECIPE_ARGUMENT_VALUE_BYTES == 91392)
 
 // recipe_spec_of_arguments gives the record of a recipe from its builder and
 // the bytes of its argument value, as the evaluator writes a value: each

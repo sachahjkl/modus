@@ -71,7 +71,14 @@ Browse_Object_State :: enum u8 {
 	Blob,
 	Tree,
 	Damaged,
+	Too_Large, // More bytes than BROWSE_OBJECT_BYTES_MOST: the page does not read it.
 }
+
+// The most bytes of an object that a page reads into memory. The cache
+// holds objects of any size (object_cache.MAX_OBJECT_BYTES); a larger one
+// is taken with cache-get, frame by frame.
+BROWSE_OBJECT_BYTES_MOST :: 16 * 1024 * 1024
+BROWSE_TOO_LARGE_SENTENCE :: "This object holds more than 16 MiB, more than a page reads: take it with cache-get."
 
 // Classification of a verified blob.
 Browse_Blob_Kind :: enum u8 {
@@ -131,9 +138,9 @@ browse_damaged_page :: proc(page: Cache_Page_Settings, title: string, digest: bl
 	return browse_html_answer(page, .Ok, "no-store", strings.to_string(b))
 }
 
-// browse_read_object reads objects/<hash> within MAX_OBJECT_PAYLOAD_BYTES and
-// verifies its content hash. A file larger than the bound is damaged and not
-// read into memory.
+// browse_read_object reads objects/<hash> within BROWSE_OBJECT_BYTES_MOST and
+// verifies its content hash. A file larger than the bound is not read into
+// memory.
 browse_read_object :: proc(server: ^Cache_Server, digest: blake3.Hash, allocator := context.temp_allocator) -> (data: []u8, state: Browse_Object_State) {
 	if server == nil || object_cache.hash_is_zero(digest) {
 		return nil, .Absent
@@ -147,15 +154,18 @@ browse_read_object :: proc(server: ^Cache_Server, digest: blake3.Hash, allocator
 	if stat_err != nil {
 		return nil, .Absent
 	}
-	if info.type != .Regular || info.size < 0 || info.size > i64(object_cache.MAX_OBJECT_PAYLOAD_BYTES) {
+	if info.type != .Regular || info.size < 0 {
 		return nil, .Damaged
+	}
+	if info.size > BROWSE_OBJECT_BYTES_MOST {
+		return nil, .Too_Large
 	}
 	bytes, read_err := os.read_entire_file(path, allocator)
 	if read_err != nil {
 		return nil, .Damaged
 	}
-	if len(bytes) > object_cache.MAX_OBJECT_PAYLOAD_BYTES {
-		return nil, .Damaged
+	if len(bytes) > BROWSE_OBJECT_BYTES_MOST {
+		return nil, .Too_Large
 	}
 	if object_cache.verify_object_content(.Blob, digest, bytes) == .Trust_By_Hash {
 		return bytes, .Blob
@@ -546,6 +556,8 @@ cache_browse_tree :: proc(server: ^Cache_Server, page_settings: Cache_Page_Setti
 		return browse_not_found_page(page_settings, "Tree not found", "No object with this hash is in this object cache.")
 	case .Damaged:
 		return browse_damaged_page(page_settings, "Damaged object", digest, "This object is damaged: its bytes do not match its hash.")
+	case .Too_Large:
+		return browse_damaged_page(page_settings, "Object too large to show", digest, BROWSE_TOO_LARGE_SENTENCE)
 	case .Blob:
 		hex := hash_to_hex(digest)
 		b := strings.builder_make(context.temp_allocator)
@@ -650,6 +662,8 @@ cache_browse_blob :: proc(server: ^Cache_Server, page_settings: Cache_Page_Setti
 		return browse_not_found_page(page_settings, "Blob not found", "No object with this hash is in this object cache.")
 	case .Damaged:
 		return browse_damaged_page(page_settings, "Damaged object", digest, "This object is damaged: its bytes do not match its hash.")
+	case .Too_Large:
+		return browse_damaged_page(page_settings, "Object too large to show", digest, BROWSE_TOO_LARGE_SENTENCE)
 	case .Tree:
 		hex := hash_to_hex(digest)
 		b := strings.builder_make(context.temp_allocator)

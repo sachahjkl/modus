@@ -86,8 +86,10 @@ import "modus:contract/value_kinds"
 import "modus:system"
 
 // The debug object of the module of a disk process, read from the store
-// into memory of this service: at most DEBUG_OBJECT_BYTES_LIMIT, 2048
-// pages. The input history of a record, HISTORY_PAGES, 16 pages, and the
+// into memory of this service of its size: 2048 pages hold an object of
+// 8 MiB, and a larger one, up to DEBUG_OBJECT_BYTES_LIMIT, takes the
+// pages that the budget of this service has, or is refused with a line of
+// the log. The input history of a record, HISTORY_PAGES, 16 pages, and the
 // point copies that the kernel takes from its budget, POINT_COPY_PAGES, 32
 // pages. The rest: the page tables of the mappings, and the call ring and
 // the call region of the connection that reads the debug object.

@@ -2,6 +2,7 @@ package build
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
@@ -519,18 +520,19 @@ bootstrap_chain_dag_structural_refusals :: proc(t: ^testing.T) {
 		hash_a := blake3.hash(transmute([]u8)string("cycle-a"))
 		hash_b := blake3.hash(transmute([]u8)string("cycle-b"))
 		hash_c := blake3.hash(transmute([]u8)string("cycle-c"))
-		rec_a, _ := bootstrap_make_recipe_spec(hash_c, .Blob, 0, 64, nil, "a")
-		rec_b, _ := bootstrap_make_recipe_spec(hash_a, .Blob, 0, 64, nil, "b")
-		rec_c, _ := bootstrap_make_recipe_spec(hash_b, .Blob, 0, 64, nil, "c")
 		dep_c := [1]Bootstrap_Stage_Dependency{{upstream_stage_name = "stage_c", binding = .Builder}}
 		dep_a := [1]Bootstrap_Stage_Dependency{{upstream_stage_name = "stage_a", binding = .Builder}}
 		dep_b := [1]Bootstrap_Stage_Dependency{{upstream_stage_name = "stage_b", binding = .Builder}}
-		stages := [3]Bootstrap_Stage_Spec {
-			{name = "stage_a", kind = .Native_Recipe, dependencies = dep_c[:], recipe = rec_a, output_hash = hash_a},
-			{name = "stage_b", kind = .Native_Recipe, dependencies = dep_a[:], recipe = rec_b, output_hash = hash_b},
-			{name = "stage_c", kind = .Native_Recipe, dependencies = dep_b[:], recipe = rec_c, output_hash = hash_c},
-		}
-		cyclic := Bootstrap_Chain{name = "three_cycle", kind = .C_Compiler_Self_Host, stages = stages[:]}
+		// A stage holds a recipe of about 90 KiB: the stages are on the heap
+		// and each recipe is written in place.
+		stages := make([]Bootstrap_Stage_Spec, 3, context.temp_allocator)
+		stages[0].name, stages[0].kind, stages[0].dependencies, stages[0].output_hash = "stage_a", .Native_Recipe, dep_c[:], hash_a
+		stages[1].name, stages[1].kind, stages[1].dependencies, stages[1].output_hash = "stage_b", .Native_Recipe, dep_a[:], hash_b
+		stages[2].name, stages[2].kind, stages[2].dependencies, stages[2].output_hash = "stage_c", .Native_Recipe, dep_b[:], hash_c
+		_ = bootstrap_make_recipe_spec(&stages[0].recipe, hash_c, .Blob, 0, 64, nil, "a")
+		_ = bootstrap_make_recipe_spec(&stages[1].recipe, hash_a, .Blob, 0, 64, nil, "b")
+		_ = bootstrap_make_recipe_spec(&stages[2].recipe, hash_b, .Blob, 0, 64, nil, "c")
+		cyclic := Bootstrap_Chain{name = "three_cycle", kind = .C_Compiler_Self_Host, stages = stages}
 		testing.expect_value(t, bootstrap_chain_verify(&cyclic).refusal, Bootstrap_Chain_Refusal.Cyclic_Dependency)
 	}
 
@@ -538,7 +540,7 @@ bootstrap_chain_dag_structural_refusals :: proc(t: ^testing.T) {
 	{
 		bad := bootstrap_chain_c_compiler_self_host()
 		// Swap stage 1 and stage 2 so stage 2 (depending on stage 1) appears earlier.
-		bad.stages[1], bad.stages[2] = bad.stages[2], bad.stages[1]
+		slice.ptr_swap_non_overlapping(&bad.stages[1], &bad.stages[2], size_of(Bootstrap_Stage_Spec))
 		testing.expect_value(t, bootstrap_chain_verify(&bad).refusal, Bootstrap_Chain_Refusal.Invalid_Topological_Order)
 	}
 }

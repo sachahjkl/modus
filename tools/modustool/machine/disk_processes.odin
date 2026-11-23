@@ -21,6 +21,7 @@ import "core:strings"
 import "modus:contract/blake3"
 import "modus:contract/disk_process_page"
 import "modus:disk_process"
+import "modus:web"
 import "modustool:foundation"
 import "modustool:build"
 
@@ -246,7 +247,12 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// that it serves live until the end of the test.
 	served_bytes := slice.clone(module_file)
 	defer delete(served_bytes)
-	served := [?]Listener_File{{path = "/" + foundation.DISK_MODULE_NAME, bytes = served_bytes}, {path = STORE_LIBRARY_CHANGED_PATH, bytes = changed_library_file}}
+	// A body of 2 MiB that ends after 512 KiB: the receive stops before its
+	// first step of 1 MiB.
+	cut_bytes := make([]u8, CUT_BODY_BYTES)
+	defer delete(cut_bytes)
+	web.pattern_fill(cut_bytes, 0)
+	served := [?]Listener_File{{path = "/" + foundation.DISK_MODULE_NAME, bytes = served_bytes}, {path = STORE_LIBRARY_CHANGED_PATH, bytes = changed_library_file}, {path = CUT_BODY_PATH, bytes = cut_bytes, cut_at = CUT_BODY_SENT_BYTES}}
 	machine_test(part, steps[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROCESSES, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_MODULES_DISK, user_network = true, served_files = served[:], fact_outside_modules = rendered_outside_modules[:]}) or_return
 
 	// The second machine, on the same disk.
@@ -594,6 +600,12 @@ disk_processes_debugger_steps :: proc(steps: ^[dynamic]Step, outsider_hash: stri
 // comes over the network: a name that the disk of the tool does not hold.
 RECEIVED_NICKNAME :: "received"
 
+// The path of a body that ends early, its Content-Length and the bytes
+// that the listener sends of it: under the first step of 1 MiB of a write.
+CUT_BODY_PATH :: "/cut_body"
+CUT_BODY_BYTES :: 2 * 1024 * 1024
+CUT_BODY_SENT_BYTES :: 512 * 1024
+
 // disk_processes_network_steps adds the steps of the module file service:
 // the module file comes from the listener of the tool through the network
 // of the machine, under a new nickname, with no new disk. The service
@@ -625,6 +637,22 @@ disk_processes_network_steps :: proc(steps: ^[dynamic]Step, hash: string, change
 	append(steps, Step{kind = .Wait, text = "visitor: the context holds the log, a window and the budget, and no handle of a grant: as it must"})
 	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", RECEIVED_NICKNAME)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped: ", RECEIVED_NICKNAME)})
+	// A body that ends early, before the first step of 1 MiB, over the
+	// same nickname: the receive fails, its staging object goes with its
+	// pending changes, and the file before stays and runs. The list shows
+	// the file before and no staging object, and a whole receive after it
+	// passes: no pending change of the cut receive is left in the way.
+	append(steps, Step{kind = .Type, text = fmt.aprintf("module_files.receive(\"%s\", \"%s\")", RECEIVED_NICKNAME, CUT_BODY_PATH)})
+	append(steps, Step{kind = .Wait, text = "[console] error: module_files.receive: "})
+	append(steps, Step{kind = .Type, text = "module_files.list()"})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("module_files: the file %s, %d bytes, the BLAKE3 hash of its bytes %s", RECEIVED_NICKNAME, module_size, hash)})
+	append(steps, Step{kind = .Wait, text = "module_files: listed 8 module files of the store module_files, each hash computed on its bytes", fails_on = disk_process.STAGING_PREFIX})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", RECEIVED_NICKNAME, hash)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant", RECEIVED_NICKNAME, hash), any_order = true})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", RECEIVED_NICKNAME)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped: ", RECEIVED_NICKNAME)})
+	append(steps, Step{kind = .Type, text = fmt.aprintf("module_files.receive(\"%s\", \"/%s\")", RECEIVED_NICKNAME, foundation.DISK_MODULE_NAME)})
+	append(steps, Step{kind = .Wait, text = fmt.aprintf("module_files: stored %s from /%s: %d bytes, the BLAKE3 hash of its bytes %s", RECEIVED_NICKNAME, foundation.DISK_MODULE_NAME, module_size, hash)})
 }
 
 // The hashes of the files of the import scan, as 64 hexadecimal digits.

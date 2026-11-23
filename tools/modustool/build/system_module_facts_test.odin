@@ -281,7 +281,7 @@ the_facts_of_the_module_file_service_write_the_lines_of_before :: proc(t: ^testi
 	for file_name in file_names {
 		for size in edges {
 			facts_expect_line(t, render(t, file, "File_Hashed", {{"size", size}, {"file_hash", hash}, {"file_name", file_name}}), line_of_before("module_files: the file ", sentence.Module_Name{file_name}, ", ", size, " bytes, the BLAKE3 hash of its bytes ", sentence.Hash{hash[:]}))
-			facts_expect_line(t, render(t, file, "File_Not_Hashed", {{"size", size}, {"file_name", file_name}}), line_of_before("module_files: the file ", sentence.Module_Name{file_name}, ", ", size, " bytes, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file"))
+			facts_expect_line(t, render(t, file, "File_Not_Hashed", {{"size", size}, {"file_name", file_name}}), line_of_before("module_files: the file ", sentence.Module_Name{file_name}, ", ", size, " bytes, has no hash: its bytes did not come, or pass the 67108864 bytes of a module file"))
 		}
 	}
 	for count in counts {

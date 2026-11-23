@@ -23,14 +23,14 @@ import writer "modus:contract/module_file_writer"
 // The bounds of a text. A bound is a cost that the workspace pays, not a
 // rule of the language. The caller gives the memory of the workspace, so
 // it chooses the bounds of the code, the data and the tables
-// (workspace_make). The bounds below are those of `Workspace_Memory` and
-// of the tier Unit, sized for a text of 256 KiB that chibicc writes: about
-// 20 bytes of text for each instruction of about 5 bytes, a label for each
-// 10 lines, a reference for each 5. The module `assemble` carves a
-// workspace of a tier from an arena for each call (workspace_carve), which
-// the budget of its call host pays (src/md/features/assembler.md, "The
-// bounds of the workspace").
-TEXT_BYTES_MOST :: 1 << 24 // The bytes of a text: a place counts its offset in 32 bits.
+// (workspace_make). The bounds below are those of `Workspace_Memory`, the
+// scale 0 of a workspace, sized for a text of 256 KiB that chibicc writes:
+// about 20 bytes of text for each instruction of about 5 bytes, a label for
+// each 10 lines, a reference for each 5. The module `assemble` carves a
+// workspace of a scale from an arena for each call (workspace_carve), and
+// doubles the scale while a table is full and the budget of its call host
+// pays (src/md/features/assembler.md, "The bounds of the workspace").
+TEXT_BYTES_MOST :: 1 << 28 // The bytes of a text, 256 MiB: a place counts its offset in 32 bits.
 LINE_BYTES_MOST :: 1024 // The bytes of one line, its comment included.
 CODE_BYTES_MOST :: 128 * 1024 // The bytes of the section code that a file stores.
 DATA_BYTES_MOST :: 128 * 1024 // The bytes of the section data that a file stores.
@@ -43,7 +43,7 @@ LABEL_CAPACITY :: 2048
 // most half full.
 LABEL_SLOTS_PER_LABEL :: 4
 REFERENCE_CAPACITY :: 4096 // The operands that name a label.
-EXPORT_CAPACITY :: 32
+EXPORT_CAPACITY :: 128 // The `export` directives.
 REBASE_CAPACITY :: 2048 // The `quad` values that name a label: each is one rebase of the module.
 LOCAL_LABEL_DIGITS :: 10 // The numeric local labels `0:` to `9:`.
 // The largest alignment of `align`: the section data starts on a page, so
@@ -62,7 +62,7 @@ Section :: enum u8 {
 Refusal :: enum u32 {
 	None                   = 0, // The text is assembled.
 	Text_Empty             = 1, // The text has no byte.
-	Text_Too_Long          = 2, // The text has more than TEXT_BYTES_MOST bytes. value: its bytes.
+	Text_Too_Long          = 2, // The text has more than TEXT_BYTES_MOST bytes. value: its bytes. The place is the first byte of the text.
 	Line_Too_Long          = 3, // A line has more than LINE_BYTES_MOST bytes. value: its bytes.
 	Character_Not_Valid    = 4, // A control byte other than a tab, or a byte past ASCII outside a comment. value: the byte.
 	Mnemonic_Unknown       = 5, // The first word of a statement is no instruction of the subset and no directive.
@@ -90,7 +90,7 @@ Refusal :: enum u32 {
 	Name_Not_Valid         = 27, // The name of an export or of a parameter is not a name of the module format.
 	Labels_Full            = 28, // More labels than the workspace holds. value: its capacity.
 	References_Full        = 29, // More operands that name a label than the workspace holds. value: its capacity.
-	Exports_Full           = 30, // More than EXPORT_CAPACITY exports.
+	Exports_Full           = 30, // More exports than the workspace holds. value: its capacity.
 	No_Instruction         = 31, // The text has no byte in the section code.
 	Rebase_Not_In_Data     = 32, // A `quad` names a label in the section code: a loader rebases writable data only.
 	Rebase_Not_Aligned     = 33, // A `quad` that names a label is not on 8 bytes of the section data. value: its offset in the section.
@@ -200,7 +200,7 @@ Workspace :: struct {
 	label_slots:     []Label_Slot, // A power of two of slots, LABEL_SLOTS_PER_LABEL for each label.
 	references:      []Reference,
 	reference_count: int,
-	exports:         [EXPORT_CAPACITY]Export_Declaration,
+	exports:         []Export_Declaration,
 	export_count:    int,
 	data_references:      []Data_Reference,
 	data_reference_count: int,
@@ -210,11 +210,11 @@ Workspace :: struct {
 	local_label_definitions: [LOCAL_LABEL_DIGITS]u32,
 	unit:            u32, // The unit of the statements from here: each `unit` adds 1.
 	segments:        [2]writer.Segment_Part, // The code, and the data when the text has data.
-	export_parts:    [EXPORT_CAPACITY]writer.Export_Part,
+	export_parts:    []writer.Export_Part, // One for each export: the parts that the writer takes.
 }
 
 // The memory of a workspace with the bounds of the constants above, the
-// tier Unit as one record: a host program and a host test take one.
+// scale 0, as one record: a host program and a host test take one.
 Workspace_Memory :: struct {
 	code:            [CODE_BYTES_MOST]u8,
 	data:            [DATA_BYTES_MOST]u8,
@@ -223,12 +223,15 @@ Workspace_Memory :: struct {
 	references:      [REFERENCE_CAPACITY]Reference,
 	data_references: [REBASE_CAPACITY]Data_Reference,
 	rebases:         [REBASE_CAPACITY]u64,
+	exports:         [EXPORT_CAPACITY]Export_Declaration,
+	export_parts:    [EXPORT_CAPACITY]writer.Export_Part,
 }
 
 // workspace_make gives a workspace over memory of the caller. The label
 // slots are cut to a power of two, and the labels to the slots that they
-// need; the rebases to the data references, one for each.
-workspace_make :: proc "contextless" (code: []u8, data: []u8, labels: []Label, label_slots: []Label_Slot, references: []Reference, data_references: []Data_Reference, rebases: []u64) -> Workspace {
+// need; the rebases to the data references, one for each; the exports to
+// their parts, one for each.
+workspace_make :: proc "contextless" (code: []u8, data: []u8, labels: []Label, label_slots: []Label_Slot, references: []Reference, data_references: []Data_Reference, rebases: []u64, exports: []Export_Declaration, export_parts: []writer.Export_Part) -> Workspace {
 	slot_count := 1
 	for slot_count * 2 <= len(label_slots) {
 		slot_count *= 2
@@ -238,6 +241,7 @@ workspace_make :: proc "contextless" (code: []u8, data: []u8, labels: []Label, l
 	}
 	label_count := min(len(labels), slot_count / LABEL_SLOTS_PER_LABEL)
 	reference_count := min(len(data_references), len(rebases))
+	export_count := min(len(exports), len(export_parts))
 	return {
 		code            = code,
 		data            = data,
@@ -246,16 +250,9 @@ workspace_make :: proc "contextless" (code: []u8, data: []u8, labels: []Label, l
 		references      = references,
 		data_references = data_references[:reference_count],
 		rebases         = rebases[:reference_count],
+		exports         = exports[:export_count],
+		export_parts    = export_parts[:export_count],
 	}
-}
-
-// The two sizes of a workspace that the module `assemble` carves from an
-// arena for one call (src/md/features/assembler.md, "The bounds of the
-// workspace"). The arena is made at the call and ended at its return, so the
-// module keeps no table between calls.
-Workspace_Tier :: enum u8 {
-	Unit    = 0, // The bounds of Workspace_Memory: a text of one source, which a call host of the default budget pays.
-	Program = 1, // The bounds of a program of many units, such as chibicc: 295 KiB of code, 52 KiB of data, 6928 labels.
 }
 
 // The bounds of a workspace: the lengths of its slices.
@@ -265,46 +262,58 @@ Workspace_Bounds :: struct {
 	labels:     u64, // The label slots are LABEL_SLOTS_PER_LABEL for each label: labels times that is a power of two.
 	references: u64,
 	rebases:    u64, // The data references, one for each rebase.
+	exports:    u64, // The export parts, one for each export.
 }
 
-// The bounds of each tier. Each bound of Program is at least the bound of
-// Unit, so a text that Unit holds, Program holds.
-@(rodata)
-WORKSPACE_BOUNDS := [Workspace_Tier]Workspace_Bounds {
-	.Unit    = {code_bytes = CODE_BYTES_MOST, data_bytes = DATA_BYTES_MOST, labels = LABEL_CAPACITY, references = REFERENCE_CAPACITY, rebases = REBASE_CAPACITY},
-	.Program = {code_bytes = PROGRAM_CODE_BYTES_MOST, data_bytes = PROGRAM_DATA_BYTES_MOST, labels = PROGRAM_LABEL_CAPACITY, references = PROGRAM_REFERENCE_CAPACITY, rebases = PROGRAM_REBASE_CAPACITY},
-}
+// The largest scale of a workspace: 512 MiB of code. A jump reaches 2 GiB
+// at most, and a budget refuses a workspace far below this scale; the bound
+// only ends the doubling of a text that a larger table never takes.
+WORKSPACE_SCALE_MOST :: 12
 
-// The bounds of the tier Program: each is past the measure of chibicc by
-// a factor of 1.7 or more (8505 operands that name a label, 246 rebases).
-PROGRAM_CODE_BYTES_MOST :: 512 * 1024
-PROGRAM_DATA_BYTES_MOST :: 128 * 1024
-PROGRAM_LABEL_CAPACITY :: 16 * 1024
-PROGRAM_REFERENCE_CAPACITY :: 16 * 1024
-PROGRAM_REBASE_CAPACITY :: 2048
-// The bytes of a text that the module `assemble` takes: a program of many
-// units. chibicc and its jump.s join into about 2 MiB of text.
-PROGRAM_TEXT_BYTES_MOST :: 4 * 1024 * 1024
-// The bytes of a text up to which the module starts with the tier Unit: the
-// bound of a text before the tier Program existed.
+// The bytes of a text for which the scale 0 is sized. The module starts at
+// the scale whose share of text holds the text, so a text of one source
+// takes one assembly, and a program passes in few.
 UNIT_TEXT_BYTES_MOST :: 256 * 1024
 
-#assert(PROGRAM_TEXT_BYTES_MOST <= TEXT_BYTES_MOST)
-#assert(PROGRAM_CODE_BYTES_MOST >= CODE_BYTES_MOST && PROGRAM_DATA_BYTES_MOST >= DATA_BYTES_MOST)
-#assert(PROGRAM_LABEL_CAPACITY >= LABEL_CAPACITY && PROGRAM_REFERENCE_CAPACITY >= REFERENCE_CAPACITY && PROGRAM_REBASE_CAPACITY >= REBASE_CAPACITY)
-#assert((PROGRAM_LABEL_CAPACITY * LABEL_SLOTS_PER_LABEL) & (PROGRAM_LABEL_CAPACITY * LABEL_SLOTS_PER_LABEL - 1) == 0)
+// workspace_bounds_of_scale gives the bounds of a workspace of a scale: the
+// bounds of Workspace_Memory times 2 to the scale. Each bound doubles, so a
+// text that a scale holds, each larger scale holds; the label slots stay a
+// power of two.
+workspace_bounds_of_scale :: proc "contextless" (scale: uint) -> Workspace_Bounds {
+	return {
+		code_bytes = CODE_BYTES_MOST << scale,
+		data_bytes = DATA_BYTES_MOST << scale,
+		labels     = LABEL_CAPACITY << scale,
+		references = REFERENCE_CAPACITY << scale,
+		rebases    = REBASE_CAPACITY << scale,
+		exports    = EXPORT_CAPACITY << scale,
+	}
+}
+
+// workspace_scale_of_text gives the first scale that a text of text_bytes
+// takes: the least scale whose share of text holds it, at most
+// WORKSPACE_SCALE_MOST.
+workspace_scale_of_text :: proc "contextless" (text_bytes: u64) -> uint {
+	scale: uint
+	for scale < WORKSPACE_SCALE_MOST && text_bytes > UNIT_TEXT_BYTES_MOST << scale {
+		scale += 1
+	}
+	return scale
+}
+
 #assert((LABEL_CAPACITY * LABEL_SLOTS_PER_LABEL) & (LABEL_CAPACITY * LABEL_SLOTS_PER_LABEL - 1) == 0)
+#assert(CODE_BYTES_MOST << WORKSPACE_SCALE_MOST <= 1 << 30)
 
 // The alignment of the memory that workspace_carve takes, and of each table
 // in it: the largest alignment of a record of the tables.
-WORKSPACE_ALIGNMENT :: max(align_of(Label), align_of(Reference), align_of(Data_Reference), align_of(u64), align_of(Label_Slot))
+WORKSPACE_ALIGNMENT :: max(align_of(Label), align_of(Reference), align_of(Data_Reference), align_of(u64), align_of(Label_Slot), align_of(Export_Declaration), align_of(writer.Export_Part))
 
 // workspace_layout gives the offset of each slice of a workspace of these
 // bounds in one block of memory, and the bytes of the block. The tables come
 // first, each on WORKSPACE_ALIGNMENT, then the code and the data.
 @(private)
 Workspace_Layout :: struct {
-	labels, label_slots, references, data_references, rebases, code, data, total: u64,
+	labels, label_slots, references, data_references, rebases, exports, export_parts, code, data, total: u64,
 }
 
 @(private)
@@ -321,25 +330,26 @@ workspace_layout :: proc "contextless" (bounds: Workspace_Bounds) -> Workspace_L
 	layout.references = place(&cursor, bounds.references * size_of(Reference))
 	layout.data_references = place(&cursor, bounds.rebases * size_of(Data_Reference))
 	layout.rebases = place(&cursor, bounds.rebases * size_of(u64))
+	layout.exports = place(&cursor, bounds.exports * size_of(Export_Declaration))
+	layout.export_parts = place(&cursor, bounds.exports * size_of(writer.Export_Part))
 	layout.code = place(&cursor, bounds.code_bytes)
 	layout.data = place(&cursor, bounds.data_bytes)
 	layout.total = cursor
 	return layout
 }
 
-// workspace_bytes gives the bytes of the memory that a workspace of a tier
-// takes in workspace_carve.
-workspace_bytes :: proc "contextless" (tier: Workspace_Tier) -> u64 {
-	return workspace_layout(WORKSPACE_BOUNDS[tier]).total
+// workspace_bytes gives the bytes of the memory that a workspace of these
+// bounds takes in workspace_carve.
+workspace_bytes :: proc "contextless" (bounds: Workspace_Bounds) -> u64 {
+	return workspace_layout(bounds).total
 }
 
-// workspace_carve gives a workspace of a tier over one block of memory of
-// the caller. ok is false, and the workspace is zero, when the block has
-// fewer bytes than workspace_bytes(tier) or its address is not a multiple
+// workspace_carve gives a workspace of these bounds over one block of memory
+// of the caller. ok is false, and the workspace is zero, when the block has
+// fewer bytes than workspace_bytes(bounds) or its address is not a multiple
 // of WORKSPACE_ALIGNMENT. The block must be zero or hold the bytes of an
 // earlier workspace: assemble zeroes the label slots first.
-workspace_carve :: proc "contextless" (memory: []u8, tier: Workspace_Tier) -> (workspace: Workspace, ok: bool) {
-	bounds := WORKSPACE_BOUNDS[tier]
+workspace_carve :: proc "contextless" (memory: []u8, bounds: Workspace_Bounds) -> (workspace: Workspace, ok: bool) {
 	layout := workspace_layout(bounds)
 	if u64(len(memory)) < layout.total || uintptr(raw_data(memory)) & (WORKSPACE_ALIGNMENT - 1) != 0 {
 		return {}, false
@@ -353,23 +363,47 @@ workspace_carve :: proc "contextless" (memory: []u8, tier: Workspace_Tier) -> (w
 		references = ([^]Reference)(&base[layout.references])[:bounds.references],
 		data_references = ([^]Data_Reference)(&base[layout.data_references])[:bounds.rebases],
 		rebases = ([^]u64)(&base[layout.rebases])[:bounds.rebases],
+		exports = ([^]Export_Declaration)(&base[layout.exports])[:bounds.exports],
+		export_parts = ([^]writer.Export_Part)(&base[layout.export_parts])[:bounds.exports],
 	), true
 }
 
-// refusal_is_capacity says if a refusal is a bound of the workspace that a
-// larger tier can pass: a section past its buffer, or a full table. The
-// value of Section_Past_Capacity past SECTION_EXTENT_MOST is no bound of the
-// buffer, and the larger tier refuses it again.
+// refusal_is_capacity says if a refusal is a bound of the workspace: a
+// section past its buffer, or a full table.
 refusal_is_capacity :: proc "contextless" (refusal: Refusal) -> bool {
 	return refusal in CAPACITY_REFUSALS
 }
 
+// workspace_scale_after gives the next scale of a workspace that can pass a
+// refusal of the scale scale, or ok false when no scale up to
+// WORKSPACE_SCALE_MOST can: a refusal that is no bound of the workspace, or
+// a section that reaches past the buffer of the largest scale (a `zero` of
+// a terabyte then a byte). A section skips to the first scale whose buffer
+// holds the bytes that it would reach, so a text needs no assembly for each
+// scale between.
+workspace_scale_after :: proc "contextless" (record: Refusal_Record, scale: uint) -> (next: uint, ok: bool) {
+	if !refusal_is_capacity(record.refusal) {
+		return scale, false
+	}
+	next = scale + 1
+	if record.refusal == .Section_Past_Capacity {
+		for next <= WORKSPACE_SCALE_MOST && u64(CODE_BYTES_MOST) << next < record.value {
+			next += 1
+		}
+	}
+	return next, next <= WORKSPACE_SCALE_MOST
+}
+
+// The code and the data have one buffer size at each scale, so the bytes
+// that a section would reach name one scale.
+#assert(CODE_BYTES_MOST == DATA_BYTES_MOST)
+
 // The refusals of a bound of the workspace.
-CAPACITY_REFUSALS :: bit_set[Refusal]{.Section_Past_Capacity, .Labels_Full, .References_Full, .Rebases_Full}
+CAPACITY_REFUSALS :: bit_set[Refusal]{.Section_Past_Capacity, .Labels_Full, .References_Full, .Rebases_Full, .Exports_Full}
 
 // workspace_of_memory gives the workspace of a Workspace_Memory.
 workspace_of_memory :: proc "contextless" (memory: ^Workspace_Memory) -> Workspace {
-	return workspace_make(memory.code[:], memory.data[:], memory.labels[:], memory.label_slots[:], memory.references[:], memory.data_references[:], memory.rebases[:])
+	return workspace_make(memory.code[:], memory.data[:], memory.labels[:], memory.label_slots[:], memory.references[:], memory.data_references[:], memory.rebases[:], memory.exports[:], memory.export_parts[:])
 }
 
 // workspace_reset sets the counts of a workspace to zero, and empties its
@@ -400,7 +434,9 @@ assemble :: proc "contextless" (text: string, workspace: ^Workspace) -> (parts: 
 		return {}, {refusal = .Text_Empty, place = {line = 1, column = 1}}
 	}
 	if len(text) > TEXT_BYTES_MOST {
-		return {}, {refusal = .Text_Too_Long, place = place_of_offset(text, TEXT_BYTES_MOST), value = u64(len(text))}
+		// The place is the first byte: the text is too long as a whole, and a
+		// place at the bound would read the text up to it.
+		return {}, {refusal = .Text_Too_Long, place = {line = 1, column = 1}, value = u64(len(text))}
 	}
 	if refusal = statements_read(text, workspace); refusal.refusal != .None {
 		return {}, refusal
@@ -422,7 +458,7 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 	case .Text_Empty:
 		return "the text is empty"
 	case .Text_Too_Long:
-		return "the text has more than 16 MiB"
+		return "the text has more than 256 MiB"
 	case .Line_Too_Long:
 		return "the line has more than 1024 bytes"
 	case .Character_Not_Valid:
@@ -478,7 +514,7 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 	case .References_Full:
 		return "the text has more operands that name a label than the workspace holds"
 	case .Exports_Full:
-		return "the text has more than 32 exports"
+		return "the text has more exports than the workspace holds"
 	case .No_Instruction:
 		return "the text has no instruction"
 	case .Rebase_Not_In_Data:
@@ -1031,7 +1067,7 @@ export_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) 
 		}
 	}
 	if workspace.export_count == len(workspace.exports) {
-		return refuse(.Exports_Full, declaration.place, EXPORT_CAPACITY)
+		return refuse(.Exports_Full, declaration.place, u64(len(workspace.exports)))
 	}
 	if !next_is(cursor, '(') {
 		return refuse(.Directive_Not_Valid, place_here(cursor))

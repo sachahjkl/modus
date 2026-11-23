@@ -10,19 +10,24 @@ import "modus:contract/declaration_eval"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/object_cache"
+import "modus:contract/root_delegation"
 import "modus:contract/tree_hash"
 
 // The context of the hash of the native C builder.
 C_BUILDER_DOMAIN :: "modus builder c v1"
 
-// The bounds of a C build. A source has the bound of the export compile
-// of the module c_compiler. The text of the assembly is many times its
-// source: one line of C gives several lines of assembly. The module is an
-// object of the local store of recipes, which keeps it beside its
-// realisation.
-C_SOURCE_BYTES_LIMIT :: 256 * 1024
-C_TEXT_BYTES_LIMIT :: 1024 * 1024
-C_MODULE_BYTES_LIMIT :: 64 * 1024
+// The bounds of a C build of one source by the service recipes: the source
+// that the module c_compiler takes, the text that the module assemble
+// takes, and the module that one object of a cache holds, as a realisation
+// is shared through a cache. The service makes the memory object of the
+// text and of the module of the size that the build needs
+// (src/md/features/program_loop.md, "The native C builder"): these bounds
+// cost no memory to a small build.
+C_SOURCE_BYTES_LIMIT :: 64 * 1024 * 1024
+C_TEXT_BYTES_LIMIT :: 256 * 1024 * 1024
+// A module past the module file that a process loads builds and never
+// runs, so the bound is the smaller of the two.
+C_MODULE_BYTES_LIMIT :: min(RECIPE_OUTPUT_BYTES_MOST, u64(root_delegation.MODULE_BYTES_LIMIT))
 
 // The blocks of the output of a C build: one module file, in blocks of
 // 4 KiB.
@@ -83,15 +88,6 @@ c_build_module_refusal :: proc "contextless" (bytes: []u8) -> errors.Error_Recor
 	return {}
 }
 
-// c_build_substitute_refusal checks the module of a realisation against its
-// output hash: a realisation read back from the private store keeps its
-// object under the hash of its record, with no new hash of the bytes.
-c_build_substitute_refusal :: proc "contextless" (bytes: []u8, output_hash: blake3.Hash) -> errors.Error_Record {
-	if blake3.hash(bytes) != output_hash {
-		return errors.error_make(.Damaged, .Modules)
-	}
-	return {}
-}
 
 // c_build_module_room_refusal checks that the memory object of
 // memory_bytes that the caller lends holds the module.
@@ -119,12 +115,13 @@ c_builder_hash :: proc "contextless" (compiler_hash, assembler_hash: blake3.Hash
 // bytes), no argument, and a module file as its output. The refusal is the
 // one of recipe_validate: a name of the source that no tree takes.
 c_build_recipe :: proc "contextless" (compiler_hash, assembler_hash: blake3.Hash, source_name: string, source_hash: blake3.Hash, spec: ^Recipe_Spec) -> Recipe_Refusal {
-	spec^ = {
-		builder_hash       = c_builder_hash(compiler_hash, assembler_hash),
-		output_kind        = .Blob,
-		output_block_limit = C_BUILD_OUTPUT_BLOCK_LIMIT,
-		input_count        = 1,
-	}
+	// Field by field: a literal of the whole record would be a value of
+	// about 90 KiB on the stack.
+	spec^ = {}
+	spec.builder_hash = c_builder_hash(compiler_hash, assembler_hash)
+	spec.output_kind = .Blob
+	spec.output_block_limit = C_BUILD_OUTPUT_BLOCK_LIMIT
+	spec.input_count = 1
 	if len(source_name) == 0 || len(source_name) > MAX_ENTRY_NAME_BYTES {
 		spec^ = {}
 		return .Invalid_Input_Name

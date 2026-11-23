@@ -306,7 +306,8 @@ inputs_tree_sandbox :: proc(inputs: []Recipe_Input_Row) -> (sandbox: Builder_San
 	if refusal != .None {
 		return {}, refusal
 	}
-	return builder_sandbox_prepare(&spec)
+	refusal = builder_sandbox_prepare(&spec, &sandbox)
+	return sandbox, refusal
 }
 
 @(test)

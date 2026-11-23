@@ -46,6 +46,8 @@ SERVICE_RESERVE_PAGES :: u64(3072)
 
 service_lock: system.Lock
 guest_queue: recipes_core.Guest_Queue
+// The queue as the holder of the retention rule of the store.
+guest_queue_keeper: recipes_core.Guest_Queue_Keeper
 guest_job: recipes_core.Guest_Queue_Job // The copy of the running build that the build thread reads.
 guest_job_result: pr.Recipe_Build_Result
 guest_thread: system.Thread

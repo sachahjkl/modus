@@ -51,7 +51,7 @@ File_Hashed :: struct {
 
 // A file of the store whose bytes did not come, or are too many for a
 // module file.
-@(log_fact = "module_files: the file {file_name}, {size}, has no hash: its bytes did not come, or pass the 4194304 bytes of a module file")
+@(log_fact = "module_files: the file {file_name}, {size}, has no hash: its bytes did not come, or pass the 67108864 bytes of a module file")
 File_Not_Hashed :: struct {
 	size:      value_kinds.Size_In_Bytes,
 	file_name: [72]u8,
@@ -122,7 +122,7 @@ Listing_Entry_Name_Refused :: struct {}
 Listing_Entry_Kind_Refused :: struct {}
 
 // The bytes of the Text field of the problem of a GET: the longest, "the
-// answer has no Content-Length of 1 to 4194304 bytes", has 54 bytes, and a
+// answer has no Content-Length of 1 byte to 64 MiB", has 52 bytes, and a
 // zero byte.
 GET_PROBLEM_FIELD_BYTES :: 64
 
@@ -161,3 +161,18 @@ File_Stored :: struct {
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 #assert(size_of(File_Not_Hashed) == 8 + FILE_NAME_FIELD_BYTES)
 #assert(size_of(Serving) == 16 + ADDRESS_FIELD_BYTES)
+
+// A write that stopped could not drop the pending changes of its staging
+// object: they stay held on the connection of the service until the next
+// write of the nickname drops them.
+@(log_fact = "module_files: the pending changes of the staging object of {nickname} were not dropped: the next write of the nickname drops them")
+Staging_Pending_Kept :: struct {
+	nickname: value_kinds.Module_Name_Field,
+}
+
+// A staging object that a stop or a refused remove left: the service
+// removed it.
+@(log_fact = "module_files: removed the staging object {file_name}, which a write that stopped left")
+Staging_Removed :: struct {
+	file_name: [72]u8,
+}

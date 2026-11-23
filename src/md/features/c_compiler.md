@@ -209,7 +209,7 @@ For each program, the host test proves that the relocatable object needs no symb
 - **The place of an error** is an offset in the text after `chibicc` changed it: a `\r\n` became `\n`, and a backslash before a new line went away. For a source with neither, it is the offset in the source.
 - **An error in an include file** names no byte of the source: the error record is `Refused`, and the log line names the file and its line.
 - **A source of more bytes than its bound** is refused before the C entry: the C part never reads past the copy.
-- **The copy of the source is in the arena**, not in the memory of the module. The bound is 256 KiB, and a static copy would take 64 pages of the 512 of a call host for each source, whatever its size: the arena takes the bytes of the source only. The byte that a diagnostic names is read before the arena ends.
+- **The copy of the source is in the arena**, not in the memory of the module. The bound is 64 MiB, more than the amalgamation of SQLite, and a static copy would take its pages of a call host for each source, whatever its size: the arena takes the bytes of the source only, and a budget that cannot pay a source refuses it with its error record. The byte that a diagnostic names is read before the arena ends.
 - **The memory of the arena runs out.** `malloc` that gets no memory writes "out of memory" and ends the compile: the export fails with the record of the refused commit.
 
 ## State

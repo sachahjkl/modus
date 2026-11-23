@@ -1,6 +1,7 @@
 #+build !freestanding
 package recipes_core
 
+import "base:runtime"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/builder"
@@ -18,6 +19,11 @@ Memory_Objects :: struct {
 	taken:       [2 * builder.MAX_INPUT_OBJECTS]blake3.Hash,
 	taken_count: int,
 	wrong_bytes: bool, // Each read gives the bytes of another tree.
+	// The places of the trees, and the hashes of objects and trees that the
+	// place holds: a walk of thousands of objects asks for each one.
+	tree_index:  map[blake3.Hash]int,
+	known:       map[blake3.Hash]bool,
+	known_count: int, // The objects that known holds.
 }
 
 @(private = "file")
@@ -26,6 +32,8 @@ memory_objects_make :: proc() -> ^Memory_Objects {
 	objects.tree_hashes = make([dynamic]blake3.Hash, context.temp_allocator)
 	objects.tree_bytes = make([dynamic][]u8, context.temp_allocator)
 	objects.objects = make([dynamic]blake3.Hash, context.temp_allocator)
+	objects.tree_index = make(map[blake3.Hash]int, context.temp_allocator)
+	objects.known = make(map[blake3.Hash]bool, context.temp_allocator)
 	return objects
 }
 
@@ -48,6 +56,8 @@ tree_add :: proc(objects: ^Memory_Objects, entries: []tree_hash.Tree_Entry) -> b
 	hash, _ := tree_hash.tree_hash(bytes[:written])
 	append(&objects.tree_hashes, hash)
 	append(&objects.tree_bytes, bytes[:written])
+	objects.tree_index[hash] = len(objects.tree_hashes) - 1
+	objects.known[hash] = true
 	return hash
 }
 
@@ -60,31 +70,28 @@ entry_of :: proc(kind: tree_hash.Tree_Entry_Kind, name: string, hash: blake3.Has
 
 @(private = "file")
 memory_read_tree :: proc "contextless" (hash: blake3.Hash, into: []u8, data: rawptr) -> (bytes: []u8, refusal: pr.Recipe_Refusal) {
+	context = runtime.default_context()
 	objects := (^Memory_Objects)(data)
-	for item, index in objects.tree_hashes {
-		if item == hash {
-			source := objects.tree_bytes[index]
-			if objects.wrong_bytes {
-				source = objects.tree_bytes[(index + 1) % len(objects.tree_bytes)]
-			}
-			copy(into, source)
-			return into[:len(source)], .None
+	if index, found := objects.tree_index[hash]; found {
+		source := objects.tree_bytes[index]
+		if objects.wrong_bytes {
+			source = objects.tree_bytes[(index + 1) % len(objects.tree_bytes)]
 		}
+		copy(into, source)
+		return into[:len(source)], .None
 	}
 	return nil, .Input_Absent
 }
 
 @(private = "file")
 memory_take :: proc "contextless" (hash: blake3.Hash, data: rawptr) -> pr.Recipe_Refusal {
+	context = runtime.default_context()
 	objects := (^Memory_Objects)(data)
-	known := false
-	for item in objects.tree_hashes {
-		known ||= item == hash
+	for objects.known_count < len(objects.objects) {
+		objects.known[objects.objects[objects.known_count]] = true
+		objects.known_count += 1
 	}
-	for item in objects.objects {
-		known ||= item == hash
-	}
-	if !known {
+	if !objects.known[hash] {
 		return .Input_Absent
 	}
 	if objects.taken_count < len(objects.taken) {
@@ -147,20 +154,35 @@ the_walk_over_the_inputs_refuses_what_is_absent_damaged_or_too_large :: proc(t: 
 	testing.expect_value(t, input_closure_take(walk, inputs[:], nil, memory_take, objects), pr.Recipe_Refusal.Buffer_Too_Small)
 	testing.expect_value(t, input_closure_take(walk, inputs[:], memory_read_tree, nil, objects), pr.Recipe_Refusal.Buffer_Too_Small)
 
-	// A tree of n objects is n + 1 objects with the tree.
-	wide :: proc(objects: ^Memory_Objects, count: int) -> blake3.Hash {
-		names := make([]tree_hash.Tree_Entry, count, context.temp_allocator)
-		for index in 0 ..< count {
-			name := [4]u8{'f', 'a' + u8(index / 676), 'a' + u8(index / 26 % 26), 'a' + u8(index % 26)}
-			append(&objects.objects, object_hash(1000 + index))
-			names[index] = entry_of(.Object, string(name[:]), object_hash(1000 + index))
+	// A root tree of subtrees of objects that holds total objects, the
+	// trees with them: a tree holds at most tree_hash.MAX_TREE_ENTRIES
+	// entries, so a whole of more objects is a tree of trees.
+	wide :: proc(objects: ^Memory_Objects, total: int) -> blake3.Hash {
+		subtree_count := 1
+		for total - 1 - subtree_count > 500 * subtree_count {
+			subtree_count += 1
 		}
-		return tree_add(objects, names)
+		object_count := total - 1 - subtree_count
+		subtrees := make([]tree_hash.Tree_Entry, subtree_count, context.temp_allocator)
+		next := 0
+		for subtree in 0 ..< subtree_count {
+			size := object_count / subtree_count + (subtree < object_count % subtree_count ? 1 : 0)
+			names := make([]tree_hash.Tree_Entry, size, context.temp_allocator)
+			for index in 0 ..< size {
+				name := [4]u8{'f', 'a' + u8(index / 676), 'a' + u8(index / 26 % 26), 'a' + u8(index % 26)}
+				append(&objects.objects, object_hash(1000 + next))
+				names[index] = entry_of(.Object, string(name[:]), object_hash(1000 + next))
+				next += 1
+			}
+			subtree_name := [3]u8{'d', 'a' + u8(subtree / 26), 'a' + u8(subtree % 26)}
+			subtrees[subtree] = entry_of(.Tree, string(subtree_name[:]), tree_add(objects, names))
+		}
+		return tree_add(objects, subtrees)
 	}
-	most := [1]pr.Recipe_Input{input_of("source", .Tree, wide(objects, builder.MAX_INPUT_OBJECTS - 1))}
+	most := [1]pr.Recipe_Input{input_of("source", .Tree, wide(objects, builder.MAX_INPUT_OBJECTS))}
 	testing.expect_value(t, input_closure_take(walk, most[:], memory_read_tree, memory_take, objects), pr.Recipe_Refusal.None)
 	testing.expect_value(t, walk.taken_count, builder.MAX_INPUT_OBJECTS)
-	past := [1]pr.Recipe_Input{input_of("source", .Tree, wide(objects, builder.MAX_INPUT_OBJECTS))}
+	past := [1]pr.Recipe_Input{input_of("source", .Tree, wide(objects, builder.MAX_INPUT_OBJECTS + 1))}
 	testing.expect_value(t, input_closure_take(walk, past[:], memory_read_tree, memory_take, objects), pr.Recipe_Refusal.Input_Too_Large)
 
 	deepest := [1]pr.Recipe_Input{input_of("source", .Tree, chain_add(objects, MAX_INPUT_TREE_DEPTH))}
@@ -169,26 +191,33 @@ the_walk_over_the_inputs_refuses_what_is_absent_damaged_or_too_large :: proc(t: 
 	testing.expect_value(t, input_closure_take(walk, too_deep[:], memory_read_tree, memory_take, objects), pr.Recipe_Refusal.Input_Too_Large)
 }
 
-// A tree whose 257 entries name one subtree holds three objects: the tree,
-// the subtree and its object. The subtree waits once, so the walk does not
-// count it 257 times against MAX_INPUT_OBJECTS.
+// A chain of LEVELS trees, each of whose MAX_TREE_ENTRIES entries names the
+// next tree, holds LEVELS + 2 objects: those trees, the tree of the leaf and
+// the leaf object. The
+// names pass MAX_INPUT_OBJECTS, and each tree waits once, so the walk does
+// not count a name against MAX_INPUT_OBJECTS.
 @(test)
 a_subtree_that_many_entries_name_is_taken_once :: proc(t: ^testing.T) {
 	walk := new(Input_Closure, context.temp_allocator)
 	objects := memory_objects_make()
 	append(&objects.objects, object_hash(1))
 	leaf := [1]tree_hash.Tree_Entry{entry_of(.Object, "leaf", object_hash(1))}
-	subtree := tree_add(objects, leaf[:])
-	COUNT :: builder.MAX_INPUT_OBJECTS + 1
+	below := tree_add(objects, leaf[:])
+	COUNT :: tree_hash.MAX_TREE_ENTRIES
+	LEVELS :: builder.MAX_INPUT_OBJECTS / COUNT + 1
+	#assert(LEVELS * COUNT > builder.MAX_INPUT_OBJECTS && LEVELS < MAX_INPUT_TREE_DEPTH)
 	entries := make([]tree_hash.Tree_Entry, COUNT, context.temp_allocator)
-	for index in 0 ..< COUNT {
-		name := [3]u8{'a' + u8(index / 676), 'a' + u8(index / 26 % 26), 'a' + u8(index % 26)}
-		entries[index] = entry_of(.Tree, string(name[:]), subtree)
+	for _ in 0 ..< LEVELS {
+		for index in 0 ..< COUNT {
+			name := [3]u8{'a' + u8(index / 676), 'a' + u8(index / 26 % 26), 'a' + u8(index % 26)}
+			entries[index] = entry_of(.Tree, string(name[:]), below)
+		}
+		below = tree_add(objects, entries)
 	}
-	inputs := [1]pr.Recipe_Input{input_of("source", .Tree, tree_add(objects, entries))}
+	inputs := [1]pr.Recipe_Input{input_of("source", .Tree, below)}
 	testing.expect_value(t, input_closure_take(walk, inputs[:], memory_read_tree, memory_take, objects), pr.Recipe_Refusal.None)
-	testing.expect_value(t, walk.taken_count, 3)
-	testing.expect_value(t, objects.taken_count, 3)
+	testing.expect_value(t, walk.taken_count, LEVELS + 2)
+	testing.expect_value(t, objects.taken_count, LEVELS + 2)
 }
 
 // The success case of the walk: two inputs that share an object and a
@@ -236,16 +265,17 @@ Memory_Start :: struct {
 }
 
 @(private = "file")
-memory_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_payload: []u8, user_data: rawptr) -> (payload_length: int, ok: bool) {
+memory_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, staging: []u8, user_data: rawptr) -> (payload: []u8, ok: bool) {
 	start := (^Builder_Start)(user_data)
 	memory := (^Memory_Start)(start.data)
 	memory.calls += 1
 	if memory.refusal != .None {
 		start.refusal = memory.refusal
-		return 0, false
+		return nil, false
 	}
-	copy(out_payload, memory.output)
-	return len(memory.output), true
+	// The output of a builder in a process of its own is memory of the
+	// service, not the staging.
+	return memory.output, true
 }
 
 @(private = "file")

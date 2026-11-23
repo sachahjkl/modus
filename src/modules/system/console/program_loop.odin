@@ -11,14 +11,19 @@ package console
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/value_kinds"
 import "modus:disk_process"
 import "modus:system"
 
-// The pages of the memory of a module: the bound of the output of the
-// native C builder.
-PROGRAM_MODULE_PAGES :: pr.C_MODULE_BYTES_LIMIT / system.PAGE_SIZE
+// The pages of the first memory of a module: a small program fits them.
+// A larger module gives its bytes in the Too_Small error record of the
+// call, and the console calls again with a memory object of that size
+// (program_call_with_room), up to the bound of the output of the native C
+// builder.
+PROGRAM_MODULE_FIRST_PAGES :: 16
+PROGRAM_MODULE_BYTES_MOST :: pr.C_MODULE_BYTES_LIMIT
 
 // The projects whose last build this console keeps the hash of.
 PROGRAM_BUILD_CAPACITY :: 16
@@ -90,6 +95,91 @@ program_memory :: proc "contextless" (pages: u64, bytes: []u8) -> (memory: syste
 	return created, true
 }
 
+// program_call_with_room calls a command whose argument memory_argument is
+// a memory object for its output, of first_pages. When the call fails with
+// Too_Small and the bytes that it needs, at most most_bytes, the console
+// makes a memory object of that size and calls again, once. On success the
+// caller closes memory; on a failure the line has failed.
+@(private = "file")
+program_call_with_room :: proc "contextless" (name: string, arguments: []Value, memory_argument: int, first_pages: u64, most_bytes: u64) -> (result: Value, memory: system.Handle, ok: bool) {
+	pages := first_pages
+	for attempt in 0 ..< 2 {
+		created, created_ok := program_memory(pages, nil)
+		if !created_ok {
+			_ = fail(name, ": the budget of the console cannot pay for ", i64(pages * system.PAGE_SIZE), " bytes of memory for the output")
+			return {}, 0, false
+		}
+		arguments[memory_argument] = {kind = .Handle, integer = i64(created)}
+		result = call_run(name, arguments)
+		if !failed {
+			return result, created, true
+		}
+		system.close(created)
+		needed := failure.record.limit
+		if attempt == 1 || !failure.has_record || failure.record.kind != i64(errors.Kind.Too_Small) || i64(failure.record.argument) != i64(memory_argument + 1) || needed <= 0 || u64(needed) <= pages * system.PAGE_SIZE || u64(needed) > most_bytes {
+			return {}, 0, false
+		}
+		// The first call failed only for the room of its output: the line
+		// goes on with the second.
+		failed = false
+		failure_reset()
+		pages = (u64(needed) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	}
+	return {}, 0, false
+}
+
+// program_source_read reads the object file of the store at place into a
+// new memory object of its size, by ranges: a source passes the call region
+// of the connection to the storage service. The caller closes memory.
+@(private = "file")
+program_source_read :: proc "contextless" (place: Value, file: string) -> (memory: system.Handle, size: i64, ok: bool) {
+	size_arguments := [2]Value{place, {kind = .Text, text = file}}
+	size_value := call_run("storage.size", size_arguments[:])
+	if failed {
+		return 0, 0, false
+	}
+	size = size_value.integer
+	if size <= 0 {
+		_ = fail("build: the object ", file, " of the store is empty: there is no source to build")
+		return 0, 0, false
+	}
+	if size > pr.C_SOURCE_BYTES_LIMIT {
+		_ = fail("build: the source ", file, " has ", size, " bytes; a build takes 1 to ", i64(pr.C_SOURCE_BYTES_LIMIT))
+		return 0, 0, false
+	}
+	created, created_ok := program_memory((u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE, nil)
+	if !created_ok {
+		_ = fail("build: the budget of the console cannot pay for the memory of the source ", file)
+		return 0, 0, false
+	}
+	address, map_status := system.memory_map(created, {.Write})
+	if map_status != .Ok {
+		system.close(created)
+		_ = fail("build: the memory of the source ", file, " does not map")
+		return 0, 0, false
+	}
+	defer system.memory_unmap(address)
+	read: i64 = 0
+	for read < size {
+		range_arguments := [3]Value{place, {kind = .Text, text = file}, {kind = .Integer, integer = read}}
+		piece := call_run("storage.read_range", range_arguments[:])
+		if failed {
+			system.close(created)
+			return 0, 0, false
+		}
+		// A piece of no byte before the size, or past it: the object
+		// changed during the read.
+		if len(piece.text) == 0 || i64(len(piece.text)) > size - read {
+			system.close(created)
+			_ = fail("build: the source ", file, " changed during its read: build it again")
+			return 0, 0, false
+		}
+		intrinsics.mem_copy_non_overlapping(rawptr(uintptr(address) + uintptr(read)), raw_data(piece.text), len(piece.text))
+		read += i64(len(piece.text))
+	}
+	return created, size, true
+}
+
 // program_project_check fails the line when the name is no name of a
 // project, or when the principal has no project of that name:
 // projects.pins refuses an unknown project.
@@ -112,39 +202,24 @@ build_program :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	// The source, from the store of the project: this console acts for
-	// the principal that owns it. storage.read gives it as a Text through
-	// the call region of the connection, so a source has at most the bytes
-	// that the region holds beside the record of the call; recipes.build_c
-	// itself takes the 256 KiB of compile.
+	// the principal that owns it. It comes by ranges into a memory object
+	// of its size, so it passes the call region of the connection.
 	store_arguments := [1]Value{{kind = .Text, text = project}}
 	place := call_run("storage.open_store", store_arguments[:])
 	if failed {
 		return {}
 	}
-	read_arguments := [2]Value{place, {kind = .Text, text = file}}
-	source := call_run("storage.read", read_arguments[:])
-	if failed {
-		return {}
-	}
-	if len(source.text) == 0 {
-		return fail("build: the object ", file, " of the store ", project, " is empty: there is no source to build")
-	}
-	source_pages := (u64(len(source.text)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	source_memory, source_ok := program_memory(source_pages, transmute([]u8)source.text)
+	source_memory, source_size, source_ok := program_source_read(place, file)
 	if !source_ok {
-		return fail("build: the budget of the console cannot pay for the memory of the source ", file)
+		return {}
 	}
 	defer system.close(source_memory)
-	module_memory, module_ok := program_memory(PROGRAM_MODULE_PAGES, nil)
-	if !module_ok {
-		return fail("build: the budget of the console cannot pay for the memory of the module")
-	}
-	defer system.close(module_memory)
-	build_arguments := [4]Value{{kind = .Text, text = file}, {kind = .Handle, integer = i64(source_memory)}, {kind = .Integer, integer = i64(len(source.text))}, {kind = .Handle, integer = i64(module_memory)}}
-	size := call_run("recipes.build_c", build_arguments[:])
-	if failed {
+	build_arguments := [4]Value{{kind = .Text, text = file}, {kind = .Handle, integer = i64(source_memory)}, {kind = .Integer, integer = source_size}, {}}
+	size, module_memory, built := program_call_with_room("recipes.build_c", build_arguments[:], 3, PROGRAM_MODULE_FIRST_PAGES, PROGRAM_MODULE_BYTES_MOST)
+	if !built {
 		return {}
 	}
+	defer system.close(module_memory)
 	put_arguments := [3]Value{{kind = .Text, text = project}, {kind = .Handle, integer = i64(module_memory)}, size}
 	digits := call_run("module_files.put", put_arguments[:])
 	if failed {
@@ -171,18 +246,14 @@ run_program :: proc "contextless" (arguments: []Value) -> Value {
 	if !program_project_check("run", project) {
 		return {}
 	}
-	module_memory, module_ok := program_memory(PROGRAM_MODULE_PAGES, nil)
-	if !module_ok {
-		return fail("run: the budget of the console cannot pay for the memory of the module")
-	}
-	defer system.close(module_memory)
-	read_arguments := [2]Value{{kind = .Text, text = project}, {kind = .Handle, integer = i64(module_memory)}}
-	size := call_run("module_files.read", read_arguments[:])
-	if failed {
+	read_arguments := [2]Value{{kind = .Text, text = project}, {}}
+	size, module_memory, read_ok := program_call_with_room("module_files.read", read_arguments[:], 1, PROGRAM_MODULE_FIRST_PAGES, PROGRAM_MODULE_BYTES_MOST)
+	if !read_ok {
 		return {}
 	}
-	if size.integer <= 0 || size.integer > pr.C_MODULE_BYTES_LIMIT {
-		return fail("run: the module of ", project, " has ", size.integer, " bytes; a run takes 1 to ", i64(pr.C_MODULE_BYTES_LIMIT))
+	defer system.close(module_memory)
+	if size.integer <= 0 || size.integer > PROGRAM_MODULE_BYTES_MOST {
+		return fail("run: the module of ", project, " has ", size.integer, " bytes; a run takes 1 to ", i64(PROGRAM_MODULE_BYTES_MOST))
 	}
 	address, map_status := system.memory_map(module_memory, {})
 	if map_status != .Ok {

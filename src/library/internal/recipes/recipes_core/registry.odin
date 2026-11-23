@@ -59,7 +59,12 @@ register_recipe :: proc "contextless" (registry: ^Recipe_Registry, spec: ^pr.Rec
 	if free < 0 {
 		return {}, .Recipe_Limit_Reached
 	}
-	registry.recipes[free] = {active = true, recipe_hash = recipe_hash, spec = spec^}
+	// Field by field: a literal of the slot would be a value of about
+	// 90 KiB on the stack.
+	slot := &registry.recipes[free]
+	slot.active = true
+	slot.recipe_hash = recipe_hash
+	slot.spec = spec^
 	return recipe_hash, .None
 }
 
@@ -123,16 +128,16 @@ build_with_inputs_tree :: proc "contextless" (state: ^Recipes_State, spec: ^pr.R
 }
 
 @(private = "file")
-inputs_tree_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_payload: []u8, user_data: rawptr) -> (payload_length: int, ok: bool) {
+inputs_tree_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, staging: []u8, user_data: rawptr) -> (payload: []u8, ok: bool) {
 	call := (^Inputs_Tree_Call)(user_data)
-	written, refusal := pr.inputs_tree_build(sandbox, out_payload)
+	written, refusal := pr.inputs_tree_build(sandbox, staging)
 	if refusal != .None {
 		if call != nil {
 			call.refusal = refusal
 		}
-		return 0, false
+		return nil, false
 	}
-	return written, true
+	return staging[:written], true
 }
 
 history_add :: proc "contextless" (registry: ^Recipe_Registry, result: ^pr.Recipe_Build_Result, mode: pr.Build_Mode) {

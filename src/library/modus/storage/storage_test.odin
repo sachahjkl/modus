@@ -5,6 +5,9 @@ import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/storage_status"
 import "core:testing"
+import block "modus:contract/block"
+import "modus:contract/storage_status"
+import "modus:system"
 
 // The kind of a Listed row comes from the storage service. Each word that
 // names no entry is refused first: None, one past the last kind, a
@@ -65,4 +68,37 @@ only_the_refusal_of_a_repair_is_made_again :: proc(t: ^testing.T) {
 	retry, wait = repair_retry(.Failed, .Callee_Busy, &repair, REPAIR_WAIT_BOUND_MILLISECONDS - 1)
 	testing.expect(t, retry)
 	testing.expect_value(t, wait, u64(1))
+}
+
+// The bound of a call: past the bound of the disk, so that a silent disk
+// answers Device before the client gives up; never in the past, at the
+// largest time too.
+@(test)
+the_bound_of_a_call_passes_the_bound_of_the_disk :: proc(t: ^testing.T) {
+	testing.expect(t, storage_status.ANSWER_BOUND_MILLISECONDS > block.NO_ANSWER_BOUND_MILLISECONDS)
+	testing.expect_value(t, call_deadline(0), u64(storage_status.ANSWER_BOUND_MILLISECONDS))
+	testing.expect_value(t, call_deadline(5), u64(5 + storage_status.ANSWER_BOUND_MILLISECONDS))
+	edge := system.WAIT_FOREVER - storage_status.ANSWER_BOUND_MILLISECONDS
+	testing.expect_value(t, call_deadline(edge), system.WAIT_FOREVER)
+	testing.expect_value(t, call_deadline(edge + 1), system.WAIT_FOREVER)
+	testing.expect_value(t, call_deadline(max(u64)), system.WAIT_FOREVER)
+}
+
+// After No_Answer the client waits for the answer of the late call only:
+// an answer of another tag, a tag 0, or a second look after the answer came
+// does not clear it, and the client serves again once it came.
+@(test)
+a_late_answer_clears_the_late_call_once :: proc(t: ^testing.T) {
+	client: Client
+	testing.expect(t, !late_answer_is(&client, 0))
+	testing.expect(t, !late_answer_is(&client, 7))
+	client.late_tag = 7
+	testing.expect(t, !late_answer_is(&client, 0))
+	testing.expect(t, !late_answer_is(&client, 6))
+	testing.expect(t, !late_answer_is(&client, 8))
+	testing.expect_value(t, client.late_tag, u32(7))
+	testing.expect(t, late_answer_is(&client, 7))
+	testing.expect_value(t, client.late_tag, u32(0))
+	testing.expect(t, !late_answer_is(&client, 7))
+	testing.expect(t, !client.gone)
 }

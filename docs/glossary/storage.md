@@ -505,6 +505,15 @@ A node holds at most 4096 entries, so a larger folder is cut, in the order of it
 The design: `src/md/data/storage_capacity.md`, "A folder of more than 4096 entries is a tree of several nodes".
 
 Do not use: chunk, page (for this), shard.
+### Staging object
+
+A staging object is the object that a writer fills by ranges before one commit makes the name of the result name its bytes.
+
+It keeps a write of many commits away from the name that readers use: a reader sees the old bytes or the new ones, never a half. The service `module_files` writes a module file into `module_files_staging_of_<nickname>`, clones it onto the nickname in one commit, and removes it; a write that stops drops its pending changes and removes it, so the file before keeps running. Its name is longer than a nickname, so it never runs. It is not a version, and not a temporary file of a shared folder.
+
+The design: `src/md/features/processes_from_a_disk.md`, "How the file reaches the disk".
+
+Do not use: temporary file, scratch object, partial file.
 
 ### Tree hash
 

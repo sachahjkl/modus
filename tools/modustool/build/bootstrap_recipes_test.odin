@@ -1,6 +1,7 @@
 package build
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -13,7 +14,10 @@ import "modustool:foundation"
 
 @(test)
 bootstrap_recipes_catalog_validates_all_sandboxes_and_hashes :: proc(t: ^testing.T) {
-	catalog, ok := bootstrap_recipe_catalog()
+	// An entry holds two recipes of about 90 KiB: each catalog and each
+	// chain is on the heap, written in place, and never copied.
+	catalog := new([BOOTSTRAP_RECIPE_CATALOG_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+	ok := bootstrap_recipe_catalog(catalog[:])
 	testing.expect(t, ok, "canonical bootstrap recipe catalog must build cleanly")
 
 	digest_a, refusal_a := bootstrap_recipe_catalog_verify(catalog[:])
@@ -21,14 +25,17 @@ bootstrap_recipes_catalog_validates_all_sandboxes_and_hashes :: proc(t: ^testing
 	testing.expect(t, !bootstrap_hash_is_zero(digest_a), "catalog digest must be non-zero")
 
 	// Determinism: building and verifying again gives the exact same catalog digest.
-	catalog_b, ok_b := bootstrap_recipe_catalog()
+	catalog_b := new([BOOTSTRAP_RECIPE_CATALOG_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+	ok_b := bootstrap_recipe_catalog(catalog_b[:])
 	testing.expect(t, ok_b)
 	digest_b, refusal_b := bootstrap_recipe_catalog_verify(catalog_b[:])
 	testing.expect_value(t, refusal_b, Bootstrap_Recipe_Catalog_Refusal.None)
 	testing.expect(t, digest_a == digest_b, "catalog digest must be bit-for-bit stable across runs")
 
 	// Verify chibicc Stage 1 == Stage 2 fixed-point hash check.
-	ch1, ch2, ch_ok := bootstrap_recipe_chibicc_self_host()
+	ch1 := new(Bootstrap_Recipe_Entry, context.temp_allocator)
+	ch2 := new(Bootstrap_Recipe_Entry, context.temp_allocator)
+	ch_ok := bootstrap_recipe_chibicc_self_host(ch1, ch2)
 	testing.expect(t, ch_ok)
 	testing.expect_value(t, bootstrap_verify_chibicc_fixed_point(ch1.expected_output_hash, ch2.expected_output_hash), Bootstrap_Recipe_Catalog_Refusal.None)
 
@@ -36,16 +43,18 @@ bootstrap_recipes_catalog_validates_all_sandboxes_and_hashes :: proc(t: ^testing
 	{
 		h_orig, r_orig := plans_recipes.recipe_hash(&ch1.recipe)
 		testing.expect_value(t, r_orig, plans_recipes.Recipe_Refusal.None)
-		reordered := ch1.recipe
+		reordered := new(plans_recipes.Recipe_Spec, context.temp_allocator)
+		mem.copy_non_overlapping(reordered, &ch1.recipe, size_of(plans_recipes.Recipe_Spec))
 		reordered.inputs[0], reordered.inputs[2] = reordered.inputs[2], reordered.inputs[0]
-		h_reordered, r_reordered := plans_recipes.recipe_hash(&reordered)
+		h_reordered, r_reordered := plans_recipes.recipe_hash(reordered)
 		testing.expect_value(t, r_reordered, plans_recipes.Recipe_Refusal.None)
 		testing.expect(t, h_orig == h_reordered, "recipe_hash must be invariant to input order")
 	}
 
 	// Verify live_bootstrap_chain has the exact 6-stage topological chain:
 	// hex0 -> M2-Planet -> mes -> tcc -> gcc -> odin.
-	chain, chain_ok := bootstrap_recipe_live_bootstrap_chain()
+	chain := new([LIVE_BOOTSTRAP_STAGE_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+	chain_ok := bootstrap_recipe_live_bootstrap_chain(chain[:])
 	testing.expect(t, chain_ok)
 	expected_ids := [LIVE_BOOTSTRAP_STAGE_COUNT]Bootstrap_Recipe_Id {
 		.Live_Bootstrap_Hex0,
@@ -85,7 +94,9 @@ bootstrap_recipes_catalog_adversarial_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, empty_refusal, Bootstrap_Recipe_Catalog_Refusal.Empty_Catalog)
 
 	// Chibicc fixed-point refusals: zero hash and 1-bit divergence.
-	ch1, ch2, _ := bootstrap_recipe_chibicc_self_host()
+	ch1 := new(Bootstrap_Recipe_Entry, context.temp_allocator)
+	ch2 := new(Bootstrap_Recipe_Entry, context.temp_allocator)
+	_ = bootstrap_recipe_chibicc_self_host(ch1, ch2)
 	testing.expect_value(t, bootstrap_verify_chibicc_fixed_point({}, ch2.expected_output_hash), Bootstrap_Recipe_Catalog_Refusal.Zero_Stage_Hash)
 	testing.expect_value(t, bootstrap_verify_chibicc_fixed_point(ch1.expected_output_hash, {}), Bootstrap_Recipe_Catalog_Refusal.Zero_Stage_Hash)
 	tampered_ch2 := ch2.expected_output_hash
@@ -94,39 +105,45 @@ bootstrap_recipes_catalog_adversarial_refusals :: proc(t: ^testing.T) {
 
 	// Reversed topological order in live_bootstrap_chain must be refused.
 	{
-		bad_chain, _ := bootstrap_recipe_live_bootstrap_chain()
-		bad_chain[1], bad_chain[2] = bad_chain[2], bad_chain[1]
+		bad_chain := new([LIVE_BOOTSTRAP_STAGE_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+		_ = bootstrap_recipe_live_bootstrap_chain(bad_chain[:])
+		bootstrap_recipe_entries_swap(&bad_chain[1], &bad_chain[2])
 		_, ref := bootstrap_recipe_catalog_verify(bad_chain[:])
 		testing.expect_value(t, ref, Bootstrap_Recipe_Catalog_Refusal.Topological_Order_Violation)
 	}
 
 	// Sandbox violations on guest stages must be refused.
 	{
-		bad_chain, _ := bootstrap_recipe_live_bootstrap_chain()
+		bad_chain := new([LIVE_BOOTSTRAP_STAGE_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+		_ = bootstrap_recipe_live_bootstrap_chain(bad_chain[:])
 		bad_chain[2].guest_spec.allow_network = true
 		_, ref := bootstrap_recipe_catalog_verify(bad_chain[:])
 		testing.expect_value(t, ref, Bootstrap_Recipe_Catalog_Refusal.Guest_Network_Enabled)
 	}
 	{
-		bad_chain, _ := bootstrap_recipe_live_bootstrap_chain()
+		bad_chain := new([LIVE_BOOTSTRAP_STAGE_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+		_ = bootstrap_recipe_live_bootstrap_chain(bad_chain[:])
 		bad_chain[3].guest_spec.allow_real_clock = true
 		_, ref := bootstrap_recipe_catalog_verify(bad_chain[:])
 		testing.expect_value(t, ref, Bootstrap_Recipe_Catalog_Refusal.Guest_Real_Clock_Enabled)
 	}
 	{
-		bad_chain, _ := bootstrap_recipe_live_bootstrap_chain()
+		bad_chain := new([LIVE_BOOTSTRAP_STAGE_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+		_ = bootstrap_recipe_live_bootstrap_chain(bad_chain[:])
 		bad_chain[4].guest_spec.allow_writable_inputs = true
 		_, ref := bootstrap_recipe_catalog_verify(bad_chain[:])
 		testing.expect_value(t, ref, Bootstrap_Recipe_Catalog_Refusal.Guest_Writable_Inputs_Enabled)
 	}
 	{
-		bad_catalog, _ := bootstrap_recipe_catalog()
+		bad_catalog := new([BOOTSTRAP_RECIPE_CATALOG_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+		_ = bootstrap_recipe_catalog(bad_catalog[:])
 		bad_catalog[2].recipe.source_date_unix = 1700000000
 		_, ref := bootstrap_recipe_catalog_verify(bad_catalog[:])
 		testing.expect_value(t, ref, Bootstrap_Recipe_Catalog_Refusal.Clock_Not_Frozen)
 	}
 	{
-		bad_catalog, _ := bootstrap_recipe_catalog()
+		bad_catalog := new([BOOTSTRAP_RECIPE_CATALOG_COUNT]Bootstrap_Recipe_Entry, context.temp_allocator)
+		_ = bootstrap_recipe_catalog(bad_catalog[:])
 		bad_catalog[0].id = .Sqlite
 		_, ref := bootstrap_recipe_catalog_verify(bad_catalog[:])
 		testing.expect_value(t, ref, Bootstrap_Recipe_Catalog_Refusal.Duplicate_Recipe_Id)

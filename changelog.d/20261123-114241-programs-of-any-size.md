@@ -1,0 +1,3 @@
+type: Changed
+
+**Programs of any size**: a module file of the store `module_files` has up to 64 MiB, and the store holds what its disk holds; `module_files` streams a file into the store by pieces, with no whole copy in its memory; a process holds 64 module records, and a module of the disk loads with up to 64 imports of the store on 16 levels, where 9 libraries were refused. A recipe takes 256 inputs and 64 KiB of arguments, and a build takes 4096 input objects. The C compiler takes a source of 64 MiB with 4096 headers and exports, and the assembler takes a text of 256 MiB, doubling its tables while a table is full and the budget of its call host pays.

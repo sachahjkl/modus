@@ -335,6 +335,9 @@ pins :: proc "c" (project_name: ^string, result: ^[]pr.Pin_Row, error: ^errors.E
 // error record (the list above), with the refusal as the value found:
 // Unknown_Project, Pin_Not_Found for a project with no pin, Store_Failed and
 // Store_Damaged for the private store.
+// The recipe that build_recipe makes: about 90 KiB, too large for the stack.
+export_inputs_spec: pr.Recipe_Spec
+
 @(export, link_name = "build_recipe")
 build_recipe :: proc "c" (project_name: ^string, head: ^system.Table_To_Append(pr.Recipe_Head), result: ^[]pr.Recipe_Input_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	principal, failure, allowed := caller_principal(false, error)
@@ -345,7 +348,8 @@ build_recipe :: proc "c" (project_name: ^string, head: ^system.Table_To_Append(p
 	if !name_ok {
 		return name_failure, 0
 	}
-	spec, refusal := projects_core.inputs_recipe(&loaded_projects, &service_state, principal, name)
+	spec := &export_inputs_spec
+	refusal := projects_core.inputs_recipe(&loaded_projects, &service_state, principal, name, spec)
 	if refusal != .None {
 		system.log_fact(.Warning, Project_Command_Refused{refusal_code = u64(refusal)})
 		return project_refusal_fail(error, refusal, 1)

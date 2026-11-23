@@ -93,17 +93,17 @@ harness_builder_invoke :: proc "contextless" (
 	sandbox: ^pr.Builder_Sandbox_Spec,
 	out_payload: []u8,
 	user_data: rawptr,
-) -> (int, bool) {
+) -> ([]u8, bool) {
 	h := (^Test_Harness)(user_data)
 	h.builder_calls += 1
 	h.builder_saw_network = sandbox.allow_network
 	h.builder_saw_date = sandbox.frozen_date_unix
 	h.builder_saw_seed = sandbox.random_seed
 	if !h.builder_ok {
-		return 0, false
+		return nil, false
 	}
 	copy(out_payload[:h.builder_payload_len], h.builder_payload[:h.builder_payload_len])
-	return h.builder_payload_len, true
+	return out_payload[:h.builder_payload_len], true
 }
 
 @(private = "file")

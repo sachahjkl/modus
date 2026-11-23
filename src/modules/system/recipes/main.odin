@@ -18,24 +18,25 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// The budget that the service asks for. Its own pages and one builder that
-// it starts as a call host of its own budget: 1024 pages of the service,
-// system.CALL_HOST_PAGES (512) of the builder, and the memory objects of
-// one native C build (source up to 256 KiB, assembly text up to 1 MiB,
-// module up to 64 KiB) with its compiler and assembler call hosts one at a
-// time. Then one guest build of a typical guest (guest_build.odin): 128 MiB
-// of guest memory, the kernel of a distribution, its nested page table and
-// its process, its kernel, its initial archive, its output disk and its
-// input disks, and the stack of the build thread past the stack that the
-// tool counts for a thread. The starter grants up to a share of the
-// machine; each guest build sizes its buffers from its spec and from what
-// the granted budget has left (recipes_core.guest_build_plan), so a smaller
-// grant runs the guest builds that fit it.
-SERVICE_AND_BUILDER_PAGES :: u64(4096)
-#assert(SERVICE_AND_BUILDER_PAGES >= 1024 + system.CALL_HOST_PAGES)
+// The budget that the service asks for: 1024 pages of the service (the
+// index of its local store, its staging, the sandbox of a build); one
+// typical native C build: a program of the size of Lua, about 700 KB of C,
+// at C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE, with its call host; and one guest
+// build of a typical guest (guest_build.odin): 128 MiB of guest memory, the
+// kernel of a distribution, its nested page table and its process, its
+// kernel, its initial archive, its output disk and its input disks, and
+// the stack of the build thread past the stack that the tool counts for a
+// thread. A budget reserves its pages, so the service states typical
+// builds, not the largest. The starter grants up to a share of the
+// machine; each build plans its memory from what the grant holds at the
+// call (c_build_plan, recipes_core.guest_build_plan), so a larger grant
+// runs a build of SQLite or a larger guest, and a smaller one refuses it
+// with the pages that it needs.
+TYPICAL_C_BUILD_PAGES :: 9216
 TYPICAL_GUEST_BUILD_PAGES :: recipes_core.TYPICAL_GUEST_BUILD_PAGES
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 54_512, processes = 3, threads = 2}
-#assert(54_512 == SERVICE_AND_BUILDER_PAGES + TYPICAL_GUEST_BUILD_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 60_656, processes = 3, threads = 2}
+#assert(60_656 == C_BUILD_SERVICE_PAGES_KEPT + TYPICAL_C_BUILD_PAGES + TYPICAL_GUEST_BUILD_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
+#assert(TYPICAL_C_BUILD_PAGES * system.PAGE_SIZE >= 700 * 1024 * C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE + system.CALL_HOST_PAGES * system.PAGE_SIZE)
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -283,6 +284,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	store_port, store_open := storage_port.bind(ctx)
 	recipes_core.state_init(&service_state, store_port)
+	// The retention rule of the store never removes an input of a
+	// registered recipe, nor what a guest build of the queue names.
+	service_state.registry = &service_registry
+	guest_queue_keeper = {queue = &guest_queue, registry = &service_registry}
+	service_state.retention_keep = recipes_core.guest_queue_keeps
+	service_state.retention_keep_user = &guest_queue_keeper
 	builder_start_init(ctx)
 	c_builder_bind(ctx)
 	if store_open {

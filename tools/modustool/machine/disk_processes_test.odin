@@ -219,11 +219,11 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 	testing.expect(t, !accepted && refused.name == "")
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.debug_object_name_write(&digits, blake3.hash(module_file))
-	// An object larger than a module file may be, and under the limit of a
-	// debug object.
-	large := test_file_bytes(disk_process.FILE_BYTES_LIMIT + format.BLOCK_SIZE, 9)
+	// An object of more blocks than the reader of the test keeps whole,
+	// and under the limit of a debug object.
+	large := test_file_bytes(9 << 20, 9)
 	files := [?]build.Module_File{{"small", module_file}, {string(digits[:]), large}}
-	image, encoded := build.module_disk_encode(files[:], 2 * disk_process.FILE_BYTES_LIMIT)
+	image, encoded := build.module_disk_encode(files[:], 16 << 20)
 	if !testing.expect(t, encoded) {
 		return
 	}
@@ -241,8 +241,10 @@ a_debug_object_beside_its_module_file :: proc(t: ^testing.T) {
 		testing.expect_value(t, stored.size, u64(len(large)))
 		testing.expect(t, !stored.damaged)
 	}
-	over := [?]build.Module_File{{string(digits[:]), test_file_bytes(disk_process.DEBUG_OBJECT_BYTES_LIMIT + 1, 3)}}
-	_, over_encoded := build.module_disk_encode(over[:], 4 * disk_process.DEBUG_OBJECT_BYTES_LIMIT)
+	// The writer refuses the size before it reads a byte or makes a disk:
+	// zero bytes of the heap cost no time.
+	over := [?]build.Module_File{{string(digits[:]), make([]u8, disk_process.DEBUG_OBJECT_BYTES_LIMIT + 1, context.temp_allocator)}}
+	_, over_encoded := build.module_disk_encode(over[:], 64 * format.BLOCK_SIZE)
 	testing.expect(t, !over_encoded)
 }
 

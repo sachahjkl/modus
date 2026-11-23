@@ -825,7 +825,8 @@ bootstrap_chain_verify :: proc(chain: ^Bootstrap_Chain) -> Bootstrap_Chain_Verif
 			if recipe_refusal != .None {
 				return bootstrap_chain_fail(.Invalid_Recipe_Spec, index, stage.name, "stage `%s` recipe refused (%v at input %d)", stage.name, recipe_refusal, bad_input)
 			}
-			sandbox, sandbox_prep_refusal := plans_recipes.builder_sandbox_prepare(&stage.recipe)
+			sandbox: plans_recipes.Builder_Sandbox_Spec
+			sandbox_prep_refusal := plans_recipes.builder_sandbox_prepare(&stage.recipe, &sandbox)
 			if sandbox_prep_refusal != .None {
 				return bootstrap_chain_fail(.Recipe_Sandbox_Violation, index, stage.name, "stage `%s` sandbox prepare failed (%v)", stage.name, sandbox_prep_refusal)
 			}
@@ -1005,39 +1006,42 @@ bootstrap_deterministic_digest :: proc(label: string) -> blake3.Hash {
 	return blake3.derive_key("modus bootstrap descriptor v1", transmute([]u8)label)
 }
 
-// bootstrap_make_recipe_spec builds a validated plans_recipes.Recipe_Spec from
-// named inputs and deterministic argument bytes.
+// bootstrap_make_recipe_spec writes a validated plans_recipes.Recipe_Spec from
+// named inputs and deterministic argument bytes into spec, which the caller
+// holds: a recipe is about 90 KiB, so it is built in place and never copied.
+// On a refusal spec is zero.
 bootstrap_make_recipe_spec :: proc(
+	spec: ^plans_recipes.Recipe_Spec,
 	builder_hash: blake3.Hash,
 	output_kind: object_cache.Cache_Object_Kind,
 	source_date_unix: u64,
 	output_block_limit: u64,
 	inputs: []plans_recipes.Recipe_Input,
 	arguments_text: string,
-) -> (spec: plans_recipes.Recipe_Spec, ok: bool) {
+) -> (ok: bool) {
+	spec^ = {}
 	if len(inputs) > plans_recipes.MAX_RECIPE_INPUTS {
-		return {}, false
+		return false
 	}
 	arg_bytes := transmute([]u8)arguments_text
 	if len(arg_bytes) > plans_recipes.MAX_RECIPE_ARG_BYTES {
-		return {}, false
+		return false
 	}
-	spec = plans_recipes.Recipe_Spec {
-		builder_hash       = builder_hash,
-		output_kind        = output_kind,
-		source_date_unix   = source_date_unix,
-		output_block_limit = output_block_limit,
-		input_count        = u32(len(inputs)),
-		arguments_length   = u32(len(arg_bytes)),
-	}
+	spec.builder_hash = builder_hash
+	spec.output_kind = output_kind
+	spec.source_date_unix = source_date_unix
+	spec.output_block_limit = output_block_limit
+	spec.input_count = u32(len(inputs))
+	spec.arguments_length = u32(len(arg_bytes))
 	for input, index in inputs {
 		spec.inputs[index] = input
 	}
 	copy(spec.arguments[:], arg_bytes)
-	if refusal, _ := plans_recipes.recipe_validate(&spec); refusal != .None {
-		return {}, false
+	if refusal, _ := plans_recipes.recipe_validate(spec); refusal != .None {
+		spec^ = {}
+		return false
 	}
-	return spec, true
+	return true
 }
 
 // bootstrap_make_guest_spec builds a deterministic, zero-network, frozen-clock
@@ -1093,22 +1097,6 @@ bootstrap_chain_c_compiler_self_host :: proc(allocator := context.temp_allocator
 	libc_input, _ := plans_recipes.recipe_input_make("thin_libc", .Tree, thin_libc_hash)
 	asm_input, _ := plans_recipes.recipe_input_make("assembler", .Blob, assembler_hash)
 
-	stage_one_recipe, _ := bootstrap_make_recipe_spec(
-		stage_zero_hash,
-		.Blob,
-		0,
-		4096,
-		[]plans_recipes.Recipe_Input{src_input, libc_input, asm_input},
-		"target=modus-x86_64;mode=compile_chibicc_stage1;reproducible_dates=epoch",
-	)
-	stage_two_recipe, _ := bootstrap_make_recipe_spec(
-		fixed_point_chibicc_hash,
-		.Blob,
-		0,
-		4096,
-		[]plans_recipes.Recipe_Input{src_input, libc_input, asm_input},
-		"target=modus-x86_64;mode=compile_chibicc_stage2;reproducible_dates=epoch",
-	)
 
 	stage_one_deps := make([]Bootstrap_Stage_Dependency, 1, allocator)
 	stage_one_deps[0] = {upstream_stage_name = "chibicc_host_seed", binding = .Builder}
@@ -1130,7 +1118,6 @@ bootstrap_chain_c_compiler_self_host :: proc(allocator := context.temp_allocator
 		description  = "Host-built chibicc compiles chibicc sources on modus",
 		kind         = .Native_Recipe,
 		dependencies = stage_one_deps,
-		recipe       = stage_one_recipe,
 		output_hash  = fixed_point_chibicc_hash,
 	}
 	stages[2] = {
@@ -1138,9 +1125,26 @@ bootstrap_chain_c_compiler_self_host :: proc(allocator := context.temp_allocator
 		description  = "Stage one chibicc compiles chibicc sources again to prove fixed point",
 		kind         = .Native_Recipe,
 		dependencies = stage_two_deps,
-		recipe       = stage_two_recipe,
 		output_hash  = fixed_point_chibicc_hash,
 	}
+	_ = bootstrap_make_recipe_spec(
+		&stages[1].recipe,
+		stage_zero_hash,
+		.Blob,
+		0,
+		4096,
+		[]plans_recipes.Recipe_Input{src_input, libc_input, asm_input},
+		"target=modus-x86_64;mode=compile_chibicc_stage1;reproducible_dates=epoch",
+	)
+	_ = bootstrap_make_recipe_spec(
+		&stages[2].recipe,
+		fixed_point_chibicc_hash,
+		.Blob,
+		0,
+		4096,
+		[]plans_recipes.Recipe_Input{src_input, libc_input, asm_input},
+		"target=modus-x86_64;mode=compile_chibicc_stage2;reproducible_dates=epoch",
+	)
 
 	return Bootstrap_Chain {
 		name                  = "chibicc_self_host",
@@ -1257,14 +1261,6 @@ bootstrap_chain_seed_guest_bootstrap :: proc(allocator := context.temp_allocator
 		prev_input, _ := plans_recipes.recipe_input_make(descriptor.prev_input, .Tree, previous_hash)
 		src_input, _ := plans_recipes.recipe_input_make("source", .Tree, source_hash)
 
-		recipe, _ := bootstrap_make_recipe_spec(
-			guest_builder_module_hash,
-			.Tree,
-			0,
-			descriptor.output_bound / 4096,
-			[]plans_recipes.Recipe_Input{prev_input, src_input},
-			descriptor.command,
-		)
 		guest_spec, _ := bootstrap_make_guest_spec(
 			guest_kernel_hash,
 			guest_root_hash,
@@ -1291,11 +1287,19 @@ bootstrap_chain_seed_guest_bootstrap :: proc(allocator := context.temp_allocator
 			description  = descriptor.description,
 			kind         = .Guest_Recipe,
 			dependencies = deps,
-			recipe       = recipe,
 			guest_spec   = guest_spec,
 			output_hash  = stage_output_hash,
 		}
 		previous_hash = stage_output_hash
+		_ = bootstrap_make_recipe_spec(
+			&stages[offset + 1].recipe,
+			guest_builder_module_hash,
+			.Tree,
+			0,
+			descriptor.output_bound / 4096,
+			[]plans_recipes.Recipe_Input{prev_input, src_input},
+			descriptor.command,
+		)
 	}
 
 	return Bootstrap_Chain {
@@ -1393,30 +1397,6 @@ bootstrap_chain_c_world_validation :: proc(allocator := context.temp_allocator) 
 	zstd_src, _ := plans_recipes.recipe_input_make("zstd_source", .Tree, bootstrap_deterministic_digest("source:zstd-1.5.7-freestanding"))
 	libc_input, _ := plans_recipes.recipe_input_make("thin_libc", .Tree, bootstrap_deterministic_digest("source:modus-thin-libc-v1"))
 
-	sqlite_recipe, _ := bootstrap_make_recipe_spec(
-		compiler_hash,
-		.Blob,
-		0,
-		16384,
-		[]plans_recipes.Recipe_Input{sqlite_src, libc_input},
-		"cc=chibicc;convert=sdk-convert;defines=SQLITE_OMIT_LOAD_EXTENSION,SQLITE_THREADSAFE=0,SQLITE_OS_OTHER=1",
-	)
-	lua_recipe, _ := bootstrap_make_recipe_spec(
-		compiler_hash,
-		.Blob,
-		0,
-		8192,
-		[]plans_recipes.Recipe_Input{lua_src, libc_input},
-		"cc=chibicc;convert=sdk-convert;defines=LUA_USE_C89,LUA_32BITS=0",
-	)
-	zstd_recipe, _ := bootstrap_make_recipe_spec(
-		compiler_hash,
-		.Blob,
-		0,
-		8192,
-		[]plans_recipes.Recipe_Input{zstd_src, libc_input},
-		"cc=chibicc;convert=sdk-convert;defines=ZSTD_STATIC_LINKING_ONLY,ZSTD_NO_ASM=1",
-	)
 
 	sqlite_vectors := make([]Bootstrap_Test_Vector, 2, allocator)
 	sqlite_vectors[0] = {name = "create_insert_select_sum", export_name = "sqlite_query_integer", input_summary = "CREATE TABLE t(x INT); INSERT VALUES(10),(32); SELECT SUM(x)", expected_value = 42}
@@ -1450,7 +1430,6 @@ bootstrap_chain_c_world_validation :: proc(allocator := context.temp_allocator) 
 		description          = "Freestanding SQLite .modus module built via chibicc and sdk-convert",
 		kind                 = .Native_Recipe,
 		dependencies         = make_builder_dep(allocator),
-		recipe               = sqlite_recipe,
 		output_hash          = bootstrap_deterministic_digest("module:sqlite.modus-v1"),
 		manifest_text        = BOOTSTRAP_SQLITE_MANIFEST,
 		require_test_vectors = true,
@@ -1461,7 +1440,6 @@ bootstrap_chain_c_world_validation :: proc(allocator := context.temp_allocator) 
 		description          = "Freestanding Lua .modus module built via chibicc and sdk-convert",
 		kind                 = .Native_Recipe,
 		dependencies         = make_builder_dep(allocator),
-		recipe               = lua_recipe,
 		output_hash          = bootstrap_deterministic_digest("module:lua.modus-v1"),
 		manifest_text        = BOOTSTRAP_LUA_MANIFEST,
 		require_test_vectors = true,
@@ -1472,12 +1450,38 @@ bootstrap_chain_c_world_validation :: proc(allocator := context.temp_allocator) 
 		description          = "Freestanding zstd .modus module built via chibicc and sdk-convert",
 		kind                 = .Native_Recipe,
 		dependencies         = make_builder_dep(allocator),
-		recipe               = zstd_recipe,
 		output_hash          = bootstrap_deterministic_digest("module:zstd.modus-v1"),
 		manifest_text        = BOOTSTRAP_ZSTD_MANIFEST,
 		require_test_vectors = true,
 		test_vectors         = zstd_vectors,
 	}
+	_ = bootstrap_make_recipe_spec(
+		&stages[1].recipe,
+		compiler_hash,
+		.Blob,
+		0,
+		16384,
+		[]plans_recipes.Recipe_Input{sqlite_src, libc_input},
+		"cc=chibicc;convert=sdk-convert;defines=SQLITE_OMIT_LOAD_EXTENSION,SQLITE_THREADSAFE=0,SQLITE_OS_OTHER=1",
+	)
+	_ = bootstrap_make_recipe_spec(
+		&stages[2].recipe,
+		compiler_hash,
+		.Blob,
+		0,
+		8192,
+		[]plans_recipes.Recipe_Input{lua_src, libc_input},
+		"cc=chibicc;convert=sdk-convert;defines=LUA_USE_C89,LUA_32BITS=0",
+	)
+	_ = bootstrap_make_recipe_spec(
+		&stages[3].recipe,
+		compiler_hash,
+		.Blob,
+		0,
+		8192,
+		[]plans_recipes.Recipe_Input{zstd_src, libc_input},
+		"cc=chibicc;convert=sdk-convert;defines=ZSTD_STATIC_LINKING_ONLY,ZSTD_NO_ASM=1",
+	)
 
 	return Bootstrap_Chain {
 		name                 = "c_world_validation_recipes",

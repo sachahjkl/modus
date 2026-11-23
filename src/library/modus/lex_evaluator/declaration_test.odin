@@ -1,18 +1,26 @@
 #+build !freestanding
 package lex_evaluator
 
+import "core:fmt"
+import "core:mem"
 import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
 import "modus:contract/plans_recipes"
+import "modus:lex_parser"
 
 @(private = "file")
 DECL_TEST_STACK :: 2 * 1024 * 1024
 
 @(private = "file")
-new_workspace :: proc() -> ^Declaration_Workspace {
-	return new(Declaration_Workspace, context.temp_allocator)
+new_workspace :: proc(scale: uint = 0) -> ^Declaration_Workspace {
+	ws := new(Declaration_Workspace, context.temp_allocator)
+	pools := declaration_pools_of_scale(scale)
+	memory, _ := mem.alloc_bytes(declaration_workspace_bytes(pools), 64, context.temp_allocator)
+	carved := declaration_workspace_carve(ws, memory, pools)
+	assert(carved)
+	return ws
 }
 
 @(private = "file")
@@ -525,7 +533,10 @@ the_largest_recipe_fits_its_written_arguments :: proc(t: ^testing.T) {
 	// The record of the other fields: its head (5 bytes), the name "t" (5),
 	// the tag (1) and the length of the text (4), then the text.
 	text_bytes := plans_recipes.MAX_RECIPE_ARG_BYTES - 15
-	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = 64 * 1024}
+	// The source holds the text of the largest arguments and the lines of
+	// each input: past the bound of a declaration file, which a caller
+	// raises with text_bytes_most.
+	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = 256 * 1024}
 	res := declaration_evaluate(ws, recipe_source(builder_lit, text_bytes), "", cfg)
 	testing.expectf(t, res.ok && res.value.kind == .Recipe_Ref, "the largest recipe converts: %v %s", res.failure_kind, res.detail)
 	testing.expect_value(t, ws.recipe_spec.input_count, u32(plans_recipes.MAX_RECIPE_INPUTS))
@@ -534,4 +545,114 @@ the_largest_recipe_fits_its_written_arguments :: proc(t: ^testing.T) {
 	res = declaration_evaluate(ws, recipe_source(builder_lit, text_bytes + 1), "", cfg)
 	testing.expect(t, !res.ok && res.failure_kind == .Recipe_Refused, "one more byte is refused")
 	testing.expect_value(t, res.detail, plans_recipes.recipe_refusal_words[.Arguments_Too_Large])
+}
+
+// The fields of one record at the bound and one past it, then the pool of
+// the names of the records that one write holds at once: a record of the
+// bound inside a record of the bound fills it, and one record more inside
+// them is refused, never a write past the pool.
+@(test)
+a_record_has_the_most_fields_and_the_pool_the_most_names :: proc(t: ^testing.T) {
+	ws := new_workspace()
+	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = 256 * 1024}
+	fields :: proc(builder: ^strings.Builder, prefix: string, count: int) {
+		for index in 0 ..< count {
+			fmt.sbprintf(builder, "%s%d = %d,\n", prefix, index, index)
+		}
+	}
+	serialize :: proc(ws: ^Declaration_Workspace, source: string, cfg: Declaration_Config) -> declaration_eval.Failure_Kind {
+		res := declaration_evaluate(ws, source, "", cfg)
+		if !res.ok {
+			return res.failure_kind
+		}
+		output := make([]u8, 1024 * 1024, context.temp_allocator)
+		_, failure := declaration_serialize_value(ws, res.value, output)
+		return failure
+	}
+	for count in ([?]int{DECLARATION_RECORD_FIELDS_LIMIT, DECLARATION_RECORD_FIELDS_LIMIT + 1}) {
+		builder := strings.builder_make(context.temp_allocator)
+		strings.write_string(&builder, "{\n")
+		fields(&builder, "f", count)
+		strings.write_string(&builder, "}\n")
+		failure := serialize(ws, strings.to_string(builder), cfg)
+		expected := count <= DECLARATION_RECORD_FIELDS_LIMIT ? declaration_eval.Failure_Kind.None : declaration_eval.Failure_Kind.Pool_Exhausted
+		testing.expectf(t, failure == expected, "a record of %d fields: %v", count, failure)
+	}
+	#assert(DECLARATION_RECORD_NAME_POOL == 2 * DECLARATION_RECORD_FIELDS_LIMIT)
+	for third in ([?]bool{false, true}) {
+		builder := strings.builder_make(context.temp_allocator)
+		strings.write_string(&builder, "{\n")
+		fields(&builder, "outer", DECLARATION_RECORD_FIELDS_LIMIT - 1)
+		strings.write_string(&builder, "inner = {\n")
+		fields(&builder, "f", DECLARATION_RECORD_FIELDS_LIMIT - 1)
+		strings.write_string(&builder, third ? "last = { x = 1 },\n" : "last = 1,\n")
+		strings.write_string(&builder, "},\n}\n")
+		failure := serialize(ws, strings.to_string(builder), cfg)
+		expected := third ? declaration_eval.Failure_Kind.Pool_Exhausted : declaration_eval.Failure_Kind.None
+		testing.expectf(t, failure == expected, "two records of the bound, a third inside them %v: %v", third, failure)
+	}
+}
+
+// A file past the share of text of the scale 0: refused there for its node
+// pool, with the pool named, then evaluated whole at the scale that
+// declaration_scale_after gives. The scales at their edges, and a memory
+// too short or off its alignment, which no workspace takes.
+@(test)
+a_declaration_file_past_64_kib_takes_a_larger_scale :: proc(t: ^testing.T) {
+	testing.expect_value(t, declaration_scale_of_text(0), uint(0))
+	testing.expect_value(t, declaration_scale_of_text(DECLARATION_UNIT_TEXT_BYTES), uint(0))
+	testing.expect_value(t, declaration_scale_of_text(DECLARATION_UNIT_TEXT_BYTES + 1), uint(1))
+	testing.expect_value(t, declaration_scale_of_text(lex_parser.DECLARATION_TEXT_BYTES_MOST), uint(DECLARATION_SCALE_MOST))
+	testing.expect_value(t, declaration_scale_of_text(max(u64)), uint(DECLARATION_SCALE_MOST))
+	testing.expect_value(t, declaration_pools_of_scale(1), Declaration_Pools{nodes = 2 * DECLARATION_NODE_POOL, text_bytes = 2 * DECLARATION_TEXT_ARENA})
+
+	// A list of small records: about 8 nodes for each 20 bytes, so a file of
+	// 80 KiB passes the node pool of the scale 0.
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, "{ items = [\n")
+	count := 0
+	for strings.builder_len(builder) < 80 * 1024 {
+		fmt.sbprintf(&builder, "  {{ a = %d, b = %d }},\n", count, count + 1)
+		count += 1
+	}
+	strings.write_string(&builder, "], n = 7 }\n")
+	source := strings.to_string(builder)
+	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = lex_parser.DECLARATION_TEXT_BYTES_MOST}
+	scale := uint(0)
+	small := new_workspace(scale)
+	res := declaration_evaluate(small, source, "n", cfg)
+	testing.expectf(t, !res.ok && res.failure_kind == .Pool_Exhausted, "the scale 0 runs out: %v", res.failure_kind)
+	testing.expect_value(t, small.exhausted, Declaration_Pool.Nodes)
+	next, larger := declaration_scale_after(small, scale)
+	testing.expect(t, larger && next == 1)
+	for {
+		ws := new_workspace(next)
+		res = declaration_evaluate(ws, source, "n", cfg)
+		if res.ok {
+			break
+		}
+		next, larger = declaration_scale_after(ws, next)
+		if !testing.expectf(t, larger, "no scale holds the file: %v", res.failure_kind) {
+			return
+		}
+	}
+	testing.expect(t, res.value.kind == .Integer && res.value.integer == 7)
+	_, larger = declaration_scale_after(small, DECLARATION_SCALE_MOST)
+	testing.expect(t, !larger)
+
+	// A refusal that no pool of the scale makes gives no larger scale.
+	ws := new_workspace()
+	res = declaration_evaluate(ws, "{ a = ", "", cfg)
+	testing.expect(t, !res.ok)
+	_, larger = declaration_scale_after(ws, 0)
+	testing.expect(t, !larger)
+
+	// No workspace on a memory one byte short, or off the alignment.
+	pools := declaration_pools_of_scale(0)
+	memory, _ := mem.alloc_bytes(declaration_workspace_bytes(pools) + 64, 64, context.temp_allocator)
+	other := new(Declaration_Workspace, context.temp_allocator)
+	testing.expect(t, !declaration_workspace_carve(other, memory[:declaration_workspace_bytes(pools) - 1], pools))
+	testing.expect(t, !declaration_workspace_carve(other, memory[1:], pools))
+	testing.expect(t, other.nodes == nil && other.text_arena == nil)
+	testing.expect(t, declaration_workspace_carve(other, memory, pools))
 }

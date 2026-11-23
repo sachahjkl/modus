@@ -30,9 +30,10 @@ import "modus:contract/value_kinds"
 import "modus:storage"
 import "modus:system"
 
-// The page tables of its mappings: the boot image, one lent file of
-// 4 MiB, and the call ring and the call region of the storage connection.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, processes = 1, threads = 1}
+// The page tables of its mappings: the boot image, one lent file of up to
+// 64 MiB (32 page tables and their directory), and the call ring and the
+// call region of the storage connection.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 128, processes = 1, threads = 1}
 
 // Status record returned by the status() export.
 Disk_Processes_Status :: struct {

@@ -210,6 +210,24 @@ Distributed_Builder :: struct {
 	answer:       [machine_wire.FRAME_LIMIT]u8,
 	arguments:    [machine_wire.ROLE_ARGUMENT_LIMIT]u8,
 	staging:      [DISTRIBUTED_OUTPUT_LIMIT]u8,
+	// The sandbox of a build on this machine: about 90 KiB, too large for
+	// the stack of the service that runs the builder.
+	sandbox:      pr.Builder_Sandbox_Spec,
+}
+
+// builder_output_into gives the count of the output of a builder in target:
+// an output that the builder wrote into target stays there, and an output
+// in memory of the builder is copied when it fits. A distributed build
+// moves each output over the wire, so an output past target is no output.
+@(private)
+builder_output_into :: proc "contextless" (payload: []u8, target: []u8) -> (count: int, ok: bool) {
+	if len(payload) > len(target) {
+		return 0, false
+	}
+	if len(payload) > 0 && raw_data(payload) != raw_data(target) {
+		copy(target, payload)
+	}
+	return len(payload), true
 }
 
 // ---- The arguments of a remote build ----
@@ -335,6 +353,7 @@ Remote_Recipes_Host :: struct {
 	publish:          Object_Publish_Proc,
 	user_data:        rawptr,
 	spec:             pr.Recipe_Spec,
+	sandbox:          pr.Builder_Sandbox_Spec, // The sandbox of the build that runs: too large for the stack.
 	staging:          [DISTRIBUTED_OUTPUT_LIMIT]u8,
 }
 
@@ -382,12 +401,14 @@ remote_recipes_serve :: proc "contextless" (host: ^Remote_Recipes_Host, export_w
 		if remote_build_arguments_read(arguments, &host.spec) != .None {
 			return 0, 0, .Argument_Refused
 		}
-		sandbox, sandbox_refusal := pr.builder_sandbox_prepare(&host.spec)
-		if sandbox_refusal != .None || pr.builder_sandbox_validate(&sandbox) != .None {
+		sandbox_refusal := pr.builder_sandbox_prepare(&host.spec, &host.sandbox)
+		if sandbox_refusal != .None || pr.builder_sandbox_validate(&host.sandbox) != .None {
 			return 0, 0, .Argument_Refused
 		}
-		count, built := host.builder_invoke(&sandbox, host.staging[:], host.user_data)
-		if !built || count < 0 || count > len(host.staging) {
+		sandbox := &host.sandbox
+		payload, built := host.builder_invoke(sandbox, host.staging[:], host.user_data)
+		count, kept := builder_output_into(payload, host.staging[:])
+		if !built || !kept {
 			return 0, 0, .Callee_Unavailable
 		}
 		output_hash, hash_refusal := pr.recipe_hash_output(sandbox.output_kind, host.staging[:count])
@@ -731,7 +752,7 @@ verify_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 		if policy.local_builder == nil {
 			return .Verify_Needs_Two_Machines
 		}
-		count, local_refusal := local_build_into(policy, spec, builder.staging[:])
+		count, local_refusal := local_build_into(builder, policy, spec, builder.staging[:])
 		if local_refusal != .None {
 			return local_refusal
 		}
@@ -990,24 +1011,26 @@ object_fetch :: proc "contextless" (builder: ^Distributed_Builder, policy: ^Dist
 }
 
 @(private = "file")
-local_build_into :: proc "contextless" (policy: ^Distributed_Policy, spec: ^pr.Recipe_Spec, target: []u8) -> (count: int, refusal: Distributed_Refusal) {
+local_build_into :: proc "contextless" (builder: ^Distributed_Builder, policy: ^Distributed_Policy, spec: ^pr.Recipe_Spec, target: []u8) -> (count: int, refusal: Distributed_Refusal) {
 	if policy.local_builder == nil {
 		return 0, .No_Builder
 	}
-	sandbox, sandbox_refusal := pr.builder_sandbox_prepare(spec)
-	if sandbox_refusal != .None || pr.builder_sandbox_validate(&sandbox) != .None {
+	sandbox := &builder.sandbox
+	sandbox_refusal := pr.builder_sandbox_prepare(spec, sandbox)
+	if sandbox_refusal != .None || pr.builder_sandbox_validate(sandbox) != .None {
 		return 0, .Local_Build_Failed
 	}
-	built, ok := policy.local_builder(&sandbox, target, policy.user_data)
-	if !ok || built < 0 || built > len(target) {
+	payload, ok := policy.local_builder(sandbox, target, policy.user_data)
+	kept_count, kept := builder_output_into(payload, target)
+	if !ok || !kept {
 		return 0, .Local_Build_Failed
 	}
-	return built, .None
+	return kept_count, .None
 }
 
 @(private = "file")
 local_realise :: proc "contextless" (builder: ^Distributed_Builder, policy: ^Distributed_Policy, index: int, spec: ^pr.Recipe_Spec) -> Distributed_Refusal {
-	count, refusal := local_build_into(policy, spec, builder.outputs[index][:])
+	count, refusal := local_build_into(builder, policy, spec, builder.outputs[index][:])
 	if refusal != .None {
 		return refusal
 	}
@@ -1034,4 +1057,3 @@ output_record :: proc "contextless" (builder: ^Distributed_Builder, index: int, 
 	result.output_hash = hash
 	result.output_length = count
 }
-

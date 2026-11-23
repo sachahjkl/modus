@@ -40,8 +40,11 @@ Forward :: struct {
 
 // A file that the listener serves: GET of its path answers its bytes.
 Listener_File :: struct {
-	path:  string,
-	bytes: []u8,
+	path:   string,
+	bytes:  []u8,
+	// Not 0: the listener sends the Content-Length of all the bytes, then
+	// this many bytes only, and closes: a body that ends early.
+	cut_at: int,
 }
 
 Listener :: struct {
@@ -313,6 +316,12 @@ listener_serve :: proc(listener: ^Listener, client: net.TCP_Socket) {
 		case head.method == .Get && listener_file_find(listener.files, path) >= 0:
 			served := listener.files[listener_file_find(listener.files, path)]
 			head_text := fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", len(served.bytes))
+			if served.cut_at > 0 {
+				// The body ends early: the connection closes after the cut.
+				_ = send_all(client, transmute([]u8)head_text) && send_all(client, served.bytes[:min(served.cut_at, len(served.bytes))])
+				sync.atomic_add(&listener.requests, 1)
+				return
+			}
 			if !send_all(client, transmute([]u8)head_text) || !send_all(client, served.bytes) {
 				return
 			}

@@ -65,7 +65,8 @@ cache_test_recipe :: proc() -> (recipe: Cache_Test_Recipe, ok: bool) {
 		return {}, false
 	}
 	recipe.object = object[:object_written]
-	sandbox, sandbox_refusal := plans_recipes.builder_sandbox_prepare(spec)
+	sandbox: plans_recipes.Builder_Sandbox_Spec
+	sandbox_refusal := plans_recipes.builder_sandbox_prepare(spec, &sandbox)
 	if sandbox_refusal != .None {
 		return {}, false
 	}

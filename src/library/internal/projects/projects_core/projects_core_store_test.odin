@@ -210,33 +210,34 @@ the_recipe_of_a_project_names_each_pin :: proc(t: ^testing.T) {
 	fixture := fixture_make(t)
 	defer fixture_free(fixture)
 	kernel := transmute([]u8)string("kernel")
-	spec, refusal := inputs_recipe(fixture.table, fixture.state, 1, kernel)
+	spec := new(pr.Recipe_Spec, context.temp_allocator)
+	refusal := inputs_recipe(fixture.table, fixture.state, 1, kernel, spec)
 	testing.expect_value(t, refusal, pr.Project_Refusal.None)
 	testing.expect(t, spec.builder_hash == pr.inputs_tree_builder_hash())
 	testing.expect_value(t, spec.output_kind, object_cache.Cache_Object_Kind.Tree)
 	testing.expect_value(t, spec.input_count, u32(2))
 	testing.expect_value(t, string(spec.inputs[1].name_bytes[:spec.inputs[1].name_length]), "odin")
 	testing.expect(t, spec.inputs[1].hash == store_hash(4), "an input is the tree hash of its pin")
-	first, _ := pr.recipe_hash(&spec)
+	first, _ := pr.recipe_hash(spec)
 
 	// A moved pin gives another recipe; moving it back gives the first one.
 	old_text, new_text: [pr.MAX_PINS_LEX_BYTES]u8
 	update_pin(fixture.table, fixture.state, 1, kernel, transmute([]u8)string("odin"), store_hash(9), old_text[:], new_text[:])
-	moved_spec, _ := inputs_recipe(fixture.table, fixture.state, 1, kernel)
-	moved, _ := pr.recipe_hash(&moved_spec)
+	inputs_recipe(fixture.table, fixture.state, 1, kernel, spec)
+	moved, _ := pr.recipe_hash(spec)
 	testing.expect(t, moved != first, "a moved pin changes the recipe")
 	update_pin(fixture.table, fixture.state, 1, kernel, transmute([]u8)string("odin"), store_hash(4), old_text[:], new_text[:])
-	back_spec, _ := inputs_recipe(fixture.table, fixture.state, 1, kernel)
-	back, _ := pr.recipe_hash(&back_spec)
+	inputs_recipe(fixture.table, fixture.state, 1, kernel, spec)
+	back, _ := pr.recipe_hash(spec)
 	testing.expect(t, back == first, "the recipe of the same pins has the same hash")
 
 	// A project with no pin has no input to build, and an unknown project
 	// has no recipe.
 	_, empty := load_project(fixture.table, fixture.state, 1, transmute([]u8)string("empty"), fixture.evaluation[:fixture.evaluation_length], nil)
 	testing.expect_value(t, empty, pr.Project_Refusal.None)
-	_, no_pin := inputs_recipe(fixture.table, fixture.state, 1, transmute([]u8)string("empty"))
+	no_pin := inputs_recipe(fixture.table, fixture.state, 1, transmute([]u8)string("empty"), spec)
 	testing.expect_value(t, no_pin, pr.Project_Refusal.Pin_Not_Found)
-	_, unknown := inputs_recipe(fixture.table, fixture.state, 1, transmute([]u8)string("absent"))
+	unknown := inputs_recipe(fixture.table, fixture.state, 1, transmute([]u8)string("absent"), spec)
 	testing.expect_value(t, unknown, pr.Project_Refusal.Unknown_Project)
 }
 

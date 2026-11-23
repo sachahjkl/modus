@@ -12,6 +12,7 @@
 //     guest-builder stage graph with topological dependency verification).
 package build
 
+import "core:slice"
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/guest_builder"
@@ -103,7 +104,8 @@ bootstrap_verify_chibicc_fixed_point :: proc "contextless" (stage1_output_hash, 
 
 // bootstrap_recipe_chibicc_self_host constructs the canonical Stage 1 and
 // Stage 2 reproducible Recipe_Spec definitions for self-hosting chibicc.
-bootstrap_recipe_chibicc_self_host :: proc() -> (stage1: Bootstrap_Recipe_Entry, stage2: Bootstrap_Recipe_Entry, ok: bool) {
+bootstrap_recipe_chibicc_self_host :: proc(stage1, stage2: ^Bootstrap_Recipe_Entry) -> (ok: bool) {
+	stage1^, stage2^ = {}, {}
 	host_chibicc_hash := bootstrap_recipe_seed_hash("builder:chibicc-host-seed-v1")
 	fixed_point_hash := bootstrap_recipe_seed_hash("output:chibicc-fixed-point-v1")
 	chibicc_source_hash := bootstrap_recipe_seed_hash("source:chibicc-c-tree-v1")
@@ -114,11 +116,12 @@ bootstrap_recipe_chibicc_self_host :: proc() -> (stage1: Bootstrap_Recipe_Entry,
 	libc_in, r1 := plans_recipes.recipe_input_make("thin_libc", .Tree, thin_libc_hash)
 	asm_in, r2 := plans_recipes.recipe_input_make("assembler", .Blob, assembler_hash)
 	if r0 != .None || r1 != .None || r2 != .None {
-		return {}, {}, false
+		return false
 	}
 
 	inputs := [3]plans_recipes.Recipe_Input{src_in, libc_in, asm_in}
-	spec1, ok1 := bootstrap_make_recipe_spec(
+	ok1 := bootstrap_make_recipe_spec(
+		&stage1.recipe,
 		host_chibicc_hash,
 		.Blob,
 		0,
@@ -126,7 +129,8 @@ bootstrap_recipe_chibicc_self_host :: proc() -> (stage1: Bootstrap_Recipe_Entry,
 		inputs[:],
 		"target=modus-x86_64;stage=chibicc_stage1;date=epoch;verify_fixed_point=true",
 	)
-	spec2, ok2 := bootstrap_make_recipe_spec(
+	ok2 := bootstrap_make_recipe_spec(
+		&stage2.recipe,
 		fixed_point_hash,
 		.Blob,
 		0,
@@ -135,29 +139,18 @@ bootstrap_recipe_chibicc_self_host :: proc() -> (stage1: Bootstrap_Recipe_Entry,
 		"target=modus-x86_64;stage=chibicc_stage2;date=epoch;verify_fixed_point=true",
 	)
 	if !ok1 || !ok2 {
-		return {}, {}, false
+		stage1^, stage2^ = {}, {}
+		return false
 	}
-
-	stage1 = Bootstrap_Recipe_Entry {
-		id                   = .Chibicc_Stage1,
-		name                 = "chibicc_stage1",
-		upstream_stage       = .None,
-		recipe               = spec1,
-		expected_output_hash = fixed_point_hash,
-	}
-	stage2 = Bootstrap_Recipe_Entry {
-		id                   = .Chibicc_Stage2,
-		name                 = "chibicc_stage2",
-		upstream_stage       = .Chibicc_Stage1,
-		recipe               = spec2,
-		expected_output_hash = fixed_point_hash,
-	}
-	return stage1, stage2, true
+	stage1.id, stage1.name, stage1.upstream_stage, stage1.expected_output_hash = .Chibicc_Stage1, "chibicc_stage1", .None, fixed_point_hash
+	stage2.id, stage2.name, stage2.upstream_stage, stage2.expected_output_hash = .Chibicc_Stage2, "chibicc_stage2", .Chibicc_Stage1, fixed_point_hash
+	return true
 }
 
 // bootstrap_recipe_sqlite constructs the canonical reproducible SQLite
 // amalgamation build recipe and its companion SQLite self-test recipe.
-bootstrap_recipe_sqlite :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
+bootstrap_recipe_sqlite :: proc(entry: ^Bootstrap_Recipe_Entry) -> (ok: bool) {
+	entry^ = {}
 	builder_hash := bootstrap_recipe_seed_hash("output:chibicc-fixed-point-v1")
 	test_runner_hash := bootstrap_recipe_seed_hash("builder:modus-module-test-runner-v1")
 	amalgamation_hash := bootstrap_recipe_seed_hash("source:sqlite-3.49-amalgamation")
@@ -168,11 +161,13 @@ bootstrap_recipe_sqlite :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 	libc_in, r1 := plans_recipes.recipe_input_make("thin_libc", .Tree, thin_libc_hash)
 	mod_in, r2 := plans_recipes.recipe_input_make("sqlite_module", .Blob, sqlite_output_hash)
 	if r0 != .None || r1 != .None || r2 != .None {
-		return {}, false
+		entry^ = {}
+		return false
 	}
 
 	build_inputs := [2]plans_recipes.Recipe_Input{src_in, libc_in}
-	build_spec, ok_build := bootstrap_make_recipe_spec(
+	ok_build := bootstrap_make_recipe_spec(
+		&entry.recipe,
 		builder_hash,
 		.Blob,
 		0,
@@ -181,7 +176,8 @@ bootstrap_recipe_sqlite :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 		"recipe=sqlite;amalgamation=sqlite3.c;defines=SQLITE_OS_OTHER=1,SQLITE_THREADSAFE=0,SQLITE_OMIT_LOAD_EXTENSION=1",
 	)
 	test_inputs := [1]plans_recipes.Recipe_Input{mod_in}
-	test_spec, ok_test := bootstrap_make_recipe_spec(
+	ok_test := bootstrap_make_recipe_spec(
+		&entry.self_test_recipe,
 		test_runner_hash,
 		.Blob,
 		0,
@@ -190,23 +186,21 @@ bootstrap_recipe_sqlite :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 		"suite=sqlite_self_test;vectors=create_insert_select_sum,transaction_rollback,btree_index_scan",
 	)
 	if !ok_build || !ok_test {
-		return {}, false
+		entry^ = {}
+		return false
 	}
-
-	return Bootstrap_Recipe_Entry {
-		id                   = .Sqlite,
-		name                 = "sqlite",
-		upstream_stage       = .Chibicc_Stage2,
-		recipe               = build_spec,
-		expected_output_hash = sqlite_output_hash,
-		has_self_test_recipe = true,
-		self_test_recipe     = test_spec,
-	}, true
+	entry.id = .Sqlite
+	entry.name = "sqlite"
+	entry.upstream_stage = .Chibicc_Stage2
+	entry.expected_output_hash = sqlite_output_hash
+	entry.has_self_test_recipe = true
+	return true
 }
 
 // bootstrap_recipe_lua constructs the canonical reproducible Lua VM build
 // recipe and its companion Lua test suite recipe.
-bootstrap_recipe_lua :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
+bootstrap_recipe_lua :: proc(entry: ^Bootstrap_Recipe_Entry) -> (ok: bool) {
+	entry^ = {}
 	builder_hash := bootstrap_recipe_seed_hash("output:chibicc-fixed-point-v1")
 	test_runner_hash := bootstrap_recipe_seed_hash("builder:modus-module-test-runner-v1")
 	lua_source_hash := bootstrap_recipe_seed_hash("source:lua-5.4.7-freestanding")
@@ -217,11 +211,13 @@ bootstrap_recipe_lua :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 	libc_in, r1 := plans_recipes.recipe_input_make("thin_libc", .Tree, thin_libc_hash)
 	mod_in, r2 := plans_recipes.recipe_input_make("lua_module", .Blob, lua_output_hash)
 	if r0 != .None || r1 != .None || r2 != .None {
-		return {}, false
+		entry^ = {}
+		return false
 	}
 
 	build_inputs := [2]plans_recipes.Recipe_Input{src_in, libc_in}
-	build_spec, ok_build := bootstrap_make_recipe_spec(
+	ok_build := bootstrap_make_recipe_spec(
+		&entry.recipe,
 		builder_hash,
 		.Blob,
 		0,
@@ -230,7 +226,8 @@ bootstrap_recipe_lua :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 		"recipe=lua;defines=LUA_USE_C89=1,LUA_32BITS=0",
 	)
 	test_inputs := [1]plans_recipes.Recipe_Input{mod_in}
-	test_spec, ok_test := bootstrap_make_recipe_spec(
+	ok_test := bootstrap_make_recipe_spec(
+		&entry.self_test_recipe,
 		test_runner_hash,
 		.Blob,
 		0,
@@ -239,23 +236,21 @@ bootstrap_recipe_lua :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 		"suite=lua_test_suite;vectors=closures,coroutines,metatables,gc_cycle,integer_arithmetic",
 	)
 	if !ok_build || !ok_test {
-		return {}, false
+		entry^ = {}
+		return false
 	}
-
-	return Bootstrap_Recipe_Entry {
-		id                   = .Lua,
-		name                 = "lua",
-		upstream_stage       = .Chibicc_Stage2,
-		recipe               = build_spec,
-		expected_output_hash = lua_output_hash,
-		has_self_test_recipe = true,
-		self_test_recipe     = test_spec,
-	}, true
+	entry.id = .Lua
+	entry.name = "lua"
+	entry.upstream_stage = .Chibicc_Stage2
+	entry.expected_output_hash = lua_output_hash
+	entry.has_self_test_recipe = true
+	return true
 }
 
 // bootstrap_recipe_zstd constructs the canonical reproducible zstd codec build
 // recipe and its companion round-trip verification recipe.
-bootstrap_recipe_zstd :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
+bootstrap_recipe_zstd :: proc(entry: ^Bootstrap_Recipe_Entry) -> (ok: bool) {
+	entry^ = {}
 	builder_hash := bootstrap_recipe_seed_hash("output:chibicc-fixed-point-v1")
 	test_runner_hash := bootstrap_recipe_seed_hash("builder:modus-module-test-runner-v1")
 	zstd_source_hash := bootstrap_recipe_seed_hash("source:zstd-1.5.7-freestanding")
@@ -266,11 +261,13 @@ bootstrap_recipe_zstd :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 	libc_in, r1 := plans_recipes.recipe_input_make("thin_libc", .Tree, thin_libc_hash)
 	mod_in, r2 := plans_recipes.recipe_input_make("zstd_module", .Blob, zstd_output_hash)
 	if r0 != .None || r1 != .None || r2 != .None {
-		return {}, false
+		entry^ = {}
+		return false
 	}
 
 	build_inputs := [2]plans_recipes.Recipe_Input{src_in, libc_in}
-	build_spec, ok_build := bootstrap_make_recipe_spec(
+	ok_build := bootstrap_make_recipe_spec(
+		&entry.recipe,
 		builder_hash,
 		.Blob,
 		0,
@@ -279,7 +276,8 @@ bootstrap_recipe_zstd :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 		"recipe=zstd;defines=ZSTD_STATIC_LINKING_ONLY=1,ZSTD_NO_ASM=1",
 	)
 	test_inputs := [1]plans_recipes.Recipe_Input{mod_in}
-	test_spec, ok_test := bootstrap_make_recipe_spec(
+	ok_test := bootstrap_make_recipe_spec(
+		&entry.self_test_recipe,
 		test_runner_hash,
 		.Blob,
 		0,
@@ -288,25 +286,28 @@ bootstrap_recipe_zstd :: proc() -> (entry: Bootstrap_Recipe_Entry, ok: bool) {
 		"suite=zstd_round_trip;vectors=empty,single_byte,compressible_4k,incompressible_4k,corrupt_frame_refusal",
 	)
 	if !ok_build || !ok_test {
-		return {}, false
+		entry^ = {}
+		return false
 	}
-
-	return Bootstrap_Recipe_Entry {
-		id                   = .Zstd,
-		name                 = "zstd",
-		upstream_stage       = .Chibicc_Stage2,
-		recipe               = build_spec,
-		expected_output_hash = zstd_output_hash,
-		has_self_test_recipe = true,
-		self_test_recipe     = test_spec,
-	}, true
+	entry.id = .Zstd
+	entry.name = "zstd"
+	entry.upstream_stage = .Chibicc_Stage2
+	entry.expected_output_hash = zstd_output_hash
+	entry.has_self_test_recipe = true
+	return true
 }
 
 // bootstrap_recipe_live_bootstrap_chain builds the 6-stage guest-builder graph:
 //   hex0 -> M2-Planet -> mes -> tcc -> gcc -> odin
 // with verified topological dependency order, read-only input mounts, zero
 // network, and frozen epoch timestamp.
-bootstrap_recipe_live_bootstrap_chain :: proc() -> (entries: [LIVE_BOOTSTRAP_STAGE_COUNT]Bootstrap_Recipe_Entry, ok: bool) {
+bootstrap_recipe_live_bootstrap_chain :: proc(entries: []Bootstrap_Recipe_Entry) -> (ok: bool) {
+	if len(entries) != LIVE_BOOTSTRAP_STAGE_COUNT {
+		return false
+	}
+	defer if !ok {
+		slice.zero(entries)
+	}
 	guest_kernel_hash := bootstrap_recipe_seed_hash("guest:linux-kernel-v1")
 	guest_root_hash := bootstrap_recipe_seed_hash("guest:minimal-rootfs-v1")
 	guest_builder_hash := bootstrap_recipe_seed_hash("module:guest-builder-v1")
@@ -390,7 +391,7 @@ bootstrap_recipe_live_bootstrap_chain :: proc() -> (entries: [LIVE_BOOTSTRAP_STA
 		src_hash := bootstrap_recipe_seed_hash(def.source_label)
 		src_in, r_src := plans_recipes.recipe_input_make("source", .Tree, src_hash)
 		if r_src != .None {
-			return {}, false
+			return false
 		}
 
 		recipe_inputs: [2]plans_recipes.Recipe_Input
@@ -404,7 +405,7 @@ bootstrap_recipe_live_bootstrap_chain :: proc() -> (entries: [LIVE_BOOTSTRAP_STA
 		if def.prev_input != "" {
 			prev_in, r_prev := plans_recipes.recipe_input_make(def.prev_input, .Tree, prev_output_hash)
 			if r_prev != .None {
-				return {}, false
+				return false
 			}
 			recipe_inputs[1] = prev_in
 			recipe_input_count = 2
@@ -412,7 +413,10 @@ bootstrap_recipe_live_bootstrap_chain :: proc() -> (entries: [LIVE_BOOTSTRAP_STA
 			mount_count = 2
 		}
 
-		recipe, ok_rec := bootstrap_make_recipe_spec(
+		entry := &entries[index]
+		entry^ = {}
+		ok_rec := bootstrap_make_recipe_spec(
+			&entry.recipe,
 			guest_builder_hash,
 			.Tree,
 			0,
@@ -430,46 +434,48 @@ bootstrap_recipe_live_bootstrap_chain :: proc() -> (entries: [LIVE_BOOTSTRAP_STA
 			mounts[:mount_count],
 		)
 		if !ok_rec || !ok_guest {
-			return {}, false
+			return false
 		}
 
 		stage_out_hash := bootstrap_recipe_seed_hash(def.name)
-		entries[index] = Bootstrap_Recipe_Entry {
-			id                   = def.id,
-			name                 = def.name,
-			upstream_stage       = def.upstream,
-			recipe               = recipe,
-			expected_output_hash = stage_out_hash,
-			has_guest_spec       = true,
-			guest_spec           = guest_spec,
-		}
+		entry.id = def.id
+		entry.name = def.name
+		entry.upstream_stage = def.upstream
+		entry.expected_output_hash = stage_out_hash
+		entry.has_guest_spec = true
+		entry.guest_spec = guest_spec
 		prev_output_hash = stage_out_hash
 	}
 
-	return entries, true
+	return true
 }
 
-// bootstrap_recipe_catalog returns all canonical bootstrap and C-world recipes
-// in strict topological dependency order.
-bootstrap_recipe_catalog :: proc() -> (entries: [BOOTSTRAP_RECIPE_CATALOG_COUNT]Bootstrap_Recipe_Entry, ok: bool) {
-	ch1, ch2, ok_ch := bootstrap_recipe_chibicc_self_host()
-	sq, ok_sq := bootstrap_recipe_sqlite()
-	lu, ok_lu := bootstrap_recipe_lua()
-	zs, ok_zs := bootstrap_recipe_zstd()
-	chain, ok_chain := bootstrap_recipe_live_bootstrap_chain()
-	if !ok_ch || !ok_sq || !ok_lu || !ok_zs || !ok_chain {
-		return {}, false
+// bootstrap_recipe_catalog writes all canonical bootstrap and C-world recipes
+// in strict topological dependency order into entries, which the caller
+// holds: an entry holds two recipes of about 90 KiB each, so the catalog is
+// written in place and never copied.
+bootstrap_recipe_catalog :: proc(entries: []Bootstrap_Recipe_Entry) -> (ok: bool) {
+	if len(entries) != BOOTSTRAP_RECIPE_CATALOG_COUNT {
+		return false
 	}
+	ok = bootstrap_recipe_chibicc_self_host(&entries[0], &entries[1]) &&
+		bootstrap_recipe_sqlite(&entries[2]) &&
+		bootstrap_recipe_lua(&entries[3]) &&
+		bootstrap_recipe_zstd(&entries[4]) &&
+		bootstrap_recipe_live_bootstrap_chain(entries[5:])
+	if !ok {
+		slice.zero(entries)
+	}
+	return ok
+}
 
-	entries[0] = ch1
-	entries[1] = ch2
-	entries[2] = sq
-	entries[3] = lu
-	entries[4] = zs
-	for stage, idx in chain {
-		entries[5 + idx] = stage
+// bootstrap_recipe_entries_swap swaps two entries in place. An entry is about
+// 180 KiB: a swap of two values makes the compiler copy each through
+// temporaries, which takes it minutes to generate.
+bootstrap_recipe_entries_swap :: proc(a, b: ^Bootstrap_Recipe_Entry) {
+	if a != b {
+		slice.ptr_swap_non_overlapping(a, b, size_of(Bootstrap_Recipe_Entry))
 	}
-	return entries, true
 }
 
 // bootstrap_recipe_catalog_verify validates every recipe entry in the catalog:
@@ -526,7 +532,8 @@ bootstrap_recipe_catalog_verify :: proc(entries: []Bootstrap_Recipe_Entry) -> (c
 		if hash_refusal != .None {
 			return {}, .Invalid_Recipe_Spec
 		}
-		sandbox, prep_refusal := plans_recipes.builder_sandbox_prepare(&entry.recipe)
+		sandbox: plans_recipes.Builder_Sandbox_Spec
+		prep_refusal := plans_recipes.builder_sandbox_prepare(&entry.recipe, &sandbox)
 		if prep_refusal != .None || plans_recipes.builder_sandbox_validate(&sandbox) != .None {
 			return {}, .Sandbox_Violation
 		}
@@ -566,7 +573,8 @@ bootstrap_recipe_catalog_verify :: proc(entries: []Bootstrap_Recipe_Entry) -> (c
 			if test_refusal != .None {
 				return {}, .Invalid_Self_Test_Recipe
 			}
-			test_sandbox, test_prep := plans_recipes.builder_sandbox_prepare(&entry.self_test_recipe)
+			test_sandbox: plans_recipes.Builder_Sandbox_Spec
+			test_prep := plans_recipes.builder_sandbox_prepare(&entry.self_test_recipe, &test_sandbox)
 			if test_prep != .None || plans_recipes.builder_sandbox_validate(&test_sandbox) != .None {
 				return {}, .Sandbox_Violation
 			}

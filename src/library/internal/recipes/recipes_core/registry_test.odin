@@ -12,13 +12,14 @@ registry_hash :: proc(tag: u8) -> blake3.Hash {
 }
 
 @(private = "file")
-inputs_tree_spec :: proc(builder: blake3.Hash) -> (spec: pr.Recipe_Spec) {
+// A recipe is about 90 KiB: it is written in place, never returned.
+inputs_tree_spec :: proc(spec: ^pr.Recipe_Spec, builder: blake3.Hash) {
+	spec^ = {}
 	spec.builder_hash = builder
 	spec.output_kind = .Tree
 	spec.input_count = 2
 	spec.inputs[0], _ = pr.recipe_input_make("src", .Tree, registry_hash(1))
 	spec.inputs[1], _ = pr.recipe_input_make("lib", .Blob, registry_hash(2))
-	return spec
 }
 
 @(test)
@@ -29,10 +30,11 @@ a_registered_recipe_builds_once_then_comes_from_the_cache :: proc(t: ^testing.T)
 	defer free(registry)
 	store := recipes_test_state_init(state)
 	defer free(store)
-	spec := inputs_tree_spec(pr.inputs_tree_builder_hash())
-	recipe, refusal := register_recipe(registry, &spec)
+	spec := new(pr.Recipe_Spec, context.temp_allocator)
+	inputs_tree_spec(spec, pr.inputs_tree_builder_hash())
+	recipe, refusal := register_recipe(registry, spec)
 	testing.expect_value(t, refusal, pr.Recipe_Refusal.None)
-	again, _ := register_recipe(registry, &spec)
+	again, _ := register_recipe(registry, spec)
 	testing.expect(t, again == recipe, "a recipe registered twice keeps one hash")
 
 	first := build_registered(state, registry, recipe, .Cache_First)
@@ -68,8 +70,9 @@ a_build_refuses_unknown_recipes_misses_and_foreign_builders :: proc(t: ^testing.
 	unknown := build_registered(state, registry, registry_hash(9), .Cache_First)
 	testing.expect_value(t, unknown.refusal, pr.Recipe_Refusal.Unknown_Recipe)
 
-	sandboxed_spec := inputs_tree_spec(registry_hash(8))
-	recipe, _ := register_recipe(registry, &sandboxed_spec)
+	sandboxed_spec := new(pr.Recipe_Spec, context.temp_allocator)
+	inputs_tree_spec(sandboxed_spec, registry_hash(8))
+	recipe, _ := register_recipe(registry, sandboxed_spec)
 	miss := build_registered(state, registry, recipe, .Cache_Only)
 	testing.expect_value(t, miss.refusal, pr.Recipe_Refusal.Cache_Miss)
 	sandboxed := build_registered(state, registry, recipe, .Cache_First)
@@ -80,7 +83,7 @@ a_build_refuses_unknown_recipes_misses_and_foreign_builders :: proc(t: ^testing.
 	empty: pr.Recipe_Spec
 	_, refusal := register_recipe(registry, &empty)
 	testing.expect_value(t, refusal, pr.Recipe_Refusal.Zero_Builder_Hash)
-	_, refusal = register_recipe(nil, &sandboxed_spec)
+	_, refusal = register_recipe(nil, sandboxed_spec)
 	testing.expect_value(t, refusal, pr.Recipe_Refusal.Buffer_Too_Small)
 }
 
@@ -89,15 +92,18 @@ a_full_registry_refuses_and_keeps_its_recipes :: proc(t: ^testing.T) {
 	registry := new(Recipe_Registry)
 	defer free(registry)
 	for index in 0 ..< MAX_REGISTERED_RECIPES {
-		spec := inputs_tree_spec(registry_hash(u8(index + 10)))
-		_, refusal := register_recipe(registry, &spec)
+		spec := new(pr.Recipe_Spec, context.temp_allocator)
+		inputs_tree_spec(spec, registry_hash(u8(index + 10)))
+		_, refusal := register_recipe(registry, spec)
 		testing.expect_value(t, refusal, pr.Recipe_Refusal.None)
 	}
-	spec := inputs_tree_spec(registry_hash(200))
-	_, refusal := register_recipe(registry, &spec)
+	spec := new(pr.Recipe_Spec, context.temp_allocator)
+	inputs_tree_spec(spec, registry_hash(200))
+	_, refusal := register_recipe(registry, spec)
 	testing.expect_value(t, refusal, pr.Recipe_Refusal.Recipe_Limit_Reached)
-	kept := inputs_tree_spec(registry_hash(10))
-	_, refusal = register_recipe(registry, &kept)
+	kept := new(pr.Recipe_Spec, context.temp_allocator)
+	inputs_tree_spec(kept, registry_hash(10))
+	_, refusal = register_recipe(registry, kept)
 	testing.expect_value(t, refusal, pr.Recipe_Refusal.None)
 }
 

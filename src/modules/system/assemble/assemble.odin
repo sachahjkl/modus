@@ -30,12 +30,12 @@ import "modus:contract/value_kinds"
 import "internal:assemble/assembler"
 import "modus:system"
 
-// The bytes of a text that the module takes: a program of many units. The
-// text is copied before it is read: in an isolated call it is in the call
-// region, which the caller can change during the call, and the labels are
-// views of the text. The copy is in the arena, so a short text does not pay
-// for the bound.
-SOURCE_BYTES_MOST :: assembler.PROGRAM_TEXT_BYTES_MOST
+// The bytes of a text that the module takes: a program of many units, as
+// the package takes it. The text is copied before it is read: in an
+// isolated call it is in the call region or in a memory object, which the
+// caller can change during the call, and the labels are views of the text.
+// The copy is in the arena, so a short text does not pay for the bound.
+SOURCE_BYTES_MOST :: assembler.TEXT_BYTES_MOST
 
 // The argument numbers of `assemble` and `assemble_program`, which an error
 // record names.
@@ -86,23 +86,24 @@ refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors
 }
 
 // text_and_workspace_push copies the text into the arena and carves a
-// workspace of the tier after it.
+// workspace of the scale after it.
 @(private)
-text_and_workspace_push :: proc "contextless" (arena: ^system.Arena, source: ^system.Bytes_To_Read, count: u64, tier: assembler.Workspace_Tier, refusal: ^errors.Error_Record) -> (text: string, workspace: assembler.Workspace, status: system.Status) {
+text_and_workspace_push :: proc "contextless" (arena: ^system.Arena, source: ^system.Bytes_To_Read, count: u64, scale: uint, refusal: ^errors.Error_Record) -> (text: string, workspace: assembler.Workspace, status: system.Status) {
 	copy_address: rawptr
 	copy_address, status = system.arena_push(arena, count, 1, refusal)
 	if status != .Ok {
 		return
 	}
 	intrinsics.mem_copy_non_overlapping(copy_address, source.bytes, int(count))
-	workspace_size := assembler.workspace_bytes(tier)
+	bounds := assembler.workspace_bounds_of_scale(scale)
+	workspace_size := assembler.workspace_bytes(bounds)
 	workspace_address: rawptr
 	workspace_address, status = system.arena_push(arena, workspace_size, assembler.WORKSPACE_ALIGNMENT, refusal)
 	if status != .Ok {
 		return
 	}
 	// The push gives the size and the alignment that the carve takes.
-	workspace, _ = assembler.workspace_carve(([^]u8)(workspace_address)[:workspace_size], tier)
+	workspace, _ = assembler.workspace_carve(([^]u8)(workspace_address)[:workspace_size], bounds)
 	return string(([^]u8)(copy_address)[:count]), workspace, .Ok
 }
 
@@ -140,24 +141,27 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 	}
 	defer system.arena_end(&arena)
 
-	// A text of one source takes the tier Unit, which costs what the module
-	// kept in its data before; a text that passes its bounds takes the tier
-	// Program, with the text copied again.
-	tier := count > assembler.UNIT_TEXT_BYTES_MOST ? assembler.Workspace_Tier.Program : assembler.Workspace_Tier.Unit
+	// The first scale is the one whose share of text holds the text: a
+	// text of one source takes the scale 0. A table that a text fills
+	// doubles the scale, with the text copied again, until the text passes,
+	// no scale can hold it, or the budget of the call host refuses the
+	// workspace: then the call fails with that error record.
+	scale := assembler.workspace_scale_of_text(count)
 	text: string
 	workspace: assembler.Workspace
 	parts: writer.Module_Parts
 	refusal: assembler.Refusal_Record
 	for {
 		push_status: system.Status
-		text, workspace, push_status = text_and_workspace_push(&arena, source, count, tier, &arena_refusal)
+		text, workspace, push_status = text_and_workspace_push(&arena, source, count, scale, &arena_refusal)
 		if push_status != .Ok {
 			return refusal_give(error, arena_refusal, push_status)
 		}
 		parts, refusal = assembler.assemble(text, &workspace)
-		if tier == .Unit && assembler.refusal_is_capacity(refusal.refusal) {
+		next, larger := assembler.workspace_scale_after(refusal, scale)
+		if larger {
 			system.arena_reset(&arena)
-			tier = .Program
+			scale = next
 			continue
 		}
 		break
@@ -205,18 +209,18 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 
 // assemble writes the module file of an assembly text into a memory object, and gives the bytes of the file.
 //
-// `source` is the text, 1 byte to 4 MiB: statements separated by a new line or by `;`, in the syntax of AT&T, with the
+// `source` is the text, 1 byte to 256 MiB: statements separated by a new line or by `;`, in the syntax of AT&T, with the
 // directives `section code`, `section data`, `export name(a: Integer, b: Text) -> Integer`, `byte`, `quad`, `zero`,
 // `align`, `unit` and `global`; a `quad` of a label is its address, which the module rebases at its load, and `unit`
 // starts the next unit of a program, whose labels other units reach only through `global`. `file` is a memory object
 // that the caller lends to write; the file starts at its first byte. The copy of the text and the tables of the
-// assembler are memory of the budget of the call host, for the time of the call: a text past the bounds of one source
-// (128 KiB of code, 2048 labels) takes the tables of a program (512 KiB of code, 128 KiB of data, 16384 labels, 16384
-// operands that name a label, 2048 rebases), and a budget that cannot pay them fails with its error record. A text
-// that the assembler does not take whole fails with the outcome `Argument_Refused` and the error record `Bad_Byte`:
-// the value is the offset of the first byte of the statement or the operand that it refuses, and found is that byte;
-// the log has the line, the column and the reason. A memory object smaller than the file fails with `Argument_Refused`
-// and `Too_Small`, and the limit is the bytes of the file. A write of the file that stops after its first bytes gives
+// assembler are memory of the budget of the call host, for the time of the call: the tables of one source (128 KiB of
+// code, 128 KiB of data, 2048 labels, 4096 operands that name a label, 2048 rebases, 128 exports) double while a text
+// fills one, and a budget that cannot pay them fails with its error record. A text that the assembler does not take
+// whole fails with the outcome `Argument_Refused` and the error record `Bad_Byte`: the value is the offset of the
+// first byte of the statement or the operand that it refuses, and found is that byte; the log has the line, the column
+// and the reason. A memory object smaller than the file fails with `Argument_Refused` and `Too_Small`, and the limit
+// is the bytes of the file. A write of the file that stops after its first bytes gives
 // `Stopped_After_A_Partial_Change`: the memory object then holds bytes that are no module file.
 @(export, link_name = "assemble")
 assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {

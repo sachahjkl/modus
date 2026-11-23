@@ -1,0 +1,3 @@
+type: Changed
+
+**Builds whose modules pass 64 KiB**: the service `recipes` keeps each output in its private store by its hash, of up to 16 MiB, and removes its oldest realisations when its outputs would pass three quarters of its store, never an output that a recipe names as an input, and none at all when the removals cannot make room. A C build plans its memory from its source and from the budget that the service holds at the call, and the console reads a source by ranges, so `build` of a program of the size of Lua or SQLite gives its module when the budget pays it, and a build past the budget is refused with the pages that it needs.

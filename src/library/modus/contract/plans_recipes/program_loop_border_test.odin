@@ -65,20 +65,6 @@ c_build_module_refusal_refuses_a_module_that_was_not_written :: proc(t: ^testing
 	expect_refusal(t, c_build_module_refusal(garbage[:]), .Malformed, 0)
 }
 
-// The module of a realisation whose bytes changed under its output hash:
-// one changed byte, a byte less, no byte; the bytes of the hash, last.
-@(test)
-c_build_substitute_refusal_refuses_changed_bytes :: proc(t: ^testing.T) {
-	bytes := [5]u8{1, 2, 3, 4, 5}
-	hash := blake3.hash(bytes[:])
-	changed := bytes
-	changed[4] = 6
-	expect_refusal(t, c_build_substitute_refusal(changed[:], hash), .Damaged, 0)
-	expect_refusal(t, c_build_substitute_refusal(bytes[:4], hash), .Damaged, 0)
-	expect_refusal(t, c_build_substitute_refusal(nil, hash), .Damaged, 0)
-	testing.expect_value(t, c_build_substitute_refusal(bytes[:], hash), errors.Error_Record{})
-}
-
 // The memory object for the module: one byte too small, no byte; exactly
 // the module, last.
 @(test)

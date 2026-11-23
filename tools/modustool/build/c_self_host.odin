@@ -53,6 +53,7 @@ C_SELF_HOST_DATA_BYTES :: 1 << 20
 C_SELF_HOST_LABELS :: 64 * 1024
 C_SELF_HOST_REFERENCES :: 128 * 1024
 C_SELF_HOST_REBASES :: 16 * 1024
+C_SELF_HOST_EXPORTS :: 1024
 
 // The record Readable_File of thin_libc.h.
 C_Readable_File :: struct {
@@ -317,7 +318,11 @@ c_program_assemble :: proc(texts: [][]u8, program: C_Program, allocator := conte
 	defer delete(data_references)
 	rebases := make([]u64, C_SELF_HOST_REBASES)
 	defer delete(rebases)
-	workspace := assembler.workspace_make(code, data, labels, label_slots, references, data_references, rebases)
+	exports := make([]assembler.Export_Declaration, C_SELF_HOST_EXPORTS)
+	defer delete(exports)
+	export_parts := make([]writer.Export_Part, C_SELF_HOST_EXPORTS)
+	defer delete(export_parts)
+	workspace := assembler.workspace_make(code, data, labels, label_slots, references, data_references, rebases, exports, export_parts)
 
 	parts, refusal := assembler.assemble(text, &workspace)
 	if refusal.refusal != .None {

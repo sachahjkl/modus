@@ -11,6 +11,7 @@
 package recipes_core
 
 import "modus:contract/blake3"
+import gb "modus:contract/guest_builder"
 import pr "modus:contract/plans_recipes"
 
 // The guest builds that the service holds: the running one and the ones
@@ -46,6 +47,50 @@ Guest_Queue :: struct {
 	arrivals:       u64,
 	last_principal: u64, // The principal of the build that ran last.
 	ran_once:       bool,
+}
+
+// The holder of the retention rule of the local store that the queue is
+// (Recipes_State.retention_keep): its user data.
+Guest_Queue_Keeper :: struct {
+	queue:    ^Guest_Queue,
+	registry: ^Recipe_Registry,
+}
+
+// guest_queue_keeps says if a build of the queue, running or waiting,
+// names hash: an input of its recipe, or the kernel or the initial archive
+// of its guest. The retention rule keeps such an output, so a build that
+// waits finds what it needs. user_data is a ^Guest_Queue_Keeper.
+guest_queue_keeps :: proc "contextless" (hash: blake3.Hash, user_data: rawptr) -> bool {
+	keeper := (^Guest_Queue_Keeper)(user_data)
+	if keeper == nil || keeper.queue == nil {
+		return false
+	}
+	for &job in keeper.queue.jobs {
+		if job.state == .Free {
+			continue
+		}
+		spec := &job.spec
+		// A build of a caller names a registered recipe; a build of the
+		// delegated ring holds its own spec.
+		if !job.from_ring {
+			if keeper.registry == nil {
+				continue
+			}
+			if spec = registered_recipe(keeper.registry, job.recipe_hash); spec == nil {
+				continue
+			}
+		}
+		for index in 0 ..< min(int(spec.input_count), len(spec.inputs)) {
+			if spec.inputs[index].hash == hash {
+				return true
+			}
+		}
+		guest, refusal := gb.decode_build_spec(spec.arguments[:min(int(spec.arguments_length), len(spec.arguments))])
+		if refusal == .None && (guest.kernel_hash == hash || guest.initial_archive_hash == hash) {
+			return true
+		}
+	}
+	return false
 }
 
 // What a cancel did.

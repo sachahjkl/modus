@@ -22,6 +22,7 @@ import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/store"
+import op "modus:contract/operation"
 
 // The context of the service disk_processes.
 DISK_PROCESSES_RING_SLOT :: 10 // Memory (Read, Write): the ring from the core, opened with Receive_Handles.
@@ -30,11 +31,16 @@ DISK_PROCESSES_IMAGE_SLOT :: 12 // Memory (Read): the boot image, for the import
 DISK_PROCESSES_VALUE_IMAGE_SIZE :: 0 // The context value with the bytes of the boot image.
 
 // The most bytes of the module file of a disk process, and of each file
-// of the store that the import scan keeps.
-MODULE_BYTES_LIMIT :: 4 << 20
+// of the store that the import scan keeps: 64 MiB.
+MODULE_BYTES_LIMIT :: 64 << 20
 
-// The most files of the store that one load keeps for its imports.
-LOAD_IMPORT_CAPACITY :: 8
+// The most files of the store that one load keeps for its imports: each
+// module record of a process can be a file of the store.
+LOAD_IMPORT_CAPACITY :: op.PROCESS_MODULE_CAPACITY
+
+// The most entries of the root tree that the import scan of one load reads
+// (disk_process.SCAN_ENTRY_CAPACITY).
+LOAD_SCAN_ENTRY_CAPACITY :: 256
 
 // The most bytes of the name of an entry of the store module_files: the
 // most bytes of the name of any entry of a store.
@@ -43,7 +49,7 @@ LOAD_FILE_NAME_CAPACITY :: store.ENTRY_NAME_CAPACITY
 // The most loans of an entry of the scan in one load: each entry one
 // time, and two reads more for each wanted hash, as the scan reads
 // (disk_process.SCAN_READ_LIMIT).
-LOAD_CANDIDATE_LOAN_LIMIT :: 64 + 2 * LOAD_IMPORT_CAPACITY
+LOAD_CANDIDATE_LOAN_LIMIT :: LOAD_SCAN_ENTRY_CAPACITY + 2 * LOAD_IMPORT_CAPACITY
 
 // The most replacements of the machine: the capacity of the replacement
 // table.

@@ -432,6 +432,41 @@ a_missing_import_and_a_changed_file_are_refused_with_the_missing_hash :: proc(t:
 	testing.expect_value(t, len(result.kept_hashes), 0)
 }
 
+// A program with many libraries of the store loads: nine imports, one past
+// the bound of before, and exactly the wanted capacity, each a file of the
+// store under its own nickname. The list of the store takes several pages.
+@(test)
+a_program_with_the_most_imports_of_the_store_loads :: proc(t: ^testing.T) {
+	for count in ([?]int{9, disk_process.SCAN_WANTED_CAPACITY}) {
+		libraries := make([]blake3.Hash, count, context.temp_allocator)
+		entries := make([]Store_Entry, count + 1, context.temp_allocator)
+		names := make([][3]u8, count, context.temp_allocator)
+		for index in 0 ..< count {
+			// A hash with the first byte IMAGE_TAG is a module of the boot
+			// image for this test: such a library is made again, longer.
+			library := module_file(nil, 100, u8(index))
+			for filler := 101; blake3.hash(library)[0] == IMAGE_TAG; filler += 1 {
+				library = module_file(nil, filler, u8(index))
+			}
+			libraries[index] = blake3.hash(library)
+			names[index] = {'l', 'a' + u8(index / 26), 'a' + u8(index % 26)}
+			entries[index + 1] = {name = string(names[index][:]), bytes = library, class = .Object}
+		}
+		file := module_file(libraries)
+		entries[0] = {name = "visitor", bytes = file, class = .Object}
+		store := Store{entries = entries}
+		machine := new(Machine, context.temp_allocator)
+		machine^ = machine_make()
+		request := request_of("visitor", blake3.hash(file))
+		result := run(machine, &store, &request)
+		testing.expectf(t, result.border_ok, "%d imports: each event passes the border of the core", count)
+		testing.expect_value(t, last(&result).event, rd.Disk_Load_Event.Ready)
+		testing.expect_value(t, len(result.kept_hashes), count)
+		seen := last(&result)
+		testing.expect_value(t, rd.start_from_bytes_check(&seen.report.start, 3, "visitor", blake3.hash(file), u64(len(file)), result.kept_hashes[:]), rd.Start_From_Bytes_Refusal.None)
+	}
+}
+
 // Imports past the wanted capacity, and a chain of imports past the depth
 // limit, end the load with Import_Bounds. A loop through a replacement of
 // the machine ends: a hash is wanted once.
@@ -459,9 +494,10 @@ imports_past_the_bounds_and_a_loop_through_a_replacement_end :: proc(t: ^testing
 	deep_file := module_file({blake3.hash(chain[0])})
 	deep_entries: [disk_process.SCAN_DEPTH_LIMIT + 2]Store_Entry
 	deep_entries[0] = {name = "visitor", bytes = deep_file, class = .Object}
-	names := [?]string{"c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"}
+	names: [disk_process.SCAN_DEPTH_LIMIT + 1][3]u8
 	for level in 0 ..= disk_process.SCAN_DEPTH_LIMIT {
-		deep_entries[level + 1] = {name = names[level], bytes = chain[level], class = .Object}
+		names[level] = {'c', 'a' + u8(level / 26), 'a' + u8(level % 26)}
+		deep_entries[level + 1] = {name = string(names[level][:]), bytes = chain[level], class = .Object}
 	}
 	deep_store := Store{entries = deep_entries[:]}
 	deep := machine_make()

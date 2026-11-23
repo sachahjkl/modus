@@ -1422,7 +1422,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 
 // The bytes of a module file that isolate_memory takes: the bound of a
 // module file of the store module_files, which a call host maps whole.
-MEMORY_MODULE_BYTES_MOST :: 4 * 1024 * 1024
+MEMORY_MODULE_BYTES_MOST :: disk_process.FILE_BYTES_LIMIT
 
 // isolate_from_memory makes each export of a module file that a memory
 // object holds a command, as isolate does for a module of the boot image

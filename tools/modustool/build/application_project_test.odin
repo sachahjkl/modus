@@ -3,6 +3,7 @@ package build
 
 import "base:runtime"
 import "core:crypto/ed25519"
+import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:testing"
@@ -144,7 +145,7 @@ evaluation_config :: proc(here: blake3.Hash, catalog_lex: string, bindings: ^[1]
 // The recipe hash that the evaluator gives for outputs.default.
 @(private = "file")
 output_recipe_hash :: proc(t: ^testing.T, project_lex: string, config: lex_evaluator.Declaration_Config) -> (hash: blake3.Hash, ok: bool) {
-	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	workspace := application_test_workspace()
 	result := lex_evaluator.declaration_evaluate(workspace, project_lex, "outputs.default", config)
 	testing.expectf(t, result.ok && result.value.kind == .Recipe_Ref, "outputs.default is not a recipe: %v", result)
 	if !result.ok || result.value.kind != .Recipe_Ref {
@@ -201,7 +202,7 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	config := evaluation_config(here, catalog_lex, &bindings)
 	project_lex := string(file_bytes(files, "project.lex"))
 
-	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	workspace := application_test_workspace()
 	evaluation: [4096]u8
 	evaluation_length, evaluated := lex_evaluator.declaration_evaluate_to_buffer(workspace, project_lex, "", config, evaluation[:])
 	testing.expect(t, evaluated, "project.lex evaluates")
@@ -247,7 +248,8 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	count, loaded := projects_core.load_project(table, state, 1, name, evaluation[:evaluation_length], file_bytes(files, "pins.lex"))
 	testing.expect_value(t, loaded, pr.Project_Refusal.None)
 	testing.expect_value(t, count, 0)
-	_, inputs_refusal := projects_core.inputs_recipe(table, state, 1, name)
+	inputs_spec := new(pr.Recipe_Spec, context.temp_allocator)
+	inputs_refusal := projects_core.inputs_recipe(table, state, 1, name, inputs_spec)
 	testing.expect_value(t, inputs_refusal, pr.Project_Refusal.Pin_Not_Found)
 
 	// The recipe of the output, on the path of the export
@@ -308,7 +310,7 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	config := evaluation_config(here, catalog_lex, &bindings)
 	project_lex := string(file_bytes(files, "project.lex"))
 
-	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	workspace := application_test_workspace()
 	evaluation: [4096]u8
 	evaluation_length, evaluated := lex_evaluator.declaration_evaluate_to_buffer(workspace, project_lex, "", config, evaluation[:])
 	testing.expect(t, evaluated, "project.lex evaluates")
@@ -386,4 +388,15 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	other_asm_bindings: [1]lex_evaluator.Declaration_Binding
 	other_asm, other_asm_eval_ok := output_recipe_hash(t, project_lex, evaluation_config(here, other_asm_catalog, &other_asm_bindings))
 	testing.expect(t, other_asm_eval_ok && other_asm != first, "another assemble gives another recipe")
+}
+
+// application_test_workspace gives an evaluation workspace with the pools
+// of the scale 0, which hold each project of these tests.
+@(private = "file")
+application_test_workspace :: proc() -> ^lex_evaluator.Declaration_Workspace {
+	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	pools := lex_evaluator.declaration_pools_of_scale(0)
+	memory, _ := mem.alloc_bytes(lex_evaluator.declaration_workspace_bytes(pools), 64, context.temp_allocator)
+	lex_evaluator.declaration_workspace_carve(workspace, memory, pools)
+	return workspace
 }

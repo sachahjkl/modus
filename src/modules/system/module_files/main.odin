@@ -41,6 +41,7 @@
 // reaches the disk").
 package module_files
 
+import "internal:module_files/module_files_core"
 import "modus:contract/blake3"
 import "modus:contract/storage_status"
 import "modus:contract/datagram"
@@ -57,9 +58,9 @@ import "modus:system"
 import "modus:tcp"
 import "modus:web"
 
-// The memory of one file of 4 MiB (1024 pages), the buffers of the 4
-// connections (96 pages), and its tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1184, processes = 1, threads = 1}
+// The buffers of the 4 connections (96 pages), and its tables. A file
+// passes in pieces of WRITE_PIECE bytes, so its size costs no memory.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 160, processes = 1, threads = 1}
 
 // The connections at one time: one for the call that runs, and the ones
 // that wait in TIME-WAIT after earlier calls.
@@ -76,16 +77,13 @@ RECEIVE_PLACES :: 96
 SEND_TAG :: 1000 // Tags from 1000: a Send of place tag - 1000.
 CALL_TAG :: 100_000 // Info.
 
-// The file of one call: the limit of a module file of a disk process, so
-// that the root service can load each file that this service stores.
-FILE_PAGES :: disk_process.FILE_BYTES_LIMIT / system.PAGE_SIZE
 
 // The bytes of the path of a request.
 PATH_LIMIT :: 200
 
-// The bytes of one write_range: the call region of a connection has 64 KiB,
-// and holds the arguments too.
-WRITE_PIECE :: 32 * 1024
+// The bytes of one piece of a file: one write_range of the stream
+// (module_files_core, file_stream.odin).
+WRITE_PIECE :: module_files_core.WRITE_PIECE
 
 // The pages of the listing of the store that one list reads at most. A
 // storage service that never gives an empty page ends there.
@@ -95,7 +93,7 @@ LIST_PAGE_LIMIT :: 1024
 Module_File_Row :: struct {
 	name:  [64]u8, // The name of the entry: the nickname of the file.
 	bytes: i64, // The bytes of the object.
-	hash:  [72]u8, // The 64 hexadecimal digits of the BLAKE3 hash of its bytes; empty when its bytes did not come or pass 4 MiB.
+	hash:  [72]u8, // The 64 hexadecimal digits of the BLAKE3 hash of its bytes; empty when its bytes did not come or pass 64 MiB.
 }
 
 table: tcp.Table
@@ -118,7 +116,7 @@ remote_port: u16
 
 store_client: storage.Client
 store_principal: u64 // The principal of the store: the only principal whose callers this service serves.
-file: []u8 // FILE_PAGES pages of its own memory: the bytes of the call that runs.
+piece: [WRITE_PIECE]u8 // The bytes of one piece of a file, in the memory of this service.
 service: system.Service
 process_generator: random.Generator // The random generator of this process, from the seed of its starter.
 
@@ -256,22 +254,28 @@ network_failure :: proc "contextless" (error: ^errors.Error_Record, outcome: cal
 	return failed
 }
 
-// fetch sends GET path to the web server of the grant, and copies the
-// body of the answer into `file`. The answer is input from the network:
-// its head has a status 200 and a Content-Length of 1 to 4 MiB, and the
-// body comes whole before the deadline, or nothing is kept. size is the
-// bytes of the body; outcome is Succeeded, or the outcome of the failed export.
-fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_Record) -> (size: int, outcome: call_outcome.Call_Outcome) {
+// fetch sends GET path to the web server of the grant, and writes the
+// body of the answer into the staging object of the nickname name, by
+// pieces, as it comes; at its end the nickname names the bytes. The answer
+// is input from the network: its head has a status 200 and a
+// Content-Length of 1 byte to disk_process.FILE_BYTES_LIMIT, each full
+// piece of the body comes before the deadline after the piece before it,
+// and the whole body before module_files_core.receive_total_deadline. size
+// is the bytes of the body and hash the hash of the bytes written; outcome
+// is Succeeded, or the outcome of the failed export. A body that ends early
+// leaves the file before under the nickname.
+fetch :: proc "contextless" (path: string, name: string, error: ^errors.Error_Record) -> (size: int, hash: blake3.Hash, outcome: call_outcome.Call_Outcome) {
+	deadline := system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
 	index, connect_error := tcp.connect(&table, remote_address, remote_port, system.nanoseconds() / 1000)
 	if connect_error.kind != 0 {
-		return 0, network_failure(error, .Callee_Busy, .Full, .Connections, path, "the table of connections has no free record")
+		return 0, {}, network_failure(error, .Callee_Busy, .Full, .Connections, path, "the table of connections has no free record")
 	}
 	defer connection_end(index)
 	for connections[index].state == .Syn_Sent && system.time() < deadline {
 		pump()
 	}
 	if connections[index].state != .Established {
-		return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the web server did not take the connection")
+		return 0, {}, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the web server did not take the connection")
 	}
 	address_buffer: [16]u8
 	address_writer := system.Writer{buffer = address_buffer[:]}
@@ -282,11 +286,11 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 	for written < len(request) {
 		count, write_error := tcp.write(&table, index, transmute([]u8)request[written:])
 		if write_error.kind != 0 {
-			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Connection, path, "the connection ended before the request went")
+			return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .Connection, path, "the connection ended before the request went")
 		}
 		written += count
 		if system.time() >= deadline {
-			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the request did not go before the deadline")
+			return 0, {}, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the request did not go before the deadline")
 		}
 		pump()
 	}
@@ -300,50 +304,145 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 			break
 		}
 		if head_length == len(head_bytes) {
-			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the head of the answer passes 2048 bytes")
+			return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the head of the answer passes 2048 bytes")
 		}
 		if remote_ended(index) {
-			return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the connection ended before the head of the answer")
+			return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the connection ended before the head of the answer")
 		}
 		if system.time() >= deadline {
-			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "no answer before the deadline")
+			return 0, {}, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "no answer before the deadline")
 		}
 		pump()
 	}
 	head, head_ok := web.head_read(head_bytes[:head_length])
 	if !head_ok {
-		return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the head of the answer is not HTTP/1.1")
+		return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the head of the answer is not HTTP/1.1")
 	}
 	if head.status != 200 {
-		return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the status of the answer is not 200", i64(head.status))
+		return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the status of the answer is not 200", i64(head.status))
 	}
 	if head.content_length < 1 || head.content_length > disk_process.FILE_BYTES_LIMIT {
-		return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has no Content-Length of 1 to 4194304 bytes", i64(head.content_length))
+		return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has no Content-Length of 1 byte to 64 MiB", i64(head.content_length))
 	}
 	// The length is read one time, here: no later byte changes it.
 	size = head.content_length
 	rest := head_bytes[head.size:head_length]
 	if len(rest) > size {
-		return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has more bytes than its Content-Length")
+		return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has more bytes than its Content-Length")
 	}
-	received := copy(file[:size], rest)
-	for received < size {
-		count, _ := tcp.read(&table, index, file[received:size])
-		received += count
-		if received == size {
-			break
+	stream: module_files_core.File_Stream
+	if status := module_files_core.file_stream_begin(&stream, &client_file_store, name); status != .Ok {
+		return 0, {}, store_refused(error, &stream.store_error, status, .File, name)
+	}
+	// Each way out before the end leaves the file before under the nickname.
+	defer file_stream_abandon_reported(&stream)
+	if status := module_files_core.file_stream_piece(&stream, rest); status != .Ok {
+		return 0, {}, store_refused(error, &stream.store_error, status, .File, name)
+	}
+	// Two deadlines end the body: no full piece in LOAD_DEADLINE_MILLISECONDS,
+	// and the total of receive_total_deadline. Only a full piece moves the
+	// first, so a link that gives a byte now and then cannot hold the call;
+	// the second bounds a link that gives a piece just before each deadline.
+	total_deadline := module_files_core.receive_total_deadline(system.time(), size)
+	filled := 0
+	for stream.written < size {
+		wanted := min(len(piece), size - stream.written)
+		count, _ := tcp.read(&table, index, piece[filled:wanted])
+		filled += count
+		if filled == wanted {
+			if status := module_files_core.file_stream_piece(&stream, piece[:filled]); status != .Ok {
+				return 0, {}, store_refused(error, &stream.store_error, status, .File, name)
+			}
+			filled = 0
+			deadline = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
+			continue
 		}
-		if count == 0 && remote_ended(index) {
-			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the connection ended before the end of the body", i64(received))
+		if count > 0 {
+			continue
 		}
-		if system.time() >= deadline {
-			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the body did not come whole before the deadline", i64(received))
+		if remote_ended(index) {
+			return 0, {}, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the connection ended before the end of the body", i64(stream.written + filled))
 		}
-		if count == 0 {
-			pump()
+		now := system.time()
+		if now >= deadline {
+			return 0, {}, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "no piece of the body came before the deadline", i64(stream.written + filled))
+		}
+		if now >= total_deadline {
+			return 0, {}, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the body did not come before its total deadline", i64(stream.written + filled))
+		}
+		pump()
+	}
+	status: storage_status.Status
+	if hash, status = module_files_core.file_stream_end(&stream); status != .Ok {
+		return 0, {}, store_refused(error, &stream.store_error, status, .File, name)
+	}
+	return size, hash, .Succeeded
+}
+
+// The staging objects that one pass of staging_objects_remove removes at
+// most, and the pages of the listing that it reads.
+STAGING_REMOVE_BATCH :: 16
+
+// staging_objects_remove removes each staging object of the store: a stop
+// of this service between the clone and the remove of a write, or a remove
+// that failed, leaves one, which no load reads and which holds blocks. The
+// service runs it at its start, when no write of its own runs, and the
+// listing runs it too. A staging object that the remove refuses stays, and
+// the listing shows it. It gives the count of staging objects that stay.
+staging_objects_remove :: proc "contextless" () -> (kept: int) {
+	rows: [16]storage.Listed
+	names: [16 * 64]u8
+	after: [64]u8
+	after_length := 0
+	for _ in 0 ..< LIST_PAGE_LIMIT {
+		page, status := storage.list(&store_client, storage.ROOT, string(after[:after_length]), rows[:], names[:])
+		if status != .Ok || len(page) == 0 {
+			return kept
+		}
+		found: [STAGING_REMOVE_BATCH][64]u8
+		found_lengths: [STAGING_REMOVE_BATCH]int
+		found_count := 0
+		for item in page {
+			if item.name_offset < 0 || item.name_count <= 0 || item.name_count > i64(len(after)) || item.name_offset > i64(len(names)) - item.name_count {
+				return kept
+			}
+			entry_name := string(names[item.name_offset:][:item.name_count])
+			after_length = copy(after[:], entry_name)
+			if disk_process.staging_name_is(entry_name) && found_count < len(found) {
+				found_lengths[found_count] = copy(found[found_count][:], entry_name)
+				found_count += 1
+			}
+		}
+		// The names are copied before the removes: a remove changes the
+		// listing, and the next page starts after the last name read.
+		for index in 0 ..< found_count {
+			name := string(found[index][:found_lengths[index]])
+			store_error: errors.Error_Record
+			if generation, removed := storage.remove(&store_client, storage.ROOT, name, &store_error); removed != .Ok || generation < 0 {
+				kept += 1
+				continue
+			}
+			system.log_fact(.Info, Staging_Removed{file_name = value_kinds.text_field(name, FILE_NAME_FIELD_BYTES)})
 		}
 	}
-	return size, .Succeeded
+	return kept
+}
+
+// file_stream_abandon_reported abandons a write that stops, and writes the
+// fact of pending changes that the storage service did not drop: they stay
+// held on this connection until the next write of the nickname drops them.
+file_stream_abandon_reported :: proc "contextless" (stream: ^module_files_core.File_Stream) {
+	module_files_core.file_stream_abandon(stream)
+	if stream.pending_kept {
+		system.log_fact(.Warning, Staging_Pending_Kept{nickname = value_kinds.module_name_field(stream.nickname)})
+	}
+}
+
+// store_refused gives the outcome of store_failure alone, for a procedure
+// that gives more than the outcome of the export.
+store_refused :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage_status.Status, subject: Store_Subject, nickname := "") -> call_outcome.Call_Outcome {
+	outcome, _ := store_failure(error, store_error, status, subject, nickname)
+	return outcome
 }
 
 // store_failure writes the fact of a refusal of the storage service, and
@@ -377,19 +476,22 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 
 // receive fetches a module file from the web server of the grant, and stores it in the store module_files under a nickname.
 //
-// The service sends `GET path` to the web server, takes a body of 1 to 4 MiB with a Content-Length, writes it as the
-// object `nickname` of the root tree of the store `module_files` of its principal in one commit, then gives the 64
-// hexadecimal digits of the BLAKE3 hash of the bytes that came. The hash is the one to type in `start_from_disk`: the
-// root service checks the bytes against it at the start, so a file with other bytes never runs under it. A file of the
-// same nickname is replaced, and the store keeps the one before as a version.
+// The service sends `GET path` to the web server, takes a body of 1 byte to 64 MiB with a Content-Length, writes it
+// into the staging object of the nickname in the root tree of the store `module_files` of its principal by pieces as
+// it comes, in commits of 1 MiB, then makes the object `nickname` name the bytes in one commit, removes the staging
+// object, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The hash is the one to type in
+// `start_from_disk`: the root service checks the bytes against it at the start, so a file with other bytes never runs
+// under it. A file of the same nickname is replaced whole, and the store keeps the one before as a version: one
+// receive makes one version. A staging object has a name longer than a nickname, so it never runs.
 //
 // - **nickname**: the name of the entry, 1 to 23 bytes, with no zero byte and no `/`; not `module_files` and not
 //   `grant_table`.
 // - **path**: the path of the request, 1 to 200 bytes that start with `/`, with no space and no control byte.
 // - **result**: the 64 hexadecimal digits of the hash.
 //
-// The caller must act for the principal of the store (**Acts_For_Principal**). The call ends 30 seconds after it
-// starts, the deadline of a load. The result is 64, or a failure with its call outcome and an error record:
+// The caller must act for the principal of the store (**Acts_For_Principal**). The call ends when no piece of 32 KiB
+// comes for 30 seconds, the deadline of a load, or when the body takes longer than 30 seconds and its bytes at 64 KiB
+// each second: 1054 seconds for 64 MiB. The result is 64, or a failure with its call outcome and an error record:
 //
 // - `No_Grant` (Grant_Or_Right_Missing): the caller does not act for the principal of the store.
 // - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 1): the nickname; `Exists` (Name_Already_Taken):
@@ -398,8 +500,9 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 //   place of the byte.
 // - `Full` (Callee_Busy): the table of connections has no free record.
 // - `No_Answer` or `Refused` (Callee_Unavailable, argument 2): the web server did not answer before the deadline, or
-//   its answer is not a module file: a status that is not 200 (the record holds it), no Content-Length of 1 to 4 MiB,
-//   or a body that ends early. The log says which.
+//   its answer is not a module file: a status that is not 200 (the record holds it), no Content-Length of 1 byte to
+//   64 MiB, or a body that ends early: the file before stays under the nickname, and the staging object goes. The
+//   log says which.
 // - `Refused` (Callee_Unavailable): the service has no store, or the storage service refused the file.
 //
 // Example: `module_files.receive("visitor", "/visitor")`.
@@ -433,27 +536,11 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
-	deadline := system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
-	size, fetched := fetch(request_path, deadline, error)
-	if fetched != .Succeeded {
-		return fetched, 0
-	}
-	hash := blake3.hash(file[:size])
 	// The store first, then the answer: the hash goes back only when the
 	// store holds the bytes.
-	store_error: errors.Error_Record
-	for piece_start := 0; piece_start < size; piece_start += WRITE_PIECE {
-		piece := file[piece_start:min(piece_start + WRITE_PIECE, size)]
-		if _, status := storage.write_range(&store_client, storage.ROOT, name, u64(piece_start), piece, &store_error); status != .Ok {
-			return store_failure(error, &store_error, status, .File, name)
-		}
-	}
-	// An older file of the nickname can be longer.
-	if status := storage.set_size(&store_client, storage.ROOT, name, u64(size), &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, .File, name)
-	}
-	if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, .File, name)
+	size, hash, fetched := fetch(request_path, name, error)
+	if fetched != .Succeeded {
+		return fetched, 0
 	}
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.hash_write(&digits, hash)
@@ -462,23 +549,25 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	return .Succeeded, disk_process.HASH_DIGITS
 }
 
-// bytes_hash reads the bytes of an object of the store into `file`, and
+// bytes_hash reads the bytes of an object of the store by pieces, and
 // gives the BLAKE3 hash of those bytes. The hash of the entry is not read:
 // it differs from the hash of the bytes when the object has a hole.
 bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_process.HASH_SIZE]u8, ok: bool) {
 	if size <= 0 || size > disk_process.FILE_BYTES_LIMIT {
 		return {}, false
 	}
+	hasher := blake3.hasher_make()
 	received := 0
 	for received < size {
-		bytes, status := storage.read_range(&store_client, storage.ROOT, name, u64(received), file[received:size])
+		bytes, status := storage.read_range(&store_client, storage.ROOT, name, u64(received), piece[:min(len(piece), size - received)])
 		// An answer with no byte before the end would come again for ever.
 		if status != .Ok || len(bytes) == 0 {
 			return {}, false
 		}
+		blake3.hasher_update(&hasher, bytes)
 		received += len(bytes)
 	}
-	return blake3.hash(file[:size]), true
+	return blake3.hasher_finish(&hasher), true
 }
 
 // list gives one row for each module file of the store module_files: its name, its bytes, and the BLAKE3 hash of its bytes.
@@ -486,7 +575,7 @@ bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_proce
 // The service reads the bytes of each object again and computes the hash: the hash that the storage service keeps for
 // an entry differs from the hash of the bytes when the object has a hole. The object `grant_table`, the disk grant
 // table of the principal, is no module file and has no row; nor has the debug object of a module file, an object named
-// by the 64 hexadecimal digits of the hash of its module. An object over 4 MiB, the limit of a module file, or whose
+// by the 64 hexadecimal digits of the hash of its module. An object over 64 MiB, the limit of a module file, or whose
 // bytes did not come, has a row with no hash. The log has one line for each row.
 //
 // - **result**: a table of `Module_File_Row` rows; the call fills at most its length.
@@ -505,6 +594,9 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> (o
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
+	// A staging object that a stop left goes first; one that stays is a
+	// row of the listing, so the listing hides nothing that holds blocks.
+	staging_objects_remove()
 	rows: [16]storage.Listed
 	names: [16 * 64]u8
 	after: [64]u8
@@ -532,8 +624,8 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> (o
 			}
 			entry_name := string(names[item.name_offset:][:item.name_count])
 			after_length = copy(after[:], entry_name)
-			// The disk grant table and the debug object of a module file
-			// are objects of the store, and no module file.
+			// The disk grant table and the debug object of a module file are
+			// objects of the store, and no module file.
 			if entry_kind != .Object || entry_name == disk_process.TABLE_OBJECT_NAME || disk_process.debug_object_name_is(entry_name) {
 				continue
 			}
@@ -565,8 +657,8 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> (o
 // machine stops.
 //
 // 1. takes its random generator; with no seed it stops with `Failed`;
-// 2. opens its service ring and its store, and makes the memory of one
-//    file; a missing part stops it with a line of the log;
+// 2. opens its service ring and its store; a missing part stops it with a
+//    line of the log;
 // 3. asks the network service for its grant; a grant that is not a client
 //    grant of TCP stops it;
 // 4. writes "module_files: serves the store module_files of principal N: ...".
@@ -583,15 +675,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if store_client, opened = storage.open(ctx); !opened {
 		fail("no store: the root service gave no connection to the store module_files")
 	}
-	file_memory, file_status := system.memory_create(FILE_PAGES)
-	if file_status != .Ok {
-		fail("no memory for the bytes of a file")
-	}
-	file_address, file_map_status := system.memory_map(file_memory, {.Write})
-	if file_map_status != .Ok {
-		fail("no memory for the bytes of a file")
-	}
-	file = ([^]u8)(file_address)[:disk_process.FILE_BYTES_LIMIT]
+	staging_objects_remove()
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")

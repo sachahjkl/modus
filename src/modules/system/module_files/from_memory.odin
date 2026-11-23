@@ -9,6 +9,7 @@ package module_files
 import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
+import "internal:module_files/module_files_core"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:disk_process"
@@ -49,14 +50,16 @@ memory_failure :: proc "contextless" (error: ^errors.Error_Record, argument: i64
 
 // put stores the module file that the caller lends in memory in the store module_files under a nickname.
 //
-// The service copies the first `size` bytes of the memory object one time, writes them as the object `nickname` of the
-// root tree of the store `module_files` of its principal in one commit, then gives the 64 hexadecimal digits of the
-// BLAKE3 hash of the bytes. A file of the same nickname is replaced, and the store keeps the one before as a version.
+// The service copies the first `size` bytes of the memory object one time, by pieces, writes them into the staging
+// object of the nickname in the root tree of the store `module_files` of its principal, in commits of 1 MiB, then
+// makes the object `nickname` name them in one commit, removes the staging object, and gives the 64 hexadecimal
+// digits of the BLAKE3 hash of the bytes. A file of the same nickname is replaced whole, and the store keeps the one
+// before as a version: one put makes one version. A put that fails keeps the file before under the nickname.
 //
 // - **nickname**: the name of the entry, 1 to 23 bytes, with no zero byte and no `/`; not `module_files` and not
 //   `grant_table`.
 // - **module**: a memory object with the bytes, which the caller lends with Read.
-// - **size**: the count of the bytes, 1 to 4 MiB, at most the bytes of the memory object.
+// - **size**: the count of the bytes, 1 byte to 64 MiB, at most the bytes of the memory object.
 // - **result**: the 64 hexadecimal digits of the hash.
 //
 // The caller must act for the principal of the store (**Acts_For_Principal**). The result is 64, or a failure with its
@@ -65,7 +68,7 @@ memory_failure :: proc "contextless" (error: ^errors.Error_Record, argument: i64
 // - `No_Grant` (Grant_Or_Right_Missing): the caller does not act for the principal of the store.
 // - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 1): the nickname; `Exists` (Name_Already_Taken):
 //   `module_files` or `grant_table`, which the store keeps.
-// - `Out_Of_Range` (Argument_Refused, argument 3): a size of 0, past 4 MiB, or past the memory object; `Refused`
+// - `Out_Of_Range` (Argument_Refused, argument 3): a size of 0, past 64 MiB, or past the memory object; `Refused`
 //   (Argument_Refused, argument 2): the memory object does not map.
 // - `Refused` (Callee_Unavailable): the service has no store, or the storage service refused the file.
 //
@@ -95,14 +98,28 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 	if map_status != .Ok {
 		return memory_failure(error, 2, map_status)
 	}
-	// One copy: the caller can change its memory object during the call,
-	// and the hash names the bytes that the store holds.
-	intrinsics.mem_copy_non_overlapping(raw_data(file), address, int(size))
-	system.memory_unmap(address)
+	// Each piece is copied one time, then hashed and written from the
+	// copy: the caller can change its memory object during the call, and
+	// the hash names the bytes that the store holds.
 	count := int(size)
-	hash := blake3.hash(file[:count])
-	if written, _ := file_write(name, count, error); written != .Succeeded {
-		return written, 0
+	stream: module_files_core.File_Stream
+	if status := module_files_core.file_stream_begin(&stream, &client_file_store, name); status != .Ok {
+		system.memory_unmap(address)
+		return store_failure(error, &stream.store_error, status, .File, name)
+	}
+	defer file_stream_abandon_reported(&stream)
+	for stream.written < count {
+		taken := min(len(piece), count - stream.written)
+		intrinsics.mem_copy_non_overlapping(&piece[0], rawptr(uintptr(address) + uintptr(stream.written)), taken)
+		if status := module_files_core.file_stream_piece(&stream, piece[:taken]); status != .Ok {
+			system.memory_unmap(address)
+			return store_failure(error, &stream.store_error, status, .File, name)
+		}
+	}
+	system.memory_unmap(address)
+	hash, status := module_files_core.file_stream_end(&stream)
+	if status != .Ok {
+		return store_failure(error, &stream.store_error, status, .File, name)
 	}
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.hash_write(&digits, hash)
@@ -147,7 +164,7 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 	}
 	store_error: errors.Error_Record
 	object_size, size_status := storage.size(&store_client, storage.ROOT, name, &store_error)
-	absent := size_status == .Failed && store_error.kind == i64(errors.Kind.Absent)
+	absent := size_status == .Absent || size_status == .Failed && store_error.kind == i64(errors.Kind.Absent)
 	if size_status != .Ok && !absent {
 		return store_failure(error, &store_error, size_status, .File, name)
 	}
@@ -156,15 +173,6 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 		return absent ? .Nothing_Has_That_Name : .Argument_Refused, 0
 	}
 	count := int(object_size)
-	received := 0
-	for received < count {
-		bytes, status := storage.read_range(&store_client, storage.ROOT, name, u64(received), file[received:count], &store_error)
-		// An answer with no byte before the end would come again for ever.
-		if status != .Ok || len(bytes) == 0 {
-			return store_failure(error, &store_error, status == .Ok ? .Refused : status, .File, name)
-		}
-		received += len(bytes)
-	}
 	pages, pages_status := system.memory_size(module.handle)
 	if pages_status != .Ok {
 		pages = 0
@@ -177,28 +185,19 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 	if map_status != .Ok {
 		return memory_failure(error, 2, map_status)
 	}
-	intrinsics.mem_copy_non_overlapping(address, raw_data(file), count)
+	// The ranges go into the memory of the caller by pieces of this
+	// service: the file costs this service no memory of its size.
+	received := 0
+	for received < count {
+		bytes, status := storage.read_range(&store_client, storage.ROOT, name, u64(received), piece[:min(len(piece), count - received)], &store_error)
+		// An answer with no byte before the end would come again for ever.
+		if status != .Ok || len(bytes) == 0 {
+			system.memory_unmap(address)
+			return store_failure(error, &store_error, status == .Ok ? .Refused : status, .File, name)
+		}
+		intrinsics.mem_copy_non_overlapping(rawptr(uintptr(address) + uintptr(received)), raw_data(bytes), len(bytes))
+		received += len(bytes)
+	}
 	system.memory_unmap(address)
 	return .Succeeded, i64(count)
-}
-
-// file_write writes the first count bytes of file as the object name, in
-// pieces, sets its size and commits it: one commit for the whole file.
-@(private = "file")
-file_write :: proc "contextless" (name: string, count: int, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	store_error: errors.Error_Record
-	for piece_start := 0; piece_start < count; piece_start += WRITE_PIECE {
-		piece := file[piece_start:min(piece_start + WRITE_PIECE, count)]
-		if _, status := storage.write_range(&store_client, storage.ROOT, name, u64(piece_start), piece, &store_error); status != .Ok {
-			return store_failure(error, &store_error, status, .File, name)
-		}
-	}
-	// An older file of the nickname can be longer.
-	if status := storage.set_size(&store_client, storage.ROOT, name, u64(count), &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, .File, name)
-	}
-	if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, .File, name)
-	}
-	return .Succeeded, 0
 }

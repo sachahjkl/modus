@@ -77,6 +77,10 @@ Client :: struct {
 	file:          []u8, // The file of the storage service: the descriptions of its exports.
 	tag:           u32, // The tag of the last call.
 	gone:          bool, // The connection ended: each call gives Gone.
+	// A call past its bound whose answer has not come: the service can still
+	// write the call region, so the next call waits for that answer first.
+	// 0: none.
+	late_tag:      u32,
 }
 
 // open opens the connection that the root service gave in the context of
@@ -165,7 +169,11 @@ repair_retry :: proc "contextless" (status: storage_status.Status, outcome: call
 // When the export fails, the status is Failed, outcome says how it ended,
 // and error has its error record, as the storage service wrote it. A change
 // that the service refuses while it repairs the counts of its disk is made
-// again, up to REPAIR_WAIT_BOUND_MILLISECONDS (repair_retry).
+// again, up to REPAIR_WAIT_BOUND_MILLISECONDS (repair_retry). With no answer
+// before storage_status.ANSWER_BOUND_MILLISECONDS, the status is No_Answer:
+// the service can still write the answer into the call region, so the next
+// call waits for that answer first (late_answer_wait), and runs when it
+// came. The connection stays: a service that was slow once serves again.
 call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status, outcome: call_outcome.Call_Outcome) {
 	local: errors.Error_Record
 	record := error != nil ? error : &local
@@ -183,10 +191,16 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 // call_once makes one isolated call and waits for its answer.
 @(private)
 call_once :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record) -> (value: i64, text: []u8, status: storage_status.Status, outcome: call_outcome.Call_Outcome) {
+	if client.late_tag != 0 {
+		if status = late_answer_wait(client); status != .Ok {
+			return 0, nil, status, .Succeeded
+		}
+	}
 	sent: Sent_Call
 	if sent, status = call_send(client, name, arguments); status != .Ok {
 		return 0, nil, status, .Succeeded
 	}
+	deadline := call_deadline(system.time())
 	for {
 		// A revocation and the stop of the service are events.
 		wait := system.wait_begin()
@@ -198,8 +212,64 @@ call_once :: proc "contextless" (client: ^Client, name: string, arguments: []iso
 			return 0, nil, .Gone, .Succeeded
 		}
 		system.wait_records(&wait, &client.calls.completions)
-		system.wait_end(&wait)
+		if system.wait_end(&wait, deadline) >= deadline {
+			// One last read: the answer can come with the deadline.
+			if value, text, status, outcome, answered = call_answer(client, &sent, arguments, error); answered {
+				return value, text, status, outcome
+			}
+			client.late_tag = sent.tag
+			return 0, nil, .No_Answer, .Succeeded
+		}
 	}
+}
+
+// late_answer_wait waits, up to the bound of a call, for the answer of the
+// call that passed its bound, and drops it: the call region is then the
+// region of this client again. No_Answer when it does not come, Gone when
+// the connection ended.
+@(private = "file")
+late_answer_wait :: proc "contextless" (client: ^Client) -> storage_status.Status {
+	deadline := call_deadline(system.time())
+	for {
+		wait := system.wait_begin()
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has := system.receive(&client.calls.completions)
+			if !has {
+				break
+			}
+			if late_answer_is(client, completion.tag) {
+				return .Ok
+			}
+		}
+		if !connected(client) {
+			return .Gone
+		}
+		system.wait_records(&wait, &client.calls.completions)
+		if system.wait_end(&wait, deadline) >= deadline {
+			return .No_Answer
+		}
+	}
+}
+
+// late_answer_is says if a completion is the answer of the late call, and
+// clears the late call when it is: an answer of another tag is an answer
+// that no call waits for any more.
+late_answer_is :: proc "contextless" (client: ^Client, tag: u32) -> bool {
+	if client.late_tag == 0 || tag != client.late_tag {
+		return false
+	}
+	client.late_tag = 0
+	return true
+}
+
+// call_deadline gives the deadline of a call sent at the time now. A time
+// so large that the sum passes the largest time gives the largest time:
+// never a deadline in the past.
+call_deadline :: proc "contextless" (now: u64) -> u64 {
+	if now > system.WAIT_FOREVER - storage_status.ANSWER_BOUND_MILLISECONDS {
+		return system.WAIT_FOREVER
+	}
+	return now + storage_status.ANSWER_BOUND_MILLISECONDS
 }
 
 // A call that was sent and whose answer did not come yet: what call_answer
@@ -431,7 +501,7 @@ commit :: proc "contextless" (client: ^Client, place: Place, name: string, error
 // pending change.
 drop_pending :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> storage_status.Status {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
-	_, _, status := call(client, "drop_pending", arguments[:], error)
+	_, _, status, _ := call(client, "drop_pending", arguments[:], error)
 	return status
 }
 
