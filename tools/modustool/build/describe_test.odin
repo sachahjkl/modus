@@ -588,7 +588,9 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 		{"a parameter given two getters", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = g, mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a pair with no =", HEAD + "// f sets x.\n@(export, enum_getters = \"mode\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a getter that is no text", HEAD + "// f sets x.\n@(export, enum_getters = 4)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
-		{"a presence before a text", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (name_presence: module.Presence, name: ^string) -> i64 {return 0}\n"},
+		{"a presence before a record", HEAD + "import \"modus:contract/module\"\nR :: struct {a: i64}\n// f sets x.\n@(export)\nf :: proc \"c\" (name_presence: module.Presence, name: ^R) -> i64 {return 0}\n"},
+		{"a bound of a text below 0", HEAD + "// f sets x.\n@(export, parameter_ranges = \"name = -1..160\")\nf :: proc \"c\" (name: ^string) -> i64 {return 0}\n"},
+		{"choices of a text", HEAD + "// f sets x.\n@(export, parameter_choices = \"name = f\")\nf :: proc \"c\" (name: ^string) -> i64 {return 0}\n"},
 		{"a presence of another name", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (speed_presence: module.Presence, mode: Mode) -> i64 {return 0}\n"},
 		{"a presence with no name before its suffix", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (_presence: module.Presence, mode: Mode) -> i64 {return 0}\n"},
 		{"a presence that ends the parameters", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode, mode_presence: module.Presence) -> i64 {return 0}\n"},
@@ -627,4 +629,14 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 	enum_index, getter := module.enum_detail_of(setter.details[1])
 	testing.expect(t, setter.parameters[1] == .Enum && enum_index == 1 && getter == 1 && len(setter.needs) == 2 && setter.needs[0] == .Required && setter.needs[1] == .Optional)
 	testing.expect(t, len(setter.setting_rows) == 1 && setter.setting_rows[0] == {export_index = 2, parameter = 0, has_range = true, least = -5, most = max(i64)})
+	// An optional Text with the bound of its bytes: two words of the call
+	// form, and a row of its bound.
+	text_source := "package p\nimport \"modus:contract/module\"\n// f sets x.\n@(export, parameter_ranges = \"home = 0..160\")\nf :: proc \"c\" (home_presence: module.Presence, home: ^string) -> i64 {return 0}\n"
+	texts := make([dynamic]Export_Description, context.temp_allocator)
+	if !testing.expect(t, describe_source("text.odin", text_source, &texts, nil, nil, nil)) || !testing.expect_value(t, len(texts), 1) {
+		return
+	}
+	text_setter := texts[0]
+	testing.expect(t, text_setter.parameters[0] == .Text && len(text_setter.needs) == 1 && text_setter.needs[0] == .Optional)
+	testing.expect(t, len(text_setter.setting_rows) == 1 && text_setter.setting_rows[0] == {export_index = 1, parameter = 0, has_range = true, least = 0, most = 160})
 }

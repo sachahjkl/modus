@@ -62,9 +62,26 @@ a_presence_word_past_given_is_refused :: proc(t: ^testing.T) {
 // The border of an optional parameter: a Presence word past Given refuses
 // the pair whatever the value; Absent is not given, whatever the value;
 // Given with a value that names no member is refused; Given with 0 is the
-// value 0, never absence.
+// value 0, never absence. An optional Text: Given with no address is
+// refused, Absent reads no address, Given with the empty text is the empty
+// text; the bound of its bytes holds at the bound and not one past it.
 @(test)
 an_optional_pair_is_read_at_its_border :: proc(t: ^testing.T) {
+	for word in ([?]u64{2, max(u64)}) {
+		some := "x"
+		_, text_given, text_ok := optional_text_of_arguments(Presence(word), &some)
+		testing.expectf(t, !text_given && !text_ok, "the presence %d of a Text is taken", word)
+	}
+	_, nil_given, nil_ok := optional_text_of_arguments(.Given, nil)
+	testing.expect(t, nil_given && !nil_ok)
+	_, absent_given, absent_ok := optional_text_of_arguments(.Absent, nil)
+	testing.expect(t, !absent_given && absent_ok)
+	empty := ""
+	empty_text, empty_given, empty_ok := optional_text_of_arguments(.Given, &empty)
+	testing.expect(t, empty_given && empty_ok && empty_text == "")
+	bound := Parameter_Setting{has_range = true, least = 1, most = 4}
+	testing.expect(t, !text_in_bound(bound, "") && text_in_bound(bound, "a") && text_in_bound(bound, "abcd") && !text_in_bound(bound, "abcde"))
+	testing.expect(t, text_in_bound({}, "any length"))
 	Font :: enum u32 {
 		Vector = 0,
 		Spleen = 1,
@@ -108,7 +125,7 @@ a_need_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	reserved := setter_with()
 	reserved.reserved = 1
 	cases := [?]Case{{past_member, 0}, {largest, 1}, {past_count, 2}, {last, PARAMETER_CAPACITY - 1}, {reserved, -1}}
-	for type in ([?]Type{.Text, .Record, .Table, .Bytes, .None}) {
+	for type in ([?]Type{.Record, .Table, .Bytes, .None}) {
 		wrong := setter_with()
 		wrong.parameters[1] = u8(type)
 		parameter, valid := function_needs_check(wrong)
@@ -118,7 +135,7 @@ a_need_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		parameter, valid := function_needs_check(item.function)
 		testing.expectf(t, !valid && parameter == item.parameter, "%v gives %d, %v, not %d", item.function.parameter_needs, parameter, valid, item.parameter)
 	}
-	for type in ([?]Type{.Integer, .Handle, .Enum}) {
+	for type in ([?]Type{.Integer, .Handle, .Enum, .Text}) {
 		taken := setter_with()
 		taken.parameters[1] = u8(type)
 		_, valid := function_needs_check(taken)
@@ -162,7 +179,9 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	with_parameter := choices
 	with_parameter.parameter_count, with_parameter.parameters[0] = 1, u8(Type.Integer)
 	integer_result := Function{result = u8(Type.Integer)}
-	functions := []Function{setter_with(), choices, with_parameter, integer_result}
+	text_setter := setter_with()
+	text_setter.parameters[1] = u8(Type.Text)
+	functions := []Function{setter_with(), choices, with_parameter, integer_result, text_setter}
 	Case :: struct {
 		rows:    []Parameter_Setting,
 		problem: Parameter_Setting_Problem,
@@ -171,7 +190,12 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	ranged := Parameter_Setting{export_index = 1, parameter = 0, has_range = true, least = 1000, most = 60000}
 	cases := [?]Case {
 		{{{export_index = 0, parameter = 0, has_range = true}}, .No_Export, 1},
-		{{{export_index = 5, parameter = 0, has_range = true}}, .No_Export, 1},
+		{{{export_index = 6, parameter = 0, has_range = true}}, .No_Export, 1},
+		// The bound of a Text: below 0, or least above most.
+		{{{export_index = 5, parameter = 1, has_range = true, least = -1, most = 160}}, .Bad_Range, 1},
+		{{{export_index = 5, parameter = 1, has_range = true, least = min(i64), most = 0}}, .Bad_Range, 1},
+		{{{export_index = 5, parameter = 1, has_range = true, least = 161, most = 160}}, .Bad_Range, 1},
+		{{{export_index = 5, parameter = 1, choices_export = 2}}, .Bad_Choices, 1},
 		{{{export_index = max(u32), parameter = 0, has_range = true}}, .No_Export, 1},
 		{{{export_index = 1, parameter = 2, has_range = true}}, .No_Parameter, 1},
 		{{{export_index = 1, parameter = max(u8), has_range = true}}, .No_Parameter, 1},
@@ -181,7 +205,7 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		{{{export_index = 1, parameter = 0, choices_export = 2, most = 1}}, .Bad_Range, 1},
 		{{{export_index = 1, parameter = 0, choices_export = 3}}, .Bad_Choices, 1},
 		{{{export_index = 1, parameter = 0, choices_export = 4}}, .Bad_Choices, 1},
-		{{{export_index = 1, parameter = 0, choices_export = 5}}, .Bad_Choices, 1},
+		{{{export_index = 1, parameter = 0, choices_export = 6}}, .Bad_Choices, 1},
 		{{{export_index = 1, parameter = 1, choices_export = 2}}, .Bad_Choices, 1},
 		{{{export_index = 1, parameter = 0, instances_export = 4}}, .Bad_Instances, 1},
 		{{{export_index = 1, parameter = 0, instances_export = max(u32)}}, .Bad_Instances, 1},
@@ -205,6 +229,9 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	file := settings_file_of({setter_with(), choices, setter_with()}, {{export_index = 1, parameter = 0, has_range = true, least = min(i64), most = max(i64)}, {export_index = 3, parameter = 0, has_range = true, least = 5, most = 5, choices_export = 2, instances_export = 2}})
 	row, problem = parameter_settings_check(file)
 	testing.expect(t, problem == .None && row == 0)
+	text_file := settings_file_of({setter_with(), text_setter}, {{export_index = 2, parameter = 1, has_range = true, least = 0, most = 160}})
+	text_row, text_problem := parameter_settings_check(text_file)
+	testing.expect(t, text_problem == .None && text_row == 0)
 	found_row, found := parameter_setting(file, 3, 0)
 	testing.expect(t, found && found_row.least == 5 && found_row.choices_export == 2)
 	_, absent := parameter_setting(file, 3, 1)

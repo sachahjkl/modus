@@ -60,6 +60,11 @@ dhcp_step :: proc "contextless" (now: u64) -> (deadline: u64) {
 	if !dhcp_in_use {
 		return max(u64)
 	}
+	if now < dhcp.deadline {
+		return dhcp.deadline
+	}
+	// A fresh transaction word only when a step is due: the generator
+	// spends nothing at the other turns of the loop.
 	word: [4]u8
 	random.fill(&dhcp_generator, word[:])
 	output := dhcp_client.client_tick(&dhcp, dhcp_message[:], now, transmute(u32)word)

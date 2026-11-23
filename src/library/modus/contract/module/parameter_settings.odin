@@ -84,14 +84,42 @@ parameter_optional :: proc "contextless" (function: Function, index: int) -> boo
 }
 
 // optional_type_allowed says if a parameter of a type can be optional: a
-// type that one word carries. A Text, a Record, a Table or Bytes is an
-// address, and has no value to leave out.
+// type that one word carries, and a Text. An absent Text crosses as the
+// Presence word Absent and the address 0, so the export reads no text. A
+// Record, a Table and Bytes are places that the callee reads or writes in
+// the memory of the caller, and have no value to leave out.
 optional_type_allowed :: proc "contextless" (type: Type) -> bool {
 	#partial switch type {
-	case .Integer, .Handle, .Enum:
+	case .Integer, .Handle, .Enum, .Text:
 		return true
 	}
 	return false
+}
+
+// optional_text_of_arguments is the border of an optional Text parameter
+// of an export: its Presence word, then the address of its text. given is
+// false for Absent; ok is false for a Presence word that names no member,
+// and for Given with no address. The bound of the bytes and the rules of
+// the text are the check of the export.
+//
+// Example: `optional_text_of_arguments(.Absent, nil)` is `"", false, true`.
+optional_text_of_arguments :: proc "contextless" (presence: Presence, text: ^string) -> (value: string, given: bool, ok: bool) {
+	switch read, read_ok := presence_of_word(presence); {
+	case !read_ok:
+		return "", false, false
+	case read == .Absent:
+		return "", false, true
+	}
+	if text == nil {
+		return "", true, false
+	}
+	return text^, true, true
+}
+
+// text_in_bound says if a text keeps the bound of the bytes of its
+// parameter: the range of a Text is the count of its bytes.
+text_in_bound :: proc "contextless" (setting: Parameter_Setting, text: string) -> bool {
+	return !setting.has_range || i64(len(text)) >= setting.least && i64(len(text)) <= setting.most
 }
 
 // function_needs_check checks the need of each parameter of an export:
@@ -153,7 +181,7 @@ parameter_word_index :: proc "contextless" (function: Function, index: int) -> i
 Parameter_Setting :: struct {
 	export_index:     u32, // The export whose parameter this is: an index in the table Exports, from 1.
 	parameter:        u8, // The parameter, from 0.
-	has_range:        bool, // least and most hold the range of an Integer.
+	has_range:        bool, // least and most hold the range of an Integer, or the bound of the bytes of a Text, from 0.
 	reserved:         u16, // 0.
 	least:            i64, // The least value that the export takes.
 	most:             i64, // The largest value that the export takes.
@@ -167,7 +195,7 @@ Parameter_Setting_Problem :: enum u8 {
 	None          = 0, // The row keeps each rule.
 	No_Export     = 1, // The export index names no export, or names the entry.
 	No_Parameter  = 2, // The parameter is past the parameters of its export.
-	Bad_Range     = 3, // A range on a parameter that is no Integer, or least above most.
+	Bad_Range     = 3, // A range on a parameter that is no Integer and no Text, least above most, or a bound of a Text below 0.
 	Bad_Choices   = 4, // A choices export on a parameter that is no Integer, or an export that does not exist, takes a parameter or gives no Table.
 	Bad_Instances = 5, // An instances export on a parameter other than the first, of no Integer, or an export that does not exist, takes a parameter or gives no Table.
 	Nothing       = 6, // A row with no range, no choices and no instances, or a reserved field that is not 0.
@@ -189,7 +217,8 @@ parameter_setting_row :: proc "contextless" (file: []u8, row: Parameter_Setting)
 	}
 	type, type_ok := function_parameter_type(function, int(row.parameter))
 	integer := type_ok && type == .Integer
-	if row.has_range && (!integer || row.least > row.most) || !row.has_range && (row.least != 0 || row.most != 0) {
+	text := type_ok && type == .Text
+	if row.has_range && (!(integer || text) || row.least > row.most || text && row.least < 0) || !row.has_range && (row.least != 0 || row.most != 0) {
 		return .Bad_Range
 	}
 	if row.choices_export != 0 && (!integer || !table_export(file, row.choices_export)) {

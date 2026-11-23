@@ -871,7 +871,7 @@ manifest_parse_export_parameter :: proc(line_number: int, line: string, builder:
 		switch {
 		case modifier == "optional":
 			if !module.optional_type_allowed(param_type) {
-				return fmt.tprintf("line %d: export %s: `optional` is allowed on integer, handle and enum parameters only: the call gives a presence word, then the value", line_number, builder.name)
+				return fmt.tprintf("line %d: export %s: `optional` is allowed on integer, handle, enum and text parameters only: the call gives a presence word, then the value", line_number, builder.name)
 			}
 			if is_optional {
 				return fmt.tprintf("line %d: export %s: `optional` is written twice on parameter `%s`", line_number, builder.name, param_name)

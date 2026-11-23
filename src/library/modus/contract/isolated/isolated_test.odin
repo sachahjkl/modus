@@ -141,11 +141,14 @@ decode_random :: proc(t: ^testing.T) {
 			continue
 		}
 		accepted += 1
-		types := function.parameters
+		// The slot of each slice is its word of the call form: the random
+		// needs are Required, so a parameter is its word, and the buffer of a
+		// Text result is the word after the last parameter, 12 at most of 16.
+		types: [module.CALL_WORD_CAPACITY]u8
+		copy(types[:], function.parameters[:])
 		count := int(function.parameter_count)
 		if function.result == u8(module.Type.Text) {
-			// The buffer of the result is one more slice.
-			testing.expect(t, count < module.PARAMETER_CAPACITY)
+			testing.expect(t, count < module.CALL_WORD_CAPACITY)
 			types[count] = u8(module.Type.Text)
 			count += 1
 		}

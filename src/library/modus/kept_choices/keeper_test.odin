@@ -68,7 +68,7 @@ the_changes_before_the_read_go_on_the_record_of_the_store :: proc(t: ^testing.T)
 	testing.expect_value(t, keeper_change(&keeper, {{name = "font", kind = .Choose, value = 3}, {name = "scale", kind = .Reset}}), Change_Result.Taken)
 	value, found := value_of(&keeper, "font")
 	testing.expect(t, found && value == 3)
-	testing.expect_value(t, keeper.pending_count, 2)
+	testing.expect_value(t, pending_count(&keeper), 2)
 	testing.expect_value(t, keeper_next_job(&keeper), Job.None)
 	keeper.read_wanted = true
 	testing.expect_value(t, keeper_next_job(&keeper), Job.Read)
@@ -94,7 +94,7 @@ the_changes_before_the_read_go_on_the_record_of_the_store :: proc(t: ^testing.T)
 	}
 	before := keeper.kept_length
 	testing.expect_value(t, keeper_change(&keeper, {{name = names[PENDING_CAPACITY], kind = .Choose, value = 1}}), Change_Result.No_Room)
-	testing.expect(t, keeper.kept_length == before && keeper.pending_count == PENDING_CAPACITY)
+	testing.expect(t, keeper.kept_length == before && pending_count(&keeper) == PENDING_CAPACITY)
 	_, found = value_of(&keeper, names[PENDING_CAPACITY])
 	testing.expect(t, !found)
 	// A name already waiting takes its place again.
@@ -140,6 +140,45 @@ a_refused_change_changes_nothing :: proc(t: ^testing.T) {
 	testing.expect(t, found && value == 1 && !keeper.dirty)
 	keeper.read_wanted = true
 	testing.expect_value(t, keeper_next_job(&keeper), Job.None)
+}
+
+// A text of a change before the read lives in the keeper: the bytes of the
+// call change after it, and the record of the read holds the text of the
+// call. A reset and then a choice of one name hold as the choice; a choice
+// and then a reset hold as the reset, which removes the value of the store.
+@(test)
+a_text_before_the_read_is_copied_and_the_last_change_of_a_name_holds :: proc(t: ^testing.T) {
+	keeper := new(Keeper, context.temp_allocator)
+	keeper_start(keeper, true)
+	call_bytes := [?]u8{'m', 'o', 'd', 'u', 's', ':', '/', '/', 'g', 'u', 'i', 'd', 'e'}
+	testing.expect_value(t, keeper_change(keeper, {{name = "home", kind = .Choose_Text, text = string(call_bytes[:])}}), Change_Result.Taken)
+	testing.expect_value(t, keeper_change(keeper, {{name = "font", kind = .Reset}}), Change_Result.Taken)
+	testing.expect_value(t, keeper_change(keeper, {{name = "font", kind = .Choose, value = 2}}), Change_Result.Taken)
+	testing.expect_value(t, keeper_change(keeper, {{name = "scale", kind = .Choose, value = 9}}), Change_Result.Taken)
+	testing.expect_value(t, keeper_change(keeper, {{name = "scale", kind = .Reset}}), Change_Result.Taken)
+	for &byte in call_bytes {
+		byte = 'x'
+	}
+	testing.expect_value(t, pending_count(keeper), 3)
+	keeper.read_wanted = true
+	_ = keeper_next_job(keeper)
+	length := stored_record(keeper, {{name = "scale", kind = .Choose, value = 16}, {name = "font", kind = .Choose, value = 1}, {name = "home", kind = .Choose_Text, text = "modus://forms"}})
+	testing.expect_value(t, keeper_read_ended(keeper, length, true, true), Fault.None)
+	home, home_found := chosen_values.find_text(keeper_record(keeper), "home")
+	testing.expect(t, home_found && home == "modus://guide")
+	font, font_found := value_of(keeper, "font")
+	testing.expect(t, font_found && font == 2)
+	testing.expect(t, !chosen_values.contains(keeper_record(keeper), "scale"))
+	testing.expect_value(t, pending_count(keeper), 0)
+	// A text past the bound of the record, or not UTF-8, changes nothing.
+	long := make([]u8, chosen_values.TEXT_BYTES_MOST + 1, context.temp_allocator)
+	for &byte in long {
+		byte = 'a'
+	}
+	before := keeper.kept_length
+	testing.expect_value(t, keeper_change(keeper, {{name = "home", kind = .Choose_Text, text = string(long)}}), Change_Result.No_Room)
+	testing.expect_value(t, keeper_change(keeper, {{name = "home", kind = .Choose_Text, text = "\xff"}}), Change_Result.No_Room)
+	testing.expect_value(t, keeper.kept_length, before)
 }
 
 @(private = "file")

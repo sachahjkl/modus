@@ -500,11 +500,6 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		complete(endpoint, tag, .Ok, {u64(local_address), u64(endpoint.local_port), u64(gateway_address), u64(address_prefix), hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
 	case .Send:
 		place, count := values[0], values[1]
-		// No address yet, or a lease that ended: no frame leaves.
-		if local_address == 0 {
-			complete(endpoint, tag, .No_Address, errors.ring_fail(kind, .State, .None))
-			return true
-		}
 		if endpoint.region == nil {
 			complete(endpoint, tag, .No_Region, errors.ring_fail(kind, .Absent, .Region))
 			return true
@@ -657,6 +652,11 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 	packet, found := network.parse(bytes)
 	if found.kind != .None {
 		problem(found)
+		return
+	}
+	// With no address, the service answers nothing but DHCP: an ARP or a
+	// segment for 0.0.0.0 names no machine.
+	if local_address == 0 && packet.kind != .Udp {
 		return
 	}
 	switch packet.kind {
@@ -1310,19 +1310,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for place in 0 ..< min(RECEIVE_PLACES, int(info.values[3])) {
 		frame_receive(place)
 	}
-	text: [64]u8
+	text: [HARDWARE_ADDRESS_FIELD_BYTES]u8
 	writer := system.Writer{buffer = text[:]}
-	network.address_write(&writer, local_address)
-	system.write_bytes(&writer, {'/'})
-	system.write_unsigned(&writer, u64(address_prefix))
-	system.write_bytes(&writer, {' '})
 	network.hardware_write(&writer, hardware)
 	// The state of the link is a case of the sentence: each one is a fact
 	// type.
 	if link_up {
-		system.log_fact(.Info, Ready_Link_Up{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), interface_address = value_kinds.text_field(system.written(&writer), INTERFACE_ADDRESS_FIELD_BYTES)})
+		system.log_fact(.Info, Ready_Link_Up{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), hardware_address = value_kinds.text_field(system.written(&writer), HARDWARE_ADDRESS_FIELD_BYTES)})
 	} else {
-		system.log_fact(.Info, Ready_Link_Down{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), interface_address = value_kinds.text_field(system.written(&writer), INTERFACE_ADDRESS_FIELD_BYTES)})
+		system.log_fact(.Info, Ready_Link_Down{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), hardware_address = value_kinds.text_field(system.written(&writer), HARDWARE_ADDRESS_FIELD_BYTES)})
 	}
 	// The cost of what this process writes for each datagram or segment that leaves:
 	// the headers of IPv4 and Ethernet, with the checksum of the IPv4
@@ -1398,8 +1394,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&control.commands) {
 			controlled(record)
 		}
+		// While no address holds, a request of an endpoint waits in its ring:
+		// no frame of a process leaves from 0.0.0.0 (src/md/features/dhcp_client.md).
 		for &endpoint, index in endpoints {
-			if endpoint.ring_memory == 0 {
+			if endpoint.ring_memory == 0 || local_address == 0 {
 				continue
 			}
 			for ring.count(&endpoint.datagram_ring.completions) + endpoint.in_flight + 1 < ring.capacity(&endpoint.datagram_ring.completions) {
@@ -1435,7 +1433,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &frames.completions)
 		system.wait_records(&wait, &control.commands)
 		for &endpoint in endpoints {
-			if endpoint.ring_memory != 0 && !endpoint.has_held && ring.count(&endpoint.datagram_ring.completions) + endpoint.in_flight + 1 < ring.capacity(&endpoint.datagram_ring.completions) {
+			if endpoint.ring_memory != 0 && local_address != 0 && !endpoint.has_held && ring.count(&endpoint.datagram_ring.completions) + endpoint.in_flight + 1 < ring.capacity(&endpoint.datagram_ring.completions) {
 				system.wait_records(&wait, &endpoint.datagram_ring.commands)
 			}
 		}

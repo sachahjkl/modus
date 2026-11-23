@@ -1228,7 +1228,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 						return describe_fail(path, field, "%s: the parameter %s%s comes just before the parameter %s, alone in its declaration", name, presence_of, PRESENCE_SUFFIX, presence_of)
 					}
 					if !module.optional_type_allowed(kind) {
-						return describe_fail(path, field, "%s: the parameter %s is optional, and only an Integer, a Handle or an Enum can be: a Text, a Record, a Table and Bytes are addresses", name, parameter.name)
+						return describe_fail(path, field, "%s: the parameter %s is optional, and only an Integer, a Handle, an Enum or a Text can be: a Record, a Table and Bytes are places in the memory of the caller", name, parameter.name)
 					}
 					need, presence_of = .Optional, ""
 				}
@@ -1413,8 +1413,10 @@ parameter_settings_read :: proc(path: string, declaration: ^ast.Value_Decl, desc
 			if index < 0 {
 				return describe_fail(path, declaration, "%s: the attribute %s names %q, which is no parameter", description.name, attribute.name, parameter_name)
 			}
-			if description.parameters[index] != .Integer {
-				return describe_fail(path, declaration, "%s: the attribute %s names %s, which is no Integer: a range, choices and instances are of an Integer", description.name, attribute.name, parameter_name)
+			// A range is of an Integer, or the bound of the bytes of a Text;
+			// choices and instances are of an Integer.
+			if description.parameters[index] != .Integer && !(attribute_index == 0 && description.parameters[index] == .Text) {
+				return describe_fail(path, declaration, "%s: the attribute %s names %s, which is no Integer: a range is of an Integer or a Text, choices and instances are of an Integer", description.name, attribute.name, parameter_name)
 			}
 			item := source_of(&sources, index)
 			switch attribute_index {
@@ -1433,6 +1435,8 @@ parameter_settings_read :: proc(path: string, declaration: ^ast.Value_Decl, desc
 					return describe_fail(path, declaration, "%s: the attribute %s names %s twice", description.name, attribute.name, parameter_name)
 				case least > most:
 					return describe_fail(path, declaration, "%s: the range of %s starts at %d, above its end %d", description.name, parameter_name, least, most)
+				case description.parameters[index] == .Text && least < 0:
+					return describe_fail(path, declaration, "%s: the range of the Text %s is the bound of its bytes, and starts at 0 or more, not at %d", description.name, parameter_name, least)
 				}
 				item.has_range, item.least, item.most = true, least, most
 			case 1:

@@ -1149,6 +1149,12 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 				return fail(name, ": the argument ", found.parameter_names[index], " is ", argument.integer, ", outside its range ", setting.least, " to ", setting.most)
 			}
 		}
+		// The bound of the bytes of a Text, as for a range.
+		if kind == .Text && found.run == nil && found.record == 0 {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, index); has_setting && !module.text_in_bound(setting, argument.text) {
+				return fail(name, ": the argument ", found.parameter_names[index], " has ", i64(len(argument.text)), " bytes, outside its bound of ", setting.least, " to ", setting.most, " bytes")
+			}
+		}
 		if kind == .Record {
 			// A copy: the export can write in its record, and a call
 			// writes the handles of the receiver in it.

@@ -167,7 +167,7 @@ manifest_parse_refusals :: proc(t: ^testing.T) {
 		{"entry with parameter", "module: m\nabout: Ok.\nexport entry\n  param x: integer\n", "takes no described parameter"},
 		{"export unknown param type", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param x: float\n", "unknown parameter type"},
 		{"export unknown result type", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  result: float\n", "unknown result type"},
-		{"export optional text", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param x: text optional\n", "allowed on integer, handle and enum parameters only"},
+		{"export optional bytes", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param x: bytes(read) optional\n", "allowed on integer, handle, enum and text parameters only"},
 		{"export getter missing", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nexport f\n  about: Test.\n  param e: enum(E) getter=missing\n", "names no export"},
 		{"export getter wrong return", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nexport g\n  about: Bad getter.\n  result: integer\nexport f\n  about: Test.\n  param e: enum(E) getter=g\n", "return an enum"},
 		{"export error_record with none result", "module: m\nabout: Ok.\nrecord Err size=8\n  field c offset=0 type=i64\nexport f\n  about: Test.\n  error_record: Err\n", "result must be integer, text, or table"},

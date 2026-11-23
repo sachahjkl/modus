@@ -25,7 +25,10 @@ scenario_network := [?]Step {
 	{kind = .Fact, process = "frame", fact = "frame_service.Device_Ready_Link_Up", condition = "hardware_address = \"52:54:00:12:34:56\"", any_order = true},
 	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
 	{kind = .Wait, text = "root: started network"},
-	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
+	{kind = .Wait, text = "network: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
+	// The hostile OFFER of the peer (peer_dhcp.odin), then the address.
+	{kind = .Wait, text = "network: refused a DHCP reply (a router outside): nothing changed", any_order = true},
+	{kind = .Wait, text = "network: the address 10.0.2.15/24 from DHCP, the gateway 10.0.2.2, a lease of ", any_order = true},
 	{kind = .Wait, text = "network: the headers of IPv4 and Ethernet of a frame with a payload of 1480 bytes: ", any_order = true},
 	{kind = .Wait, text = "network: an endpoint for net: the local port 49152, the grant 10.0.2.2 port 7", any_order = true},
 	// The datagram region of `net` is a read region of the frame service:

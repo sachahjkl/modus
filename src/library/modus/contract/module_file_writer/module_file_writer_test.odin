@@ -370,11 +370,11 @@ enums_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 	expect_problem(t, parts, .No_Getter)
 	storage.details[1], _ = module.enum_detail_make(1, 1)
 	expect_last_check_refusal(t, parts, .Enum_Not_Valid, .Functions, 1)
-	// An optional Text, Record, Table or Bytes, and more needs than
-	// parameters.
+	// An optional Record, Table or Bytes, and more needs than parameters.
+	// An optional Text is taken: its absent address is 0.
 	parts = enum_parts(&storage, enums[:])
 	needs := [3]module.Parameter_Need{.Optional, .Required, .Required}
-	for type in ([?]module.Type{.Text, .Record, .Table, .Bytes}) {
+	for type in ([?]module.Type{.Record, .Table, .Bytes}) {
 		storage.parameters[0] = type
 		storage.exports[1].parameter_needs = needs[:1]
 		expect_refusal(t, parts, .Need_Not_Valid, .Exports, 1)

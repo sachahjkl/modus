@@ -14,9 +14,8 @@ import "modus:contract/chosen_values"
 // as it is.
 KEPT_RECORD_BYTES :: 4096
 
-// The changes that wait for the end of the read: one for each name, the
-// last one of a name in place of the one before. An owner has fewer
-// settings than this.
+// The resets that wait for the end of the read: one for each name. An
+// owner has fewer settings than this.
 PENDING_CAPACITY :: 32
 
 // The job of the store that the keeper asks for now.
@@ -57,8 +56,16 @@ Keeper :: struct {
 	kept_bytes:      [KEPT_RECORD_BYTES]u8,
 	kept_length:     int,
 	scratch_bytes:   [KEPT_RECORD_BYTES]u8,
-	pending:         [PENDING_CAPACITY]chosen_values.Change,
-	pending_count:   int,
+	// The changes that came before the read ended: the values chosen, as a
+	// record in the memory of the keeper (a text of a call does not live
+	// past the call), and the names reset, copied too. A name is in one of
+	// the two at most: its last change.
+	pending_bytes:   [KEPT_RECORD_BYTES]u8,
+	pending_scratch: [KEPT_RECORD_BYTES]u8, // Not scratch_bytes: a change holds the next kept record there meanwhile.
+	pending_length:  int,
+	resets:          [PENDING_CAPACITY][chosen_values.NAME_SIZE]u8,
+	reset_lengths:   [PENDING_CAPACITY]u8,
+	reset_count:     int,
 	problem:         chosen_values.Record_Problem, // With Unreadable.
 }
 
@@ -67,6 +74,37 @@ keeper_start :: proc "contextless" (keeper: ^Keeper, store_open: bool) {
 	keeper^ = {}
 	keeper.store_open = store_open
 	keeper.kept_length, _ = chosen_values.write_record({}, {}, keeper.kept_bytes[:])
+	keeper.pending_length, _ = chosen_values.write_record({}, {}, keeper.pending_bytes[:])
+}
+
+// pending_count gives the changes that wait for the end of the read.
+pending_count :: proc "contextless" (keeper: ^Keeper) -> int {
+	record, _ := chosen_values.read_record(keeper.pending_bytes[:keeper.pending_length])
+	return record.count + keeper.reset_count
+}
+
+// pending_changes writes the changes of before the read into changes: the
+// values chosen, with their texts in the bytes of the keeper, then the
+// resets. It gives their count.
+@(private = "file")
+pending_changes :: proc "contextless" (keeper: ^Keeper, changes: ^[2 * PENDING_CAPACITY]chosen_values.Change) -> int {
+	record, _ := chosen_values.read_record(keeper.pending_bytes[:keeper.pending_length])
+	count := 0
+	for index in 0 ..< min(record.count, PENDING_CAPACITY) {
+		name := chosen_values.entry_name(record, index)
+		switch chosen_values.entry_kind(record, index) {
+		case .Word:
+			changes[count] = {name = name, kind = .Choose, value = chosen_values.entry_value(record, index)}
+		case .Text:
+			changes[count] = {name = name, kind = .Choose_Text, text = chosen_values.entry_text(record, index)}
+		}
+		count += 1
+	}
+	for index in 0 ..< keeper.reset_count {
+		changes[count] = {name = string(keeper.resets[index][:keeper.reset_lengths[index]]), kind = .Reset}
+		count += 1
+	}
+	return count
 }
 
 // keeper_record gives the record in force. It holds bytes of the keeper:
@@ -115,7 +153,12 @@ keeper_job_refused :: proc "contextless" (keeper: ^Keeper) {
 keeper_read_ended :: proc "contextless" (keeper: ^Keeper, length: int, found: bool, stored: bool) -> (fault: Fault) {
 	keeper.job = .None
 	keeper.read = true
-	defer keeper.pending_count = 0
+	pending: [2 * PENDING_CAPACITY]chosen_values.Change
+	count := pending_changes(keeper, &pending)
+	defer {
+		keeper.pending_length, _ = chosen_values.write_record({}, {}, keeper.pending_bytes[:])
+		keeper.reset_count = 0
+	}
 	if !stored {
 		// A record that the store did not give is never written over in this
 		// run: the next start reads it again.
@@ -134,7 +177,7 @@ keeper_read_ended :: proc "contextless" (keeper: ^Keeper, length: int, found: bo
 			base = record
 		}
 	}
-	if fault == .Unreadable && keeper.pending_count == 0 {
+	if fault == .Unreadable && count == 0 {
 		// Nothing of this run goes over a record that this release cannot
 		// read: the defaults hold, and no write is asked.
 		keeper.kept_length, _ = chosen_values.write_record({}, {}, keeper.kept_bytes[:])
@@ -142,7 +185,7 @@ keeper_read_ended :: proc "contextless" (keeper: ^Keeper, length: int, found: bo
 	}
 	// A change of the principal starts a new record over one that this
 	// release cannot read: the principal acted.
-	written, problem := chosen_values.write_record(base, keeper.pending[:keeper.pending_count], keeper.scratch_bytes[:])
+	written, problem := chosen_values.write_record(base, pending[:count], keeper.scratch_bytes[:])
 	if problem != .None {
 		// The record of the store has no room for the changes of before: it
 		// holds, and those changes are lost.
@@ -150,7 +193,7 @@ keeper_read_ended :: proc "contextless" (keeper: ^Keeper, length: int, found: bo
 	}
 	copy(keeper.kept_bytes[:], keeper.scratch_bytes[:written])
 	keeper.kept_length = written
-	keeper.dirty = keeper.pending_count > 0 && problem == .None
+	keeper.dirty = count > 0 && problem == .None
 	return fault
 }
 
@@ -178,26 +221,63 @@ keeper_change_for_this_run :: proc "contextless" (keeper: ^Keeper, changes: []ch
 	if problem != .None {
 		return .No_Room
 	}
-	if keeper.store_open && !keeper.read {
-		pending := keeper.pending
-		count := keeper.pending_count
-		for change in changes {
-			place := count
-			for index in 0 ..< count {
-				if pending[index].name == change.name {
-					place = index
-				}
-			}
-			if place == PENDING_CAPACITY {
-				return .No_Room
-			}
-			pending[place] = change
-			count = max(count, place + 1)
-		}
-		keeper.pending, keeper.pending_count = pending, count
+	if keeper.store_open && !keeper.read && !pending_take(keeper, changes) {
+		return .No_Room
 	}
 	copy(keeper.kept_bytes[:], keeper.scratch_bytes[:written])
 	keeper.kept_length = written
 	keeper.dirty = keeper.store_open && keeper.read
 	return .Taken
+}
+
+// pending_take keeps changes of before the read in the memory of the
+// keeper: a choice goes on the pending record and leaves the resets, a
+// reset leaves the record and joins the resets. false: no room, and nothing
+// changed.
+@(private = "file")
+pending_take :: proc "contextless" (keeper: ^Keeper, changes: []chosen_values.Change) -> bool {
+	resets, reset_lengths, reset_count := keeper.resets, keeper.reset_lengths, keeper.reset_count
+	record_changes: [PENDING_CAPACITY]chosen_values.Change
+	if len(changes) > PENDING_CAPACITY {
+		return false
+	}
+	for change, index in changes {
+		// A reset is a removal from the pending record; a choice is itself.
+		record_changes[index] = change
+		place := -1
+		for reset in 0 ..< reset_count {
+			if string(resets[reset][:reset_lengths[reset]]) == change.name {
+				place = reset
+			}
+		}
+		switch change.kind {
+		case .Reset:
+			if place < 0 {
+				if reset_count == PENDING_CAPACITY || len(change.name) >= chosen_values.NAME_SIZE {
+					return false
+				}
+				copy(resets[reset_count][:], change.name)
+				reset_lengths[reset_count] = u8(len(change.name))
+				reset_count += 1
+			}
+		case .Choose, .Choose_Text:
+			if place >= 0 {
+				resets[place], reset_lengths[place] = resets[reset_count - 1], reset_lengths[reset_count - 1]
+				reset_count -= 1
+			}
+		}
+	}
+	pending, _ := chosen_values.read_record(keeper.pending_bytes[:keeper.pending_length])
+	written, problem := chosen_values.write_record(pending, record_changes[:len(changes)], keeper.pending_scratch[:])
+	if problem != .None {
+		return false
+	}
+	after, _ := chosen_values.read_record(keeper.pending_scratch[:written])
+	if after.count > PENDING_CAPACITY {
+		return false
+	}
+	copy(keeper.pending_bytes[:], keeper.pending_scratch[:written])
+	keeper.pending_length = written
+	keeper.resets, keeper.reset_lengths, keeper.reset_count = resets, reset_lengths, reset_count
+	return true
 }

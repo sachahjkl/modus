@@ -387,7 +387,10 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 			store(region, field, u64(arguments[index].presence))
 			field += 8
 			if arguments[index].presence != .Given {
-				store(region, field, u64(0))
+				// Each byte of the field is 0: a Text field is two words.
+				for zero := u64(0); zero < field_size(word); zero += 8 {
+					store(region, field + zero, u64(0))
+				}
 				field += field_size(word)
 				continue
 			}

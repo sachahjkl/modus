@@ -46,6 +46,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A plan gives a text value.** A plan of principal 0 gives the default of a text setting, as the home of the browser, or locks it, as it does for a word. [Design](src/md/features/module_settings.md)
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)
@@ -161,4 +162,3 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The browser wren on the system with no guest.** Two ways are open for its Rust libraries, a Rust target for the system or Odin code in their place, and each waits for that work; both wait for code that a process writes then runs, and for WebGPU on a GPU. [Design](src/md/features/desktop_to_browser.md)
 - **Other proven algorithms.** Roaring bitmaps, SIMD `memchr` and Teddy, vqsort and pdqsort, Dragonbox and fast_float, SIMD base64 and hexadecimal, and QOI each make one kind of work faster with a published, measured method. One way is open for each: a portable Odin rewrite with a reference, a fuzz test and a measure, and each waits for its first user in the system.
 - **The code of the modules translated to WebAssembly at the build.** The tool translates each module once, as a cache named by its hash and the hash of the translator, so a large module starts with no warm-up of the software processor. One way is open, and it waits for a measure of the start of the large modules on the compiled tier. [Design](src/md/features/browser_machine.md)
-- **A text value of a setting.** A setting holds one word, so the browser chooses its home among its built-in pages and not by an address. A text entry of the chosen values and of the plan waits for a second owner that needs one. [Design](src/md/features/module_settings.md)

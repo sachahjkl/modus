@@ -675,7 +675,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	service, _ := system.service_open(ctx)
 	settings_open(ctx) // settings.odin: its read waits for the first frame.
-	page_load(BOOKMARK_ADDRESSES[home_in_force], true)
+	page_load(home_text(), true)
 	frame_build(&window)
 	system.log_fact(.Info, Window_Ready{pages = u64(len(Built_In_Page))})
 	kept_choices.kept_load(&browser_kept)

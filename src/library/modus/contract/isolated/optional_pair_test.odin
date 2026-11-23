@@ -59,9 +59,33 @@ an_optional_pair_crosses_the_call_region :: proc(t: ^testing.T) {
 	all.parameter_needs[7] = u8(module.Parameter_Need.Optional)
 	_, too_many := record_size(all)
 	testing.expect(t, !too_many)
-	// An optional Text is refused: an address has no value to leave out.
+	// An optional Text: Given, its bytes reach the callee in the call region;
+	// Absent, the address is 0 whatever the caller held; a Record is never
+	// optional.
 	text := function
 	text.parameters[0] = u8(module.Type.Text)
-	_, text_described := record_size(text)
-	testing.expect(t, !text_described)
+	text_size, text_described := record_size(text)
+	testing.expect(t, text_described && text_size == 32)
+	guide := "modus://guide"
+	left := "left behind"
+	given_text := [2]Argument{{presence = .Given, text = transmute([]u8)guide}, {integer = 7}}
+	offset, encoded_size, _, _, ok = encode(nil, text, given_text[:], region[:])
+	testing.expect(t, ok)
+	call = {}
+	testing.expect(t, decode(nil, text, offset, encoded_size, region[:], &call))
+	testing.expect(t, call.arguments[0] == u64(module.Presence.Given) && call.arguments[1] != 0 && call.arguments[2] == 7)
+	if call.arguments[1] != 0 {
+		slice := (^Slice)(uintptr(call.arguments[1]))^
+		testing.expect(t, slice.count == len("modus://guide") && string(([^]u8)(uintptr(slice.start))[:slice.count]) == "modus://guide")
+	}
+	absent_text := [2]Argument{{presence = .Absent, text = transmute([]u8)left}, {integer = 7}}
+	offset, encoded_size, _, _, ok = encode(nil, text, absent_text[:], region[:])
+	testing.expect(t, ok)
+	call = {}
+	testing.expect(t, decode(nil, text, offset, encoded_size, region[:], &call))
+	testing.expect(t, call.arguments[0] == 0 && call.arguments[1] == 0 && call.arguments[2] == 7)
+	record := function
+	record.parameters[0] = u8(module.Type.Record)
+	_, record_described := record_size(record)
+	testing.expect(t, !record_described)
 }

@@ -226,7 +226,7 @@ Each set of today becomes `Call_Outcome` in its migration step. Where one word o
 | | `Device_Error` | `Callee_Unavailable` for a read; `Stopped_After_A_Partial_Change` for a write |
 | | `Too_Many`, `Busy` | `Callee_Busy` |
 | | `Not_Granted` | `Grant_Or_Right_Missing` |
-| | `No_Answer`, `Link_Down`, `No_Address` | `Callee_Unavailable` |
+| | `No_Answer`, `Link_Down` | `Callee_Unavailable` |
 | | `Amplification` | `Budget_Or_Capacity_Exhausted` |
 | `storage.Export_Error` | -1 `No_Store` | `Grant_Or_Right_Missing` |
 | | -2 `No_Budget` | `Budget_Or_Capacity_Exhausted` |

@@ -77,6 +77,7 @@ Peer :: struct {
 	quic:         ^Peer_Quic, // The peer as QUIC clients (peer_quic.odin).
 	relay:        Peer_Relay, // UDP of programs of the host to the machine (peer_relay.odin).
 	tcp_segments: int, // TCP segments of the machine.
+	dhcp:         Peer_Dhcp, // The DHCP server of the peer (peer_dhcp.odin).
 }
 
 // The peers that this process started: the name of the socket of the calls
@@ -235,12 +236,16 @@ peer_check :: proc(peer: ^Peer) -> bool {
 		fmt.eprintfln("modustool: test failed: the peer received %d wrong frames from the machine; the first: %s", peer.wrong, peer.first_wrong)
 		return false
 	}
+	if peer.frames != 0 && (peer.dhcp.acks < 1 || !peer.dhcp.hostile_sent) {
+		fmt.eprintln("modustool: test failed: the network service took no address of the DHCP server of the peer")
+		return false
+	}
 	if peer.refused_sent && peer.ping_replies < 1 {
 		fmt.eprintln("modustool: test failed: the machine did not answer the echo request of the peer")
 		return false
 	}
 	if peer.frames != 0 {
-		foundation.test_passed_print("the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine, %d TCP segments; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.tcp_segments, peer.firmware)
+		foundation.test_passed_print("the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine, %d TCP segments; %d DHCP offers and %d acks; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.tcp_segments, peer.dhcp.offers, peer.dhcp.acks, peer.firmware + peer.dhcp.firmware)
 	}
 	return true
 }
@@ -305,6 +310,10 @@ peer_run :: proc(peer: ^Peer) {
 		peer.machine = from
 		sync.mutex_unlock(&peer.lock)
 		frame := buffer[:count]
+		// The network service asks its address before its first ARP frame.
+		if peer_dhcp(peer, frame) {
+			continue
+		}
 		if !peer.started {
 			// An ARP frame (kind 0x0806) whose sender address is 10.0.2.15.
 			if count >= 42 && frame[12] == 0x08 && frame[13] == 0x06 && address_at(frame, 28) == MACHINE_ADDRESS {

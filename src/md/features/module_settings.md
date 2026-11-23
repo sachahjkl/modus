@@ -71,7 +71,7 @@ A **reset** export makes a chosen value absent. An absent optional parameter mea
 
 The description of a parameter grows by three general fields. None is special to settings: each export uses them.
 
-1. **The range** of an Integer: its least and its largest value. The console refuses a value out of it before the call, the palette offers its stops, and the owner checks it again at its border.
+1. **The range** of an Integer: its least and its largest value. The range of a Text is the bound of its bytes, from 0: `parameter_ranges = "home = 1..160"`. The console refuses a value or a text out of it before the call, the palette offers the stops of an Integer, and the owner checks it again at its border. The table `Parameter_Settings` carries both in its fields `least` and `most`, so the module format stays 8.
 2. **A choices export**: a table export that gives the identity and the display text of each choice of an open set (the fonts of the image, the screens). It is `enum_getters` for a set that the code does not know. The value is the identity of a choice, never its place in a list.
 3. **An instances export**: a table export that gives the instances that a setter takes as its first argument (a screen, a keyboard, a store). The owner keeps one value for each instance, in memory that its budget pays.
 
@@ -79,7 +79,7 @@ The description of a parameter grows by three general fields. None is special to
 
 - Absent is the zero value, so a caller that passes zeros passes absence: zero is initialization (property 13).
 - Zero stays a real value when the word before it is `Given`: a time zone of 0, a count of 0. The former form gave an absent Enum the word of all its bits set, and an Integer had no absent word at all.
-- Any parameter can be optional, of any type that a word carries: Integer, Enum, Handle. No bitmask of 16 bits bounds their count; the call form counts two words for each, within `module.CALL_WORD_CAPACITY`, 16 words: the seven settings of `settings` and an error record take 15. The call form grew from 12 words to 16 for that setter; an export still has 12 parameters at most.
+- Any parameter can be optional, of any type that a word carries: Integer, Enum, Handle, and a Text, whose word is the address of its text: an absent Text crosses as Absent and the address 0, so the export reads no text. A Record, a Table and Bytes are never optional: they are places that the callee reads or writes in the memory of the caller. No bitmask of 16 bits bounds their count; the call form counts two words for each, within `module.CALL_WORD_CAPACITY`, 16 words: the seven settings of `settings` and an error record take 15. The call form grew from 12 words to 16 for that setter; an export still has 12 parameters at most.
 - The pair is two parameters, not one struct of 16 bytes: the C convention passes such a struct on the stack when one register is left, and later words then take that register, so the words of the call would no longer follow the parameters in order.
 
 The range, the choices export and the instances export are written in the source as attributes of the export (`parameter_ranges = "notification_time = 1000..60000"`, `parameter_choices = "font = fonts"`, `parameter_instances = "screen = screens"`). The module file holds them in its table `Parameter_Settings`, one record for each parameter that has one. A role contract names the range of each setter parameter from the constants of its contract, so the check of a holder compares the numbers of its file with the one place of each fact.
@@ -157,16 +157,16 @@ The forms refused: a lock that writes the value of the plan in the kept record (
 
 A module that holds no role declares its settings in the same form as an owner of a role: a setter export whose optional parameters are its settings, each with its range or its enum getter, a getter for each setting, `reset` and `settings_state`. It keeps its chosen values in its private store (the grant Store), in one object, `settings`, in the form of `modus:contract/chosen_values`. Its plan values are those of the owner of its module name. A module setting is a taste: the plan alone holds a value of the line of "The two doors", as for a role.
 
+**A text value.** A setting is a word or a text. A kept record holds both kinds of entry (`chosen_values.Entry_Kind`): a text entry gives the place and the length of its text in the bytes after the entries, in the order of the entries with no gap, so one record has one form. The reader refuses a text that is not UTF-8 or longer than `chosen_values.TEXT_BYTES_MOST`, 1024 bytes, before any owner sees it; the owner checks its own bound and its own rules after. `plan_values.text_in_force` gives a text by the same precedence as a word. A plan gives no text yet: a plan entry of the kind `Value` carries a word (`ROADMAP.md`).
+
 **The keeper.** `modus:kept_choices` keeps the record of one owner: it reads the object on a worker thread after the first frame, holds each change that comes before the read ends and puts it on the record that the store gives, writes the record after each change, and leaves a record that this release cannot read as it is until the principal changes a value. The owner checks each word at its border before the keeper sees it, and computes the values in force from the record of the keeper and its plan values. The compositor, the browser and the monitor use it.
 
 Why one library: each owner with a window must never wait for the store in its loop, so each needs the same states (no store, read asked, read, write asked) and the same rule for the changes of before the read. Three copies of those states drift.
 
 The first module settings:
 
-- **The browser**: `home`, the built-in page that the browser opens at its start: `welcome`, `properties`, `guide` or `forms` (an Enum, `welcome` by default). The first frame shows the home of the plan or of the contract; when the read of the store gives another home, it takes the place of the first page, unless the principal loaded a page already.
+- **The browser**: `home`, the address that the browser opens at its start, a Text of 1 to 160 bytes (`modus://welcome` by default): a built-in page or an address of HTTP or HTTPS. Its border is the border of the address field of the browser (`home_problem_of`): the bound of the bytes, UTF-8, then `address_parse`; the browser keeps the canonical form that its address field writes. The first frame shows the home of the plan or of the contract; when the read of the store gives another home, it takes the place of the first page, unless the principal loaded a page already.
 - **The monitor**: `sample_interval`, the time between two samples and two pictures, 250 ms to 5000 ms, 500 ms by default.
-
-Why the home of the browser is a built-in page and not an address: a chosen value is a name and a word. An address is a text, and a text value is a new form of entry, of the record and of the plan; one owner does not justify it.
 
 The form refused: a module that keeps its settings in an object of its own format. The window of settings, the plan and the console read one form, and the precedence holds only where the owner reads the plan with the same procedure (`plan_values.value_in_force`).
 
@@ -190,6 +190,7 @@ The faults that the inventory found, fixed before any mechanism:
 | Task | Expression |
 |---|---|
 | Change a setting | `settings.set(font = .spleen)` |
+| Change a text setting | `browser.set(home = "modus://guide")` |
 | Change two bound settings at once | `settings.set(light_from = 6:30, dark_from = 20:00)` |
 | Undo a choice | `settings.reset(font = true)` |
 | See each setting of an owner, its layer and its range | `compositor.settings_state()` |

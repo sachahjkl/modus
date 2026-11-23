@@ -109,7 +109,8 @@ Read_Region_Refused :: struct {
 #assert(size_of(Endpoint_Listens_Udp_From_Address) == 8 + value_kinds.MODULE_NAME_FIELD_BYTES + ADDRESS_FIELD_BYTES)
 #assert(size_of(Frame_Service_Silent) == 8 + COMMAND_FIELD_BYTES)
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
-#assert(size_of(Ready_Link_Up) == 8 + INTERFACE_ADDRESS_FIELD_BYTES)
+#assert(size_of(Ready_Link_Up) == 8 + HARDWARE_ADDRESS_FIELD_BYTES)
+#assert(size_of(Address_Bound) == 16 + 2 * ADDRESS_FIELD_BYTES)
 #assert(size_of(Payload_Passes_Checked) == 16 + value_kinds.MODULE_NAME_FIELD_BYTES + PROTOCOL_FIELD_BYTES)
 
 // The bytes of the Text field of the failure that stops the service: the
@@ -117,10 +118,9 @@ Read_Region_Refused :: struct {
 // network, "no handle of the frame service with the right Read: a wait
 // for the device would have no end", has 91 bytes, and a zero byte.
 FAILURE_FIELD_BYTES :: 96
-// The bytes of the Text field of the address of the interface: an IPv4
-// address, its prefix and the hardware address, at most
-// "255.255.255.255/24 ff:ff:ff:ff:ff:ff", 36 bytes, and a zero byte.
-INTERFACE_ADDRESS_FIELD_BYTES :: 40
+// The bytes of the Text field of a hardware address: "ff:ff:ff:ff:ff:ff",
+// 17 bytes, and a zero byte, in a multiple of 8.
+HARDWARE_ADDRESS_FIELD_BYTES :: 24
 // The bytes of the Text field of the protocol of an endpoint: "TCP" or
 // "UDP", and a zero byte.
 PROTOCOL_FIELD_BYTES :: 8
@@ -164,18 +164,19 @@ Udp_Passes_Measured :: struct {
 	owner:           value_kinds.Module_Name_Field,
 }
 
-// The service is ready, and the link of the device is up.
-@(log_fact = "network: ok, the address {interface_address}, the gateway 10.0.2.2, the link is up, {receive_places} places for frames that arrive")
+// The service is ready, and the link of the device is up. The address of
+// the machine has its own line: Address_Static or Address_Bound.
+@(log_fact = "network: ok, the hardware address {hardware_address}, the link is up, {receive_places} places for frames that arrive")
 Ready_Link_Up :: struct {
-	receive_places:    u64,
-	interface_address: [40]u8,
+	receive_places:   u64,
+	hardware_address: [24]u8, // N written out: the tool reads the size of a Text field from the source.
 }
 
 // The service is ready, and the link of the device is down.
-@(log_fact = "network: ok, the address {interface_address}, the gateway 10.0.2.2, the link is down, {receive_places} places for frames that arrive")
+@(log_fact = "network: ok, the hardware address {hardware_address}, the link is down, {receive_places} places for frames that arrive")
 Ready_Link_Down :: struct {
-	receive_places:    u64,
-	interface_address: [40]u8,
+	receive_places:   u64,
+	hardware_address: [24]u8,
 }
 
 // A measure: the time of the headers of IPv4 and Ethernet of one frame,

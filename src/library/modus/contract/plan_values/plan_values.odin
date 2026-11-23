@@ -136,7 +136,7 @@ records_read :: proc "contextless" (defaults_bytes, locks_bytes: []u8) -> (value
 		return {}, .Bad_Record
 	}
 	for index in 0 ..< values.locks.count {
-		if _, found := chosen_values.find(values.defaults, chosen_values.entry_name(values.locks, index)); found {
+		if chosen_values.contains(values.defaults, chosen_values.entry_name(values.locks, index)) {
 			return {}, .Default_And_Lock
 		}
 	}
@@ -268,8 +268,10 @@ owner_page_write :: proc "contextless" (page: []u8, values: Owner_Values) -> (ok
 	for &byte in page {
 		byte = 0
 	}
-	defaults_length := chosen_values.HEADER_SIZE + values.defaults.count * chosen_values.ENTRY_SIZE
-	locks_length := chosen_values.HEADER_SIZE + values.locks.count * chosen_values.ENTRY_SIZE
+	// An empty record is written as a header: the page always holds two
+	// records.
+	defaults_length := max(chosen_values.record_size(values.defaults), chosen_values.HEADER_SIZE)
+	locks_length := max(chosen_values.record_size(values.locks), chosen_values.HEADER_SIZE)
 	if len(page) < OWNER_PAGE_HEADER_SIZE || defaults_length + locks_length > len(page) - OWNER_PAGE_HEADER_SIZE {
 		return false
 	}
@@ -316,9 +318,25 @@ value_in_force :: proc "contextless" (name: string, chosen: chosen_values.Record
 	return 0, .Contract_Default, false
 }
 
-// locked says if the plan locks a field: the setter of the owner refuses a
-// change of it with No_Grant, and keeps the chosen value under the lock.
+// text_in_force gives the text of a field in force and its layer, in the
+// order of value_in_force: a text that the border of the field refuses
+// holds as no value of its layer. The text is in the bytes of its record.
+text_in_force :: proc "contextless" (name: string, chosen: chosen_values.Record, plan: Owner_Values, border: proc "contextless" (text: string) -> bool) -> (text: string, layer: chosen_values.Layer, found: bool) {
+	Source :: struct {
+		record: chosen_values.Record,
+		layer:  chosen_values.Layer,
+	}
+	for source in ([3]Source{{plan.locks, .Locked}, {chosen, .Chosen}, {plan.defaults, .Plan_Default}}) {
+		if value, value_found := chosen_values.find_text(source.record, name); value_found && border(value) {
+			return value, source.layer, true
+		}
+	}
+	return "", .Contract_Default, false
+}
+
+// locked says if the plan locks a field, a word or a text: the setter of
+// the owner refuses a change of it with No_Grant, and keeps the chosen
+// value under the lock.
 locked :: proc "contextless" (plan: Owner_Values, name: string) -> bool {
-	_, found := chosen_values.find(plan.locks, name)
-	return found
+	return chosen_values.contains(plan.locks, name)
 }

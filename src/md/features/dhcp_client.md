@@ -1,6 +1,6 @@
 # The address of the machine: DHCP, or a static address of the plan
 
-State: **Decided.** Built: the client as a pure package with its host tests (`internal:network/dhcp_client`), the static address of the plan with its border (`dhcp_client.static_of`), and the input and output of the client in the network service (`src/modules/system/network/dhcp.odin`). Not run on a machine: the machine tests wait for the line of the address at the start, which now comes after the ACK.
+State: **Decided.** Built: the client as a pure package with its host tests (`internal:network/dhcp_client`), the static address of the plan with its border (`dhcp_client.static_of`), the input and output of the client in the network service (`src/modules/system/network/dhcp.odin`), and its machine case: the peer of the machine tests is a DHCP server (`tools/modustool/machine/peer_dhcp.odin`).
 
 ## Purpose
 
@@ -30,7 +30,13 @@ The options that the client does not use are passed over by their length; the ov
 - The service reads its plan values at its start: a whole static address holds, and a refused one starts DHCP with one line of the log (`Address_Static_Refused`).
 - Each datagram from UDP port 67 to port 68 goes to the client before the check of the destination address: a reply comes to the broadcast address, or to the address that it offers. The UDP checksum is checked when the server wrote one.
 - A REQUEST of a renewal goes to the hardware address of the server when the table of the neighbors holds it, else to the broadcast hardware address with the server as the IPv4 destination.
-- The transaction words come from the generator of the process, seeded from its context.
+- The transaction words come from the generator of the process, seeded from its context; the generator spends bytes only at a step of the client.
+- While no address holds, the service reads no request of an endpoint: each one waits in its ring, and no frame of a process leaves from 0.0.0.0. It takes no frame but a DHCP reply: an ARP request or a segment for 0.0.0.0 names no machine.
+- The line of the start of the service names the hardware address and the link; the address has its own line, `Address_Bound` or `Address_Static`, which the machine tests wait for.
+
+## The machine case
+
+The peer of the machine tests answers DHCP with its own code, not with the client package, so a fault of a field of the client is a fault that the peer sees. It answers the first DISCOVER with an OFFER whose router is outside the subnet, then with the correct OFFER: the scenario of the network waits for the refusal ("refused a DHCP reply (a router outside)") and then for the address 10.0.2.15/24. The peer does not answer a message with the option 60 (the vendor class of the firmware). A machine with QEMU user networking takes its address from the DHCP server of QEMU.
 
 ## Refused forms
 
@@ -40,5 +46,6 @@ The options that the client does not use are passed over by their length; the ov
 
 ## Subtle points
 
-- The service answers no ARP for an address that it does not hold yet: before the ACK, it holds 0.0.0.0, and the endpoints of the processes wait for the address.
-- A lease that ends drops the address while endpoints are open: their sends are refused until the next ACK, and the log says why once.
+- The service answers no ARP for an address that it does not hold yet: before the ACK, it holds 0.0.0.0, and the requests of the endpoints wait for the address.
+- A lease that ends drops the address while endpoints are open: their requests wait until the next ACK, and the log says why once. A request that waits past the answer bound of its caller ends there, as with a slow service.
+- Why a request waits and is not refused: a process that starts before the ACK would fail at once on a machine that has an address a few milliseconds later; the order of the starts would decide.
