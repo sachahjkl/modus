@@ -345,6 +345,15 @@ COMMANDS :: [?]foundation.Command {
 	// that the system draws, writes it to `resources/fonts`, and draws one
 	// picture that compares the candidates. Run it to change a font; a build
 	// reads the files of the repository (docs/FONTS.md).
+	// Writes the tables of the written shaper from the Unicode Character
+	// Database of `UNICODE_DATA_SOURCE` (src/md/features/written_shaping.md).
+	// The result is in the repository: run it to change the version of
+	// Unicode.
+	// Writes the script font set, the fonts past the boot image, from
+	// `SCRIPT_FONT_SOURCES`, and prints its hash, which a plan names
+	// (src/md/features/script_fonts.md).
+	{name = "script_fonts", about = "write the script font set of " + resources.SCRIPT_FONT_SOURCES_VARIABLE + " to " + resources.SCRIPT_FONTS_OUTPUT + " and print its hash", run = resources.run_script_fonts},
+	{name = "unicode_tables", about = "write the tables of the written shaper from the Unicode Character Database of " + resources.UNICODE_DATA_SOURCE_VARIABLE + " to " + resources.UNICODE_TABLES_OUTPUT, run = resources.run_unicode_tables},
 	{name = "vector_fonts", about = "subset the vector font candidates of " + resources.VECTOR_FONT_SOURCES_VARIABLE + " to " + resources.VECTOR_FONT_FOLDER + " and draw " + resources.CANDIDATES_PICTURE, run = resources.run_vector_fonts},
 	// Draws the files of the mark of the system from its geometry in
 	// `src/library/modus/mark`: the icons in `resources/logo`, the font of the name of

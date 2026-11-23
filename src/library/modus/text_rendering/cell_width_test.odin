@@ -21,6 +21,9 @@ the_ranges_of_cell_widths_are_in_order_and_apart :: proc(t: ^testing.T) {
 @(test)
 each_range_holds_its_edges_and_nothing_past_them :: proc(t: ^testing.T) {
 	outside :: proc(character: rune) -> Cell_Width {
+		if is_mark(character) {
+			return .Zero
+		}
 		for range in cell_width_ranges {
 			if character >= range.first && character <= range.last {
 				return range.width

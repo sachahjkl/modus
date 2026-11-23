@@ -26,16 +26,28 @@ fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_out
 	if problem.kind != .None {
 		return problem, {}
 	}
-	return {}, text_rendering.open(&outlines)
+	missing = text_rendering.open(&outlines)
+	// The script font set, when the plan names one and the starter mapped
+	// it: with none, each character of those scripts is the replacement
+	// glyph, and no line says so: a machine with no such set is the usual
+	// case (src/md/features/script_fonts.md).
+	if scripts, script_problem := font_outlines.script_fonts_open(&ctx.values); script_problem.kind == .None {
+		missing += text_rendering.script_fonts_open(&scripts)
+	}
+	return {}, missing
 }
 
-// script_coverage_tell writes, for each script of the fallback chains, how
+// script_coverage_tell writes, for each script of the fallback chains that
+// it counts (Script_Row.counted), how
 // many of its characters the chain of the interface and the chain of the
 // cells draw, and says when no font of the system has the others. One
 // process writes it once, after text_settings_open: the compositor, which
 // starts once at each boot. The lines start with the name of the caller.
 script_coverage_tell :: proc "contextless" (caller: string) {
 	for script in text_rendering.Script {
+		if !text_rendering.scripts[script].counted {
+			continue
+		}
 		interface_drawn, total := text_rendering.coverage(.Interface, script)
 		cells_drawn, _ := text_rendering.coverage(.Cells, script)
 		if interface_drawn == total && cells_drawn == total {

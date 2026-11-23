@@ -540,8 +540,10 @@ a_call_opens_the_fonts_of_its_face :: proc(t: ^testing.T) {
 	outlines := repository_outlines(t)
 	defer delete(outlines.words)
 	testing.expect_value(t, text_rendering.fonts_of_face(.None), text_rendering.Outline_Fonts{})
-	testing.expect_value(t, text_rendering.fonts_of_face(.Interface), text_rendering.Outline_Fonts{.B612, .Paper_Mono, .Noto_Sans})
-	testing.expect_value(t, text_rendering.fonts_of_face(.Cells_Bold), text_rendering.Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612, .Noto_Sans})
+	// The script fonts are in the chains of each face; a caller gives the
+	// font outlines only, so a call never opens them.
+	testing.expect_value(t, text_rendering.fonts_of_face(.Interface), text_rendering.Outline_Fonts{.B612, .Paper_Mono, .Noto_Sans} + text_rendering.SCRIPT_FONTS)
+	testing.expect_value(t, text_rendering.fonts_of_face(.Cells_Bold), text_rendering.Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612, .Noto_Sans} + text_rendering.SCRIPT_FONTS)
 	placed: [3]text_rendering.Placed_Glyph
 	count, _ := shape_through_module(t, &outlines, "ΠЖā", text_rendering.TEXT_SIZE_OF_SCALE_ONE, placed[:])
 	testing.expect_value(t, count, 3)

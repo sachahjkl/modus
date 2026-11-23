@@ -43,8 +43,8 @@ STRIPE_ROW_LIMIT :: 3 * PLACED_WIDTH_LIMIT + 2 * STRIPE_MARGIN
 
 // Render_Memory: the memory of the caller for the work on one glyph.
 Render_Memory :: struct {
-	points:   [POINT_LIMIT]Outline_Point,
-	contours: [128]int,
+	points:   [OUTLINE_POINT_LIMIT]Outline_Point,
+	contours: [OUTLINE_CONTOUR_LIMIT]int,
 	cells:    [(STRIPE_ROW_LIMIT + 1) * CELL_HEIGHT_LIMIT]i32,
 	thirds:   [STRIPE_ROW_LIMIT * CELL_HEIGHT_LIMIT]u8,
 	filtered: [STRIPE_ROW_LIMIT]u8,
@@ -193,6 +193,27 @@ font_measures_of_outline :: proc "contextless" (font: ^Font_File, outline: ^Outl
 		}
 	}
 	if measures.advance <= 0 || measures.x_height <= 0 || measures.cap_height <= measures.x_height || measures.top <= 0 {
+		return measures, .Unknown_Format
+	}
+	return measures, .None
+}
+
+// font_measures_stated gives the measures of a font that has no outline
+// of the characters 33 to 126, as a font of one script: the x-height and
+// the cap height that its table OS/2 states, else parts of its em, and its
+// ascender and descender as its top and bottom. A font of one script is
+// drawn in the frame of the first font of a face, so only its cap height
+// places it (src/md/features/script_fonts.md).
+font_measures_stated :: proc "contextless" (font: ^Font_File) -> (measures: Font_Measures, problem: Font_Problem) {
+	x_height, cap_height := stated_heights(font)
+	if cap_height <= 0 || cap_height > font.units_per_em {
+		cap_height = font.units_per_em * 7 / 10
+	}
+	if x_height <= 0 || x_height >= cap_height {
+		x_height = cap_height * 7 / 10
+	}
+	measures = {advance = font.units_per_em / 2, x_height = x_height, cap_height = cap_height, top = max(font.ascender, cap_height), bottom = min(font.descender, -1)}
+	if measures.advance <= 0 || measures.x_height <= 0 || measures.cap_height <= measures.x_height {
 		return measures, .Unknown_Format
 	}
 	return measures, .None

@@ -380,7 +380,7 @@ fuzz_target_table := [?]Fuzz_Target {
 	{
 		name = "text_shaping",
 		kind = .Raw,
-		about = "support/text_rendering: one placed glyph for each character, at its byte, with the advance and the pair of its font file at any size, each in its bound",
+		about = "support/text_rendering: each placed glyph at the byte of a character, each advance in its bound, the places one line from 0 to the width; a plain text one glyph for each character with the advance and the pair of its font file",
 		packages = {foundation.SOURCE_FOLDER_PUBLIC + "/text_rendering"},
 		input_limit = FUZZ_SHAPING_INPUT_LIMIT,
 		execute = fuzz_text_shaping_execute,

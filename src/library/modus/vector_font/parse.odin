@@ -22,8 +22,8 @@ package vector_font
 Font_Problem :: enum u8 {
 	None, // No problem.
 	Too_Short, // A read past the end of the file or of a table.
-	Missing_Table, // head, hhea, maxp, hmtx, loca, glyf or cmap is not there.
-	Unknown_Format, // No cmap of format 4, a loca format other than 0 and 1, or a glyph that breaks a rule of the format.
+	Missing_Table, // head, hhea, maxp, hmtx or cmap is not there, or neither glyf with loca nor CFF nor CFF2.
+	Unknown_Format, // No cmap of format 4 or 12, a loca format other than 0 and 1, or a glyph or a table that breaks a rule of its format.
 	Composite_Too_Deep, // A glyph made of glyphs, more than COMPOSITE_DEPTH levels deep, or of more than COMPOSITE_PART_LIMIT parts in all its levels.
 	Too_Many_Points, // The glyph has more points or contours than the memory of the caller.
 	No_Glyph, // The character has no glyph.
@@ -54,8 +54,11 @@ Font_File :: struct {
 	horizontal_metrics:  int, // The long metrics of hmtx.
 	head, hhea, maxp:    Table, // The tables that the reader needs.
 	hmtx, loca, glyf:    Table, // The metrics and the glyphs.
-	character_map:       Table, // The cmap subtable of format 4.
+	character_map:       Table, // The cmap subtable of format 4; empty when the font has a subtable of format 12 only.
 	map_segments:        int, // The segments of the cmap subtable, whose ends font_open checked to grow strictly.
+	long_map:            Table, // The cmap subtable of format 12, for each plane; empty when the font has none.
+	map_groups:          int, // The groups of the subtable of format 12, which font_open checked to grow strictly.
+	cff:                 Cff_Font, // The CFF or CFF2 outlines; version 0 for a font of glyf (cff.odin).
 	name, os2, post:     Table, // Read by the tool only.
 	kern:                Table, // The pair adjustments; absent in many fonts (spacing.odin).
 	gsub:                Table, // The substitutions of glyphs; read by the tool only (substitution.odin).
@@ -91,6 +94,14 @@ COMPOSITE_DEPTH :: 4
 COMPOSITE_PART_LIMIT :: 64
 // The flags of one simple glyph are read into a table of this size.
 POINT_LIMIT :: 1024
+// The points and the contours of one outline in the memory of a caller. A
+// glyph of CFF holds more points than a glyph of glyf of the same form:
+// each cubic curve becomes two quadratic curves, four points
+// (src/md/features/script_fonts.md). The most complex symbols of Noto Sans
+// Symbols 2 need them.
+OUTLINE_POINT_LIMIT :: 2048
+OUTLINE_CONTOUR_LIMIT :: 256
+#assert(OUTLINE_POINT_LIMIT >= POINT_LIMIT)
 
 // read_u16 reads a number of 16 bits, big-endian, when it is inside the
 // bytes.
@@ -178,12 +189,21 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 			font.kern = table
 		case "GSUB":
 			font.gsub = table
+		case "CFF ":
+			font.cff.table = table
+			font.cff.version = 1
+		case "CFF2":
+			font.cff.table = table
+			font.cff.version = 2
 		}
 	}
-	for table in ([?]Table{font.head, font.hhea, font.maxp, font.hmtx, font.loca, font.glyf, font.character_map}) {
+	for table in ([?]Table{font.head, font.hhea, font.maxp, font.hmtx, font.character_map}) {
 		if table.length == 0 {
 			return font, .Missing_Table
 		}
+	}
+	if font.cff.version == 0 && (font.loca.length == 0 || font.glyf.length == 0) {
+		return font, .Missing_Table
 	}
 	head := bytes[font.head.offset:][:font.head.length]
 	font.units_per_em = read_u16(head, 18) or_else 0
@@ -205,29 +225,80 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 	if font.horizontal_metrics * 4 + (font.glyph_count - font.horizontal_metrics) * 2 > font.hmtx.length {
 		return font, .Too_Short
 	}
-	// The subtable of format 4 of the cmap (Unicode, the basic plane).
+	// The subtable of format 4 of the cmap (Unicode, the basic plane), and
+	// the subtable of format 12 (Unicode, each plane) when the font has one:
+	// the emoji and the ideographs past U+FFFF are only there.
 	map_table := bytes[font.character_map.offset:][:font.character_map.length]
 	subtables := read_u16(map_table, 2) or_else 0
-	found := false
+	short_map, long_map: Table
 	for index in 0 ..< subtables {
 		platform := read_u16(map_table, 4 + index * 8) or_else 0xFFFF
 		encoding := read_u16(map_table, 6 + index * 8) or_else 0xFFFF
 		offset := read_u32(map_table, 8 + index * 8) or_else len(map_table)
-		if (platform == 3 && encoding == 1 || platform == 0) && (read_u16(map_table, offset) or_else 0) == 4 {
+		map_format := read_u16(map_table, offset) or_else 0
+		switch {
+		case map_format == 4 && short_map.length == 0 && (platform == 3 && encoding == 1 || platform == 0):
 			length := read_u16(map_table, offset + 2) or_else 0
 			if offset + length > len(map_table) {
 				return font, .Too_Short
 			}
-			font.character_map = {font.character_map.offset + offset, length}
-			found = true
-			break
+			short_map = {font.character_map.offset + offset, length}
+		case map_format == 12 && long_map.length == 0 && (platform == 3 && encoding == 10 || platform == 0 && (encoding == 4 || encoding == 6)):
+			length := read_u32(map_table, offset + 4) or_else 0
+			if length < LONG_MAP_HEADER_SIZE || offset + length > len(map_table) {
+				return font, .Too_Short
+			}
+			long_map = {font.character_map.offset + offset, length}
 		}
 	}
-	if !found {
+	if short_map.length == 0 && long_map.length == 0 {
 		return font, .Unknown_Format
 	}
-	font.map_segments = character_map_segments_check(bytes[font.character_map.offset:][:font.character_map.length]) or_return
+	font.character_map = short_map
+	font.long_map = long_map
+	if short_map.length > 0 {
+		font.map_segments = character_map_segments_check(bytes[short_map.offset:][:short_map.length]) or_return
+	}
+	if long_map.length > 0 {
+		font.map_groups = long_map_groups_check(bytes[long_map.offset:][:long_map.length]) or_return
+	}
+	if font.cff.version != 0 {
+		cff_open(&font) or_return
+	}
 	return font, .None
+}
+
+// The subtable of format 12: a header of 16 bytes (format, reserved,
+// length, language, the count of groups), then groups of 12 bytes: the
+// first character, the last character and the glyph of the first.
+@(private)
+LONG_MAP_HEADER_SIZE :: 16
+@(private)
+LONG_MAP_GROUP_SIZE :: 12
+
+// long_map_groups_check checks the groups of a subtable of format 12 once:
+// inside the subtable, each with its first at most its last, and each
+// after the one before it, so glyph_of finds a group by halves.
+@(private)
+long_map_groups_check :: proc "contextless" (table: []u8) -> (groups: int, problem: Font_Problem) {
+	count, read := read_u32(table, 12)
+	if !read {
+		return 0, .Too_Short
+	}
+	if count > (len(table) - LONG_MAP_HEADER_SIZE) / LONG_MAP_GROUP_SIZE {
+		return 0, .Too_Short
+	}
+	previous := -1
+	for group in 0 ..< count {
+		at := LONG_MAP_HEADER_SIZE + LONG_MAP_GROUP_SIZE * group
+		first := read_u32(table, at) or_else -1
+		last := read_u32(table, at + 4) or_else -1
+		if first <= previous || last < first || last > 0x10FFFF {
+			return 0, .Unknown_Format
+		}
+		previous = last
+	}
+	return count, .None
 }
 
 // The places in a subtable of format 4 of the cmap: the count of segments
@@ -271,10 +342,16 @@ character_map_segments_check :: proc "contextless" (table: []u8) -> (segments: i
 	return segments, .None
 }
 
-// glyph_of gives the glyph of a character, from the cmap of format 4: the
-// first segment whose end is at or past the character, found by halves
-// over the ends that font_open checked to be sorted.
+// glyph_of gives the glyph of a character: from the cmap of format 12 when
+// the font has one, else of format 4. Each is a search by halves over the
+// groups or the segments that font_open checked to be sorted.
 glyph_of :: proc "contextless" (font: ^Font_File, character: rune) -> (glyph: int, problem: Font_Problem) {
+	if font.long_map.length > 0 {
+		return long_map_glyph_of(font, character)
+	}
+	if character < 0 || character > 0xFFFF {
+		return 0, .No_Glyph
+	}
 	table := font.bytes[font.character_map.offset:][:font.character_map.length]
 	segments := font.map_segments
 	code := int(character)
@@ -316,6 +393,35 @@ glyph_of :: proc "contextless" (font: ^Font_File, character: rune) -> (glyph: in
 	return 0, .No_Glyph
 }
 
+// long_map_glyph_of gives the glyph of a character from the groups of the
+// cmap of format 12.
+@(private)
+long_map_glyph_of :: proc "contextless" (font: ^Font_File, character: rune) -> (glyph: int, problem: Font_Problem) {
+	table := font.bytes[font.long_map.offset:][:font.long_map.length]
+	code := int(character)
+	low, high := 0, font.map_groups
+	for low < high {
+		middle := low + (high - low) / 2
+		at := LONG_MAP_HEADER_SIZE + LONG_MAP_GROUP_SIZE * middle
+		first := read_u32(table, at) or_else 0
+		last := read_u32(table, at + 4) or_else 0
+		switch {
+		case code < first:
+			high = middle
+		case code > last:
+			low = middle + 1
+		case:
+			start := read_u32(table, at + 8) or_else 0
+			glyph = start + code - first
+			if glyph <= 0 || glyph >= font.glyph_count {
+				return 0, .No_Glyph
+			}
+			return glyph, .None
+		}
+	}
+	return 0, .No_Glyph
+}
+
 // glyph_advance gives the advance width of a glyph, in units of the font.
 glyph_advance :: proc "contextless" (font: ^Font_File, glyph: int) -> int {
 	metrics := font.bytes[font.hmtx.offset:][:font.hmtx.length]
@@ -329,6 +435,9 @@ glyph_advance :: proc "contextless" (font: ^Font_File, glyph: int) -> int {
 glyph_data :: proc "contextless" (font: ^Font_File, glyph: int) -> (data: []u8, problem: Font_Problem) {
 	if glyph < 0 || glyph >= font.glyph_count {
 		return nil, .No_Glyph
+	}
+	if font.loca.length == 0 {
+		return nil, .Unknown_Format // A font of CFF outlines has no glyf.
 	}
 	loca := font.bytes[font.loca.offset:][:font.loca.length]
 	start, end: int
@@ -357,6 +466,9 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 		return .No_Glyph
 	}
 	outline.advance = glyph_advance(font, glyph)
+	if font.cff.version != 0 {
+		return cff_glyph_outline(font, glyph, outline)
+	}
 	parts := 0
 	return glyph_outline_add(font, glyph, outline, {65536, 0, 0, 65536, 0, 0}, 0, &parts)
 }

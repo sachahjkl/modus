@@ -127,6 +127,29 @@ face_glyph_draw :: #force_no_inline proc "contextless" (face: text_rendering.Fac
 	return false
 }
 
+// face_index_glyph_draw draws a glyph of a font of a face by its index (a
+// form or a ligature of a substitution), as face_glyph_draw draws the
+// glyph of a character; false when the face has no such glyph.
+@(private)
+face_index_glyph_draw :: #force_no_inline proc "contextless" (face: text_rendering.Face, font: text_rendering.Outline_Font, index, size, position: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32) -> bool {
+	entry, words, source := text_rendering.glyph_by_index(face, font, index, size, position)
+	switch source {
+	case .Missing, .Busy:
+		return false
+	case .Private_Cache, .Not_Kept:
+		glyph_words_draw(entry, words, square_root, tables, order, canvas, x, y, color, alpha)
+		return true
+	case .Banded:
+		job, started := text_rendering.glyph_index_bands(face, font, index, size, position)
+		if !started {
+			return false
+		}
+		glyph_bands_draw(&job, square_root, tables, order, canvas, x, y, color, alpha)
+		return true
+	}
+	return false
+}
+
 // glyph_bands_draw draws the bands of a glyph that text_rendering started
 // (glyph_bands, glyph_bands_in), each band blended as it is drawn.
 @(private)
@@ -357,29 +380,34 @@ text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string,
 		spleen_scale = min(spleen_scale, max(1, spleen_advance / CELL_WIDTH))
 	}
 	if alpha == 0 {
-		return x + text_encoding.character_count(transmute([]u8)characters) * advance
+		return x + text_rendering.cell_count(transmute([]u8)characters) * advance
 	}
 	face := text_state.cell_face
 	if bold && text_state.bold_face != .None {
 		face = text_state.bold_face
+	}
+	if vector {
+		return text_cells_of_face(canvas, x, y, transmute([]u8)characters, face, color, size, alpha, advance)
 	}
 	spleen_x := (advance - CELL_WIDTH * spleen_scale) / 2
 	// The line is two cells of the size, not two advances: a wider advance
 	// of Spleen under the body keeps the line of the size.
 	spleen_y := (2 * text_rendering.cell_columns(size) - CELL_HEIGHT * spleen_scale) / 2
 	// The text is UTF-8: one cell for each character, and one for each
-	// invalid sequence, which draws the replacement glyph.
+	// invalid sequence, which draws the replacement glyph; a mark takes no
+	// cell of its own and draws the replacement glyph over its base, as
+	// Spleen has no mark.
 	bytes := transmute([]u8)characters
 	at, place := x, 0
 	for place < len(bytes) {
-		character, length, _ := text_encoding.character_decode(bytes, place)
+		character, length, valid := text_encoding.character_decode(bytes, place)
 		place += length
+		if valid && text_rendering.is_mark(character) && at > x {
+			character_replacement_sized(canvas, at - advance, y, color, size, alpha)
+			continue
+		}
 		if at < canvas.width && at + advance > 0 {
 			switch {
-			case vector:
-				if !character_of_face(face, canvas, at, y, character, color, size, alpha) {
-					character_replacement_sized(canvas, at, y, color, size, alpha)
-				}
 			case !cell_font_draws(character):
 				character_replacement_sized(canvas, at, y, color, size, alpha)
 			case spleen_scale == 1 && spleen_x == 0 && spleen_y == 0:
@@ -394,10 +422,65 @@ text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string,
 }
 
 // text_width gives the width of a text in the font of the cells at scale 1,
-// in pixels: 8 pixels for each character of the UTF-8 text, and for each
-// invalid sequence. Both fonts of the cells have that width.
+// in pixels: 8 pixels for each cell of the UTF-8 text
+// (text_rendering.cell_count: a mark none, a wide character two, an
+// invalid sequence one). Both fonts of the cells have that width.
 text_width :: proc "contextless" (characters: string) -> int {
-	return text_encoding.character_count(transmute([]u8)characters) * CELL_WIDTH
+	return text_rendering.cell_count(transmute([]u8)characters) * CELL_WIDTH
+}
+
+// text_cells_of_face draws a text in the cells of a face of the vector
+// font: each cluster of a character and its marks (text_rendering.
+// cluster_read) in its cells, its composed character when a font has it
+// (é for e and U+0301), each mark that stays apart centred on the cells of
+// its base, a mark with no base on a dotted circle, a wide character in
+// two cells. It gives the x after the last cell.
+@(private)
+text_cells_of_face :: proc "contextless" (canvas: Canvas, x, y: int, bytes: []u8, face: text_rendering.Face, color: Color, size: int, alpha: u32, advance: int) -> int {
+	at, place := x, 0
+	for {
+		cluster, read := text_rendering.cluster_read(&text_rendering.state.font_set, face, bytes, place)
+		if !read {
+			break
+		}
+		place = cluster.end
+		cells := 1
+		if cluster.base_valid && text_rendering.cell_width_of(cluster.base) == .Two {
+			cells = 2
+		}
+		width := advance * cells
+		if at < canvas.width && at + width > 0 {
+			if !cluster.base_valid || !character_of_face(face, canvas, at, y, cluster.base, color, size, alpha) {
+				character_replacement_sized(canvas, at, y, color, size, alpha)
+			}
+			for mark in cluster.marks[:cluster.mark_count] {
+				mark_draw(face, mark, size, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, i64(at) * text_rendering.SUBPIXEL, i64(width) * text_rendering.SUBPIXEL, y, color, alpha)
+			}
+		}
+		at += width
+	}
+	return at
+}
+
+// mark_draw draws a mark that stays apart, centred on the advance of its
+// base: base is the left of the base in 1/64 of a pixel, base_advance its
+// advance. The height of the mark is the height that its font gives it. A
+// mark that no font has draws the replacement glyph at the base.
+@(private)
+mark_draw :: proc "contextless" (face: text_rendering.Face, mark: rune, size: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, base, base_advance: i64, y: int, color: Color, alpha: u32) {
+	centre := (base + base_advance / 2) / text_rendering.SUBPIXEL
+	entry, words, source := text_rendering.glyph(face, mark, size, 0)
+	switch source {
+	case .Private_Cache, .Not_Kept:
+		glyph_words_draw(entry, words, square_root, tables, order, canvas, int(centre) - int(entry.left) - int(entry.width) / 2, y, color, alpha)
+	case .Banded:
+		job, started := text_rendering.glyph_bands(face, mark, size, 0)
+		if started {
+			glyph_bands_draw(&job, square_root, tables, order, canvas, int(centre) - job.columns / 2 + job.origin_column, y, color, alpha)
+		}
+	case .Missing, .Busy:
+		character_replacement_sized(canvas, int(base / text_rendering.SUBPIXEL), y, color, size, alpha)
+	}
 }
 
 // glyph_words_draw draws one glyph from its first word with the fast
@@ -517,11 +600,28 @@ text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_
 		return
 	}
 	position_count := text_rendering.positions_of(face)
+	// The base of the marks that follow it: its place and its advance.
+	base_place, base_advance: i64
+	has_base := false
 	for glyph in placed {
 		replacement := glyph.glyph == text_rendering.REPLACEMENT_GLYPH
 		character: rune
+		if font, index, direct := text_rendering.direct_glyph_parts(glyph.glyph); direct {
+			// A form or a ligature that a substitution gave.
+			pixel, position := text_rendering.position_of(place + i64(glyph.x), position_count)
+			if pixel < -i64(text_rendering.WORK_COLUMN_LIMIT) || pixel > i64(canvas.width) {
+				continue
+			}
+			if !face_index_glyph_draw(face, font, index, size, position, square_root, tables, order, canvas, int(pixel), y, color, alpha) {
+				character_replacement_sized(canvas, int(pixel), y, color, size, alpha)
+			}
+			base_place, base_advance, has_base = place + i64(glyph.x), i64(glyph.advance), true
+			continue
+		}
 		switch {
 		case replacement:
+		case glyph.glyph >= text_rendering.DIRECT_GLYPH_FIRST:
+			continue // A direct glyph of a font that names no member.
 		case glyph.glyph >= text_rendering.FALLBACK_GLYPH_FIRST:
 			character = rune(glyph.glyph - text_rendering.FALLBACK_GLYPH_FIRST)
 		case:
@@ -531,6 +631,13 @@ text_proportional_with :: proc "contextless" (face: text_rendering.Face, square_
 			}
 			character = indexed
 		}
+		if !replacement && glyph.advance == 0 && has_base && text_rendering.is_mark(character) {
+			if base_place > -(i64(text_rendering.WORK_COLUMN_LIMIT) << 6) && base_place < i64(canvas.width) << 6 {
+				mark_draw(face, character, size, square_root, tables, order, canvas, base_place, base_advance, y, color, alpha)
+			}
+			continue
+		}
+		base_place, base_advance, has_base = place + i64(glyph.x), i64(glyph.advance), true
 		pixel, position := text_rendering.position_of(place + i64(glyph.x), position_count)
 		// A glyph far outside the canvas: its pixel does not fit an int of
 		// the canvas, and it draws nothing. No glyph is wider than the

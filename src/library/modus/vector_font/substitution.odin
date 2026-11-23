@@ -47,6 +47,35 @@ tag_at :: proc "contextless" (bytes: []u8, at: int) -> (tag: Feature_Tag, ok: bo
 // no table GSUB, no such feature in its default language system, or no
 // single substitution of the glyph in its lookups.
 single_substitution :: proc "contextless" (font: ^Font_File, tag: Feature_Tag, glyph: int) -> (substitute: int, problem: Font_Problem) {
+	return gsub_find(font, {'D', 'F', 'L', 'T'}, {'l', 'a', 't', 'n'}, tag, .Single, glyph, 0)
+}
+
+// script_single_substitution is single_substitution in the default
+// language system of a script, else of DFLT: the forms of the letters of
+// Arabic are the features isol, init, medi and fina of the script arab.
+script_single_substitution :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyph: int) -> (substitute: int, problem: Font_Problem) {
+	return gsub_find(font, script, {'D', 'F', 'L', 'T'}, tag, .Single, glyph, 0)
+}
+
+// script_ligature gives the ligature of two glyphs that a feature of a
+// script makes (a lookup of type 4): lam and alef of Arabic make one glyph
+// by the feature rlig. .No_Feature when the font has none.
+script_ligature :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, first, second: int) -> (ligature: int, problem: Font_Problem) {
+	return gsub_find(font, script, {'D', 'F', 'L', 'T'}, tag, .Ligature, first, second)
+}
+
+// The lookups that gsub_find reads.
+@(private)
+Gsub_Kind :: enum u8 {
+	Single, // Type 1: one glyph for one glyph.
+	Ligature, // Type 4: one glyph for two glyphs.
+}
+
+// gsub_find finds the glyph that a feature of the default language system
+// of a script (else of a second script) gives for a glyph, or for a pair
+// of glyphs by a ligature.
+@(private)
+gsub_find :: proc "contextless" (font: ^Font_File, script, other_script, tag: Feature_Tag, kind: Gsub_Kind, glyph, second: int) -> (substitute: int, problem: Font_Problem) {
 	if font.gsub.length == 0 {
 		return 0, .No_Feature
 	}
@@ -71,11 +100,11 @@ single_substitution :: proc "contextless" (font: ^Font_File, tag: Feature_Tag, g
 	if !script_list_ok || !feature_list_ok || !lookup_list_ok {
 		return 0, .Too_Short
 	}
-	// The default language system of DFLT, else of latn.
+	// The default language system of the script, else of the other one.
 	language_system: []u8
 	system_found := false
 	script_count := read_u16(script_list, 0) or_else 0
-	for wanted in ([2]Feature_Tag{{'D', 'F', 'L', 'T'}, {'l', 'a', 't', 'n'}}) {
+	for wanted in ([2]Feature_Tag{script, other_script}) {
 		for index in 0 ..< script_count {
 			script_tag, tag_read := tag_at(script_list, 2 + 6 * index)
 			script_offset, offset_read := read_u16(script_list, 6 + 6 * index)
@@ -153,7 +182,14 @@ single_substitution :: proc "contextless" (font: ^Font_File, tag: Feature_Tag, g
 			if !lookup_offset_read || !lookup_ok {
 				return 0, .Too_Short
 			}
-			found, lookup_problem := lookup_single_substitution(lookup, glyph, &substitute)
+			found: bool
+			lookup_problem: Font_Problem
+			switch kind {
+			case .Single:
+				found, lookup_problem = lookup_single_substitution(lookup, glyph, &substitute)
+			case .Ligature:
+				found, lookup_problem = lookup_ligature(lookup, glyph, second, &substitute)
+			}
 			if lookup_problem != .None {
 				return 0, lookup_problem
 			}
@@ -240,6 +276,86 @@ lookup_single_substitution :: proc "contextless" (lookup: []u8, glyph: int, subs
 			return true, .None
 		case:
 			return false, .Unknown_Format
+		}
+	}
+	return false, .None
+}
+
+// lookup_ligature reads one lookup of type 4, or of type 7 that holds a
+// type 4: the ligature of a first glyph whose components are the second
+// glyph alone.
+@(private)
+lookup_ligature :: proc "contextless" (lookup: []u8, first, second: int, ligature: ^int) -> (found: bool, problem: Font_Problem) {
+	lookup_type, type_read := read_u16(lookup, 0)
+	subtable_count, count_read := read_u16(lookup, 4)
+	if !type_read || !count_read {
+		return false, .Too_Short
+	}
+	if lookup_type != 4 && lookup_type != 7 {
+		return false, .None
+	}
+	for number in 0 ..< min(subtable_count, SUBSTITUTION_SUBTABLE_LIMIT) {
+		subtable_offset, offset_read := read_u16(lookup, 6 + 2 * number)
+		subtable, subtable_ok := part_at(lookup, subtable_offset)
+		if !offset_read || !subtable_ok {
+			return false, .Too_Short
+		}
+		if lookup_type == 7 {
+			held_type, held_read := read_u16(subtable, 2)
+			held_offset, held_offset_read := read_u32(subtable, 4)
+			if !held_read || !held_offset_read {
+				return false, .Too_Short
+			}
+			if held_type != 4 {
+				continue
+			}
+			subtable, subtable_ok = part_at(subtable, held_offset)
+			if !subtable_ok {
+				return false, .Too_Short
+			}
+		}
+		format, format_read := read_u16(subtable, 0)
+		coverage_offset, coverage_read := read_u16(subtable, 2)
+		set_count, set_count_read := read_u16(subtable, 4)
+		coverage, coverage_ok := part_at(subtable, coverage_offset)
+		if !format_read || !coverage_read || !set_count_read || !coverage_ok {
+			return false, .Too_Short
+		}
+		if format != 1 {
+			return false, .Unknown_Format
+		}
+		index := coverage_index_of(coverage, first) or_return
+		if index < 0 {
+			continue
+		}
+		if index >= set_count {
+			return false, .Unknown_Format
+		}
+		set_offset, set_offset_read := read_u16(subtable, 6 + 2 * index)
+		set, set_ok := part_at(subtable, set_offset)
+		ligature_count, ligature_count_read := read_u16(set, 0)
+		if !set_offset_read || !set_ok || !ligature_count_read {
+			return false, .Too_Short
+		}
+		for ligature_number in 0 ..< min(ligature_count, SUBSTITUTION_SUBTABLE_LIMIT) {
+			ligature_offset, ligature_offset_read := read_u16(set, 2 + 2 * ligature_number)
+			entry, entry_ok := part_at(set, ligature_offset)
+			glyph, glyph_read := read_u16(entry, 0)
+			components, components_read := read_u16(entry, 2)
+			if !ligature_offset_read || !entry_ok || !glyph_read || !components_read {
+				return false, .Too_Short
+			}
+			if components != 2 {
+				continue
+			}
+			component, component_read := read_u16(entry, 4)
+			if !component_read {
+				return false, .Too_Short
+			}
+			if component == second {
+				ligature^ = glyph
+				return true, .None
+			}
 		}
 	}
 	return false, .None

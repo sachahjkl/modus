@@ -186,6 +186,18 @@
         "b612_bold=${b612File "B612-Bold.ttf" "sha256-kXSVQax7LDKLWIMrfixN+AnX4ro41io6WqP444snGBQ="}"
         "noto_sans=${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf"
       ];
+      # The script fonts (src/md/features/script_fonts.md): whole files,
+      # for the command "script_fonts" and the host tests of the text.
+      SCRIPT_FONT_SOURCES = builtins.concatStringsSep ";" [
+        "noto_sans_hebrew=${pkgs.noto-fonts}/share/fonts/noto/NotoSansHebrew.ttf"
+        "noto_sans_arabic=${pkgs.noto-fonts}/share/fonts/noto/NotoSansArabic.ttf"
+        "noto_sans_symbols_2=${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols2-Regular.otf"
+        "noto_emoji=${pkgs.noto-fonts-monochrome-emoji}/share/fonts/noto/NotoEmoji.ttf"
+        "noto_sans_cjk=${pkgs.noto-fonts-cjk-sans}/share/fonts/opentype/noto-cjk/NotoSansCJK-VF.otf.ttc"
+      ];
+      # The Unicode Character Database, for the command "unicode_tables"
+      # (src/md/features/written_shaping.md).
+      UNICODE_DATA_SOURCE = "${pkgs.unicode-character-database}/share/unicode";
     };
 
     # chibicc, the C compiler of the module c_compiler: its source at one

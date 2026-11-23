@@ -286,7 +286,7 @@ The settings are the smallest form that keeps the properties:
 - **Outlines whose hash is wrong**: the root service does not map them (one line on the log), and no process has them.
 - **A damaged font file** at build time: the tool stops the build with the problem (`vector_font.Font_Problem`). The reader checks each read (host test `hostile_files`: the file cut at each 211 bytes, 48 files with 64 changed bytes, each glyph drawn at the three scales: no fault).
 - **The boot display uses no font file**: the boot program has none before it checked the boot image, so the boot program, the root service and the process `boot` draw it in Spleen at the size of its scale, the same pixels in each (`src/md/features/boot_display_scale.md`).
-- **A character that the font lacks**: each font of the system holds ASCII 32 to 126, the Latin-1 Supplement and the euro sign, and each candidate has all of them (the subset command refuses a font without one). Spleen 2.1.0 has them too (`modustool font`). A text is UTF-8: the drawing decodes it, gives each character one cell, and draws each other character, and each invalid sequence, as the replacement glyph, the outline of a box (`graphics.character_replacement`), in both fonts and at each scale. A process with the font outlines draws each other character that a font of its fallback chain has: the dashes, the curly quotes, the ellipsis, the arrows, the operators, the box-drawing characters, Latin Extended-A and B, Greek and Cyrillic, each into its private glyph cache (section 13). The replacement glyph means that no font of the system has the character.
+- **A character that the font lacks**: each font of the system holds ASCII 32 to 126, the Latin-1 Supplement and the euro sign, and each candidate has all of them (the subset command refuses a font without one). Spleen 2.1.0 has them too (`modustool font`). A text is UTF-8: the drawing decodes it, gives each character one cell, and draws each other character, and each invalid sequence, as the replacement glyph, the outline of a box (`graphics.character_replacement`), in both fonts and at each scale. A process with the font outlines draws each other character that a font of its fallback chain has: the dashes, the curly quotes, the ellipsis, the arrows, the operators, the box-drawing characters, Latin Extended-A and B, Greek and Cyrillic, each into its private glyph cache (section 13). A combining mark composes with its letter (e and U+0301 draw é) or draws over it, and a mark with no letter stands on a dotted circle (section 13.9). The replacement glyph means that no font of the process has the character.
 
 ## 9. Measures
 
@@ -310,7 +310,7 @@ The console stays fast: the producer writes into the terminal ring, and the term
 - No grid fit of each stem; no stem darkening (`gui_toolkit` thickens the stripes by 0.2 pixel; not tried here).
 - The first frames use the default settings until the boot pass of `settings` (section 7).
 - The scheduling strategy is not a setting and does not survive a stop (section 7).
-- The fonts of the system have no Armenian, Hebrew, Arabic, Thai, CJK ideograph or emoji, and no geometric square (U+25A0): such a character draws the replacement glyph until a font with it joins the fallback chains (section 13.8). Spleen 8x16 draws the 192 characters only. A monospace font has no subpixel position; the proportional font and its pairs are in section 12.
+- The fonts of the boot image have no Armenian, Hebrew, Arabic, Thai, CJK ideograph or emoji, and no geometric square (U+25A0). Hebrew, Arabic, the ideographs, the emoji and the geometric shapes are in the script font set (section 13.9); a process with no set draws the replacement glyph for each of them. Armenian, Thai and the scripts of India have no font (section 13.8). Spleen 8x16 draws the 192 characters only. A monospace font has no subpixel position; the proportional font and its pairs are in section 12.
 - The order of the stripes of the screen is not detected: under QEMU it is the panel of the host, which the system cannot read.
 - The measures of section 9 were taken on a host with a load above 8.
 
@@ -509,11 +509,18 @@ The chains are data (`text_rendering.scripts`): one row for each script, with th
 | Greek (U+0391 to U+03C9, 49 letters) | B612, Paper Mono, Noto Sans | Paper Mono, B612, Noto Sans |
 | Cyrillic (U+0400 to U+045F, 96 letters) | Noto Sans | Noto Sans |
 | Box drawing and block elements (U+2500 to U+259F) | Paper Mono | Paper Mono |
-| Each other character, Latin Extended-A too | B612, Noto Sans, Paper Mono | Paper Mono, B612, Noto Sans |
+| Hebrew (U+0590 to U+05FF, U+FB1D to U+FB4F) | Noto Sans Hebrew | Noto Sans Hebrew |
+| Arabic (U+0600 to U+06FF, U+0750 to U+077F, U+08A0 to U+08FF, the presentation forms) | Noto Sans Arabic | Noto Sans Arabic |
+| Geometric shapes, symbols, dingbats (U+25A0 to U+27BF, U+2B00 to U+2BFF) | B612, Paper Mono, Noto Sans, Noto Sans Symbols 2, Noto Emoji | Paper Mono, B612, Noto Sans, Noto Sans Symbols 2, Noto Emoji |
+| Han, kana, Hangul and the full-width forms | Noto Sans CJK, Paper Mono | Noto Sans CJK, Paper Mono |
+| Emoji (U+1F000 to U+1FAFF) | Noto Emoji, Noto Sans Symbols 2 | Noto Emoji, Noto Sans Symbols 2 |
+| Each other character, Latin Extended-A too | B612, Noto Sans, Paper Mono, Noto Sans Symbols 2, Noto Sans CJK | Paper Mono, B612, Noto Sans, Noto Sans Symbols 2, Noto Sans CJK |
+
+The fonts after Noto Sans are the script fonts (section 13.9): a chain skips a font that the process did not open.
 
 The bold weights follow the same rows with B612 Bold and Paper Mono SemiBold first. A face of the interface takes Noto Sans before Paper Mono: a letter that B612 lacks (ș, ł, č) then has a proportional advance, not the cell of a monospace font. A face of cells takes Paper Mono first, so ș, — and → keep their cell. Noto Sans has one weight: a bold Cyrillic letter, Π, ρ or a bold letter that only Noto Sans has draws in its regular weight. A glyph of a font that is not the first of its face is drawn in the frame of the first font: its outlines are scaled so that its cap height is the cap height of the first font, on the baseline of the first font; in a face of cells it is cut to its cell.
 
-The compositor writes one line for each script at its start, with what the chains draw:
+The compositor writes one line for each counted script at its start, with what the chains draw (Han and emoji are not counted: their blocks hold more characters than a line can say anything useful about):
 
 - `compositor: the script greek: the chain of the interface draws 49 of its 49 characters, the chain of the cells 49`;
 - `compositor: the script cyrillic: the chain of the interface draws 96 of its 96 characters, the chain of the cells 96`;
@@ -527,19 +534,19 @@ The subsets, the font outlines, Spleen 8x16 and the boot display are built at bu
 
 ### 13.4 The subsets
 
-Each subset holds, after the 192 characters, each character of the basic plane past U+00FF that the character map of its source has with an advance above zero, and that is not a combining mark, a format character, a separator of lines or paragraphs, a private use character or a control character (`font_outlines.interface_past_cache_ranges`, `cell_past_cache_ranges`, `script_fallback_past_cache_ranges`, written by `modustool vector_fonts`). A combining mark has no place of its own in a text that the system draws, one place for each character; a private use character names no character of a text of another system.
+Each subset holds, after the 192 characters, each character of the basic plane past U+00FF that the character map of its source has with an advance above zero, or that is a combining mark (Mn or Me) with an outline, and that is not a format character, a separator of lines or paragraphs, a private use character or a control character (`font_outlines.interface_past_cache_ranges`, `cell_past_cache_ranges`, `script_fallback_past_cache_ranges`, written by `modustool vector_fonts`). A mark that does not compose with its letter draws over it (section 13.9); a private use character names no character of a text of another system.
 
 | Subset | Characters past the 192 | What they are | Bytes |
 |---|---|---|---|
 | B612 Regular, B612 Bold | 326 | Œ, Š, Ÿ, ƒ, the Greek letters (no Π, U+03A0, and no ρ, U+03C1), General Punctuation, superscripts, ₹, letterlike symbols, fractions and Roman numerals, arrows, mathematical operators, some geometric shapes, symbols and dingbats, the ligatures fi and fl | 119 824, 118 104 |
-| Paper Mono, Paper Mono SemiBold | 448 | 119 letters of Latin Extended-A, the letters of Romanian (ș, ț), five Greek letters (Λ, Ω, λ, μ, π), General Punctuation, the arrows, some operators, ₽, ₴, ₪, the box-drawing characters and the block elements | 94 996, 94 044 |
-| Noto Sans, "Noto Sans LGC" | 2 381 | Latin Extended-A, B and Additional (Vietnamese), the IPA letters, the whole Greek and Greek Extended blocks, the whole Cyrillic block and its supplement, General Punctuation, 32 currency signs, letterlike symbols | 548 128 |
+| Paper Mono, Paper Mono SemiBold | 467 | 119 letters of Latin Extended-A, the letters of Romanian (ș, ț), five Greek letters (Λ, Ω, λ, μ, π), General Punctuation, the arrows, some operators, ₽, ₴, ₪, the box-drawing characters and the block elements, the combining marks of its accents | 96 488, 95 512 |
+| Noto Sans, "Noto Sans LGC" | 2 654 | Latin Extended-A, B and Additional (Vietnamese), the IPA letters, the whole Greek and Greek Extended blocks, the whole Cyrillic block and its supplement, the combining marks of these scripts, General Punctuation, 32 currency signs, letterlike symbols, the dotted circle | 586 360 |
 
 The window `interface_font` shows the 47 Greek letters of B612, and its line `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must` is a line of the machine test. Paper Mono has no α: a cell of α draws the α of B612, the second font of the chain of the cells. The box-drawing characters of Paper Mono pass their advance by 5 units on each side; the cell cuts them, as it cuts each glyph of a face of cells.
 
 The source of Noto Sans is the variable font `NotoSans.ttf` of the package `noto-fonts` of nixpkgs: the subset holds the outlines of its default instance, the regular weight, with its 918 glyphs made of glyphs made simple. It has no table `kern`, so its glyphs have no pair. The subsets of B612 keep each pair of `kern` between two of their characters: 1 017 pairs in Regular and 1 061 in Bold.
 
-The subsets hold no table `GSUB`: e followed by the combining acute accent (U+0301) draws the accent as the replacement glyph in its own place. The keys and the subsets give the precomposed form (é), which the subsets have for each letter of Latin Extended-A and B.
+The subsets hold no table `GSUB`. A letter and its marks compose to the precomposed character (e and U+0301 to é) by the compositions of Unicode, and each mark that stays apart draws its own glyph over its letter (section 13.9).
 The 192 characters keep their glyph indices: the characters past them come after them in each subset.
 
 ### 13.5 Who can write the font outlines and the private glyph cache
@@ -575,13 +582,28 @@ Host: AMD Ryzen 7 5800X, one core (`taskset`), `-o:speed`, each time the least o
 |---|---|
 | The private glyph cache, in each copy of `text_rendering` that draws a glyph | 1 MiB of words, 4 096 entries of 48 bytes, a Swiss table index of 340 groups (5 440 slots, 16 344 bytes) and the blocks, and about 150 KiB of render memory: about 1.4 MiB (354 pages), one memory object that the process takes from its budget at the frame after its first such glyph (section 14.4) |
 | The globals of each copy of `text_rendering` | about 25 KiB: the memory of one outline (13 KiB), which the measure needs too, a band of one row (11 KiB), and the state; a copy that only measures carries the outline and the state |
-| The font outlines | the five subsets: 975 096 bytes in the boot image, 548 128 of them Noto Sans |
+| The font outlines | the five subsets: 1 016 288 bytes in the boot image, 586 360 of them Noto Sans |
+| The script font set | five whole fonts, 35 772 620 bytes, outside the boot image (section 13.9) |
 
 These measures are of the rasterizer that drew the glyph cache files that left the system (`vector_font.glyph_render_placed`, which the host test `private_glyph_measure` still measures): there a placed glyph costs about four times a glyph of cells, because `glyph_render_placed` clears and filters a work row of 64 pixels whatever the width of the glyph. The rasterizer of each process has a work row as wide as the glyph (section 14.3); its measures are in section 14.6.
 
 ### 13.8 What is left
 
-A TrueType font for the CJK ideographs, with a cell of two columns; fonts for Armenian, Hebrew, Arabic, the scripts of India and Thai, and for emoji; the composition of a letter and a combining mark; the shaping of complex scripts in the process: `ROADMAP.md`.
+The plan field that names the script font set and the root service that maps it; fonts for Armenian, Thai and the scripts of India, and their shaping; the anchors of `GPOS` for the marks; the isolates of UAX #9: `ROADMAP.md`.
+
+### 13.9 The script font set and the written shaping
+
+The script font set is one data object in the format of the font outlines, outside the boot image: Noto Sans Hebrew (35 508 bytes), Noto Sans Arabic (682 836), Noto Sans Symbols 2 (404 576, CFF), Noto Emoji (1 966 648, monochrome) and Noto Sans CJK (32 682 580, a collection of CFF2, face 0). `modustool script_fonts` writes it to `build/fonts/script_fonts.bin` from `SCRIPT_FONT_SOURCES` and prints its hash. `font_outlines.script_fonts_check` refuses the whole set when its bytes do not give the named hash or a font does not give the hash of its record. A process opens the set at the fixed range `Script_Fonts` when its starter mapped it; with no set, each character of these scripts is the replacement glyph, and nothing waits. The intent is `src/md/features/script_fonts.md`.
+
+The shaper (`text_rendering.shape`) reads a text by clusters: a base and its marks.
+
+- **The composition**: a base and a mark compose by the compositions of Unicode 17.0 when a font of the face draws the result, in the canonical order of the marks. e with U+0302 and U+0323, in either order, is ệ.
+- **A mark apart**: a mark that does not compose is a placed glyph with the advance 0, centred on its base. A mark at the start of a text, or after a space, stands on a dotted circle (U+25CC). In a face of cells, a mark takes no cell.
+- **Arabic**: each letter takes its isolated, initial, medial or final form by its joining type, the presentation form that Unicode names when its font has it, else the single substitution of `GSUB`. Lam and an alef make one glyph.
+- **A line of mixed direction**: when every placed glyph fits the table, the places follow UAX #9 for one line, with the mirrored brackets in a right-to-left run. The order of the placed glyphs stays the order of the text.
+- **Wide characters**: an ideograph takes two cells in a face of cells.
+
+The intent is `src/md/features/written_shaping.md`. The tables come from the Unicode Character Database by `modustool unicode_tables`.
 
 ## 14. Text at any size
 

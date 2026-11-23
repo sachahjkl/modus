@@ -682,6 +682,46 @@ The design: `src/md/features/interface_language.md`, "5. Text processing".
 
 Do not use: character (for this), letter, glyph (for this).
 
+### Combining mark
+
+A combining mark is a character that draws on the character before it, its base: an accent, a dot below, a vowel sign of Hebrew or Arabic.
+
+The shaper reads a base and its marks as one cluster. It composes them to one character by the compositions of Unicode when a font draws the result: `e` then U+0301 is é, and `e` with U+0323 and U+0302, in either order, is ệ. A mark that does not compose is a placed glyph with the advance 0, centred on its base. A mark with no base, at the start of a text or after a space, stands on a dotted circle (U+25CC). In a grid of cells a mark takes no cell.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: accent (for this), diacritic (for the character), zero-width character.
+
+### Joining form
+
+A joining form is the shape that a letter of Arabic takes by its neighbours: isolated, initial, medial or final.
+
+The shaper gives each letter its form from its joining type (Unicode) and the joining types of the letters on each side; a mark between two letters does not break the join. The form is the presentation form that Unicode names when the font has it, else the substitution of the font. Lam then alef is one glyph, their ligature. Example: in بيت the beh is initial, the yeh medial and the teh final.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: contextual form, positional form, glyph variant.
+
+### Line direction
+
+The line direction is the order on the screen of the runs of one line that mixes left-to-right and right-to-left text, by the rules of UAX #9.
+
+The first strong letter of the text gives the direction of the line; each run of the other direction is reversed in place, numbers keep their order, and a bracket in a right-to-left run draws its mirrored glyph. The shaper changes only the x of each placed glyph: the placed glyphs stay in the order of the text. Example: `abc אבג 123` shows a b c, then 1 2 3, then ג ב א.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: bidi (alone), RTL mode, visual order (for the text).
+
+### Script font set
+
+The script font set is the fonts of the scripts that the boot image lacks, one data object that a plan names by its hash and that a process opens at a fixed range.
+
+It holds Noto Sans Hebrew, Noto Sans Arabic, Noto Sans Symbols 2, Noto Emoji and Noto Sans CJK, whole, 35.8 MB, so the boot image stays small. `modustool script_fonts` writes it and prints its hash; `font_outlines.script_fonts_check` refuses the whole set when a byte does not give its hash. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
+
+The design: `src/md/features/script_fonts.md`.
+
+Do not use: font pack, font download, extra fonts.
+
 ### Collation
 
 A collation is the order of texts that a reader of one language expects, from the Unicode Collation Algorithm, the root order of CLDR and the tailoring of a locale.

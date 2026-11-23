@@ -25,8 +25,11 @@
 // 3 Cells, 4 Cells_Without_Grid_Fit, 5 Cells_Bold); a text size is the
 // height of a line in 1/64 of a pixel, from 256 to 16384.
 //
-// **What it does not do**: no ligature, no direction other than left to
-// right, no shaping of a complex script.
+// **What it does not do**: no script font (the caller gives the font
+// outlines only, so Hebrew, Arabic, the ideographs and the emoji are the
+// replacement glyph), no shaping of the scripts of India and of Southeast
+// Asia. The composition of the marks and the order of a line of mixed
+// direction are those of the package.
 package text_rendering_module
 
 import "modus:contract/errors"
@@ -40,7 +43,7 @@ import "modus:text_rendering"
 TABLE_LIMIT :: u64(1) << 40
 
 // The fonts of one call, opened from the bytes of the caller, and the
-// memory of one outline for their measures: about 16 KiB on the stack of
+// memory of one outline for their measures: about 45 KiB on the stack of
 // the call.
 @(private)
 Call_Fonts :: struct {

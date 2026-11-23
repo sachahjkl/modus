@@ -49,7 +49,7 @@ FILTER_SPREAD_THIRDS :: 2
 // row: no ink ever reaches a side of the row.
 WORK_ROOM_PIXELS :: 1
 SUBUNITS :: vector_font.SUBUNITS_PER_PIXEL
-CONTOUR_LIMIT :: 128 // The contours of one outline.
+CONTOUR_LIMIT :: vector_font.OUTLINE_CONTOUR_LIMIT // The contours of one outline.
 // The largest place of a point, in subunits, either side of 0. A point of
 // a hostile font past it is refused before any cut to 32 bits: inside it,
 // each place fits an i32, and so does the sum of two places from which
@@ -65,7 +65,7 @@ CELL_COUNT :: (WORK_THIRDS_LIMIT + 1) * BAND_ROWS
 // The memory of the points of one outline. open reads the measures of each
 // font with it, so a copy that only measures carries it: about 13 KiB.
 Outline_Memory :: struct {
-	points:   [vector_font.POINT_LIMIT]vector_font.Outline_Point,
+	points:   [vector_font.OUTLINE_POINT_LIMIT]vector_font.Outline_Point,
 	contours: [CONTOUR_LIMIT]int,
 }
 
@@ -249,18 +249,23 @@ raster_place :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Fo
 	}
 	if job.outline.point_count == 0 {
 		// No ink: a space. A band job of no rows.
-		job.columns = form.proportional ? 1 : cell_columns(size)
+		job.columns = form.proportional ? 1 : cell_columns(size) * (position == WIDE_CELL_POSITION ? 2 : 1)
 		job.thirds = 3 * job.columns + 2 * STRIPE_MARGIN
 		return job, .None
 	}
 	job.row_first = int(clamp(floor_divide(low_y, SUBUNITS), 0, i64(rows)))
 	job.row_end = int(clamp(ceiling_divide(high_y, SUBUNITS), i64(job.row_first), i64(rows)))
 	job.next_row = job.row_first
-	if !form.proportional {
-		// A glyph of cells is cut to its cell, as in a glyph cache.
-		job.columns = cell_columns(size)
+	if !form.proportional && job.outline.advance != 0 {
+		// A glyph of cells is cut to its cell, as in a glyph cache; a glyph
+		// of two cells (WIDE_CELL_POSITION) to its two cells.
+		job.columns = cell_columns(size) * (position == WIDE_CELL_POSITION ? 2 : 1)
 		job.origin_column = 0
 	} else {
+		// A proportional glyph, and a mark of a face of cells: its advance
+		// is 0 and its ink is left of its origin, so it keeps the box of
+		// its ink, which the draw centres on its base.
+		job.proportional = true
 		shift := i64(position) * SUBUNITS // One third of a pixel for each position.
 		columns, origin_column, fits := work_columns(low_x, high_x, shift)
 		if !fits {
@@ -448,6 +453,17 @@ glyph_bands_in :: proc "contextless" (set: ^Font_Set, face: Face, character: run
 		return {}, false
 	}
 	problem: Raster_Problem
-	job, problem = raster_begin_in(set, face, font, glyph_index, size, position)
+	job, problem = raster_begin_in(set, face, font, glyph_index, size, cell_position_of(face, character, position))
+	return job, problem == .None
+}
+
+// glyph_index_bands is glyph_bands for a glyph by its index, as
+// glyph_by_index gives it: a form or a ligature of a substitution.
+glyph_index_bands :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (job: Raster_Job, ok: bool) {
+	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) || font == .None || font not_in fonts_of_face(face) || !state.fonts[font].opened {
+		return {}, false
+	}
+	problem: Raster_Problem
+	job, problem = raster_begin_in(&state.font_set, face, font, glyph_index, size, position)
 	return job, problem == .None
 }

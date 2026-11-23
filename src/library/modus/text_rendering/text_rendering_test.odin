@@ -442,7 +442,9 @@ a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
 	for face in chain_faces {
-		for script in Script {
+		// The scripts of the fonts of the boot image; those of the script
+		// fonts are in the_scripts_of_the_script_fonts.
+		for script in ([?]Script{.Greek, .Cyrillic, .Box_Drawing}) {
 			drawn, total := coverage(face, script)
 			testing.expectf(t, drawn == total && total > 0, "%v, %v: %v of %v", face, script, drawn, total)
 		}
@@ -624,7 +626,7 @@ each_character_of_the_subsets_draws_and_the_cache_evicts :: proc(t: ^testing.T) 
 					testing.expectf(t, entry.row_count > 0 || no_ink(key.character), "%v U+%04X: no ink", key.face, int(key.character))
 				}
 				value, found := advance(.Interface, character, TEXT_SIZE_OF_SCALE_ONE)
-				testing.expectf(t, found && value > 0, "U+%04X: the advance %v", int(character), value)
+				testing.expectf(t, found && (value > 0 || is_mark(character)), "U+%04X: the advance %v", int(character), value)
 			}
 		}
 	}
