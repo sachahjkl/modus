@@ -28,6 +28,8 @@ import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
+import "internal:storage/storage_retention"
 import format "modus:contract/store"
 import answers "modus:storage"
 import "base:intrinsics"
@@ -1229,6 +1231,13 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)
+	// The retention rule of the plan of principal 0, once: the page of the
+	// plan values never changes after the start.
+	if plan, planned := system.plan_values_of_process(&ctx.values); planned {
+		rule, order_refused := storage_retention.rule_of(plan)
+		retention_rule = rule
+		system.log_fact(.Info, Retention_Rule_Of_The_Plan{keep_all = value_kinds.Time_In_Milliseconds(i64(rule.keep_all_milliseconds)), hours_end = value_kinds.Time_In_Milliseconds(i64(rule.hours_end_milliseconds)), order_refused = order_refused ? 1 : 0})
+	}
 	// The key of the slots of the hash index: a new one at each start, so
 	// that no party can choose hashes whose first slots make one long run.
 	// The generator is local: it serves this one draw, and leaves no state

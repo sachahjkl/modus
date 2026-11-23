@@ -59,7 +59,7 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: i6
 		return errors.fail(error, result, .Empty, .Records, 1, 0, pr.MAX_PLAN_ENTRIES, found)
 	case .Too_Many_Entries:
 		return errors.fail(error, result, .Over_Limit, .Records, 1, 0, pr.MAX_PLAN_ENTRIES, found)
-	case .Bad_Entry_Kind, .Bad_Role, .Zero_Module_Hash, .Bad_Start_Grant, .Bad_Store_Rights, .Invalid_Name, .Duplicate_Entry, .Cyclic_Role_Chain, .Trusted_Path_Forbidden, .Principal_Mismatch:
+	case .Bad_Entry_Kind, .Bad_Role, .Zero_Module_Hash, .Bad_Start_Grant, .Bad_Store_Rights, .Invalid_Name, .Duplicate_Entry, .Cyclic_Role_Chain, .Trusted_Path_Forbidden, .Principal_Mismatch, .Bad_Value:
 		return errors.fail(error, result, .Bad_Value, .Records, 1, i64(bad_index), 0, found)
 	case .Buffer_Too_Small, .Truncated, .Trailing_Bytes, .Bad_Header, .Zero_Plan_Hash:
 		return errors.fail(error, result, .Damaged, .Versions, 0, 0, 0, found)
@@ -87,6 +87,9 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: i6
 		return errors.fail(error, result, .Damaged, .Store, 0, 0, 0, found)
 	case .Roles_Refused:
 		return errors.fail(error, result, .Refused, .Grants, 1, 0, 0, found)
+	case .Values_Refused:
+		// The core refused the values of the plan: no value changed.
+		return errors.fail(error, result, .Refused, .Records, 1, 0, 0, found)
 	}
 	return errors.fail(error, result, .Refused, .None, 0, 0, 0, found)
 }

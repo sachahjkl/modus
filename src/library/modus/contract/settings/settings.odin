@@ -63,6 +63,7 @@ import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import "modus:contract/language_tag"
 import "modus:contract/module"
+import "modus:contract/plan_values"
 import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 
@@ -810,24 +811,23 @@ zone_offset_minutes_allowed :: proc "contextless" (word: u64) -> bool {
 // one. A word that its border refuses holds as no choice, and stays kept as
 // it was: a later release may know it. The choice holds no appearance in
 // force and no count.
-choice_of_kept :: proc "contextless" (record: chosen_values.Record, languages_bytes: []u8, languages_found: bool) -> (choice: Choice, zone_offset_minutes: i32, layers: Kept_Layers) {
+choice_of_kept :: proc "contextless" (record: chosen_values.Record, languages_bytes: []u8, languages_found: bool, plan: plan_values.Owner_Values = {}) -> (choice: Choice, zone_offset_minutes: i32, layers: Kept_Layers) {
 	choice = choice_default()
 	values := values_of(choice)
 	for setting in Setting {
-		word, found := chosen_values.find(record, descriptions[setting].name)
-		if !found || word > u64(max(u32)) {
-			continue
-		}
-		if _, ok := value_place_of_word(setting, u32(word)); !ok {
+		// The precedence: a lock of the plan, a choice of the principal, a
+		// default of the plan, the default of the contract.
+		word, layer, found := plan_values.value_in_force(descriptions[setting].name, record, plan, setting_borders[setting])
+		if !found {
 			continue
 		}
 		values[setting] = u32(word)
-		layers.values[setting] = .Chosen
+		layers.values[setting] = layer
 	}
 	choice, _, _ = choice_of_values(values)
-	if word, found := chosen_values.find(record, TIME_ZONE_NAME); found && zone_offset_minutes_allowed(word) {
+	if word, layer, found := plan_values.value_in_force(TIME_ZONE_NAME, record, plan, zone_offset_minutes_allowed); found {
 		zone_offset_minutes = i32(cast(i64)word)
-		layers.time_zone = .Chosen
+		layers.time_zone = layer
 	}
 	if languages_found && len(languages_bytes) == size_of(Language_List) {
 		list: Language_List // A copy: the bytes can be at any alignment.
@@ -919,6 +919,48 @@ presentation_of_words :: proc "contextless" (words: [PRESENTATION_WORDS]u64, sca
 	}
 	choice.languages = list
 	return choice, true
+}
+
+// The border of the word of each setting, for the precedence: a word that
+// names a value of its setting.
+@(rodata)
+setting_borders := [Setting]proc "contextless" (word: u64) -> bool {
+	.Font            = proc "contextless" (word: u64) -> bool {return word_of_setting_valid(.Font, word)},
+	.Subpixel_Order  = proc "contextless" (word: u64) -> bool {return word_of_setting_valid(.Subpixel_Order, word)},
+	.Pointer_Theme   = proc "contextless" (word: u64) -> bool {return word_of_setting_valid(.Pointer_Theme, word)},
+	.Grid_Fit        = proc "contextless" (word: u64) -> bool {return word_of_setting_valid(.Grid_Fit, word)},
+	.Keyboard_Layout = proc "contextless" (word: u64) -> bool {return word_of_setting_valid(.Keyboard_Layout, word)},
+	.Appearance      = proc "contextless" (word: u64) -> bool {return word_of_setting_valid(.Appearance, word)},
+	.Scale           = proc "contextless" (word: u64) -> bool {return word_of_setting_valid(.Scale, word)},
+}
+
+@(private = "file")
+word_of_setting_valid :: proc "contextless" (setting: Setting, word: u64) -> bool {
+	if word > u64(max(u32)) {
+		return false
+	}
+	_, ok := value_place_of_word(setting, u32(word))
+	return ok
+}
+
+// setting_locked says if the plan locks a setting: its setter refuses a
+// change with No_Grant, and keeps the choice of the principal under the
+// lock (src/md/features/module_settings.md, "The precedence").
+setting_locked :: proc "contextless" (plan: plan_values.Owner_Values, setting: Setting) -> bool {
+	return plan_values.locked(plan, descriptions[setting].name)
+}
+
+// first_locked gives the first setting that a call of set gives and that a
+// lock of the plan holds: the setter refuses the whole call with No_Grant,
+// unit Plan_Lock (src/md/features/module_settings.md, "The lock"). A
+// presence that is not Given never counts.
+first_locked :: proc "contextless" (plan: plan_values.Owner_Values, presences: [Setting]module.Presence) -> (setting: Setting, found: bool) {
+	for member in Setting {
+		if presences[member] == .Given && setting_locked(plan, member) {
+			return member, true
+		}
+	}
+	return {}, false
 }
 
 // Kept_Changes: the changes of the kept record that one change of the

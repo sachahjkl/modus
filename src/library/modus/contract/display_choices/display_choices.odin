@@ -16,6 +16,7 @@ import "modus:contract/desktop_shell"
 import "modus:contract/enum_word"
 import "modus:contract/module"
 import "modus:contract/notifications"
+import "modus:contract/plan_values"
 import "modus:contract/powerbox"
 
 // The settings of the role, in the order of the rows of the state export.
@@ -106,6 +107,36 @@ word_valid :: proc "contextless" (setting: Setting, word: u64) -> bool {
 	return false
 }
 
+// The border of the word of each setting, for the precedence.
+@(rodata)
+setting_borders := [Setting]proc "contextless" (word: u64) -> bool {
+	.Bar_Edge               = proc "contextless" (word: u64) -> bool {return word_valid(.Bar_Edge, word)},
+	.Do_Not_Disturb         = proc "contextless" (word: u64) -> bool {return word_valid(.Do_Not_Disturb, word)},
+	.Notification_Show_Time = proc "contextless" (word: u64) -> bool {return word_valid(.Notification_Show_Time, word)},
+	.Magnifier_Factor       = proc "contextless" (word: u64) -> bool {return word_valid(.Magnifier_Factor, word)},
+	.Consent_Arm_Time       = proc "contextless" (word: u64) -> bool {return word_valid(.Consent_Arm_Time, word)},
+}
+
+// setting_locked says if the plan locks a setting of the role: the setter
+// refuses a change of it with No_Grant, and keeps the choice of the
+// principal under the lock.
+setting_locked :: proc "contextless" (plan: plan_values.Owner_Values, setting: Setting) -> bool {
+	return plan_values.locked(plan, SETTING_NAMES[setting])
+}
+
+// first_locked gives the first setting that a call of set gives and that a
+// lock of the plan holds: the setter refuses the whole call with No_Grant,
+// unit Plan_Lock (src/md/features/module_settings.md, "The lock"). A
+// presence that is not Given never counts.
+first_locked :: proc "contextless" (plan: plan_values.Owner_Values, presences: [Setting]module.Presence) -> (setting: Setting, found: bool) {
+	for member in Setting {
+		if presences[member] == .Given && setting_locked(plan, member) {
+			return member, true
+		}
+	}
+	return {}, false
+}
+
 // word_of gives the word of a setting in a set of choices.
 word_of :: proc "contextless" (choices: Choices, setting: Setting) -> u64 {
 	switch setting {
@@ -127,14 +158,16 @@ word_of :: proc "contextless" (choices: Choices, setting: Setting) -> u64 {
 // each chosen word that passes its border, and the default of the contract
 // for each other setting. A chosen word that its border refuses holds as no
 // choice, and the caller keeps it as it was: a later release may know it.
-choices_of_record :: proc "contextless" (record: chosen_values.Record) -> Choices {
+choices_of_record :: proc "contextless" (record: chosen_values.Record, plan: plan_values.Owner_Values = {}) -> Choices {
 	choices := CONTRACT_DEFAULTS
 	for setting in Setting {
-		word, found := chosen_values.find(record, SETTING_NAMES[setting])
-		if !found || !word_valid(setting, word) {
+		// The precedence: a lock of the plan, a choice of the principal, a
+		// default of the plan, the default of the contract.
+		word, layer, found := plan_values.value_in_force(SETTING_NAMES[setting], record, plan, setting_borders[setting])
+		if !found {
 			continue
 		}
-		choices.layers[setting] = .Chosen
+		choices.layers[setting] = layer
 		switch setting {
 		case .Bar_Edge:
 			choices.bar_edge, _ = desktop_shell.bar_position_of_word(word)

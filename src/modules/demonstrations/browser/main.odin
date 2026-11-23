@@ -13,9 +13,9 @@
 //
 // **Start**: `start("browser")` in the console.
 //
-// **Grants**: none. The window is its one handle: the pages that it shows
-// are built into it (modus://welcome, modus://properties, modus://guide,
-// modus://forms). An address of HTTP or HTTPS gets a page that shows the
+// **Grants**: Serve, for its settings (settings.odin), and Store, which
+// keeps them. The pages that it shows are built into it (modus://welcome,
+// modus://properties, modus://guide, modus://forms). An address of HTTP or HTTPS gets a page that shows the
 // request that the worker of its origin writes, and says that this window
 // has no grant of the network.
 //
@@ -39,6 +39,7 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:kept_choices"
 import box_layout "modus:layout"
 import "modus:system"
 
@@ -64,7 +65,10 @@ LARGEST_HEIGHT :: 900
 // (display.TEXT_MEMORY_PAGES). 2250 + 354 = 2604. The document, its style
 // sheet, its boxes, its records and the layout tree of the window are in
 // the memory of the module, which the tool counts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2604, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The keeper of the settings (settings.odin) runs a worker thread: its
+// stack past the 16 pages that the tool counts for a thread, 48 pages.
+// 2604 + 48 = 2652.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2652, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 
 LINE :: graphics.LINE_HEIGHT
 ROW_HEIGHT :: interface.TABLE_LINE // A text field and a button.
@@ -348,6 +352,10 @@ html_css_attribute :: proc "contextless" (node: u16, name: string) -> (value: st
 }
 
 act_run :: proc "contextless" (act: Act) -> bool {
+	// A page that the principal asked for stays when the kept home comes.
+	if act.kind != .None && act.kind != .Reload {
+		page_chosen_after_start = true
+	}
 	switch act.kind {
 	case .None:
 		return false
@@ -665,13 +673,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else if !sent {
 		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", STAYS_FIXED_CAUSE_FIELD_BYTES)})
 	}
-	page_load(HOME_ADDRESS, true)
+	service, _ := system.service_open(ctx)
+	settings_open(ctx) // settings.odin: its read waits for the first frame.
+	page_load(BOOKMARK_ADDRESSES[home_in_force], true)
 	frame_build(&window)
 	system.log_fact(.Info, Window_Ready{pages = u64(len(Built_In_Page))})
+	kept_choices.kept_load(&browser_kept)
 	for {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
-		system.wait_end(&wait)
+		system.service_wait(&wait, &service)
+		ready := kept_choices.kept_wait(&browser_kept, &wait)
+		system.wait_end(&wait, ready ? system.time() : system.WAIT_FOREVER)
+		system.service_run(&service)
+		settings_step()
 		if interface.window_events(&window_memory.drawing, &window) {
 			frame_build(&window)
 		}

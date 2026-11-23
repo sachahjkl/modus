@@ -25,7 +25,7 @@ The module contract is in [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTR
 
 Every export and every imported function uses the System V AMD64 C call form (`extern "C"` in C, Rust, and Zig; `proc "c"` in Odin):
 
-- **Scalar registers and stack.** Up to 12 integer arguments (`module.PARAMETER_CAPACITY`): the first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, and arguments 7 to 12 as 8-byte words on the stack.
+- **Scalar registers and stack.** Up to 16 integer words (`module.CALL_WORD_CAPACITY`) for up to 12 parameters (`module.PARAMETER_CAPACITY`): the first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, and words 7 to 16 as 8-byte words on the stack. An optional parameter is two words: a Presence word, then its value; a C or Rust export declares them as two parameters.
 - **No aggregate by value.** Records, tables, bytes buffers, and text slices travel by pointer to caller-owned memory.
 - **Flat fixed-layout records.** Every record has an explicit byte size (at most 256 bytes) and explicit field offsets matching C struct layout on x86-64. Each field is an integer of 1, 2, 4, or 8 bytes, a fixed-size UTF-8 byte array, a 32-byte hash, or a 4-byte handle number.
 - **Text and table descriptors.** A `Text` parameter is a pointer to `{uint8_t *address; uint64_t count;}` (16 bytes). A `Table` or `Bytes` parameter is a pointer to `module.Table_Place`: `{void *address; uint64_t count; uint64_t capacity;}` (24 bytes).
@@ -113,7 +113,7 @@ Block directives (`enum`, `record`, `export`):
 
 - `enum <Name> <u8|i8|u16|i16|u32|i32|u64|i64>` followed by `member <name> = <value>` lines (1 to 64 members).
 - `record <Name> size=<bytes>` followed by `field <name> offset=<bytes> type=<type>` lines. Field types: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `hex8`, `hex16`, `hex32`, `hex64`, `size_bytes`, `size_kib`, `size_mib`, `size_pages`, `size_blocks`, `time_ns`, `time_us`, `time_ms`, `time_s`, `text(<N>)`, `module_name`, `hash`, and `handle(<rights>)`.
-- `export <name>` followed by `about: <text>`, zero or more `param <name>: <type> [optional] [getter=<export>]` lines, optional `result: <type>`, and optional `error_record: <Record>`. Parameter types: `integer`, `integer(<unit>)`, `text`, `record(<Record>)`, `handle(<rights>)`, `table(<Record>, read|change|append)`, `bytes(read|change|append)`, and `enum(<Enum>)`. Result types: `none`, `integer`, `text`, `record(<Record>)`, `table(<Record>)`, and `enum(<Enum>)`.
+- `export <name>` followed by `about: <text>`, zero or more `param <name>: <type> [optional] [getter=<export>]` lines, optional `result: <type>`, and optional `error_record: <Record>`. The modifier `optional` is taken on an `integer`, a `handle` or an `enum`: the function of the object then takes two parameters in its place, a `uint64_t` Presence word (`MODUS_MODULE_PRESENCE_ABSENT` or `MODUS_MODULE_PRESENCE_GIVEN`) and the value, and the call form counts both within 16 words (`MODUS_MODULE_CALL_WORD_CAPACITY`). Parameter types: `integer`, `integer(<unit>)`, `text`, `record(<Record>)`, `handle(<rights>)`, `table(<Record>, read|change|append)`, `bytes(read|change|append)`, and `enum(<Enum>)`. Result types: `none`, `integer`, `text`, `record(<Record>)`, `table(<Record>)`, and `enum(<Enum>)`.
 
 ### 4. Hardening of the linked-ELF (`ET_DYN`) path
 

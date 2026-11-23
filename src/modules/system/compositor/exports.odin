@@ -556,8 +556,9 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 // error record: No_Grant for a caller that does not act for the principal,
 // Absent for a call that gives no setting, Bad_Value for a word that names
 // no member or a number out of its range (argument: its place, from 1),
-// Refused when the store did not keep the change. A refused call changes
-// nothing. The edges left and right are kept and draw the bar at the top:
+// Refused when the store did not keep the change, No_Grant with the unit
+// Plan_Lock for a setting that a lock of the plan holds (argument: its
+// place). A refused call changes nothing. The edges left and right are kept and draw the bar at the top:
 // the compositor draws no vertical bar yet (src/md/features/bar_edge.md).
 //
 // **Grant**: the caller must **act for the principal**.
@@ -592,6 +593,12 @@ display_set_export :: proc "c" (
 	case .Bad_Value:
 		words := [5]i64{i64(bar_edge), i64(do_not_disturb), notification_show_milliseconds, magnifier_eighths, consent_arm_milliseconds}
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, i64(argument), words[argument - 1])
+	}
+	// A lock of the plan holds over the choice: a call that names a locked
+	// setting changes none (src/md/features/module_settings.md, "The lock").
+	presences := [display_choices.Setting]module.Presence{.Bar_Edge = bar_edge_presence, .Do_Not_Disturb = do_not_disturb_presence, .Notification_Show_Time = notification_show_milliseconds_presence, .Magnifier_Factor = magnifier_eighths_presence, .Consent_Arm_Time = consent_arm_milliseconds_presence}
+	if locked, found := display_choices.first_locked(display_plan, presences); found {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, i64(locked) + 1)
 	}
 	return choice_change_fail(display_choices_change(changes[:count]), error, 0, 0)
 }
@@ -632,7 +639,7 @@ consent_arm_time_get :: proc "c" () -> i64 {
 
 // reset makes the choice of one setting of the role absent: the default
 // holds for it again. The result is 1, or -1 with an error record:
-// No_Grant, Bad_Value for a word that names no setting, Refused when the
+// No_Grant (unit Plan_Lock: a lock of the plan holds it), Bad_Value for a word that names no setting, Refused when the
 // store did not keep the change.
 //
 // **Grant**: the caller must **act for the principal**.
@@ -648,6 +655,9 @@ display_reset_export :: proc "c" (setting: display_choices.Setting, error: ^erro
 	member, ok := display_choices.setting_of_word(u64(setting))
 	if !ok {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(setting))
+	}
+	if display_choices.setting_locked(display_plan, member) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
 	}
 	changes := [1]chosen_values.Change{{name = display_choices.SETTING_NAMES[member], kind = .Reset}}
 	return choice_change_fail(display_choices_change(changes[:]), error, 1, i64(setting))

@@ -226,6 +226,45 @@ answer_bound_field :: proc "contextless" () -> value_kinds.Time_In_Milliseconds 
 	return value_kinds.Time_In_Milliseconds(system.ANSWER_BOUND_MILLISECONDS)
 }
 
+// The plan of principal 0 gives the address of the machine.
+@(log_fact = "network: the static address {address}/{prefix} of the plan, the gateway {gateway}")
+Address_Static :: struct {
+	prefix:  u64,
+	address: [16]u8, // N written out: the tool reads the size of a Text field from the source.
+	gateway: [16]u8,
+}
+
+// The plan gives a static address that its border refuses: a part is
+// missing, the prefix is not 8 to 30, the address is no address of a
+// machine, or the gateway is outside its subnet.
+@(log_fact = "network: the static address of the plan is refused: a part is missing, or it is no address of a machine of its subnet; the address comes from DHCP")
+Address_Static_Refused :: struct {}
+
+@(log_fact = "network: no fresh bytes for the transaction words of DHCP: the machine holds no address")
+Address_No_Seed :: struct {}
+
+// A DHCP reply that the border refused: nothing changed.
+@(log_fact = "network: refused a DHCP reply ({reply_problem}): nothing changed")
+Address_Reply_Refused :: struct {
+	reply_problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
+// DHCP gave the machine its address.
+@(log_fact = "network: the address {address}/{prefix} from DHCP, the gateway {gateway}, a lease of {lease}")
+Address_Bound :: struct {
+	prefix:  u64,
+	lease:   value_kinds.Time_In_Seconds,
+	address: [16]u8,
+	gateway: [16]u8,
+}
+
+// The lease ended, or the server refused its renewal: no frame leaves
+// until the next address.
+@(log_fact = "network: the lease of the address {address} ended: no frame leaves until DHCP gives an address")
+Address_Lost :: struct {
+	address: [16]u8,
+}
+
 // address_field gives the Text field of an IPv4 address, in the digits of
 // the line before the fact.
 address_field :: proc "contextless" (address: u32) -> [ADDRESS_FIELD_BYTES]u8 {

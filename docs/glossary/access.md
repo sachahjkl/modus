@@ -540,11 +540,11 @@ Do not use: site default, mandatory default.
 
 ### Locked value
 
-A locked value is a value of a setting that the plan of principal 0 fixes: the setter of its owner refuses a change with `No_Grant`, and names the lock.
+A locked value is a value of a setting that the plan of principal 0 fixes: the setter of its owner refuses a change with `No_Grant`, unit `Plan_Lock`, and names the lock.
 
 A lock writes nothing: the chosen value stays kept under it and holds again when the lock ends. The state of the owner says which layer gives each value, so a reader sees a lock. A lock is a plan record, so a principal sees it in a difference on the trusted display.
 
-The design: `src/md/features/module_settings.md`, "The precedence".
+The design: `src/md/features/module_settings.md`, "The lock".
 
 Do not use: mandatory setting, enforced policy, group policy.
 
@@ -557,6 +557,16 @@ The owner states it in its contract: the value has no setter. Examples: the rete
 The design: `src/md/features/module_settings.md`, "The two doors".
 
 Do not use: policy setting, admin setting, system setting.
+
+### Plan values page
+
+The plan values page is the read-only page at the fixed range `Plan_Values_Page` that holds the plan defaults and the locks of one owner, as the core mapped them at its start.
+
+The holder of Plans gives the core the whole set of the values of an accepted plan of principal 0 with the root ring command `Plan_Values`. At the start of an owner, the core writes the values of that owner, by the name of its store, on a page of its own. Nobody writes the page after the start, so an owner takes a new value at its next start. An owner reads it with `system.plan_values_of_process`.
+
+The design: `src/md/features/module_settings.md`, "Plan records".
+
+Do not use: policy page, configuration page.
 
 ### Consent arm time
 

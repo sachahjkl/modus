@@ -234,7 +234,7 @@ PLAN_CURRENT_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'C', 'U', 'R', '1'}
 
 // The bytes of one entry row in a generation object: four words, three
 // hashes and the name.
-PLAN_ENTRY_ROW_WIRE_SIZE :: 4 * 8 + 3 * blake3.HASH_SIZE + MAX_ENTRY_NAME_BYTES
+PLAN_ENTRY_ROW_WIRE_SIZE :: 6 * 8 + 3 * blake3.HASH_SIZE + MAX_ENTRY_NAME_BYTES
 
 // The head of a generation object: its magic, the applied plan record and
 // the count of its rows (4 bytes, then 4 zero bytes).
@@ -371,6 +371,8 @@ encode_plan_generation :: proc "contextless" (record: ^Applied_Plan_Record, plan
 		copy(output[place + 64:place + 96], row.interposed_over_hash[:])
 		copy(output[place + 96:place + 128], row.recipe_hash[:])
 		copy(output[place + 128:place + 192], row.name[:])
+		byte_order.write_u64_little_endian(output, place + 192, cast(u64)row.value_word)
+		byte_order.write_u64_little_endian(output, place + 200, u64(row.value_layer_word))
 	}
 	return size, .None
 }
@@ -427,6 +429,8 @@ decode_plan_generation :: proc "contextless" (input: []u8, principal: u64, gener
 		copy(row.interposed_over_hash[:], input[place + 64:place + 96])
 		copy(row.recipe_hash[:], input[place + 96:place + 128])
 		copy(row.name[:], input[place + 128:place + 192])
+		row.value_word = cast(i64)byte_order.read_u64_little_endian(input, place + 192)
+		row.value_layer_word = i64(byte_order.read_u64_little_endian(input, place + 200))
 	}
 	if row_refusal, _ := plan_of_rows(principal, rows[:count], out); row_refusal != .None {
 		return {}, .Store_Damaged

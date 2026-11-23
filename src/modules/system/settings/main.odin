@@ -78,6 +78,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/language_tag"
 import "modus:contract/module"
+import "modus:contract/plan_values"
 import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
@@ -216,6 +217,10 @@ kept_choice: settings.Choice
 kept_zone_offset_minutes: i32
 kept_layers: settings.Kept_Layers
 
+// The plan values of this owner: its defaults and its locks, from the page
+// of its start (src/md/features/module_settings.md, "Plan records").
+kept_plan: plan_values.Owner_Values
+
 // What the read of the kept record found.
 Kept_Load :: enum u8 {
 	Nothing_Kept, // No record: the principal chose nothing.
@@ -229,7 +234,8 @@ Kept_Load :: enum u8 {
 // of each pass: a change goes on the record that the store holds, so it
 // never loses a choice that this process does not know.
 kept_load :: proc "contextless" () -> Kept_Load {
-	kept_choice = settings.choice_default()
+	// With no store the defaults of the plan still hold.
+	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept({}, nil, false, kept_plan)
 	if !has_store {
 		return .No_Store
 	}
@@ -257,7 +263,7 @@ kept_load :: proc "contextless" () -> Kept_Load {
 	if kept_languages_found && load == .Nothing_Kept {
 		load = .Kept
 	}
-	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, kept_languages_bytes[:], kept_languages_found)
+	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, kept_languages_bytes[:], kept_languages_found, kept_plan)
 	return load
 }
 
@@ -310,7 +316,7 @@ kept_write :: proc "contextless" (changes: []chosen_values.Change, write_languag
 		kept_languages_found = true
 	}
 	record, _ := chosen_values.read_record(kept_record_bytes[:kept_record_length])
-	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, kept_languages_bytes[:], kept_languages_found)
+	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, kept_languages_bytes[:], kept_languages_found, kept_plan)
 	return true
 }
 
@@ -512,6 +518,8 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 // - `Absent` (-2): the call gives no setting.
 // - `Bad_Value` (-3): a value that names no member of the enum of its setting; the record names the argument and
 //   holds the value. No setting changes.
+// - `No_Grant` (-1), unit `Plan_Lock`: a lock of the plan of principal 0 holds a setting that the call gives; the
+//   record names its argument. No setting changes, and the choice before stays kept.
 // - `Refused` (-4): the store did not keep the values. The page keeps the values before: a change is kept in the
 //   store first, so no window shows a value that the next start of the machine loses.
 //
@@ -544,6 +552,7 @@ set :: proc "c" (
 	// parameters are in the order of the settings.
 	argument := i64(refused) + 1
 	words := settings.values_of({font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale})
+	presences := [settings.Setting]module.Presence{.Font = font_presence, .Subpixel_Order = subpixel_order_presence, .Pointer_Theme = pointer_theme_presence, .Grid_Fit = grid_fit_presence, .Keyboard_Layout = keyboard_layout_presence, .Appearance = appearance_presence, .Scale = scale_presence}
 	switch problem {
 	case .None:
 	case .Nothing_Given:
@@ -551,11 +560,15 @@ set :: proc "c" (
 	case .Bad_Value:
 		// A Presence word past Given is the value that the record holds;
 		// otherwise the word that names no member.
-		presences := [settings.Setting]module.Presence{.Font = font_presence, .Subpixel_Order = subpixel_order_presence, .Pointer_Theme = pointer_theme_presence, .Grid_Fit = grid_fit_presence, .Keyboard_Layout = keyboard_layout_presence, .Appearance = appearance_presence, .Scale = scale_presence}
 		if _, presence_ok := module.presence_of_word(presences[refused]); !presence_ok {
 			return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, argument, i64(presences[refused]))
 		}
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, argument, i64(words[refused]))
+	}
+	// A lock of the plan holds over the choice: a call that names a locked
+	// setting changes none (src/md/features/module_settings.md, "The lock").
+	if locked, found := settings.first_locked(kept_plan, presences); found {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, i64(locked) + 1)
 	}
 	if !change(changed, current.zone_offset_minutes) {
 		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
@@ -629,6 +642,7 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 //
 // - `No_Grant` (-1): the caller does not act for the principal.
 // - `Too_Long` (-3): the zone has more than 32 bytes.
+// - `No_Grant` (-1), unit `Plan_Lock`: a lock of the plan of principal 0 holds the zone.
 // - `Bad_Value` (-3): the text is no zone: "+8:00", "+08:10", "+15:00", "UTC".
 // - `Refused` (-4): the store did not keep the zone. The page keeps the zone before.
 //
@@ -646,6 +660,9 @@ set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> i64 {
 	minutes, parsed := settings.zone_parse(given)
 	if !parsed {
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1)
+	}
+	if plan_values.locked(kept_plan, settings.TIME_ZONE_NAME) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
 	}
 	current, _ := settings.read(page)
 	if !change(current, minutes) {
@@ -777,7 +794,7 @@ reset_and_write :: proc "contextless" (changes: []chosen_values.Change, language
 		}
 		kept_languages_found = false
 		record, _ := chosen_values.read_record(kept_record_bytes[:kept_record_length])
-		kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, nil, false)
+		kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, nil, false, kept_plan)
 	}
 	choice := kept_choice
 	current, _ := page_choice()
@@ -788,8 +805,9 @@ reset_and_write :: proc "contextless" (changes: []chosen_values.Change, language
 
 // reset makes the choice of one setting absent: its default holds again. The
 // result is 1, or an error record: `No_Grant` (-1) for a caller that does
-// not act for the principal, `Bad_Value` (-3) for a word that names no
-// setting, `Refused` (-4) when the store did not keep the change.
+// not act for the principal or (unit `Plan_Lock`) for a setting that a lock
+// of the plan holds, `Bad_Value` (-3) for a word that names no setting,
+// `Refused` (-4) when the store did not keep the change.
 //
 // ```
 // settings.reset(.font)
@@ -802,6 +820,9 @@ reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> i6
 	member, ok := enum_word.member_of_word(settings.Setting, u64(setting))
 	if !ok {
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, i64(setting))
+	}
+	if settings.setting_locked(kept_plan, member) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
 	}
 	changes := [1]chosen_values.Change{{name = settings.descriptions[member].name, kind = .Reset}}
 	if !reset_and_write(changes[:], false) {
@@ -816,6 +837,9 @@ reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> i6
 reset_time_zone :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if plan_values.locked(kept_plan, settings.TIME_ZONE_NAME) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
 	}
 	changes := [1]chosen_values.Change{{name = settings.TIME_ZONE_NAME, kind = .Reset}}
 	if !reset_and_write(changes[:], false) {
@@ -839,8 +863,8 @@ reset_languages :: proc "c" (error: ^errors.Error_Record) -> i64 {
 
 // The state of one setting: the setting (its number in settings.Setting,
 // then 7 for the time zone and 8 for the language list), the layer that
-// gives its value (0 the default of the contract, 2 a choice of the
-// principal), and the word of its value (the count of the languages for the
+// gives its value (0 the default of the contract, 1 a default of the plan,
+// 2 a choice of the principal, 3 a lock of the plan), and the word of its value (the count of the languages for the
 // language list).
 Setting_State :: struct {
 	setting: i64,
@@ -1875,6 +1899,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !has_store {
 		system.log_fact(.Warning, No_Store{})
 	}
+	kept_plan, _ = system.plan_values_of_process(&ctx.values)
 	pass, pass_ok := settings.pass_of_word(ctx.values[settings.VALUE_PASS])
 	if !pass_ok {
 		system.log_fact(.Warning, Pass_Refused{word = ctx.values[settings.VALUE_PASS]})

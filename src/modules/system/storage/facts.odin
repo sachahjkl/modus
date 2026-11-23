@@ -133,6 +133,16 @@ Share_Ended :: struct {
 }
 
 // The open found a disk with no commit, and formatted it.
+// The plan of principal 0 gives the retention rule of the versions.
+// order_refused is 1 when its two times broke their order, and the default
+// rule holds.
+@(log_fact = "storage: the retention rule of the plan: each version kept {keep_all}, the newest of each hour until {hours_end}, order refused {order_refused}")
+Retention_Rule_Of_The_Plan :: struct {
+	keep_all:      value_kinds.Time_In_Milliseconds,
+	hours_end:     value_kinds.Time_In_Milliseconds,
+	order_refused: u64,
+}
+
 @(log_fact = "storage: ok, a new disk: generation 1, {blocks}")
 New_Disk_Formatted :: struct {
 	blocks: value_kinds.Size_In_Blocks,

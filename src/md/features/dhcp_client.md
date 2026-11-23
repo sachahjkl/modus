@@ -1,6 +1,6 @@
 # The address of the machine: DHCP, or a static address of the plan
 
-State: **Decided.** Not built yet.
+State: **Decided.** Built: the client as a pure package with its host tests (`internal:network/dhcp_client`), the static address of the plan with its border (`dhcp_client.static_of`), and the input and output of the client in the network service (`src/modules/system/network/dhcp.odin`). Not run on a machine: the machine tests wait for the line of the address at the start, which now comes after the ACK.
 
 ## Purpose
 
@@ -24,6 +24,13 @@ A message comes from any machine of the network, so each field is hostile. The b
 - an address that a machine cannot hold: 0.0.0.0, the broadcast address of its subnet, the subnet itself, 255.255.255.255, a loopback address, a multicast address; a router outside the subnet of the address.
 
 The options that the client does not use are passed over by their length; the overload option (52) is refused, so the fields `file` and `sname` are never read.
+
+## As built
+
+- The service reads its plan values at its start: a whole static address holds, and a refused one starts DHCP with one line of the log (`Address_Static_Refused`).
+- Each datagram from UDP port 67 to port 68 goes to the client before the check of the destination address: a reply comes to the broadcast address, or to the address that it offers. The UDP checksum is checked when the server wrote one.
+- A REQUEST of a renewal goes to the hardware address of the server when the table of the neighbors holds it, else to the broadcast hardware address with the server as the IPv4 destination.
+- The transaction words come from the generator of the process, seeded from its context.
 
 ## Refused forms
 

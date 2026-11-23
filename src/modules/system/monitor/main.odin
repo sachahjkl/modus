@@ -51,6 +51,7 @@ import "internal:monitor/sample_history"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:kept_choices"
 import "modus:layout"
 import "modus:system"
 
@@ -73,10 +74,10 @@ HEIGHT :: 640
 // stack, its tables and its glyph memory. The tool counts the window at
 // the largest scale (docs/MODULE_CONTRACT.md, "The budget that a module
 // asks for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1398, window_width = WIDTH, window_height = HEIGHT}
-// The sample period: one sample and one picture each 500 ms. The sample
-// history of a graph then holds the last minute.
-INTERVAL :: 500
+// The keeper of the settings (settings.odin) runs a worker thread: its
+// stack past the 16 pages that the tool counts for a thread, 48 pages.
+// 1398 + 48 = 1446.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1446, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 LINE :: 20
 // The room between the edge of the window and the cards, and between two
 // cards: the gap token, so the cards line up with the other windows.
@@ -629,6 +630,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	disk_processes = process_page.page_of(ctx)
 	service, _ = system.service_open(ctx)
+	settings_open(ctx) // settings.odin: its read waits for the first picture.
 	previous_time: u64
 	logged := false
 	lost := false
@@ -835,16 +837,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if !logged {
 			system.log_fact(.Info, Window_Ready{})
 			logged = true
+			kept_choices.kept_load(&monitor_kept)
 		}
 		for _ in interface.window_next_event(&window_memory.drawing, &window) {}
 		// The calls run while the monitor waits for its next picture.
-		next := system.time() + INTERVAL
+		next := system.time() + sample_interval_in_force
 		for {
 			wait: system.Wait
 			display.wait_events(&wait, &window)
 			system.service_wait(&wait, &service)
-			now := system.wait_end(&wait, next)
+			ready := kept_choices.kept_wait(&monitor_kept, &wait)
+			now := system.wait_end(&wait, ready ? system.time() : next)
 			system.service_run(&service)
+			settings_step()
 			for _ in interface.window_next_event(&window_memory.drawing, &window) {}
 			// The bars, the wheel and the page keys of a window that
 			// scrolls draw at once.

@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/chosen_values"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
@@ -87,7 +88,11 @@ the_facts_of_monitor_write_the_lines_of_before :: proc(t: ^testing.T) {
 			facts_expect_line(t, fact_test_render(t, file, "monitor", "Disk_Process_Shown", {{"file_hash", hash}, {"hash_prefix", prefix}, {"nickname", nickname}}), line_of_before("monitor: the disk process ", nickname, ", hash prefix ", prefix, ", the file ", sentence.Hash{hash[:]}, ", from the root service"))
 		}
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"hash_prefix", 16}, {"nickname", 23}))
+	problems := make([dynamic]string, context.temp_allocator)
+	for name in chosen_values.RECORD_PROBLEM_NAMES {
+		append(&problems, name)
+	}
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"hash_prefix", 16}, {"nickname", 23}, {"problem", longest(problems[:])}))
 }
 
 // The facts of the window log: the counts 0, 1 and the largest; the size

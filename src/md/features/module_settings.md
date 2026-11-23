@@ -1,6 +1,6 @@
 # Settings and plan values
 
-State: **Decided.** Partly built: see "State" at the end. The prior art, the inventory and the joint critique are in [`docs/research/module_settings_study.md`](../../../docs/research/module_settings_study.md) and [`docs/research/module_settings_critique.md`](../../../docs/research/module_settings_critique.md).
+State: **Decided.** Built, but for the readers of "State" at the end. The prior art, the inventory and the joint critique are in [`docs/research/module_settings_study.md`](../../../docs/research/module_settings_study.md) and [`docs/research/module_settings_critique.md`](../../../docs/research/module_settings_critique.md).
 
 This file records how a value that changes the behaviour of a process reaches it: a choice of a principal (a font, the time that a notification shows), a value of the plan (the retention of the snapshots, a static network address), and a lock. It records one value model, two doors to change a value, and one order of precedence, with no registry and no constant of policy in the code.
 
@@ -126,11 +126,49 @@ The owner reads its plan record at its start from a page that nobody writes afte
 - The record of chosen values and the plan values share one form of entry (`modus:contract/chosen_values`): a name of 32 bytes and a word. One reader, one border.
 - The forms refused: a value that the owner reads with a call to the holder of Plans at each use (a plan holder that is slow or replaced would stall each owner); a page that the core writes during the life of the owner (a value that changes under a running owner is a live edit, refused).
 
+The owners and their fields, as built:
+
+- `settings`: each setting by its name in `settings.descriptions`, and `time_zone`, a default or a lock (`settings.choice_of_kept`).
+- `display` (the holder of the display): `bar_edge`, `do_not_disturb`, `notification_show_milliseconds`, `magnifier_eighths`, `consent_arm_milliseconds` (`display_choices.choices_of_record`).
+- `storage`: `keep_all_minutes` and `hours_end_hours`, the retention rule, with their order (`storage_retention.rule_of`).
+- `root`: `budget_share`, and the start size and the largest size of the screen of memory (`root_plan_values.root_plan_of`); the core reads them at the start of the holder of the display.
+- any owner of a store: `store_blocks`, the quota of its store, which the core reads when it opens the store (`root_plan_values.store_blocks_of`).
+
 First plan-only values:
 
 - **The retention of the snapshots** of the storage service ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Persistence: no save action, and versions for all processes", leaves "who sets the retention rule" open: the plan of principal 0 sets it).
 - **The network address**: DHCP gives it by default; a plan record of the network service gives a static address.
 - **The quota of a store** and **the budget share of a process**, which today are rows of the start grant sets and a quarter of the budget of the machine.
+
+## The lock
+
+A value of the layer `Locked` of the plan of principal 0 holds over the choice of the principal. Its owner reads the lock on its plan values page at its start (`plan_values.locked`), and each door of a change of a locked value refuses it:
+
+- A setter and a `reset` refuse a call that names a locked setting with `No_Grant`, unit `Plan_Lock`, and the argument of that setting, from 1. A call that gives a locked setting and other settings changes none of them: a call holds whole or not at all.
+- A press of the principal on the desktop that would change a locked value of the role Display changes nothing.
+- The chosen value stays kept under the lock, and holds again when a later plan removes the lock.
+- `settings_state` gives the layer `Locked` (3) and the value of the lock.
+
+Why `No_Grant` and not `Bad_Value`: the value is valid, and the caller lacks the authority to change it; the authority is the plan of principal 0. Why its own unit: the sentence names the plan as the fix, where a missing start grant names the starter of the process.
+
+The forms refused: a lock that writes the value of the plan in the kept record (the choice of the principal would be lost when the lock ends); a lock that the getter hides (a reader would see the choice and not the value in force); a setter that takes a locked value in silence (the caller would think that it holds).
+
+## Module settings
+
+A module that holds no role declares its settings in the same form as an owner of a role: a setter export whose optional parameters are its settings, each with its range or its enum getter, a getter for each setting, `reset` and `settings_state`. It keeps its chosen values in its private store (the grant Store), in one object, `settings`, in the form of `modus:contract/chosen_values`. Its plan values are those of the owner of its module name. A module setting is a taste: the plan alone holds a value of the line of "The two doors", as for a role.
+
+**The keeper.** `modus:kept_choices` keeps the record of one owner: it reads the object on a worker thread after the first frame, holds each change that comes before the read ends and puts it on the record that the store gives, writes the record after each change, and leaves a record that this release cannot read as it is until the principal changes a value. The owner checks each word at its border before the keeper sees it, and computes the values in force from the record of the keeper and its plan values. The compositor, the browser and the monitor use it.
+
+Why one library: each owner with a window must never wait for the store in its loop, so each needs the same states (no store, read asked, read, write asked) and the same rule for the changes of before the read. Three copies of those states drift.
+
+The first module settings:
+
+- **The browser**: `home`, the built-in page that the browser opens at its start: `welcome`, `properties`, `guide` or `forms` (an Enum, `welcome` by default). The first frame shows the home of the plan or of the contract; when the read of the store gives another home, it takes the place of the first page, unless the principal loaded a page already.
+- **The monitor**: `sample_interval`, the time between two samples and two pictures, 250 ms to 5000 ms, 500 ms by default.
+
+Why the home of the browser is a built-in page and not an address: a chosen value is a name and a word. An address is a text, and a text value is a new form of entry, of the record and of the plan; one owner does not justify it.
+
+The form refused: a module that keeps its settings in an object of its own format. The window of settings, the plan and the console read one form, and the precedence holds only where the owner reads the plan with the same procedure (`plan_values.value_in_force`).
 
 ## Evolution
 
@@ -194,11 +232,16 @@ The faults that the inventory found, fixed before any mechanism:
 
 ## State
 
-Built: layers 1 to 5.
+Built: layers 1 to 8, and the DHCP client.
 
 - The compositor keeps the settings of the role Display in the store of the role, on a worker thread, and the root service gives a holder of a role the grants and the store of the role.
 - `settings` keeps chosen values only, keyed by name (`modus:contract/chosen_values`), with `reset` and `settings_state`.
 - Module files are version 8: any word parameter can be optional, as a Presence word then its value, and the table `Parameter_Settings` holds the range, the choices export and the instances export of a parameter. The console refuses a value out of a range before the call; one `compositor.set` takes the five settings of the role. The palette and the window of settings do not read the ranges and the choices yet.
 - Each window gets its presentation record in the event `Presentation` and keeps it on its own presentation page; only `settings`, the date service, the input service and the compositor map the settings page of the machine.
 
-Layers 6 to 8 and the DHCP client are entries of `ROADMAP.md`.
+- A plan of principal 0 holds values of the kind `Value` (`owner.field`, a word, `Plan_Default` or `Locked`); the holder of Plans sends them with `Plan_Values` before the roles, and each owner of "The owners and their fields, as built" reads its page at its start. No reader turns a Lex `plan { ... }` into rows yet: a plan gives its values as rows of `plans.apply`.
+- The network service takes its address from DHCP, or the static address of the plan ([dhcp_client.md](dhcp_client.md)).
+- The browser (`home`) and the monitor (`sample_interval`) have module settings, kept in their private stores through `modus:kept_choices`, which the compositor uses too.
+- A lock of the plan makes each setter and each `reset` refuse a locked setting with `No_Grant`, unit `Plan_Lock`; a press on the desktop changes nothing under it.
+
+Not built: the palette and the window of settings do not read the ranges and the choices yet, and no reader turns a Lex `plan { ... }` into rows (`ROADMAP.md`).

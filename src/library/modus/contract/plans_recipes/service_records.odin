@@ -38,9 +38,11 @@ Plan_Entry_Row :: struct {
 	interposed_over_hash: value_kinds.Hash_Field,
 	recipe_hash:          value_kinds.Hash_Field,
 	name:                 [64]u8,
+	value_word:           i64, // A Value: the word of the field (Plan_Entry.value_word).
+	value_layer_word:     i64, // A Value: Plan_Default (1) or Locked (3).
 }
 
-#assert(size_of(Plan_Entry_Row) == 192)
+#assert(size_of(Plan_Entry_Row) == 208)
 #assert(len(Plan_Entry_Row{}.name) == MAX_ENTRY_NAME_BYTES)
 
 // Whether an apply of a difference needs the consent of the principal on the
@@ -63,9 +65,13 @@ Plan_Diff_Row :: struct {
 	old_module_hash:       value_kinds.Hash_Field,
 	new_module_hash:       value_kinds.Hash_Field,
 	name:                  [64]u8,
+	old_value_word:        i64, // A Value: the word before, 0 for an added one.
+	new_value_word:        i64, // A Value: the word after, 0 for a removed one.
+	old_value_layer_word:  i64,
+	new_value_layer_word:  i64,
 }
 
-#assert(size_of(Plan_Diff_Row) == 184)
+#assert(size_of(Plan_Diff_Row) == 216)
 
 // The counts of a difference and the two plan hashes. An apply names
 // current_plan_hash, so an apply of a difference that another apply made
@@ -81,6 +87,9 @@ Plan_Difference_Summary :: struct {
 	added_stores:       i64,
 	removed_stores:     i64,
 	changed_stores:     i64,
+	added_values:       i64,
+	removed_values:     i64,
+	changed_values:     i64,
 	added_grants:       i64,
 	removed_grants:     i64,
 	consent_word:       i64,
@@ -88,7 +97,7 @@ Plan_Difference_Summary :: struct {
 	proposed_plan_hash: value_kinds.Hash_Field,
 }
 
-#assert(size_of(Plan_Difference_Summary) == 168)
+#assert(size_of(Plan_Difference_Summary) == 192)
 
 // The hash of the current plan that an apply expects. Zero: the principal
 // has no applied plan yet.
@@ -245,6 +254,8 @@ plan_of_rows :: proc "contextless" (principal: u64, rows: []Plan_Entry_Row, out:
 		entry.recipe_hash = blake3.Hash(row.recipe_hash)
 		entry.start_grants_mask = u64(row.start_grants_mask)
 		entry.store_rights_word = u64(row.store_rights_word)
+		entry.value_word = cast(u64)row.value_word
+		entry.value_layer_word = u64(row.value_layer_word)
 	}
 	out.entry_count = u32(len(rows))
 	refusal, bad_index = plan_validate(out)
@@ -266,6 +277,8 @@ plan_entry_row_of_entry :: proc "contextless" (entry: ^Plan_Entry) -> (row: Plan
 	row.module_hash = value_kinds.Hash_Field(entry.module_hash)
 	row.interposed_over_hash = value_kinds.Hash_Field(entry.interposed_over_hash)
 	row.recipe_hash = value_kinds.Hash_Field(entry.recipe_hash)
+	row.value_word = cast(i64)entry.value_word
+	row.value_layer_word = i64(entry.value_layer_word)
 	return row
 }
 
@@ -282,6 +295,8 @@ plan_diff_row_of_item :: proc "contextless" (item: ^Plan_Diff_Item) -> (row: Pla
 	row.new_store_rights_word = i64(item.new_store_rights)
 	row.old_module_hash = value_kinds.Hash_Field(item.old_module_hash)
 	row.new_module_hash = value_kinds.Hash_Field(item.new_module_hash)
+	row.old_value_word, row.new_value_word = cast(i64)item.old_value_word, cast(i64)item.new_value_word
+	row.old_value_layer_word, row.new_value_layer_word = i64(item.old_value_layer_word), i64(item.new_value_layer_word)
 	return row
 }
 
@@ -302,6 +317,9 @@ plan_difference_summary_of :: proc "contextless" (difference: ^Plan_Difference) 
 		added_stores       = i64(difference.added_stores),
 		removed_stores     = i64(difference.removed_stores),
 		changed_stores     = i64(difference.changed_stores),
+		added_values       = i64(difference.added_values),
+		removed_values     = i64(difference.removed_values),
+		changed_values     = i64(difference.changed_values),
 		added_grants       = i64(difference.added_grants_count),
 		removed_grants     = i64(difference.removed_grants_count),
 		consent_word       = i64(consent),

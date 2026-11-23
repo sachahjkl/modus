@@ -229,7 +229,7 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	if is_role_holder(service_name, .Storage) {
 		amount: u64
 		if .Store in start_grant_set.grants && .Store not_in caller.revoked {
-			amount = start_grant_set_store_blocks(start_grant_set)
+			amount = store_blocks_planned(role_policy.store_name_of_module(&role_holder_names, system.name_of(caller.name[:])), start_grant_set)
 		}
 		grant := isolated.caller_grant_make(amount, caller.principal, acts)
 		// The grant to erase versions is a right over the private store: it
@@ -1101,6 +1101,7 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
 	display_role_store_give(served, display_name, &context_grants, &values, mappings[:], &mapping_count)
 	plan_values_page_give(served, display_name, mappings[:], &mapping_count, &values)
+	root_plan_read() // plan_values.odin
 	if context_refused(display_name, &context_grants, &values) {
 		display_holder_place_free(served)
 		return .Bad_State

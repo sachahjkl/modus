@@ -577,6 +577,7 @@ c_render_modus_module_h :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintfln(&out, "#define MODUS_MODULE_UNDERSTOOD_FEATURES ((uint64_t)0x%016XULL)", module.UNDERSTOOD_FEATURES)
 	fmt.sbprintfln(&out, "#define MODUS_MODULE_TABLE_COUNT ((uint32_t)%dU)", module.TABLE_COUNT)
 	fmt.sbprintfln(&out, "#define MODUS_MODULE_PARAMETER_CAPACITY ((uint32_t)%dU)", module.PARAMETER_CAPACITY)
+	fmt.sbprintfln(&out, "#define MODUS_MODULE_CALL_WORD_CAPACITY ((uint32_t)%dU)", module.CALL_WORD_CAPACITY)
 	fmt.sbprintfln(&out, "#define MODUS_MODULE_RECORD_SIZE_LIMIT ((uint32_t)%dU)", module.RECORD_SIZE_LIMIT)
 	fmt.sbprintfln(&out, "#define MODUS_MODULE_HANDLE_CAPACITY ((uint32_t)%dU)", module.HANDLE_CAPACITY)
 	fmt.sbprintfln(&out, "#define MODUS_MODULE_REBASE_WORD_SIZE ((uint32_t)%dU)", module.REBASE_WORD_SIZE)

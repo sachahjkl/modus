@@ -19,6 +19,7 @@ import "internal:root/role_policy"
 import "modus:contract/errors"
 import "modus:contract/plan_values"
 import rd "modus:contract/root_delegation"
+import "modus:contract/root_plan_values"
 import "modus:contract/root_ring"
 import "modus:system"
 
@@ -71,7 +72,7 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 	intrinsics.mem_copy_non_overlapping(&plan_values_copy, plan_values_pages, plan_values.SET_SIZE)
 	head, problem := plan_values.set_check(plan_values_copy[:])
 	if problem != .None {
-		system.log_fact(.Warning, Plan_Values_Refused{problem = text_field(plan_values.SET_PROBLEM_NAMES[problem], 24)})
+		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[problem], 24)})
 		answer^ = errors.ring_fail(kind, .Refused, .Records, 0, 0, 0, i64(problem))
 		return .Bad_State
 	}
@@ -116,6 +117,51 @@ plan_values_of :: proc "contextless" (owner: string) -> (values: plan_values.Own
 		return {}, false
 	}
 	return plan_values.owner_values_of(plan_values_in_force[:], owner)
+}
+
+// store_blocks_planned gives the quota of the store of an owner: the value
+// store_blocks of its plan values when the plan of principal 0 gives one
+// that passes its border, else the row of its start grant set. The quota is
+// a plan-only value: it spends the disk of the machine.
+store_blocks_planned :: proc "contextless" (owner: string, start_grant_set: ^Start_Grant_Set) -> u64 {
+	if values, found := plan_values_of(owner); found {
+		if blocks, planned := root_plan_values.store_blocks_of(values); planned {
+			return blocks
+		}
+	}
+	return start_grant_set_store_blocks(start_grant_set)
+}
+
+// The values of the owner `root` that the core read at the last start of
+// the holder of the display.
+root_plan_in_force: root_plan_values.Root_Plan = root_plan_values.ROOT_PLAN_DEFAULTS
+
+// root_plan_read reads the values of the owner `root` at the start of the
+// holder of the display, and logs them once.
+//
+// Merge note, the share: on work/limits_kernel_and_budgets the core reads
+// the share through budget_share_take (src/modules/system/root/budgets.odin)
+// with the border module.budget_share_of_word, LARGEST_BUDGET_SHARE_LEAST 1
+// to LARGEST_BUDGET_SHARE_MOST 64, default 4: the same range as
+// root_plan_values.BUDGET_SHARE_*. At the merge, call
+// budget_share_take(root_plan_in_force.budget_share) here, before the start
+// of the next process, and keep one of the two borders (the constants of
+// module/format.odin are the place of the fact; root_plan_values then names
+// them).
+//
+// Merge note, the screen of memory: on work/limits_remote_and_network the
+// screen of memory is paid at its start size and grows through the root
+// command Screen_Budget (screen_budgets, memory_screen.screen_budget_grow_decide);
+// no fixed cost row stays. At the merge, give the compositor its start size
+// from memory_screen_start_width and _height in its context at this start,
+// and make memory_screen_most_width and _height the largest size that
+// screen_budget_grow_decide grants; the borders are memory_screen.MIN_* to
+// MAX_*, which that branch raises to 7680 x 4320.
+root_plan_read :: proc "contextless" () {
+	values, _ := plan_values_of(root_plan_values.OWNER)
+	plan, sizes_refused := root_plan_values.root_plan_of(values)
+	root_plan_in_force = plan
+	system.log_fact(.Info, Root_Plan_Values_Read{budget_share = plan.budget_share, start_width = u64(plan.memory_screen_start_width), start_height = u64(plan.memory_screen_start_height), most_width = u64(plan.memory_screen_most_width), most_height = u64(plan.memory_screen_most_height), sizes_refused = sizes_refused ? 1 : 0})
 }
 
 // plan_values_owner_pages_create creates the pages of the owners. A

@@ -3,6 +3,7 @@ package display_choices
 
 import "core:testing"
 import "modus:contract/notifications"
+import "modus:contract/plan_values"
 import "modus:contract/module"
 import "modus:contract/chosen_values"
 import "modus:contract/desktop_shell"
@@ -133,4 +134,51 @@ a_set_that_its_border_refuses_changes_nothing :: proc(t: ^testing.T) {
 	testing.expect_value(t, all[1].value, notifications.SHOW_MILLISECONDS_LEAST)
 	testing.expect_value(t, all[2].value, MAGNIFIER_EIGHTHS_MOST)
 	testing.expect_value(t, all[3].value, CONSENT_ARM_MILLISECONDS_LEAST)
+}
+
+
+// plan_of writes the defaults and the locks of a plan of one owner.
+@(private = "file")
+plan_of :: proc(defaults, locks: []chosen_values.Change) -> (plan: plan_values.Owner_Values) {
+	defaults_bytes := make([]u8, chosen_values.HEADER_SIZE + 16 * chosen_values.ENTRY_SIZE, context.temp_allocator)
+	locks_bytes := make([]u8, chosen_values.HEADER_SIZE + 16 * chosen_values.ENTRY_SIZE, context.temp_allocator)
+	written, _ := chosen_values.write_record({}, defaults, defaults_bytes)
+	plan.defaults, _ = chosen_values.read_record(defaults_bytes[:written])
+	written, _ = chosen_values.write_record({}, locks, locks_bytes)
+	plan.locks, _ = chosen_values.read_record(locks_bytes[:written])
+	return plan
+}
+
+// The precedence of the settings of the role: a lock of the arm time hides
+// a choice of it, a default of the plan gives the edge of the bar under no
+// choice, and a time of the plan out of its range holds as no value.
+@(test)
+a_lock_of_the_role_hides_a_choice :: proc(t: ^testing.T) {
+	buffer: [chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE]u8
+	written, _ := chosen_values.write_record({}, {{name = "consent_arm_milliseconds", kind = .Choose, value = 2_000}}, buffer[:])
+	record, _ := chosen_values.read_record(buffer[:written])
+	plan := plan_of({{name = "bar_edge", kind = .Choose, value = u64(desktop_shell.Bar_Position.Bottom)}, {name = "notification_show_milliseconds", kind = .Choose, value = 10}}, {{name = "consent_arm_milliseconds", kind = .Choose, value = 1_000}})
+	choices := choices_of_record(record, plan)
+	testing.expect(t, choices.consent_arm_milliseconds == 1_000 && choices.layers[.Consent_Arm_Time] == .Locked)
+	testing.expect(t, choices.bar_edge == .Bottom && choices.layers[.Bar_Edge] == .Plan_Default)
+	testing.expect(t, choices.notification_show_milliseconds == CONTRACT_DEFAULTS.notification_show_milliseconds && choices.layers[.Notification_Show_Time] == .Contract_Default)
+	testing.expect(t, setting_locked(plan, .Consent_Arm_Time) && !setting_locked(plan, .Bar_Edge))
+}
+
+// The lock of a call of set of the role: only a given setting counts, and
+// the first one in the order of the parameters is named.
+@(test)
+a_call_that_gives_a_locked_setting_of_the_role_is_named :: proc(t: ^testing.T) {
+	plan := plan_of({}, {{name = "magnifier_eighths", kind = .Choose, value = 16}, {name = "consent_arm_milliseconds", kind = .Choose, value = 1_000}})
+	presences: [Setting]module.Presence
+	presences[.Bar_Edge] = .Given
+	presences[.Magnifier_Factor] = module.Presence(2)
+	_, found := first_locked(plan, presences)
+	testing.expect(t, !found)
+	presences[.Consent_Arm_Time] = .Given
+	setting, arm_found := first_locked(plan, presences)
+	testing.expect(t, arm_found && setting == .Consent_Arm_Time)
+	presences[.Magnifier_Factor] = .Given
+	setting, found = first_locked(plan, presences)
+	testing.expect(t, found && setting == .Magnifier_Factor)
 }

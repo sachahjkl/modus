@@ -309,6 +309,17 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			}
 			return
 		}
+		if record.unit == i64(errors.Unit.Plan_Lock) {
+			// The fix is a new plan of principal 0, never a grant of the
+			// starter. A reset names no argument: it changes one setting.
+			if record.argument == 0 {
+				write_part(writer, "the setting")
+			} else {
+				subject(writer, record, argument)
+			}
+			write_part(writer, " is locked by the plan of principal 0: the value of the plan holds, and only a new plan changes it")
+			return
+		}
 		write_part(writer, "the caller has no grant for this: ")
 		write_part(writer, unit)
 		// The fix of a missing grant is a grant from the starter of the

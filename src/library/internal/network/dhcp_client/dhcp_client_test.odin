@@ -2,6 +2,8 @@
 package dhcp_client
 
 import "core:testing"
+import "modus:contract/chosen_values"
+import "modus:contract/plan_values"
 
 HARDWARE :: [6]u8{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
 TRANSACTION :: u32(0x1234_5678)
@@ -272,4 +274,37 @@ a_refused_request_starts_again :: proc(t: ^testing.T) {
 	be32_put(nak_renew, 4, TRANSACTION + 1)
 	lost, _ := client_receive(&client, nak_renew, out[:], 6 + 43200 * 1000)
 	testing.expect(t, lost.event == .Lost && client.phase == .Init)
+}
+// The static address of the plan: no field asks DHCP; a part missing, a
+// prefix out of 8 to 30, an address that a machine cannot hold, and a
+// gateway outside the subnet or equal to the address are refused; a whole
+// address is taken.
+@(test)
+a_static_address_of_the_plan_is_read_at_its_border :: proc(t: ^testing.T) {
+	plan_of :: proc(changes: []chosen_values.Change) -> (plan: plan_values.Owner_Values) {
+		bytes := make([]u8, chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE, context.temp_allocator)
+		written, _ := chosen_values.write_record({}, changes, bytes)
+		plan.locks, _ = chosen_values.read_record(bytes[:written])
+		return plan
+	}
+	_, none_found, none_refused := static_of({})
+	testing.expect(t, !none_found && !none_refused)
+	Case :: struct {
+		address, prefix, gateway: u64,
+		with_prefix: bool,
+	}
+	for item in ([?]Case{{u64(ADDRESS), 0, 0, false}, {u64(ADDRESS), 7, 0, true}, {u64(ADDRESS), 31, 0, true}, {0, 24, 0, true}, {0x0A00_0200, 24, 0, true}, {0x0A00_02FF, 24, 0, true}, {0x7F00_0001, 8, 0, true}, {u64(ADDRESS), 24, 0x0A00_0302, true}, {u64(ADDRESS), 24, u64(ADDRESS), true}, {1 << 32, 24, 0, true}}) {
+		changes := make([dynamic]chosen_values.Change, context.temp_allocator)
+		append(&changes, chosen_values.Change{name = STATIC_ADDRESS_FIELD, kind = .Choose, value = item.address})
+		if item.with_prefix {
+			append(&changes, chosen_values.Change{name = STATIC_PREFIX_FIELD, kind = .Choose, value = item.prefix})
+		}
+		if item.gateway != 0 {
+			append(&changes, chosen_values.Change{name = STATIC_GATEWAY_FIELD, kind = .Choose, value = item.gateway})
+		}
+		_, found, refused := static_of(plan_of(changes[:]))
+		testing.expectf(t, found && refused, "%v is taken", item)
+	}
+	static, found, refused := static_of(plan_of({{name = STATIC_ADDRESS_FIELD, kind = .Choose, value = u64(ADDRESS)}, {name = STATIC_PREFIX_FIELD, kind = .Choose, value = 24}, {name = STATIC_GATEWAY_FIELD, kind = .Choose, value = u64(SERVER)}}))
+	testing.expect(t, found && !refused && static.address == ADDRESS && static.mask == MASK && static.prefix == 24 && static.gateway == SERVER)
 }

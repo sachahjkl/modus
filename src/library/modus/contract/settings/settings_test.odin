@@ -5,6 +5,7 @@ import "core:testing"
 import "modus:contract/chosen_values"
 import "modus:contract/language_tag"
 import "modus:contract/module"
+import "modus:contract/plan_values"
 import "modus:contract/scale_factor"
 
 // A writer that stops in a change (an odd count) does not stop a reader:
@@ -696,4 +697,62 @@ a_presentation_record_is_read_at_its_border :: proc(t: ^testing.T) {
 	testing.expect(t, read.appearance_in_force == .Light && read.zone_offset_minutes == ZONE_OFFSET_MINUTES_MOST)
 	testing.expect(t, read.pointer_theme == choice_default().pointer_theme && read.keyboard_layout == choice_default().keyboard_layout)
 	testing.expect(t, read.languages.count == 1 && read.languages.locales[0].language == locales[0].language && read.languages.locales[0].region == locales[0].region)
+}
+
+// plan_of writes the defaults and the locks of a plan of one owner.
+@(private = "file")
+plan_of :: proc(defaults, locks: []chosen_values.Change) -> (plan: plan_values.Owner_Values) {
+	defaults_bytes := make([]u8, chosen_values.HEADER_SIZE + 16 * chosen_values.ENTRY_SIZE, context.temp_allocator)
+	locks_bytes := make([]u8, chosen_values.HEADER_SIZE + 16 * chosen_values.ENTRY_SIZE, context.temp_allocator)
+	written, _ := chosen_values.write_record({}, defaults, defaults_bytes)
+	plan.defaults, _ = chosen_values.read_record(defaults_bytes[:written])
+	written, _ = chosen_values.write_record({}, locks, locks_bytes)
+	plan.locks, _ = chosen_values.read_record(locks_bytes[:written])
+	return plan
+}
+
+// The precedence of the settings: a lock hides a choice, a choice hides a
+// default of the plan, a default of the plan holds where the principal
+// chose nothing, and a word of the plan that the border refuses holds as
+// no value: the next layer holds.
+@(test)
+a_lock_hides_a_choice_and_a_plan_default_holds_under_none :: proc(t: ^testing.T) {
+	buffer: [chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE]u8
+	written, _ := chosen_values.write_record({}, {{name = "font", kind = .Choose, value = u64(Font.Spleen)}, {name = "appearance", kind = .Choose, value = u64(Appearance.Light)}}, buffer[:])
+	record, _ := chosen_values.read_record(buffer[:written])
+	plan := plan_of({{name = "grid_fit", kind = .Choose, value = u64(Grid_Fit.Off)}, {name = "appearance", kind = .Choose, value = u64(Appearance.Dark)}, {name = "scale", kind = .Choose, value = 99}}, {{name = "font", kind = .Choose, value = u64(Font.Vector)}, {name = TIME_ZONE_NAME, kind = .Choose, value = 7}})
+	choice, zone, layers := choice_of_kept(record, nil, false, plan)
+	testing.expect(t, choice.font == .Vector && layers.values[.Font] == .Locked)
+	testing.expect(t, choice.appearance == .Light && layers.values[.Appearance] == .Chosen)
+	testing.expect(t, choice.grid_fit == .Off && layers.values[.Grid_Fit] == .Plan_Default)
+	testing.expect(t, choice.scale == scale_factor.DEFAULT && layers.values[.Scale] == .Contract_Default)
+	testing.expect(t, zone == 0 && layers.time_zone == .Contract_Default)
+	testing.expect(t, setting_locked(plan, .Font) && !setting_locked(plan, .Grid_Fit))
+}
+// The lock of a call of set: a locked setting that the call does not give,
+// or gives with a presence word that is not Given, does not count; the
+// first locked setting that the call gives is named; a plan with no lock
+// names none.
+@(test)
+a_call_that_gives_a_locked_setting_is_named :: proc(t: ^testing.T) {
+	plan := plan_of({}, {{name = "appearance", kind = .Choose, value = u64(Appearance.Dark)}, {name = "scale", kind = .Choose, value = 16}})
+	presences: [Setting]module.Presence
+	_, found := first_locked(plan, presences)
+	testing.expect(t, !found)
+	presences[.Font] = .Given
+	presences[.Appearance] = module.Presence(2)
+	presences[.Scale] = module.Presence(max(u64))
+	_, found = first_locked(plan, presences)
+	testing.expect(t, !found)
+	presences[.Scale] = .Given
+	setting, scale_found := first_locked(plan, presences)
+	testing.expect(t, scale_found && setting == .Scale)
+	presences[.Appearance] = .Given
+	setting, found = first_locked(plan, presences)
+	testing.expect(t, found && setting == .Appearance)
+	for &presence in presences {
+		presence = .Given
+	}
+	_, found = first_locked({}, presences)
+	testing.expect(t, !found)
 }

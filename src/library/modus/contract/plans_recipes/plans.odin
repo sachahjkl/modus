@@ -9,6 +9,7 @@ package plans_recipes
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/chosen_values"
 import "modus:contract/enum_word"
 import "modus:contract/powerbox"
 import "modus:contract/role_contract"
@@ -45,6 +46,11 @@ Plan_Entry_Kind :: enum u8 {
 	Start_Module = 2,
 	Disk_Module  = 3,
 	Store_Grant  = 4,
+	// A value of the plan for one owner of settings: a default or a lock
+	// (src/md/features/module_settings.md, "Plan records"). The name is
+	// `owner.field`, each a name of chosen values; value_word is the word,
+	// value_layer_word the layer, Plan_Default or Locked.
+	Value        = 5,
 }
 
 // Closed set of store access rights declared in a plan or project console.
@@ -98,6 +104,8 @@ Plan_Refusal :: enum u8 {
 	Store_Failed           = 30, // The private store did not take a write: nothing was committed.
 	Store_Damaged          = 31, // A record of the private store does not decode or does not match its hash.
 	Roles_Refused          = 32, // The root service refused the roles of the plan of principal 0: nothing was committed.
+	Bad_Value              = 33, // A Value entry whose name is not `owner.field`, whose layer is not Plan_Default or Locked, or that carries a field of another kind.
+	Values_Refused         = 34, // The root service refused the values of the plan of principal 0: nothing was committed.
 }
 
 // Closed set of completion statuses returned on the recipes and projects
@@ -120,6 +128,8 @@ Plan_Entry :: struct {
 	recipe_hash:          blake3.Hash,
 	start_grants_mask:    u64,
 	store_rights_word:    u64,
+	value_word:           u64, // A Value: the word that the owner checks at the border of its field.
+	value_layer_word:     u64, // A Value: a chosen_values.Layer, Plan_Default or Locked.
 }
 
 // Complete typed plan value produced by declaration evaluation and checked by
@@ -143,6 +153,10 @@ Plan_Diff_Item :: struct {
 	removed_grants_mask: u64,
 	old_store_rights:    Plan_Store_Rights,
 	new_store_rights:    Plan_Store_Rights,
+	old_value_word:       u64, // A Value: the word before, 0 for an added one.
+	old_value_layer_word: u64,
+	new_value_word:       u64, // A Value: the word after, 0 for a removed one.
+	new_value_layer_word: u64,
 }
 
 // Summary and itemized difference between two plans. Feeds directly into the
@@ -159,6 +173,9 @@ Plan_Difference :: struct {
 	added_stores:         u32,
 	removed_stores:       u32,
 	changed_stores:       u32,
+	added_values:         u32,
+	removed_values:       u32,
+	changed_values:       u32,
 	added_grants_count:   u32,
 	removed_grants_count: u32,
 	any_grant_added:      bool,
@@ -412,6 +429,51 @@ plan_entry_make_store :: proc "contextless" (name: string, rights: Plan_Store_Ri
 	return entry, true
 }
 
+// plan_value_layer_of_word is the border of the layer of a Value entry:
+// Plan_Default or Locked; a choice of the principal is never in a plan.
+plan_value_layer_of_word :: proc "contextless" (word: u64) -> (layer: chosen_values.Layer, ok: bool) {
+	member, known := enum_word.member_of_word(chosen_values.Layer, word)
+	if !known || (member != .Plan_Default && member != .Locked) {
+		return .Contract_Default, false
+	}
+	return member, true
+}
+
+// plan_value_parts gives the owner and the field of a Value entry: the
+// name `owner.field`, each a name of chosen values.
+plan_value_parts :: proc "contextless" (entry: ^Plan_Entry) -> (owner: string, field: string, ok: bool) {
+	if int(entry.name_length) > MAX_ENTRY_NAME_BYTES {
+		return "", "", false
+	}
+	name := string(entry.name_bytes[:entry.name_length])
+	for index in 0 ..< len(name) {
+		if name[index] == '.' {
+			owner, field = name[:index], name[index + 1:]
+			return owner, field, chosen_values.name_valid(owner) && chosen_values.name_valid(field)
+		}
+	}
+	return "", "", false
+}
+
+// plan_entry_make_value constructs a Value entry: the default or the lock
+// of one field of one owner.
+plan_entry_make_value :: proc "contextless" (owner, field: string, word: u64, layer: chosen_values.Layer) -> (entry: Plan_Entry, ok: bool) {
+	if !chosen_values.name_valid(owner) || !chosen_values.name_valid(field) || len(owner) + 1 + len(field) > MAX_ENTRY_NAME_BYTES {
+		return {}, false
+	}
+	if _, layer_ok := plan_value_layer_of_word(u64(layer)); !layer_ok {
+		return {}, false
+	}
+	copy(entry.name_bytes[:], owner)
+	entry.name_bytes[len(owner)] = '.'
+	copy(entry.name_bytes[len(owner) + 1:], field)
+	entry.name_length = u8(len(owner) + 1 + len(field))
+	entry.kind_word = u64(Plan_Entry_Kind.Value)
+	entry.value_word = word
+	entry.value_layer_word = u64(layer)
+	return entry, true
+}
+
 @(private = "file")
 plan_entries_same_identity :: proc "contextless" (first, second: ^Plan_Entry) -> bool {
 	if first.kind_word != second.kind_word {
@@ -502,6 +564,19 @@ plan_validate :: proc "contextless" (plan: ^Plan_Spec) -> (refusal: Plan_Refusal
 			if _, rights_ok := plan_store_rights_of_word(entry.store_rights_word); !rights_ok {
 				return .Bad_Store_Rights, index
 			}
+		case .Value:
+			if entry.role_word != 0 || entry.start_grants_mask != 0 || entry.store_rights_word != 0 || !hash_is_zero(entry.module_hash) || !hash_is_zero(entry.interposed_over_hash) || !hash_is_zero(entry.recipe_hash) {
+				return .Bad_Value, index
+			}
+			if _, _, parts_ok := plan_value_parts(entry); !parts_ok {
+				return .Bad_Value, index
+			}
+			if _, layer_ok := plan_value_layer_of_word(entry.value_layer_word); !layer_ok {
+				return .Bad_Value, index
+			}
+		}
+		if kind != .Value && (entry.value_word != 0 || entry.value_layer_word != 0) {
+			return .Bad_Entry_Kind, index
 		}
 
 		// Duplicate checks against all earlier entries.
@@ -614,6 +689,8 @@ plan_hash :: proc "contextless" (plan: ^Plan_Spec) -> (digest: blake3.Hash, refu
 		encoder_raw_bytes(&encoder, entry.recipe_hash[:])
 		encoder_u64(&encoder, entry.start_grants_mask)
 		encoder_u64(&encoder, entry.store_rights_word)
+		encoder_u64(&encoder, entry.value_word)
+		encoder_u64(&encoder, entry.value_layer_word)
 	}
 	if encoder.overflow {
 		return {}, .Buffer_Too_Small
@@ -692,6 +769,8 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 				case .Store_Grant:
 					out_diff.removed_stores += 1
 					out_diff.removed_grants_count += 1
+				case .Value:
+					out_diff.removed_values += 1
 				}
 				if item := reserve_diff_item(out_diff); item != nil {
 					item.change = .Removed
@@ -702,6 +781,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 					item.old_module_hash = cur_entry.module_hash
 					item.removed_grants_mask = removed_bits
 					item.old_store_rights = cur_rights
+					item.old_value_word, item.old_value_layer_word = cur_entry.value_word, cur_entry.value_layer_word
 				}
 				continue
 			}
@@ -710,7 +790,8 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 			module_changed := cur_entry.module_hash != matched.module_hash || cur_entry.interposed_over_hash != matched.interposed_over_hash
 			grants_changed := cur_entry.start_grants_mask != matched.start_grants_mask
 			rights_changed := cur_rights != prop_rights
-			if !module_changed && !grants_changed && !rights_changed {
+			value_changed := cur_entry.value_word != matched.value_word || cur_entry.value_layer_word != matched.value_layer_word
+			if !module_changed && !grants_changed && !rights_changed && !value_changed {
 				continue
 			}
 
@@ -745,6 +826,11 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 				} else if cur_rights == .Read_Write && prop_rights == .Read_Only {
 					out_diff.removed_grants_count += 1
 				}
+			case .Value:
+				// A value of the plan can widen an access or spend a resource
+				// of the machine: each change needs the consent.
+				out_diff.changed_values += 1
+				out_diff.any_grant_added = true
 			}
 
 			if item := reserve_diff_item(out_diff); item != nil {
@@ -759,6 +845,8 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 				item.removed_grants_mask = removed_bits
 				item.old_store_rights = cur_rights
 				item.new_store_rights = prop_rights
+				item.old_value_word, item.old_value_layer_word = cur_entry.value_word, cur_entry.value_layer_word
+				item.new_value_word, item.new_value_layer_word = matched.value_word, matched.value_layer_word
 			}
 		}
 	}
@@ -800,6 +888,9 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 			out_diff.added_stores += 1
 			out_diff.added_grants_count += 1
 			out_diff.any_grant_added = true
+		case .Value:
+			out_diff.added_values += 1
+			out_diff.any_grant_added = true
 		}
 
 		if item := reserve_diff_item(out_diff); item != nil {
@@ -811,6 +902,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 			item.new_module_hash = prop_entry.module_hash
 			item.added_grants_mask = added_bits
 			item.new_store_rights = prop_rights
+			item.new_value_word, item.new_value_layer_word = prop_entry.value_word, prop_entry.value_layer_word
 		}
 	}
 

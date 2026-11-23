@@ -2,6 +2,8 @@
 package storage_retention
 
 import "core:testing"
+import "modus:contract/chosen_values"
+import "modus:contract/plan_values"
 
 MINUTE :: 60 * 1000
 
@@ -129,4 +131,39 @@ a_clock_that_jumps_forward_thins_nothing :: proc(t: ^testing.T) {
 		time = now - age(now_time, version_time, now_date, 946_684_800 + u64(index) * 60)
 	}
 	testing.expect_value(t, keeps(times[:], now, keep[:]), 0)
+}
+
+// The rule of the plan: each time at its border, at each edge, and their
+// order; a rule taken keeps by its own times.
+@(test)
+the_rule_of_the_plan_is_read_at_its_borders :: proc(t: ^testing.T) {
+	plan_of :: proc(changes: []chosen_values.Change) -> (plan: plan_values.Owner_Values) {
+		bytes := make([]u8, chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE, context.temp_allocator)
+		written, _ := chosen_values.write_record({}, changes, bytes)
+		plan.defaults, _ = chosen_values.read_record(bytes[:written])
+		return plan
+	}
+	none, none_refused := rule_of({})
+	testing.expect(t, none == DEFAULT_RULE && !none_refused)
+	for minutes in ([?]u64{0, KEEP_ALL_MINUTES_MOST + 1, max(u64)}) {
+		rule, _ := rule_of(plan_of({{name = KEEP_ALL_FIELD, kind = .Choose, value = minutes}}))
+		testing.expectf(t, rule == DEFAULT_RULE, "%d minutes are taken", minutes)
+	}
+	for hours in ([?]u64{0, HOURS_END_HOURS_MOST + 1, max(u64)}) {
+		rule, _ := rule_of(plan_of({{name = HOURS_END_FIELD, kind = .Choose, value = hours}}))
+		testing.expectf(t, rule == DEFAULT_RULE, "%d hours are taken", hours)
+	}
+	broken, refused := rule_of(plan_of({{name = KEEP_ALL_FIELD, kind = .Choose, value = 120}, {name = HOURS_END_FIELD, kind = .Choose, value = 2}}))
+	testing.expect(t, broken == DEFAULT_RULE && refused)
+	equal, equal_refused := rule_of(plan_of({{name = KEEP_ALL_FIELD, kind = .Choose, value = 60}, {name = HOURS_END_FIELD, kind = .Choose, value = 1}}))
+	testing.expect(t, equal == DEFAULT_RULE && equal_refused)
+	rule, rule_refused := rule_of(plan_of({{name = KEEP_ALL_FIELD, kind = .Choose, value = KEEP_ALL_MINUTES_LEAST}, {name = HOURS_END_FIELD, kind = .Choose, value = HOURS_END_HOURS_MOST}}))
+	testing.expect(t, !rule_refused && rule.keep_all_milliseconds == 60_000 && rule.hours_end_milliseconds == HOURS_END_HOURS_MOST * HOUR_MILLISECONDS)
+	// Two versions 2 and 3 minutes old: the default keeps both, a rule of 1
+	// minute keeps the newest of their hour.
+	now := u64(3 * DAY_MILLISECONDS)
+	times := [2]u64{now - 3 * 60_000, now - 2 * 60_000}
+	keep: [2]bool
+	testing.expect_value(t, keeps(times[:], now, keep[:]), 0)
+	testing.expect_value(t, keeps(times[:], now, keep[:], rule), 1)
 }

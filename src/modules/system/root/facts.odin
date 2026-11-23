@@ -544,10 +544,23 @@ Plan_Values_Replaced :: struct {
 	owners:     u64,
 }
 
+// The values of the owner `root` that the core holds from the start of the
+// holder of the display. sizes_refused is 1 when the start size of the
+// screen of memory passed its largest size, and the four defaults hold.
+@(log_fact = "root: the plan values of the core: the share {budget_share}, the screen of memory from {start_width} x {start_height} to {most_width} x {most_height}, sizes refused {sizes_refused}")
+Root_Plan_Values_Read :: struct {
+	budget_share:  u64,
+	start_width:   u64,
+	start_height:  u64,
+	most_width:    u64,
+	most_height:   u64,
+	sizes_refused: u64,
+}
+
 // The core refused a set of plan values: no value changed.
-@(log_fact = "root: refused the plan values ({problem}): the values before stay in force")
+@(log_fact = "root: refused the plan values ({set_problem}): the values before stay in force")
 Plan_Values_Refused :: struct {
-	problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
+	set_problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
 }
 
 // One hash of the role contracts, as the root service computes it at its

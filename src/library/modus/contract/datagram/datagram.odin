@@ -215,6 +215,9 @@ Status :: enum u32 {
 	// value: the bytes that the remote would have received; limit: 3 times
 	// the bytes that came from it. Both count the data, with no UDP header.
 	Amplification = 9,
+	// State: the machine holds no address yet (DHCP has not bound one), or
+	// its lease ended: no frame leaves (src/md/features/dhcp_client.md).
+	No_Address    = 10,
 }
 
 // The command of the control ring, from the root service to the network

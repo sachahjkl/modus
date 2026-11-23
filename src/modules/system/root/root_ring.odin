@@ -338,7 +338,7 @@ edit_store_limit :: proc "contextless" (store_name: string) -> u64 {
 	}
 	row := start_grant_set_of(base)
 	if .Store in row.grants {
-		return start_grant_set_store_blocks(&row)
+		return store_blocks_planned(base, &row)
 	}
 	edit_row := start_grant_set_of("edit")
 	return start_grant_set_store_blocks(&edit_row)

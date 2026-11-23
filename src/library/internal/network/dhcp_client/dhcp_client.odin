@@ -8,6 +8,9 @@
 // This package allocates no memory and calls no kernel operation.
 package dhcp_client
 
+import "modus:contract/chosen_values"
+import "modus:contract/plan_values"
+
 CLIENT_PORT :: 68
 SERVER_PORT :: 67
 // The fixed part of a message and the magic cookie (RFC 2131, section 2).
@@ -488,4 +491,47 @@ client_receive :: proc "contextless" (client: ^Client, message: []u8, out: []u8,
 		}
 	}
 	return {}, .None
+}
+// The fields of the plan values of the owner `network`: a static address
+// of the machine, its prefix, and the gateway (0: none). Only the plan of
+// principal 0 gives them: an address of the machine is a plan-only value
+// (src/md/features/dhcp_client.md).
+STATIC_ADDRESS_FIELD :: "static_address"
+STATIC_PREFIX_FIELD :: "static_prefix"
+STATIC_GATEWAY_FIELD :: "static_gateway"
+
+// A static address of the plan, as the service takes it.
+Static :: struct {
+	address: u32,
+	mask:    u32,
+	prefix:  u8,
+	gateway: u32, // 0: no gateway.
+}
+
+// static_of is the border of the static address of the plan: the rules of
+// an address of a reply (address_holdable, a prefix from 8 to 30, a
+// gateway inside the subnet), the one border of each address that the
+// service takes. found is false when the plan gives no address: the
+// service asks DHCP. refused is true when the plan gives an address that
+// the border refuses: the service asks DHCP, and the log says why.
+static_of :: proc "contextless" (plan: plan_values.Owner_Values) -> (static: Static, found: bool, refused: bool) {
+	any :: proc "contextless" (word: u64) -> bool {return true}
+	empty: chosen_values.Record
+	address, _, has_address := plan_values.value_in_force(STATIC_ADDRESS_FIELD, empty, plan, any)
+	prefix, _, has_prefix := plan_values.value_in_force(STATIC_PREFIX_FIELD, empty, plan, any)
+	gateway, _, has_gateway := plan_values.value_in_force(STATIC_GATEWAY_FIELD, empty, plan, any)
+	if !has_address && !has_prefix && !has_gateway {
+		return {}, false, false
+	}
+	if !has_address || !has_prefix || address > u64(max(u32)) || prefix < 8 || prefix > 30 || gateway > u64(max(u32)) {
+		return {}, true, true
+	}
+	mask := ~u32(0) << (32 - u32(prefix))
+	if !address_holdable(u32(address), mask) {
+		return {}, true, true
+	}
+	if gateway != 0 && (u32(gateway) & mask != u32(address) & mask || !address_holdable(u32(gateway), mask) || gateway == address) {
+		return {}, true, true
+	}
+	return {address = u32(address), mask = mask, prefix = u8(prefix), gateway = u32(gateway)}, true, false
 }
