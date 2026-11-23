@@ -191,6 +191,8 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 			return grant == .Start_Policy
 		case .Plans:
 			return grant == .Plans
+		case .Screen_Capture:
+			return grant == .Screen_Capture
 		}
 		return false
 	}
@@ -211,6 +213,17 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, !sender_allowed(.Plan_Roles, {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy}))
 	testing.expect(t, !sender_allowed(.Plan_Roles, {.Plans} - ROOT_RING_GRANTS))
 	testing.expect(t, sender_allowed(.Plan_Roles, {.Plans}))
+	// The budgets of a screen of memory grow for the service of the remote
+	// display only: no console, no start policy, no holder of Connect.
+	testing.expect(t, !sender_allowed(.Screen_Budget, ROOT_RING_GRANTS - {.Screen_Capture}))
+	testing.expect(t, sender_allowed(.Screen_Budget, {.Screen_Capture}))
+	testing.expect(t, !sender_allowed(.Start, {.Screen_Capture}))
+	testing.expect(t, !sender_allowed(.Connect, {.Screen_Capture}))
+	// The word of its step at its border.
+	for word in ([?]u64{0, u64(max(Screen_Budget_Step)) + 1, max(u64)}) {
+		_, step_ok := screen_budget_step_of_word(word)
+		testing.expectf(t, !step_ok, "the step word %d was taken", word)
+	}
 	testing.expect(t, !sender_allowed(.Start, {.Plans}))
 	testing.expect(t, !sender_allowed(.Connect, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Connect, .Principals, .Debugger}))

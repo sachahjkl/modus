@@ -52,11 +52,13 @@ package remote_display_service
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/memory_screen"
 import "modus:contract/pointer_pictures"
 import "modus:contract/remote"
 import protocol "modus:contract/remote_display"
 import "modus:contract/ring"
+import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:interface"
@@ -307,6 +309,26 @@ screen_change_asker_generation: u64
 // The change was refused by the copies of this process: the compositor
 // was asked for screen_before, and its answer opens the face again.
 screen_reverting: bool
+
+// The growth of the budgets (src/md/features/screen_of_memory.md, "The
+// growth of the budgets"). The root ring of this process carries
+// Screen_Budget. screen_start is the size of the first face: the budget of
+// this process pays its copies at it and below; a larger size is paid by
+// the extra budget that the root service gives, which this process closes
+// when its face opens again at a size at most screen_start.
+requests: ring.Ring
+request_tag: u32
+screen_start: protocol.Screen
+extra_budget: system.Handle
+extra_budget_pages: u64
+copies_in_extra: bool // The copies of the face in force are objects of the extra budget.
+// A Grow went for the ask of a viewer: its answer sends the size to the
+// compositor, or the refusal to the viewer.
+grow_waits: bool
+grow_tag: u32
+grow_ask: protocol.Screen_Size_Body
+grow_place: int
+grow_generation: u64
 
 // The measure of the viewer frames of a small damage, in the machine.
 small_viewer_frame_bytes: [SMALL_VIEWER_FRAME_SAMPLES]u64
@@ -1080,7 +1102,7 @@ copies_pages_of :: proc "contextless" (width, height: u64) -> u64 {
 // process does not pay is refused here: the copies of today are freed
 // before the new ones are made, so their pages count.
 screen_asks_work :: proc "contextless" () {
-	if capture_state != .Open || size_ask_in_flight || screen_change_waits {
+	if capture_state != .Open || size_ask_in_flight || screen_change_waits || grow_waits {
 		return
 	}
 	for &viewer, place in viewers {
@@ -1092,22 +1114,110 @@ screen_asks_work :: proc "contextless" () {
 		if ask.width == screen.width && ask.height == screen.height {
 			continue
 		}
+		needed := copies_pages_of(u64(ask.width), u64(ask.height))
+		larger := !screen_paid_at_start(ask)
+		// One extra budget at a time: a size that it does not pay waits for a
+		// size at most the start size, which gives it back.
+		if larger && extra_budget != 0 && needed > extra_budget_pages {
+			viewer_size_refuse(&viewer, ask, .Grown_Already)
+			continue
+		}
 		now := system.time()
 		if refusal := memory_screen.resize_interval_decide(now, viewer.size_asked_at, screen_changed_at); refusal != .None {
 			viewer_size_refuse(&viewer, ask, refusal)
 			continue
 		}
-		budget, budget_status := system.budget_read()
-		pages_left := budget_status == .Ok ? u64(budget.pages) : 0
-		refusal := memory_screen.service_resize_decide(u64(ask.width), u64(ask.height), copies_pages_of(u64(ask.width), u64(ask.height)), copies_pages_of(u64(screen.width), u64(screen.height)), pages_left)
+		viewer.size_asked_at = now
+		if larger && extra_budget == 0 {
+			// The budgets of both processes grow first: the answer of the
+			// root service sends the size on (root_completions_work).
+			request_tag += 1
+			if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Grow), 1 = u64(ask.width), 2 = u64(ask.height)}}) {
+				viewer_size_refuse(&viewer, ask, .Service_Budget)
+				continue
+			}
+			grow_waits, grow_tag, grow_ask, grow_place, grow_generation = true, request_tag, ask, place, viewer.generation
+			return
+		}
+		// The copies of today are freed before the new ones are made, from
+		// the budget that pays their size.
+		paying := larger ? extra_budget : 0
+		pages_left: u64
+		if budget, budget_status := system.budget_read(paying); budget_status == .Ok {
+			pages_left = u64(budget.pages)
+		}
+		held: u64
+		if copies_in_extra == larger {
+			held = copies_pages_of(u64(screen.width), u64(screen.height))
+		}
+		refusal := memory_screen.service_resize_decide(u64(ask.width), u64(ask.height), needed, held, pages_left)
 		if refusal != .None {
 			viewer_size_refuse(&viewer, ask, refusal)
 			continue
 		}
-		compositor_send({kind = u32(display.Command.Screen_Size_Set), values = {0 = u64(ask.width), 1 = u64(ask.height)}})
-		size_ask_in_flight, size_ask_sent, size_ask_place, size_ask_generation = true, ask, place, viewer.generation
-		viewer.size_asked_at = now
+		screen_size_send(ask, place, viewer.generation)
 		return
+	}
+}
+
+// screen_size_send sends the compositor the size that a viewer asked.
+screen_size_send :: proc "contextless" (ask: protocol.Screen_Size_Body, place: int, generation: u64) {
+	compositor_send({kind = u32(display.Command.Screen_Size_Set), values = {0 = u64(ask.width), 1 = u64(ask.height)}})
+	size_ask_in_flight, size_ask_sent, size_ask_place, size_ask_generation = true, ask, place, generation
+}
+
+// screen_paid_at_start says if the budget of this process pays the copies
+// of a size: at most the size of its first face on each side. The
+// compositor holds the same rule with its own start size, which is the
+// same screen.
+screen_paid_at_start :: proc "contextless" (size: protocol.Screen_Size_Body) -> bool {
+	return screen_start.width == 0 || size.width <= screen_start.width && size.height <= screen_start.height
+}
+
+// root_completions_work reads the answers of the root service: a Grow
+// gives the extra budget, and the size goes to the compositor, or its
+// refusal goes to the viewer that asked; a Release that the root service
+// refused writes a line.
+root_completions_work :: proc "contextless" () {
+	for record in system.receive(&requests.completions) {
+		if !grow_waits || record.tag != grow_tag {
+			if record.kind != u32(system.Status.Ok) {
+				system.log_fact(.Warning, Screen_Budget_Answer_Refused{status = op.Status(record.kind)})
+			}
+			continue
+		}
+		grow_waits = false
+		viewer := &viewers[grow_place]
+		asker_bound := viewer.bound && viewer.generation == grow_generation
+		if record.kind == u32(system.Status.Ok) {
+			extra_budget, extra_budget_pages = system.Handle(record.values[0]), record.values[1]
+			if asker_bound && capture_state == .Open {
+				screen_size_send(grow_ask, grow_place, grow_generation)
+			}
+			continue
+		}
+		// The error record names the cause in its found word.
+		refusal, known := memory_screen.grow_refusal_of_word(u64(errors.completion_record(record.values).found))
+		cause := known ? memory_screen.resize_refusal_of_grow(refusal) : memory_screen.Resize_Refusal.Service_Budget
+		if asker_bound {
+			viewer_size_refuse(viewer, grow_ask, cause)
+		}
+	}
+}
+
+// extra_budget_give_back closes the extra budget once the face holds no
+// copy of it, and tells the root service, which closes its own handle: the
+// pages return.
+extra_budget_give_back :: proc "contextless" () {
+	if extra_budget == 0 || copies_in_extra {
+		return
+	}
+	system.close(extra_budget)
+	extra_budget, extra_budget_pages = 0, 0
+	request_tag += 1
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Release)}}) {
+		// The root service ends the budget at the stop of this process.
+		system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
 	}
 }
 
@@ -1244,7 +1354,14 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	copy_pages := mirror_pages_of(width, height)
 	mirror_release()
 	status: system.Status
-	mirror_memory, status = system.memory_create(copy_pages)
+	// A size past the size of the first face is paid by the extra budget.
+	larger := !screen_paid_at_start({u32(width), u32(height)})
+	paying := larger ? extra_budget : 0
+	if larger && paying == 0 {
+		status = .No_Budget
+	} else {
+		mirror_memory, status = system.memory_create(copy_pages, paying)
+	}
 	mirror_address: rawptr
 	if status == .Ok {
 		mirror_address, status = system.memory_map(mirror_memory, {.Write})
@@ -1253,7 +1370,7 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	}
 	if status == .Ok {
 		mirror = ([^]u32)(mirror_address)
-		if capture_memory, status = system.memory_create(pages); status != .Ok {
+		if capture_memory, status = system.memory_create(pages, paying); status != .Ok {
 			capture_memory = 0
 		}
 	}
@@ -1292,6 +1409,13 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	compositor_send({kind = u32(display.Command.Capture_Open), values = {0 = u64(given), 1 = width, 2 = height}})
 	capture_state = .Open
 	system.log_fact(.Info, Capture_Face_Opened{width = width, height = height})
+	if screen_start.width == 0 {
+		screen_start = screen
+	}
+	// The copies of a size at most the start size leave the extra budget
+	// with no object: it goes back.
+	copies_in_extra = larger
+	extra_budget_give_back()
 	viewers_tell()
 	return true
 }
@@ -1457,6 +1581,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if window, status = system.ring_open(window_memory); status != .Ok {
 		fail("no ring of a window: the capture face rides it")
 	}
+	// The root ring carries Screen_Budget: the growth of the budgets of a
+	// screen of memory.
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
+		fail("no ring to the root service")
+	}
 	client_table_address, client_table_status := system.memory_map(ctx.handles[remote.GRANT_CLIENT_TABLE], {})
 	if client_table_status != .Ok {
 		fail("no client table: the process has no grant Remote_Clients")
@@ -1487,6 +1616,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		compositor_held_push()
 		count := quic_server.completions_drain(&quic_endpoint, &server, records[:], arrived[:])
 		capture_events()
+		root_completions_work()
 		screen_change_apply()
 		screen_asks_work()
 		capture_apply()
@@ -1503,6 +1633,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		system.wait_records(&wait, &quic_endpoint.datagrams.completions)
 		system.wait_records(&wait, &window.completions)
+		system.wait_records(&wait, &requests.completions)
 		if compositor_held_count > 0 {
 			system.wait_room(&wait, &window.commands)
 		}

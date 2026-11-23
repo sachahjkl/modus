@@ -2,6 +2,7 @@ package build
 
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
+import "modus:contract/memory_screen"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/replacement_list"
@@ -77,6 +78,9 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 	// name 31, a file of the store disk_process.NAME_LIMIT, and a resource
 	// the name of an entry of the boot image.
 	most["principal_name"] = 23
+	for refusal in memory_screen.GROW_REFUSAL_SENTENCES {
+		most["grow_refusal"] = max(most["grow_refusal"], u32(len(refusal)))
+	}
 	most["store"] = 31
 	most["file"] = 23
 	most["resource"] = 31
@@ -226,6 +230,13 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		for part in BUDGET_PARTS {
 			for who in LARGEST_OF {
 				expect(t, render(t, file, "Budget_Part_Limited", {{"asked", count}, {"largest", max(u64) - count}, {"granted", count}, {"started_process", process}, {"budget_part", part}, {"largest_of", who}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " ", part, ", and ", who, " gets at most ", max(u64) - count, ": it starts with ", count))
+				expect(t, render(t, file, "Screen_Budget_Grown", {{"width", count}, {"height", max(u64) - count}, {"compositor_pages", min(count, u64(max(i64)))}, {"service_pages", u64(max(i64)) - min(count, u64(max(i64)))}}), line_of_before("root: the budgets of the screen of memory grow for ", count, " x ", max(u64) - count, ": an extra budget of ", sentence.Size{min(count, u64(max(i64))), .Pages}, " for the compositor and of ", sentence.Size{u64(max(i64)) - min(count, u64(max(i64))), .Pages}, " for remote_display"))
+				for refusal in memory_screen.GROW_REFUSAL_SENTENCES {
+					expect(t, render(t, file, "Screen_Budget_Refused", {{"width", count}, {"height", max(u64) - count}, {"grow_refusal", refusal}}), line_of_before("root: refused to grow the budgets of the screen of memory for ", count, " x ", max(u64) - count, ": ", refusal))
+				}
+				expect(t, render(t, file, "Screen_Budget_Released", {{"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " gave back its extra budget of the screen of memory: its pages return"))
+				expect(t, render(t, file, "Screen_Budget_Release_Refused", {{"holder", process}}), line_of_before("root: refused the release of an extra budget of the screen of memory from ", sentence.Module_Name{process}, ", which holds none"))
+				expect(t, render(t, file, "Screen_Budget_Ended_At_Stop", {{"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " stopped with an extra budget of the screen of memory: its pages return"))
 				expect(t, render(t, file, "Compositor_On_Screen_Of_Memory", {{"width", count}, {"height", max(u64) - count}}), line_of_before("root: the compositor starts on a screen of memory of ", count, " x ", max(u64) - count, ": the machine has no screen"))
 				expect(t, render(t, file, "Budget_Screen_Pictures_Refused", {{"screen_pictures", count}, {"started_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen"))
 			}

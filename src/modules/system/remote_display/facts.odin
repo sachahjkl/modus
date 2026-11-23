@@ -3,6 +3,7 @@ package remote_display_service
 import "modus:contract/value_kinds"
 import "modus:quic"
 import "modus:quic_server"
+import op "modus:contract/operation"
 
 // The log facts of the remote display (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the viewer keys that
@@ -224,6 +225,17 @@ Capture_Size_Refusal_Refused :: struct {
 	height:       u64,
 	refusal_word: u64,
 }
+
+// The root service refused a Screen_Budget that no viewer waits for, or a
+// Release: the extra budget ends at the stop of this process.
+@(log_fact = "remote_display: the root service refused a command of the budgets of the screen of memory: status {status}")
+Screen_Budget_Answer_Refused :: struct {
+	status: op.Status,
+}
+
+// The root ring had no room for the release of the extra budget.
+@(log_fact = "remote_display: the root ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of this process")
+Screen_Budget_Release_Not_Sent :: struct {}
 
 // The copies of a new size of the screen were refused: the compositor is
 // asked for the size before, and no viewer ends.

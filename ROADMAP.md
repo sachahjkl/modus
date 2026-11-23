@@ -4,7 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **A screen of memory that grows.** A viewer asks a screen of memory larger than its start size, and the root service gives the compositor and `remote_display` the pages of that size at the same step, within the share of a process, and takes them back when the size shrinks; today such a size is refused with its budget cause. [Design](src/md/features/screen_of_memory.md)
 
 ## Next
 

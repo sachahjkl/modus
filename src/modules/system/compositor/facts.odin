@@ -871,6 +871,27 @@ Screen_Of_Memory_Resized :: struct {
 	windows: u64,
 }
 
+// The root service gave an extra budget for a larger screen of memory.
+@(log_fact = "compositor: an extra budget of {pages} for a screen of memory of {width} x {height}")
+Screen_Budget_Taken :: struct {
+	width:  u64,
+	height: u64,
+	pages:  value_kinds.Size_In_Pages,
+}
+
+// The root service gave a handle that is no budget, or a second extra
+// budget: it is closed with no use.
+@(log_fact = "compositor: closed an extra budget for {width} x {height} with no use: it is no budget, or one is held already")
+Screen_Budget_Not_Taken :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// The control ring had no room for the release of the extra budget: the
+// root service ends it at the stop of the compositor.
+@(log_fact = "compositor: the control ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of the compositor")
+Screen_Budget_Release_Not_Sent :: struct {}
+
 // A viewer asked a size of the screen, and the compositor refused it.
 @(log_fact = "compositor: refused a screen of {width} x {height} that a viewer asked: {resize_refusal}")
 Screen_Of_Memory_Refused :: struct {

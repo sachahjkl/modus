@@ -569,6 +569,14 @@ Control :: enum u32 {
 	// that window, then a Settings_Raise_Focus. The root service names the
 	// window by the process that it started, so no other window can take it.
 	Settings_Raise          = 9,
+	// root to compositor: the extra budget of a growth of the screen of
+	// memory (src/md/features/screen_of_memory.md, "The growth of the
+	// budgets"). values: the handle (in the compositor) with Read and Spend,
+	// its pages, the width and the height that it pays.
+	Screen_Budget_Give      = 10,
+	// compositor to root: the compositor closed its extra budget, as no
+	// picture of it is left. No values.
+	Screen_Budget_Release   = 11,
 }
 
 // Where the focus goes in the window that Settings_Raise raises. The values

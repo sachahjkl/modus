@@ -651,6 +651,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		held_entry = &work.slot.held_entry
 		work.slot.held_for_replay = true
 	}
+	work.slot.budget_pages = process_budget.pages
 	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time

@@ -661,13 +661,14 @@ canvas_create_with_handle :: proc "contextless" (width, height: int) -> (canvas:
 }
 
 // canvas_try_create makes a picture in one memory object, in contiguous
-// pages when the kernel has them. ok is false with no memory: nothing is
+// pages when the kernel has them, paid by budget (0: the budget of this
+// process). ok is false with no memory: nothing is
 // kept.
-canvas_try_create :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, handle: system.Handle, ok: bool) {
+canvas_try_create :: proc "contextless" (width, height: int, budget: system.Handle = 0) -> (canvas: graphics.Canvas, handle: system.Handle, ok: bool) {
 	pages := (u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	memory, status := system.memory_create(pages, 0, {.Contiguous})
+	memory, status := system.memory_create(pages, budget, {.Contiguous})
 	if status != .Ok {
-		memory, status = system.memory_create(pages)
+		memory, status = system.memory_create(pages, budget)
 	}
 	if status != .Ok {
 		return {}, 0, false
@@ -784,8 +785,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if screen_of_memory {
 		// No pixel of a device: the frame is the screen, and screen_put
-		// copies nothing.
+		// copies nothing. Its budget pays this size; a larger one is paid by
+		// an extra budget of the root service.
 		screen = {width = width, height = height, stride = width}
+		screen_start_width, screen_start_height = width, height
 	} else {
 		screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 		screen_pages_open(ctx)
@@ -927,7 +930,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				quality_window_started(system.Handle(record.values[0]), record.values[1])
 			case .Settings_Raise:
 				settings_raise(record.values[0], record.values[1]) // tray_widgets.odin
-			case .None, .Start, .Stop, .Appearance_Next:
+			case .Screen_Budget_Give:
+				screen_budget_take(system.Handle(record.values[0]), record.values[1], record.values[2], record.values[3]) // screen_of_memory.odin
+			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release:
 				// The border refused None above. Start, Stop and
 				// Appearance_Next go from the compositor to the root service,
 				// never to the compositor.

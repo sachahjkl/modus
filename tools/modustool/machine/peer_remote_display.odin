@@ -1024,6 +1024,16 @@ peer_display_ask_case :: proc(state: ^Peer_Remote_Display, viewer_key: [32]u8, w
 				return false, fmt.tprintf("the ask of %dx%d was refused for %dx%d with the cause %s, not %s", width, height, refusal.width, refusal.height, cause, fields[2])
 			}
 			return true, fmt.tprintf("the ask of %dx%d got Screen_Size_Refused with the cause %s, and the session goes on", width, height, cause)
+		case !refused && size_refused && memory_screen.Resize_Refusal(refusal.refusal) == .Too_Soon:
+			// The least time between two changes: the viewer asks again until
+			// the service takes the ask, within the bound of the case.
+			sync.mutex_lock(&state.lock)
+			state.size_refused = false
+			asked_again := state.active && peer_display_queue(state, .Screen_Size_Ask, ask)
+			sync.mutex_unlock(&state.lock)
+			if !asked_again {
+				return false, fmt.tprintf("the ask did not go again: %s", peer_display_end_text(state))
+			}
 		case !refused && size_refused:
 			return false, fmt.tprintf("the ask of %dx%d was refused with the cause %v", width, height, memory_screen.Resize_Refusal(refusal.refusal))
 		case !refused && sizes > sizes_before && screen == {ask.width, ask.height} && frames > 0:

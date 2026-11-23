@@ -478,6 +478,38 @@ Root_Command :: enum u32 {
 	// the serial in force, values[1] its generation. Only the process with
 	// the start grant Plans sends this command.
 	Plan_Roles = 32,
+	// Screen_Budget grows the budgets of the compositor and of the service of
+	// the remote display for a size of a screen of memory past the size that
+	// their start paid, or ends a growth (src/md/features/screen_of_memory.md,
+	// "The growth of the budgets"). values[0] is a Screen_Budget_Step. Its
+	// name is not read. Only the process with the start grant Screen_Capture
+	// sends it.
+	//
+	// Grow: values[1] the width, values[2] the height, values[3..6] 0. The
+	// root service makes one extra budget for each process, both or neither
+	// (memory_screen.screen_budget_grow_decide), gives the compositor its
+	// handle with Screen_Budget_Give on the control ring, then answers:
+	// values[0] the handle of the extra budget of the sender, with Read and
+	// Spend, values[1] its pages. A refusal has the status No_Budget, the
+	// kind Refused (unit Pages), the width as the value and the
+	// memory_screen.Grow_Refusal as the value found; nothing is made.
+	//
+	// Release: values[1..6] 0. The sender closed its extra budget: the root
+	// service closes its own handle, and the pages return when the budget
+	// ends. Refused with Bad_State and the kind Absent when the sender holds
+	// none.
+	Screen_Budget = 33,
+}
+
+// The step of a Screen_Budget, in values[0].
+Screen_Budget_Step :: enum u64 {
+	Grow    = 1,
+	Release = 2,
+}
+
+// screen_budget_step_of_word is the border of values[0] of a Screen_Budget.
+screen_budget_step_of_word :: proc "contextless" (word: u64) -> (step: Screen_Budget_Step, ok: bool) {
+	return enum_word.member_of_word(Screen_Budget_Step, word)
 }
 
 // values[5] of a Debug_Start: what it does.
@@ -680,6 +712,9 @@ Root_Command_Sender :: enum u8 {
 	// The process with the start grant Plans only: the holder of the role
 	// Plans names the holders of the roles of the machine.
 	Plans,
+	// The process with the start grant Screen_Capture only: the service of
+	// the remote display, for the budgets of a screen of memory.
+	Screen_Capture,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -719,12 +754,13 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Start_Edit             = .Root_Ring,
 	.Debug_Start            = .Debugger,
 	.Plan_Roles             = .Plans,
+	.Screen_Budget          = .Screen_Capture,
 }
 
 // The start grants that give a process a root ring. A process with none of
 // them has no root ring, so it sends no command: a disk process, whose
 // grants a command gives, and which no command gives one of these.
-ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans}
+ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture}
 
 // root_ring_given says if a process with these start grants receives a
 // root ring at its start.
@@ -847,6 +883,8 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 		return .Start_Policy in start_grant_set
 	case .Plans:
 		return .Plans in start_grant_set
+	case .Screen_Capture:
+		return .Screen_Capture in start_grant_set
 	}
 	return false
 }
@@ -900,6 +938,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Start_Edit             = .Command,
 	.Debug_Start            = .Command,
 	.Plan_Roles             = .Command,
+	.Screen_Budget          = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -1076,6 +1115,7 @@ root_command_names := [Root_Command]string {
 	.Start_Edit             = "Start_Edit",
 	.Debug_Start            = "Debug_Start",
 	.Plan_Roles             = "Plan_Roles",
+	.Screen_Budget          = "Screen_Budget",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1115,6 +1155,7 @@ root_first_argument_names := [Root_Command]string {
 	.Start_Edit             = "store",
 	.Debug_Start            = "name",
 	.Plan_Roles             = "override",
+	.Screen_Budget          = "step",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1155,6 +1196,7 @@ root_second_argument_names := [Root_Command]string {
 	.Start_Edit             = "name",
 	.Debug_Start            = "",
 	.Plan_Roles             = "",
+	.Screen_Budget          = "",
 }
 
 // command_of_record reads the command that an error record names: the

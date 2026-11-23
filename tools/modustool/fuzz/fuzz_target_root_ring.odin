@@ -88,8 +88,8 @@ fuzz_root_ring_start_grant_set_of :: proc(word: u64) -> (start_grant_set: bit_se
 // from the guides and not from the table of the contract, so a wrong row
 // of ROOT_COMMAND_SENDERS breaks the oracle:
 // - a process receives a root ring only with Root_Ring, Connect,
-//   Principals, Debugger or Start_Policy (src/md/api/root_ring.md, "The
-//   chosen form");
+//   Principals, Debugger, Start_Policy, Plans or Screen_Capture
+//   (src/md/api/root_ring.md, "The chosen form");
 // - `unlock`, with Principals, alone sends Principal_Record,
 //   Principal_Unlock, Machine_Key and Principal_Change_End
 //   (docs/PRINCIPALS.md, "7. The commands");
@@ -102,12 +102,15 @@ fuzz_root_ring_start_grant_set_of :: proc(word: u64) -> (start_grant_set: bit_se
 //   (src/md/features/start_policy.md);
 // - the holder of the role Plans, with Plans, alone sends Plan_Roles
 //   (src/md/features/declarations.md, "The apply as built");
+// - the service of the remote display, with Screen_Capture, alone sends
+//   Screen_Budget (src/md/features/screen_of_memory.md, "The growth of the
+//   budgets");
 // - each other command from Root_Ring, the console; None from nobody.
 // The switch is whole: a new command does not compile until its sender is
 // written here too.
 @(private = "file")
 fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant_set: bit_set[start_grant.Grant], listed: bool) -> bool {
-	if start_grant_set & {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans} == {} {
+	if start_grant_set & {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture} == {} {
 		return false
 	}
 	switch command {
@@ -125,6 +128,8 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return .Start_Policy in start_grant_set
 	case .Plan_Roles:
 		return .Plans in start_grant_set
+	case .Screen_Budget:
+		return .Screen_Capture in start_grant_set
 	case .Start, .Stop, .Wire:
 		return .Root_Ring in start_grant_set || .Start_Policy in start_grant_set
 	case .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice, .Start_Edit:

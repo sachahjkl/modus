@@ -5,11 +5,60 @@ package compositor
 // display with the input can ask another size, through the capture face.
 
 import "modus:contract/memory_screen"
+import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:display"
 import "modus:system"
 
 // The frame is a screen of memory: no framebuffer, no screen page.
 screen_of_memory: bool
+// The size of the screen of memory at the start: the budget of this
+// process pays its frame and its background at this size and below.
+screen_start_width, screen_start_height: int
+// The extra budget that the root service gave for a larger size
+// (src/md/features/screen_of_memory.md, "The growth of the budgets"), and
+// whether the frame and the background of the size in force are its
+// objects. 0: none.
+screen_extra_budget: system.Handle
+screen_pictures_in_extra: bool
+
+// screen_budget_take keeps the extra budget that the root service gave. A
+// second one while one is held is closed with no use: the root service
+// gives one at a time.
+screen_budget_take :: proc "contextless" (budget: system.Handle, pages, width, height: u64) {
+	kind, _, _ := system.handle_state(budget)
+	if kind != .Budget || screen_extra_budget != 0 {
+		if budget != 0 {
+			system.close(budget)
+		}
+		system.log_fact(.Warning, Screen_Budget_Not_Taken{width = width, height = height})
+		return
+	}
+	screen_extra_budget = budget
+	system.log_fact(.Info, Screen_Budget_Taken{width = width, height = height, pages = value_kinds.Size_In_Pages(pages)})
+}
+
+// screen_size_paid_at_start says if the budget of this process pays the
+// pictures of a size: at most the start size on each side.
+screen_size_paid_at_start :: proc "contextless" (width, height: u64) -> bool {
+	return width <= u64(screen_start_width) && height <= u64(screen_start_height)
+}
+
+// screen_budget_give_back closes the extra budget when no picture of it is
+// left, and tells the root service, which closes its own handle: the pages
+// return.
+@(private = "file")
+screen_budget_give_back :: proc "contextless" () {
+	if screen_extra_budget == 0 || screen_pictures_in_extra {
+		return
+	}
+	system.close(screen_extra_budget)
+	screen_extra_budget = 0
+	if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Screen_Budget_Release)}) {
+		// The root service ends the budget at the stop of this process.
+		system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
+	}
+}
 
 // The bytes of the cause in the line of a refused size.
 RESIZE_REFUSAL_FIELD_BYTES :: 88
@@ -19,10 +68,20 @@ RESIZE_REFUSAL_FIELD_BYTES :: 88
 // size that it asked with the cause of its refusal. A refusal changes
 // nothing.
 screen_of_memory_resize :: proc "contextless" (client: ^Client, width, height: u64) {
-	budget, budget_status := system.budget_read()
-	pages_left := budget_status == .Ok ? u64(budget.pages) : 0
+	// A size that the start paid comes from the budget of this process; a
+	// larger one from the extra budget, with no extra budget no page.
+	paying: system.Handle
+	if !screen_size_paid_at_start(width, height) {
+		paying = screen_extra_budget
+	}
+	pages_left: u64
+	if paying != 0 || screen_size_paid_at_start(width, height) {
+		if budget, budget_status := system.budget_read(paying); budget_status == .Ok {
+			pages_left = u64(budget.pages)
+		}
+	}
 	refusal, same := memory_screen.resize_decide(screen_of_memory, width, height, u32(screen.width), u32(screen.height), pages_left)
-	if refusal == .None && !same && !screen_of_memory_take(int(width), int(height)) {
+	if refusal == .None && !same && !screen_of_memory_take(int(width), int(height), paying) {
 		// The kernel had fewer pages than the budget says: the same cause.
 		refusal = .Compositor_Budget
 	}
@@ -40,12 +99,12 @@ screen_of_memory_resize :: proc "contextless" (client: ^Client, width, height: u
 // in force, the background and the bar, the work area and the fit of each
 // window, and the whole screen as damage.
 @(private = "file")
-screen_of_memory_take :: proc "contextless" (width, height: int) -> bool {
-	new_frame, new_frame_memory, frame_made := canvas_try_create(width, height)
+screen_of_memory_take :: proc "contextless" (width, height: int, paying: system.Handle) -> bool {
+	new_frame, new_frame_memory, frame_made := canvas_try_create(width, height, paying)
 	if !frame_made {
 		return false
 	}
-	new_background, new_background_memory, background_made := canvas_try_create(width, height)
+	new_background, new_background_memory, background_made := canvas_try_create(width, height, paying)
 	if !background_made {
 		canvas_free(new_frame, new_frame_memory)
 		return false
@@ -58,6 +117,10 @@ screen_of_memory_take :: proc "contextless" (width, height: int) -> bool {
 	frame, frame_memory_handle = new_frame, new_frame_memory
 	background, background_memory_handle = new_background, new_background_memory
 	screen = {width = width, height = height, stride = width}
+	// The old pictures are gone: an extra budget with none of them left goes
+	// back to the root service.
+	screen_pictures_in_extra = paying != 0
+	screen_budget_give_back()
 	desktop_size_follow_screen(true) // scale.odin
 	background_build()
 	bar_mark_build()

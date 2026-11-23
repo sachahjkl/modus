@@ -352,6 +352,10 @@ Started :: struct {
 	// child wiring budget (`wiring_budget`). Closed at stop.
 	budget:          system.Handle,
 	wiring_budget:   system.Handle,
+	// The pages of the budget of the process at its start: a growth of the
+	// budgets of a screen of memory adds an extra budget within its share
+	// (screen_budgets.odin).
+	budget_pages:    u64,
 	// The wiring ring of a process that declares record streams or asked
 	// for a list page: handed to the delegated `wiring` service, never
 	// mapped in the root core.
@@ -1141,7 +1145,9 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	display_holder_load_error: module.Load_Error
-	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
+	display_budget := budget_of(image_file_checked(display_name), display_name)
+	served.budget_pages = display_budget.pages
+	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
 	if status != .Ok {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -1257,7 +1263,9 @@ control_ring_serve :: proc "contextless" () {
 		switch control_word {
 		case .Appearance_Next:
 			settings_appearance_next_start() // text_settings.odin
-		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise:
+		case .Screen_Budget_Release:
+			screen_budget_release(.Compositor, role_holder_name(.Display)) // screen_budgets.odin
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Screen_Budget_Give:
 			// This service sends these to the compositor, and takes none
 			// from it.
 			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
@@ -2464,6 +2472,15 @@ reap :: proc "contextless" () {
 			// release closes the handle of the process, which is the handle
 			// of the compositor: no later start may give to it.
 			display_holder_reaped := item.process == display_holder
+			// The extra budget of a screen of memory of a process that stopped:
+			// the stop closed its handle and its objects, and this service
+			// closes its own, so the pages return (screen_budgets.odin).
+			if display_holder_reaped {
+				screen_budget_stopped(.Compositor, system.name_of(item.name[:]))
+			}
+			if .Screen_Capture in item.start_grant_set.grants {
+				screen_budget_stopped(.Service, system.name_of(item.name[:]))
+			}
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
 			stopped_for_the_rescue := item.stop_asked_by_root_service

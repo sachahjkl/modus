@@ -332,3 +332,64 @@ resize_interval_at_its_edges :: proc(t: ^testing.T) {
 	testing.expect_value(t, resize_interval_decide(5000, 9000, 0), Resize_Refusal.Too_Soon)
 	testing.expect_value(t, resize_interval_decide(max(u64), max(u64) - RESIZE_INTERVAL_MILLISECONDS, max(u64) - RESIZE_INTERVAL_MILLISECONDS), Resize_Refusal.None)
 }
+
+// A growth that breaks each rule, in its order: a sender that is not the
+// service, a screen of a device, each side past its bounds, an extra budget
+// of either process open, each share one page past; then each share at its
+// edge, which passes with the pages of each process.
+@(test)
+a_growth_of_the_budgets_is_refused_at_each_edge :: proc(t: ^testing.T) {
+	good := Grow_Facts{from_service = true, screen_of_memory = true, width = 2560, height = 1440, compositor_paid = 30000, service_paid = 8000, share = 50000}
+	compositor_pages := compositor_grow_pages(2560, 1440)
+	service_pages := service_copies_pages(2560, 1440)
+	testing.expect_value(t, compositor_pages, 7200)
+	testing.expect_value(t, service_pages, 1 + 7200 + 3600)
+	cases := [?]struct {
+		change:  proc(facts: ^Grow_Facts),
+		refusal: Grow_Refusal,
+	} {
+		{proc(facts: ^Grow_Facts) {facts.from_service = false}, .Not_The_Service},
+		{proc(facts: ^Grow_Facts) {facts.screen_of_memory = false}, .No_Screen_Of_Memory},
+		{proc(facts: ^Grow_Facts) {facts.width = MAX_WIDTH + 1}, .Outside_Bounds},
+		{proc(facts: ^Grow_Facts) {facts.height = MIN_HEIGHT - 1}, .Outside_Bounds},
+		{proc(facts: ^Grow_Facts) {facts.width, facts.height = max(u64), max(u64)}, .Outside_Bounds},
+		{proc(facts: ^Grow_Facts) {facts.compositor_extra_open = true}, .Extra_Open},
+		{proc(facts: ^Grow_Facts) {facts.service_extra_open = true}, .Extra_Open},
+		{proc(facts: ^Grow_Facts) {facts.compositor_paid = facts.share - compositor_grow_pages(2560, 1440) + 1}, .Past_Compositor_Share},
+		{proc(facts: ^Grow_Facts) {facts.compositor_paid = max(u64)}, .Past_Compositor_Share},
+		{proc(facts: ^Grow_Facts) {facts.service_paid = facts.share - service_copies_pages(2560, 1440) + 1}, .Past_Service_Share},
+		{proc(facts: ^Grow_Facts) {facts.service_paid = max(u64)}, .Past_Service_Share},
+	}
+	for item in cases {
+		facts := good
+		item.change(&facts)
+		refusal, a, b := screen_budget_grow_decide(facts)
+		testing.expectf(t, refusal == item.refusal && a == 0 && b == 0, "%v gave %v", item.refusal, refusal)
+	}
+	edge := good
+	edge.compositor_paid = edge.share - compositor_pages
+	edge.service_paid = edge.share - service_pages
+	refusal, a, b := screen_budget_grow_decide(edge)
+	testing.expect(t, refusal == .None && a == compositor_pages && b == service_pages)
+}
+
+// The word of a refused growth at its border, and the cause that a viewer
+// gets for each refusal.
+@(test)
+a_grow_refusal_word_at_its_border :: proc(t: ^testing.T) {
+	for word in ([?]u64{0, u64(max(Grow_Refusal)) + 1, max(u64)}) {
+		_, ok := grow_refusal_of_word(word)
+		testing.expectf(t, !ok, "the word %d was taken", word)
+	}
+	for member in Grow_Refusal {
+		if member == .None {
+			continue
+		}
+		refusal, ok := grow_refusal_of_word(u64(member))
+		testing.expect(t, ok && refusal == member)
+		testing.expect(t, resize_refusal_of_grow(member) != .None)
+	}
+	testing.expect_value(t, resize_refusal_of_grow(.Extra_Open), Resize_Refusal.Grown_Already)
+	testing.expect_value(t, resize_refusal_of_grow(.Past_Compositor_Share), Resize_Refusal.Compositor_Budget)
+	testing.expect_value(t, resize_refusal_of_grow(.Past_Service_Share), Resize_Refusal.Service_Budget)
+}

@@ -431,6 +431,7 @@ Resize_Refusal :: enum u32 {
 	Compositor_Budget = 3, // The pages left in the budget of the compositor do not pay a new frame and a new background.
 	Service_Budget    = 4, // The pages left in the budget of the service of the remote display do not pay its copies.
 	Too_Soon          = 5, // The screen changed size, or the viewer asked one, less than the least time ago.
+	Grown_Already     = 6, // The screen is past its start size, with an extra budget open: a size at most the start size comes first.
 }
 
 // The words of each cause in a line of the log.
@@ -442,6 +443,7 @@ RESIZE_REFUSAL_SENTENCES := [Resize_Refusal]string {
 	.Compositor_Budget = "the budget of the compositor does not pay a frame and a background of that size",
 	.Service_Budget    = "the budget of remote_display does not pay its copies of that size",
 	.Too_Soon          = "the screen changed size, or the viewer asked one, less than a second ago",
+	.Grown_Already     = "the screen is past its start size already: a size at most its start size comes first",
 }
 
 // resize_refusal_of_word is the border of a word of Resize_Refusal: a word
@@ -528,4 +530,122 @@ resize_interval_decide :: proc "contextless" (now, viewer_asked_at, screen_chang
 		}
 	}
 	return .None
+}
+
+// The pages of the frame and the background of the compositor at a size:
+// the extra budget of a growth pays both new ones, as the compositor makes
+// them before it frees the old ones. A size past the bounds gives 0.
+compositor_grow_pages :: proc "contextless" (width, height: u64) -> u64 {
+	return COMPOSITOR_PICTURES * picture_pages(width, height)
+}
+
+// The pages of the copies of the service of the remote display at a size:
+// the memory of its capture face (one header page and two pictures) and
+// its copy of the screen. The display package makes them
+// (display.capture_pages); its host test checks that both agree. A size
+// past the bounds gives 0.
+service_copies_pages :: proc "contextless" (width, height: u64) -> u64 {
+	if !size_in_bounds(width, height) {
+		return 0
+	}
+	pixels := width * height * BYTES_PER_PIXEL
+	return 1 + (2 * pixels + PAGE_SIZE - 1) / PAGE_SIZE + (pixels + PAGE_SIZE - 1) / PAGE_SIZE
+}
+
+// Why the root service refuses a growth of the budgets of a screen of
+// memory (src/md/features/screen_of_memory.md, "The growth of the
+// budgets"). The word crosses the root ring in the error record of the
+// refusal: grow_refusal_of_word is its border.
+Grow_Refusal :: enum u64 {
+	None                  = 0, // Not a refusal: refused at the border.
+	Not_The_Service       = 1, // The sender does not hold the start grant Screen_Capture.
+	No_Screen_Of_Memory   = 2, // The machine has a screen of a device, or no compositor draws into a screen of memory.
+	Outside_Bounds        = 3, // The size is outside MIN_WIDTH x MIN_HEIGHT to MAX_WIDTH x MAX_HEIGHT.
+	Extra_Open            = 4, // The compositor or the service holds an extra budget: at most one for each.
+	Past_Compositor_Share = 5, // The budget of the compositor and its extra budget pass the share of a process.
+	Past_Service_Share    = 6, // The budget of the service and its extra budget pass the share of a process.
+	No_Pages              = 7, // The budget of the root service did not make an extra budget.
+}
+
+// The words of each refusal of a growth in a line of the log.
+@(rodata)
+GROW_REFUSAL_SENTENCES := [Grow_Refusal]string {
+	.None                  = "no cause",
+	.Not_The_Service       = "the sender does not hold the start grant Screen_Capture",
+	.No_Screen_Of_Memory   = "the compositor does not draw into a screen of memory",
+	.Outside_Bounds        = "the size is outside 320 x 240 to 7680 x 4320",
+	.Extra_Open            = "the compositor or remote_display holds an extra budget already",
+	.Past_Compositor_Share = "the budget of the compositor would pass the share of a process",
+	.Past_Service_Share    = "the budget of remote_display would pass the share of a process",
+	.No_Pages              = "the budget of the root service did not make the extra budgets",
+}
+
+// grow_refusal_of_word is the border of a word of Grow_Refusal: None and a
+// word past the members are refused.
+grow_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: Grow_Refusal, ok: bool) {
+	member := enum_word.member_of_word(Grow_Refusal, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// resize_refusal_of_grow gives the cause that a viewer gets for a refused
+// growth.
+resize_refusal_of_grow :: proc "contextless" (refusal: Grow_Refusal) -> Resize_Refusal {
+	switch refusal {
+	case .None:
+		return .None
+	case .No_Screen_Of_Memory:
+		return .Device_Screen
+	case .Outside_Bounds:
+		return .Outside_Bounds
+	case .Extra_Open:
+		return .Grown_Already
+	case .Past_Compositor_Share:
+		return .Compositor_Budget
+	case .Not_The_Service, .Past_Service_Share, .No_Pages:
+	}
+	return .Service_Budget
+}
+
+// What the root service knows of a growth when it reads the command.
+Grow_Facts :: struct {
+	from_service:          bool, // The sender holds the start grant Screen_Capture.
+	screen_of_memory:      bool, // The machine has no screen of a device, and the compositor draws into a screen of memory.
+	width, height:         u64,
+	compositor_extra_open: bool,
+	service_extra_open:    bool,
+	compositor_paid:       u64, // The pages of the budget of the compositor at its start.
+	service_paid:          u64, // The pages of the budget of the service at its start.
+	share:                 u64, // The largest budget of a process of the machine, in pages.
+}
+
+// screen_budget_grow_decide decides a growth for both processes together:
+// the sender, the screen, the size, the extra budgets that are open, then
+// the share of each process, in this order. It gives the pages of each
+// extra budget, or the refusal and no pages.
+//
+// Example: a growth to 2560 x 1440 gives the compositor 7200 pages and the
+// service 10801 pages, when each sum stays inside the share.
+screen_budget_grow_decide :: proc "contextless" (facts: Grow_Facts) -> (refusal: Grow_Refusal, compositor_pages, service_pages: u64) {
+	switch {
+	case !facts.from_service:
+		return .Not_The_Service, 0, 0
+	case !facts.screen_of_memory:
+		return .No_Screen_Of_Memory, 0, 0
+	case !size_in_bounds(facts.width, facts.height):
+		return .Outside_Bounds, 0, 0
+	case facts.compositor_extra_open || facts.service_extra_open:
+		return .Extra_Open, 0, 0
+	}
+	compositor_pages = compositor_grow_pages(facts.width, facts.height)
+	service_pages = service_copies_pages(facts.width, facts.height)
+	if facts.compositor_paid > facts.share || compositor_pages > facts.share - facts.compositor_paid {
+		return .Past_Compositor_Share, 0, 0
+	}
+	if facts.service_paid > facts.share || service_pages > facts.share - facts.service_paid {
+		return .Past_Service_Share, 0, 0
+	}
+	return .None, compositor_pages, service_pages
 }

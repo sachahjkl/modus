@@ -223,6 +223,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = debug_start(item, name, record.values, &answer.values)
 	case .Plan_Roles:
 		answer.status = plan_roles_command(item, record.values, &answer.values)
+	case .Screen_Budget:
+		answer.status = screen_budget_command(item, record, &answer.values) // screen_budgets.odin
 	}
 	return answer
 }
@@ -468,7 +470,7 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	// starts it: a Start of its name is refused as one.
 	of_the_system := name_is_a_system_part(name) || .Start_Policy in start_grant_set_of(name).grants
 	switch command {
-	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire, .Start_Edit, .Debug_Start, .Plan_Roles:
+	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire, .Start_Edit, .Debug_Start, .Plan_Roles, .Screen_Budget:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
 		// A grant of the start grant set that the command needs, and that the process

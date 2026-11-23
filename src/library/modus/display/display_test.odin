@@ -2,6 +2,7 @@
 package display
 
 import "modus:contract/errors"
+import "modus:contract/memory_screen"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
@@ -770,4 +771,16 @@ the_record_of_the_act_names :: proc(t: ^testing.T) {
 	last[6] = 1
 	_, _, last_ok := act_names_of_values(last)
 	testing.expect(t, !last_ok)
+}
+
+// The pages of the copies of the service of the remote display, as the root
+// service counts them for a growth (memory_screen.service_copies_pages), are
+// the pages that the service makes: the capture face and the copy of the
+// screen, at each bound and at the screens between.
+@(test)
+the_pages_of_the_copies_agree_with_the_screen_of_memory :: proc(t: ^testing.T) {
+	for size in ([?][2]int{{320, 240}, {1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}, {7680, 4320}, {321, 241}}) {
+		mirror := (u64(size[0] * size[1] * 4) + 4095) / 4096
+		testing.expectf(t, capture_pages(size[0], size[1]) + mirror == memory_screen.service_copies_pages(u64(size[0]), u64(size[1])), "%v", size)
+	}
 }
