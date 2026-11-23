@@ -48,10 +48,14 @@ import "modus:console_language"
 import "modus:line_editor"
 
 // The bytes of the longest text: the longest line that the console runs.
-// The nested form of a line is never longer than its line. Each level of a
-// nesting takes one byte at least, so this bound is also the bound of the
-// depth of the parser.
+// The nested form of a line is never longer than its line.
 TEXT_BYTES_MOST :: line_editor.LINE_CAPACITY
+
+// The nesting depth of a console line: a line of TEXT_BYTES_MOST bytes can
+// nest one level for each byte, and the parser takes the stack of its
+// thread for each level, so the depth has its own bound, as a declaration
+// has.
+LINE_PARSE_DEPTH_LIMIT :: 256
 
 // The bytes and nesting depth of a multi-line declaration file (.lex). A
 // file of the most bytes is a large generated declaration: its evaluator
@@ -292,7 +296,7 @@ Parser :: struct {
 	multiline:       bool,
 	trailing_commas: bool,
 	depth:           int,
-	depth_limit:     int, // 0: no separate depth bound (bounded by TEXT_BYTES_MOST).
+	depth_limit:     int, // 0: no separate depth bound (bounded by the bytes of the text).
 }
 
 // tree_nodes gives the active node buffer of tree: external_nodes when
@@ -306,7 +310,7 @@ tree_nodes :: proc "contextless" (tree: ^Syntax_Tree) -> []Node {
 // is a node in its place, and each node before it is in the tree.
 parse :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tree) {
 	tree.external_nodes = nil
-	parse_with_limits(text, lookup, tree, TEXT_BYTES_MOST, false, false, true, 0)
+	parse_with_limits(text, lookup, tree, TEXT_BYTES_MOST, false, false, true, LINE_PARSE_DEPTH_LIMIT)
 }
 
 // parse_declaration reads a multi-line .lex declaration file into tree,

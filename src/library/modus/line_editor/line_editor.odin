@@ -19,9 +19,11 @@ package line_editor
 
 import "modus:contract/text_encoding"
 
-// The bytes of one line. A text process can show a line of this length
-// after a prompt of a few characters, in one terminal record.
-LINE_CAPACITY :: 200
+// The bytes of one line: a pipeline of several stages, a pasted hash with
+// a long call, a record literal of many fields. A text process shows the
+// whole line: the terminal takes a long one in several records
+// (terminal.edit).
+LINE_CAPACITY :: 4096
 
 // One line that the input edits, in the memory of the caller.
 Line :: struct {

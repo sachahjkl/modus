@@ -111,10 +111,10 @@ Window_Problem :: enum u8 {
 	None      = 0,
 	No_Store  = 1, // No store: the notes live until the process stops.
 	Not_Kept  = 2, // The store refused a commit or gave no answer: the changes after it are not kept.
-	Full      = 3, // The note has TEXT_CAPACITY bytes: a key or a paste that adds one is refused.
+	Full      = 3, // The budget cannot hold one more byte of the note: a key or a paste that adds one is refused.
 	Too_Long  = 4, // A note of the store is longer than a text: it is not shown.
 	List_Full = 5, // The list holds NOTE_CAPACITY notes: no new note.
-	Selection = 6, // The selection is longer than the limit of the clipboard.
+	Selection = 6, // The selection is longer than the buffer of a copy.
 	Busy      = 7, // The queue of the store thread is full: the act did not start.
 	Unreadable = 8, // The note shown could not be read whole: it is shown empty, and never written.
 	Version_Unreadable = 9, // The version chosen could not be read: it is not restored.
@@ -128,7 +128,7 @@ window_problem_texts := [Window_Problem]string {
 	.Full               = "The note is full: a key that adds a byte is refused.",
 	.Too_Long           = "The note in the store is too long to show: it is not written over.",
 	.List_Full          = "The list is full: delete a note to make a new one.",
-	.Selection          = "The selection is longer than the clipboard limit of 4096 bytes.",
+	.Selection          = "The selection is longer than a note can be.",
 	.Busy               = "The store is busy: the act did not start. Try again.",
 	.Unreadable         = "The note cannot be read: it is not shown and not written over.",
 	.Version_Unreadable = "This version cannot be read: it cannot be restored.",
@@ -207,8 +207,50 @@ tokens: box_layout.Element_Tokens
 // back from it (store_thread.odin).
 window_request: store_work.Request
 window_result: store_work.Result
-clean_buffer: [text_model.TEXT_CAPACITY]u8
-clipboard_buffer: [display.CLIPBOARD_TEXT_LIMIT]u8
+write_gate: store_work.Write_Gate // The one Write in flight, which owns the write memory.
+
+// The arenas of the window (src/md/features/memory_without_a_bound.md):
+// each holds one buffer that grows in place, paid by the budget of this
+// process, so a note has the size that the budget holds. A reservation
+// costs its frame list only; the budget refuses a commit past it, and the
+// status band says that the note is full.
+TEXT_RESERVE_PAGES :: 4096 // The bytes of a note: 16 MiB.
+ROWS_RESERVE_PAGES :: 4096 // The display rows: 2 Mi rows of 8 bytes.
+// A text from the store and its clean copy, a selection to copy, a paste.
+TRANSFER_RESERVE_PAGES :: 8192
+// The read memory and the write memory of the store thread: one note each.
+STORE_RESERVE_PAGES :: TEXT_RESERVE_PAGES
+
+text_arena: system.Arena
+preview_arena: system.Arena
+rows_arena: system.Arena
+transfer_arena: system.Arena
+
+// arenas_start reserves the arenas and gives them to the text model and to
+// the store thread. A reservation that the budget refuses leaves its zero
+// arena, which refuses each growth: the texts then keep the buffers inside
+// the model.
+arenas_start :: proc "contextless" () {
+	text_arena, _ = system.arena_create(TEXT_RESERVE_PAGES)
+	preview_arena, _ = system.arena_create(TEXT_RESERVE_PAGES)
+	rows_arena, _ = system.arena_create(ROWS_RESERVE_PAGES)
+	transfer_arena, _ = system.arena_create(TRANSFER_RESERVE_PAGES)
+	read_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
+	write_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
+	text_model.text_init_buffer(&text, nil, system.arena_grow, &text_arena)
+	text_model.text_init_buffer(&preview, nil, system.arena_grow, &preview_arena)
+	text_model.layout_init_buffer(&layout, nil, system.arena_grow, &rows_arena)
+}
+
+// transfer_bytes gives count bytes of the transfer arena after its first
+// `after` bytes, which stay. nil: the budget cannot pay them.
+transfer_bytes :: proc "contextless" (after, count: int) -> []u8 {
+	whole, status := system.arena_extend_to(&transfer_arena, u64(after + count))
+	if status != .Ok {
+		return nil
+	}
+	return whole[after:][:count]
+}
 
 title_field :: proc "contextless" (title: string) -> [TITLE_FIELD_BYTES]u8 {
 	return value_kinds.text_field(title, TITLE_FIELD_BYTES)
@@ -223,10 +265,13 @@ shown_title :: proc "contextless" () -> string {
 
 // request_of_note puts a request about a note in the queue of the store
 // thread. false: the queue is full, or the note has no object.
-request_of_note :: proc "contextless" (kind: store_work.Request_Kind, note: ^note_list.Note, generation: i64 = 0, bytes: []u8 = nil) -> (serial: u64, put: bool) {
+//
+// byte_count: Write, the bytes of the text in the write memory; Version,
+// the bytes of the version, from its row.
+request_of_note :: proc "contextless" (kind: store_work.Request_Kind, note: ^note_list.Note, generation: i64 = 0, byte_count: int = 0) -> (serial: u64, put: bool) {
 	request := &window_request
-	request.kind, request.generation = kind, generation
-	if !store_work.name_set(note_list.note_name(note), &request.name, &request.name_count) || !store_work.bytes_set(request, bytes) {
+	request.kind, request.generation, request.byte_count = kind, generation, byte_count
+	if !store_work.name_set(note_list.note_name(note), &request.name, &request.name_count) {
 		return 0, false
 	}
 	request_serial += 1
@@ -314,7 +359,22 @@ commit :: proc "contextless" () {
 		problem_shown, change_wait.waiting = .Not_Kept, false
 		return
 	}
-	if _, put := request_of_note(.Write, note, 0, text_model.text_bytes(&text)); !put {
+	// One Write in flight owns the write memory: a change while it runs
+	// waits for one more pause (store_work.Write_Gate).
+	if !store_work.write_gate_take(&write_gate) {
+		note_list.change_wait_again(&change_wait, system.time())
+		return
+	}
+	bytes := text_model.text_bytes(&text)
+	snapshot, room_ok := write_memory(len(bytes))
+	if !room_ok {
+		store_work.write_gate_done(&write_gate)
+		problem_shown, change_wait.waiting = .Not_Kept, false
+		return
+	}
+	copy(snapshot, bytes)
+	if _, put := request_of_note(.Write, note, 0, len(bytes)); !put {
+		store_work.write_gate_done(&write_gate)
 		note_list.change_wait_again(&change_wait, system.time())
 		return
 	}
@@ -332,16 +392,21 @@ change_end :: proc "contextless" () {
 }
 
 // text_take writes bytes from the store into a text: each invalid sequence
-// becomes the replacement character. ok is false for bytes longer than a
-// text, and the text is then empty.
+// becomes the replacement character. ok is false for bytes that the budget
+// cannot hold, and the text is then empty.
 text_take :: proc "contextless" (into: ^text_model.Text, bytes: []u8) -> (replaced: int, ok: bool) {
-	count, replaced_count, problem := text_model.text_clean(bytes, clean_buffer[:])
-	if problem != .None {
+	defer system.arena_reset(&transfer_arena)
+	clean := transfer_bytes(0, text_model.text_clean_length(bytes))
+	count, replaced_count := 0, 0
+	problem := text_model.Edit_Problem.Too_Long
+	if clean != nil || len(bytes) == 0 {
+		count, replaced_count, problem = text_model.text_clean(bytes, clean)
+	}
+	if problem != .None || text_model.text_replace_whole(into, clean[:count]) != .None {
 		text_model.text_replace_whole(into, nil)
 		text_model.selection_set(into, 0, 0)
 		return 0, false
 	}
-	text_model.text_replace_whole(into, clean_buffer[:count])
 	text_model.selection_set(into, 0, 0)
 	return replaced_count, true
 }
@@ -490,7 +555,7 @@ version_choose :: proc "contextless" (index: int) {
 	if index < 0 || index >= version_count || shown < 0 || !note_session.versions_keys_act(&session) {
 		return
 	}
-	serial, put := request_of_note(.Version, &notes.notes[shown], version_rows[index].generation)
+	serial, put := request_of_note(.Version, &notes.notes[shown], version_rows[index].generation, int(max(version_rows[index].bytes, 0)))
 	if !put {
 		problem_shown = .Busy
 		return
@@ -548,6 +613,10 @@ version_restore :: proc "contextless" () {
 // result that the session does not take is dropped
 // (note_session.result_taken).
 result_apply :: proc "contextless" (result: ^store_work.Result) {
+	// The result of a Write ends the Write in flight, taken or dropped.
+	if result.kind == .Write {
+		store_work.write_gate_done(&write_gate)
+	}
 	note_session.unanswered(&session, result.status)
 	if result.status == .Unanswered {
 		problem_shown = .Not_Kept
@@ -584,7 +653,7 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 	case .Load:
 		switch note_session.load_done(&session, result.status) {
 		case .Text:
-			replaced, _ := text_take(&text, result.bytes[:result.byte_count])
+			replaced, _ := text_take(&text, read_memory()[:result.byte_count])
 			title_refresh()
 			if replaced > 0 {
 				system.log_fact(.Info, Note_Cleaned{replaced = u64(replaced), title = title_field(shown_title())})
@@ -598,7 +667,7 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 			problem_shown = .Unreadable
 			if result.status == .Too_Long {
 				problem_shown = .Too_Long
-				system.log_fact(.Info, Note_Too_Long{bytes = i64(result.byte_count), limit = text_model.TEXT_CAPACITY})
+				system.log_fact(.Info, Note_Too_Long{bytes = i64(result.byte_count), limit = STORE_RESERVE_PAGES * system.PAGE_SIZE})
 			}
 		}
 		layout_refresh()
@@ -617,7 +686,7 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		if !note_session.versions_done(&session, result.status, count) {
 			return
 		}
-		copy(([^]u8)(&version_rows)[:count * size_of(storage.Version)], result.bytes[:count * size_of(storage.Version)])
+		copy(([^]u8)(&version_rows)[:count * size_of(storage.Version)], read_memory()[:count * size_of(storage.Version)])
 		version_count = count
 		bar = {}
 		version_choose(version_count - 1)
@@ -635,7 +704,7 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		if problem_shown == .Version_Unreadable {
 			problem_shown = shown_note_problem()
 		}
-		text_take(&preview, result.bytes[:result.byte_count])
+		text_take(&preview, read_memory()[:result.byte_count])
 		layout_refresh()
 		row := &version_rows[version_chosen]
 		date_buffer: [DATE_FIELD_BYTES]u8
@@ -829,7 +898,12 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 		display.copy_decline(window)
 		return
 	}
-	count, copy_problem := text_model.selection_copy(&text, clipboard_buffer[:])
+	copied := transfer_bytes(0, text_model.selection_count(&text))
+	defer system.arena_reset(&transfer_arena)
+	count, copy_problem := text_model.selection_copy(&text, copied)
+	if copied == nil && text_model.selection_count(&text) > 0 {
+		copy_problem = .Too_Long
+	}
 	switch copy_problem {
 	case .Empty, .Not_Text:
 		display.copy_decline(window)
@@ -846,7 +920,7 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 		display.copy_decline(window)
 		return
 	}
-	if send_problem, _ := display.copy_send(window, clipboard_buffer[:count]); send_problem != .None {
+	if send_problem, _ := display.copy_send(window, copied[:count]); send_problem != .None {
 		return
 	}
 	if action == .Cut && text_model.selection_delete(&text) {
@@ -856,11 +930,18 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 
 // paste_event answers Pasted (Ctrl+V): a text of several lines, with tabs.
 paste_event :: proc "contextless" (window: ^display.Window, event: display.Event) {
-	pasted, paste_problem := display.paste_read(window, event, clipboard_buffer[:], .Multi_Line)
+	// The room of a paste is the bytes of its content, in the transfer
+	// arena; a budget that cannot hold them refuses the paste whole.
+	room := transfer_bytes(0, max(event.byte_count, 0))
+	defer system.arena_reset(&transfer_arena)
+	pasted, paste_problem := display.paste_read(window, event, room, .Multi_Line)
+	if paste_problem == .Too_Large && note_session.text_keys_act(&session) {
+		problem_shown = .Full
+	}
 	if paste_problem != .None || !note_session.text_keys_act(&session) {
 		return
 	}
-	switch text_model.text_insert(&text, clipboard_buffer[:pasted]) {
+	switch text_model.text_insert(&text, room[:pasted]) {
 	case .None:
 		change_end()
 	case .Too_Long:
@@ -1150,6 +1231,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// this source, and the window then keeps its size.
 	_, _ = display.resizable_set(&window, {least_width = LEAST_WIDTH, least_height = LEAST_HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT})
 	columns = columns_of_width(window.width)
+	// Before the store thread starts: it reads and writes the memory of the
+	// notes in the arenas.
+	arenas_start()
 	// Each call of the storage service runs on the store thread: this
 	// thread draws while the store works.
 	if _, status := system.thread_start(store_thread_entry, ctx, STORE_THREAD_STACK_PAGES); status != .Ok {
@@ -1165,6 +1249,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		results_seen := system.event_count(&results_event)
 		for result_take(&window_result) {
 			result_apply(&window_result)
+			// The window took the bytes of the result, or dropped it: the
+			// store thread can fill the read memory again.
+			if window_result.holds_read {
+				store_work.read_hold_release(&read_hold)
+				system.event_wake(&read_released_event)
+			}
 		}
 		if note_list.change_wait_due(&change_wait, system.time()) {
 			commit()

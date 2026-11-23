@@ -25,7 +25,7 @@ The terms Agent step and Agent loop are in [`docs/glossary/access.md`](../../../
 
 ### The language of a step: Lex, run by an agent console
 
-An agent step is an ordered list of 1 to `AGENT_STEP_LINE_CAPACITY` (16) console lines. Each line is a line of the console as the principal types it ([`docs/LEX.md`](../../../docs/LEX.md), "1. What Lex is: one language, two evaluation modes"): one expression, or `name = expression`, at most 200 bytes, evaluated in mode `console`. A name that a line binds is a variable of the agent console: later lines of the step and later steps of the same request read it. A new request clears the variables.
+An agent step is an ordered list of 1 to `AGENT_STEP_LINE_CAPACITY` (16) console lines. Each line is a line of the console as the principal types it ([`docs/LEX.md`](../../../docs/LEX.md), "1. What Lex is: one language, two evaluation modes"): one expression, or `name = expression`, at most `line_editor.LINE_CAPACITY` bytes (4096), evaluated in mode `console`. A name that a line binds is a variable of the agent console: later lines of the step and later steps of the same request read it. A new request clears the variables.
 
 ```
 failed = log.records(0) |> facts(storage.Bad_Block)
@@ -40,7 +40,7 @@ The parser and the evaluator are the ones of the console, `modus:lex_parser` and
 **How the text reaches the one evaluator.** The lines are text, and Lex text has one kind of reader in the system: a console. The console of the principal reads the text that the principal typed, which the terminal carries as characters and never reads. An agent console reads the text that the agent wrote, which `remote` carries and never reads:
 
 1. The runner of the agent on the host sends the lines of a step to `remote` over the connection of its client key, as one typed record: the request serial, the step serial, and a table of line records, each a Text field.
-2. `remote` checks each Text at the text border (UTF-8 with no control character, at most 200 bytes) and the count of lines, and writes the records into the line ring of the agent console of that key. It reads no Lex.
+2. `remote` checks each Text at the text border (UTF-8 with no control character, at most 4096 bytes) and the count of lines, and writes the records into the line ring of the agent console of that key. It reads no Lex.
 3. The agent console takes the lines in order, parses and runs each one, and writes for each line a typed result record on its result ring: the kind of the value, a table or a record with its record description and its rows, or the error record of the failure.
 4. `remote` gives the result records to the runner as typed values. The runner reads each table with its description, as the console draws it.
 

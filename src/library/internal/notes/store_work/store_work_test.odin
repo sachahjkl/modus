@@ -57,11 +57,25 @@ a_name_and_the_bytes_past_their_bounds_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, request.name_count, 0)
 	testing.expect(t, name_set(strings.repeat("n", NAME_BYTES, context.temp_allocator), &request.name, &request.name_count))
 	testing.expect_value(t, request.name_count, NAME_BYTES)
-	long := make([]u8, len(request.bytes) + 1, context.temp_allocator)
-	testing.expect(t, !bytes_set(request, long))
-	testing.expect_value(t, request.byte_count, 0)
-	testing.expect(t, bytes_set(request, long[:len(request.bytes)]))
-	testing.expect_value(t, request.byte_count, len(request.bytes))
-	testing.expect(t, bytes_set(request, nil))
-	testing.expect_value(t, request.byte_count, 0)
+}
+
+// One Write in flight: a second take is refused until the first is done.
+// The read memory: free, held by a result, free again after the release.
+@(test)
+the_write_gate_and_the_read_hold_give_the_memory_to_one_thread_at_a_time :: proc(t: ^testing.T) {
+	gate: Write_Gate
+	testing.expect(t, write_gate_take(&gate))
+	testing.expect(t, !write_gate_take(&gate))
+	testing.expect(t, !write_gate_take(&gate))
+	write_gate_done(&gate)
+	testing.expect(t, write_gate_take(&gate))
+	hold: Read_Hold
+	testing.expect(t, read_hold_free(&hold))
+	read_hold_set(&hold)
+	testing.expect(t, !read_hold_free(&hold))
+	read_hold_release(&hold)
+	testing.expect(t, read_hold_free(&hold))
+	// A damaged word from the memory of the process is not free.
+	hold.held = max(u32)
+	testing.expect(t, !read_hold_free(&hold))
 }

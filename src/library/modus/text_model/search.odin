@@ -11,11 +11,13 @@ package text_model
 import "modus:contract/text_encoding"
 
 // The most bytes of a search query: UTF-8 with no control character.
-SEARCH_QUERY_CAPACITY :: 128
+SEARCH_QUERY_CAPACITY :: 1024
 
-// A non-empty query is at least 1 byte, so a text of TEXT_CAPACITY bytes
-// has at most TEXT_CAPACITY non-overlapping matches.
+// Inline match capacity when the caller supplies no external match buffer.
 MATCH_CAPACITY :: TEXT_CAPACITY
+
+// Caller-supplied growth callback for the search match offset array.
+Match_Grow :: #type proc "contextless" (user_data: rawptr, current: []i32, minimum_matches: int) -> (grown: []i32, ok: bool)
 
 // The moves of the caret inside the search query.
 Search_Motion :: enum u8 {
@@ -28,14 +30,65 @@ Search_Motion :: enum u8 {
 // The search state of the editor. The zero value is closed with an empty
 // query and active_match == -1 after search_open.
 Search :: struct {
-	active:       bool,
-	query:        [SEARCH_QUERY_CAPACITY]u8,
-	query_count:  int,
-	query_caret:  int,
-	origin:       int, // Where incremental typing searches from, so typing "fo" after "f" does not jump past the current match.
-	matches:      [MATCH_CAPACITY]i32,
-	match_count:  int,
-	active_match: int, // Index in matches[:match_count], or -1 when there is no match.
+	active:            bool,
+	query:             [SEARCH_QUERY_CAPACITY]u8,
+	query_count:       int,
+	query_caret:       int,
+	origin:            int, // Where incremental typing searches from, so typing "fo" after "f" does not jump past the current match.
+	matches:           []i32, // Active slice of match byte offsets (external_matches or inline_matches[:]).
+	inline_matches:    [MATCH_CAPACITY]i32,
+	external_matches:  []i32,
+	grow:              Match_Grow,
+	grow_data:         rawptr,
+	match_count:       int,
+	active_match:      int, // Index in matches[:match_count], or -1 when there is no match.
+	matches_truncated: bool, // True if the text had more matches than the caller's match budget held.
+}
+
+// search_init_buffer attaches a caller-supplied match buffer and optional
+// growth callback to search.
+search_init_buffer :: proc "contextless" (search: ^Search, buffer: []i32, grow: Match_Grow = nil, grow_data: rawptr = nil) {
+	search.external_matches = buffer
+	search.matches = len(buffer) > 0 ? buffer : search.inline_matches[:]
+	search.grow = grow
+	search.grow_data = grow_data
+	search.match_count = 0
+	search.active_match = -1
+	search.matches_truncated = false
+}
+
+@(private)
+search_storage :: proc "contextless" (search: ^Search) -> []i32 {
+	if len(search.external_matches) > 0 {
+		return search.external_matches
+	}
+	return search.inline_matches[:]
+}
+
+@(private)
+search_ensure_capacity :: proc "contextless" (search: ^Search, needed: int, used: int) -> bool {
+	if needed < 0 {
+		return false
+	}
+	storage := search_storage(search)
+	if needed <= len(storage) {
+		search.matches = storage
+		return true
+	}
+	if search.grow == nil {
+		return false
+	}
+	grown, ok := search.grow(search.grow_data, storage, needed)
+	if !ok || len(grown) < needed {
+		return false
+	}
+	same_base := len(storage) > 0 && raw_data(grown) == raw_data(storage)
+	if !same_base && used > 0 {
+		copy(grown[:used], storage[:used])
+	}
+	search.external_matches = grown
+	search.matches = grown
+	return true
 }
 
 // search_query_bytes gives the current query bytes.
@@ -71,8 +124,10 @@ search_close :: proc "contextless" (search: ^Search) {
 // (wrapping to match 0 if none is after from_place); when move_caret is
 // true, it moves text.caret and text.anchor to that match.
 search_recompute :: proc "contextless" (search: ^Search, text: ^Text, from_place: int, move_caret: bool) {
+	search.matches = search_storage(search)
 	search.match_count = 0
 	search.active_match = -1
+	search.matches_truncated = false
 	query_length := search.query_count
 	length := text_length(text)
 	if query_length == 0 || query_length > length {
@@ -89,6 +144,10 @@ search_recompute :: proc "contextless" (search: ^Search, text: ^Text, from_place
 			}
 		}
 		if matched {
+			if !search_ensure_capacity(search, search.match_count + 1, search.match_count) {
+				search.matches_truncated = true
+				break
+			}
 			search.matches[search.match_count] = i32(place)
 			search.match_count += 1
 			place += query_length

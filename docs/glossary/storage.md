@@ -360,7 +360,7 @@ Do not use: epoch, transaction id, version (for this).
 
 The history store is the store of the line history of the console in the storage service, apart from its private store.
 
-The line history must survive a stop, but the console must not need the grant of its private store, or the grant to act for the principal, for it. So the root service gives the console a second connection, with the grant `history`. Its store is `console.history`, and its limit is 4 blocks. The history store is not a file of a shell in a home folder: no other process reads it, and `revoke("console", "history")` ends it.
+The line history must survive a stop, but the console must not need the grant of its private store, or the grant to act for the principal, for it. So the root service gives the console a second connection, with the grant `history`. Its store is `console.history`, and its limit is 24 blocks. The history store is not a file of a shell in a home folder: no other process reads it, and `revoke("console", "history")` ends it.
 
 The design: `docs/CONSOLE.md`, "6. The line history across a stop".
 

@@ -429,17 +429,23 @@ surface_resize_names_the_axis_past_the_largest_limit :: proc(t: ^testing.T) {
 // and multi-byte characters.
 @(test)
 clipboard_text_problem_refuses_each_text_that_is_not_text :: proc(t: ^testing.T) {
-	limit_and_one: [CLIPBOARD_TEXT_LIMIT + 1]u8
+	// A long text of a page and one byte; the limit of 1 GiB is tried with
+	// a slice of that length that the check refuses before it reads a byte.
+	LONG :: 4096
+	limit_and_one: [LONG + 1]u8
 	for &value in limit_and_one {
 		value = 'a'
 	}
+	past_the_limit := ([^]u8)(&limit_and_one[0])[:CLIPBOARD_TEXT_LIMIT + 1]
 	refused_always := [?]struct {
 		text:    []u8,
 		room:    int,
 		problem: Clipboard_Problem,
 	}{
 		{nil, CLIPBOARD_TEXT_LIMIT, .Empty},
-		{limit_and_one[:], CLIPBOARD_TEXT_LIMIT + 1, .Too_Large},
+		{past_the_limit, CLIPBOARD_TEXT_LIMIT + 1, .Too_Large},
+		{past_the_limit, max(int), .Too_Large},
+		{limit_and_one[:], LONG, .Too_Large},
 		{limit_and_one[:8], 7, .Too_Large},
 		{limit_and_one[:1], 0, .Too_Large},
 		{{0xFF}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
@@ -482,14 +488,15 @@ clipboard_text_problem_refuses_each_text_that_is_not_text :: proc(t: ^testing.T)
 	}
 	testing.expect_value(t, clipboard_text_problem(limit_and_one[:1], 1, .Single_Line), Clipboard_Problem.None)
 	testing.expect_value(t, clipboard_text_problem(limit_and_one[:1], 1, .Multi_Line), Clipboard_Problem.None)
-	testing.expect_value(t, clipboard_text_problem(limit_and_one[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT, .Single_Line), Clipboard_Problem.None)
-	testing.expect_value(t, clipboard_text_problem(limit_and_one[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT, .Multi_Line), Clipboard_Problem.None)
-	// Multi-line text at exact size bound and one past bound.
+	// A text past the old limit of one page holds: the room bounds it.
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:], LONG + 1, .Single_Line), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:], LONG + 1, .Multi_Line), Clipboard_Problem.None)
+	// Multi-line text at exact room and one past the room.
 	multiline_bound := limit_and_one
 	multiline_bound[0] = '\n'
-	multiline_bound[CLIPBOARD_TEXT_LIMIT - 1] = '\n'
-	testing.expect_value(t, clipboard_text_problem(multiline_bound[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT, .Multi_Line), Clipboard_Problem.None)
-	testing.expect_value(t, clipboard_text_problem(multiline_bound[:CLIPBOARD_TEXT_LIMIT + 1], CLIPBOARD_TEXT_LIMIT + 1, .Multi_Line), Clipboard_Problem.Too_Large)
+	multiline_bound[LONG - 1] = '\n'
+	testing.expect_value(t, clipboard_text_problem(multiline_bound[:LONG], LONG, .Multi_Line), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(multiline_bound[:LONG + 1], LONG, .Multi_Line), Clipboard_Problem.Too_Large)
 	euro := [?]u8{0xE2, 0x82, 0xAC, 'h', 0xC3, 0xA9}
 	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro), .Single_Line), Clipboard_Problem.None)
 	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro), .Multi_Line), Clipboard_Problem.None)

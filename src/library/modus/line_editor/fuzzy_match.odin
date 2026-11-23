@@ -17,13 +17,15 @@ import "modus:contract/text_encoding"
 //                 QUERY_LIMIT places: at most 192 + 2 * 128 + 64 = 512 steps.
 //   the place     a binary search in the kept names: at most 7 orders of
 //                 two names, each one at most NAME_COMPARE_LIMIT bytes, so
-//                 1792 bytes; then a move of at most 64 kept records.
+//                 28 672 bytes; then a move of at most 64 kept records.
 //   equal names   only for a search that skips them (a history): at most
-//                 64 kept names of NAME_COMPARE_LIMIT bytes, 16 384 bytes.
-// The ranking reads at most CANDIDATE_SCAN_LIMIT names. So one key costs
-// at most 4096 * (512 + 1792 + 64), about 9.7 million steps; a search that
-// skips equal names reads at most 256 lines of a history, so at most
-// 256 * (512 + 1792 + 64 + 16 384), about 4.8 million.
+//                 64 kept names of NAME_COMPARE_LIMIT bytes, 262 144 bytes.
+// An order of two names stops at their first byte that differs, so the
+// usual cost is far below these bounds. The ranking reads at most
+// CANDIDATE_SCAN_LIMIT names. So one key costs at most
+// 4096 * (512 + 28 672 + 64), about 120 million steps; a search that skips
+// equal names reads at most 1024 lines of a history, so at most
+// 1024 * (512 + 28 672 + 64 + 262 144), about 300 million.
 
 NAME_SCAN_LIMIT :: 128 // The bytes of a name that the match reads. A longer name matches only in its start.
 QUERY_LIMIT :: 64 // A longer query matches no name.
@@ -33,7 +35,7 @@ RANKED_CAPACITY :: 64 // The best names that a ranking keeps.
 // name comes first, and two names of one length are equal. It holds a whole
 // line of a history, so that two lines that differ only at their end stay
 // two lines.
-NAME_COMPARE_LIMIT :: 256
+NAME_COMPARE_LIMIT :: LINE_CAPACITY
 #assert(NAME_COMPARE_LIMIT >= LINE_CAPACITY)
 
 // The places of the characters of a name that the query matched: bit n is

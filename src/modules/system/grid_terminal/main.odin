@@ -135,7 +135,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Edit:
 				edit := &intake.edit
 				cursor := edit.has_cursor ? u64(edit.cursor) : terminal_records.NO_CURSOR
-				grid_renderer.grid_write_edit_line(&screen, edit_row, edit.text[:edit.length], &edit.code, cursor, .Dark)
+				grid_renderer.grid_write_edit_line(&screen, edit_row, edit.text[:edit.length], edit.code.runs[:clamp(edit.code.count, 0, len(edit.code.runs))], cursor, .Dark)
 			}
 		}
 		_ = grid_renderer.grid_present_dirty(&screen, canvas, &intake.list.shown, edit_row, .Dark)

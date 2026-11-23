@@ -236,7 +236,7 @@ grid_edit_line_takes_one_cell_for_each_utf8_character :: proc(t: ^testing.T) {
 	text := transmute([]u8)string("é中😀a\x1b\xffb")
 	runs := terminal_records.Code_Runs{count = 1, runs = {0 = {start = 2, length = 3, kind = u8(terminal_records.Code_Kind.Function)}}}
 	// The byte 9 starts 'a': three characters are before it.
-	grid_write_edit_line(screen, 1, text, &runs, 9, .Dark)
+	grid_write_edit_line(screen, 1, text, runs.runs[:runs.count], 9, .Dark)
 	expected := [?]rune{'é', '中', '😀', 'a', 0xFFFD, 0xFFFD, 'b', ' '}
 	for character, cell in expected {
 		testing.expectf(t, screen.cells[1][cell].character == character, "the cell %d holds %v", cell, screen.cells[1][cell].character)

@@ -19,7 +19,7 @@ One grammar, one parser (`src/library/modus/lex_parser`), and one lazy evaluator
 | Where it runs | The console process (`src/modules/system/console`) | The sandboxed evaluation process (`src/modules/system/declaration_eval`) |
 | Evaluation strategy | Forces each line whole, left to right, including every `let` binding | Lazy thunk graph: forces only the requested field path and its dependencies |
 | Effects and calls | Allowed: built-in commands, loaded exports, isolated calls, service calls, record streams | Refused at the border with `Effect_Refused` before arguments run |
-| Input format | One line of up to 200 bytes; supports top-level `name = expr` variable assignment | Multi-line `.lex` file up to 64 KiB; supports trailing commas; refuses top-level assignment |
+| Input format | One line of up to 4096 bytes; supports top-level `name = expr` variable assignment | Multi-line `.lex` file up to 64 KiB; supports trailing commas; refuses top-level assignment |
 | Authority | Acts for the principal of the console session | Zero authority: read-only input bundle, no writable store, no network, no root ring |
 | Cross-file loading | Not performed directly; declaration expressions return a typed declaration reference | `import("path.lex")` and `declaration(blake3:...)` read from the caller-supplied read-only bundle |
 

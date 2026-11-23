@@ -29,7 +29,7 @@ grid_renderer_dirty_rows_and_tiny_canvas_bounds :: proc(t: ^testing.T) {
 		count = 1,
 		runs = {0 = {start = 0, length = 4, kind = u8(terminal_records.Code_Kind.Function)}},
 	}
-	grid_write_edit_line(screen, 3, line, &runs, 4, .Dark)
+	grid_write_edit_line(screen, 3, line, runs.runs[:runs.count], 4, .Dark)
 	testing.expect_value(t, grid_present_dirty(screen, canvas, nil, 3, .Dark), 1)
 	palette := graphics.colors_for_contrast_mode(.Standard, true)
 	// Cursor at row 3, col 4 has chosen blue background.

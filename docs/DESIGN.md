@@ -335,7 +335,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 
 - **Control+C** copies, **Control+X** cuts, and **Control+V** pastes the last copied text into the element that has the focus in the window in front. The compositor takes the three keys: a process never receives them as keys, and no process can send them.
 - A copy takes the selection of the editor `edit`, or the whole text of a text field: a single-line field has no selection yet. A multi-line copy preserves LF line ends and tabs (still refusing CR, NUL and all other control characters); single-line fields and the console refuse pasted text that contains a line end, a tab or any control character, so a paste never runs a line.
-- A text on the clipboard is UTF-8 of 1 to 4096 bytes. It stays until the next copy, or until the process that copied it ends.
+- A text on the clipboard is UTF-8 of 1 byte or more, in a memory object of its size that the process that copies pays. The place that pastes bounds it: a field takes a line, the editor what its budget holds. It stays until the next copy, or until the process that copied it ends.
 - A process reads the clipboard only at a paste of the principal, through a handle that the compositor lends for that paste. The log of the compositor names each copy and each paste, with the two windows.
 - The design: `src/md/features/clipboard.md`.
 

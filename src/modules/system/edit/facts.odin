@@ -109,17 +109,17 @@ REPLACED_WORDS :: ", with invalid sequences replaced"
 // the longest text of text_model.walk_problem_texts, and a zero byte.
 WALK_PROBLEM_FIELD_BYTES :: 48
 
-// The text in the store has more bytes than a text of the editor.
-@(log_fact = "edit: the text in the store has more than {text_capacity}: the editor starts empty and keeps nothing")
+// The budget of the editor cannot hold the bytes of the text in the store.
+@(log_fact = "edit: the text in the store has {length}, more than the memory of the editor holds: the editor starts empty and keeps nothing")
 Stored_Text_Too_Long :: struct {
-	text_capacity: value_kinds.Size_In_Bytes,
+	length: value_kinds.Size_In_Bytes,
 }
 
-// The text in the store passes the bytes of a text of the editor once its
+// The budget of the editor cannot hold the text in the store once its
 // invalid sequences are replaced.
-@(log_fact = "edit: the text in the store passes {text_capacity} with its replacement characters: the editor starts empty and keeps nothing")
+@(log_fact = "edit: the text in the store has {length}, and with its replacement characters it is more than the memory of the editor holds: the editor starts empty and keeps nothing")
 Cleaned_Text_Too_Long :: struct {
-	text_capacity: value_kinds.Size_In_Bytes,
+	length: value_kinds.Size_In_Bytes,
 }
 
 // The text of the last run is restored, with no sequence to replace.
@@ -156,8 +156,9 @@ Too_Many_Versions :: struct {
 	action:          [8]u8,
 }
 
-// A version is too long for the editor: the undo or the redo does nothing.
-@(log_fact = "edit: {action}: the version of generation {generation} is too long for the editor")
+// The budget of the editor cannot hold a version that the store made
+// current: the editor keeps nothing more.
+@(log_fact = "edit: {action}: the version of generation {generation} is more than the memory of the editor holds: the store keeps it as the current text, and the editor keeps nothing more")
 Version_Too_Long :: struct {
 	generation: i64,
 	action:     [8]u8,

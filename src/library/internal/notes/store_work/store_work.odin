@@ -6,13 +6,22 @@
 // their events.
 package store_work
 
+import "base:intrinsics"
 import "modus:contract/store"
-import "modus:text_model"
+
+// The bytes of a note go between the two threads in memory that each
+// thread owns in turn, never in the records of the queues, so a note has
+// the size that the budget pays (src/md/features/notes.md, "The store
+// thread"):
+//
+// - the write memory: the window thread writes the text of a Write in it,
+//   and puts the request; it writes nothing more in it until the result of
+//   that Write came back (Write_Gate). One Write is in flight at a time.
+// - the read memory: the store thread writes the bytes of a Load or a
+//   Version, or the rows of Versions, in it, and holds it (Read_Hold) until
+//   the window thread took the result that names them and released it.
 
 NAME_BYTES :: store.ENTRY_NAME_CAPACITY
-// The bytes of a result: a text, and one byte more, so that an object
-// longer than a text shows as one.
-RESULT_BYTES :: text_model.TEXT_CAPACITY + 1
 // The requests that wait at most. A full queue refuses a push: the window
 // keeps its change waiting and tries again at its next turn.
 QUEUE_CAPACITY :: 4
@@ -45,8 +54,7 @@ Request :: struct {
 	name:       [NAME_BYTES]u8,
 	name_count: int,
 	generation: i64, // Version, Restore: the version.
-	bytes:      [text_model.TEXT_CAPACITY]u8, // Write: the text.
-	byte_count: int,
+	byte_count: int, // Write: the bytes of the text in the write memory. Version: the bytes of the version, from its row.
 }
 
 Result :: struct {
@@ -56,8 +64,53 @@ Result :: struct {
 	name:       [NAME_BYTES]u8,
 	name_count: int,
 	generation: i64, // Write, Restore, Remove: the commit; Version: the version read.
-	bytes:      [RESULT_BYTES]u8, // Load, Version: the bytes; Versions: the rows of the versions.
-	byte_count: int,
+	byte_count: int, // Load, Version: the bytes in the read memory; Versions: the bytes of the rows there. Too_Long: the bytes of the note.
+	holds_read: bool, // The read memory holds the bytes of this result: the window releases it after it took them.
+}
+
+// Write_Gate: the one Write in flight. The window thread alone uses it.
+Write_Gate :: struct {
+	in_flight: bool,
+}
+
+// write_gate_take says if the window can write the write memory and put a
+// Write: no Write is in flight. It then marks one in flight.
+write_gate_take :: proc "contextless" (gate: ^Write_Gate) -> bool {
+	if gate.in_flight {
+		return false
+	}
+	gate.in_flight = true
+	return true
+}
+
+// write_gate_done ends the Write in flight: its result came back.
+write_gate_done :: proc "contextless" (gate: ^Write_Gate) {
+	gate.in_flight = false
+}
+
+// Read_Hold: who owns the read memory. 0: the store thread may write it;
+// 1: a result that names it waits for the window thread. The two threads
+// read and write the word; the module wakes the store thread with an
+// event after a release.
+Read_Hold :: struct {
+	held: u32,
+}
+
+// read_hold_free says if the store thread may write the read memory now.
+read_hold_free :: proc "contextless" (hold: ^Read_Hold) -> bool {
+	return intrinsics.atomic_load_explicit(&hold.held, .Acquire) == 0
+}
+
+// read_hold_set marks the read memory held by the result that the store
+// thread puts next.
+read_hold_set :: proc "contextless" (hold: ^Read_Hold) {
+	intrinsics.atomic_store_explicit(&hold.held, 1, .Release)
+}
+
+// read_hold_release gives the read memory back to the store thread: the
+// window thread took the bytes of the result that held it.
+read_hold_release :: proc "contextless" (hold: ^Read_Hold) {
+	intrinsics.atomic_store_explicit(&hold.held, 0, .Release)
 }
 
 // A queue of records, the oldest first. The zero value is empty.
@@ -105,12 +158,4 @@ name_set :: proc "contextless" (name: string, into: ^[NAME_BYTES]u8, count: ^int
 	return true
 }
 
-// bytes_set writes the bytes of a text into a request. false: they are
-// longer than a text, and nothing changed.
-bytes_set :: proc "contextless" (request: ^Request, bytes: []u8) -> bool {
-	if len(bytes) > len(request.bytes) {
-		return false
-	}
-	request.byte_count = copy(request.bytes[:], bytes)
-	return true
-}
+

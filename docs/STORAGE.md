@@ -23,7 +23,7 @@ The terms are in `glossary/storage.md`. The versions and the date are in `ARCHIT
 | "5. Not built: the next steps" | The order of the next capabilities |
 | "6. The tests" | What the host tests and the machine tests check |
 
-**An example.** The console holds its line history in the store `console.history`, with a limit of 4 blocks: `storage.usage()` gives the counts of a store, and from a process that acts for the principal, `place = storage.open_store("console.history")` then `storage.versions(place, "line_history")` lists the earlier states of the object. The picture shows the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes.
+**An example.** The console holds its line history in the store `console.history`, with a limit of 24 blocks: `storage.usage()` gives the counts of a store, and from a process that acts for the principal, `place = storage.open_store("console.history")` then `storage.versions(place, "line_history")` lists the earlier states of the object. The picture shows the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes.
 
 ![The storage service: the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes](screenshots/storage.png)
 

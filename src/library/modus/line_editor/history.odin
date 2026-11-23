@@ -9,10 +9,11 @@ import "modus:contract/text_encoding"
 // at the end stay unused. So each line is one slice of the ring.
 //
 // The ring keeps at most HISTORY_LINE_CAPACITY lines, and fewer when the
-// lines are long: 16384 bytes hold 256 lines of 64 bytes, or 81 lines of
-// 200 bytes. The oldest lines go first.
-HISTORY_LINE_CAPACITY :: 256
-HISTORY_BYTE_CAPACITY :: 16384 // The bytes of the ring of the history.
+// lines are long: 262144 bytes hold 1024 lines of 256 bytes, or 64 lines of
+// LINE_CAPACITY bytes. The oldest lines go first.
+HISTORY_LINE_CAPACITY :: 1024
+HISTORY_BYTE_CAPACITY :: 262144 // The bytes of the ring of the history.
+#assert(LINE_CAPACITY <= int(max(u16)))
 
 // The history of one line, in the memory of the caller.
 History :: struct {

@@ -230,7 +230,7 @@ emit_edit_line :: proc "contextless" (
 	sink: ^Byte_Sink,
 	row_1based: int,
 	text: []u8,
-	runs: ^terminal_records.Code_Runs,
+	runs: []terminal_records.Code_Run,
 	cursor_byte: u64,
 	appearance: graphics.Appearance,
 ) {
@@ -239,9 +239,8 @@ emit_edit_line :: proc "contextless" (
 	emit_sgr_rgb(sink, palette.text, palette.background)
 	sink_text(sink, "\x1b[K")
 	pos := 0
-	if runs != nil && runs.count > 0 {
-		for index in 0 ..< min(runs.count, terminal_records.CODE_RUN_LIMIT) {
-			run := runs.runs[index]
+	{
+		for run in runs {
 			start := int(run.start)
 			end := min(start + int(run.length), len(text))
 			if start > pos && start <= len(text) {

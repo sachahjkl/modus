@@ -6,7 +6,6 @@ import "internal:notes/note_list"
 import "internal:notes/store_work"
 import "modus:storage"
 import "modus:system"
-import "modus:text_model"
 
 // The store thread: the one thread of notes that calls the storage
 // service. The window thread never waits for the store: it puts a request
@@ -36,8 +35,46 @@ store_listed: note_list.Note_List
 LIST_PAGE_ROWS :: 64
 list_rows: [LIST_PAGE_ROWS]storage.Listed
 list_names: [LIST_PAGE_ROWS * note_list.NAME_BYTES]u8
-version_rows_read: [VERSION_ROWS_CAPACITY]storage.Version
-#assert(size_of(version_rows_read) <= store_work.RESULT_BYTES)
+// The read memory and the write memory of the bytes of the notes
+// (store_work): two arenas that the budget of notes pays, which each grow
+// in place to the bytes of one note.
+read_arena: system.Arena
+write_arena: system.Arena
+read_hold: store_work.Read_Hold
+read_released_event: system.Event // The window thread released the read memory.
+
+// read_room gives the read memory from its start, at least `minimum`
+// bytes, after the window released it. The store thread alone calls it.
+read_room :: proc "contextless" (data: rawptr, minimum: int) -> (room: []u8, ok: bool) {
+	for {
+		seen := system.event_count(&read_released_event)
+		if store_work.read_hold_free(&read_hold) {
+			break
+		}
+		system.event_wait(&read_released_event, seen)
+	}
+	bytes, status := system.arena_extend_to(&read_arena, u64(minimum))
+	if status != .Ok {
+		return nil, false
+	}
+	return bytes[:minimum], true
+}
+
+// read_memory gives the bytes that the read memory holds: the window
+// thread reads a result there while the result holds it.
+read_memory :: proc "contextless" () -> []u8 {
+	return read_arena.base[:read_arena.used_bytes]
+}
+
+// write_memory gives the write memory, at least `count` bytes: the window
+// thread alone calls it, with no Write in flight.
+write_memory :: proc "contextless" (count: int) -> (bytes: []u8, ok: bool) {
+	whole, status := system.arena_extend_to(&write_arena, u64(count))
+	if status != .Ok {
+		return nil, false
+	}
+	return whole[:count], true
+}
 
 // store_thread_entry runs the requests one after the other, in the order
 // in which the window thread put them.
@@ -55,6 +92,9 @@ store_thread_entry :: proc "c" (parameter: rawptr) -> ! {
 		store_request_run(ctx)
 		for {
 			room_seen := system.event_count(&results_taken_event)
+			if store_result.holds_read {
+				store_work.read_hold_set(&read_hold)
+			}
 			system.lock(&store_lock)
 			put := store_work.queue_push(&results, &store_result)
 			system.unlock(&store_lock)
@@ -114,7 +154,7 @@ store_request_run :: proc "contextless" (ctx: ^system.Context) {
 	result := &store_result
 	result.kind, result.serial, result.status = request.kind, request.serial, .Done
 	result.name, result.name_count = request.name, request.name_count
-	result.generation, result.byte_count = 0, 0
+	result.generation, result.byte_count, result.holds_read = 0, 0, false
 	name := string(request.name[:request.name_count])
 	if request.kind != .List && !store_opened {
 		result.status = .No_Store
@@ -125,32 +165,43 @@ store_request_run :: proc "contextless" (ctx: ^system.Context) {
 	case .List:
 		store_list(ctx)
 	case .Load:
-		bytes, found, status := storage.read(&store_client, storage.ROOT, name, result.bytes[:], &error)
+		bytes, outcome, status := storage.read_whole(&store_client, storage.ROOT, name, read_room, nil, &error)
 		switch {
 		case status == .Damaged:
 			result.status = .Damaged
 		case status != .Ok:
 			result.status = store_failed(.Load, status, &error)
-		case !found:
+		case outcome == .Absent:
 			result.status = .Absent
-		case len(bytes) > text_model.TEXT_CAPACITY:
+		case outcome == .Too_Long:
 			result.status = .Too_Long
-			result.byte_count = len(bytes)
+			if size, size_status := storage.size(&store_client, storage.ROOT, name, &error); size_status == .Ok {
+				result.byte_count = int(max(size, 0))
+			}
 		case:
 			result.byte_count = len(bytes)
+			result.holds_read = true
 		}
 	case .Write:
-		generation, status := storage.write(&store_client, storage.ROOT, name, request.bytes[:request.byte_count], &error)
+		// The window writes nothing in the write memory until this result
+		// (store_work.Write_Gate).
+		text := write_arena.base[:min(u64(request.byte_count), write_arena.used_bytes)]
+		generation, status := storage.write_whole(&store_client, storage.ROOT, name, text, &error)
 		if status != .Ok || generation < 0 {
 			result.status = store_failed(.Write, status, &error)
 			return
 		}
 		result.generation = generation
 		// The fact of the commit, with the title of the text that it holds.
-		title, title_count := note_list.title_of(request.bytes[:min(request.byte_count, note_list.TITLE_BYTES + 4)])
+		title, title_count := note_list.title_of(text[:min(len(text), note_list.TITLE_BYTES + 4)])
 		system.log_fact(.Info, Note_Kept{generation = generation, bytes = u64(request.byte_count), title = title_field(string(title[:title_count]))})
 	case .Versions:
-		rows, total, status := storage.versions(&store_client, storage.ROOT, name, version_rows_read[:], &error)
+		room, room_ok := read_room(nil, VERSION_ROWS_CAPACITY * size_of(storage.Version))
+		if !room_ok {
+			result.status = .Too_Long
+			return
+		}
+		rows, total, status := storage.versions(&store_client, storage.ROOT, name, ([^]storage.Version)(raw_data(room))[:VERSION_ROWS_CAPACITY], &error)
 		if status != .Ok {
 			result.status = store_failed(.Versions, status, &error)
 			return
@@ -158,17 +209,27 @@ store_request_run :: proc "contextless" (ctx: ^system.Context) {
 		if total > i64(len(rows)) {
 			system.log_fact(.Info, Versions_Cut{versions = total, listed = VERSION_ROWS_CAPACITY})
 		}
-		result.byte_count = copy(result.bytes[:], ([^]u8)(raw_data(rows))[:len(rows) * size_of(storage.Version)])
+		result.byte_count = len(rows) * size_of(storage.Version)
+		result.holds_read = true
 	case .Version:
 		result.generation = request.generation
-		bytes, status := storage.version(&store_client, storage.ROOT, name, request.generation, result.bytes[:], &error)
+		// The size of the version comes from its row; storage.version reads
+		// it in pieces, and says Too_Small when it is larger than the row.
+		room, room_ok := read_room(nil, max(request.byte_count, 0))
+		if !room_ok {
+			result.status = .Too_Long
+			result.byte_count = request.byte_count
+			return
+		}
+		bytes, status := storage.version(&store_client, storage.ROOT, name, request.generation, room, &error)
 		switch {
+		case status == .Too_Small:
+			result.status = .Too_Long
 		case status != .Ok:
 			result.status = store_failed(.Version, status, &error)
-		case len(bytes) > text_model.TEXT_CAPACITY:
-			result.status = .Too_Long
 		case:
 			result.byte_count = len(bytes)
+			result.holds_read = true
 		}
 	case .Restore:
 		commit, status := storage.restore(&store_client, storage.ROOT, name, request.generation, &error)

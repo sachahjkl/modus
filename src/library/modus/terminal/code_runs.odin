@@ -10,7 +10,9 @@ package terminal_records
 //   - a Text record: Style.code, one kind for the whole run of text: the
 //     lines that the terminal keeps have runs already;
 //   - a Code_Runs record: the runs of the next Edit record, or of the next
-//     List_Row record of one row: a row that the terminal keeps whole.
+//     List_Row record of one row: a row that the terminal keeps whole. An
+//     edit line takes the runs of each Code_Runs record before it, so a
+//     line longer than one record keeps its colors.
 // A run gives a color, never text: a run that is refused, or a row with
 // more runs than CODE_RUN_LIMIT, leaves the text whole and plain.
 
@@ -35,25 +37,39 @@ Code_Kind :: enum u8 {
 	Unknown         = 12, // A name that is no command, module or variable, or a byte that the language does not take.
 }
 
-// One run: start and length in bytes of the text of its row. A row has at
-// most RUN_LIMIT bytes: a byte holds its start. A part of one kind that is
-// longer than 255 bytes is two runs. The kind is the byte of a Code_Kind,
-// not the enum: the runs come from another process, and a reader takes the
-// byte through code_kind_of, which refuses a byte that names no kind.
-Code_Run :: struct {
-	start:    u8, // The first byte of the run in the text of its row.
-	length:   u8, // The bytes of the run.
-	kind:     u8, // What the run is: a Code_Kind.
-	reserved: u8, // 0.
+// One run: start and length in bytes of the text of its row. The start is
+// two bytes, as an edit line has up to EDIT_TEXT_LIMIT bytes, more than
+// one record; a part of one kind that is longer than 255 bytes is two
+// runs. The kind is the byte of a Code_Kind, not the enum: the runs come
+// from another process, and a reader takes the byte through code_kind_of,
+// which refuses a byte that names no kind.
+Code_Run :: struct #packed {
+	start:  u16, // The first byte of the run in the text of its row.
+	length: u8, // The bytes of the run.
+	kind:   u8, // What the run is: a Code_Kind.
 }
 #assert(size_of(Code_Run) == 4)
+#assert(EDIT_TEXT_LIMIT <= int(max(u16)))
 
-// The runs of one row: the bytes of one record of the text region.
+// The runs of one Code_Runs record: the bytes of one record of the text
+// region.
 CODE_RUN_LIMIT :: RUN_LIMIT / size_of(Code_Run)
 
-// The runs of one row or one edit line.
+// The runs of an edit line at most: the runs of 16 Code_Runs records. A
+// line with more parts keeps its first runs, and its text after them is
+// plain.
+EDIT_CODE_RUN_LIMIT :: 16 * CODE_RUN_LIMIT
+
+// The runs of one row of the list.
 Code_Runs :: struct {
 	runs:  [CODE_RUN_LIMIT]Code_Run, // In the order of their bytes.
+	count: int, // The runs in use.
+}
+
+// The runs of an edit line: the runs of each Code_Runs record before its
+// Edit record, in order.
+Edit_Code_Runs :: struct {
+	runs:  [EDIT_CODE_RUN_LIMIT]Code_Run, // In the order of their bytes.
 	count: int, // The runs in use.
 }
 
@@ -95,13 +111,16 @@ code_kind_color :: proc "contextless" (kind: Code_Kind, plain: graphics.Color) -
 // code_runs_send gives the runs of the next record of a target: Kind.Edit,
 // or Kind.List_Row with the number of its row. The process sends it just
 // before that record. No runs: nothing is sent, and the record is plain.
+// The runs of an edit line go in as many records as they need, up to
+// EDIT_CODE_RUN_LIMIT; a row of the list takes CODE_RUN_LIMIT runs.
 code_runs_send :: proc "contextless" (terminal: ^Terminal, target: Kind, row: int, runs: []Code_Run) {
-	count := min(len(runs), CODE_RUN_LIMIT)
-	if count == 0 {
-		return
+	rest := runs[:min(len(runs), target == .Edit ? EDIT_CODE_RUN_LIMIT : CODE_RUN_LIMIT)]
+	for len(rest) > 0 {
+		count := min(len(rest), CODE_RUN_LIMIT)
+		append(terminal, string(([^]u8)(raw_data(rest))[:count * size_of(Code_Run)]))
+		push(terminal, ring.Record{kind = u32(Kind.Code_Runs), tag = u32(count * size_of(Code_Run)), values = {0 = u64(target), 1 = u64(max(row, 0))}})
+		rest = rest[count:]
 	}
-	append(terminal, string(([^]u8)(raw_data(runs))[:count * size_of(Code_Run)]))
-	push(terminal, ring.Record{kind = u32(Kind.Code_Runs), tag = u32(count * size_of(Code_Run)), values = {0 = u64(target), 1 = u64(max(row, 0))}})
 }
 
 // code_runs_read copies the runs of a Code_Runs record from its two parts
@@ -119,12 +138,28 @@ code_runs_read :: proc "contextless" (first, second: []u8) -> (read: Code_Runs, 
 	return read, true
 }
 
+// edit_code_runs_add adds the runs of a Code_Runs record to the runs of the
+// next edit line. Bytes that are not a whole count of runs, or runs past
+// EDIT_CODE_RUN_LIMIT, give false: the runs that came before stay, and
+// the check at the Edit record refuses nothing that it did not see.
+edit_code_runs_add :: proc "contextless" (pending: ^Edit_Code_Runs, first, second: []u8) -> bool {
+	read, ok := code_runs_read(first, second)
+	if !ok {
+		return false
+	}
+	pending.count = clamp(pending.count, 0, EDIT_CODE_RUN_LIMIT)
+	kept := copy(pending.runs[pending.count:], read.runs[:read.count])
+	pending.count += kept
+	return kept == read.count
+}
+
 // code_runs_check keeps the runs of a row of length bytes when each run is
 // inside the row, after the run before it, with at least one byte and a
 // kind that exists. One run that is not: the row has no runs, and false.
-// The text is not changed in either case.
-code_runs_check :: proc "contextless" (runs: ^Code_Runs, length: int) -> bool {
-	count := clamp(runs.count, 0, CODE_RUN_LIMIT)
+// The text is not changed in either case. Runs is a Code_Runs or an
+// Edit_Code_Runs.
+code_runs_check :: proc "contextless" (runs: ^$Runs, length: int) -> bool {
+	count := clamp(runs.count, 0, len(runs.runs))
 	end := 0
 	for run in runs.runs[:count] {
 		start := int(run.start)
@@ -144,8 +179,8 @@ code_runs_check :: proc "contextless" (runs: ^Code_Runs, length: int) -> bool {
 // the bytes in order keeps): each byte costs one step at most. The check of
 // the runs refused each byte of no kind already; the border reads the byte
 // again, and a byte that names no kind gives no color of its own.
-code_runs_kind_at :: proc "contextless" (runs: ^Code_Runs, place: int, cursor: ^int) -> Code_Kind {
-	count := clamp(runs.count, 0, CODE_RUN_LIMIT)
+code_runs_kind_at :: proc "contextless" (runs: ^$Runs, place: int, cursor: ^int) -> Code_Kind {
+	count := clamp(runs.count, 0, len(runs.runs))
 	for cursor^ < count && int(runs.runs[cursor^].start) + int(runs.runs[cursor^].length) <= place {
 		cursor^ += 1
 	}

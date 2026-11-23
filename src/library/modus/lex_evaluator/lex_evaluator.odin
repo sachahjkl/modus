@@ -27,26 +27,31 @@ import "modus:lex_parser"
 // computed. The measure over the declarations of the system sets the bound
 // when the evaluator first runs one; until then it is far above the steps
 // of the longest line of the console, NODE_CAPACITY.
-EVALUATION_BUDGET_STEPS :: 1 << 20
+EVALUATION_BUDGET_STEPS :: 1 << 25
 
 #assert(lex_parser.NODE_CAPACITY * 5000 < EVALUATION_BUDGET_STEPS)
 
 // The bytes of stack that one evaluation may take, from its first force:
 // the evaluator recurses one level for each force inside a force, and a
 // level takes from 1 KiB (an operator) to 5 KiB (a call) in a module built
-// with -o:speed. The deepest line of 200 bytes takes about 340 KiB. A host
+// with -o:speed. The parser bounds the depth of a line
+// (lex_parser.LINE_PARSE_DEPTH_LIMIT), and the deepest line takes about
+// 340 KiB. A host
 // gives its thread this bound and room for its commands at the deepest
 // place (src/md/features/declarations.md, "The functions of layer 4 as
 // built").
 EVALUATION_STACK_BYTES :: 512 * 1024
 
-// The calls of functions of one evaluation, the thunks of their bodies, and
-// the items of its lists. A call is kept until the evaluation ends: a
-// function or a literal that it made can outlive it.
-CALL_CAPACITY :: 256
-CALL_THUNK_CAPACITY :: 512
-LIST_ITEM_CAPACITY :: 256
-HASH_CAPACITY :: 64
+// The calls of functions of one evaluation, the thunks of their bodies, the
+// items of its lists and its hashes, in the memory of the evaluation. A
+// call is kept until the evaluation ends: a function or a literal that it
+// made can outlive it. A line of LINE_CAPACITY bytes holds a list of 2048
+// items, a map over a folder of a few thousand entries, and as many hash
+// literals as it has room for.
+CALL_CAPACITY :: 4096
+CALL_THUNK_CAPACITY :: 8192
+LIST_ITEM_CAPACITY :: 4096
+HASH_CAPACITY :: 64 + lex_parser.TEXT_BYTES_MOST / 71 // A hash literal takes 71 bytes.
 EVALUATION_DEPTH_LIMIT :: 256
 
 // A call of a function in the memory of an evaluation, from 1.

@@ -1055,7 +1055,9 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 			}
 		}
 	case .Paste:
-		buffer: [display.CLIPBOARD_TEXT_LIMIT]u8
+		// A field of the palette holds a line: a longer paste is refused
+		// whole, as clipboard_read_local refuses a content past its room.
+		buffer: [line_editor.LINE_CAPACITY]u8
 		if count, ok := clipboard_read_local(buffer[:]); ok {
 			drawn, text_changed, _ := palette.panel_paste(panel, string(buffer[:count]))
 			if text_changed && panel.state == .Search {

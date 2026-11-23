@@ -448,3 +448,221 @@ a_full_forward_list_forgets_its_oldest_step :: proc(t: ^testing.T) {
 	step, _ := walk_forward(&walk)
 	testing.expect_value(t, step.to, i64(1000 - (WALK_FORWARD_CAPACITY + 1)))
 }
+
+// Simulated uncommitted-reservation arena for testing in-place growth and
+// exact budget refusal in host tests.
+@(private = "file")
+Test_Reservation :: struct {
+	backing:    []u8,
+	committed:  int,
+	budget_cap: int,
+}
+
+@(private = "file")
+test_bytes_grow :: proc "contextless" (user_data: rawptr, current: []u8, minimum_bytes: int) -> (grown: []u8, ok: bool) {
+	res := (^Test_Reservation)(user_data)
+	if minimum_bytes > res.budget_cap || minimum_bytes > len(res.backing) {
+		return nil, false
+	}
+	target := max(res.committed * 2, 4096)
+	for target < minimum_bytes {
+		target *= 2
+	}
+	target = min(target, res.budget_cap, len(res.backing))
+	res.committed = target
+	return res.backing[:target], true
+}
+
+@(private = "file")
+test_rows_grow :: proc "contextless" (user_data: rawptr, current: []Row, minimum_rows: int) -> (grown: []Row, ok: bool) {
+	res := (^Test_Reservation)(user_data)
+	needed_bytes := minimum_rows * size_of(Row)
+	if needed_bytes > res.budget_cap || needed_bytes > len(res.backing) {
+		return nil, false
+	}
+	target_rows := max(len(current) * 2, 1024)
+	for target_rows < minimum_rows {
+		target_rows *= 2
+	}
+	max_rows := min(res.budget_cap, len(res.backing)) / size_of(Row)
+	target_rows = min(target_rows, max_rows)
+	res.committed = target_rows * size_of(Row)
+	return ([^]Row)(raw_data(res.backing))[:target_rows], true
+}
+
+@(private = "file")
+test_matches_grow :: proc "contextless" (user_data: rawptr, current: []i32, minimum_matches: int) -> (grown: []i32, ok: bool) {
+	res := (^Test_Reservation)(user_data)
+	needed_bytes := minimum_matches * size_of(i32)
+	if needed_bytes > res.budget_cap || needed_bytes > len(res.backing) {
+		return nil, false
+	}
+	target := max(len(current) * 2, 1024)
+	for target < minimum_matches {
+		target *= 2
+	}
+	max_items := min(res.budget_cap, len(res.backing)) / size_of(i32)
+	target = min(target, max_items)
+	res.committed = target * size_of(i32)
+	return ([^]i32)(raw_data(res.backing))[:target], true
+}
+
+@(test)
+caller_backed_text_handles_over_64kib_and_refuses_past_budget :: proc(t: ^testing.T) {
+	BUDGET :: 160 * 1024
+	backing := make([]u8, 256 * 1024)
+	defer delete(backing)
+	res := Test_Reservation{backing = backing, committed = 16 * 1024, budget_cap = BUDGET}
+
+	text := new(Text)
+	defer free(text)
+	text_init_buffer(text, backing[:res.committed], test_bytes_grow, &res)
+
+	// Insert 100 KiB (well past TEXT_CAPACITY = 32 KiB and > 64 KiB).
+	chunk := make([]u8, 100 * 1024)
+	defer delete(chunk)
+	for i in 0 ..< len(chunk) {
+		chunk[i] = i % 64 == 63 ? '\n' : u8('a' + (i % 26))
+	}
+	testing.expect_value(t, text_insert(text, chunk), Edit_Problem.None)
+	testing.expect_value(t, text_length(text), 100 * 1024)
+
+	// Move gap to the middle and insert another 40 KiB across the gap.
+	selection_set(text, 50 * 1024, 50 * 1024)
+	mid := make([]u8, 40 * 1024)
+	defer delete(mid)
+	for &b in mid {
+		b = 'Z'
+	}
+	testing.expect_value(t, text_insert(text, mid), Edit_Problem.None)
+	testing.expect_value(t, text_length(text), 140 * 1024)
+	testing.expect_value(t, byte_at(text, 50 * 1024), u8('Z'))
+	testing.expect_value(t, byte_at(text, 90 * 1024 - 1), u8('Z'))
+	testing.expect_value(t, byte_at(text, 90 * 1024), chunk[50 * 1024])
+
+	// Selection copy spanning the gap at >64 KiB offsets.
+	selection_set(text, 50 * 1024 - 4, 90 * 1024 + 4)
+	copied := make([]u8, 40 * 1024 + 8)
+	defer delete(copied)
+	n, cp := selection_copy(text, copied)
+	testing.expect_value(t, cp, Edit_Problem.None)
+	testing.expect_value(t, n, 40 * 1024 + 8)
+	testing.expect_value(t, copied[4], u8('Z'))
+	testing.expect_value(t, copied[len(copied) - 5], u8('Z'))
+
+	// Exact budget bound succeeds; 1 byte past budget is refused without changing text or selection.
+	remaining := BUDGET - text_length(text)
+	fill := make([]u8, remaining)
+	defer delete(fill)
+	for &b in fill {
+		b = 'q'
+	}
+	selection_set(text, text_length(text), text_length(text))
+	testing.expect_value(t, text_insert(text, fill), Edit_Problem.None)
+	testing.expect_value(t, text_length(text), BUDGET)
+
+	selection_set(text, 10, 10)
+	testing.expect_value(t, text_insert_character(text, 'x'), Edit_Problem.Too_Long)
+	testing.expect_value(t, text_length(text), BUDGET)
+	testing.expect_value(t, text.caret, 10)
+	testing.expect_value(t, text.anchor, 10)
+
+	// text_replace_whole past budget is refused and keeps previous text intact.
+	too_big := make([]u8, BUDGET + 1)
+	defer delete(too_big)
+	for &b in too_big {
+		b = 'b'
+	}
+	testing.expect_value(t, text_replace_whole(text, too_big), Edit_Problem.Too_Long)
+	testing.expect_value(t, text_length(text), BUDGET)
+}
+
+@(test)
+caller_backed_layout_and_search_handle_over_64kib_and_refuse_past_budget :: proc(t: ^testing.T) {
+	// 70 000 newlines -> 70 001 display rows and 70 000 single-byte matches.
+	COUNT :: 70_000
+	text_backing := make([]u8, 128 * 1024)
+	defer delete(text_backing)
+	text_res := Test_Reservation{backing = text_backing, committed = 16 * 1024, budget_cap = 128 * 1024}
+	text := new(Text)
+	defer free(text)
+	text_init_buffer(text, text_backing[:text_res.committed], test_bytes_grow, &text_res)
+
+	lines := make([]u8, COUNT * 2)
+	defer delete(lines)
+	for i in 0 ..< COUNT {
+		lines[i * 2] = 'a'
+		lines[i * 2 + 1] = '\n'
+	}
+	// Grow text_res budget to hold 140 000 bytes.
+	text_res.budget_cap = len(text_backing)
+	// Use 256 KiB backing so 140 000 bytes fits.
+	text_backing_big := make([]u8, 256 * 1024)
+	defer delete(text_backing_big)
+	text_res_big := Test_Reservation{backing = text_backing_big, committed = 16 * 1024, budget_cap = 256 * 1024}
+	text_init_buffer(text, text_backing_big[:text_res_big.committed], test_bytes_grow, &text_res_big)
+	testing.expect_value(t, text_insert(text, lines), Edit_Problem.None)
+	testing.expect_value(t, text_length(text), COUNT * 2)
+
+	// Layout with tight row budget refuses cleanly with Rows_Full.
+	small_row_bytes := make([]u8, 4096 * size_of(Row))
+	defer delete(small_row_bytes)
+	small_row_res := Test_Reservation{backing = small_row_bytes, committed = 1024 * size_of(Row), budget_cap = 2048 * size_of(Row)}
+	layout := new(Layout)
+	defer free(layout)
+	layout_init_buffer(layout, ([^]Row)(raw_data(small_row_bytes))[:1024], test_rows_grow, &small_row_res)
+	testing.expect_value(t, layout_compute(layout, text, COLUMNS, .Character), Layout_Problem.Rows_Full)
+	testing.expect_value(t, layout.row_count, 2048)
+
+	// Layout with sufficient row budget computes all 70 001 rows.
+	big_row_bytes := make([]u8, 80_000 * size_of(Row))
+	defer delete(big_row_bytes)
+	big_row_res := Test_Reservation{backing = big_row_bytes, committed = 1024 * size_of(Row), budget_cap = 80_000 * size_of(Row)}
+	layout_init_buffer(layout, ([^]Row)(raw_data(big_row_bytes))[:1024], test_rows_grow, &big_row_res)
+	testing.expect_value(t, layout_compute(layout, text, COLUMNS, .Character), Layout_Problem.None)
+	testing.expect_value(t, layout.row_count, COUNT + 1)
+	testing.expect_value(t, layout.line_count, COUNT + 1)
+	testing.expect_value(t, row_of(layout, COUNT * 2), COUNT)
+
+	// Search with tight match budget truncates cleanly without writing out of bounds.
+	small_match_bytes := make([]u8, 1024 * size_of(i32))
+	defer delete(small_match_bytes)
+	small_match_res := Test_Reservation{backing = small_match_bytes, committed = 512 * size_of(i32), budget_cap = 1024 * size_of(i32)}
+	search := new(Search)
+	defer free(search)
+	search_init_buffer(search, ([^]i32)(raw_data(small_match_bytes))[:512], test_matches_grow, &small_match_res)
+	search_open(search, text)
+	testing.expect_value(t, search_query_set(search, text, transmute([]u8)string("a")), Edit_Problem.None)
+	testing.expect(t, search.matches_truncated)
+	testing.expect_value(t, search.match_count, 1024)
+
+	// Search with sufficient match budget finds all 70 000 matches.
+	big_match_bytes := make([]u8, 80_000 * size_of(i32))
+	defer delete(big_match_bytes)
+	big_match_res := Test_Reservation{backing = big_match_bytes, committed = 1024 * size_of(i32), budget_cap = 80_000 * size_of(i32)}
+	search_init_buffer(search, ([^]i32)(raw_data(big_match_bytes))[:1024], test_matches_grow, &big_match_res)
+	search_open(search, text)
+	testing.expect_value(t, search_query_set(search, text, transmute([]u8)string("a")), Edit_Problem.None)
+	testing.expect(t, !search.matches_truncated)
+	testing.expect_value(t, search.match_count, COUNT)
+	testing.expect_value(t, search.matches[COUNT - 1], i32((COUNT - 1) * 2))
+}
+
+// The length that text_clean writes, known before the copy: each case gives
+// the count of text_clean, and a target one byte short is refused whole.
+@(test)
+the_clean_length_is_the_count_of_the_clean_copy :: proc(t: ^testing.T) {
+	cases := [?]string{"", "a", "a\nb\tc", "\xff", "\x00\x1b", "é\xc3", "\xed\xa0\x80x", "€€\x7f"}
+	target: [64]u8
+	for source in cases {
+		bytes := transmute([]u8)source
+		count, _, problem := text_clean(bytes, target[:])
+		testing.expect_value(t, problem, Edit_Problem.None)
+		testing.expect_value(t, text_clean_length(bytes), count)
+		if count > 0 {
+			short, _, short_problem := text_clean(bytes, target[:count - 1])
+			testing.expect_value(t, short_problem, Edit_Problem.Too_Long)
+			testing.expect_value(t, short, 0)
+		}
+	}
+}

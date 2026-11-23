@@ -289,7 +289,7 @@ Open_Call :: struct {
 
 // run_add writes the run text[start:end] of a kind after count runs. A
 // part longer than 255 bytes is several runs; a run cannot start after the
-// byte 255 (a row has RUN_LIMIT bytes); the kind None is no run. It gives
+// byte 65535 (terminal.Code_Run); the kind None is no run. It gives
 // the new count; runs that do not fit are not written.
 run_add :: proc "contextless" (runs: []terminal.Code_Run, count: int, start, end: int, kind: terminal.Code_Kind) -> int {
 	if kind == .None {
@@ -297,9 +297,9 @@ run_add :: proc "contextless" (runs: []terminal.Code_Run, count: int, start, end
 	}
 	written := count
 	place := start
-	for place < end && written < len(runs) && place <= 255 {
+	for place < end && written < len(runs) && place <= int(max(u16)) {
 		length := min(end - place, 255)
-		runs[written] = {start = u8(place), length = u8(length), kind = u8(kind)}
+		runs[written] = {start = u16(place), length = u8(length), kind = u8(kind)}
 		written += 1
 		place += length
 	}

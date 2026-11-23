@@ -216,28 +216,32 @@ scratch_bytes :: proc "contextless" (size: int) -> []u8 {
 // the evaluator, which `binding.field` of a let reads too.
 field_value :: lex_evaluator.record_field_value
 
-VARIABLE_CAPACITY :: 16
-VARIABLE_NAME_SIZE :: 16
-VARIABLE_TEXT_SIZE :: 96
+// The variables of the console. A variable keeps the bytes of its value
+// (a Text, a Record, a Table and its description, the items of a List and
+// their bytes) in a memory object of their size, which the budget of the
+// console pays: a value has the size that the budget holds, not a size of
+// a slot. A name has at most a name of an identifier of Lex that a person
+// types.
+VARIABLE_CAPACITY :: 64
+VARIABLE_NAME_SIZE :: 64
 ARGUMENT_CAPACITY :: module.PARAMETER_CAPACITY // The arguments of a call: those of an export at most.
 
 // The items of a list that one variable keeps, the items of its nested
-// lists included (lex_evaluator, kept_list.odin). Their texts and records
-// take the memory of a table of the variable.
+// lists included (lex_evaluator, kept_list.odin): each list that a line
+// can make.
 VARIABLE_LIST_ITEM_CAPACITY :: lex_evaluator.KEPT_LIST_ITEM_CAPACITY
-#assert(TABLE_KEPT >= lex_evaluator.KEPT_LIST_BYTE_CAPACITY)
 
 Variable :: struct {
 	name:            [VARIABLE_NAME_SIZE]u8,
 	name_count:      int, // 0: the slot is free.
 	value:           Value,
-	text:            [VARIABLE_TEXT_SIZE]u8,
-	record:          [module.RECORD_SIZE_LIMIT / 8]u64,
-	table:           [TABLE_KEPT / 8]u64, // The records of a Table, or the texts and records of the items of a List.
-	description:     [DESCRIPTION_SIZE / 8]u64, // A description that join or columns made: it is in the memory of the line.
-	// A List: its items from 0, then the items of each nested list. The
-	// value of a nested list names its first item here.
-	list_items:      [VARIABLE_LIST_ITEM_CAPACITY]Value,
+	// The memory object of the bytes of the value, mapped; 0: the value
+	// holds no byte of a line.
+	memory:          system.Handle,
+	memory_bytes:    []u8,
+	// A List: its items from 0, then the items of each nested list, in
+	// memory_bytes. The value of a nested list names its first item here.
+	list_items:      []Value,
 	list_item_count: int,
 	// The line that copied the items into its evaluation, and the place of
 	// the first one there: a line reads a list variable many times, in a
@@ -254,8 +258,9 @@ line_serial: u64
 // The copy of a list that a line assigns, before it goes into its variable.
 list_keeping: lex_evaluator.List_Keeping
 
-// The memory of the Text values of one line.
-scratch: [4096]u8
+// The memory of the Text values of one line: the texts of a line of
+// LINE_CAPACITY bytes, and what the commands join from them.
+scratch: [64 * 1024]u8
 scratch_count: int
 
 failed: bool
@@ -263,7 +268,7 @@ failed: bool
 // The nested form of the line that runs, and the stages of its "|>". A
 // Text value of the line is a part of its nested form, so the nested form
 // lives until the next line.
-NESTED_LINE_SIZE :: 1024 // A nested form is never longer than its line: a line of the history has 256 bytes at most.
+NESTED_LINE_SIZE :: 2 * LINE_CAPACITY // A nested form is never longer than its line; the room past it is a margin of the pipe.
 nested_line: [NESTED_LINE_SIZE]u8
 line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
 
@@ -372,8 +377,8 @@ assign :: proc "contextless" (name: string, value: Value) {
 		fail(FUNCTION_VARIABLE_REFUSAL)
 		return
 	}
-	if len(name) > VARIABLE_NAME_SIZE || len(value.text) > VARIABLE_TEXT_SIZE {
-		fail("the name or the text is too long")
+	if len(name) > VARIABLE_NAME_SIZE {
+		fail("the name of a variable has ", i64(VARIABLE_NAME_SIZE), " bytes at most; this one has ", i64(len(name)))
 		return
 	}
 	// The whole list is copied before the variable changes: a refusal
@@ -383,8 +388,8 @@ assign :: proc "contextless" (name: string, value: Value) {
 			return
 		}
 	}
-	if value.kind == .Table && len(value.record) > TABLE_KEPT || in_table_memory(value.file) && len(value.file) > DESCRIPTION_SIZE {
-		fail("a variable keeps a table of ", i64(TABLE_KEPT), " bytes at most; this one has ", i64(len(value.record)))
+	if in_table_memory(value.file) && len(value.file) > DESCRIPTION_SIZE {
+		fail("the description of the records has ", i64(len(value.file)), " bytes, more than the ", i64(DESCRIPTION_SIZE), " of a description that join or columns makes")
 		return
 	}
 	slot: ^Variable
@@ -398,37 +403,78 @@ assign :: proc "contextless" (name: string, value: Value) {
 		}
 	}
 	if slot == nil {
-		fail("no room for a variable")
+		fail("the console keeps ", i64(VARIABLE_CAPACITY), " variables: give a new value to one of them")
 		return
 	}
-	slot.name_count = copy(slot.name[:], name)
-	slot.value = value
+	// The bytes that the value keeps: a value from the line, its
+	// description when join or columns made it, and the items of a list
+	// with their bytes. Each part starts at a multiple of 8.
+	kept_bytes := 0
 	switch value.kind {
 	case .List:
-		list_keeping_commit(slot)
+		kept_bytes = list_keeping.item_count * size_of(Value) + list_keeping.byte_count
 	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// The value holds no memory of the line: the slot keeps it as it is.
 		// A Bytes value and a Stream were refused above; the evaluator
 		// refuses a literal and a member that nothing typed. An Enum names
 		// the module file of its enum, which stays while the module does.
 	case .Text:
-		count := copy(slot.text[:], value.text)
-		slot.value.text = string(slot.text[:count])
-	case .Record:
-		bytes := ([^]u8)(&slot.record)[:len(value.record)]
-		copy(bytes, value.record)
-		slot.value.record = bytes
-	case .Table:
-		bytes := ([^]u8)(&slot.table)[:len(value.record)]
-		copy(bytes, value.record)
-		slot.value.record = bytes
+		kept_bytes = len(value.text)
+	case .Record, .Table:
+		kept_bytes = len(value.record)
+	}
+	description_bytes := in_table_memory(value.file) ? len(value.file) : 0
+	value_end := (kept_bytes + 7) &~ 7
+	memory: system.Handle
+	memory_bytes: []u8
+	if value_end + description_bytes > 0 {
+		pages := u64(value_end + description_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		created, status := system.memory_create(pages)
+		address: rawptr
+		if status == .Ok {
+			address, status = system.memory_map(created, {.Write})
+			if status != .Ok {
+				system.close(created)
+			}
+		}
+		if status != .Ok {
+			// The old value stays: the new one is refused whole.
+			fail("the budget of the console cannot pay the ", i64(value_end + description_bytes), " bytes of the value of ", name)
+			return
+		}
+		memory, memory_bytes = created, ([^]u8)(address)[:pages * system.PAGE_SIZE]
+	}
+	variable_memory_end(slot)
+	slot.name_count = copy(slot.name[:], name)
+	slot.value = value
+	slot.memory, slot.memory_bytes = memory, memory_bytes
+	switch value.kind {
+	case .List:
+		list_keeping_commit(slot)
+	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+	case .Text:
+		count := copy(memory_bytes, value.text)
+		slot.value.text = string(memory_bytes[:count])
+	case .Record, .Table:
+		copy(memory_bytes, value.record)
+		slot.value.record = memory_bytes[:len(value.record)]
 	}
 	// The description that join or columns made lives for one line.
-	if in_table_memory(value.file) {
-		bytes := ([^]u8)(&slot.description)[:len(value.file)]
+	if description_bytes > 0 {
+		bytes := memory_bytes[value_end:][:description_bytes]
 		copy(bytes, value.file)
 		slot.value.file = bytes
 	}
+}
+
+// variable_memory_end gives back the memory object of the value of a
+// variable: a new value replaces it, whole.
+variable_memory_end :: proc "contextless" (slot: ^Variable) {
+	if slot.memory != 0 {
+		system.memory_unmap(raw_data(slot.memory_bytes))
+		system.close(slot.memory)
+	}
+	slot.memory, slot.memory_bytes, slot.list_items, slot.list_item_count = 0, nil, nil, 0
 }
 
 FUNCTION_VARIABLE_REFUSAL :: "a variable keeps no function: a function reads the values of its line, which end with the line"
@@ -460,11 +506,13 @@ list_keep :: proc "contextless" (value: Value) -> bool {
 	return false
 }
 
-// list_keeping_commit moves the list that list_keep copied into a variable:
-// its items, and its bytes into the memory of the table of the variable.
+// list_keeping_commit moves the list that list_keep copied into the memory
+// of a variable: its items first, then their bytes, where each text and
+// record of an item then points.
 list_keeping_commit :: proc "contextless" (slot: ^Variable) {
-	bytes := ([^]u8)(&slot.table)[:lex_evaluator.KEPT_LIST_BYTE_CAPACITY]
-	slot.list_item_count = lex_evaluator.list_keeping_commit(&list_keeping, slot.list_items[:], bytes)
+	items_end := list_keeping.item_count * size_of(Value)
+	slot.list_items = ([^]Value)(raw_data(slot.memory_bytes))[:list_keeping.item_count]
+	slot.list_item_count = lex_evaluator.list_keeping_commit(&list_keeping, slot.list_items, slot.memory_bytes[items_end:])
 	// The top list is the first items; the next line copies them again.
 	slot.value.integer = 0
 	slot.list_line = 0

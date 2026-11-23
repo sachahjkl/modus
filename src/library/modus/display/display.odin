@@ -303,9 +303,12 @@ Clipboard_Text_Form :: enum u8 {
 	Multi_Line  = 1, // LF ('\n') and tab ('\t') allowed; CR, NUL and all other controls refused.
 }
 
-// The most bytes of a text on the clipboard: one page, a field or a line
-// of the console.
-CLIPBOARD_TEXT_LIMIT :: 4096
+// The most bytes of a text on the clipboard: one memory object, which the
+// process that copies makes with its own budget (src/md/features/clipboard.md,
+// "The size of a content"). The budget of the copier and the room of the
+// reader bound a content; this bound only keeps a count word inside one
+// object.
+CLIPBOARD_TEXT_LIMIT :: op.MEMORY_PAGE_LIMIT * system.PAGE_SIZE
 
 // clipboard_kind_of_word is the border of the kind of a content: the
 // member, or false for a word that names no member, None included.

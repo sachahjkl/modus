@@ -67,7 +67,7 @@ import "base:intrinsics"
 // ```
 //
 // **A variable keeps a value** for the lines after it: `t = readings(4)`,
-// then `sum_values(where(t, sensor = 2))`. The console keeps 16 variables.
+// then `sum_values(where(t, sensor = 2))`. The console keeps 64 variables.
 // `variables()` lists them.
 //
 // **Errors.** A command that fails gives no value, and the line has an
@@ -935,7 +935,7 @@ commands_start :: proc "contextless" () {
 	// a text.
 	//
 	// A line `name = expression` makes or changes a variable. The console
-	// keeps 16 variables; a table keeps at most 32 KiB of rows. The value
+	// keeps 64 variables, each in memory of the size of its value. The value
 	// of a table is the count of its rows; the value of a record is its
 	// fields in one line.
 	command("variables", {}, .Table, "the variables", list_variables)

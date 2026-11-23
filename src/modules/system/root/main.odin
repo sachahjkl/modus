@@ -403,12 +403,13 @@ Connection :: struct {
 	role_generation: u64, // Supervision generation of service role at Connect time.
 }
 
-// The blocks of the store of a line history. One object of one block
-// takes 3 blocks of a store (the table of the store, the list of the
-// object, its data), and a change of it needs one block more for the new
-// data, in the commit that thins the version before: 4 is the least limit
-// with which the history can change.
-HISTORY_STORE_LIMIT :: 4
+// The blocks of the store of a line history. The file of a history has 8
+// blocks at most (line_editor.HISTORY_FILE_SIZE_LIMIT, 32 KiB): with the
+// table of the store, the list of the object and its object node it takes
+// 11 blocks, and a change of it needs 8 blocks more for the new data and a
+// node, in the commit that thins the version before: 20 is the least limit
+// with which the history can change, and 24 leaves room for a second node.
+HISTORY_STORE_LIMIT :: 24
 
 // connection_grant gives what the caller of a connection receives in its
 // service now: for the history store, its limit only.

@@ -28,8 +28,7 @@ import "modus:sentence"
 // directory, and the tables Records, Fields and Strings (description_make).
 // The description has no second format.
 
-TABLE_ARENA :: 256 * 1024 // The memory of the tables of one line.
-TABLE_KEPT :: 32 * 1024 // The bytes of the rows that a variable keeps.
+TABLE_ARENA :: 1024 * 1024 // The memory of the tables of one line; a variable keeps a table of it whole.
 DESCRIPTION_SIZE :: 2048 // The bytes of a description that join or columns makes.
 COLUMN_CAPACITY :: console_results.COLUMN_LIMIT
 
@@ -155,8 +154,8 @@ table_argument :: proc "contextless" (command: string, value: Value, name: strin
 // of each service. A command that gives a table gives a new table in the
 // memory of the line: the table of its argument does not change.
 //
-// The tables of one line share 256 KiB; a variable keeps at most 32 KiB of
-// rows. The console draws a table as a line of the names of its fields, a
+// The tables of one line share 1 MiB; a variable keeps a table of a line
+// whole, in memory of its size. The console draws a table as a line of the names of its fields, a
 // line for each row, and the count: "2 rows of Import"
 // (docs/CONSOLE.md, "Results and their drawers").
 tables_start :: proc "contextless" () {
@@ -288,8 +287,8 @@ tables_start :: proc "contextless" () {
 	// > table(output_counter.counts |> where(status = 404))
 	// ```
 	//
-	// Error: the rows pass the 32 KiB that a Table of a line keeps before
-	// the end of the stream: `first(s, n)` keeps the first rows.
+	// Error: the rows pass the 1 MiB of the tables of a line before the end
+	// of the stream: `first(s, n)` keeps the first rows.
 	command("table", {.Table}, .Table, "the rows of a stream until its end", stream_table)
 	command_takes_stream()
 	// Gives one row for each record output that a module declares: its

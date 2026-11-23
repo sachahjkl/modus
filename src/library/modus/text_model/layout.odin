@@ -30,11 +30,18 @@ Wrap :: enum u8 {
 	Word      = 1, // After the last space or tab of the row, when the row has one: a word stays whole.
 }
 
-// Why a layout is refused. A refused layout keeps the rows that it had.
+// Caller-supplied growth callback for the display row array. Returns a slice
+// of at least minimum_rows (in place or fresh), or false when the caller's
+// budget refuses the growth.
+Row_Grow :: #type proc "contextless" (user_data: rawptr, current: []Row, minimum_rows: int) -> (grown: []Row, ok: bool)
+
+// Why a layout is refused. A refused layout keeps the rows that it had
+// when the arguments are out of range; Rows_Full stops at the rows that fit.
 Layout_Problem :: enum u8 {
 	None                 = 0,
 	Columns_Out_Of_Range = 1, // The cells of a row are not in COLUMNS_LEAST ..= COLUMNS_LIMIT.
 	Wrap_Unknown         = 2, // The wrap names no member of Wrap.
+	Rows_Full            = 3, // The text produced more display rows than the row buffer and caller budget hold.
 }
 
 // One display row: where it starts in the text, and the line that it
@@ -46,11 +53,60 @@ Row :: struct {
 }
 
 Layout :: struct {
-	rows:       [ROW_CAPACITY]Row,
-	row_count:  int, // At least 1: an empty text has one empty row.
-	line_count: int,
-	columns:    int, // The cells of a row, of the last layout that was not refused.
-	wrap:       Wrap,
+	rows:          []Row,             // Active slice of display rows (external_rows or inline_rows[:]).
+	inline_rows:   [ROW_CAPACITY]Row, // Inline backing when external_rows is nil.
+	external_rows: []Row,
+	grow:          Row_Grow,
+	grow_data:     rawptr,
+	row_count:     int, // At least 1 after layout_compute: an empty text has one empty row.
+	line_count:    int,
+	columns:       int, // The cells of a row, of the last layout that was not refused.
+	wrap:          Wrap,
+}
+
+// layout_init_buffer attaches a caller-supplied row buffer and optional
+// growth callback to layout.
+layout_init_buffer :: proc "contextless" (layout: ^Layout, buffer: []Row, grow: Row_Grow = nil, grow_data: rawptr = nil) {
+	layout.external_rows = buffer
+	layout.rows = len(buffer) > 0 ? buffer : layout.inline_rows[:]
+	layout.grow = grow
+	layout.grow_data = grow_data
+	layout.row_count = 0
+	layout.line_count = 0
+}
+
+@(private)
+layout_storage :: proc "contextless" (layout: ^Layout) -> []Row {
+	if len(layout.external_rows) > 0 {
+		return layout.external_rows
+	}
+	return layout.inline_rows[:]
+}
+
+@(private)
+layout_ensure_capacity :: proc "contextless" (layout: ^Layout, needed: int, used: int) -> bool {
+	if needed < 0 {
+		return false
+	}
+	storage := layout_storage(layout)
+	if needed <= len(storage) {
+		layout.rows = storage
+		return true
+	}
+	if layout.grow == nil {
+		return false
+	}
+	grown, ok := layout.grow(layout.grow_data, storage, needed)
+	if !ok || len(grown) < needed {
+		return false
+	}
+	same_base := len(storage) > 0 && raw_data(grown) == raw_data(storage)
+	if !same_base && used > 0 {
+		copy(grown[:used], storage[:used])
+	}
+	layout.external_rows = grown
+	layout.rows = grown
+	return true
 }
 
 // cell_width gives the cells of a character whose lead byte is value, at
@@ -75,6 +131,9 @@ layout_compute :: proc "contextless" (layout: ^Layout, text: ^Text, columns: int
 	if wrap != .Character && wrap != .Word {
 		return .Wrap_Unknown
 	}
+	if !layout_ensure_capacity(layout, 1, 0) {
+		return .Rows_Full
+	}
 	layout.columns, layout.wrap = columns, wrap
 	layout.rows[0] = {start = 0, line = 0}
 	layout.row_count = 1
@@ -86,12 +145,11 @@ layout_compute :: proc "contextless" (layout: ^Layout, text: ^Text, columns: int
 	length := text_length(text)
 	for place in 0 ..< length {
 		value := byte_at(text, place)
-		// The bound of ROW_CAPACITY above holds for each valid text; the
-		// test keeps a wrong text from a write past the array.
-		if layout.row_count >= ROW_CAPACITY {
-			break
-		}
 		if value == LINE_END {
+			if !layout_ensure_capacity(layout, layout.row_count + 1, layout.row_count) {
+				layout.line_count = line + 1
+				return .Rows_Full
+			}
 			line += 1
 			layout.rows[layout.row_count] = {start = i32(place + 1), line = i32(line)}
 			layout.row_count += 1
@@ -100,6 +158,10 @@ layout_compute :: proc "contextless" (layout: ^Layout, text: ^Text, columns: int
 		}
 		width := cell_width(value, column)
 		if width > 0 && column + width > columns {
+			if !layout_ensure_capacity(layout, layout.row_count + 1, layout.row_count) {
+				layout.line_count = line + 1
+				return .Rows_Full
+			}
 			// A space or a tab that does not fit starts the next row
 			// itself: the row before it keeps its last word.
 			start := place
@@ -132,6 +194,9 @@ layout_compute :: proc "contextless" (layout: ^Layout, text: ^Text, columns: int
 // start of a row that continues a line is on that row, not at the end of
 // the row before.
 row_of :: proc "contextless" (layout: ^Layout, place: int) -> int {
+	if layout.row_count <= 0 || len(layout.rows) == 0 {
+		return 0
+	}
 	low, high := 0, layout.row_count - 1
 	for low < high {
 		middle := (low + high + 1) / 2

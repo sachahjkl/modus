@@ -148,7 +148,7 @@ rows_write :: proc "contextless" (kept: int) {
 // measure, and the rows that list_send gives the terminal. The runs go to
 // a buffer of the measure, not to the terminal.
 colors_write :: proc "contextless" (kept: int) {
-	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
+	runs: [terminal.EDIT_CODE_RUN_LIMIT]terminal.Code_Run
 	_ = edit_runs(measure_line, len(measure_line), runs[:])
 	for item in measure_ranked[:min(kept, terminal.LIST_ROWS)] {
 		buffer: [terminal.RUN_LIMIT]u8

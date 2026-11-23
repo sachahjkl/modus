@@ -33,11 +33,11 @@ Renderer_Event :: struct {
 
 // The edit line as a renderer shows it.
 Renderer_Edit :: struct {
-	text:       [RUN_LIMIT]u8,
+	text:       [EDIT_TEXT_LIMIT]u8,
 	length:     int,
 	has_cursor: bool,
 	cursor:     int, // Bytes from the start of the text, at most length.
-	code:       Code_Runs, // Checked against the text: no runs when they did not fit.
+	code:       Edit_Code_Runs, // Checked against the text: no runs when they did not fit.
 }
 
 // The status line as a renderer shows it. A total of 0: no status line.
@@ -72,9 +72,10 @@ Renderer_Intake :: struct {
 	text:              [RUN_LIMIT]u8, // The text of the last Text record.
 	text_length:       int,
 	edit:              Renderer_Edit,
+	edit_staging:      Edit_Staging, // The parts of the next edit line.
 	status:            Renderer_Status,
 	hint:              Renderer_Hint,
-	edit_runs_pending: Code_Runs,
+	edit_runs_pending: Edit_Code_Runs, // The runs that the next Edit record takes.
 	list:              List_Keeping,
 	records_refused:   u64, // Records whose word names no record.
 	runs_refused:      u64, // Runs for the edit line that did not fit it, or that named no target that takes runs.
@@ -160,8 +161,7 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 		first, second := renderer_take(intake, record.tag)
 		edit := &intake.edit
 		edit^ = {}
-		edit.length = copy(edit.text[:], first)
-		edit.length += copy(edit.text[edit.length:], second)
+		edit.length = edit_staging_end(&intake.edit_staging, first, second, &edit.text)
 		if record.values[1] != NO_CURSOR {
 			edit.has_cursor = true
 			edit.cursor = int(min(record.values[1], u64(edit.length)))
@@ -179,6 +179,10 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 	case .List:
 		list_keep_show(&intake.list, record.values)
 		return {step = .List}
+	case .Edit_Part:
+		first, second := renderer_take(intake, record.tag)
+		edit_part_keep(&intake.edit_staging, first, second)
+		return {}
 	case .Code_Runs:
 		first, second := renderer_take(intake, record.tag)
 		target, target_ok := enum_word.member_of_word(Kind, record.values[0])
@@ -188,14 +192,12 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 		}
 		switch target {
 		case .Edit:
-			read, ok := code_runs_read(first, second)
-			if !ok {
+			if !edit_code_runs_add(&intake.edit_runs_pending, first, second) {
 				intake.runs_refused += 1
 			}
-			intake.edit_runs_pending = read
 		case .List_Row:
 			list_keep_code_runs(&intake.list, record.values, first, second)
-		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs:
+		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs, .Edit_Part:
 			intake.runs_refused += 1
 		}
 		return {}
