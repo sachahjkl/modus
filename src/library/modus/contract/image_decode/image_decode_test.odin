@@ -882,6 +882,132 @@ png_unfilter_simd_matches_scalar_all_edges :: proc(t: ^testing.T) {
 // 4. Baseline JPEG decode tests (Grayscale, YCbCr 4:4:4, 4:2:2, 4:2:0, DRI)
 // ---------------------------------------------------------------------------
 
+// The pixel bound of a header, from its edges: a side of 0, the largest
+// side words, one pixel past the bound in each shape, then the bound
+// itself, a photo of 6000 x 4000 and a panorama of 30000 x 2000.
+@(test)
+the_pixel_bound_replaces_the_bound_of_each_side :: proc(t: ^testing.T) {
+	Case :: struct {
+		width, height: u32,
+		refusal:       Image_Decode_Refusal,
+	}
+	cases := [?]Case {
+		{0, 4000, .Dimensions_Invalid},
+		{6000, 0, .Dimensions_Invalid},
+		{max(u32), max(u32), .Decompression_Bomb},
+		{65535, 65535, .Decompression_Bomb},
+		{IMAGE_PIXELS_LIMIT + 1, 1, .Decompression_Bomb},
+		{1, IMAGE_PIXELS_LIMIT + 1, .Decompression_Bomb},
+		{16384, 16385, .Decompression_Bomb},
+	}
+	for each in cases {
+		bytes, refusal := validate_dimensions(each.width, each.height)
+		testing.expectf(t, refusal == each.refusal && bytes == 0, "%d x %d gives %v and %d bytes", each.width, each.height, refusal, bytes)
+	}
+	taken := [?][2]u32{{16384, 16384}, {IMAGE_PIXELS_LIMIT, 1}, {6000, 4000}, {30000, 2000}, {4097, 1}, {1, 1}}
+	for size in taken {
+		bytes, refusal := validate_dimensions(size[0], size[1])
+		testing.expectf(t, refusal == .None && bytes == u64(size[0]) * u64(size[1]) * RGBA_BYTES_PER_PIXEL, "%v gives %v", size, refusal)
+	}
+	testing.expect_value(t, u64(IMAGE_PIXELS_LIMIT) * RGBA_BYTES_PER_PIXEL, u64(1) << 30)
+}
+
+// Images wider than 4096 pixels, the old bound of a side. A PNG of 6000 x 2
+// needs the three row buffers in its scratch: one byte short of them is
+// refused and writes no pixel; the least scratch decodes in two passes; a larger one in
+// one pass, with the same pixels. A JPEG of 6000 x 16 decodes. The same
+// JPEG with the height of a photo of 6000 x 4000 probes to 96 000 000
+// bytes, and a buffer one byte short of them is refused before any pixel.
+@(test)
+images_wider_than_4096_decode_within_the_memory_of_the_caller :: proc(t: ^testing.T) {
+	W :: 6000
+	{
+		H :: 2
+		pixels := make([]u8, W * H * 4)
+		defer delete(pixels)
+		for i in 0 ..< len(pixels) {
+			pixels[i] = u8(i * 13 + i / 4096)
+		}
+		filters := [2]Png_Filter{.Sub, .Paeth}
+		png := build_test_png(W, H, .Truecolor_Alpha, pixels, filters[:], .Fixed_Huffman)
+		defer delete(png)
+		header, probe_refusal := image_probe(png[:])
+		testing.expect_value(t, probe_refusal, Image_Decode_Refusal.None)
+		least := png_minimum_scratch_bytes(W * 4)
+		testing.expect_value(t, header.minimum_scratch_bytes, least)
+		testing.expect_value(t, least, u64(PNG_MINIMUM_SCRATCH_BYTES + 3 * W * 4 + 1))
+		out := make([]u8, W * H * 4)
+		defer delete(out)
+		scratch := make([]u8, int(least) + int(H * (1 + W * 4)))
+		defer delete(scratch)
+		for &b in out {
+			b = 0xA5
+		}
+		// The scratch of make is aligned: the workspace starts at its first
+		// byte, and the 16 bytes of the least scratch for an alignment stay
+		// free. One byte short of the rows past the workspace is refused.
+		testing.expect(t, uintptr(raw_data(scratch)) & 7 == 0)
+		_, short := image_decode_rgba(png[:], out, scratch[:size_of(Png_Workspace) + 3 * W * 4])
+		testing.expect_value(t, short, Image_Decode_Refusal.Scratch_Too_Small)
+		testing.expect(t, all_bytes_equal(out, 0xA5))
+		_, streamed := image_decode_rgba(png[:], out, scratch[:least])
+		testing.expect_value(t, streamed, Image_Decode_Refusal.None)
+		testing.expect(t, slices_equal(out, pixels))
+		for &b in out {
+			b = 0
+		}
+		_, whole := image_decode_rgba(png[:], out, scratch)
+		testing.expect_value(t, whole, Image_Decode_Refusal.None)
+		testing.expect(t, slices_equal(out, pixels))
+	}
+	{
+		H :: 16
+		gray := make([]u8, W * H)
+		defer delete(gray)
+		for i in 0 ..< len(gray) {
+			gray[i] = u8(40 + (i % W) / 32)
+		}
+		jpg := build_test_jpeg(W, H, .Grayscale, gray, nil, nil)
+		defer delete(jpg)
+		scratch := make([]u8, JPEG_MINIMUM_SCRATCH_BYTES)
+		defer delete(scratch)
+		out := make([]u8, W * H * 4)
+		defer delete(out)
+		header, refusal := image_decode_rgba(jpg[:], out, scratch)
+		testing.expect_value(t, refusal, Image_Decode_Refusal.None)
+		testing.expect(t, header.width == W && header.height == H)
+		for i in 0 ..< W * H {
+			if abs(i32(out[i * 4]) - i32(gray[i])) > 2 {
+				testing.expectf(t, false, "pixel %d: %d, not %d", i, out[i * 4], gray[i])
+				break
+			}
+		}
+		// The height of SOF0 is 5 bytes past its marker: the length, then the
+		// precision.
+		sof := -1
+		for i in 0 ..< len(jpg) - 1 {
+			if jpg[i] == 0xFF && jpg[i + 1] == 0xC0 {
+				sof = i
+				break
+			}
+		}
+		testing.expect(t, sof > 0)
+		photo := make([]u8, len(jpg))
+		defer delete(photo)
+		copy(photo, jpg[:])
+		byte_order.write_u16_big_endian(photo, sof + 5, 4000)
+		probed, probe_refusal := image_probe(photo)
+		testing.expect_value(t, probe_refusal, Image_Decode_Refusal.None)
+		testing.expect(t, probed.width == 6000 && probed.height == 4000 && probed.output_bytes == 96_000_000)
+		for &b in out {
+			b = 0xA5
+		}
+		_, too_small := image_decode_rgba(photo, out, scratch)
+		testing.expect_value(t, too_small, Image_Decode_Refusal.Output_Buffer_Too_Small)
+		testing.expect(t, all_bytes_equal(out, 0xA5))
+	}
+}
+
 @(test)
 jpeg_decodes_grayscale_444_422_and_420_with_restarts :: proc(t: ^testing.T) {
 	scratch := make([]u8, JPEG_MINIMUM_SCRATCH_BYTES)

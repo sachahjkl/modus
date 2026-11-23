@@ -8,14 +8,41 @@ import "modus:contract/errors"
 import "modus:contract/html_css"
 import "modus:contract/http_client"
 import "modus:contract/image_decode"
+import "modus:system"
+import "modus:web"
 
-// Static scratch arenas avoid large stack frames in freestanding library calls.
+// The document of a call: its tree, its style sheet and its boxes are in
+// arenas of the budget of the process that imports this module, made at
+// the first call and kept, which grow with the page: a page has no fixed
+// count of nodes (src/md/features/desktop_to_browser.md, "The memory of a
+// document").
 @(private)
 engine_dom: html_css.Dom_Tree
 @(private)
 engine_sheet: html_css.Css_Stylesheet
 @(private)
 engine_layout: html_css.Layout_Tree
+@(private)
+engine_arenas: web.Document_Arenas
+@(private)
+engine_memory_ready: bool
+
+// engine_memory makes the arenas of the document at the first call: each
+// reserves the pages that the budget holds. false: the budget did not pay
+// a reservation.
+@(private)
+engine_memory :: proc "contextless" () -> bool {
+	if engine_memory_ready {
+		return true
+	}
+	own, _ := system.budget_read()
+	if web.document_arenas_create(&engine_arenas, system.arena_reservation_pages(own.pages)) != .Ok {
+		return false
+	}
+	web.document_memory_bind(&engine_arenas, &engine_dom, &engine_sheet, &engine_layout)
+	engine_memory_ready = true
+	return true
+}
 
 // http_request_build formats a strict RFC 9112 HTTP/1.1 GET request into result,
 // refusing CRLF header injection and invalid paths with a typed error record.
@@ -36,11 +63,17 @@ html_layout_count :: proc "c" (html: ^string, viewport_width: i64, viewport_heig
 	if viewport_width <= 0 || viewport_width > 8192 || viewport_height <= 0 || viewport_height > 8192 {
 		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Counts, 2)
 	}
+	if !engine_memory() {
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, 0)
+	}
 	html_css.parse_html(&engine_dom, {}, transmute([]u8)(html^))
-	engine_sheet = {}
+	html_css.stylesheet_clear(&engine_sheet)
 	html_css.parse_document_styles(&engine_dom, &engine_sheet)
 	html_css.compute_layout(&engine_dom, &engine_sheet, i32(viewport_width), i32(viewport_height), &engine_layout)
-	return .Succeeded, i64(engine_layout.box_count)
+	box_count := i64(engine_layout.box_count)
+	// The pages past the need of this page go back to the budget.
+	web.document_memory_trim(&engine_arenas, &engine_dom, &engine_sheet, &engine_layout)
+	return .Succeeded, box_count
 }
 
 // image_probe_pixels inspects PNG or JPEG bytes and returns width * height on

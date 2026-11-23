@@ -1,20 +1,26 @@
-// Per-principal isolated cookie jar and HTTP response cache.
-// Partitioned strictly by principal_id so principals can never read, overwrite,
-// or evict each other's cookies or cached responses. Zero heap allocations.
+// Per-principal isolated cookie jar and HTTP response cache, in memory of
+// the caller that grows. Isolated strictly by principal_id so principals can
+// never read, overwrite, or evict each other's cookies or cached responses:
+// each principal has a part of the memory of its own, bounded by a share
+// that the caller fixes (src/md/features/desktop_to_browser.md, "The share
+// of a principal"). Zero heap allocations.
 package http_client
 
+import "base:intrinsics"
 import "modus:contract/enum_word"
 
-MAX_STORE_PRINCIPALS :: 8
-COOKIES_PER_PRINCIPAL :: 32
-CACHE_ENTRIES_PER_PRINCIPAL :: 8
-MAX_ORIGIN_HOST_LEN :: 128
-MAX_COOKIE_NAME_LEN :: 64
-MAX_COOKIE_VALUE_LEN :: 256
-MAX_COOKIE_DOMAIN_LEN :: 128
-MAX_COOKIE_PATH_LEN :: 128
-MAX_CACHE_TARGET_LEN :: 256
-MAX_CACHED_BODY_SIZE :: 4096
+// The jar and the cache are in memory of the caller, which grows (the grow
+// procedures below): they hold the cookies and the responses of the
+// principals that the caller declares, each in its part. The sizes of
+// one cookie are those that RFC 6265 (section 6.1) asks a client to keep:
+// 4096 bytes of a name and its value, a host of DNS (RFC 1035) and a path
+// of an address of the web.
+MAX_ORIGIN_HOST_LEN :: 253
+MAX_COOKIE_NAME_LEN :: 256
+MAX_COOKIE_VALUE_LEN :: 4096
+MAX_COOKIE_DOMAIN_LEN :: 253
+MAX_COOKIE_PATH_LEN :: 1024
+MAX_CACHE_TARGET_LEN :: 2048
 
 // Scheme of a web origin. Zero is invalid and refused at the border.
 Origin_Scheme :: enum u8 {
@@ -82,7 +88,7 @@ origin_key_make :: proc "contextless" (principal_id: u64, scheme: Origin_Scheme,
 	return key, .None
 }
 
-// Single cookie record belonging to one principal partition.
+// Single cookie record belonging to one principal.
 Cookie_Entry :: struct {
 	used:            bool,
 	principal_id:    u64,
@@ -105,20 +111,57 @@ Cookie_Entry :: struct {
 	last_used_seq:   u64,
 }
 
-// Isolated cookie storage dedicated to a single principal.
-Principal_Cookie_Partition :: struct {
-	occupied:     bool,
+// The part of the memory of a principal: a principal that a store serves
+// gets one at its first use, and keeps it. Its index places its region of
+// entries, and of bodies in a cache, a share each, in the memory: no
+// principal reads, writes or evicts in the region of another, and what one
+// holds never changes what another can hold.
+Principal_Part :: struct {
 	principal_id: u64,
-	entries:      [COOKIES_PER_PRINCIPAL]Cookie_Entry,
+	bodies_used:  int, // Cache: the bytes in use of its region of bodies, from its start.
 }
 
-// Per-principal partitioned cookie jar.
+// part_find gives the part of a principal, or -1.
+@(private = "file")
+part_find :: proc "contextless" (parts: []Principal_Part, principal: u64) -> int {
+	for &part, index in parts {
+		if part.principal_id == principal {
+			return index
+		}
+	}
+	return -1
+}
+
+// Cookie_Jar_Grow makes the jar hold at least wanted entries: it sets
+// entries to a longer slice that keeps the entries before it. false: the
+// memory cannot grow.
+Cookie_Jar_Grow :: #type proc "contextless" (jar: ^Cookie_Jar, wanted: int) -> bool
+
+// The cookie jar of the principals that the caller serves: the region of
+// the part of a principal is entries[part * share:][:share]. A principal
+// reads, replaces and evicts only in its region: at its share, a new cookie
+// takes the place of its own cookie used least. A principal past the
+// principals that the jar serves gets no part, and is refused.
 Cookie_Jar :: struct {
-	partitions: [MAX_STORE_PRINCIPALS]Principal_Cookie_Partition,
-	access_seq: u64,
+	entries:                []Cookie_Entry,
+	parts:                  []Principal_Part, // One for each principal served: its length is their count.
+	part_count:             int, // The parts given.
+	cookies_of_a_principal: int, // The share: the entries of each part (cookie_jar_init).
+	access_seq:             u64,
+	grow:                   Cookie_Jar_Grow,
+	grow_data:              rawptr,
 }
 
-// Single cached HTTP response belonging to one principal partition.
+// cookie_jar_init gives a jar the parts of the principals that it serves
+// (one for each), and the share of each: share, or the room of cookies over
+// the principals when share is 0. The share is fixed: it does not follow
+// who holds cookies now.
+cookie_jar_init :: proc "contextless" (jar: ^Cookie_Jar, parts: []Principal_Part, room: int, share := 0) {
+	jar.parts, jar.part_count = parts, 0
+	jar.cookies_of_a_principal = share > 0 ? share : room / max(len(parts), 1)
+}
+
+// Single cached HTTP response belonging to one principal.
 Cache_Entry :: struct {
 	used:            bool,
 	principal_id:    u64,
@@ -132,42 +175,47 @@ Cache_Entry :: struct {
 	stored_at_unix:  i64,
 	max_age_seconds: i64,
 	must_revalidate: bool,
-	body:            [MAX_CACHED_BODY_SIZE]u8,
-	body_len:        u16,
+	body_offset:     int, // The place of the body in the bodies of the cache, in the region of its part.
+	body_len:        int,
 	last_used_seq:   u64,
 }
 
-// Isolated cache storage dedicated to a single principal.
-Principal_Cache_Partition :: struct {
-	occupied:     bool,
-	principal_id: u64,
-	entries:      [CACHE_ENTRIES_PER_PRINCIPAL]Cache_Entry,
+// The parts of the memory of a response cache.
+Cache_Part :: enum u8 {
+	Entries = 0,
+	Bodies  = 1, // The bytes of the bodies.
 }
 
-// Per-principal partitioned HTTP response cache.
+// Response_Cache_Grow makes a part of the cache hold at least wanted
+// entries or bytes, as Cookie_Jar_Grow does for a jar.
+Response_Cache_Grow :: #type proc "contextless" (cache: ^Response_Cache, part: Cache_Part, wanted: int) -> bool
+
+// The response cache of the principals that the caller serves: the part of
+// a principal has a region of entries (entries_of_a_principal) and a
+// region of bodies (body_bytes_of_a_principal). The places of the bodies
+// that a part no longer holds come back when its region is full
+// (cache_bodies_compact). A principal evicts only in its regions; a body
+// past the region of bodies is refused before any eviction.
 Response_Cache :: struct {
-	partitions: [MAX_STORE_PRINCIPALS]Principal_Cache_Partition,
-	access_seq: u64,
+	entries:                   []Cache_Entry,
+	bodies:                    []u8,
+	parts:                     []Principal_Part,
+	part_count:                int,
+	entries_of_a_principal:    int,
+	body_bytes_of_a_principal: int,
+	access_seq:                u64,
+	grow:                      Response_Cache_Grow,
+	grow_data:                 rawptr,
 }
 
-@(private = "file")
-find_or_create_cookie_partition :: proc "contextless" (jar: ^Cookie_Jar, principal_id: u64, create: bool) -> ^Principal_Cookie_Partition {
-	for i := 0; i < MAX_STORE_PRINCIPALS; i += 1 {
-		if jar.partitions[i].occupied && jar.partitions[i].principal_id == principal_id {
-			return &jar.partitions[i]
-		}
-	}
-	if !create {
-		return nil
-	}
-	for i := 0; i < MAX_STORE_PRINCIPALS; i += 1 {
-		if !jar.partitions[i].occupied {
-			jar.partitions[i].occupied = true
-			jar.partitions[i].principal_id = principal_id
-			return &jar.partitions[i]
-		}
-	}
-	return nil
+// response_cache_init gives a cache the parts of the principals that it
+// serves, and the shares of each: of the entries and of the bytes of the
+// bodies, or the rooms over the principals when a share is 0.
+response_cache_init :: proc "contextless" (cache: ^Response_Cache, parts: []Principal_Part, entry_room, body_room: int, entry_share := 0, body_share := 0) {
+	cache.parts, cache.part_count = parts, 0
+	principals := max(len(parts), 1)
+	cache.entries_of_a_principal = entry_share > 0 ? entry_share : entry_room / principals
+	cache.body_bytes_of_a_principal = body_share > 0 ? body_share : body_room / principals
 }
 
 @(private = "file")
@@ -349,7 +397,7 @@ parse_http_date_imf :: proc "contextless" (text: []u8) -> (unix_sec: i64, ok: bo
 	return days * 86400 + i64(hour_u) * 3600 + i64(min_u) * 60 + i64(sec_u), true
 }
 
-// cookie_jar_set_from_header parses one Set-Cookie header and stores it strictly inside origin.principal_id's partition.
+// cookie_jar_set_from_header parses one Set-Cookie header and stores it strictly among the entries of origin.principal_id.
 cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Origin_Key, request_path: string, set_cookie: string, now_unix: i64) -> Store_Refusal {
 	_, s_ok := origin_scheme_of_word(u8(origin.scheme))
 	if !s_ok {
@@ -527,25 +575,40 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 		return .Secure_Required
 	}
 
-	partition := find_or_create_cookie_partition(jar, origin.principal_id, !delete_now)
-	if partition == nil {
+	// The part of the principal: a new one with its region, or a refusal
+	// when the jar serves no more principals or the memory cannot hold the
+	// region. Nothing of another part is read.
+	part := part_find(jar.parts[:jar.part_count], origin.principal_id)
+	if part < 0 {
 		if delete_now {
 			return .None
 		}
+		if jar.part_count >= len(jar.parts) {
+			return .Principal_Quota_Exceeded
+		}
+		part = jar.part_count
+	}
+	share := jar.cookies_of_a_principal
+	end := (part + 1) * share
+	if share <= 0 || (len(jar.entries) < end && (jar.grow == nil || !jar.grow(jar, end) || len(jar.entries) < end)) {
 		return .Principal_Quota_Exceeded
 	}
+	if part == jar.part_count {
+		jar.parts[part] = {principal_id = origin.principal_id}
+		jar.part_count += 1
+	}
+	first := part * share
 
 	match_idx := -1
 	free_idx := -1
-	oldest_idx := 0
+	oldest_idx := -1
 	oldest_seq := max(u64)
-
-	for i := 0; i < COOKIES_PER_PRINCIPAL; i += 1 {
-		cur := &partition.entries[i]
+	for i := first; i < end; i += 1 {
+		cur := &jar.entries[i]
 		if cur.used && cur.has_expiry && now_unix >= cur.expires_at_unix {
-			cur.used = false
+			cur^ = {}
 		}
-		if !cur.used {
+		if !cur.used || cur.principal_id != origin.principal_id {
 			if free_idx < 0 {
 				free_idx = i
 			}
@@ -564,36 +627,43 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 		}
 	}
 
-	if match_idx >= 0 && partition.entries[match_idx].secure && origin.scheme != .Https {
+	if match_idx >= 0 && jar.entries[match_idx].secure && origin.scheme != .Https {
 		return .Secure_Required
 	}
 	if delete_now {
 		if match_idx >= 0 {
-			partition.entries[match_idx] = {}
+			jar.entries[match_idx] = {}
 		}
 		return .None
 	}
-
-	jar.access_seq += 1
-	entry.last_used_seq = jar.access_seq
-
+	// The match, else a free entry of the region, else, at the share, the
+	// cookie of the principal used least.
 	target_idx := match_idx
 	if target_idx < 0 {
-		target_idx = free_idx if free_idx >= 0 else oldest_idx
+		target_idx = free_idx >= 0 ? free_idx : oldest_idx
 	}
-	partition.entries[target_idx] = entry
+	jar.access_seq += 1
+	entry.last_used_seq = jar.access_seq
+	jar.entries[target_idx] = entry
 	return .None
 }
 
-// cookie_jar_format_header builds the Cookie request header strictly from origin.principal_id's partition.
+// jar_region gives the region of the part of a principal, or nothing.
+@(private = "file")
+jar_region :: proc "contextless" (jar: ^Cookie_Jar, principal: u64) -> []Cookie_Entry {
+	part := part_find(jar.parts[:jar.part_count], principal)
+	share := jar.cookies_of_a_principal
+	if part < 0 || share <= 0 || (part + 1) * share > len(jar.entries) {
+		return nil
+	}
+	return jar.entries[part * share:][:share]
+}
+
+// cookie_jar_format_header builds the Cookie request header strictly from the entries of origin.principal_id.
 // Enforces Secure (never on HTTP), HttpOnly (never for script), SameSite, Domain, Path, and expiry.
 cookie_jar_format_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Origin_Key, request_path: string, is_same_site: bool, is_top_level_nav: bool, for_script: bool, now_unix: i64, out: []u8) -> (written: int, refusal: Store_Refusal) {
 	if !origin_valid(origin) {
 		return 0, .Invalid_Scheme
-	}
-	partition := find_or_create_cookie_partition(jar, origin.principal_id, false)
-	if partition == nil {
-		return 0, .None
 	}
 
 	req_host := origin.host[:origin.host_len]
@@ -601,8 +671,8 @@ cookie_jar_format_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Origi
 	pos := 0
 	count := 0
 
-	for i := 0; i < COOKIES_PER_PRINCIPAL; i += 1 {
-		c := &partition.entries[i]
+	for &cookie in jar_region(jar, origin.principal_id) {
+		c := &cookie
 		if !c.used {
 			continue
 		}
@@ -610,7 +680,7 @@ cookie_jar_format_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Origi
 			continue
 		}
 		if c.has_expiry && now_unix >= c.expires_at_unix {
-			c.used = false
+			c^ = {}
 			continue
 		}
 		if c.secure && origin.scheme != .Https {
@@ -663,26 +733,6 @@ cookie_jar_format_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Origi
 		c.last_used_seq = jar.access_seq
 	}
 	return pos, .None
-}
-
-@(private = "file")
-find_or_create_cache_partition :: proc "contextless" (cache: ^Response_Cache, principal_id: u64, create: bool) -> ^Principal_Cache_Partition {
-	for i := 0; i < MAX_STORE_PRINCIPALS; i += 1 {
-		if cache.partitions[i].occupied && cache.partitions[i].principal_id == principal_id {
-			return &cache.partitions[i]
-		}
-	}
-	if !create {
-		return nil
-	}
-	for i := 0; i < MAX_STORE_PRINCIPALS; i += 1 {
-		if !cache.partitions[i].occupied {
-			cache.partitions[i].occupied = true
-			cache.partitions[i].principal_id = principal_id
-			return &cache.partitions[i]
-		}
-	}
-	return nil
 }
 
 @(private = "file")
@@ -742,8 +792,77 @@ parse_cache_control :: proc "contextless" (header_value: string) -> Cache_Direct
 	return res
 }
 
-// response_cache_store stores a cacheable HTTP response strictly inside origin.principal_id's partition.
-// Honors Cache-Control: no-store (never stores and purges prior entry) and max-age.
+// cache_entry_names says if an entry of a principal is the response of an
+// origin and a target.
+@(private = "file")
+cache_entry_names :: proc "contextless" (e: ^Cache_Entry, origin: ^Origin_Key, target: []u8) -> bool {
+	return e.used && e.principal_id == origin.principal_id && e.scheme == origin.scheme && e.port == origin.port &&
+	       slice_equal(e.host[:e.host_len], origin.host[:origin.host_len]) &&
+	       slice_equal(e.target[:e.target_len], target)
+}
+
+// cache_region gives the part of a principal and its region of entries,
+// or -1 and nothing.
+@(private = "file")
+cache_region :: proc "contextless" (cache: ^Response_Cache, principal: u64) -> (part: int, region: []Cache_Entry) {
+	part = part_find(cache.parts[:cache.part_count], principal)
+	share := cache.entries_of_a_principal
+	if part < 0 || share <= 0 || (part + 1) * share > len(cache.entries) {
+		return -1, nil
+	}
+	return part, cache.entries[part * share:][:share]
+}
+
+// cache_bodies_compact moves the bodies of the entries of a part to the
+// start of its region of bodies, in their order, so the places of the
+// bodies that it no longer holds come back. Each body moves down, never
+// over a body not moved yet: the next body is the one at the lowest place
+// past the last one moved. Only the region of the part moves.
+@(private = "file")
+cache_bodies_compact :: proc "contextless" (cache: ^Response_Cache, part: int, region: []Cache_Entry) {
+	start := part * cache.body_bytes_of_a_principal
+	cursor := start
+	for {
+		next := -1
+		for &e, index in region {
+			if e.used && e.body_len > 0 && e.body_offset >= cursor && (next < 0 || e.body_offset < region[next].body_offset) {
+				next = index
+			}
+		}
+		if next < 0 {
+			break
+		}
+		e := &region[next]
+		if e.body_offset != cursor {
+			intrinsics.mem_copy(&cache.bodies[cursor], &cache.bodies[e.body_offset], e.body_len)
+			e.body_offset = cursor
+		}
+		cursor += e.body_len
+	}
+	cache.parts[part].bodies_used = cursor - start
+}
+
+// cache_body_place gives the place of a body of a size in the region of
+// bodies of a part: after its bodies, or after a compaction of the
+// region. false: the region does not hold it now.
+@(private = "file")
+cache_body_place :: proc "contextless" (cache: ^Response_Cache, part: int, region: []Cache_Entry, size: int) -> (place: int, ok: bool) {
+	share := cache.body_bytes_of_a_principal
+	if cache.parts[part].bodies_used + size > share {
+		cache_bodies_compact(cache, part, region)
+	}
+	if cache.parts[part].bodies_used + size > share {
+		return 0, false
+	}
+	place = part * share + cache.parts[part].bodies_used
+	cache.parts[part].bodies_used += size
+	return place, true
+}
+
+// response_cache_store stores a cacheable HTTP response strictly in the part of origin.principal_id.
+// Honors Cache-Control: no-store (never stores and purges prior entry) and max-age. A body has any size
+// up to the share of bytes of a part; a body past it is Body_Too_Large, refused before any eviction.
+// At its shares, a principal evicts its own entries used least, never one of another.
 response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Origin_Key, target: string, status_code: u16, cache_control: string, body: []u8, now_unix: i64) -> Store_Refusal {
 	if !origin_valid(origin) {
 		return .Invalid_Scheme
@@ -755,21 +874,13 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 
 	cc := parse_cache_control(cache_control)
 	if cc.no_store {
-		part := find_or_create_cache_partition(cache, origin.principal_id, false)
-		if part != nil {
-			for i := 0; i < CACHE_ENTRIES_PER_PRINCIPAL; i += 1 {
-				e := &part.entries[i]
-				if e.used && e.scheme == origin.scheme && e.port == origin.port &&
-				   slice_equal(e.host[:e.host_len], origin.host[:origin.host_len]) &&
-				   slice_equal(e.target[:e.target_len], tbytes) {
-					e^ = {}
-				}
+		_, region := cache_region(cache, origin.principal_id)
+		for &e in region {
+			if cache_entry_names(&e, origin, tbytes) {
+				e = {}
 			}
 		}
 		return .Not_Cacheable
-	}
-	if len(body) > MAX_CACHED_BODY_SIZE {
-		return .Body_Too_Large
 	}
 	if !is_cacheable_status(status_code) {
 		return .Not_Cacheable
@@ -777,28 +888,46 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 	if !cc.has_max_age || cc.max_age_seconds <= 0 {
 		return .Not_Cacheable
 	}
+	size := len(body)
+	if size > cache.body_bytes_of_a_principal {
+		return .Body_Too_Large
+	}
 
-	part := find_or_create_cache_partition(cache, origin.principal_id, true)
-	if part == nil {
-		return .Principal_Quota_Exceeded
+	// The part of the principal: a new one with its regions, or a refusal
+	// when the cache serves no more principals or the memory cannot hold
+	// them. Nothing of another part is read.
+	part, region := cache_region(cache, origin.principal_id)
+	if part < 0 {
+		if cache.part_count >= len(cache.parts) || cache.entries_of_a_principal <= 0 {
+			return .Principal_Quota_Exceeded
+		}
+		part = cache.part_count
+		entries_end := (part + 1) * cache.entries_of_a_principal
+		bodies_end := (part + 1) * cache.body_bytes_of_a_principal
+		if len(cache.entries) < entries_end && (cache.grow == nil || !cache.grow(cache, .Entries, entries_end) || len(cache.entries) < entries_end) {
+			return .Principal_Quota_Exceeded
+		}
+		if len(cache.bodies) < bodies_end && (cache.grow == nil || !cache.grow(cache, .Bodies, bodies_end) || len(cache.bodies) < bodies_end) {
+			return .Principal_Quota_Exceeded
+		}
+		cache.parts[part] = {principal_id = origin.principal_id}
+		cache.part_count += 1
+		part, region = cache_region(cache, origin.principal_id)
 	}
 
 	match_idx := -1
 	free_idx := -1
-	oldest_idx := 0
+	oldest_idx := -1
 	oldest_seq := max(u64)
-
-	for i := 0; i < CACHE_ENTRIES_PER_PRINCIPAL; i += 1 {
-		e := &part.entries[i]
-		if !e.used {
+	for i := 0; i < len(region); i += 1 {
+		e := &region[i]
+		if !e.used || e.principal_id != origin.principal_id {
 			if free_idx < 0 {
 				free_idx = i
 			}
 			continue
 		}
-		if e.scheme == origin.scheme && e.port == origin.port &&
-		   slice_equal(e.host[:e.host_len], origin.host[:origin.host_len]) &&
-		   slice_equal(e.target[:e.target_len], tbytes) {
+		if cache_entry_names(e, origin, tbytes) {
 			match_idx = i
 			break
 		}
@@ -807,15 +936,35 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 			oldest_idx = i
 		}
 	}
-
+	// The match, else a free entry of the region, else, at the share, the
+	// entry of the principal used least. The entry of the slot ends first:
+	// the room of its body comes back at the next compaction.
 	slot_idx := match_idx
 	if slot_idx < 0 {
-		slot_idx = free_idx if free_idx >= 0 else oldest_idx
+		slot_idx = free_idx >= 0 ? free_idx : oldest_idx
 	}
-
+	region[slot_idx] = {}
+	// The bytes: the own bodies used least go until the body fits the region.
+	place := 0
+	for {
+		placed: bool
+		if place, placed = cache_body_place(cache, part, region, size); placed {
+			break
+		}
+		least, least_seq := -1, max(u64)
+		for &e, index in region {
+			if e.used && e.body_len > 0 && e.last_used_seq < least_seq {
+				least, least_seq = index, e.last_used_seq
+			}
+		}
+		if least < 0 {
+			return .Body_Too_Large
+		}
+		region[least] = {}
+	}
+	copy(cache.bodies[place:][:size], body)
 	cache.access_seq += 1
-	e := &part.entries[slot_idx]
-	e^ = {}
+	e := &region[slot_idx]
 	e.used = true
 	e.principal_id = origin.principal_id
 	e.scheme = origin.scheme
@@ -828,41 +977,33 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 	e.stored_at_unix = now_unix
 	e.max_age_seconds = cc.max_age_seconds
 	e.must_revalidate = cc.no_cache
-	copy(e.body[:len(body)], body)
-	e.body_len = u16(len(body))
+	e.body_offset = place
+	e.body_len = size
 	e.last_used_seq = cache.access_seq
 	return .None
 }
 
-// response_cache_lookup retrieves a fresh cached response strictly from origin.principal_id's partition.
+// response_cache_lookup retrieves a fresh cached response strictly from the part of origin.principal_id.
 response_cache_lookup :: proc "contextless" (cache: ^Response_Cache, origin: ^Origin_Key, target: string, now_unix: i64, body_out: []u8) -> (status_code: u16, body_len: int, hit: bool) {
 	if !origin_valid(origin) {
 		return 0, 0, false
 	}
-	part := find_or_create_cache_partition(cache, origin.principal_id, false)
-	if part == nil {
-		return 0, 0, false
-	}
 	tbytes := transmute([]u8)target
-	for i := 0; i < CACHE_ENTRIES_PER_PRINCIPAL; i += 1 {
-		e := &part.entries[i]
-		if !e.used || e.principal_id != origin.principal_id {
+	_, region := cache_region(cache, origin.principal_id)
+	for &e in region {
+		if !cache_entry_names(&e, origin, tbytes) {
 			continue
 		}
-		if e.scheme == origin.scheme && e.port == origin.port &&
-		   slice_equal(e.host[:e.host_len], origin.host[:origin.host_len]) &&
-		   slice_equal(e.target[:e.target_len], tbytes) {
-			if e.must_revalidate || now_unix < e.stored_at_unix || now_unix - e.stored_at_unix >= e.max_age_seconds {
-				return 0, 0, false
-			}
-			if int(e.body_len) > len(body_out) {
-				return 0, 0, false
-			}
-			copy(body_out[:e.body_len], e.body[:e.body_len])
-			cache.access_seq += 1
-			e.last_used_seq = cache.access_seq
-			return e.status_code, int(e.body_len), true
+		if e.must_revalidate || now_unix < e.stored_at_unix || now_unix - e.stored_at_unix >= e.max_age_seconds {
+			return 0, 0, false
 		}
+		if e.body_len > len(body_out) {
+			return 0, 0, false
+		}
+		copy(body_out[:e.body_len], cache.bodies[e.body_offset:][:e.body_len])
+		cache.access_seq += 1
+		e.last_used_seq = cache.access_seq
+		return e.status_code, e.body_len, true
 	}
 	return 0, 0, false
 }

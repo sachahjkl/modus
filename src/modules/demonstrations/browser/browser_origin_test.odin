@@ -43,7 +43,8 @@ origin_messages_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, reply_problem, Message_Problem.None)
 	testing.expect(t, reply_back == reply, "the reply comes back the same")
 
-	tree := Origin_Render_Tree{status = .Done, origin = a, node_count = html_css.MAX_DOM_NODES, rule_count = html_css.MAX_CSS_RULES, box_count = 3, record_count = DOCUMENT_RECORD_CAPACITY, text_count = html_css.MAX_TEXT_POOL, document_height = max(i32), truncated = true, style_reused = true}
+	// Counts past each fixed table of before: 80 000 nodes, 5 000 rules.
+	tree := Origin_Render_Tree{status = .Done, origin = a, node_count = 80_000, rule_count = 5_000, box_count = 70_000, record_count = DOCUMENT_RECORDS_OF_A_BOX * 70_000, text_count = 1 << 30, document_height = max(i32), truncated = true, style_reused = true}
 	tree.title_count = copy(tree.title[:], strings.repeat("t", TITLE_CAPACITY, context.temp_allocator))
 	tree_bytes: [ORIGIN_RENDER_TREE_BYTES]u8
 	testing.expect_value(t, origin_render_tree_encode(&tree, tree_bytes[:]), ORIGIN_RENDER_TREE_BYTES)
@@ -72,7 +73,7 @@ origin_messages_refuse_broken_bytes :: proc(t: ^testing.T) {
 	OWNER_SCHEME :: 1 + ORIGIN_WIRE_BYTES + 8
 	WIDTH :: 1 + 2 * ORIGIN_WIRE_BYTES
 	KEY_COUNT :: WIDTH + 4
-	VALUE_COUNT :: KEY_COUNT + 1 + ORIGIN_KEY_CAPACITY
+	VALUE_COUNT :: KEY_COUNT + 2 + ORIGIN_KEY_CAPACITY
 	Case :: struct {
 		place:   int,
 		bytes:   []u8,
@@ -88,7 +89,8 @@ origin_messages_refuse_broken_bytes :: proc(t: ^testing.T) {
 		{REQUESTER_HOST_LENGTH, {0xFF, 0xFF}, .Host_Too_Long},
 		{WIDTH, {0xFF, 0xFF, 0xFF, 0xFF}, .Width_Refused},
 		{WIDTH, {u8((LARGEST_WIDTH + 1) & 0xFF), u8((LARGEST_WIDTH + 1) >> 8), 0, 0}, .Width_Refused},
-		{KEY_COUNT, {ORIGIN_KEY_CAPACITY + 1}, .Count_Too_Large},
+		{KEY_COUNT, {u8((ORIGIN_KEY_CAPACITY + 1) & 0xFF), u8((ORIGIN_KEY_CAPACITY + 1) >> 8)}, .Count_Too_Large},
+		{KEY_COUNT, {0xFF, 0xFF}, .Count_Too_Large},
 		{VALUE_COUNT, {ORIGIN_VALUE_CAPACITY + 1}, .Count_Too_Large},
 		{VALUE_COUNT, {255}, .Count_Too_Large},
 	}
@@ -103,7 +105,7 @@ origin_messages_refuse_broken_bytes :: proc(t: ^testing.T) {
 	// and a value at their capacity.
 	edge := good
 	copy(edge[WIDTH:], []u8{0, 0, 0, 0})
-	edge[KEY_COUNT] = ORIGIN_KEY_CAPACITY
+	edge[KEY_COUNT], edge[KEY_COUNT + 1] = u8(ORIGIN_KEY_CAPACITY & 0xFF), u8(ORIGIN_KEY_CAPACITY >> 8)
 	edge[VALUE_COUNT] = ORIGIN_VALUE_CAPACITY
 	_, problem := origin_request_decode(edge[:])
 	testing.expect_value(t, problem, Message_Problem.None)
@@ -130,11 +132,22 @@ origin_messages_refuse_broken_bytes :: proc(t: ^testing.T) {
 	tree_bytes: [ORIGIN_RENDER_TREE_BYTES]u8
 	origin_render_tree_encode(&tree, tree_bytes[:])
 	NODE_COUNT :: 1 + ORIGIN_WIRE_BYTES
-	TRUNCATED :: NODE_COUNT + 3 * 2 + 3 * 4
+	BOX_COUNT :: NODE_COUNT + 2 * 4
+	RECORD_COUNT :: NODE_COUNT + 3 * 4
+	TRUNCATED :: NODE_COUNT + 3 * 4 + 3 * 4
+	// A count of nodes past the index of a node, boxes past the nodes, and
+	// records past the records of the boxes are refused.
 	over_nodes := tree_bytes
-	over_nodes[NODE_COUNT] = u8((html_css.MAX_DOM_NODES + 1) & 0xFF)
-	over_nodes[NODE_COUNT + 1] = u8((html_css.MAX_DOM_NODES + 1) >> 8)
+	copy(over_nodes[NODE_COUNT:], []u8{0xFF, 0xFF, 0xFF, 0xFF})
 	_, tree_problem := origin_render_tree_decode(over_nodes[:])
+	testing.expect_value(t, tree_problem, Message_Problem.Count_Too_Large)
+	over_boxes := tree_bytes
+	over_boxes[BOX_COUNT] = 1
+	_, tree_problem = origin_render_tree_decode(over_boxes[:])
+	testing.expect_value(t, tree_problem, Message_Problem.Count_Too_Large)
+	over_records := tree_bytes
+	over_records[RECORD_COUNT] = 1
+	_, tree_problem = origin_render_tree_decode(over_records[:])
 	testing.expect_value(t, tree_problem, Message_Problem.Count_Too_Large)
 	bad_flag := tree_bytes
 	bad_flag[TRUNCATED] = 2
@@ -288,7 +301,7 @@ cached_style_sheets_are_partitioned :: proc(t: ^testing.T) {
 	testing.expect(t, !origin_render_ask(&a, page, 640).style_reused, "A reused the sheet that B parsed")
 	testing.expect(t, !origin_render_ask(&a, other, 640).style_reused, "another text is parsed again")
 	tree := origin_render_ask(&a, page, 640)
-	testing.expect_value(t, tree.rule_count, u16(2))
+	testing.expect_value(t, tree.rule_count, u32(2))
 	state := origin_state_find(&a, false)
 	testing.expect(t, state != nil && state.style.reuses == 1, "one reuse for A")
 }

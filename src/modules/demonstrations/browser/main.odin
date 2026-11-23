@@ -62,9 +62,21 @@ LARGEST_HEIGHT :: 900
 // pages. And the glyph memory of the copy of the text rendering of the
 // drawing module, which draws its text: 354 pages
 // (display.TEXT_MEMORY_PAGES). 2250 + 354 = 2604. The document, its style
-// sheet, its boxes, its records and the layout tree of the window are in
-// the memory of the module, which the tool counts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2604, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// sheet, its boxes, its records and the tables of the window are arenas of
+// the budget that grow with the page (document.odin): the budget states a
+// page of the web of today, 1 MiB of HTML with 20 000 nodes, 40 000
+// attributes and 1 000 rules. Its parts need about 17 MB: records 5.8 MB
+// (6 of 48 bytes for each box), boxes 3.2 MB (160 bytes), styles 1.9 MB
+// (96 bytes), rules 1.8 MB (1784 bytes), text and the text of the records
+// 2.1 MB, nodes and attributes 1.4 MB. A growth asks twice its need, and
+// its need alone when the budget does not pay twice: 8192 pages hold the
+// page, its growth and the frame lists of the 13 reservations. A larger
+// page takes the pages that the budget holds, and past them it is cut.
+// 2604 + 8192 = 10796.
+DOCUMENT_PAGES :: 8192
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10796, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The second surface, the glyph memory, and the document.
+#assert(MODULE_BUDGET.working_memory_pages == 2250 + 354 + DOCUMENT_PAGES)
 
 LINE :: graphics.LINE_HEIGHT
 ROW_HEIGHT :: interface.TABLE_LINE // A text field and a button.
@@ -101,7 +113,7 @@ SCROLL_LINE :: 3 * LINE
 
 // The back and forward history: the addresses of the pages that the window
 // showed, and the scroll of each when the window left it.
-HISTORY_CAPACITY :: 32
+HISTORY_CAPACITY :: 256
 
 History_Entry :: struct {
 	address: [ADDRESS_CAPACITY]u8,
@@ -162,7 +174,7 @@ Act_Kind :: enum u8 {
 
 Act :: struct {
 	kind:     Act_Kind,
-	node:     u16, // The element a of a link, or the form to send.
+	node:     u32, // The element a of a link, or the form to send.
 	bookmark: Built_In_Page, // The page of a bookmark.
 }
 
@@ -299,7 +311,7 @@ history_go :: proc "contextless" (place: int) {
 }
 
 // link_follow loads the address of a link, resolved against the page.
-link_follow :: proc "contextless" (anchor: u16) {
+link_follow :: proc "contextless" (anchor: u32) {
 	href, _ := html_css_attribute(anchor, "href")
 	target: [ADDRESS_CAPACITY + 8]u8
 	writer := Source_Writer{bytes = target[:]}
@@ -314,7 +326,7 @@ link_follow :: proc "contextless" (anchor: u16) {
 
 // form_send writes the fields of a form into the query of its action and
 // loads that address.
-form_send :: proc "contextless" (form: u16) {
+form_send :: proc "contextless" (form: u32) {
 	action, _ := html_css_attribute(form, "action")
 	target: [ADDRESS_CAPACITY + 8]u8
 	writer := Source_Writer{bytes = target[:]}
@@ -342,7 +354,7 @@ form_send :: proc "contextless" (form: u16) {
 	}
 }
 
-html_css_attribute :: proc "contextless" (node: u16, name: string) -> (value: string, found: bool) {
+html_css_attribute :: proc "contextless" (node: u32, name: string) -> (value: string, found: bool) {
 	bytes, has := html_css.dom_node_attr(&document_tree, node, name)
 	return string(bytes), has
 }
@@ -664,6 +676,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field(display.SIZE_LIMITS_PROBLEM_SENTENCES[problem], STAYS_FIXED_CAUSE_FIELD_BYTES)})
 	} else if !sent {
 		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", STAYS_FIXED_CAUSE_FIELD_BYTES)})
+	}
+	// The arenas of the document reserve the pages that the budget holds:
+	// a page is as large as the budget pays, and no larger.
+	own, _ := system.budget_read()
+	if status := document_memory_create(system.arena_reservation_pages(own.pages)); status != .Ok {
+		system.log_fact(.Warning, Document_Memory_Refused{status = u64(status)})
+		system.stop(.Failed)
 	}
 	page_load(HOME_ADDRESS, true)
 	frame_build(&window)

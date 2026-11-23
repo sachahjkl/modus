@@ -46,27 +46,34 @@ BORDER_OF_TEST :: 2
 TITLE_OF_TEST :: 24
 @(private = "file")
 PAGE_OF_TEST :: 4096
+// The reference screen, whose surfaces have at most 4096 pixels on a side.
+@(private = "file")
+REFERENCE_WIDTH_OF_TEST :: 1920
+@(private = "file")
+REFERENCE_HEIGHT_OF_TEST :: 1080
 
 // A Surface_Create that the compositor takes: a window of 560 x 592
 // logical pixels at 1.25, 700 x 740 pixels of the screen.
 @(private = "file")
 create_of_test :: proc() -> Surface_Create_Facts {
-	return {is_memory = true, readable = true, memory_bytes = 700 * 740 * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = u64(scale_factor.Scale.Ten_Eighths), width = 560, height = 592}
+	return {is_memory = true, readable = true, memory_bytes = 700 * 740 * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = u64(scale_factor.Scale.Ten_Eighths), width = 560, height = 592, screen_side_limit = surface_screen_side_limit(REFERENCE_WIDTH_OF_TEST, REFERENCE_HEIGHT_OF_TEST)}
 }
 
 // The sizes of Surface_Create. Each refusal first: no memory, no Read, a
-// logical side of 0, one past the limit, 4096 and the largest word; a scale
-// word of no member: 0, 7 and 17; memory one byte short
-// of the pixels at the scale of the record. Then the edges that hold: 1 x 1,
-// and the limit at each scale of the range, whose pixels of the screen
-// are 2048 at 1, 2560 at 1.25, 2816 at 1.375 and 4096 at 2.
+// logical side of 0, one past the limit, twice the limit and the largest
+// word; a scale word of no member: 0, 7 and 17; memory one byte short of
+// the pixels at the scale of the record; a side past the screen of the
+// reference screen (4000 logical pixels at 1.25 are 5000 pixels of the
+// screen). Then the edges that hold: 1 x 1, and the limit at each scale of
+// the range on a screen of 8K, whose pixels of the screen are 8192 at 1,
+// 10240 at 1.25, 11264 at 1.375 and 16384 at 2.
 @(test)
 surface_create_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	Case :: struct {
 		facts:   Surface_Create_Facts,
 		refusal: Surface_Create_Refusal,
 	}
-	cases: [12]Case
+	cases: [14]Case
 	for &each in cases {
 		each.facts = create_of_test()
 	}
@@ -75,13 +82,15 @@ surface_create_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	cases[2].facts.width, cases[2].refusal = 0, .Size_Out_Of_Range
 	cases[3].facts.height, cases[3].refusal = 0, .Size_Out_Of_Range
 	cases[4].facts.width, cases[4].refusal = WINDOW_LOGICAL_LIMIT + 1, .Size_Out_Of_Range
-	cases[5].facts.height, cases[5].refusal = 4096, .Size_Out_Of_Range
+	cases[5].facts.height, cases[5].refusal = 2 * WINDOW_LOGICAL_LIMIT, .Size_Out_Of_Range
 	cases[6].facts.width, cases[6].refusal = max(u64), .Size_Out_Of_Range
 	cases[7].facts.scale_word, cases[7].refusal = 0, .No_Scale
 	cases[8].facts.scale_word, cases[8].refusal = scale_factor.EIGHTHS_OF_ONE - 1, .No_Scale
 	cases[9].facts.scale_word, cases[9].refusal = u64(max(scale_factor.Scale)) + 1, .No_Scale
 	cases[10].facts.scale_word, cases[10].refusal = max(u64), .No_Scale
 	cases[11].facts.memory_bytes, cases[11].refusal = 700 * 740 * SURFACE_BYTES_FOR_EACH_PIXEL - 1, .Too_Small
+	cases[12].facts.width, cases[12].facts.memory_bytes, cases[12].refusal = 4000, 5000 * 740 * SURFACE_BYTES_FOR_EACH_PIXEL, .Past_Screen
+	cases[13].facts.screen_side_limit, cases[13].refusal = 0, .Past_Screen
 	for each, index in cases {
 		refusal, _, screen_width, screen_height := surface_create_refusal(each.facts)
 		testing.expectf(t, refusal == each.refusal, "case %d gives %v, not %v", index, refusal, each.refusal)
@@ -101,11 +110,40 @@ surface_create_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	facts.width, facts.height, facts.memory_bytes = 1, 1, SURFACE_BYTES_FOR_EACH_PIXEL
 	refusal, _, screen_width, screen_height = surface_create_refusal(facts)
 	testing.expect(t, refusal == .None && screen_width == 1 && screen_height == 1)
-	for limit in ([?][2]u64{{u64(scale_factor.Scale.Eight_Eighths), 2048}, {u64(scale_factor.Scale.Ten_Eighths), 2560}, {u64(scale_factor.Scale.Eleven_Eighths), 2816}, {u64(scale_factor.Scale.Sixteen_Eighths), 4096}}) {
-		facts = {is_memory = true, readable = true, memory_bytes = limit[1] * limit[1] * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = limit[0], width = WINDOW_LOGICAL_LIMIT, height = WINDOW_LOGICAL_LIMIT}
+	for limit in ([?][2]u64{{u64(scale_factor.Scale.Eight_Eighths), 8192}, {u64(scale_factor.Scale.Ten_Eighths), 10240}, {u64(scale_factor.Scale.Eleven_Eighths), 11264}, {u64(scale_factor.Scale.Sixteen_Eighths), 16384}}) {
+		facts = {is_memory = true, readable = true, memory_bytes = limit[1] * limit[1] * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = limit[0], width = WINDOW_LOGICAL_LIMIT, height = WINDOW_LOGICAL_LIMIT, screen_side_limit = surface_screen_side_limit(7680, 4320) + 1024}
 		refusal, _, screen_width, screen_height = surface_create_refusal(facts)
 		testing.expectf(t, refusal == .None && screen_width == limit[1] && screen_height == limit[1], "the limit at %d eighths gives %v, %d", limit[0], refusal, screen_width)
 	}
+}
+
+// The side of a surface follows the screen in force. The refusals first: a
+// screen of no size, or a negative size, keeps the floor of 4096; then the
+// reference screen keeps it too, and a screen of 4K, 5K and 8K gets twice
+// its longest side. A window of 3840 x 2160 at the scale 1 on a screen of
+// 4K is taken, and so is the same window at 2 (7680 x 4320 pixels of the
+// screen, the side limit of that screen); one logical pixel more at 2 is
+// past the screen.
+@(test)
+a_surface_follows_the_screen_in_force :: proc(t: ^testing.T) {
+	testing.expect_value(t, surface_screen_side_limit(0, 0), u64(SURFACE_SCREEN_SIDE_FLOOR))
+	testing.expect_value(t, surface_screen_side_limit(-1, min(int)), u64(SURFACE_SCREEN_SIDE_FLOOR))
+	testing.expect_value(t, surface_screen_side_limit(REFERENCE_WIDTH_OF_TEST, REFERENCE_HEIGHT_OF_TEST), u64(SURFACE_SCREEN_SIDE_FLOOR))
+	testing.expect_value(t, surface_screen_side_limit(3840, 2160), u64(7680))
+	testing.expect_value(t, surface_screen_side_limit(5120, 2880), u64(10240))
+	testing.expect_value(t, surface_screen_side_limit(2880, 5120), u64(10240))
+	testing.expect_value(t, surface_screen_side_limit(7680, 4320), u64(15360))
+	four_k := surface_screen_side_limit(3840, 2160)
+	facts := Surface_Create_Facts{is_memory = true, readable = true, memory_bytes = 7680 * 4321 * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = u64(scale_factor.Scale.Sixteen_Eighths), width = 3841, height = 2160, screen_side_limit = four_k}
+	refusal, _, _, _ := surface_create_refusal(facts)
+	testing.expect_value(t, refusal, Surface_Create_Refusal.Past_Screen)
+	facts.width = 3840
+	screen_width, screen_height: u64
+	refusal, _, screen_width, screen_height = surface_create_refusal(facts)
+	testing.expect(t, refusal == .None && screen_width == 7680 && screen_height == 4320)
+	facts.scale_word, facts.memory_bytes = u64(scale_factor.Scale.Eight_Eighths), 3840 * 2160 * SURFACE_BYTES_FOR_EACH_PIXEL
+	refusal, _, screen_width, screen_height = surface_create_refusal(facts)
+	testing.expect(t, refusal == .None && screen_width == 3840 && screen_height == 2160)
 }
 
 // Each logical size up to the limit, at each scale of the range, gives
@@ -149,6 +187,7 @@ rescale_of_test :: proc() -> Surface_Rescale_Facts {
 		scale           = .Eleven_Eighths,
 		window_width    = 1000,
 		window_height   = 704,
+		screen_side_limit = surface_screen_side_limit(REFERENCE_WIDTH_OF_TEST, REFERENCE_HEIGHT_OF_TEST),
 	}
 }
 
@@ -166,7 +205,7 @@ surface_rescale_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 		facts:   Surface_Rescale_Facts,
 		refusal: Surface_Rescale_Refusal,
 	}
-	cases: [22]Case
+	cases: [23]Case
 	for &each in cases {
 		each.facts = rescale_of_test()
 	}
@@ -192,6 +231,9 @@ surface_rescale_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	cases[19].facts.scale_word, cases[19].refusal = u64(scale_factor.Scale.Ten_Eighths), .Other_Scale
 	cases[20].facts.window_width, cases[20].refusal = WINDOW_LOGICAL_LIMIT + 1, .Other_Size
 	cases[21].facts.window_height, cases[21].refusal = 0, .Other_Size
+	// 3000 logical pixels at 1.375 are 4125 pixels of the screen, past the
+	// side of a surface on the reference screen.
+	cases[22].facts.window_width, cases[22].facts.width, cases[22].refusal = 3000, 4125, .Past_Screen
 	for each, index in cases {
 		refusal := surface_rescale_refusal(each.facts)
 		testing.expectf(t, refusal == each.refusal, "case %d gives %v, not %v", index, refusal, each.refusal)
@@ -418,7 +460,7 @@ release_of_test :: proc(side: ^Compositor_Side, serial: u64, held_width, held_he
 offer_of_test :: proc(side: Compositor_Side, view_width, view_height: int, scale: scale_factor.Scale, serial: u64) -> Surface_Rescale_Facts {
 	width := u64(scale_factor.screen_pixel_of_logical_pixel(i32(view_width), scale))
 	height := u64(scale_factor.screen_pixel_of_logical_pixel(i32(view_height), scale))
-	return {gift = true, is_memory = true, readable = true, memory_bytes = width * height * SURFACE_BYTES_FOR_EACH_PIXEL, width = width, height = height, scale_word = u64(scale), serial = serial, created = true, released = side.released, released_serial = side.released_serial, scale = scale, window_width = side.width, window_height = side.height}
+	return {gift = true, is_memory = true, readable = true, memory_bytes = width * height * SURFACE_BYTES_FOR_EACH_PIXEL, width = width, height = height, scale_word = u64(scale), serial = serial, created = true, released = side.released, released_serial = side.released_serial, scale = scale, window_width = side.width, window_height = side.height, screen_side_limit = surface_screen_side_limit(REFERENCE_WIDTH_OF_TEST, REFERENCE_HEIGHT_OF_TEST)}
 }
 
 // The clamp answered, with a scale that waited for it: the window takes
@@ -541,6 +583,7 @@ the_offer_after_a_clamp_has_the_clamped_size :: proc(t: ^testing.T) {
 		scale           = .Sixteen_Eighths,
 		window_width    = 816,
 		window_height   = 482,
+		screen_side_limit = surface_screen_side_limit(REFERENCE_WIDTH_OF_TEST, REFERENCE_HEIGHT_OF_TEST),
 	}
 	before := clamped
 	before.height, before.memory_bytes = 1120, 1632 * 1120 * SURFACE_BYTES_FOR_EACH_PIXEL
@@ -576,6 +619,6 @@ a_refused_offer_moves_the_serial_released :: proc(t: ^testing.T) {
 	first := serial_after_refused_offer(true, false, 6, 7)
 	testing.expect_value(t, first, 7)
 	testing.expect_value(t, serial_after_refused_offer(true, false, first, 8), 8)
-	facts := Surface_Rescale_Facts{gift = true, is_memory = true, readable = true, memory_bytes = 1500 * 993 * SURFACE_BYTES_FOR_EACH_PIXEL, width = 1500, height = 993, scale_word = u64(scale_factor.Scale.Twelve_Eighths), serial = 8, created = true, released = true, released_serial = first, scale = .Twelve_Eighths, window_width = 1000, window_height = 662}
+	facts := Surface_Rescale_Facts{gift = true, is_memory = true, readable = true, memory_bytes = 1500 * 993 * SURFACE_BYTES_FOR_EACH_PIXEL, width = 1500, height = 993, scale_word = u64(scale_factor.Scale.Twelve_Eighths), serial = 8, created = true, released = true, released_serial = first, scale = .Twelve_Eighths, window_width = 1000, window_height = 662, screen_side_limit = surface_screen_side_limit(REFERENCE_WIDTH_OF_TEST, REFERENCE_HEIGHT_OF_TEST)}
 	testing.expect_value(t, surface_rescale_refusal(facts), Surface_Rescale_Refusal.None)
 }

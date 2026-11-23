@@ -647,7 +647,11 @@ MODIFIER_ALT :: 4 // The bit set while the left Alt key is down. The right Alt k
 BUTTON_LEFT :: 1 // The bit of `Event.buttons` set while the left button is down.
 BUTTON_RIGHT :: 2 // The bit set while the right button is down.
 
-SURFACE_LIMIT :: 2048 // The largest width and height.
+// The largest logical width and height of a surface: a window as wide as a
+// screen of 8K at the scale 1. It is a bound of the words of the ring; the
+// holder of the display bounds each surface by the screen in force too,
+// and the budget of the window pays its pixels.
+SURFACE_LIMIT :: 8192
 
 // The most windows that a Settings_Changed counts as declining the scale:
 // more than a compositor holds, so a larger word is no count.

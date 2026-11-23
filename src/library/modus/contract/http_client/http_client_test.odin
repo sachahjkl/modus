@@ -2,6 +2,8 @@
 package http_client
 
 import "core:fmt"
+import "core:slice"
+import "core:strings"
 import "core:testing"
 
 @(test)
@@ -185,8 +187,8 @@ test_http3_framing_bridge_and_h2_refusals :: proc(t: ^testing.T) {
 
 @(test)
 test_cookie_attributes_and_secure_enforcement :: proc(t: ^testing.T) {
-	jar := new(Cookie_Jar)
-	defer free(jar)
+	jar := store_test_jar_make()
+	defer store_test_jar_free(jar)
 	out := make([]u8, 512)
 	defer delete(out)
 
@@ -250,10 +252,11 @@ test_cookie_attributes_and_secure_enforcement :: proc(t: ^testing.T) {
 
 @(test)
 test_strict_per_principal_isolation_cookies_and_cache :: proc(t: ^testing.T) {
-	jar := new(Cookie_Jar)
-	cache := new(Response_Cache)
-	defer free(jar)
-	defer free(cache)
+	// Shares of 32 cookies and 8 cached answers for each principal.
+	jar := store_test_jar_make(2, 32)
+	cache := store_test_cache_make(2, 8)
+	defer store_test_jar_free(jar)
+	defer store_test_cache_free(cache)
 
 	out := make([]u8, 1024)
 	body_out := make([]u8, 1024)
@@ -281,11 +284,11 @@ test_strict_per_principal_isolation_cookies_and_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, response_cache_store(cache, &p1, "/account", 200, "max-age=600", transmute([]u8)string("BALANCE_P1=$10"), now), Store_Refusal.None)
 
 	// Eviction isolation attack: Principal 1 floods 2x cookie quota and 4x cache quota!
-	for i := 0; i < COOKIES_PER_PRINCIPAL * 2; i += 1 {
+	for i := 0; i < jar.cookies_of_a_principal * 2; i += 1 {
 		hdr := fmt.tprintf("flood%d=v%d; Secure; Path=/; Max-Age=600", i, i)
 		testing.expect_value(t, cookie_jar_set_from_header(jar, &p1, "/", hdr, now), Store_Refusal.None)
 	}
-	for i := 0; i < CACHE_ENTRIES_PER_PRINCIPAL * 4; i += 1 {
+	for i := 0; i < cache.entries_of_a_principal * 4; i += 1 {
 		path := fmt.tprintf("/flood/%d", i)
 		testing.expect_value(t, response_cache_store(cache, &p1, path, 200, "max-age=600", transmute([]u8)string("flood"), now), Store_Refusal.None)
 	}
@@ -310,3 +313,184 @@ test_strict_per_principal_isolation_cookies_and_cache :: proc(t: ^testing.T) {
 	_, blen, hit0 = response_cache_lookup(cache, &p0, "/account", now + 6, body_out)
 	testing.expect(t, hit0 && string(body_out[:blen]) == "BALANCE_P0=$9999", "Principal 1 no-store must not purge Principal 0 cache")
 }
+
+// The jar and the cache hold what their memory holds, past each fixed
+// count of before: 100 principals with 40 cookies each, a cookie value of
+// 4000 bytes, and a cached body of 64 KiB (16 times the 4 KiB of before).
+// A memory that cannot grow keeps its own: a principal with no entry is
+// refused, never given the place of another, and a body that the bodies do
+// not hold is refused with no entry; the places of replaced bodies come
+// back by a compaction, and the bodies read back whole.
+@(test)
+test_jar_and_cache_grow_with_their_memory :: proc(t: ^testing.T) {
+	jar := store_test_jar_make(100, 41)
+	cache := store_test_cache_make(100, 4)
+	defer store_test_jar_free(jar)
+	defer store_test_cache_free(cache)
+	now: i64 = 1_700_000_000
+	out := make([]u8, 8192)
+	defer delete(out)
+	for principal in 0 ..< 100 {
+		origin, _ := origin_key_make(u64(principal), .Https, "site.example", 443)
+		for cookie in 0 ..< 40 {
+			testing.expect_value(t, cookie_jar_set_from_header(jar, &origin, "/", fmt.tprintf("c%d=v; Secure; Path=/", cookie), now), Store_Refusal.None)
+		}
+	}
+	last, _ := origin_key_make(99, .Https, "site.example", 443)
+	n, _ := cookie_jar_format_header(jar, &last, "/", true, true, false, now, out)
+	testing.expect(t, n > 0 && strings.count(string(out[:n]), "=") == 40, "each cookie of the last principal is kept")
+	long_value := strings.repeat("v", 4000, context.temp_allocator)
+	testing.expect_value(t, cookie_jar_set_from_header(jar, &last, "/", fmt.tprintf("long=%s; Secure; Path=/", long_value), now), Store_Refusal.None)
+
+	big := make([]u8, 64 << 10)
+	defer delete(big)
+	for &b, i in big {
+		b = u8(i)
+	}
+	body_out := make([]u8, 64 << 10)
+	defer delete(body_out)
+	testing.expect_value(t, response_cache_store(cache, &last, "/big", 200, "max-age=600", big, now), Store_Refusal.None)
+	_, blen, hit := response_cache_lookup(cache, &last, "/big", now + 1, body_out)
+	testing.expect(t, hit && blen == len(big) && string(body_out[:blen]) == string(big), "a body of 64 KiB reads back whole")
+
+	// A fixed memory for two principals: four entries and 32 bytes of
+	// bodies, so a part of two entries and 16 bytes each.
+	entries := make([]Cache_Entry, 4)
+	defer delete(entries)
+	bodies := make([]u8, 32)
+	defer delete(bodies)
+	parts := make([]Principal_Part, 2)
+	defer delete(parts)
+	fixed := Response_Cache{entries = entries, bodies = bodies}
+	response_cache_init(&fixed, parts, len(entries), len(bodies))
+	testing.expect(t, fixed.entries_of_a_principal == 2 && fixed.body_bytes_of_a_principal == 16)
+	other, _ := origin_key_make(5, .Https, "site.example", 443)
+	third, _ := origin_key_make(6, .Https, "site.example", 443)
+	for i in 0 ..< 2 {
+		testing.expect_value(t, response_cache_store(&fixed, &last, fmt.tprintf("/p%d", i), 200, "max-age=600", transmute([]u8)string("12345678"), now), Store_Refusal.None)
+	}
+	// A body past the share of bytes is refused before any entry goes.
+	testing.expect_value(t, response_cache_store(&fixed, &last, "/p0", 200, "max-age=600", make([]u8, 17, context.temp_allocator), now), Store_Refusal.Body_Too_Large)
+	_, _, hit = response_cache_lookup(&fixed, &last, "/p0", now + 1, body_out)
+	testing.expect(t, hit, "a body past the share takes no entry")
+	// Another principal has its own part: it moves nothing of last.
+	testing.expect_value(t, response_cache_store(&fixed, &other, "/x", 200, "max-age=600", transmute([]u8)string("1"), now), Store_Refusal.None)
+	// A principal past the two that the cache serves gets no part.
+	testing.expect_value(t, response_cache_store(&fixed, &third, "/x", 200, "max-age=600", transmute([]u8)string("1"), now), Store_Refusal.Principal_Quota_Exceeded)
+	// At its share, last replaces its own entry used least: /p1, as the
+	// lookup of /p0 used /p0 last.
+	testing.expect_value(t, response_cache_store(&fixed, &last, "/p2", 200, "max-age=600", transmute([]u8)string("abcdefgh"), now), Store_Refusal.None)
+	_, _, hit = response_cache_lookup(&fixed, &last, "/p1", now + 1, body_out)
+	testing.expect(t, !hit, "its own least used entry went")
+	// Each replacement frees the place of the body before it: the bodies stay
+	// within the 16 bytes of the part by compaction.
+	for round in 0 ..< 8 {
+		text := fmt.tprintf("r%d-abcd", round)
+		testing.expect_value(t, response_cache_store(&fixed, &last, "/p2", 200, "max-age=600", transmute([]u8)text, now), Store_Refusal.None)
+		_, blen, hit = response_cache_lookup(&fixed, &last, "/p2", now + 1, body_out)
+		testing.expect(t, hit && string(body_out[:blen]) == text)
+	}
+	_, blen, hit = response_cache_lookup(&fixed, &last, "/p0", now + 1, body_out)
+	testing.expect(t, hit && string(body_out[:blen]) == "12345678", "a moved body reads back whole")
+	_, blen, hit = response_cache_lookup(&fixed, &other, "/x", now + 1, body_out)
+	testing.expect(t, hit && string(body_out[:blen]) == "1", "the part of another stays")
+}
+
+
+// A principal that fills its part, and floods past it, never moves an
+// entry of another: the regions of the other principal, its cookies, its
+// entries and the bytes of its bodies, stay byte for byte, and each read
+// of it gives what it stored.
+@(test)
+test_a_full_part_never_moves_another :: proc(t: ^testing.T) {
+	jar := store_test_jar_make(3, 4)
+	cache := store_test_cache_make(3, 4, 64)
+	defer store_test_jar_free(jar)
+	defer store_test_cache_free(cache)
+	now: i64 = 1_700_000_000
+	a, _ := origin_key_make(1, .Https, "a.example", 443)
+	b, _ := origin_key_make(2, .Https, "b.example", 443)
+	for i in 0 ..< 2 {
+		testing.expect_value(t, cookie_jar_set_from_header(jar, &b, "/", fmt.tprintf("b%d=kept; Secure", i), now), Store_Refusal.None)
+		testing.expect_value(t, response_cache_store(cache, &b, fmt.tprintf("/b%d", i), 200, "max-age=600", transmute([]u8)string("the body of b"), now), Store_Refusal.None)
+	}
+	part_b := 0
+	for i in 0 ..< jar.part_count {
+		part_b = jar.parts[i].principal_id == 2 ? i : part_b
+	}
+	cookies_of_b := slice.clone(slice.to_bytes(jar.entries[part_b * 4:][:4]), context.temp_allocator)
+	entries_of_b := slice.clone(slice.to_bytes(cache.entries[part_b * 4:][:4]), context.temp_allocator)
+	bodies_of_b := slice.clone(cache.bodies[part_b * 64:][:64], context.temp_allocator)
+	// a fills its part and floods ten times past it, with bodies of its
+	// whole share of bytes.
+	for i in 0 ..< 40 {
+		testing.expect_value(t, cookie_jar_set_from_header(jar, &a, "/", fmt.tprintf("a%d=v; Secure", i), now), Store_Refusal.None)
+		testing.expect_value(t, response_cache_store(cache, &a, fmt.tprintf("/a%d", i), 200, "max-age=600", make([]u8, 64 - i % 3, context.temp_allocator), now), Store_Refusal.None)
+	}
+	testing.expect(t, slice.equal(slice.to_bytes(jar.entries[part_b * 4:][:4]), cookies_of_b), "the cookies of b stay byte for byte")
+	testing.expect(t, slice.equal(slice.to_bytes(cache.entries[part_b * 4:][:4]), entries_of_b), "the entries of b stay byte for byte")
+	testing.expect(t, slice.equal(cache.bodies[part_b * 64:][:64], bodies_of_b), "the bodies of b stay byte for byte")
+	out := make([]u8, 256, context.temp_allocator)
+	n, _ := cookie_jar_format_header(jar, &b, "/", true, true, false, now, out)
+	testing.expect_value(t, string(out[:n]), "b0=kept; b1=kept")
+	for i in 0 ..< 2 {
+		_, blen, hit := response_cache_lookup(cache, &b, fmt.tprintf("/b%d", i), now + 1, out)
+		testing.expect(t, hit && string(out[:blen]) == "the body of b")
+	}
+	// a keeps its share and no more: its newest four.
+	n, _ = cookie_jar_format_header(jar, &a, "/", true, true, false, now, out)
+	testing.expect_value(t, strings.count(string(out[:n]), "="), 4)
+	testing.expect(t, strings.contains(string(out[:n]), "a39=v") && !strings.contains(string(out[:n]), "a35=v"))
+}
+
+// The room of a newcomer is its share, whatever the others hold: in a jar
+// and a cache where another principal fills its part, and in ones where
+// it holds nothing, the newcomer stores the same, evicts the same of its
+// own, and is refused the same body past its share, before any eviction.
+@(test)
+test_the_room_of_a_newcomer_does_not_depend_on_others :: proc(t: ^testing.T) {
+	now: i64 = 1_700_000_000
+	a, _ := origin_key_make(1, .Https, "a.example", 443)
+	c, _ := origin_key_make(3, .Https, "c.example", 443)
+	Result :: struct {
+		cookies:  string,
+		refusals: [8]Store_Refusal,
+		hits:     [8]bool,
+	}
+	run :: proc(full: bool, a, c: ^Origin_Key, now: i64) -> (result: Result) {
+		jar := store_test_jar_make(2, 3)
+		cache := store_test_cache_make(2, 3, 32)
+		defer store_test_jar_free(jar)
+		defer store_test_cache_free(cache)
+		if full {
+			for i in 0 ..< 20 {
+				cookie_jar_set_from_header(jar, a, "/", fmt.tprintf("a%d=v; Secure", i), now)
+				response_cache_store(cache, a, fmt.tprintf("/a%d", i), 200, "max-age=600", make([]u8, 32, context.temp_allocator), now)
+			}
+		}
+		for i in 0 ..< 4 {
+			result.refusals[i] = cookie_jar_set_from_header(jar, c, "/", fmt.tprintf("c%d=v; Secure", i), now)
+		}
+		out := make([]u8, 256, context.temp_allocator)
+		n, _ := cookie_jar_format_header(jar, c, "/", true, true, false, now, out)
+		result.cookies = strings.clone(string(out[:n]), context.temp_allocator)
+		result.refusals[4] = response_cache_store(cache, c, "/c0", 200, "max-age=600", make([]u8, 20, context.temp_allocator), now)
+		result.refusals[5] = response_cache_store(cache, c, "/c1", 200, "max-age=600", make([]u8, 12, context.temp_allocator), now)
+		result.refusals[6] = response_cache_store(cache, c, "/c2", 200, "max-age=600", make([]u8, 33, context.temp_allocator), now)
+		result.refusals[7] = response_cache_store(cache, c, "/c3", 200, "max-age=600", make([]u8, 16, context.temp_allocator), now)
+		for i in 0 ..< 4 {
+			_, _, result.hits[i] = response_cache_lookup(cache, c, fmt.tprintf("/c%d", i), now + 1, out)
+		}
+		return
+	}
+	alone := run(false, &a, &c, now)
+	beside_a_full_part := run(true, &a, &c, now)
+	testing.expect_value(t, beside_a_full_part, alone)
+	// Its share of 3 cookies: the fourth took the place of its own first.
+	testing.expect_value(t, alone.cookies, "c3=v; c1=v; c2=v")
+	// 20 + 12 bytes fill its 32; a body of 33 is refused before any
+	// eviction; a body of 16 evicts its own least used body, of 20 bytes.
+	testing.expect_value(t, alone.refusals[6], Store_Refusal.Body_Too_Large)
+	testing.expect_value(t, alone.hits, [8]bool{false, true, false, true, false, false, false, false})
+}
+

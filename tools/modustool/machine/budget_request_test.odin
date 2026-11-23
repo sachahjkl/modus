@@ -92,7 +92,7 @@ budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) 
 	} {
 		{"a name of an expression", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{window_width = MARGIN, window_height = HEIGHT}\n"},
 		{"a name that the package does not have", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{window_width = DEPTH, window_height = HEIGHT}\n"},
-		{"a width above the limit", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{window_width = 4096, window_height = HEIGHT}\n"},
+		{"a width above the limit", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{window_width = 8193, window_height = HEIGHT}\n"},
 	}
 	for item in refused {
 		item_state: build.Describe_State
@@ -233,9 +233,9 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	testing.expect(t, !largest_ok)
 	at_limit, at_limit_ok := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT}, 0, nil)
 	testing.expect(t, at_limit_ok)
-	// 2048 logical pixels are 4096 pixels of the screen at the largest
+	// 8192 logical pixels are 16384 pixels of the screen at the largest
 	// scale, 2; with a least size, cut to the screen.
-	testing.expect_value(t, at_limit.window_pages, u64(4096 * 4096 * 8 / 4096))
+	testing.expect_value(t, at_limit.window_pages, u64(16384 * 16384 * 8 / 4096))
 	at_limit_cut, _ := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT, window_least_width = 1, window_least_height = 1}, 0, nil)
 	testing.expect_value(t, at_limit_cut.window_pages, 4050)
 	// The cut on one axis only: 1000 x 100 are 1920 x 200 pixels; and a

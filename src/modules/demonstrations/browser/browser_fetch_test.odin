@@ -1,6 +1,7 @@
 #+build !freestanding
 package browser
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modus:contract/html_css"
@@ -15,11 +16,17 @@ address_of :: proc(text: string) -> Address {
 	return address
 }
 
+// The memory that the tests give a body: the bound of a body is the
+// memory of the caller, so the edges of the tests are at this size.
+@(private = "file")
+FETCH_TEST_BODY_BYTES :: 1 << 20
+
 @(private = "file")
 answer_read :: proc(base_text: string, raw: string, redirects: int = 0) -> (result: Fetch_Result, body: string) {
 	base := address_of(base_text)
-	output := make([]u8, FETCH_BODY_CAPACITY, context.temp_allocator)
-	result = fetch_response_read(&base, transmute([]u8)raw, redirects, output)
+	scratch := make([]u8, FETCH_TEST_BODY_BYTES, context.temp_allocator)
+	output := make([]u8, FETCH_TEST_BODY_BYTES, context.temp_allocator)
+	result = fetch_response_read(&base, transmute([]u8)raw, redirects, scratch, output)
 	return result, string(output[:result.body_count])
 }
 
@@ -76,11 +83,35 @@ fetch_response_documents :: proc(t: ^testing.T) {
 	testing.expect_value(t, result.outcome, Fetch_Outcome.Document)
 	testing.expect_value(t, body, "hello 0123456789")
 	testing.expect_value(t, string(result.cookie[:result.cookie_count]), "sid=42")
-	// The edge of the cap: a body of exactly the cap is taken.
-	at_cap := strings.repeat("a", FETCH_BODY_CAPACITY, context.temp_allocator)
-	result, body = answer_read("http://h", strings.concatenate({HTML_HEAD, "Content-Length: 16384\r\n\r\n", at_cap}, context.temp_allocator))
+	// A page of one byte past 16 KiB, the cap before, is taken, by its length
+	// and chunked.
+	past_old_cap := strings.repeat("b", 16 * 1024 + 1, context.temp_allocator)
+	result, body = answer_read("http://h", fmt.tprintf("%sContent-Length: %d\r\n\r\n%s", HTML_HEAD, len(past_old_cap), past_old_cap))
 	testing.expect_value(t, result.outcome, Fetch_Outcome.Document)
-	testing.expect_value(t, len(body), FETCH_BODY_CAPACITY)
+	testing.expect_value(t, body, past_old_cap)
+	result, body = answer_read("http://h", fmt.tprintf("%sTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n0\r\n\r\n", HTML_HEAD, len(past_old_cap), past_old_cap))
+	testing.expect_value(t, result.outcome, Fetch_Outcome.Document)
+	testing.expect_value(t, body, past_old_cap)
+	// The edge of the cap: a body of exactly the cap is taken.
+	at_cap := strings.repeat("a", FETCH_TEST_BODY_BYTES, context.temp_allocator)
+	result, body = answer_read("http://h", fmt.tprintf("%sContent-Length: %d\r\n\r\n%s", HTML_HEAD, FETCH_TEST_BODY_BYTES, at_cap))
+	testing.expect_value(t, result.outcome, Fetch_Outcome.Document)
+	testing.expect_value(t, len(body), FETCH_TEST_BODY_BYTES)
+	// The memory of the caller is the bound: a page of 3 MiB is taken when
+	// the caller gives it 3 MiB, and refused from its head when one of the
+	// two parts of that memory is a byte short.
+	large := strings.repeat("c", 3 << 20, context.temp_allocator)
+	large_answer := transmute([]u8)fmt.tprintf("%sContent-Length: %d\r\n\r\n%s", HTML_HEAD, len(large), large)
+	base := address_of("http://h")
+	scratch := make([]u8, 3 << 20, context.temp_allocator)
+	output := make([]u8, 3 << 20, context.temp_allocator)
+	result = fetch_response_read(&base, large_answer, 0, scratch, output)
+	testing.expect_value(t, result.outcome, Fetch_Outcome.Document)
+	testing.expect(t, result.body_count == len(large) && string(output[:result.body_count]) == large, "a page of 3 MiB reads whole")
+	result = fetch_response_read(&base, large_answer, 0, scratch[:len(large) - 1], output)
+	testing.expect_value(t, result.problem, Fetch_Problem.Body_Too_Large)
+	result = fetch_response_read(&base, large_answer, 0, scratch, output[:len(large) - 1])
+	testing.expect_value(t, result.problem, Fetch_Problem.Body_Too_Large)
 	// The media type and the charset in any case, quoted.
 	result, _ = answer_read("http://h", "HTTP/1.1 200 OK\r\nContent-Type: TEXT/HTML ; Charset=\"UTF-8\"\r\nContent-Length: 0\r\n\r\n")
 	testing.expect_value(t, result.outcome, Fetch_Outcome.Document)
@@ -98,8 +129,8 @@ fetch_chunked_edge_cases :: proc(t: ^testing.T) {
 		body:    string,
 		problem: Fetch_Problem,
 	}
-	over_cap := strings.concatenate({"4001\r\n", strings.repeat("a", FETCH_BODY_CAPACITY + 1, context.temp_allocator), "\r\n0\r\n\r\n"}, context.temp_allocator)
-	split_over_cap := strings.concatenate({"4000\r\n", strings.repeat("a", FETCH_BODY_CAPACITY, context.temp_allocator), "\r\n1\r\nb\r\n0\r\n\r\n"}, context.temp_allocator)
+	over_cap := fmt.tprintf("%x\r\n%s\r\n0\r\n\r\n", FETCH_TEST_BODY_BYTES + 1, strings.repeat("a", FETCH_TEST_BODY_BYTES + 1, context.temp_allocator))
+	split_over_cap := fmt.tprintf("%x\r\n%s\r\n1\r\nb\r\n0\r\n\r\n", FETCH_TEST_BODY_BYTES, strings.repeat("a", FETCH_TEST_BODY_BYTES, context.temp_allocator))
 	cases := [?]Case {
 		{"", .Response_Incomplete},
 		{"5\r\nhel", .Response_Incomplete},
@@ -128,7 +159,7 @@ fetch_chunked_edge_cases :: proc(t: ^testing.T) {
 	result, _ = answer_read("http://h", HTML_HEAD + "Content-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n")
 	testing.expect_value(t, result.problem, Fetch_Problem.Response_Malformed)
 	// A length past the cap is refused from the head alone, before its body.
-	result, _ = answer_read("http://h", HTML_HEAD + "Content-Length: 16385\r\n\r\n")
+	result, _ = answer_read("http://h", fmt.tprintf("%sContent-Length: %d\r\n\r\n", HTML_HEAD, FETCH_TEST_BODY_BYTES + 1))
 	testing.expect_value(t, result.problem, Fetch_Problem.Body_Too_Large)
 	result, _ = answer_read("http://h", HTML_HEAD + "Content-Length: 18446744073709551616\r\n\r\n")
 	testing.expect_value(t, result.problem, Fetch_Problem.Response_Malformed)

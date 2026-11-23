@@ -18,7 +18,7 @@ make_test_origin :: proc(principal_id: u64, host: string) -> Document_Origin {
 
 @(test)
 test_html_malformed_void_rawtext_and_implicit_closure :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 
 	html := `<!DOCTYPE html>
@@ -48,7 +48,7 @@ test_html_malformed_void_rawtext_and_implicit_closure :: proc(t: ^testing.T) {
 			testing.expect_value(t, n.first_child, NO_NODE)
 		}
 		if n.kind == .Element && n.tag == .Img {
-			alt, ok := dom_node_attr(tree, u16(i), "alt")
+			alt, ok := dom_node_attr(tree, u32(i), "alt")
 			testing.expect(t, ok && string(alt) == "A & B", "img alt attribute must decode &amp;")
 		}
 	}
@@ -57,11 +57,11 @@ test_html_malformed_void_rawtext_and_implicit_closure :: proc(t: ^testing.T) {
 	// The implied end of <p>: the first two <p> are siblings in the div.
 	// The stray </p> after </div> finds no open p, so the WHATWG algorithm
 	// makes an empty one in the body.
-	p_nodes: [4]u16
+	p_nodes: [4]u32
 	p_count := 0
 	for i := 0; i < int(tree.node_count); i += 1 {
 		if tree.nodes[i].kind == .Element && tree.nodes[i].tag == .P && p_count < 4 {
-			p_nodes[p_count] = u16(i)
+			p_nodes[p_count] = u32(i)
 			p_count += 1
 		}
 	}
@@ -75,7 +75,7 @@ test_html_malformed_void_rawtext_and_implicit_closure :: proc(t: ^testing.T) {
 
 @(test)
 test_html_entity_decoding_edge_cases :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 
 	html := `<p>&amp;&lt;&gt;&quot;&apos;&#65;&#x42;&unknown;&;&#;&#xZZ;&#0;&#xD800;&#x110000;</p>`
@@ -108,9 +108,9 @@ test_deep_nesting_500_divs_bounded_safely :: proc(t: ^testing.T) {
 		pos += 6
 	}
 
-	tree := new(Dom_Tree)
-	layout := new(Layout_Tree)
-	sheet := new(Css_Stylesheet)
+	tree := test_tree_make()
+	layout := test_layout_make()
+	sheet := test_sheet_make()
 	defer free(tree)
 	defer free(layout)
 	defer free(sheet)
@@ -118,7 +118,7 @@ test_deep_nesting_500_divs_bounded_safely :: proc(t: ^testing.T) {
 	parse_html(tree, make_test_origin(0, "deep.example"), buf[:pos])
 	testing.expect(t, tree.truncated, "500-deep input must record truncation")
 	testing.expect(t, tree.max_depth_reached <= MAX_DOM_DEPTH, "DOM depth must never exceed MAX_DOM_DEPTH")
-	testing.expect(t, tree.node_count <= MAX_DOM_NODES, "DOM node count must never exceed MAX_DOM_NODES")
+	testing.expect(t, int(tree.node_count) <= len(tree.nodes), "the nodes stay in the memory of the tree")
 
 	compute_layout(tree, sheet, 800, 600, layout)
 	records := make([]draw_record.Draw_Record, 512)
@@ -134,9 +134,9 @@ test_deep_nesting_500_divs_bounded_safely :: proc(t: ^testing.T) {
 
 @(test)
 test_fuzzed_byte_soup_1000_inputs_never_panics :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
-	sheet := new(Css_Stylesheet)
-	layout := new(Layout_Tree)
+	tree := test_tree_make()
+	sheet := test_sheet_make()
+	layout := test_layout_make()
 	records := make([]draw_record.Draw_Record, 512)
 	text_buf := make([]u8, 8192)
 	soup := make([]u8, 256)
@@ -170,15 +170,15 @@ test_fuzzed_byte_soup_1000_inputs_never_panics :: proc(t: ^testing.T) {
 		}
 
 		parse_html(tree, origin, soup[:slen])
-		testing.expect(t, tree.node_count <= MAX_DOM_NODES, "node_count bounded")
-		testing.expect(t, tree.attr_count <= MAX_ATTRS, "attr_count bounded")
+		testing.expect(t, int(tree.node_count) <= len(tree.nodes), "node_count bounded")
+		testing.expect(t, int(tree.attr_count) <= len(tree.attrs), "attr_count bounded")
 		testing.expect(t, tree.max_depth_reached <= MAX_DOM_DEPTH, "depth bounded")
 
-		sheet^ = {}
+		stylesheet_clear(sheet)
 		parse_stylesheet(sheet, soup[:slen])
 		parse_document_styles(tree, sheet)
 		compute_layout(tree, sheet, 640, 480, layout)
-		testing.expect(t, layout.box_count <= MAX_DOM_NODES, "box_count bounded")
+		testing.expect(t, int(layout.box_count) <= len(layout.boxes), "box_count bounded")
 
 		rc, _ := emit_draw_records(tree, layout, records, text_buf)
 		for k := 0; k < rc; k += 1 {
@@ -190,9 +190,9 @@ test_fuzzed_byte_soup_1000_inputs_never_panics :: proc(t: ^testing.T) {
 
 @(test)
 test_css_cascade_specificity_and_inheritance :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
-	sheet := new(Css_Stylesheet)
-	layout := new(Layout_Tree)
+	tree := test_tree_make()
+	sheet := test_sheet_make()
+	layout := test_layout_make()
 	defer free(tree)
 	defer free(sheet)
 	defer free(layout)
@@ -225,9 +225,9 @@ test_css_cascade_specificity_and_inheritance :: proc(t: ^testing.T) {
 
 @(test)
 test_block_inline_flex_layout_and_draw_records :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
-	sheet := new(Css_Stylesheet)
-	layout := new(Layout_Tree)
+	tree := test_tree_make()
+	sheet := test_sheet_make()
+	layout := test_layout_make()
 	defer free(tree)
 	defer free(sheet)
 	defer free(layout)

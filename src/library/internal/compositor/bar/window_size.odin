@@ -151,6 +151,7 @@ Surface_Resize_Facts :: struct {
 	// chose the size, below the least size of a resizable window, and the
 	// window scrolls its layout in it (src/md/features/window_scroll.md).
 	clamp:        bool,
+	screen_side_limit: u64, // surface_screen_side_limit of the screen in force.
 }
 
 // The rule that a Surface_Resize breaks. None: the compositor takes it.
@@ -162,6 +163,7 @@ Surface_Resize_Refusal :: enum {
 	Not_Asked, // No Resized waits for an answer: the principal did not ask for a size, or the answer came.
 	Other_Size, // The size is not the asked one.
 	Outside_Limits, // The size is outside the limits of the window: a Resizable narrowed them after the request.
+	Past_Screen, // A side past screen_side_limit: the limits of a window are logical, and a scale makes them larger.
 	Too_Small, // The memory does not hold two pictures of the size.
 }
 
@@ -189,6 +191,8 @@ surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Su
 		return .Outside_Limits
 	case !facts.clamp && (facts.limits.least_width < 0 || facts.limits.least_height < 0 || facts.width < u64(facts.limits.least_width) || facts.height < u64(facts.limits.least_height) || facts.width > u64(max(facts.limits.largest_width, 0)) || facts.height > u64(max(facts.limits.largest_height, 0))):
 		return .Outside_Limits
+	case facts.width > facts.screen_side_limit || facts.height > facts.screen_side_limit:
+		return .Past_Screen
 	}
 	// The size is now inside the limits, which a surface bounds: the
 	// product cannot overflow.

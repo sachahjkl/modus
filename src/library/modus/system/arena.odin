@@ -286,6 +286,30 @@ arena_reset_to :: proc "contextless" (arena: ^Arena, mark: u64) {
 	}
 }
 
+// arena_trim gives back the committed pages past keep_bytes, and moves the
+// end of the arena back to keep_bytes when it is past it: the bytes before
+// keep_bytes keep their place and their value, and a push past it commits
+// again (a page committed again is zero). So an arena that grew for a
+// large use pays only for the use after it. It decommits from the end, in
+// calls of at most `op.RANGE_TABLE_PAGE_LIMIT` pages: a refused call
+// leaves the pages before it committed, the committed end follows them,
+// and the status of the call comes back.
+arena_trim :: proc "contextless" (arena: ^Arena, keep_bytes: u64, error: ^errors.Error_Record = nil) -> Status {
+	keep_pages := min((keep_bytes + PAGE_SIZE - 1) / PAGE_SIZE, arena.committed_pages)
+	status := Status.Ok
+	for arena.committed_pages > keep_pages {
+		part := min(arena.committed_pages - keep_pages, op.RANGE_TABLE_PAGE_LIMIT)
+		if status = arena.page_change(arena, {first = arena.committed_pages - part, page_count = part}, {.Decommit}, error); status != .Ok {
+			break
+		}
+		arena.committed_pages -= part
+	}
+	arena.used_bytes = min(arena.used_bytes, keep_bytes, arena.committed_pages * PAGE_SIZE)
+	// The growth starts again from its first step: the next use is new.
+	arena.growth_step_pages = ARENA_GROWTH_STEP_FIRST_PAGES
+	return status
+}
+
 // arena_end ends the arena whole: it unmaps the range and closes the
 // object, so each committed page and the frame list return to the budget
 // at once. Each address of the arena is then invalid. The arena becomes

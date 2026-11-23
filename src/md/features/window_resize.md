@@ -39,6 +39,15 @@ The compositor refuses limits that break a rule, with one line of the log; the w
 - **The double press and the drag of a maximized window.** Two presses on a title bar, on one window, at most 400 ms apart and at most 4 logical pixels apart on each axis, toggle the maximize the same way (`bar.double_press_take`); the system has no setting of that time, so 400 ms is the usual time of desktops. A third press starts a new pair, and a press anywhere else forgets the first. A drag of the title of a maximized window gives it back its size of before once the pointer leaves the press by more than the same distance: the window asks for that size, and the pointer keeps the same part of its title (`bar.restored_hold_x`), so the drag goes on with the smaller window under the pointer.
 - **The keys.** Control+Shift+F8, or the entry "resize window" of the palette, is a drag of the corner at the bottom right by the arrow keys: each key is one step of 16 logical pixels, or 1 with Shift, through the same rule of the size (`bar.keyboard_resize_size` calls `bar.resize_drag`). Enter is the release: the one `Resized`, with the right and the bottom edges held. Escape asks nothing. The window enters the mode only when its edges would take a drag ([accessibility.md](accessibility.md), "3. Keyboard access to everything").
 
+### The size of a surface
+
+A side of a surface has two bounds, and neither is a size of a reference screen:
+
+- **The words.** A logical side is 1 to `SURFACE_LIMIT` (8192): a window as wide as a screen of 8K at the scale 1. It is a bound of the words of the ring, so that a product of two sides never wraps.
+- **The screen in force.** The compositor maps each surface that it shows, and its budget pays the page tables of each mapping. So it refuses a surface whose side in pixels of the screen is past `bar.surface_screen_side_limit`: twice the longest side of the screen, and never less than 4096. On the reference screen this is 4096, the side of a window of 2048 logical pixels at the scale 2, so the budget of the compositor stays the one that it states. On a screen of 5K it is 10240: a window wider than 2048 logical pixels at the scale 1 opens. The refusal is `Past_Screen` for `Surface_Create`, `Surface_Rescale` and `Surface_Resize`.
+
+The budget of the process pays the pixels of its surface: a surface that the budget cannot pay is `No_Budget` at `display.open` or `display.surface_resize`, which the process reads. A refused bound of 2048 logical pixels was a size of the reference screen, not a cost: a window on a screen of 5120 × 2880 at the scale 1 could not be wider than 2048.
+
 ### The new surface
 
 - The process reads `Resized` from `display.next_event`. The border (`display.event_of_record`) refuses a size of 0 or past `SURFACE_LIMIT`.

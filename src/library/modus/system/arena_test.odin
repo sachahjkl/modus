@@ -587,3 +587,46 @@ arena_grow_gives_whole_records_in_place :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, len(grown), RESERVED_PAGES * PAGE_SIZE / size_of(Record))
 }
+
+// A trim gives back the committed pages past the bytes that it keeps, from
+// the end, and moves the end of the arena back; a push past it commits
+// again. A trim past the committed end, and a trim to 0, are edges; a
+// refused decommit leaves the pages before it committed.
+@(test)
+arena_trim_gives_back_the_pages_past_what_it_keeps :: proc(t: ^testing.T) {
+	fake := fake_reservation(4096, 4096)
+	_, status := arena_push(&fake.arena, 1000 * PAGE_SIZE, 1)
+	testing.expect_value(t, status, Status.Ok)
+	committed := fake.committed_pages
+	testing.expect(t, committed >= 1000)
+	// Past the committed end: nothing changes.
+	testing.expect_value(t, arena_trim(&fake.arena, committed * PAGE_SIZE + 1), Status.Ok)
+	testing.expect_value(t, fake.committed_pages, committed)
+	testing.expect_value(t, fake.decommit_calls, 0)
+	// To 10 pages and one byte: 11 pages stay, the rest goes back.
+	testing.expect_value(t, arena_trim(&fake.arena, 10 * PAGE_SIZE + 1), Status.Ok)
+	testing.expect_value(t, fake.committed_pages, 11)
+	testing.expect_value(t, fake.pages_of_the_fake, 11)
+	testing.expect_value(t, fake.used_bytes, 10 * PAGE_SIZE + 1)
+	testing.expect_value(t, fake.growth_step_pages, ARENA_GROWTH_STEP_FIRST_PAGES)
+	// A push past it commits again.
+	_, status = arena_push(&fake.arena, 100 * PAGE_SIZE, 1)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect(t, fake.committed_pages >= 111)
+	// To 0: each page goes back.
+	testing.expect_value(t, arena_trim(&fake.arena, 0), Status.Ok)
+	testing.expect_value(t, fake.committed_pages, 0)
+	testing.expect_value(t, fake.pages_of_the_fake, 0)
+	testing.expect_value(t, fake.used_bytes, 0)
+	// A refused decommit, past the first call of a trim of two calls: the
+	// pages before it stay committed, and the end follows them.
+	large := fake_reservation(3 * op.RANGE_TABLE_PAGE_LIMIT, 3 * op.RANGE_TABLE_PAGE_LIMIT)
+	_, status = arena_push(&large.arena, 2 * op.RANGE_TABLE_PAGE_LIMIT * PAGE_SIZE, 1)
+	testing.expect_value(t, status, Status.Ok)
+	committed = large.committed_pages
+	large.decommits_accepted = 1
+	testing.expect_value(t, arena_trim(&large.arena, 0), Status.Bad_State)
+	testing.expect(t, large.committed_pages > 0 && large.committed_pages < committed)
+	testing.expect_value(t, large.pages_of_the_fake, large.committed_pages)
+	testing.expect(t, large.used_bytes <= large.committed_pages * PAGE_SIZE)
+}

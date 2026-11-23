@@ -27,21 +27,26 @@ import "modus:contract/html_css"
 //   before it. The style sheet is reused only for the same origin and the
 //   same style text.
 
-ORIGIN_STATE_CAPACITY :: 8
-STORAGE_SLOT_CAPACITY :: 4
-COOKIE_SLOT_CAPACITY :: 4
-FORM_MEMORY_CAPACITY :: 4
+// The origins of one window, and what each keeps: a session of the web of
+// today visits some tens of sites, and a site sets some tens of cookies.
+// The oldest goes when a table is full, as before.
+ORIGIN_STATE_CAPACITY :: 32
+STORAGE_SLOT_CAPACITY :: 16
+COOKIE_SLOT_CAPACITY :: 16
+FORM_MEMORY_CAPACITY :: 8
 // The bytes of a key (a storage key, a cookie name, a path) and of a value.
-ORIGIN_KEY_CAPACITY :: 64
+// A key holds the path of a page, for the memory of its forms: its count is
+// a u16 on the wire.
+ORIGIN_KEY_CAPACITY :: PATH_CAPACITY
 ORIGIN_VALUE_CAPACITY :: 128
 TITLE_CAPACITY :: 64
 
 // The bytes of each message on the border.
 ORIGIN_WIRE_BYTES :: 8 + 1 + 2 + 2 + html_css.MAX_ORIGIN_HOST_LEN
-ORIGIN_REQUEST_BYTES :: 1 + 2 * ORIGIN_WIRE_BYTES + 4 + 1 + ORIGIN_KEY_CAPACITY + 1 + ORIGIN_VALUE_CAPACITY
+ORIGIN_REQUEST_BYTES :: 1 + 2 * ORIGIN_WIRE_BYTES + 4 + 2 + ORIGIN_KEY_CAPACITY + 1 + ORIGIN_VALUE_CAPACITY
 ORIGIN_REPLY_BYTES :: 1 + 1 + ORIGIN_VALUE_CAPACITY
-ORIGIN_RENDER_TREE_BYTES :: 1 + ORIGIN_WIRE_BYTES + 3 * 2 + 2 * 4 + 4 + 1 + 1 + 1 + TITLE_CAPACITY
-#assert(ORIGIN_KEY_CAPACITY <= int(max(u8)) && ORIGIN_VALUE_CAPACITY <= int(max(u8)) && TITLE_CAPACITY <= int(max(u8)))
+ORIGIN_RENDER_TREE_BYTES :: 1 + ORIGIN_WIRE_BYTES + 3 * 4 + 2 * 4 + 4 + 1 + 1 + 1 + TITLE_CAPACITY
+#assert(ORIGIN_KEY_CAPACITY <= int(max(u16)) && ORIGIN_VALUE_CAPACITY <= int(max(u8)) && TITLE_CAPACITY <= int(max(u8)))
 #assert(PATH_CAPACITY <= ORIGIN_KEY_CAPACITY)
 
 // The state of one origin.
@@ -75,7 +80,7 @@ Form_Memory :: struct {
 Style_Cache :: struct {
 	valid:       bool,
 	source_hash: u64,
-	rule_count:  u16,
+	rule_count:  u32,
 	reuses:      u64,
 }
 
@@ -132,9 +137,9 @@ Origin_Reply :: struct {
 Origin_Render_Tree :: struct {
 	status:          Origin_Reply_Status,
 	origin:          html_css.Document_Origin,
-	node_count:      u16,
-	rule_count:      u16,
-	box_count:       u16,
+	node_count:      u32,
+	rule_count:      u32,
+	box_count:       u32,
 	record_count:    u32,
 	text_count:      u32,
 	document_height: i32,
@@ -257,6 +262,17 @@ take_count :: proc "contextless" (reader: ^Message_Reader, capacity: int, proble
 	return min(count, capacity)
 }
 
+// take_long_count reads a count of bytes of 16 bits and refuses one past
+// its capacity.
+@(private = "file")
+take_long_count :: proc "contextless" (reader: ^Message_Reader, capacity: int, problem: ^Message_Problem) -> int {
+	count := int(take_u16(reader))
+	if count > capacity && problem^ == .None {
+		problem^ = .Count_Too_Large
+	}
+	return min(count, capacity)
+}
+
 @(private = "file")
 take_flag :: proc "contextless" (reader: ^Message_Reader, problem: ^Message_Problem) -> bool {
 	word := take_u8(reader)
@@ -292,7 +308,7 @@ origin_request_encode :: proc "contextless" (request: ^Origin_Request, bytes: []
 	put_origin(&writer, &request.requester)
 	put_origin(&writer, &request.owner)
 	put_u32(&writer, u32(request.view_width))
-	put_u8(&writer, u8(clamp(request.key_count, 0, ORIGIN_KEY_CAPACITY)))
+	put_u16(&writer, u16(clamp(request.key_count, 0, ORIGIN_KEY_CAPACITY)))
 	put_array(&writer, request.key[:], request.key_count)
 	put_u8(&writer, u8(clamp(request.value_count, 0, ORIGIN_VALUE_CAPACITY)))
 	put_array(&writer, request.value[:], request.value_count)
@@ -319,7 +335,7 @@ origin_request_decode :: proc "contextless" (bytes: []u8) -> (request: Origin_Re
 	if (request.view_width < 0 || request.view_width > LARGEST_WIDTH) && problem == .None {
 		problem = .Width_Refused
 	}
-	request.key_count = take_count(&reader, ORIGIN_KEY_CAPACITY, &problem)
+	request.key_count = take_long_count(&reader, ORIGIN_KEY_CAPACITY, &problem)
 	take_array(&reader, request.key[:])
 	request.value_count = take_count(&reader, ORIGIN_VALUE_CAPACITY, &problem)
 	take_array(&reader, request.value[:])
@@ -365,9 +381,9 @@ origin_render_tree_encode :: proc "contextless" (tree: ^Origin_Render_Tree, byte
 	writer := Message_Writer{bytes = bytes[:ORIGIN_RENDER_TREE_BYTES]}
 	put_u8(&writer, u8(tree.status))
 	put_origin(&writer, &tree.origin)
-	put_u16(&writer, tree.node_count)
-	put_u16(&writer, tree.rule_count)
-	put_u16(&writer, tree.box_count)
+	put_u32(&writer, tree.node_count)
+	put_u32(&writer, tree.rule_count)
+	put_u32(&writer, tree.box_count)
 	put_u32(&writer, tree.record_count)
 	put_u32(&writer, tree.text_count)
 	put_u32(&writer, u32(tree.document_height))
@@ -391,13 +407,18 @@ origin_render_tree_decode :: proc "contextless" (bytes: []u8) -> (tree: Origin_R
 	}
 	tree.status = status
 	tree.origin = take_origin(&reader, &problem)
-	tree.node_count = take_u16(&reader)
-	tree.rule_count = take_u16(&reader)
-	tree.box_count = take_u16(&reader)
+	tree.node_count = take_u32(&reader)
+	tree.rule_count = take_u32(&reader)
+	tree.box_count = take_u32(&reader)
 	tree.record_count = take_u32(&reader)
 	tree.text_count = take_u32(&reader)
 	tree.document_height = i32(take_u32(&reader))
-	if (int(tree.node_count) > html_css.MAX_DOM_NODES || int(tree.rule_count) > html_css.MAX_CSS_RULES || int(tree.box_count) > html_css.MAX_DOM_NODES || int(tree.record_count) > DOCUMENT_RECORD_CAPACITY || int(tree.text_count) > html_css.MAX_TEXT_POOL || tree.document_height < 0) && problem == .None {
+	// The counts name entries of the memory of the document, which grows:
+	// past an index of a node, a count names no entry. A node gives one box
+	// at most (html_css: a box for each node that layout_node or a table
+	// lays out once; a measure makes no box, and wrapped text is one box),
+	// so more boxes than nodes is a damaged tree.
+	if (int(tree.node_count) > html_css.NODE_INDEX_LIMIT || int(tree.box_count) > int(tree.node_count) || int(tree.record_count) > DOCUMENT_RECORDS_OF_A_BOX * int(tree.box_count) || tree.document_height < 0) && problem == .None {
 		problem = .Count_Too_Large
 	}
 	tree.truncated = take_flag(&reader, &problem)
@@ -504,7 +525,7 @@ origin_render :: proc "contextless" (state: ^Origin_State, request: ^Origin_Requ
 	if reused {
 		state.style.reuses += 1
 	} else {
-		sheet = {}
+		html_css.stylesheet_clear(&sheet)
 		html_css.parse_document_styles(&document_tree, &sheet)
 		sheet_valid = true
 		sheet_origin = request.owner
@@ -513,6 +534,7 @@ origin_render :: proc "contextless" (state: ^Origin_State, request: ^Origin_Requ
 	}
 	document_targets_read()
 	document_lay_out(request.view_width, 0)
+	document_memory_trim()
 	tree = {
 		status          = .Done,
 		origin          = request.owner,

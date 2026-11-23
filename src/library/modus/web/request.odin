@@ -6,6 +6,8 @@ package web
 // that the server answers. Nothing is allocated: the request is a record of
 // fixed size, and the target is copied into it.
 
+import "modus:contract/store"
+
 REQUEST_HEAD_LIMIT :: 8192 // The bytes of a request head, with its empty line: 431 over it.
 REQUEST_FIELD_LIMIT :: 64 // Header fields of one request: 431 over it.
 REQUEST_TARGET_LIMIT :: 1024 // The bytes of the target: 414 over it.
@@ -445,11 +447,11 @@ status_text :: proc "contextless" (status: int) -> string {
 // The pages that a server serves by name, from its private store: the
 // rules of their names, and the index object that lists them. The store is
 // hostile input too: an index that the server reads back can have each byte.
-PAGE_NAME_LIMIT :: 39 // The names of the storage service have 39 bytes at most.
+PAGE_NAME_LIMIT :: store.ENTRY_NAME_CAPACITY // A page is an object of the store: its name is the name of the object.
 PAGE_INDEX_NAME :: "pages.index" // The object that lists the pages.
-PAGE_INDEX_ENTRY_SIZE :: 40 // One name in the index, ended by a zero byte.
+PAGE_INDEX_ENTRY_SIZE :: PAGE_NAME_LIMIT + 8 // One name in the index, ended by a zero byte, up to a multiple of 8.
 
-// page_name_valid: 1 to 39 bytes of letters, digits, ".", "-" and "_", not
+// page_name_valid: 1 to PAGE_NAME_LIMIT bytes of letters, digits, ".", "-" and "_", not
 // the name of the index. A name is the target of a request: no "/".
 // bad_byte is the place of the first byte that breaks the rule, or -1.
 page_name_valid :: proc "contextless" (name: string) -> (ok: bool, bad_byte: int) {

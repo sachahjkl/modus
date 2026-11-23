@@ -9,7 +9,22 @@ import "modus:contract/scale_factor"
 
 // The largest logical width and height of a window: the limit of
 // display.SURFACE_LIMIT, which this package does not import.
-WINDOW_LOGICAL_LIMIT :: 2048
+WINDOW_LOGICAL_LIMIT :: 8192
+
+// The side in pixels of the screen that a surface can always have, on any
+// screen: a window of 2048 logical pixels at the largest scale. On a
+// larger screen the side is twice the longest side of the screen, so a
+// window of the whole screen fits at each scale and the mapping of one
+// surface stays a multiple of the screen that the budget of the compositor
+// pays (src/md/features/window_resize.md, "The size of a surface").
+SURFACE_SCREEN_SIDE_FLOOR :: 4096
+
+// surface_screen_side_limit gives the largest side in pixels of the screen
+// of one surface on a screen of a size.
+surface_screen_side_limit :: proc "contextless" (screen_width, screen_height: int) -> u64 {
+	longest := u64(max(screen_width, screen_height, 0))
+	return max(SURFACE_SCREEN_SIDE_FLOOR, 2 * longest)
+}
 
 // scale_after_read gives the scale of the desktop after a read of the
 // settings page: the scale of the page when the read took it, else the
@@ -29,6 +44,7 @@ Surface_Create_Facts :: struct {
 	memory_bytes:  u64, // 0 when the kernel refused to give the size.
 	scale_word:    u64, // The bits of the first word above its handle.
 	width, height: u64, // The logical size: the words of the record.
+	screen_side_limit: u64, // surface_screen_side_limit of the screen in force.
 }
 
 // The rule that a Surface_Create breaks. None: the compositor takes it.
@@ -38,6 +54,7 @@ Surface_Create_Refusal :: enum {
 	No_Read,
 	No_Scale, // The word names no scale of the range.
 	Size_Out_Of_Range, // A logical side of 0, or past WINDOW_LOGICAL_LIMIT.
+	Past_Screen, // A side in pixels of the screen past screen_side_limit.
 	Too_Small, // The memory does not hold two pictures of its pixels of the screen.
 }
 
@@ -60,6 +77,9 @@ surface_create_refusal :: proc "contextless" (facts: Surface_Create_Facts) -> (r
 	}
 	screen_width = u64(scale_factor.screen_pixel_of_logical_pixel(i32(facts.width), scale))
 	screen_height = u64(scale_factor.screen_pixel_of_logical_pixel(i32(facts.height), scale))
+	if screen_width > facts.screen_side_limit || screen_height > facts.screen_side_limit {
+		return .Past_Screen, {}, 0, 0
+	}
 	if facts.memory_bytes / SURFACE_BYTES_FOR_EACH_PIXEL / screen_width < screen_height {
 		return .Too_Small, {}, 0, 0
 	}
@@ -84,6 +104,7 @@ Surface_Rescale_Facts :: struct {
 	released_serial: u64, // The serial of the surface that the window released.
 	scale:         scale_factor.Scale, // The scale of the compositor.
 	window_width, window_height: int, // The logical size of the window.
+	screen_side_limit: u64, // surface_screen_side_limit of the screen in force.
 }
 
 // What a Surface_Release does to the request of the size that waits
@@ -155,6 +176,7 @@ Surface_Rescale_Refusal :: enum {
 	Other_Serial, // Not the serial one past the released one.
 	Other_Scale, // Not the scale of the compositor.
 	Other_Size, // Not the logical size of the window at that scale, to the pixel.
+	Past_Screen, // A side in pixels of the screen past screen_side_limit.
 	Too_Small, // The memory does not hold two pictures of the size.
 }
 
@@ -246,6 +268,9 @@ surface_rescale_refusal :: proc "contextless" (facts: Surface_Rescale_Facts) -> 
 	wanted_height := u64(scale_factor.screen_pixel_of_logical_pixel(i32(facts.window_height), scale))
 	if facts.width != wanted_width || facts.height != wanted_height {
 		return .Other_Size
+	}
+	if wanted_width > facts.screen_side_limit || wanted_height > facts.screen_side_limit {
+		return .Past_Screen
 	}
 	if facts.memory_bytes / SURFACE_BYTES_FOR_EACH_PIXEL / wanted_width < wanted_height {
 		return .Too_Small

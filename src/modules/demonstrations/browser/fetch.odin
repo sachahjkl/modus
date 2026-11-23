@@ -16,8 +16,6 @@ import "modus:contract/http_client"
 REQUEST_CAPACITY :: 1024
 // The redirects that one load follows: the sixth is refused.
 REDIRECT_LIMIT :: 5
-// The bytes of a body that a page takes.
-FETCH_BODY_CAPACITY :: PAGE_SOURCE_CAPACITY
 
 // Why a fetch gives no page.
 Fetch_Problem :: enum u8 {
@@ -43,7 +41,7 @@ FETCH_PROBLEM_SENTENCES := [Fetch_Problem]string {
 	.Request_Refused           = "the address holds a byte that a request cannot carry",
 	.Response_Incomplete       = "the answer ends before its end",
 	.Response_Malformed        = "the answer is not HTTP/1.1 that the browser reads",
-	.Body_Too_Large            = "the page is longer than 16384 bytes",
+	.Body_Too_Large            = "the page is longer than the memory that the browser holds for it",
 	.Status_Refused            = "the server answered with an error",
 	.Redirect_Without_Location = "a redirect names no address",
 	.Redirect_Location_Refused = "a redirect names an address that the browser refuses",
@@ -79,7 +77,6 @@ Fetch_Result :: struct {
 // The head of an answer: its headers are large, so it lives in the memory
 // of the module.
 fetch_response_head: http_client.Http_Response_Head
-fetch_raw_body: [FETCH_BODY_CAPACITY]u8
 
 // request_target_write writes the target of the request line: the path,
 // "/" for none, and the query. The fragment never leaves the browser.
@@ -192,8 +189,11 @@ is_redirect_status :: proc "contextless" (status: u16) -> bool {
 
 // fetch_response_read reads the whole answer to a request for the address
 // base, after redirects_followed redirects. A Document leaves its body in
-// body_output, as UTF-8.
-fetch_response_read :: proc "contextless" (base: ^Address, raw: []u8, redirects_followed: int, body_output: []u8) -> (result: Fetch_Result) {
+// body_output, as UTF-8; body_scratch holds the body without its framing
+// first. The memory of the caller is the bound of a body: a page has no
+// fixed size, and the caller gives memory of an arena of its budget.
+fetch_response_read :: proc "contextless" (base: ^Address, raw: []u8, redirects_followed: int, body_scratch, body_output: []u8) -> (result: Fetch_Result) {
+	body_limit := min(len(body_scratch), len(body_output))
 	head := &fetch_response_head
 	if problem := fetch_problem_of_refusal(http_client.parse_response_head(raw, head)); problem != .None {
 		result.problem = problem
@@ -202,7 +202,7 @@ fetch_response_read :: proc "contextless" (base: ^Address, raw: []u8, redirects_
 	result.status = head.status_code
 	// The cap comes before a byte of the body: a length past it is refused
 	// from the head alone.
-	if head.has_content_length && head.content_length > u64(min(len(body_output), FETCH_BODY_CAPACITY)) {
+	if head.has_content_length && head.content_length > u64(body_limit) {
 		result.problem = .Body_Too_Large
 		return
 	}
@@ -245,13 +245,12 @@ fetch_response_read :: proc "contextless" (base: ^Address, raw: []u8, redirects_
 		result.problem = problem
 		return
 	}
-	raw_capacity := min(len(body_output), FETCH_BODY_CAPACITY)
-	body_count, _, body_refusal := http_client.parse_response(raw, head, fetch_raw_body[:raw_capacity])
+	body_count, _, body_refusal := http_client.parse_response(raw, head, body_scratch[:body_limit])
 	if problem := fetch_problem_of_refusal(body_refusal); problem != .None {
 		result.problem = problem
 		return
 	}
-	result.body_count, result.replaced = utf8_replace_invalid(fetch_raw_body[:body_count], body_output)
+	result.body_count, result.replaced = utf8_replace_invalid(body_scratch[:body_count], body_output)
 	if cookie, has_cookie := http_client.response_header_get(head, "set-cookie"); has_cookie {
 		end := 0
 		for end < len(cookie) && cookie[end] != ';' {

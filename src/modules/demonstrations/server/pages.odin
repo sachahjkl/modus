@@ -30,7 +30,7 @@ PAGE_INDEX_NAME :: web.PAGE_INDEX_NAME
 PAGE_MEMORY_PAGES :: PAGE_CAPACITY * PAGE_SIZE_LIMIT / system.PAGE_SIZE
 
 Page_Entry :: struct {
-	name:        [40]u8,
+	name:        [72]u8,
 	name_length: int,
 	length:      int, // The bytes of the page.
 	used:        bool, // false: the place is free.
@@ -40,7 +40,7 @@ Page_Entry :: struct {
 
 // One row of server.pages().
 Page_Row :: struct {
-	name:   [40]u8,
+	name:   [72]u8,
 	bytes:  i64,
 	served: i64, // The answers of this page since the start of the server.
 	type:   [32]u8,
@@ -167,7 +167,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 // served is always the page that the store keeps, and a refused write leaves the old page in place. A page that
 // changes keeps its count of answers.
 //
-// - **name**: 1 to 39 bytes of letters, digits, ".", "-" and "_". Its end gives the content type: .html, .txt,
+// - **name**: 1 to 64 bytes of letters, digits, ".", "-" and "_". Its end gives the content type: .html, .txt,
 //   .css, .js, .json or .svg.
 // - **text**: the bytes of the page, 60 KiB at most (the call region of a connection has 64 KiB).
 //

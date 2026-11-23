@@ -15,6 +15,16 @@ Css_Fixture :: struct {
 	layout: Layout_Tree,
 }
 
+// fixture_make gives a fixture whose memory grows from the heap.
+@(private = "file")
+fixture_make :: proc() -> ^Css_Fixture {
+	fixture := new(Css_Fixture)
+	fixture.tree.grow = test_dom_grow
+	fixture.sheet.grow = test_css_grow
+	fixture.layout.grow = test_layout_grow
+	return fixture
+}
+
 @(private = "file")
 fixture_lay_out :: proc(fixture: ^Css_Fixture, html, css: string, width: i32 = 800) {
 	origin := Document_Origin {
@@ -24,7 +34,7 @@ fixture_lay_out :: proc(fixture: ^Css_Fixture, html, css: string, width: i32 = 8
 	}
 	origin.host_len = u16(copy(origin.host[:], "css.example"))
 	parse_html(&fixture.tree, origin, transmute([]u8)html)
-	fixture.sheet = {}
+	stylesheet_clear(&fixture.sheet)
 	parse_stylesheet(&fixture.sheet, transmute([]u8)css)
 	parse_document_styles(&fixture.tree, &fixture.sheet)
 	compute_layout(&fixture.tree, &fixture.sheet, width, 600, &fixture.layout)
@@ -58,7 +68,7 @@ SPECIFICITY_TAG :: 1
 // compound selectors; the universal selector counts nothing.
 @(test)
 selector_specificity_is_ids_classes_tags :: proc(t: ^testing.T) {
-	sheet := new(Css_Stylesheet)
+	sheet := test_sheet_make()
 	defer free(sheet)
 	Case :: struct {
 		selector:    string,
@@ -80,7 +90,7 @@ selector_specificity_is_ids_classes_tags :: proc(t: ^testing.T) {
 		{"a b i u", 4 * SPECIFICITY_TAG, 4},
 	}
 	for item in cases {
-		sheet^ = {}
+		stylesheet_clear(sheet)
 		parse_stylesheet(sheet, transmute([]u8)join(item.selector, " { color: red }"))
 		testing.expectf(t, sheet.rule_count == 1, "%q: %d rules", item.selector, sheet.rule_count)
 		if sheet.rule_count == 1 {
@@ -95,7 +105,7 @@ selector_specificity_is_ids_classes_tags :: proc(t: ^testing.T) {
 // as CSS drops a rule whose selector list holds an invalid selector.
 @(test)
 invalid_selectors_drop_their_rule :: proc(t: ^testing.T) {
-	sheet := new(Css_Stylesheet)
+	sheet := test_sheet_make()
 	defer free(sheet)
 	refused := [?]string {
 		"p, a:hover",
@@ -118,17 +128,17 @@ invalid_selectors_drop_their_rule :: proc(t: ^testing.T) {
 		"@media screen",
 	}
 	for selector in refused {
-		sheet^ = {}
+		stylesheet_clear(sheet)
 		parse_stylesheet(sheet, transmute([]u8)join(selector, " { color: red }"))
 		testing.expectf(t, sheet.rule_count == 0, "%q was kept", selector)
 		testing.expectf(t, sheet.name_count == 0, "%q left %d bytes of names", selector, sheet.name_count)
 	}
 	// Eight selectors is the bound: kept.
-	sheet^ = {}
+	stylesheet_clear(sheet)
 	parse_stylesheet(sheet, transmute([]u8)string("p,p,p,p,p,p,p,p { color: red } div { color: blue }"))
-	testing.expect_value(t, sheet.rule_count, u16(2))
+	testing.expect_value(t, sheet.rule_count, u32(2))
 	testing.expect_value(t, sheet.rules[0].selector_count, u8(MAX_SELECTORS_PER_RULE))
-	testing.expect_value(t, sheet.rules[1].order, u16(1))
+	testing.expect_value(t, sheet.rules[1].order, u32(1))
 }
 
 // The cascade orders the rules by specificity, then by source order: an
@@ -136,7 +146,7 @@ invalid_selectors_drop_their_rule :: proc(t: ^testing.T) {
 // two equal selectors the later one wins.
 @(test)
 cascade_orders_by_specificity_then_source :: proc(t: ^testing.T) {
-	fixture := new(Css_Fixture)
+	fixture := fixture_make()
 	defer free(fixture)
 	html := `<div id="a" class="b c"><p id="t" class="x">t</p><p id="u">u</p></div>`
 	css := `
@@ -167,7 +177,7 @@ cascade_orders_by_specificity_then_source :: proc(t: ^testing.T) {
 // that matches when the nearest one fails the rest of the selector.
 @(test)
 combinators_match_parents_and_ancestors :: proc(t: ^testing.T) {
-	fixture := new(Css_Fixture)
+	fixture := fixture_make()
 	defer free(fixture)
 	html := `<section><div class="y"><div class="x"><div class="x"><p id="deep">d</p></div></div></div><p id="near">n</p></section>`
 	Case :: struct {
@@ -202,7 +212,7 @@ combinators_match_parents_and_ancestors :: proc(t: ^testing.T) {
 // is inherited.
 @(test)
 text_align_moves_the_lines :: proc(t: ^testing.T) {
-	fixture := new(Css_Fixture)
+	fixture := fixture_make()
 	defer free(fixture)
 	fixture_lay_out(fixture, `<div style="width:200px;text-align:center"><span id="s">abcd</span></div><div style="width:200px;text-align:right"><p><span id="r">ab</span></p></div><div style="width:200px"><span id="l">ab</span></div>`, "")
 	testing.expect_value(t, box_of(t, fixture, "s").x, i32((200 - 32) / 2))
@@ -217,7 +227,7 @@ text_align_moves_the_lines :: proc(t: ^testing.T) {
 // painted as four rectangles in its color, or in the color of the text.
 @(test)
 borders_take_room_and_paint :: proc(t: ^testing.T) {
-	fixture := new(Css_Fixture)
+	fixture := fixture_make()
 	defer free(fixture)
 	fixture_lay_out(fixture, `<div id="b" style="width:100px;border:2px solid red;padding:3px">x</div><div id="n" style="width:100px;border:2px">y</div><div id="s" style="width:100px;border-width:1px 2px 3px 4px;border-style:dashed;color:#123456">z</div><div id="o" style="border: red solid thick">o</div>`, "")
 	b := box_of(t, fixture, "b")
@@ -294,7 +304,7 @@ box_shorthands_one_to_four_values :: proc(t: ^testing.T) {
 // width that it names, or cuts them to fit the view.
 @(test)
 table_grid_rows_and_columns :: proc(t: ^testing.T) {
-	fixture := new(Css_Fixture)
+	fixture := fixture_make()
 	defer free(fixture)
 	html := `<table id="t"><tr><td id="a">x</td><td id="b">yyyy</td></tr><tr><td id="c">zzzzzz</td><td id="d" style="padding:10px">w</td></tr></table>`
 	fixture_lay_out(fixture, html, "")
@@ -346,7 +356,7 @@ table_grid_rows_and_columns :: proc(t: ^testing.T) {
 // table on a div makes a grid of its rows.
 @(test)
 display_modes_by_css :: proc(t: ^testing.T) {
-	fixture := new(Css_Fixture)
+	fixture := fixture_make()
 	defer free(fixture)
 	html := `<div class="gone"><p id="hidden">h</p></div><div id="i1" class="inline">aa</div><div id="i2" class="inline">bb</div><span id="blk" class="block">c</span><div class="row"><div id="f1">1</div><div id="f2">2</div></div><div class="grid"><div class="r"><div id="g1" class="c">ab</div><div id="g2" class="c">c</div></div></div>`
 	css := `.gone { display: none } .inline { display: inline } .block { display: block } .row { display: flex; flex-direction: row; gap: 4px } #f1 { width: 30px } .grid { display: table } .r { display: table-row } .c { display: table-cell }`

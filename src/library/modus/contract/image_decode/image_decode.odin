@@ -9,12 +9,19 @@
 package image_decode
 
 import "modus:contract/enum_word"
+import op "modus:contract/operation"
 
-// Hard safety bounds against memory exhaustion and decompression bombs.
-MAX_IMAGE_WIDTH :: 4096
-MAX_IMAGE_HEIGHT :: 4096
-MAX_IMAGE_PIXELS :: MAX_IMAGE_WIDTH * MAX_IMAGE_HEIGHT
 RGBA_BYTES_PER_PIXEL :: 4
+
+// The most pixels of a decoded image: the RGBA pixels of one memory object
+// of the largest size (1 GiB, 268 435 456 pixels). An output buffer is one
+// mapping of one object, so a larger image has no buffer to decode into; a
+// header that names more is a decompression bomb. Each side is free: a
+// panorama of 30000 x 2000 decodes as a photo of 6000 x 4000 does. The
+// caller bounds an image below this with the output buffer that it gives:
+// a header whose pixels do not fit it is Output_Buffer_Too_Small, before
+// any pixel is decoded.
+IMAGE_PIXELS_LIMIT :: op.MEMORY_PAGE_LIMIT * op.PAGE_SIZE / RGBA_BYTES_PER_PIXEL
 
 // Closed set of supported image formats. Values cross process borders.
 Image_Format :: enum u8 {
@@ -58,17 +65,14 @@ Image_Header :: struct {
 }
 
 // validate_dimensions checks image width and height against zero and the
-// hard pixel/dimension bounds without integer overflow.
+// pixel bound. Each side is below 2^32, so the product cannot wrap a u64.
 @(private)
 validate_dimensions :: proc "contextless" (width, height: u32) -> (output_bytes: u64, refusal: Image_Decode_Refusal) {
 	if width == 0 || height == 0 {
 		return 0, .Dimensions_Invalid
 	}
-	if width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT {
-		return 0, .Decompression_Bomb
-	}
 	pixels := u64(width) * u64(height)
-	if pixels > MAX_IMAGE_PIXELS {
+	if pixels > IMAGE_PIXELS_LIMIT {
 		return 0, .Decompression_Bomb
 	}
 	return pixels * RGBA_BYTES_PER_PIXEL, .None
