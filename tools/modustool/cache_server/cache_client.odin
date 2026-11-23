@@ -5,6 +5,7 @@ package cache_server
 
 import "core:fmt"
 import "core:net"
+import "core:time"
 import "modus:contract/blake3"
 import "modus:contract/object_cache"
 import "modus:contract/tree_hash"
@@ -24,11 +25,16 @@ Cache_Client_Outcome :: enum u8 {
 	Bad_Signature    = 8,
 	Too_Large        = 9, // A payload past the bound of its kind, refused before it leaves the host.
 	Bad_Request      = 10, // A request that the protocol refuses, refused before it leaves the host.
+	Deadline_Passed  = 11, // The request and its whole answer took longer than the bound of one exchange.
 }
 
 // One connection to an object cache.
 Cache_Client :: struct {
-	socket: net.TCP_Socket,
+	socket:        net.TCP_Socket,
+	// The bound of one exchange: the send of a request and the read of its
+	// whole answer. A bound on each read alone lets a server that sends one
+	// byte before each timeout hold the client for hours.
+	exchange_bound: time.Duration,
 	// The last status of the server, for the sentence of a refusal.
 	server_status: object_cache.Cache_Response_Status,
 }
@@ -67,6 +73,8 @@ cache_client_outcome_text :: proc(outcome: Cache_Client_Outcome, server_status: 
 		return fmt.tprintf("the object is larger than the %d bytes that one object can hold", object_cache.MAX_OBJECT_PAYLOAD_BYTES)
 	case .Bad_Request:
 		return "the protocol refuses the request"
+	case .Deadline_Passed:
+		return "the object cache did not give its whole answer within the bound of one exchange"
 	}
 	return ""
 }
@@ -74,7 +82,7 @@ cache_client_outcome_text :: proc(outcome: Cache_Client_Outcome, server_status: 
 // cache_client_connect opens a connection to host:port, with the rule of the
 // endpoint of the page (cache_page_endpoint_valid). A host name is resolved
 // once.
-cache_client_connect :: proc(endpoint: string) -> (client: Cache_Client, outcome: Cache_Client_Outcome) {
+cache_client_connect :: proc(endpoint: string, exchange_bound := foundation.HANG_BOUND) -> (client: Cache_Client, outcome: Cache_Client_Outcome) {
 	if !cache_page_endpoint_valid(endpoint) {
 		return {}, .Bad_Request
 	}
@@ -82,23 +90,79 @@ cache_client_connect :: proc(endpoint: string) -> (client: Cache_Client, outcome
 	if dial_error != nil {
 		return {}, .Unreachable
 	}
-	// A server that never answers holds the client for the hang bound at most.
-	_ = net.set_option(socket, .Receive_Timeout, foundation.HANG_BOUND)
-	_ = net.set_option(socket, .Send_Timeout, foundation.HANG_BOUND)
-	return Cache_Client{socket = socket}, .Done
+	return Cache_Client{socket = socket, exchange_bound = exchange_bound}, .Done
 }
 
 cache_client_close :: proc(client: ^Cache_Client) {
 	net.close(client.socket)
 }
 
-// cache_client_read_answer reads one answer frame. It refuses the head before
-// it allocates: a wrong magic or version, a kind or a status that names no
-// member, a body past MAX_RESPONSE_BODY_BYTES.
-cache_client_read_answer :: proc(socket: net.TCP_Socket, allocator := context.allocator) -> (frame: []u8, outcome: Cache_Client_Outcome) {
+// The time left before the deadline of an exchange, or false when it passed.
+@(private = "file")
+time_left :: proc(deadline: time.Tick) -> (left: time.Duration, ok: bool) {
+	left = -time.tick_diff(deadline, time.tick_now())
+	return left, left > 0
+}
+
+// client_send_all sends all bytes before the deadline. Each send waits at
+// most the time that remains.
+@(private = "file")
+client_send_all :: proc(socket: net.TCP_Socket, data: []u8, deadline: time.Tick) -> Cache_Client_Outcome {
+	sent := 0
+	for sent < len(data) {
+		left, in_time := time_left(deadline)
+		if !in_time {
+			return .Deadline_Passed
+		}
+		if net.set_option(socket, .Send_Timeout, left) != nil {
+			return .Unreachable
+		}
+		count, send_error := net.send_tcp(socket, data[sent:])
+		if send_error != nil || count == 0 {
+			if _, still := time_left(deadline); !still {
+				return .Deadline_Passed
+			}
+			return .Unreachable
+		}
+		sent += count
+	}
+	return .Done
+}
+
+// client_read_exact reads exactly len(buffer) bytes before the deadline.
+// Each read waits at most the time that remains, so a server that sends one
+// byte at a time still ends at the deadline.
+@(private = "file")
+client_read_exact :: proc(socket: net.TCP_Socket, buffer: []u8, deadline: time.Tick) -> Cache_Client_Outcome {
+	received := 0
+	for received < len(buffer) {
+		left, in_time := time_left(deadline)
+		if !in_time {
+			return .Deadline_Passed
+		}
+		if net.set_option(socket, .Receive_Timeout, left) != nil {
+			return .Unreachable
+		}
+		count, receive_error := net.recv_tcp(socket, buffer[received:])
+		if receive_error != nil || count == 0 {
+			if _, still := time_left(deadline); !still {
+				return .Deadline_Passed
+			}
+			return .Unreachable
+		}
+		received += count
+	}
+	return .Done
+}
+
+// cache_client_read_answer reads one answer frame before the deadline. It
+// refuses the head before it allocates: a wrong magic or version, a kind or
+// a status that names no member, a nonzero reserved byte, a body past
+// MAX_RESPONSE_BODY_BYTES.
+cache_client_read_answer :: proc(socket: net.TCP_Socket, deadline: time.Tick, allocator := context.allocator) -> (frame: []u8, outcome: Cache_Client_Outcome) {
 	header: [object_cache.FRAME_HEADER_SIZE]u8
-	if read_ok, _ := tcp_read_exact(socket, header[:], false); !read_ok {
-		return nil, .Unreachable
+	if read_outcome := client_read_exact(socket, header[:], deadline); read_outcome != .Done {
+		return nil, read_outcome
 	}
 	_, _, body_length, header_refusal := object_cache.inspect_response_header(header[:])
 	if header_refusal != .None {
@@ -107,9 +171,9 @@ cache_client_read_answer :: proc(socket: net.TCP_Socket, allocator := context.al
 	frame = make([]u8, object_cache.FRAME_HEADER_SIZE + body_length, allocator)
 	copy(frame[:object_cache.FRAME_HEADER_SIZE], header[:])
 	if body_length > 0 {
-		if body_ok, _ := tcp_read_exact(socket, frame[object_cache.FRAME_HEADER_SIZE:], false); !body_ok {
+		if body_outcome := client_read_exact(socket, frame[object_cache.FRAME_HEADER_SIZE:], deadline); body_outcome != .Done {
 			delete(frame, allocator)
-			return nil, .Unreachable
+			return nil, body_outcome
 		}
 	}
 	return frame, .Done
@@ -125,7 +189,15 @@ cache_client_answer_outcome :: proc(request_kind: object_cache.Cache_Request_Kin
 	case .Ok:
 		return .Done
 	case .Not_Found:
-		return .Not_Found
+		// Only a get can find nothing: a Has or a put answered Not_Found is
+		// an answer that the protocol does not give.
+		switch request_kind {
+		case .Get_Object, .Get_Realisation:
+			return .Not_Found
+		case .Has, .Put_Object, .Put_Realisation:
+			return .Damaged_Answer
+		}
+		return .Damaged_Answer
 	case .Refused, .Too_Large, .Bad_Hash, .Bad_Signature, .Unauthorized:
 		return .Server_Refused
 	}
@@ -146,14 +218,18 @@ cache_client_exchange :: proc(
 	if size_refusal != .None {
 		return nil, {}, .Bad_Request
 	}
-	request_frame := make([]u8, size, context.temp_allocator)
+	// A put frame holds up to 16 MiB: it is freed here, not left to the
+	// temporary allocator of a caller that puts a whole release.
+	request_frame := make([]u8, size)
+	defer delete(request_frame)
 	if _, encode_refusal := object_cache.encode_request(request, request_frame); encode_refusal != .None {
 		return nil, {}, .Bad_Request
 	}
-	if !tcp_write_all(client.socket, request_frame) {
-		return nil, {}, .Unreachable
+	deadline := time.tick_add(time.tick_now(), client.exchange_bound)
+	if send_outcome := client_send_all(client.socket, request_frame, deadline); send_outcome != .Done {
+		return nil, {}, send_outcome
 	}
-	frame, outcome = cache_client_read_answer(client.socket, allocator)
+	frame, outcome = cache_client_read_answer(client.socket, deadline, allocator)
 	if outcome != .Done {
 		return nil, {}, outcome
 	}

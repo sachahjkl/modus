@@ -8,6 +8,7 @@ import "core:strings"
 import "core:sync"
 import "core:testing"
 import "core:thread"
+import "core:time"
 import info "modus:contract/boot_info"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
@@ -60,13 +61,16 @@ Fake_Server :: struct {
 	listener: net.TCP_Socket,
 	endpoint: string,
 	answer:   []u8,
+	// Never answer: hold the connection until the client closes it.
+	hold:     bool,
 	worker:   ^thread.Thread,
 }
 
 @(private = "file")
-fake_server_start :: proc(t: ^testing.T, answer: []u8) -> ^Fake_Server {
+fake_server_start :: proc(t: ^testing.T, answer: []u8, hold := false) -> ^Fake_Server {
 	fake := new(Fake_Server)
 	fake.answer = answer
+	fake.hold = hold
 	listen_error: net.Network_Error
 	fake.listener, listen_error = net.listen_tcp({net.IP4_Loopback, 0})
 	testing.expect_value(t, listen_error, nil)
@@ -90,8 +94,10 @@ fake_server_start :: proc(t: ^testing.T, answer: []u8) -> ^Fake_Server {
 				return
 			}
 		}
-		_ = tcp_write_all(client, fake.answer)
-		_ = net.shutdown(client, .Send)
+		if !fake.hold {
+			_ = tcp_write_all(client, fake.answer)
+			_ = net.shutdown(client, .Send)
+		}
 		// Wait for the close of the client: a close with bytes unread would
 		// send a reset, which can remove the answer before the client reads it.
 		drain: [256]u8
@@ -107,6 +113,9 @@ fake_server_start :: proc(t: ^testing.T, answer: []u8) -> ^Fake_Server {
 
 @(private = "file")
 fake_server_stop :: proc(fake: ^Fake_Server) {
+	// A client that never connected leaves the thread in accept: the end of
+	// the listener wakes it, before the join.
+	_ = net.shutdown(fake.listener, .Both)
 	thread.join(fake.worker)
 	thread.destroy(fake.worker)
 	net.close(fake.listener)
@@ -121,9 +130,59 @@ fake_get_object :: proc(t: ^testing.T, answer: []u8, asked: blake3.Hash) -> Cach
 	defer fake_server_stop(fake)
 	client, connect_outcome := cache_client_connect(fake.endpoint)
 	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
+	if connect_outcome != .Done {
+		return connect_outcome
+	}
 	defer cache_client_close(&client)
 	payload, outcome := cache_client_get_object(&client, .Blob, asked)
 	delete(payload)
+	return outcome
+}
+
+// fake_get_realisation asks a fake server for one realisation.
+@(private = "file")
+fake_get_realisation :: proc(t: ^testing.T, answer: []u8, recipe: blake3.Hash, signer: [object_cache.PUBLIC_KEY_SIZE]u8) -> Cache_Client_Outcome {
+	fake := fake_server_start(t, answer)
+	defer fake_server_stop(fake)
+	client, connect_outcome := cache_client_connect(fake.endpoint)
+	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
+	if connect_outcome != .Done {
+		return connect_outcome
+	}
+	defer cache_client_close(&client)
+	_, outcome := cache_client_get_realisation(&client, recipe, signer)
+	return outcome
+}
+
+// fake_has asks a fake server about two hashes.
+@(private = "file")
+fake_has :: proc(t: ^testing.T, answer: []u8) -> Cache_Client_Outcome {
+	fake := fake_server_start(t, answer)
+	defer fake_server_stop(fake)
+	client, connect_outcome := cache_client_connect(fake.endpoint)
+	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
+	if connect_outcome != .Done {
+		return connect_outcome
+	}
+	defer cache_client_close(&client)
+	hashes := [2]blake3.Hash{blake3.hash(transmute([]u8)string("a")), blake3.hash(transmute([]u8)string("b"))}
+	_, outcome := cache_client_has(&client, hashes[:])
+	return outcome
+}
+
+// fake_put asks a fake server to keep one blob.
+@(private = "file")
+fake_put :: proc(t: ^testing.T, answer: []u8) -> Cache_Client_Outcome {
+	fake := fake_server_start(t, answer)
+	defer fake_server_stop(fake)
+	client, connect_outcome := cache_client_connect(fake.endpoint)
+	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
+	if connect_outcome != .Done {
+		return connect_outcome
+	}
+	defer cache_client_close(&client)
+	key, _, _ := make_test_keypair(0x5a)
+	_, outcome := cache_client_put_object(&client, &key, .Blob, transmute([]u8)string("a blob"))
 	return outcome
 }
 
@@ -221,8 +280,104 @@ a_cut_or_damaged_answer_is_refused_by_the_client :: proc(t: ^testing.T) {
 	absent := answer_head(u8(object_cache.Cache_Request_Kind.Get_Object), u8(object_cache.Cache_Response_Status.Not_Found), 0)
 	testing.expect_value(t, fake_get_object(t, absent[:], asked), Cache_Client_Outcome.Not_Found)
 
+	// A nonzero reserved byte of the head.
+	reserved := answer_head(u8(object_cache.Cache_Request_Kind.Get_Object), u8(object_cache.Cache_Response_Status.Not_Found), 0)
+	reserved[7] = 1
+	testing.expect_value(t, fake_get_object(t, reserved[:], asked), Cache_Client_Outcome.Damaged_Answer)
+
+	// A body on a status that is not Ok.
+	with_body := make([dynamic]u8, context.temp_allocator)
+	not_found_head := answer_head(u8(object_cache.Cache_Request_Kind.Get_Object), u8(object_cache.Cache_Response_Status.Not_Found), 4)
+	append(&with_body, ..not_found_head[:])
+	append(&with_body, 1, 2, 3, 4)
+	testing.expect_value(t, fake_get_object(t, with_body[:], asked), Cache_Client_Outcome.Damaged_Answer)
+
 	// Last: the whole answer.
 	testing.expect_value(t, fake_get_object(t, whole_frame, asked), Cache_Client_Outcome.Done)
+}
+
+@(test)
+a_cut_or_damaged_realisation_is_refused_by_the_client :: proc(t: ^testing.T) {
+	key, signer, _ := make_test_keypair(0x23)
+	recipe := blake3.hash(transmute([]u8)string("recipe"))
+	output := blake3.hash(transmute([]u8)string("output"))
+	record, _ := cache_client_realisation_sign(&key, recipe, output, .Tree)
+	whole := object_cache.Cache_Response {
+		request_kind = .Get_Realisation,
+		status       = .Ok,
+		realisation  = record,
+	}
+	whole_frame := encoded_answer(t, &whole)
+
+	// The answer of another kind of request, with the same body.
+	other_kind := make([]u8, len(whole_frame), context.temp_allocator)
+	copy(other_kind, whole_frame)
+	other_kind[5] = u8(object_cache.Cache_Request_Kind.Get_Object)
+	testing.expect_value(t, fake_get_realisation(t, other_kind, recipe, signer), Cache_Client_Outcome.Damaged_Answer)
+
+	// A record cut after 100 of its 164 bytes, then the end of the connection.
+	testing.expect_value(t, fake_get_realisation(t, whole_frame[:object_cache.FRAME_HEADER_SIZE + 100], recipe, signer), Cache_Client_Outcome.Unreachable)
+
+	// A head that says 100 bytes, and a record of 100 bytes: too short.
+	short := make([]u8, object_cache.FRAME_HEADER_SIZE + 100, context.temp_allocator)
+	copy(short, whole_frame[:len(short)])
+	byte_order.write_u32_little_endian(short, 8, 100)
+	testing.expect_value(t, fake_get_realisation(t, short, recipe, signer), Cache_Client_Outcome.Damaged_Answer)
+
+	// An output kind that names no member.
+	bad_kind := make([]u8, len(whole_frame), context.temp_allocator)
+	copy(bad_kind, whole_frame)
+	bad_kind[object_cache.FRAME_HEADER_SIZE + 64] = 3
+	testing.expect_value(t, fake_get_realisation(t, bad_kind, recipe, signer), Cache_Client_Outcome.Damaged_Answer)
+
+	// Last: the whole record.
+	testing.expect_value(t, fake_get_realisation(t, whole_frame, recipe, signer), Cache_Client_Outcome.Done)
+}
+
+@(test)
+a_damaged_answer_to_has_or_to_a_put_is_refused :: proc(t: ^testing.T) {
+	// A Has body of 7 and of 9 bytes: the body is 8 bytes.
+	for length in ([2]u32{7, 9}) {
+		frame := make([dynamic]u8, context.temp_allocator)
+		head := answer_head(u8(object_cache.Cache_Request_Kind.Has), u8(object_cache.Cache_Response_Status.Ok), length)
+		append(&frame, ..head[:])
+		for _ in 0 ..< length {
+			append(&frame, 0)
+		}
+		testing.expect_value(t, fake_has(t, frame[:]), Cache_Client_Outcome.Damaged_Answer)
+	}
+	// Not_Found answers a get only: as the answer to a Has or to a put, the
+	// protocol does not give it.
+	has_not_found := answer_head(u8(object_cache.Cache_Request_Kind.Has), u8(object_cache.Cache_Response_Status.Not_Found), 0)
+	testing.expect_value(t, fake_has(t, has_not_found[:]), Cache_Client_Outcome.Damaged_Answer)
+	put_not_found := answer_head(u8(object_cache.Cache_Request_Kind.Put_Object), u8(object_cache.Cache_Response_Status.Not_Found), 0)
+	testing.expect_value(t, fake_put(t, put_not_found[:]), Cache_Client_Outcome.Damaged_Answer)
+	testing.expect_value(t, cache_client_outcome_text(.Damaged_Answer, .Not_Found), "the object cache gave an answer that the protocol refuses")
+	// Last: the answers that the protocol gives.
+	has_ok := answer_head(u8(object_cache.Cache_Request_Kind.Has), u8(object_cache.Cache_Response_Status.Ok), 8)
+	has_frame := make([dynamic]u8, context.temp_allocator)
+	append(&has_frame, ..has_ok[:])
+	append(&has_frame, 1, 0, 0, 0, 0, 0, 0, 0)
+	testing.expect_value(t, fake_has(t, has_frame[:]), Cache_Client_Outcome.Done)
+	put_ok := answer_head(u8(object_cache.Cache_Request_Kind.Put_Object), u8(object_cache.Cache_Response_Status.Ok), 0)
+	testing.expect_value(t, fake_put(t, put_ok[:]), Cache_Client_Outcome.Done)
+}
+
+@(test)
+a_server_that_never_answers_ends_at_the_deadline_of_the_exchange :: proc(t: ^testing.T) {
+	fake := fake_server_start(t, nil, hold = true)
+	defer fake_server_stop(fake)
+	// A short bound, so the test ends soon; the condition is the outcome,
+	// not a time.
+	client, connect_outcome := cache_client_connect(fake.endpoint, 200 * time.Millisecond)
+	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
+	if connect_outcome != .Done {
+		return
+	}
+	defer cache_client_close(&client)
+	payload, outcome := cache_client_get_object(&client, .Blob, blake3.hash(transmute([]u8)string("x")))
+	delete(payload)
+	testing.expect_value(t, outcome, Cache_Client_Outcome.Deadline_Passed)
 }
 
 @(test)
@@ -306,8 +461,11 @@ the_client_refuses_a_request_before_it_leaves_the_host :: proc(t: ^testing.T) {
 	testing.expect_value(t, oversize_outcome, Cache_Client_Outcome.Too_Large)
 	_, tree_outcome := cache_client_put_object(&client, &key, .Tree, transmute([]u8)string("no tree"))
 	testing.expect_value(t, tree_outcome, Cache_Client_Outcome.Bad_Request)
-	_, kind_outcome := cache_client_put_object(&client, &key, object_cache.Cache_Object_Kind(0), transmute([]u8)string("x"))
-	testing.expect_value(t, kind_outcome, Cache_Client_Outcome.Bad_Request)
+	// The kinds that name no member: 0, one past the last, the largest byte.
+	for word in ([3]u8{0, 3, 255}) {
+		_, kind_outcome := cache_client_put_object(&client, &key, object_cache.Cache_Object_Kind(word), transmute([]u8)string("x"))
+		testing.expect_value(t, kind_outcome, Cache_Client_Outcome.Bad_Request)
+	}
 
 	// Has of no hash, and of one past 64.
 	many: [object_cache.MAX_HAS_HASHES + 1]blake3.Hash
@@ -367,9 +525,13 @@ the_cache_test_recipe_is_a_constant_that_each_reader_computes :: proc(t: ^testin
 	digest, refusal := tree_hash.tree_hash(first.output_bytes[:first.output_size])
 	testing.expect_value(t, refusal, tree_hash.Tree_Refusal.None)
 	testing.expect_value(t, digest, first.output_hash)
+	// The two hashes are pinned: a change of the recipe, of the inputs tree
+	// builder or of the tree format gives another recipe, and the public
+	// object cache would then hold a realisation that no client asks for.
 	recipe_digits := hash_to_hex(first.recipe_hash)
 	output_digits := hash_to_hex(first.output_hash)
-	fmt.printfln("the cache test recipe %s gives the tree %s", string(recipe_digits[:]), string(output_digits[:]))
+	testing.expect_value(t, string(recipe_digits[:]), "e43cdb437d27f9bc310ccc794cfa9eeac17d6b219ee2cd33505f5aeb24815980")
+	testing.expect_value(t, string(output_digits[:]), "93de1a935ebd7cb72a40c0ef6d9438948b45e883c0f9d56a8dbf51d02a4d2f07")
 }
 
 @(test)
@@ -508,9 +670,12 @@ the_commands_cache_put_and_cache_get_on_loopback :: proc(t: ^testing.T) {
 	testing.expect_value(t, run_cache_get({endpoint, "test-recipe", "--signer", public_path, "--signer", public_path}), foundation.EXIT_USAGE)
 	testing.expect_value(t, run_cache_get({endpoint, "tree", string(publisher_digits[:])}), foundation.EXIT_USAGE)
 
-	// A seed that other users can read is refused before any connection.
-	testing.expect_value(t, os.chmod(seed_path, os.perm(0o644)), nil)
-	testing.expect_value(t, run_cache_put({endpoint, "--key", seed_path, "release", image_path}), foundation.EXIT_FAILURE)
+	// A seed that another user can read or write is refused before any
+	// connection.
+	for mode in ([4]int{0o644, 0o640, 0o604, 0o620}) {
+		testing.expect_value(t, os.chmod(seed_path, os.perm(mode)), nil)
+		testing.expect_value(t, run_cache_put({endpoint, "--key", seed_path, "release", image_path}), foundation.EXIT_FAILURE)
+	}
 	testing.expect_value(t, os.chmod(seed_path, os.perm(0o600)), nil)
 
 	// Nothing is on the cache yet.

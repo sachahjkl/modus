@@ -243,14 +243,7 @@ cache_verify_release :: proc(client: ^Cache_Client, trusted_signer: [object_cach
 // read_signer_private_key_file reads a seed file of 64 hexadecimal digits
 // that only its owner can read, and gives its key. The caller clears it.
 read_signer_private_key_file :: proc(path: string) -> (private_key: ed25519.Private_Key, ok: bool) {
-	information, stat_error := os.stat(path, context.temp_allocator)
-	if stat_error != nil {
-		fmt.eprintfln("modustool: the key %s was not read: %v", path, stat_error)
-		return {}, false
-	}
-	shared := os.Permissions{.Read_Group, .Write_Group, .Execute_Group, .Read_Other, .Write_Other, .Execute_Other}
-	if information.mode & shared != {} {
-		fmt.eprintfln("modustool: the private key %s can be read by other users of this computer: run `chmod 600 %s`", path, path)
+	if !foundation.private_key_file_check(path) {
 		return {}, false
 	}
 	raw, read_error := os.read_entire_file(path, context.temp_allocator)
@@ -289,7 +282,7 @@ cache_connect_or_say :: proc(command, endpoint: string) -> (client: Cache_Client
 		return client, true
 	case .Bad_Request:
 		fmt.eprintfln("modustool: %s: %s is not host:port", command, endpoint)
-	case .Unreachable, .Damaged_Answer, .Not_Found, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large:
+	case .Unreachable, .Damaged_Answer, .Not_Found, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed:
 		fmt.eprintfln("modustool: %s: no connection to %s", command, endpoint)
 	}
 	return {}, false
@@ -422,9 +415,13 @@ run_cache_get :: proc(args: []string) -> int {
 	if form != "blob" {
 		if signer_path == "" {
 			signer_path = foundation.CACHE_SIGNING_KEY_PUBLIC_FILE
+			if !os.exists(signer_path) {
+				fmt.eprintfln("modustool: cache-get: no --signer names the trusted key, and %s is not in this folder: start the command at the root of the repository, or give --signer <public key file>", signer_path)
+				return foundation.EXIT_USAGE
+			}
 		}
 		key_ok: bool
-		trusted_signer, key_ok = read_public_key_file(signer_path)
+		trusted_signer, key_ok = read_public_key_file("cache-get", signer_path)
 		if !key_ok {
 			return foundation.EXIT_FAILURE
 		}

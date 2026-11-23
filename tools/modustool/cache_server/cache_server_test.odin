@@ -581,13 +581,13 @@ key_file_loaders_and_cli_validation :: proc(t: ^testing.T) {
 	testing.expect(t, priv_ok)
 	testing.expect_value(t, derived_pub, pub)
 
-	loaded_pub, pub_ok := read_public_key_file(pub_path)
+	loaded_pub, pub_ok := read_public_key_file("cache-serve", pub_path)
 	testing.expect(t, pub_ok)
 	testing.expect_value(t, loaded_pub, pub)
 
 	_, bad_priv_ok := read_signer_public_key_from_private_key_file(bad_path)
 	testing.expect(t, !bad_priv_ok)
-	_, bad_pub_ok := read_public_key_file(bad_path)
+	_, bad_pub_ok := read_public_key_file("cache-serve", bad_path)
 	testing.expect(t, !bad_pub_ok)
 
 	// CLI refuses missing --dir and unknown options.

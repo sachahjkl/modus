@@ -753,21 +753,22 @@ read_signer_public_key_from_private_key_file :: proc(path: string) -> (public_ke
 	return public_key, true
 }
 
-// read_public_key_file reads a 64-hex-digit Ed25519 public key file.
-read_public_key_file :: proc(path: string) -> (public_key: [object_cache.PUBLIC_KEY_SIZE]u8, ok: bool) {
+// read_public_key_file reads a 64-hex-digit Ed25519 public key file. command
+// names the command in each refusal.
+read_public_key_file :: proc(command, path: string) -> (public_key: [object_cache.PUBLIC_KEY_SIZE]u8, ok: bool) {
 	raw, read_err := os.read_entire_file(path, context.temp_allocator)
 	if read_err != nil {
-		fmt.eprintfln("modustool: cache-serve: cannot read public key %s: %v", path, read_err)
+		fmt.eprintfln("modustool: %s: the public key %s was not read: %v", command, path, read_err)
 		return {}, false
 	}
 	decoded, decode_ok := decode_hex_32(string(raw))
 	if !decode_ok {
-		fmt.eprintfln("modustool: cache-serve: %s must hold 64 hexadecimal digits", path)
+		fmt.eprintfln("modustool: %s: %s must hold 64 hexadecimal digits", command, path)
 		return {}, false
 	}
 	parsed: ed25519.Public_Key
 	if !ed25519.public_key_set_bytes(&parsed, decoded[:]) {
-		fmt.eprintfln("modustool: cache-serve: %s is not a valid Ed25519 public key", path)
+		fmt.eprintfln("modustool: %s: %s is not an Ed25519 public key", command, path)
 		return {}, false
 	}
 	return decoded, true
@@ -819,7 +820,7 @@ run_cache_serve :: proc(args: []string) -> int {
 				return foundation.EXIT_USAGE
 			}
 			index += 1
-			pub, ok := read_public_key_file(args[index])
+			pub, ok := read_public_key_file("cache-serve", args[index])
 			if !ok {
 				return foundation.EXIT_FAILURE
 			}

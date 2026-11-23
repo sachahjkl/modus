@@ -9,7 +9,6 @@ import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:strings"
-import "core:sys/linux"
 import crypto "modus:cryptography/compatibility_crypto"
 import "modus:cryptography/ed25519"
 import "modus:cryptography/sha2"
@@ -122,7 +121,7 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 	} else if path_inside_repository(path) {
 		fmt.eprintfln("modustool: %s names %s, inside the repository: the private key of the publisher of the system stays outside it", SIGNING_KEY_VARIABLE, path)
 		return
-	} else if !private_key_file_check(path) {
+	} else if !foundation.private_key_file_check(path) {
 		return
 	}
 	key.path = path
@@ -245,29 +244,6 @@ path_inside_repository :: proc(path: string) -> bool {
 		return true // Not known: refused.
 	}
 	return absolute == repository || strings.has_prefix(absolute, strings.concatenate({repository, "/"}, context.temp_allocator))
-}
-
-// private_key_file_check refuses a private key file that another user owns,
-// or that the group or the others can read, write or run: such a key can be
-// copied by someone who is not the publisher of the system.
-private_key_file_check :: proc(path: string) -> bool {
-	information, stat_error := os.stat(path, context.temp_allocator)
-	if stat_error != nil {
-		fmt.eprintfln("modustool: cannot read the mode of %s: %v", path, stat_error)
-		return false
-	}
-	shared := os.Permissions{.Read_Group, .Write_Group, .Execute_Group, .Read_Other, .Write_Other, .Execute_Other}
-	if information.mode & shared != {} {
-		fmt.eprintfln("modustool: the private key %s can be read by other users of this computer: run `chmod 600 %s`, then make a new key if another user can have copied it", path, path)
-		return false
-	}
-	record: linux.Stat
-	path_text := strings.clone_to_cstring(path, context.temp_allocator)
-	if linux.stat(path_text, &record) != .NONE || record.uid != linux.getuid() {
-		fmt.eprintfln("modustool: the private key %s belongs to another user", path)
-		return false
-	}
-	return true
 }
 
 // file_create_new writes a new file with this mode. It refuses a path that
@@ -628,6 +604,10 @@ run_key :: proc(args: []string) -> int {
 		case len(args) == 3 && args[0] == "write":
 			return cache_signing_key_write(args[2]) ? 0 : foundation.EXIT_FAILURE
 		}
+		// `key new cache` with no folder must not become `key new` of a
+		// folder named cache.
+		fmt.eprintln("modustool: key new cache <folder outside the repository> | key write cache <folder outside the repository> | key show cache")
+		return foundation.EXIT_USAGE
 	}
 	if len(args) == 1 && args[0] == "show" {
 		key, ok := signing_key_read()
@@ -710,7 +690,7 @@ run_key :: proc(args: []string) -> int {
 	public_digits := system_description.hexadecimal(public)
 	private_text := strings.concatenate({string(seed_digits[:]), "\n"}, context.temp_allocator)
 	defer crypto.zero_explicit(raw_data(private_text), len(private_text))
-	if !file_create_new(private_path, transmute([]u8)private_text, 0o600) || !private_key_file_check(private_path) {
+	if !file_create_new(private_path, transmute([]u8)private_text, 0o600) || !foundation.private_key_file_check(private_path) {
 		return foundation.EXIT_FAILURE
 	}
 	if !file_create_new(public_path, transmute([]u8)strings.concatenate({string(public_digits[:]), "\n"}, context.temp_allocator), 0o644) {

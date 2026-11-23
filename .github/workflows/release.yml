@@ -9,7 +9,8 @@
 # Each action is pinned by the commit of its version. No cache action runs
 # here: the cache daemon and its post step would run while the keys are on
 # the disk of the runner. The keys are secrets of the environment
-# `release`, which only a tag v* may use (secrets/README.md). The runner
+# `release`, and the cache signing key of the environment `cache`; only a
+# tag v* may use either (secrets/README.md). The runner
 # must be a hosted runner: it is discarded after the job, with the key
 # folder.
 name: release
@@ -99,12 +100,18 @@ jobs:
   # The files of the release boot image and the signed realisation of the
   # cache test recipe go on the public object cache
   # (src/md/infrastructure/cache_publication.md). This job holds the cache
-  # signing key alone, and runs after publish: a failed upload leaves the
-  # release published, and this job fails with the refusal in its log.
+  # signing key alone, from the environment cache, which holds no other
+  # secret; the jobs of the environment release never see it. It runs after
+  # publish: a failed upload leaves the release published, and this job
+  # fails with the refusal in its log. Its last step reads each file and the
+  # realisation back, so a green job says that the cache holds the release.
   cache:
     needs: publish
     runs-on: ubuntu-24.04
-    environment: release
+    environment: cache
+    # Each exchange of the client has its bound; this bounds the whole job,
+    # with a Nix shell to build first.
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -118,3 +125,4 @@ jobs:
         env:
           CACHE_SIGNING_KEY_TEXT: ${{ secrets.CACHE_SIGNING_KEY }}
       - run: nix develop .#release -c modustool cache-put cache.modus.systems:5010 --key "$RUNNER_TEMP/cache_key/cache_signing_key" release build/boot_volume_release.image
+      - run: nix develop .#release -c modustool cache-get cache.modus.systems:5010 release build/boot_volume_release.image

@@ -78,7 +78,7 @@ cache_signing_key_files_write :: proc(folder: string, seed_digits: string, publi
 	if !file_create_new(private_path, transmute([]u8)private_text, 0o600) {
 		return false
 	}
-	if !private_key_file_check(private_path) {
+	if !foundation.private_key_file_check(private_path) {
 		_ = os.remove(private_path)
 		return false
 	}
@@ -119,12 +119,19 @@ cache_signing_key_new :: proc(folder: string) -> bool {
 // key from the secret of a workflow. It refuses a key whose public key is
 // not the committed one: the object cache would refuse each upload.
 cache_signing_key_write :: proc(folder: string) -> bool {
+	text := strings.trim_space(os.get_env(CACHE_SIGNING_KEY_TEXT_VARIABLE, context.temp_allocator))
+	defer crypto.zero_explicit(raw_data(text), len(text))
+	committed, committed_found := committed_public_text()
+	return cache_signing_key_write_text(folder, text, committed, committed_found)
+}
+
+// cache_signing_key_write_text writes the key folder from the text of the
+// seed, checked against the text of the committed public key.
+cache_signing_key_write_text :: proc(folder, text, committed: string, committed_found: bool) -> bool {
 	if path_inside_repository(folder) {
 		fmt.eprintfln("modustool: %s is inside the repository: a private key stays outside it", folder)
 		return false
 	}
-	text := strings.trim_space(os.get_env(CACHE_SIGNING_KEY_TEXT_VARIABLE, context.temp_allocator))
-	defer crypto.zero_explicit(raw_data(text), len(text))
 	if text == "" {
 		fmt.eprintfln("modustool: key write cache: the variable %s is empty (secrets/README.md)", CACHE_SIGNING_KEY_TEXT_VARIABLE)
 		return false
@@ -134,7 +141,6 @@ cache_signing_key_write :: proc(folder: string) -> bool {
 		fmt.eprintfln("modustool: key write cache: %s %s", CACHE_SIGNING_KEY_TEXT_VARIABLE, problem)
 		return false
 	}
-	committed, committed_found := committed_public_text()
 	if committed_problem := cache_signing_key_committed_check(public_key, committed, committed_found); committed_problem != "" {
 		fmt.eprintfln("modustool: key write cache: %s", committed_problem)
 		return false
@@ -154,7 +160,7 @@ cache_signing_key_show :: proc() -> bool {
 		fmt.eprintfln("modustool: key show cache: %s names no cache signing key", CACHE_SIGNING_KEY_VARIABLE)
 		return false
 	}
-	private_key_file_check(path) or_return
+	foundation.private_key_file_check(path) or_return
 	data := foundation.read_file(path) or_return
 	defer crypto.zero_explicit(raw_data(data), len(data))
 	public_key, problem := cache_signing_key_public_of(string(data))
