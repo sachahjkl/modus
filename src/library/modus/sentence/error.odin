@@ -248,6 +248,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, "the ring has no data region: send Attach first, with a memory handle that came through the ring")
 			return
 		}
+		if record.unit == i64(errors.Unit.Pending) {
+			// found 1 is the race of a commit, not a row (errors.Unit.Pending).
+			subject(writer, record, argument)
+			if record.found == 1 {
+				write_part(writer, ": another change of the object came first since its first pending change, so its pending changes are dropped")
+			} else {
+				write_part(writer, ": the object has no pending change on this connection")
+			}
+			return
+		}
 		if record.found > 0 {
 			write_part(writer, "row ")
 			write_part(writer, record.found)

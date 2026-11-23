@@ -189,6 +189,18 @@ Request_Source :: enum u8 {
 //   Callee_Unavailable      another response code of the TPM (Refused), or
 //                           an interface that gave no whole answer within
 //                           its bound (Device, found: the Device_Step).
+//   Stopped_After_A_Partial_Change  a request that changed what a caller
+//                           can see (the count of the extends, PCR 12, an
+//                           index of a pin), then failed before its command
+//                           reached the TPM or with a refusal of the TPM:
+//                           the record of that failure.
+//   Deadline_Passed_During_The_Call, Answer_Unreadable  a command that
+//                           changes the TPM (an extend, a removal, a
+//                           definition or a write of an index) whose
+//                           interface failed from the start of the command
+//                           on (No_Answer at Start, Malformed at Answer), or
+//                           whose answer cannot be read (Malformed): the
+//                           TPM can have run it, so the request is in doubt.
 
 // The step of a request at which the interface failed, the value found of
 // the record of a completion Callee_Unavailable with the kind Device. Its

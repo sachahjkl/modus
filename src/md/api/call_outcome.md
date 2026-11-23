@@ -47,7 +47,7 @@ The value of the call is a value only. Its sign means nothing.
 | Value | Effect group | What holds after the call | What generic code does |
 |---|---|---|---|
 | 0 | `Whole_Work_Done` | The call did all its work. Its value and its results are valid | Use them |
-| 1 | `Nothing_Changed` | The call changed nothing that the caller can see: no byte of a result, no handle, no state of the callee | Act on the outcome; a test checks that nothing changed |
+| 1 | `Nothing_Changed` | The call changed nothing that the caller can see: no byte of a result, no handle, no state of the callee that the caller reads. A shared service that the call started on demand is not such a state ("A service on demand", below) | Act on the outcome; a test checks that nothing changed |
 | 2 | `Partial_Change_Stated` | The call did a part of its work and stopped. The documentation of the export states what holds then, and the record says where it stopped | Read what the documentation states; never call again blindly |
 | 3 | `Change_In_Doubt` | The call ran in whole, in part or not at all, and nobody can tell the caller which | Read the state, or rely on an idempotent export or a request serial |
 

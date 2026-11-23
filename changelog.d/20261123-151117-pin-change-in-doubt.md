@@ -1,0 +1,3 @@
+type: Fixed
+
+**A change of a pin that the TPM can have run says it is in doubt.** When the interface fails after a removal, a definition or a write of the index of a pin reached the TPM, or its answer cannot be read, the request ends with `Deadline_Passed_During_The_Call` or `Answer_Unreadable`, as an extend of PCR 12 does, not with `Callee_Unavailable`. A commit of ranges that has no pending change, or that lost the race with another change, now says so in plain words: "the object has no pending change on this connection", or "another change of the object came first since its first pending change, so its pending changes are dropped".

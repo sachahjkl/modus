@@ -2908,36 +2908,37 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 		return fail_no_answer()
 	}
 	// The outcome and its record come from the root service: the border of
-	// a completion reads them, and each refusal is said from the outcome and
-	// the record that the root service named (replacement_rules).
+	// a completion reads them, and the reason of a refusal is read by the
+	// named fields of the contract (root_ring.Replace_Refusal).
 	outcome, refusal := call_outcome.completion_outcome(completion.kind, completion.values)
-	switch outcome {
-	case .Succeeded:
+	if outcome == .Succeeded {
 		return {}
-	case .Argument_Refused:
-		if refusal.limit != 0 {
-			return fail("no module has the name ", by)
-		}
-		return fail("a module does not replace itself")
-	case .Nothing_Has_That_Name:
-		if refusal.unit == i64(errors.Unit.Records) {
-			// Its log line gives the whole reason (docs/MODULE_CONTRACT.md,
-			// "Who may replace a module").
-			return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
-		}
-		return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
-	case .Wrong_State:
-		return fail("a chain of replacements is refused: ", name, ", ", by)
-	case .Data_Damaged:
-		if refusal.found == 0 {
-			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
-		}
-		return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
-	case .Budget_Or_Capacity_Exhausted:
-		return fail("the replacement table is full")
-	case .Grant_Or_Right_Missing:
+	}
+	reason, _, known := root_ring.replace_refusal_of_record(outcome, refusal)
+	if !known {
+		return fail_root("", completion)
+	}
+	switch reason {
+	case .No_Grant:
 		return fail("the console has no grant to change the replacement table")
-	case .Operation_Unsupported, .Name_Already_Taken, .Callee_Busy, .Another_Change_Came_First, .Callee_Unavailable, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
+	case .Entry_Past_The_Image:
+		return fail("no module has the name ", by)
+	case .Replaces_Itself:
+		return fail("a module does not replace itself")
+	case .No_Module:
+		return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
+	case .No_Signed_Row:
+		// Its log line gives the whole reason (docs/MODULE_CONTRACT.md, "Who
+		// may replace a module").
+		return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
+	case .Chain:
+		return fail("a chain of replacements is refused: ", name, ", ", by)
+	case .Row_Not_Authentic:
+		return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
+	case .List_Not_Valid:
+		return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
+	case .Table_Full:
+		return fail("the replacement table is full")
 	}
 	return fail_root("", completion)
 }

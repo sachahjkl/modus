@@ -602,12 +602,12 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 	// answer lost is in doubt.
 	answer, step := transact(count)
 	if step != .None {
-		return extend_interface_failed(step)
+		return changing_interface_failed(step, changed_before = true)
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem != .None {
 		system.log_fact(.Warning, Extend_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
-		return changed_then_failed(outcome_of_problem(problem, code, tpm2.COMMAND_PCR_EXTEND))
+		return changing_answer_failed(problem, code, tpm2.COMMAND_PCR_EXTEND, changed_before = true)
 	}
 	// PCR 12 changed: a failure of the read back is a partial change.
 	count = tpm2.pcr_read_command(command_bytes[:])
@@ -637,21 +637,38 @@ changed_then_failed :: proc "contextless" (failed: Outcome) -> Outcome {
 	return {outcome = outcome, values = errors.completion_values(record)}
 }
 
-// extend_interface_failed gives the end of an extend whose interface failed
-// after the count of the extends changed. Before the command reached the
-// TPM (the locality, the ready state), the extend did not run: a partial
-// change, the count. After it (the end of the command, the answer), the TPM
-// can have extended PCR 12: the extend is in doubt.
-extend_interface_failed :: proc "contextless" (step: tpm_service.Device_Step) -> Outcome {
+// changing_interface_failed gives the end of a request whose command that
+// changes the TPM (an extend of PCR 12, a removal, a definition or a write
+// of the index of a pin) failed in the interface. Before the command
+// reached the TPM (the locality, the ready state), it did not run: the
+// state before it holds, a partial change when an earlier step of the
+// request changed what a caller can see (changed_before). From the start
+// of the command on (the end of the command, the answer), the TPM can have
+// run it with its answer lost: the request is in doubt.
+changing_interface_failed :: proc "contextless" (step: tpm_service.Device_Step, changed_before: bool) -> Outcome {
 	switch step {
 	case .None, .Locality, .Ready:
-		return changed_then_failed(request_failed(.Callee_Unavailable, .Device, 0, i64(step)))
+		failed := request_failed(.Callee_Unavailable, .Device, 0, i64(step))
+		return changed_before ? changed_then_failed(failed) : failed
 	case .Start:
 		return request_failed(.Deadline_Passed_During_The_Call, .No_Answer, 0, i64(step))
 	case .Answer:
 		return request_failed(.Answer_Unreadable, .Malformed, 0, i64(step))
 	}
 	return request_failed(.Answer_Unreadable, .Malformed, 0, i64(step))
+}
+
+// changing_answer_failed gives the end of a request whose command that
+// changes the TPM got an answer that is not taken. A refusal of the TPM
+// with a response code ran nothing of the command: its outcome, a partial
+// change when an earlier step changed what a caller can see. An answer
+// that cannot be read says nothing of what the TPM did: in doubt.
+changing_answer_failed :: proc "contextless" (problem: tpm2.Answer_Problem, code: u32, command: u32, changed_before: bool) -> Outcome {
+	if problem != .Refused {
+		return request_failed(.Answer_Unreadable, .Malformed, i64(command), i64(code))
+	}
+	failed := outcome_of_problem(problem, code, command)
+	return changed_before ? changed_then_failed(failed) : failed
 }
 
 // The generator of this process: it gives the lockout authorization value.

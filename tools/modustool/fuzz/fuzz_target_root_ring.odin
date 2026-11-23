@@ -40,6 +40,7 @@ FUZZ_ROOT_RING_SERVICE_LISTED :: 1 // The list of the start grant set names the 
 FUZZ_ROOT_RING_NAME_IN_IMAGE :: 2 // A Replace names a module of the image.
 FUZZ_ROOT_RING_REPLACES_ITSELF :: 4 // The entry of a Replace is the module of its name.
 FUZZ_ROOT_RING_CHAINED :: 8 // The table holds a record that a Replace would chain to.
+FUZZ_ROOT_RING_TABLE_FULL :: 16 // The replacement table has no room; values[3] / 2 is its capacity.
 
 FUZZ_ROOT_RING_CASE_LIMIT :: 16
 FUZZ_ROOT_RING_INPUT_LIMIT :: FUZZ_ROOT_RING_CASE_LIMIT * size_of(Fuzz_Root_Ring_Case)
@@ -199,34 +200,58 @@ fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict 
 	return fuzz_root_ring_words_check(record)
 }
 
-// fuzz_root_ring_replace_model gives the outcome and the kind of a Replace,
-// written by hand from docs/MODULE_CONTRACT.md, "Who may replace a module",
-// and from the order of the tests of a callee (src/md/api/call_outcome.md):
-// the grant; the arguments; the names; the state; the data of the system.
-// A removal (by 0) reads no row and no chain.
+// The record that the model waits for of a Replace, field by field.
 @(private = "file")
-fuzz_root_ring_replace_model :: proc(facts: replacement_rules.Replace_Facts) -> (call_outcome.Call_Outcome, errors.Kind) {
+Fuzz_Replace_Expected :: struct {
+	outcome:  call_outcome.Call_Outcome,
+	kind:     errors.Kind,
+	unit:     errors.Unit,
+	argument: i64,
+	value:    i64,
+	limit:    i64,
+	found:    i64,
+}
+
+// fuzz_root_ring_replace_model gives the outcome and the record of a
+// Replace, written by hand from docs/MODULE_CONTRACT.md, "Who may replace
+// a module", from the fields that root_ring.Replace_Refusal names, and from
+// the order of the tests of a callee (src/md/api/call_outcome.md): the
+// grant; the arguments; the names; the state; the data of the system. A
+// removal (by 0) reads no row and no chain. A Replace that the facts allow
+// into a full table gives the record of the table.
+@(private = "file")
+fuzz_root_ring_replace_model :: proc(facts: replacement_rules.Replace_Facts, table_full: bool, capacity: i64) -> Fuzz_Replace_Expected {
 	replacing := facts.by != 0
 	no_row := facts.decision == .No_Row || facts.decision == .No_List
-	damaged := facts.decision == .Not_Authentic || facts.decision == .List_Not_Valid
+	by := i64(min(facts.by, 1 << 62))
 	switch {
 	case !facts.granted:
-		return .Grant_Or_Right_Missing, .No_Grant
-	case facts.by > facts.entry_count, replacing && facts.replaces_itself:
-		return .Argument_Refused, .Bad_Value
-	case !facts.name_in_image, replacing && no_row:
-		return .Nothing_Has_That_Name, .Absent
+		return {.Grant_Or_Right_Missing, .No_Grant, .Root_Commands, 0, 0, 0, 0}
+	case facts.by > facts.entry_count:
+		return {.Argument_Refused, .Bad_Value, .None, 2, by, i64(min(facts.entry_count, 1 << 62)), 0}
+	case replacing && facts.replaces_itself:
+		return {.Argument_Refused, .Bad_Value, .Modules, 2, by, 0, 0}
+	case !facts.name_in_image:
+		return {.Nothing_Has_That_Name, .Absent, .Modules, 1, 0, 0, 0}
+	case replacing && no_row:
+		return {.Nothing_Has_That_Name, .Absent, .Records, 2, by, 0, 0}
 	case replacing && facts.chained:
-		return .Wrong_State, .State
-	case replacing && damaged:
-		return .Data_Damaged, .Damaged
+		return {.Wrong_State, .State, .Records, 2, by, 0, 0}
+	case replacing && facts.decision == .Not_Authentic:
+		return {.Data_Damaged, .Damaged, .Records, 2, by, 0, 0}
+	case replacing && facts.decision == .List_Not_Valid:
+		return {.Data_Damaged, .Damaged, .Records, 2, by, 0, i64(facts.problem)}
+	case table_full:
+		return {.Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, capacity, 0}
 	}
-	return .Succeeded, .None
+	return {outcome = .Succeeded}
 }
 
 // fuzz_root_ring_replace_check: the decision of a Replace from the facts of
-// the case is the outcome of the model, with a record that names the
-// command and whose kind explains the outcome, and the same twice.
+// the case, and the refusal of a full table when the case names one, is
+// the record of the model field by field, which names the command, whose
+// kind explains the outcome, whose reason the reader of the contract reads
+// back, and which is the same twice.
 @(private = "file")
 fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case, start_grant_set: bit_set[start_grant.Grant]) -> Fuzz_Verdict {
 	values := case_of.record.values
@@ -240,15 +265,20 @@ fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case, start_grant_s
 		decision        = replacement_signature.Decision(values[5] % (u64(max(replacement_signature.Decision)) + 1)),
 		problem         = replacement_list.List_Problem(values[6] % (u64(max(replacement_list.List_Problem)) + 1)),
 	}
+	table_full := case_of.flags & FUZZ_ROOT_RING_TABLE_FULL != 0
+	capacity := i64(values[3] >> 1)
 	outcome, refusal, _ := replacement_rules.replace_refusal(facts)
 	again, refusal_again, _ := replacement_rules.replace_refusal(facts)
 	if again != outcome || refusal_again != refusal {
 		return fuzz_broken(.Contract, "two decisions of one Replace differ")
 	}
-	wanted, wanted_kind := fuzz_root_ring_replace_model(facts)
+	if outcome == .Succeeded && table_full {
+		outcome, refusal = replacement_rules.table_full_refusal(capacity)
+	}
+	wanted := fuzz_root_ring_replace_model(facts, table_full, capacity)
 	read := errors.completion_record(refusal)
-	if outcome != wanted || read.kind != i64(wanted_kind) {
-		return fuzz_broken(.Model, "the Replace of %v gives %v with %v, and the model %v with %v", facts, outcome, read, wanted, wanted_kind)
+	if outcome != wanted.outcome {
+		return fuzz_broken(.Model, "the Replace of %v gives %v with %v, and the model %v", facts, outcome, read, wanted)
 	}
 	if outcome == .Succeeded {
 		if refusal != ([7]u64{}) {
@@ -256,8 +286,14 @@ fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case, start_grant_s
 		}
 		return FUZZ_PASSED
 	}
+	if read.kind != i64(wanted.kind) || read.unit != i64(wanted.unit) || read.argument != wanted.argument || read.value != wanted.value || read.limit != wanted.limit || read.found != wanted.found {
+		return fuzz_broken(.Model, "the record of the Replace of %v is %v, and the model %v", facts, read, wanted)
+	}
 	if read.operation != i64(root_ring.Root_Command.Replace) || !fuzz_error_record_named(read) || errors.Kind(read.kind) not_in call_outcome.KINDS_OF[outcome] {
 		return fuzz_broken(.Contract, "the record of a refused Replace is %v with %v", read, outcome)
+	}
+	if _, _, known := root_ring.replace_refusal_of_record(outcome, read); !known {
+		return fuzz_broken(.Contract, "the reader of the contract reads no reason in the record %v of a Replace", read)
 	}
 	return fuzz_root_ring_round_trip(refusal)
 }
@@ -342,13 +378,19 @@ fuzz_root_ring_seeds :: proc(seeds: ^[dynamic][]u8) {
 	// Each fact of a Replace alone, with each decision on its signature,
 	// at the edges of its entry: 0, 1, the last, one past it.
 	replace_grants := u64(1) << u64(start_grant.Grant.Root_Ring) | u64(1) << u64(start_grant.Grant.Replace)
-	for flags in ([?]u64{FUZZ_ROOT_RING_NAME_IN_IMAGE, 0, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_REPLACES_ITSELF, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_CHAINED}) {
+	for flags in ([?]u64{FUZZ_ROOT_RING_NAME_IN_IMAGE, 0, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_REPLACES_ITSELF, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_CHAINED, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_TABLE_FULL}) {
 		for decision in replacement_signature.Decision {
-			for by in ([?]u64{0, 1, 12, 13}) {
-				append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {4 = by, 5 = u64(decision), 6 = 2}}, start_grant_set = replace_grants, flags = flags, entries = 12})
+			for by in ([?]u64{0, 1, 12, 13, max(u64)}) {
+				append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {3 = 128, 4 = by, 5 = u64(decision), 6 = 2}}, start_grant_set = replace_grants, flags = flags, entries = 12})
 			}
 		}
 	}
+	// A full table of capacity 0 and of the largest capacity, and an image
+	// of no entry.
+	for capacity_word in ([?]u64{0, max(u64)}) {
+		append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {3 = capacity_word, 4 = 1}}, start_grant_set = replace_grants, flags = FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_TABLE_FULL, entries = 12})
+	}
+	append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {4 = 1}}, start_grant_set = replace_grants, flags = FUZZ_ROOT_RING_NAME_IN_IMAGE, entries = 0})
 	for kind in ([?]u32{u32(max(root_ring.Root_Command)) + 1, 1 << 16, max(u32)}) {
 		append(&cases, Fuzz_Root_Ring_Case{record = {kind = kind, values = {max(u64), max(u64), max(u64), max(u64), max(u64), max(u64), max(u64)}}, start_grant_set = max(u64)})
 	}

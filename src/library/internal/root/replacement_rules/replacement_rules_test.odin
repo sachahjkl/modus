@@ -50,7 +50,7 @@ each_refusal_of_a_replace_names_its_outcome :: proc(t: ^testing.T) {
 	facts = RUNS
 	facts.replaces_itself = true
 	facts.name_in_image = false
-	expect_refused(t, facts, .Argument_Refused, .Bad_Value, .None, "a module that replaces itself")
+	expect_refused(t, facts, .Argument_Refused, .Bad_Value, .Modules, "a module that replaces itself")
 	facts = RUNS
 	facts.name_in_image = false
 	facts.chained = true

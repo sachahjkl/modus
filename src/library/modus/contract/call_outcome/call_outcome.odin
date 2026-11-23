@@ -63,7 +63,7 @@ Call_Outcome_Word :: distinct u64
 // outcomes.
 Effect_Group :: enum u8 {
 	Whole_Work_Done       = 0, // The call did all its work. Its value and its results are valid.
-	Nothing_Changed       = 1, // The call changed nothing that the caller can see.
+	Nothing_Changed       = 1, // The call changed nothing that the caller can see; a shared service that it started on demand is no state of the caller (src/md/api/call_outcome.md, "A service on demand").
 	Partial_Change_Stated = 2, // The call did a part of its work and stopped; the documentation of the export states what holds.
 	Change_In_Doubt       = 3, // The call ran in whole, in part or not at all, and nobody can tell the caller which.
 }

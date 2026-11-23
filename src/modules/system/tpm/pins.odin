@@ -126,17 +126,16 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 	removed, defined := false, false
 	switch step {
 	case .Remove_Then_Define_Then_Write:
-		if failed, ok := pin_index_command(tpm2.nv_undefine_command(command_bytes[:], index), tpm2.COMMAND_NV_UNDEFINE_SPACE); !ok {
+		if failed, ok := pin_index_command(tpm2.nv_undefine_command(command_bytes[:], index), tpm2.COMMAND_NV_UNDEFINE_SPACE, changed_before = false); !ok {
 			return failed
 		}
 		removed = true
 		system.log_fact(.Info, Pin_Index_Removed{index = value_kinds.Hexadecimal_Sixteen_Digits(index), state = u64(state)})
 		fallthrough
 	case .Define_Then_Write:
-		if failed, ok := pin_index_command(tpm2.pin_define_command(command_bytes[:], index, &policy, size), tpm2.COMMAND_NV_DEFINE_SPACE); !ok {
+		if failed, ok := pin_index_command(tpm2.pin_define_command(command_bytes[:], index, &policy, size), tpm2.COMMAND_NV_DEFINE_SPACE, changed_before = removed); !ok {
 			if removed {
 				system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
-				return changed_then_failed(failed)
 			}
 			return failed
 		}
@@ -154,12 +153,9 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 		}
 		return session_failed
 	}
-	if failed, ok := pin_index_command(tpm2.pin_write_command(command_bytes[:], index, session, proposed[:size]), tpm2.COMMAND_NV_WRITE); !ok {
+	if failed, ok := pin_index_command(tpm2.pin_write_command(command_bytes[:], index, session, proposed[:size]), tpm2.COMMAND_NV_WRITE, changed_before = removed || defined); !ok {
 		if removed {
 			system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
-		}
-		if removed || defined {
-			return changed_then_failed(failed)
 		}
 		return failed
 	}
@@ -167,16 +163,18 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 	return {outcome = .Succeeded}
 }
 
-// pin_index_command sends one command of an index whose answer has no
-// parameter that this service reads.
-pin_index_command :: proc "contextless" (count: int, command: u32) -> (failed: Outcome, ok: bool) {
+// pin_index_command sends one command that changes an index, whose answer
+// has no parameter that this service reads. A failure says what changed:
+// changing_interface_failed and changing_answer_failed, with changed_before
+// when an earlier command of the request changed the index.
+pin_index_command :: proc "contextless" (count: int, command: u32, changed_before: bool) -> (failed: Outcome, ok: bool) {
 	answer, step := transact(count)
 	if step != .None {
-		return request_failed(.Callee_Unavailable, .Device, 0, i64(step)), false
+		return changing_interface_failed(step, changed_before), false
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem != .None {
-		return outcome_of_problem(problem, code, command), false
+		return changing_answer_failed(problem, code, command, changed_before), false
 	}
 	return {}, true
 }

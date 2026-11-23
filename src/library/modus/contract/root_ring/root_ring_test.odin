@@ -4,6 +4,7 @@ package root_ring
 import "core:testing"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/replacement_list"
 import "modus:contract/start_grant"
 
 // values[5] of a Start: one past the last member and the largest word name
@@ -449,5 +450,69 @@ a_machine_key_report_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) 
 		report, status := machine_key_report_of_values({4 = u64(state), 5 = max(u64)})
 		testing.expect_value(t, status, call_outcome.Call_Outcome.Succeeded)
 		testing.expect_value(t, report.state, state)
+	}
+}
+
+// The refusal record of a Replace is read back by its named fields, never
+// by the place of a field. First the records that no reason writes: the
+// record of another command, a kind or a unit word that names no member, a
+// list problem past the last member or None, a pair of an outcome and a
+// kind that the contract does not write. Then each reason at its edges:
+// an entry past an image of 0 entries and past the largest word, each
+// problem of a list, a table of capacity 0 and of the largest capacity.
+@(test)
+the_refusal_of_a_replace_is_read_by_its_named_fields :: proc(t: ^testing.T) {
+	refused := [?]struct {
+		outcome: call_outcome.Call_Outcome,
+		record:  errors.Error_Record,
+		about:   string,
+	} {
+		{.Wrong_State, errors.completion_record(errors.ring_fail(u32(Root_Command.Start), .State, .Records, 2)), "a record of Start"},
+		{.Data_Damaged, {kind = 9999, unit = i64(errors.Unit.Records), operation = i64(Root_Command.Replace)}, "a kind of no member"},
+		{.Data_Damaged, {kind = i64(errors.Kind.Damaged), unit = 9999, operation = i64(Root_Command.Replace)}, "a unit of no member"},
+		{.Data_Damaged, errors.completion_record(errors.ring_fail(u32(Root_Command.Replace), .Damaged, .Records, 2, 3, 0, i64(max(replacement_list.List_Problem)) + 1)), "a problem past the last"},
+		{.Data_Damaged, errors.completion_record(errors.ring_fail(u32(Root_Command.Replace), .Damaged, .Records, 2, 3, 0, -1)), "a negative problem"},
+		{.Argument_Refused, errors.completion_record(errors.ring_fail(u32(Root_Command.Replace), .Bad_Value, .Modules, 1)), "a module of argument 1"},
+		{.Callee_Busy, errors.completion_record(errors.ring_fail(u32(Root_Command.Replace), .Full, .Records)), "a full table under another outcome"},
+	}
+	for item in refused {
+		_, _, ok := replace_refusal_of_record(item.outcome, item.record)
+		testing.expectf(t, !ok, "%s is read as a refusal of a Replace", item.about)
+	}
+	Case :: struct {
+		refusal:     Replace_Refusal,
+		by:          u64,
+		entry_count: u64,
+		problem:     replacement_list.List_Problem,
+		capacity:    i64,
+	}
+	cases := make([dynamic]Case, context.temp_allocator)
+	append(&cases, Case{refusal = .Entry_Past_The_Image, by = 1, entry_count = 0}, Case{refusal = .Entry_Past_The_Image, by = max(u64), entry_count = 12})
+	append(&cases, Case{refusal = .Table_Full, capacity = 0}, Case{refusal = .Table_Full, capacity = max(i64)})
+	for problem in replacement_list.List_Problem {
+		if problem != .None {
+			append(&cases, Case{refusal = .List_Not_Valid, by = 3, entry_count = 12, problem = problem})
+		}
+	}
+	for refusal in Replace_Refusal {
+		append(&cases, Case{refusal = refusal, by = 3, entry_count = 12, problem = .Magic, capacity = 64})
+	}
+	for item in cases {
+		outcome, values := replace_refusal_record(item.refusal, item.by, item.entry_count, item.problem, item.capacity)
+		record := errors.completion_record(values)
+		testing.expect_value(t, outcome, REPLACE_REFUSAL_OUTCOMES[item.refusal])
+		testing.expectf(t, errors.Kind(record.kind) in call_outcome.KINDS_OF[outcome], "%v: the kind %v does not explain %v", item.refusal, record.kind, outcome)
+		read, problem, ok := replace_refusal_of_record(outcome, record)
+		testing.expectf(t, ok && read == item.refusal, "%v is read as %v (%v)", item.refusal, read, ok)
+		if item.refusal == .List_Not_Valid {
+			testing.expect_value(t, problem, item.problem)
+		}
+		if item.refusal == .Entry_Past_The_Image {
+			testing.expect_value(t, record.value, i64(min(item.by, 1 << 62)))
+			testing.expect_value(t, record.limit, i64(item.entry_count))
+		}
+		if item.refusal == .Table_Full {
+			testing.expect_value(t, record.limit, item.capacity)
+		}
 	}
 }

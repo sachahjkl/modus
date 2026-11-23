@@ -20,6 +20,7 @@ import "base:intrinsics"
 import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
+import "modus:contract/replacement_list"
 import "modus:contract/start_grant"
 
 // The ring to the root service. The name of the process is in values[0..4],
@@ -876,6 +877,108 @@ sender_refusal :: proc "contextless" (command: Root_Command) -> [7]u64 {
 		return errors.ring_fail(u32(command), .No_Grant, .Connection, 1)
 	}
 	return errors.ring_fail(u32(command), .No_Grant, .Root_Commands)
+}
+
+// Why the root service refused a Replace: the contract of its refusal
+// record. The root service writes it with replace_refusal_record
+// (internal:root/replacement_rules decides the reason), and a reader reads
+// it back with replace_refusal_of_record, never by the place of a field.
+Replace_Refusal :: enum u8 {
+	No_Grant             = 0, // The sender lacks the start grant Replace: the record of the sender.
+	Entry_Past_The_Image = 1, // by past the entries: Bad_Value of argument 2, value by (at most 2^62), limit the count of the entries, unit None.
+	Replaces_Itself      = 2, // The entry by is the module of the name: Bad_Value of argument 2, value by, unit Modules.
+	No_Module            = 3, // No module of the boot image has the name: Absent of argument 1, unit Modules.
+	No_Signed_Row        = 4, // No signed row names the pair, or the image has no list: Absent of argument 2, unit Records, value by.
+	Chain                = 5, // A record of the table would chain to this one: State of argument 2, unit Records, value by.
+	Row_Not_Authentic    = 6, // The row of the pair does not verify: Damaged of argument 2, unit Records, value by, found 0.
+	List_Not_Valid       = 7, // The list breaks its format: Damaged of argument 2, unit Records, value by, found the List_Problem (1 or more).
+	Table_Full           = 8, // The replacement table has no room: Full, unit Records, limit its capacity.
+}
+
+// The outcome of each refusal of a Replace.
+@(rodata)
+REPLACE_REFUSAL_OUTCOMES := [Replace_Refusal]call_outcome.Call_Outcome {
+	.No_Grant             = .Grant_Or_Right_Missing,
+	.Entry_Past_The_Image = .Argument_Refused,
+	.Replaces_Itself      = .Argument_Refused,
+	.No_Module            = .Nothing_Has_That_Name,
+	.No_Signed_Row        = .Nothing_Has_That_Name,
+	.Chain                = .Wrong_State,
+	.Row_Not_Authentic    = .Data_Damaged,
+	.List_Not_Valid       = .Data_Damaged,
+	.Table_Full           = .Budget_Or_Capacity_Exhausted,
+}
+
+// replace_refusal_record writes the outcome and the record of one refusal
+// of a Replace, with the fields that Replace_Refusal names. problem is read
+// for List_Not_Valid only, and capacity for Table_Full only.
+replace_refusal_record :: proc "contextless" (refusal: Replace_Refusal, by: u64, entry_count: u64, problem: replacement_list.List_Problem, capacity: i64) -> (outcome: call_outcome.Call_Outcome, values: [7]u64) {
+	kind := u32(Root_Command.Replace)
+	outcome = REPLACE_REFUSAL_OUTCOMES[refusal]
+	by_value := i64(min(by, 1 << 62))
+	switch refusal {
+	case .No_Grant:
+		values = sender_refusal(.Replace)
+	case .Entry_Past_The_Image:
+		values = errors.ring_fail(kind, .Bad_Value, .None, 2, by_value, i64(min(entry_count, 1 << 62)))
+	case .Replaces_Itself:
+		values = errors.ring_fail(kind, .Bad_Value, .Modules, 2, by_value)
+	case .No_Module:
+		values = errors.ring_fail(kind, .Absent, .Modules, 1)
+	case .No_Signed_Row:
+		values = errors.ring_fail(kind, .Absent, .Records, 2, by_value)
+	case .Chain:
+		values = errors.ring_fail(kind, .State, .Records, 2, by_value)
+	case .Row_Not_Authentic:
+		values = errors.ring_fail(kind, .Damaged, .Records, 2, by_value)
+	case .List_Not_Valid:
+		values = errors.ring_fail(kind, .Damaged, .Records, 2, by_value, 0, i64(problem))
+	case .Table_Full:
+		values = errors.ring_fail(kind, .Full, .Records, 0, 0, capacity)
+	}
+	return outcome, values
+}
+
+// replace_refusal_of_record reads the reason of a refused Replace from its
+// outcome and its record, by the fields that Replace_Refusal names, and the
+// problem of a list that breaks its format. A pair that no reason writes
+// gives ok false: the reader says the record as it is.
+replace_refusal_of_record :: proc "contextless" (outcome: call_outcome.Call_Outcome, record: errors.Error_Record) -> (refusal: Replace_Refusal, problem: replacement_list.List_Problem, ok: bool) {
+	if record.operation != i64(Root_Command.Replace) && outcome != .Grant_Or_Right_Missing {
+		return {}, {}, false
+	}
+	kind, kind_ok := errors.kind_of_word(record.kind)
+	unit, unit_ok := errors.unit_of_word(record.unit)
+	if !kind_ok || !unit_ok {
+		return {}, {}, false
+	}
+	switch {
+	case outcome == .Grant_Or_Right_Missing && kind == .No_Grant && unit == .Root_Commands:
+		refusal = .No_Grant
+	case outcome == .Argument_Refused && kind == .Bad_Value && unit == .None && record.argument == 2:
+		refusal = .Entry_Past_The_Image
+	case outcome == .Argument_Refused && kind == .Bad_Value && unit == .Modules && record.argument == 2:
+		refusal = .Replaces_Itself
+	case outcome == .Nothing_Has_That_Name && kind == .Absent && unit == .Modules:
+		refusal = .No_Module
+	case outcome == .Nothing_Has_That_Name && kind == .Absent && unit == .Records:
+		refusal = .No_Signed_Row
+	case outcome == .Wrong_State && kind == .State && unit == .Records:
+		refusal = .Chain
+	case outcome == .Data_Damaged && kind == .Damaged && unit == .Records && record.found == 0:
+		refusal = .Row_Not_Authentic
+	case outcome == .Data_Damaged && kind == .Damaged && unit == .Records:
+		read, read_ok := enum_word.member_of_word(replacement_list.List_Problem, u64(record.found))
+		if !read_ok || read == .None {
+			return {}, {}, false
+		}
+		refusal, problem = .List_Not_Valid, read
+	case outcome == .Budget_Or_Capacity_Exhausted && kind == .Full && unit == .Records:
+		refusal = .Table_Full
+	case:
+		return {}, {}, false
+	}
+	return refusal, problem, true
 }
 
 // member_of_word is the border of a word of a root command: the member, or
