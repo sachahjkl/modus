@@ -58,7 +58,7 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 	case .Untyped_Hash, .Nested_Input, .Not_A_Recipe, .Unsupported_Argument:
 		return errors.error_make(.Bad_Value, .None, argument, 0, 0, found)
 	case .Too_Many_Inputs:
-		return errors.error_make(.Over_Limit, .Records, argument, 0, pr.MAX_RECIPE_INPUTS, found)
+		return errors.error_make(.Too_Long, .Records, argument, 0, pr.MAX_RECIPE_INPUTS, found)
 	case .Arguments_Too_Large:
 		return errors.error_make(.Too_Long, .Bytes, argument, 0, pr.MAX_RECIPE_ARG_BYTES, found)
 	case .Cache_Miss, .Unknown_Recipe, .Builder_Absent, .Input_Absent:
@@ -69,10 +69,13 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 		return errors.error_make(.Refused, .None, argument, 0, builder.BUILD_TIME_BOUND_MILLISECONDS, found)
 	case .Input_Too_Large:
 		return errors.error_make(.Over_Limit, .Objects, argument, 0, builder.MAX_INPUT_OBJECTS, found)
-	case .Store_Full, .Recipe_Limit_Reached, .Buffer_Too_Small:
+	case .Store_Full, .Recipe_Limit_Reached:
 		return errors.error_make(.Full, .Objects, argument, 0, 0, found)
+	case .Buffer_Too_Small:
+		return errors.error_make(.Too_Small, .Objects, argument, 0, 0, found)
 	case .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement:
-		return errors.error_make(.Not_Authentic, .Objects, argument, 0, 0, found)
+		// The value found names which check of the realisation failed.
+		return errors.error_make(.Damaged, .Objects, argument, 0, 0, found)
 	case .Builder_Failed, .Sandbox_Violation:
 		return errors.error_make(.Refused, .None, argument, 0, 0, found)
 	case .Builder_Needs_Sandbox:
@@ -82,7 +85,8 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 	case .Store_Damaged:
 		return errors.error_make(.Damaged, .Store, argument, 0, 0, found)
 	case .Damaged_Recipe:
-		return errors.error_make(.Damaged, .None, argument, 0, 0, found)
+		// The caller gave the recipe: its bytes are an argument.
+		return errors.error_make(.Malformed, .None, argument, 0, 0, found)
 	}
 	return errors.error_make(.Refused, .None, argument, 0, 0, found)
 }
@@ -93,13 +97,15 @@ recipe_refusal_outcome :: proc "contextless" (refusal: pr.Recipe_Refusal) -> cal
 	switch refusal {
 	case .None, .Zero_Builder_Hash, .Bad_Output_Kind, .Bad_Build_Mode, .Invalid_Input_Name, .Zero_Input_Hash, .Duplicate_Input, .Bad_Input_Kind, .Nonzero_Padding, .Bad_Head_Value, .Untyped_Hash, .Nested_Input, .Not_A_Recipe, .Unsupported_Argument, .Too_Many_Inputs, .Arguments_Too_Large, .Buffer_Too_Small, .Damaged_Recipe:
 		return .Argument_Refused
-	case .Cache_Miss, .Unknown_Recipe:
+	case .Cache_Miss, .Unknown_Recipe, .Builder_Absent, .Input_Absent:
 		return .Nothing_Has_That_Name
-	case .Store_Full, .Recipe_Limit_Reached:
+	case .Store_Full, .Recipe_Limit_Reached, .Input_Too_Large:
 		return .Budget_Or_Capacity_Exhausted
 	case .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement, .Store_Damaged:
 		return .Data_Damaged
-	case .Builder_Failed, .Sandbox_Violation, .Store_Failed:
+	case .Builder_Failed, .Sandbox_Violation, .Store_Failed, .Builder_Timed_Out:
+		// The builder ran in a call host that ended with the build: no
+		// output is kept, so nothing is in doubt.
 		return .Callee_Unavailable
 	case .Builder_Needs_Sandbox:
 		return .Operation_Unsupported

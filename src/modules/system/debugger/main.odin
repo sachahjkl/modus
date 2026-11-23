@@ -233,9 +233,29 @@ text_copy :: proc "contextless" (buffer: []u8, text: ^string) -> (copied: string
 	return string(buffer[:count]), true
 }
 
-// refused gives the result of an export that the kernel refused.
+// refused gives the result of an export that the kernel refused for a
+// handle or a value that the caller gave.
 refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
 	return refuse(error, system.outcome_of_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+}
+
+// session_refused gives the result of an export whose kernel operation on
+// the debugged process refused. The caller gave no handle of that process,
+// so no change of its arguments makes the call run: the outcome is the one
+// of an operation on an own object, but a thread or a process in a state
+// where the operation does not apply is Wrong_State.
+session_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
+	outcome := status == .Bad_State ? call_outcome.Call_Outcome.Wrong_State : system.outcome_of_own_status(status)
+	return refuse(error, outcome, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+}
+
+// party_answer_refused gives the result of an export whose party, the root
+// service or the storage service, gave an answer that the service does not
+// take: a handle that is not a process with Debug, or no object. The
+// service undid its part, so nothing changed for the caller: the party
+// failed, and the caller is not blamed.
+party_answer_refused :: proc "contextless" (error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	return refuse(error, .Callee_Unavailable, .Refused)
 }
 
 // outcome_of_status_word gives the call outcome of a refusal of the root

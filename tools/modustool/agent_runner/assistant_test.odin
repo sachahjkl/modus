@@ -8,6 +8,7 @@ import "core:testing"
 import "core:time"
 import "modustool:agent_bridge"
 import assistant_contract "modus:contract/assistant"
+import "modus:contract/call_outcome"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
 
@@ -164,7 +165,7 @@ Counting_Transport :: struct {
 }
 
 @(private = "file")
-counting_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: agent_bridge.Lex_Eval_Result, err: string, ok: bool) {
+counting_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: agent_bridge.Lex_Eval_Result, outcome: call_outcome.Call_Outcome, err: string) {
 	transport := (^Counting_Transport)(user_data)
 	transport.lines += 1
 	columns := make([]string, 2, allocator)
@@ -173,7 +174,7 @@ counting_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Alloca
 	row[0], row[1] = "3", "console"
 	rows := make([][]string, 1, allocator)
 	rows[0] = row
-	return {value_kind = .Table, record_name = "Process", columns = columns, rows = rows, total_rows = 1}, "", true
+	return {value_kind = .Table, record_name = "Process", columns = columns, rows = rows, total_rows = 1}, .Succeeded, ""
 }
 
 // An act runs through the bridge as any agent: a line on the read-only
@@ -230,7 +231,7 @@ a_bridge_answer_that_is_not_whole_is_a_refusal :: proc(t: ^testing.T) {
 	for answer in ([]string{"", "not json", "[]", `{"jsonrpc":"2.0","id":1}`}) {
 		testing.expect_value(t, bridge_answer_read(answer).state, assistant_contract.Act_State.Refused)
 	}
-	report := bridge_answer_read(`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"Integer","value":12}}`)
+	report := bridge_answer_read(`{"jsonrpc":"2.0","id":1,"result":{"state":"Ended","outcome":"Succeeded","value_kind":"Integer","value":12}}`)
 	testing.expect(t, report.state == .Done && report.text == "12")
 }
 

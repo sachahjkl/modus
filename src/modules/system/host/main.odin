@@ -48,9 +48,10 @@ space: system.Module_Space // The module and its imports, in this process.
 //
 // **The load.** The loader checks the hash of each file, applies the
 // replacements, and maps the segments in this process. A failure writes
-// the [load error](term:load-error) in the call region, sends the
-// completion `Load_Failed`, and stops with `Failed`. A success sends the
-// completion `Ok`.
+// the [load error](term:load-error) in the call region, sends a completion
+// with the outcome `Nothing_Has_That_Name` (the load source has no file of
+// a hash that the load names) or `Argument_Refused` (another stage), and
+// stops with `Failed`. A success sends the completion `Succeeded`.
 //
 // **The loop.** It takes up to one ring of commands at a time; each one is
 // a call of an export with its argument records in the call region
@@ -104,7 +105,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	index, loaded := system.module_space_load(&space, file, error)
 	if !loaded {
 		load_failure_log(error)
-		system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Load_Failed)})
+		stage, _ := module.load_stage_of_word(error.stage)
+		system.send(&queue.completions, isolated.load_failed_record(stage))
 		system.stop(.Failed)
 	}
 	base := space.modules[index].base

@@ -100,7 +100,7 @@ call_host_ready_step_takes_a_late_load_failure :: proc(t: ^testing.T) {
 			return
 		}
 	}
-	testing.expect(t, ring.push(&made.root.completions, ring.Record{kind = u32(isolated.Status.Load_Failed), tag = isolated.READY_TAG}))
+	testing.expect(t, ring.push(&made.root.completions, isolated.load_failed_record(.Bind)))
 	reading, done := connection_ready_step(&made.caller, late, deadline, .Ready)
 	testing.expect(t, done)
 	testing.expect_value(t, reading, isolated.Ready_Reading.Load_Failed)

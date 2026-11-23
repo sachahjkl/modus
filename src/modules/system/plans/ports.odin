@@ -146,9 +146,9 @@ display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: strin
 	}
 	arguments := [3]isolated.Argument{{text = transmute([]u8)plan_name}, {text = transmute([]u8)added}, {text = transmute([]u8)removed}}
 	error: errors.Error_Record
-	result, status, _ := system.call_isolated(&display_connection.connection, display_connection.file, display_connection.ask_export, arguments[:], &error)
-	if status != .Ok || result <= 0 {
-		if status != .Ok && status != .Failed {
+	result, outcome := system.call_isolated(&display_connection.connection, display_connection.file, display_connection.ask_export, arguments[:], &error)
+	if outcome != .Succeeded || result <= 0 {
+		if system.connection_to_renew(outcome) {
 			display_disconnect()
 		}
 		return 0, false
@@ -164,9 +164,9 @@ display_poll :: proc "contextless" (user: rawptr, serial: u64) -> (decision: pr.
 	}
 	arguments := [1]isolated.Argument{{integer = serial}}
 	error: errors.Error_Record
-	result, status, _ := system.call_isolated(&display_connection.connection, display_connection.file, display_connection.poll_export, arguments[:], &error)
-	if status != .Ok {
-		if status != .Failed {
+	result, outcome := system.call_isolated(&display_connection.connection, display_connection.file, display_connection.poll_export, arguments[:], &error)
+	if outcome != .Succeeded {
+		if system.connection_to_renew(outcome) {
 			display_disconnect()
 		}
 		return .Unknown, false

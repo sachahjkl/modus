@@ -5,6 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "core:math/rand"
 import "core:testing"
+import "modus:contract/call_outcome"
 
 @(private = "file")
 request_make :: proc() -> (request: Request) {
@@ -16,7 +17,6 @@ request_make :: proc() -> (request: Request) {
 	request.result_start = 64
 	request.result_count = REGION_SIZE - 64
 	request.result_unit = 200
-	request.error_start = 8
 	return request
 }
 
@@ -65,8 +65,6 @@ request_refusals :: proc(t: ^testing.T) {
 		{proc(request: ^Request) {request.result_start = REGION_SIZE + 8; request.result_count = 0; request.result_unit = 0}, FIELD_RESULT_START, .Bad_Value},
 		{proc(request: ^Request) {request.result_count = REGION_SIZE}, FIELD_RESULT_COUNT, .Too_Long},
 		{proc(request: ^Request) {request.result_count = 100; request.result_unit = 101}, FIELD_RESULT_UNIT, .Too_Long},
-		{proc(request: ^Request) {request.error_start = 12}, FIELD_ERROR_START, .Bad_Value},
-		{proc(request: ^Request) {request.error_start = REGION_SIZE - 48}, FIELD_ERROR_START, .Bad_Value},
 		{proc(request: ^Request) {request.details_end = 20}, FIELD_DETAILS_END, .Bad_Value},
 		{proc(request: ^Request) {request.details_end = 16}, FIELD_DETAILS_END, .Bad_Value},
 		{proc(request: ^Request) {request.details_end = 32}, FIELD_DETAILS_END, .Bad_Value}, // Past the argument record of 24 bytes.
@@ -183,7 +181,7 @@ answer_round_trip :: proc(t: ^testing.T) {
 	}
 	out := make([]u8, ANSWER_LIMIT, context.temp_allocator)
 	for total in ([]int{0, 1, 1200, 5000, REGION_SIZE}) {
-		bytes, written := answer_write(out, {status = .Ok, value = i64(total)}, result[:total])
+		bytes, written := answer_write(out, {value = i64(total)}, result[:total])
 		testing.expect(t, written)
 		testing.expect_value(t, len(bytes), ANSWER_SIZE + total)
 		header, data, ok := answer_check(bytes)
@@ -219,20 +217,35 @@ answer_refusals :: proc(t: ^testing.T) {
 	header.total = REGION_SIZE + 1
 	_, _, ok = answer_check(bytes)
 	testing.expect(t, !ok, "a total larger than a call region")
-	// The status is a word of the remote service: one past the largest
-	// member, and the largest word, name no status. The bytes stay.
-	header.total = 3000
-	for word in ([]u32{u32(max(Status)) + 1, max(u32)}) {
-		(^u32)(&out[offset_of(Answer, status)])^ = word
-		before := out
-		checked, result, refused_ok := answer_check(bytes)
-		testing.expectf(t, !refused_ok, "the status %d names no status", word)
-		testing.expect(t, checked == (Answer{}) && result == nil, "a refused answer gives no header and no result")
-		testing.expect(t, before == out, "answer_check changes no byte")
+}
+
+// The two outcome words of an answer cross one border. A word that names no
+// outcome, in either place, is Answer_Unreadable with the record of the
+// word: one past the last member, and the largest word. A refused request
+// gives its relay outcome and its record, whatever the export word says. A
+// request that ran gives the outcome of the export. The success comes last.
+@(test)
+answer_outcome_reads_the_two_words :: proc(t: ^testing.T) {
+	for word in ([]u32{u32(max(call_outcome.Call_Outcome)) + 1, max(u32)}) {
+		outcome, record, refused := answer_outcome({relay_outcome = word})
+		testing.expectf(t, outcome == .Answer_Unreadable && record.kind == i64(errors.Kind.Bad_Value) && !refused, "the relay word %d gives %v", word, outcome)
+		outcome, record, refused = answer_outcome({outcome = word})
+		testing.expectf(t, outcome == .Answer_Unreadable && record.kind == i64(errors.Kind.Bad_Value) && !refused, "the export word %d gives %v", word, outcome)
 	}
-	(^u32)(&out[offset_of(Answer, status)])^ = u32(max(Status))
-	_, _, ok = answer_check(bytes)
-	testing.expect(t, ok, "the largest status is a status")
+	refusal := errors.error_make(.Bad_Value, .None, FIELD_HASH)
+	outcome, record, refused := answer_outcome({relay_outcome = u32(call_outcome.Call_Outcome.Argument_Refused), outcome = max(u32), error = refusal})
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect(t, refused)
+	testing.expect_value(t, record.argument, i64(FIELD_HASH))
+	failed := errors.error_make(.Absent, .None, 1)
+	outcome, record, refused = answer_outcome({outcome = u32(call_outcome.Call_Outcome.Nothing_Has_That_Name), error = failed})
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Nothing_Has_That_Name)
+	testing.expect(t, !refused)
+	testing.expect_value(t, record, failed)
+	outcome, record, refused = answer_outcome({value = 5})
+	testing.expect(t, !refused)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, record, errors.Error_Record{})
 }
 
 // The framing of a call on a stream: a request of REQUEST_LIMIT bytes is
@@ -314,7 +327,6 @@ request_random :: proc(t: ^testing.T) {
 			request.result_start = u32(rand.int_max(REGION_SIZE + 100))
 			request.result_count = u32(rand.int_max(REGION_SIZE + 100))
 			request.result_unit = u32(rand.int_max(300))
-			request.error_start = u32(rand.int_max(REGION_SIZE + 100))
 			request.record_size = u32(rand.int_max(count - REQUEST_SIZE + 10))
 			request.arguments = u32(count - REQUEST_SIZE)
 			(^Request)(&out[0])^ = request
@@ -326,7 +338,6 @@ request_random :: proc(t: ^testing.T) {
 		accepted += 1
 		testing.expect(t, len(arguments) == int(request.arguments) && REQUEST_SIZE + len(arguments) == count)
 		testing.expect(t, u64(request.result_start) + u64(request.result_count) <= REGION_SIZE)
-		testing.expect(t, request.error_start == 0 || (request.error_start % 8 == 0 && u64(request.error_start) + 56 <= REGION_SIZE))
 		testing.expect(t, result_bytes(request, i64(rand.uint64())) <= u64(request.result_count))
 	}
 	testing.expect(t, accepted > 1000, "the random requests reach the end of the checks")

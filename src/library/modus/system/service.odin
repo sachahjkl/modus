@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -272,9 +273,11 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 // and closes each one after it. The caller also revokes what it lent
 // (lend_end). An export never receives a handle that this process holds for
 // itself.
-// A refusal (Bad_Arguments, Bad_Handle) has an error record in the values
-// of the completion: the argument and why, so that the caller learns the
-// cause of each refusal.
+// A refusal has its outcome in the kind of the completion and its error
+// record in the values: Argument_Refused for a call record or a handle that
+// the receiver refuses, Grant_Or_Right_Missing for a handle without the
+// right of the description, Operation_Unsupported for an export that the
+// module does not have. The record says which argument and why.
 // memory_objects_allowed: a table in a lent memory object is taken. A call
 // host takes it; a service does not: the caller can revoke the
 // lent memory while the export runs, and the fault of the export would stop
@@ -285,18 +288,15 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	function, described := module.function(file, command.kind)
 	address, has_address := module.export_address(file, uintptr(base), command.kind)
 	if !described || !has_address || command.kind == head.entry_export {
-		completion.kind = u32(isolated.Status.Bad_Export)
-		return completion
+		return isolated.refusal_completion(command.tag, .Operation_Unsupported, errors.error_make(.Unsupported, .None, 0, i64(command.kind)))
 	}
 	prepared: isolated.Call
 	refusal: errors.Error_Record
-	refused :: proc "contextless" (completion: ^ring.Record, status: isolated.Status, refusal: errors.Error_Record) -> ring.Record {
-		completion.kind = u32(status)
-		completion.values = transmute([7]u64)refusal
-		return completion^
+	refused :: proc "contextless" (completion: ^ring.Record, outcome: call_outcome.Call_Outcome, refusal: errors.Error_Record) -> ring.Record {
+		return isolated.refusal_completion(completion.tag, outcome, refusal)
 	}
 	if !isolated.decode(file, function, command.values[0], command.values[1], region, &prepared, &refusal) {
-		return refused(&completion, .Bad_Arguments, refusal)
+		return refused(&completion, .Argument_Refused, refusal)
 	}
 	// The proof of each handle, and the deferred close of each one that came
 	// through the call ring, come first: each refusal after this point
@@ -321,22 +321,22 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	}
 	if !memory_objects_allowed && prepared.mapping_count > 0 {
 		item := prepared.mappings[0]
-		return refused(&completion, .Bad_Arguments, errors.error_make(.Bad_Value, .None, i64(item.parameter + 1), i64(item.handle), 0))
+		return refused(&completion, .Argument_Refused, errors.error_make(.Bad_Value, .None, i64(item.parameter + 1), i64(item.handle), 0))
 	}
 	// A handle that did not come through the call ring was not lent for
 	// this call; one that came lacks a right of the description (note 4).
 	if first_unproven >= 0 {
 		item := lent[first_unproven]
 		if !came[first_unproven] {
-			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, 0, i64(item.handle)))
+			return refused(&completion, .Argument_Refused, errors.error_make(.Handle_Absent, .Lent_Handles, 0, i64(item.handle)))
 		}
-		return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Rights, .None, 0, i64(item.handle), i64(item.rights), i64(transmute(u32)held_rights)))
+		return refused(&completion, .Grant_Or_Right_Missing, errors.error_make(.Handle_Rights, .None, 0, i64(item.handle), i64(item.rights), i64(transmute(u32)held_rights)))
 	}
 	// A table names a memory object, not another kind of object: a caller
 	// can lend a handle of any kind as the memory of a table.
 	for item in prepared.mappings[:prepared.mapping_count] {
 		if kind, _, _ := handle_state(Handle(item.handle)); kind != .Memory {
-			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Kind, .None, i64(item.parameter + 1), i64(item.handle), i64(op.Object_Kind.Memory), i64(kind)))
+			return refused(&completion, .Argument_Refused, errors.error_make(.Handle_Kind, .None, i64(item.parameter + 1), i64(item.handle), i64(op.Object_Kind.Memory), i64(kind)))
 		}
 	}
 	// A table in a memory object (form iii): map it for the time of the
@@ -354,11 +354,11 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		object_pages, object_status := memory_size(memory)
 		if object_status != .Ok {
 			// The kernel refused the handle: the record says which argument.
-			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Absent, .None, i64(item.parameter + 1), i64(item.handle)))
+			return refused(&completion, .Argument_Refused, errors.error_make(.Handle_Absent, .None, i64(item.parameter + 1), i64(item.handle)))
 		}
 		object_size := object_pages * PAGE_SIZE
 		if item.start > object_size || item.size > object_size - item.start {
-			return refused(&completion, .Bad_Arguments, errors.error_make(.Out_Of_Range, .Bytes, i64(item.parameter + 1), i64(min(item.start, 1 << 62) + min(item.size, 1 << 62)), i64(object_size)))
+			return refused(&completion, .Argument_Refused, errors.error_make(.Out_Of_Range, .Bytes, i64(item.parameter + 1), i64(min(item.start, 1 << 62) + min(item.size, 1 << 62)), i64(object_size)))
 		}
 		// A work-around of a fault of the kernel (a mapping with no chosen
 		// address never reuses its range of addresses): the same address at
@@ -372,7 +372,7 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		pages := (item.start + item.size + PAGE_SIZE - 1) / PAGE_SIZE - first
 		start, status := memory_map(memory, item.writable ? {.Write} : {}, 0, mapping_address, first, pages)
 		if status != .Ok {
-			return refused(&completion, .Bad_Arguments, errors.error_make(.Refused, .None, i64(item.parameter + 1), 0, 0, i64(status)))
+			return refused(&completion, .Argument_Refused, errors.error_make(.Refused, .Kernel_Status, i64(item.parameter + 1), 0, 0, i64(status)))
 		}
 		mapped[index] = start
 		prepared.places[item.parameter].address = u64(uintptr(start)) + item.start % PAGE_SIZE
@@ -385,15 +385,9 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		isolated.result_store(function, &prepared, region)
 	}
 	isolated.counts_store(function, &prepared, region)
-	// A failure: the error record names the export. The export does not
-	// know its own number.
-	if prepared.error.count != 0 && outcome_word != 0 {
-		error := (^errors.Error_Record)(raw_data(region[prepared.error.start:]))
-		error.operation = i64(command.kind)
-	}
-	completion.values[0] = value
-	completion.values[isolated.COMPLETION_OUTCOME_VALUE] = outcome_word
-	return completion
+	// A failure: the record of the export goes in the completion, and names
+	// the export, which does not know its own number.
+	return isolated.answer_completion(command.tag, command.kind, value, outcome_word, prepared.error_record)
 }
 
 // The copies that a caller made for one isolated call: see lend.

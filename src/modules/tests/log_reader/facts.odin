@@ -1,6 +1,6 @@
 package log_reader
 
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -21,11 +21,9 @@ import "modus:contract/value_kinds"
 // - the line of a bad block and the line of a connection of the measures:
 //   the measure compares their write as text with their write as a fact.
 //
-// A status of a call, the kind of an object and the form of a record are
+// An outcome of a call, the kind of an object and the form of a record are
 // the words of their contract enums, written by the names of their
-// members. A field of a status of a call is named `status`, not after the
-// package call_status, so that a field and a local of that name never
-// hide the package; main.odin converts with call_status_word.
+// members. main.odin converts an outcome with call_outcome_word.
 //
 // A field of the name of a process holds the name and a zero byte; the
 // name of a refused call or of an edge is a Text field of its own size.
@@ -348,9 +346,9 @@ Refused_Calls_Checked :: struct {
 }
 
 // The call with the process handle of the log service was not refused.
-@(log_fact = "log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status {status}")
+@(log_fact = "log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the outcome {outcome}")
 Wrong_Service_Handle_Call :: struct {
-	status:      call_status.Call_Status_Word,
+	outcome:     call_outcome.Call_Outcome_Word,
 }
 
 // The process handle of the log service, which has no Give, is not lent.
@@ -358,24 +356,24 @@ Wrong_Service_Handle_Call :: struct {
 Service_Handle_Not_Lent :: struct {}
 
 // The call of log.process_records for a child did not come back.
-@(log_fact = "log_reader: WRONG: the call of log.process_records for {child} gave the status {status}")
+@(log_fact = "log_reader: WRONG: the call of log.process_records for {child} gave the outcome {outcome}")
 Wrong_Child_Records_Call :: struct {
-	status:      call_status.Call_Status_Word,
+	outcome:     call_outcome.Call_Outcome_Word,
 	child:       value_kinds.Module_Name_Field,
 }
 
 // The call of log.process_value_runs for a child did not come back.
-@(log_fact = "log_reader: WRONG: the call of log.process_value_runs for {child} gave the status {status}")
+@(log_fact = "log_reader: WRONG: the call of log.process_value_runs for {child} gave the outcome {outcome}")
 Wrong_Child_Runs_Call :: struct {
-	status:      call_status.Call_Status_Word,
+	outcome:     call_outcome.Call_Outcome_Word,
 	child:       value_kinds.Module_Name_Field,
 }
 
 // The log service did not refuse a memory object in place of a process
 // handle with the kind Handle_Kind.
-@(log_fact = "log_reader: WRONG: a memory object in place of a process handle gave the status {status}, the kind {kind}, the argument {argument} and the found kind {found_kind}")
+@(log_fact = "log_reader: WRONG: a memory object in place of a process handle gave the outcome {outcome}, the kind {kind}, the argument {argument} and the found kind {found_kind}")
 Wrong_Memory_Lent :: struct {
-	status:      call_status.Call_Status_Word,
+	outcome:     call_outcome.Call_Outcome_Word,
 	kind:        errors.Kind_Word,
 	argument:    i64,
 	found_kind:  op.Object_Kind_Word,
@@ -423,10 +421,10 @@ refusal_name_field :: proc "contextless" (name: string) -> [REFUSAL_NAME_FIELD_B
 	return value_kinds.text_field(name, REFUSAL_NAME_FIELD_BYTES)
 }
 
-// call_status_word gives the word of the status of a call, for a field
+// call_outcome_word gives the word of the outcome of a call, for a field
 // of a fact.
-call_status_word :: proc "contextless" (status: call_status.Call_Status) -> call_status.Call_Status_Word {
-	return call_status.Call_Status_Word(status)
+call_outcome_word :: proc "contextless" (outcome: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome_Word {
+	return call_outcome.Call_Outcome_Word(outcome)
 }
 
 // problem_field gives the Text field of the reason of a failure.

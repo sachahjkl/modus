@@ -31,7 +31,7 @@
 package audit_asker
 
 import "modus:contract/blake3"
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -260,9 +260,9 @@ display_refusal_case :: proc "contextless" (ctx: ^system.Context) {
 	removed := ""
 	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {text = transmute([]u8)added}, {text = transmute([]u8)removed}}
 	error: errors.Error_Record
-	result, status, outcome := system.call_isolated(&connection, file, ask, arguments[:], &error)
-	if status != call_status.Call_Status.Failed || outcome != .Grant_Or_Right_Missing || result != 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {
-		system.log_fact(.Error, Wrong_Display_Answer{status = u64(status), result = result, error_kind = error.kind, error_unit = error.unit})
+	result, outcome := system.call_isolated(&connection, file, ask, arguments[:], &error)
+	if outcome != .Grant_Or_Right_Missing || result != 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {
+		system.log_fact(.Error, Wrong_Display_Answer{outcome = call_outcome.Call_Outcome_Word(outcome), result = result, error_kind = error.kind, error_unit = error.unit})
 		system.stop(.Failed)
 	}
 	system.call_connection_end(&connection)

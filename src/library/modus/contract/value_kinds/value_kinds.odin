@@ -496,7 +496,7 @@ Contract_Enum :: enum u8 {
 	Load_Difference = 11, // module.Difference: what differs between an export and its replacement.
 	Block_Status    = 12, // block.Status: the answer of the block service to a request.
 	Storage_Status  = 13, // storage_status.Status: the result of a call of a client of the storage service.
-	Call_Status     = 14, // call_status.Call_Status: what an isolated call gives besides its integer result.
+	Call_Outcome    = 14, // call_outcome.Call_Outcome: how a call ended (src/md/api/call_outcome.md).
 	Pointer_Part    = 15, // pointer_pictures.Part: the part of a pointer theme file where a check found a problem.
 	Pointer_Field   = 16, // pointer_pictures.Field: the field of a pointer theme file that holds the bad value.
 	Pointer_Problem = 17, // pointer_pictures.Problem_Kind: the rule that a pointer theme file breaks.
@@ -541,7 +541,7 @@ CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
 	.Load_Difference = {package_name = "module", name = "Difference", word_name = "Difference_Word"},
 	.Block_Status    = {package_name = "block", name = "Status", word_name = "Status_Word"},
 	.Storage_Status  = {package_name = "storage_status", name = "Status", word_name = "Status_Word"},
-	.Call_Status     = {package_name = "call_status", name = "Call_Status", word_name = "Call_Status_Word"},
+	.Call_Outcome    = {package_name = "call_outcome", name = "Call_Outcome", word_name = "Call_Outcome_Word"},
 	.Pointer_Part    = {package_name = "pointer_pictures", name = "Part", word_name = "Part_Word"},
 	.Pointer_Field   = {package_name = "pointer_pictures", name = "Field", word_name = "Field_Word"},
 	.Pointer_Problem = {package_name = "pointer_pictures", name = "Problem_Kind", word_name = "Problem_Kind_Word"},

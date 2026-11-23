@@ -411,6 +411,9 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "root: started remote", any_order = true},
 	{kind = .Remote_Key, text = "remote: the public key of this service: "},
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
+	// No session of this caller yet: the service names nothing, and the
+	// outcome says so.
+	{kind = .Call, text = "debugger.detach()", outcome = .Failed, expected = "error: debugger.detach: the call names none of the processes that the debugger service debugs for this caller\n  outcome    Nothing_Has_That_Name"},
 	{kind = .Call, text = "debugger.attach(\"debug_target\")", expected = "1 rows of Attached"},
 	// The debug access is for the principal of the row of the key of the
 	// client, which allowed it.

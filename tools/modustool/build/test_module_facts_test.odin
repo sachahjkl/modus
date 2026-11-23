@@ -1,7 +1,7 @@
 package build
 
 import "modus:contract/block"
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -589,12 +589,12 @@ the_facts_of_log_reader_of_its_checks_and_measures_write_their_sentences :: proc
 		past_form := u64(max(op.Log_Record_Form)) + 1
 		facts_expect_line(t, render(t, file, "Wrong_Fact_Row", {{"index", c}, {"form", past_form}, {"continues", b}, {"part", c}, {"part_count", o}, {"key", o}, {"value_count", b}, {"first_values", c}, {"last_value", o}}), line_of_before("log_reader: WRONG: the fact ", c, " has the form ", past_form, ", more ", s, ", the part ", c, " of ", o, ", the key ", sentence.Hex(o), ", ", s, " value bytes, the first ", sentence.Hex(c), " and the last ", o))
 		// A kind word of -1, as a record of another party can hold, and an
-		// object kind and a status of a call that name no member: their
+		// object kind and an outcome of a call that name no member: their
 		// numbers.
-		past_call := u64(max(call_status.Call_Status)) + 1
+		past_call := u64(max(call_outcome.Call_Outcome)) + 1
 		past_object := u64(max(op.Object_Kind)) + 1
-		facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"status", past_call}, {"kind", max(u64)}, {"argument", b}, {"found_kind", past_object}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", past_call, ", the kind ", max(u64), ", the argument ", s, " and the found kind ", past_object))
-		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"status", past_call}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", past_call))
+		facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"outcome", past_call}, {"kind", max(u64)}, {"argument", b}, {"found_kind", past_object}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the outcome ", past_call, ", the kind ", max(u64), ", the argument ", s, " and the found kind ", past_object))
+		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"outcome", past_call}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the outcome ", past_call))
 		facts_expect_line(t, render(t, file, "Write_Measured", {{"calls", c}, {"bad_block_text_least", o}, {"bad_block_text_median", c}, {"bad_block_fact_least", o}, {"bad_block_fact_median", c}, {"connected_text_least", o}, {"connected_text_median", c}, {"connected_fact_least", o}, {"connected_fact_median", c}}), line_of_before("log_reader: measure: the write of one line, in ns, the least and the median of ", c, " calls: a bad block as text ", o, " and ", c, ", as a fact ", o, " and ", c, "; a connection as text ", o, " and ", c, ", as a fact ", o, " and ", c))
 		facts_expect_line(t, render(t, file, "Log_Operation_Measured", {{"calls", c}, {"text_least", o}, {"text_median", c}, {"fact_least", o}, {"fact_median", c}, {"refused_least", o}, {"refused_median", c}}), line_of_before("log_reader: measure: the operation Log, in ns from the call to the return, the least and the median of ", c, " calls: the text of a bad block ", o, " and ", c, ", its fact ", o, " and ", c, ", a call that the kernel refuses at the border of the form ", o, " and ", c))
 		facts_expect_line(t, render(t, file, "Render_Measured", {{"renders", c}, {"render_least", o}, {"render_median", c}, {"window_rows", o}, {"window_rows_time", c}}), line_of_before("log_reader: measure: the render of a log fact by module.fact_sentence_write, in ns, the least and the median of ", c, " renders of two fact types of this module: ", o, " and ", c, "; ", o, " rows of the window of the log at the median: ", c, " ns"))
@@ -602,20 +602,20 @@ the_facts_of_log_reader_of_its_checks_and_measures_write_their_sentences :: proc
 	for problem in problems {
 		facts_expect_line(t, render(t, file, "Wrong_Check", {{"problem", problem}}), line_of_before("log_reader: WRONG: ", problem))
 	}
-	// A status of a call by the name of its member, and each object kind
+	// An outcome of a call by the name of its member, and each object kind
 	// and each error kind by theirs.
-	for status in call_status.Call_Status {
-		name := call_status.CALL_STATUS_NAMES[status]
-		word := u64(status)
-		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"status", word}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the status ", name))
+	for outcome in call_outcome.Call_Outcome {
+		name := call_outcome.CALL_OUTCOME_NAMES[outcome]
+		word := u64(outcome)
+		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Call", {{"outcome", word}}), line_of_before("log_reader: WRONG: the call of log.process_records with the process handle of the log service gave the outcome ", name))
 		for child in children {
-			facts_expect_line(t, render(t, file, "Wrong_Child_Records_Call", {{"status", word}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_records for ", child, " gave the status ", name))
-			facts_expect_line(t, render(t, file, "Wrong_Child_Runs_Call", {{"status", word}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_value_runs for ", child, " gave the status ", name))
+			facts_expect_line(t, render(t, file, "Wrong_Child_Records_Call", {{"outcome", word}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_records for ", child, " gave the outcome ", name))
+			facts_expect_line(t, render(t, file, "Wrong_Child_Runs_Call", {{"outcome", word}, {"child", child}}), line_of_before("log_reader: WRONG: the call of log.process_value_runs for ", child, " gave the outcome ", name))
 		}
 		for object in op.Object_Kind {
 			for kind in errors.Kind {
 				for signed in TEST_FACT_SIGNED {
-					facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"status", word}, {"kind", u64(kind)}, {"argument", signed_bits(signed)}, {"found_kind", u64(object)}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the status ", name, ", the kind ", errors.KIND_NAMES[kind], ", the argument ", signed, " and the found kind ", op.OBJECT_KIND_MEMBER_NAMES[object]))
+					facts_expect_line(t, render(t, file, "Wrong_Memory_Lent", {{"outcome", word}, {"kind", u64(kind)}, {"argument", signed_bits(signed)}, {"found_kind", u64(object)}}), line_of_before("log_reader: WRONG: a memory object in place of a process handle gave the outcome ", name, ", the kind ", errors.KIND_NAMES[kind], ", the argument ", signed, " and the found kind ", op.OBJECT_KIND_MEMBER_NAMES[object]))
 				}
 			}
 		}

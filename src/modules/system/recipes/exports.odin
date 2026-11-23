@@ -272,38 +272,42 @@ copied_source_name: [pr.MAX_ENTRY_NAME_BYTES]u8
 //
 // The log says whether the module was built or substituted, with the recipe hash and the hash of the module.
 //
-// The caller must act for its principal (**Acts_For_Principal**). The result is the bytes of the module, or a negative
-// number with an error record:
+// The caller must act for its principal (**Acts_For_Principal**). The result is the bytes of the module, or a failure
+// with its call outcome and an error record:
 //
-// - ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL or ERROR_NOT_READY.
-// - `Unsupported` (-5): the service has no boot image, or the image has no module c_compiler or assemble.
-// - `Empty` or `Too_Long` (-4, argument 1): the name; `Bad_Value` (-4): a name that no tree takes.
-// - `Out_Of_Range` (-4, argument 3): a size of 0, past 256 KiB or past the memory object.
-// - The error record of the step that failed (-5): the record of compile, whose value is the byte of the source that
-//   the diagnostic names (argument 2); of assemble; `No_Answer` when the compiler or the assembler gives no answer
-//   before the hang bound, which ends its call host; `Empty` or `Out_Of_Range` for a count of bytes that the call
-//   host gave and its memory object cannot hold; or `Malformed` for a module that module.validate refuses. Nothing is
-//   kept.
-// - `Too_Small` (-5, argument 4): the memory object of the module holds fewer bytes than the module.
-// - The refusal of the recipe (-5), as for build: `Store_Failed` when the private store refused the realisation.
-// - `Damaged` (-5): the module of a realisation has bytes whose hash is not its output hash. Nothing is given.
+// - The refusals of the caller, as for build.
+// - `Unsupported` (Operation_Unsupported): the service has no boot image, or the image has no module c_compiler or
+//   assemble, or the module has no export compile or assemble.
+// - `Empty` or `Too_Long` (Argument_Refused, argument 1): the name; `Bad_Value` (Argument_Refused): a name that no
+//   tree takes.
+// - `Out_Of_Range` (Argument_Refused, argument 3): a size of 0, past 256 KiB or past the memory object.
+// - The outcome and the record of the step that refused its input: the record of compile, whose value is the byte of
+//   the source that the diagnostic names (argument 2), or of assemble (argument 0). Nothing is kept.
+// - Callee_Unavailable when the compiler or the assembler fails: `No_Answer` when it gives no answer before the hang
+//   bound, which ends its call host; `Refused` for a call host that does not start, a count of bytes that the call
+//   host gave and its memory object cannot hold, or a module that module.validate refuses. The log names the kind.
+//   Nothing is kept.
+// - `Too_Small` (Argument_Refused, argument 4): the memory object of the module holds fewer bytes than the module.
+// - The refusal of the recipe, as for build: `Store_Failed` when the private store refused the realisation.
+// - `Damaged` (Data_Damaged): the module of a realisation has bytes whose hash is not its output hash. Nothing is
+//   given.
 //
 // Example: `recipes.build_c("hello.c", source, 120, module)`.
 @(export, link_name = "build_c")
-build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_size: i64, module: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> i64 {
+build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_size: i64, module: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := caller_check(true, error); !ok {
-		return failure
+		return failure, 0
 	}
 	if !c_builder.ready {
-		return errors.fail(error, ERROR_BUILD, .Unsupported, .Modules)
+		return call_outcome.fail(error, .Operation_Unsupported, .Unsupported, .Modules)
 	}
 	if source_name == nil {
-		return errors.fail(error, ERROR_RECIPE, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	name_view := intrinsics.volatile_load(source_name)
 	if refusal := pr.c_build_name_refusal(len(name_view)); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_RECIPE
+		return .Argument_Refused, 0
 	}
 	intrinsics.mem_copy_non_overlapping(&copied_source_name[0], raw_data(name_view), len(name_view))
 	name := string(copied_source_name[:len(name_view)])
@@ -313,7 +317,7 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	}
 	if refusal := pr.c_build_source_refusal(source_size, pages * system.PAGE_SIZE); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_RECIPE
+		return .Argument_Refused, 0
 	}
 	// One copy into a new memory object of this build: the caller can
 	// change its memory object during the call, the recipe names the bytes
@@ -322,24 +326,24 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	work := C_Build_Work{}
 	source_memory, source_status := system.memory_create((u64(source_size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 	if source_status != .Ok {
-		return errors.fail(error, ERROR_BUILD, .Refused, .None, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(source_status))
+		return call_outcome.fail(error, system.outcome_of_own_status(source_status), .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(source_status))
 	}
 	defer system.close(source_memory)
 	copy_address, copy_status := system.memory_map(source_memory, {.Write})
 	if copy_status != .Ok {
-		return errors.fail(error, ERROR_BUILD, .Refused, .None, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(copy_status))
+		return call_outcome.fail(error, system.outcome_of_own_status(copy_status), .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(copy_status))
 	}
 	defer system.memory_unmap(copy_address)
 	caller_address, caller_status := system.memory_map(source.handle, {})
 	if caller_status != .Ok {
-		return errors.fail(error, ERROR_RECIPE, .Refused, .None, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(caller_status))
+		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(caller_status))
 	}
 	intrinsics.mem_copy_non_overlapping(copy_address, caller_address, int(source_size))
 	system.memory_unmap(caller_address)
 	work.source_memory = source_memory
 	work.source = ([^]u8)(copy_address)[:source_size]
 	if refusal := pr.c_build_recipe(c_builder.compiler_hash, c_builder.assembler_hash, name, blake3.hash(work.source), &export_spec); refusal != .None {
-		return recipe_refusal_fail(error, ERROR_RECIPE, refusal, 1)
+		return recipe_refusal_fail(error, refusal, 1)
 	}
 	export_result = recipes_core.build_recipe(&service_state, &export_spec, .Cache_First, {}, nil, c_builder_invoke, nil, nil, &work)
 	if export_result.refusal != .None {
@@ -354,21 +358,26 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 			case .None, .Compiler_Start, .Assembler_Start, .Assemble, .Module_Refused:
 				error.argument = 0
 			}
+			// A kind that the outcome does not explain goes out as Refused;
+			// the fact keeps the kind that the step gave.
+			if kind, known := errors.kind_of_word(work.error.kind); !known || kind not_in call_outcome.KINDS_OF[work.outcome] {
+				error.kind = i64(errors.Kind.Refused)
+			}
 			system.log_fact(.Warning, C_Build_Failed{step_code = u64(work.step), error_kind = u64(work.error.kind), error_value = work.error.value})
-			return ERROR_BUILD
+			return work.outcome, 0
 		}
-		return recipe_refusal_fail(error, ERROR_BUILD, export_result.refusal, 1)
+		return recipe_refusal_fail(error, export_result.refusal, 1)
 	}
 	bytes, found := recipes_core.output_bytes(&service_state, export_result.output_hash)
 	if !found {
-		return recipe_refusal_fail(error, ERROR_BUILD, .Cache_Miss, 1)
+		return recipe_refusal_fail(error, .Cache_Miss, 1)
 	}
 	// A realisation read back from the private store keeps its object under
 	// the output hash of its record, with no new hash of the bytes: the
 	// module goes out only with the bytes that the hash names.
 	if refusal := pr.c_build_substitute_refusal(bytes, export_result.output_hash); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_BUILD
+		return .Data_Damaged, 0
 	}
 	module_pages, module_size_status := system.memory_size(module.handle)
 	if module_size_status != .Ok {
@@ -376,11 +385,11 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	}
 	if refusal := pr.c_build_module_room_refusal(len(bytes), module_pages * system.PAGE_SIZE); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_BUILD
+		return .Argument_Refused, 0
 	}
 	module_address, module_status := system.memory_map(module.handle, {.Write})
 	if module_status != .Ok {
-		return errors.fail(error, ERROR_BUILD, .Refused, .None, pr.C_BUILD_ARGUMENT_MODULE, 0, 0, i64(module_status))
+		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_MODULE, 0, 0, i64(module_status))
 	}
 	intrinsics.mem_copy_non_overlapping(module_address, raw_data(bytes), len(bytes))
 	system.memory_unmap(module_address)
@@ -390,5 +399,5 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	case .Built_Locally, .None, .Refused:
 		system.log_fact(.Info, C_Built{size = value_kinds.Size_In_Bytes(len(bytes)), recipe_hash = value_kinds.Hash_Field(export_result.recipe_hash), output_hash = value_kinds.Hash_Field(export_result.output_hash)}, name)
 	}
-	return i64(len(bytes))
+	return .Succeeded, i64(len(bytes))
 }

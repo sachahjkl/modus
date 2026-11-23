@@ -66,20 +66,6 @@ Place :: distinct i64
 ROOT :: Place(0) // The root of the connection: the tree of the store, or the tree of a share.
 FILE_ADDRESS :: fixed_addresses.STORAGE_FILE_ADDRESS // Where the root service maps that file.
 
-// answer_of_completion reads the completion of a call that the storage
-// service answered with the status Ok: the value, and the call outcome
-// that the service wrote, through its border
-// (call_outcome.outcome_of_word). A word that names no outcome gives
-// Answer_Unreadable and its record in unreadable. The value of an outcome
-// that is not Succeeded is 0.
-answer_of_completion :: proc "contextless" (values: [7]u64) -> (value: i64, outcome: call_outcome.Call_Outcome, unreadable: errors.Error_Record) {
-	outcome, unreadable = call_outcome.outcome_of_word(values[isolated.COMPLETION_OUTCOME_VALUE])
-	if outcome != .Succeeded {
-		return 0, outcome, unreadable
-	}
-	return i64(values[0]), .Succeeded, {}
-}
-
 // One connection to the storage service, in the memory of the process. One
 // thread uses it at a time: a call uses the call region whole.
 Client :: struct {
@@ -182,7 +168,6 @@ Sent_Call :: struct {
 	function:    module.Function, // The description of the export.
 	offset:      u64, // The argument record in the call region.
 	buffer:      isolated.Slice, // Where the export writes a Text or a Table result.
-	error_place: isolated.Slice, // Where the export writes its error record.
 	tag:         u32, // The tag of the command: its completion has it.
 }
 
@@ -206,7 +191,7 @@ call_send :: proc "contextless" (client: ^Client, name: string, arguments: []iso
 	if export == 0 {
 		return {}, .Refused
 	}
-	offset, size, buffer, error_place, ok := isolated.encode(client.file, function, arguments, client.region)
+	offset, size, buffer, ok := isolated.encode(client.file, function, arguments, client.region)
 	if !ok {
 		return {}, .Refused
 	}
@@ -214,7 +199,7 @@ call_send :: proc "contextless" (client: ^Client, name: string, arguments: []iso
 	if !system.send(&client.calls.commands, ring.Record{kind = export, tag = client.tag, values = {0 = offset, 1 = size}}) {
 		return {}, .Refused
 	}
-	return {function = function, offset = offset, buffer = buffer, error_place = error_place, tag = client.tag}, .Ok
+	return {function = function, offset = offset, buffer = buffer, tag = client.tag}, .Ok
 }
 
 // call_answer reads the answer of a call that call_send sent, if it came:
@@ -230,24 +215,17 @@ call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments:
 		if completion.tag != sent.tag {
 			continue
 		}
-		if completion.kind != u32(isolated.Status.Ok) {
-			return 0, nil, .Refused, .Succeeded, true
-		}
-		answer, ended, unreadable := answer_of_completion(completion.values)
+		// The completion crosses its one border: the outcome and the record
+		// of the service, or Answer_Unreadable for a word that names none.
+		answer, ended, record := isolated.answer_of_completion(completion)
 		if ended != .Succeeded {
-			// The service wrote it: values only, read as values.
 			if error != nil {
-				switch {
-				case unreadable.kind != 0:
-					error^ = unreadable
-				case sent.error_place.count != 0:
-					error^ = (^errors.Error_Record)(raw_data(client.region[sent.error_place.start:]))^
-				}
+				error^ = record
 			}
 			return 0, nil, .Failed, ended, true
 		}
 		if sent.function.result == u8(module.Type.Text) {
-			result, complete := isolated.result_text(client.region, sent.buffer, completion.values[0])
+			result, complete := isolated.result_text(client.region, sent.buffer, u64(answer))
 			if !complete {
 				return answer, nil, .Refused, .Succeeded, true
 			}
@@ -260,7 +238,7 @@ call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments:
 			if !described_ok {
 				return 0, nil, .Refused, .Succeeded, true
 			}
-			records, _ := isolated.result_table(client.region, sent.buffer, completion.values[0], u64(described.size))
+			records, _ := isolated.result_table(client.region, sent.buffer, u64(answer), u64(described.size))
 			return answer, records, .Ok, .Succeeded, true
 		}
 		if problem, _ := isolated.tables_return(client.file, sent.function, arguments, client.region, sent.offset); problem != .None {

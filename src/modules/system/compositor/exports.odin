@@ -169,7 +169,7 @@ plan_display_caller :: proc "contextless" () -> bool {
 //   the appearance in force.
 //
 // **Grant**: the caller must **act for the principal**. A caller without
-// it gets the error kind `No_Grant`, with the result -1: the place of the
+// it gets the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing: the place of the
 // pointer tells where the input goes.
 //
 // ```
@@ -244,7 +244,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> (outcom
 // back are missing, and the result still gives the count of all windows.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -319,7 +319,7 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> (outcome
 // (`monitor.processes()`).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -559,7 +559,7 @@ bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> 
 // `notifications` or `calendar` (src/md/features/tray_widgets.md).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -579,8 +579,8 @@ tray_widget_open_export :: proc "c" (widget_word: i64, error: ^errors.Error_Reco
 }
 
 // gpu_info returns one row describing the VirtIO-GPU 1.2 scanout and Venus
-// capability state discovered by the compositor, or a negative number with an
-// error record. With the scanout, `presents` counts the frames that the
+// capability state discovered by the compositor, or a failure with its call outcome
+// and an error record. With the scanout, `presents` counts the frames that the
 // scanout showed, and `frames_merged` the frames whose damage waited for
 // the answer of a present and went with the next one: a host that is slow
 // to answer merges frames, and never holds the compositor
@@ -625,7 +625,7 @@ gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -
 // grants are missing, and the result still gives the count of all.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -648,7 +648,7 @@ window_grants_export :: proc "c" (result: ^[]Window_Grant_Row, error: ^errors.Er
 // revoke_grant ends a requested grant by its number, as its button in the menu of the windows does. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Bad_Value (a number under 1); Absent (no grant of that number holds).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -677,7 +677,7 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 //
 // **Grant**: the caller must be the holder of the role Plans, which the
 // root service names in the amount of its grant, or **act for the
-// principal**; else the error kind `No_Grant`, with the result -1.
+// principal**; else the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -705,7 +705,7 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 	case .Item_Too_Long:
 		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Too_Many_Items:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
 	case .Not_A_Name, .Not_An_Act, .No_Grant, .Bad_Serial:
 		// The plan face checks no identifier, and its caller is checked
 		// above: only the act face and a poll give these.
@@ -728,14 +728,14 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 //
 // **Grant**: the caller must be the holder of the role Plans, which the
 // root service names in the amount of its grant, or **act for the
-// principal**; else the error kind `No_Grant`, with the result -1.
+// principal**; else the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.plan_diff_poll(1)
 // ```
 @(export, link_name = "plan_diff_poll")
-plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The decision on an act is no decision on a plan.
 	caller := bar.Plan_Difference_Caller{allowed = plan_display_caller(), is_asker = true}
 	decision, known, refusal := bar.plan_difference_poll(&plan_difference_dialog, .Plan, caller, serial)
@@ -745,16 +745,16 @@ plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> 
 // dialog_poll_result gives the result of plan_diff_poll and act_poll: the
 // word of the decision, or the record of a refusal.
 @(private = "file")
-dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision, known: bool, refusal: bar.Plan_Difference_Refusal, serial: i64, error: ^errors.Error_Record) -> i64 {
+dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision, known: bool, refusal: bar.Plan_Difference_Refusal, serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch refusal {
 	case .None:
 	case .No_Grant:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
 	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
 		// A poll shows nothing: it gives none of the refusals of a show.
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
 	if !known {
 		return .Succeeded, i64(pr.Plan_Display_Decision.Unknown)
@@ -783,7 +783,7 @@ act_display_caller :: proc "contextless" () -> bar.Plan_Difference_Caller {
 	return {allowed = pr.act_display_caller_allowed(caller.grant), is_asker = dialog_asker_is(caller)}
 }
 
-// act_ask shows one act of an agent on the trusted display, for the principal to allow once or refuse: the asker, which is the name of the calling process, and the act, `service.export`. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller may not ask an act, or the call comes from no connection); Busy (-1, a dialog of the trusted display shows); Bad_Value (-1, the act is not two identifiers with a period between them, or the name of the caller is no identifier).
+// act_ask shows one act of an agent on the trusted display, for the principal to allow once or refuse: the asker, which is the name of the calling process, and the act, `service.export`. The result is the serial of the dialog, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller may not ask an act, or the call comes from no connection); Busy (Callee_Busy: a dialog of the trusted display shows); Bad_Value (Argument_Refused: the act is not two identifiers with a period between them, or, with the argument 0, the name of the caller is no identifier).
 //
 // **What it is for.** An agent proposes acts to the principal through a
 // window such as the assistant (src/md/features/assistant.md, "The act
@@ -800,46 +800,46 @@ act_display_caller :: proc "contextless" () -> bar.Plan_Difference_Caller {
 //
 // **Grant**: the caller must have the right to **ask an act**, which the
 // root service names in the amount of its grant, or **act for the
-// principal**; else the error kind `No_Grant`, with the result -1.
+// principal**; else the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // compositor.act_ask("plans.apply")
 // ```
 @(export, link_name = "act_ask")
-act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> i64 {
+act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	serial, refusal, argument := act_dialog_show(system.service_caller(), act_display_caller(), act^)
 	switch refusal {
 	case .None:
-		return i64(serial)
+		return .Succeeded, i64(serial)
 	case .No_Grant:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Busy:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .Requests, 0, 1, 1)
 	case .Not_A_Name, .Not_An_Act:
 		// The argument of the export is the act; the asker is no argument.
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Bad_Serial:
 		// The act face gives none of the refusals of a plan or of a poll.
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+	return call_outcome.fail(error, .Argument_Refused, .Refused)
 }
 
-// act_poll gives the decision of the principal on the act that act_ask showed with a serial, to the connection that asked: 0 while the dialog shows, 1 allowed, 2 refused, 3 unknown (a later dialog replaced it, no dialog had the serial, it was the dialog of a plan, or another connection asked for it). The result is the decision, or a negative number with an error record. The error kinds: No_Grant (-1, the caller may not ask an act, or the call comes from no connection); Bad_Value (-1, a serial under 1).
+// act_poll gives the decision of the principal on the act that act_ask showed with a serial, to the connection that asked: 0 while the dialog shows, 1 allowed, 2 refused, 3 unknown (a later dialog replaced it, no dialog had the serial, it was the dialog of a plan, or another connection asked for it). The result is the decision, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller may not ask an act, or the call comes from no connection); Bad_Value (Argument_Refused: a serial under 1).
 //
 // **Grant**: the caller must have the right to **ask an act**, or **act
-// for the principal**; else the error kind `No_Grant`, with the result
-// -1.
+// for the principal**; else the error kind `No_Grant`, with the call
+// outcome Grant_Or_Right_Missing.
 //
 // ```
 // compositor.act_poll(1)
 // ```
 @(export, link_name = "act_poll")
-act_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+act_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	decision, known, refusal := bar.plan_difference_poll(&plan_difference_dialog, .Act, act_display_caller(), serial)
 	return dialog_poll_result(decision, known, refusal, serial, error)
 }
 
-// act_cancel closes the act dialog that act_ask showed with a serial with a refusal, for the connection that asked: the agent withdrew the act. The result is 1 when the dialog closed, 0 when no act dialog of the caller with that serial shows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller may not ask an act, or the call comes from no connection); Bad_Value (-1, a serial under 1).
+// act_cancel closes the act dialog that act_ask showed with a serial with a refusal, for the connection that asked: the agent withdrew the act. The result is 1 when the dialog closed, 0 when no act dialog of the caller with that serial shows, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller may not ask an act, or the call comes from no connection); Bad_Value (Argument_Refused: a serial under 1).
 //
 // **What it is for.** A window that asked for an act dialog and no longer
 // shows the act, as when the entry of the act leaves its conversation,
@@ -847,39 +847,39 @@ act_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
 // does not show.
 //
 // **Grant**: the caller must have the right to **ask an act**, or **act
-// for the principal**; else the error kind `No_Grant`, with the result
-// -1.
+// for the principal**; else the error kind `No_Grant`, with the call
+// outcome Grant_Or_Right_Missing.
 //
 // ```
 // compositor.act_cancel(1)
 // ```
 @(export, link_name = "act_cancel")
-act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	closed, refusal := bar.plan_difference_act_cancel(&plan_difference_dialog, act_display_caller(), serial)
 	switch refusal {
 	case .None:
 	case .No_Grant:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
 	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
 	if !closed {
-		return 0
+		return .Succeeded, 0
 	}
 	act_dialog_cancelled()
-	return 1
+	return .Succeeded, 1
 }
 
-// assistive_attach records a holder of the assistive role, which reads the semantic trees of the windows from here on, and gives its number. The bar shows a mark in the warning color with the word assistive and the nickname while it reads. The result is the number of the holder, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Empty (-1, no nickname); Too_Long (-1, a nickname past 31 bytes); Bad_Value (-1, a nickname with a control byte or a damaged character, or a kind that names no holder: 1 screen reader, 2 magnifier, 3 switch input); Full (-1, 4 holders read already).
+// assistive_attach records a holder of the assistive role, which reads the semantic trees of the windows from here on, and gives its number. The bar shows a mark in the warning color with the word assistive and the nickname while it reads. The result is the number of the holder, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller does not act for the principal); Empty (Argument_Refused: no nickname); Too_Long (Argument_Refused: a nickname past 31 bytes); Bad_Value (Argument_Refused: a nickname with a control byte or a damaged character, or a kind that names no holder: 1 screen reader, 2 magnifier, 3 switch input); Full (Callee_Busy: 4 holders read already).
 //
 // **Several holders at once.** A principal with low vision uses a
 // magnifier and a screen reader together, so each holder has its own
 // number and its own mark.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -915,7 +915,7 @@ assistive_attach_export :: proc "c" (nickname: ^string, kind_word: i64, error: ^
 // assistive_detach ends a holder of the assistive role by its number. Its mark leaves the bar; with the last holder, a magnification that a holder asked for ends too. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Bad_Value (a number under 1); Absent (no holder of that number reads).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -941,7 +941,7 @@ assistive_detach_export :: proc "c" (holder_id: i64, error: ^errors.Error_Record
 // holders are missing, and the result still gives the count of all.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -970,7 +970,7 @@ assistive_holders_export :: proc "c" (result: ^[]Assistive_Holder_Row, error: ^e
 // assistive_magnify draws a rectangle of the screen larger, over the whole screen, for a holder of the assistive role: the view centers on the rectangle when it fits, else it starts at its left and top edges. The rectangle is in logical pixels; the factor is in eighths, from 12 (1.5 times) to 64 (8 times). No pixel leaves the compositor. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Absent (no assistive holder reads, so no mark would explain the magnification); Bad_Value (a factor past its bounds, or a width or a height under 1); Out_Of_Range (a part of the rectangle is off the screen: argument 1 for the left and the width, 2 for the top and the height).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
@@ -1007,7 +1007,7 @@ assistive_magnify_export :: proc "c" (left, top, width, height, factor_eighths: 
 // assistive_magnify_end ends the magnification that a holder of the assistive role asked for. The result is 1 when a magnification ended, 0 when none was on, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Absent (no assistive holder reads).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")

@@ -11,6 +11,8 @@
 //   call, preventing infinite restart loops if the new holder also stops.
 package supervision
 
+import "modus:contract/call_outcome"
+
 // Lifecycle state of one tracked client call across holder restarts.
 Client_Call_State :: enum u32 {
 	None                  = 0,
@@ -43,9 +45,26 @@ Client_Call_Tracker :: struct {
 	completed_result_word:  u64,
 }
 
+// client_call_ended_outcome gives the call outcome that the client library
+// gives its caller for a decision that ends the call with no answer
+// (src/md/api/call_outcome.md, "The calls of supervision"): the call left,
+// so it is in doubt. ended is false for each decision that does not end the
+// call that way: the answer of a completion carries its own outcome.
+client_call_ended_outcome :: proc "contextless" (decision: Client_Retry_Decision) -> (outcome: call_outcome.Call_Outcome, ended: bool) {
+	switch decision {
+	case .Return_Holder_Stopped_In_Flight:
+		return .Callee_Stopped_During_The_Call, true
+	case .Return_Connection_Closed:
+		return .Connection_Ended_During_The_Call, true
+	case .None, .Continue_Waiting, .Complete_With_Answer, .Resend_To_New_Holder, .Refuse_Invalid_Input:
+	}
+	return .Succeeded, false
+}
+
 // client_call_begin starts tracking an outgoing call on a Connected connection.
 // Refuses invalid replay rules, non-Connected snapshots, zero holder
-// generation, or a zero request_serial for Serial_Tracked calls.
+// generation, or a zero request_serial for Serial_Tracked calls. A call that
+// it refuses did not leave: the client library gives Callee_Unavailable.
 client_call_begin :: proc "contextless" (
 	replay_rule: Call_Replay_Rule,
 	request_serial: u64,

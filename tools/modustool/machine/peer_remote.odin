@@ -1,5 +1,6 @@
 package machine
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/remote"
 import "core:encoding/hex"
@@ -92,7 +93,6 @@ Remote_Call_Outcome :: enum u32 {
 	Key_Refused, // `remote` presented another key than the pinned one, or the call named another one: the reason gives both.
 	Bad_Socket_Call, // The bytes on the socket of the calls are not a header and the request that it counts.
 	Client_Refused, // `remote` refused the key of this client in the handshake (access_denied): no principal allowed it, or the session of its principal is locked. No call ran.
-	Answer_Unknown_Status, // The answer has the size that its header names, and a status that names no remote.Status.
 }
 
 Remote_Call :: struct {
@@ -842,22 +842,25 @@ remote_case_call :: proc(state: ^Peer_Remote, request: []u8, no_end := false) ->
 	return peer_remote_wait(state, place)
 }
 
-// remote_case_answer checks that a call gave a whole answer with a status,
-// and gives its header.
+// remote_case_answer checks that a call gave a whole answer that the remote
+// service refused, or that ran a call, and gives its header and its
+// outcome.
 @(private = "file")
-remote_case_answer :: proc(result: Remote_Call_Result, status: remote.Status) -> (header: remote.Answer, problem: string) {
+remote_case_answer :: proc(result: Remote_Call_Result, refused: bool) -> (header: remote.Answer, outcome: call_outcome.Call_Outcome, problem: string) {
 	if result.outcome != .Answer {
-		return {}, fmt.tprintf("the call gave %v (code %d: %s) and no answer: %s", result.outcome, result.code, remote.stream_error_name(result.code), result.reason)
+		return {}, .Answer_Unreadable, fmt.tprintf("the call gave %v (code %d: %s) and no answer: %s", result.outcome, result.code, remote.stream_error_name(result.code), result.reason)
 	}
 	checked, _, ok := remote.answer_check(result.answer)
 	if !ok {
 		_, reason := answer_refusal_cause(result.answer)
-		return {}, fmt.tprintf("an answer of %d bytes: %s", len(result.answer), reason)
+		return {}, .Answer_Unreadable, fmt.tprintf("an answer of %d bytes: %s", len(result.answer), reason)
 	}
-	if checked.status != status {
-		return checked, fmt.tprintf("an answer with the status %v, not %v", checked.status, status)
+	request_refused: bool
+	outcome, _, request_refused = remote.answer_outcome(checked)
+	if request_refused != refused {
+		return checked, outcome, fmt.tprintf("an answer with the outcome %v, which the remote service %s", outcome, request_refused ? "refused" : "did not refuse")
 	}
-	return checked, ""
+	return checked, outcome, ""
 }
 
 // The malformed call requests of the case "malformed", and the refusal that
@@ -866,16 +869,17 @@ remote_case_answer :: proc(result: Remote_Call_Result, status: remote.Status) ->
 Malformed :: struct {
 	argument: i64,
 	kind:     errors.Kind,
+	outcome:  call_outcome.Call_Outcome,
 }
 
 @(rodata)
 remote_malformed := [?]Malformed {
-	{0, .Too_Small}, // 20 bytes: shorter than the header.
-	{remote.FIELD_KIND, .Bad_Value}, // An unknown kind.
-	{remote.FIELD_ARGUMENTS, .Too_Long}, // More bytes of arguments than the stream has.
-	{remote.FIELD_RESULT_COUNT, .Too_Long}, // A result past the end of the call region.
-	{remote.FIELD_ERROR_START, .Bad_Value}, // An error record that is not aligned on 8.
-	{remote.FIELD_SERVICE, .No_Grant}, // A service that the root service does not let it call.
+	{0, .Too_Small, .Argument_Refused}, // 20 bytes: shorter than the header.
+	{remote.FIELD_KIND, .Bad_Value, .Argument_Refused}, // An unknown kind.
+	{remote.FIELD_ARGUMENTS, .Too_Long, .Argument_Refused}, // More bytes of arguments than the stream has.
+	{remote.FIELD_RESULT_COUNT, .Too_Long, .Argument_Refused}, // A result past the end of the call region.
+	{remote.FIELD_DETAILS_END, .Bad_Value, .Argument_Refused}, // A table of error details that is not aligned on 8.
+	{remote.FIELD_SERVICE, .No_Grant, .Grant_Or_Right_Missing}, // A service that the root service does not let it call.
 }
 
 // remote_case_run runs one case of the transport of `remote` (docs/QUIC.md,
@@ -898,7 +902,6 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 					result_start = 64,
 					result_count = 64,
 					result_unit  = 1,
-					error_start  = 24,
 				}
 				remote.name_set(&request.service, "manual")
 				switch item.argument {
@@ -906,8 +909,8 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 					request.kind = 9
 				case remote.FIELD_RESULT_COUNT:
 					request.result_count = remote.REGION_SIZE
-				case remote.FIELD_ERROR_START:
-					request.error_start = 28
+				case remote.FIELD_DETAILS_END:
+					request.details_end = 28
 				case remote.FIELD_SERVICE:
 					remote.name_set(&request.service, "console")
 				}
@@ -918,12 +921,12 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 					(^remote.Request)(raw_data(out)).arguments = 400
 				}
 			}
-			header, problem := remote_case_answer(remote_case_call(state, bytes), .Refused)
+			header, outcome, problem := remote_case_answer(remote_case_call(state, bytes), true)
 			if problem != "" {
 				return false, fmt.tprintf("the request with the wrong field %d: %s", item.argument, problem)
 			}
-			if header.error.argument != item.argument || header.error.kind != i64(item.kind) {
-				return false, fmt.tprintf("the request with the wrong field %d: refused with the field %d and the kind %d, not %v", item.argument, header.error.argument, header.error.kind, item.kind)
+			if header.error.argument != item.argument || header.error.kind != i64(item.kind) || outcome != item.outcome {
+				return false, fmt.tprintf("the request with the wrong field %d: refused with the field %d, the kind %d and the outcome %v, not %v and %v", item.argument, header.error.argument, header.error.kind, outcome, item.kind, item.outcome)
 			}
 		}
 		return true, fmt.tprintf("remote refused each of the %d malformed requests with the expected error record, each on its own stream", len(remote_malformed))
@@ -943,11 +946,11 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 		}
 		second_result := peer_remote_wait(state, second_place)
 		first_result := peer_remote_wait(state, first_place)
-		first_header, problem := remote_case_answer(first_result, .Ok)
+		first_header, _, problem := remote_case_answer(first_result, false)
 		if problem != "" {
 			return false, fmt.tprintf("monitor.processes(): %s", problem)
 		}
-		second_header, second_answer_problem := remote_case_answer(second_result, .Ok)
+		second_header, _, second_answer_problem := remote_case_answer(second_result, false)
 		if second_answer_problem != "" {
 			return false, fmt.tprintf("monitor.count(\"processors\"): %s", second_answer_problem)
 		}
@@ -994,7 +997,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 		if problem != "" {
 			return false, problem
 		}
-		if _, answer_problem := remote_case_answer(remote_case_call(state, request), .Ok); answer_problem != "" {
+		if _, _, answer_problem := remote_case_answer(remote_case_call(state, request), false); answer_problem != "" {
 			return false, fmt.tprintf("the call after the datagram of the stranger: %s", answer_problem)
 		}
 		sync.mutex_lock(&state.lock)
@@ -1037,7 +1040,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 			return false, problem
 		}
 		outcome := remote_case_call(state, request)
-		if _, answer_problem := remote_case_answer(outcome, .Ok); answer_problem != "" {
+		if _, _, answer_problem := remote_case_answer(outcome, false); answer_problem != "" {
 			return false, fmt.tprintf("the first call after the silence: %s", answer_problem)
 		}
 		sync.mutex_lock(&state.lock)

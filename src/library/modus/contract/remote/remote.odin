@@ -36,6 +36,7 @@
 package remote
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -131,8 +132,8 @@ request_kind_of_word :: proc "contextless" (word: u32) -> (kind: Request_Kind, o
 // The header of a call request. The bytes of the call region follow it.
 //
 // The host writes it; the remote service reads it as hostile input and
-// refuses a field that it cannot use (`Status.Refused`, with the field in the
-// error record).
+// refuses a field that it cannot use (the relay outcome `Argument_Refused`,
+// with the field in the error record).
 Request :: struct {
 	kind:         u32, // The word of a Request_Kind (request_kind_of_word): Call.
 	export:       u32, // The index of the export in the module of the service: the kind of the command record.
@@ -143,40 +144,37 @@ Request :: struct {
 	result_start: u32, // The place of the result in the call region. 0 and 0: none.
 	result_count: u32, // The bytes of that place.
 	result_unit:  u32, // The bytes that one unit of the integer result counts there: 1 for a Text, the size of a record for a Table, 0 for a Record (the whole place).
-	error_start:  u32, // The place of the error record (56 bytes). 0: the export has none.
 	// The table of error details: the offset of the end of its field
 	// (isolated.Table_Field, 32 bytes) in the argument record. 0: the export
 	// has none. The end and not the start, because a field at offset 0 is
 	// valid.
 	details_end:  u32,
-	_:            u32,
+	_:            [2]u32, // The error record of a call comes back in the answer, never from the call region.
 }
 #assert(size_of(Request) == 104)
 
 // The names of the fields of a Request, for the sentence of a refusal: the
 // argument of the error record is the index, from 1.
 @(rodata)
-REQUEST_FIELD_NAMES := [?]string{"kind", "export", "service", "hash", "arguments", "record_size", "result_start", "result_count", "result_unit", "error_start", "details_end"}
-
-// The status of an answer.
-Status :: enum u32 {
-	// The remote service sent the call. outcome says how the call ended
-	// (call_outcome.Call_Outcome); value is the value of the export when it
-	// is Succeeded, else 0. When it is not Succeeded, error is the record of
-	// the export or of the receiver that refused the call record, and the
-	// bytes of the answer are the error details of the export
-	// (details_bytes).
-	Ok      = 0,
-	// The remote service refused the request, and no call ran: error says
-	// why. Its argument is the field of the Request (REQUEST_FIELD_NAMES).
-	Refused = 1,
-}
+REQUEST_FIELD_NAMES := [?]string{"kind", "export", "service", "hash", "arguments", "record_size", "result_start", "result_count", "result_unit", "details_end"}
 
 // The header of a call answer. The bytes of the result follow it: total
-// bytes, then the end of the stream.
+// bytes, then the end of the stream (src/md/api/call_outcome.md, "The
+// borders of the isolated call, of remote").
+//
+// Two outcome words: relay_outcome is the outcome of the request to the
+// remote service, and outcome the outcome of the export. A refused request
+// ran no call: relay_outcome is not Succeeded, error says why with the field
+// of the Request as its argument (REQUEST_FIELD_NAMES), and outcome means
+// nothing. A request that ran: relay_outcome is Succeeded, outcome says how
+// the call ended, value is the value of the export when it is Succeeded,
+// else 0; a call that failed has the record of the export or of the
+// receiver in error, and the bytes of the answer are the error details of
+// the export (details_bytes). A reader takes both words through
+// answer_outcome.
 Answer :: struct {
-	status:      Status, // Ok or Refused.
-	outcome:     u32, // The word of the call_outcome.Call_Outcome of the call: a reader takes it with call_outcome.outcome_of_word.
+	relay_outcome: u32, // The word of the call_outcome.Call_Outcome of the request.
+	outcome:     u32, // The word of the call_outcome.Call_Outcome of the export.
 	value:       i64, // The value of the export; 0 when the outcome is not Succeeded.
 	total:       u32, // The bytes of the result after this header.
 	details:     u32, // A call that failed: the count of its error details, of the full answer, at most the largest u32. The bytes of the answer are the details that fit.
@@ -215,8 +213,7 @@ FIELD_RECORD_SIZE :: 6
 FIELD_RESULT_START :: 7
 FIELD_RESULT_COUNT :: 8
 FIELD_RESULT_UNIT :: 9
-FIELD_ERROR_START :: 10
-FIELD_DETAILS_END :: 11
+FIELD_DETAILS_END :: 10
 
 // What the bytes of one direction of a call stream are, so far.
 Stream_Progress :: enum u8 {
@@ -243,7 +240,8 @@ stream_progress :: proc "contextless" (received: u64, finished: bool, limit: u64
 // request_check reads the header of a call request in the bytes of a whole
 // request stream, and checks it against those bytes and a call region of
 // region_size bytes. When ok is false, error says which field is wrong:
-// the remote service sends it in an answer with the status Refused. The
+// the remote service sends it in an answer with the relay outcome
+// Argument_Refused. The
 // header is a copy: the stream buffer can change after the check.
 // arguments: the bytes of the call region, after the header.
 request_check :: proc "contextless" (bytes: []u8, region_size: u64) -> (request: Request, arguments: []u8, error: errors.Error_Record, ok: bool) {
@@ -274,13 +272,37 @@ request_check :: proc "contextless" (bytes: []u8, region_size: u64) -> (request:
 		return request, nil, refuse(.Too_Long, .Bytes, FIELD_RESULT_COUNT, i64(request.result_count), i64(region_size - u64(request.result_start))), false
 	case request.result_unit > request.result_count:
 		return request, nil, refuse(.Too_Long, .Bytes, FIELD_RESULT_UNIT, i64(request.result_unit), i64(request.result_count)), false
-	case request.error_start != 0 && (request.error_start % 8 != 0 || u64(request.error_start) > region_size - isolated.ERROR_RECORD_SIZE):
-		return request, nil, refuse(.Bad_Value, .Bytes, FIELD_ERROR_START, i64(request.error_start), i64(region_size - isolated.ERROR_RECORD_SIZE)), false
 	case request.details_end != 0 && (request.details_end % 8 != 0 || request.details_end < size_of(isolated.Table_Field) || request.details_end > request.record_size):
 		// The field of the table is inside the argument record.
 		return request, nil, refuse(.Bad_Value, .Bytes, FIELD_DETAILS_END, i64(request.details_end), i64(request.record_size)), false
 	}
 	return request, bytes[REQUEST_SIZE:][:request.arguments], {}, true
+}
+
+// answer_outcome is the one border of the two outcome words of an answer,
+// which the remote service writes over the network: the outcome of the
+// request when it is not Succeeded, else the outcome of the export, and the
+// one error record. request_refused is true when the remote service
+// refused the request: no call ran, and the argument of the record is the
+// field of the Request (REQUEST_FIELD_NAMES). A word that names no outcome
+// gives Answer_Unreadable with the record of the word: the reader trusts
+// nothing of the answer.
+answer_outcome :: proc "contextless" (answer: Answer) -> (outcome: call_outcome.Call_Outcome, record: errors.Error_Record, request_refused: bool) {
+	relay, relay_unreadable := call_outcome.outcome_of_word(u64(answer.relay_outcome))
+	if relay_unreadable.kind != 0 {
+		return .Answer_Unreadable, relay_unreadable, false
+	}
+	if relay != .Succeeded {
+		return relay, answer.error, true
+	}
+	called, called_unreadable := call_outcome.outcome_of_word(u64(answer.outcome))
+	if called_unreadable.kind != 0 {
+		return .Answer_Unreadable, called_unreadable, false
+	}
+	if called != .Succeeded {
+		return called, answer.error, false
+	}
+	return .Succeeded, {}, false
 }
 
 // result_bytes gives the bytes of the result that a call answer carries,
@@ -348,11 +370,10 @@ answer_write :: proc "contextless" (out: []u8, header: Answer, result: []u8) -> 
 
 // answer_check reads a whole call answer: the bytes of its stream up to the
 // end. result is the bytes after the header. ok is false when the bytes
-// are not exactly a header and the total that it names, when the total is
-// larger than a call region, or when the status names no member of Status:
-// it is the border of that word, so the host never switches on a status
-// that the remote service did not name. Each refusal gives the zero header
-// and no result: a caller never reads a field of a refused answer.
+// are not exactly a header and the total that it names, or when the total
+// is larger than a call region. Each refusal gives the zero header and no
+// result: a caller never reads a field of a refused answer. The two outcome
+// words cross their own border, answer_outcome.
 answer_check :: proc "contextless" (bytes: []u8) -> (header: Answer, result: []u8, ok: bool) {
 	if len(bytes) < ANSWER_SIZE {
 		return {}, nil, false
@@ -360,9 +381,6 @@ answer_check :: proc "contextless" (bytes: []u8) -> (header: Answer, result: []u
 	header = read(bytes, Answer)
 	rest := u64(len(bytes) - ANSWER_SIZE)
 	if u64(header.total) != rest || u64(header.total) > REGION_SIZE {
-		return {}, nil, false
-	}
-	if _, known := enum_word.member_of_word(Status, u64(header.status)); !known {
 		return {}, nil, false
 	}
 	return header, bytes[ANSWER_SIZE:], true

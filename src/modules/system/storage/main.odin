@@ -656,7 +656,7 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	// and it could hold each share of the service (docs/STORAGE.md, "4.3
 	// Read only, and revocation").
 	if share_of(caller.connection) != nil {
-		return errors.fail(error, failure(.No_Store), .No_Grant, .Connections)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Connections)
 	}
 	path, ok := place_path(&caller, place, error, 1)
 	if !ok {

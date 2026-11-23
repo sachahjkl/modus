@@ -4,6 +4,7 @@ package agent_bridge
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/value_kinds"
@@ -73,23 +74,31 @@ test_enum_border_parsers_refuse_zero_and_unknown_values :: proc(t: ^testing.T) {
 		testing.expect(t, len(bridge_command_kind_name(expected)) > 0)
 	}
 
-	// Bridge_Status: refuses 0, 5, max(u32)
-	if _, ok := bridge_status_from_word(0); ok {
-		testing.fail_now(t, "bridge_status_from_word accepted 0")
+	// Bridge_Request_State: refuses 0, one past the last, max(u32)
+	for word in ([]u32{0, u32(max(Bridge_Request_State)) + 1, max(u32)}) {
+		_, ok := bridge_request_state_from_word(word)
+		testing.expectf(t, !ok, "bridge_request_state_from_word accepted %d", word)
 	}
-	if _, ok := bridge_status_from_word(5); ok {
-		testing.fail_now(t, "bridge_status_from_word accepted 5")
-	}
-	if _, ok := bridge_status_from_word(max(u32)); ok {
-		testing.fail_now(t, "bridge_status_from_word accepted max(u32)")
-	}
-	for expected in Bridge_Status {
+	for expected in Bridge_Request_State {
 		if expected == .None {
 			continue
 		}
-		parsed, ok := bridge_status_from_word(u32(expected))
+		parsed, ok := bridge_request_state_from_word(u32(expected))
 		testing.expect(t, ok && parsed == expected)
-		testing.expect(t, len(bridge_status_name(expected)) > 0)
+		testing.expect(t, len(bridge_request_state_name(expected)) > 0)
+	}
+
+	// Each refusal of the bridge ends a request with an outcome that changed
+	// nothing, and that is not Succeeded.
+	for refusal in Bridge_Refusal {
+		outcome := bridge_refusal_outcome(refusal)
+		if refusal == .None {
+			testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
+			continue
+		}
+		testing.expectf(t, call_outcome.effect_group_of(outcome) == .Nothing_Changed, "the refusal %v gives %v", refusal, outcome)
+		decision := bridge_refused(refusal)
+		testing.expect(t, decision.state == .Ended && decision.outcome == outcome && decision.refusal == refusal)
 	}
 
 	// Bridge_Refusal: accepts 0..19, refuses 20 and max(u32)
@@ -231,9 +240,10 @@ test_command_and_response_wire_framing_roundtrip_and_refusals :: proc(t: ^testin
 		_, mr := decode_command_frame(mut[:written])
 		testing.expect_value(t, mr, Bridge_Refusal.Bad_Header)
 	}
-	{
+	// The version before and the version after.
+	for version in ([]u16{BRIDGE_WIRE_VERSION - 1, BRIDGE_WIRE_VERSION + 1}) {
 		mut := buf
-		byte_order.write_u16_little_endian(mut[:], 6, 2)
+		byte_order.write_u16_little_endian(mut[:], 6, version)
 		_, mr := decode_command_frame(mut[:written])
 		testing.expect_value(t, mr, Bridge_Refusal.Bad_Header)
 	}
@@ -272,7 +282,7 @@ test_command_and_response_wire_framing_roundtrip_and_refusals :: proc(t: ^testin
 
 	// Response frame round-trip + refusals
 	resp := Bridge_Response_Frame {
-		status              = .Awaiting_Principal_Approval,
+		state               = .Awaiting_Principal_Approval,
 		refusal             = .Principal_Approval_Required,
 		request_id          = 42,
 		act_sequence_number = 3,
@@ -286,19 +296,22 @@ test_command_and_response_wire_framing_roundtrip_and_refusals :: proc(t: ^testin
 
 	dec_resp, resp_dec := decode_response_frame(resp_buf[:resp_written])
 	testing.expect_value(t, resp_dec, Bridge_Refusal.None)
-	testing.expect_value(t, dec_resp.status, Bridge_Status.Awaiting_Principal_Approval)
+	testing.expect_value(t, dec_resp.state, Bridge_Request_State.Awaiting_Principal_Approval)
+	testing.expect_value(t, dec_resp.outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, dec_resp.refusal, Bridge_Refusal.Principal_Approval_Required)
 	testing.expect_value(t, dec_resp.request_id, u64(42))
 	testing.expect_value(t, dec_resp.act_sequence_number, u64(3))
 	testing.expect_value(t, dec_resp.act_record_hash, resp.act_record_hash)
 	testing.expect_value(t, string(dec_resp.payload), "approval needed")
 
-	// Response frame refusals: unknown status, unknown refusal, truncated, trailing, reserved non-zero
-	{
+	// Response frame refusals: unknown state, unknown refusal, an outcome
+	// of a request that waits, an outcome word that names no outcome,
+	// truncated, trailing
+	for word in ([]u32{0, u32(max(Bridge_Request_State)) + 1, max(u32)}) {
 		mut := resp_buf
-		byte_order.write_u32_little_endian(mut[:], 8, 0)
+		byte_order.write_u32_little_endian(mut[:], 8, word)
 		_, mr := decode_response_frame(mut[:resp_written])
-		testing.expect_value(t, mr, Bridge_Refusal.Unknown_Status)
+		testing.expect_value(t, mr, Bridge_Refusal.Unknown_State)
 	}
 	{
 		mut := resp_buf
@@ -308,9 +321,31 @@ test_command_and_response_wire_framing_roundtrip_and_refusals :: proc(t: ^testin
 	}
 	{
 		mut := resp_buf
-		byte_order.write_u32_little_endian(mut[:], 68, 7)
+		byte_order.write_u32_little_endian(mut[:], 68, u32(call_outcome.Call_Outcome.Argument_Refused))
 		_, mr := decode_response_frame(mut[:resp_written])
 		testing.expect_value(t, mr, Bridge_Refusal.Bad_Header)
+	}
+	for word in ([]u32{u32(max(call_outcome.Call_Outcome)) + 1, max(u32)}) {
+		mut := resp_buf
+		byte_order.write_u32_little_endian(mut[:], 8, u32(Bridge_Request_State.Ended))
+		byte_order.write_u32_little_endian(mut[:], 68, word)
+		_, mr := decode_response_frame(mut[:resp_written])
+		testing.expect_value(t, mr, Bridge_Refusal.Bad_Header)
+	}
+	// An ended request carries its outcome across.
+	{
+		ended := resp
+		ended.state, ended.outcome = .Ended, .Grant_Or_Right_Missing
+		ended_buf: [256]u8
+		ended_written, ended_enc := encode_response_frame(&ended, ended_buf[:])
+		testing.expect_value(t, ended_enc, Bridge_Refusal.None)
+		read, read_refusal := decode_response_frame(ended_buf[:ended_written])
+		testing.expect(t, read_refusal == .None && read.state == .Ended && read.outcome == .Grant_Or_Right_Missing)
+		// A request that waits carries no outcome.
+		waiting := resp
+		waiting.outcome = .Argument_Refused
+		_, waiting_enc := encode_response_frame(&waiting, ended_buf[:])
+		testing.expect_value(t, waiting_enc, Bridge_Refusal.Invalid_Field)
 	}
 	_, tr := decode_response_frame(resp_buf[:resp_written - 1])
 	testing.expect_value(t, tr, Bridge_Refusal.Truncated)
@@ -584,7 +619,7 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 			lex_line = transmute([]u8)line,
 		}
 		dec := bridge_authorize_command(&policy, &req)
-		testing.expect_value(t, dec.status, Bridge_Status.Awaiting_Principal_Approval)
+		testing.expect_value(t, dec.state, Bridge_Request_State.Awaiting_Principal_Approval)
 		testing.expect_value(t, dec.refusal, Bridge_Refusal.Principal_Approval_Required)
 	}
 
@@ -596,7 +631,7 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 			lex_line = transmute([]u8)line,
 		}
 		dec := bridge_authorize_command(&policy, &req)
-		testing.expect_value(t, dec.status, Bridge_Status.Refused)
+		testing.expect(t, dec.state == .Ended && dec.outcome != .Succeeded)
 		testing.expect_value(t, dec.refusal, Bridge_Refusal.Invalid_Text)
 	}
 
@@ -608,10 +643,10 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 			lex_line = transmute([]u8)string("compositor.wide_grant_indicator(0, 0)"),
 		}
 		dec := bridge_authorize_command(&policy, &req)
-		testing.expect_value(t, dec.status, Bridge_Status.Awaiting_Principal_Approval)
+		testing.expect_value(t, dec.state, Bridge_Request_State.Awaiting_Principal_Approval)
 		req.lex_line = transmute([]u8)string("monitor.processes()")
 		dec = bridge_authorize_command(&policy, &req)
-		testing.expect_value(t, dec.status, Bridge_Status.Ok)
+		testing.expect(t, dec.state == .Ended && dec.outcome == .Succeeded)
 		testing.expect_value(t, dec.required_act_kind, wide_grants.Act_Kind.Action_Invoked)
 	}
 
@@ -629,7 +664,7 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 		testing.expect_value(t, bridge_authorize_command(&read_only_policy, &req).refusal, Bridge_Refusal.Permission_Denied)
 
 		req = Bridge_Authorization_Request{command = .Read_Log_Facts, now_ms = 2_000}
-		testing.expect_value(t, bridge_authorize_command(&read_only_policy, &req).status, Bridge_Status.Ok)
+		testing.expect_value(t, bridge_authorize_command(&read_only_policy, &req).outcome, call_outcome.Call_Outcome.Succeeded)
 
 		// Missing remote View use refuses Read_Screen even if Bridge_Permission.Read_Screen is set.
 		calls_only_policy := policy
@@ -644,18 +679,18 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 
 		// Valid active grant in scope -> Ok + Key_Injected
 		dec := bridge_authorize_command(&policy, &key_req)
-		testing.expect_value(t, dec.status, Bridge_Status.Ok)
+		testing.expect(t, dec.state == .Ended && dec.outcome == .Succeeded)
 		testing.expect_value(t, dec.required_act_kind, wide_grants.Act_Kind.Key_Injected)
 
 		// Valid pointer click vs move
 		ptr_req := Bridge_Authorization_Request{command = .Send_Pointer, now_ms = 2_000, target_window_id = 202, pointer_has_click = true}
 		dec = bridge_authorize_command(&policy, &ptr_req)
-		testing.expect_value(t, dec.status, Bridge_Status.Ok)
+		testing.expect(t, dec.state == .Ended && dec.outcome == .Succeeded)
 		testing.expect_value(t, dec.required_act_kind, wide_grants.Act_Kind.Pointer_Clicked)
 
 		ptr_req.pointer_has_click = false
 		dec = bridge_authorize_command(&policy, &ptr_req)
-		testing.expect_value(t, dec.status, Bridge_Status.Ok)
+		testing.expect(t, dec.state == .Ended && dec.outcome == .Succeeded)
 		testing.expect_value(t, dec.required_act_kind, wide_grants.Act_Kind.Pointer_Moved)
 
 		// Out-of-scope window (0 and 999) refused!

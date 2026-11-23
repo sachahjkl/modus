@@ -194,8 +194,8 @@ notification_job :: proc "contextless" (parameter: rawptr) {
 	arguments[0].text = transmute([]u8)title
 	arguments[1].text = transmute([]u8)body
 	error: errors.Error_Record
-	result, status, _ := system.call_isolated(&notifier.connection, notifier.file, notifier.export, arguments[:], &error)
-	if status == .Ok {
+	result, outcome := system.call_isolated(&notifier.connection, notifier.file, notifier.export, arguments[:], &error)
+	if outcome == .Succeeded {
 		system.log_fact(.Info, Notification_Posted{identifier = u64(result)})
 	} else {
 		system.log_fact(.Warning, Notification_Refused(errors.error_record_fact_fields(error)))

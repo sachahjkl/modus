@@ -9,7 +9,7 @@ package remote_service
 // the identity key of that machine, and whose own key is the identity key
 // of this machine. machine_wire.Mesh_Link keeps the session of each link:
 // the pinned key, the requests in flight with their bounds, and the end of
-// each one (Answered, Refused, Unknown_Outcome, Unreachable).
+// each one, a call outcome (machine_wire, "The ends of a request").
 //
 // The datagrams of a link cross the endpoint of the server: a datagram
 // whose first packet names the connection identifier that a link chose goes
@@ -27,6 +27,7 @@ package remote_service
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/machine_mesh"
@@ -62,7 +63,7 @@ Mesh_Client_Request :: struct {
 	request_length:   int,
 	written:          int,
 	received:         int,
-	outcome:          machine_wire.Mesh_Outcome,
+	outcome:          call_outcome.Call_Outcome,
 	reason:           machine_wire.Refusal_Reason,
 	detail:           u32,
 	object_kind:      object_cache.Cache_Object_Kind,
@@ -358,8 +359,8 @@ mesh_pairing_join_send :: proc "contextless" (identity: [32]u8, error: ^errors.E
 // mesh_request_result gives the end of a request: 0 while it is in
 // flight, 1 when it was answered and its effect holds (the object kept, the
 // store merged, the pairing confirmed, the role answered: value and the
-// result bytes), or -1 with an error record: Refused, No_Answer for an
-// unknown outcome, Link_Down for a request that never left, Not_Authentic
+// result bytes), or -1 with an error record: Refused, No_Answer for a
+// request in doubt, Link_Down for a request that never left, Not_Authentic
 // for an object whose bytes do not hash to its hash, Too_Long for a role
 // result larger than result. For a role call, result_count is the exact
 // count of the result bytes.
@@ -380,13 +381,14 @@ mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, va
 		// the stack.
 		ended := &item
 		defer ended^ = {}
-		switch ended.outcome {
-		case .Answered:
-		case .Refused:
-			return errors.fail(error, -1, .Refused, .None, 2, i64(ended.detail), 0, i64(ended.reason))
-		case .Unknown_Outcome:
+		switch {
+		case ended.outcome == .Succeeded:
+		case call_outcome.effect_group_of(ended.outcome) == .Change_In_Doubt:
 			return errors.fail(error, -1, .No_Answer, .Requests, 2, i64(ended.detail), 0, i64(ended.reason))
-		case .Unreachable, .None:
+		case ended.reason != .None:
+			// The other machine refused the request before it ran.
+			return errors.fail(error, -1, .Refused, .None, 2, i64(ended.detail), 0, i64(ended.reason))
+		case:
 			return errors.fail(error, -1, .Link_Down, .Connection, 2)
 		}
 		switch ended.kind {
@@ -508,7 +510,7 @@ mesh_pairing_abandon :: proc "contextless" (link: ^Mesh_Client_Link, kind: machi
 }
 
 @(private = "file")
-mesh_request_end :: proc "contextless" (link: ^Mesh_Client_Link, identifier: u64, outcome: machine_wire.Mesh_Outcome) {
+mesh_request_end :: proc "contextless" (link: ^Mesh_Client_Link, identifier: u64, outcome: call_outcome.Call_Outcome) {
 	for &item in link.requests {
 		if item.phase != .Free && item.phase != .Ended && item.identifier == identifier {
 			item.outcome = outcome
@@ -525,7 +527,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 	_, outcome, reason, detail, found := machine_wire.mesh_answer_accept(&link.session, item.identifier, answer)
 	if !found {
 		item.phase = .Ended
-		item.outcome = .Unknown_Outcome
+		item.outcome = .Answer_Unreadable
 		mesh_pairing_abandon(link, item.kind, false)
 		return
 	}
@@ -533,7 +535,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 	item.reason = reason
 	item.detail = detail
 	item.phase = .Ended
-	if outcome != .Answered {
+	if outcome != .Succeeded {
 		mesh_pairing_abandon(link, item.kind, false)
 		return
 	}
@@ -550,11 +552,11 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 		frame, _ := machine_wire.frame_decode(answer)
 		reply, read_ok := machine_wire.role_reply_read(frame.body)
 		if !read_ok || reply.identifier != item.identifier {
-			item.outcome = .Unknown_Outcome
+			item.outcome = .Answer_Unreadable
 			return
 		}
 		if reply.outcome == .Refused {
-			item.outcome = .Refused
+			item.outcome = machine_wire.mesh_refusal_outcome(.Role_Refused)
 			item.reason = .Role_Refused
 		}
 		item.role_value = reply.value
@@ -570,7 +572,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 			confirm_sent = request != nil
 		}
 		if status != .Ok || !confirm_sent {
-			item.outcome = .Refused
+			item.outcome = machine_wire.mesh_refusal_outcome(.Pairing_Refused)
 			item.reason = .Pairing_Refused
 			item.detail = u32(status)
 			// The reply wrote the row of the offerer when its tag held: with
@@ -582,7 +584,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 	case .Pairing_Confirm:
 		if _, _, ok := machine_wire.pairing_confirmed_accept(&mesh, link.session.pinned_identity, answer); !ok {
 			// pairing_confirmed_accept removed the row; the pairing fails too.
-			item.outcome = .Refused
+			item.outcome = machine_wire.mesh_refusal_outcome(.Pairing_Refused)
 			item.reason = .Pairing_Refused
 			mesh_pairing_abandon(link, .Pairing_Confirm, false)
 		}
@@ -622,16 +624,16 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 		connection_ended := connection.state == .Closing || connection.state == .Draining || connection.state == .Closed
 		if connection_ended && (link.session.state == .Connecting || link.session.state == .Up) {
 			ended, count := machine_wire.mesh_link_broken(&link.session)
-			unknown, unreachable: u64
+			in_doubt, unreachable: u64
 			for end in ended[:count] {
 				mesh_request_end(&link, end.identifier, end.outcome)
-				if end.outcome == .Unknown_Outcome {
-					unknown += 1
+				if call_outcome.effect_group_of(end.outcome) == .Change_In_Doubt {
+					in_doubt += 1
 				} else {
 					unreachable += 1
 				}
 			}
-			system.log_fact(.Info, Mesh_Link_Ended{unknown_outcome = unknown, unreachable = unreachable, client_key_head = key_head_field(link.session.pinned_identity), peer = peer_field(link.address)})
+			system.log_fact(.Info, Mesh_Link_Ended{in_doubt = in_doubt, unreachable = unreachable, client_key_head = key_head_field(link.session.pinned_identity), peer = peer_field(link.address)})
 		}
 		ended, count := machine_wire.mesh_link_expire(&link.session, now_ms)
 		for end in ended[:count] {
@@ -673,7 +675,7 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 							quic.stream_reset(connection, item.stream, u64(remote.Stream_Error.Too_Large))
 							machine_wire.mesh_answer_accept(&link.session, item.identifier, nil)
 							item.phase = .Ended
-							item.outcome = .Unknown_Outcome
+							item.outcome = .Answer_Unreadable
 							mesh_pairing_abandon(&link, item.kind, false)
 							continue
 						}
@@ -683,7 +685,7 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 						// left: it can have run.
 						machine_wire.mesh_answer_accept(&link.session, item.identifier, nil)
 						item.phase = .Ended
-						item.outcome = .Unknown_Outcome
+						item.outcome = .Connection_Ended_During_The_Call
 						mesh_pairing_abandon(&link, item.kind, false)
 					} else if finished {
 						mesh_answer_take(&link, &item)

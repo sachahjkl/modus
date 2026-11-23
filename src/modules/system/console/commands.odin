@@ -2521,7 +2521,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	case .Bad_Operation, .Bad_Address, .No_Memory, .Bad_State, .No_Budget:
 		return fail(item.name, ": the console cannot lend its handles to the process ", sandbox.name, ": ", system.kernel_status_text(lend_status))
 	}
-	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
+	offset, size, buffer, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
 	if !ok {
 		if missing := isolated.room_missing(item.file, item.function, encoded[:parameter_total], u64(len(sandbox.region))); missing.parameter != 0 {
 			return fail("the table ", item.parameter_names[missing.parameter - 1], " of ", item.name, " has ", missing.needed, " bytes; the call region has ", missing.free, " bytes free for it")
@@ -2554,100 +2554,84 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			if completion.tag != sandbox.calls {
 				continue
 			}
-			// The call host writes the word: a word that names no status is
-			// refused, never read as a status.
-			call_status, call_status_ok := enum_word.member_of_word(isolated.Status, u64(completion.kind))
-			if !call_status_ok {
-				return fail("the process ", sandbox.name, " gave a status word that names no status")
+			// The completion crosses its one border: the value of a success,
+			// or the outcome and the record of the export or of the receiver
+			// that refused the call. A word that names no outcome is
+			// Answer_Unreadable, never read as a member.
+			value, outcome, error := isolated.answer_of_completion(completion)
+			if outcome != .Succeeded {
+				// A refusal of the receiver names no operation: the call is
+				// the one of this export.
+				if error.operation == 0 {
+					error.operation = i64(item.export)
+				}
+				// Only the table of error details comes back: the rows that
+				// a failed export wrote in a Change table stay out of the
+				// values of the console (docs/MODULE_CONTRACT.md, section 8,
+				// "The table of error details").
+				// A wrong table of error details is an answer that the console
+				// cannot read whole: the outcome says so, and the record of
+				// the export stays.
+				details_wrong := false
+				if item.details_parameter != 0 {
+					problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset)
+					details_wrong = problem != .None
+				}
+				result := export_failure(item, &error, details_wrong ? .Answer_Unreadable : outcome)
+				if details_wrong {
+					fail_note("the process ", sandbox.name, " gave a wrong count for the table of error details: the details are missing")
+				} else if item.details_parameter != 0 {
+					failure_details_set(details[:], encoded[item.details_parameter - 1].table.count)
+				}
+				return result
 			}
-			switch call_status {
-			case .Ok:
-				// A failure first: the other process wrote the error record,
-				// values only, in the place that encode chose, and the error
-				// details. Only the table of error details comes back: the
-				// rows that a failed export wrote in a Change table stay out
-				// of the values of the console (docs/MODULE_CONTRACT.md,
-				// section 8, "The table of error details").
-				outcome := call_outcome.Call_Outcome.Succeeded
-				unreadable: errors.Error_Record
-				if item.function.error_record != 0 {
-					outcome, unreadable = call_outcome.outcome_of_word(completion.values[isolated.COMPLETION_OUTCOME_VALUE])
-				}
-				if outcome != .Succeeded {
-					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
-					if unreadable.kind != 0 {
-						error = unreadable
-					}
-					result := export_failure(item, &error, outcome)
-					if item.details_parameter != 0 {
-						if problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
-							fail_note("the process ", sandbox.name, " gave a wrong count for the table of error details: the details are missing")
-						} else {
-							failure_details_set(details[:], encoded[item.details_parameter - 1].table.count)
-						}
-					}
-					return result
-				}
-				// The rows of a Change table come back into the memory of the value.
-				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
-					name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
-					return fail("the process ", sandbox.name, " gave a wrong count for the table ", name)
-				}
-				switch item.result {
-				case .Integer:
-					return {kind = .Integer, integer = i64(completion.values[0])}
-				case .Text:
-					// The count comes from the other process: read no more
-					// than the buffer, and copy the text out of the call region.
-					text, complete := isolated.result_text(sandbox.region, buffer, completion.values[0])
-					if !complete || len(text) > len(scratch) - scratch_count {
-						return fail("the result of ", item.name, " has ", completion.values[0], " bytes: it does not fit")
-					}
-					return {kind = .Text, text = scratch_text(string(text))}
-				case .Record:
-					// The other process wrote these bytes: they are values, and
-					// the console reads them with the description.
-					record := scratch_bytes(int(buffer.count))
-					if record == nil || !isolated.result_record(sandbox.region, buffer, record) {
-						return fail("the result of ", item.name, " does not fit")
-					}
-					return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
-				case .Table:
-					// The other process wrote the records and the count:
-					// read no more than the buffer, and copy the records
-					// out of the call region.
-					described, _ := module.record_type(item.file, item.function.result_detail)
-					rows, complete := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
-					if !complete {
-						return fail("the result of ", item.name, " has ", completion.values[0], " records; ", i64(len(rows) / int(max(described.size, 1))), " fit in the call region")
-					}
-					bytes := table_bytes(len(rows))
-					if bytes == nil && len(rows) > 0 {
-						return fail("the line has no room for the ", completion.values[0], " records of ", item.name)
-					}
-					copy(bytes, rows)
-					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
-				case .Enum:
-					return enum_result(item, i64(completion.values[0]))
-				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
-					// None gives no value; callable_by_console refuses an
-					// export with a Handle or a Bytes result, and no export
-					// gives a Stream.
-				}
-				return {}
-			case .Bad_Export:
-				return fail("the process ", sandbox.name, " has no export ", item.name)
-			case .Bad_Arguments, .Bad_Handle:
-				// The values of a refusal hold its error record: the argument and why.
-				refusal := transmute(errors.Error_Record)completion.values
-				if refusal.kind != 0 {
-					refusal.operation = i64(item.export)
-					return export_failure(item, &refusal, system.outcome_of_call_status(.Refused, call_status))
-				}
-				return fail("the process ", sandbox.name, " refused the arguments of ", item.name)
-			case .Load_Failed:
-				return fail("the process ", sandbox.name, " gave the status of a load for a call")
+			// The rows of a Change table come back into the memory of the value.
+			if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
+				name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
+				return fail("the process ", sandbox.name, " gave a wrong count for the table ", name)
 			}
+			switch item.result {
+			case .Integer:
+				return {kind = .Integer, integer = value}
+			case .Text:
+				// The count comes from the other process: read no more
+				// than the buffer, and copy the text out of the call region.
+				text, complete := isolated.result_text(sandbox.region, buffer, u64(value))
+				if !complete || len(text) > len(scratch) - scratch_count {
+					return fail("the result of ", item.name, " has ", u64(value), " bytes: it does not fit")
+				}
+				return {kind = .Text, text = scratch_text(string(text))}
+			case .Record:
+				// The other process wrote these bytes: they are values, and
+				// the console reads them with the description.
+				record := scratch_bytes(int(buffer.count))
+				if record == nil || !isolated.result_record(sandbox.region, buffer, record) {
+					return fail("the result of ", item.name, " does not fit")
+				}
+				return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
+			case .Table:
+				// The other process wrote the records and the count:
+				// read no more than the buffer, and copy the records
+				// out of the call region.
+				described, _ := module.record_type(item.file, item.function.result_detail)
+				rows, complete := isolated.result_table(sandbox.region, buffer, u64(value), u64(described.size))
+				if !complete {
+					return fail("the result of ", item.name, " has ", u64(value), " records; ", i64(len(rows) / int(max(described.size, 1))), " fit in the call region")
+				}
+				bytes := table_bytes(len(rows))
+				if bytes == nil && len(rows) > 0 {
+					return fail("the line has no room for the ", u64(value), " records of ", item.name)
+				}
+				copy(bytes, rows)
+				return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
+			case .Enum:
+				return enum_result(item, value)
+			case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+				// None gives no value; callable_by_console refuses an
+				// export with a Handle or a Bytes result, and no export
+				// gives a Stream.
+			}
+			return {}
 		}
 		if state, cause, outcome := system.process_state(sandbox.process); state == .Stopped {
 			report := system.process_stop_report(sandbox.process)

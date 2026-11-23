@@ -5,16 +5,47 @@ import "core:strings"
 import "core:testing"
 import bridge_contract "modus:contract/agent_bridge"
 import assistant_contract "modus:contract/assistant"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
+// The outcome of each kind of refusal of the conversation.
+@(private = "file", rodata)
+OUTCOME_OF_KIND := #partial [errors.Kind]call_outcome.Call_Outcome {
+	.No_Grant  = .Grant_Or_Right_Missing,
+	.Absent    = .Nothing_Has_That_Name,
+	.State     = .Wrong_State,
+	.Empty     = .Argument_Refused,
+	.Too_Long  = .Argument_Refused,
+	.Bad_Value = .Argument_Refused,
+}
+
 @(private = "file")
-expect_refusal :: proc(t: ^testing.T, result: i64, error: errors.Error_Record, kind: errors.Kind, argument: i64 = -1, location := #caller_location) {
-	testing.expect_value(t, result, i64(ERROR_RESULT), location)
+expect_refusal :: proc(t: ^testing.T, outcome: call_outcome.Call_Outcome, result: i64, error: errors.Error_Record, kind: errors.Kind, argument: i64 = -1, location := #caller_location) {
+	testing.expect_value(t, outcome, OUTCOME_OF_KIND[kind], location)
+	testing.expect_value(t, result, 0, location)
 	testing.expect_value(t, error.kind, i64(kind), location)
 	if argument >= 0 {
 		testing.expect_value(t, error.argument, argument, location)
 	}
+}
+
+// serial_value gives the serial that request_serial gives a caller that
+// acts for the principal.
+@(private = "file")
+serial_value :: proc(talk: ^Conversation) -> i64 {
+	error: errors.Error_Record
+	_, serial := request_serial(talk, true, &error)
+	return serial
+}
+
+// state_value gives the state that act_state gives a caller that acts for
+// the principal.
+@(private = "file")
+state_value :: proc(talk: ^Conversation, act: i64) -> i64 {
+	error: errors.Error_Record
+	_, state := act_state(talk, true, act, &error)
+	return state
 }
 
 // A conversation with one request, taken, so a test starts at the reply.
@@ -24,7 +55,7 @@ taken_conversation :: proc(t: ^testing.T) -> ^Conversation {
 	testing.expect(t, request_keep(talk, "which processes run") != nil)
 	buffer: [assistant_contract.REQUEST_TEXT_BYTES]u8
 	error: errors.Error_Record
-	count, taken := request_text(talk, true, 1, buffer[:], &error)
+	_, count, taken := request_text(talk, true, 1, buffer[:], &error)
 	testing.expect_value(t, count, 19)
 	testing.expect(t, taken != nil)
 	return talk
@@ -42,20 +73,24 @@ each_border_refuses_a_caller_that_does_not_act_for_the_principal :: proc(t: ^tes
 	before := talk.entry_count
 	error: errors.Error_Record
 	buffer: [assistant_contract.REQUEST_TEXT_BYTES]u8
-	expect_refusal(t, request_serial(talk, false, &error), error, .No_Grant)
-	count, taken := request_text(talk, false, 1, buffer[:], &error)
-	expect_refusal(t, count, error, .No_Grant)
+	refused_outcome, refused_value := request_serial(talk, false, &error)
+	expect_refusal(t, refused_outcome, refused_value, error, .No_Grant)
+	outcome, count, taken := request_text(talk, false, 1, buffer[:], &error)
+	expect_refusal(t, outcome, count, error, .No_Grant)
 	testing.expect(t, taken == nil)
-	result, kept := reply(talk, false, 1, "hi", 0, &error)
-	expect_refusal(t, result, error, .No_Grant)
+	result: i64
+	kept: ^Entry
+	outcome, result, kept = reply(talk, false, 1, "hi", 0, &error)
+	expect_refusal(t, outcome, result, error, .No_Grant)
 	testing.expect(t, kept == nil)
-	result, kept = reply_refused(talk, false, 1, i64(errors.Kind.Bad_Value), i64(errors.Unit.Bytes), 1, 0, 0, &error)
-	expect_refusal(t, result, error, .No_Grant)
-	result, kept = act(talk, false, 1, 1, "monitor.processes()", "monitor", "processes", &error)
-	expect_refusal(t, result, error, .No_Grant)
-	result, kept = act_result(talk, false, 1, 2, "done", &error)
-	expect_refusal(t, result, error, .No_Grant)
-	expect_refusal(t, act_state(talk, false, 1, &error), error, .No_Grant)
+	outcome, result, kept = reply_refused(talk, false, 1, i64(errors.Kind.Bad_Value), i64(errors.Unit.Bytes), 1, 0, 0, &error)
+	expect_refusal(t, outcome, result, error, .No_Grant)
+	outcome, result, kept = act(talk, false, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	expect_refusal(t, outcome, result, error, .No_Grant)
+	outcome, result, kept = act_result(talk, false, 1, 2, "done", &error)
+	expect_refusal(t, outcome, result, error, .No_Grant)
+	refused_outcome, refused_value = act_state(talk, false, 1, &error)
+	expect_refusal(t, refused_outcome, refused_value, error, .No_Grant)
 	testing.expect_value(t, talk.entry_count, before)
 	testing.expect_value(t, talk.entries[0].turn, Turn_State.Waiting)
 }
@@ -69,21 +104,21 @@ request_text_refuses_a_serial_and_a_result_too_small :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	buffer: [8]u8
 	for serial in BAD_SERIALS {
-		count, _ := request_text(talk, true, serial, buffer[:], &error)
-		expect_refusal(t, count, error, .Absent, 1)
+		outcome, count, _ := request_text(talk, true, serial, buffer[:], &error)
+		expect_refusal(t, outcome, count, error, .Absent, 1)
 	}
-	count, taken := request_text(talk, true, 1, buffer[:3], &error)
-	expect_refusal(t, count, error, .Too_Long, 0)
+	outcome, count, taken := request_text(talk, true, 1, buffer[:3], &error)
+	expect_refusal(t, outcome, count, error, .Too_Long, 0)
 	testing.expect_value(t, error.value, 4)
 	testing.expect_value(t, error.limit, 3)
 	testing.expect(t, taken == nil && !talk.entries[0].taken)
-	testing.expect_value(t, request_serial(talk, true, &error), 1)
-	count, taken = request_text(talk, true, 1, buffer[:4], &error)
+	testing.expect_value(t, serial_value(talk), 1)
+	outcome, count, taken = request_text(talk, true, 1, buffer[:4], &error)
 	testing.expect_value(t, count, 4)
 	testing.expect(t, taken != nil)
-	testing.expect_value(t, request_serial(talk, true, &error), 0)
+	testing.expect_value(t, serial_value(talk), 0)
 	// A second read gives the text and takes nothing more.
-	count, taken = request_text(talk, true, 1, buffer[:], &error)
+	outcome, count, taken = request_text(talk, true, 1, buffer[:], &error)
 	testing.expect(t, count == 4 && taken == nil)
 }
 
@@ -96,35 +131,35 @@ reply_refuses_each_bad_input_and_comes_once :: proc(t: ^testing.T) {
 	request_keep(talk, "not taken")
 	error: errors.Error_Record
 	for serial in BAD_SERIALS {
-		result, _ := reply(talk, true, serial, "hi", 0, &error)
-		expect_refusal(t, result, error, .Absent, 1)
+		outcome, result, _ := reply(talk, true, serial, "hi", 0, &error)
+		expect_refusal(t, outcome, result, error, .Absent, 1)
 	}
 	long := strings.repeat("a", assistant_contract.REPLY_TEXT_BYTES + 1, context.temp_allocator)
-	result, _ := reply(talk, true, 1, long, 0, &error)
-	expect_refusal(t, result, error, .Too_Long, 2)
-	result, _ = reply(talk, true, 1, "", 0, &error)
-	expect_refusal(t, result, error, .Empty, 2)
-	result, _ = reply(talk, true, 1, "a\nb", 0, &error)
-	expect_refusal(t, result, error, .Bad_Value, 2)
+	outcome, result, _ := reply(talk, true, 1, long, 0, &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 2)
+	outcome, result, _ = reply(talk, true, 1, "", 0, &error)
+	expect_refusal(t, outcome, result, error, .Empty, 2)
+	outcome, result, _ = reply(talk, true, 1, "a\nb", 0, &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	for acts in ([?]i64{-1, min(i64)}) {
-		result, _ = reply(talk, true, 1, "hi", acts, &error)
-		expect_refusal(t, result, error, .Bad_Value, 3)
+		outcome, result, _ = reply(talk, true, 1, "hi", acts, &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 3)
 	}
 	for acts in ([?]i64{assistant_contract.MODEL_ACT_CAPACITY + 1, max(i64)}) {
-		result, _ = reply(talk, true, 1, "hi", acts, &error)
-		expect_refusal(t, result, error, .Too_Long, 3)
+		outcome, result, _ = reply(talk, true, 1, "hi", acts, &error)
+		expect_refusal(t, outcome, result, error, .Too_Long, 3)
 	}
 	testing.expect_value(t, talk.entry_count, 2)
 	testing.expect_value(t, talk.entries[0].turn, Turn_State.Waiting)
 	most := strings.repeat("a", assistant_contract.REPLY_TEXT_BYTES, context.temp_allocator)
 	kept: ^Entry
-	result, kept = reply(talk, true, 1, most, assistant_contract.MODEL_ACT_CAPACITY, &error)
+	outcome, result, kept = reply(talk, true, 1, most, assistant_contract.MODEL_ACT_CAPACITY, &error)
 	testing.expect_value(t, result, i64(assistant_contract.REPLY_TEXT_BYTES))
 	testing.expect(t, kept != nil && kept.kind == .Reply)
-	result, _ = reply(talk, true, 1, "again", 0, &error)
-	expect_refusal(t, result, error, .State, 1)
-	result, _ = reply_refused(talk, true, 1, i64(errors.Kind.Bad_Value), i64(errors.Unit.Bytes), 1, 0, 0, &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ = reply(talk, true, 1, "again", 0, &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+	outcome, result, _ = reply_refused(talk, true, 1, i64(errors.Kind.Bad_Value), i64(errors.Unit.Bytes), 1, 0, 0, &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 }
 
 // reply_refused: a serial of no request, a kind that names no member and
@@ -135,26 +170,26 @@ reply_refused_refuses_each_bad_word_and_ends_the_turn :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	bad_value, bytes := i64(errors.Kind.Bad_Value), i64(errors.Unit.Bytes)
 	for serial in BAD_SERIALS {
-		result, _ := reply_refused(talk, true, serial, bad_value, bytes, 1, 0, 0, &error)
-		expect_refusal(t, result, error, .Absent, 1)
+		outcome, result, _ := reply_refused(talk, true, serial, bad_value, bytes, 1, 0, 0, &error)
+		expect_refusal(t, outcome, result, error, .Absent, 1)
 	}
 	for kind in ([?]i64{i64(errors.Kind.None), -1, 9999, max(i64)}) {
-		result, _ := reply_refused(talk, true, 1, kind, bytes, 1, 0, 0, &error)
-		expect_refusal(t, result, error, .Bad_Value, 2)
+		outcome, result, _ := reply_refused(talk, true, 1, kind, bytes, 1, 0, 0, &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	}
 	for unit in ([?]i64{-1, 9999, max(i64)}) {
-		result, _ := reply_refused(talk, true, 1, bad_value, unit, 1, 0, 0, &error)
-		expect_refusal(t, result, error, .Bad_Value, 3)
+		outcome, result, _ := reply_refused(talk, true, 1, bad_value, unit, 1, 0, 0, &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 3)
 	}
 	testing.expect_value(t, talk.entry_count, 1)
-	result, kept := reply_refused(talk, true, 1, bad_value, bytes, 3, 0, 0, &error)
+	outcome, result, kept := reply_refused(talk, true, 1, bad_value, bytes, 3, 0, 0, &error)
 	testing.expect(t, result == 1 && kept != nil)
 	testing.expect_value(t, talk.entries[0].turn, Turn_State.Ended)
 	// No act of a refused reply, and no reply after it.
-	result, _ = act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
-	expect_refusal(t, result, error, .State, 1)
-	result, _ = reply(talk, true, 1, "hi", 0, &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ = act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+	outcome, result, _ = reply(talk, true, 1, "hi", 0, &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 }
 
 // act: before the reply, a serial of no request, a kind that names no
@@ -164,36 +199,36 @@ reply_refused_refuses_each_bad_word_and_ends_the_turn :: proc(t: ^testing.T) {
 act_refuses_each_bad_input_and_each_act_past_the_turn :: proc(t: ^testing.T) {
 	talk := taken_conversation(t)
 	error: errors.Error_Record
-	result, _ := act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ := act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 	reply(talk, true, 1, "two acts", 2, &error)
 	for serial in BAD_SERIALS {
-		result, _ = act(talk, true, serial, 1, "monitor.processes()", "monitor", "processes", &error)
-		expect_refusal(t, result, error, .Absent, 1)
+		outcome, result, _ = act(talk, true, serial, 1, "monitor.processes()", "monitor", "processes", &error)
+		expect_refusal(t, outcome, result, error, .Absent, 1)
 	}
 	for kind in ([?]i64{0, -1, 2, 255, max(i64)}) {
-		result, _ = act(talk, true, 1, kind, "monitor.processes()", "monitor", "processes", &error)
-		expect_refusal(t, result, error, .Bad_Value, 2)
+		outcome, result, _ = act(talk, true, 1, kind, "monitor.processes()", "monitor", "processes", &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	}
 	long := strings.repeat("a", assistant_contract.ACT_LINE_BYTES + 1, context.temp_allocator)
-	result, _ = act(talk, true, 1, 1, long, "", "", &error)
-	expect_refusal(t, result, error, .Too_Long, 3)
-	result, _ = act(talk, true, 1, 1, "", "", "", &error)
-	expect_refusal(t, result, error, .Empty, 3)
+	outcome, result, _ = act(talk, true, 1, 1, long, "", "", &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 3)
+	outcome, result, _ = act(talk, true, 1, 1, "", "", "", &error)
+	expect_refusal(t, outcome, result, error, .Empty, 3)
 	long_name := strings.repeat("a", assistant_contract.ACT_NAME_BYTES + 1, context.temp_allocator)
 	names := [?][2]string{{"Monitor", "processes"}, {"monitor", "processes()"}, {"monitor", ""}, {"", "processes"}, {"plans.apply", "x"}, {long_name, "x"}, {"monitor", "a b"}}
 	for pair in names {
-		result, _ = act(talk, true, 1, 1, "monitor.processes()", pair[0], pair[1], &error)
-		testing.expectf(t, result == ERROR_RESULT && error.kind == i64(errors.Kind.Bad_Value), "the names %v passed", pair)
+		outcome, result, _ = act(talk, true, 1, 1, "monitor.processes()", pair[0], pair[1], &error)
+		testing.expectf(t, outcome == .Argument_Refused && result == 0 && error.kind == i64(errors.Kind.Bad_Value), "the names %v passed", pair)
 	}
 	testing.expect_value(t, talk.entry_count, 2)
-	first, kept := act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	_, first, kept := act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
 	testing.expect(t, first == 1 && kept != nil && kept.state == .Proposed)
-	second, _ := act(talk, true, 1, 1, "x |> y", "", "", &error)
+	_, second, _ := act(talk, true, 1, 1, "x |> y", "", "", &error)
 	testing.expect_value(t, second, 2)
 	testing.expect_value(t, talk.entries[0].turn, Turn_State.Ended)
-	result, _ = act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ = act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 }
 
 // act_result: an act of no number, a state that names no member or that
@@ -207,25 +242,26 @@ act_result_refuses_each_bad_input_and_takes_one_outcome :: proc(t: ^testing.T) {
 	act(talk, true, 1, 1, "plans.apply(\"home\")", "plans", "apply", &error)
 	act(talk, true, 1, 1, "x |> y", "", "", &error)
 	for number in ([?]i64{0, -1, 3, max(i64), min(i64)}) {
-		result, _ := act_result(talk, true, number, 2, "done", &error)
-		expect_refusal(t, result, error, .Absent, 1)
-		expect_refusal(t, act_state(talk, true, number, &error), error, .Absent, 1)
+		outcome, result, _ := act_result(talk, true, number, 2, "done", &error)
+		expect_refusal(t, outcome, result, error, .Absent, 1)
+		refused_outcome, refused_value := act_state(talk, true, number, &error)
+	expect_refusal(t, refused_outcome, refused_value, error, .Absent, 1)
 	}
 	for state in ([?]i64{0, -1, 1, 5, 6, 7, 8, max(i64)}) {
-		result, _ := act_result(talk, true, 1, state, "words", &error)
-		expect_refusal(t, result, error, .Bad_Value, 2)
+		outcome, result, _ := act_result(talk, true, 1, state, "words", &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	}
-	result, _ := act_result(talk, true, 2, i64(assistant_contract.Act_State.Awaiting_Principal), "words", &error)
-	expect_refusal(t, result, error, .Bad_Value, 2)
+	outcome, result, _ := act_result(talk, true, 2, i64(assistant_contract.Act_State.Awaiting_Principal), "words", &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	long := strings.repeat("a", assistant_contract.REPLY_TEXT_BYTES + 1, context.temp_allocator)
-	result, _ = act_result(talk, true, 1, 2, long, &error)
-	expect_refusal(t, result, error, .Too_Long, 3)
-	testing.expect_value(t, act_state(talk, true, 1, &error), i64(assistant_contract.Act_State.Proposed))
+	outcome, result, _ = act_result(talk, true, 1, 2, long, &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 3)
+	testing.expect_value(t, state_value(talk, 1), i64(assistant_contract.Act_State.Proposed))
 	kept: ^Entry
-	result, kept = act_result(talk, true, 1, i64(assistant_contract.Act_State.Awaiting_Principal), "stopped", &error)
+	outcome, result, kept = act_result(talk, true, 1, i64(assistant_contract.Act_State.Awaiting_Principal), "stopped", &error)
 	testing.expect(t, result == 1 && kept != nil)
-	result, _ = act_result(talk, true, 1, 2, "done", &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ = act_result(talk, true, 1, 2, "done", &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 }
 
 // A stand-in of the trusted display that counts its calls.
@@ -289,10 +325,10 @@ a_refusal_of_the_display_other_than_busy_is_final :: proc(t: ^testing.T) {
 	stand_in.ask_outcome = .Refused
 	waiting, event, entry, cause := acts_waiting_step(talk, port)
 	testing.expect(t, waiting && event == .Not_Shown && entry.act == 1 && cause == "Bad_Value")
-	testing.expect_value(t, act_state(talk, true, 1, &error), i64(assistant_contract.Act_State.Not_Shown))
+	testing.expect_value(t, state_value(talk, 1), i64(assistant_contract.Act_State.Not_Shown))
 	// The runner cannot change a final state.
-	result, _ := act_result(talk, true, 1, 2, "done", &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ := act_result(talk, true, 1, 2, "done", &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 	stand_in.ask_outcome = .Shown
 	waiting, event, entry, _ = acts_waiting_step(talk, port)
 	testing.expect(t, waiting && event == .Shown && entry.act == 2)
@@ -382,74 +418,74 @@ act_table_refuses_each_form_that_is_not_a_whole_table :: proc(t: ^testing.T) {
 	cells := [4]assistant_contract.Act_Table_Cell{cell_of("1"), cell_of("root"), cell_of("2"), cell_of("devices")}
 	table := i64(assistant_contract.Act_Table_Shape.Table)
 	record := i64(assistant_contract.Act_Table_Shape.Record)
-	result, _ := act_table(talk, false, 1, table, "Process", 2, columns[:], cells[:], &error)
-	expect_refusal(t, result, error, .No_Grant)
+	outcome, result, _ := act_table(talk, false, 1, table, "Process", 2, columns[:], cells[:], &error)
+	expect_refusal(t, outcome, result, error, .No_Grant)
 	for number in ([?]i64{0, -1, 3, max(i64)}) {
-		result, _ = act_table(talk, true, number, table, "Process", 2, columns[:], cells[:], &error)
-		expect_refusal(t, result, error, .Absent, 1)
+		outcome, result, _ = act_table(talk, true, number, table, "Process", 2, columns[:], cells[:], &error)
+		expect_refusal(t, outcome, result, error, .Absent, 1)
 	}
-	result, _ = act_table(talk, true, 2, table, "Process", 2, columns[:], cells[:], &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ = act_table(talk, true, 2, table, "Process", 2, columns[:], cells[:], &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 	for word in ([?]i64{0, -1, 3, max(i64)}) {
-		result, _ = act_table(talk, true, 1, word, "Process", 2, columns[:], cells[:], &error)
-		expect_refusal(t, result, error, .Bad_Value, 2)
+		outcome, result, _ = act_table(talk, true, 1, word, "Process", 2, columns[:], cells[:], &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	}
-	result, _ = act_table(talk, true, 1, table, "", 2, columns[:], cells[:], &error)
-	expect_refusal(t, result, error, .Empty, 3)
-	result, _ = act_table(talk, true, 1, table, strings.repeat("n", assistant_contract.ACT_TABLE_NAME_BYTES + 1, context.temp_allocator), 2, columns[:], cells[:], &error)
-	expect_refusal(t, result, error, .Too_Long, 3)
-	result, _ = act_table(talk, true, 1, table, "Process", 0, nil, nil, &error)
-	expect_refusal(t, result, error, .Empty, 5)
+	outcome, result, _ = act_table(talk, true, 1, table, "", 2, columns[:], cells[:], &error)
+	expect_refusal(t, outcome, result, error, .Empty, 3)
+	outcome, result, _ = act_table(talk, true, 1, table, strings.repeat("n", assistant_contract.ACT_TABLE_NAME_BYTES + 1, context.temp_allocator), 2, columns[:], cells[:], &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 3)
+	outcome, result, _ = act_table(talk, true, 1, table, "Process", 0, nil, nil, &error)
+	expect_refusal(t, outcome, result, error, .Empty, 5)
 	many_columns := make([]assistant_contract.Act_Table_Column, assistant_contract.ACT_TABLE_COLUMN_CAPACITY + 1, context.temp_allocator)
 	for &column in many_columns {
 		column = column_of("c")
 	}
-	result, _ = act_table(talk, true, 1, table, "Process", 0, many_columns, nil, &error)
-	expect_refusal(t, result, error, .Too_Long, 5)
-	result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], cells[:3], &error)
-	expect_refusal(t, result, error, .Bad_Value, 6)
+	outcome, result, _ = act_table(talk, true, 1, table, "Process", 0, many_columns, nil, &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 5)
+	outcome, result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], cells[:3], &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 6)
 	many_cells := make([]assistant_contract.Act_Table_Cell, 2 * (assistant_contract.ACT_TABLE_ROW_CAPACITY + 1), context.temp_allocator)
-	result, _ = act_table(talk, true, 1, table, "Process", 100, columns[:], many_cells, &error)
-	expect_refusal(t, result, error, .Too_Long, 6)
+	outcome, result, _ = act_table(talk, true, 1, table, "Process", 100, columns[:], many_cells, &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 6)
 	for total in ([?]i64{1, 0, -1, min(i64)}) {
-		result, _ = act_table(talk, true, 1, table, "Process", total, columns[:], cells[:], &error)
-		expect_refusal(t, result, error, .Bad_Value, 4)
+		outcome, result, _ = act_table(talk, true, 1, table, "Process", total, columns[:], cells[:], &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 4)
 	}
-	result, _ = act_table(talk, true, 1, record, "Process", 2, columns[:], cells[:], &error)
-	expect_refusal(t, result, error, .Bad_Value, 6)
-	result, _ = act_table(talk, true, 1, record, "Process", 2, columns[:], cells[:2], &error)
-	expect_refusal(t, result, error, .Bad_Value, 6)
+	outcome, result, _ = act_table(talk, true, 1, record, "Process", 2, columns[:], cells[:], &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 6)
+	outcome, result, _ = act_table(talk, true, 1, record, "Process", 2, columns[:], cells[:2], &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 6)
 	empty_name := [2]assistant_contract.Act_Table_Column{column_of("slot"), {}}
-	result, _ = act_table(talk, true, 1, table, "Process", 2, empty_name[:], cells[:], &error)
-	expect_refusal(t, result, error, .Bad_Value, 5)
+	outcome, result, _ = act_table(talk, true, 1, table, "Process", 2, empty_name[:], cells[:], &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 5)
 	testing.expect_value(t, error.found, 2)
 	bad_cells := [?]assistant_contract.Act_Table_Cell{cell_of("a\nb"), cell_of("\xc3"), cell_of("\x1b[31m")}
 	for bad in bad_cells {
 		damaged := cells
 		damaged[3] = bad
-		result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], damaged[:], &error)
-		expect_refusal(t, result, error, .Bad_Value, 6)
+		outcome, result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], damaged[:], &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 6)
 		testing.expect_value(t, error.found, 2)
 	}
 	hidden := cells
 	hidden[0].text[5] = 'x'
-	result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], hidden[:], &error)
-	expect_refusal(t, result, error, .Bad_Value, 6)
+	outcome, result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], hidden[:], &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 6)
 	testing.expect(t, !act_of(talk, 1).table.present)
 	// A whole table, last: it is kept once.
 	kept: ^Entry
-	result, kept = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
+	outcome, result, kept = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
 	testing.expect(t, result == 1 && kept != nil && kept.table.present)
 	testing.expect(t, kept.table.row_count == 2 && kept.table.column_count == 2 && kept.table.total_rows == 18)
 	testing.expect_value(t, act_table_cell_text(&kept.table, 1, 1), "devices")
 	testing.expect_value(t, act_table_column_name(&kept.table, 0), "slot")
 	testing.expect_value(t, act_table_name(&kept.table), "Process")
-	result, _ = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
-	expect_refusal(t, result, error, .State, 1)
+	outcome, result, _ = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
 	// A record of one row, and an empty cell, pass on a new act.
 	talk = done_conversation(t)
 	one := [2]assistant_contract.Act_Table_Cell{cell_of("3"), {}}
-	result, kept = act_table(talk, true, 1, record, "Process", 1, columns[:], one[:], &error)
+	outcome, result, kept = act_table(talk, true, 1, record, "Process", 1, columns[:], one[:], &error)
 	testing.expect(t, result == 1 && kept.table.shape == .Record && act_table_cell_text(&kept.table, 0, 1) == "")
 }
 
@@ -474,19 +510,19 @@ act_table_refuses_a_column_kind_or_a_cell_of_the_other_form :: proc(t: ^testing.
 	for columns in bad_columns {
 		columns := columns
 		columns[1].name = column_of("resident").name
-		result, _ := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
-		expect_refusal(t, result, error, .Bad_Value, 5)
+		outcome, result, _ := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 5)
 	}
 	columns := [2]assistant_contract.Act_Table_Column{column_of("name"), column_of("resident", .Size, pages)}
 	bad_cells := [?][2]assistant_contract.Act_Table_Cell{{cell_of("root"), cell_of("9052", 9052)}, {cell_of("root", 1), cell_of("", 9052)}}
 	for wrong in bad_cells {
 		wrong := wrong
-		result, _ := act_table(talk, true, 1, table, "Process", 1, columns[:], wrong[:], &error)
-		expect_refusal(t, result, error, .Bad_Value, 6)
+		outcome, result, _ := act_table(talk, true, 1, table, "Process", 1, columns[:], wrong[:], &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 6)
 	}
 	testing.expect(t, !act_of(talk, 1).table.present)
-	result, kept := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
-	testing.expect(t, result == 1 && kept != nil)
+	outcome, result, kept := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
+	testing.expect(t, outcome == .Succeeded && result == 1 && kept != nil)
 	unit, is_size := act_table_column_form(&kept.table, 1).(value_kinds.Size_Unit)
 	testing.expect(t, is_size && unit == .Pages)
 	_, is_text := act_table_column_form(&kept.table, 0).(Text_Form)

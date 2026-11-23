@@ -42,12 +42,12 @@ export: u32
 
 // post calls compositor.notify with a title, and gives its result, its
 // error record and its call outcome.
-post :: proc "contextless" (title: string, body := "the border of notify") -> (result: i64, error: errors.Error_Record, status: system.Status, outcome: call_outcome.Call_Outcome) {
+post :: proc "contextless" (title: string, body := "the border of notify") -> (result: i64, error: errors.Error_Record, outcome: call_outcome.Call_Outcome) {
 	arguments: [2]isolated.Argument
 	arguments[0].text = transmute([]u8)title
 	arguments[1].text = transmute([]u8)body
-	call_result, call_status, call_ended := system.call_isolated(&connection, file, export, arguments[:], &error)
-	return call_result, error, call_status == .Ok || call_status == .Failed ? .Ok : .Bad_State, call_ended
+	result, outcome = system.call_isolated(&connection, file, export, arguments[:], &error)
+	return result, error, outcome
 }
 
 wrong :: proc "contextless" (what: string) -> ! {
@@ -105,8 +105,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		{"a title", string(long_body[:]), .Too_Long, 2, 256},
 	}
 	for refused_post in refused_posts {
-		_, error, status, outcome := post(refused_post.title, refused_post.body)
-		if status != .Ok {
+		_, error, outcome := post(refused_post.title, refused_post.body)
+		if system.connection_to_renew(outcome) {
 			wrong("the call of a refused post did not come back")
 		}
 		if outcome != .Argument_Refused || !is_refusal(error, refused_post.kind, .Bytes) || error.argument != refused_post.argument || refused_post.kind == .Too_Long && error.limit != refused_post.limit {
@@ -118,14 +118,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The rate: a post right after an accepted one. The first card comes
 	// right after the refused posts: they kept no time of the rate.
 	first_time := system.time()
-	result, error, status, outcome := post("the first card")
-	if status != .Ok || outcome != .Succeeded || result <= 0 {
+	result, error, outcome := post("the first card")
+	if outcome != .Succeeded || result <= 0 {
 		system.log_fact(.Warning, Wrong_Refusal(errors.error_record_fact_fields(error)))
 		wrong("the first card was refused")
 	}
-	result, error, status, outcome = post("a card within 500 ms")
+	result, error, outcome = post("a card within 500 ms")
 	second_time := system.time()
-	if status != .Ok {
+	if system.connection_to_renew(outcome) {
 		wrong("the call of the second card did not come back")
 	}
 	if outcome != .Succeeded {
@@ -141,8 +141,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	refused := false
 	for _ in 0 ..< POST_LIMIT {
 		system.sleep(system.time() + RATE_MILLISECONDS + 100)
-		result, error, status, outcome = post("a card toward the bound")
-		if status != .Ok {
+		result, error, outcome = post("a card toward the bound")
+		if system.connection_to_renew(outcome) {
 			wrong("a call of notify did not come back")
 		}
 		if outcome == .Succeeded {

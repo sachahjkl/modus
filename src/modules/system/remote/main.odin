@@ -79,7 +79,6 @@ package remote_service
 
 import "base:intrinsics"
 import "modus:contract/call_outcome"
-import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/machine_wire"
@@ -327,7 +326,7 @@ counts: Counts
 Recent :: struct {
 	service:      [32]u8,
 	export:       u32,
-	status:       remote.Status,
+	relay_outcome: call_outcome.Call_Outcome, // Not Succeeded: this process refused the request, and no call ran.
 	outcome:      call_outcome.Call_Outcome,
 	text:         [96]u8, // A refusal: the sentence of its error record.
 	text_count:   int,
@@ -822,9 +821,10 @@ answer_put :: proc "contextless" (buffer: []u8, header: remote.Answer, result: [
 	return len(bytes)
 }
 
-// refuse answers a request that this process refused, and writes the
-// sentence of its error record on the log while the log has room for it.
-refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}) -> int {
+// refuse answers a request that this process refused with its relay
+// outcome, and writes the sentence of its error record on the log while the
+// log has room for it. No call ran.
+refuse :: proc "contextless" (buffer: []u8, outcome: call_outcome.Call_Outcome, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}) -> int {
 	counts.refused += 1
 	error := error
 	// One sentence, for the log and for the window.
@@ -842,7 +842,7 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 			system.log_fact(.Info, Request_Refused(errors.error_record_fact_fields(error)))
 		}
 	}
-	answer := remote.Answer{status = .Refused, error = error, hash = hash}
+	answer := remote.Answer{relay_outcome = u32(outcome), error = error, hash = hash}
 	item := recent_add(service, 0, answer, 0, 0)
 	item.text_count = copy(item.text[:], system.written(&writer))
 	return answer_put(buffer, answer, nil)
@@ -850,11 +850,29 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 
 recent_add :: proc "contextless" (service: string, export: u32, answer: remote.Answer, bytes: u64, microseconds: u64) -> ^Recent {
 	item := &recent[recent_count % RECENT_CAPACITY]
+	// This process wrote both words: they name members.
+	relay, _ := call_outcome.outcome_of_word(u64(answer.relay_outcome))
 	outcome, _ := call_outcome.outcome_of_word(u64(answer.outcome))
-	item^ = {export = export, status = answer.status, outcome = outcome, value = answer.value, error = answer.error.kind, bytes = bytes, microseconds = microseconds}
+	item^ = {export = export, relay_outcome = relay, outcome = outcome, value = answer.value, error = answer.error.kind, bytes = bytes, microseconds = microseconds}
 	copy(item.service[:len(item.service) - 1], service)
 	recent_count += 1
 	return item
+}
+
+// connection_refusal_outcome gives the relay outcome of a connection to a
+// service that did not come, from the kind of its record: the one place of
+// this map.
+connection_refusal_outcome :: proc "contextless" (refusal: errors.Error_Record) -> call_outcome.Call_Outcome {
+	kind, _ := errors.kind_of_word(refusal.kind)
+	#partial switch kind {
+	case .Absent:
+		return .Nothing_Has_That_Name
+	case .No_Grant:
+		return .Grant_Or_Right_Missing
+	case .Full, .Busy:
+		return .Callee_Busy
+	}
+	return .Callee_Unavailable
 }
 
 // connection_find gives the connection to a service for the row of the
@@ -1150,7 +1168,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 // While it waits, this process runs no QUIC: an isolated call is bounded by
 // CALL_LIMIT, and a peer of QUIC sends again what it does not see
 // acknowledged.
-isolated_call_make :: proc "contextless" (connection: ^Service_Connection, request: remote.Request, arguments: []u8) -> (completion: ring.Record, error: errors.Error_Record, ok: bool) {
+isolated_call_make :: proc "contextless" (connection: ^Service_Connection, request: remote.Request, arguments: []u8) -> (completion: ring.Record, outcome: call_outcome.Call_Outcome, error: errors.Error_Record, ok: bool) {
 	// The bytes after the arguments are zero: a request that names a place
 	// of the result reads no byte of a call before it.
 	copied := copy(connection.region, arguments)
@@ -1159,7 +1177,7 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 	}
 	connection.tag += 1
 	if !system.send(&connection.calls.commands, ring.Record{kind = request.export, tag = connection.tag, values = {0 = 0, 1 = u64(request.record_size)}}) {
-		return {}, errors.error_make(.Full, .Records, 0, 0, i64(ring.capacity(&connection.calls.commands))), false
+		return {}, .Callee_Busy, errors.error_make(.Full, .Records, 0, 0, i64(ring.capacity(&connection.calls.commands))), false
 	}
 	start := system.time()
 	limit := start + CALL_LIMIT
@@ -1172,13 +1190,14 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 				break
 			}
 			if record.tag == connection.tag {
-				return record, {}, true
+				return record, .Succeeded, {}, true
 			}
 		}
-		if state, _, _ := system.process_state(connection.process); state == .Stopped || state == .None {
+		if state, stop_cause, stop_outcome := system.process_state(connection.process); state == .Stopped || state == .None {
 			system.log_fact(.Info, Service_Stopped_During_Call{service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			connection_end(connection, false)
-			return {}, errors.error_make(.State, .None, remote.FIELD_SERVICE, 0, 0, i64(state)), false
+			// The command left: the service can have run it.
+			return {}, .Callee_Stopped_During_The_Call, errors.error_make(.Callee_Stopped, .None, 0, i64(stop_cause), 0, i64(stop_outcome)), false
 		}
 		system.wait_records(&wait, &connection.calls.completions)
 		if system.wait_spin(&wait) {
@@ -1187,7 +1206,8 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 		if now := system.wait_end(&wait, limit); now >= limit {
 			system.log_fact(.Info, Service_Silent{bound = milliseconds_field(CALL_LIMIT), service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			connection_end(connection, true)
-			return {}, errors.error_make(.Over_Limit, .Milliseconds, remote.FIELD_EXPORT, i64(now - start), CALL_LIMIT), false
+			// The command left, and the service can still run it.
+			return {}, .Deadline_Passed_During_The_Call, errors.error_make(.No_Answer, .Milliseconds, 0, i64(now - start), CALL_LIMIT), false
 		}
 	}
 }
@@ -1208,12 +1228,12 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	}
 	if client.mesh_only {
 		// A paired machine with no row of the client table acts for no principal.
-		return refuse(buffer, errors.error_make(.No_Grant, .None, remote.FIELD_KIND, i64(remote.Request_Kind.Call), i64(remote.Request_Kind.Mesh)))
+		return refuse(buffer, .Grant_Or_Right_Missing, errors.error_make(.No_Grant, .None, remote.FIELD_KIND, i64(remote.Request_Kind.Call), i64(remote.Request_Kind.Mesh)))
 	}
 	start := system.nanoseconds()
 	request, arguments, error, ok := remote.request_check(buffer[:received], remote.REGION_SIZE)
 	if !ok {
-		return refuse(buffer, error)
+		return refuse(buffer, .Argument_Refused, error)
 	}
 	service := remote.name_text(&request.service)
 	connection, connection_error, pending := connection_find(service, client)
@@ -1221,56 +1241,40 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 		return SERVE_PENDING
 	}
 	if connection == nil {
-		return refuse(buffer, connection_error, service)
+		return refuse(buffer, connection_refusal_outcome(connection_error), connection_error, service)
 	}
 	if connection.hash != request.hash {
-		return refuse(buffer, errors.error_make(.Bad_Value, .None, remote.FIELD_HASH), service, connection.hash)
+		return refuse(buffer, .Argument_Refused, errors.error_make(.Bad_Value, .None, remote.FIELD_HASH), service, connection.hash)
 	}
 	if u64(len(connection.region)) < remote.REGION_SIZE {
-		return refuse(buffer, errors.error_make(.Too_Small, .Bytes, remote.FIELD_SERVICE, i64(len(connection.region)), remote.REGION_SIZE), service, connection.hash)
+		return refuse(buffer, .Argument_Refused, errors.error_make(.Too_Small, .Bytes, remote.FIELD_SERVICE, i64(len(connection.region)), remote.REGION_SIZE), service, connection.hash)
 	}
-	completion, call_error, called := isolated_call_make(connection, request, arguments)
-	if !called {
-		return refuse(buffer, call_error, service, connection.hash)
-	}
+	completion, path_outcome, call_error, called := isolated_call_make(connection, request, arguments)
 	connection.count += 1
 	counts.calls += 1
+	// The request ran: the relay outcome is Succeeded, and the outcome is
+	// the one of the call, from the service through its border, or from the
+	// path to the service.
 	answer := remote.Answer {
-		status = .Ok,
-		hash   = connection.hash,
+		hash = connection.hash,
 	}
-	// The service wrote the status and the outcome word: each goes through
-	// its border, and the client gets one outcome.
 	result: []u8
-	refusal, refusal_known := enum_word.member_of_word(isolated.Status, u64(completion.kind))
-	switch {
-	case !refusal_known:
-		answer.outcome = u32(call_outcome.Call_Outcome.Answer_Unreadable)
-		answer.error = errors.error_make(.Bad_Value, .None, 0, i64(completion.kind), i64(max(isolated.Status)))
+	value, outcome, record := i64(0), path_outcome, call_error
+	if called {
+		value, outcome, record = isolated.answer_of_completion(completion)
+	}
+	answer.outcome = u32(outcome)
+	if outcome == .Succeeded {
+		answer.value = value
+		result = connection.region[request.result_start:][:remote.result_bytes(request, value)]
+	} else {
+		answer.error = record
 		counts.failed += 1
-	case refusal != .Ok:
-		answer.outcome = u32(system.outcome_of_call_status(.Refused, refusal))
-		answer.error = transmute(errors.Error_Record)completion.values
-		counts.failed += 1
-	case:
-		outcome, unreadable := call_outcome.outcome_of_word(completion.values[isolated.COMPLETION_OUTCOME_VALUE])
-		answer.outcome = u32(outcome)
-		if outcome == .Succeeded {
-			answer.value = i64(completion.values[0])
-			result = connection.region[request.result_start:][:remote.result_bytes(request, answer.value)]
-		} else if unreadable.kind != 0 {
-			answer.error = unreadable
-			counts.failed += 1
-		} else if request.error_start != 0 {
-			// The service wrote it: values only, copied as values.
-			answer.error = (^errors.Error_Record)(raw_data(connection.region[request.error_start:]))^
-			counts.failed += 1
-			// The bytes of a failed call are its error details.
+		// The bytes of a call that the export failed are its error details.
+		if called && request.details_end != 0 {
 			details, details_count := remote.details_bytes(request, connection.region[:remote.REGION_SIZE])
 			answer.details = u32(min(details_count, u64(max(u32))))
 			result = details
-		} else {
-			counts.failed += 1
 		}
 	}
 	length := answer_put(buffer, answer, result)

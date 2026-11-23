@@ -300,10 +300,10 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 			break
 		}
 		if head_length == len(head_bytes) {
-			return 0, network_failure(error, .Callee_Unavailable, .Too_Long, .Bytes, path, "the head of the answer passes 2048 bytes")
+			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the head of the answer passes 2048 bytes")
 		}
 		if remote_ended(index) {
-			return 0, network_failure(error, .Callee_Unavailable, .Malformed, .None, path, "the connection ended before the head of the answer")
+			return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the connection ended before the head of the answer")
 		}
 		if system.time() >= deadline {
 			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "no answer before the deadline")
@@ -312,19 +312,19 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 	}
 	head, head_ok := web.head_read(head_bytes[:head_length])
 	if !head_ok {
-		return 0, network_failure(error, .Callee_Unavailable, .Malformed, .None, path, "the head of the answer is not HTTP/1.1")
+		return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the head of the answer is not HTTP/1.1")
 	}
 	if head.status != 200 {
 		return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the status of the answer is not 200", i64(head.status))
 	}
 	if head.content_length < 1 || head.content_length > disk_process.FILE_BYTES_LIMIT {
-		return 0, network_failure(error, .Callee_Unavailable, .Too_Long, .Bytes, path, "the answer has no Content-Length of 1 to 4194304 bytes", i64(head.content_length))
+		return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has no Content-Length of 1 to 4194304 bytes", i64(head.content_length))
 	}
 	// The length is read one time, here: no later byte changes it.
 	size = head.content_length
 	rest := head_bytes[head.size:head_length]
 	if len(rest) > size {
-		return 0, network_failure(error, .Callee_Unavailable, .Too_Long, .Bytes, path, "the answer has more bytes than its Content-Length")
+		return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has more bytes than its Content-Length")
 	}
 	received := copy(file[:size], rest)
 	for received < size {
@@ -334,7 +334,7 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 			break
 		}
 		if count == 0 && remote_ended(index) {
-			return 0, network_failure(error, .Callee_Unavailable, .Too_Small, .Bytes, path, "the connection ended before the end of the body", i64(received))
+			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the connection ended before the end of the body", i64(received))
 		}
 		if system.time() >= deadline {
 			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the body did not come whole before the deadline", i64(received))
@@ -391,14 +391,16 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 // The caller must act for the principal of the store (**Acts_For_Principal**). The call ends 30 seconds after it
 // starts, the deadline of a load. The result is 64, or a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
-//   store keeps.
-// - `Empty`, `Too_Long` or `Bad_Byte` (-3): the path; for `Bad_Byte`, the record holds the place of the byte.
-// - `No_Answer`, `Full` or `Refused` (-4): the connection to the web server, or the deadline.
-// - `Refused`, `Malformed`, `Too_Long` or `Too_Small` (-5): the answer: a status that is not 200 (the record holds
-//   it), no Content-Length of 1 to 4 MiB, or a body that ends early.
-// - `Refused`: the service has no store, or the storage service refused the file.
+// - `No_Grant` (Grant_Or_Right_Missing): the caller does not act for the principal of the store.
+// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 1): the nickname; `Exists` (Name_Already_Taken):
+//   `module_files` or `grant_table`, which the store keeps.
+// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 2): the path; for `Bad_Byte`, the record holds the
+//   place of the byte.
+// - `Full` (Callee_Busy): the table of connections has no free record.
+// - `No_Answer` or `Refused` (Callee_Unavailable, argument 2): the web server did not answer before the deadline, or
+//   its answer is not a module file: a status that is not 200 (the record holds it), no Content-Length of 1 to 4 MiB,
+//   or a body that ends early. The log says which.
+// - `Refused` (Callee_Unavailable): the service has no store, or the storage service refused the file.
 //
 // Example: `module_files.receive("visitor", "/visitor")`.
 @(export, link_name = "receive")
@@ -408,8 +410,8 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	}
 	name_copy: [disk_process.NAME_LIMIT]u8
 	name, name_failure := nickname_check(nickname, &name_copy, .Make, error)
-	if name_failure != 0 {
-		return name_failure
+	if name_failure != .Succeeded {
+		return name_failure, 0
 	}
 	path_text := path^
 	path_copy: [PATH_LIMIT]u8

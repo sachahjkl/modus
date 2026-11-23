@@ -103,14 +103,14 @@ history_end_names := [input_history.History_End_Reason]string {
 	.Divergence          = "divergence",
 }
 
-// kernel_refused gives the result of an export whose kernel operation
-// failed: the record of the kernel when it gave one, else Refused with the
-// status.
+// kernel_refused gives the result of an export whose kernel operation on
+// the debugged process failed: the record of the kernel when it gave one,
+// else Refused with the status. The outcome is the one of session_refused.
 kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
 	if error != nil && error.kind != i64(errors.Kind.None) {
-		return system.outcome_of_status(status)
+		return status == .Bad_State ? .Wrong_State : system.outcome_of_own_status(status)
 	}
-	return refused(error, status)
+	return session_refused(error, status)
 }
 
 // own_kernel_refused gives the outcome of a kernel refusal on an object
@@ -120,7 +120,7 @@ own_kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: s
 	if error != nil && error.kind != i64(errors.Kind.None) {
 		return outcome
 	}
-	return refuse(error, outcome, .Refused, .None, 0, 0, 0, i64(status))
+	return refuse(error, outcome, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 }
 
 // history_header_read copies the header of the history once, through the
@@ -302,7 +302,7 @@ held_session_begin :: proc "contextless" (name: string, caller: ^system.Connecti
 	handle := system.Handle(completion[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return refused(error, .Bad_Handle)
+		return party_answer_refused(error)
 	}
 	hash := transmute([32]u8)[4]u64{completion[1], completion[2], completion[3], completion[4]}
 	slot, process_serial, matches := slot_find(name, hash, held_only = true)
@@ -324,7 +324,7 @@ held_session_begin :: proc "contextless" (name: string, caller: ^system.Connecti
 	if status := system.debug_attach(handle); status != .Ok {
 		system.close(handle)
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return refused(error, status)
+		return session_refused(error, status)
 	}
 	session = {
 		attached       = true,
@@ -364,7 +364,7 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 	handle := system.Handle(completion.values[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return refused(error, .Bad_Handle)
+		return party_answer_refused(error)
 	}
 	// The boot image can hold another module of this name than the one
 	// that was recorded: its replay would prove another run.

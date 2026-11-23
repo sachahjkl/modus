@@ -3,8 +3,7 @@ package system
 
 import "core:testing"
 import "modus:contract/call_outcome"
-import "modus:contract/call_status"
-import "modus:contract/isolated"
+import "modus:contract/errors"
 
 // A refusal of the kernel changes nothing: each status but Ok maps, in both
 // maps, to an outcome of the group Nothing_Changed, and Ok to Succeeded.
@@ -38,27 +37,30 @@ own_refusals_never_blame_the_caller :: proc(t: ^testing.T) {
 	testing.expect_value(t, outcome_of_status(.No_Right), call_outcome.Call_Outcome.Grant_Or_Right_Missing)
 }
 
-// A status of the path gives an outcome in doubt only when the command can
-// have reached the receiver: a stop of the receiver or an answer that the
-// reader cannot read. Each other status of the path changed nothing.
+// The path ends a call with the value 0 and its record, and a caller that
+// asked for no record gets the outcome alone.
 @(test)
-path_statuses_in_doubt_only_after_the_command_left :: proc(t: ^testing.T) {
-	for status in call_status.Call_Status {
-		outcome := outcome_of_call_status(status)
-		group := call_outcome.effect_group_of(outcome)
-		switch status {
-		case .Ok, .Failed:
-			// The outcome of the export decides: the map gives Succeeded.
-			testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
-		case .Stopped:
-			testing.expect_value(t, outcome, call_outcome.Call_Outcome.Callee_Stopped_During_The_Call)
-		case .Wrong_Answer, .Failed_With_Wrong_Details:
-			testing.expect_value(t, outcome, call_outcome.Call_Outcome.Answer_Unreadable)
-		case .Lend_Failed, .No_Room, .Ring_Full, .Refused, .Not_Done:
-			testing.expectf(t, group == .Nothing_Changed, "the status %v gives %v, which is not in Nothing_Changed", status, outcome)
-		}
+a_failure_of_the_path_gives_zero_and_its_record :: proc(t: ^testing.T) {
+	record: errors.Error_Record
+	value, outcome := path_failure(&record, .Callee_Busy, errors.error_make(.Full, .Requests, 0, 64, 64))
+	testing.expect_value(t, value, 0)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Callee_Busy)
+	testing.expect_value(t, record.kind, i64(errors.Kind.Full))
+	value, outcome = path_failure(nil, .Deadline_Passed_During_The_Call, errors.error_make(.No_Answer))
+	testing.expect_value(t, value, 0)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Deadline_Passed_During_The_Call)
+}
+
+// A connection is renewed after a call in doubt or a callee that did not
+// take the command, and after no answer of an export.
+@(test)
+a_connection_is_renewed_only_when_it_cannot_be_trusted :: proc(t: ^testing.T) {
+	for outcome in call_outcome.Call_Outcome {
+		in_doubt := call_outcome.effect_group_of(outcome) == .Change_In_Doubt
+		testing.expectf(t, connection_to_renew(outcome) == (in_doubt || outcome == .Callee_Unavailable), "the outcome %v", outcome)
 	}
-	testing.expect_value(t, outcome_of_call_status(.Refused, .Bad_Export), call_outcome.Call_Outcome.Operation_Unsupported)
-	testing.expect_value(t, outcome_of_call_status(.Refused, isolated.Status.Bad_Arguments), call_outcome.Call_Outcome.Argument_Refused)
-	testing.expect_value(t, outcome_of_call_status(.Ring_Full), call_outcome.Call_Outcome.Callee_Busy)
+	testing.expect(t, connection_to_renew(.Answer_Unreadable))
+	testing.expect(t, connection_to_renew(.Deadline_Passed_During_The_Call))
+	testing.expect(t, !connection_to_renew(.Argument_Refused))
+	testing.expect(t, !connection_to_renew(.Succeeded))
 }

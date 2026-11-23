@@ -2,6 +2,7 @@
 package system
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -60,7 +61,7 @@ connection_ready_step_ends_a_hang_at_the_deadline :: proc(t: ^testing.T) {
 connection_ready_step_refuses_a_wrong_first_completion :: proc(t: ^testing.T) {
 	made := test_ring_make(t)
 	defer delete(made.memory)
-	testing.expect(t, ring.push(&made.server.completions, ring.Record{kind = u32(isolated.Status.Ok), tag = 1}))
+	testing.expect(t, ring.push(&made.server.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 1}))
 	reading, done := connection_ready_step(&made.caller, 0, answer_deadline(0), .Ready)
 	testing.expect(t, done)
 	testing.expect_value(t, reading, isolated.Ready_Reading.Refused)
@@ -72,7 +73,7 @@ connection_ready_step_refuses_a_wrong_first_completion :: proc(t: ^testing.T) {
 connection_ready_step_reads_the_completion_before_the_stop :: proc(t: ^testing.T) {
 	made := test_ring_make(t)
 	defer delete(made.memory)
-	testing.expect(t, ring.push(&made.server.completions, ring.Record{kind = u32(isolated.Status.Load_Failed), tag = isolated.READY_TAG}))
+	testing.expect(t, ring.push(&made.server.completions, isolated.load_failed_record(.Bind)))
 	reading, done := connection_ready_step(&made.caller, 0, answer_deadline(0), .Stopped)
 	testing.expect(t, done)
 	testing.expect_value(t, reading, isolated.Ready_Reading.Load_Failed)

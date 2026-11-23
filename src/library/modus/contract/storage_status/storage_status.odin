@@ -10,7 +10,7 @@ package storage_status
 Status :: enum u8 {
 	Ok        = 0, // The export ran and gave the call outcome Succeeded.
 	Gone      = 1, // The connection ended: the grant was revoked, or the storage service stopped.
-	Refused   = 2, // The storage service refused the call: see isolated.Status.
+	Refused   = 2, // The client sent no call, or could not read the result that the export wrote: no name, no room, a full ring, a damaged result.
 	Damaged   = 3, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
 	Failed    = 4, // The export gave a call outcome that is not Succeeded: the error record says why.
 	Too_Small = 5, // The bytes do not fit in the buffer of the caller: the count of the bytes is the result.

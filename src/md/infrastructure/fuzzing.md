@@ -163,7 +163,7 @@ Built after them. Each raw target has a seed of each form and its edges; a gener
 - **The rasterizer of a path**: `draw_path` writes fuzzed points as one `Path` record, with a stroke width from the input, and draws it into a canvas framed by guard pixels, whole and in damage rectangles across the bands of the accumulation. No guard pixel and no pixel outside the box changes, and the two draws are equal. The places of the input are moved inside the coordinate limit, most of them near the canvas, so the execution reaches the bands and not only the border. It is the one oracle of a sum of the cells past its bound: the arithmetic of Odin wraps with no fault.
 - **The tables of the firmware**: `firmware_tables` (`dmar_read`, `scope_resolve`, `unit_of`, `ivrs_read`, `amd_unit_of`, `mcfg_read`), and `acpi_processors` (`processors_read` in each mode of the identifiers, at several capacities: the list of 8 bits is a part of the list of 32 bits, in its order).
 
-The oracle of `remote_answer` named one fault of a border before its first run: `answer_check` accepted a status that names no member of `remote.Status`. It now refuses it, and its host test gives it the largest member plus one and the largest word.
+The oracle of `remote_answer` named one fault of a border before its first run: `answer_check` accepted a status that named no member. The two outcome words of an answer now cross their own border, `remote.answer_outcome`: the oracle checks that a word that names no outcome is `Answer_Unreadable` with its record, and the seeds hold the largest member plus one in each place.
 
 Built last, the last readers of the records between processes, each raw target with its seeds and its regions:
 

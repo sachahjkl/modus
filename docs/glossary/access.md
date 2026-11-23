@@ -1088,7 +1088,7 @@ Do not use: packet, message (alone), mesh request.
 
 An outbound link is a QUIC connection that `remote` opens to a paired machine, whose handshake pins the identity key of that machine.
 
-It is the other direction of the mesh frames: this machine sends the requests (an object by hash, a role call, a store offer, the two pairing steps of the joiner) and the other machine answers. The link refuses a handshake that proves any other key. Each request ends Answered, Refused, Unknown_Outcome when it left and lost its answer, or Unreachable when the link was not up. It is not a grant: the other machine still checks the uses that its plan gives this machine.
+It is the other direction of the mesh frames: this machine sends the requests (an object by hash, a role call, a store offer, the two pairing steps of the joiner) and the other machine answers. The link refuses a handshake that proves any other key. Each request ends with a call outcome: in doubt when it left and lost its answer, `Callee_Unavailable` when the link was not up. It is not a grant: the other machine still checks the uses that its plan gives this machine.
 
 The design: `src/md/features/several_machines.md`, "The outbound link".
 

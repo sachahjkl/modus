@@ -1,5 +1,6 @@
 package recipes_service
 
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // Log facts emitted by the delegated recipes service.
@@ -34,11 +35,11 @@ Builder_Not_Started :: struct {
 	stage:  u64,
 }
 
-// The call of build did not give 1: the call status (call_status.Call_Status),
-// the result, and the kind of the error record.
-@(log_fact = "recipes: the call of build gave the call status {call_status}, the result {result}, the error kind {kind}")
+// The call of build did not give 1: the call outcome, the result, and the
+// kind of the error record.
+@(log_fact = "recipes: the call of build gave the call outcome {outcome}, the result {result}, the error kind {kind}")
 Builder_Call_Ended :: struct {
-	call_status: u64,
+	outcome:     call_outcome.Call_Outcome_Word,
 	result:      i64,
 	kind:        i64,
 }

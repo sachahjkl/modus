@@ -10,6 +10,7 @@ import "core:strings"
 import "core:testing"
 import contract "modus:contract/agent_bridge"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/byte_order"
 import "modus:contract/remote"
 import module "modus:contract/module"
@@ -62,15 +63,15 @@ Fake_Transport_State :: struct {
 }
 
 @(private = "file")
-fake_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: Lex_Eval_Result, err: string, ok: bool) {
+fake_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: Lex_Eval_Result, outcome: call_outcome.Call_Outcome, err: string) {
 	_ = allocator
 	state := (^Fake_Transport_State)(user_data)
 	state.eval_lex_calls += 1
 	state.last_lex_line = strings.clone(line, context.temp_allocator)
 	if state.fail_eval_lex {
-		return {}, state.eval_lex_err, false
+		return {}, .Callee_Unavailable, state.eval_lex_err
 	}
-	return state.next_lex_result, "", true
+	return state.next_lex_result, .Succeeded, ""
 }
 
 @(private = "file")
@@ -204,7 +205,7 @@ expect_json_error :: proc(
 	t: ^testing.T,
 	text: string,
 	expected_code: Json_Rpc_Error_Code,
-	expected_status: contract.Bridge_Status,
+	expected_outcome: call_outcome.Call_Outcome,
 	expected_refusal: contract.Bridge_Refusal,
 ) {
 	root := parse_json_object(t, text)
@@ -216,8 +217,17 @@ expect_json_error :: proc(
 	testing.expectf(t, is_obj, "error field is not an object: %s", text)
 	code_val, code_ok := err_obj["code"].(json.Integer)
 	testing.expectf(t, code_ok && code_val == i64(expected_code), "expected error code %d, got %v in %s", i64(expected_code), err_obj["code"], text)
-	status_val, status_ok := err_obj["status"].(json.String)
-	testing.expectf(t, status_ok && status_val == contract.bridge_status_name(expected_status), "expected status %s, got %v in %s", contract.bridge_status_name(expected_status), err_obj["status"], text)
+	// A request that waits for the principal has no outcome; an ended one
+	// names its outcome.
+	expected_state := expected_code == .Awaiting_Principal_Approval ? contract.Bridge_Request_State.Awaiting_Principal_Approval : contract.Bridge_Request_State.Ended
+	state_val, state_ok := err_obj["state"].(json.String)
+	testing.expectf(t, state_ok && state_val == contract.bridge_request_state_name(expected_state), "expected state %s, got %v in %s", contract.bridge_request_state_name(expected_state), err_obj["state"], text)
+	outcome_val, has_outcome := err_obj["outcome"].(json.String)
+	if expected_state == .Ended {
+		testing.expectf(t, has_outcome && outcome_val == call_outcome.CALL_OUTCOME_NAMES[expected_outcome], "expected outcome %v, got %v in %s", expected_outcome, err_obj["outcome"], text)
+	} else {
+		testing.expectf(t, !has_outcome, "a request that waits names an outcome in %s", text)
+	}
 	refusal_val, refusal_ok := err_obj["refusal"].(json.String)
 	testing.expectf(t, refusal_ok && refusal_val == contract.bridge_refusal_name(expected_refusal), "expected refusal %s, got %v in %s", contract.bridge_refusal_name(expected_refusal), err_obj["refusal"], text)
 }
@@ -237,7 +247,7 @@ test_eval_lex_structured_values_and_tables :: proc(t: ^testing.T) {
 	state.next_lex_result = Lex_Eval_Result{value_kind = .Integer, integer_value = 4}
 	resp := bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{"line":"monitor.count(\"processors\")"}}`)
 	res := expect_json_result(t, resp)
-	testing.expect_value(t, res["status"].(json.String), "Ok")
+	testing.expect_value(t, res["outcome"].(json.String), "Succeeded")
 	testing.expect_value(t, res["value_kind"].(json.String), "integer")
 	testing.expect_value(t, res["value"].(json.Integer), i64(4))
 	testing.expect_value(t, state.eval_lex_calls, 1)
@@ -316,7 +326,7 @@ test_eval_lex_structured_values_and_tables :: proc(t: ^testing.T) {
 	state.fail_eval_lex = true
 	state.eval_lex_err = "peer disconnected"
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":6,"method":"eval_lex","params":{"line":"monitor.processes()"}}`)
-	expect_json_error(t, resp, .Transport_Error, .Transport_Error, .None)
+	expect_json_error(t, resp, .Transport_Error, .Callee_Unavailable, .None)
 }
 
 @(test)
@@ -349,7 +359,7 @@ test_read_screen_snapshot_and_bounds :: proc(t: ^testing.T) {
 	}
 	for req in bad_cases {
 		resp := bridge_handle_json_line(&bridge, req)
-		expect_json_error(t, resp, .Invalid_Params, .Refused, .Invalid_Field)
+		expect_json_error(t, resp, .Invalid_Params, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Invalid_Field), .Invalid_Field)
 	}
 	testing.expect_value(t, state.read_screen_calls, 0)
 
@@ -403,22 +413,22 @@ test_send_key_and_send_pointer_window_scope_and_act_chain :: proc(t: ^testing.T)
 
 	// Out-of-scope windows (0 and 999) refused without calling transport or growing act log
 	resp := bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":1,"method":"send_key","params":{"window_id":0,"code":30,"character":97,"pressed":true,"modifiers":0}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Window_Not_In_Scope)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Window_Not_In_Scope), .Window_Not_In_Scope)
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":2,"method":"send_key","params":{"window_id":999,"code":30,"character":97,"pressed":true,"modifiers":0}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Window_Not_In_Scope)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Window_Not_In_Scope), .Window_Not_In_Scope)
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":3,"method":"send_pointer","params":{"window_id":999,"x":100,"y":200,"buttons":1,"wheel":0}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Window_Not_In_Scope)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Window_Not_In_Scope), .Window_Not_In_Scope)
 	testing.expect_value(t, state.send_key_calls, 0)
 	testing.expect_value(t, state.send_pointer_calls, 0)
 	testing.expect_value(t, len(bridge.act_log.records), 0)
 
 	// Invalid key/pointer fields refused at payload validation border
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":4,"method":"send_key","params":{"window_id":101,"code":0,"pressed":true}}`)
-	expect_json_error(t, resp, .Invalid_Params, .Refused, .Invalid_Field)
+	expect_json_error(t, resp, .Invalid_Params, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Invalid_Field), .Invalid_Field)
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":5,"method":"send_pointer","params":{"window_id":101,"x":99999,"y":10,"buttons":0}}`)
-	expect_json_error(t, resp, .Invalid_Params, .Refused, .Invalid_Field)
+	expect_json_error(t, resp, .Invalid_Params, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Invalid_Field), .Invalid_Field)
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":6,"method":"send_pointer","params":{"window_id":101,"x":10,"y":10,"buttons":4}}`)
-	expect_json_error(t, resp, .Invalid_Params, .Refused, .Invalid_Field)
+	expect_json_error(t, resp, .Invalid_Params, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Invalid_Field), .Invalid_Field)
 	testing.expect_value(t, state.send_key_calls, 0)
 	testing.expect_value(t, state.send_pointer_calls, 0)
 
@@ -466,7 +476,7 @@ test_send_key_and_send_pointer_window_scope_and_act_chain :: proc(t: ^testing.T)
 	// Expired wide grant at exact expiry boundary refuses input
 	clock.now_ms = bridge.policy.wide_grant_expires_ms
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":13,"method":"send_key","params":{"window_id":101,"code":30,"pressed":false}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Wide_Grant_Expired)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Wide_Grant_Expired), .Wide_Grant_Expired)
 	testing.expect_value(t, state.send_key_calls, 1)
 }
 
@@ -494,7 +504,7 @@ test_read_log_facts_queries_and_bounds :: proc(t: ^testing.T) {
 	}
 	for item in bad_cases {
 		resp := bridge_handle_json_line(&bridge, item.line)
-		expect_json_error(t, resp, .Invalid_Params, .Refused, item.refusal)
+		expect_json_error(t, resp, .Invalid_Params, contract.bridge_refusal_outcome(item.refusal), item.refusal)
 	}
 	testing.expect_value(t, state.read_log_facts_calls, 0)
 
@@ -549,16 +559,16 @@ test_unauthorized_permissions_and_remote_uses_refused :: proc(t: ^testing.T) {
 	bridge.clock_user_data = &clock
 
 	resp := bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{"line":"monitor.processes()"}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":2,"method":"read_screen","params":{"format":"png"}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":3,"method":"send_key","params":{"window_id":101,"code":30,"pressed":true}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":4,"method":"send_pointer","params":{"window_id":101,"x":10,"y":20,"buttons":0}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 
 	testing.expect_value(t, state.eval_lex_calls, 0)
 	testing.expect_value(t, state.read_screen_calls, 0)
@@ -574,18 +584,18 @@ test_unauthorized_permissions_and_remote_uses_refused :: proc(t: ^testing.T) {
 	bridge.policy.permissions_word = contract.bridge_permissions_to_word({.Eval_Lex, .Read_Screen, .Send_Input, .Read_Log_Facts})
 	bridge.policy.remote_uses_word = remote.client_uses_word({.Calls})
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":6,"method":"read_screen","params":{"format":"png"}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 
 	// View without Input refuses Send_Key and Send_Pointer
 	bridge.policy.remote_uses_word = remote.client_uses_word({.Calls, .View})
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":7,"method":"send_key","params":{"window_id":101,"code":30,"pressed":true}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 	testing.expect_value(t, state.send_key_calls, 0)
 
 	// Missing client key refused with Client_Key_Missing
 	bridge.policy.client_key_public = {}
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":8,"method":"eval_lex","params":{"line":"monitor.processes()"}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Client_Key_Missing)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Client_Key_Missing), .Client_Key_Missing)
 	testing.expect_value(t, state.eval_lex_calls, 0)
 }
 
@@ -649,13 +659,13 @@ test_snapshot_folder_of_the_operator_is_the_only_place_of_a_file :: proc(t: ^tes
 	// A symbolic link planted at the next name is refused, never followed.
 	target := fmt.tprintf("%s/target", outside)
 	testing.expect_value(t, os.symlink(target, fmt.tprintf("%s/snapshot_4.bgrx", checked)), nil)
-	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":9,"method":"read_screen","params":{"format":"raw_bgrx"}}`), .Transport_Error, .Transport_Error, .None)
+	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":9,"method":"read_screen","params":{"format":"raw_bgrx"}}`), .Transport_Error, .Callee_Unavailable, .None)
 	testing.expect(t, !os.exists(target), "the bridge followed a symbolic link")
 
 	// A folder that became a link after the check is refused.
 	testing.expect_value(t, os.remove_all(checked), nil)
 	testing.expect_value(t, os.symlink(outside, checked), nil)
-	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":10,"method":"read_screen","params":{"format":"raw_bgrx"}}`), .Transport_Error, .Transport_Error, .None)
+	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":10,"method":"read_screen","params":{"format":"raw_bgrx"}}`), .Transport_Error, .Callee_Unavailable, .None)
 	outside_entries, list_error = os.read_directory_by_path(outside, -1, context.temp_allocator)
 	testing.expect_value(t, list_error, nil)
 	testing.expect_value(t, len(outside_entries), 0)
@@ -688,7 +698,7 @@ test_grant_adding_plans_apply_and_sensitive_actions_await_principal_approval :: 
 		for fields in bypass_fields {
 			req := fmt.tprintf(`{{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{{"line":%q%s}}}}`, line, fields)
 			resp := bridge_handle_json_line(&bridge, req)
-			expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+			expect_json_error(t, resp, .Awaiting_Principal_Approval, .Succeeded, .Principal_Approval_Required)
 		}
 	}
 
@@ -705,8 +715,8 @@ test_grant_adding_plans_apply_and_sensitive_actions_await_principal_approval :: 
 		frame_size, encode_refusal := contract.encode_command_frame(&frame, frame_buffer[:])
 		testing.expect_value(t, encode_refusal, contract.Bridge_Refusal.None)
 		response_buffer: [contract.RESPONSE_HEADER_SIZE + 64]u8
-		_, status, refusal := bridge_handle_wire_frame(&bridge, frame_buffer[:frame_size], response_buffer[:])
-		testing.expect_value(t, status, contract.Bridge_Status.Awaiting_Principal_Approval)
+		_, state, _, refusal := bridge_handle_wire_frame(&bridge, frame_buffer[:frame_size], response_buffer[:])
+		testing.expect_value(t, state, contract.Bridge_Request_State.Awaiting_Principal_Approval)
 		testing.expect_value(t, refusal, contract.Bridge_Refusal.Principal_Approval_Required)
 	}
 
@@ -714,14 +724,14 @@ test_grant_adding_plans_apply_and_sensitive_actions_await_principal_approval :: 
 	for line in ([?]string{"# comment\nplans.apply(1)", "-- comment\nstorage.write(\"a\", \"b\")", "// comment\nsettings.appearance(1)", "monitor.processes() // plans.apply(1)", "plan |> plans.apply()"}) {
 		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":2,"method":"eval_lex","params":{{"line":%q,"sensitive_action":false}}}}`, line)
 		resp := bridge_handle_json_line(&bridge, req)
-		expect_json_error(t, resp, .Refused, .Refused, .Invalid_Text)
+		expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Invalid_Text), .Invalid_Text)
 	}
 
 	// Calls outside the read-only list cannot self-approve.
 	for line in ([?]string{`compositor.wide_grant_indicator(0, 0)`, `settings.appearance(1)`, `storage.write("a", "b")`, `debugger.attach(1)`, `remote.allow("abcd")`}) {
 		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":4,"method":"eval_lex","params":{{"line":%q,"sensitive_action":"Normal_Semantic_Read"}}}}`, line)
 		resp := bridge_handle_json_line(&bridge, req)
-		expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+		expect_json_error(t, resp, .Awaiting_Principal_Approval, .Succeeded, .Principal_Approval_Required)
 	}
 
 	testing.expect_value(t, state.eval_lex_calls, 0)
@@ -731,7 +741,7 @@ test_grant_adding_plans_apply_and_sensitive_actions_await_principal_approval :: 
 	// A read-only call runs, whatever the request says of it.
 	resp := bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":8,"method":"eval_lex","params":{"line":"monitor.processes()","sensitive_action":"Passphrase_Or_Unlock_Dialog"}}`)
 	res := expect_json_result(t, resp)
-	testing.expect_value(t, res["status"].(json.String), "Ok")
+	testing.expect_value(t, res["outcome"].(json.String), "Succeeded")
 	testing.expect_value(t, state.eval_lex_calls, 1)
 }
 @(test)
@@ -759,10 +769,10 @@ test_collector_full_fails_closed_and_detects_tampering :: proc(t: ^testing.T) {
 	// Collector is now full: subsequent key and pointer inputs fail closed with Act_Log_Required
 	clock.now_ms = 2_020
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":3,"method":"send_key","params":{"window_id":101,"code":30,"pressed":false}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Act_Log_Required)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Act_Log_Required), .Act_Log_Required)
 
 	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":4,"method":"send_pointer","params":{"window_id":202,"x":51,"y":61,"buttons":0}}`)
-	expect_json_error(t, resp, .Refused, .Refused, .Act_Log_Required)
+	expect_json_error(t, resp, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Act_Log_Required), .Act_Log_Required)
 
 	testing.expect_value(t, state.send_key_calls, 1)
 	testing.expect_value(t, state.send_pointer_calls, 1)
@@ -835,7 +845,7 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 	}
 	resp_json := bridge_handle_json_line(&bridge, wire_json_req(1, encode_cmd_hex(t, &lex_frame)))
 	wire_resp := decode_wire_json_response(t, resp_json)
-	testing.expect_value(t, wire_resp.status, contract.Bridge_Status.Ok)
+	testing.expect(t, wire_resp.state == .Ended && wire_resp.outcome == .Succeeded)
 	testing.expect_value(t, wire_resp.request_id, u64(101))
 	testing.expect_value(t, string(wire_resp.payload), "text:ok-lex")
 
@@ -853,7 +863,7 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 	}
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(2, encode_cmd_hex(t, &screen_frame)))
 	wire_resp = decode_wire_json_response(t, resp_json)
-	testing.expect_value(t, wire_resp.status, contract.Bridge_Status.Ok)
+	testing.expect(t, wire_resp.state == .Ended && wire_resp.outcome == .Succeeded)
 	testing.expect_value(t, len(wire_resp.payload), 4)
 
 	// 3. Send_Key over wire_command records act hash and sequence 0
@@ -872,7 +882,7 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 	}
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(3, encode_cmd_hex(t, &key_frame)))
 	wire_resp = decode_wire_json_response(t, resp_json)
-	testing.expect_value(t, wire_resp.status, contract.Bridge_Status.Ok)
+	testing.expect(t, wire_resp.state == .Ended && wire_resp.outcome == .Succeeded)
 	testing.expect_value(t, wire_resp.act_sequence_number, u64(0))
 	testing.expect_value(t, wire_resp.act_record_hash, bridge.act_log.records[0].record_hash)
 
@@ -893,7 +903,7 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 	clock.now_ms = 2_010
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(4, encode_cmd_hex(t, &ptr_frame)))
 	wire_resp = decode_wire_json_response(t, resp_json)
-	testing.expect_value(t, wire_resp.status, contract.Bridge_Status.Ok)
+	testing.expect(t, wire_resp.state == .Ended && wire_resp.outcome == .Succeeded)
 	testing.expect_value(t, wire_resp.act_sequence_number, u64(1))
 	testing.expect_value(t, wire_resp.act_record_hash, bridge.act_log.records[1].record_hash)
 
@@ -911,13 +921,13 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 	}
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(5, encode_cmd_hex(t, &log_frame)))
 	wire_resp = decode_wire_json_response(t, resp_json)
-	testing.expect_value(t, wire_resp.status, contract.Bridge_Status.Ok)
+	testing.expect(t, wire_resp.state == .Ended && wire_resp.outcome == .Succeeded)
 	testing.expect_value(t, string(wire_resp.payload), "1")
 
 	// Collector is full (capacity=2): next wire Send_Key fails closed with Act_Log_Required
 	key_frame.request_id = 106
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(6, encode_cmd_hex(t, &key_frame)))
-	expect_json_error(t, resp_json, .Refused, .Refused, .Act_Log_Required)
+	expect_json_error(t, resp_json, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Act_Log_Required), .Act_Log_Required)
 
 	// plans.apply in wire Eval_Lex stops with Awaiting_Principal_Approval
 	apply_frame := contract.Bridge_Command_Frame {
@@ -928,63 +938,63 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 		payload         = transmute([]u8)string("plans.apply(1)"),
 	}
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(7, encode_cmd_hex(t, &apply_frame)))
-	expect_json_error(t, resp_json, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+	expect_json_error(t, resp_json, .Awaiting_Principal_Approval, .Succeeded, .Principal_Approval_Required)
 
 	// Mismatched client_key_hash, principal_id, and grant_serial are refused
 	wrong_key_frame := lex_frame
 	wrong_key_frame.client_key_hash[0] ~= 0xFF
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(8, encode_cmd_hex(t, &wrong_key_frame)))
-	expect_json_error(t, resp_json, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp_json, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 
 	wrong_principal_frame := lex_frame
 	wrong_principal_frame.principal_id = 99
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(9, encode_cmd_hex(t, &wrong_principal_frame)))
-	expect_json_error(t, resp_json, .Refused, .Refused, .Permission_Denied)
+	expect_json_error(t, resp_json, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Permission_Denied), .Permission_Denied)
 
 	wrong_grant_frame := key_frame
 	wrong_grant_frame.grant_serial = 999
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(10, encode_cmd_hex(t, &wrong_grant_frame)))
-	expect_json_error(t, resp_json, .Refused, .Refused, .Wide_Grant_Not_Active)
+	expect_json_error(t, resp_json, .Refused, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Wide_Grant_Not_Active), .Wide_Grant_Not_Active)
 
 	// Malformed hex and corrupted MODAB1 wire frames
 	resp_json = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":11,"method":"wire_command","params":{"frame_hex":"not-hex!!"}}`)
-	expect_json_error(t, resp_json, .Invalid_Params, .Refused, .Bad_Header)
+	expect_json_error(t, resp_json, .Invalid_Params, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Bad_Header), .Bad_Header)
 
 	raw_buf: [256]u8
 	written, _ := contract.encode_command_frame(&lex_frame, raw_buf[:])
 	resp_out: [256]u8
 
 	// Truncated header
-	_, st, ref := bridge_handle_wire_frame(&bridge, raw_buf[:contract.COMMAND_HEADER_SIZE - 1], resp_out[:])
-	testing.expect_value(t, st, contract.Bridge_Status.Refused)
+	_, request_state, outcome, ref := bridge_handle_wire_frame(&bridge, raw_buf[:contract.COMMAND_HEADER_SIZE - 1], resp_out[:])
+	testing.expect(t, request_state == .Ended && outcome == .Argument_Refused)
 	testing.expect_value(t, ref, contract.Bridge_Refusal.Truncated)
 
 	// Bad magic
 	bad_magic := raw_buf
 	bad_magic[0] = 'X'
-	_, st, ref = bridge_handle_wire_frame(&bridge, bad_magic[:written], resp_out[:])
-	testing.expect_value(t, st, contract.Bridge_Status.Refused)
+	_, request_state, outcome, ref = bridge_handle_wire_frame(&bridge, bad_magic[:written], resp_out[:])
+	testing.expect(t, request_state == .Ended && outcome == .Argument_Refused)
 	testing.expect_value(t, ref, contract.Bridge_Refusal.Bad_Header)
 
 	// Non-zero reserved word
 	bad_reserved := raw_buf
 	byte_order.write_u32_little_endian(bad_reserved[:], 80, 1)
-	_, st, ref = bridge_handle_wire_frame(&bridge, bad_reserved[:written], resp_out[:])
-	testing.expect_value(t, st, contract.Bridge_Status.Refused)
+	_, request_state, outcome, ref = bridge_handle_wire_frame(&bridge, bad_reserved[:written], resp_out[:])
+	testing.expect(t, request_state == .Ended && outcome == .Argument_Refused)
 	testing.expect_value(t, ref, contract.Bridge_Refusal.Bad_Header)
 
 	// Trailing byte
 	trailing := raw_buf
 	trailing[written] = 0xAA
-	_, st, ref = bridge_handle_wire_frame(&bridge, trailing[:written + 1], resp_out[:])
-	testing.expect_value(t, st, contract.Bridge_Status.Refused)
+	_, request_state, outcome, ref = bridge_handle_wire_frame(&bridge, trailing[:written + 1], resp_out[:])
+	testing.expect(t, request_state == .Ended && outcome == .Argument_Refused)
 	testing.expect_value(t, ref, contract.Bridge_Refusal.Trailing_Bytes)
 
 	// Unknown command word
 	bad_cmd := raw_buf
 	byte_order.write_u32_little_endian(bad_cmd[:], 8, 99)
-	_, st, ref = bridge_handle_wire_frame(&bridge, bad_cmd[:written], resp_out[:])
-	testing.expect_value(t, st, contract.Bridge_Status.Refused)
+	_, request_state, outcome, ref = bridge_handle_wire_frame(&bridge, bad_cmd[:written], resp_out[:])
+	testing.expect(t, request_state == .Ended && outcome == .Argument_Refused)
 	testing.expect_value(t, ref, contract.Bridge_Refusal.Unknown_Command)
 
 	// Verify only the 5 valid commands ever reached the transport
@@ -1033,7 +1043,7 @@ test_malformed_json_and_invalid_jsonrpc_requests :: proc(t: ^testing.T) {
 
 	for item in cases {
 		resp := bridge_handle_json_line(&bridge, item.line)
-		expect_json_error(t, resp, item.code, .Refused, item.refusal)
+		expect_json_error(t, resp, item.code, contract.bridge_refusal_outcome(item.refusal), item.refusal)
 	}
 
 	testing.expect_value(t, state.eval_lex_calls, 0)
@@ -1070,8 +1080,8 @@ test_remote_transport_lifecycle_and_fail_closed :: proc(t: ^testing.T) {
 	testing.expect(t, iface.read_log_facts != nil)
 
 	// Malformed Lex call fails cleanly before touching the socket
-	_, eval_err, eval_ok := iface.eval_lex(iface.user_data, "not_a_call", context.temp_allocator)
-	testing.expect(t, !eval_ok && len(eval_err) > 0)
+	_, eval_outcome, eval_err := iface.eval_lex(iface.user_data, "not_a_call", context.temp_allocator)
+	testing.expect(t, eval_outcome == .Argument_Refused && len(eval_err) > 0)
 
 	// Unattached live remote_display operations fail closed with clear transport errors
 	_, screen_err, screen_ok := iface.read_screen(iface.user_data, Screen_Snapshot_Request{format = .Png}, context.temp_allocator)
@@ -1083,8 +1093,8 @@ test_remote_transport_lifecycle_and_fail_closed :: proc(t: ^testing.T) {
 
 	// Closed transport fails closed cleanly
 	remote_transport_close(&transport)
-	_, closed_err, closed_ok := iface.eval_lex(iface.user_data, "monitor.processes()", context.temp_allocator)
-	testing.expect(t, !closed_ok && len(closed_err) > 0)
+	_, closed_outcome, closed_err := iface.eval_lex(iface.user_data, "monitor.processes()", context.temp_allocator)
+	testing.expect(t, closed_outcome == .Callee_Unavailable && len(closed_err) > 0)
 }
 
 // The kind of a column comes from its field: a plain number, a size and a

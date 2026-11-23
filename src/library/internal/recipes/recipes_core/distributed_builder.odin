@@ -788,14 +788,14 @@ builders_try :: proc "contextless" (
 			continue
 		}
 		call := machine_wire.mesh_call_role(&builder.links[peer_index], policy.transport, REMOTE_RECIPES_ROLE, u32(Remote_Recipes_Export.Build), {.Idempotent}, arguments, now_ms, policy.bound_ms, builder.request[:], builder.answer[:])
-		switch call.exchange.outcome {
-		case .Answered:
-		case .Refused:
+		switch {
+		case call.exchange.outcome == .Succeeded:
+		case machine_wire.mesh_refused_by_peer(call.exchange):
 			builder.counters.builders_refused += 1
 			builder.peer_out[peer_index] = true
 			builder_leaves(builder, index)
 			continue
-		case .None, .Unknown_Outcome, .Unreachable:
+		case:
 			// The build can have run there; it is a function of its recipe,
 			// so the next machine builds the same output.
 			builder.counters.links_lost += 1
@@ -870,12 +870,12 @@ cache_fetch :: proc "contextless" (
 	}
 	hash := recipe_hash
 	call := machine_wire.mesh_call_role(&builder.links[peer_index], policy.transport, REMOTE_RECIPES_ROLE, u32(Remote_Recipes_Export.Realisation_Lookup), {.Idempotent}, hash[:], now_ms, policy.bound_ms, builder.request[:], builder.answer[:])
-	switch call.exchange.outcome {
-	case .Answered:
-	case .Refused:
+	switch {
+	case call.exchange.outcome == .Succeeded:
+	case machine_wire.mesh_refused_by_peer(call.exchange):
 		// The cache holds no realisation of the recipe.
 		return false, .None
-	case .None, .Unknown_Outcome, .Unreachable:
+	case:
 		builder.counters.links_lost += 1
 		builder.peer_out[peer_index] = true
 		return false, .None
@@ -941,11 +941,11 @@ object_fetch :: proc "contextless" (builder: ^Distributed_Builder, policy: ^Dist
 		return 0, .Malformed_Realisation, false
 	}
 	exchange := machine_wire.mesh_exchange(&builder.links[peer_index], policy.transport, request, now_ms, policy.bound_ms, builder.answer[:])
-	switch exchange.outcome {
-	case .Answered:
-	case .Refused:
+	switch {
+	case exchange.outcome == .Succeeded:
+	case machine_wire.mesh_refused_by_peer(exchange):
 		return 0, .Output_Absent, false
-	case .None, .Unknown_Outcome, .Unreachable:
+	case:
 		return 0, .None, true
 	}
 	body := exchange.body

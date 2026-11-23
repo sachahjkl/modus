@@ -182,16 +182,17 @@ value_of_size :: proc "contextless" (size: u64) -> i64 {
 // on entry: when they did not fit, the record names bytes past the text
 // table, and the readers of a draw table check each range. The result is
 // the pair of the export: the count of draw records of the full answer, or
-// the outcome Argument_Refused with an error record: Full for an element
-// larger than the element frame, Out_Of_Range for a text table past 2^32
-// bytes (the first byte of a range is a u32). It refuses before it appends.
+// a failure with an error record: Budget_Or_Capacity_Exhausted with Full
+// for an element larger than the element frame, Argument_Refused with
+// Out_Of_Range for a text table past 2^32 bytes (the first byte of a range
+// is a u32). It refuses before it appends.
 @(private)
 element_frame_append_to_caller :: proc "contextless" (element: ^Element_Frame, drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if element.table.full {
 		if element.table.record_count >= ELEMENT_RECORD_CAPACITY {
-			return call_outcome.fail(error, .Argument_Refused, .Full, .Records, 0, 0, ELEMENT_RECORD_CAPACITY)
+			return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, ELEMENT_RECORD_CAPACITY)
 		}
-		return call_outcome.fail(error, .Argument_Refused, .Full, .Bytes, 0, 0, ELEMENT_TEXT_CAPACITY)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Bytes, 0, 0, ELEMENT_TEXT_CAPACITY)
 	}
 	text_base := text != nil ? text.count : 0
 	pad := u64(0)
@@ -255,7 +256,7 @@ area_of :: proc "contextless" (area: Area) -> interface.Area {
 	return {int(area.x), int(area.y), int(area.width), int(area.height)}
 }
 
-// draw_background appends the background of the rules on an area: one color and the grid of points. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
+// draw_background appends the background of the rules on an area: one color and the grid of points. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or a failure with an error record: Argument_Refused with Too_Long for a table over 2^40 records or bytes, or with Out_Of_Range for a text table past 2^32 bytes; Budget_Or_Capacity_Exhausted with Full for an element over 64 records or 4096 bytes of text.
 @(export, link_name = "draw_background")
 draw_background :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	element: Element_Frame
@@ -266,7 +267,7 @@ draw_background :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Rec
 	return element_frame_append_to_caller(&element, drawn, nil, error)
 }
 
-// draw_card appends the frame of one subject: its border, its surface, its title in the accent and its caption. It writes the area of its content in the one row of `area`. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
+// draw_card appends the frame of one subject: its border, its surface, its title in the accent and its caption. It writes the area of its content in the one row of `area`. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or a failure with an error record: Argument_Refused with Too_Long for a table over 2^40 records or bytes, or with Out_Of_Range for a text table past 2^32 bytes; Budget_Or_Capacity_Exhausted with Full for an element over 64 records or 4096 bytes of text.
 @(export, link_name = "draw_card")
 draw_card :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	element: Element_Frame
@@ -281,7 +282,7 @@ draw_card :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), 
 	return element_frame_append_to_caller(&element, drawn, text, error)
 }
 
-// draw_cell_text appends a text in a cell of a line, at the left, or at the right when `right` is not 0. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
+// draw_cell_text appends a text in a cell of a line, at the left, or at the right when `right` is not 0. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or a failure with an error record: Argument_Refused with Too_Long for a table over 2^40 records or bytes, or with Out_Of_Range for a text table past 2^32 bytes; Budget_Or_Capacity_Exhausted with Full for an element over 64 records or 4096 bytes of text.
 @(export, link_name = "draw_cell_text")
 draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	element: Element_Frame
@@ -292,7 +293,7 @@ draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Reco
 	return element_frame_append_to_caller(&element, drawn, text, error)
 }
 
-// draw_label_value_line appends a name in the dim color and its value. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
+// draw_label_value_line appends a name in the dim color and its value. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or a failure with an error record: Argument_Refused with Too_Long for a table over 2^40 records or bytes, or with Out_Of_Range for a text table past 2^32 bytes; Budget_Or_Capacity_Exhausted with Full for an element over 64 records or 4096 bytes of text.
 @(export, link_name = "draw_label_value_line")
 draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, result_value: i64) {
 	element: Element_Frame
@@ -303,7 +304,7 @@ draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Dr
 	return element_frame_append_to_caller(&element, drawn, text, error)
 }
 
-// draw_table_band appends the band under line `index` of a table: every second line has the surface of a card. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
+// draw_table_band appends the band under line `index` of a table: every second line has the surface of a card. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or a failure with an error record: Argument_Refused with Too_Long for a table over 2^40 records or bytes, or with Out_Of_Range for a text table past 2^32 bytes; Budget_Or_Capacity_Exhausted with Full for an element over 64 records or 4096 bytes of text.
 @(export, link_name = "draw_table_band")
 draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	element: Element_Frame
@@ -314,7 +315,7 @@ draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Rec
 	return element_frame_append_to_caller(&element, drawn, nil, error)
 }
 
-// draw_bar appends a value against a maximum: the track and the full part. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: Too_Long for a table over 2^40 records or bytes, Full for an element over 64 records or 4096 bytes of text, Out_Of_Range for a text table past 2^32 bytes.
+// draw_bar appends a value against a maximum: the track and the full part. The result is the count of draw records of the full answer (larger than the capacity: it did not fit), or a failure with an error record: Argument_Refused with Too_Long for a table over 2^40 records or bytes, or with Out_Of_Range for a text table past 2^32 bytes; Budget_Or_Capacity_Exhausted with Full for an element over 64 records or 4096 bytes of text.
 @(export, link_name = "draw_bar")
 draw_bar :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	element: Element_Frame

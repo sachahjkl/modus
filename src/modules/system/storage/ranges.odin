@@ -418,7 +418,7 @@ set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes
 
 // commit puts the pending changes of this connection on the object `name` under a place in one commit, on the disk when the call returns. The state before becomes a version. The commit hashes the blocks that changed and the object nodes above them, and the path of the last block: never the whole object. The result is one row: the generation, and the measure of the commit (the blocks of the object, the blocks changed, hashed and written); or a failure with its call outcome and an error record.
 //
-// The error kinds: those of write; Absent (unit Pending: the object has no pending change on this connection; found 1: another change of the object came first since the first pending change, and the pending changes are dropped); Damaged (Data_Damaged: the state before is damaged; the pending changes are dropped).
+// The error kinds: those of write; Absent (unit Pending: the object has no pending change on this connection; found 1: another change of the object came first since the first pending change, and the pending changes are dropped); Damaged (Data_Damaged: the state before is damaged; the pending changes stay on the connection).
 @(export, link_name = "commit")
 commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ranged, refused := ranged_of(place, name^, error, true)
@@ -434,11 +434,12 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 	measure: Commit_Measure
 	generation, changed := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, reaches_whole_store(&ranged.named.caller), error, 2, pending, &measure)
 	if changed != .Succeeded {
-		// A race lost and a damaged state before drop the pending changes:
-		// the connection sees the last commit at its next read.
-		if changed == .Another_Change_Came_First || changed == .Data_Damaged {
+		// A race lost drops the pending changes, which start from a state
+		// that is no longer the last one: the connection sees the last
+		// commit at its next read. Each other refusal, a damaged state
+		// before too, changes nothing: the pending changes stay.
+		if changed == .Another_Change_Came_First {
 			pending_drop(pending)
-			return changed, 0
 		}
 		return changed, 0
 	}

@@ -601,7 +601,7 @@ The run passes: OpenSSL takes the Retry, completes the handshake with the raw pu
 **One call, one stream.**
 1. The host opens a bidirectional stream, and writes the call request: the `remote.Request` header of 104 bytes, then the bytes of the call region (its `arguments` field), then the end of the stream.
 2. `remote` reads the stream into the buffer of its stream as it arrives. The buffer holds `remote.REQUEST_LIMIT` bytes: the header and a whole call region (65 640 bytes).
-3. When the end of the stream came, `remote` checks the request (`remote.request_check`, against the bytes of the stream), then makes the isolated call. A request that does not check gets an answer with the status Refused and its error record, as each refusal of `remote`. A stream that ends before its header is such a request ("the call has 20 bytes; it must have at least 104 bytes").
+3. When the end of the stream came, `remote` checks the request (`remote.request_check`, against the bytes of the stream), then makes the isolated call. A request that does not check gets an answer with the relay outcome `Argument_Refused` and its error record, as each refusal of `remote` gets its relay outcome. A stream that ends before its header is such a request ("the call has 20 bytes; it must have at least 104 bytes").
 4. `remote` writes on the same stream the call answer: one `remote.Answer` header of 112 bytes, whose `total` counts the bytes of the result, then those bytes, then the end of the stream. The host checks that the bytes are exactly a header and its total, and that the status names a member of `remote.Status` (`remote.answer_check`).
 5. The stream ends when both ends were read and acknowledged: its stream record is free, and the server gives the host one more stream (MAX_STREAMS).
 
@@ -617,7 +617,7 @@ The stream names the call, so a header carries no number of its own for the call
 
 | Case | What `remote` does | Code |
 |---|---|---|
-| A request that does not check | It answers with the status Refused and its error record, then the end of the stream | none |
+| A request that does not check | It answers with the relay outcome of the refusal (`Argument_Refused` for a field of the request) and its error record, then the end of the stream | none |
 | A request of more than `REQUEST_LIMIT` bytes | STOP_SENDING and RESET_STREAM as soon as the byte after the limit comes, before any call | Too_Large (1) |
 | A request that is not whole 10 s after its stream came (`REQUEST_TIME_LIMIT`) | STOP_SENDING and RESET_STREAM, no call | Timeout (2) |
 | An answer that the host did not take (each byte and the end acknowledged) 10 s after the call (`ANSWER_TIME_LIMIT`) | RESET_STREAM | Timeout (2) |

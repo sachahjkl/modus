@@ -8,27 +8,42 @@ package module_files
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:disk_process"
 import "modus:storage"
 import "modus:system"
 
-// The failure of a memory object that the caller lent.
-ERROR_MEMORY :: -7
-
 // nickname_check copies a nickname of a call one time, then checks the copy:
 // the caller can change its call region during the call. It gives the
-// name, in the place of the caller, or a failure with its error record.
-nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_process.NAME_LIMIT]u8, use: disk_process.Nickname_Use, error: ^errors.Error_Record) -> (name: string, failure: i64) {
+// name, in the place of the caller, or the outcome of the refusal with its
+// error record. A name that the store keeps for itself exists already: a
+// file of that name is never made, and none is read.
+nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_process.NAME_LIMIT]u8, use: disk_process.Nickname_Use, error: ^errors.Error_Record) -> (name: string, outcome: call_outcome.Call_Outcome) {
 	nickname_text := nickname^
 	name_length := copy(name_copy[:], nickname_text)
 	name = string(name_copy[:name_length])
-	if refusal := disk_process.nickname_refusal(name, len(nickname_text), 1, use); refusal.kind != 0 {
-		error^ = refusal
-		return "", ERROR_NAME
+	refusal := disk_process.nickname_refusal(name, len(nickname_text), 1, use)
+	if refusal.kind == 0 {
+		return name, .Succeeded
 	}
-	return name, 0
+	error^ = refusal
+	switch refusal.kind {
+	case i64(errors.Kind.Exists):
+		return "", .Name_Already_Taken
+	case i64(errors.Kind.Absent):
+		return "", .Nothing_Has_That_Name
+	}
+	return "", .Argument_Refused
+}
+
+// memory_failure gives the outcome of a memory object that the caller lent
+// and that the kernel did not map: the argument is wrong, and nothing
+// changed.
+@(private = "file")
+memory_failure :: proc "contextless" (error: ^errors.Error_Record, argument: i64, status: system.Status) -> (call_outcome.Call_Outcome, i64) {
+	return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, argument, 0, 0, i64(status))
 }
 
 // put stores the module file that the caller lends in memory in the store module_files under a nickname.
@@ -43,26 +58,26 @@ nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_proce
 // - **size**: the count of the bytes, 1 to 4 MiB, at most the bytes of the memory object.
 // - **result**: the 64 hexadecimal digits of the hash.
 //
-// The caller must act for the principal of the store (**Acts_For_Principal**). The result is 64, or a negative number
-// with an error record:
+// The caller must act for the principal of the store (**Acts_For_Principal**). The result is 64, or a failure with its
+// call outcome and an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
-//   store keeps.
-// - `Refused` (-6): the service has no store, or the storage service refused the file.
-// - `Out_Of_Range` (-7, argument 3): a size of 0, past 4 MiB, or past the memory object; `Refused` (-7): the memory
-//   object does not map.
+// - `No_Grant` (Grant_Or_Right_Missing): the caller does not act for the principal of the store.
+// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 1): the nickname; `Exists` (Name_Already_Taken):
+//   `module_files` or `grant_table`, which the store keeps.
+// - `Out_Of_Range` (Argument_Refused, argument 3): a size of 0, past 4 MiB, or past the memory object; `Refused`
+//   (Argument_Refused, argument 2): the memory object does not map.
+// - `Refused` (Callee_Unavailable): the service has no store, or the storage service refused the file.
 //
 // Example: `module_files.put("hello", module, 4096)`.
 @(export, link_name = "put")
-put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !caller_allowed() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [disk_process.NAME_LIMIT]u8
 	name, name_failure := nickname_check(nickname, &name_copy, .Make, error)
-	if name_failure != 0 {
-		return name_failure
+	if name_failure != .Succeeded {
+		return name_failure, 0
 	}
 	pages, size_status := system.memory_size(module.handle)
 	if size_status != .Ok {
@@ -70,14 +85,14 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 	}
 	if refusal := disk_process.put_size_refusal(size, pages * system.PAGE_SIZE, 3); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_MEMORY
+		return .Argument_Refused, 0
 	}
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
-		return errors.fail(error, ERROR_STORE, .Refused, .Store)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
 	address, map_status := system.memory_map(module.handle, {})
 	if map_status != .Ok {
-		return errors.fail(error, ERROR_MEMORY, .Refused, .None, 2, 0, 0, i64(map_status))
+		return memory_failure(error, 2, map_status)
 	}
 	// One copy: the caller can change its memory object during the call,
 	// and the hash names the bytes that the store holds.
@@ -85,14 +100,14 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 	system.memory_unmap(address)
 	count := int(size)
 	hash := blake3.hash(file[:count])
-	if failure := file_write(name, count, error); failure != 0 {
-		return failure
+	if written, _ := file_write(name, count, error); written != .Succeeded {
+		return written, 0
 	}
 	digits: [disk_process.HASH_DIGITS]u8
 	disk_process.hash_write(&digits, hash)
 	system.log_fact(.Info, File_Put{size = value_kinds.Size_In_Bytes(count), file_hash = value_kinds.Hash_Field(hash), nickname = value_kinds.module_name_field(name)})
 	copy(result^, digits[:])
-	return disk_process.HASH_DIGITS
+	return .Succeeded, disk_process.HASH_DIGITS
 }
 
 // read gives the bytes of the module file of a nickname of the store module_files in a memory object that the caller lends.
@@ -105,28 +120,29 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 // - **module**: a memory object that the caller lends with Read and Write.
 //
 // The caller must act for the principal of the store (**Acts_For_Principal**). The result is the count of the bytes, or
-// a negative number with an error record:
+// a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Absent` (-2): `module_files` or `grant_table`, which no
-//   module file has.
-// - `Absent` (-6): no object of the nickname; `Refused` (-6): the service has no store, or the storage service refused
-//   the read.
-// - `Too_Small` (-7, argument 2): the memory object holds fewer bytes than the file; `Refused` (-7): it does not map.
+// - `No_Grant` (Grant_Or_Right_Missing): the caller does not act for the principal of the store.
+// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 1): the nickname; `Absent` (Nothing_Has_That_Name):
+//   `module_files` or `grant_table`, which no module file has, or no object of the nickname.
+// - `Out_Of_Range` (Argument_Refused, argument 1): the object of the nickname is larger than a module file.
+// - `Too_Small` (Argument_Refused, argument 2): the memory object holds fewer bytes than the file; `Refused`
+//   (Argument_Refused, argument 2): it does not map.
+// - `Refused` (Callee_Unavailable): the service has no store, or the storage service refused the read.
 //
 // Example: `module_files.read("hello", module)`.
 @(export, link_name = "read")
-read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> i64 {
+read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !caller_allowed() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [disk_process.NAME_LIMIT]u8
 	name, name_failure := nickname_check(nickname, &name_copy, .Read, error)
-	if name_failure != 0 {
-		return name_failure
+	if name_failure != .Succeeded {
+		return name_failure, 0
 	}
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
-		return errors.fail(error, ERROR_STORE, .Refused, .Store)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
 	store_error: errors.Error_Record
 	object_size, size_status := storage.size(&store_client, storage.ROOT, name, &store_error)
@@ -136,7 +152,7 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 	}
 	if refusal := disk_process.stored_file_refusal(object_size, absent, 1); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_STORE
+		return absent ? .Nothing_Has_That_Name : .Argument_Refused, 0
 	}
 	count := int(object_size)
 	received := 0
@@ -154,21 +170,21 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 	}
 	if refusal := disk_process.read_room_refusal(i64(count), pages * system.PAGE_SIZE, 2); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_MEMORY
+		return .Argument_Refused, 0
 	}
 	address, map_status := system.memory_map(module.handle, {.Write})
 	if map_status != .Ok {
-		return errors.fail(error, ERROR_MEMORY, .Refused, .None, 2, 0, 0, i64(map_status))
+		return memory_failure(error, 2, map_status)
 	}
 	intrinsics.mem_copy_non_overlapping(address, raw_data(file), count)
 	system.memory_unmap(address)
-	return i64(count)
+	return .Succeeded, i64(count)
 }
 
 // file_write writes the first count bytes of file as the object name, in
 // pieces, sets its size and commits it: one commit for the whole file.
 @(private = "file")
-file_write :: proc "contextless" (name: string, count: int, error: ^errors.Error_Record) -> i64 {
+file_write :: proc "contextless" (name: string, count: int, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	store_error: errors.Error_Record
 	for piece_start := 0; piece_start < count; piece_start += WRITE_PIECE {
 		piece := file[piece_start:min(piece_start + WRITE_PIECE, count)]
@@ -183,5 +199,5 @@ file_write :: proc "contextless" (name: string, count: int, error: ^errors.Error
 	if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
 		return store_failure(error, &store_error, status, .File, name)
 	}
-	return 0
+	return .Succeeded, 0
 }

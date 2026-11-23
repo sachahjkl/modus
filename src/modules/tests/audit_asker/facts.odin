@@ -1,6 +1,7 @@
 package audit_asker
 
 import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the test module audit_asker
@@ -67,9 +68,9 @@ Pair_Refusals_Checked :: struct {}
 
 // The display answered plan_diff_ask of a caller that holds no role Plans
 // with another answer than No_Grant.
-@(log_fact = "audit_asker: WRONG: the display answered plan_diff_ask of a caller that does not hold Plans with the call status {status}, the result {result}, the kind {error_kind} and the unit {error_unit}, in place of No_Grant")
+@(log_fact = "audit_asker: WRONG: the display answered plan_diff_ask of a caller that does not hold Plans with the call outcome {outcome}, the result {result}, the kind {error_kind} and the unit {error_unit}, in place of No_Grant")
 Wrong_Display_Answer :: struct {
-	status:     u64,
+	outcome:    call_outcome.Call_Outcome_Word,
 	result:     i64,
 	error_kind: i64,
 	error_unit: i64,

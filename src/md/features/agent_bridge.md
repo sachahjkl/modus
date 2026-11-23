@@ -35,7 +35,7 @@ An external agent drives a running modus machine through one typed bridge on the
 The contract package `modus:contract/agent_bridge` defines canonical little-endian binary frames starting with the 6-byte magic `"MODAB1"` and 2-byte version `1`:
 
 - **Command frame** (`COMMAND_HEADER_SIZE` = 84 bytes + bounded payload): magic, version, `Bridge_Command_Kind`, non-zero `request_id`, `principal_id`, `grant_serial`, `target_window_id`, 32-byte `client_key_hash`, `payload_length`, zero `reserved` field, followed by the exact command payload bytes.
-- **Response frame** (`RESPONSE_HEADER_SIZE` = 72 bytes + bounded payload): magic, version, `Bridge_Status`, `Bridge_Refusal`, non-zero `request_id`, `act_sequence_number`, 32-byte `act_record_hash`, `payload_length`, zero `reserved` field, followed by the exact response payload bytes.
+- **Response frame** (`RESPONSE_HEADER_SIZE` = 72 bytes + bounded payload): magic, version 2, `Bridge_Request_State` (`Ended` or `Awaiting_Principal_Approval`), `Bridge_Refusal`, non-zero `request_id`, `act_sequence_number`, 32-byte `act_record_hash`, `payload_length`, the word of the call outcome of an ended request (`Succeeded` for a request that waits), followed by the exact response payload bytes.
 
 Each decoder checks the magic, version, reserved word, exact byte length (refusing both truncation and trailing bytes), closed enum membership, and payload bounds before returning a decoded record.
 

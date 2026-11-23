@@ -99,7 +99,7 @@ read_table_round_trip :: proc(t: ^testing.T) {
 	function := table_description_of(.Read)
 	function.result = u8(module.Type.Integer)
 	arguments := [1]Argument{{table = {records = bytes_of(&rows, 64), count = 3}}}
-	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	testing.expect_value(t, size, 32)
 	call: Call
@@ -132,7 +132,7 @@ change_table_round_trip :: proc(t: ^testing.T) {
 	region: [256]u8
 	function := table_description_of(.Change)
 	arguments := [1]Argument{{table = {records = bytes_of(&memory, 64), count = 2}}}
-	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
@@ -173,7 +173,7 @@ append_table_round_trip :: proc(t: ^testing.T) {
 		function := table_description_of(.Append)
 		function.result = u8(module.Type.Integer)
 		arguments := [1]Argument{{table = {records = bytes_of(&memory, 80), count = 2}}}
-		offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
+		offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 		testing.expect(t, encoded)
 		call: Call
 		testing.expect(t, decode(file, function, offset, size, region[:], &call))
@@ -213,7 +213,7 @@ append_count_smaller :: proc(t: ^testing.T) {
 	region: [256]u8
 	function := table_description_of(.Append)
 	arguments := [1]Argument{{table = {records = bytes_of(&memory, 64), count = 2}}}
-	offset, size, _, _, _ := encode(file, function, arguments[:], region[:])
+	offset, size, _, _ := encode(file, function, arguments[:], region[:])
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
 	call.places[0].count = 1
@@ -232,7 +232,7 @@ append_capacity_zero :: proc(t: ^testing.T) {
 	region: [64]u8
 	function := table_description_of(.Append)
 	arguments := [1]Argument{{table = {}}}
-	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
@@ -259,7 +259,7 @@ bytes_round_trip :: proc(t: ^testing.T) {
 		b = GUARD
 	}
 	arguments := [2]Argument{{table = {records = transmute([]u8)text, count = 5}}, {table = {records = out[:8], count = 2}}}
-	offset, size, _, _, encoded := encode(nil, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(nil, function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	testing.expect_value(t, size, 64)
 	call: Call
@@ -289,7 +289,7 @@ memory_object_table :: proc(t: ^testing.T) {
 	region: [128]u8
 	function := table_description_of(.Read, .Change)
 	arguments := [2]Argument{{table = {records = make([]u8, 65536 * 16, context.temp_allocator), count = 65536, memory_handle = 0x20005, memory_start = 4096}}, {table = {records = make([]u8, 64, context.temp_allocator), count = 4, memory_handle = 0x20006}}}
-	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded, "a table of 1 MiB in a memory object needs no room in the call region")
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
@@ -301,7 +301,7 @@ memory_object_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, transmute(op.Rights)call.lent[1].rights, op.Rights{.Read, .Write})
 	// Without the memory object, the table does not fit: room_missing says how much.
 	arguments[0].table.memory_handle = 0
-	_, _, _, _, encoded = encode(file, function, arguments[:], region[:])
+	_, _, _, encoded = encode(file, function, arguments[:], region[:])
 	testing.expect(t, !encoded)
 	missing := room_missing(file, function, arguments[:], 65536)
 	testing.expect_value(t, missing.parameter, 1)
@@ -530,7 +530,7 @@ tables_return_changes_nothing_on_a_problem :: proc(t: ^testing.T) {
 	region: [512]u8
 	function := table_description_of(.Append, .Append)
 	arguments := [2]Argument{{table = {records = bytes_of(&first, 64), count = 1}}, {table = {records = bytes_of(&second, 64), count = 2}}}
-	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
@@ -602,7 +602,7 @@ append_across_calls_is_the_same_in_each_way :: proc(t: ^testing.T) {
 		append_three_readings(&direct_place)
 		// The isolated call.
 		region: [512]u8
-		offset, size, _, _, encoded := encode(file, function, isolated_argument[:], region[:])
+		offset, size, _, encoded := encode(file, function, isolated_argument[:], region[:])
 		testing.expectf(t, encoded, "call %d: encode takes a count of %d over a capacity of 4", call_number + 1, isolated_argument[0].table.count)
 		call: Call
 		testing.expectf(t, decode(file, function, offset, size, region[:], &call), "call %d: decode", call_number + 1)

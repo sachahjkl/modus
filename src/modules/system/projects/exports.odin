@@ -173,26 +173,26 @@ load :: proc "c" (tree_name: ^string, project_evaluation: ^system.Bytes_To_Read,
 // - **project_name**: 1 to 23 bytes, with no zero byte and no /; not
 //   module_files and not grant_table; and a Lex name.
 //
-// The result is 0, or a negative number with an error record:
-// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
-// ERROR_PROJECT: Empty, Too_Long, Bad_Byte, or Exists for module_files and
-// grant_table, which the store module_files keeps, for the name, or the
+// The result is 0, or a failure with its call outcome and an error record:
+// the refusals of the caller, as for load; Empty, Too_Long or Bad_Byte
+// (Argument_Refused) for the name; Exists (Name_Already_Taken) for
+// module_files and grant_table, which the store module_files keeps; or the
 // refusal of the project as the value found.
 //
 // Example: `projects.new("hello")`.
 @(export, link_name = "new")
-new_project :: proc "c" (project_name: ^string, error: ^errors.Error_Record) -> i64 {
+new_project :: proc "c" (project_name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	principal, failure, allowed := caller_principal(true, error)
 	if !allowed {
-		return failure
+		return failure, 0
 	}
 	name, name_failure, name_ok := name_copy(project_name, copied_project_name[:], 1, error)
 	if !name_ok {
-		return name_failure
+		return name_failure, 0
 	}
 	if refusal := disk_process.nickname_refusal(string(name), len(name), 1, .Make); refusal.kind != 0 {
 		error^ = refusal
-		return ERROR_PROJECT
+		return refusal.kind == i64(errors.Kind.Exists) ? .Name_Already_Taken : .Argument_Refused, 0
 	}
 	evaluation: [pr.PROJECT_NEW_EVALUATION_BYTES]u8
 	written, written_ok := pr.project_new_evaluation(string(name), evaluation[:])
@@ -204,7 +204,7 @@ new_project :: proc "c" (project_name: ^string, error: ^errors.Error_Record) -> 
 		return project_refusal_fail(error, refusal, 1)
 	}
 	system.log_fact(.Info, Project_Made{project = value_kinds.module_name_field(string(name)), principal = principal})
-	return 0
+	return .Succeeded, 0
 }
 
 // update moves one input of a loaded project of the principal of the caller

@@ -334,10 +334,10 @@ bridge_answer_read :: proc(answer: string) -> (report: Act_Report) {
 		return {state = .Refused, text = "the bridge gave an answer that is no JSON"}
 	}
 	if error_value, has_error := root["error"].(json.Object); has_error {
-		status, _ := error_value["status"].(json.String)
+		state, _ := error_value["state"].(json.String)
 		refusal, _ := error_value["refusal"].(json.String)
 		message, _ := error_value["message"].(json.String)
-		if string(status) == bridge_contract.bridge_status_name(.Awaiting_Principal_Approval) {
+		if string(state) == bridge_contract.bridge_request_state_name(.Awaiting_Principal_Approval) {
 			return {state = .Awaiting_Principal, text = text_cut(fmt.tprintf("the bridge stopped it for the principal: %s", refusal))}
 		}
 		return {state = .Refused, text = text_cut(fmt.tprintf("%s: %s", refusal, message))}

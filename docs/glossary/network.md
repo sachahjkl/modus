@@ -283,7 +283,7 @@ Do not use: RPC channel, request stream (for this).
 
 A stream error code is the application error code of a RESET_STREAM, a STOP_SENDING or a CONNECTION_CLOSE of the remote service: a value of `remote.Stream_Error`, which the tool prints by its name.
 
-The values are `Too_Large` (1), a request of more than `REQUEST_LIMIT` bytes; `Timeout` (2), a bound of time that passed; and `Cancelled` (3), a stream that the host ended before the call. A request that does not pass its check gets no stream error code: it gets a call answer with the status Refused and its error record. A stream error code is not a status of a call and not an error number: it says why the transport of one call ended.
+The values are `Too_Large` (1), a request of more than `REQUEST_LIMIT` bytes; `Timeout` (2), a bound of time that passed; and `Cancelled` (3), a stream that the host ended before the call. A request that does not pass its check gets no stream error code: it gets a call answer with the relay outcome of its refusal and its error record. A stream error code is not a status of a call and not an error number: it says why the transport of one call ended.
 
 The design: `docs/QUIC.md`, "Errors and ends of a call".
 
@@ -293,7 +293,7 @@ Do not use: status (for this), error number.
 
 A call request is the bytes of a call stream from the host to the remote service: a fixed header, `remote.Request`, then the bytes of the call region from offset 0.
 
-The header names the service, the BLAKE3 hash of its module and the index of the export. The host encodes the arguments with the description of the export. The remote service trusts nothing in a request: `remote.request_check` checks each count and each place against the bytes of the stream and the size of the call region. A refusal is a call answer with the status Refused. A call request is not a message with names in text: it names the export by its index and the module by its hash.
+The header names the service, the BLAKE3 hash of its module and the index of the export. The host encodes the arguments with the description of the export. The remote service trusts nothing in a request: `remote.request_check` checks each count and each place against the bytes of the stream and the size of the call region. A refusal is a call answer whose relay outcome is not `Succeeded`. A call request is not a message with names in text: it names the export by its index and the module by its hash.
 
 The design: `docs/MODULE_CONTRACT.md`, "A call from the host".
 
@@ -303,11 +303,21 @@ Do not use: RPC request, message, packet.
 
 A call answer is the bytes of a call stream from the remote service to the host: a fixed header, `remote.Answer`, then the bytes of the result.
 
-The header has 112 bytes: the status, the integer result, the error record, and the count of the bytes of the result that follow (`total`). The host trusts nothing in it: `remote.answer_check` checks that the bytes are exactly a header and its total, and that the status names a member. The host decodes the result with the description of the export and prints it. The answers come back in any order; the host matches each one to its call by its stream. A call answer is not a response of HTTP: it has no headers of text.
+The header has 112 bytes: the relay outcome, the outcome of the export, the integer result, the error record, and the count of the bytes of the result that follow (`total`). The host trusts nothing in it: `remote.answer_check` checks that the bytes are exactly a header and its total, and `remote.answer_outcome` is the border of the two outcome words. The answers come back in any order; the host matches each one to its call by its stream. A call answer is not a response of HTTP: it has no headers of text.
 
 The design: `src/library/modus/contract/remote`.
 
 Do not use: response, reply.
+
+### Relay outcome
+
+A relay outcome is the call outcome of a request to the remote service, beside the outcome of the export in a call answer (`remote.Answer.relay_outcome`).
+
+It is not `Succeeded` when the remote service refused the request, and then no call ran: `Argument_Refused` for a field of the request or a hash of another build, the outcome of a connection that did not come for a service. The error record names the field of the request. When it is `Succeeded`, the outcome of the export says how the call ended. A reader gives its caller the first of the two that is not `Succeeded`.
+
+The design: `src/md/api/call_outcome.md`, "The borders of the isolated call, of `remote`".
+
+Do not use: status (for this), relay status.
 
 ### Developer tool
 

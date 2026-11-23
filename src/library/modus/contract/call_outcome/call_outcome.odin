@@ -52,6 +52,11 @@ Call_Outcome :: enum u64 {
 	Answer_Unreadable                = 16, // An answer came, and the reader cannot read it by the contract that it knows: trust nothing of it.
 }
 
+// The word of a call outcome as another party wrote it: a writer of a log
+// fact copies it with no cast, so a word that names no member is carried as
+// it came, and the reader of the fact writes its number.
+Call_Outcome_Word :: distinct u64
+
 // What a call did to the state. The four groups never change: no member is
 // added, and no outcome moves to another group. A relay, a test, a replay
 // and a library that calls again switch on the group, never on the

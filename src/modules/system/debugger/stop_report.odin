@@ -80,14 +80,14 @@ stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^er
 	if !answered {
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, DISK_DEBUG_OBJECT_MILLISECONDS)
 	}
-	if system.Status(completion.kind) != .Ok {
+	if status, unreadable := system.status_of_word(completion.kind); unreadable.kind != 0 || status != .Ok {
 		if error != nil {
 			error^ = errors.completion_record(completion.values)
 		}
 		return outcome_of_status_word(completion.kind), 0
 	}
 	if !received {
-		return refused(error, .Bad_Handle), 0
+		return party_answer_refused(error), 0
 	}
 	// The object of the module: the one read here, or the one of the
 	// session when the service debugs the same module from the store of

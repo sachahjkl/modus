@@ -478,7 +478,7 @@ Do not use: struct type, schema, class.
 
 A call host is the process that loads one module and executes the isolated calls of its exports (`src/modules/system/host`).
 
-The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: Ok, or `Load_Failed` with its load error. A call has no time limit: the caller ends it by closing the process handle, and the next call starts a new call host. Example: `isolate("sample")` in the console.
+The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: `Succeeded`, or the outcome of a failed load with its load error. A call has no time limit: the caller ends it by closing the process handle, and the next call starts a new call host. Example: `isolate("sample")` in the console.
 
 The design: `docs/MODULE_CONTRACT.md`, "The isolated call, as implemented".
 
@@ -494,9 +494,9 @@ Do not use: channel, pipe.
 
 ### Ready completion
 
-A ready completion is the first completion of a call ring: the tag 0, the kind Ok, no value, which the call host or the service sends once it maps the ring with the consent to receive handles.
+A ready completion is the first completion of a call ring: the tag 0, the kind `Succeeded`, no value, which the call host or the service sends once it maps the ring with the consent to receive handles.
 
-A caller sends its first call only after it: before it, the kernel has no receiver for a handle that the call lends. `system.call_host_start`, `system.service_connection`, `storage.open`, `storage.open_handles`, the console and `remote` wait for it, and end a connection whose service stops first, or does not answer before the hang bound of an answer. A call host that does not load sends `Load_Failed` in its place.
+A caller sends its first call only after it: before it, the kernel has no receiver for a handle that the call lends. `system.call_host_start`, `system.service_connection`, `storage.open`, `storage.open_handles`, the console and `remote` wait for it, and end a connection whose service stops first, or does not answer before the hang bound of an answer. A call host that does not load sends the outcome of its failed load in its place.
 
 The design: `src/md/api/call_ring_ready.md`.
 
@@ -540,7 +540,7 @@ Do not use: heartbeat, status channel, reconnect event.
 
 A call outcome is the one word that says how a call ended and what its caller can do next (`call_outcome.Call_Outcome`).
 
-It is one closed enum for every call. Each member is a whole phrase: `Succeeded`, `Argument_Refused`, `Nothing_Has_That_Name`, `Callee_Busy`, `Callee_Stopped_During_The_Call`, and twelve more. An export that can fail gives it first, in `rax`, then the value in `rdx`, and the compiler makes each caller read it. The rings, the kernel and `remote` still answer with their own status words, which their readers map to it at one place. The error record explains it. A word that names no member is read as `Answer_Unreadable`.
+It is one closed enum for every call. Each member is a whole phrase: `Succeeded`, `Argument_Refused`, `Nothing_Has_That_Name`, `Callee_Busy`, `Callee_Stopped_During_The_Call`, and twelve more. An export that can fail gives it first, in `rax`, then the value in `rdx`, and the compiler makes each caller read it. The rings and the kernel still answer with their own status words, which their readers map to it at one place. The error record explains it. A word that names no member is read as `Answer_Unreadable`.
 
 The design: `src/md/api/call_outcome.md`, "The members".
 
@@ -618,7 +618,7 @@ Do not use: request, message, call.
 
 A completion record is a record that reports the result of one command record.
 
-Its kind is a status (0 is success) and its tag is the tag of the command. When the status is not 0, its seven values are an error record; else they are the results.
+Its kind is a status (0 is success) and its tag is the tag of the command. When the status is not 0, its seven values are an error record; else they are the results. In a call ring, the status is the word of the call outcome.
 
 Do not use: response, reply, event.
 

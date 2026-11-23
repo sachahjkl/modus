@@ -309,7 +309,7 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 	handle := system.Handle(completion.values[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
 		root_debug_end(name, caller.ring_memory)
-		return refused(error, .Bad_Handle), 0
+		return party_answer_refused(error), 0
 	}
 	hash := transmute([32]u8)[4]u64{completion.values[1], completion.values[2], completion.values[3], completion.values[4]}
 	slot, process_serial, matches := slot_find(name, hash)
@@ -331,7 +331,7 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 	if status := system.debug_attach(handle); status != .Ok {
 		system.close(handle)
 		root_debug_end(name, caller.ring_memory)
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	session = {
 		attached       = true,
@@ -402,7 +402,9 @@ detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> (outcom
 	}
 	session_end("the caller detached")
 	if status != .Ok {
-		return refused(error, status), 0
+		// The session ended whatever the kernel said: the threads run, the
+		// breakpoints are gone, and the row says what the session held.
+		return call_outcome.outcome_passed_on(session_refused(error, status), true), 0
 	}
 	return .Succeeded, 1
 }
@@ -451,7 +453,7 @@ hold :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 	}
 	if !session.threads[number].held {
 		if _, status := system.thread_control_stop(session.process, number); status != .Ok {
-			return refused(error, status), 0
+			return session_refused(error, status), 0
 		}
 		session.threads[number].held = true
 	}
@@ -483,7 +485,7 @@ release :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Re
 		return failure, 0
 	}
 	if status := thread_release(number); status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	return .Succeeded, thread_rows(result, thread)
 }
@@ -516,7 +518,9 @@ continue_all :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) ->
 		}
 	}
 	if first_failure != .Ok {
-		return refused(error, first_failure), 0
+		// The threads before the first refusal run again, and the others
+		// stay held: the rows say which.
+		return call_outcome.outcome_passed_on(session_refused(error, first_failure), true), 0
 	}
 	return .Succeeded, thread_rows(result)
 }
@@ -543,7 +547,7 @@ registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Erro
 	}
 	image_of_thread, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	words := (^[18]u64)(&image_of_thread)^
 	for name, index in register_names {
@@ -610,7 +614,7 @@ stack :: proc "c" (thread: i64, result: ^[]Frame_Row, error: ^errors.Error_Recor
 	}
 	walked, status := stack_read(number)
 	if status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	for index in 0 ..< walked.count {
 		if index >= len(result^) {
@@ -647,7 +651,7 @@ frame_of_arguments :: proc "contextless" (thread: i64, frame: i64, needs_object:
 	}
 	walked, status := stack_read(number)
 	if status != .Ok {
-		return {}, refused(error, status)
+		return {}, session_refused(error, status)
 	}
 	if frame < 0 || frame >= i64(walked.count) {
 		return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Stack_Frames, 2)
@@ -1005,7 +1009,7 @@ break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, 
 	if status := breaks_apply(); status != .Ok {
 		item^ = {}
 		breaks_apply()
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	return .Succeeded, break_rows(result)
 }
@@ -1174,7 +1178,7 @@ break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Erro
 	}
 	session.breaks[number] = {}
 	if status := breaks_apply(); status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	return .Succeeded, break_rows(result)
 }
@@ -1241,7 +1245,7 @@ step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 	}
 	stepped, _, status := step_one(number, system.time() + STEP_WAIT_MILLISECONDS)
 	if status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	return .Succeeded, thread_rows(result, thread, i64(stepped ? 0 : 1))
 }
@@ -1279,11 +1283,12 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 	}
 	image_of_thread, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	start := place_of_address(image_of_thread.rip).place
 	deadline := system.time() + STEP_LINE_WAIT_MILLISECONDS
 	pending: i64 = 1
+	stepped_once := false
 	for _ in 0 ..< STEP_LINE_INSTRUCTION_LIMIT {
 		if system.time() >= deadline {
 			break
@@ -1291,11 +1296,12 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		stepped, at_breakpoint: bool
 		stepped, at_breakpoint, status = step_one(number, deadline)
 		if status != .Ok {
-			return refused(error, status), 0
+			return step_refused(error, status, stepped_once), 0
 		}
 		if !stepped {
 			break
 		}
+		stepped_once = true
 		// A breakpoint or a watch that the thread reached: it stops
 		// there, as it does with no step, and the stop is an event.
 		if at_breakpoint {
@@ -1304,7 +1310,7 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		}
 		image_of_thread, status = system.thread_registers_read(session.process, number)
 		if status != .Ok {
-			return refused(error, status), 0
+			return step_refused(error, status, stepped_once), 0
 		}
 		now := place_of_address(image_of_thread.rip).place
 		if now.line != 0 && (now.line != start.line || now.file != start.file) {
@@ -1313,6 +1319,14 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		}
 	}
 	return .Succeeded, thread_rows(result, thread, pending)
+}
+
+// step_refused gives the result of step_line or step_over when a kernel
+// operation refused in the middle of the steps. After one step the thread
+// is where the last step left it, which its row does not show: the caller
+// reads the thread again (thread_rows).
+step_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status, stepped_once: bool) -> call_outcome.Call_Outcome {
+	return call_outcome.outcome_passed_on(session_refused(error, status), stepped_once)
 }
 
 // The bytes of the longest call instruction: a call was made when the stack
@@ -1463,16 +1477,17 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 	// thread, or at another instruction: that step ends here.
 	if session.step_over.active {
 		if status := step_over_end(); status != .Ok {
-			return refused(error, status), 0
+			return session_refused(error, status), 0
 		}
 	}
 	registers, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	start := place_of_address(registers.rip).place
 	deadline := system.time() + STEP_LINE_WAIT_MILLISECONDS
 	pending: i64 = 1
+	stepped_once := false
 	for _ in 0 ..< STEP_LINE_INSTRUCTION_LIMIT {
 		if system.time() >= deadline {
 			break
@@ -1481,24 +1496,25 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		stepped, at_breakpoint: bool
 		stepped, at_breakpoint, status = step_one(number, deadline)
 		if status != .Ok {
-			return refused(error, status), 0
+			return step_refused(error, status, stepped_once), 0
 		}
 		if !stepped {
 			break
 		}
+		stepped_once = true
 		if at_breakpoint {
 			pending = 0
 			break
 		}
 		registers, status = system.thread_registers_read(session.process, number)
 		if status != .Ok {
-			return refused(error, status), 0
+			return step_refused(error, status, stepped_once), 0
 		}
 		if return_address, called := call_return_of(before, registers); called {
 			returned, stopped_inside: bool
 			returned, stopped_inside, status = call_run_to_return(number, return_address, before.rsp, deadline)
 			if status != .Ok {
-				return refused(error, status), 0
+				return step_refused(error, status, stepped_once), 0
 			}
 			if stopped_inside {
 				pending = 0
@@ -1510,7 +1526,7 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			}
 			registers, status = system.thread_registers_read(session.process, number)
 			if status != .Ok {
-				return refused(error, status), 0
+				return step_refused(error, status, stepped_once), 0
 			}
 		}
 		now := place_of_address(registers.rip).place
@@ -1702,7 +1718,7 @@ record_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) ->
 	}
 	record_state_refresh()
 	if record_session.state == .Recording {
-		return call_outcome.fail(error, .Wrong_State, .Full, .Input_Histories, 0, 0, 1)
+		return call_outcome.fail(error, .Wrong_State, .State, .Input_Histories, 0, 0, 1)
 	}
 	if failure := record_begin(error); failure != .Succeeded {
 		return failure, 0
@@ -1859,7 +1875,7 @@ replay_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) ->
 	case .None:
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Input_Histories)
 	case .Recording, .Replaying:
-		return call_outcome.fail(error, .Wrong_State, .Full, .Input_Histories, 0, 0, 1)
+		return call_outcome.fail(error, .Wrong_State, .State, .Input_Histories, 0, 0, 1)
 	case .Ended, .Replayed:
 	}
 	if failure := replay_begin(system.service_caller(), error); failure != .Succeeded {
@@ -1929,7 +1945,7 @@ replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^e
 	}
 	registers, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status), 0
+		return session_refused(error, status), 0
 	}
 	header, _, ok := history_header_read()
 	if !ok {
