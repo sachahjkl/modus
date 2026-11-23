@@ -1,0 +1,3 @@
+type: Changed
+
+**The decoded blocks of the software processor.** A browser machine runs each run of instructions that it decoded before from its decoded form: no translation and no decode of the prefixes for each byte, after a compare of its bytes with the memory, so code that a write changed never runs stale. In Node, with the same boot image, the processor time to the prompt of the console image fell from 4.6 s to 3.4 s, and to the first frame of the desktop image from 10.5 to 11.5 s to 8.6 s. `modustool browser-machine boot` now waits for the last line of the answer of `help()`, which the console writes whatever the count of its commands, and checks that the root service of a page refuses a module with one changed byte at its first use.

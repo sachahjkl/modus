@@ -6,15 +6,18 @@ package build
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
+import "modus:contract/value_kinds"
 import "modustool:foundation"
 
 BROWSER_MACHINE_FOLDER :: foundation.BUILD_FOLDER + "/browser_machine"
@@ -156,12 +159,15 @@ BROWSER_MACHINE_ROOT_STAGE_LINE :: "kernel: boot: kernel: root service: "
 
 // The interactive part of a start with a boot image: once the root service
 // writes its usable line, the host types the command on the PS/2 keyboard,
-// and the console must write the answer line. The answer is the line of
-// help() for shutdown: the echo of the typed line does not hold it.
+// and the console must write the answer line. The answer line is the last
+// line of the table of help(), "<count> rows of Command": the console shows
+// only the first rows of a long table, so a row of one command, as the one
+// of shutdown, leaves the answer when the commands grow; and the echo of
+// the typed line does not hold it.
 BROWSER_MACHINE_USABLE_LINE :: "[console] kernel console"
 BROWSER_MACHINE_TYPED_COMMAND :: "help()"
-BROWSER_MACHINE_ANSWER_PREFIX :: "[console] shutdown "
-BROWSER_MACHINE_ANSWER_TEXT :: "stop the machine"
+BROWSER_MACHINE_ANSWER_PREFIX :: "[console] "
+BROWSER_MACHINE_ANSWER_TEXT :: " rows of Command"
 
 // One file of the page of a browser machine. The site writes the same
 // files (site_browser_machine.odin).
@@ -798,8 +804,8 @@ browser_machine_trust_write :: proc(image_path: string) -> bool {
 // The program that Node runs: it imports the host of the page, starts the
 // kernel with a boot image or none, prints each line of the serial port,
 // types the command and its Enter on the PS/2 keyboard after the usable
-// line, and ends when the answer line comes, when the machine stops, or at
-// the bound. Its arguments: the host module, the kernel, the boot image
+// line (with an empty command, it types nothing), and ends when the answer
+// line comes, when the machine stops, or at the bound. Its arguments: the host module, the kernel, the boot image
 // (empty: none), the bound in milliseconds, the usable line, the command,
 // the prefix and the text of the answer line. After the answer it writes
 // "framebuffer: <pixels that are not black> <pixels>". At each stage of the
@@ -832,12 +838,12 @@ const machine = new host.BrowserMachine({
     console.log("serial: " + line);
     tracker.serialLine(line);
     if (!usable && line.includes(usableLine)) usable = true;
-    if (typed && line.startsWith(answerPrefix) && line.includes(answerText)) answered = true;
+    if ((typed || !command) && line.startsWith(answerPrefix) && line.includes(answerText)) answered = true;
   },
 });
 await machine.start();
 while (machine.state === host.MachineState.Running && Date.now() < end && !answered) {
-  if (usable && !typed) {
+  if (usable && !typed && command) {
     typed = true;
     if (!machine.keyboard.typeText(command + "\n")) throw new Error("the layout has no key for a character of " + command);
     console.log("typed: " + command + " at " + ((Date.now() - started) / 1000).toFixed(1) + " s");
@@ -970,6 +976,102 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 	}
 	fmt.printfln("modustool: the framebuffer in node: %d of %d pixels are not black", lit, pixels)
 	foundation.test_passed_print("the kernel for WebAssembly starts in node to the root service, and the console answers %s typed on the PS/2 keyboard", BROWSER_MACHINE_TYPED_COMMAND)
+	return browser_machine_damaged_module_boot(boot_image, trust_hash_hex, bound)
+}
+
+// The module whose file browser_machine_damaged_module_boot changes: the
+// root service starts it at each start of the machine.
+BROWSER_MACHINE_DAMAGED_MODULE :: "console"
+
+// The copy of the boot image with one changed byte in that module.
+BROWSER_MACHINE_DAMAGED_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/damaged_module.image"
+
+// browser_machine_damaged_module_boot starts the machine again in Node on a
+// copy of the boot image with one byte of a module changed, and the trust
+// of the image as it is: its description is the same. The root service of
+// a page hashes each file at its first use, so it must refuse that module
+// at its load, with the fact root.Image_File_Hash_Wrong
+// (docs/TRUSTED_BOOT.md, "Root_Service_At_Load").
+browser_machine_damaged_module_boot :: proc(boot_image: string, trust_hash_hex: string, bound: string) -> bool {
+	image, read_error := os.read_entire_file(boot_image, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", boot_image, read_error)
+		return false
+	}
+	modules, _, valid := info.image_tables(image)
+	if !valid {
+		fmt.eprintfln("modustool: %s is not a boot image", boot_image)
+		return false
+	}
+	changed, root_found := false, false
+	root_tag: [FACT_LINE_MODULE_TAG_BYTES]u8
+	for &entry in modules {
+		if system_description.name_of(&entry.name) == "root" {
+			root_tag = module_tag_of(entry.hash)
+			root_found = true
+		}
+		if system_description.name_of(&entry.name) != BROWSER_MACHINE_DAMAGED_MODULE {
+			continue
+		}
+		bytes, inside := info.image_entry_bytes(image, &entry)
+		if !inside || len(bytes) == 0 {
+			fmt.eprintfln("modustool: the entry of the module %s points outside %s", BROWSER_MACHINE_DAMAGED_MODULE, boot_image)
+			return false
+		}
+		bytes[len(bytes) / 2] ~= 0xFF
+		changed = true
+	}
+	if !changed || !root_found {
+		fmt.eprintfln("modustool: %s holds no module %s to change, or no module root", boot_image, BROWSER_MACHINE_DAMAGED_MODULE)
+		return false
+	}
+	if error := os.write_entire_file(BROWSER_MACHINE_DAMAGED_IMAGE_PATH, image); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", BROWSER_MACHINE_DAMAGED_IMAGE_PATH, error)
+		return false
+	}
+	// A fact writes "[<module>] #<module tag>:<key tag> <values>" on the
+	// serial port. The Node program ends at the first line of the root
+	// service with the key tag; the check below reads that line whole.
+	refusal_key_tag := op.log_fact_key_tag(fact_key("root", "Image_File_Hash_Wrong"))
+	refusal_tag := fmt.tprintf(":%06x", refusal_key_tag)
+	refused_file := value_kinds.module_name_field(BROWSER_MACHINE_DAMAGED_MODULE)
+	started := time.tick_now()
+	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_NODE_PROGRAM, BROWSER_MACHINE_HOST_PATH, BROWSER_MACHINE_KERNEL_PATH, BROWSER_MACHINE_DAMAGED_IMAGE_PATH, bound, BROWSER_MACHINE_USABLE_LINE, "", "[root] ", refusal_tag, trust_hash_hex}}, context.temp_allocator)
+	if error != nil || !state.success {
+		fmt.eprintfln("modustool: node failed on the image with a changed module (code %d, %v): %s", state.exit_code, error, string(error_output))
+		return false
+	}
+	refused, damaged_ran, machine_line := false, "", ""
+	damaged_head := "[" + BROWSER_MACHINE_DAMAGED_MODULE + "] "
+	lines := string(output)
+	for line in strings.split_lines_iterator(&lines) {
+		if strings.has_prefix(line, "serial: ") {
+			serial := line[len("serial: "):]
+			if strings.has_prefix(serial, damaged_head) && damaged_ran == "" {
+				damaged_ran = serial
+			}
+			if strings.has_prefix(serial, "[root] ") {
+				fact, is_fact := fact_line_parse(serial[len("[root] "):])
+				refused ||= is_fact && fact.module_tag == root_tag && fact.key_tag == refusal_key_tag && fact.part_count == 1 && fact.value_count <= len(refused_file) && slice.equal(fact.values[:len(refused_file)], refused_file[:])
+			}
+		} else if strings.has_prefix(line, "machine: ") {
+			machine_line = line
+		}
+	}
+	fmt.printfln("modustool: measure: the browser machine in node with a changed module: %.1f s, %s", time.duration_seconds(time.tick_since(started)), machine_line)
+	if strings.has_prefix(machine_line, "machine: trapped") {
+		fmt.eprintln("modustool: the kernel in node ended with a trap of WebAssembly on the image with a changed module")
+		return false
+	}
+	if damaged_ran != "" {
+		fmt.eprintfln("modustool: the module %s with one changed byte ran in node: %q", BROWSER_MACHINE_DAMAGED_MODULE, damaged_ran)
+		return false
+	}
+	if !refused {
+		fmt.eprintfln("modustool: the root service in node wrote no fact root.Image_File_Hash_Wrong (%s) for the file %s with one changed byte", refusal_tag, BROWSER_MACHINE_DAMAGED_MODULE)
+		return false
+	}
+	foundation.test_passed_print("the root service in node refuses the module %s with one changed byte at its first use", BROWSER_MACHINE_DAMAGED_MODULE)
 	return true
 }
 

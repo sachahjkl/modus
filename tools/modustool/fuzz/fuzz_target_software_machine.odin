@@ -34,6 +34,10 @@ FUZZ_MACHINE_READ_ONLY_ADDRESS :: u64(0x40_3000)
 FUZZ_MACHINE_SUPERVISOR_ADDRESS :: u64(0x40_4000)
 FUZZ_MACHINE_STACK_ADDRESS :: u64(0x40_6000)
 FUZZ_MACHINE_STACK_TOP :: FUZZ_MACHINE_STACK_ADDRESS + software_machine.PAGE_SIZE
+// The two code frames a second time, writable and not executable, as two
+// mappings of one frame in a process: a write through them changes code
+// that a decoded block holds.
+FUZZ_MACHINE_CODE_ALIAS_ADDRESS :: u64(0x40_8000)
 
 FUZZ_MACHINE_REGISTER_BYTES :: 16 * size_of(u64)
 FUZZ_MACHINE_CODE_BYTES :: 2 * int(software_machine.PAGE_SIZE)
@@ -52,7 +56,9 @@ FUZZ_MACHINE_FLAGS_KNOWN :: software_machine.RFLAGS_CF | software_machine.RFLAGS
 FUZZ_MACHINE_FAULT_BITS_KNOWN :: software_machine.PAGE_FAULT_PRESENT | software_machine.PAGE_FAULT_WRITE | software_machine.PAGE_FAULT_USER | software_machine.PAGE_FAULT_RESERVED | software_machine.PAGE_FAULT_INSTRUCTION
 
 // Two machines: one steps one instruction at a time, the other runs the
-// budget in one call. The memories are large for the stack of an execution.
+// budget in one call, with a cache of decoded blocks, so each input also
+// compares the decoded blocks with the steps. The memories are large for
+// the stack of an execution.
 @(private = "file")
 fuzz_machine_state: struct {
 	memory:         [FUZZ_MACHINE_MEMORY_BYTES]u8,
@@ -62,6 +68,7 @@ fuzz_machine_state: struct {
 	processor:      software_machine.Processor_State,
 	before_step:    software_machine.Processor_State,
 	run_processor:  software_machine.Processor_State,
+	run_blocks:     software_machine.Block_Cache,
 }
 
 @(private = "file")
@@ -101,6 +108,9 @@ fuzz_machine_build :: proc(memory: []u8, code: []u8) {
 	fuzz_machine_map(memory, FUZZ_MACHINE_READ_ONLY_ADDRESS, FUZZ_MACHINE_FRAME_READ_ONLY, software_machine.PAGE_PRESENT | software_machine.PAGE_USER | software_machine.PAGE_NO_EXECUTE)
 	fuzz_machine_map(memory, FUZZ_MACHINE_SUPERVISOR_ADDRESS, FUZZ_MACHINE_FRAME_SUPERVISOR, software_machine.PAGE_PRESENT | software_machine.PAGE_WRITE | software_machine.PAGE_NO_EXECUTE)
 	fuzz_machine_map(memory, FUZZ_MACHINE_STACK_ADDRESS, FUZZ_MACHINE_FRAME_STACK, software_machine.PAGE_PRESENT | software_machine.PAGE_WRITE | software_machine.PAGE_USER | software_machine.PAGE_NO_EXECUTE)
+	for page in 0 ..< 2 {
+		fuzz_machine_map(memory, FUZZ_MACHINE_CODE_ALIAS_ADDRESS + u64(page) * software_machine.PAGE_SIZE, FUZZ_MACHINE_FRAME_CODE + page, software_machine.PAGE_PRESENT | software_machine.PAGE_WRITE | software_machine.PAGE_USER | software_machine.PAGE_NO_EXECUTE)
+	}
 	code_frames := memory[FUZZ_MACHINE_FRAME_CODE * int(software_machine.PAGE_SIZE):][:FUZZ_MACHINE_CODE_BYTES]
 	slice.fill(code_frames, FUZZ_MACHINE_CODE_FILL)
 	copy(code_frames, code)
@@ -131,7 +141,7 @@ fuzz_machine_memory_problem :: proc(now, earlier: []u8, writes_allowed: bool) ->
 			}
 			continue
 		}
-		if writes_allowed && (frame == FUZZ_MACHINE_FRAME_DATA || frame == FUZZ_MACHINE_FRAME_STACK) {
+		if writes_allowed && (frame == FUZZ_MACHINE_FRAME_DATA || frame == FUZZ_MACHINE_FRAME_STACK || frame == FUZZ_MACHINE_FRAME_CODE || frame == FUZZ_MACHINE_FRAME_CODE + 1) {
 			continue
 		}
 		if !slice.equal(now_frame, earlier_frame) {
@@ -197,6 +207,9 @@ fuzz_software_machine_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	software_machine.processor_init(&state.processor, root, FUZZ_MACHINE_CODE_ADDRESS, registers[int(software_machine.General_Register.Rsp)])
 	state.processor.registers = registers
 	state.run_processor = state.processor
+	// An empty cache for each input, so an input gives its verdict alone.
+	state.run_blocks = {}
+	state.run_processor.blocks = &state.run_blocks
 	run_outcome := software_machine.processor_run(&state.run_processor, state.run_memory[:], FUZZ_MACHINE_STEP_LIMIT)
 	if run_outcome > max(software_machine.Step_Outcome) || run_outcome == .Running || run_outcome == .Halted {
 		return fuzz_broken(.Contract, "software_machine.processor_run gives the outcome %d", u8(run_outcome))
@@ -273,6 +286,21 @@ fuzz_software_machine_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if state.memory != state.run_memory {
 		return fuzz_broken(.Two_Readers, "the run and the steps leave two memories")
 	}
+
+	// The same input again from the initial memory, with the blocks that
+	// the first run kept: each entry finds a block, or a block whose bytes
+	// the first run changed, and the run must still give the steps.
+	state.run_memory = state.initial
+	software_machine.processor_init(&state.run_processor, root, FUZZ_MACHINE_CODE_ADDRESS, registers[int(software_machine.General_Register.Rsp)])
+	state.run_processor.registers = registers
+	state.run_processor.blocks = &state.run_blocks
+	again_outcome := software_machine.processor_run(&state.run_processor, state.run_memory[:], FUZZ_MACHINE_STEP_LIMIT)
+	if again_outcome != expected || !fuzz_machine_same_architectural_state(&state.processor, &state.run_processor) || state.processor.steps_executed != state.run_processor.steps_executed || state.processor.fault_address != state.run_processor.fault_address || state.processor.fault_error_code != state.run_processor.fault_error_code {
+		return fuzz_broken(.Two_Readers, "the run with the kept blocks gives %v after %d steps at %x; the steps give %v after %d at %x", again_outcome, state.run_processor.steps_executed, state.run_processor.rip, outcome, state.processor.steps_executed, state.processor.rip)
+	}
+	if state.memory != state.run_memory {
+		return fuzz_broken(.Two_Readers, "the run with the kept blocks and the steps leave two memories")
+	}
 	return FUZZ_PASSED
 }
 
@@ -314,6 +342,10 @@ fuzz_software_machine_seeds :: proc(seeds: ^[dynamic][]u8) {
 	add(seeds, []u8{0xB9, 0x05, 0x00, 0x00, 0x00, 0xE8, 0x05, 0x00, 0x00, 0x00, 0xFF, 0xC9, 0x75, 0xF7, 0xCC, 0xC3})
 	// rep stosb from the data page into the page that is read only.
 	add(seeds, []u8{0x48, 0xC7, 0xC7, 0xFC, 0x2F, 0x40, 0x00, 0xB9, 0x10, 0x00, 0x00, 0x00, 0xB0, 0x5A, 0xF3, 0xAA, 0xCC})
+	// A loop that writes the immediate of its own next instruction through
+	// the alias of the code: mov rbx, alias; mov ecx, 5; mov byte
+	// [rbx + 0x10], cl; mov eax, imm; dec ecx; jnz to the store.
+	add(seeds, []u8{0x48, 0xC7, 0xC3, 0x00, 0x80, 0x40, 0x00, 0xB9, 0x05, 0x00, 0x00, 0x00, 0x88, 0x4B, 0x10, 0xB8, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xC9, 0x75, 0xF4, 0xCC})
 	// A write into the code.
 	add(seeds, []u8{0x48, 0xC7, 0xC0, 0x00, 0x00, 0x40, 0x00, 0xC6, 0x00, 0x90})
 	// A jump into the data, which is not executable.
@@ -347,7 +379,7 @@ fuzz_software_machine_seeds :: proc(seeds: ^[dynamic][]u8) {
 // the dictionary: an immediate or a register with one of them reaches a
 // page instead of a fault on the first access.
 fuzz_software_machine_words :: proc(words: ^[dynamic][]u8) {
-	for place in ([?]u64{FUZZ_MACHINE_CODE_ADDRESS, FUZZ_MACHINE_DATA_ADDRESS, FUZZ_MACHINE_READ_ONLY_ADDRESS, FUZZ_MACHINE_SUPERVISOR_ADDRESS, FUZZ_MACHINE_STACK_ADDRESS, FUZZ_MACHINE_STACK_TOP - 8}) {
+	for place in ([?]u64{FUZZ_MACHINE_CODE_ADDRESS, FUZZ_MACHINE_CODE_ALIAS_ADDRESS, FUZZ_MACHINE_DATA_ADDRESS, FUZZ_MACHINE_READ_ONLY_ADDRESS, FUZZ_MACHINE_SUPERVISOR_ADDRESS, FUZZ_MACHINE_STACK_ADDRESS, FUZZ_MACHINE_STACK_TOP - 8}) {
 		word := place
 		append(words, slice.clone(mem.ptr_to_bytes(&word)))
 	}

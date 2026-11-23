@@ -461,7 +461,12 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 			if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 				mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
 				if !given {
-					release(slot) // The compositor forgets the ring.
+					// The file of the storage service does not have the hash
+					// of its entry (image_entry_mapping names it on the log):
+					// the disk process would read a file that nothing
+					// checked, so it does not start, and its slot and its
+					// ring are freed as for any abandoned start.
+					release(slot)
 					return .Bad_Operation
 				}
 				system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)

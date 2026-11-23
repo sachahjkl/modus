@@ -65,6 +65,12 @@ software_processor_registers: Software_Processor_Registers
 @(thread_local)
 software_processor: software.Processor_State
 
+// The decoded blocks of the software processor of this processor: each
+// worker keeps its own, so no lock guards them (browser_machine.md, "The
+// decoded blocks").
+@(thread_local)
+software_processor_blocks: software.Block_Cache
+
 port_write_8 :: #force_inline proc "contextless" (port: u16, value: u8) {
 	page_port_write_8(port, value)
 }
