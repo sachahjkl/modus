@@ -1,0 +1,3 @@
+type: Added
+
+**The page of a public object cache.** `modustool cache-serve --status-listen <host:port>` answers a page in the look of the site and `status.json`: what modus and this object cache are, that a client trusts a hash or a signer key and never the host, the accepted signer keys, the endpoint and its protocol (binary frames over TCP), the counts of the store, the free space and the last 10 realisations. The server keeps its counts at each write, so a view of the page reads no file, and its reader refuses a head past 4096 bytes, a head that does not end in 5 seconds, a method other than `GET` and any other path.

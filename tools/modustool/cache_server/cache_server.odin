@@ -24,6 +24,7 @@ import "core:net"
 import "core:os"
 import "core:strings"
 import "core:sync"
+import "core:time"
 import "modus:contract/blake3"
 import "modus:contract/object_cache"
 import crypto_compat "modus:cryptography/compatibility_crypto"
@@ -46,6 +47,7 @@ Cache_Server :: struct {
 	authorized_signers: [dynamic][object_cache.PUBLIC_KEY_SIZE]u8,
 	temp_sequence:      u64,
 	stop:               bool,
+	status:             Cache_Status,
 }
 
 // Configuration passed to cache_server_serve.
@@ -53,6 +55,9 @@ Cache_Serve_Options :: struct {
 	directory:              string,
 	listen_address:         string,
 	authorized_public_keys: [][object_cache.PUBLIC_KEY_SIZE]u8,
+	// The listener of the page and of the status record; empty: none.
+	status_listen_address:  string,
+	page:                   Cache_Page_Settings,
 }
 
 @(private = "file")
@@ -85,7 +90,7 @@ hex_hash_valid :: proc(text: string) -> bool {
 	return true
 }
 
-@(private = "file")
+@(private)
 store_directory_name :: proc(directory: Store_Directory) -> string {
 	switch directory {
 	case .Objects:
@@ -144,6 +149,12 @@ cache_server_open :: proc(
 			append(&server.authorized_signers, key)
 		}
 	}
+	server.status.started = time.now()
+	server.status.started_tick = time.tick_now()
+	if !cache_status_scan(&server) {
+		cache_server_destroy(&server, allocator)
+		return {}, false
+	}
 	return server, true
 }
 
@@ -186,30 +197,34 @@ store_read_by_hex :: proc(
 
 // store_write_atomic writes content to a unique temporary file under tmp/ and
 // renames it into place atomically so no reader ever sees a partial file.
+// added says that the store did not hold the name before: the counts of the
+// page grow only then. The server is the one writer of its folder, so the
+// test before the rename holds until the rename.
 store_write_atomic :: proc(
 	server: ^Cache_Server,
 	directory: Store_Directory,
 	hex_name: string,
 	content: []u8,
-) -> bool {
+) -> (written: bool, added: bool) {
 	if server == nil {
-		return false
+		return false, false
 	}
 	final_path, final_ok := store_path_for_hex(server.root_directory, directory, hex_name, context.temp_allocator)
 	if !final_ok {
-		return false
+		return false, false
 	}
+	added = !os.exists(final_path)
 	sequence := sync.atomic_add(&server.temp_sequence, 1)
 	temp_path := fmt.tprintf("%s/%s/%s.%d.tmp", server.root_directory, store_directory_name(.Temp), hex_name, sequence)
 	if write_err := os.write_entire_file(temp_path, content); write_err != nil {
 		_ = os.remove(temp_path)
-		return false
+		return false, false
 	}
 	if rename_err := os.rename(temp_path, final_path); rename_err != nil {
 		_ = os.remove(temp_path)
-		return false
+		return false, false
 	}
-	return true
+	return true, added
 }
 
 // cache_server_verify_ed25519 verifies an Ed25519 signature using the modus
@@ -452,13 +467,15 @@ cache_server_handle_frame :: proc(
 			return encode_response_alloc(&response, allocator)
 		}
 		hex_bytes := hash_to_hex(request.object_hash)
-		if !store_write_atomic(server, .Objects, string(hex_bytes[:]), request.payload) {
+		written, added := store_write_atomic(server, .Objects, string(hex_bytes[:]), request.payload)
+		if !written {
 			response := object_cache.Cache_Response {
 				request_kind = .Put_Object,
 				status       = .Refused,
 			}
 			return encode_response_alloc(&response, allocator)
 		}
+		cache_status_record_object(&server.status, u64(len(request.payload)), added, time.now())
 		response := object_cache.Cache_Response {
 			request_kind = .Put_Object,
 			status       = .Ok,
@@ -498,13 +515,15 @@ cache_server_handle_frame :: proc(
 			return encode_response_alloc(&response, allocator)
 		}
 		hex_bytes := hash_to_hex(request.realisation.recipe_hash)
-		if !store_write_atomic(server, .Realisations, string(hex_bytes[:]), encoded_record[:]) {
+		written, added := store_write_atomic(server, .Realisations, string(hex_bytes[:]), encoded_record[:])
+		if !written {
 			response := object_cache.Cache_Response {
 				request_kind = .Put_Realisation,
 				status       = .Refused,
 			}
 			return encode_response_alloc(&response, allocator)
 		}
+		cache_status_record_realisation(&server.status, request.realisation, added, time.now())
 		response := object_cache.Cache_Response {
 			request_kind = .Put_Realisation,
 			status       = .Ok,
@@ -663,6 +682,44 @@ cache_server_serve :: proc(options: Cache_Serve_Options) -> bool {
 			len(server.authorized_signers),
 		)
 	}
+
+	// The page and the status record, on their own thread, so a slow reader
+	// of the page never holds the thread of the protocol.
+	status_running: ^Cache_Status_Running
+	if options.status_listen_address != "" {
+		status_endpoint, status_endpoint_ok := net.parse_endpoint(options.status_listen_address)
+		if !status_endpoint_ok {
+			fmt.eprintfln("modustool: cache-serve: invalid status listen address %q (expected host:port)", options.status_listen_address)
+			return false
+		}
+		page := options.page
+		if page.endpoint == "" {
+			page.endpoint = listen_text
+		}
+		if page.site_address == "" {
+			page.site_address = DEFAULT_SITE_ADDRESS
+		}
+		status_socket, status_listen_err := net.listen_tcp(status_endpoint)
+		if status_listen_err != nil {
+			fmt.eprintfln("modustool: cache-serve: cannot listen on %s: %v", options.status_listen_address, status_listen_err)
+			return false
+		}
+		status_bound, status_bound_err := net.bound_endpoint(status_socket)
+		if status_bound_err == nil {
+			fmt.printfln("modustool: cache-serve: the page and status.json on http://%s/", net.endpoint_to_string(status_bound, context.temp_allocator))
+		}
+		status_running = cache_status_start(&server, page, status_socket)
+		if status_running == nil {
+			fmt.eprintln("modustool: cache-serve: the system refused the thread of the page")
+			net.close(status_socket)
+			return false
+		}
+	}
+	defer if status_running != nil {
+		sync.atomic_store(&server.stop, true)
+		cache_status_stop(status_running)
+	}
+
 	cache_server_serve_listener(&server, listener)
 	return true
 }
@@ -745,9 +802,13 @@ read_public_key_file :: proc(path: string) -> (public_key: [object_cache.PUBLIC_
 
 // run_cache_serve implements `modustool cache-serve --dir <path> [--listen <addr>] [--signer-key <path>] [--authorized-key <path>]`.
 run_cache_serve :: proc(args: []string) -> int {
-	usage_text :: "modustool: cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>]"
+	usage_text :: "modustool: cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]"
 	directory := ""
 	listen_address := DEFAULT_LISTEN_ADDRESS
+	status_listen_address := ""
+	page := Cache_Page_Settings {
+		site_address = DEFAULT_SITE_ADDRESS,
+	}
 	authorized := make([dynamic][object_cache.PUBLIC_KEY_SIZE]u8)
 	defer delete(authorized)
 
@@ -790,6 +851,29 @@ run_cache_serve :: proc(args: []string) -> int {
 				return foundation.EXIT_FAILURE
 			}
 			append(&authorized, pub)
+		case "--status-listen", "--endpoint", "--site":
+			if index + 1 >= len(args) {
+				fmt.eprintln(usage_text)
+				return foundation.EXIT_USAGE
+			}
+			index += 1
+			value := args[index]
+			switch flag {
+			case "--status-listen":
+				status_listen_address = value
+			case "--endpoint":
+				if !cache_page_endpoint_valid(value) {
+					fmt.eprintfln("modustool: cache-serve: --endpoint takes host:port, with letters, digits, '.', '-', ':', '[' and ']' only")
+					return foundation.EXIT_USAGE
+				}
+				page.endpoint = value
+			case "--site":
+				if !cache_page_site_address_valid(value) {
+					fmt.eprintfln("modustool: cache-serve: --site takes an address that starts with https:// or http://, with no space, quote, '<', '>', ';', '?' or '#'")
+					return foundation.EXIT_USAGE
+				}
+				page.site_address = strings.trim_right(value, "/")
+			}
 		case:
 			fmt.eprintfln("modustool: cache-serve: unknown option %s", flag)
 			fmt.eprintln(usage_text)
@@ -807,6 +891,8 @@ run_cache_serve :: proc(args: []string) -> int {
 		directory              = directory,
 		listen_address         = listen_address,
 		authorized_public_keys = authorized[:],
+		status_listen_address  = status_listen_address,
+		page                   = page,
 	}
 	return cache_server_serve(options) ? 0 : foundation.EXIT_FAILURE
 }

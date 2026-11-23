@@ -701,7 +701,7 @@ COMMANDS :: [?]foundation.Command {
 	//   realisations.
 	// - `--authorized-key <path>` (optional, repeatable): a 64-hex-digit Ed25519
 	//   public key file allowed to upload objects and signed realisations.
-	{name = "cache-serve", about = "cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>]: serve a content-addressed object cache of blobs, canonical trees and signed realisations", run = cache_server.run_cache_serve},
+	{name = "cache-serve", about = "cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]: serve an object cache of blobs, canonical trees and signed realisations, and with --status-listen its page and status.json over HTTP", run = cache_server.run_cache_serve},
 	// Serves the typed host agent bridge over line-delimited JSON-RPC 2.0 on
 	// standard input and output, enforcing client-key permissions, remote key
 	// uses, active wide-grant window scopes, append-only BLAKE3 act recording,
