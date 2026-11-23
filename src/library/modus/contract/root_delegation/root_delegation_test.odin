@@ -203,13 +203,22 @@ device_identity_table_and_grant_spec_refuse_unknown_duplicates_and_escalation ::
 }
 
 @(test)
-canonical_role_catalog_covers_all_14_core_roles_with_unique_blake3_hashes :: proc(t: ^testing.T) {
+canonical_role_catalog_covers_all_roles_with_unique_blake3_hashes :: proc(t: ^testing.T) {
 	// Refuse None and out-of-range role words.
 	for bad in ([?]role_contract.Role{.None, role_contract.Role(u64(max(role_contract.Role)) + 1), role_contract.Role(max(u64))}) {
 		_, ok := role_contract_by_role(bad)
 		testing.expect(t, !ok)
 		_, h_ok := role_contract_hash_by_role(bad)
 		testing.expect(t, !h_ok)
+	}
+
+	// Every non-None member of role_contract.Role has a canonical contract.
+	for role in role_contract.Role {
+		if role == .None {
+			continue
+		}
+		_, ok := role_contract_by_role(role)
+		testing.expectf(t, ok, "missing canonical contract for role %v", role)
 	}
 
 	hashes: [len(CORE_CATALOG_ROLES)]role_contract.Contract_Hash
@@ -239,6 +248,10 @@ canonical_role_catalog_covers_all_14_core_roles_with_unique_blake3_hashes :: pro
 		}
 		hashes[idx] = digest
 	}
+	digest, contracts, encoded := role_contracts_digest()
+	testing.expect(t, digest != {})
+	testing.expect_value(t, contracts, u64(len(role_contract.Role) - 1))
+	testing.expect_value(t, encoded, contracts)
 }
 
 @(test)

@@ -15,8 +15,12 @@ import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
+import ws "modus:contract/wiring_service"
 import "internal:start_policy/wiring_rows"
 import "modus:system"
+
+// Process stop notices wired from the root service core.
+stops: system.Record_Input(ws.Process_Stop_Notice)
 
 // 32 pages for what it maps at its start, with their page tables; the
 // root service adds the pages of the wirings that the list header gives.

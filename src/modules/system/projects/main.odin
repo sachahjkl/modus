@@ -57,16 +57,18 @@ region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
 	return offset <= service_region_bytes - length
 }
 
-// status writes aggregate projects service counters into out.
+// status writes aggregate projects service counters into result.
 @(export)
-status :: proc "c" (out: ^Projects_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if out == nil {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+status :: proc "c" (result: ^Projects_Status, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	if result == nil {
+		outcome, _ := call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+		return outcome
 	}
 	if !service_state.initialized {
-		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		return outcome
 	}
-	out^ = {
+	result^ = {
 		total_inputs_queries = i64(service_state.counters.total_inputs_queries),
 		total_updates        = i64(service_state.counters.total_updates),
 		total_enters         = i64(service_state.counters.total_enters),
@@ -74,7 +76,7 @@ status :: proc "c" (out: ^Projects_Status, error: ^errors.Error_Record) -> (outc
 		active_consoles      = i64(service_state.counters.active_consoles),
 		total_refusals       = i64(service_state.counters.total_refusals),
 	}
-	return .Succeeded, 0
+	return .Succeeded
 }
 
 // active_console_count returns the number of currently open child consoles.

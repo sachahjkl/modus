@@ -77,16 +77,18 @@ region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
 	return offset <= service_region_bytes - length
 }
 
-// status writes aggregate recipes service counters into out.
+// status writes aggregate recipes service counters into result.
 @(export)
-status :: proc "c" (out: ^Recipes_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if out == nil {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+status :: proc "c" (result: ^Recipes_Status, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	if result == nil {
+		outcome, _ := call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+		return outcome
 	}
 	if !service_state.initialized {
-		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		return outcome
 	}
-	out^ = {
+	result^ = {
 		total_builds         = i64(service_state.counters.total_builds),
 		cache_hits_local     = i64(service_state.counters.cache_hits_local),
 		cache_hits_remote    = i64(service_state.counters.cache_hits_remote),
@@ -95,7 +97,7 @@ status :: proc "c" (out: ^Recipes_Status, error: ^errors.Error_Record) -> (outco
 		verify_disagreements = i64(service_state.counters.verify_disagreements),
 		total_refusals       = i64(service_state.counters.total_refusals),
 	}
-	return .Succeeded, 0
+	return .Succeeded
 }
 
 // build_count returns the build requests whose mode and recipe the service

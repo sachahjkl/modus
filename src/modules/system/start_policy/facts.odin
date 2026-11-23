@@ -4,16 +4,8 @@ import op "modus:contract/operation"
 import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
-// The log facts of the start policy (src/md/features/log_facts.md). A
-// sentence that differs by its case is one fact type for each case. The
-// stop of a row has the fields of the stop of the root service. A Text
-// field is the last field, [N]u8 with N written out, as the tool reads it.
-
-// The bytes of the Text field of the fault of a start list: the longest,
-// "a row has a mark that is neither needed nor not needed", has 54 bytes,
-// and a zero byte.
+// Log facts of start_policy (src/md/features/log_facts.md).
 LIST_PROBLEM_FIELD_BYTES :: 56
-// The Text field of a part: the longest, "disk of the measures", has 20 bytes.
 PART_FIELD_BYTES :: 24
 
 // The start list is refused, at one of its rows.
