@@ -2503,8 +2503,11 @@ scenario := [?]Step {
 	// the fact of each commit, never for a count of versions: a slow host
 	// can split a line in two commits.
 	{kind = .Launch, text = "notes"},
+	// The store line comes from the store thread of notes, the surface line
+	// from the compositor and the picture line from the window thread: the
+	// system fixes no order between the three.
 	{kind = .Wait, text = "notes: a new store: no note", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "compositor: surface notes", any_order = true},
 	{kind = .Wait, text = "notes: ok, the first picture is presented"},
 	{kind = .Keys, text = "versions"},
 	{kind = .Wait, text = "notes: the note is \"versions\", 8 bytes, generation "},
