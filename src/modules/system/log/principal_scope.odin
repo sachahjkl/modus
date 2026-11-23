@@ -33,6 +33,9 @@ session_table: ^log_scope.SESSION_TABLE
 // process, which the root service gives at its start.
 window_principal: u64
 
+// The output follow counts the rings of each principal apart.
+#assert(system.SCOPED_PRINCIPALS_MOST >= principals.PRINCIPAL_CAPACITY)
+
 // What the pass knows of the record at one place of the ring: a place
 // names the record of its number only.
 Record_Principal :: struct {
@@ -51,9 +54,18 @@ settled_next: u64
 settle_lost: u64
 // The next scope number of each principal.
 scope_counts: [principals.PRINCIPAL_CAPACITY]u64
-// The principal of the last fact of the root service, for the records of
-// a fact after its first one.
-root_fact_principal: u64
+// The fact of the root service whose parts the pass reads now: the
+// principal of its first part, its key, and the part that comes next. A
+// part that does not follow it, or a loss in the pass, closes it: the parts
+// after a lost one name no principal.
+Root_Fact :: struct {
+	open:      bool,
+	principal: u64,
+	key:       u64,
+	next_part: u8,
+	parts:     u8,
+}
+root_fact: Root_Fact
 
 // session_table_open maps the session table, and reads the principal of
 // the window.
@@ -78,10 +90,14 @@ principals_settle :: proc "contextless" () -> (deadline: u64) {
 	written := intrinsics.atomic_load(&reader_head.written)
 	next, lost := op.log_first_kept(settled_next, written)
 	settle_lost += lost
+	if lost != 0 {
+		root_fact.open = false
+	}
 	for ; next < written; next += 1 {
 		record, whole := record_copy(next)
 		if !whole {
 			settle_lost += 1
+			root_fact.open = false
 			continue
 		}
 		principal, decision := record_settle(&record)
@@ -113,7 +129,7 @@ record_settle :: proc "contextless" (record: ^op.Log_Record) -> (principal: u64,
 		return 0, .No_Principal
 	}
 	if u64(record.process) == log_scope.ROOT_SERVICE_SLOT && u64(record.process_serial) == log_scope.ROOT_SERVICE_SERIAL {
-		return root_record_principal(record), .Known
+		return root_record_principal(record)
 	}
 	now := u64(system.time()) * 1000
 	age := now > record.time ? now - record.time : 0
@@ -123,17 +139,27 @@ record_settle :: proc "contextless" (record: ^op.Log_Record) -> (principal: u64,
 // root_record_principal gives the principal of a record of the root
 // service: the field "principal" of its fact, else principal 0.
 @(private = "file")
-root_record_principal :: proc "contextless" (record: ^op.Log_Record) -> u64 {
+root_record_principal :: proc "contextless" (record: ^op.Log_Record) -> (principal: u64, decision: log_scope.Settle_Decision) {
 	form, form_known := op.log_record_form(record)
 	if !form_known || form != .Fact {
-		return principals.MACHINE
+		root_fact.open = false
+		return principals.MACHINE, .Known
 	}
 	fact := op.log_record_fact(record)
 	if fact.part != 0 {
-		return root_fact_principal
+		// A later part takes the principal of the first part of the same
+		// fact, read right before it in this pass; else it names none.
+		if !root_fact.open || fact.key != root_fact.key || fact.part != root_fact.next_part || fact.part_count != root_fact.parts {
+			root_fact.open = false
+			return 0, .No_Principal
+		}
+		root_fact.next_part += 1
+		root_fact.open = root_fact.next_part < root_fact.parts
+		return root_fact.principal, .Known
 	}
-	root_fact_principal = fact_principal_field(fact)
-	return root_fact_principal
+	principal = fact_principal_field(fact)
+	root_fact = {open = fact.part_count > 1, principal = principal, key = fact.key, next_part = 1, parts = fact.part_count}
+	return principal, .Known
 }
 
 // fact_principal_field reads the Integer field "principal" of the first

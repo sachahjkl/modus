@@ -45,9 +45,9 @@ Session_Table_Row_Refused :: struct {
 	principal: u64,
 }
 
-// The ring of the storage service had no room for the lock of a principal:
-// its keys stay in the storage service until the next lock or stop.
-@(log_fact = "root: the storage service did not take the lock of principal {principal}: its ring is full, and the keys of the principal stay there until the next lock")
+// The ring of the storage service had no room for the erase of the keys of
+// a principal: the root service sends it again when the ring has room.
+@(log_fact = "root: the storage service did not take the erase of the keys of principal {principal}: its ring is full, and the root service sends it again when the ring has room")
 Storage_Lock_Not_Sent :: struct {
 	principal: u64,
 }

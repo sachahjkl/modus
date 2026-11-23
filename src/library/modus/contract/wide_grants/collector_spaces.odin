@@ -269,12 +269,20 @@ space_forwarding_of_word :: proc "contextless" (word: u64) -> (forwarding: Space
 // space_store_init empties store for principal, over the private store of
 // store_port and the memory of memory. The audit spaces come back from that
 // store at the first step.
-space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64, identifier: [COLLECTOR_IDENTIFIER_SIZE]u8, store_port: pr.Private_Store_Port, memory: Space_Memory_Port) {
+//
+// A named principal with an identifier of zero bytes, the name of principal
+// 0, gets no store: its port keeps no procedure, so each step is refused
+// and no object names it as principal 0. identified is then false.
+space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64, identifier: [COLLECTOR_IDENTIFIER_SIZE]u8, store_port: pr.Private_Store_Port, memory: Space_Memory_Port) -> (identified: bool) {
 	store^ = {}
 	store.principal = principal
 	store.identifier = identifier
-	store.store_port = store_port
 	store.memory = memory
+	if principal != 0 && identifier == {} {
+		return false
+	}
+	store.store_port = store_port
+	return true
 }
 
 // space_index_bytes_of gives the bytes of an index of count places.

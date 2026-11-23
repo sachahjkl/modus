@@ -537,13 +537,26 @@ records_of_turn :: proc "contextless" (queue: ^ring.Queue) -> u32 {
 // when half of the queue is free, and before it waits itself (wait_end).
 receive :: proc "contextless" (queue: ^ring.Queue) -> (record: ring.Record, ok: bool) {
 	record = ring.pop(queue) or_return
+	receive_wake_writer(queue)
+	return record, true
+}
+
+// receive_erasing receives a record as receive does, and writes zeros over
+// its slot in the ring: the reader of a ring that can carry a key calls it.
+receive_erasing :: proc "contextless" (queue: ^ring.Queue) -> (record: ring.Record, ok: bool) {
+	record = ring.pop_erasing(queue) or_return
+	receive_wake_writer(queue)
+	return record, true
+}
+
+@(private = "file")
+receive_wake_writer :: proc "contextless" (queue: ^ring.Queue) {
 	if ring.count(queue) == ring.capacity(queue) / 2 {
 		ring.complete(&queue.counters.read) // See wake_reader.
 		if intrinsics.atomic_load(&queue.counters.writer_waits) != 0 && intrinsics.atomic_exchange(&queue.counters.writer_waits, 0) != 0 {
 			word_wake(&queue.counters.read, WAKE_ALL)
 		}
 	}
-	return record, true
 }
 
 // wake_one wakes one of the threads that wait on a word, if one waits. Call

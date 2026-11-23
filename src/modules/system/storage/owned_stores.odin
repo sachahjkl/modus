@@ -1,11 +1,10 @@
 package storage_service
 
-import "base:intrinsics"
+import principal_keys "internal:storage/principal_keys"
 import "modus:contract/errors"
 import format "modus:contract/store"
 import "modus:principals"
 import "modus:random"
-import "modus:store_encryption"
 import "modus:system"
 
 // The stores of a named principal (src/md/features/store_encryption.md).
@@ -41,10 +40,7 @@ owned_slot :: proc "contextless" (name: string) -> u64 {
 // then the first 31 bytes of the name tag. ok is false for a name that no
 // tag takes.
 owned_tag :: proc "contextless" (keys: ^Principal_Storage, name: string) -> (field: [format.NAME_CAPACITY]u8, ok: bool) {
-	tag := store_encryption.name_tag(keys.name_key, name) or_return
-	field[0] = format.OWNED_CELL_MARK
-	copy(field[1:], tag[:format.NAME_CAPACITY - 1])
-	return field, true
+	return principal_keys.cell_field(keys, name)
 }
 
 // owned_find gives the store of a name of a named principal: the cell with
@@ -75,15 +71,30 @@ owned_find :: proc "contextless" (slot: u64, name: string) -> int {
 }
 
 // owned_store_check reads the store block of an owned store, and checks its
-// owner and its key check against the keys held.
+// owner, its key check and its sealed name against the keys held and the
+// cell (owned_store_open).
 owned_store_check :: proc "contextless" (index: int, keys: ^Principal_Storage) -> bool {
-	owner, read := owned_fields_read(index)
-	if !read || owner.owner != keys.identifier {
-		return false
+	buffer: [format.OWNER_FIELD_SIZE]u8
+	_, ok := owned_store_open(index, keys, &buffer)
+	return ok
+}
+
+// owned_store_open opens the name of an owned store into buffer, after it
+// checked the store block against the keys held: its owner, its key check,
+// and the tag of the opened name, which must be the tag of the cell. So a
+// cell that a writer of the disk pointed at another store block of the same
+// principal, whose owner and key check pass, is refused: each cell is bound
+// to its store block by its name. On a refusal, buffer holds zeros.
+owned_store_open :: proc "contextless" (index: int, keys: ^Principal_Storage, buffer: ^[format.OWNER_FIELD_SIZE]u8) -> (name: string, ok: bool) {
+	buffer^ = {}
+	if !owned_cell(index) {
+		return "", false
 	}
-	store_keys, ok := store_encryption.store_keys_of(keys.storage_key, keys.identifier, owner.salt)
-	defer intrinsics.mem_zero_volatile(&store_keys, size_of(store_keys))
-	return ok && store_encryption.key_check_matches(&store_keys, owner.key_check)
+	owner, read := owned_fields_read(index)
+	if !read {
+		return "", false
+	}
+	return principal_keys.owner_open(keys, &owner, store_cell(index).name, buffer)
 }
 
 // owned_fields_read reads the owner fields of the store block of a store.
@@ -104,18 +115,11 @@ owned_make :: proc "contextless" (slot: u64, name: string, error: ^errors.Error_
 		return {}, {}, false
 	}
 	field = owned_tag(keys, name) or_return
-	if !random.fill_for_a_key(&salt_generator, owner.salt[:], .Processor, error) {
+	salt: [format.OWNER_FIELD_SIZE]u8
+	if !random.fill_for_a_key(&salt_generator, salt[:], .Processor, error) {
 		return {}, {}, false
 	}
-	store_keys := store_encryption.store_keys_of(keys.storage_key, keys.identifier, owner.salt) or_return
-	defer intrinsics.mem_zero_volatile(&store_keys, size_of(store_keys))
-	owner.owner = keys.identifier
-	owner.key_check = store_keys.check
-	copy(owner.name_sealed[:], name)
-	// The nonce of the block 0 and the check 0 is used by this one write
-	// under the key of the store: no block of a store is block 0.
-	nonce := store_encryption.block_nonce(&store_keys, 0, 0)
-	store_encryption.xchacha20(&store_keys.cipher, &nonce, owner.name_sealed[:])
+	owner = principal_keys.owner_seal(keys, name, salt) or_return
 	return owner, field, true
 }
 
@@ -123,23 +127,13 @@ owned_make :: proc "contextless" (slot: u64, name: string, error: ^errors.Error_
 // held, into buffer: "" when the principal is locked or the store is of
 // another one.
 owned_name_into :: proc "contextless" (index: int, slot: u64, buffer: ^[format.OWNER_FIELD_SIZE]u8) -> string {
+	buffer^ = {}
 	keys := principal_keys_held(slot)
-	if keys == nil || !owned_cell(index) {
+	if keys == nil {
 		return ""
 	}
-	owner, read := owned_fields_read(index)
-	if !read || owner.owner != keys.identifier {
-		return ""
-	}
-	store_keys, ok := store_encryption.store_keys_of(keys.storage_key, keys.identifier, owner.salt)
-	defer intrinsics.mem_zero_volatile(&store_keys, size_of(store_keys))
-	if !ok || !store_encryption.key_check_matches(&store_keys, owner.key_check) {
-		return ""
-	}
-	buffer^ = owner.name_sealed
-	nonce := store_encryption.block_nonce(&store_keys, 0, 0)
-	store_encryption.xchacha20(&store_keys.cipher, &nonce, buffer[:])
-	return system.name_of(buffer[:])
+	name, _ := owned_store_open(index, keys, buffer)
+	return name
 }
 
 // owned_checks_clear forgets the checks of the stores of a slot: its keys

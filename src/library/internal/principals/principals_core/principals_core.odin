@@ -373,19 +373,14 @@ session_transition :: proc "contextless" (state: ^Principals_State, input: ^rd.S
 
 	case .Bring_To_Front:
 		// One open session: the session that unlocks is in front, so the
-		// front is a fact that this action checks, and changes only for
-		// principal 0 while no named session holds the seat.
+		// front is a fact that this action checks and never changes.
+		// Principal 0 is in front while no named session holds the seat; the
+		// start alone puts it there (principals.seat_next).
 		if !session_running(entry) {
 			state.counters.total_refusals += 1
 			return .Session_State_Conflict
 		}
-		if entry.id == role_contract.MACHINE_PRINCIPAL {
-			if state.seat.state == .Session && state.seat.in_front != role_contract.MACHINE_PRINCIPAL {
-				state.counters.total_refusals += 1
-				return .Session_State_Conflict
-			}
-			state.seat, _ = principals.seat_next(state.seat, .Machine_Alone)
-		} else if principals.principal_in_front(state.seat) != entry.id {
+		if principals.principal_in_front(state.seat) != entry.id {
 			state.counters.total_refusals += 1
 			return .Session_State_Conflict
 		}

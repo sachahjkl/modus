@@ -121,6 +121,37 @@ a_full_queue_refuses_a_push_and_changes_nothing :: proc(t: ^testing.T) {
 	testing.expect_value(t, count(queue), u32(CAPACITY))
 }
 
+// pop_erasing gives the record as pop does and leaves zeros in its slot,
+// and nowhere else; an empty queue and counters that say more records than
+// the queue holds give nothing and write no byte.
+@(test)
+a_pop_that_erases_leaves_no_copy_in_the_ring :: proc(t: ^testing.T) {
+	memory := memory_of_pages(PAGE_COUNT)
+	defer delete(memory)
+	ring, opened := open(raw_data(memory), PAGE_COUNT)
+	testing.expect(t, opened)
+	queue := &ring.commands
+	before := slice.clone(memory)
+	defer delete(before)
+	record, popped := pop_erasing(queue)
+	testing.expect(t, !popped && record == Record{})
+	testing.expect(t, slice.equal(before, memory), "a pop of an empty queue wrote a byte")
+	testing.expect(t, push(queue, numbered_record(1)))
+	testing.expect(t, push(queue, numbered_record(2)))
+	record, popped = pop_erasing(queue)
+	testing.expect(t, popped)
+	testing.expect_value(t, record, numbered_record(1))
+	testing.expect_value(t, queue.records[0], Record{})
+	testing.expect_value(t, queue.records[1], numbered_record(2))
+	testing.expect_value(t, count(queue), 1)
+	// Counters past the capacity: refused, nothing erased.
+	intrinsics.atomic_store(&queue.counters.write, queue.counters.read + u32(CAPACITY) + 1)
+	copy(before, memory)
+	record, popped = pop_erasing(queue)
+	testing.expect(t, !popped, "a pop took a record of counters that no writer writes")
+	testing.expect(t, slice.equal(before, memory), "a refused pop wrote a byte")
+}
+
 // A pop on an empty queue gives no record and changes no counter, also on
 // a queue that its reader emptied.
 @(test)

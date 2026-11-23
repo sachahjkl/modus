@@ -1,5 +1,6 @@
 package system
 
+import "base:intrinsics"
 import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
@@ -71,7 +72,7 @@ Service :: struct {
 	// root service sends (Principal_Identity, Principal_Storage_Key,
 	// Principal_Locked). Only the holder of the role Storage sets it; each
 	// other service refuses them.
-	principal_keys: proc "contextless" (service: ^Service, command: isolated.Service_Command, values: [7]u64),
+	principal_keys: proc "contextless" (service: ^Service, command: isolated.Service_Command, values: ^[7]u64),
 }
 
 // The service ring and the call ring of each caller, two words each, take
@@ -131,7 +132,11 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 		return 0
 	}
 	for _ in 0 ..< ring.CAPACITY {
-		command, has_command := receive(&service.names.commands)
+		// The ring of the root service can carry the storage key of a
+		// principal: each record is erased in the ring as it is taken, and
+		// its copy here at the end of its turn.
+		command, has_command := receive_erasing(&service.names.commands)
+		defer intrinsics.mem_zero_volatile(&command, size_of(command))
 		if !has_command {
 			break
 		}
@@ -163,7 +168,7 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 				log(.Warning, "service: the root service sent the keys of a principal to a service that takes none: they are refused")
 				continue
 			}
-			service.principal_keys(service, service_command, command.values)
+			service.principal_keys(service, service_command, &command.values)
 		case .Disconnect:
 			for &connection in service.connections {
 				if connection.calls.head != nil && connection.ring_memory == ring_memory {

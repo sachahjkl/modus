@@ -760,12 +760,15 @@ a_moved_missing_or_older_object_refuses_the_restart :: proc(t: ^testing.T) {
 	index.used = true
 
 	// Another principal reads the store: another identifier, also in the
-	// same slot, and no identifier.
+	// same slot. With no identifier, a named principal gets no store: the
+	// restart reads nothing and keeps no space.
 	other_identifier := TEST_COLLECTOR_IDENTIFIER
 	other_identifier[31] ~= 1
 	expect_damaged(t, fixture, "another principal", PRINCIPAL + 1, other_identifier)
 	expect_damaged(t, fixture, "another principal in the same slot", PRINCIPAL, other_identifier)
-	expect_damaged(t, fixture, "no identifier", PRINCIPAL, {})
+	testing.expect(t, !space_store_init(&fixture.store, PRINCIPAL, {}, failing_store_port(&fixture.failing), space_window_heap_port()))
+	testing.expect(t, space_store_ready(&fixture.store) != .None, "a named principal with no identifier read the store")
+	testing.expect_value(t, space_count(&fixture.store), 0)
 
 	// The index of an older release names its principal by its slot: it is
 	// refused as such, not as damage.

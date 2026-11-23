@@ -105,49 +105,42 @@ follow_row_of :: proc "contextless" (number: u64, record: ^op.Log_Record) -> (ro
 	return row, true
 }
 
-// follow_lost says a loss to each ring of follow: one gap record of one
-// record, whatever the count, because the records that the kernel wrote
-// over before the pass settled them have no principal, and their count
-// would tell a follower how many records the others wrote.
+// follow_lost says the loss of one record of a principal to the rings of
+// that principal only, with its serial and its counts: no follower learns a
+// loss, or a count, of another principal.
 @(private = "file")
-follow_lost :: proc "contextless" () {
-	system.output_gap(&follow, 1)
+follow_lost :: proc "contextless" (principal: u64) {
+	system.output_gap_principal(&follow, principal, 1)
 }
 
 // follow_pump writes the settled records that follow did not write yet,
 // each to the rings of its principal with its scope number, until the
 // first one that a ring of its principal refuses. With no follower, the
 // next one joins from the next record.
+//
+// A record that the kernel wrote over after the pass settled it is a loss
+// of its principal, said to that principal. A record that the kernel wrote
+// over before the pass read it has no principal, and no scope number: no
+// follower's numbers miss it (principal_scope.odin).
 follow_pump :: proc "contextless" () {
 	if !system.output_read_by(&follow) {
 		follow_next = settled_next
 		return
 	}
-	lost := false
 	for follow_next < settled_next {
 		place, settled := record_settled(follow_next)
+		if !settled || !place.known {
+			follow_next += 1
+			continue
+		}
 		record, whole := record_copy(follow_next)
-		if !settled || !whole {
-			// The kernel wrote over this record before the pump read it.
-			lost = true
-			follow_next += 1
-			continue
-		}
-		if !place.known {
-			follow_next += 1
-			continue
-		}
 		row, row_ok := follow_row_of(place.scope_number, &record)
-		if !row_ok {
-			// A byte that names no member: a record that no follower
-			// reads.
-			lost = true
+		if !whole || !row_ok {
+			// Written over after the pass, or a byte that names no member:
+			// a loss of its principal.
+			follow_lost(place.principal)
 			follow_next += 1
 			continue
-		}
-		if lost {
-			follow_lost()
-			lost = false
 		}
 		switch system.output_write_principal(&follow, place.principal, row, wait = false, deadline = system.time()) {
 		case .Ok, .No_Reader:
@@ -163,8 +156,5 @@ follow_pump :: proc "contextless" () {
 			// twice.
 			follow_next += 1
 		}
-	}
-	if lost {
-		follow_lost()
 	}
 }

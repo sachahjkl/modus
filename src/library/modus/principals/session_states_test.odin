@@ -106,6 +106,29 @@ a_record_takes_the_seat_from_principal_zero_only :: proc(t: ^testing.T) {
 	testing.expect(t, ok && next == held, "a named session keeps the seat")
 	_, ok = seat_next({state = .Chooser}, .Machine_Alone, 1)
 	testing.expect(t, !ok, "the start names principal 0 only")
+	_, ok = seat_next({}, .Machine_Alone, 1)
+	testing.expect(t, !ok, "the start names principal 0 only")
+}
+
+// The start comes once and first: Machine_Alone in each later state is
+// refused and changes nothing, and no other event has a meaning before it.
+@(test)
+the_start_comes_once_and_first :: proc(t: ^testing.T) {
+	for later in ([?]Seat{{state = .Chooser}, {state = .Unlock_Window}, {state = .Session, in_front = 1}, {state = .Session, in_front = MACHINE}}) {
+		next, ok := seat_next(later, .Machine_Alone)
+		testing.expect(t, !ok && next == later, "Machine_Alone past the start was taken")
+	}
+	for event in Seat_Event {
+		if event == .Machine_Alone {
+			continue
+		}
+		for principal in ([?]u64{MACHINE, 1}) {
+			next, ok := seat_next({}, event, principal)
+			testing.expect(t, !ok && next == Seat{}, "an event before the start was taken")
+		}
+	}
+	next, ok := seat_next({}, .Machine_Alone)
+	testing.expect(t, ok && next == Seat{state = .Session, in_front = MACHINE})
 }
 
 @(test)

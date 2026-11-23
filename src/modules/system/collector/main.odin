@@ -664,7 +664,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if service_region_base != nil && service_region_bytes >= wide_grants.COLLECTOR_REGION_IDENTIFIER_AT + wide_grants.COLLECTOR_IDENTIFIER_SIZE {
 		copy(identifier[:], service_region_base[wide_grants.COLLECTOR_REGION_IDENTIFIER_AT:][:wide_grants.COLLECTOR_IDENTIFIER_SIZE])
 	}
-	wide_grants.space_store_init(&space_service.store, principal_id, identifier, store_port, memory_port)
+	if !wide_grants.space_store_init(&space_service.store, principal_id, identifier, store_port, memory_port) {
+		store_open = false
+		system.log_fact(.Error, Spaces_Refused_No_Identifier{principal_id = principal_id})
+	}
 	system.log_fact(.Info, Space_Windows_Paid{windows = u64(windows)})
 	closed_date_page = date.page_of(ctx)
 

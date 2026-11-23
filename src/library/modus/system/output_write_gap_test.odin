@@ -588,8 +588,14 @@ a_write_of_a_principal_reaches_the_rings_of_that_principal_only :: proc(t: ^test
 	record := Gap_Test_Record{sequence = 1, tag = 5}
 	testing.expect_value(t, output_write_principal(&stream, output.READER_PRINCIPAL_LIMIT, record, wait = false), output.Stream_Status.Bad_Record)
 	testing.expect_value(t, output_write_principal(&stream, max(u64), record, wait = false), output.Stream_Status.Bad_Record)
-	testing.expect_value(t, output_write_principal(&stream, 7, record, wait = false), output.Stream_Status.No_Reader)
-	testing.expect_value(t, output_principal_rings(&stream, 7), 0)
+	testing.expect_value(t, output_write_principal(&stream, SCOPED_PRINCIPALS_MOST, record, wait = false), output.Stream_Status.Bad_Record)
+	testing.expect_value(t, output_principal_rings(&stream, SCOPED_PRINCIPALS_MOST), 0)
+	testing.expect_value(t, output_gap_principal(&stream, SCOPED_PRINCIPALS_MOST, 1), output.Stream_Status.Bad_Record)
+	testing.expect(t, stream.state.scoped == {} && stream.state.counts == {}, "a refused write changed a count")
+	// A principal with no ring: no reader.
+	stream_ends[1].reader_principal = 0
+	testing.expect_value(t, output_write_principal(&stream, 1, record, wait = false), output.Stream_Status.No_Reader)
+	stream_ends[1].reader_principal = 1 + 1
 	for backing in ([?]^Host_Output_Ring{&ring_machine, &ring_named, &ring_unknown}) {
 		_, _, _, has := host_pop_record(t, backing, size_of(Gap_Test_Record))
 		testing.expect(t, !has, "a refused write reached a ring")
@@ -612,6 +618,23 @@ a_write_of_a_principal_reaches_the_rings_of_that_principal_only :: proc(t: ^test
 	_, _, _, named_has := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
 	testing.expect(t, !named_has, "the record of principal 0 reached principal 1")
 	testing.expect_value(t, output_principal_rings(&stream, 0), 1)
+	// Each principal has its own serials and counts: principal 0 reads the
+	// serial 0 and no count of the two records of principal 1.
+	_, _, _, _ = host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	machine_kind, machine_serial, _, machine_ok := host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	testing.expect(t, machine_ok && machine_kind == .Record)
+	testing.expect_value(t, machine_serial, u32(0))
+	testing.expect_value(t, stream.state.scoped[0].written, u64(1))
+	testing.expect_value(t, stream.state.scoped[1].next_serial, u32(2))
+	testing.expect(t, stream.state.counts == {}, "a write of a principal counted in the whole record output")
+	// A loss of principal 1 reaches its ring only.
+	testing.expect_value(t, output_gap_principal(&stream, 1, 3), output.Stream_Status.Ok)
+	gap_kind, gap_serial, _, gap_ok := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
+	testing.expect(t, gap_ok && gap_kind == .Gap)
+	testing.expect_value(t, gap_serial, u32(2))
+	_, _, _, machine_gap := host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	testing.expect(t, !machine_gap, "a loss of principal 1 reached principal 0")
+	testing.expect_value(t, stream.state.scoped[0].next_serial, u32(1))
 	// A live count sees the ring of each principal.
 	testing.expect_value(t, output_reader_count(&stream), 3)
 }

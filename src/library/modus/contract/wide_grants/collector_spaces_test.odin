@@ -17,6 +17,26 @@ memory_store_bind :: proc(store: ^Space_Store, principal: u64, windows_paid: u32
 	return memory
 }
 
+// A named principal with an identifier of zero bytes gets no store: each
+// step is refused, so no object names it as principal 0. Principal 0 with
+// zero bytes, its own name, gets its store.
+@(test)
+a_named_principal_with_no_identifier_gets_no_store :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := new(pr.Memory_Private_Store)
+	defer free(memory)
+	port, _ := space_memory_heap(64, 256)
+	for principal in ([?]u64{1, max(u64)}) {
+		testing.expect(t, !space_store_init(store, principal, {}, pr.memory_private_store_port(memory), port), "a named principal with no identifier got a store")
+		_, refusal := space_open(store, text("server"), text("orders"), audit_terms(4))
+		testing.expect(t, refusal != .None, "a space opened with no identifier")
+		testing.expect(t, memory.writes == 0 && memory.reads == 0 && memory.removes == 0, "a step with no identifier used the store")
+	}
+	testing.expect(t, space_store_init(store, 0, {}, pr.memory_private_store_port(memory), port))
+	testing.expect(t, space_store_init(store, 1, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), port))
+}
+
 @(private = "file")
 audit_terms :: proc(bound: i64, record_size: i64 = 8, forwarding := Space_Forwarding.Keeps) -> Space_Terms {
 	return {kind_word = i64(Collector_Space_Kind.Audit), bound_records = bound, forwarding_word = i64(forwarding), record_size = record_size}

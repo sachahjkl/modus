@@ -1269,6 +1269,7 @@ root_loop_pass :: proc "contextless" () {
 	// After reap: a storage service that stopped ended its connections.
 	disk_load_step(&wait)
 	persisted_tables_step()
+	storage_erase_step(&wait) // principals.odin
 	network_answers(&wait)
 	wiring_request_step(&wait)
 	devices_answers(&wait)

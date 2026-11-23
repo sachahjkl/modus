@@ -69,6 +69,7 @@ session_next :: proc "contextless" (state: Session_State, event: Session_Event) 
 
 // The state of the seat.
 Seat_State :: enum u8 {
+	Starting, // The machine starts: no event but Machine_Alone has a meaning yet.
 	Chooser, // No session is in front, and no window of unlock shows.
 	Unlock_Window, // A window of unlock that no session asked for: the unlock or the creation.
 	Session, // A session is in front: Seat.in_front names its principal.
@@ -100,6 +101,11 @@ Seat_Event :: enum u8 {
 // Session_Unlocked of principal 2: one session is in front at a time.
 seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 = MACHINE) -> (next: Seat, ok: bool) {
 	machine_in_front := seat.state == .Session && seat.in_front == MACHINE
+	// The start comes once, first: Machine_Alone past it would put principal
+	// 0 in front of a chooser or of a named session.
+	if (seat.state == .Starting) != (event == .Machine_Alone) {
+		return seat, false
+	}
 	switch event {
 	case .Machine_Alone:
 		if principal == MACHINE {

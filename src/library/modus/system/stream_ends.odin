@@ -963,14 +963,19 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 	if output.compartment_size(u32(len(bytes))) == 0 {
 		return .Bad_Record
 	}
+	// The serial and the counts of the rings that this write reaches.
+	cs := counts_of(state, selector)
+	if cs == nil {
+		return .Bad_Record
+	}
 	index := stream_index_read(&state.index)
 	// An earlier look of this write waited: a wake before the room counts
 	// no second hold.
 	waited := false
 	room_loop: for {
 		if output_ends_of(state, u32(len(bytes)), selector) == 0 {
-			state.discarded += 1
-			state.next_serial += 1
+			cs.discarded += 1
+			cs.next_serial += 1
 			return .No_Reader
 		}
 		// A ring whose condition the record fails takes nothing of this
@@ -1030,8 +1035,8 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		// write that waited and reached its deadline counts in held and in
 		// refused.
 		step := output.write_step_of(held_by_choice, held_always, wait)
-		looked := output.write_counts_after({refused = state.refused, held = state.held}, step, waited, false)
-		state.refused, state.held = looked.refused, looked.held
+		looked := output.write_counts_after({refused = cs.refused, held = cs.held}, step, waited, false)
+		cs.refused, cs.held = looked.refused, looked.held
 		switch step {
 		case .Write:
 			refused_full_mark(index, false, selector)
@@ -1042,19 +1047,20 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		case .Wait:
 			waited = true
 			if wait_end(&waiting, deadline) >= deadline {
-				timed_out := output.write_counts_after({refused = state.refused, held = state.held}, .Wait, true, true)
-				state.refused, state.held = timed_out.refused, timed_out.held
+				timed_out := output.write_counts_after({refused = cs.refused, held = cs.held}, .Wait, true, true)
+				cs.refused, cs.held = timed_out.refused, timed_out.held
 				refused_full_mark(index, true, selector)
 				return .Full
 			}
 		}
 	}
-	serial := state.next_serial
+	serial := cs.next_serial
 	// The counts before this record. Each write publishes them again, so a
 	// reader reads the counts of the last write before its read, at least
 	// as new as the compartment that it took
 	// (src/md/features/module_outputs.md, "The counts of a record output").
-	counts := output.Writer_Counts{written = state.written, discarded = state.discarded, refused = state.refused, held = state.held, rings_past_gap = state.rings_past_gap}
+	// A ring of one principal reads the counts of that principal only.
+	counts := output.Writer_Counts{written = cs.written, discarded = cs.discarded, refused = cs.refused, held = cs.held, rings_past_gap = cs.rings_past_gap}
 	taken := false
 	for &end in stream_ends {
 		if !writer_end_in(&end, index, selector) || !end.opened {
@@ -1102,7 +1108,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 				// after the records that its ring holds. The other rings
 				// of this write go on. A refused record never gives
 				// Not_Contiguous: it is the same end.
-				state.rings_past_gap += 1
+				cs.rings_past_gap += 1
 				stream_end_finish(&end)
 			}
 			continue
@@ -1113,14 +1119,28 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		compartment_push_to(&end, .Record, serial, bytes)
 		counters_wake_reader(end.queue.commands.counters)
 	}
-	state.next_serial += 1
+	cs.next_serial += 1
 	// A record that the condition of each ring left out, or that each ring
 	// refused for its reader, is taken by no ring: it counts as discarded,
 	// as a record with no reader. Each ring that refused it counts it in
 	// its gap.
 	after := output.counts_after_write(counts, taken)
-	state.written, state.discarded = after.written, after.discarded
+	cs.written, cs.discarded = after.written, after.discarded
 	return .Ok
+}
+
+// counts_of gives the serial and the counts of the rings that a selector
+// reaches: those of one reader principal, or of the whole record output.
+// nil: a principal past SCOPED_PRINCIPALS_MOST, whose rings take nothing.
+@(private = "file")
+counts_of :: proc "contextless" (state: ^Output_State, selector: End_Selector) -> ^Serial_Counts {
+	if selector.reader_principal == 0 {
+		return &state.counts
+	}
+	if selector.reader_principal > SCOPED_PRINCIPALS_MOST {
+		return nil
+	}
+	return &state.scoped[selector.reader_principal - 1]
 }
 
 // output_end ends a record output: an end record in each ring, with an
@@ -1319,7 +1339,8 @@ output_write_principal :: proc "contextless" (stream: ^Record_Output($Record_Typ
 	if state.ended {
 		return .Ended
 	}
-	if principal >= output.READER_PRINCIPAL_LIMIT {
+	// A principal past the counted ones has no ring and no serial.
+	if principal >= SCOPED_PRINCIPALS_MOST {
 		return .Bad_Record
 	}
 	local := record
@@ -1330,7 +1351,7 @@ output_write_principal :: proc "contextless" (stream: ^Record_Output($Record_Typ
 // output_principal_rings gives the live rings of the readers of one
 // principal of a record output By_Principal.
 output_principal_rings :: proc "contextless" (stream: ^Record_Output($Record_Type, module.Record_Output_Pairing.By_Principal), principal: u64) -> int {
-	if principal >= output.READER_PRINCIPAL_LIMIT {
+	if principal >= SCOPED_PRINCIPALS_MOST {
 		return 0
 	}
 	return output_ends_of(&stream.state, u32(size_of(Record_Type)), {reader_principal = principal + 1})
@@ -1358,17 +1379,53 @@ output_gap :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 	if !output_size_known(stream) {
 		return .Bad_Record
 	}
-	if output_ends_live(stream) == 0 {
-		state.next_serial += count
+	when pairing == .By_Principal {
+		// A record output of principals says a loss to the rings of one
+		// principal only: output_gap_principal.
+		return .Bad_Record
+	}
+	record_size := u32(size_of(Record_Type))
+	when Record_Type == Any_Record {
+		record_size = state.record_size
+	}
+	return output_gap_bytes(state, record_size, count, {})
+}
+
+// output_gap_principal says a loss of count records to the rings of the
+// readers of one principal of a record output By_Principal, with the serial
+// and the counts of that principal: the rings of another principal learn
+// nothing of it.
+output_gap_principal :: proc "contextless" (stream: ^Record_Output($Record_Type, module.Record_Output_Pairing.By_Principal), principal: u64, count: u32) -> output.Stream_Status where Record_Type != Any_Record {
+	state := &stream.state
+	if state.ended {
+		return .Ended
+	}
+	if principal >= SCOPED_PRINCIPALS_MOST {
+		return .Bad_Record
+	}
+	if count == 0 {
+		return .Ok
+	}
+	return output_gap_bytes(state, u32(size_of(Record_Type)), count, {reader_principal = principal + 1})
+}
+
+@(private = "file")
+output_gap_bytes :: proc "contextless" (state: ^Output_State, record_size: u32, count: u32, selector: End_Selector) -> output.Stream_Status {
+	cs := counts_of(state, selector)
+	if cs == nil {
+		return .Bad_Record
+	}
+	if output_ends_of(state, record_size, selector) == 0 {
+		cs.next_serial += count
 		return .No_Reader
 	}
 	index := stream_index_read(&state.index)
-	first := state.next_serial
+	first := cs.next_serial
 	// The counts as of this call, in each ring, as each write publishes
 	// them: a reader that reads the gap reads counts at least as new.
-	counts := output.Writer_Counts{written = state.written, discarded = state.discarded, refused = state.refused, held = state.held, rings_past_gap = state.rings_past_gap}
+	counts := output.Writer_Counts{written = cs.written, discarded = cs.discarded, refused = cs.refused, held = cs.held, rings_past_gap = cs.rings_past_gap}
 	for &end in stream_ends {
-		if end.command != .Writer_End || end.index != index || !end.opened {
+		if !writer_end_in(&end, index, selector) || !end.opened {
 			continue
 		}
 		output.writer_counts_write(end.ring_address, counts)
@@ -1380,7 +1437,7 @@ output_gap :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 			// A gap past its largest count, or one that cannot say both
 			// losses, would give a reader a serial that it cannot place:
 			// the stream of this reader ends.
-			state.rings_past_gap += 1
+			cs.rings_past_gap += 1
 			stream_end_finish(&end)
 			continue
 		}
@@ -1406,7 +1463,7 @@ output_gap :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 			counters_wake_reader(end.queue.commands.counters)
 		}
 	}
-	state.next_serial += count
+	cs.next_serial += count
 	return .Ok
 }
 
