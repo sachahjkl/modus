@@ -6,6 +6,7 @@ import "core:strings"
 import "modus:contract/module"
 import "modus:contract/output"
 import "modus:contract/start_list"
+import "modus:contract/wide_grants"
 import "modustool:foundation"
 import "modustool:resources"
 
@@ -40,6 +41,12 @@ Start_List_Wiring :: struct {
 	record_input:  string,
 	pace:          output.Wiring_Pace,
 	capacity:      u32, // 0: the default.
+	// The bound of an audit space of the collector, for a row to
+	// collector.sources: the tool writes the terms of that space, Audit, no
+	// forward, the size of the record of the writer. 0: no terms
+	// (src/md/features/module_outputs.md, "The audit of a server from the
+	// start list: what leaves, not what enters").
+	audit_bound:   i64,
 }
 
 // The name of the record output log of a writer row in this table.
@@ -324,9 +331,27 @@ start_list_wiring_records :: proc(rows: []Start_List_Row, wirings: []Start_List_
 			continue
 		}
 		input_row, input_wirings, _, _, _ := module.record_input(reader_file, input_index)
-		if input_row.terms != 0 {
-			append(&found, fmt.tprintf("%s names a record input that takes terms, which a start list does not give", at))
+		// Terms go only to a record input that takes them, and such an input
+		// takes no row without them.
+		if (input_row.terms != 0) != (wiring.audit_bound != 0) {
+			append(&found, fmt.tprintf("%s gives terms to a record input that takes none, or none to one that takes them: the audit bound is %d", at, wiring.audit_bound))
 			continue
+		}
+		if wiring.audit_bound != 0 {
+			if wiring.audit_bound < 1 || wiring.audit_bound > wide_grants.SPACE_AUDIT_BOUND_MOST {
+				append(&found, fmt.tprintf("%s has an audit bound of %d, out of 1 to %d", at, wiring.audit_bound, wide_grants.SPACE_AUDIT_BOUND_MOST))
+				continue
+			}
+			described_writer, _ := module.record_stream_type(writer.file, writer.record)
+			terms := wide_grants.Space_Terms {
+				kind_word       = i64(wide_grants.Collector_Space_Kind.Audit),
+				bound_records   = wiring.audit_bound,
+				forwarding_word = i64(wide_grants.Space_Forwarding.Keeps),
+				record_size     = i64(described_writer.size),
+			}
+			#assert(size_of(wide_grants.Space_Terms) == start_list.START_LIST_TERMS_BYTES)
+			record.terms = transmute([start_list.START_LIST_TERMS_BYTES]u8)terms
+			record.wiring.terms_count = start_list.START_LIST_TERMS_BYTES
 		}
 		if input_row.record != 0 {
 			if difference, part := output.record_descriptions_compare(writer.file, writer.record, reader_file, input_row.record); difference != .Equal {

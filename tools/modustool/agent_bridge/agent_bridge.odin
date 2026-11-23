@@ -47,6 +47,9 @@ Bridge_Json_Method :: enum u8 {
 	Send_Pointer   = 4,
 	Read_Log_Facts = 5,
 	Wire_Command   = 6,
+	// The ask of a wide grant for the key of the bridge: the trusted display
+	// of the machine shows its screen, and the principal answers there.
+	Ask_Wide_Grant = 7,
 }
 
 // Structured typed result returned by Eval_Lex (never scraped terminal text).
@@ -117,6 +120,7 @@ Machine_Transport :: struct {
 	send_key:       proc(user_data: rawptr, window_id: u64, key: remote_display.Key_Body) -> (err: string, ok: bool),
 	send_pointer:   proc(user_data: rawptr, window_id: u64, pointer: remote_display.Pointer_Body) -> (err: string, ok: bool),
 	read_log_facts: proc(user_data: rawptr, query: Log_Facts_Query, allocator: mem.Allocator) -> (facts: []Structured_Log_Fact, err: string, ok: bool),
+	ask_wide_grant: proc(user_data: rawptr, authorities: wide_grants.Wide_Authorities, duration_ms: u64) -> (screen: u64, err: string, ok: bool),
 }
 
 // Bounded append-only host-side BLAKE3 hash-chained act log using the exact
@@ -359,6 +363,8 @@ bridge_method_from_string :: proc(name: string) -> Bridge_Json_Method {
 		return .Read_Log_Facts
 	case "wire_command":
 		return .Wire_Command
+	case "ask_wide_grant":
+		return .Ask_Wide_Grant
 	}
 	return .None
 }
@@ -1052,6 +1058,44 @@ bridge_handle_json_line :: proc(
 			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote read_log_facts failed", allocator)
 		}
 		return format_log_facts_json(id_value, has_id, facts, allocator)
+
+	case .Ask_Wide_Grant:
+		// The ask needs no permission of the bridge: it gives nothing. The
+		// principal answers the screen on the machine, and the root service
+		// takes the key from the handshake, never from this request
+		// (src/md/features/wide_grants.md, "The ask of an agent").
+		scopes_text, has_scopes, scopes_ok := json_get_string(params, "scopes")
+		minutes, has_minutes, minutes_ok := json_get_u64(params, "minutes")
+		if !scopes_ok || !has_scopes || !minutes_ok || !has_minutes {
+			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "ask_wide_grant requires string parameter scopes and integer parameter minutes", allocator)
+		}
+		authorities: wide_grants.Wide_Authorities
+		switch scopes_text {
+		case "view":
+			authorities = {.View_Screen}
+		case "view_and_input":
+			authorities = {.View_Screen, .Send_Input}
+		case:
+			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "scopes must be view or view_and_input", allocator)
+		}
+		most := wide_grants.MAX_WIDE_GRANT_DURATION_MS / 60_000
+		if minutes < 1 || minutes > most {
+			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, fmt.tprintf("minutes must be 1 to %d", most), allocator)
+		}
+		if bridge.transport.ask_wide_grant == nil {
+			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, "ask_wide_grant transport is not configured", allocator)
+		}
+		screen, err_text, ok := bridge.transport.ask_wide_grant(bridge.transport.user_data, authorities, minutes * 60_000)
+		if !ok {
+			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote ask_wide_grant failed", allocator)
+		}
+		builder := strings.builder_make(allocator)
+		strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
+		json_write_id(&builder, id_value, has_id)
+		strings.write_string(&builder, `,"result":{"status":"Ok","screen":`)
+		fmt.sbprintf(&builder, "%d", screen)
+		strings.write_string(&builder, `}}`)
+		return strings.to_string(builder)
 
 	case .Wire_Command:
 		frame_hex, has_hex, hex_ok := json_get_string(params, "frame_hex")

@@ -191,6 +191,9 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 			return grant == .Start_Policy
 		case .Plans:
 			return grant == .Plans
+		case .Remote_Clients:
+			// A ring grant alone is never Remote_Clients, which gives no ring.
+			return false
 		}
 		return false
 	}
@@ -489,6 +492,14 @@ the_wide_grant_commands_keep_their_senders :: proc(t: ^testing.T) {
 	for command in ([2]Root_Command{.Wide_Grant_Ask, .Wide_Grant_End}) {
 		testing.expect(t, !sender_allowed(command, {.Principals, .Connect, .Debugger, .Start_Policy, .Plans}))
 		testing.expect(t, sender_allowed(command, {.Root_Ring}))
+	}
+	// The ask of an agent and its second connection come from the holder of
+	// Remote_Clients with a root ring only: a console, and Remote_Clients
+	// with no root ring, send neither.
+	for command in ([2]Root_Command{.Wide_Grant_Agent_Ask, .Wide_Grant_Second_Connection}) {
+		testing.expect(t, !sender_allowed(command, {.Root_Ring, .Principals, .Connect, .Debugger, .Start_Policy, .Plans}))
+		testing.expect(t, !sender_allowed(command, {.Remote_Clients}))
+		testing.expect(t, sender_allowed(command, {.Connect, .Remote_Clients}))
 	}
 	for word in ([?]u64{0, u64(max(Wide_Grant_Proof_Outcome)) + 1, max(u64)}) {
 		_, ok := wide_grant_proof_outcome_of_word(word)

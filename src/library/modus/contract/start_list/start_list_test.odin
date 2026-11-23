@@ -217,7 +217,14 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.reader_handle = 5}), .Wiring_Refused, refused(.Reader_Handle, 5, 4)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.writer_index = 0}), .Wiring_Refused, refused(.Writer_Index, 0, module.RECORD_STREAM_INDEX_MOST)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.capacity = 33}), .Wiring_Refused, refused(.Capacity, 33, output.WIRING_CAPACITY_MOST)},
-		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_offset, record.wiring.terms_count = 64, 8}), .Wiring_Refused, refused(.Terms_Offset, 64, 0)},
+		// The terms: an offset, a count that is not the size of the terms, and
+		// bytes of terms in a row with none.
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_offset, record.wiring.terms_count = 64, 8}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_offset, record.wiring.terms_count = 1, START_LIST_TERMS_BYTES}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_count = START_LIST_TERMS_BYTES - 1}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_count = START_LIST_TERMS_BYTES + 1}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_count = max(u32)}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.terms[START_LIST_TERMS_BYTES - 1] = 1}), .Bad_Terms, {}},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.condition_offset, record.wiring.condition_count = 64, size_of(output.Condition_Terms)}), .Wiring_Refused, refused(.Condition_Offset, 64, 0)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.reserved[1] = 1}), .Wiring_Refused, refused(.Reserved, 1, 0)},
 		// A pair names an earlier row that the output border takes, and the
@@ -246,6 +253,17 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	reader_restarts := record_change(bytes, 0, proc(record: ^Row_Record) {record.restart_count = RESTART_LIMIT})
 	problem, _, _ := list_read(reader_restarts, &list)
 	testing.expect_value(t, problem, List_Problem.None)
+	// A row with terms: the list keeps them, with their count.
+	with_terms := change(good, proc(record: ^Wiring_Row_Record) {
+		record.wiring.terms_count = START_LIST_TERMS_BYTES
+		for index in 0 ..< START_LIST_TERMS_BYTES {
+			record.terms[index] = u8(index + 1)
+		}
+	})
+	problem, _, _ = list_read(wiring_change(bytes, 4, 1, with_terms), &list)
+	testing.expect_value(t, problem, List_Problem.None)
+	testing.expect_value(t, list.wirings[1].wiring.terms_count, u32(START_LIST_TERMS_BYTES))
+	testing.expect_value(t, list.wirings[1].terms, with_terms.terms)
 }
 
 // The writer of a list refuses more start rows or wiring rows than a list

@@ -364,6 +364,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/replacement_signature",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/start_policy_rules",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/wide_grant_flow",
+	foundation.SOURCE_FOLDER_INTERNAL + "/compositor/wide_grant_view",
 	foundation.SOURCE_FOLDER_INTERNAL + "/start_policy/wiring_rows",
 	foundation.SOURCE_FOLDER_CONTRACT + "/operation",
 	foundation.SOURCE_FOLDER_CONTRACT + "/operation_sequence",

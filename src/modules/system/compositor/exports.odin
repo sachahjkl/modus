@@ -435,7 +435,9 @@ powerbox_ask_export :: proc "c" (process_name: ^string, resource: ^string, error
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	if plan_difference_dialog.open {
+	// One trusted dialog at a time: a dialog of a plan, the screen of a
+	// wide grant or the card of its mark shows, or a screen waits.
+	if plan_difference_dialog.open || wide_grant_trusted_surface_open() || wide_grant_screen_waits {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
 	}
 	id := powerbox_prompt_open(.Network_Endpoint, process_name^, resource^)
@@ -491,7 +493,9 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	if plan_difference_dialog.open {
+	// One trusted dialog at a time: a dialog of a plan, the screen of a
+	// wide grant or the card of its mark shows, or a screen waits.
+	if plan_difference_dialog.open || wide_grant_trusted_surface_open() || wide_grant_screen_waits {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
 	}
 	id := powerbox_prompt_open(.Store_Share, process_name^, mode^)

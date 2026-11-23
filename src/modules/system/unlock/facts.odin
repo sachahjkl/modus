@@ -605,9 +605,10 @@ Wide_Grant_Proof_Asked :: struct {
 	principal: u64,
 }
 
-@(log_fact = "unlock: principal {principal} has no passphrase that proves a wide grant here: no grant")
+@(log_fact = "unlock: principal {principal} has no passphrase that proves a wide grant here, problem {problem_code}: no grant")
 Wide_Grant_Proof_Not_Possible :: struct {
-	principal: u64,
+	principal:    u64,
+	problem_code: u64,
 }
 
 @(log_fact = "unlock: the passphrase of principal {principal} proved a wide grant")

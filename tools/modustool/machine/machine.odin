@@ -5,6 +5,7 @@ import "modus:contract/font_outlines"
 import "internal:compositor/bar"
 import "internal:compositor/palette"
 import "modus:text_rendering"
+import "modus:contract/wide_grants"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
@@ -184,6 +185,12 @@ Step_Kind :: enum {
 	Power_Loss, // Wait until the disk of the last Power_Loss_Arm loses its power: it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
 	Disk_Disconnect, // The disk that the tool serves closes its connection: QEMU fails each request that waits for an answer, so a machine whose disk went silent can end (silent_disk.odin).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
+	// The ask of a wide grant of the peer through the remote service
+	// (call.odin, wide_grant_ask_send): text the scopes, "view" or
+	// "view_and_input", `milliseconds` the duration. With `expected`, the
+	// number of the screen of the answer; with the outcome Refused, the
+	// answer must be a refusal.
+	Ask_Wide_Grant,
 	Assistant_Turn, // One turn of the agent runner of the assistant (tools/modustool/agent_runner) through the remote service, with text as the one reply of its fake model: what the runner prints has `expected`.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
@@ -258,7 +265,7 @@ Step :: struct {
 	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes. For Key_Again_Until: the other decision of the dialog, which fails the step and stops the presses.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
-	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
+	outcome:    Call_Outcome, // For Call: Result, Failed or Refused. For Ask_Wide_Grant: Refused, or the default for an answer.
 	rows_call:  string, // For Call: a call whose Integer result is the count of rows of the Table.
 	lose:       int, // For Call: the peer drops this many datagrams of `remote` to the host; QUIC sends them again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.
@@ -271,7 +278,7 @@ Step :: struct {
 	least_answer_bytes: int, // For Call: the least bytes of the answer on its stream.
 	inside_window: string, // For Click and Drag: (x, y), and the end of a Drag, are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
 	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970, which date_check checks by order against the clock of the host.
-	milliseconds: int, // For Film_Hold: how long the state stays on the screen.
+	milliseconds: int, // For Film_Hold: how long the state stays on the screen. For Ask_Wide_Grant: the duration of the grant.
 	element:    string, // For Click_Element and Wheel: the element name ("watch", "frame 0", "round_robin").
 	notches:    int, // For Wheel: the notches of the wheel, in NOTCH_TOWARD_THE_END.
 	form:       string, // For Point: the pointer form that compositor.pointer() must also report, "dark" or "light" (docs/POINTERS.md).
@@ -2287,6 +2294,28 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			foundation.test_passed_print("%s: inspect gives %d pages in %d mappings and %d threads, as monitor.processes() gives", step.text, pages, mappings.total, threads.total)
+		case .Ask_Wide_Grant:
+			if !machine.client_open {
+				if !call_client_open(&machine.client, machine.call_socket) {
+					return false
+				}
+				machine.client_open = true
+			}
+			authorities := wide_grants.Wide_Authorities{.View_Screen}
+			if step.text == "view_and_input" {
+				authorities += {.Send_Input}
+			}
+			answer, transport, sent := wide_grant_ask_send(&machine.client, authorities, u64(step.milliseconds))
+			if !sent {
+				fmt.eprintfln("modustool: test failed: step %d: the ask of a wide grant got no answer: %s", index + 1, transport.reason)
+				return false
+			}
+			refused := answer.status != .Ok
+			if refused != (step.outcome == .Refused) || (!refused && step.expected != "" && fmt.tprint(answer.value) != step.expected) {
+				fmt.eprintfln("modustool: test failed: step %d: the ask of a wide grant gave the status %v, the screen %d, and the error record %v", index + 1, answer.status, answer.value, answer.error)
+				return false
+			}
+			foundation.test_passed_print("the ask of a wide grant with the scopes %s for %d ms gave %s", step.text, step.milliseconds, refused ? "its refusal" : fmt.tprintf("the screen %d", answer.value))
 		case .Call:
 			call_started_unix := time.time_to_unix(time.now()) // No date in the answer is before it.
 			if !machine.client_open {

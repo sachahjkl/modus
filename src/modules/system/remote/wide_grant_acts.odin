@@ -1,49 +1,46 @@
-// Wide-grant act record output of the remote service
+// The act records of `remote` under a wide grant
 // (src/md/features/wide_grants.md, "The record of each act").
 //
-// Each call of a key whose row of the client table holds a wide grant emits
-// a Call_Made record onto `acts` without blocking. When the audit ring is
-// full, the caller refuses the call with Busy so no call runs unrecorded.
+// Each call of a key whose row of the client table holds a wide grant
+// writes a Call_Made record onto `acts` without blocking, before the call
+// runs. Each status but Ok refuses the call: a full ring, and also a ring
+// with no reader, whose record no one keeps (wide_grants.act_emit).
 package remote_service
 
 import "modus:contract/wide_grants"
 import "modus:system"
 
-// Wide-grant act records emitted by remote for the calls of a key while a
-// wide grant of that key holds.
+// The act records of the calls of a key while a wide grant of that key
+// holds.
 acts: system.Record_Output(wide_grants.Act_Stream_Record)
 
-// remote_wide_grant_act_emit writes one remote-service act record onto `acts`
-// without blocking. Returns busy == true when an audit ring is full so the
-// caller refuses the call rather than running it unrecorded.
-remote_wide_grant_act_emit :: proc "contextless" (
-	grant_serial: u64,
-	principal_id: u64,
-	kind: wide_grants.Act_Kind,
-	target_window_id: u64 = 0,
-	detail_word_0: u64 = 0,
-	detail_word_1: u64 = 0,
-) -> (recorded: bool, busy: bool) {
-	if grant_serial == 0 || kind == .None {
-		return false, false
-	}
-	record := wide_grants.Act_Stream_Record {
-		grant_serial     = grant_serial,
-		principal_id     = principal_id,
-		timestamp_ms     = system.time(),
-		producer_word    = u64(wide_grants.Act_Producer.Remote_Service),
-		act_kind_word    = u64(kind),
-		target_window_id = target_window_id,
-		detail_word_0    = detail_word_0,
-		detail_word_1    = detail_word_1,
-	}
+// act_write is the write of wide_grants.act_emit: the status of the output
+// becomes its member of Act_Write_Status, at this border.
+@(private = "file")
+act_write :: proc "contextless" (user: rawptr, record: wide_grants.Act_Stream_Record) -> wide_grants.Act_Write_Status {
 	switch system.output_write(&acts, record, wait = false) {
 	case .Ok:
-		return true, false
+		return .Ok
 	case .Full:
-		return false, true
-	case .No_Reader, .No_Writer, .Ended, .Bad_Record, .No_Record:
-		return false, false
+		return .Full
+	case .No_Reader:
+		return .No_Reader
+	case .No_Writer:
+		return .No_Writer
+	case .Ended:
+		return .Ended
+	case .Bad_Record:
+		return .Bad_Record
+	case .No_Record:
+		return .No_Record
 	}
-	return false, false
+	return .Bad_Record
+}
+
+// call_act_record writes the record of one call under the grant of a row:
+// the head of the hash of the service, and the bytes of the request. It
+// says if the call may run.
+call_act_record :: proc "contextless" (grant_serial: u64, principal_id: u64, service_hash: [32]u8, request_bytes: u64) -> (outcome: wide_grants.Act_Emit_Outcome, status: wide_grants.Act_Write_Status) {
+	record := wide_grants.call_made_record(grant_serial, principal_id, service_hash, request_bytes, system.time())
+	return wide_grants.act_emit(act_write, nil, record)
 }

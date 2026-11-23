@@ -55,6 +55,59 @@ copied_act_record: wide_grants.Act_Record
 outbound_act_record: wide_grants.Act_Record
 query_staging: [QUERY_STAGING_CAPACITY]wide_grants.Act_Record
 
+// A Grant_Ended that the ring of the root service had no room for: it
+// leaves at the next pass.
+grant_ended_pending: struct {
+	grant_serial: u64,
+	reason:       wide_grants.Revocation_Reason,
+}
+
+// grant_ended_tell tells the root service that the collector ended a grant
+// itself: its end time, or an audit ring that closed. The root service then
+// ends the flow of the grant, clears its row and its mark, and ends its
+// wirings (src/md/features/wide_grants.md, "The path of a grant, end to
+// end").
+grant_ended_tell :: proc "contextless" (grant_serial: u64, reason: wide_grants.Revocation_Reason) {
+	if service_ring.head == nil || grant_serial == 0 {
+		return
+	}
+	if !ring.push(&service_ring.completions, ring.Record{kind = u32(wide_grants.Collector_Ring_Status.Grant_Ended), tag = 0, values = {0 = grant_serial, 1 = u64(reason)}}) {
+		grant_ended_pending = {grant_serial, reason}
+		return
+	}
+	grant_ended_pending = {}
+	system.wake_reader(&service_ring.completions)
+}
+
+// act_ring_closed ends the grant that holds when a ring of its act records
+// ended or was closed: no act of that writer would have a reader, and a
+// writer that finds no reader refuses its act, so the grant would hold with
+// nothing that it can do. The ring of a grant that ended already changes
+// nothing.
+act_ring_closed :: proc "contextless" (now_ms: u64) {
+	if grant_act_router.state != .Wired {
+		return
+	}
+	grant_serial := grant_act_router.grant_serial
+	if refusal := collector_core.manager_revoke_grant(&manager_state, grant_serial, now_ms, .Audit_Ring_Closed); refusal != .None {
+		system.log_fact(.Warning, Wide_Grant_Action_Refused{refusal_code = u64(refusal), grant_serial = grant_serial})
+	}
+	act_end_log(wide_grants.act_wiring_revoke(&grant_act_router, &space_service.store, grant_serial, .Audit_Ring_Closed, now_ms))
+	grant_ended_tell(grant_serial, .Audit_Ring_Closed)
+}
+
+// act_end_log logs an end of the act spaces of a grant that the router
+// refused, and an end whose record found no room.
+act_end_log :: proc "contextless" (refusal: wide_grants.Act_Wiring_Refusal) {
+	if refusal != .None {
+		system.log_fact(.Warning, Act_Wiring_End_Refused{refusal_code = u64(refusal), grant_serial = grant_act_router.grant_serial})
+		return
+	}
+	if !grant_act_router.revocation_recorded {
+		system.log_fact(.Warning, Act_Wiring_End_Not_Recorded{grant_serial = grant_act_router.grant_serial})
+	}
+}
+
 @(private = "file")
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
@@ -254,7 +307,9 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 		// Copy once out of shared memory before validation so the caller cannot
 		// mutate terms or proof fields after border checks.
 		intrinsics.mem_copy_non_overlapping(&copied_create_request, rawptr(&service_region_base[request_offset]), size_of(wide_grants.Create_Grant_Request))
-		grant_serial, refusal := collector_core.manager_create_grant(&manager_state, &copied_create_request.terms, &copied_create_request.proof, now_ms)
+		// values[1]: the one end time of the grant, which the root service
+		// fixed when the proof was given.
+		grant_serial, refusal := collector_core.manager_create_grant(&manager_state, &copied_create_request.terms, &copied_create_request.proof, now_ms, command.values[1])
 		if refusal != .None {
 			system.log_fact(.Warning, Wide_Grant_Action_Refused{refusal_code = u64(refusal), grant_serial = 0})
 			status_code := refusal == .Act_Log_Full ? u32(wide_grants.Collector_Ring_Status.Busy) : u32(wide_grants.Collector_Ring_Status.Refused)
@@ -274,8 +329,12 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 		{
 			// A grant that this one replaces ends its wiring first, with its record.
 			if grant_act_router.state == .Wired && grant_act_router.grant_serial != grant_serial {
-				_ = wide_grants.act_wiring_revoke(&grant_act_router, &space_service.store, grant_act_router.grant_serial, .Replaced_By_Newer_Grant, now_ms)
+				act_end_log(wide_grants.act_wiring_revoke(&grant_act_router, &space_service.store, grant_act_router.grant_serial, .Replaced_By_Newer_Grant, now_ms))
 			}
+			// The rings of the grant before close now, not at the next
+			// pass: once this grant holds, a record of the other grant on an
+			// old ring would close a ring of this one.
+			act_sources_of_ended_grant_close()
 			authorities, _ := wide_grants.wide_authorities_from_word(copied_create_request.terms.authorities_word)
 			attach_refusal := wide_grants.Act_Wiring_Refusal.Store_Refused
 			if space_service.store.store_port.write != nil {
@@ -320,7 +379,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 		}
 		refusal := collector_core.manager_revoke_grant(&manager_state, grant_serial, now_ms, reason)
 		if refusal == .None && grant_act_router.state == .Wired && grant_act_router.grant_serial == grant_serial {
-			_ = wide_grants.act_wiring_revoke(&grant_act_router, &space_service.store, grant_serial, reason, now_ms)
+			act_end_log(wide_grants.act_wiring_revoke(&grant_act_router, &space_service.store, grant_serial, reason, now_ms))
 		}
 		status_code := refusal == .None ? u32(wide_grants.Collector_Ring_Status.Ok) : u32(wide_grants.Collector_Ring_Status.Refused)
 		ring.push(
@@ -588,7 +647,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if expired := collector_core.manager_expire_grants(&manager_state, now_ms); expired > 0 {
 			if grant_act_router.state == .Wired {
 				if grant_state, expires_ms, found := collector_core.manager_grant_state(&manager_state, grant_act_router.grant_serial); found && grant_state == .Expired {
-					_ = wide_grants.act_wiring_expire(&grant_act_router, &space_service.store, grant_act_router.grant_serial, expires_ms, now_ms)
+					act_end_log(wide_grants.act_wiring_expire(&grant_act_router, &space_service.store, grant_act_router.grant_serial, expires_ms, now_ms))
+					grant_ended_tell(grant_act_router.grant_serial, .Time_Bound)
 				}
 			}
 			system.log_fact(.Info, Grants_Expired{expired_grants = u64(expired)})
@@ -616,11 +676,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			system.wait_records(&wait, &service_ring.commands)
 		}
+		if grant_ended_pending.grant_serial != 0 {
+			grant_ended_tell(grant_ended_pending.grant_serial, grant_ended_pending.reason)
+		}
 		// The sources and the pairs: after the words above, so the rings
 		// that the wait holds are the rings that this pass read.
 		pending := sources_pass()
 		not_waited := sources_wait(&wait)
-		if manager_state.counters.active_grants > 0 || pending || not_waited {
+		if manager_state.counters.active_grants > 0 || pending || not_waited || grant_ended_pending.grant_serial != 0 {
 			system.wait_end(&wait, now_ms + PENDING_RETRY_MILLISECONDS)
 		} else {
 			system.wait_end(&wait)

@@ -291,6 +291,15 @@ Client :: struct {
 	// as its Client_Add says: the root service marks the window of unlock
 	// that proves a principal for a wide grant (wide_grant_screen.odin).
 	local_input_only: bool,
+	// The id of the window in the bound of a wide grant: never given to
+	// another window in this run (wide_grant_screen.odin, window_serial_next).
+	window_serial:     u64,
+	// The name that the root service gave the process in Client_Add: the
+	// name of its module, or the nickname of a disk process. The screen of
+	// a wide grant names a window by it, never by a title that the process
+	// chose.
+	given_name:        [process_page.NICKNAME_LIMIT]u8,
+	given_name_length: int,
 	minimized:       bool,
 	maximized:       bool,
 	// The place and the size of a maximized window before its maximize: the
@@ -1119,6 +1128,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// knows that the screen shows what the processes sent.
 		system.service_run(&service)
 		plan_difference_asker_check()
+		wide_grant_screen_waiting_open() // wide_grant_screen.odin: a screen that waited for another dialog.
 		pointer_update(now) // After each change of what is under the pointer.
 		if second_of_bar(now) != shown_second {
 			shown_second = second_of_bar(now)
@@ -1254,8 +1264,13 @@ client_add :: proc "contextless" (record: ring.Record) {
 		client = {ring_memory = memory, ring = opened}
 		client.capture_allowed = record.values[display.CLIENT_ADD_CAPTURE] == display.CLIENT_CAPTURE
 		client.local_input_only = record.values[display.CLIENT_ADD_LOCAL_INPUT_ONLY] == display.CLIENT_LOCAL_INPUT_ONLY
+		client.window_serial = window_serial_next() // wide_grant_screen.odin
 		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
-		if nickname.length > 0 {
+		client.given_name_length = copy(client.given_name[:], process_page.nickname_text(&nickname))
+		// Value 4 is the head of the hash of the file of a disk process: a
+		// process of the boot image has 0 there, and its module name in
+		// values 1 to 3.
+		if nickname.length > 0 && record.values[4] != 0 {
 			client.from_disk = true
 			copy(client.nickname[:len(client.nickname) - 1], process_page.nickname_text(&nickname))
 			process_page.hash_prefix_write(&client.hash_prefix, record.values[4])
@@ -1270,6 +1285,9 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if client.ring_memory != memory {
 			continue
 		}
+		// The window leaves the bound of a wide grant and the screen: its id
+		// is never given again, so no later window takes its place there.
+		wide_grant_window_closed(&client) // wide_grant_screen.odin
 		for position in 0 ..< order_count {
 			if order[position] == index {
 				copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
@@ -1624,17 +1642,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			resize_begin(index, edges) // window_resize.odin
 			return
 		}
-		for position := order_count - 1; position >= 0; position -= 1 {
+		if position := window_position_at(pointer_x, pointer_y); position >= 0 {
 			client := &clients[order[position]]
-			if client.minimized {
-				continue
-			}
 			csd := client.decoration == .Client
-			outer_width := csd ? client.width : client.width + 2 * BORDER
-			outer_height := csd ? client.height : client.height + TITLE_HEIGHT + BORDER
-			if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, outer_height) {
-				continue
-			}
+			outer_width, _ := window_outer_size(client)
 			client_index := order[position]
 			raise(position)
 			if !csd {
@@ -1665,7 +1676,6 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 					return
 				}
 			}
-			break
 		}
 	}
 	// The process with focus receives the pointer when it is over its surface,
@@ -1673,11 +1683,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// screen: it receives none.
 	if order_count > 0 && !clients[order[order_count - 1]].minimized {
 		client := &clients[order[order_count - 1]]
-		x := pointer_x - client.x - BORDER
-		y := pointer_y - client.y - TITLE_HEIGHT
 		// One event more when the pointer leaves the surface: the process
 		// then draws at rest what the pointer was over (a scroll bar).
-		on_surface := inside(x, y, 0, 0, client.width, client.height)
+		x, y, on_surface := surface_point(client, pointer_x, pointer_y)
 		over := held || on_surface
 		if over || client.pointer_over {
 			// The notches go only with a pointer over the surface: not
@@ -1688,6 +1696,40 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 		client.pointer_over = over
 	}
+}
+
+// window_outer_size gives the size of a window with its frame: the surface
+// alone for a window that draws its own frame.
+window_outer_size :: proc "contextless" (client: ^Client) -> (width, height: int) {
+	if client.decoration == .Client {
+		return client.width, client.height
+	}
+	return client.width + 2 * BORDER, client.height + TITLE_HEIGHT + BORDER
+}
+
+// window_position_at gives the place in the order of the top window whose
+// frame holds the point (x, y), or -1: the one hit test of a press on the
+// windows, which the input of a viewer under a wide grant reads too.
+window_position_at :: proc "contextless" (x, y: int) -> int {
+	for position := order_count - 1; position >= 0; position -= 1 {
+		client := &clients[order[position]]
+		if client.minimized {
+			continue
+		}
+		width, height := window_outer_size(client)
+		if inside(x, y, client.x, client.y, width, height) {
+			return position
+		}
+	}
+	return -1
+}
+
+// surface_point gives the place of (x, y) on the surface of a window, and
+// says if it is on the surface: the place that the process receives.
+surface_point :: proc "contextless" (client: ^Client, x, y: int) -> (surface_x, surface_y: int, on_surface: bool) {
+	surface_x = x - client.x - BORDER
+	surface_y = y - client.y - TITLE_HEIGHT
+	return surface_x, surface_y, inside(surface_x, surface_y, 0, 0, client.width, client.height)
 }
 
 // pointer_leaves_front tells the process of the window in front that the

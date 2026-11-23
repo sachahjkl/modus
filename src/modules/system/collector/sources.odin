@@ -131,21 +131,33 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 				return
 			}
 		}
+		// A ring of act records is not read while its space has room for one
+		// ring only: the ring fills, and its writer refuses its next act. Each
+		// record in the ring is an act that ran, which that room keeps.
+		if space := wide_grants.space_of(&space_service.store, link.space); space != nil && wide_grants_space_is_acts(space) && !wide_grants.act_link_may_read(&grant_act_router, &space_service.store, link) {
+			return
+		}
 		item, status := system.input_read_from(&sources, link.tag, source_record[:], 0)
 		switch status {
 		case .Ok:
 			switch item.kind {
 			case .Record:
-				// Wide-grant `acts` streams must carry a valid Act_Stream_Record
-				// matching the wired producer and an active wide grant; stale or
-				// post-revocation records close the source ring fail-closed.
+				// A ring of an act record output carries the records of the
+				// grant that holds only: a record of no grant, of an ended
+				// grant or of another producer closes the ring, and its space
+				// keeps nothing (wide_grants.act_link_keep).
 				if space := wide_grants.space_of(&space_service.store, link.space); space != nil && wide_grants_space_is_acts(space) {
-					act_rec, decoded := wide_grants.act_stream_record_decode(source_record[:item.record_size])
-					expected_producer, producer_ok := wide_grants.act_producer_from_source_name(wide_grants_name_slice(&space.source))
-					if !decoded || !producer_ok || wide_grants.act_wiring_accepts_stream_record(&grant_act_router, &act_rec, expected_producer) != .None {
-						system.log_fact(.Warning, Source_Refused{wiring_number = u64(link.tag), refusal_code = u64(wide_grants.Space_Refusal.Bad_Kind)})
+					expected_producer, _ := wide_grants.act_producer_from_source_name(wide_grants_name_slice(&space.source))
+					act_step, act_refusal, space_refusal := wide_grants.act_link_keep(&grant_act_router, &space_service.store, link, source_record[:item.record_size], expected_producer, system.time())
+					switch act_step {
+					case .Kept:
+						continue
+					case .Held:
+						return
+					case .Refused:
+						system.log_fact(.Warning, Act_Source_Refused{wiring_number = u64(link.tag), act_refusal_code = u64(act_refusal), space_refusal_code = u64(space_refusal)})
 						system.input_close(&sources, link.tag)
-						wide_grants.link_close(link, errors.error_make(.Bad_Value, .Records, 0, i64(wide_grants.Space_Refusal.Bad_Kind), i64(link.record_size), i64(link.tag)))
+						act_ring_closed(system.time()) // main.odin
 						return
 					}
 				}
@@ -164,13 +176,16 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 			}
 		case .Ended:
 			wide_grants.link_end(link, source_end_error(item))
+			act_link_ended(link)
 			return
 		case .Bad_Record:
 			wide_grants.link_end(link, item.refusal)
+			act_link_ended(link)
 			return
 		case .No_Writer:
 			// The library closed the ring with no end record.
 			wide_grants.link_end(link, errors.error_make(.State, .Wirings, 0, 0, 0, i64(link.tag)))
+			act_link_ended(link)
 			return
 		case .No_Record, .Full, .No_Reader:
 			return
@@ -185,6 +200,7 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 // that ended and whose pair is not settled): the loop then tries again
 // after PENDING_RETRY_MILLISECONDS.
 sources_pass :: proc "contextless" () -> (pending: bool) {
+	act_sources_of_ended_grant_close()
 	count := system.input_tags(&sources, source_tags[:])
 	for tag in source_tags[:count] {
 		link := wide_grants.link_of(&source_links, tag)
@@ -212,6 +228,27 @@ sources_pass :: proc "contextless" () -> (pending: bool) {
 		pending ||= link.active && (link.pending || link.state == .Ended)
 	}
 	return pending
+}
+
+// act_sources_of_ended_grant_close closes the rings of the act records of
+// a grant that ended, before any read: a record that a full space held, or
+// one that came after the end, is kept nowhere
+// (wide_grants.act_links_close_ended).
+act_sources_of_ended_grant_close :: proc "contextless" () {
+	closed: [wide_grants.SOURCE_LINKS_MOST]u32
+	closed_count := wide_grants.act_links_close_ended(&grant_act_router, &source_links, closed[:])
+	for tag in closed[:closed_count] {
+		system.input_close(&sources, tag)
+	}
+}
+
+// act_link_ended ends the grant that holds when a ring of its act records
+// ended (main.odin, act_ring_closed).
+@(private = "file")
+act_link_ended :: proc "contextless" (link: ^wide_grants.Source_Link) {
+	if space := wide_grants.space_of(&space_service.store, link.space); space != nil && wide_grants_space_is_acts(space) {
+		act_ring_closed(system.time())
+	}
 }
 
 // The pairs that forward holds, as output_pairs lists them, and the rings

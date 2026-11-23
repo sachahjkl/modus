@@ -215,7 +215,7 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 	error: errors.Error_Record
 
 	source_text, output_text := "server", "requests"
-	for bound in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_RECORDS_MOST + 1, max(i64)}) {
+	for bound in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_AUDIT_BOUND_MOST + 1, max(i64)}) {
 		terms := terms_of(.Audit, bound)
 		error = {}
 		expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &terms, &error), ERROR_SPACE, error, .Bad_Value, .None)
@@ -493,7 +493,7 @@ a_damaged_segment_refuses_each_export_after_a_restart :: proc(t: ^testing.T) {
 	}
 	name_place: [wide_grants.SEGMENT_OBJECT_NAME_BYTES]u8
 	places := [?]int{wide_grants.SEGMENT_SPACE_AT, wide_grants.SEGMENT_FIRST_SERIAL_AT, wide_grants.SEGMENT_PREVIOUS_HASH_AT, wide_grants.SEGMENT_HEAD_BYTES + wide_grants.SEGMENT_RECORD_HEAD_BYTES}
-	for segment in u32(0) ..< 2 {
+	for segment in u64(0) ..< 2 {
 		object := pr.memory_private_store_find(&fixture.memory, wide_grants.segment_object_name(&name_place, u32(space), segment))
 		testing.expect(t, object != nil, "a segment is missing")
 		for place in places {
@@ -605,7 +605,7 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 	other_auth: wide_grants.Wide_Grant_Authority
 	testing.expect(t, wide_grants.authority_init_from_bytes(&other_auth, other_key, .Processor))
 	wrong_proof, _ := wide_grants.authority_mint_proof(&other_auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 100)
-	_, wrong_refusal := collector_core.manager_create_grant(manager, &terms, &wrong_proof, 100)
+	_, wrong_refusal := collector_core.manager_create_grant(manager, &terms, &wrong_proof, 100, 100 + terms.duration_ms)
 	testing.expect_value(t, wrong_refusal, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
 
 	// Proof from fresh key is accepted; tampered proof is refused.
@@ -613,10 +613,10 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 	testing.expect_value(t, mint_r, wide_grants.Wide_Grant_Refusal.None)
 	tampered := good_proof
 	tampered.proof_tag[3] ~= 0x80
-	_, tampered_r := collector_core.manager_create_grant(manager, &terms, &tampered, 200)
+	_, tampered_r := collector_core.manager_create_grant(manager, &terms, &tampered, 200, 200 + terms.duration_ms)
 	testing.expect_value(t, tampered_r, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
 
-	serial, created_r := collector_core.manager_create_grant(manager, &terms, &good_proof, 200)
+	serial, created_r := collector_core.manager_create_grant(manager, &terms, &good_proof, 200, 200 + terms.duration_ms)
 	testing.expect_value(t, created_r, wide_grants.Wide_Grant_Refusal.None)
 	testing.expect_value(t, serial, u64(1))
 

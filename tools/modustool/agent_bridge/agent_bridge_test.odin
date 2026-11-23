@@ -59,6 +59,10 @@ Fake_Transport_State :: struct {
 	next_log_facts:       []Structured_Log_Fact,
 	fail_read_log_facts:  bool,
 	read_log_facts_err:   string,
+	ask_calls:            int,
+	last_ask_authorities: wide_grants.Wide_Authorities,
+	last_ask_duration_ms: u64,
+	fail_ask:             bool,
 }
 
 @(private = "file")
@@ -128,6 +132,18 @@ fake_read_log_facts :: proc(user_data: rawptr, query: Log_Facts_Query, allocator
 }
 
 @(private = "file")
+fake_ask_wide_grant :: proc(user_data: rawptr, authorities: wide_grants.Wide_Authorities, duration_ms: u64) -> (screen: u64, err: string, ok: bool) {
+	state := (^Fake_Transport_State)(user_data)
+	state.ask_calls += 1
+	state.last_ask_authorities = authorities
+	state.last_ask_duration_ms = duration_ms
+	if state.fail_ask {
+		return 0, "the trusted display shows another screen", false
+	}
+	return 7, "", true
+}
+
+@(private = "file")
 make_fake_transport :: proc(state: ^Fake_Transport_State) -> Machine_Transport {
 	return Machine_Transport {
 		user_data      = state,
@@ -136,6 +152,7 @@ make_fake_transport :: proc(state: ^Fake_Transport_State) -> Machine_Transport {
 		send_key       = fake_send_key,
 		send_pointer   = fake_send_pointer,
 		read_log_facts = fake_read_log_facts,
+		ask_wide_grant = fake_ask_wide_grant,
 	}
 }
 
@@ -993,6 +1010,45 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 	testing.expect_value(t, state.send_key_calls, 1)
 	testing.expect_value(t, state.send_pointer_calls, 1)
 	testing.expect_value(t, state.read_log_facts_calls, 1)
+}
+
+// The ask of a wide grant: no scopes, scopes that name no scope, minutes
+// of 0, past a day, negative or of another type never reach the
+// transport; a refusal of the machine comes back as a transport error; a
+// good ask gives the number of the screen, and the bridge sends the scopes
+// and the duration only, never a key.
+@(test)
+test_ask_wide_grant_borders_and_transport :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	state: Fake_Transport_State
+	bridge: Agent_Bridge
+	testing.expect(t, bridge_init(&bridge, make_full_policy(make_test_key(0x42)), make_fake_transport(&state)))
+	defer bridge_destroy(&bridge)
+	refused := [?]string {
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":"view"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"minutes":60}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":"input","minutes":60}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":"view","minutes":0}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":"view","minutes":1441}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":"view","minutes":-1}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":"view","minutes":"60"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ask_wide_grant","params":{"scopes":7,"minutes":60}}`,
+	}
+	for line in refused {
+		expect_json_error(t, bridge_handle_json_line(&bridge, line), .Invalid_Params, .Refused, .Invalid_Field)
+	}
+	testing.expect_value(t, state.ask_calls, 0)
+
+	state.fail_ask = true
+	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":2,"method":"ask_wide_grant","params":{"scopes":"view","minutes":60}}`), .Transport_Error, .Transport_Error, .None)
+	testing.expect_value(t, state.ask_calls, 1)
+
+	state.fail_ask = false
+	result := expect_json_result(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":3,"method":"ask_wide_grant","params":{"scopes":"view_and_input","minutes":1440}}`))
+	testing.expect_value(t, result["screen"].(json.Integer), json.Integer(7))
+	testing.expect_value(t, state.last_ask_authorities, wide_grants.Wide_Authorities{.View_Screen, .Send_Input})
+	testing.expect_value(t, state.last_ask_duration_ms, wide_grants.MAX_WIDE_GRANT_DURATION_MS)
 }
 
 @(test)

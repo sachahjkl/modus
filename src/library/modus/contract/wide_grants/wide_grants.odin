@@ -103,6 +103,8 @@ Revocation_Reason :: enum u64 {
 	Duplicate_Connection    = 3,
 	Session_Locked          = 4, // The session of the principal was locked.
 	Time_Bound              = 5, // The duration of the terms ran out.
+	Audit_Ring_Closed       = 6, // A ring of act records of the grant ended or was closed: no act of its writer has a reader.
+	Mark_Not_Shown          = 7, // The trusted display did not take the mark of the grant.
 }
 
 // Closed lifecycle state machine of a wide grant.
@@ -129,6 +131,10 @@ Act_Kind :: enum u64 {
 	Grant_Expired         = 8,
 	Forbidden_Act_Blocked = 9,
 	Call_Made             = 10, // A call of an export through `remote`: detail 0 the head of the hash of the service, detail 1 the bytes of the request.
+	// The input of a viewer reaches another window: the target window, then
+	// detail 0 the keys and detail 1 the presses that the window before it
+	// took. It comes before the first act on its window.
+	Target_Window_Changed = 11,
 }
 
 // Closed set of refusal reasons returned by wide grant border validators,
@@ -194,6 +200,10 @@ Collector_Ring_Status :: enum u32 {
 	Refused     = 1,
 	Bad_Command = 2,
 	Busy        = 3,
+	// A record that the collector sends with no command, tag 0: it ended
+	// the grant of values[0] itself, with the Revocation_Reason of
+	// values[1] (an audit ring closed, or its end time).
+	Grant_Ended = 4,
 }
 
 // Fixed-layout terms of one wide grant proposed and fixed before principal
@@ -514,7 +524,7 @@ act_requires_principal_proof :: proc "contextless" (action: Sensitive_Action) ->
 // non-zero target window identifier.
 act_kind_requires_target_window :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
-	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked:
+	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Target_Window_Changed:
 		return true
 	case .None, .Frame_Read, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made:
 		return false
@@ -529,9 +539,9 @@ act_kind_is_agent_invocable :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
 	case .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked:
 		return true
-	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made:
-		// A call is recorded by `remote` on its own ring, never through the
-		// manager of the collector.
+	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made, .Target_Window_Changed:
+		// A call and a change of target are recorded by their writer on its
+		// own ring, never through the manager of the collector.
 		return false
 	}
 	return false

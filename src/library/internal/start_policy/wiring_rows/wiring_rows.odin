@@ -83,14 +83,17 @@ readers_of_row :: proc "contextless" (list: ^start_list.List, writer: int, runni
 // list_of_row writes in page the wiring list of the start of the writer
 // row: its wiring rows in their order, each reader named by its place in
 // handles, which holds the number lent for each row of readers, in that
-// order. ok is false when the page is too small, when handles and readers
-// differ in count, or when a reader of a row is not in readers.
+// order, then the terms of the rows that have terms, after the handles,
+// each row with its place there. ok is false when the page is too small,
+// when handles and readers differ in count, or when a reader of a row is
+// not in readers.
 list_of_row :: proc "contextless" (list: ^start_list.List, writer: int, readers: []int, handles: []u32, page: []u8) -> (rows: int, ok: bool) {
 	if len(handles) != len(readers) {
 		return 0, false
 	}
 	written: [start_list.WIRING_ROW_CAPACITY]output.Wiring
-	for &wiring_row in list.wirings[:list.wiring_count] {
+	terms_of: [start_list.WIRING_ROW_CAPACITY]int // The wiring row of each written row.
+	for &wiring_row, row_index in list.wirings[:list.wiring_count] {
 		if wiring_row.writer_row != writer {
 			continue
 		}
@@ -106,10 +109,28 @@ list_of_row :: proc "contextless" (list: ^start_list.List, writer: int, readers:
 		}
 		written[rows] = wiring_row.wiring
 		written[rows].reader_handle = u32(place + 1)
+		terms_of[rows] = row_index
 		rows += 1
 	}
-	if rows == 0 || !output.wiring_list_write(page, written[:rows], handles) {
+	if rows == 0 {
 		return 0, false
+	}
+	terms_at := output.wiring_terms_start(rows, len(handles))
+	for index in 0 ..< rows {
+		if written[index].terms_count == 0 {
+			continue
+		}
+		written[index].terms_offset = u32(terms_at)
+		terms_at += start_list.START_LIST_TERMS_BYTES
+	}
+	if terms_at > len(page) || !output.wiring_list_write(page, written[:rows], handles) {
+		return 0, false
+	}
+	for index in 0 ..< rows {
+		if written[index].terms_count != 0 {
+			terms := list.wirings[terms_of[index]].terms
+			copy(page[written[index].terms_offset:][:start_list.START_LIST_TERMS_BYTES], terms[:])
+		}
 	}
 	return rows, true
 }

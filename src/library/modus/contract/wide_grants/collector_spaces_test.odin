@@ -72,7 +72,7 @@ space_open_refuses_each_bad_term :: proc(t: ^testing.T) {
 		{text("server"), text("orders"), {kind_word = 2, bound_records = 4, forwarding_word = min(i64), record_size = 8}, .Bad_Forwarding},
 		{text("server"), text("orders"), audit_terms(0), .Bad_Bound},
 		{text("server"), text("orders"), audit_terms(-1), .Bad_Bound},
-		{text("server"), text("orders"), audit_terms(SPACE_RECORDS_MOST + 1), .Bad_Bound},
+		{text("server"), text("orders"), audit_terms(SPACE_AUDIT_BOUND_MOST + 1), .Bad_Bound},
 		{text("server"), text("orders"), audit_terms(4, 0), .Bad_Record_Size},
 		{text("server"), text("orders"), audit_terms(4, SPACE_RECORD_BYTES_MOST + 1), .Bad_Record_Size},
 		{text("server"), text("orders"), audit_terms(4, max(i64)), .Bad_Record_Size},

@@ -323,3 +323,6 @@ Wide_Grant_Ended :: struct {
 
 @(log_fact = "root: the control ring of the trusted display is full: the mark of a wide grant was not sent")
 Wide_Grant_Control_Full :: struct {}
+
+@(log_fact = "root: the end of a wide grant passed its bound with no answer of the collector or of the wiring service")
+Wide_Grant_End_Late :: struct {}

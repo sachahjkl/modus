@@ -84,6 +84,7 @@ import "modus:contract/machine_wire"
 import "modus:contract/remote"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:contract/wide_grants"
 import "modus:display"
 import "modus:interface"
 import "modus:quic"
@@ -526,6 +527,44 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 	if log_allowed() {
 		system.log_fact(.Info, Client_Key_Proved{principal = client.principal, client_key_head = key_head_field(key), peer = peer_field(peer)})
 	}
+	second_connection_check(connection, client)
+}
+
+// second_connection_check ends both connections of a key, before any call
+// of the new one, when the row of the key holds a wide grant and another
+// connection of that key is bound: two holders of one key is a key that
+// another host holds too. The root service ends the grant
+// (src/md/features/wide_grants.md, "An agent key stolen from the host").
+@(private = "file")
+second_connection_check :: proc "contextless" (connection: ^quic.Connection, client: ^Record_Client) {
+	other_keys: [CAPACITY][32]u8
+	other_count := 0
+	for &other in record_clients {
+		if &other != client && other.bound && !other.ended && !other.mesh_only {
+			other_keys[other_count] = other.key
+			other_count += 1
+		}
+	}
+	if !remote.second_connection_ends_grant(client_rows[client.row], client.key, other_keys[:other_count]) {
+		return
+	}
+	for &other, place in record_clients {
+		if (&other == client || (other.bound && !other.ended && !other.mesh_only && other.key == client.key)) {
+			other.bound = false
+			other.ended = true
+			quic.connection_close(&quic_connections[place], u64(remote.Stream_Error.Revoked), now_microseconds())
+			counts.revoked += 1
+		}
+	}
+	key := transmute([4]u64)client.key
+	request_tag += 1
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Wide_Grant_Second_Connection), tag = request_tag, values = {0 = key[0], 1 = key[1], 2 = key[2], 3 = key[3]}}) {
+		// The root service did not take it: the connections ended anyway,
+		// and the next connection of the key finds the row as it is.
+		system.log_fact(.Warning, Second_Connection_Not_Told{client_key_head = key_head_field(client.key)})
+		return
+	}
+	system.log_fact(.Info, Second_Connection_Ended_Grant{client_key_head = key_head_field(client.key)})
 }
 
 // client_grant_check ends the connection of a bound record whose grant
@@ -773,15 +812,21 @@ answer_put :: proc "contextless" (buffer: []u8, header: remote.Answer, result: [
 
 // refuse answers a request that this process refused, and writes the
 // sentence of its error record on the log while the log has room for it.
-refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}) -> int {
+// field_names: the names of the fields of the request that error names;
+// nil for a call request.
+refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}, field_names: []string = nil) -> int {
+	field_names := field_names
+	if field_names == nil {
+		field_names = remote.REQUEST_FIELD_NAMES[:]
+	}
 	counts.refused += 1
 	error := error
 	// One sentence, for the log and for the window.
 	sentence: [256]u8
 	writer := system.Writer{buffer = sentence[:]}
 	field := ""
-	if error.argument >= 1 && error.argument <= len(remote.REQUEST_FIELD_NAMES) {
-		field = remote.REQUEST_FIELD_NAMES[error.argument - 1]
+	if error.argument >= 1 && error.argument <= i64(len(field_names)) {
+		field = field_names[error.argument - 1]
 	}
 	system.error_text(&writer, &error, "remote", field)
 	if counts.refused <= LOG_REFUSALS {
@@ -959,6 +1004,46 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 	}
 }
 
+// wide_grant_ask_serve passes the ask of a wide grant of an agent to the
+// root service, for the key that the client proved in its handshake: the
+// stream names no key and no principal (src/md/features/wide_grants.md, "The
+// ask of an agent"). The answer gives the number of the screen in its value.
+@(private = "file")
+wide_grant_ask_serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client) -> int {
+	authorities, duration_ms, error, ok := wide_grants.wide_grant_ask_check(buffer[:received])
+	if !ok {
+		return refuse(buffer, error, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+	}
+	key := transmute([4]u64)client.key
+	request_tag += 1
+	tag := request_tag
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Wide_Grant_Agent_Ask), tag = tag, values = {0 = key[0], 1 = key[1], 2 = key[2], 3 = key[3], 4 = wide_grants.wide_authorities_to_word(authorities), 5 = duration_ms}}) {
+		return refuse(buffer, errors.error_make(.Busy, .Requests, 0, 0, 0), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+	}
+	limit := system.time() + CONNECT_LIMIT
+	for {
+		for record in system.receive(&requests.completions) {
+			if record.tag != tag {
+				continue
+			}
+			status, status_refusal := system.status_of_word(record.kind)
+			if status_refusal.kind != 0 {
+				return refuse(buffer, status_refusal, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+			}
+			if status != .Ok {
+				return refuse(buffer, errors.completion_record(record.values), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+			}
+			system.log_fact(.Info, Wide_Grant_Asked_By_Agent{principal = client.principal, client_key_head = key_head_field(client.key), flow = record.values[0]})
+			return answer_put(buffer, remote.Answer{status = .Ok, value = i64(min(record.values[0], u64(max(i64))))}, nil)
+		}
+		wait: system.Wait
+		system.wait_records(&wait, &requests.completions)
+		if system.wait_end(&wait, limit) >= limit {
+			return refuse(buffer, errors.error_make(.Over_Limit, .Milliseconds, 0, CONNECT_LIMIT, CONNECT_LIMIT), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+		}
+	}
+}
+
 // serve reads one whole request in the buffer of its stream, makes the
 // call for the principal of the row of its client, and writes the answer in
 // the same buffer: the request is copied into the call region before the
@@ -976,6 +1061,9 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	if client.mesh_only {
 		// A paired machine with no row of the client table acts for no principal.
 		return refuse(buffer, errors.error_make(.No_Grant, .None, remote.FIELD_KIND, i64(remote.Request_Kind.Call), i64(remote.Request_Kind.Mesh)))
+	}
+	if kind, kind_ok := remote.request_kind_of_stream(buffer[:received]); kind_ok && kind == .Wide_Grant_Ask {
+		return wide_grant_ask_serve(buffer, received, client)
 	}
 	start := system.nanoseconds()
 	request, arguments, error, ok := remote.request_check(buffer[:received], remote.REGION_SIZE)
@@ -997,12 +1085,8 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	// first, and a full ring refuses the call, so no call runs unrecorded
 	// (src/md/features/wide_grants.md, "The path of a grant, end to end").
 	if row := client_rows[client.row]; row.wide_grant != 0 && row.serial == client.serial {
-		hash_head: u64
-		for index in 0 ..< 8 {
-			hash_head |= u64(connection.hash[index]) << (8 * u64(index))
-		}
-		if _, busy := remote_wide_grant_act_emit(row.wide_grant, client.principal, .Call_Made, 0, hash_head, u64(received)); busy {
-			return refuse(buffer, errors.error_make(.Busy, .Records, remote.FIELD_SERVICE, 0, 0), service, connection.hash)
+		if outcome, status := call_act_record(row.wide_grant, client.principal, connection.hash, u64(received)); outcome == .Refused {
+			return refuse(buffer, errors.error_make(.Busy, .Records, remote.FIELD_SERVICE, i64(status), 0), service, connection.hash)
 		}
 	}
 	completion, call_error, called := isolated_call_make(connection, request, arguments)

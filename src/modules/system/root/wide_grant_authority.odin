@@ -16,6 +16,7 @@ package root
 import "base:intrinsics"
 import "internal:root/wide_grant_flow"
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/remote"
@@ -44,19 +45,29 @@ Collector_Link :: struct {
 	region_memory: system.Handle,
 	region:        []u8,
 	next_tag:      u32,
-	create_tag:    u32, // The tag of the Create_Grant in flight; 0: none.
 }
 collector_links: [principals.PRINCIPAL_CAPACITY]Collector_Link
 
-// The one flow of the machine, and the writers whose acts it wires.
+// The one flow of the machine.
 wide_grant_flow_state: wide_grant_flow.Flow
+#assert(wide_grant_flow.KEY_RECORDS_MOST >= remote.CLIENT_CAPACITY)
+#assert(wide_grant_flow.PRINCIPALS_MOST >= principals.PRINCIPAL_CAPACITY)
+
+// A writer of the act records of the grant: the trusted display, and
+// `remote` when it runs, also when it starts after the grant.
 Act_Writer :: struct {
 	producer: wide_grants.Act_Producer,
 	writer:   ^Started,
+	wired:    bool,
 }
-wide_grant_writers: [2]Act_Writer
+WIDE_GRANT_WRITERS_MOST :: 2
+wide_grant_writers: [WIDE_GRANT_WRITERS_MOST]Act_Writer
 wide_grant_writer_count: u32
-wide_grant_unwire_pending: ^Started // The collector whose audit wirings still end.
+wide_grant_wiring_writer := -1 // The writer whose Wire the wiring service serves; -1: none.
+wide_grant_mark_clear_due: bool // A clear of the mark that the control ring did not take yet.
+// The collector of a principal whose session locked while its grant ends:
+// it stops when the end settled, after its record of the end.
+wide_grant_collector_stop_after_end: ^Started
 
 // wide_grant_authority_start generates a fresh authority key from
 // process_generator, refusing weak entropy (below Processor) and refusing an
@@ -152,37 +163,94 @@ collector_link_close :: proc "contextless" (link: ^Collector_Link) {
 wide_grant_process_released :: proc "contextless" (item: ^Started) {
 	flow := &wide_grant_flow_state
 	for &link, principal in collector_links {
-		if link.owner == item {
-			// The grant lived in this collector: no Revoke_Grant reaches it.
-			if flow.stage != .Idle && u64(principal) == flow.principal {
-				wide_grant_end(.Principal_Revoked, false)
-			}
-			if wide_grant_unwire_pending == item {
-				wide_grant_unwire_pending = nil
-			}
-			collector_link_close(&link)
+		if link.owner != item {
+			continue
 		}
+		if u64(principal) == flow.principal {
+			switch flow.stage {
+			case .Creating, .Wiring, .Active:
+				wide_grant_end(.Principal_Revoked, true)
+			case .Idle, .Screen_Shown, .Proving, .Ending:
+			}
+			wide_grant_flow.flow_collector_gone(flow)
+		}
+		if wide_grant_collector_stop_after_end == item {
+			wide_grant_collector_stop_after_end = nil
+		}
+		collector_link_close(&link)
 	}
 	switch flow.stage {
-	case .Idle:
+	case .Idle, .Ending:
 	case .Proving:
 		if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 			_ = wide_grant_flow.flow_proved(flow, flow.principal, false, system.time())
 			system.log_fact(.Info, Wide_Grant_Proof_Not_Given{principal = flow.principal})
-			wide_grant_mark_send({})
 		}
 	case .Screen_Shown, .Creating, .Wiring, .Active:
 		if item.process != 0 && item.process == display_holder {
-			wide_grant_end(.Principal_Revoked, true)
+			wide_grant_end(.Principal_Revoked, false)
 			return
 		}
 		for writer in wide_grant_writers[:wide_grant_writer_count] {
 			if writer.writer == item {
-				wide_grant_end(.Principal_Revoked, true)
+				wide_grant_end(.Audit_Ring_Closed, false)
 				return
 			}
 		}
 	}
+}
+
+// wide_grant_process_started takes a process whose start ended: `remote`
+// that starts while a grant holds is a writer of its acts, wired at the
+// next pass. Until then its record of each call finds no reader, and it
+// refuses the call (wide_grants.act_emit).
+wide_grant_process_started :: proc "contextless" (item: ^Started) {
+	flow := &wide_grant_flow_state
+	if (flow.stage != .Wiring && flow.stage != .Active) || item == nil || item.is_terminal || system.name_of(item.name[:]) != "remote" {
+		return
+	}
+	wide_grant_writer_add(.Remote_Service, item)
+}
+
+@(private = "file")
+wide_grant_writer_add :: proc "contextless" (producer: wide_grants.Act_Producer, item: ^Started) {
+	for writer in wide_grant_writers[:wide_grant_writer_count] {
+		if writer.writer == item {
+			return
+		}
+	}
+	if wide_grant_writer_count >= WIDE_GRANT_WRITERS_MOST {
+		return
+	}
+	wide_grant_writers[wide_grant_writer_count] = {producer = producer, writer = item}
+	wide_grant_writer_count += 1
+}
+
+// wide_grant_principal_unlocked takes the unlock of a session: the proofs
+// of the principal that were not given count from 0 again.
+wide_grant_principal_unlocked :: proc "contextless" (principal: u64) {
+	wide_grant_flow.flow_principal_unlocked(&wide_grant_flow_state, principal)
+}
+
+// wide_grant_principal_locked ends the grant of a principal whose session
+// locks, with its reason, and keeps its collector until the end settled:
+// the collector writes the record of the end before it stops. It says if
+// item is that collector, which principal_lock must not stop now.
+wide_grant_principal_locked :: proc "contextless" (principal: u64) {
+	flow := &wide_grant_flow_state
+	if flow.stage == .Idle || flow.principal != principal {
+		return
+	}
+	wide_grant_end(.Session_Locked, false)
+}
+
+wide_grant_collector_held_at_lock :: proc "contextless" (item: ^Started) -> bool {
+	flow := &wide_grant_flow_state
+	if flow.stage != .Ending || flow.principal >= principals.PRINCIPAL_CAPACITY || collector_links[flow.principal].owner != item {
+		return false
+	}
+	wide_grant_collector_stop_after_end = item
+	return true
 }
 
 // wide_grant_row_of gives the place of the row of a key of a principal in
@@ -201,28 +269,86 @@ wide_grant_row_of :: proc "contextless" (principal: u64, key: [32]u8) -> int {
 	return place
 }
 
-// wide_grant_row_set writes the grant serial in the row of the key of the
-// flow: the one writer of the field.
+// wide_grant_row_set writes the grant serial in the row of the key: the one
+// writer of the field. new_serial: the row held a grant that ends, and
+// gets a new serial, so `remote` and `remote_display` end each connection
+// of the key with Revoked (src/md/features/wide_grants.md, "What the agent
+// sees").
 @(private = "file")
-wide_grant_row_set :: proc "contextless" (key: [32]u8, grant_serial: u64) {
+wide_grant_row_set :: proc "contextless" (key: [32]u8, grant_serial: u64, new_serial: bool) {
 	place := remote.client_find(&client_table.clients, key)
 	if place < 0 {
 		return
 	}
 	row := client_table.clients[place]
 	row.wide_grant = grant_serial
+	if new_serial {
+		client_serial_last += 1
+		row.serial = client_serial_last
+	}
 	remote.client_table_write(client_table, place, row)
 	system.word_wake(&client_table.version, system.WAKE_ALL)
 }
 
+// wide_grant_mark_send gives the trusted display the mark of a grant, or
+// its clear. false: the control ring did not take it. With no trusted
+// display there is no mark to show or clear.
 @(private = "file")
-wide_grant_mark_send :: proc "contextless" (mark: wide_grants.Mark) {
+wide_grant_mark_send :: proc "contextless" (mark: wide_grants.Mark) -> bool {
 	if display_holder == 0 {
-		return
+		return mark.grant_serial == 0
 	}
 	if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Wide_Grant_Mark), values = wide_grants.mark_values(mark)}) {
 		system.log_fact(.Warning, Wide_Grant_Control_Full{})
+		return false
 	}
+	return true
+}
+
+// wide_grant_ask_open opens the flow of an ask, from a console or from an
+// agent, for the key of a row of principal, and shows its screen.
+@(private = "file")
+wide_grant_ask_open :: proc "contextless" (command: root_ring.Root_Command, principal: u64, key: [32]u8, authorities_word: u64, duration_ms: u64, values: ^[7]u64) -> system.Status {
+	kind := u32(command)
+	if display_holder == 0 {
+		values^ = errors.ring_fail(kind, .Absent, .Services)
+		return .Bad_State
+	}
+	if wide_grant_authority.status != .Ready {
+		values^ = errors.ring_fail(kind, .Refused, .None)
+		return .Bad_State
+	}
+	serial, refusal := wide_grant_flow.flow_ask(&wide_grant_flow_state, principal, key, authorities_word, duration_ms, system.time())
+	switch refusal {
+	case .None:
+	case .Busy:
+		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
+		return .No_Slot
+	case .Bad_Scopes:
+		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(authorities_word, 1 << 62)), i64(wide_grants.wide_authorities_to_word(wide_grants.SCREEN_AUTHORITIES)))
+		return .Bad_Operation
+	case .Bad_Duration:
+		values^ = errors.ring_fail(kind, .Out_Of_Range, .Milliseconds, 3, i64(min(duration_ms, 1 << 62)), i64(wide_grants.MAX_WIDE_GRANT_DURATION_MS))
+		return .Bad_Operation
+	case .Zero_Key:
+		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
+		return .Bad_Handle
+	case .Paused, .Refused_For_Run, .Proofs_Refused:
+		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
+		return .Bad_State
+	case .Not_Awaited, .Other_Flow, .Scope_Not_Proposed, .Duration_Past_Ask, .Bad_Answer, .Other_Principal, .Terms_Refused, .No_Grant, .Other_Key, .Other_Tag:
+		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
+		return .Bad_State
+	}
+	show := wide_grant_flow.flow_screen(&wide_grant_flow_state)
+	if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Wide_Grant_Screen_Show), values = wide_grants.screen_show_values(show)}) {
+		wide_grant_flow.flow_to_idle(&wide_grant_flow_state)
+		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
+		return .No_Slot
+	}
+	system.log_fact(.Info, Wide_Grant_Screen_Asked{principal = principal, flow = serial})
+	values^ = {0 = serial}
+	return .Ok
 }
 
 // wide_grant_ask serves Wide_Grant_Ask: a console that acts for its
@@ -242,45 +368,44 @@ wide_grant_ask :: proc "contextless" (caller: ^Started, record: ring.Record, val
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
 		return .Bad_Handle
 	}
-	if display_holder == 0 {
-		values^ = errors.ring_fail(kind, .Absent, .Services)
-		return .Bad_State
-	}
-	if wide_grant_authority.status != .Ready {
-		values^ = errors.ring_fail(kind, .Refused, .None)
-		return .Bad_State
-	}
-	now := system.time()
-	serial, refusal := wide_grant_flow.flow_ask(&wide_grant_flow_state, caller.principal, key, record.values[4], record.values[5], now)
-	switch refusal {
-	case .None:
-	case .Busy:
-		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
-		return .No_Slot
-	case .Bad_Scopes:
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(record.values[4], 1 << 62)), i64(wide_grants.WIDE_AUTHORITY_KNOWN_MASK))
+	return wide_grant_ask_open(.Wide_Grant_Ask, caller.principal, key, record.values[4], record.values[5], values)
+}
+
+// wide_grant_agent_ask serves Wide_Grant_Agent_Ask: `remote` passes the
+// ask of an agent for the key that its client proved. The principal is the
+// one of the row of the key, whose grant to call still holds: the agent
+// names no principal.
+wide_grant_agent_ask :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+	kind := u32(root_ring.Root_Command.Wide_Grant_Agent_Ask)
+	if record.values[6] != 0 {
+		values^ = root_ring.word_refusal(.Wide_Grant_Agent_Ask, 7, record.values[6], 0)
 		return .Bad_Operation
-	case .Bad_Duration:
-		values^ = errors.ring_fail(kind, .Out_Of_Range, .Milliseconds, 3, i64(min(record.values[5], 1 << 62)), i64(wide_grants.MAX_WIDE_GRANT_DURATION_MS))
-		return .Bad_Operation
-	case .Zero_Key:
+	}
+	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
+	place := remote.client_find(&client_table.clients, key)
+	if place < 0 || !remote.client_grant_holds(&client_table.clients, place, client_table.clients[place].serial, .Calls) {
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
 		return .Bad_Handle
-	case .Paused, .Refused_For_Run:
-		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
-		return .Bad_State
-	case .Not_Awaited, .Other_Flow, .Scope_Not_Proposed, .Duration_Past_Ask, .Bad_Answer, .Other_Principal, .Terms_Refused, .No_Grant, .Other_Key:
-		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
-		return .Bad_State
 	}
-	show := wide_grant_flow.flow_screen(&wide_grant_flow_state)
-	if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Wide_Grant_Screen_Show), values = wide_grants.screen_show_values(show)}) {
-		wide_grant_flow.flow_to_idle(&wide_grant_flow_state)
-		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
-		return .No_Slot
+	return wide_grant_ask_open(.Wide_Grant_Agent_Ask, client_table.clients[place].principal, key, record.values[4], record.values[5], values)
+}
+
+// wide_grant_second_connection serves Wide_Grant_Second_Connection: a
+// second connection of a key whose row holds a grant ends that grant.
+wide_grant_second_connection :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+	kind := u32(root_ring.Root_Command.Wide_Grant_Second_Connection)
+	for index in 4 ..< len(record.values) {
+		if record.values[index] != 0 {
+			values^ = root_ring.word_refusal(.Wide_Grant_Second_Connection, i64(index) + 1, record.values[index], 0)
+			return .Bad_Operation
+		}
 	}
-	system.log_fact(.Info, Wide_Grant_Screen_Asked{principal = caller.principal, flow = serial})
-	values^ = {0 = serial}
+	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
+	if wide_grant_flow.flow_end_key(&wide_grant_flow_state, key) != .None {
+		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
+		return .Bad_Handle
+	}
+	wide_grant_end(.Duplicate_Connection, false)
 	return .Ok
 }
 
@@ -303,7 +428,7 @@ wide_grant_end_command :: proc "contextless" (caller: ^Started, record: ring.Rec
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
 		return .Bad_Handle
 	}
-	wide_grant_end(.Principal_Revoked, true)
+	wide_grant_end(.Principal_Revoked, false)
 	return .Ok
 }
 
@@ -331,7 +456,6 @@ wide_grant_proof :: proc "contextless" (caller: ^Started, record: ring.Record, v
 	refusal := wide_grant_flow.flow_proved(&wide_grant_flow_state, principal, outcome == .Proved, now)
 	if refusal != .None {
 		system.log_fact(.Warning, Wide_Grant_Proof_Refused{principal = principal, refusal_code = u64(refusal)})
-		wide_grant_mark_send({})
 		values^ = errors.ring_fail(kind, .Refused, .Grants, 0, 0, 0, i64(refusal))
 		return .Bad_State
 	}
@@ -347,9 +471,15 @@ wide_grant_proof :: proc "contextless" (caller: ^Started, record: ring.Record, v
 	return .Ok
 }
 
+@(private = "file")
+collector_tag_next :: proc "contextless" (link: ^Collector_Link) -> u32 {
+	link.next_tag = link.next_tag == max(u32) ? 1 : link.next_tag + 1
+	return link.next_tag
+}
+
 // wide_grant_create_send mints the proof of the terms that the screen
 // fixed and sends Create_Grant to the collector of the principal, which it
-// starts when none runs.
+// starts when none runs, with the one end time of the grant.
 @(private = "file")
 wide_grant_create_send :: proc "contextless" (now_ms: u64) -> bool {
 	flow := &wide_grant_flow_state
@@ -379,12 +509,11 @@ wide_grant_create_send :: proc "contextless" (now_ms: u64) -> bool {
 	request.proof = proof
 	intrinsics.mem_copy_non_overlapping(raw_data(link.region), &request, size_of(request))
 	intrinsics.mem_zero_volatile(&request, size_of(request))
-	link.next_tag = link.next_tag == max(u32) ? 1 : link.next_tag + 1
-	if !system.send(&link.ring.commands, ring.Record{kind = u32(wide_grants.Collector_Ring_Command.Create_Grant), tag = link.next_tag, values = {0 = 0}}) {
+	tag := collector_tag_next(link)
+	if !system.send(&link.ring.commands, ring.Record{kind = u32(wide_grants.Collector_Ring_Command.Create_Grant), tag = tag, values = {0 = 0, 1 = flow.ends_at_ms}}) {
 		return false
 	}
-	link.create_tag = link.next_tag
-	return true
+	return wide_grant_flow.flow_create_sent(flow, tag) == .None
 }
 
 // wide_grant_screen_answered takes the answer of the trusted display: a
@@ -402,7 +531,6 @@ wide_grant_screen_answered :: proc "contextless" (values: [7]u64) {
 	}
 	if status := unlock_start(.Prove_Wide_Grant, "", flow.principal); status != .Ok {
 		wide_grant_flow.flow_to_idle(flow)
-		wide_grant_mark_send({})
 	}
 }
 
@@ -412,47 +540,64 @@ wide_grant_revoke_pressed :: proc "contextless" (values: [7]u64) {
 	if values[0] == 0 || values[0] != flow.grant_serial || flow.stage != .Active {
 		return
 	}
-	wide_grant_end(.Principal_Revoked, true)
+	wide_grant_end(.Principal_Revoked, false)
 }
 
-// wide_grant_wire_answered takes the answer of one Wire of the audit.
-wide_grant_wire_answered :: proc "contextless" (status: system.Status) {
+// wide_grant_wire_answered takes the answer of the wiring service to a
+// request of the path: a Wire of one writer, or the end of the wirings of
+// the collector. An answer of another flow counts for nothing.
+wide_grant_wire_answered :: proc "contextless" (request: Audit_Request, flow_serial: u64, status: system.Status) {
 	flow := &wide_grant_flow_state
-	if flow.stage != .Wiring {
+	if flow_serial != flow.serial {
 		return
 	}
-	if status != .Ok {
+	switch request {
+	case .None:
+		return
+	case .Unwire:
+		if status != .Ok {
+			system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = status})
+		}
+		_ = wide_grant_flow.flow_unwired(flow, status == .Ok)
+		return
+	case .Wire:
+	}
+	index := wide_grant_wiring_writer
+	wide_grant_wiring_writer = -1
+	if flow.stage != .Wiring && flow.stage != .Active {
+		return
+	}
+	if status != .Ok || index < 0 || index >= int(wide_grant_writer_count) {
 		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = status})
-		wide_grant_end(.Principal_Revoked, true)
+		wide_grant_end(.Audit_Ring_Closed, false)
 		return
 	}
-	active, _ := wide_grant_flow.flow_wired(flow, wide_grant_writer_count, system.time())
+	wide_grant_writers[index].wired = true
+	if flow.stage == .Active {
+		return
+	}
+	active, _ := wide_grant_flow.flow_wired(flow, flow_serial, wide_grant_writer_count)
 	if !active {
 		return
 	}
-	wide_grant_row_set(flow.client_key, flow.grant_serial)
-	wide_grant_mark_send({grant_serial = flow.grant_serial, principal_id = flow.principal, authorities = flow.answer.authorities, ends_at_ms = flow.ends_at_ms, flow_serial = flow.serial})
+	wide_grant_row_set(flow.client_key, flow.grant_serial, false)
+	if !wide_grant_mark_send({grant_serial = flow.grant_serial, principal_id = flow.principal, authorities = flow.answer.authorities, ends_at_ms = flow.ends_at_ms, flow_serial = flow.serial}) {
+		// No grant holds without its mark.
+		wide_grant_end(.Mark_Not_Shown, false)
+		return
+	}
 	system.log_fact(.Info, Wide_Grant_Active{principal = flow.principal, grant_serial = flow.grant_serial, writers = u64(wide_grant_writer_count)})
 }
 
-// wide_grant_end ends the flow in any stage: the grant in the collector,
-// the audit wirings, the row, the mark, a proof that runs. revoke: the
-// collector still runs and takes Revoke_Grant.
-wide_grant_end :: proc "contextless" (reason: wide_grants.Revocation_Reason, revoke: bool) {
+// wide_grant_end ends the flow in any stage but Idle and Ending: the row,
+// the mark, a proof that runs, then the work that waits in Ending (the
+// revocation in the collector, the end of the wirings), which
+// wide_grant_end_work drives at each pass. collector_ended: the collector
+// ended the grant itself, or stopped.
+wide_grant_end :: proc "contextless" (reason: wide_grants.Revocation_Reason, collector_ended: bool) {
 	flow := &wide_grant_flow_state
-	if flow.stage == .Idle {
+	if flow.stage == .Idle || flow.stage == .Ending {
 		return
-	}
-	link: ^Collector_Link
-	if flow.principal < principals.PRINCIPAL_CAPACITY {
-		link = &collector_links[flow.principal]
-	}
-	if revoke && flow.grant_serial != 0 && link != nil && link.ring.head != nil {
-		link.next_tag = link.next_tag == max(u32) ? 1 : link.next_tag + 1
-		_ = system.send(&link.ring.commands, ring.Record{kind = u32(wide_grants.Collector_Ring_Command.Revoke_Grant), tag = link.next_tag, values = {0 = flow.grant_serial, 1 = u64(reason)}})
-	}
-	if link != nil && link.owner != nil && (flow.stage == .Wiring || flow.stage == .Active) {
-		wide_grant_unwire_pending = link.owner
 	}
 	if flow.stage == .Proving {
 		if running := find("unlock"); running != nil {
@@ -460,20 +605,68 @@ wide_grant_end :: proc "contextless" (reason: wide_grants.Revocation_Reason, rev
 			started_process_stop(running)
 		}
 	}
-	wide_grant_row_set(flow.client_key, 0)
-	wide_grant_mark_send({})
-	system.log_fact(.Info, Wide_Grant_Ended{principal = flow.principal, grant_serial = flow.grant_serial, reason_code = u64(reason)})
-	wide_grant_flow.flow_to_idle(flow)
+	key := flow.client_key
+	held := flow.stage == .Active
+	principal, grant := flow.principal, flow.grant_serial
+	if wide_grant_flow.flow_end(flow, reason, collector_ended, system.time()) != .None {
+		return
+	}
+	if held {
+		wide_grant_row_set(key, 0, true)
+	}
+	wide_grant_mark_clear_due = true
 	wide_grant_writer_count = 0
-	if link != nil {
-		link.create_tag = 0
+	wide_grant_wiring_writer = -1
+	system.log_fact(.Info, Wide_Grant_Ended{principal = principal, grant_serial = grant, reason_code = u64(reason)})
+	wide_grant_end_work()
+}
+
+// wide_grant_end_work sends what the end waits for: the Revoke_Grant (again
+// after a full ring), the end of the wirings of the collector (again after
+// a refusal), the clear of the mark; then settles the end, and stops the
+// collector that a lock kept for the record of the end.
+@(private = "file")
+wide_grant_end_work :: proc "contextless" () {
+	flow := &wide_grant_flow_state
+	if wide_grant_mark_clear_due && wide_grant_mark_send({}) {
+		wide_grant_mark_clear_due = false
+	}
+	if flow.stage != .Ending {
+		return
+	}
+	link: ^Collector_Link
+	if flow.principal < principals.PRINCIPAL_CAPACITY {
+		link = &collector_links[flow.principal]
+	}
+	if link == nil || link.owner == nil || link.ring.head == nil {
+		wide_grant_flow.flow_collector_gone(flow)
+	}
+	if grant_serial, reason, due := wide_grant_flow.flow_revoke_due(flow); due {
+		tag := collector_tag_next(link)
+		if system.send(&link.ring.commands, ring.Record{kind = u32(wide_grants.Collector_Ring_Command.Revoke_Grant), tag = tag, values = {0 = grant_serial, 1 = u64(reason)}}) {
+			_ = wide_grant_flow.flow_revoke_sent(flow, tag)
+		}
+	}
+	if wide_grant_flow.flow_unwire_due(flow) && wiring_request.stage == .Idle {
+		if audit_unwire_begin(link.owner, flow.serial) == .Ok {
+			wide_grant_flow.flow_unwire_sent(flow)
+		}
+	}
+	if settled, late := wide_grant_flow.flow_end_settle(flow, system.time()); settled {
+		if late {
+			system.log_fact(.Warning, Wide_Grant_End_Late{})
+		}
+		if wide_grant_collector_stop_after_end != nil {
+			started_process_stop(wide_grant_collector_stop_after_end)
+			wide_grant_collector_stop_after_end = nil
+		}
 	}
 }
 
 // wide_grant_pass reads the answers of the collectors, wires the next ring
-// of the audit, ends the wirings of an ended grant, checks the row of the
-// key and the end time, and adds the rings to the wait. It gives the time of
-// the end of the grant that holds, or WAIT_FOREVER.
+// of the audit, drives the end, checks the row of the key and the end time,
+// and adds the rings to the wait. It gives the next time that it must run
+// at, or WAIT_FOREVER.
 wide_grant_pass :: proc "contextless" (wait: ^system.Wait) -> (deadline: u64) {
 	flow := &wide_grant_flow_state
 	now := system.time()
@@ -482,62 +675,84 @@ wide_grant_pass :: proc "contextless" (wait: ^system.Wait) -> (deadline: u64) {
 			continue
 		}
 		for record in system.receive(&link.ring.completions) {
-			if record.tag == 0 || record.tag != link.create_tag {
-				continue
-			}
-			link.create_tag = 0
-			status, known := wide_grants_collector_status_of_word(record.kind)
-			if !known || status != .Ok {
-				system.log_fact(.Warning, Wide_Grant_Collector_Refused{status_word = u64(record.kind), refusal_code = record.values[0]})
-				wide_grant_end(.Principal_Revoked, false)
-				continue
-			}
-			if wide_grant_flow.flow_created(flow, record.values[1]) != .None {
-				wide_grant_end(.Principal_Revoked, true)
-				continue
-			}
-			wide_grant_writers_find()
-			if wide_grant_writer_count == 0 {
-				wide_grant_end(.Principal_Revoked, true)
-			}
+			wide_grant_collector_answer(record)
 		}
 		system.wait_records(wait, &link.ring.completions)
 	}
-	if wide_grant_unwire_pending != nil && audit_unwire_begin(wide_grant_unwire_pending) != .No_Slot {
-		wide_grant_unwire_pending = nil
-	}
-	if flow.stage == .Wiring && flow.wired < wide_grant_writer_count && wiring_request.stage == .Idle {
-		wide_grant_wire_next()
-	}
-	if flow.stage == .Active || flow.stage == .Wiring || flow.stage == .Creating {
+	wide_grant_wire_pass()
+	switch flow.stage {
+	case .Creating, .Wiring, .Active:
 		// A row that left, that a lock locked, or that two principals hold
 		// ends the grant: the key no longer acts for its principal.
-		if place := wide_grant_row_of(flow.principal, flow.client_key); place < 0 {
+		if wide_grant_row_of(flow.principal, flow.client_key) < 0 {
 			row_place := remote.client_find(&client_table.clients, flow.client_key)
 			reason := wide_grants.Revocation_Reason.Principal_Revoked
 			if row_place >= 0 && client_table.clients[row_place].session_locked != 0 {
 				reason = .Session_Locked
 			}
-			wide_grant_end(reason, true)
+			wide_grant_end(reason, false)
 		}
+	case .Idle, .Screen_Shown, .Proving, .Ending:
 	}
 	if wide_grant_flow.flow_due(flow, now) {
-		wide_grant_end(.Time_Bound, true)
+		wide_grant_end(.Time_Bound, false)
 	}
-	if flow.stage == .Active {
+	wide_grant_end_work()
+	switch flow.stage {
+	case .Active, .Wiring:
 		return flow.ends_at_ms
+	case .Ending:
+		return min(flow.end.deadline_ms, now + WIDE_GRANT_RETRY_MILLISECONDS)
+	case .Idle, .Screen_Shown, .Proving, .Creating:
+	}
+	if wide_grant_mark_clear_due {
+		return now + WIDE_GRANT_RETRY_MILLISECONDS
 	}
 	return system.WAIT_FOREVER
 }
 
+// The time between two tries of a send that a full ring refused.
+WIDE_GRANT_RETRY_MILLISECONDS :: u64(50)
+
+// wide_grant_collector_answer takes one record of the ring of a collector:
+// a Grant_Ended that it sent itself, or the answer to a Create_Grant or a
+// Revoke_Grant of the flow, matched by its tag.
 @(private = "file")
-wide_grants_collector_status_of_word :: proc "contextless" (word: u32) -> (status: wide_grants.Collector_Ring_Status, ok: bool) {
-	for member in wide_grants.Collector_Ring_Status {
-		if u32(member) == word {
-			return member, true
-		}
+wide_grant_collector_answer :: proc "contextless" (record: ring.Record) {
+	flow := &wide_grant_flow_state
+	status, known := enum_word.member_of_word(wide_grants.Collector_Ring_Status, u64(record.kind))
+	if !known {
+		system.log_fact(.Warning, Wide_Grant_Collector_Refused{status_word = u64(record.kind), refusal_code = record.values[0]})
+		return
 	}
-	return .Ok, false
+	if record.tag == 0 {
+		if status != .Grant_Ended || record.values[0] == 0 || record.values[0] != flow.grant_serial {
+			return
+		}
+		reason, reason_ok := wide_grants.revocation_reason_from_word(record.values[1])
+		if !reason_ok {
+			reason = .Audit_Ring_Closed
+		}
+		wide_grant_end(reason, true)
+		return
+	}
+	granted := status == .Ok ? record.values[1] : 0
+	if refusal := wide_grant_flow.flow_created(flow, record.tag, granted); refusal == .None || refusal == .No_Grant {
+		if granted == 0 {
+			system.log_fact(.Warning, Wide_Grant_Collector_Refused{status_word = u64(record.kind), refusal_code = record.values[0]})
+			return
+		}
+		if flow.stage == .Wiring {
+			wide_grant_writers_find()
+			if wide_grant_writer_count == 0 {
+				wide_grant_end(.Audit_Ring_Closed, false)
+			}
+		}
+		return
+	}
+	if wide_grant_flow.flow_revoke_answered(flow, record.tag) == .None && status != .Ok {
+		system.log_fact(.Warning, Wide_Grant_Collector_Refused{status_word = u64(record.kind), refusal_code = record.values[0]})
+	}
 }
 
 // wide_grant_writers_find names the writers of the acts of the grant: the
@@ -551,45 +766,56 @@ wide_grant_writers_find :: proc "contextless" () {
 			continue
 		}
 		name := system.name_of(item.name[:])
-		producer := wide_grants.Act_Producer.None
 		switch {
 		case item.process == display_holder || name == display_name:
-			producer = .Trusted_Display
+			wide_grant_writer_add(.Trusted_Display, &item)
 		case name == "remote":
-			producer = .Remote_Service
+			wide_grant_writer_add(.Remote_Service, &item)
 		}
-		if producer == .None || wide_grant_writer_count >= len(wide_grant_writers) {
-			continue
-		}
-		wide_grant_writers[wide_grant_writer_count] = {producer = producer, writer = &item}
-		wide_grant_writer_count += 1
 	}
 }
 
-// wide_grant_wire_next asks the Wire of the next writer of the audit.
+// wide_grant_wire_pass asks the Wire of the next writer that is not wired,
+// while the grant is wired or holds: a writer that started late is wired
+// too. One request at a time.
 @(private = "file")
-wide_grant_wire_next :: proc "contextless" () {
+wide_grant_wire_pass :: proc "contextless" () {
 	flow := &wide_grant_flow_state
-	link := &collector_links[flow.principal]
-	if link.owner == nil {
-		wide_grant_end(.Principal_Revoked, false)
+	if (flow.stage != .Wiring && flow.stage != .Active) || wiring_request.stage != .Idle || wide_grant_wiring_writer >= 0 {
 		return
 	}
-	writer := wide_grant_writers[flow.wired]
+	index := -1
+	for writer, place in wide_grant_writers[:wide_grant_writer_count] {
+		if !writer.wired {
+			index = place
+			break
+		}
+	}
+	if index < 0 {
+		return
+	}
+	link := &collector_links[flow.principal]
+	if link.owner == nil {
+		wide_grant_end(.Principal_Revoked, true)
+		return
+	}
+	writer := wide_grant_writers[index]
 	collector_file := image_file_checked("collector")
 	writer_file := image_file_checked(system.name_of(writer.writer.name[:]))
 	input_index := module_record_input_index(collector_file, "sources")
 	output_index := module_record_output_index(writer_file, wide_grants.ACT_OUTPUT_NAME)
 	if input_index == 0 || output_index == 0 {
 		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = .Bad_Operation})
-		wide_grant_end(.Principal_Revoked, true)
+		wide_grant_end(.Audit_Ring_Closed, false)
 		return
 	}
 	// No_Slot: the wiring service serves another request; the next pass
 	// asks again.
-	if status := audit_wire_begin(link.owner, writer.writer, writer.producer, output_index, input_index); status != .Ok && status != .No_Slot {
+	if status := audit_wire_begin(link.owner, writer.writer, writer.producer, output_index, input_index, flow.serial); status == .Ok {
+		wide_grant_wiring_writer = index
+	} else if status != .No_Slot {
 		system.log_fact(.Warning, Wide_Grant_Wiring_Refused{status = status})
-		wide_grant_end(.Principal_Revoked, true)
+		wide_grant_end(.Audit_Ring_Closed, false)
 	}
 }
 

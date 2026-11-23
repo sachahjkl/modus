@@ -142,6 +142,23 @@ client_table_write :: proc "contextless" (table: ^Client_Table, place: int, clie
 	intrinsics.atomic_store_explicit(&table.version, table.version + 1, .Release)
 }
 
+// second_connection_ends_grant says if a connection of key that binds now
+// ends the wide grant of its row: the row holds a grant, and another
+// connection bound to the same key is open (src/md/features/wide_grants.md,
+// "An agent key stolen from the host"). other_keys are the keys of the
+// other connections that are bound to a row now.
+second_connection_ends_grant :: proc "contextless" (row: Client, key: [32]u8, other_keys: [][32]u8) -> bool {
+	if row.wide_grant == 0 || row.key != key || key == ([32]u8{}) {
+		return false
+	}
+	for other in other_keys {
+		if other == key {
+			return true
+		}
+	}
+	return false
+}
+
 // client_find gives the place of the row of a key in a copy of the table,
 // or -1. A free row has no key.
 client_find :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8) -> int {

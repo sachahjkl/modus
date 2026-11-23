@@ -1361,6 +1361,49 @@ principal_recovery_seal_key :: proc "contextless" (recovery_key: ^[RECOVERY_KEY_
 	return keyed_hash(recovery_key^[:], PRINCIPAL_RECOVERY_SEAL_TEXT)
 }
 
+// Why the proof of a wide grant cannot be asked of a principal here
+// (src/md/features/wide_grants.md, "The path of a grant, end to end").
+Proof_Problem :: enum u8 {
+	None             = 0,
+	No_Record        = 1, // The store holds no record of the principal, or one that cannot be read.
+	No_Passphrase    = 2, // The machine key opens with no passphrase: the TPM alone seals it.
+	No_Tpm           = 3, // The record needs the TPM, and the TPM service does not run.
+	Bad_Principal    = 4, // A number past PRINCIPAL_CAPACITY.
+	Other_Principal  = 5, // The file read names another principal.
+}
+
+// proof_problem decides if `unlock` can ask the passphrase that proves a
+// wide grant of principal: principal 0 by the machine passphrase, in a
+// record that a passphrase opens; a named principal by the passphrase of
+// its file. loaded_principal: the number that the file names, for a named
+// principal. The proof offers no recovery key: a record that only the
+// recovery key opens here proves nothing.
+proof_problem :: proc "contextless" (principal: u64, record_present: bool, machine_form: Machine_Record_Form, has_tpm: bool, loaded_principal: u64) -> Proof_Problem {
+	if principal >= PRINCIPAL_CAPACITY {
+		return .Bad_Principal
+	}
+	if !record_present {
+		return .No_Record
+	}
+	if principal != MACHINE {
+		if loaded_principal != principal {
+			return .Other_Principal
+		}
+		return .None
+	}
+	switch machine_form {
+	case .Passphrase:
+		return .None
+	case .Sealed_By_The_Tpm_With_Passphrase:
+		return has_tpm ? .None : .No_Tpm
+	case .Sealed_By_The_Tpm:
+		return .No_Passphrase
+	case .Unknown:
+		return .No_Record
+	}
+	return .No_Record
+}
+
 // change_principal_valid reports whether a principal number supplied in
 // VALUE_PRINCIPAL names a named principal that may request a change.
 change_principal_valid :: proc "contextless" (requested_principal: u64) -> bool {

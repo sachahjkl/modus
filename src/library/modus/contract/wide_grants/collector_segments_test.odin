@@ -98,10 +98,15 @@ append_records :: proc(t: ^testing.T, store: ^Space_Store, space_number: u32, fi
 	}
 }
 
+// The segments of a space of SPACE_RECORDS_MOST records, which the tests
+// open.
+@(private = "file")
+TEST_SEGMENTS :: SPACE_RECORDS_MOST / SPACE_SEGMENT_RECORDS
+
 @(private = "file")
 object_of :: proc(fixture: ^Fixture, space_number: u32, segment: u32) -> ^pr.Memory_Private_Object {
 	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
-	return pr.memory_private_store_find(&fixture.failing.memory, segment_object_name(&name_place, space_number, segment))
+	return pr.memory_private_store_find(&fixture.failing.memory, segment_object_name(&name_place, space_number, u64(segment)))
 }
 
 // expect_space_whole checks that space_number holds the serials 0 ..< count
@@ -141,9 +146,12 @@ expect_space_whole :: proc(t: ^testing.T, store: ^Space_Store, space_number: u32
 segment_object_names_are_exact :: proc(t: ^testing.T) {
 	place: [SEGMENT_OBJECT_NAME_BYTES]u8
 	testing.expect_value(t, segment_object_name(&place, 1, 0), "collector_space_1_segment_0")
-	testing.expect_value(t, segment_object_name(&place, SPACE_CAPACITY, SPACE_SEGMENTS_MOST), "collector_space_8_segment_4")
+	testing.expect_value(t, segment_object_name(&place, SPACE_CAPACITY, TEST_SEGMENTS), "collector_space_8_segment_4")
 	testing.expect_value(t, segment_object_name(&place, 10, 0), "collector_space_10_segment_0")
-	testing.expect_value(t, segment_object_name(&place, max(u32), max(u32)), "collector_space_4294967295_segment_4294967295")
+	// A segment takes the name of its slot.
+	testing.expect_value(t, segment_object_name(&place, max(u32), SPACE_SEGMENT_SLOTS - 1), "collector_space_4294967295_segment_255")
+	testing.expect_value(t, segment_object_name(&place, 1, SPACE_SEGMENT_SLOTS), "collector_space_1_segment_0")
+	testing.expect_value(t, segment_object_name(&place, 1, max(u64)), "collector_space_1_segment_255")
 }
 
 // At 0, 1, a whole segment, one past it and the bound of the space, a
@@ -163,7 +171,7 @@ records_survive_a_restart_at_each_segment_boundary :: proc(t: ^testing.T) {
 		append_records(t, &fixture.store, space_number, 0, count)
 		testing.expect_value(t, u64(fixture.failing.memory.writes - writes_before), count)
 		segments := u32((count + SPACE_SEGMENT_RECORDS - 1) / SPACE_SEGMENT_RECORDS)
-		for segment in u32(0) ..= SPACE_SEGMENTS_MOST {
+		for segment in u32(0) ..= TEST_SEGMENTS {
 			testing.expectf(t, (object_of(fixture, space_number, segment) != nil) == (segment < segments), "count %d: segment %d present is wrong", count, segment)
 		}
 		before := fixture.store.spaces[space_number - 1]
@@ -173,13 +181,13 @@ records_survive_a_restart_at_each_segment_boundary :: proc(t: ^testing.T) {
 		testing.expect_value(t, fixture.store.load_state, Space_Load_State.Loaded)
 		expect_space_whole(t, &fixture.store, space_number, count)
 		after := &fixture.store.spaces[space_number - 1]
-		testing.expect(t, after.segment_hashes == before.segment_hashes, "a segment hash changed")
+		testing.expect(t, after.closed_segment_hash == before.closed_segment_hash, "a segment hash changed")
 		testing.expect(t, after.last_hash == before.last_hash, "the last link changed")
 
 		// The closed segments keep their bytes through the next record.
 		closed := u32(count / SPACE_SEGMENT_RECORDS)
-		saved: [SPACE_SEGMENTS_MOST][SEGMENT_BYTES_MOST]u8
-		saved_length: [SPACE_SEGMENTS_MOST]int
+		saved: [TEST_SEGMENTS][SEGMENT_BYTES_MOST]u8
+		saved_length: [TEST_SEGMENTS]int
 		for segment in 0 ..< closed {
 			object := object_of(fixture, space_number, segment)
 			saved_length[segment] = object.length
@@ -189,7 +197,7 @@ records_survive_a_restart_at_each_segment_boundary :: proc(t: ^testing.T) {
 		serial, refusal := record_append(&fixture.store, space_number, record[:], 1000 + count)
 		if count == SPACE_RECORDS_MOST {
 			testing.expect_value(t, refusal, Space_Refusal.Space_Full)
-			testing.expect(t, object_of(fixture, space_number, SPACE_SEGMENTS_MOST) == nil, "a segment past the bound was written")
+			testing.expect(t, object_of(fixture, space_number, TEST_SEGMENTS) == nil, "a segment past the bound was written")
 		} else {
 			testing.expect_value(t, refusal, Space_Refusal.None)
 			testing.expect_value(t, serial, count)
@@ -396,9 +404,9 @@ a_moved_missing_or_older_object_refuses_the_restart :: proc(t: ^testing.T) {
 	// A segment past the last segment of the largest space.
 	extra_name: [SEGMENT_OBJECT_NAME_BYTES]u8
 	port := pr.memory_private_store_port(&fixture.failing.memory)
-	testing.expect_value(t, pr.private_store_write(&port, segment_object_name(&extra_name, 1, SPACE_SEGMENTS_MOST), first.bytes[:first.length]), pr.Private_Store_Status.Ok)
+	testing.expect_value(t, pr.private_store_write(&port, segment_object_name(&extra_name, 1, TEST_SEGMENTS), first.bytes[:first.length]), pr.Private_Store_Status.Ok)
 	expect_damaged(t, fixture, "a segment past the bound")
-	pr.memory_private_store_find(&fixture.failing.memory, segment_object_name(&extra_name, 1, SPACE_SEGMENTS_MOST)).used = false
+	pr.memory_private_store_find(&fixture.failing.memory, segment_object_name(&extra_name, 1, TEST_SEGMENTS)).used = false
 
 	// A segment of a space that the index does not name.
 	testing.expect_value(t, pr.private_store_write(&port, segment_object_name(&extra_name, 5, 0), second.bytes[:second.length]), pr.Private_Store_Status.Ok)
@@ -469,8 +477,8 @@ a_refused_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 			forward_done(&fixture.store)
 		}
 		snapshot := fixture.store.spaces[space_number - 1]
-		stored: [SPACE_SEGMENTS_MOST + 1]pr.Memory_Private_Object
-		for segment in u32(0) ..= SPACE_SEGMENTS_MOST {
+		stored: [TEST_SEGMENTS + 1]pr.Memory_Private_Object
+		for segment in u32(0) ..= TEST_SEGMENTS {
 			if object := object_of(fixture, space_number, segment); object != nil {
 				stored[segment] = object^
 			}
@@ -483,7 +491,7 @@ a_refused_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 		testing.expect_value(t, fixture.store.forward_count, u32(0))
 		_, empty := forward_peek(&fixture.store)
 		testing.expect_value(t, empty, Space_Refusal.Forward_Empty)
-		for segment in u32(0) ..= SPACE_SEGMENTS_MOST {
+		for segment in u32(0) ..= TEST_SEGMENTS {
 			object := object_of(fixture, space_number, segment)
 			if stored[segment].used {
 				testing.expect(t, object != nil && object^ == stored[segment], "a refused write changed a stored segment")

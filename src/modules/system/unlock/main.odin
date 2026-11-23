@@ -1766,24 +1766,19 @@ proof_by_machine_passphrase: bool
 prove_start :: proc "contextless" (requested_principal: u64) {
 	change_mode = .Prove_Wide_Grant
 	proof_principal = requested_principal
+	present := false
 	if requested_principal == principals.MACHINE {
-		state := machine_record_read()
-		form_proves := machine_form == .Passphrase || (machine_form == .Sealed_By_The_Tpm_With_Passphrase && has_tpm)
-		if state != .Present || !form_proves {
-			system.log_fact(.Info, Wide_Grant_Proof_Not_Possible{principal = requested_principal})
-			proof_end(.Refused)
-			system.stop(.Refused)
-		}
-		proof_by_machine_passphrase = true
-		message = "type the machine passphrase to give the wide grant"
-	} else {
-		if !principals.change_principal_valid(requested_principal) || !principal_file_read() || !principals.change_principal_matches(requested_principal, number) {
-			system.log_fact(.Info, Wide_Grant_Proof_Not_Possible{principal = requested_principal})
-			proof_end(.Refused)
-			system.stop(.Refused)
-		}
-		message = "type your passphrase to give the wide grant"
+		present = machine_record_read() == .Present
+	} else if requested_principal < principals.PRINCIPAL_CAPACITY {
+		present = principal_file_read()
 	}
+	if problem := principals.proof_problem(requested_principal, present, machine_form, has_tpm, number); problem != .None {
+		system.log_fact(.Info, Wide_Grant_Proof_Not_Possible{principal = requested_principal, problem_code = u64(problem)})
+		proof_end(.Refused)
+		system.stop(.Refused)
+	}
+	proof_by_machine_passphrase = requested_principal == principals.MACHINE
+	message = proof_by_machine_passphrase ? "type the machine passphrase to give the wide grant" : "type your passphrase to give the wide grant"
 	mode = .Change_Current
 	system.log_fact(.Info, Wide_Grant_Proof_Asked{principal = requested_principal})
 }

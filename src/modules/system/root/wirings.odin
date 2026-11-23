@@ -77,10 +77,19 @@ Wiring_Request :: struct {
 	counted_restart:    ^start_policy_rules.Name_Count,
 	start_reply_handle: u64,
 	deadline:           u64,
-	// A Wire of the audit of a wide grant: the root service asked it for
-	// itself, and its answer goes to the path of the grant, not to a ring
-	// (wide_grant_authority.odin).
-	audit_of_wide_grant: bool,
+	// A request of the audit of a wide grant: the root service asked it
+	// for itself, and its answer goes to the path of the grant with the
+	// flow that asked it, not to a ring (wide_grant_authority.odin).
+	audit:             Audit_Request,
+	audit_flow_serial: u64,
+}
+
+// What the root service asked the wiring service for the audit of a wide
+// grant.
+Audit_Request :: enum u8 {
+	None   = 0,
+	Wire   = 1, // The Wire of one writer of act records to the collector.
+	Unwire = 2, // The end of the wirings whose asker is the collector.
 }
 
 // State of the delegated `wiring` service process.
@@ -740,7 +749,7 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 // pays the ring from its budget; the core writes the request whole, with
 // the fact audit_wired_by_root on both ends, so no list of an asker ever
 // carries it. The answer reaches wide_grant_wire_answered.
-audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, producer: wide_grants.Act_Producer, writer_output_index: u32, collector_input_index: u32) -> system.Status {
+audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, producer: wide_grants.Act_Producer, writer_output_index: u32, collector_input_index: u32, flow_serial: u64) -> system.Status {
 	if wiring_request.stage != .Idle {
 		return .No_Slot
 	}
@@ -793,21 +802,31 @@ audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, p
 		service_tag         = stag,
 		asker               = collector,
 		deadline            = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
-		audit_of_wide_grant = true,
+		audit               = .Wire,
+		audit_flow_serial   = flow_serial,
 	}
 	return .Ok
 }
 
-// audit_unwire_begin ends every wiring whose asker is the collector: the
-// wirings of the audit of a wide grant, which only the core asks for in its
-// name. .No_Slot: the wiring service serves another request; the caller
-// tries again at the next pass.
-audit_unwire_begin :: proc "contextless" (collector: ^Started) -> system.Status {
+// audit_unwire_begin asks the end of every wiring whose asker is the
+// collector: the wirings of the audit of a wide grant, which only the core
+// asks for in its name. Its answer reaches wide_grant_wire_answered. With no
+// wiring service, or no collector, no wiring is left, and the answer Ok
+// comes at once. .No_Slot: the wiring service serves another request; the
+// caller tries again at the next pass.
+audit_unwire_begin :: proc "contextless" (collector: ^Started, flow_serial: u64) -> system.Status {
 	if wiring_process == nil || collector == nil || collector.process == 0 {
+		wide_grant_wire_answered(.Unwire, flow_serial, .Ok)
 		return .Ok
 	}
 	values: [7]u64
-	status, _ := wirings_revoke_begin(nil, collector, 0, &values)
+	status, held := wirings_revoke_begin(nil, collector, 0, &values)
+	if status == .Ok && held {
+		wiring_request.audit = .Unwire
+		wiring_request.audit_flow_serial = flow_serial
+	} else if status == .Ok {
+		wide_grant_wire_answered(.Unwire, flow_serial, .Ok)
+	}
 	return status
 }
 
@@ -852,10 +871,11 @@ wiring_request_deadline :: proc "contextless" () -> u64 {
 wiring_request_reply :: proc "contextless" (status: system.Status, values: [7]u64) {
 	asker := wiring_request.asker
 	tag := wiring_request.tag
-	audit := wiring_request.audit_of_wide_grant
+	audit := wiring_request.audit
+	audit_flow_serial := wiring_request.audit_flow_serial
 	wiring_request = {}
-	if audit {
-		wide_grant_wire_answered(status)
+	if audit != .None {
+		wide_grant_wire_answered(audit, audit_flow_serial, status)
 		return
 	}
 	if asker != nil && asker.process != 0 && asker.requests.head != nil {

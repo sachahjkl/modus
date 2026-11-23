@@ -82,6 +82,31 @@ Source_Refused :: struct {
 	refusal_code:  u64,
 }
 
+// The router of the act spaces refused the end of a grant: its state says
+// why (a grant that ended already, another grant).
+@(log_fact = "collector: the end of the act records of grant {grant_serial} was refused: refusal {refusal_code}")
+Act_Wiring_End_Refused :: struct {
+	refusal_code: u64,
+	grant_serial: u64,
+}
+
+// The space of the root service had no room for the record of the end of
+// a grant: the grant ended, with no record of its end.
+@(log_fact = "collector: the grant {grant_serial} ended with no record of its end: the space of the root service is full")
+Act_Wiring_End_Not_Recorded :: struct {
+	grant_serial: u64,
+}
+
+// The collector closed a ring of act records: a record of no grant, of an
+// ended grant, of another grant or of another producer, or one that broke
+// the terms of its space.
+@(log_fact = "collector: closed the act records of wiring {wiring_number}, act refusal {act_refusal_code}, space refusal {space_refusal_code}")
+Act_Source_Refused :: struct {
+	wiring_number:      u64,
+	act_refusal_code:   u64,
+	space_refusal_code: u64,
+}
+
 #assert(size_of(Source_Refused) == 16)
 
 @(log_fact = "collector: act chain verification failed at index {failing_index} with refusal {refusal_code}")

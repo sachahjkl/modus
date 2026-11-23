@@ -6,6 +6,7 @@ import "modus:contract/module"
 import "modus:contract/module_file_writer"
 import "modus:contract/output"
 import "modus:contract/start_list"
+import "modus:contract/wide_grants"
 import "modustool:foundation"
 
 // stream_module_file gives a module file with one data segment, these
@@ -103,7 +104,10 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 		{{{writer = "writer", record_output = "paired", reader = "reader", record_input = "numbers"}}, "names a record output Paired"},
 		{{{writer = "writer", record_output = WIRING_OUTPUT_LOG, reader = "reader", record_input = "any", pace = .Never_Holds_Writer}}, "wires the log with the pace Never_Holds_Writer"},
 		{{{writer = "writer", record_output = "others", reader = "reader", record_input = "numbers"}}, "joins two records that differ"},
-		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "with_terms"}}, "names a record input that takes terms"},
+		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "with_terms"}}, "gives terms to a record input that takes none, or none to one that takes them"},
+		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers", audit_bound = 16}}, "gives terms to a record input that takes none, or none to one that takes them"},
+		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "with_terms", audit_bound = -1}}, "has an audit bound of -1"},
+		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "with_terms", audit_bound = wide_grants.SPACE_AUDIT_BOUND_MOST + 1}}, "has an audit bound of"},
 		{{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}, {writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}}, "is a second row to a record input that takes one wiring"},
 		{{{writer = "writer", record_output = "numbers", reader = "writer", record_input = "loopback"}}, start_list.LIST_PROBLEM_TEXTS[.Wiring_Loops]},
 	}
@@ -179,6 +183,23 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, records[1].wiring.pace, u32(output.Wiring_Pace.Always_Holds_Writer))
 		testing.expect_value(t, sizes[0], 16)
 		testing.expect_value(t, sizes[1], size_of(output.Log_Output_Record))
+	}
+
+	// The audit of what leaves a server: terms of an audit space, its
+	// bound, no forward, the size of the record of the writer, which the
+	// border of the list reads back whole.
+	audited := []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "with_terms", audit_bound = 100}}
+	testing.expect_value(t, len(start_list_problems(rows, modules, false, audited, files)), 0)
+	audited_records, _, audited_problems := start_list_wiring_records(rows, audited, files)
+	testing.expect_value(t, len(audited_problems), 0)
+	if len(audited_records) == 1 {
+		testing.expect_value(t, audited_records[0].wiring.terms_count, u32(start_list.START_LIST_TERMS_BYTES))
+		testing.expect_value(t, audited_records[0].wiring.terms_offset, u32(0))
+		terms := transmute(wide_grants.Space_Terms)audited_records[0].terms
+		testing.expect_value(t, terms, wide_grants.Space_Terms{kind_word = i64(wide_grants.Collector_Space_Kind.Audit), bound_records = 100, forwarding_word = i64(wide_grants.Space_Forwarding.Keeps), record_size = 16})
+		_, audited_list, audited_list_problem := start_list_bytes(rows, audited_records)
+		testing.expect_value(t, audited_list_problem, "")
+		testing.expect_value(t, audited_list.wirings[0].terms, audited_records[0].terms)
 	}
 
 	// The default start list, with module files that declare its pair as

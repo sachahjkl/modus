@@ -91,7 +91,11 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 		return errors.fail(error, ERROR_STORE, .Damaged, .Store, argument, 0, 0, found)
 	case .Space_Held:
 		return errors.fail(error, ERROR_SPACE, .Exists, .Records, argument, 0, 0, found)
-	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Bad_Name, .Bad_Record_Size, .Wrong_Size:
+	case .Bad_Bound:
+		// The largest bound: SPACE_RECORDS_MOST for a space Keep, which holds
+		// its records in memory, SPACE_AUDIT_BOUND_MOST for a space Audit.
+		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, argument, 0, wide_grants.SPACE_AUDIT_BOUND_MOST, found)
+	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Name, .Bad_Record_Size, .Wrong_Size:
 		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, argument, 0, 0, found)
 	}
 	return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, argument, 0, 0, found)

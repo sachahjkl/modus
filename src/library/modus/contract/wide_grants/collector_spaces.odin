@@ -25,7 +25,9 @@ import "modus:contract/value_kinds"
 // The spaces that one collector holds at once.
 SPACE_CAPACITY :: 8
 
-// The records that one space holds at most: the largest bound of a space.
+// The records that one space holds in memory at most: the largest bound of
+// a space Keep, and the window of the newest records of a space Audit,
+// whose records stay in the private store up to its bound.
 SPACE_RECORDS_MOST :: 64
 
 // The records that the bounds of all the spaces hold together: a space whose
@@ -132,24 +134,35 @@ Space_Reader :: struct {
 	name:               [SPACE_NAME_BYTES]u8,
 }
 
-// One space.
+// One space. The ring in memory holds the newest records, window of them
+// at most; a space Audit keeps each record in the private store too, from
+// kept_first_serial, and refuses a record past its bound.
 Collector_Space :: struct {
 	active:         bool,
 	kind:           Collector_Space_Kind,
 	forwarding:     Space_Forwarding,
 	bound:          u32,
+	window:         u32, // The places of the ring in memory: min(bound, SPACE_RECORDS_MOST).
 	record_size:    u32,
 	source:         [SPACE_NAME_BYTES]u8,
 	output:         [SPACE_NAME_BYTES]u8,
 	first:          u32, // The place of the oldest record in the ring of the space.
-	count:          u32,
+	count:          u32, // The records in the ring.
+	first_serial:   u64, // The serial of the record at first.
 	next_serial:    u64,
 	removed:        u64,
 	refused_full:   u64,
 	forwarded:      u64,
 	unforwarded:    u64, // The kept records whose pair ended before they left: the space keeps them, and no reader got them.
 	last_hash:      blake3.Hash,
-	segment_hashes: [SPACE_SEGMENTS_MOST]blake3.Hash, // The hash of each audit segment in the private store.
+	window_link:    blake3.Hash, // The link of the record before first_serial: where the chain of the ring starts.
+	// A space Audit: the first record that the private store keeps. The
+	// records before it rotated out (space_rotate_before), whole segments
+	// at a time; the anchors close the chain at that place.
+	kept_first_serial:   u64,
+	anchor_segment_hash: blake3.Hash, // The hash of the segment before the first kept one.
+	anchor_link:         blake3.Hash, // The link of the record before kept_first_serial.
+	closed_segment_hash: blake3.Hash, // The hash of the last full segment: the previous one of the open segment.
 	serials:        [SPACE_RECORDS_MOST]u64,
 	times:          [SPACE_RECORDS_MOST]u64,
 	hashes:         [SPACE_RECORDS_MOST]blake3.Hash,
@@ -229,7 +242,7 @@ space_room_left :: proc "contextless" (store: ^Space_Store) -> u32 {
 	used: u32 = 0
 	for &space in store.spaces {
 		if space.active {
-			used += space.bound
+			used += space.window
 		}
 	}
 	return used >= SPACE_ROOM_RECORDS ? 0 : SPACE_ROOM_RECORDS - used
@@ -260,13 +273,14 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 	if !forwarding_ok {
 		return 0, .Bad_Forwarding
 	}
-	if terms.bound_records < 1 || terms.bound_records > SPACE_RECORDS_MOST {
+	if terms.bound_records < 1 || terms.bound_records > i64(space_bound_most(kind)) {
 		return 0, .Bad_Bound
 	}
 	if terms.record_size < 1 || terms.record_size > SPACE_RECORD_BYTES_MOST {
 		return 0, .Bad_Record_Size
 	}
 	bound := u32(terms.bound_records)
+	window := min(bound, SPACE_RECORDS_MOST)
 	record_size := u32(terms.record_size)
 	free := -1
 	for &space, index in store.spaces {
@@ -285,7 +299,7 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 	if free < 0 {
 		return 0, .Space_Limit_Reached
 	}
-	if bound > space_room_left(store) {
+	if window > space_room_left(store) {
 		return 0, .Bound_Past_Room
 	}
 	space := &store.spaces[free]
@@ -294,6 +308,7 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 	space.kind = kind
 	space.forwarding = forwarding
 	space.bound = bound
+	space.window = window
 	space.record_size = record_size
 	copy(space.source[:], source)
 	copy(space.output[:], output)
@@ -306,6 +321,47 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 		}
 	}
 	return u32(free + 1), .None
+}
+
+// space_bound_most gives the largest bound of a space of kind: a space Keep
+// holds its records in memory only, a space Audit in the private store.
+space_bound_most :: proc "contextless" (kind: Collector_Space_Kind) -> u32 {
+	switch kind {
+	case .Audit:
+		return SPACE_AUDIT_BOUND_MOST
+	case .Keep:
+		return SPACE_RECORDS_MOST
+	case .None:
+		return 0
+	}
+	return 0
+}
+
+// space_place_of gives the place in the ring of a record whose serial the
+// ring holds.
+space_place_of :: proc "contextless" (space: ^Collector_Space, serial: u64) -> u32 {
+	return u32((u64(space.first) + (serial - space.first_serial)) % u64(space.window))
+}
+
+// space_window_drop_oldest takes the oldest record out of the ring: a
+// space Keep thins it; a space Audit keeps it in the private store.
+space_window_drop_oldest :: proc "contextless" (space: ^Collector_Space) {
+	if space.count == 0 {
+		return
+	}
+	space.window_link = space.hashes[space.first]
+	space.first = (space.first + 1) % space.window
+	space.count -= 1
+	space.first_serial += 1
+}
+
+// space_kept_count gives the records that a space keeps: in the private
+// store for a space Audit, in memory for a space Keep.
+space_kept_count :: proc "contextless" (space: ^Collector_Space) -> u64 {
+	if space.kind == .Audit {
+		return space.next_serial - space.kept_first_serial
+	}
+	return u64(space.count)
 }
 
 // space_of gives the active space of space_number, or nil.
@@ -350,15 +406,15 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 	if u32(len(record)) != space.record_size || len(record) > SPACE_RECORD_BYTES_MOST {
 		return 0, .Wrong_Size
 	}
-	if space.count >= space.bound {
-		switch space.kind {
-		case .Audit:
+	switch space.kind {
+	case .Audit:
+		if space.next_serial - space.kept_first_serial >= u64(space.bound) {
 			space.refused_full += 1
 			return 0, .Space_Full
-		case .Keep:
-		case .None:
-			return 0, .Bad_Kind
 		}
+	case .Keep:
+	case .None:
+		return 0, .Bad_Kind
 	}
 	forwards := space.forwarding == .Forward
 	if forwards && (store.forward_count >= FORWARD_QUEUE_CAPACITY || forward_count_of(store, space_number) >= FORWARD_QUEUE_PER_SPACE_LIMIT) {
@@ -374,22 +430,29 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 			return 0, persisted
 		}
 	}
-	if space.count >= space.bound {
-		// A space Keep thins its oldest record, and counts it.
-		space.first = (space.first + 1) % space.bound
-		space.count -= 1
-		space.removed += 1
+	if space.count >= space.window {
+		// A space Keep thins its oldest record, and counts it; a space Audit
+		// keeps it in the private store, out of the ring.
+		space_window_drop_oldest(space)
+		if space.kind == .Keep {
+			space.removed += 1
+		}
 	}
 	serial = space.next_serial
-	place := (space.first + space.count) % space.bound
+	place := (space.first + space.count) % space.window
 	space.serials[place] = serial
 	space.times[place] = time_ms
 	offset := int(place) * SPACE_RECORD_BYTES_MOST
 	copy(space.bytes[offset:][:len(record)], record)
+	if space.count == 0 {
+		space.first_serial = serial
+	}
 	if space.kind == .Audit {
 		space.last_hash = space_record_hash(space.last_hash, serial, time_ms, record)
 		space.hashes[place] = space.last_hash
-		space.segment_hashes[serial / SPACE_SEGMENT_RECORDS] = segment_hash
+		if serial % SPACE_SEGMENT_RECORDS == SPACE_SEGMENT_RECORDS - 1 {
+			space.closed_segment_hash = segment_hash
+		}
 	}
 	space.count += 1
 	space.next_serial += 1
@@ -532,7 +595,7 @@ records_read :: proc "contextless" (
 		if count >= limit {
 			break
 		}
-		place := (space.first + index) % space.bound
+		place := (space.first + index) % space.window
 		serial := space.serials[place]
 		if after >= 0 && serial <= u64(after) {
 			continue
@@ -570,9 +633,11 @@ space_verify :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (
 	if space.kind != .Audit {
 		return .Bad_Kind, 0
 	}
-	link: blake3.Hash
+	// The ring starts at the link of the record before it: the records
+	// before are in the private store, which space_segments_verify reads.
+	link := space.window_link
 	for index in 0 ..< space.count {
-		place := (space.first + index) % space.bound
+		place := (space.first + index) % space.window
 		offset := int(place) * SPACE_RECORD_BYTES_MOST
 		link = space_record_hash(link, space.serials[place], space.times[place], space.bytes[offset:][:space.record_size])
 		if link != space.hashes[place] {
@@ -644,7 +709,7 @@ space_row_of :: proc "contextless" (space: ^Collector_Space, space_number: u32) 
 		forwarding_word = i64(space.forwarding),
 		bound_records   = i64(space.bound),
 		record_size     = i64(space.record_size),
-		kept            = i64(space.count),
+		kept            = i64(min(space_kept_count(space), u64(max(i64)))),
 		removed         = i64(min(space.removed, u64(max(i64)))),
 		refused_full    = i64(min(space.refused_full, u64(max(i64)))),
 		forwarded       = i64(min(space.forwarded, u64(max(i64)))),
@@ -692,7 +757,7 @@ kept_record_count :: proc "contextless" (store: ^Space_Store) -> u64 {
 	total: u64 = 0
 	for &space in store.spaces {
 		if space.active {
-			total += u64(space.count)
+			total += space_kept_count(&space)
 		}
 	}
 	return total

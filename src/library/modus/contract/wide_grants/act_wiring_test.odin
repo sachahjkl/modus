@@ -27,6 +27,11 @@ act_test_terms :: proc(principal: u64 = 0) -> Wide_Grant_Terms {
 	return terms
 }
 
+// A plan of act spaces small enough to fill in a test: a whole ring of
+// reserve, and room for one grant of a few records.
+@(private = "file")
+ACT_TEST_PLAN :: Act_Space_Plan{bound_records = 48, retained_grants = 1, records_per_minute = 1, grant_records_least = 1}
+
 @(private = "file")
 act_test_store_bind :: proc(store: ^Space_Store, principal: u64) -> ^pr.Memory_Private_Store {
 	memory := new(pr.Memory_Private_Store)
@@ -186,7 +191,7 @@ test_act_stream_borders_and_wiring_row_builder :: proc(t: ^testing.T) {
 	testing.expect_value(t, r, Act_Wiring_Refusal.Bad_Wiring_End)
 	_, r = act_wiring_rows_build(.Started, 1, 1, endpoints[:], 256, 0, rows[:], &terms)
 	testing.expect_value(t, r, Act_Wiring_Refusal.Bad_Bound)
-	_, r = act_wiring_rows_build(.Started, 1, 1, endpoints[:], 256, SPACE_RECORDS_MOST + 1, rows[:], &terms)
+	_, r = act_wiring_rows_build(.Started, 1, 1, endpoints[:], 256, SPACE_AUDIT_BOUND_MOST + 1, rows[:], &terms)
 	testing.expect_value(t, r, Act_Wiring_Refusal.Bad_Bound)
 	_, r = act_wiring_rows_build(.Started, 1, 1, endpoints[:], 256, ACT_SPACE_BOUND_RECORDS, rows[:2], &terms)
 	testing.expect_value(t, r, Act_Wiring_Refusal.Buffer_Too_Small)
@@ -250,20 +255,24 @@ test_grant_act_router_wiring_refusals_and_revocation :: proc(t: ^testing.T) {
 	// Refusal 2: Attach with grant_serial 0, wrong principal, or bad bound changes nothing.
 	testing.expect_value(t, act_wiring_attach(&router, store, 0, 0, {.View_Screen}, 60_000, 100), Act_Wiring_Refusal.No_Active_Grant)
 	testing.expect_value(t, act_wiring_attach(&router, store, 1, 1, {.View_Screen}, 60_000, 100), Act_Wiring_Refusal.Principal_Mismatch)
-	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen}, 60_000, 100, 0), Act_Wiring_Refusal.Bad_Bound)
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen}, 60_000, 100, Act_Space_Plan{}), Act_Wiring_Refusal.Bad_Bound)
+	small := ACT_TEST_PLAN
+	small.bound_records = i64(ACT_RING_CAPACITY)
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen}, 60_000, 100, small), Act_Wiring_Refusal.Bad_Bound)
 	testing.expect_value(t, router.state, Act_Wiring_State.Unwired)
 
 	// Refusal 3: Store failure on attach leaves router unwired.
 	memory.writes_allowed = 0
-	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, 4), Act_Wiring_Refusal.Store_Refused)
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.Store_Refused)
 	testing.expect_value(t, router.state, Act_Wiring_State.Unwired)
 	memory.writes_allowed = -1
 
-	// Attach succeeds: all 4 audit spaces opened and Grant_Started recorded in root.acts.
-	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, 4), Act_Wiring_Refusal.None)
+	// Attach succeeds: the spaces of the three writers of this layer open,
+	// and Grant_Started is recorded in root.acts.
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
 	testing.expect_value(t, router.state, Act_Wiring_State.Wired)
-	testing.expect_value(t, router.wired_producers, ALL_ACT_PRODUCERS)
-	testing.expect_value(t, space_count(store), 4)
+	testing.expect_value(t, router.wired_producers, ACT_PRODUCERS_WIRED)
+	testing.expect_value(t, space_count(store), 3)
 	testing.expect_value(t, router.emitted_counts[.Root_Service], u64(1))
 
 	// Refusal 4: Non-root producer cannot forge Grant_Revoked or spoof another producer.
@@ -305,24 +314,25 @@ test_grant_act_router_wiring_refusals_and_revocation :: proc(t: ^testing.T) {
 		{grant_serial = 1, principal_id = 0, timestamp_ms = 140, producer_word = u64(Act_Producer.Remote_Service), act_kind_word = u64(Act_Kind.Frame_Read), target_window_id = 10},
 		{grant_serial = 1, principal_id = 0, timestamp_ms = 150, producer_word = u64(Act_Producer.Trusted_Display), act_kind_word = u64(Act_Kind.Key_Injected), target_window_id = 10, detail_word_0 = 5},
 	}
-	for sample in samples {
+	for sample, index in samples {
 		_, r := act_wiring_emit(&router, store, sample)
-		testing.expect_value(t, r, Act_Wiring_Refusal.None)
+		// The agent console has no space in this layer: its record is refused.
+		testing.expect_value(t, r, index == 1 ? Act_Wiring_Refusal.Producer_Not_Wired : Act_Wiring_Refusal.None)
 	}
 	testing.expect_value(t, router.emitted_counts[.Root_Service], u64(2))
-	testing.expect_value(t, router.emitted_counts[.Agent_Console], u64(1))
+	testing.expect_value(t, router.emitted_counts[.Agent_Console], u64(0))
 	testing.expect_value(t, router.emitted_counts[.Remote_Service], u64(1))
 	testing.expect_value(t, router.emitted_counts[.Trusted_Display], u64(1))
 
 	// Refusal 6: Filling a producer's audit space fails closed with Audit_Space_Full.
-	for i in u64(0) ..< 3 {
+	for i in u64(0) ..< u64(ACT_TEST_PLAN.bound_records) - 1 {
 		fill_rec := samples[3]
-		fill_rec.timestamp_ms = 160 + i
+		fill_rec.timestamp_ms = 151 + i
 		_, r := act_wiring_emit(&router, store, fill_rec)
 		testing.expect_value(t, r, Act_Wiring_Refusal.None)
 	}
 	overflow_rec := samples[3]
-	overflow_rec.timestamp_ms = 170
+	overflow_rec.timestamp_ms = 199
 	_, emit_r = act_wiring_emit(&router, store, overflow_rec)
 	testing.expect_value(t, emit_r, Act_Wiring_Refusal.Audit_Space_Full)
 
@@ -345,24 +355,346 @@ test_grant_act_router_wiring_refusals_and_revocation :: proc(t: ^testing.T) {
 	testing.expect_value(t, emit_r, Act_Wiring_Refusal.Grant_Revoked)
 	testing.expect_value(t, act_wiring_revoke(&router, store, 1, .Principal_Revoked, 220), Act_Wiring_Refusal.Grant_Revoked)
 
-	for producer in Act_Producer {
-		if producer == .None {
-			continue
-		}
+	for producer in ACT_PRODUCERS_WIRED {
 		verify_r, _ := space_verify(store, router.space_numbers[producer])
 		testing.expect_value(t, verify_r, Space_Refusal.None)
 	}
 
-	// Revocation still closes wirings even if root.acts is full (bound 4: 3 records already,
-	// attach adds 1 -> full at 4, then revoke still transitions to Ended!).
-	testing.expect_value(t, act_wiring_attach(&router, store, 2, 0, {.View_Screen}, 30_000, 300, 4), Act_Wiring_Refusal.None)
+	// The next grant: the ring of one grant is full, so the grant before
+	// rotates out of each space, whole segments at a time, and the full
+	// space of the trusted display has room again.
+	testing.expect_value(t, act_wiring_attach(&router, store, 2, 0, {.View_Screen}, 30_000, 300, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
 	testing.expect_value(t, router.state, Act_Wiring_State.Wired)
-	testing.expect_value(t, act_wiring_revoke(&router, store, 2, .Duplicate_Connection, 310), Act_Wiring_Refusal.None)
+	testing.expect_value(t, router.retained.count, 1)
+	display := space_of(store, router.space_numbers[.Trusted_Display])
+	testing.expect_value(t, display.kept_first_serial, u64(ACT_TEST_PLAN.bound_records))
+	// The root service fills its own space; the revocation still ends the
+	// grant, with no record of its end.
+	for index in u64(0) ..< u64(ACT_TEST_PLAN.bound_records) {
+		filler := samples[0]
+		filler.grant_serial = 2
+		filler.timestamp_ms = 301 + index
+		_, _ = act_wiring_emit(&router, store, filler)
+	}
+	testing.expect_value(t, act_wiring_revoke(&router, store, 2, .Duplicate_Connection, 400), Act_Wiring_Refusal.None)
 	testing.expect_value(t, router.state, Act_Wiring_State.Ended)
 	testing.expect(t, !router.revocation_recorded, "full audit space skips append but still ends wiring")
 	post_rec := samples[1]
 	post_rec.grant_serial = 2
-	post_rec.timestamp_ms = 320
+	post_rec.timestamp_ms = 420
 	_, emit_r = act_wiring_emit(&router, store, post_rec)
 	testing.expect_value(t, emit_r, Act_Wiring_Refusal.Grant_Revoked)
 }
+
+@(private = "file")
+act_test_remote_record :: proc(grant_serial: u64, timestamp_ms: u64, producer := Act_Producer.Remote_Service, kind := Act_Kind.Call_Made) -> [size_of(Act_Stream_Record)]u8 {
+	record := Act_Stream_Record {
+		grant_serial     = grant_serial,
+		principal_id     = 0,
+		timestamp_ms     = timestamp_ms,
+		producer_word    = u64(producer),
+		act_kind_word    = u64(kind),
+		target_window_id = 10,
+	}
+	return act_stream_record_encode(&record)
+}
+
+@(private = "file")
+act_test_remote_link :: proc(t: ^testing.T, links: ^Source_Links, store: ^Space_Store, tag: u32, bound: i64) -> ^Source_Link {
+	link, refusal := link_open(links, store, tag, transmute([]u8)string("remote"), transmute([]u8)string(ACT_OUTPUT_NAME), act_audit_space_terms(bound), size_of(Act_Stream_Record))
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	return link
+}
+
+@(private = "file")
+act_test_kept :: proc(store: ^Space_Store, space: u32) -> u64 {
+	found := space_of(store, space)
+	return found == nil ? 0 : u64(found.count)
+}
+
+// A record on a ring of act records that breaks the gate closes its link
+// before its space sees it, with no pending record: a record that does not
+// decode, of another producer, of another grant, a lifecycle record of a
+// producer that is not the root service, and, the case of the end, each
+// record that arrives after the revocation of its grant. The space keeps
+// only the record that came while the grant held.
+@(test)
+test_a_record_after_revocation_is_refused_and_kept_nowhere :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := act_test_store_bind(store, 0)
+	defer free(memory)
+	router: Grant_Act_Router
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
+
+	short := act_test_remote_record(1, 110)
+	broken := [?]struct {
+		record:   [size_of(Act_Stream_Record)]u8,
+		expected: Act_Wiring_Refusal,
+	} {
+		{act_test_remote_record(1, 110, .Trusted_Display, .Key_Injected), .Bad_Producer},
+		{act_test_remote_record(2, 110), .Grant_Serial_Mismatch},
+		{act_test_remote_record(1, 110, .Remote_Service, .Grant_Revoked), .Bad_Act_Kind},
+		{act_test_remote_record(1, 99), .Clock_Went_Back},
+	}
+	for case_of, index in broken {
+		links: Source_Links
+		link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
+		record := case_of.record
+		step, act_refusal, _ := act_link_keep(&router, store, link, record[:], .Remote_Service, 110)
+		testing.expectf(t, step == .Refused && act_refusal == case_of.expected, "case %d: %v %v", index, step, act_refusal)
+		testing.expect_value(t, link.state, Source_Link_State.Ended)
+		testing.expect(t, !link.pending)
+		testing.expect_value(t, act_test_kept(store, link.space), u64(0))
+	}
+	// A record of a wrong size never decodes.
+	{
+		links: Source_Links
+		link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
+		step, act_refusal, _ := act_link_keep(&router, store, link, short[:size_of(Act_Stream_Record) - 1], .Remote_Service, 110)
+		testing.expect_value(t, step, Link_Step.Refused)
+		testing.expect_value(t, act_refusal, Act_Wiring_Refusal.Bad_Producer)
+		testing.expect_value(t, act_test_kept(store, link.space), u64(0))
+	}
+
+	links: Source_Links
+	link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
+	kept := act_test_remote_record(1, 110)
+	step, act_refusal, _ := act_link_keep(&router, store, link, kept[:], .Remote_Service, 110)
+	testing.expect_value(t, step, Link_Step.Kept)
+	testing.expect_value(t, act_refusal, Act_Wiring_Refusal.None)
+	testing.expect_value(t, act_test_kept(store, link.space), u64(1))
+
+	testing.expect_value(t, act_wiring_revoke(&router, store, 1, .Principal_Revoked, 120), Act_Wiring_Refusal.None)
+	late := act_test_remote_record(1, 130)
+	step, act_refusal, _ = act_link_keep(&router, store, link, late[:], .Remote_Service, 130)
+	testing.expect_value(t, step, Link_Step.Refused)
+	testing.expect_value(t, act_refusal, Act_Wiring_Refusal.Grant_Revoked)
+	testing.expect_value(t, link.state, Source_Link_State.Ended)
+	testing.expect(t, !link.pending)
+	testing.expect_value(t, act_test_kept(store, link.space), u64(1))
+	verify, _ := space_verify(store, link.space)
+	testing.expect_value(t, verify, Space_Refusal.None)
+}
+
+// The lock of the session ends the grant with its reason: the last record
+// of the space of the root service is Grant_Revoked with Session_Locked,
+// and it survives a start of the collector.
+@(test)
+test_the_lock_leaves_its_end_record :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := act_test_store_bind(store, 0)
+	defer free(memory)
+	router: Grant_Act_Router
+	testing.expect_value(t, act_wiring_attach(&router, store, 3, 0, {.View_Screen}, 60_000, 100), Act_Wiring_Refusal.None)
+	testing.expect_value(t, act_wiring_revoke(&router, store, 3, .Session_Locked, 150), Act_Wiring_Refusal.None)
+	testing.expect(t, router.revocation_recorded)
+	again := new(Space_Store)
+	defer free(again)
+	space_store_init(again, 0, pr.memory_private_store_port(memory))
+	reader := Space_Reader{principal = 0, acts_for_principal = true}
+	copy(reader.name[:], "console")
+	heads: [4]Kept_Record_Head
+	bytes: [4 * size_of(Act_Stream_Record)]u8
+	count, refusal := records_read(again, router.space_numbers[.Root_Service], -1, 4, &reader, heads[:], bytes[:])
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	testing.expect_value(t, count, 2)
+	last, decoded := act_stream_record_decode(bytes[size_of(Act_Stream_Record):][:size_of(Act_Stream_Record)])
+	testing.expect(t, decoded)
+	testing.expect_value(t, Act_Kind(last.act_kind_word), Act_Kind.Grant_Revoked)
+	testing.expect_value(t, Revocation_Reason(last.detail_word_0), Revocation_Reason.Session_Locked)
+	testing.expect_value(t, last.grant_serial, u64(3))
+}
+
+// One grant of an hour: the 33rd record of a writer is kept, and the 100th;
+// the ring in memory holds the newest 64, the private store each of them,
+// and a collector that starts again reads them back whole.
+@(test)
+test_a_grant_keeps_more_records_than_memory :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := act_test_store_bind(store, 0)
+	defer free(memory)
+	router: Grant_Act_Router
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60 * 60_000, 100), Act_Wiring_Refusal.None)
+	testing.expect(t, act_grant_allowance(ACT_SPACE_PLAN, 60 * 60_000) >= 100)
+	links: Source_Links
+	link := act_test_remote_link(t, &links, store, 5, ACT_SPACE_PLAN.bound_records)
+	for index in u64(0) ..< 100 {
+		record := act_test_remote_record(1, 110 + index)
+		step, _, _ := act_link_keep(&router, store, link, record[:], .Remote_Service, 110 + index)
+		testing.expectf(t, step == .Kept, "the record %d was not kept", index + 1)
+	}
+	space := space_of(store, link.space)
+	testing.expect_value(t, space_kept_count(space), u64(100))
+	testing.expect_value(t, space.count, u32(SPACE_RECORDS_MOST))
+	testing.expect_value(t, space.first_serial, u64(100 - SPACE_RECORDS_MOST))
+	verified, _ := space_verify(store, link.space)
+	testing.expect_value(t, verified, Space_Refusal.None)
+	last_hash := space.last_hash
+	space_number := link.space
+
+	again := new(Space_Store)
+	defer free(again)
+	space_store_init(again, 0, pr.memory_private_store_port(memory))
+	testing.expect_value(t, space_store_ready(again), Space_Refusal.None)
+	loaded := space_of(again, space_number)
+	testing.expect_value(t, loaded.next_serial, u64(100))
+	testing.expect(t, loaded.last_hash == last_hash, "the chain changed at the start")
+	verified, _ = space_verify(again, space_number)
+	testing.expect_value(t, verified, Space_Refusal.None)
+}
+
+// The ring of the kept grants: 17 grants in a row each start, the ring
+// keeps the newest ACT_SPACE_PLAN.retained_grants, and a collector that
+// starts again reads the ring back. With a small plan, the oldest grant
+// rotates out of the space of a writer when a new grant needs its room,
+// whole segments at a time, and the chain of what stays still verifies
+// from its anchors, also after a start. A damaged ring refuses the grant.
+@(test)
+test_the_seventeenth_grant_rotates_the_oldest_out :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := act_test_store_bind(store, 0)
+	defer free(memory)
+	router: Grant_Act_Router
+	now := u64(100)
+	for grant in u64(1) ..= 17 {
+		testing.expectf(t, act_wiring_attach(&router, store, grant, 0, {.View_Screen}, 60_000, now) == .None, "the grant %d did not start", grant)
+		testing.expect_value(t, act_wiring_revoke(&router, store, grant, .Principal_Revoked, now + 1), Act_Wiring_Refusal.None)
+		testing.expect(t, router.revocation_recorded)
+		now += 10
+	}
+	testing.expect_value(t, router.retained.count, ACT_SPACE_PLAN.retained_grants)
+	testing.expect_value(t, router.retained.rows[0].grant_serial, u64(17 - ACT_SPACE_PLAN.retained_grants + 1))
+	testing.expect_value(t, router.retained.rows[router.retained.count - 1].grant_serial, u64(17))
+
+	// A collector that starts again reads the same ring.
+	again := new(Space_Store)
+	defer free(again)
+	space_store_init(again, 0, pr.memory_private_store_port(memory))
+	restarted: Grant_Act_Router
+	testing.expect_value(t, act_wiring_attach(&restarted, again, 18, 0, {.View_Screen}, 60_000, now), Act_Wiring_Refusal.None)
+	testing.expect_value(t, restarted.retained.count, ACT_SPACE_PLAN.retained_grants)
+	testing.expect_value(t, restarted.retained.rows[0].grant_serial, u64(18 - ACT_SPACE_PLAN.retained_grants + 1))
+
+	// A small plan: two grants of 16 records of remote fill its space.
+	small := Act_Space_Plan{bound_records = 64, retained_grants = 2, records_per_minute = 1, grant_records_least = 1}
+	testing.expect_value(t, act_grant_records_most(small), u64(16))
+	rotating := new(Space_Store)
+	defer free(rotating)
+	rotating_memory := act_test_store_bind(rotating, 0)
+	defer free(rotating_memory)
+	small_router: Grant_Act_Router
+	time := u64(1000)
+	for grant in u64(1) ..= 3 {
+		testing.expect_value(t, act_wiring_attach(&small_router, rotating, grant, 0, {.View_Screen}, 16 * 60_000, time, small), Act_Wiring_Refusal.None)
+		links: Source_Links
+		link := act_test_remote_link(t, &links, rotating, u32(grant), small.bound_records)
+		for index in u64(0) ..< 16 {
+			record := act_test_remote_record(grant, time + 1 + index)
+			step, _, _ := act_link_keep(&small_router, rotating, link, record[:], .Remote_Service, time + 1 + index)
+			testing.expect_value(t, step, Link_Step.Kept)
+		}
+		testing.expect_value(t, act_wiring_revoke(&small_router, rotating, grant, .Time_Bound, time + 100), Act_Wiring_Refusal.None)
+		time += 1000
+	}
+	remote_space := space_of(rotating, small_router.space_numbers[.Remote_Service])
+	// The third grant rotated the first out: its segment left.
+	testing.expect_value(t, remote_space.kept_first_serial, u64(16))
+	testing.expect_value(t, space_kept_count(remote_space), u64(32))
+	testing.expect_value(t, remote_space.removed, u64(16))
+	verified, _ := space_verify(rotating, small_router.space_numbers[.Remote_Service])
+	testing.expect_value(t, verified, Space_Refusal.None)
+	restart := new(Space_Store)
+	defer free(restart)
+	space_store_init(restart, 0, pr.memory_private_store_port(rotating_memory))
+	testing.expect_value(t, space_store_ready(restart), Space_Refusal.None)
+	reloaded := space_of(restart, small_router.space_numbers[.Remote_Service])
+	testing.expect_value(t, reloaded.kept_first_serial, u64(16))
+	testing.expect_value(t, reloaded.next_serial, u64(48))
+	verified, _ = space_verify(restart, small_router.space_numbers[.Remote_Service])
+	testing.expect_value(t, verified, Space_Refusal.None)
+	// The grant that holds never rotates: a new grant waits for its end.
+	testing.expect_value(t, act_wiring_attach(&small_router, rotating, 4, 0, {.View_Screen}, 60_000, time, small), Act_Wiring_Refusal.None)
+	testing.expect_value(t, act_wiring_attach(&small_router, rotating, 5, 0, {.View_Screen}, 60_000, time, small), Act_Wiring_Refusal.Already_Wired)
+
+	// A damaged ring refuses the grant, with nothing changed.
+	object := pr.memory_private_store_find(rotating_memory, RETAINED_GRANTS_OBJECT_NAME)
+	object.bytes[20] ~= 1
+	broken: Grant_Act_Router
+	testing.expect_value(t, act_wiring_attach(&broken, rotating, 6, 0, {.View_Screen}, 60_000, time, small), Act_Wiring_Refusal.Store_Refused)
+	testing.expect_value(t, broken.state, Act_Wiring_State.Unwired)
+}
+
+// An agent fills the space of its act records. While the grant holds, the
+// collector reads no more of a ring once the space has room for one ring
+// only: the ring fills, and the writer refuses its next act. A record that
+// came anyway waits, pending, when the space is full. The revocation still
+// ends the grant and its record lands, since only the collector writes
+// root.acts. After the end, the records of a ring with a time at or before
+// the end are kept in the room of the ring, a later one is refused, and the
+// link of the record that a full space held closes, kept nowhere.
+@(test)
+test_a_full_act_space_never_blocks_the_end_of_its_grant :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := act_test_store_bind(store, 0)
+	defer free(memory)
+	router: Grant_Act_Router
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
+	links: Source_Links
+	link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
+	closed: [4]u32
+	reserve_at := u64(ACT_TEST_PLAN.bound_records) - u64(ACT_RING_CAPACITY)
+	for index in u64(0) ..< reserve_at {
+		testing.expect(t, act_link_may_read(&router, store, link))
+		record := act_test_remote_record(1, 110 + index)
+		step, _, _ := act_link_keep(&router, store, link, record[:], .Remote_Service, 110 + index)
+		testing.expect_value(t, step, Link_Step.Kept)
+	}
+	// The room of one ring is left: the collector reads no more.
+	testing.expect(t, !act_link_may_read(&router, store, link))
+	// The ring of the reserve, read anyway, fills the space; one more waits.
+	for index in reserve_at ..< u64(ACT_TEST_PLAN.bound_records) {
+		record := act_test_remote_record(1, 110 + index)
+		step, _, _ := act_link_keep(&router, store, link, record[:], .Remote_Service, 110 + index)
+		testing.expect_value(t, step, Link_Step.Kept)
+	}
+	held := act_test_remote_record(1, 170)
+	step, act_refusal, space_refusal := act_link_keep(&router, store, link, held[:], .Remote_Service, 170)
+	testing.expect_value(t, step, Link_Step.Held)
+	testing.expect_value(t, act_refusal, Act_Wiring_Refusal.None)
+	testing.expect_value(t, space_refusal, Space_Refusal.Space_Full)
+	testing.expect(t, link.pending)
+	testing.expect_value(t, act_links_close_ended(&router, &links, closed[:]), 0)
+	testing.expect_value(t, link.state, Source_Link_State.Open)
+
+	testing.expect_value(t, act_wiring_revoke(&router, store, 1, .Principal_Revoked, 200), Act_Wiring_Refusal.None)
+	testing.expect_value(t, router.state, Act_Wiring_State.Ended)
+	testing.expect(t, router.revocation_recorded)
+	testing.expect(t, act_link_may_read(&router, store, link))
+	testing.expect_value(t, act_links_close_ended(&router, &links, closed[:0]), 0)
+	testing.expect_value(t, act_links_close_ended(&router, &links, closed[:]), 1)
+	testing.expect_value(t, closed[0], u32(5))
+	testing.expect_value(t, link.state, Source_Link_State.Ended)
+	testing.expect(t, !link.pending)
+	testing.expect_value(t, space_kept_count(space_of(store, link.space)), u64(ACT_TEST_PLAN.bound_records))
+	testing.expect_value(t, act_links_close_ended(&router, &links, closed[:]), 0)
+
+	// A ring of another writer, read after the end: its record of before
+	// the end is kept, one of after the end is refused.
+	display_links: Source_Links
+	display_link, display_open := link_open(&display_links, store, 6, transmute([]u8)string("compositor"), transmute([]u8)string(ACT_OUTPUT_NAME), act_audit_space_terms(ACT_TEST_PLAN.bound_records), size_of(Act_Stream_Record))
+	testing.expect_value(t, display_open, Space_Refusal.None)
+	before_end := act_test_remote_record(1, 195, .Trusted_Display, .Target_Window_Changed)
+	step, act_refusal, _ = act_link_keep(&router, store, display_link, before_end[:], .Trusted_Display, 201)
+	testing.expect_value(t, step, Link_Step.Kept)
+	after_end := act_test_remote_record(1, 201, .Trusted_Display, .Target_Window_Changed)
+	step, act_refusal, _ = act_link_keep(&router, store, display_link, after_end[:], .Trusted_Display, 201)
+	testing.expect_value(t, step, Link_Step.Refused)
+	testing.expect_value(t, act_refusal, Act_Wiring_Refusal.Grant_Revoked)
+	testing.expect_value(t, space_kept_count(space_of(store, display_link.space)), u64(1))
+}
+

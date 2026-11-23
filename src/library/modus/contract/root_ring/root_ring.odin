@@ -491,6 +491,19 @@ Root_Command :: enum u32 {
 	// Wide_Grant_End ends the wide grant of a client key: values[0..3] the
 	// key. The sender acts for the principal of the grant.
 	Wide_Grant_End = 35,
+	// Wide_Grant_Agent_Ask is the ask of an agent through `remote`
+	// (src/md/features/wide_grants.md, "The ask of an agent"): values[0..3]
+	// the key that the client proved in its handshake, values[4] the word of
+	// the scopes, values[5] the duration in milliseconds, values[6] 0. The
+	// principal is the principal of the row of the key. Only the holder of
+	// Remote_Clients sends it. The completion: the serial of the flow in
+	// values[0], as for Wide_Grant_Ask.
+	Wide_Grant_Agent_Ask = 36,
+	// Wide_Grant_Second_Connection says that a second connection of a key
+	// came while the row of the key held a wide grant: values[0..3] the key,
+	// the other values 0. The root service ends the grant with the reason
+	// Duplicate_Connection. Only the holder of Remote_Clients sends it.
+	Wide_Grant_Second_Connection = 37,
 }
 
 // values[5] of a Wide_Grant_Proof: how the proof of the principal ended.
@@ -687,6 +700,9 @@ Root_Command_Sender :: enum u8 {
 	// The process with the start grant Plans only: the holder of the role
 	// Plans names the holders of the roles of the machine.
 	Plans,
+	// The process with the start grant Remote_Clients and a root ring: it
+	// names a client key that proved itself in its handshake.
+	Remote_Clients,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -729,6 +745,8 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Wide_Grant_Ask         = .Root_Ring,
 	.Wide_Grant_Proof       = .Principals,
 	.Wide_Grant_End         = .Root_Ring,
+	.Wide_Grant_Agent_Ask   = .Remote_Clients,
+	.Wide_Grant_Second_Connection = .Remote_Clients,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -857,6 +875,8 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 		return .Start_Policy in start_grant_set
 	case .Plans:
 		return .Plans in start_grant_set
+	case .Remote_Clients:
+		return .Remote_Clients in start_grant_set
 	}
 	return false
 }
@@ -913,6 +933,8 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Wide_Grant_Ask         = .Command,
 	.Wide_Grant_Proof       = .Command,
 	.Wide_Grant_End         = .Command,
+	.Wide_Grant_Agent_Ask   = .Command,
+	.Wide_Grant_Second_Connection = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -1092,6 +1114,8 @@ root_command_names := [Root_Command]string {
 	.Wide_Grant_Ask         = "Wide_Grant_Ask",
 	.Wide_Grant_Proof       = "Wide_Grant_Proof",
 	.Wide_Grant_End         = "Wide_Grant_End",
+	.Wide_Grant_Agent_Ask   = "Wide_Grant_Agent_Ask",
+	.Wide_Grant_Second_Connection = "Wide_Grant_Second_Connection",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1134,6 +1158,8 @@ root_first_argument_names := [Root_Command]string {
 	.Wide_Grant_Ask         = "key",
 	.Wide_Grant_Proof       = "name",
 	.Wide_Grant_End         = "key",
+	.Wide_Grant_Agent_Ask   = "key",
+	.Wide_Grant_Second_Connection = "key",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1177,6 +1203,8 @@ root_second_argument_names := [Root_Command]string {
 	.Wide_Grant_Ask         = "scopes",
 	.Wide_Grant_Proof       = "principal",
 	.Wide_Grant_End         = "",
+	.Wide_Grant_Agent_Ask   = "scopes",
+	.Wide_Grant_Second_Connection = "",
 }
 
 // command_of_record reads the command that an error record names: the

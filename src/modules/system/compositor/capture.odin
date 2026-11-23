@@ -25,6 +25,7 @@ import "modus:interface"
 import "internal:compositor/bar"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "internal:compositor/wide_grant_view"
 import "modus:contract/wide_grants"
 import "modus:key_path"
 import "modus:system"
@@ -133,8 +134,16 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 	case .Capture_Size_Ask:
 		send(client, .Capture_Size, {0 = u64(screen.width), 1 = u64(screen.height)})
 	case .Capture_Open:
+		// Under a wide grant, a view opens only once its record left
+		// (wide_grant_screen.odin): a refused record refuses the view.
+		if !wide_grant_view_record(true, index) {
+			if _, _, through := system.handle_state(system.Handle(record.values[0]), client.ring_memory); through {
+				system.close(system.Handle(record.values[0]))
+			}
+			capture_refuse(client, "the act record of the view did not leave")
+			return
+		}
 		capture_open(index, record)
-		_, _ = wide_grant_act_emit(.Frame_Read, 0, 1, u64(index))
 	case .Capture_Taken:
 		if capture.client != index || capture.held < 0 || record.values[0] != u64(capture.held) {
 			capture_refuse(client, "a Capture_Taken of a picture that the process does not hold")
@@ -146,7 +155,9 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 	case .Capture_Close:
 		if capture.client == index {
-			_, _ = wide_grant_act_emit(.Frame_Read, 0, 0, u64(index))
+			// The close of a view ends what the agent sees: it is never
+			// refused. A record that did not leave is counted on the mark.
+			_ = wide_grant_view_record(false, index)
 			capture_end("the service closed it")
 		}
 	case .Capture_Viewers:
@@ -177,30 +188,28 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		_ = capture_record_viewer_input(record)
 		character := display.key_character_of(character_word)
-		// A trusted surface, a window marked local, and under a wide grant
-		// each window out of its bound get no key of a viewer
-		// (wide_grant_screen.odin).
-		if !wide_grant_viewer_key_allowed() {
+		// A trusted surface and a window marked local get no key of a
+		// viewer; under a wide grant only the window in front, if it is in
+		// the bound and nothing lies over it, and only after the record of
+		// its window left (internal:compositor/wide_grant_view).
+		surface, window_id := viewer_key_surface() // wide_grant_screen.odin
+		if wide_grant_view.viewer_input_verdict(&wide_grant_display, surface, window_id) != .Allowed {
+			damage_bar()
 			return
 		}
 		// The path of a key of the input service: the palette, the
 		// clipboard, then the window in front, never the bar. Under a wide
 		// grant, the window in front only.
 		switch {
-		case wide_grant_display.active && order_count > 0:
-			in_front := order[order_count - 1]
-			if _, dropped_full := wide_grant_act_emit(.Key_Injected, u64(in_front + 1), code, modifiers); dropped_full {
+		case wide_grant_display.active:
+			if !wide_grant_input_allowed(window_id, .Key) {
 				return
 			}
-			send(&clients[in_front], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
+			send(&clients[order[order_count - 1]], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
 		case palette_key(u32(code), character, pressed != 0, u32(modifiers)):
 		case clipboard_key(character, u32(modifiers), pressed != 0):
 		case order_count > 0:
-			in_front := order[order_count - 1]
-			if _, dropped_full := wide_grant_act_emit(.Key_Injected, u64(in_front + 1), code, modifiers); dropped_full {
-				return
-			}
-			send(&clients[in_front], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
+			send(&clients[order[order_count - 1]], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
 		}
 	case .Remote_Pointer:
 		x, y, buttons := record.values[0], record.values[1], record.values[2]
@@ -211,17 +220,16 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		capture.remote_pointers += 1
 		viewer_slot := capture_record_viewer_input(record)
 		// The pointer of a viewer reaches no trusted surface and no window
-		// marked local; under a wide grant, only a window of its bound
-		// (wide_grant_screen.odin).
-		allowed, target_window := wide_grant_viewer_pointer_allowed(logical_pixel_of(int(x)), logical_pixel_of(int(y)))
-		if !allowed {
+		// marked local; under a wide grant, only the surface of a window of
+		// its bound, by the hit test of a press, after the record of its
+		// window left (wide_grant_screen.odin).
+		surface, target_window := viewer_pointer_surface(logical_pixel_of(int(x)), logical_pixel_of(int(y)))
+		if wide_grant_view.viewer_input_verdict(&wide_grant_display, surface, target_window) != .Allowed {
+			damage_bar()
 			return
 		}
-		if wide_grant_display.active {
-			act_kind := buttons != 0 ? wide_grants.Act_Kind.Pointer_Clicked : wide_grants.Act_Kind.Pointer_Moved
-			if _, dropped_full := wide_grant_act_emit(act_kind, target_window, x, y); dropped_full {
-				return
-			}
+		if !wide_grant_input_allowed(target_window, buttons != 0 ? wide_grants.Input_Act.Press : wide_grants.Input_Act.Move) {
+			return
 		}
 		wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 		before_x, before_y := pointer_x, pointer_y

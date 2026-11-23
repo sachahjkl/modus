@@ -35,7 +35,7 @@ lends_reset :: proc(failing: int) {
 // A list that the border takes: two readers, a writer whose three wiring
 // rows go to them, the log among them, and a row with no wiring row.
 @(private = "file")
-wired_list :: proc() -> (list: start_list.List) {
+wired_list :: proc(with_terms := false) -> (list: start_list.List) {
 	rows: [4]start_list.Start_Row
 	for name, index in ([4]string{"reader_one", "reader_two", "writer", "lone"}) {
 		rows[index], _ = start_list.row_make(name, {}, .Not_Started, .Not_Needed)
@@ -46,6 +46,13 @@ wired_list :: proc() -> (list: start_list.List) {
 		{writer_row = 3, wiring = {writer_end = child, writer_stream = record_output, writer_index = 1, reader_end = started, reader_handle = 1, reader_index = 1}},
 		{writer_row = 3, wiring = {writer_end = child, writer_stream = record_output, writer_index = 2, reader_end = started, reader_handle = 2, reader_index = 1}},
 		{writer_row = 3, wiring = {writer_end = child, writer_stream = log, reader_end = started, reader_handle = 1, reader_index = 2}},
+	}
+	if with_terms {
+		// The second row carries the terms of an audit space of its reader.
+		wirings[1].wiring.terms_count = start_list.START_LIST_TERMS_BYTES
+		for index in 0 ..< start_list.START_LIST_TERMS_BYTES {
+			wirings[1].terms[index] = u8(0xA0 + index)
+		}
 	}
 	bytes := make([]u8, start_list.list_size(4, 3), context.temp_allocator)
 	_, written := start_list.list_write(rows[:], wirings[:], bytes)
@@ -169,4 +176,33 @@ a_writer_gets_the_list_of_its_rows :: proc(t: ^testing.T) {
 		testing.expect_value(t, checked.rows[index].reader_handle, place)
 	}
 	testing.expect_value(t, checked.rows[2].writer_stream, output.Writer_Stream.Log)
+}
+
+// A row with terms: the page holds its terms after the lent handles, at
+// the place that its row names, and the border of the root service takes
+// the list; the rows with no terms name none.
+@(test)
+the_terms_of_a_row_follow_the_handles :: proc(t: ^testing.T) {
+	list := wired_list(with_terms = true)
+	page := make([]u8, PAGE_BYTES, context.temp_allocator)
+	running := [4]bool{true, true, false, false}
+	lends_reset(0)
+	prepared := row_list_prepare(&list, 2, running[:], page, test_lend)
+	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Ok})
+	checked: output.Checked_Wiring_List
+	refusal, ok := output.wiring_list_check(page, .Start, &checked)
+	testing.expectf(t, ok, "the root service refuses the list: %v", refusal)
+	terms_at := output.wiring_terms_start(3, 2)
+	testing.expect_value(t, checked.rows[1].terms_offset, u32(terms_at))
+	testing.expect_value(t, checked.rows[1].terms_count, u32(start_list.START_LIST_TERMS_BYTES))
+	testing.expect_value(t, checked.rows[0].terms_count, u32(0))
+	testing.expect_value(t, checked.rows[2].terms_count, u32(0))
+	for index in 0 ..< start_list.START_LIST_TERMS_BYTES {
+		testing.expect_value(t, page[terms_at + index], u8(0xA0 + index))
+	}
+	// A page too small for the terms: no list, and both numbers go back.
+	lends_reset(0)
+	small := make([]u8, terms_at + start_list.START_LIST_TERMS_BYTES - 1, context.temp_allocator)
+	prepared = row_list_prepare(&list, 2, running[:], small, test_lend)
+	testing.expect_value(t, prepared.outcome, Outcome.List_Not_Written)
 }

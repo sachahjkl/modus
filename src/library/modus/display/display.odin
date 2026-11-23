@@ -489,8 +489,9 @@ Control :: enum u32 {
 	// root to compositor. values: ring memory handle (in the compositor). For
 	// a disk process, values 1 to 3 hold its nickname, as the root ring
 	// carries a name of 23 bytes, and value 4 the first 8 bytes of the hash
-	// of its file (modus:contract/disk_process_page, hash_head); for another
-	// process, values 1 to 4 are 0. Value CLIENT_ADD_CAPTURE is
+	// of its file (modus:contract/disk_process_page, hash_head); for a
+	// process of the boot image, values 1 to 3 hold the name of its module
+	// in the same form, and value 4 is 0. Value CLIENT_ADD_CAPTURE is
 	// CLIENT_CAPTURE for a process with the start grant Screen_Capture.
 	Client_Add    = 1,
 	Client_Remove = 2, // root to compositor. values: the same handle

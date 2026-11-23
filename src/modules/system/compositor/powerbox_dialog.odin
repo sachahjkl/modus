@@ -12,7 +12,6 @@ import "internal:compositor/bar"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
 import "modus:contract/value_kinds"
-import "modus:contract/wide_grants"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -45,25 +44,8 @@ Powerbox_Prompt_State :: struct {
 	last_decision:   powerbox.Item_Decision,
 }
 
-// The mark of the grant that holds, as the root service wrote it, and the
-// windows that bound the input of a viewer (wide_grant_screen.odin).
-Wide_Grant_Display_State :: struct {
-	active:        bool,
-	mark:          wide_grants.Mark,
-	bound:         wide_grants.Screen_Answer,
-	card_open:     bool,
-	acts_recorded: u64,
-	dropped_acts:  u64,
-	dropped_input: u64,
-}
-
-// Wide-grant act records emitted by the trusted display: agent input target
-// window changes, key/pointer acts, and view open/close
-// (src/md/features/wide_grants.md, "The record of each act").
-acts: system.Record_Output(wide_grants.Act_Stream_Record)
 
 powerbox_prompt: Powerbox_Prompt_State
-wide_grant_display: Wide_Grant_Display_State
 powerbox_next_id: u64 = 1
 // The requested grants that the principal kept and that hold: the menu of
 // the windows lists them under the window of their process.
@@ -171,7 +153,9 @@ window_grants_window_closed :: proc "contextless" (process_name: string) {
 // display, and gives its serial, or 0 with the refusal and the argument
 // that it names, from 1.
 plan_difference_show :: proc "contextless" (plan_name, added, removed: string) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
-	if powerbox_prompt.open {
+	// One trusted dialog at a time: the screen of a wide grant, and a
+	// screen that waits for its turn, go first.
+	if powerbox_prompt.open || wide_grant_trusted_surface_open() || wide_grant_screen_waits {
 		return 0, .Busy, 0
 	}
 	serial, refusal, argument = bar.plan_difference_open(&plan_difference_dialog, plan_name, added, removed, system.time())
@@ -322,37 +306,6 @@ plan_difference_pointer :: proc "contextless" (pressed: bool) -> bool {
 		}
 	}
 	return true
-}
-
-// wide_grant_act_emit writes one trusted-display act record onto `acts`
-// without blocking while a wide grant is active. If the audit ring is full,
-// it increments dropped_acts and returns dropped_full == true so the caller
-// drops the agent input rather than running it unrecorded.
-wide_grant_act_emit :: proc "contextless" (kind: wide_grants.Act_Kind, target_window_id: u64, detail_0: u64 = 0, detail_1: u64 = 0) -> (recorded: bool, dropped_full: bool) {
-	if !wide_grant_display.active || wide_grant_display.mark.grant_serial == 0 || kind == .None {
-		return false, false
-	}
-	record := wide_grants.Act_Stream_Record {
-		grant_serial     = wide_grant_display.mark.grant_serial,
-		principal_id     = wide_grant_display.mark.principal_id,
-		timestamp_ms     = system.time(),
-		producer_word    = u64(wide_grants.Act_Producer.Trusted_Display),
-		act_kind_word    = u64(kind),
-		target_window_id = target_window_id,
-		detail_word_0    = detail_0,
-		detail_word_1    = detail_1,
-	}
-	switch system.output_write(&acts, record, wait = false) {
-	case .Ok:
-		wide_grant_display.acts_recorded += 1
-		return true, false
-	case .Full:
-		wide_grant_display.dropped_acts += 1
-		return false, true
-	case .No_Reader, .No_Writer, .Ended, .Bad_Record, .No_Record:
-		return false, false
-	}
-	return false, false
 }
 
 powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, modifiers: u32) -> bool {

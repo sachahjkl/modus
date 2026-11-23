@@ -14,18 +14,85 @@
 // operation, and allocates no memory.
 package wide_grants
 
+import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
+import "modus:contract/errors"
 import "modus:contract/output"
+import pr "modus:contract/plans_recipes"
 
 // Name of the record output declared by each wide-grant act producer.
 ACT_OUTPUT_NAME :: "acts"
 
-// Default per-producer audit space bound in records for a wide grant: four
-// producers * 32 records = 128 records, leaving half of SPACE_ROOM_RECORDS
-// free for server audit spaces in the same collector.
-ACT_SPACE_BOUND_RECORDS :: i64(32)
-#assert(ACT_SPACE_BOUND_RECORDS * 4 <= SPACE_ROOM_RECORDS)
+// The bound of the audit space of each writer of act records: the largest
+// space Audit. It holds the records of the grants that the collector keeps
+// (Act_Space_Plan), in its private store; memory holds the newest
+// SPACE_RECORDS_MOST of them.
+ACT_SPACE_BOUND_RECORDS :: i64(SPACE_AUDIT_BOUND_MOST)
+
+// The capacity of the ring of each wiring of act records. Each record in
+// that ring is an act that ran: the space keeps room for a whole ring while
+// a grant holds, and reads the ring to its end after the grant ends.
+ACT_RING_CAPACITY :: u32(output.WIRING_CAPACITY_LEAST)
+
+// The records of the root service in each grant: its start and its end.
+ACT_ROOT_RECORDS_PER_GRANT :: 2
+
+// The most grants whose act records a collector keeps.
+ACT_RETAINED_GRANTS_MOST :: 16
+
+// How the act spaces of a collector are sized
+// (src/md/features/wide_grants.md, "The size of the act records"): each
+// space holds bound_records; the collector keeps the records of
+// retained_grants grants at most, the newest ones; a new grant needs room
+// for records_per_minute records of each writer for each minute of its
+// duration, at least grant_records_least, and at most the share of one
+// grant of the space. The oldest closed grants rotate out to make that
+// room, whole segments at a time; the grant that holds never does.
+Act_Space_Plan :: struct {
+	bound_records:       i64,
+	retained_grants:     int,
+	records_per_minute:  u64,
+	grant_records_least: u64,
+}
+
+ACT_SPACE_PLAN :: Act_Space_Plan {
+	bound_records       = ACT_SPACE_BOUND_RECORDS,
+	retained_grants     = 8,
+	records_per_minute  = 16,
+	grant_records_least = 64,
+}
+
+// act_space_plan_valid says if a plan holds: a bound of an audit space, a
+// count of grants in the ring, a rate, and a least share that fits the
+// share of one grant.
+act_space_plan_valid :: proc "contextless" (plan: Act_Space_Plan) -> bool {
+	if plan.bound_records < i64(ACT_RING_CAPACITY) + 1 || plan.bound_records > SPACE_AUDIT_BOUND_MOST {
+		return false
+	}
+	if plan.retained_grants < 1 || plan.retained_grants > ACT_RETAINED_GRANTS_MOST || plan.records_per_minute < 1 || plan.grant_records_least < 1 {
+		return false
+	}
+	return plan.grant_records_least <= act_grant_records_most(plan)
+}
+
+// act_grant_records_most gives the share of one grant of the space of a
+// writer: the bound less the ring of the reserve, between the grants of the
+// ring.
+act_grant_records_most :: proc "contextless" (plan: Act_Space_Plan) -> u64 {
+	return (u64(plan.bound_records) - u64(ACT_RING_CAPACITY)) / u64(plan.retained_grants)
+}
+
+// act_grant_allowance gives the records of each writer that a grant of
+// duration_ms needs room for when it starts.
+act_grant_allowance :: proc "contextless" (plan: Act_Space_Plan, duration_ms: u64) -> u64 {
+	minutes := (duration_ms + 59_999) / 60_000
+	wanted := minutes * plan.records_per_minute
+	if minutes != 0 && wanted / minutes != plan.records_per_minute {
+		wanted = max(u64)
+	}
+	return clamp(wanted, plan.grant_records_least, act_grant_records_most(plan))
+}
 
 // Number of act producers wired for a wide grant.
 ACT_PRODUCER_COUNT :: 4
@@ -45,6 +112,12 @@ Act_Producers :: bit_set[Act_Producer;u64]
 
 // Complete set of the four producers required for a wide grant audit.
 ALL_ACT_PRODUCERS :: Act_Producers{.Root_Service, .Agent_Console, .Remote_Service, .Trusted_Display}
+
+// The writers whose spaces a grant of this layer opens and wires: the
+// agent console writes no act record until the layer of Console_Lines
+// (src/md/features/wide_grants.md, "The order of the work"), and an empty
+// space would take a window of memory from the audits of the servers.
+ACT_PRODUCERS_WIRED :: Act_Producers{.Root_Service, .Remote_Service, .Trusted_Display}
 
 // Canonical module/source name for each act producer, used as the source name
 // of its audit space in the collector.
@@ -119,13 +192,45 @@ Grant_Act_Router :: struct {
 	grant_serial:        u64,
 	principal_id:        u64,
 	wired_producers:     Act_Producers,
+	ended_producers:     Act_Producers, // The writers of the grant that ended: their records of before the end are still read.
 	space_numbers:       [Act_Producer]u32,
 	emitted_counts:      [Act_Producer]u64,
-	last_timestamp_ms:   u64,
+	// The time of the last record of each writer: one ring is in the order
+	// of its times, two rings are not in each other's order.
+	writer_last_ms:      [Act_Producer]u64,
+	last_timestamp_ms:   u64, // The clock of the collector at the start and the end of the grant.
 	revocation_reason:   Revocation_Reason,
 	ended_ms:            u64,
 	revocation_recorded: bool,
+	plan:                Act_Space_Plan,
+	retained:            Retained_Grants, // Kept through each grant: the ring of the grants that the spaces keep.
 }
+
+// One grant of the ring that the act spaces keep: where its records start
+// in the space of each writer.
+Retained_Grant :: struct {
+	grant_serial:  u64,
+	first_serials: [Act_Producer]u64,
+}
+
+// The ring of the grants whose records the act spaces keep, oldest first.
+// It lives in its own object of the private store, so a collector that
+// starts again rotates the same grants out.
+Retained_Grants :: struct {
+	loaded: bool,
+	count:  int,
+	rows:   [ACT_RETAINED_GRANTS_MOST]Retained_Grant,
+}
+
+// The object of the ring of the grants, its first bytes, its version and
+// the context string of its hash.
+RETAINED_GRANTS_OBJECT_NAME :: "collector_act_grants"
+RETAINED_GRANTS_MAGIC :: "mcolactg"
+RETAINED_GRANTS_VERSION :: 1
+RETAINED_GRANTS_HASH_DOMAIN :: "modus collector act grants v1"
+RETAINED_GRANTS_HEAD_BYTES :: 16
+RETAINED_GRANTS_ROW_BYTES :: 8 + 8 * ACT_PRODUCER_COUNT
+RETAINED_GRANTS_BYTES_MOST :: RETAINED_GRANTS_HEAD_BYTES + ACT_RETAINED_GRANTS_MOST * RETAINED_GRANTS_ROW_BYTES + blake3.HASH_SIZE
 
 // Border parser converting a raw transport word into Act_Producer, refusing 0
 // and any unknown value.
@@ -158,7 +263,7 @@ act_kind_is_lifecycle :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
 	case .Grant_Started, .Grant_Revoked, .Grant_Expired:
 		return true
-	case .None, .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Forbidden_Act_Blocked, .Call_Made:
+	case .None, .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Forbidden_Act_Blocked, .Call_Made, .Target_Window_Changed:
 		return false
 	}
 	return false
@@ -250,7 +355,7 @@ act_wiring_rows_build :: proc "contextless" (
 	if (collector_end != .Started && collector_end != .Connected) || collector_handle == 0 || collector_input_index == 0 {
 		return 0, .Bad_Wiring_End
 	}
-	if bound_records < 1 || bound_records > SPACE_RECORDS_MOST {
+	if bound_records < 1 || bound_records > SPACE_AUDIT_BOUND_MOST {
 		return 0, .Bad_Bound
 	}
 	seen_producers: Act_Producers
@@ -282,7 +387,7 @@ act_wiring_rows_build :: proc "contextless" (
 			reader_handle = collector_handle,
 			reader_index  = collector_input_index,
 			pace          = u32(output.Wiring_Pace.Always_Holds_Writer),
-			capacity      = 0,
+			capacity      = ACT_RING_CAPACITY,
 			terms_offset  = terms_offset,
 			terms_count   = size_of(Space_Terms),
 		}
@@ -310,11 +415,100 @@ act_space_refusal_map :: proc "contextless" (refusal: Space_Refusal) -> Act_Wiri
 	return .Store_Refused
 }
 
+// retained_grants_load reads the ring of the grants from the private store
+// once. No object is an empty ring; a damaged one refuses the grant: the
+// spaces would else grow with no grant to rotate out.
+@(private = "file")
+retained_grants_load :: proc "contextless" (store: ^Space_Store, retained: ^Retained_Grants) -> Act_Wiring_Refusal {
+	if retained.loaded {
+		return .None
+	}
+	buffer: [RETAINED_GRANTS_BYTES_MOST]u8
+	bytes, status := pr.private_store_read(&store.store_port, RETAINED_GRANTS_OBJECT_NAME, buffer[:])
+	switch status {
+	case .Ok:
+	case .Absent:
+		retained^ = {loaded = true}
+		return .None
+	case .Too_Large, .Failed:
+		return .Store_Refused
+	}
+	if len(bytes) < RETAINED_GRANTS_HEAD_BYTES + blake3.HASH_SIZE || string(bytes[:8]) != RETAINED_GRANTS_MAGIC || byte_order.read_u32_little_endian(bytes, 8) != RETAINED_GRANTS_VERSION {
+		return .Store_Refused
+	}
+	count := int(byte_order.read_u32_little_endian(bytes, 12))
+	if count > ACT_RETAINED_GRANTS_MOST || len(bytes) != RETAINED_GRANTS_HEAD_BYTES + count * RETAINED_GRANTS_ROW_BYTES + blake3.HASH_SIZE {
+		return .Store_Refused
+	}
+	hash_at := len(bytes) - blake3.HASH_SIZE
+	grants_hash := blake3.derive_key(RETAINED_GRANTS_HASH_DOMAIN, bytes[:hash_at])
+	if string(grants_hash[:]) != string(bytes[hash_at:]) {
+		return .Store_Refused
+	}
+	read: Retained_Grants = {loaded = true, count = count}
+	for index in 0 ..< count {
+		row := bytes[RETAINED_GRANTS_HEAD_BYTES + index * RETAINED_GRANTS_ROW_BYTES:][:RETAINED_GRANTS_ROW_BYTES]
+		read.rows[index].grant_serial = byte_order.read_u64_little_endian(row, 0)
+		at := 8
+		for producer in Act_Producer {
+			if producer == .None {
+				continue
+			}
+			read.rows[index].first_serials[producer] = byte_order.read_u64_little_endian(row, at)
+			at += 8
+		}
+	}
+	retained^ = read
+	return .None
+}
+
+// retained_grants_persist writes the ring of the grants whole.
+@(private = "file")
+retained_grants_persist :: proc "contextless" (store: ^Space_Store, retained: ^Retained_Grants) -> Act_Wiring_Refusal {
+	bytes: [RETAINED_GRANTS_BYTES_MOST]u8
+	copy(bytes[:8], RETAINED_GRANTS_MAGIC)
+	byte_order.write_u32_little_endian(bytes[:], 8, RETAINED_GRANTS_VERSION)
+	byte_order.write_u32_little_endian(bytes[:], 12, u32(retained.count))
+	at := RETAINED_GRANTS_HEAD_BYTES
+	for index in 0 ..< retained.count {
+		byte_order.write_u64_little_endian(bytes[:], at, retained.rows[index].grant_serial)
+		at += 8
+		for producer in Act_Producer {
+			if producer == .None {
+				continue
+			}
+			byte_order.write_u64_little_endian(bytes[:], at, retained.rows[index].first_serials[producer])
+			at += 8
+		}
+	}
+	grants_hash := blake3.derive_key(RETAINED_GRANTS_HASH_DOMAIN, bytes[:at])
+	copy(bytes[at:][:blake3.HASH_SIZE], grants_hash[:])
+	at += blake3.HASH_SIZE
+	if pr.private_store_write(&store.store_port, RETAINED_GRANTS_OBJECT_NAME, bytes[:at]) != .Ok {
+		return .Store_Refused
+	}
+	return .None
+}
+
+// act_room_short says if the space of a writer has less room than a grant
+// needs: its allowance, and the ring of the reserve.
+@(private = "file")
+act_room_short :: proc "contextless" (store: ^Space_Store, space_number: u32, needed: u64) -> bool {
+	space := space_of(store, space_number)
+	if space == nil {
+		return true
+	}
+	return space_kept_count(space) + needed > u64(space.bound)
+}
+
 // act_wiring_attach wires all four act record outputs (root, console, remote,
 // compositor) to append-only Audit spaces in the principal's collector store
-// and writes the opening Grant_Started record from Root_Service. Fails closed
-// with router state unchanged if any space cannot open or the opening record
-// cannot be persisted.
+// and writes the opening Grant_Started record from Root_Service. It makes
+// room first: while the ring of the kept grants is full, or a space has
+// less room than the grant needs, the oldest grant of the ring rotates out
+// of each space. The grant that ended before is closed: no open grant ever
+// rotates. Fails closed with the router unchanged if any space cannot open,
+// the room cannot be made, or the opening record cannot be persisted.
 act_wiring_attach :: proc "contextless" (
 	router: ^Grant_Act_Router,
 	store: ^Space_Store,
@@ -323,7 +517,7 @@ act_wiring_attach :: proc "contextless" (
 	authorities: Wide_Authorities,
 	duration_ms: u64,
 	now_ms: u64,
-	bound_records: i64 = ACT_SPACE_BOUND_RECORDS,
+	plan: Act_Space_Plan = ACT_SPACE_PLAN,
 ) -> Act_Wiring_Refusal {
 	if grant_serial == 0 {
 		return .No_Active_Grant
@@ -331,22 +525,23 @@ act_wiring_attach :: proc "contextless" (
 	if store == nil || principal_id != store.principal {
 		return .Principal_Mismatch
 	}
-	if bound_records < 1 || bound_records > SPACE_RECORDS_MOST {
+	if !act_space_plan_valid(plan) {
 		return .Bad_Bound
 	}
 	if router.state == .Wired && router.grant_serial == grant_serial {
+		return .Already_Wired
+	}
+	if router.state == .Wired {
+		// The grant before must end first, with its record.
 		return .Already_Wired
 	}
 	if router.last_timestamp_ms > 0 && now_ms < router.last_timestamp_ms {
 		return .Clock_Went_Back
 	}
 
-	terms := act_audit_space_terms(bound_records)
+	terms := act_audit_space_terms(plan.bound_records)
 	opened: [Act_Producer]u32
-	for producer in Act_Producer {
-		if producer == .None {
-			continue
-		}
+	for producer in ACT_PRODUCERS_WIRED {
 		source_name := transmute([]u8)ACT_PRODUCER_NAMES[producer]
 		output_name := transmute([]u8)string(ACT_OUTPUT_NAME)
 		space_number, open_refusal := space_open(store, source_name, output_name, terms)
@@ -354,6 +549,60 @@ act_wiring_attach :: proc "contextless" (
 			return act_space_refusal_map(open_refusal)
 		}
 		opened[producer] = space_number
+	}
+
+	retained := router.retained
+	if load_refusal := retained_grants_load(store, &retained); load_refusal != .None {
+		return load_refusal
+	}
+	allowance := act_grant_allowance(plan, duration_ms)
+	needed :: proc "contextless" (producer: Act_Producer, allowance: u64) -> u64 {
+		return (producer == .Root_Service ? ACT_ROOT_RECORDS_PER_GRANT : allowance) + u64(ACT_RING_CAPACITY)
+	}
+	for {
+		short := retained.count >= plan.retained_grants
+		for producer in ACT_PRODUCERS_WIRED {
+			if act_room_short(store, opened[producer], needed(producer, allowance)) {
+				short = true
+			}
+		}
+		if !short {
+			break
+		}
+		if retained.count == 0 {
+			// Each grant rotated out and the room is still short: records that
+			// no grant of the ring names fill the space. They rotate out too.
+			for producer in ACT_PRODUCERS_WIRED {
+				space := space_of(store, opened[producer])
+				if space_rotate_before(store, opened[producer], space.next_serial) != .None {
+					return .Store_Refused
+				}
+				if act_room_short(store, opened[producer], needed(producer, allowance)) {
+					return .Audit_Space_Full
+				}
+			}
+			break
+		}
+		// The oldest grant of the ring rotates out: each space keeps from the
+		// first record of the grant after it.
+		for producer in ACT_PRODUCERS_WIRED {
+			boundary := retained.count > 1 ? retained.rows[1].first_serials[producer] : space_of(store, opened[producer]).next_serial
+			if space_rotate_before(store, opened[producer], boundary) != .None {
+				return .Store_Refused
+			}
+		}
+		copy(retained.rows[:retained.count - 1], retained.rows[1:retained.count])
+		retained.rows[retained.count - 1] = {}
+		retained.count -= 1
+	}
+	row := Retained_Grant{grant_serial = grant_serial}
+	for producer in ACT_PRODUCERS_WIRED {
+		row.first_serials[producer] = space_of(store, opened[producer]).next_serial
+	}
+	retained.rows[retained.count] = row
+	retained.count += 1
+	if persist_refusal := retained_grants_persist(store, &retained); persist_refusal != .None {
+		return persist_refusal
 	}
 
 	start_record := Act_Stream_Record {
@@ -368,6 +617,9 @@ act_wiring_attach :: proc "contextless" (
 	encoded := act_stream_record_encode(&start_record)
 	_, append_refusal := record_append(store, opened[.Root_Service], encoded[:], now_ms)
 	if append_refusal != .None {
+		// The ring names a grant with no start: it rotates out with the
+		// others, and holds no record.
+		router.retained = retained
 		return act_space_refusal_map(append_refusal)
 	}
 
@@ -375,12 +627,35 @@ act_wiring_attach :: proc "contextless" (
 		state             = .Wired,
 		grant_serial      = grant_serial,
 		principal_id      = principal_id,
-		wired_producers   = ALL_ACT_PRODUCERS,
+		wired_producers   = ACT_PRODUCERS_WIRED,
 		space_numbers     = opened,
 		last_timestamp_ms = now_ms,
+		plan              = plan,
+
+		retained          = retained,
 	}
 	router.emitted_counts[.Root_Service] = 1
+	// A record of a time before the start of the grant is of no act of it.
+	for &last in router.writer_last_ms {
+		last = now_ms
+	}
 	return .None
+}
+
+// act_link_may_read says if the collector may read the next record of the
+// ring of a writer. While the grant holds, the space keeps room for a whole
+// ring: below that room it reads no more, the ring fills, and the writer
+// refuses its next act. After the end it reads the ring to its end into
+// that room: each record there is an act that ran before the end.
+act_link_may_read :: proc "contextless" (router: ^Grant_Act_Router, store: ^Space_Store, link: ^Source_Link) -> bool {
+	if router.state != .Wired {
+		return true
+	}
+	space := space_of(store, link.space)
+	if space == nil {
+		return true
+	}
+	return space_kept_count(space) + u64(ACT_RING_CAPACITY) < u64(space.bound)
 }
 
 // act_wiring_accepts_stream_record checks whether an incoming Act_Stream_Record
@@ -403,11 +678,18 @@ act_wiring_accepts_stream_record :: proc "contextless" (
 	if producer != expected_producer {
 		return .Bad_Producer
 	}
+	writers := router.wired_producers
 	switch router.state {
 	case .Unwired:
 		return .No_Active_Grant
 	case .Ended:
-		return .Grant_Revoked
+		// A record of the grant that ended, from a writer of it, with a time
+		// at or before the end, is an act that ran while the grant held, and
+		// waited in its ring: it is kept. Each other one is refused.
+		if record.grant_serial != router.grant_serial || record.timestamp_ms > router.ended_ms {
+			return .Grant_Revoked
+		}
+		writers = router.ended_producers
 	case .Wired:
 	}
 	if record.grant_serial != router.grant_serial {
@@ -416,13 +698,13 @@ act_wiring_accepts_stream_record :: proc "contextless" (
 	if record.principal_id != router.principal_id {
 		return .Principal_Mismatch
 	}
-	if producer not_in router.wired_producers {
+	if producer not_in writers {
 		return .Producer_Not_Wired
 	}
 	if act_kind_is_lifecycle(kind) && producer != .Root_Service {
 		return .Bad_Act_Kind
 	}
-	if record.timestamp_ms < router.last_timestamp_ms {
+	if record.timestamp_ms < router.writer_last_ms[producer] {
 		return .Clock_Went_Back
 	}
 	return .None
@@ -457,7 +739,7 @@ act_wiring_emit :: proc "contextless" (
 		return 0, act_space_refusal_map(append_refusal)
 	}
 	router.emitted_counts[producer] += 1
-	router.last_timestamp_ms = local.timestamp_ms
+	router.writer_last_ms[producer] = local.timestamp_ms
 	return appended_serial, .None
 }
 
@@ -509,12 +791,81 @@ act_wiring_revoke :: proc "contextless" (
 	}
 
 	router.state = .Ended
+	router.ended_producers = router.wired_producers
 	router.wired_producers = {}
 	router.revocation_reason = parsed_reason
 	router.ended_ms = now_ms
 	router.last_timestamp_ms = now_ms
 	router.revocation_recorded = recorded
 	return .None
+}
+
+// act_link_keep is the step of one record that a ring of an act record
+// output brings to the collector. A record that does not decode, of another
+// producer, of no grant, of an ended grant or of another grant is refused
+// before its space sees it: the link closes with no pending record, and the
+// space keeps nothing. A record that passes goes to link_keep, whose Held
+// keeps it pending while the space is full.
+act_link_keep :: proc "contextless" (
+	router: ^Grant_Act_Router,
+	store: ^Space_Store,
+	link: ^Source_Link,
+	record: []u8,
+	expected_producer: Act_Producer,
+	time_ms: u64,
+) -> (step: Link_Step, act_refusal: Act_Wiring_Refusal, space_refusal: Space_Refusal) {
+	stream_record, decoded := act_stream_record_decode(record)
+	act_refusal = .Bad_Producer
+	if decoded {
+		act_refusal = act_wiring_accepts_stream_record(router, &stream_record, expected_producer)
+	}
+	if act_refusal != .None {
+		link_close(link, errors.error_make(.Refused, .Records, 0, i64(act_refusal), i64(link.record_size), i64(link.tag)))
+		return .Refused, act_refusal, .None
+	}
+	step, space_refusal = link_keep(store, link, record, time_ms)
+	switch step {
+	case .Kept, .Held:
+		// A record that the space holds pending counts too: its time is
+		// past, and a later record of an earlier time is a clock that went
+		// back.
+		router.writer_last_ms[expected_producer] = max(router.writer_last_ms[expected_producer], stream_record.timestamp_ms)
+		if step == .Kept {
+			router.emitted_counts[expected_producer] += 1
+		}
+	case .Refused:
+		link_close(link, errors.error_make(.Bad_Value, .Records, 0, i64(space_refusal), i64(link.record_size), i64(link.tag)))
+	}
+	return step, .None, space_refusal
+}
+
+// act_links_close_ended closes each link that feeds an act space of a
+// router whose grant ended and holds a pending record: a record that its
+// full space held, which no room will keep after the end. A link with no
+// pending record stays open: its ring is read to its end, and its records
+// of before the end are kept. It writes the tags of the rings that the
+// caller closes, and gives their count. A router that holds a grant closes
+// nothing, so an agent that fills its space cannot end the links of
+// another grant.
+act_links_close_ended :: proc "contextless" (router: ^Grant_Act_Router, links: ^Source_Links, closed_tags: []u32) -> (count: int) {
+	if router.state != .Ended {
+		return 0
+	}
+	for &link in links.links {
+		if !link.active || link.state != .Open || !link.pending || count >= len(closed_tags) {
+			continue
+		}
+		for producer in Act_Producer {
+			if producer == .None || router.space_numbers[producer] != link.space {
+				continue
+			}
+			link_close(&link, errors.error_make(.Refused, .Records, 0, i64(Act_Wiring_Refusal.Grant_Revoked), i64(link.record_size), i64(link.tag)))
+			closed_tags[count] = link.tag
+			count += 1
+			break
+		}
+	}
+	return count
 }
 
 // act_wiring_expire records Grant_Expired from Root_Service and closes all
@@ -559,6 +910,7 @@ act_wiring_expire :: proc "contextless" (
 	}
 
 	router.state = .Ended
+	router.ended_producers = router.wired_producers
 	router.wired_producers = {}
 	router.ended_ms = now_ms
 	router.last_timestamp_ms = now_ms

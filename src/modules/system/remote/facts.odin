@@ -76,6 +76,30 @@ Client_Key_Proved :: struct {
 	peer:            [32]u8,
 }
 
+// An agent asked for a wide grant for its key: the trusted display shows
+// the screen of the flow.
+@(log_fact = "remote: the client key {client_key_head} of principal {principal} asked for a wide grant: screen {flow}")
+Wide_Grant_Asked_By_Agent :: struct {
+	principal:       u64,
+	client_key_head: [24]u8,
+	flow:            u64,
+}
+
+// A second connection of a key whose row holds a wide grant: both
+// connections ended with Revoked, and the root service ends the grant.
+@(log_fact = "remote: a second connection of the client key {client_key_head} ended its wide grant and both connections")
+Second_Connection_Ended_Grant :: struct {
+	client_key_head: [24]u8,
+}
+
+// The root ring had no room for the end of the grant at a second
+// connection: both connections ended, and the grant holds until another
+// end.
+@(log_fact = "remote: the root service did not take the second connection of the client key {client_key_head}: both connections ended, the grant holds")
+Second_Connection_Not_Told :: struct {
+	client_key_head: [24]u8,
+}
+
 // A host proved the identity key of a paired machine, or of the machine of
 // an open pairing: its streams carry mesh frames only.
 @(log_fact = "remote: {peer} proved the machine identity key {client_key_head}: a paired machine, whose streams carry mesh frames only")

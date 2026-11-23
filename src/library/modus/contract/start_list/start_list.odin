@@ -54,7 +54,7 @@ VALUE_LIST_SIZE :: 0
 
 // The bytes "STARTLST" and the version of the format of a list.
 LIST_MAGIC :: u64(0x54534C5452415453)
-LIST_VERSION :: 3
+LIST_VERSION :: 4
 // The rows of one list at most: a list is read into a table of this size,
 // on the stack of the start policy.
 ROW_CAPACITY :: 32
@@ -297,15 +297,24 @@ List_Header :: struct {
 Wiring_Row_Record :: struct {
 	writer_row: u32, // The start row of the writer, from 1.
 	reserved:   u32, // 0.
-	wiring:     output.Wiring,
+	wiring:     output.Wiring, // terms_offset 0; terms_count 0, or START_LIST_TERMS_BYTES with terms.
+	// The terms of the row, which the start policy writes after the lent
+	// handles of the list of its start: the terms of an audit space of the
+	// collector. Zero bytes with no terms.
+	terms:      [START_LIST_TERMS_BYTES]u8,
 }
-#assert(size_of(Wiring_Row_Record) == 72)
+#assert(size_of(Wiring_Row_Record) == 104)
+
+// The bytes of the terms of a wiring row: the size of the terms of a space
+// of the collector (wide_grants.Space_Terms).
+START_LIST_TERMS_BYTES :: 32
 
 // One wiring row after the border.
 Wiring_Row :: struct {
 	writer_row: int, // The index of the start row of the writer, from 0.
 	reader_row: int, // The index of the start row of the reader, from 0: before writer_row.
 	wiring:     output.Wiring, // As the list holds it: reader_handle is reader_row + 1.
+	terms:      [START_LIST_TERMS_BYTES]u8, // wiring.terms_count says if the row has terms.
 }
 
 // A list after its border: its start rows, then its wiring rows.
@@ -373,6 +382,8 @@ List_Problem :: enum u8 {
 	Writer_Restarts      = 21, // The writer row of a wiring row has restarts: a restart applies its rows again, which a reader of one wiring refuses or not by its speed.
 	// A start row again: place is the start row from 0.
 	Window_Without_Restarts = 22, // A restart window on a row with no restart: a bound of nothing.
+	// A wiring row again.
+	Bad_Terms = 23, // Terms of another size, an offset of terms, or bytes of terms in a row with no terms.
 }
 
 @(rodata)
@@ -401,6 +412,7 @@ LIST_PROBLEM_TEXTS := [List_Problem]string {
 	.Writer_Restarts      = "a wiring row has a writer row with restarts",
 	// A start row again.
 	.Window_Without_Restarts = "a row has a restart window and no restart",
+	.Bad_Terms               = "a wiring row has terms of another size, or bytes of terms with no terms",
 }
 
 // parts_of_word is the border of a word of Machine_Parts: a bit that names
@@ -571,9 +583,18 @@ wiring_row_of_record :: proc "contextless" (record: ^Wiring_Row_Record, index: i
 	if record.writer_row == 0 || int(record.writer_row) > row_count {
 		return {}, .Wiring_Row_Unknown, {}
 	}
-	// A list of 0 bytes: terms and a condition need bytes that a start list
-	// does not lend, so the border refuses both.
-	checked, row_refusal, checked_ok := output.wiring_row_check(record.wiring, u32(index + 1), .Start, u32(row_count), 0, 0)
+	// The terms are in the row: the start policy gives them their place.
+	// The row holds no offset, and no byte of terms when it has none.
+	has_terms := record.wiring.terms_count == START_LIST_TERMS_BYTES
+	if record.wiring.terms_offset != 0 || (record.wiring.terms_count != 0 && !has_terms) || (!has_terms && record.terms != ([START_LIST_TERMS_BYTES]u8{})) {
+		return {}, .Bad_Terms, {}
+	}
+	// A list of 0 bytes: a condition needs bytes that a start list does not
+	// lend, so the border refuses it. The terms are checked above, so the
+	// generic check reads the row without them.
+	plain := record.wiring
+	plain.terms_count = 0
+	checked, row_refusal, checked_ok := output.wiring_row_check(plain, u32(index + 1), .Start, u32(row_count), 0, 0)
 	if !checked_ok {
 		return {}, .Wiring_Refused, row_refusal
 	}
@@ -592,7 +613,7 @@ wiring_row_of_record :: proc "contextless" (record: ^Wiring_Row_Record, index: i
 	if checked.reader_handle > record.writer_row {
 		return {}, .Writer_Before_Reader, {}
 	}
-	return {writer_row = int(record.writer_row) - 1, reader_row = int(checked.reader_handle) - 1, wiring = record.wiring}, .None, {}
+	return {writer_row = int(record.writer_row) - 1, reader_row = int(checked.reader_handle) - 1, wiring = record.wiring, terms = record.terms}, .None, {}
 }
 
 // list_size gives the bytes of a list of row_count start rows and

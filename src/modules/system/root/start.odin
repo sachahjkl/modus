@@ -14,6 +14,7 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/settings"
+import "modus:disk_process"
 import "modus:display"
 import "modus:pci"
 import "modus:principals"
@@ -138,6 +139,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	if name == "collector" {
 		wide_grant_collector_started(&work) // wide_grant_authority.odin
 	}
+	wide_grant_process_started(work.slot)
 	if place != nil {
 		place^ = work.slot
 	}
@@ -487,7 +489,11 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 	// the keys of the input service only: an agent with input never types
 	// the proof of its own grant.
 	local_input_only: u64 = work.name == "unlock" && unlock_run.mode == .Prove_Wide_Grant ? display.CLIENT_LOCAL_INPUT_ONLY : 0
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), display.CLIENT_ADD_CAPTURE = capture, display.CLIENT_ADD_LOCAL_INPUT_ONLY = local_input_only}})
+	// Values 1 to 3: the name of the module, the one name of the window
+	// that the process does not choose; value 4 is 0 for a process of the
+	// boot image.
+	name := disk_process.name_pack(work.name)
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), 1 = name[0], 2 = name[1], 3 = name[2], display.CLIENT_ADD_CAPTURE = capture, display.CLIENT_ADD_LOCAL_INPUT_ONLY = local_input_only}})
 	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
 	return .Ok
 }
