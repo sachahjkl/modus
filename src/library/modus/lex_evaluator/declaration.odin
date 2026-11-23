@@ -13,7 +13,7 @@ package lex_evaluator
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
 import "modus:contract/plans_recipes"
-import "modus:console_language"
+import "modus:hash_table"
 import "modus:lex_parser"
 
 // The names of the evaluation that make the values of a plan, in both
@@ -188,12 +188,24 @@ Declaration_Pool :: enum u8 {
 Declaration_Workspace :: struct {
 	trees:               [DECLARATION_TREE_CAPACITY]lex_parser.Syntax_Tree,
 	tree_slots:          [DECLARATION_TREE_CAPACITY]Tree_Slot,
-	nodes:               []lex_parser.Node,
+	nodes:               []lex_parser.Ast_Node,
+	extra_children:      []lex_parser.Node_Index,
+	scratch_children:    []lex_parser.Node_Index,
+	int_consts:          []i64,
+	bindings_side:       []lex_parser.Node_Index,
+	functions_side:      []lex_parser.Node_Index,
+	interner:            lex_parser.String_Interner,
+	dup_controls:        []u8,
+	dup_refs:            []u32,
+	dup_keys:            []u64,
+	dup_nodes:           []lex_parser.Node_Index,
 	thunks:              []Thunk,
 	slots:               []i16,
 	slot_counts:         []u16,
 	exhausted:           Declaration_Pool,
 	nodes_used:          int,
+	extra_used:          int,
+	int_consts_used:     int,
 	node_limit:          int,
 	calls:               [DECLARATION_CALL_CAPACITY + 1]Function_Call,
 	call_thunks:         [DECLARATION_CALL_THUNK_CAPACITY]Thunk,
@@ -206,7 +218,6 @@ Declaration_Workspace :: struct {
 	text_used:           int,
 	record_names:        [DECLARATION_RECORD_NAME_POOL]string,
 	record_names_used:   int,
-	pipe_stages:         [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage,
 	imports:             [DECLARATION_TREE_CAPACITY]Import_Entry,
 	import_count:        int,
 	bindings:            [DECLARATION_BINDING_CAPACITY]Declaration_Binding,
@@ -260,19 +271,48 @@ declaration_scale_after :: proc "contextless" (ws: ^Declaration_Workspace, scale
 	return scale + 1, scale < DECLARATION_SCALE_MOST
 }
 
-// The alignment of each part of the memory of the pools: the largest of
-// their records.
 @(private = "file")
-POOLS_ALIGNMENT :: max(align_of(lex_parser.Node), align_of(Thunk))
+POOLS_ALIGNMENT :: max(align_of(lex_parser.Ast_Node), align_of(Thunk))
 
 @(private = "file")
 pools_part_end :: proc "contextless" (start: int, size: int) -> int {
 	return (start + size + POOLS_ALIGNMENT - 1) &~ (POOLS_ALIGNMENT - 1)
 }
 
+@(private = "file")
+pools_int_const_cap :: proc "contextless" (nodes: int) -> int {
+	return max(64, nodes / 8)
+}
+
+@(private = "file")
+pools_intern_cap :: proc "contextless" (nodes: int) -> int {
+	return max(64, nodes / 2)
+}
+
 // declaration_workspace_bytes gives the bytes of the memory of the pools.
 declaration_workspace_bytes :: proc "contextless" (pools: Declaration_Pools) -> int {
-	end := pools_part_end(0, pools.nodes * size_of(lex_parser.Node))
+	int_cap := pools_int_const_cap(pools.nodes)
+	sym_cap := pools_intern_cap(pools.nodes)
+	sym_groups := hash_table.slice_index_groups_for_entries(sym_cap)
+	sym_slots := sym_groups * hash_table.GROUP_WIDTH
+	sym_bytes := max(4096, sym_cap * 16)
+
+	end := pools_part_end(0, pools.nodes * size_of(lex_parser.Ast_Node))
+	end = pools_part_end(end, pools.nodes * size_of(lex_parser.Node_Index)) // extra_children
+	end = pools_part_end(end, pools.nodes * size_of(lex_parser.Node_Index)) // scratch_children
+	end = pools_part_end(end, int_cap * size_of(i64))
+	end = pools_part_end(end, pools.nodes * size_of(lex_parser.Node_Index)) // bindings_side
+	end = pools_part_end(end, pools.nodes * size_of(lex_parser.Node_Index)) // functions_side
+	// Compile-time String_Interner + Dup_Table
+	end = pools_part_end(end, sym_slots * size_of(u8))
+	end = pools_part_end(end, sym_slots * size_of(u32))
+	end = pools_part_end(end, (sym_cap + 1) * size_of(lex_parser.Sym_Span))
+	end = pools_part_end(end, sym_bytes)
+	end = pools_part_end(end, sym_slots * size_of(u8))
+	end = pools_part_end(end, sym_slots * size_of(u32))
+	end = pools_part_end(end, sym_cap * size_of(u64))
+	end = pools_part_end(end, sym_cap * size_of(lex_parser.Node_Index))
+	// Evaluator thunks & slots
 	end = pools_part_end(end, pools.nodes * size_of(Thunk))
 	end = pools_part_end(end, pools.nodes * size_of(i16))
 	end = pools_part_end(end, pools.nodes * size_of(u16))
@@ -287,10 +327,46 @@ declaration_workspace_carve :: proc "contextless" (ws: ^Declaration_Workspace, m
 	if len(memory) < declaration_workspace_bytes(pools) || uintptr(raw_data(memory)) & (POOLS_ALIGNMENT - 1) != 0 {
 		return false
 	}
+	int_cap := pools_int_const_cap(pools.nodes)
+	sym_cap := pools_intern_cap(pools.nodes)
+	sym_groups := hash_table.slice_index_groups_for_entries(sym_cap)
+	sym_slots := sym_groups * hash_table.GROUP_WIDTH
+	sym_bytes := max(4096, sym_cap * 16)
+
 	base := raw_data(memory)
 	at := 0
-	ws.nodes = ([^]lex_parser.Node)(&base[at])[:pools.nodes]
-	at = pools_part_end(at, pools.nodes * size_of(lex_parser.Node))
+	ws.nodes = ([^]lex_parser.Ast_Node)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(lex_parser.Ast_Node))
+	ws.extra_children = ([^]lex_parser.Node_Index)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(lex_parser.Node_Index))
+	ws.scratch_children = ([^]lex_parser.Node_Index)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(lex_parser.Node_Index))
+	ws.int_consts = ([^]i64)(&base[at])[:int_cap]
+	at = pools_part_end(at, int_cap * size_of(i64))
+	ws.bindings_side = ([^]lex_parser.Node_Index)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(lex_parser.Node_Index))
+	ws.functions_side = ([^]lex_parser.Node_Index)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(lex_parser.Node_Index))
+
+	ictrl := base[at:][:sym_slots]
+	at = pools_part_end(at, sym_slots * size_of(u8))
+	irefs := ([^]u32)(&base[at])[:sym_slots]
+	at = pools_part_end(at, sym_slots * size_of(u32))
+	ispans := ([^]lex_parser.Sym_Span)(&base[at])[:sym_cap + 1]
+	at = pools_part_end(at, (sym_cap + 1) * size_of(lex_parser.Sym_Span))
+	ibytes := base[at:][:sym_bytes]
+	at = pools_part_end(at, sym_bytes)
+	ws.interner, _ = lex_parser.interner_init(ictrl, irefs, ispans, ibytes, 0)
+
+	ws.dup_controls = base[at:][:sym_slots]
+	at = pools_part_end(at, sym_slots * size_of(u8))
+	ws.dup_refs = ([^]u32)(&base[at])[:sym_slots]
+	at = pools_part_end(at, sym_slots * size_of(u32))
+	ws.dup_keys = ([^]u64)(&base[at])[:sym_cap]
+	at = pools_part_end(at, sym_cap * size_of(u64))
+	ws.dup_nodes = ([^]lex_parser.Node_Index)(&base[at])[:sym_cap]
+	at = pools_part_end(at, sym_cap * size_of(lex_parser.Node_Index))
+
 	ws.thunks = ([^]Thunk)(&base[at])[:pools.nodes]
 	at = pools_part_end(at, pools.nodes * size_of(Thunk))
 	ws.slots = ([^]i16)(&base[at])[:pools.nodes]
@@ -299,6 +375,23 @@ declaration_workspace_carve :: proc "contextless" (ws: ^Declaration_Workspace, m
 	at = pools_part_end(at, pools.nodes * size_of(u16))
 	ws.text_arena = base[at:][:pools.text_bytes]
 	return true
+}
+
+@(private)
+decl_tree_storage :: proc "contextless" (ws: ^Declaration_Workspace) -> lex_parser.Tree_Storage {
+	return {
+		nodes            = ws.nodes[ws.nodes_used:ws.node_limit],
+		extra_children   = ws.extra_children[ws.extra_used:],
+		scratch_children = ws.scratch_children,
+		int_consts       = ws.int_consts[ws.int_consts_used:],
+		bindings         = ws.bindings_side[ws.nodes_used:ws.node_limit],
+		functions        = ws.functions_side[ws.nodes_used:ws.node_limit],
+		interner         = &ws.interner,
+		dup_controls     = ws.dup_controls,
+		dup_refs         = ws.dup_refs,
+		dup_keys         = ws.dup_keys,
+		dup_nodes        = ws.dup_nodes,
+	}
 }
 
 // bundle_loader returns a pure Declaration_Loader backed by a validated
@@ -323,11 +416,14 @@ bundle_loader :: proc "contextless" (bundle: ^[]u8) -> Declaration_Loader {
 // that dotted field path and its transitive dependencies are forced.
 declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: string, field_path: string = "", config: Declaration_Config = {}) -> (result: Declaration_Result) {
 	ws.nodes_used = 0
+	ws.extra_used = 0
+	ws.int_consts_used = 0
 	ws.node_limit = config.node_limit > 0 ? min(config.node_limit, len(ws.nodes)) : len(ws.nodes)
 	ws.exhausted = .None
 	ws.text_used = 0
 	ws.import_count = 0
 	ws.record_names_used = 0
+	lex_parser.interner_clear(&ws.interner)
 	ws.loader = config.loader
 	ws.has_here = config.has_here
 	ws.here_hash = config.here_hash
@@ -348,22 +444,8 @@ declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: 
 	depth_limit := config.depth_limit > 0 ? config.depth_limit : EVALUATION_DEPTH_LIMIT
 	stack_bytes := config.stack_bytes > 0 ? config.stack_bytes : EVALUATION_STACK_BYTES
 
-	// Desugar any |> in the root source.
-	nested, pipe_ok := declaration_pipe_desugar(ws, source)
-	if !pipe_ok {
-		return {
-			ok           = false,
-			failure_kind = ws.host_failure_kind,
-			line         = ws.host_failure_place.line,
-			column       = ws.host_failure_place.column,
-			offset       = ws.host_failure_place.offset,
-			detail       = ws.host_failure_detail,
-		}
-	}
-
-	// Parse root source into tree 0 using the workspace node pool.
-	root_nodes := ws.nodes[ws.nodes_used:ws.node_limit]
-	lex_parser.parse_declaration(nested, root_nodes, &ws.trees[0], ws.text_bytes_most, ws.parse_depth_limit)
+	// Parse root source directly into tree 0 (native |> in parser, zero source copy).
+	lex_parser.parse_declaration(source, decl_tree_storage(ws), &ws.trees[0], ws.text_bytes_most, ws.parse_depth_limit)
 	if ws.trees[0].refusal.refusal != .None {
 		r := ws.trees[0].refusal
 		if r.refusal == .Nodes_Full && ws.node_limit == len(ws.nodes) {
@@ -386,6 +468,8 @@ declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: 
 		slot_counts = ws.slot_counts[ws.nodes_used:ws.nodes_used + root_count],
 	}
 	ws.nodes_used += root_count
+	ws.extra_used += ws.trees[0].extra_count
+	ws.int_consts_used += ws.trees[0].int_const_count
 
 	pools := Evaluation_Pools {
 		trees          = ws.tree_slots[:],
@@ -475,33 +559,7 @@ declaration_evaluate_to_buffer :: proc "contextless" (ws: ^Declaration_Workspace
 	return ser_written, true
 }
 
-// ---- Pipe desugaring and text arena.
-
-@(private)
-declaration_pipe_desugar :: proc "contextless" (ws: ^Declaration_Workspace, source: string) -> (nested: string, ok: bool) {
-	room := ws.text_arena[ws.text_used:]
-	form := console_language.pipe_nested_form(source, 0, room, ws.pipe_stages[:], true)
-	if form.refusal != .None {
-		place := lex_parser.place_of_offset(source, form.found_start)
-		kind := declaration_eval.Failure_Kind.Parse_Error
-		if form.refusal == .Too_Long && len(source) <= len(room) {
-			// Output buffer had room, so placeholders_find hit its group nesting bound.
-			kind = .Depth_Bound_Reached
-		} else if form.refusal == .Too_Long || form.refusal == .Too_Many_Stages {
-			kind = .Pool_Exhausted
-			if form.refusal == .Too_Long {
-				ws.exhausted = .Text
-			}
-		}
-		decl_host_fail(ws, kind, "|>", place)
-		return "", false
-	}
-	// If pipe_nested_form wrote into room, advance text_used.
-	if len(form.nested) > 0 && len(room) > 0 && raw_data(form.nested) == raw_data(room) {
-		ws.text_used += len(form.nested)
-	}
-	return form.nested, true
-}
+// ---- Text arena.
 
 @(private)
 decl_arena_append :: proc "contextless" (ws: ^Declaration_Workspace, a, b: string) -> (joined: string, ok: bool) {
@@ -538,7 +596,7 @@ parse_refusal_to_failure_kind :: proc "contextless" (r: lex_parser.Refusal) -> d
 		return .Pool_Exhausted
 	case .Nesting_Too_Deep:
 		return .Depth_Bound_Reached
-	case .Text_Too_Long, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Thin_Arrow:
+	case .Text_Too_Long, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe:
 		return .Parse_Error
 	}
 	return .Parse_Error
@@ -996,8 +1054,7 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 			decl_host_fail(ws, .Type_Error, name, {})
 			return {}, false
 		}
-		dummy := lex_parser.Node{}
-		return function_call(&ws.evaluation, lex_parser.NO_NODE, &dummy, fn_val, arguments)
+		return function_call(&ws.evaluation, lex_parser.NO_NODE, {}, fn_val, arguments)
 	}
 
 	decl_host_fail(ws, .Unknown_Command, name, {})
@@ -1088,10 +1145,8 @@ decl_load_source_into_tree :: proc "contextless" (ws: ^Declaration_Workspace, so
 		decl_host_fail(ws, .Pool_Exhausted, "imports", {})
 		return {}, false
 	}
-	nested := declaration_pipe_desugar(ws, source) or_return
 	tree_idx := ws.evaluation.active_tree_count
-	available := ws.nodes[ws.nodes_used:ws.node_limit]
-	lex_parser.parse_declaration(nested, available, &ws.trees[tree_idx], ws.text_bytes_most, ws.parse_depth_limit)
+	lex_parser.parse_declaration(source, decl_tree_storage(ws), &ws.trees[tree_idx], ws.text_bytes_most, ws.parse_depth_limit)
 	if ws.trees[tree_idx].refusal.refusal != .None {
 		r := ws.trees[tree_idx].refusal
 		if r.refusal == .Nodes_Full && ws.node_limit == len(ws.nodes) {
@@ -1108,6 +1163,8 @@ decl_load_source_into_tree :: proc "contextless" (ws: ^Declaration_Workspace, so
 		slot_counts = ws.slot_counts[ws.nodes_used:ws.nodes_used + count],
 	}
 	ws.nodes_used += count
+	ws.extra_used += ws.trees[tree_idx].extra_count
+	ws.int_consts_used += ws.trees[tree_idx].int_const_count
 	registered, reg_ok := evaluation_register_tree(&ws.evaluation, slot)
 	if !reg_ok {
 		decl_host_fail(ws, .Pool_Exhausted, "imports", {})
@@ -1156,11 +1213,11 @@ collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value
 		if slot == nil || slot.tree == nil {
 			return false
 		}
-		lit := lex_parser.node_at(slot.tree, lex_parser.Node_Index(value.integer))
-		if lit == nil {
+		lit_idx := lex_parser.Node_Index(value.integer)
+		if lex_parser.node_at(slot.tree, lit_idx) == nil {
 			return false
 		}
-		for field := lit.first_child; field != lex_parser.NO_NODE; field = lex_parser.next_of(slot.tree, field) {
+		for field in lex_parser.node_children(slot.tree, lit_idx) {
 			fn := lex_parser.node_at(slot.tree, field)
 			if fn.kind != .Literal_Field {
 				continue

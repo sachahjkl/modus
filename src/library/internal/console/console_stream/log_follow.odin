@@ -25,6 +25,7 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
+import "modus:lex_parser"
 
 // Typed names of the log service's live follow stream.
 LOG_SERVICE_NAME :: "log"
@@ -36,10 +37,10 @@ MAX_FOLLOW_CONDITIONS :: 4
 // Exact byte size of log.Follow_Row (src/modules/system/log/follow.odin).
 FOLLOW_ROW_SIZE :: 232
 
-// Fixed stack buffer capacities for Follow_Row / Log_Output descriptions and pipe lowering.
+// Fixed stack buffer capacities for Follow_Row / Log_Output descriptions.
 FOLLOW_ROW_DESCRIPTION_CAPACITY :: 2048
 LOG_OUTPUT_DESCRIPTION_CAPACITY :: 2048
-FOLLOW_NESTED_LINE_CAPACITY :: 512
+FOLLOW_PARSE_NODE_CAPACITY :: 128
 
 // Wire layout matching log.Follow_Row byte-for-byte so host tests and the
 // console share one canonical description without importing the log module.
@@ -555,6 +556,57 @@ build_self_slot_filter :: proc "contextless" (
 	return terms, checked, true
 }
 
+@(private = "file")
+follow_form_of :: proc "contextless" (data: rawptr, command_name: string, index: int) -> lex_parser.Parameter_Form {
+	if command_name == "where" && index == 1 {
+		return .Condition
+	}
+	return .Expression
+}
+
+// follow_call_cond_span locates the raw byte span of the condition argument
+// inside a `where(...)` call starting at call_name_end, supporting both piped
+// `where(cond)` (expected_commas = 0) and nested `where(inner, cond)` (1).
+@(private = "file")
+follow_call_cond_span :: proc "contextless" (text: string, call_name_end: int, nested: bool) -> (start, end: int, ok: bool) {
+	open_tok := console_language.token_next(text, call_name_end)
+	if open_tok.kind != .Operator || text[open_tok.start] != '(' {
+		return 0, 0, false
+	}
+	depth := 1
+	comma_pos := -1
+	close_pos := -1
+	for scan := console_language.token_next(text, open_tok.end); scan.kind != .None; scan = console_language.token_next(text, scan.end) {
+		if scan.kind == .Operator {
+			ch := text[scan.start]
+			if ch == '(' || ch == '{' || ch == '[' {
+				depth += 1
+			} else if ch == ')' || ch == '}' || ch == ']' {
+				depth -= 1
+				if depth == 0 {
+					close_pos = scan.start
+					break
+				}
+			} else if ch == ',' && depth == 1 {
+				if !nested || comma_pos >= 0 {
+					return 0, 0, false
+				}
+				comma_pos = scan.start
+			}
+		}
+	}
+	if close_pos < 0 {
+		return 0, 0, false
+	}
+	if nested {
+		if comma_pos < 0 {
+			return 0, 0, false
+		}
+		return comma_pos + 1, close_pos, true
+	}
+	return open_tok.end, close_pos, true
+}
+
 // log_follow_lower parses log.follow or log.follow |> where(...) ...
 // (and its nested form where(log.follow, ...)), validates every condition
 // against log.Follow_Row, and attaches the structural self-feedback loop
@@ -567,14 +619,40 @@ log_follow_lower :: proc "contextless" (
 	if own_process_slot < 0 {
 		return {}, .Bad_Own_Slot
 	}
-
-	nested_buf: [FOLLOW_NESTED_LINE_CAPACITY]u8
-	stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
-	form := console_language.pipe_nested_form(text, 0, nested_buf[:], stages[:])
-	if form.refusal != .None {
-		return {}, .Malformed_Pipe
+	if console_language.token_next(text, 0).kind == .None {
+		return {}, .Not_Log_Follow
 	}
-	expr := form.nested
+
+	nodes: [FOLLOW_PARSE_NODE_CAPACITY]lex_parser.Ast_Node
+	extra: [FOLLOW_PARSE_NODE_CAPACITY]lex_parser.Node_Index
+	scratch: [FOLLOW_PARSE_NODE_CAPACITY]lex_parser.Node_Index
+	int_consts: [16]i64
+	conditions: [MAX_FOLLOW_CONDITIONS + 4]lex_parser.Condition_Extra
+	storage := lex_parser.Tree_Storage {
+		nodes            = nodes[:],
+		extra_children   = extra[:],
+		scratch_children = scratch[:],
+		int_consts       = int_consts[:],
+		conditions       = conditions[:],
+	}
+	tree: lex_parser.Syntax_Tree
+	lex_parser.parse_with_storage(text, {form_of = follow_form_of}, storage, &tree, lex_parser.TEXT_BYTES_MOST, false, false, false, lex_parser.LINE_PARSE_DEPTH_LIMIT)
+
+	switch tree.refusal.refusal {
+	case .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar,
+	     .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe:
+		return {}, .Malformed_Pipe
+	case .None, .Text_Too_Long, .Nodes_Full, .Line_Ends_Too_Soon, .Unexpected,
+	     .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing,
+	     .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing,
+	     .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing,
+	     .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice,
+	     .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing,
+	     .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name,
+	     .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters,
+	     .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing,
+	     .Nesting_Too_Deep, .Thin_Arrow:
+	}
 
 	desc_buf: [FOLLOW_ROW_DESCRIPTION_CAPACITY]u8
 	desc_size, desc_ok := follow_row_description_write(desc_buf[:])
@@ -587,9 +665,6 @@ log_follow_lower :: proc "contextless" (
 		return {}, .Bad_Condition_Syntax
 	}
 
-	// Peel nested where(inner, cond) calls from outermost to innermost.
-	// Store raw condition spans in outer-to-inner order, then reverse so
-	// plan.conditions[0] is the first piped where(...).
 	Cond_Span :: struct {
 		start: int,
 		end:   int,
@@ -597,67 +672,80 @@ log_follow_lower :: proc "contextless" (
 	spans: [MAX_FOLLOW_CONDITIONS]Cond_Span
 	span_count := 0
 
-	cur_start := 0
-	cur_end := len(expr)
-	for {
-		tok := console_language.token_next(expr, cur_start)
-		if tok.kind != .Name || tok.start >= cur_end {
+	cur := tree.root
+	has_top_trailing := false
+	if rn := lex_parser.node_at(&tree, cur); rn != nil && rn.kind == .Refused {
+		if lex_parser.node_refusal(&tree, cur) == .Unexpected && lex_parser.node_child(&tree, cur) != lex_parser.NO_NODE {
+			has_top_trailing = true
+			cur = lex_parser.node_child(&tree, cur)
+		} else {
 			return {}, .Not_Log_Follow
 		}
-		tok_name := expr[tok.start:tok.end]
-		after := console_language.token_next(expr, tok.end)
-		if after.kind == .None || after.start >= cur_end {
+	}
+
+	// Peel chained `|> where(...)` and nested `where(inner, ...)` calls from
+	// outermost to innermost, then compile conditions in pipeline order.
+	for {
+		n := lex_parser.node_at(&tree, cur)
+		if n == nil {
+			return {}, .Not_Log_Follow
+		}
+		#partial switch n.kind {
+		case .Name:
+			tok_name := lex_parser.node_text(&tree, cur)
 			owner, stream, split_ok := typed_name_split(tok_name)
 			if !split_ok || !is_log_follow_name(owner, stream) {
 				return {}, .Not_Log_Follow
 			}
-			break
-		}
-		if after.kind != .Operator || expr[after.start] != '(' {
-			return {}, .Trailing_Tokens
-		}
-		if tok_name != "where" {
-			return {}, .Unsupported_Stage
-		}
-		if span_count >= MAX_FOLLOW_CONDITIONS {
-			return {}, .Too_Many_Conditions
-		}
-
-		// Find matching ')' and top-level ',' splitting (inner_stream, condition).
-		depth := 1
-		comma_pos := -1
-		close_pos := -1
-		for scan := console_language.token_next(expr, after.end); scan.kind != .None && scan.start < cur_end; scan = console_language.token_next(expr, scan.end) {
-			if scan.kind == .Operator {
-				ch := expr[scan.start]
-				if ch == '(' || ch == '{' || ch == '[' {
-					depth += 1
-				} else if ch == ')' || ch == '}' || ch == ']' {
-					depth -= 1
-					if depth == 0 {
-						close_pos = scan.start
-						break
-					}
-				} else if ch == ',' && depth == 1 {
-					if comma_pos >= 0 {
-						return {}, .Bad_Condition_Syntax
-					}
-					comma_pos = scan.start
-				}
+			if has_top_trailing {
+				return {}, .Trailing_Tokens
 			}
+			break
+		case .Pipe:
+			left, right := lex_parser.node_binary_children(&tree, cur)
+			rn := lex_parser.node_at(&tree, right)
+			if rn == nil || rn.kind != .Call {
+				return {}, .Unsupported_Stage
+			}
+			call_name := lex_parser.node_text(&tree, right)
+			if call_name != "where" {
+				return {}, .Unsupported_Stage
+			}
+			if span_count >= MAX_FOLLOW_CONDITIONS {
+				return {}, .Too_Many_Conditions
+			}
+			cstart, cend, span_ok := follow_call_cond_span(text, int(rn.b), false)
+			if !span_ok {
+				return {}, .Bad_Condition_Syntax
+			}
+			spans[span_count] = {start = cstart, end = cend}
+			span_count += 1
+			cur = left
+			continue
+		case .Call:
+			call_name := lex_parser.node_text(&tree, cur)
+			if call_name != "where" {
+				return {}, .Unsupported_Stage
+			}
+			if span_count >= MAX_FOLLOW_CONDITIONS {
+				return {}, .Too_Many_Conditions
+			}
+			args := lex_parser.node_children(&tree, cur)
+			if len(args) < 1 {
+				return {}, .Bad_Condition_Syntax
+			}
+			cstart, cend, span_ok := follow_call_cond_span(text, int(n.b), true)
+			if !span_ok {
+				return {}, .Bad_Condition_Syntax
+			}
+			spans[span_count] = {start = cstart, end = cend}
+			span_count += 1
+			cur = args[0]
+			continue
+		case:
+			return {}, .Not_Log_Follow
 		}
-		if close_pos < 0 || comma_pos < 0 {
-			return {}, .Bad_Condition_Syntax
-		}
-		tail := console_language.token_next(expr, close_pos + 1)
-		if tail.kind != .None && tail.start < cur_end {
-			return {}, .Trailing_Tokens
-		}
-
-		spans[span_count] = {start = comma_pos + 1, end = close_pos}
-		span_count += 1
-		cur_start = after.end
-		cur_end = comma_pos
+		break
 	}
 
 	plan = {
@@ -670,7 +758,7 @@ log_follow_lower :: proc "contextless" (
 
 	// Compile conditions in pipeline order (innermost first -> plan.conditions[0]).
 	for idx := span_count - 1; idx >= 0; idx -= 1 {
-		cond, terms, checked, cond_ref := follow_condition_compile(desc_file, described, expr, spans[idx].start, spans[idx].end)
+		cond, terms, checked, cond_ref := follow_condition_compile(desc_file, described, text, spans[idx].start, spans[idx].end)
 		if cond_ref != .None {
 			return {}, cond_ref
 		}

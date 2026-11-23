@@ -414,7 +414,6 @@ evaluation_register_tree :: proc "contextless" (evaluation: ^Evaluation, slot: T
 @(private)
 tree_slot_prepare :: proc "contextless" (slot: ^Tree_Slot) {
 	tree := slot.tree
-	nodes := lex_parser.tree_nodes(tree)
 	count := clamp(tree.node_count, 0, min(len(slot.thunks), min(len(slot.slots), len(slot.slot_counts))))
 	for &thunk in slot.thunks[:count] {
 		thunk = {}
@@ -423,11 +422,11 @@ tree_slot_prepare :: proc "contextless" (slot: ^Tree_Slot) {
 		slot.slots[index], slot.slot_counts[index] = -1, 0
 	}
 	for index in 0 ..< count {
-		node := &nodes[index]
+		node := &tree.nodes[index]
 		if node.kind == .Parameter {
 			slot_give_in(slot, lex_parser.Node_Index(index))
 		} else if node.kind == .Let_Binding || node.kind == .Literal_Field {
-			slot_give_in(slot, node.first_child)
+			slot_give_in(slot, lex_parser.node_child(tree, lex_parser.Node_Index(index)))
 		}
 	}
 }
@@ -437,10 +436,11 @@ tree_slot_prepare :: proc "contextless" (slot: ^Tree_Slot) {
 @(private)
 slot_give_in :: proc "contextless" (slot: ^Tree_Slot, index: lex_parser.Node_Index) {
 	node := lex_parser.node_at(slot.tree, index)
-	if node == nil || node.function == lex_parser.NO_NODE || int(index) >= len(slot.slots) || slot.slots[int(index)] >= 0 {
+	fn_idx := lex_parser.node_function(slot.tree, index)
+	if node == nil || fn_idx == lex_parser.NO_NODE || int(index) >= len(slot.slots) || slot.slots[int(index)] >= 0 {
 		return
 	}
-	function := int(node.function)
+	function := int(fn_idx)
 	if function >= len(slot.slot_counts) {
 		return
 	}
@@ -475,12 +475,13 @@ call_of :: proc "contextless" (evaluation: ^Evaluation, function: lex_parser.Nod
 // thunk_at gives the thunk of a node in a call, or nil: a node of a body
 // that one reader forces is computed each time.
 @(private)
-thunk_at :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, call: Call_Index) -> ^Thunk {
+thunk_at :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Ast_Node, call: Call_Index) -> ^Thunk {
 	tree_slot := active_slot(evaluation, evaluation.current_tree)
 	if tree_slot == nil {
 		return nil
 	}
-	if node.function == lex_parser.NO_NODE {
+	fn_idx := lex_parser.node_function(tree_slot.tree, index)
+	if fn_idx == lex_parser.NO_NODE {
 		if int(index) >= len(tree_slot.thunks) {
 			return nil
 		}
@@ -511,27 +512,20 @@ refused :: proc "contextless" (evaluation: ^Evaluation) -> bool {
 line_force :: proc "contextless" (evaluation: ^Evaluation) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
 	switch tree.refusal.refusal {
-	case .Text_Too_Long, .Nodes_Full, .Nesting_Too_Deep:
+	case .Text_Too_Long, .Nodes_Full, .Nesting_Too_Deep, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe:
 		return refuse(evaluation, {refusal = .Text, text_refusal = tree.refusal.refusal, place = tree.refusal.place, node = tree.root})
-	case .Thin_Arrow:
-		// The names before a "->" are the parameters of a function that the
-		// line meant, never values: no part of the line runs, so the
-		// refusal names the form of a function, not a missing variable.
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Thin_Arrow, place = tree.refusal.place, node = tree.root})
 	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing:
 	}
 	value = force(evaluation, tree.root) or_return
 	if evaluation.mode == .Console {
-		// The value of a line is drawn or kept: a literal or a member that
-		// nothing typed has no type to draw or keep, also as an item of a list.
 		untyped := untyped_find(evaluation, value, 0)
 		if untyped.kind == .Record_Literal {
 			literal := lex_parser.Node_Index(untyped.integer)
-			return refuse(evaluation, {refusal = .Literal_No_Type, place = lex_parser.node_at(tree, literal).place, node = literal})
+			return refuse(evaluation, {refusal = .Literal_No_Type, place = lex_parser.node_place(tree, literal), node = literal})
 		}
 		if untyped.kind == .Member {
 			member := lex_parser.Node_Index(untyped.integer)
-			return refuse(evaluation, {refusal = .Member_No_Type, place = lex_parser.node_at(tree, member).place, node = member})
+			return refuse(evaluation, {refusal = .Member_No_Type, place = lex_parser.node_place(tree, member), node = member})
 		}
 	}
 	return value, true
@@ -601,11 +595,9 @@ argument_force :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser
 		// line_force refuses such a tree first.
 		return refuse(evaluation, {refusal = .Text, text_refusal = .Nodes_Full, place = evaluation.tree.refusal.place, node = index})
 	}
-	// A node of a function is computed in the call of that function that
-	// the current call sees: its own, or one in which it was written.
-	owner, visible := call_of(evaluation, node.function)
+	owner, visible := call_of(evaluation, lex_parser.node_function(evaluation.tree, index))
 	if !visible {
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = lex_parser.node_place(evaluation.tree, index), node = index})
 	}
 	thunk := thunk_at(evaluation, index, node, owner)
 	if thunk != nil {
@@ -613,9 +605,7 @@ argument_force :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser
 		case .Forced:
 			return thunk.value, true
 		case .Forcing:
-			// The computation of this thunk needs its own value. A binding
-			// refuses it first, with the place of its name.
-			return refuse(evaluation, {refusal = .Cycle, place = node.place, node = index})
+			return refuse(evaluation, {refusal = .Cycle, place = lex_parser.node_place(evaluation.tree, index), node = index})
 		case .Unforced:
 		}
 	}
@@ -628,13 +618,13 @@ argument_force :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser
 	used := evaluation.stack_start > here ? uint(evaluation.stack_start - here) : 0
 	evaluation.stack_deepest = max(evaluation.stack_deepest, used)
 	if used > evaluation.stack_bytes {
-		return refuse(evaluation, {refusal = .Stack_Exceeded, place = node.place, node = index, left = i64(used), right = i64(evaluation.stack_bytes)})
+		return refuse(evaluation, {refusal = .Stack_Exceeded, place = lex_parser.node_place(evaluation.tree, index), node = index, left = i64(used), right = i64(evaluation.stack_bytes)})
 	}
 	if evaluation.depth_limit > 0 && evaluation.depth >= evaluation.depth_limit {
-		return refuse(evaluation, {refusal = .Depth_Exceeded, place = node.place, node = index, left = i64(evaluation.depth), right = i64(evaluation.depth_limit)})
+		return refuse(evaluation, {refusal = .Depth_Exceeded, place = lex_parser.node_place(evaluation.tree, index), node = index, left = i64(evaluation.depth), right = i64(evaluation.depth_limit)})
 	}
 	if evaluation.steps >= evaluation.budget {
-		return refuse(evaluation, {refusal = .Budget_Exceeded, place = node.place, node = index, steps = evaluation.budget})
+		return refuse(evaluation, {refusal = .Budget_Exceeded, place = lex_parser.node_place(evaluation.tree, index), node = index, steps = evaluation.budget})
 	}
 	evaluation.steps += 1
 	if thunk != nil {
@@ -690,7 +680,11 @@ force_in_tree :: proc "contextless" (evaluation: ^Evaluation, tree_index: u16, i
 @(private)
 refuse :: proc "contextless" (evaluation: ^Evaluation, record: Refusal_Record) -> (value: Value, ok: bool) {
 	if !refused(evaluation) {
-		evaluation.refusal = record
+		r := record
+		if r.place.line == 0 && r.node != lex_parser.NO_NODE {
+			r.place = lex_parser.node_place(evaluation.tree, r.node)
+		}
+		evaluation.refusal = r
 	}
 	return {}, false
 }
@@ -699,94 +693,100 @@ refuse :: proc "contextless" (evaluation: ^Evaluation, record: Refusal_Record) -
 // failure, or the refusal of the evaluator when a force inside the host
 // stopped the evaluation.
 @(private)
-host_answer :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, value: Value, ok: bool) -> (Value, bool) {
+host_answer :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Ast_Node, value: Value, ok: bool) -> (Value, bool) {
 	if refused(evaluation) {
 		return {}, false
 	}
 	if !ok {
-		return refuse(evaluation, {refusal = .Host_Refused, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Host_Refused, place = lex_parser.node_place(evaluation.tree, index), node = index})
 	}
 	return value, true
 }
 
 @(private)
-compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, command_name: string, before: []Value) -> (value: Value, ok: bool) {
+compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Ast_Node, command_name: string, before: []Value) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
 	host := evaluation.host
 	switch node.kind {
 	case .Integer:
-		return {kind = .Integer, integer = node.integer}, true
+		return {kind = .Integer, integer = lex_parser.node_integer(tree, index)}, true
 	case .Text:
 		quoted := lex_parser.node_text(tree, index)
 		return {kind = .Text, text = quoted[1:len(quoted) - 1]}, true
 	case .Name:
-		if node.binding != lex_parser.NO_NODE {
+		if lex_parser.node_binding(tree, index) != lex_parser.NO_NODE {
 			return binding_value(evaluation, index, node)
 		}
 		value, ok = host.name_value(host.data, lex_parser.node_text(tree, index))
 		return host_answer(evaluation, index, node, value, ok)
 	case .Record_Literal:
 		if evaluation.mode == .Console {
-			// Mode `console`: force values from the left so effects run in order.
-			for field := node.first_child; field != lex_parser.NO_NODE; field = lex_parser.next_of(tree, field) {
+			for field in lex_parser.node_children(tree, index) {
 				field_node := lex_parser.node_at(tree, field)
-				if _, forced := force(evaluation, field_node.kind == .Literal_Field ? field_node.first_child : field); !forced {
+				target := field_node.kind == .Literal_Field ? lex_parser.node_child(tree, field) : field
+				if _, forced := force(evaluation, target); !forced {
 					return {}, false
 				}
 			}
 		} else {
-			// Mode `declaration`: record fields stay unforced thunks until
-			// selected! Only a direct syntax refusal node inside the brace
-			// list stops here.
-			for field := node.first_child; field != lex_parser.NO_NODE; field = lex_parser.next_of(tree, field) {
+			for field in lex_parser.node_children(tree, index) {
 				field_node := lex_parser.node_at(tree, field)
 				if field_node.kind == .Refused {
-					return refuse(evaluation, {refusal = .Text, text_refusal = field_node.refusal, place = field_node.place, node = field})
+					return refuse(evaluation, {refusal = .Text, text_refusal = lex_parser.node_refusal(tree, field), place = lex_parser.node_place(tree, field), node = field})
 				}
 			}
 		}
 		return {kind = .Record_Literal, integer = i64(index), call = evaluation.call, tree = evaluation.current_tree}, true
 	case .Let:
-		return let_compute(evaluation, node)
+		return let_compute(evaluation, index)
 	case .Member:
-		// The name only; the Enum parameter that receives it gives the enum.
 		return {kind = .Member, integer = i64(index), tree = evaluation.current_tree}, true
 	case .Hash:
-		decoded, valid := console_language.hash_value(tree.text, int(node.place.offset), int(node.end))
+		start, end := lex_parser.node_span(tree, index)
+		decoded, valid := console_language.hash_value(tree.text, start, end)
 		if !valid {
-			return refuse(evaluation, {refusal = .Text, text_refusal = .Hash_Not_Valid, place = node.place, node = index})
+			return refuse(evaluation, {refusal = .Text, text_refusal = .Hash_Not_Valid, place = lex_parser.node_place(tree, index), node = index})
 		}
 		hash_idx, intern_ok := hash_intern(evaluation, decoded)
 		if !intern_ok {
-			return refuse(evaluation, {refusal = .Imports_Full, place = node.place, node = index})
+			return refuse(evaluation, {refusal = .Imports_Full, place = lex_parser.node_place(tree, index), node = index})
 		}
 		return {kind = .Hash, detail = hash_idx}, true
 	case .Boolean:
-		return {kind = .Boolean, integer = node.integer != 0 ? 1 : 0}, true
+		return {kind = .Boolean, integer = lex_parser.node_integer(tree, index)}, true
 	case .If:
-		return if_compute(evaluation, index, node)
+		return if_compute(evaluation, index)
 	case .Field_Select:
-		base := force(evaluation, node.first_child) or_return
-		return field_force(evaluation, base, lex_parser.node_text(tree, index), node.place, index)
+		base := force(evaluation, lex_parser.node_child(tree, index)) or_return
+		return field_force(evaluation, base, lex_parser.node_text(tree, index), {}, index)
 	case .Function:
-		// A refusal of the text inside it stops the line here: its body
-		// runs only in a call, and the parse stopped in it.
 		if refused_node := refusal_inside(tree, index); refused_node != lex_parser.NO_NODE {
-			refused_at := lex_parser.node_at(tree, refused_node)
-			return refuse(evaluation, {refusal = .Text, text_refusal = refused_at.refusal, place = refused_at.place, node = refused_node})
+			return refuse(evaluation, {refusal = .Text, text_refusal = lex_parser.node_refusal(tree, refused_node), place = lex_parser.node_place(tree, refused_node), node = refused_node})
 		}
 		return {kind = .Function, integer = i64(index), call = evaluation.call, tree = evaluation.current_tree}, true
 	case .List_Literal:
-		return list_compute(evaluation, index, node)
-	case .Literal_Field, .Named_Argument, .Let_Binding, .Parameter:
-		// Their parent forces their value; a call gives a parameter.
+		return list_compute(evaluation, index)
+	case .Literal_Field, .Named_Argument, .Let_Binding, .Parameter, .Placeholder:
 		break
 	case .Call:
-		return call_compute(evaluation, index, node)
+		return call_compute(evaluation, index, node, lex_parser.NO_NODE)
+	case .Pipe:
+		lhs, rhs := lex_parser.node_binary_children(tree, index)
+		rhs_node := lex_parser.node_at(tree, rhs)
+		if rhs_node == nil {
+			return refuse(evaluation, {refusal = .Text, text_refusal = .Pipe_Not_A_Call, place = lex_parser.node_place(tree, index), node = index})
+		}
+		if rhs_node.kind == .Refused {
+			return force(evaluation, rhs)
+		}
+		if rhs_node.kind != .Call {
+			return refuse(evaluation, {refusal = .Text, text_refusal = .Pipe_Not_A_Call, place = lex_parser.node_place(tree, rhs), node = rhs})
+		}
+		return call_compute(evaluation, rhs, rhs_node, lhs)
 	case .Negate:
-		return negate_compute(evaluation, index, node)
+		return negate_compute(evaluation, index)
 	case .Binary:
-		return binary_compute(evaluation, index, node)
+		return binary_compute(evaluation, index)
 	case .Condition:
 		if command_name == "" {
 			break
@@ -803,109 +803,93 @@ compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_I
 		if command_name == "" {
 			break
 		}
-		if node.refusal == .Field_Name_Missing {
-			return refuse(evaluation, {refusal = .Text, text_refusal = .Field_Name_Missing, place = node.place, node = index, command = command_name})
+		if lex_parser.node_refusal(tree, index) == .Field_Name_Missing {
+			return refuse(evaluation, {refusal = .Text, text_refusal = .Field_Name_Missing, place = lex_parser.node_place(tree, index), node = index, command = command_name})
 		}
-		// The names as the line has them: the command checks each one
-		// against the record of its table.
 		return {kind = .Text, text = lex_parser.node_text(tree, index)}, true
 	case .Refused:
-		// The part that the parser read before the fault runs first.
-		if node.first_child != lex_parser.NO_NODE {
-			if _, before_ok := force(evaluation, node.first_child); !before_ok {
+		if before_node := lex_parser.node_child(tree, index); before_node != lex_parser.NO_NODE {
+			if _, before_ok := force(evaluation, before_node); !before_ok {
 				return {}, false
 			}
 		}
-		return refuse(evaluation, {refusal = .Text, text_refusal = node.refusal, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = lex_parser.node_refusal(tree, index), place = lex_parser.node_place(tree, index), node = index})
 	}
-	// The parser makes a condition, a fact name and field names only as an
-	// argument of a call, which forces them with its name.
-	return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = node.place, node = index})
+	return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = lex_parser.node_place(tree, index), node = index})
 }
 
-// let_compute forces the bindings of a let from the left, in mode
-// `console`, then its body: the line is forced whole. In mode `declaration`
-// a binding is forced when a value needs it.
 @(private)
-let_compute :: proc "contextless" (evaluation: ^Evaluation, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
+let_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
+	children := lex_parser.node_children(tree, index)
 	body := lex_parser.NO_NODE
-	for child := node.first_child; child != lex_parser.NO_NODE; child = lex_parser.next_of(tree, child) {
+	for child in children {
 		if lex_parser.node_at(tree, child).kind != .Let_Binding {
 			body = child
 		}
 	}
-	// With no body, the parse stopped in a binding: its refusal is met there.
 	whole := evaluation.mode == .Console || body == lex_parser.NO_NODE
-	for child := node.first_child; whole && child != lex_parser.NO_NODE; child = lex_parser.next_of(tree, child) {
-		child_node := lex_parser.node_at(tree, child)
-		if child_node.kind != .Let_Binding {
-			continue
-		}
-		if _, forced := binding_force(evaluation, child, child_node, child_node.place); !forced {
-			return {}, false
+	if whole {
+		for child in children {
+			child_node := lex_parser.node_at(tree, child)
+			if child_node.kind != .Let_Binding {
+				continue
+			}
+			if _, forced := binding_force(evaluation, child, child); !forced {
+				return {}, false
+			}
 		}
 	}
 	if body == lex_parser.NO_NODE {
-		// A let with no body holds the refusal of the text in a binding,
-		// which the loop above met: this stays a refusal in any case.
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Let_In_Missing, place = node.place, node = lex_parser.NO_NODE})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Let_In_Missing, place = lex_parser.node_place(tree, index), node = lex_parser.NO_NODE})
 	}
 	return force(evaluation, body)
 }
 
-// binding_force gives the value of a binding: the thunk of its value. A
-// value that its own computation needs is a cycle, refused at place: the
-// name that closes it.
 @(private)
-binding_force :: proc "contextless" (evaluation: ^Evaluation, binding: lex_parser.Node_Index, binding_node: ^lex_parser.Node, place: lex_parser.Place) -> (value: Value, ok: bool) {
-	value_index := binding_node.first_child
+binding_force :: proc "contextless" (evaluation: ^Evaluation, binding: lex_parser.Node_Index, ref_node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	value_index := lex_parser.node_child(evaluation.tree, binding)
 	if value_node := lex_parser.node_at(evaluation.tree, value_index); value_node != nil {
-		owner, _ := call_of(evaluation, value_node.function)
+		owner, _ := call_of(evaluation, lex_parser.node_function(evaluation.tree, value_index))
 		if thunk := thunk_at(evaluation, value_index, value_node, owner); thunk != nil && thunk.state == .Forcing {
-			return refuse(evaluation, {refusal = .Cycle, place = place, node = binding, command = lex_parser.node_text(evaluation.tree, binding)})
+			return refuse(evaluation, {refusal = .Cycle, place = lex_parser.node_place(evaluation.tree, ref_node), node = binding, command = lex_parser.node_text(evaluation.tree, binding)})
 		}
 	}
 	return force(evaluation, value_index)
 }
 
-// parameter_value gives the value of a parameter in the call that the
-// current call sees: the call gave it.
 @(private)
-parameter_value :: proc "contextless" (evaluation: ^Evaluation, parameter: lex_parser.Node_Index, parameter_node: ^lex_parser.Node, place: lex_parser.Place) -> (value: Value, ok: bool) {
-	owner, visible := call_of(evaluation, parameter_node.function)
+parameter_value :: proc "contextless" (evaluation: ^Evaluation, parameter: lex_parser.Node_Index, ref_node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	owner, visible := call_of(evaluation, lex_parser.node_function(evaluation.tree, parameter))
 	thunk: ^Thunk
 	if visible {
-		thunk = thunk_at(evaluation, parameter, parameter_node, owner)
+		thunk = thunk_at(evaluation, parameter, lex_parser.node_at(evaluation.tree, parameter), owner)
 	}
 	if thunk == nil || thunk.state != .Forced {
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = place, node = parameter})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = lex_parser.node_place(evaluation.tree, ref_node), node = parameter})
 	}
 	return thunk.value, true
 }
 
-// if_compute forces the condition only, checks it is Boolean, and forces
-// only the selected branch.
 @(private)
-if_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
+if_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
-	cond_node := node.first_child
-	then_node := lex_parser.next_of(tree, cond_node)
-	else_node := lex_parser.next_of(tree, then_node)
+	children := lex_parser.node_children(tree, index)
+	cond_node := len(children) > 0 ? children[0] : lex_parser.NO_NODE
+	then_node := len(children) > 1 ? children[1] : lex_parser.NO_NODE
+	else_node := len(children) > 2 ? children[2] : lex_parser.NO_NODE
 	cond := force(evaluation, cond_node) or_return
 	if cond.kind != .Boolean {
-		return refuse(evaluation, {refusal = .Condition_Not_Boolean, place = lex_parser.node_at(tree, cond_node).place, node = cond_node, left_kind = cond.kind})
+		return refuse(evaluation, {refusal = .Condition_Not_Boolean, place = lex_parser.node_place(tree, cond_node), node = cond_node, left_kind = cond.kind})
 	}
-	// If the parse stopped at If_Then_Missing or If_Else_Missing, then_node
-	// or else_node holds the Refused node.
 	if then_node == lex_parser.NO_NODE {
-		return refuse(evaluation, {refusal = .Text, text_refusal = .If_Then_Missing, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .If_Then_Missing, place = lex_parser.node_place(tree, index), node = index})
 	}
 	if lex_parser.node_at(tree, then_node).kind == .Refused {
 		return force(evaluation, then_node)
 	}
 	if else_node == lex_parser.NO_NODE {
-		return refuse(evaluation, {refusal = .Text, text_refusal = .If_Else_Missing, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .If_Else_Missing, place = lex_parser.node_place(tree, index), node = index})
 	}
 	if lex_parser.node_at(tree, else_node).kind == .Refused {
 		return force(evaluation, else_node)
@@ -913,30 +897,27 @@ if_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Nod
 	return force(evaluation, cond.integer != 0 ? then_node : else_node)
 }
 
-// binding_value gives the value of a name that a let or a function binds:
-// the value of the binding or of the parameter, or a chain of fields after
-// '.' (`r.outputs.tools`).
 @(private)
-binding_value :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
+binding_value :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Ast_Node) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
-	binding_node := lex_parser.node_at(tree, node.binding)
+	binding_idx := lex_parser.node_binding(tree, index)
+	binding_node := lex_parser.node_at(tree, binding_idx)
 	if binding_node.kind == .Parameter {
-		value = parameter_value(evaluation, node.binding, binding_node, node.place) or_return
+		value = parameter_value(evaluation, binding_idx, index) or_return
 	} else {
-		value = binding_force(evaluation, node.binding, binding_node, node.place) or_return
+		value = binding_force(evaluation, binding_idx, index) or_return
 	}
 	name := lex_parser.node_text(tree, index)
-	binding_name := lex_parser.node_text(tree, node.binding)
+	binding_name := lex_parser.node_text(tree, binding_idx)
 	if len(name) <= len(binding_name) + 1 {
-		// The name alone; "a." has no field and reads as the name.
 		return value, true
 	}
 	rest := name[len(binding_name) + 1:]
 	for len(rest) > 0 {
 		dot := -1
-		for character, place in rest {
+		for character, pos in rest {
 			if character == '.' {
-				dot = place
+				dot = pos
 				break
 			}
 		}
@@ -944,7 +925,7 @@ binding_value :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.
 		if len(segment) == 0 {
 			break
 		}
-		value = field_force(evaluation, value, segment, node.place, index) or_return
+		value = field_force(evaluation, value, segment, {}, index) or_return
 		if dot < 0 {
 			break
 		}
@@ -1009,12 +990,12 @@ field_force :: proc "contextless" (evaluation: ^Evaluation, base: Value, field: 
 			literal := lex_parser.Node_Index(base.integer)
 			field_index := literal_field_find(slot.tree, literal, field)
 			if field_index != lex_parser.NO_NODE {
-				field_value_node := lex_parser.node_at(slot.tree, field_index).first_child
+				field_value_node := lex_parser.node_child(slot.tree, field_index)
 				// Check for direct or mutual record-field cycle before forcing.
 				saved_tree, saved_idx, saved_call := evaluation.tree, evaluation.current_tree, evaluation.call
 				evaluation.tree, evaluation.current_tree, evaluation.call = slot.tree, base.tree, base.call
 				if vn := lex_parser.node_at(slot.tree, field_value_node); vn != nil {
-					owner, _ := call_of(evaluation, vn.function)
+					owner, _ := call_of(evaluation, lex_parser.node_function(slot.tree, field_value_node))
 					if thunk := thunk_at(evaluation, field_value_node, vn, owner); thunk != nil && thunk.state == .Forcing {
 						evaluation.tree, evaluation.current_tree, evaluation.call = saved_tree, saved_idx, saved_call
 						return refuse(evaluation, {refusal = .Cycle, place = place, node = node_index, command = field})
@@ -1089,11 +1070,7 @@ handle_of :: proc "contextless" (record: []u8, item: module.Field) -> u32 {
 // literal_field_find gives the field of a literal with a name, or NO_NODE.
 @(private)
 literal_field_find :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, literal: lex_parser.Node_Index, name: string) -> lex_parser.Node_Index {
-	literal_node := lex_parser.node_at(tree, literal)
-	if literal_node == nil {
-		return lex_parser.NO_NODE
-	}
-	for field := literal_node.first_child; field != lex_parser.NO_NODE; field = lex_parser.next_of(tree, field) {
+	for field in lex_parser.node_children(tree, literal) {
 		if lex_parser.node_at(tree, field).kind == .Literal_Field && lex_parser.node_text(tree, field) == name {
 			return field
 		}
@@ -1125,24 +1102,19 @@ literal_names_check :: proc "contextless" (evaluation: ^Evaluation, literal: lex
 	literal_node := lex_parser.node_at(tree, literal)
 	described, described_ok := module.record_type(file, detail)
 	if literal_node == nil || !described_ok {
-		place: lex_parser.Place
-		if literal_node != nil {
-			place = literal_node.place
-		}
-		refuse(evaluation, {refusal = .Literal_No_Type, place = place, node = literal})
+		refuse(evaluation, {refusal = .Literal_No_Type, place = lex_parser.node_place(tree, literal), node = literal})
 		return false
 	}
 	given: [LITERAL_FIELD_CAPACITY]bool
-	for field := literal_node.first_child; field != lex_parser.NO_NODE; field = lex_parser.next_of(tree, field) {
+	for field in lex_parser.node_children(tree, literal) {
 		field_node := lex_parser.node_at(tree, field)
 		if field_node.kind != .Literal_Field {
-			// A refusal of the text, which the values met.
 			continue
 		}
 		name := lex_parser.node_text(tree, field)
 		_, number, found := record_field_find(file, described, name)
 		if !found {
-			refuse(evaluation, {refusal = .Literal_Field_Unknown, place = field_node.place, node = field, field = name, file = file, detail = detail})
+			refuse(evaluation, {refusal = .Literal_Field_Unknown, place = lex_parser.node_place(tree, field), node = field, field = name, file = file, detail = detail})
 			return false
 		}
 		if number < LITERAL_FIELD_CAPACITY {
@@ -1157,16 +1129,12 @@ literal_names_check :: proc "contextless" (evaluation: ^Evaluation, literal: lex
 			continue
 		}
 		item, _ := module.field(file, described, number)
-		refuse(evaluation, {refusal = .Literal_Field_Missing, place = literal_node.place, node = literal, field = module.string_at(file, item.name_offset, item.name_count), file = file, detail = detail})
+		refuse(evaluation, {refusal = .Literal_Field_Missing, place = lex_parser.node_place(tree, literal), node = literal, field = module.string_at(file, item.name_offset, item.name_count), file = file, detail = detail})
 		return false
 	}
 	return true
 }
 
-// literal_typed gives the record of a literal of the record file:detail:
-// a whole one, or base with the fields of the literal in place of its own
-// for `with`. The values are forced already; each is checked against its
-// field, and written in the memory of the host.
 @(private)
 literal_typed :: proc "contextless" (evaluation: ^Evaluation, value: Value, file: []u8, detail: u32, base: []u8) -> (typed: Value, ok: bool) {
 	tree := evaluation.tree
@@ -1184,17 +1152,17 @@ literal_typed :: proc "contextless" (evaluation: ^Evaluation, value: Value, file
 	if base != nil {
 		copy(bytes, base)
 	}
-	for field := literal_node.first_child; field != lex_parser.NO_NODE; field = lex_parser.next_of(tree, field) {
+	for field in lex_parser.node_children(tree, literal) {
 		field_node := lex_parser.node_at(tree, field)
 		if field_node.kind != .Literal_Field {
 			continue
 		}
 		name := lex_parser.node_text(tree, field)
 		item, _, _ := record_field_find(file, described, name)
-		field_value := force_in(evaluation, field_node.first_child, value.call) or_return
+		field_value := force_in(evaluation, lex_parser.node_child(tree, field), value.call) or_return
 		record := Refusal_Record {
 			refusal    = .Literal_Field_Kind,
-			place      = field_node.place,
+			place      = lex_parser.node_place(tree, field),
 			node       = field,
 			field      = name,
 			field_item = item,
@@ -1252,16 +1220,16 @@ literal_typed :: proc "contextless" (evaluation: ^Evaluation, value: Value, file
 	return {kind = .Record, record = bytes[:described.size], file = file, detail = detail}, true
 }
 
-// call_compute asks the host for the command first, so a name that no
-// command has fails before its arguments; then it forces the arguments from
-// the left, and the host runs the call.
+// call_compute evaluates a call node, optionally receiving a piped LHS node
+// from an enclosing `.Pipe` node. If `piped_lhs != NO_NODE`, it is inserted at
+// the `.Placeholder` slot (or slot 0 when no placeholder is present) so
+// evaluation order matches the exact nested-call order.
 @(private)
-call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
+call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Ast_Node, piped_lhs: lex_parser.Node_Index) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
 	host := evaluation.host
 	name := lex_parser.node_text(tree, index)
-	// The callee: a function that a let or a parameter binds, map, filter, or
-	// a command of the host.
+	call_place := lex_parser.Place{}
 	Callee :: enum u8 {
 		Host     = 0,
 		Function = 1,
@@ -1271,10 +1239,10 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 	callee := Callee.Host
 	function: Value
 	signature: Command_Signature
-	if node.binding != lex_parser.NO_NODE {
+	if lex_parser.node_binding(tree, index) != lex_parser.NO_NODE {
 		function = binding_value(evaluation, index, node) or_return
 		if function.kind != .Function {
-			return refuse(evaluation, {refusal = .Not_A_Function, place = node.place, node = index, command = name, left_kind = function.kind})
+			return refuse(evaluation, {refusal = .Not_A_Function, place = call_place, node = index, command = name, left_kind = function.kind})
 		}
 		callee = .Function
 		fn_slot := active_slot(evaluation, function.tree)
@@ -1293,29 +1261,63 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 		if !found {
 			return host_answer(evaluation, index, node, {}, false)
 		}
-		// At the border: nothing of the call is forced, and nothing runs.
 		if evaluation.mode == .Declaration && signature.has_effect {
-			return refuse(evaluation, {refusal = .Effect_Refused, place = node.place, node = index, command = name})
+			return refuse(evaluation, {refusal = .Effect_Refused, place = call_place, node = index, command = name})
 		}
 	}
 	parameter_count := clamp(signature.parameter_count, 0, lex_parser.ARGUMENT_CAPACITY)
-	// The names, before any argument runs: the parameter of each argument,
-	// and the fields of each literal that a Record parameter receives.
+
+	// Assemble effective argument list in evaluation order (substituting
+	// piped_lhs at slot 0 or at the `.Placeholder` position).
+	raw_children := lex_parser.node_children(tree, index)
+	has_placeholder := piped_lhs != lex_parser.NO_NODE && (node.sub & lex_parser.CALL_FLAG_HAS_PLACEHOLDER) != 0
+	arg_nodes: [lex_parser.ARGUMENT_CAPACITY + 2]lex_parser.Node_Index
+	arg_is_named_placeholder: [lex_parser.ARGUMENT_CAPACITY + 2]bool
+	arg_count := 0
+	if piped_lhs != lex_parser.NO_NODE && !has_placeholder {
+		arg_nodes[arg_count] = piped_lhs
+		arg_count += 1
+	}
+	for child in raw_children {
+		if arg_count >= len(arg_nodes) {
+			break
+		}
+		cn := lex_parser.node_at(tree, child)
+		if piped_lhs != lex_parser.NO_NODE && cn != nil && cn.kind == .Placeholder {
+			arg_nodes[arg_count] = piped_lhs
+			arg_count += 1
+		} else if piped_lhs != lex_parser.NO_NODE && cn != nil && cn.kind == .Named_Argument {
+			val_node := lex_parser.node_at(tree, lex_parser.node_child(tree, child))
+			arg_nodes[arg_count] = child
+			if val_node != nil && val_node.kind == .Placeholder {
+				arg_is_named_placeholder[arg_count] = true
+			}
+			arg_count += 1
+		} else {
+			arg_nodes[arg_count] = child
+			arg_count += 1
+		}
+	}
+
 	slots: [lex_parser.ARGUMENT_CAPACITY]lex_parser.Node_Index
 	for &slot in slots {
 		slot = lex_parser.NO_NODE
+	}
+	slot_of_arg: [lex_parser.ARGUMENT_CAPACITY + 2]int
+	for &s in slot_of_arg {
+		s = -1
 	}
 	positional := 0
 	named := false
 	count := 0
 	given := 0
 	text_refused := false
-	for argument := node.first_child; argument != lex_parser.NO_NODE; argument = lex_parser.next_of(tree, argument) {
+	for arg_i in 0 ..< arg_count {
+		argument := arg_nodes[arg_i]
 		argument_node := lex_parser.node_at(tree, argument)
 		slot := -1
 		switch argument_node.kind {
 		case .Refused:
-			// A refusal of the text: the arguments before it run, then it.
 			text_refused = true
 			continue
 		case .Named_Argument:
@@ -1328,12 +1330,12 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 				}
 			}
 			if slot < 0 {
-				return refuse(evaluation, {refusal = .Argument_Unknown, place = argument_node.place, node = argument, command = name, field = argument_name})
+				return refuse(evaluation, {refusal = .Argument_Unknown, place = lex_parser.node_place(tree, argument), node = argument, command = name, field = argument_name})
 			}
 			if slots[slot] != lex_parser.NO_NODE {
-				return refuse(evaluation, {refusal = .Argument_Twice, place = argument_node.place, node = argument, command = name, field = argument_name})
+				return refuse(evaluation, {refusal = .Argument_Twice, place = lex_parser.node_place(tree, argument), node = argument, command = name, field = argument_name})
 			}
-		case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Condition, .Fact_Name, .Field_Names, .Record_Literal, .Literal_Field, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select:
+		case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Condition, .Fact_Name, .Field_Names, .Record_Literal, .Literal_Field, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder:
 			given += 1
 			if positional == len(slots) {
 				continue
@@ -1342,88 +1344,71 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 			positional += 1
 		}
 		slots[slot] = argument
+		slot_of_arg[arg_i] = slot
 		count = max(count, slot + 1)
-		// A function and map take a literal and a member as they are.
 		if signature.untyped {
 			continue
 		}
-		literal := argument_node.kind == .Named_Argument ? argument_node.first_child : argument
+		literal := argument
+		if argument_node.kind == .Named_Argument {
+			literal = arg_is_named_placeholder[arg_i] ? piped_lhs : lex_parser.node_child(tree, argument)
+		}
 		if literal_node := lex_parser.node_at(tree, literal); literal_node != nil && literal_node.kind == .Record_Literal && slot < parameter_count {
 			if signature.kinds[slot] != .Record || signature.files[slot] == nil {
-				return refuse(evaluation, {refusal = .Literal_No_Type, place = literal_node.place, node = literal, command = name, parameter = slot + 1, right_kind = signature.kinds[slot]})
+				return refuse(evaluation, {refusal = .Literal_No_Type, place = lex_parser.node_place(tree, literal), node = literal, command = name, parameter = slot + 1, right_kind = signature.kinds[slot]})
 			}
 			if !literal_names_check(evaluation, literal, signature.files[slot], signature.details[slot], true) {
 				return {}, false
 			}
 		}
-		// A member is checked against the enum of its parameter here, at
-		// its place, before any argument of the call runs.
 		if member_node := lex_parser.node_at(tree, literal); member_node != nil && member_node.kind == .Member && slot < parameter_count {
 			if _, typed := member_typed(evaluation, literal, name, slot, signature); !typed {
 				return {}, false
 			}
 		}
 	}
-	// A parameter that the call does not give: an optional one, and the
-	// last one that a call may leave out, get no value; the host gives an
-	// optional parameter the Presence word Absent and the value 0. A call with named arguments gives each
-	// other parameter; a call by place that misses one is refused by the
-	// host, which counts its arguments.
 	missing := false
 	for parameter in 0 ..< parameter_count {
 		if slots[parameter] != lex_parser.NO_NODE || parameter == parameter_count - 1 && signature.optional_last || signature.optional[parameter] {
 			continue
 		}
 		if named && !text_refused {
-			return refuse(evaluation, {refusal = .Argument_Missing, place = node.place, node = index, command = name, field = signature.names[parameter]})
+			return refuse(evaluation, {refusal = .Argument_Missing, place = call_place, node = index, command = name, field = signature.names[parameter]})
 		}
 		missing = true
 	}
-	// A function, map and filter count their arguments themselves, before any
-	// argument runs. A call whose text stops in its arguments has no count:
-	// the arguments before the fault run, then the refusal of the text
-	// comes at its place, as for a command of the host.
 	if signature.untyped && callee != .Host && !text_refused && (count > parameter_count || !named && given != parameter_count) {
-		return refuse(evaluation, {refusal = .Function_Arguments, place = node.place, node = index, command = name, left = i64(given), right = i64(parameter_count)})
+		return refuse(evaluation, {refusal = .Function_Arguments, place = call_place, node = index, command = name, left = i64(given), right = i64(parameter_count)})
 	}
 	if named || !missing {
 		count = max(count, parameter_count - (signature.optional_last && parameter_count > 0 && slots[parameter_count - 1] == lex_parser.NO_NODE ? 1 : 0))
 	}
-	// The values, in the order of the line.
 	arguments: [lex_parser.ARGUMENT_CAPACITY]Value
-	for argument := node.first_child; argument != lex_parser.NO_NODE; argument = lex_parser.next_of(tree, argument) {
+	for arg_i in 0 ..< arg_count {
+		argument := arg_nodes[arg_i]
 		argument_node := lex_parser.node_at(tree, argument)
-		slot := -1
-		for candidate, place in slots {
-			if candidate == argument {
-				slot = place
-			}
-		}
+		slot := slot_of_arg[arg_i]
 		argument_value: Value
 		if argument_node.kind == .Named_Argument {
-			argument_value = force(evaluation, argument_node.first_child) or_return
+			val_idx := arg_is_named_placeholder[arg_i] ? piped_lhs : lex_parser.node_child(tree, argument)
+			argument_value = force(evaluation, val_idx) or_return
 		} else {
-			// A condition reads the arguments before it.
 			argument_value = argument_force(evaluation, argument, name, arguments[:max(slot, 0)]) or_return
 		}
 		if slot < 0 {
-			// The parser ends the arguments with a refusal past the
-			// capacity: its force failed above.
-			return refuse(evaluation, {refusal = .Text, text_refusal = .Too_Many_Arguments, place = argument_node.place, node = argument})
+			return refuse(evaluation, {refusal = .Text, text_refusal = .Too_Many_Arguments, place = lex_parser.node_place(tree, argument), node = argument})
 		}
 		if signature.untyped {
 			arguments[slot] = argument_value
 			continue
 		}
-		// A function is code of Lex and a list holds values of this
-		// evaluation: no command of the host reads either.
 		if argument_value.kind == .Function || argument_value.kind == .List {
-			return refuse(evaluation, {refusal = .Value_At_Border, place = argument_node.place, node = argument, command = name, parameter = slot + 1, left_kind = argument_value.kind})
+			return refuse(evaluation, {refusal = .Value_At_Border, place = lex_parser.node_place(tree, argument), node = argument, command = name, parameter = slot + 1, left_kind = argument_value.kind})
 		}
 		if argument_value.kind == .Record_Literal {
 			if slot >= parameter_count || signature.kinds[slot] != .Record || signature.files[slot] == nil {
 				literal := lex_parser.Node_Index(argument_value.integer)
-				return refuse(evaluation, {refusal = .Literal_No_Type, place = argument_node.place, node = literal, command = name, parameter = slot + 1, right_kind = slot < parameter_count ? signature.kinds[slot] : .None})
+				return refuse(evaluation, {refusal = .Literal_No_Type, place = lex_parser.node_place(tree, argument), node = literal, command = name, parameter = slot + 1, right_kind = slot < parameter_count ? signature.kinds[slot] : .None})
 			}
 			argument_value = literal_typed(evaluation, argument_value, signature.files[slot], signature.details[slot], nil) or_return
 		}
@@ -1434,27 +1419,21 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 	}
 	switch callee {
 	case .Function:
-		return function_call(evaluation, index, node, function, arguments[:count])
+		return function_call(evaluation, index, call_place, function, arguments[:count])
 	case .Map:
-		return map_compute(evaluation, index, node, arguments[0], arguments[1])
+		return map_compute(evaluation, index, call_place, arguments[0], arguments[1])
 	case .Filter:
-		return filter_compute(evaluation, index, node, arguments[0], arguments[1])
+		return filter_compute(evaluation, index, call_place, arguments[0], arguments[1])
 	case .Host:
 	}
 	value, ok = host.call_run(host.data, name, arguments[:count])
 	return host_answer(evaluation, index, node, value, ok)
 }
 
-// function_signature gives the parameters of a function: their count and
-// their names, which take any value.
 @(private)
 function_signature :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, function: lex_parser.Node_Index) -> (signature: Command_Signature) {
 	signature.untyped = true
-	function_node := lex_parser.node_at(tree, function)
-	if function_node == nil {
-		return signature
-	}
-	for child := function_node.first_child; child != lex_parser.NO_NODE; child = lex_parser.next_of(tree, child) {
+	for child in lex_parser.node_children(tree, function) {
 		if lex_parser.node_at(tree, child).kind != .Parameter || signature.parameter_count == lex_parser.ARGUMENT_CAPACITY {
 			continue
 		}
@@ -1464,26 +1443,22 @@ function_signature :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, functio
 	return signature
 }
 
-// function_call runs a function on its arguments, which are forced: a new
-// call, whose parent is the call in which the function was written, with
-// one thunk for each node of the body that two readers force; the
-// parameters hold the arguments. Then it forces the body in that call.
 @(private)
-function_call :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, function: Value, arguments: []Value) -> (value: Value, ok: bool) {
+function_call :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, place: lex_parser.Place, function: Value, arguments: []Value) -> (value: Value, ok: bool) {
 	fn_slot := active_slot(evaluation, function.tree)
 	if fn_slot == nil || fn_slot.tree == nil {
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = place, node = index})
 	}
 	tree := fn_slot.tree
 	function_index := lex_parser.Node_Index(function.integer)
 	function_node := lex_parser.node_at(tree, function_index)
 	if function_node == nil || function_node.kind != .Function {
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = place, node = index})
 	}
 	slot_count := int(fn_slot.slot_counts[int(function_index)])
 	max_calls := len(evaluation.active_calls) - 1
 	if evaluation.call_count >= max_calls || slot_count > len(evaluation.active_call_thunks) - evaluation.call_thunk_count {
-		return refuse(evaluation, {refusal = .Calls_Full, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Calls_Full, place = place, node = index})
 	}
 	evaluation.call_count += 1
 	call := Call_Index(evaluation.call_count)
@@ -1495,7 +1470,7 @@ function_call :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.
 	}
 	body := lex_parser.NO_NODE
 	parameter := 0
-	for child := function_node.first_child; child != lex_parser.NO_NODE; child = lex_parser.next_of(tree, child) {
+	for child in lex_parser.node_children(tree, function_index) {
 		if lex_parser.node_at(tree, child).kind != .Parameter {
 			body = child
 			continue
@@ -1507,72 +1482,66 @@ function_call :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.
 		parameter += 1
 	}
 	if body == lex_parser.NO_NODE {
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Line_Ends_Too_Soon, place = function_node.place, node = function_index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Line_Ends_Too_Soon, place = lex_parser.node_place(tree, function_index), node = function_index})
 	}
 	return force_in_tree(evaluation, function.tree, body, call)
 }
 
-// map_compute calls a function on each item of a list, from the first, and
-// gives the list of the results.
 @(private)
-map_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, list, function: Value) -> (value: Value, ok: bool) {
+map_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, place: lex_parser.Place, list, function: Value) -> (value: Value, ok: bool) {
 	if list.kind != .List {
-		return refuse(evaluation, {refusal = .Not_A_List, place = node.place, node = index, command = MAP_NAME, parameter = 1, left_kind = list.kind})
+		return refuse(evaluation, {refusal = .Not_A_List, place = place, node = index, command = MAP_NAME, parameter = 1, left_kind = list.kind})
 	}
 	if function.kind != .Function {
-		return refuse(evaluation, {refusal = .Not_A_Function, place = node.place, node = index, command = MAP_NAME, parameter = 2, left_kind = function.kind})
+		return refuse(evaluation, {refusal = .Not_A_Function, place = place, node = index, command = MAP_NAME, parameter = 2, left_kind = function.kind})
 	}
 	fn_slot := active_slot(evaluation, function.tree)
 	fn_tree := fn_slot != nil ? fn_slot.tree : evaluation.tree
 	if parameters := function_signature(fn_tree, lex_parser.Node_Index(function.integer)).parameter_count; parameters != 1 {
-		return refuse(evaluation, {refusal = .Function_Arguments, place = node.place, node = index, command = MAP_NAME, parameter = 2, left = 1, right = i64(parameters)})
+		return refuse(evaluation, {refusal = .Function_Arguments, place = place, node = index, command = MAP_NAME, parameter = 2, left = 1, right = i64(parameters)})
 	}
 	count := int(list.detail)
 	if count > len(evaluation.active_list_items) - evaluation.list_item_count {
-		return refuse(evaluation, {refusal = .Lists_Full, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Lists_Full, place = place, node = index})
 	}
-	// The results take their places first: a call can make a list too.
 	first := evaluation.list_item_count
 	evaluation.list_item_count += count
 	for item_number in 0 ..< count {
 		item := [1]Value{evaluation.active_list_items[int(list.integer) + item_number]}
-		result := function_call(evaluation, index, node, function, item[:]) or_return
+		result := function_call(evaluation, index, place, function, item[:]) or_return
 		if !list_item_takes(result.kind) {
-			return refuse(evaluation, {refusal = .List_Item_Kind, place = node.place, node = index, left_kind = result.kind})
+			return refuse(evaluation, {refusal = .List_Item_Kind, place = place, node = index, left_kind = result.kind})
 		}
 		evaluation.active_list_items[first + item_number] = result
 	}
 	return {kind = .List, integer = i64(first), detail = u32(count)}, true
 }
 
-// filter_compute keeps each item of a list for which a Boolean predicate
-// function returns true, preserving order.
 @(private)
-filter_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, list, function: Value) -> (value: Value, ok: bool) {
+filter_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, place: lex_parser.Place, list, function: Value) -> (value: Value, ok: bool) {
 	if list.kind != .List {
-		return refuse(evaluation, {refusal = .Not_A_List, place = node.place, node = index, command = FILTER_NAME, parameter = 1, left_kind = list.kind})
+		return refuse(evaluation, {refusal = .Not_A_List, place = place, node = index, command = FILTER_NAME, parameter = 1, left_kind = list.kind})
 	}
 	if function.kind != .Function {
-		return refuse(evaluation, {refusal = .Not_A_Function, place = node.place, node = index, command = FILTER_NAME, parameter = 2, left_kind = function.kind})
+		return refuse(evaluation, {refusal = .Not_A_Function, place = place, node = index, command = FILTER_NAME, parameter = 2, left_kind = function.kind})
 	}
 	fn_slot := active_slot(evaluation, function.tree)
 	fn_tree := fn_slot != nil ? fn_slot.tree : evaluation.tree
 	if parameters := function_signature(fn_tree, lex_parser.Node_Index(function.integer)).parameter_count; parameters != 1 {
-		return refuse(evaluation, {refusal = .Function_Arguments, place = node.place, node = index, command = FILTER_NAME, parameter = 2, left = 1, right = i64(parameters)})
+		return refuse(evaluation, {refusal = .Function_Arguments, place = place, node = index, command = FILTER_NAME, parameter = 2, left = 1, right = i64(parameters)})
 	}
 	count := int(list.detail)
 	if count > len(evaluation.active_list_items) - evaluation.list_item_count {
-		return refuse(evaluation, {refusal = .Lists_Full, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Lists_Full, place = place, node = index})
 	}
-	// Reserve worst-case room up front so calls inside predicate cannot overwrite.
 	first := evaluation.list_item_count
 	evaluation.list_item_count += count
 	kept := 0
 	for item_number in 0 ..< count {
 		item := [1]Value{evaluation.active_list_items[int(list.integer) + item_number]}
-		pred := function_call(evaluation, index, node, function, item[:]) or_return
+		pred := function_call(evaluation, index, place, function, item[:]) or_return
 		if pred.kind != .Boolean {
-			return refuse(evaluation, {refusal = .Condition_Not_Boolean, place = node.place, node = index, command = FILTER_NAME, left_kind = pred.kind})
+			return refuse(evaluation, {refusal = .Condition_Not_Boolean, place = place, node = index, command = FILTER_NAME, left_kind = pred.kind})
 		}
 		if pred.integer != 0 {
 			evaluation.active_list_items[first + kept] = item[0]
@@ -1582,9 +1551,6 @@ filter_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser
 	return {kind = .List, integer = i64(first), detail = u32(kept)}, true
 }
 
-// list_item_takes says if a list holds a value of a kind: each value but
-// none, and a Stream or a Record_Input, which live in the wiring of their
-// line and have no item to draw.
 @(private)
 list_item_takes :: proc "contextless" (kind: Kind) -> bool {
 	switch kind {
@@ -1595,56 +1561,55 @@ list_item_takes :: proc "contextless" (kind: Kind) -> bool {
 	return true
 }
 
-// list_compute forces the items of a list from the left, and gives the
-// List. Its items take their places first: an item can make a list too.
 @(private)
-list_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
+list_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
-	count := 0
-	for item := node.first_child; item != lex_parser.NO_NODE; item = lex_parser.next_of(tree, item) {
-		count += 1
-	}
+	items := lex_parser.node_children(tree, index)
+	count := len(items)
 	if count > len(evaluation.active_list_items) - evaluation.list_item_count {
-		return refuse(evaluation, {refusal = .Lists_Full, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Lists_Full, place = lex_parser.node_place(tree, index), node = index})
 	}
 	first := evaluation.list_item_count
 	evaluation.list_item_count += count
-	place := first
-	for item := node.first_child; item != lex_parser.NO_NODE; item = lex_parser.next_of(tree, item) {
+	for item, offset in items {
 		item_value := force(evaluation, item) or_return
 		if !list_item_takes(item_value.kind) {
-			return refuse(evaluation, {refusal = .List_Item_Kind, place = lex_parser.node_at(tree, item).place, node = item, left_kind = item_value.kind})
+			return refuse(evaluation, {refusal = .List_Item_Kind, place = lex_parser.node_place(tree, item), node = item, left_kind = item_value.kind})
 		}
-		evaluation.active_list_items[place] = item_value
-		place += 1
+		evaluation.active_list_items[first + offset] = item_value
 	}
 	return {kind = .List, integer = i64(first), detail = u32(count)}, true
 }
 
-// refusal_inside gives the node of a subtree where the parse stopped, or
-// NO_NODE: a Refused node, or a condition, a fact name or field names with
-// their refusal.
 @(private)
 refusal_inside :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, index: lex_parser.Node_Index) -> lex_parser.Node_Index {
 	node := lex_parser.node_at(tree, index)
 	if node == nil {
 		return lex_parser.NO_NODE
 	}
-	if node.kind == .Refused || node.refusal != .None {
+	if node.kind == .Refused || lex_parser.node_refusal(tree, index) != .None {
 		return index
 	}
-	for child := node.first_child; child != lex_parser.NO_NODE; child = lex_parser.next_of(tree, child) {
-		if found := refusal_inside(tree, child); found != lex_parser.NO_NODE {
+	switch node.kind {
+	case .Negate, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition:
+		return refusal_inside(tree, lex_parser.node_child(tree, index))
+	case .Binary, .Pipe:
+		left, right := lex_parser.node_binary_children(tree, index)
+		if found := refusal_inside(tree, left); found != lex_parser.NO_NODE {
 			return found
 		}
+		return refusal_inside(tree, right)
+	case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If:
+		for child in lex_parser.node_children(tree, index) {
+			if found := refusal_inside(tree, child); found != lex_parser.NO_NODE {
+				return found
+			}
+		}
+	case .Integer, .Text, .Name, .Fact_Name, .Field_Names, .Member, .Parameter, .Hash, .Boolean, .Placeholder:
 	}
 	return lex_parser.NO_NODE
 }
 
-// member_typed gives the value of a member node for the parameter slot of a
-// call: the value of the member of the same name in the enum of the
-// parameter. A parameter that is no Enum, and a name that the enum does not
-// have, are refused at the place of the member.
 @(private)
 member_typed :: proc "contextless" (evaluation: ^Evaluation, member: lex_parser.Node_Index, command_name: string, slot: int, signature: Command_Signature) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
@@ -1652,14 +1617,15 @@ member_typed :: proc "contextless" (evaluation: ^Evaluation, member: lex_parser.
 	if member_node == nil {
 		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = tree.refusal.place, node = member})
 	}
+	member_place := lex_parser.node_place(tree, member)
 	if slot < 0 || slot >= clamp(signature.parameter_count, 0, lex_parser.ARGUMENT_CAPACITY) || signature.kinds[slot] != .Enum || signature.files[slot] == nil {
 		right_kind := slot >= 0 && slot < lex_parser.ARGUMENT_CAPACITY ? signature.kinds[slot] : .None
-		return refuse(evaluation, {refusal = .Member_No_Type, place = member_node.place, node = member, command = command_name, parameter = slot + 1, right_kind = right_kind})
+		return refuse(evaluation, {refusal = .Member_No_Type, place = member_place, node = member, command = command_name, parameter = slot + 1, right_kind = right_kind})
 	}
 	text := lex_parser.node_text(tree, member)
 	member_name := len(text) > 0 ? text[1:] : text
 	file, enum_index := signature.files[slot], signature.details[slot]
-	record := Refusal_Record{refusal = .Member_Unknown, place = member_node.place, node = member, command = command_name, parameter = slot + 1, field = member_name, file = file, detail = enum_index}
+	record := Refusal_Record{refusal = .Member_Unknown, place = member_place, node = member, command = command_name, parameter = slot + 1, field = member_name, file = file, detail = enum_index}
 	described, problem := module.enum_type(file, enum_index)
 	if problem != .None {
 		return refuse(evaluation, record)
@@ -1671,20 +1637,15 @@ member_typed :: proc "contextless" (evaluation: ^Evaluation, member: lex_parser.
 	return {kind = .Enum, integer = member_value, file = file, detail = enum_index}, true
 }
 
-// is_lazy_record says if a value is a lazy record value of mode `declaration`.
 is_lazy_record :: proc "contextless" (kind: Kind) -> bool {
 	return kind == .Record_Literal || kind == .Record_With || kind == .Plan_Value || kind == .Project_Value
 }
 
-// with_compute gives `left with right`: the record on the left, with the
-// fields of a literal on the right, or the record on the right when both
-// have one description. In mode `declaration`, two lazy records compose
-// lazily without forcing any fields.
 @(private)
-with_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, left, right: Value) -> (value: Value, ok: bool) {
+with_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, place: lex_parser.Place, left, right: Value) -> (value: Value, ok: bool) {
 	if evaluation.mode == .Declaration && is_lazy_record(left.kind) && is_lazy_record(right.kind) {
 		if evaluation.with_pair_count >= len(evaluation.with_pairs) {
-			return refuse(evaluation, {refusal = .With_Pairs_Full, place = node.place, node = index})
+			return refuse(evaluation, {refusal = .With_Pairs_Full, place = place, node = index})
 		}
 		pair_index := evaluation.with_pair_count
 		evaluation.with_pairs[pair_index] = {left = left, right = right}
@@ -1697,17 +1658,15 @@ with_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 			return literal_typed(evaluation, right, left.file, left.detail, left.record)
 		case .Record:
 			if !module.records_equal(left.file, left.detail, right.file, right.detail) {
-				return refuse(evaluation, {refusal = .With_Records_Differ, place = node.place, node = index, file = left.file, detail = left.detail, other_file = right.file, other_detail = right.detail})
+				return refuse(evaluation, {refusal = .With_Records_Differ, place = place, node = index, file = left.file, detail = left.detail, other_file = right.file, other_detail = right.detail})
 			}
 			return right, true
 		case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		}
 	}
-	return refuse(evaluation, {refusal = .With_Kinds, place = node.place, node = index, operator = .With, left_kind = left.kind, right_kind = right.kind})
+	return refuse(evaluation, {refusal = .With_Kinds, place = place, node = index, operator = .With, left_kind = left.kind, right_kind = right.kind})
 }
 
-// member_name_of gives the name of an untyped Member value (without its
-// leading '.').
 member_name_of :: proc "contextless" (evaluation: ^Evaluation, value: Value) -> string {
 	slot := active_slot(evaluation, value.tree)
 	if slot == nil || slot.tree == nil {
@@ -1717,16 +1676,14 @@ member_name_of :: proc "contextless" (evaluation: ^Evaluation, value: Value) -> 
 	return len(text) > 0 && text[0] == '.' ? text[1:] : text
 }
 
-// comparison_compute evaluates `=`, `!=`, `<`, `<=`, `>`, `>=` and gives a
-// Boolean value.
 @(private)
-comparison_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node, left, right: Value) -> (value: Value, ok: bool) {
-	equality_only := node.operator == .Equal || node.operator == .Not_Equal
+comparison_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, op: lex_parser.Operator, place: lex_parser.Place, left, right: Value) -> (value: Value, ok: bool) {
+	equality_only := op == .Equal || op == .Not_Equal
 	record := Refusal_Record {
 		refusal    = .Operator_Kinds,
-		place      = node.place,
+		place      = place,
 		node       = index,
-		operator   = node.operator,
+		operator   = op,
 		left_kind  = left.kind,
 		right_kind = right.kind,
 	}
@@ -1736,7 +1693,7 @@ comparison_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_pa
 	result := false
 	switch left.kind {
 	case .Integer:
-		switch node.operator {
+		switch op {
 		case .Equal:
 			result = left.integer == right.integer
 		case .Not_Equal:
@@ -1757,13 +1714,13 @@ comparison_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_pa
 			return refuse(evaluation, record)
 		}
 		same := (left.integer != 0) == (right.integer != 0)
-		result = node.operator == .Equal ? same : !same
+		result = op == .Equal ? same : !same
 	case .Text:
 		if !equality_only {
 			return refuse(evaluation, record)
 		}
 		same := left.text == right.text
-		result = node.operator == .Equal ? same : !same
+		result = op == .Equal ? same : !same
 	case .Hash, .Module_Ref, .Tree_Ref, .Recipe_Ref:
 		if !equality_only {
 			return refuse(evaluation, record)
@@ -1774,13 +1731,13 @@ comparison_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_pa
 			return refuse(evaluation, record)
 		}
 		same := lh == rh
-		result = node.operator == .Equal ? same : !same
+		result = op == .Equal ? same : !same
 	case .Member:
 		if !equality_only {
 			return refuse(evaluation, record)
 		}
 		same := member_name_of(evaluation, left) == member_name_of(evaluation, right)
-		result = node.operator == .Equal ? same : !same
+		result = op == .Equal ? same : !same
 	case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Function, .List, .Record_With, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		return refuse(evaluation, record)
 	}
@@ -1788,35 +1745,36 @@ comparison_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_pa
 }
 
 @(private)
-negate_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
-	value = force(evaluation, node.first_child) or_return
+negate_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	value = force(evaluation, lex_parser.node_child(evaluation.tree, index)) or_return
 	if value.kind != .Integer {
-		return refuse(evaluation, {refusal = .Negate_Kind, place = node.place, node = index, left_kind = value.kind})
+		return refuse(evaluation, {refusal = .Negate_Kind, node = index, left_kind = value.kind})
 	}
 	opposite, fits := console_language.integer_negate(value.integer)
 	if !fits {
-		return refuse(evaluation, {refusal = .Overflow, place = node.place, node = index, operator = .Subtract, left = 0, right = value.integer})
+		return refuse(evaluation, {refusal = .Overflow, node = index, operator = .Subtract, left = 0, right = value.integer})
 	}
 	return {kind = .Integer, integer = opposite}, true
 }
 
-// binary_compute forces the left operand, then the right one.
 @(private)
-binary_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
-	left := force(evaluation, node.first_child) or_return
-	right := force(evaluation, lex_parser.next_of(evaluation.tree, node.first_child)) or_return
-	if node.operator == .With {
-		return with_compute(evaluation, index, node, left, right)
+binary_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+	tree := evaluation.tree
+	left_idx, right_idx := lex_parser.node_binary_children(tree, index)
+	op := lex_parser.node_operator(tree, index)
+	left := force(evaluation, left_idx) or_return
+	right := force(evaluation, right_idx) or_return
+	if op == .With {
+		return with_compute(evaluation, index, {}, left, right)
 	}
-	switch node.operator {
+	switch op {
 	case .Equal, .Not_Equal, .Less, .Less_Or_Equal, .Greater, .Greater_Or_Equal:
-		return comparison_compute(evaluation, index, node, left, right)
+		return comparison_compute(evaluation, index, op, {}, left, right)
 	case .None, .Add, .Subtract, .Multiply, .Divide, .Remainder, .With:
 	}
 	record := Refusal_Record {
-		place      = node.place,
 		node       = index,
-		operator   = node.operator,
+		operator   = op,
 		left_kind  = left.kind,
 		right_kind = right.kind,
 		left       = left.integer,
@@ -1825,14 +1783,12 @@ binary_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser
 	integers := left.kind == .Integer && right.kind == .Integer
 	result: i64
 	fits := true
-	switch node.operator {
+	switch op {
 	case .Add:
-		// Two Texts or two Tables: the host has the memory of the sum, and
-		// refuses two Tables of two records.
 		if left.kind == right.kind && (left.kind == .Text || left.kind == .Table) {
 			host := evaluation.host
 			sum, sum_ok := host.values_add(host.data, left, right)
-			return host_answer(evaluation, index, node, sum, sum_ok)
+			return host_answer(evaluation, index, lex_parser.node_at(tree, index), sum, sum_ok)
 		}
 		if !integers {
 			break
@@ -1857,16 +1813,13 @@ binary_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser
 			return refuse(evaluation, record)
 		}
 		quotient, rest, quotient_fits := console_language.integer_divide(left.integer, right.integer)
-		if node.operator == .Divide {
+		if op == .Divide {
 			result, fits = quotient, quotient_fits
 		} else {
-			// The remainder of a division by -1 is 0, also when the
-			// quotient does not fit.
 			result = right.integer == -1 ? 0 : rest
 		}
 	case .None, .With, .Equal, .Not_Equal, .Less, .Less_Or_Equal, .Greater, .Greater_Or_Equal:
-		// Handled above.
-		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, place = node.place, node = index})
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Unexpected, node = index})
 	}
 	if !integers {
 		record.refusal = .Operator_Kinds

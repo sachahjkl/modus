@@ -249,7 +249,7 @@ fact_name_fail :: proc "contextless" (command_name, name: string) -> Value {
 // fact names of the boot image before the command runs.
 fact_name_evaluate :: proc "contextless" (command_name: string, fact_name_node: lex_parser.Node_Index) -> Value {
 	name := lex_parser.node_text(&line_tree, fact_name_node)
-	if lex_parser.node_at(&line_tree, fact_name_node).refusal == .Fact_Name_Missing {
+	if lex_parser.node_refusal(&line_tree, fact_name_node) == .Fact_Name_Missing {
 		return fail(command_name, " takes the name of a fact type, as ", command_name, "(t, storage.Bad_Block), not a value")
 	}
 	if !fact_name_known(name) {

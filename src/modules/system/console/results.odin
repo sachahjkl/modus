@@ -278,13 +278,15 @@ value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Valu
 // function_text gives the text of a function of the line: its parameters,
 // "=>" and its body, as the nested form of the line has them.
 function_text :: proc "contextless" (value: Value) -> string {
-	node := lex_parser.node_at(&line_tree, lex_parser.Node_Index(value.integer))
+	node_idx := lex_parser.Node_Index(value.integer)
+	node := lex_parser.node_at(&line_tree, node_idx)
 	if node == nil || node.kind != .Function {
 		return "a function"
 	}
 	text := line_tree.text
-	open := clamp(int(node.integer), 0, len(text))
-	arrow_end := clamp(int(node.end), open, len(text))
+	open_off, arrow_off := lex_parser.node_function_offsets(&line_tree, node_idx)
+	open := clamp(open_off, 0, len(text))
+	arrow_end := clamp(arrow_off, open, len(text))
 	// The end of the last token of the body: no space and no comment after it.
 	body_end := console_language.function_body_end(text, arrow_end)
 	end := arrow_end

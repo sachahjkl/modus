@@ -129,6 +129,7 @@ host_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []u8, ok:
 
 @(private = "file")
 Run :: struct {
+	buffers:    lex_parser.Console_Tree_Buffers,
 	tree:       lex_parser.Syntax_Tree,
 	evaluation: lex_evaluator.Evaluation,
 	rows:       [TEST_ROWS]pr.Plan_Entry_Row,
@@ -151,7 +152,7 @@ plan_with_room :: proc(count: int) -> pr.Plan_Spec {
 @(private = "file")
 read_text :: proc(image: ^Fake_Image, text: string, rows_given := TEST_ROWS) -> ^Run {
 	run := new(Run, context.temp_allocator)
-	lex_parser.parse(text, {}, &run.tree)
+	lex_parser.parse_console(text, {}, &run.buffers, &run.tree)
 	host := lex_evaluator.Evaluation_Host{data = &run.evaluation, name_value = host_none, command_find = host_command_find, call_run = host_call_run, record_memory = host_memory}
 	lex_evaluator.evaluation_start(&run.evaluation, &run.tree, .Console, host, lex_evaluator.EVALUATION_BUDGET_STEPS, 2 * 1024 * 1024)
 	value, ok := lex_evaluator.line_force(&run.evaluation)

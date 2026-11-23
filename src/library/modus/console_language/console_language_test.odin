@@ -700,12 +700,38 @@ multiline_scanning_and_pipes :: proc(t: ^testing.T) {
 	close, arrow_end, found := function_head(fn_text, 0, true)
 	testing.expect(t, found && fn_text[close] == ')' && arrow_end > close)
 
-	// Multi-line pipe.
-	memory: [256]u8
-	stages: [PIPE_STAGE_CAPACITY]Pipe_Stage
-	piped := "[\n  1,\n  2,\n]\n|> map((x) => x * 2)"
-	form := pipe_nested_form(piped, 0, memory[:], stages[:], true)
-	testing.expect_value(t, form.refusal, Pipe_Refusal.None)
-	testing.expect_value(t, form.stage_count, 1)
-	testing.expect_value(t, form.nested, "map([\n  1,\n  2,\n], (x) => x * 2)")
+	// function_head lookahead is bounded by FUNCTION_HEAD_TOKEN_LIMIT so long
+	// parenthesised expressions never cause O(N^2) scanning.
+	long_expr: [512]u8
+	pos := 0
+	long_expr[pos] = '('
+	pos += 1
+	for i in 0 ..< 80 {
+		if i > 0 {
+			long_expr[pos] = '+'
+			pos += 1
+		}
+		long_expr[pos] = '1'
+		pos += 1
+	}
+	long_expr[pos] = ')'
+	pos += 1
+	long_expr[pos] = '='
+	pos += 1
+	long_expr[pos] = '>'
+	pos += 1
+	long_expr[pos] = '1'
+	pos += 1
+	_, _, long_found := function_head(string(long_expr[:pos]), 0, true)
+	testing.expect(t, !long_found, "function_head must stop past FUNCTION_HEAD_TOKEN_LIMIT")
+
+	// call_has_placeholder and call_parameter_at_caret with native |>.
+	testing.expect(t, pipe_before("a |> where(x = 1)", 5))
+	testing.expect(t, !pipe_before("where(t, x = 1)", 0))
+	testing.expect(t, call_has_placeholder("a |> f(1, _)", 6))
+	testing.expect(t, !call_has_placeholder("a |> f(1, g(_))", 6))
+	cname, cparam, cfound := call_parameter_at_caret("a |> where(status = 1)", 15)
+	testing.expect(t, cfound && cname == "where" && cparam == 1)
+	cname, cparam, cfound = call_parameter_at_caret("a |> where(_, status = 1)", 17)
+	testing.expect(t, cfound && cname == "where" && cparam == 1)
 }

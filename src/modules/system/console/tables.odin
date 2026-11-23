@@ -485,8 +485,11 @@ condition_evaluate :: proc "contextless" (command_name: string, before: []Value,
 		file    = table.file,
 		record  = table.record,
 	}
-	node := lex_parser.node_at(&line_tree, condition_node)
-	head, refusal := node.condition_head, node.condition_refusal
+	cond := lex_parser.node_condition(&line_tree, condition_node)
+	if cond == nil {
+		return fail(command_name, ": a condition needs a field, an operator and a value")
+	}
+	head, refusal := cond.head, cond.refusal
 	details.field, details.comparison = head.field, head.comparison
 	if refusal != .None {
 		return condition_fail(refusal, details)
@@ -510,7 +513,7 @@ condition_evaluate :: proc "contextless" (command_name: string, before: []Value,
 	} else {
 		// The value is a thunk of the evaluation: its refusal stops the
 		// evaluation, which writes the sentence.
-		value, forced := lex_evaluator.force(&line_evaluation, node.first_child)
+		value, forced := lex_evaluator.force(&line_evaluation, lex_parser.node_child(&line_tree, condition_node))
 		if !forced || failed {
 			return {}
 		}
@@ -526,7 +529,7 @@ condition_evaluate :: proc "contextless" (command_name: string, before: []Value,
 	}
 	// After the name of a member, the argument ends: a status reads one
 	// name, never an expression.
-	if status && !node.member_alone {
+	if status && !cond.member_alone {
 		return fail("\",\" or \")\" is missing")
 	}
 	return {condition = kept}

@@ -7,7 +7,6 @@ import "core:sys/posix"
 import "core:testing"
 import module "modus:contract/module"
 import "modus:contract/module_file_writer"
-import "modus:console_language"
 import "modus:lex_parser"
 
 // The fake host of the tests. Each call is an effect: the host writes its
@@ -202,7 +201,7 @@ fake_records_make :: proc(fake: ^Fake) {
 // field that is no status.
 @(private = "file")
 fake_condition_value :: proc "contextless" (data: rawptr, evaluation: ^Evaluation, command_name: string, before: []Value, node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
-	return force(evaluation, lex_parser.node_at(evaluation.tree, node).first_child)
+	return force(evaluation, lex_parser.node_child(evaluation.tree, node))
 }
 
 @(private = "file")
@@ -248,6 +247,7 @@ test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: i
 // One evaluation of a text, with its tree, its host and its result.
 @(private = "file")
 Run :: struct {
+	buffers:    lex_parser.Console_Tree_Buffers,
 	tree:       lex_parser.Syntax_Tree,
 	evaluation: Evaluation,
 	fake:       Fake,
@@ -277,7 +277,7 @@ run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVAL
 	run := new(Run, context.temp_allocator)
 	fake_records_make(&run.fake)
 	fake_enums_make(&run.fake)
-	lex_parser.parse(text, {form_of = test_form_of}, &run.tree)
+	lex_parser.parse_console(text, {form_of = test_form_of}, &run.buffers, &run.tree)
 	host := Evaluation_Host {
 		data            = &run.fake,
 		name_value      = fake_name_value,
@@ -494,7 +494,7 @@ evaluation_forces_a_thunk_once :: proc(t: ^testing.T) {
 		value, ok := force(&run.evaluation, run.tree.root)
 		testing.expect(t, ok)
 		testing.expect_value(t, value.integer, i64(2))
-		value, ok = force(&run.evaluation, lex_parser.node_at(&run.tree, run.tree.root).first_child)
+		value, ok = force(&run.evaluation, lex_parser.node_children(&run.tree, run.tree.root)[0])
 		testing.expect(t, ok)
 		testing.expect_value(t, value.integer, i64(1))
 	}
@@ -518,12 +518,8 @@ evaluation_runs_the_effects_in_the_order_of_the_data :: proc(t: ^testing.T) {
 	expect_log(t, run, {"h", "g", "k", "f"}, "f(g(h()), k())")
 	testing.expect_value(t, run.value.integer, i64(4))
 
-	memory: [lex_parser.TEXT_BYTES_MOST]u8
-	stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
 	piped := "h() |> g() |> f(k())"
-	form := console_language.pipe_nested_form(piped, console_language.expression_start(piped), memory[:], stages[:])
-	testing.expect_value(t, form.refusal, console_language.Pipe_Refusal.None)
-	run = run_of(form.nested)
+	run = run_of(piped)
 	testing.expect(t, run.ok)
 	expect_log(t, run, {"h", "g", "k", "f"}, piped)
 
@@ -684,10 +680,10 @@ evaluation_refusals_of_the_forms :: proc(t: ^testing.T) {
 	testing.expect_value(t, run.evaluation.refusal.command, "a")
 	run = run_of("pair(second = g())")
 	testing.expect_value(t, run.evaluation.refusal.command, "pair")
-	// A word of Lex that the console did not nest is a refusal of the text.
+	// A placeholder outside a pipe is a refusal of the text.
 	run = run_of("pair(_, 1)")
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Text)
-	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Word_As_Name)
+	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Placeholder_Without_Pipe)
 }
 
 // A member is refused at its place before any argument of the call runs: a
@@ -793,8 +789,6 @@ evaluation_order_of_the_forms :: proc(t: ^testing.T) {
 
 	// `_` and the order of the effects: the value on the left runs where
 	// the call reads it, after the arguments before the '_'.
-	memory: [lex_parser.TEXT_BYTES_MOST]u8
-	stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
 	Piped :: struct {
 		text:    string,
 		effects: []string,
@@ -805,12 +799,8 @@ evaluation_order_of_the_forms :: proc(t: ^testing.T) {
 		{"g() |> pair(second = _, first = h())", {"g", "h", "pair"}},
 	}
 	for item in piped {
-		form := console_language.pipe_nested_form(item.text, console_language.expression_start(item.text), memory[:], stages[:])
-		if !testing.expectf(t, form.refusal == .None, "%q: %v", item.text, form.refusal) {
-			continue
-		}
-		run = run_of(form.nested)
-		testing.expect(t, run.ok)
+		run = run_of(item.text)
+		testing.expectf(t, run.ok, "%q: %v", item.text, run.evaluation.refusal.refusal)
 		expect_log(t, run, item.effects, item.text)
 	}
 }

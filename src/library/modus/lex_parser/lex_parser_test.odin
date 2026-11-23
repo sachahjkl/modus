@@ -5,11 +5,8 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modus:console_condition"
-import "modus:console_language"
+import "modus:hash_table"
 
-// The forms of the commands of the tests: `where` takes a condition after
-// its table, `facts` a fact name and `columns` field names, as in the
-// console; every other argument is an expression.
 @(private = "file")
 test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: int) -> Parameter_Form {
 	switch {
@@ -23,7 +20,6 @@ test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: i
 	return .Expression
 }
 
-// parse_of parses a text with the forms of the tests.
 @(private = "file")
 parse_of :: proc(text: string) -> ^Syntax_Tree {
 	return parse_with(text, {form_of = test_form_of})
@@ -31,14 +27,51 @@ parse_of :: proc(text: string) -> ^Syntax_Tree {
 
 @(private = "file")
 parse_with :: proc(text: string, lookup: Form_Lookup) -> ^Syntax_Tree {
+	buf := new(Console_Tree_Buffers, context.temp_allocator)
 	tree := new(Syntax_Tree, context.temp_allocator)
-	parse(text, lookup, tree)
+	parse_console(text, lookup, buf, tree)
 	return tree
 }
 
-// tree_form writes a tree in a short form that a test compares: a binary
-// node in parentheses, a condition in brackets, a fact name in angles, a
-// refusal after "!" with the part before it in parentheses.
+@(private = "file")
+make_decl_storage :: proc(node_cap: int, allocator := context.temp_allocator) -> Tree_Storage {
+	nodes := make([]Ast_Node, node_cap, allocator)
+	extra := make([]Node_Index, node_cap, allocator)
+	scratch := make([]Node_Index, node_cap, allocator)
+	ints := make([]i64, max(64, node_cap / 8), allocator)
+	bindings := make([]Node_Index, node_cap, allocator)
+	functions := make([]Node_Index, node_cap, allocator)
+
+	groups := hash_table.slice_index_groups_for_entries(max(64, node_cap))
+	ctrl := make([]u8, groups * hash_table.GROUP_WIDTH, allocator)
+	refs := make([]u32, groups * hash_table.GROUP_WIDTH, allocator)
+	spans := make([]Sym_Span, max(64, node_cap) + 1, allocator)
+	sbytes := make([]u8, max(4096, node_cap * 16), allocator)
+	interner := new(String_Interner, allocator)
+	init_ok: bool
+	interner^, init_ok = interner_init(ctrl, refs, spans, sbytes, 0x1E7_0001)
+	assert(init_ok)
+
+	dctrl := make([]u8, groups * hash_table.GROUP_WIDTH, allocator)
+	drefs := make([]u32, groups * hash_table.GROUP_WIDTH, allocator)
+	dkeys := make([]u64, max(64, node_cap), allocator)
+	dnodes := make([]Node_Index, max(64, node_cap), allocator)
+
+	return {
+		nodes            = nodes,
+		extra_children   = extra,
+		scratch_children = scratch,
+		int_consts       = ints,
+		bindings         = bindings,
+		functions        = functions,
+		interner         = interner,
+		dup_controls     = dctrl,
+		dup_refs         = drefs,
+		dup_keys         = dkeys,
+		dup_nodes        = dnodes,
+	}
+}
+
 @(private = "file")
 tree_form :: proc(tree: ^Syntax_Tree, index: Node_Index) -> string {
 	builder := strings.builder_make(context.temp_allocator)
@@ -46,11 +79,10 @@ tree_form :: proc(tree: ^Syntax_Tree, index: Node_Index) -> string {
 	return strings.to_string(builder)
 }
 
-// children_write writes a list of nodes, separated.
 @(private = "file")
-children_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, first: Node_Index, separator: string) {
-	for child := first; child != NO_NODE; child = next_of(tree, child) {
-		if child != first {
+children_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, children: []Node_Index, separator: string) {
+	for child, i in children {
+		if i > 0 {
 			strings.write_string(builder, separator)
 		}
 		node_form_write(builder, tree, child)
@@ -65,29 +97,28 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 		return
 	}
 	switch node.kind {
-	case .Integer, .Text, .Member, .Parameter, .Hash, .Boolean:
+	case .Integer, .Text, .Member, .Parameter, .Hash, .Boolean, .Placeholder:
 		strings.write_string(builder, node_text(tree, index))
 	case .If:
 		strings.write_string(builder, "if(")
-		children_write(builder, tree, node.first_child, "; ")
+		children_write(builder, tree, node_children(tree, index), "; ")
 		strings.write_string(builder, ")")
 	case .Field_Select:
-		node_form_write(builder, tree, node.first_child)
+		node_form_write(builder, tree, node_child(tree, index))
 		fmt.sbprintf(builder, ".%s", node_text(tree, index))
 	case .Name:
-		// A name that a let or a function binds is marked with '@'.
-		if node.binding != NO_NODE {
+		if node_binding(tree, index) != NO_NODE {
 			strings.write_string(builder, "@")
 		}
 		strings.write_string(builder, node_text(tree, index))
 	case .Function:
-		// fn(x, y => body): the parameters, then the body.
 		strings.write_string(builder, "fn(")
+		_, arrow_end := node_function_offsets(tree, index)
+		arrow_start := u32(max(arrow_end - 2, 0))
 		first := true
-		for child := node.first_child; child != NO_NODE; child = next_of(tree, child) {
-			// The parameters and their refusals are before the "=>".
+		for child in node_children(tree, index) {
 			child_node := node_at(tree, child)
-			if child_node.place.offset > node.place.offset {
+			if child_node != nil && child_node.span_off > arrow_start {
 				strings.write_string(builder, " => ")
 			} else if !first {
 				strings.write_string(builder, ", ")
@@ -98,78 +129,87 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 		strings.write_string(builder, ")")
 	case .List_Literal:
 		strings.write_string(builder, "[")
-		children_write(builder, tree, node.first_child, ", ")
+		children_write(builder, tree, node_children(tree, index), ", ")
 		strings.write_string(builder, "]")
 	case .Record_Literal:
 		strings.write_string(builder, "#{")
-		children_write(builder, tree, node.first_child, ", ")
+		children_write(builder, tree, node_children(tree, index), ", ")
 		strings.write_string(builder, "}")
 	case .Literal_Field, .Named_Argument, .Let_Binding:
 		fmt.sbprintf(builder, "%s = ", node_text(tree, index))
-		node_form_write(builder, tree, node.first_child)
+		node_form_write(builder, tree, node_child(tree, index))
 	case .Let:
 		strings.write_string(builder, "let(")
-		children_write(builder, tree, node.first_child, "; ")
+		children_write(builder, tree, node_children(tree, index), "; ")
 		strings.write_string(builder, ")")
 	case .Call:
-		// A call of a name that a let or a function binds is marked too.
-		if node.binding != NO_NODE {
+		if node_binding(tree, index) != NO_NODE {
 			strings.write_string(builder, "@")
 		}
 		strings.write_string(builder, node_text(tree, index))
 		strings.write_string(builder, "(")
-		first := true
-		for child := node.first_child; child != NO_NODE; child = next_of(tree, child) {
-			if !first {
-				strings.write_string(builder, ", ")
-			}
-			first = false
-			node_form_write(builder, tree, child)
-		}
+		children_write(builder, tree, node_children(tree, index), ", ")
 		strings.write_string(builder, ")")
 	case .Negate:
 		strings.write_string(builder, "(-")
-		node_form_write(builder, tree, node.first_child)
+		node_form_write(builder, tree, node_child(tree, index))
 		strings.write_string(builder, ")")
 	case .Binary:
+		left, right := node_binary_children(tree, index)
 		strings.write_string(builder, "(")
-		node_form_write(builder, tree, node.first_child)
-		fmt.sbprintf(builder, " %s ", OPERATOR_TEXTS[node.operator])
-		node_form_write(builder, tree, next_of(tree, node.first_child))
+		node_form_write(builder, tree, left)
+		fmt.sbprintf(builder, " %s ", OPERATOR_TEXTS[node_operator(tree, index)])
+		node_form_write(builder, tree, right)
+		strings.write_string(builder, ")")
+	case .Pipe:
+		left, right := node_binary_children(tree, index)
+		strings.write_string(builder, "(")
+		node_form_write(builder, tree, left)
+		strings.write_string(builder, " |> ")
+		node_form_write(builder, tree, right)
 		strings.write_string(builder, ")")
 	case .Condition:
-		if node.condition_refusal != .None {
-			fmt.sbprintf(builder, "[!%v]", node.condition_refusal)
+		cond := node_condition(tree, index)
+		if cond == nil {
+			strings.write_string(builder, "[?]")
 			return
 		}
-		fmt.sbprintf(builder, "[%s %s ", node.condition_head.field, console_condition.COMPARISON_TEXTS[node.condition_head.comparison])
-		node_form_write(builder, tree, node.first_child)
+		if cond.refusal != .None {
+			fmt.sbprintf(builder, "[!%v]", cond.refusal)
+			return
+		}
+		fmt.sbprintf(builder, "[%s %s ", cond.head.field, console_condition.COMPARISON_TEXTS[cond.head.comparison])
+		node_form_write(builder, tree, node_child(tree, index))
 		strings.write_string(builder, "]")
 	case .Fact_Name:
-		if node.refusal == .Fact_Name_Missing {
+		if node_refusal(tree, index) == .Fact_Name_Missing {
 			strings.write_string(builder, "<!>")
 			return
 		}
 		fmt.sbprintf(builder, "<%s>", node_text(tree, index))
 	case .Field_Names:
-		if node.refusal == .Field_Name_Missing {
+		if node_refusal(tree, index) == .Field_Name_Missing {
 			fmt.sbprintf(builder, "{{%s!}}", node_text(tree, index))
 			return
 		}
 		fmt.sbprintf(builder, "{{%s}}", node_text(tree, index))
 	case .Refused:
-		fmt.sbprintf(builder, "!%v", node.refusal)
-		if node.first_child != NO_NODE {
+		fmt.sbprintf(builder, "!%v", node_refusal(tree, index))
+		before := node_child(tree, index)
+		if before != NO_NODE {
 			strings.write_string(builder, "(")
-			node_form_write(builder, tree, node.first_child)
+			node_form_write(builder, tree, before)
 			strings.write_string(builder, ")")
 		}
 	}
 }
 
-// The text bounds: 0 bytes, spaces only, the longest line that the console
-// runs, one byte past it, and far past it. A text past the bound gives one
-// node and no other part.
+@(test)
+ast_node_is_16_bytes_and_tree_has_no_inline_bloat :: proc(t: ^testing.T) {
+	testing.expect_value(t, size_of(Ast_Node), 16)
+	testing.expect(t, size_of(Syntax_Tree) <= 256)
+}
+
 @(test)
 parse_refusals_at_the_text_bounds :: proc(t: ^testing.T) {
 	tree := parse_of("")
@@ -192,7 +232,6 @@ parse_refusals_at_the_text_bounds :: proc(t: ^testing.T) {
 		testing.expect_value(t, tree.assigned_name, "")
 	}
 
-	// The longest line that runs: "11" and 99 times "+1", 200 bytes.
 	longest := strings.concatenate({"11", strings.repeat("+1", (TEXT_BYTES_MOST - 2) / 2, context.temp_allocator)}, context.temp_allocator)
 	testing.expect_value(t, len(longest), TEXT_BYTES_MOST)
 	tree = parse_of(longest)
@@ -200,9 +239,6 @@ parse_refusals_at_the_text_bounds :: proc(t: ^testing.T) {
 	testing.expect_value(t, node_at(tree, tree.root).kind, Node_Kind.Binary)
 }
 
-// The memory of the nodes: the densest text of TEXT_BYTES_MOST bytes, one
-// node for each byte and the refusal after them, fills it exactly, and is
-// refused for its missing operand, not for its memory.
 @(test)
 parse_fills_the_node_memory_exactly :: proc(t: ^testing.T) {
 	densest := strings.repeat("1+", TEXT_BYTES_MOST / 2, context.temp_allocator)
@@ -218,10 +254,6 @@ parse_fills_the_node_memory_exactly :: proc(t: ^testing.T) {
 	testing.expect_value(t, tree.node_count, len(whole))
 }
 
-// nesting_deepest gives the most levels of a form of nesting that a line
-// parses, and checks that one level more is refused with Nesting_Too_Deep
-// and fits the bytes of a line: the depth has its own bound, below the
-// bound of the text.
 @(private = "file")
 nesting_deepest :: proc(t: ^testing.T, opening, inner, closing: string) -> (levels: int) {
 	text_of :: proc(opening, inner, closing: string, levels: int) -> string {
@@ -236,48 +268,36 @@ nesting_deepest :: proc(t: ^testing.T, opening, inner, closing: string) -> (leve
 	testing.expectf(t, len(more) <= TEXT_BYTES_MOST, "%q: %d levels fit the bytes of a line", opening, levels + 1)
 	testing.expect_value(t, parse_of(more).refusal.refusal, Refusal.Nesting_Too_Deep)
 	testing.expect_value(t, parse_of(text_of(opening, inner, closing, levels)).refusal.refusal, Refusal.None)
-	// A level takes one or two steps of the depth.
 	testing.expectf(t, levels >= LINE_PARSE_DEPTH_LIMIT / 2 - 1 && levels <= LINE_PARSE_DEPTH_LIMIT, "%q: %d levels", opening, levels)
 	return levels
 }
 
-// The depth: a line of TEXT_BYTES_MOST bytes could nest one level for each
-// byte, so the parser has a depth bound of its own, LINE_PARSE_DEPTH_LIMIT.
-// The deepest nesting of each kind that fits, then one level more, refused
-// with Nesting_Too_Deep; then a text past the bytes of a line.
 @(test)
 parse_nesting_at_the_bound_of_the_depth :: proc(t: ^testing.T) {
-	// "-": one byte for each level.
 	levels := nesting_deepest(t, "-", "1", "")
 	tree := parse_of(strings.concatenate({strings.repeat("-", levels, context.temp_allocator), "1"}, context.temp_allocator))
 	depth := 0
-	for index := tree.root; node_at(tree, index).kind == .Negate; index = node_at(tree, index).first_child {
+	for index := tree.root; node_at(tree, index).kind == .Negate; index = node_child(tree, index) {
 		depth += 1
 	}
 	testing.expect_value(t, depth, levels)
 	tree = parse_of(strings.concatenate({strings.repeat("-", TEXT_BYTES_MOST, context.temp_allocator), "1"}, context.temp_allocator))
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 
-	// Parentheses: a group is no node.
 	levels = nesting_deepest(t, "(", "1", ")")
 	tree = parse_of(strings.concatenate({strings.repeat("(", levels, context.temp_allocator), "1", strings.repeat(")", levels, context.temp_allocator)}, context.temp_allocator))
 	testing.expect_value(t, tree.node_count, 1)
 
-	// Calls: one node for each level.
 	levels = nesting_deepest(t, "f(", "1", ")")
 	tree = parse_of(strings.concatenate({strings.repeat("f(", levels, context.temp_allocator), "1", strings.repeat(")", levels, context.temp_allocator)}, context.temp_allocator))
 	testing.expect_value(t, tree.node_count, levels + 1)
 
-	// An unclosed group past the depth: the refusal is the depth, at the
-	// first byte that it does not read.
 	open := strings.concatenate({strings.repeat("(", TEXT_BYTES_MOST - 1, context.temp_allocator), "1"}, context.temp_allocator)
 	tree = parse_of(open)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Nesting_Too_Deep)
 	testing.expect(t, int(tree.refusal.place.column) <= LINE_PARSE_DEPTH_LIMIT + 1)
 }
 
-// Each refusal of the text, with its record, its place, and the tree that
-// the parse made before it: the console evaluates that part, then fails.
 @(test)
 parse_refusals_with_their_places :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -287,7 +307,6 @@ parse_refusals_with_their_places :: proc(t: ^testing.T) {
 		form:    string,
 	}
 	cases := [?]Case {
-		// An unclosed call, and a missing argument.
 		{"f(", .Line_Ends_Too_Soon, 3, "f(!Line_Ends_Too_Soon)"},
 		{"f(1", .Comma_Or_Close_Missing, 4, "f(1, !Comma_Or_Close_Missing)"},
 		{"f(1,", .Line_Ends_Too_Soon, 5, "f(1, !Line_Ends_Too_Soon)"},
@@ -296,25 +315,19 @@ parse_refusals_with_their_places :: proc(t: ^testing.T) {
 		{"f(1 2)", .Comma_Or_Close_Missing, 5, "f(1, !Comma_Or_Close_Missing)"},
 		{"f(g(1), h(2) 3)", .Comma_Or_Close_Missing, 14, "f(g(1), h(2), !Comma_Or_Close_Missing)"},
 		{"f(1,1,1,1,1,1,1,1,1,1,1,1,1)", .Too_Many_Arguments, 27, "f(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, !Too_Many_Arguments)"},
-		// A byte that starts no value: unknown, a '|' alone, a "|>" that
-		// the console did not nest, a line feed, a byte past ASCII.
 		{"#", .Unexpected, 1, "!Unexpected"},
 		{"1 # 2", .Unexpected, 3, "!Unexpected(1)"},
-		{"1 | 2", .Unexpected, 3, "!Unexpected(1)"},
-		{"|", .Unexpected, 1, "!Unexpected"},
-		{"x |> f", .Unexpected, 3, "!Unexpected(x)"},
+		{"1 | 2", .Lone_Bar, 3, "!Lone_Bar(1)"},
+		{"|", .Lone_Bar, 1, "!Lone_Bar"},
 		{"1\n+ 2", .Unexpected, 2, "!Unexpected(1)"},
 		{"\xc3\xa9", .Unexpected, 1, "!Unexpected"},
 		{"= 3", .Unexpected, 1, "!Unexpected"},
-		// More after the expression.
 		{"1 2", .Unexpected, 3, "!Unexpected(1)"},
 		{"f(1) g", .Unexpected, 6, "!Unexpected(f(1))"},
-		// A missing operand.
 		{"-", .Line_Ends_Too_Soon, 2, "(-!Line_Ends_Too_Soon)"},
 		{"1 +", .Line_Ends_Too_Soon, 4, "(1 + !Line_Ends_Too_Soon)"},
 		{"2 * ", .Line_Ends_Too_Soon, 5, "(2 * !Line_Ends_Too_Soon)"},
 		{"x =", .Line_Ends_Too_Soon, 4, "!Line_Ends_Too_Soon"},
-		// Parentheses, texts and numbers.
 		{"(1 + 2", .Close_Parenthesis_Missing, 7, "!Close_Parenthesis_Missing((1 + 2))"},
 		{"(", .Line_Ends_Too_Soon, 2, "!Line_Ends_Too_Soon"},
 		{")", .Unexpected, 1, "!Unexpected"},
@@ -322,19 +335,15 @@ parse_refusals_with_their_places :: proc(t: ^testing.T) {
 		{"1 + \"abc", .Text_Without_End_Quote, 5, "(1 + !Text_Without_End_Quote)"},
 		{"9223372036854775808", .Number_Too_Large, 1, "!Number_Too_Large"},
 		{"1 - 99999999999999999999", .Number_Too_Large, 5, "(1 - !Number_Too_Large)"},
-		// A fact name: none, or a value in its place.
 		{"facts(t, 3)", .Fact_Name_Missing, 10, "facts(t, <!>)"},
 		{"facts(t, )", .Fact_Name_Missing, 10, "facts(t, <!>)"},
 		{"facts(t,", .Fact_Name_Missing, 9, "facts(t, <!>)"},
 		{"facts(t, a.B c)", .Comma_Or_Close_Missing, 14, "facts(t, <a.B>, !Comma_Or_Close_Missing)"},
-		// Field names: none, none after a ",", a text in the old form, two
-		// names with no ",".
 		{"columns(t,", .Field_Name_Missing, 11, "columns(t, {!})"},
 		{"columns(t, )", .Field_Name_Missing, 12, "columns(t, {!})"},
 		{"columns(t, a,)", .Field_Name_Missing, 14, "columns(t, {a,!})"},
 		{"columns(t, \"a b\")", .Field_Name_Missing, 12, "columns(t, {!})"},
 		{"columns(t, a b)", .Comma_Or_Close_Missing, 14, "columns(t, {a }, !Comma_Or_Close_Missing)"},
-		// The field and the operator of a condition.
 		{"where(t, = 3)", .Condition_Head_Refused, 10, "where(t, [!No_Field])"},
 		{"where(t,", .Condition_Head_Refused, 9, "where(t, [!No_Field])"},
 		{"where(t, level)", .Condition_Head_Refused, 10, "where(t, [!No_Operator])"},
@@ -342,7 +351,6 @@ parse_refusals_with_their_places :: proc(t: ^testing.T) {
 		{"where(t, a ! 1)", .Condition_Head_Refused, 10, "where(t, [!Lone_Bang])"},
 		{"where(t, a <)", .Condition_Head_Refused, 10, "where(t, [!No_Value])"},
 		{"where(t, a < ", .Condition_Head_Refused, 10, "where(t, [!No_Value])"},
-		// The value of a condition.
 		{"where(t, a = 1", .Comma_Or_Close_Missing, 15, "where(t, [a = 1], !Comma_Or_Close_Missing)"},
 		{"where(t, a = (1", .Close_Parenthesis_Missing, 16, "where(t, [a = !Close_Parenthesis_Missing(1)])"},
 	}
@@ -350,12 +358,10 @@ parse_refusals_with_their_places :: proc(t: ^testing.T) {
 		tree := parse_of(item.text)
 		form := tree_form(tree, tree.root)
 		testing.expectf(t, tree.refusal.refusal == item.refusal && tree.refusal.place.line == 1 && tree.refusal.place.column == item.column && form == item.form, "%q: %v at line %d, column %d, %q; not %v at column %d, %q", item.text, tree.refusal.refusal, tree.refusal.place.line, tree.refusal.place.column, form, item.refusal, item.column, item.form)
-		testing.expectf(t, tree.refusal.place == place_of_offset(item.text, int(tree.refusal.place.offset)), "%q: the offset %d is not at its line and column", item.text, tree.refusal.place.offset)
+		testing.expectf(t, tree.refusal.place == place_of_offset(item.text, int(tree.refusal.place.offset)), "%q: offset mismatch", item.text)
 	}
 }
 
-// The record of a refusal holds what its member says: the bytes of a text
-// too long, the refusal of the head of a condition.
 @(test)
 parse_refusal_values :: proc(t: ^testing.T) {
 	tree := parse_of("where(t, a == 1)")
@@ -366,23 +372,19 @@ parse_refusal_values :: proc(t: ^testing.T) {
 	testing.expect_value(t, tree.refusal, Refusal_Record{})
 }
 
-// The form of an argument comes from the lookup: with no lookup, `where`
-// takes expressions, so `level = 1` is a named argument, not a condition.
 @(test)
 parse_reads_the_form_of_the_lookup :: proc(t: ^testing.T) {
 	tree := parse_with("where(t, level = 1)", {})
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	testing.expect_value(t, tree_form(tree, tree.root), "where(t, level = 1)")
-	testing.expect_value(t, node_at(tree, next_of(tree, node_at(tree, tree.root).first_child)).kind, Node_Kind.Named_Argument)
+	testing.expect_value(t, node_at(tree, node_children(tree, tree.root)[1]).kind, Node_Kind.Named_Argument)
 	tree = parse_of("where(t, level = 1)")
 	testing.expect_value(t, tree_form(tree, tree.root), "where(t, [level = 1])")
 	tree = parse_with("facts(t, a.B)", {})
 	testing.expect_value(t, tree_form(tree, tree.root), "facts(t, a.B)")
-	testing.expect_value(t, node_at(tree, next_of(tree, node_at(tree, tree.root).first_child)).kind, Node_Kind.Name)
+	testing.expect_value(t, node_at(tree, node_children(tree, tree.root)[1]).kind, Node_Kind.Name)
 }
 
-// place_of_offset: a negative offset, the first byte, a line feed, the
-// byte after it, the end, and past the end.
 @(test)
 place_of_each_offset :: proc(t: ^testing.T) {
 	text := "a\nbc"
@@ -395,7 +397,6 @@ place_of_each_offset :: proc(t: ^testing.T) {
 	testing.expect_value(t, place_of_offset("", 0), Place{line = 1, column = 1, offset = 0})
 }
 
-// node_at and next_of refuse an index that names no node.
 @(test)
 node_indexes_out_of_the_tree :: proc(t: ^testing.T) {
 	tree := parse_of("f(1)")
@@ -403,12 +404,10 @@ node_indexes_out_of_the_tree :: proc(t: ^testing.T) {
 	testing.expect(t, node_at(tree, Node_Index(tree.node_count)) == nil)
 	testing.expect(t, node_at(tree, Node_Index(max(i32))) == nil)
 	testing.expect(t, node_at(tree, Node_Index(min(i32))) == nil)
-	testing.expect_value(t, next_of(tree, NO_NODE), NO_NODE)
 	testing.expect_value(t, node_text(tree, NO_NODE), "")
 	testing.expect(t, node_at(tree, Node_Index(tree.node_count - 1)) != nil)
 }
 
-// The tree of each form of a line of the console.
 @(test)
 parse_trees_of_each_form :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -416,7 +415,6 @@ parse_trees_of_each_form :: proc(t: ^testing.T) {
 		form: string,
 	}
 	cases := [?]Case {
-		// Literals, names and variables.
 		{"42", "42"},
 		{"0", "0"},
 		{"9223372036854775807", "9223372036854775807"},
@@ -425,14 +423,12 @@ parse_trees_of_each_form :: proc(t: ^testing.T) {
 		{"x", "x"},
 		{"monitor.count", "monitor.count"},
 		{"r.value", "r.value"},
-		// Calls and nested calls.
 		{"f()", "f()"},
 		{"f( )", "f()"},
 		{"f(1, \"x\", y)", "f(1, \"x\", y)"},
 		{"f(g(1), h(k(2)))", "f(g(1), h(k(2)))"},
 		{"monitor.count(\"notes\")", "monitor.count(\"notes\")"},
 		{"f(1,1,1,1,1,1,1,1,1,1,1,1)", "f(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)"},
-		// Operators: their priority and their order.
 		{"1 + 2 * 3", "(1 + (2 * 3))"},
 		{"1 - 2 - 3", "((1 - 2) - 3)"},
 		{"(1 + 2) * 3", "((1 + 2) * 3)"},
@@ -442,7 +438,6 @@ parse_trees_of_each_form :: proc(t: ^testing.T) {
 		{"2 * -3", "(2 * (-3))"},
 		{"\"a\" + \"b\"", "(\"a\" + \"b\")"},
 		{"rows(t) - rows(u)", "(rows(t) - rows(u))"},
-		// Conditions, fact names and tables.
 		{"where(t, level = Warning)", "where(t, [level = Warning])"},
 		{"where(t, block >= 12 + 1)", "where(t, [block >= (12 + 1)])"},
 		{"where(t, name != \"x\")", "where(t, [name != \"x\"])"},
@@ -453,7 +448,6 @@ parse_trees_of_each_form :: proc(t: ^testing.T) {
 		{"join(columns(a(), h), columns(b(), h, n), \"h\")", "join(columns(a(), {h}), columns(b(), {h, n}), \"h\")"},
 		{"columns(t,name,slot)", "columns(t, {name,slot})"},
 		{"columns(t, name , slot )", "columns(t, {name , slot })"},
-		// Members of an enum, by place and by name.
 		{".french", ".french"},
 		{"settings.set(keyboard_layout = .french)", "settings.set(keyboard_layout = .french)"},
 		{"f(.a_1, b = .c)", "f(.a_1, b = .c)"},
@@ -464,18 +458,16 @@ parse_trees_of_each_form :: proc(t: ^testing.T) {
 		testing.expectf(t, tree.refusal.refusal == .None && form == item.form && tree.assigned_name == "", "%q: %v %q, not %q", item.text, tree.refusal.refusal, form, item.form)
 	}
 	tree := parse_of("9223372036854775807")
-	testing.expect_value(t, node_at(tree, tree.root).integer, max(i64))
+	testing.expect_value(t, node_integer(tree, tree.root), max(i64))
 }
 
-// A variable that keeps the value of a line, and the lines that are no
-// assignment.
 @(test)
 parse_assignments :: proc(t: ^testing.T) {
 	tree := parse_of("t = rows(x)")
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	testing.expect_value(t, tree.assigned_name, "t")
 	testing.expect_value(t, tree_form(tree, tree.root), "rows(x)")
-	testing.expect_value(t, node_at(tree, tree.root).place, Place{line = 1, column = 5, offset = 4})
+	testing.expect_value(t, node_place(tree, tree.root), Place{line = 1, column = 5, offset = 4})
 
 	tree = parse_of("x")
 	testing.expect_value(t, tree.assigned_name, "")
@@ -484,10 +476,6 @@ parse_assignments :: proc(t: ^testing.T) {
 	testing.expect_value(t, tree.assigned_name, "a.b")
 }
 
-// "->" where the line goes on is the refusal Thin_Arrow at the "->", in
-// place of the refusal of the token that the parser expected: in a call, a
-// list, a literal, a let and at the end of a line. A "->" with no value
-// before it keeps its own refusal, and "=>" makes a function.
 @(test)
 parse_thin_arrow :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -496,7 +484,6 @@ parse_thin_arrow :: proc(t: ^testing.T) {
 		column:  u32,
 	}
 	cases := []Case {
-		// A "->" with no value before it is a "-" before ">".
 		{"->", .Unexpected, 2},
 		{"f(->)", .Unexpected, 4},
 		{"n -> n * n", .Thin_Arrow, 3},
@@ -518,9 +505,6 @@ parse_thin_arrow :: proc(t: ^testing.T) {
 	}
 }
 
-// `let x = value` with nothing after the value is the assignment
-// `x = value`; each other form of `let` is the expression, with its own
-// refusals in their places, as if the first reading had not happened.
 @(test)
 parse_let_assignments :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -531,8 +515,6 @@ parse_let_assignments :: proc(t: ^testing.T) {
 		form:     string,
 	}
 	cases := []Case {
-		// The refusals first: no name, a word of Lex, "==", no value, an
-		// open list, a second binding, a value then more text.
 		{"let", "", .Let_Name_Missing, 4, "let(!Let_Name_Missing)"},
 		{"let = 1", "", .Word_As_Name, 1, "!Word_As_Name"},
 		{"let in = 1", "", .Word_As_Name, 5, "let(!Word_As_Name)"},
@@ -542,11 +524,8 @@ parse_let_assignments :: proc(t: ^testing.T) {
 		{"let x = [1, 2", "", .List_Close_Missing, 14, ""},
 		{"let a = 1, b = 2", "", .Let_In_Missing, 17, "let(a = 1; b = 2; !Let_In_Missing)"},
 		{"let a = 1 a", "", .Let_In_Missing, 11, "let(a = 1; !Let_In_Missing)"},
-		// The expression let, which keeps its meaning.
 		{"let a = 1 in a", "", .None, 0, "let(a = 1; @a)"},
-		// A name that starts with let is a name.
 		{"letter = 1", "letter", .None, 0, "1"},
-		// The assignments.
 		{"let a = 1", "a", .None, 0, "1"},
 		{"let  x   =  2 * 3 ", "x", .None, 0, "(2 * 3)"},
 		{"let x = [1, 2, 3]", "x", .None, 0, ""},
@@ -562,24 +541,20 @@ parse_let_assignments :: proc(t: ^testing.T) {
 			testing.expectf(t, form == item.form, "%q: %q, not %q", item.text, form, item.form)
 		}
 	}
-	// The assigned value keeps its places in the line.
 	tree := parse_of("let x = [1, 2, 3]")
 	testing.expect_value(t, node_at(tree, tree.root).kind, Node_Kind.List_Literal)
-	testing.expect_value(t, node_at(tree, tree.root).place, Place{line = 1, column = 9, offset = 8})
+	testing.expect_value(t, node_place(tree, tree.root), Place{line = 1, column = 9, offset = 8})
 }
 
-// The place of each node, and what a condition keeps for the member of a
-// status: its value, and whether the first token is the whole value.
 @(test)
 parse_places_and_conditions :: proc(t: ^testing.T) {
 	tree := parse_of("f(1,  x)")
-	call := node_at(tree, tree.root)
-	testing.expect_value(t, call.place, Place{line = 1, column = 1, offset = 0})
+	testing.expect_value(t, node_place(tree, tree.root), Place{line = 1, column = 1, offset = 0})
 	testing.expect_value(t, node_text(tree, tree.root), "f")
-	first := call.first_child
-	testing.expect_value(t, node_at(tree, first).place.column, u32(3))
-	testing.expect_value(t, node_at(tree, next_of(tree, first)).place.column, u32(7))
-	testing.expect_value(t, next_of(tree, next_of(tree, first)), NO_NODE)
+	args := node_children(tree, tree.root)
+	testing.expect_value(t, len(args), 2)
+	testing.expect_value(t, node_place(tree, args[0]).column, u32(3))
+	testing.expect_value(t, node_place(tree, args[1]).column, u32(7))
 
 	Case :: struct {
 		text:         string,
@@ -595,60 +570,85 @@ parse_places_and_conditions :: proc(t: ^testing.T) {
 	}
 	for item in cases {
 		tree = parse_of(item.text)
-		condition := node_at(tree, next_of(tree, node_at(tree, tree.root).first_child))
-		testing.expectf(t, condition != nil && condition.kind == .Condition && condition.member_alone == item.member_alone, "%q: member_alone is not %v", item.text, item.member_alone)
-		if condition != nil {
-			testing.expect_value(t, condition.condition_head.field, "level")
-			testing.expect_value(t, condition.condition_head.comparison, console_condition.Comparison.Equal)
-			testing.expect_value(t, condition.place.column, u32(10))
-			testing.expect_value(t, node_text(tree, next_of(tree, node_at(tree, tree.root).first_child)), "level =")
+		cond_idx := node_children(tree, tree.root)[1]
+		condition := node_at(tree, cond_idx)
+		extra := node_condition(tree, cond_idx)
+		testing.expectf(t, condition != nil && condition.kind == .Condition && extra != nil && extra.member_alone == item.member_alone, "%q: member_alone is not %v", item.text, item.member_alone)
+		if extra != nil {
+			testing.expect_value(t, extra.head.field, "level")
+			testing.expect_value(t, extra.head.comparison, console_condition.Comparison.Equal)
+			testing.expect_value(t, node_place(tree, cond_idx).column, u32(10))
+			testing.expect_value(t, node_text(tree, cond_idx), "level =")
 		}
 	}
 }
 
-// The parser reads the nested form of a line with "|>": its tree is the
-// tree of the same line with calls in calls.
+// Native |> parsing (no text-level pipe_nested_form) preserving Form_Lookup
+// parameter offsets, placeholder validation, and exact source byte offsets.
 @(test)
-parse_nested_forms_of_the_pipe :: proc(t: ^testing.T) {
-	memory: [TEXT_BYTES_MOST]u8
-	stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+parse_native_pipe_and_placeholders :: proc(t: ^testing.T) {
 	Case :: struct {
-		piped:  string,
-		nested: string,
+		text: string,
+		form: string,
 	}
 	cases := [?]Case {
-		{"processes() |> where(name = \"server\")", "where(processes(), name = \"server\")"},
-		{"x |> h |> g(1) |> f", "f(g(h(x), 1))"},
-		{"1 + 2 |> text", "text(1 + 2)"},
-		{"t = processes() |> rows", "t = rows(processes())"},
-		{"where(x |> f, a = 1)", "where(f(x), a = 1)"},
-		{"log.records() |> facts(storage.Bad_Block) |> where(block = 12)", "where(facts(log.records(), storage.Bad_Block), block = 12)"},
-		// The placeholder, and the pieces of the forms of records.
-		{"x |> f(b, _)", "f(b, x)"},
-		{"x |> f(n = _)", "f(n = x)"},
-		{"x |> f(_, y) |> g(1, _)", "g(1, f(x, y))"},
-		{"f(x |> g(_), y)", "f(g(x), y)"},
-		{"f(n = x |> g)", "f(n = g(x))"},
-		{"{a = x |> g, b = 2}", "{a = g(x), b = 2}"},
-		{"x |> f({a = 1, b = 2})", "f(x, {a = 1, b = 2})"},
-		{"let a = x |> g in a |> h", "let a = g(x) in h(a)"},
-		{"x |> f(let a = 1, b = 2 in a)", "f(x, let a = 1, b = 2 in a)"},
+		{"processes() |> where(name = \"server\")", "(processes() |> where([name = \"server\"]))"},
+		{"processes() |> where(_, name = \"server\")", "(processes() |> where(_, [name = \"server\"]))"},
+		{"processes() |> columns(name, slot)", "(processes() |> columns({name, slot}))"},
+		{"log.records() |> facts(storage.Bad_Block) |> where(block = 12)", "((log.records() |> facts(<storage.Bad_Block>)) |> where([block = 12]))"},
+		{"x |> h |> g(1) |> f", "(((x |> h()) |> g(1)) |> f())"},
+		{"1 + 2 |> text", "((1 + 2) |> text())"},
+		{"r with {a = 1} |> f", "((r with #{a = 1}) |> f())"},
+		{"x |> f(b, _)", "(x |> f(b, _))"},
+		{"x |> f(n = _)", "(x |> f(n = _))"},
+		{"x |> f(_, y) |> g(1, _)", "((x |> f(_, y)) |> g(1, _))"},
+		{"f(x |> g(_), y)", "f((x |> g(_)), y)"},
+		{"f(n = x |> g)", "f(n = (x |> g()))"},
+		{"{a = x |> g, b = 2}", "#{a = (x |> g()), b = 2}"},
+		{"let a = x |> g in a |> h", "let(a = (x |> g()); (@a |> h()))"},
 	}
 	for item in cases {
-		form := console_language.pipe_nested_form(item.piped, console_language.expression_start(item.piped), memory[:], stages[:])
-		if !testing.expectf(t, form.refusal == .None, "%q: %v", item.piped, form.refusal) {
-			continue
-		}
-		piped := parse_of(form.nested)
-		nested := parse_of(item.nested)
-		testing.expectf(t, piped.refusal.refusal == .None && nested.refusal.refusal == .None, "%q: %v, %v", item.piped, piped.refusal.refusal, nested.refusal.refusal)
-		testing.expect_value(t, tree_form(piped, piped.root), tree_form(nested, nested.root))
-		testing.expect_value(t, piped.assigned_name, nested.assigned_name)
+		tree := parse_of(item.text)
+		form := tree_form(tree, tree.root)
+		testing.expectf(t, tree.refusal.refusal == .None && form == item.form, "%q: %v %q, not %q", item.text, tree.refusal.refusal, form, item.form)
+	}
+
+	// Assignment with native pipe preserves exact offset of RHS.
+	tree := parse_of("t = processes() |> rows")
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	testing.expect_value(t, tree.assigned_name, "t")
+	testing.expect_value(t, tree_form(tree, tree.root), "(processes() |> rows())")
+	_, rhs := node_binary_children(tree, tree.root)
+	testing.expect_value(t, node_place(tree, rhs).offset, u32(19))
+
+	// Refusals for malformed |> and _ placement.
+	Refusal_Case :: struct {
+		text:    string,
+		refusal: Refusal,
+	}
+	refusals := [?]Refusal_Case {
+		{"|> f", .Pipe_No_Left},
+		{"a |>", .Pipe_Line_End},
+		{"a |> 12", .Pipe_Not_A_Call},
+		{"a |> \"x\"", .Pipe_Not_A_Call},
+		{"a |> (f)", .Pipe_Not_A_Call},
+		{"a |> |> f", .Pipe_Not_A_Call},
+		{"a | f", .Lone_Bar},
+		{"a |> f(_ + 1)", .Placeholder_Not_Whole},
+		{"a |> f((_))", .Placeholder_Not_Whole},
+		{"a |> f({ x = _ })", .Placeholder_Not_Whole},
+		{"a |> f([_])", .Placeholder_Not_Whole},
+		{"a |> f(_, _)", .Placeholder_Twice},
+		{"a |> f(g(_))", .Placeholder_Nested},
+		{"f(_)", .Placeholder_Without_Pipe},
+		{"a |> f(1,2,3,4,5,6,7,8,9,10,11,12)", .Too_Many_Arguments},
+	}
+	for item in refusals {
+		rt := parse_of(item.text)
+		testing.expectf(t, rt.refusal.refusal == item.refusal, "%q: got %v, expected %v", item.text, rt.refusal.refusal, item.refusal)
 	}
 }
 
-// Each refusal of the forms of records, at its place, with the tree before
-// it: a literal, a named argument, a let, `with` and the words of Lex.
 @(test)
 parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -658,7 +658,6 @@ parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 		form:    string,
 	}
 	cases := [?]Case {
-		// A record literal: no name, no "=", no end, a field twice.
 		{"{", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
 		{"{= 1}", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
 		{"{1}", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
@@ -672,23 +671,18 @@ parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 		{"{a = 1, a = 2}", .Literal_Field_Twice, 9, "#{a = 1, !Literal_Field_Twice}"},
 		{"{_ = 1}", .Word_As_Name, 2, "#{!Word_As_Name}"},
 		{"{in = 1}", .Word_As_Name, 2, "#{!Word_As_Name}"},
-		// Named arguments: a name twice, an argument with no name after
-		// one, a word of Lex as a name; "==" is no "=".
 		{"f(a = 1, 2)", .Positional_After_Named, 10, "f(a = 1, !Positional_After_Named)"},
 		{"f(a = 1, a = 2)", .Named_Argument_Twice, 10, "f(a = 1, !Named_Argument_Twice)"},
 		{"f(_ = 1)", .Word_As_Name, 3, "f(!Word_As_Name)"},
 		{"f(with = 1)", .Word_As_Name, 3, "f(!Word_As_Name)"},
 		{"f(a == 1)", .Comma_Or_Close_Missing, 5, "f(a, !Comma_Or_Close_Missing)"},
 		{"f(a = )", .Unexpected, 7, "f(a = !Unexpected)"},
-		// A member: a "." with no name after it, a digit or a space after
-		// the ".", and a second "." after the name.
 		{"f(a = .)", .Unexpected, 7, "f(a = !Unexpected)"},
 		{"f(.1)", .Unexpected, 3, "f(!Unexpected)"},
 		{"f(. a)", .Unexpected, 3, "f(!Unexpected)"},
 		{".", .Unexpected, 1, "!Unexpected"},
 		{"f(.a.b)", .Comma_Or_Close_Missing, 5, "f(.a, !Comma_Or_Close_Missing)"},
 		{"f(a = .french", .Comma_Or_Close_Missing, 14, "f(a = .french, !Comma_Or_Close_Missing)"},
-		// A let: no name, no "=", no "in", a name twice, no body.
 		{"let", .Let_Name_Missing, 4, "let(!Let_Name_Missing)"},
 		{"let 1 = 2 in 3", .Let_Name_Missing, 5, "let(!Let_Name_Missing)"},
 		{"let a", .Let_Equal_Missing, 6, "let(!Let_Equal_Missing)"},
@@ -697,8 +691,6 @@ parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 		{"let a = 1, a = 2 in a", .Let_Name_Twice, 12, "let(a = 1; !Let_Name_Twice)"},
 		{"let in = 1 in 2", .Word_As_Name, 5, "let(!Word_As_Name)"},
 		{"let a = 1 in", .Line_Ends_Too_Soon, 13, "let(a = 1; !Line_Ends_Too_Soon)"},
-		// `with` with no right side, and the words where a value or a
-		// variable is read.
 		{"r with", .Line_Ends_Too_Soon, 7, "(r with !Line_Ends_Too_Soon)"},
 		{"with r", .Word_As_Name, 1, "!Word_As_Name"},
 		{"_", .Word_As_Name, 1, "!Word_As_Name"},
@@ -712,29 +704,24 @@ parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 		tree := parse_of(item.text)
 		form := tree_form(tree, tree.root)
 		testing.expectf(t, tree.refusal.refusal == item.refusal && tree.refusal.place.column == item.column && form == item.form, "%q: %v at column %d, %q; not %v at column %d, %q", item.text, tree.refusal.refusal, tree.refusal.place.column, form, item.refusal, item.column, item.form)
-		testing.expectf(t, tree.refusal.place == place_of_offset(item.text, int(tree.refusal.place.offset)), "%q: the offset %d is not at its line and column", item.text, tree.refusal.place.offset)
+		testing.expectf(t, tree.refusal.place == place_of_offset(item.text, int(tree.refusal.place.offset)), "%q: offset mismatch", item.text)
 	}
-	// The record names the word or the name that it refuses.
 	tree := parse_of("{a = 1, a = 2}")
-	testing.expect_value(t, node_text(tree, next_of(tree, node_at(tree, tree.root).first_child)), "a")
+	testing.expect_value(t, node_text(tree, node_children(tree, tree.root)[1]), "a")
 	tree = parse_of("let _ = 1 in 2")
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Word_As_Name)
-	testing.expect_value(t, node_text(tree, node_at(tree, tree.root).first_child), "_")
+	testing.expect_value(t, node_text(tree, node_children(tree, tree.root)[0]), "_")
 }
 
-// The edges of a literal: none of its fields, the most fields that a line
-// holds, and the deepest nesting of literals, then one more level.
 @(test)
 parse_literal_edges :: proc(t: ^testing.T) {
 	tree := parse_of("{}")
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	testing.expect_value(t, tree_form(tree, tree.root), "#{}")
-	testing.expect_value(t, node_at(tree, tree.root).first_child, NO_NODE)
+	testing.expect_value(t, len(node_children(tree, tree.root)), 0)
 	tree = parse_of("{ }")
 	testing.expect_value(t, tree_form(tree, tree.root), "#{}")
 
-	// Fields of three letters, "xab=1," each: the names after "x" of two
-	// letters, none a word of Lex, which a line holds.
 	builder := strings.builder_make(context.temp_allocator)
 	strings.write_string(&builder, "{")
 	most := min((TEXT_BYTES_MOST - 2) / 6, 26 * 26)
@@ -752,25 +739,31 @@ parse_literal_edges :: proc(t: ^testing.T) {
 	testing.expect(t, len(widest) <= TEXT_BYTES_MOST)
 	tree = parse_of(widest)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
-	fields := 0
-	for field := node_at(tree, tree.root).first_child; field != NO_NODE; field = next_of(tree, field) {
-		fields += 1
-	}
-	testing.expect_value(t, fields, most)
+	testing.expect_value(t, len(node_children(tree, tree.root)), most)
 
-	// "{a=" and "}": the deepest that the depth bound takes.
 	levels := nesting_deepest(t, "{a=", "1", "}")
 	deepest := strings.concatenate({strings.repeat("{a=", levels, context.temp_allocator), "1", strings.repeat("}", levels, context.temp_allocator)}, context.temp_allocator)
 	tree = parse_of(deepest)
 	depth := 0
-	for index := tree.root; node_at(tree, index).kind == .Record_Literal; index = node_at(tree, node_at(tree, index).first_child).first_child {
+	for index := tree.root; node_at(tree, index).kind == .Record_Literal; {
 		depth += 1
+		index = node_child(tree, node_children(tree, index)[0])
 	}
 	testing.expect_value(t, depth, levels)
+
+	// Duplicate detection past DUP_HASH_THRESHOLD (16) using String_Interner.
+	storage := make_decl_storage(512, context.temp_allocator)
+	db := strings.builder_make_len_cap(0, 1024, context.temp_allocator)
+	strings.write_string(&db, "{\n")
+	for i in 0 ..< 40 {
+		fmt.sbprintf(&db, "  f_%02d = %d,\n", i, i)
+	}
+	strings.write_string(&db, "  f_05 = 999,\n}\n")
+	dup_tree := new(Syntax_Tree, context.temp_allocator)
+	parse_declaration(strings.to_string(db), storage, dup_tree)
+	testing.expect_value(t, dup_tree.refusal.refusal, Refusal.Literal_Field_Twice)
 }
 
-// The trees of the forms of records, and the binding of each name that a
-// let reads.
 @(test)
 parse_trees_of_the_forms :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -778,23 +771,18 @@ parse_trees_of_the_forms :: proc(t: ^testing.T) {
 		form: string,
 	}
 	cases := [?]Case {
-		// Record literals.
 		{"{a = 1}", "#{a = 1}"},
 		{"{ a = 1 , b = 2 }", "#{a = 1, b = 2}"},
 		{"{a = 1, b = \"x\", c = f(2)}", "#{a = 1, b = \"x\", c = f(2)}"},
 		{"{a = {b = 1}}", "#{a = #{b = 1}}"},
 		{"f({x = 1}, 2)", "f(#{x = 1}, 2)"},
-		// Named arguments.
 		{"f(x, by = 2)", "f(x, by = 2)"},
 		{"f(a = 1, b = {c = 2})", "f(a = 1, b = #{c = 2})"},
 		{"sum_values(x_y)", "sum_values(x_y)"},
-		// `with`: the lowest priority, from the left.
 		{"r with {width = 10}", "(r with #{width = 10})"},
 		{"r with {a = 1} with {b = 2}", "((r with #{a = 1}) with #{b = 2})"},
 		{"r with s + t", "(r with (s + t))"},
 		{"withdraw(x)", "withdraw(x)"},
-		// let: a name of a binding is bound, a later one too, and an inner
-		// let hides an outer one.
 		{"let a = 1 in a + 1", "let(a = 1; (@a + 1))"},
 		{"let a = 1, b = a + 1 in {x = a, y = b}", "let(a = 1; b = (@a + 1); #{x = @a, y = @b})"},
 		{"let a = b, b = 1 in a", "let(a = @b; b = 1; @a)"},
@@ -810,29 +798,24 @@ parse_trees_of_the_forms :: proc(t: ^testing.T) {
 		testing.expectf(t, tree.refusal.refusal == .None && form == item.form, "%q: %v %q, not %q", item.text, tree.refusal.refusal, form, item.form)
 	}
 
-	// An inner let hides an outer one: the name reads the inner binding.
 	tree := parse_of("let a = 1 in let a = 2 in a")
 	testing.expect_value(t, tree_form(tree, tree.root), "let(a = 1; let(a = 2; @a))")
-	inner := next_of(tree, node_at(tree, tree.root).first_child)
-	inner_binding := node_at(tree, inner).first_child
-	body := next_of(tree, inner_binding)
-	testing.expect_value(t, node_at(tree, body).binding, inner_binding)
+	inner := node_children(tree, tree.root)[1]
+	inner_children := node_children(tree, inner)
+	inner_binding := inner_children[0]
+	body := inner_children[1]
+	testing.expect_value(t, node_binding(tree, body), inner_binding)
 
-	// An assignment of a let, and its places.
 	tree = parse_of("x = let a = 1 in a")
 	testing.expect_value(t, tree.assigned_name, "x")
 	testing.expect_value(t, node_at(tree, tree.root).kind, Node_Kind.Let)
-	testing.expect_value(t, node_at(tree, tree.root).place.column, u32(5))
+	testing.expect_value(t, node_place(tree, tree.root).column, u32(5))
 	tree = parse_of("{width = 1}")
-	field := node_at(tree, tree.root).first_child
-	testing.expect_value(t, node_at(tree, field).place.column, u32(2))
-	testing.expect_value(t, node_at(tree, node_at(tree, field).first_child).place.column, u32(10))
+	field := node_children(tree, tree.root)[0]
+	testing.expect_value(t, node_place(tree, field).column, u32(2))
+	testing.expect_value(t, node_place(tree, node_child(tree, field)).column, u32(10))
 }
 
-// The names of a module file that the palette puts in a line: each text
-// that adds a call, an argument, a text or a member to the line is no name,
-// and neither is a word of Lex, a dotted name or a name that starts with a
-// digit. A module file with such a name gives no command.
 @(test)
 a_name_of_a_module_file_adds_nothing_to_a_line :: proc(t: ^testing.T) {
 	injected := []string {
@@ -848,8 +831,6 @@ a_name_of_a_module_file_adds_nothing_to_a_line :: proc(t: ^testing.T) {
 	}
 }
 
-// Each refusal of a function and of a list, at its place, with the tree
-// before it.
 @(test)
 parse_refusals_of_functions_and_lists :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -859,8 +840,6 @@ parse_refusals_of_functions_and_lists :: proc(t: ^testing.T) {
 		form:    string,
 	}
 	cases := [?]Case {
-		// A parameter that is no name, a word of Lex, a name with a dot, a
-		// name twice, no ',' between two names, 13 parameters.
 		{"(1) => 2", .Parameter_Name_Missing, 2, "fn(!Parameter_Name_Missing)"},
 		{"(x,) => 1", .Parameter_Name_Missing, 4, "fn(x, !Parameter_Name_Missing)"},
 		{"(, x) => 1", .Parameter_Name_Missing, 2, "fn(!Parameter_Name_Missing)"},
@@ -873,16 +852,13 @@ parse_refusals_of_functions_and_lists :: proc(t: ^testing.T) {
 		{"(x, y, x) => 1", .Parameter_Twice, 8, "fn(x, y, !Parameter_Twice)"},
 		{"(x y) => 1", .Comma_Or_Close_Missing, 4, "fn(x, !Comma_Or_Close_Missing)"},
 		{"(a,b,c,d,e,f,g,h,i,j,k,l,m) => 1", .Too_Many_Parameters, 26, "fn(a, b, c, d, e, f, g, h, i, j, k, l, !Too_Many_Parameters)"},
-		// A body that is missing or not whole.
 		{"(x) =>", .Line_Ends_Too_Soon, 7, "fn(x => !Line_Ends_Too_Soon)"},
 		{"() =>", .Line_Ends_Too_Soon, 6, "fn( => !Line_Ends_Too_Soon)"},
 		{"(x) => 1 +", .Line_Ends_Too_Soon, 11, "fn(x => (1 + !Line_Ends_Too_Soon))"},
 		{"(x) => 1 => 2", .Unexpected, 10, "!Unexpected(fn(x => 1))"},
-		// "=>" is no "=": no assignment, no named argument.
 		{"x => 1", .Unexpected, 3, "!Unexpected(x)"},
 		{"x=>1", .Unexpected, 2, "!Unexpected(x)"},
 		{"f(a => 1)", .Comma_Or_Close_Missing, 5, "f(a, !Comma_Or_Close_Missing)"},
-		// A list: no "]", no "," between two items, an item missing.
 		{"[", .Line_Ends_Too_Soon, 2, "[!Line_Ends_Too_Soon]"},
 		{"[1, 2", .List_Close_Missing, 6, "[1, 2, !List_Close_Missing]"},
 		{"[1 2]", .List_Close_Missing, 4, "[1, !List_Close_Missing]"},
@@ -895,16 +871,13 @@ parse_refusals_of_functions_and_lists :: proc(t: ^testing.T) {
 		tree := parse_of(item.text)
 		form := tree_form(tree, tree.root)
 		testing.expectf(t, tree.refusal.refusal == item.refusal && tree.refusal.place.column == item.column && form == item.form, "%q: %v at column %d, %q; not %v at column %d, %q", item.text, tree.refusal.refusal, tree.refusal.place.column, form, item.refusal, item.column, item.form)
-		testing.expectf(t, tree.refusal.place == place_of_offset(item.text, int(tree.refusal.place.offset)), "%q: the offset %d is not at its line and column", item.text, tree.refusal.place.offset)
+		testing.expectf(t, tree.refusal.place == place_of_offset(item.text, int(tree.refusal.place.offset)), "%q: offset mismatch", item.text)
 	}
-	// The record names the parameter that it refuses.
 	tree := parse_of("(x, x) => 1")
-	refused := next_of(tree, node_at(tree, tree.root).first_child)
+	refused := node_children(tree, tree.root)[1]
 	testing.expect_value(t, node_text(tree, refused), "x")
 }
 
-// The trees of functions and lists, the binding of each name of a body,
-// and the function that holds each node.
 @(test)
 parse_trees_of_functions_and_lists :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -931,7 +904,6 @@ parse_trees_of_functions_and_lists :: proc(t: ^testing.T) {
 		{"[ ]", "[]"},
 		{"[[], [[]]]", "[[], [[]]]"},
 		{"[1 + 2, \"a\", {b = 3}]", "[(1 + 2), \"a\", #{b = 3}]"},
-		// A '(' with no "=>" after its group stays a group.
 		{"(1)", "1"},
 		{"(a) + 1", "(a + 1)"},
 		{"(x)", "x"},
@@ -943,40 +915,35 @@ parse_trees_of_functions_and_lists :: proc(t: ^testing.T) {
 		testing.expectf(t, tree.refusal.refusal == .None && form == item.form, "%q: %v %q, not %q", item.text, tree.refusal.refusal, form, item.form)
 	}
 
-	// An inner parameter hides an outer one, and a parameter hides a
-	// binding of a let around the function.
 	tree := parse_of("(x) => (x) => x")
 	testing.expect_value(t, tree_form(tree, tree.root), "fn(x => fn(x => @x))")
-	inner := next_of(tree, node_at(tree, tree.root).first_child)
-	inner_parameter := node_at(tree, inner).first_child
-	testing.expect_value(t, node_at(tree, next_of(tree, inner_parameter)).binding, inner_parameter)
-	tree = parse_of("let x = 1 in (x) => x")
-	function := next_of(tree, node_at(tree, tree.root).first_child)
-	parameter := node_at(tree, function).first_child
-	testing.expect_value(t, node_at(tree, next_of(tree, parameter)).binding, parameter)
+	inner := node_children(tree, tree.root)[1]
+	inner_c := node_children(tree, inner)
+	testing.expect_value(t, node_binding(tree, inner_c[1]), inner_c[0])
 
-	// Each node knows the innermost function that holds it; the function
-	// itself is held by the one around it.
+	tree = parse_of("let x = 1 in (x) => x")
+	function := node_children(tree, tree.root)[1]
+	fn_c := node_children(tree, function)
+	testing.expect_value(t, node_binding(tree, fn_c[1]), fn_c[0])
+
 	tree = parse_of("(x) => (y) => x")
 	outer := tree.root
-	testing.expect_value(t, node_at(tree, outer).function, NO_NODE)
-	outer_parameter := node_at(tree, outer).first_child
-	testing.expect_value(t, node_at(tree, outer_parameter).function, outer)
-	inner = next_of(tree, outer_parameter)
-	testing.expect_value(t, node_at(tree, inner).function, outer)
-	inner_parameter = node_at(tree, inner).first_child
-	testing.expect_value(t, node_at(tree, inner_parameter).function, inner)
-	testing.expect_value(t, node_at(tree, next_of(tree, inner_parameter)).function, inner)
-	// The function keeps the place of its '(' and its bytes are "=>".
+	testing.expect_value(t, node_function(tree, outer), NO_NODE)
+	outer_c := node_children(tree, outer)
+	testing.expect_value(t, node_function(tree, outer_c[0]), outer)
+	inner = outer_c[1]
+	testing.expect_value(t, node_function(tree, inner), outer)
+	inner_c = node_children(tree, inner)
+	testing.expect_value(t, node_function(tree, inner_c[0]), inner)
+	testing.expect_value(t, node_function(tree, inner_c[1]), inner)
+
 	tree = parse_of("1 + (a) => a")
-	function = next_of(tree, node_at(tree, tree.root).first_child)
-	testing.expect_value(t, node_at(tree, function).integer, i64(4))
-	testing.expect_value(t, node_text(tree, function), "=>")
+	_, fn_rhs := node_binary_children(tree, tree.root)
+	open, _ := node_function_offsets(tree, fn_rhs)
+	testing.expect_value(t, open, 4)
+	testing.expect_value(t, node_text(tree, fn_rhs), "=>")
 }
 
-// A comment gives no node: a line can end with one; a line of only a
-// comment holds no expression; "//" in a text is a part of the text; a '/'
-// alone and "/ /" stay faults.
 @(test)
 parse_comments :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -1005,37 +972,31 @@ parse_comments :: proc(t: ^testing.T) {
 	}
 	tree := parse_of("x = 1 // a variable")
 	testing.expect_value(t, tree.assigned_name, "x")
-	// The nodes: the comment takes none.
 	tree = parse_of("1 // 2 + 3")
 	testing.expect_value(t, tree.node_count, 1)
 }
 
-// The edges of a function and of a list: no parameter, the most parameters
-// that a call takes, the deepest nesting of functions that a line holds,
-// then one more level; the most items that a line holds.
 @(test)
 parse_function_edges :: proc(t: ^testing.T) {
 	tree := parse_of("(a,b,c,d,e,f,g,h,i,j,k,l) => a")
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	parameters := 0
-	for child := node_at(tree, tree.root).first_child; child != NO_NODE; child = next_of(tree, child) {
+	for child in node_children(tree, tree.root) {
 		if node_at(tree, child).kind == .Parameter {
 			parameters += 1
 		}
 	}
 	testing.expect_value(t, parameters, ARGUMENT_CAPACITY)
 
-	// "()=>" for each level: the deepest that the depth bound takes.
 	levels := nesting_deepest(t, "()=>", "1", "")
 	deepest := strings.concatenate({strings.repeat("()=>", levels, context.temp_allocator), "1"}, context.temp_allocator)
 	tree = parse_of(deepest)
 	depth := 0
-	for index := tree.root; node_at(tree, index).kind == .Function; index = node_at(tree, index).first_child {
+	for index := tree.root; node_at(tree, index).kind == .Function; index = node_children(tree, index)[0] {
 		depth += 1
 	}
 	testing.expect_value(t, depth, levels)
 
-	// "1," for each item: the nodes of the line hold them all.
 	builder := strings.builder_make(context.temp_allocator)
 	strings.write_string(&builder, "[")
 	items := (TEXT_BYTES_MOST - 2 + 1) / 2
@@ -1050,15 +1011,9 @@ parse_function_edges :: proc(t: ^testing.T) {
 	testing.expect(t, len(widest) <= TEXT_BYTES_MOST)
 	tree = parse_of(widest)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
-	count := 0
-	for child := node_at(tree, tree.root).first_child; child != NO_NODE; child = next_of(tree, child) {
-		count += 1
-	}
-	testing.expect_value(t, count, items)
+	testing.expect_value(t, len(node_children(tree, tree.root)), items)
 }
 
-// Hash literals, call on a record literal, conditionals, comparisons, and
-// postfix field selection: refusals first, then valid trees.
 @(test)
 parse_layer5_forms_and_refusals :: proc(t: ^testing.T) {
 	VALID_HASH :: "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -1069,20 +1024,17 @@ parse_layer5_forms_and_refusals :: proc(t: ^testing.T) {
 		column:  u32,
 	}
 	refusals := [?]Refusal_Case {
-		// Malformed hash literals: empty, short, 63 hex, 65 hex, uppercase, non-hex.
 		{"blake3:", .Hash_Not_Valid, 1},
 		{"blake3:0", .Hash_Not_Valid, 1},
 		{"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde", .Hash_Not_Valid, 1},
 		{"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0", .Hash_Not_Valid, 1},
 		{"blake3:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef", .Hash_Not_Valid, 1},
 		{"module(blake3:zzzz)", .Hash_Not_Valid, 8},
-		// Conditionals missing `then`, `else`, or branch expressions.
 		{"if true", .If_Then_Missing, 8},
 		{"if true 1 else 2", .If_Then_Missing, 9},
 		{"if true then 1", .If_Else_Missing, 15},
 		{"if true then 1 2", .If_Else_Missing, 16},
 		{"if true then 1 else", .Line_Ends_Too_Soon, 20},
-		// New Lex words refused as names.
 		{"then", .Word_As_Name, 1},
 		{"else", .Word_As_Name, 1},
 		{"if = 1", .Word_As_Name, 1},
@@ -1122,11 +1074,9 @@ parse_layer5_forms_and_refusals :: proc(t: ^testing.T) {
 	}
 }
 
-// Multi-line .lex declaration parsing: external node storage, newlines, tabs,
-// comments, trailing commas, depth bound, and size bound.
 @(test)
 parse_multiline_declarations_and_bounds :: proc(t: ^testing.T) {
-	nodes := make([]Node, 1024, context.temp_allocator)
+	storage := make_decl_storage(1024, context.temp_allocator)
 	tree := new(Syntax_Tree, context.temp_allocator)
 
 	source := `// A multi-line project declaration.
@@ -1146,35 +1096,31 @@ project {
 			1,
 			2,
 			double(3),
-		],
+		] |> map((x) => x + 1),
 	},
 }
 `
-	parse_declaration(source, nodes, tree)
+	parse_declaration(source, storage, tree)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
 	testing.expect(t, tree.node_count > 10)
-	// Line numbers are tracked across newlines.
 	root := node_at(tree, tree.root)
-	testing.expect(t, root != nil && root.kind == .Let && root.place.line == 2)
+	testing.expect(t, root != nil && root.kind == .Let && node_place(tree, tree.root).line == 2)
 
-	// Top-level console assignment is refused in declaration mode (parsed as equality expression or unexpected).
-	// Wait: "a = 1" is a comparison expression in declaration mode, not an assignment!
-	parse_declaration("a = 1", nodes, tree)
+	parse_declaration("a = 1", storage, tree)
 	testing.expect_value(t, tree.assigned_name, "")
 	testing.expect_value(t, node_at(tree, tree.root).kind, Node_Kind.Binary)
-	testing.expect_value(t, node_at(tree, tree.root).operator, Operator.Equal)
+	testing.expect_value(t, node_operator(tree, tree.root), Operator.Equal)
 
-	// Depth bound prevents stack overflow on hostile deeply nested input.
 	deep := strings.concatenate({strings.repeat("(", 300, context.temp_allocator), "1", strings.repeat(")", 300, context.temp_allocator)}, context.temp_allocator)
-	parse_declaration(deep, nodes, tree, DECLARATION_TEXT_BYTES_MOST, 64)
+	parse_declaration(deep, storage, tree, DECLARATION_TEXT_BYTES_MOST, 64)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Nesting_Too_Deep)
 
-	// Node buffer exhaustion stops cleanly with Nodes_Full.
-	tiny_nodes: [4]Node
-	parse_declaration("{ a = 1, b = 2, c = 3 }", tiny_nodes[:], tree)
+	tiny_nodes: [4]Ast_Node
+	tiny_extra: [4]Node_Index
+	tiny_scratch: [4]Node_Index
+	parse_declaration("{ a = 1, b = 2, c = 3 }", {nodes = tiny_nodes[:], extra_children = tiny_extra[:], scratch_children = tiny_scratch[:]}, tree)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Nodes_Full)
 
-	// Text past bound stops cleanly with Text_Too_Long.
-	parse_declaration("1 + 2 + 3", nodes, tree, text_bytes_most = 4)
+	parse_declaration("1 + 2 + 3", storage, tree, text_bytes_most = 4)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 }

@@ -6,9 +6,9 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
-import "modus:console_language"
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
+import "modus:hash_table"
 import "modus:lex_parser"
 
 // Opt-in performance measurement suite for Lex (M1-M5, W1-W3).
@@ -304,8 +304,8 @@ lex_measure_suite :: proc(t: ^testing.T) {
 
 	fmt.println("================================================================")
 	fmt.println("LEX BENCHMARK SUITE (v1 baseline / layer comparison)")
-	fmt.printfln("sizeof(lex_parser.Node)=%d, sizeof(lex_parser.Syntax_Tree)=%d, sizeof(Value)=%d, sizeof(Thunk)=%d, sizeof(Declaration_Workspace)=%d",
-		size_of(lex_parser.Node), size_of(lex_parser.Syntax_Tree), size_of(Value), size_of(Thunk), size_of(Declaration_Workspace))
+	fmt.printfln("sizeof(lex_parser.Ast_Node)=%d, sizeof(lex_parser.Syntax_Tree)=%d, sizeof(Value)=%d, sizeof(Thunk)=%d, sizeof(Declaration_Workspace)=%d",
+		size_of(lex_parser.Ast_Node), size_of(lex_parser.Syntax_Tree), size_of(Value), size_of(Thunk), size_of(Declaration_Workspace))
 	fmt.println("================================================================")
 
 	samples: [MEASURE_ROUNDS]i64
@@ -313,13 +313,39 @@ lex_measure_suite :: proc(t: ^testing.T) {
 	// ---- M1: parse large (~180 KiB: 4096-field record + 4096-item list)
 	{
 		src := generate_m1_source(context.temp_allocator)
-		nodes := make([]lex_parser.Node, 65536, context.temp_allocator)
+		N :: 65536
+		M1_INTERN_SYMS :: 8192
+		M1_DUP_CAP :: 8192
+		intern_groups := hash_table.slice_index_groups_for_entries(M1_INTERN_SYMS)
+		dup_groups := hash_table.slice_index_groups_for_entries(M1_DUP_CAP)
+		interner, intern_ok := lex_parser.interner_init(
+			make([]u8, intern_groups * hash_table.GROUP_WIDTH, context.temp_allocator),
+			make([]u32, intern_groups * hash_table.GROUP_WIDTH, context.temp_allocator),
+			make([]lex_parser.Sym_Span, M1_INTERN_SYMS, context.temp_allocator),
+			make([]u8, 256 * 1024, context.temp_allocator),
+			0x9e3779b97f4a7c15,
+		)
+		assert(intern_ok)
+		storage := lex_parser.Tree_Storage {
+			nodes            = make([]lex_parser.Ast_Node, N, context.temp_allocator),
+			extra_children   = make([]lex_parser.Node_Index, N, context.temp_allocator),
+			scratch_children = make([]lex_parser.Node_Index, N, context.temp_allocator),
+			int_consts       = make([]i64, 4096, context.temp_allocator),
+			bindings         = make([]lex_parser.Node_Index, N, context.temp_allocator),
+			functions        = make([]lex_parser.Node_Index, N, context.temp_allocator),
+			interner         = &interner,
+			dup_controls     = make([]u8, dup_groups * hash_table.GROUP_WIDTH, context.temp_allocator),
+			dup_refs         = make([]u32, dup_groups * hash_table.GROUP_WIDTH, context.temp_allocator),
+			dup_keys         = make([]u64, M1_DUP_CAP, context.temp_allocator),
+			dup_nodes        = make([]lex_parser.Node_Index, M1_DUP_CAP, context.temp_allocator),
+		}
 		tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
 		node_count := 0
 		refusal := lex_parser.Refusal.None
 		for r in 0 ..< MEASURE_ROUNDS {
+			lex_parser.interner_clear(&interner)
 			start := time.tick_now()
-			lex_parser.parse_declaration(src, nodes, tree)
+			lex_parser.parse_declaration(src, storage, tree)
 			samples[r] = time.duration_nanoseconds(time.tick_since(start))
 			node_count = tree.node_count
 			refusal = tree.refusal.refusal
@@ -428,22 +454,17 @@ lex_measure_suite :: proc(t: ^testing.T) {
 	// ---- W3: 10,000 console lines
 	{
 		lines := generate_w3_lines(context.temp_allocator)
+		tree_bufs := new(lex_parser.Console_Tree_Buffers, context.temp_allocator)
 		tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
 		eval := new(Evaluation, context.temp_allocator)
 		host_state := new(Bench_Console_Host, context.temp_allocator)
-		nested_buf: [2 * lex_parser.TEXT_BYTES_MOST]u8
-		stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
 		ok_count := 0
 		for r in 0 ..< MEASURE_ROUNDS {
 			ok_count = 0
 			start := time.tick_now()
 			for line in lines {
 				host_state.used = 0
-				form := console_language.pipe_nested_form(line, console_language.expression_start(line), nested_buf[:], stages[:])
-				if form.refusal != .None {
-					continue
-				}
-				lex_parser.parse(form.nested, {}, tree)
+				lex_parser.parse_console(line, {}, tree_bufs, tree)
 				evaluation_start(eval, tree, .Console, bench_console_host(host_state))
 				if _, ok := line_force(eval); ok {
 					ok_count += 1

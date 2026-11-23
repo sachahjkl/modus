@@ -152,7 +152,7 @@ LINE_THREAD_STACK_PAGES :: 160
 // their types), and the threads as the tool counts them (the first thread
 // 72 pages, each other 19). The sum is 11871 pages, 4513 under the floor.
 CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES :: 729
-CONSOLE_LINE_TABLE_BYTES :: size_of(line_tree) + size_of(line_evaluation) + size_of(list_keeping) + size_of(history) + size_of(history_copy) + TABLE_ARENA + size_of(scratch) + size_of(nested_line) + size_of(work) + size_of(shown)
+CONSOLE_LINE_TABLE_BYTES :: size_of(line_tree) + size_of(line_tree_buffers) + size_of(completion_tree_buffers) + size_of(line_evaluation) + size_of(list_keeping) + size_of(history) + size_of(history_copy) + TABLE_ARENA + size_of(scratch) + size_of(line_source) + size_of(work) + size_of(shown)
 CONSOLE_THREAD_PAGES :: 72 + (MODULE_BUDGET.threads - 1) * 19
 CONSOLE_REQUEST_PAGES :: MODULE_BUDGET.working_memory_pages + CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES + (CONSOLE_LINE_TABLE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE + CONSOLE_THREAD_PAGES
 #assert(CONSOLE_REQUEST_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES, "the console asks for more pages than the largest budget of a process of the boot image")

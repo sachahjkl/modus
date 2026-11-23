@@ -546,17 +546,28 @@ bound_by_let :: proc "contextless" (text: string, token: Token) -> bool {
 	return false
 }
 
+// Maximum tokens scanned inside a single `(...)` group when probing for `=>`.
+// Covers up to 12 parameters, commas, destructuring patterns, and parens
+// while bounding lookahead to O(1) per `(` (preventing O(N^2) scanning on
+// deeply nested expressions).
+FUNCTION_HEAD_TOKEN_LIMIT :: 64
+
 // function_head says if the '(' at open starts a function: its group
-// closes, and "=>" follows its ')'. It gives the ')' and the byte after the
-// "=>". The parameters are not checked: the parser refuses a parameter
-// that is no name at its place.
+// closes within FUNCTION_HEAD_TOKEN_LIMIT tokens, and "=>" follows its ')'.
+// It gives the ')' and the byte after the "=>". The parameters are not
+// checked: the parser refuses a parameter that is no name at its place.
 function_head :: proc "contextless" (text: string, open: int, multiline := false) -> (close: int, arrow_end: int, found: bool) {
 	first := token_next(text, open, multiline)
 	if first.start != open || !(first.kind == .Operator && text[first.start] == '(') {
 		return 0, 0, false
 	}
 	depth := 0
+	scanned := 0
 	for token := first; token.kind != .None; token = token_next(text, token.end, multiline) {
+		if scanned >= FUNCTION_HEAD_TOKEN_LIMIT {
+			return 0, 0, false
+		}
+		scanned += 1
 		if opens(text, token) {
 			depth += 1
 		} else if closes(text, token) {
@@ -567,6 +578,9 @@ function_head :: proc "contextless" (text: string, open: int, multiline := false
 					return 0, 0, false
 				}
 				return token.start, arrow.end, true
+			}
+			if depth < 0 {
+				return 0, 0, false
 			}
 		}
 	}
@@ -1044,4 +1058,102 @@ integer_divide :: proc "contextless" (a, b: i64) -> (quotient, rest: i64, ok: bo
 		return opposite, 0, fits
 	}
 	return a / b, a % b, true
+}
+
+// ---- Token and group helpers shared by the parser and console completion.
+
+// word_is says if a token is a name with exactly the bytes of a word.
+word_is :: proc "contextless" (text: string, token: Token, word: string) -> bool {
+	return token.kind == .Name && text[token.start:token.end] == word
+}
+
+// opens and closes say if a token opens or closes a group: parentheses, the
+// braces of a record literal and the brackets of a list.
+@(private)
+opens :: proc "contextless" (text: string, token: Token) -> bool {
+	return token.kind == .Operator && (text[token.start] == '(' || text[token.start] == '{' || text[token.start] == '[')
+}
+
+@(private)
+closes :: proc "contextless" (text: string, token: Token) -> bool {
+	return token.kind == .Operator && (text[token.start] == ')' || text[token.start] == '}' || text[token.start] == ']')
+}
+
+// single_equal says if a token is "=" with no "=" after it: the "=" of a
+// named argument, of a field, of a binding.
+@(private)
+single_equal :: proc "contextless" (text: string, token: Token) -> bool {
+	return token.kind == .Operator && text[token.start] == '=' && !(token.end < len(text) && text[token.end] == '=')
+}
+
+// pipe_before says if the token just before the byte place is "|>": the
+// name at place is the call of a stage.
+pipe_before :: proc "contextless" (text: string, place: int) -> bool {
+	limit := clamp(place, 0, len(text))
+	last := Token{}
+	for token := token_next(text, 0); token.kind != .None && token.end <= limit; token = token_next(text, token.end) {
+		last = token
+	}
+	return last.kind == .Pipe
+}
+
+// call_has_placeholder says if the call whose '(' is at open_place holds a
+// top-level placeholder "_" inside its parentheses (either bare `_` or
+// `name = _`). Used by native `|>` parsing for Form_Lookup arg_offset and by
+// console completion.
+call_has_placeholder :: proc "contextless" (text: string, open_place: int, multiline := false) -> bool {
+	depth := 0
+	for token := token_next(text, open_place + 1, multiline); token.kind != .None; token = token_next(text, token.end, multiline) {
+		switch {
+		case opens(text, token):
+			depth += 1
+		case closes(text, token):
+			if depth == 0 {
+				return false
+			}
+			depth -= 1
+		case depth == 0 && word_is(text, token, "_"):
+			return true
+		}
+	}
+	return false
+}
+
+// call_parameter_at_caret gives the name of the call open at caret_asked
+// and the parameter index (from 0) that takes the argument at the caret.
+// For a call on the right of "|>" that has no top-level "_", the value on
+// the left takes parameter 0, so the argument at the caret takes parameter
+// commas + 1. found is false in a comment, outside any call, inside a '('
+// that no name precedes, or deeper than GROUP_DEPTH_MOST.
+call_parameter_at_caret :: proc "contextless" (text: string, caret_asked: int) -> (name: string, parameter: int, found: bool) {
+	caret := clamp(caret_asked, 0, len(text))
+	if in_comment(text, caret) {
+		return "", 0, false
+	}
+	groups: [GROUP_DEPTH_MOST]Open_Group
+	depth, ok := groups_at(text, caret, &groups)
+	if !ok || depth == 0 {
+		return "", 0, false
+	}
+	call_depth := depth - 1
+	for call_depth >= 0 && groups[call_depth].opener != .Parenthesis {
+		call_depth -= 1
+	}
+	if call_depth < 0 {
+		return "", 0, false
+	}
+	call := groups[call_depth]
+	previous, before_name: Token
+	for token := token_next(text, 0); token.kind != .None && token.end <= call.start; token = token_next(text, token.end) {
+		before_name = previous
+		previous = token
+	}
+	if previous.kind != .Name {
+		return "", 0, false
+	}
+	parameter = call.commas
+	if before_name.kind == .Pipe && !call_has_placeholder(text, call.start) {
+		parameter += 1
+	}
+	return text[previous.start:previous.end], parameter, true
 }

@@ -9,8 +9,9 @@ import "modus:lex_parser"
 // An evaluation with no list, whose items a test fills with list_items_add.
 @(private = "file")
 fresh_evaluation :: proc() -> ^Evaluation {
+	bufs := new(lex_parser.Console_Tree_Buffers, context.temp_allocator)
 	tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
-	lex_parser.parse("0", {}, tree)
+	lex_parser.parse_console("0", {}, bufs, tree)
 	evaluation := new(Evaluation, context.temp_allocator)
 	evaluation_start(evaluation, tree, .Console, {})
 	return evaluation
@@ -20,8 +21,9 @@ fresh_evaluation :: proc() -> ^Evaluation {
 // of a kept list past its bounds needs a list that no line makes.
 @(private = "file")
 large_evaluation :: proc(items: int) -> ^Evaluation {
+	bufs := new(lex_parser.Console_Tree_Buffers, context.temp_allocator)
 	tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
-	lex_parser.parse("0", {}, tree)
+	lex_parser.parse_console("0", {}, bufs, tree)
 	evaluation := new(Evaluation, context.temp_allocator)
 	trees := make([]Tree_Slot, 1, context.temp_allocator)
 	trees[0] = {tree = tree, thunks = evaluation.thunks[:], slots = evaluation.slots[:], slot_counts = evaluation.slot_counts[:]}
