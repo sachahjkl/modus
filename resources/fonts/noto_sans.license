@@ -2,9 +2,64 @@ Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-gree
 
 This file is a subset of noto_sans, made by "modustool vector_fonts" (docs/FONTS.md):
 the characters 32 to 126, the characters U+00A0 to U+00FF, the characters U+20AC,
-the characters that each process draws from the outlines, U+0100 to U+017F U+0391 to U+03A1 U+03A3 to U+03A9 U+03B1 to U+03C9 U+0400 to U+045F,
+the 2381 characters that each process draws from the outlines, in these runs:
+U+0100 to U+02FF
+U+0370 to U+0377
+U+037A to U+037F
+U+0384 to U+038A
+U+038C to U+038C
+U+038E to U+03A1
+U+03A3 to U+03E1
+U+03F0 to U+0482
+U+048A to U+052F
+U+10FB to U+10FB
+U+1C80 to U+1C88
+U+1D00 to U+1DBF
+U+1E00 to U+1F15
+U+1F18 to U+1F1D
+U+1F20 to U+1F45
+U+1F48 to U+1F4D
+U+1F50 to U+1F57
+U+1F59 to U+1F59
+U+1F5B to U+1F5B
+U+1F5D to U+1F5D
+U+1F5F to U+1F7D
+U+1F80 to U+1FB4
+U+1FB6 to U+1FC4
+U+1FC6 to U+1FD3
+U+1FD6 to U+1FDB
+U+1FDD to U+1FEF
+U+1FF2 to U+1FF4
+U+1FF6 to U+1FFE
+U+2000 to U+200A
+U+2010 to U+2027
+U+202F to U+205F
+U+2070 to U+2071
+U+2074 to U+208E
+U+2090 to U+209C
+U+20A0 to U+20AB
+U+20AD to U+20C0
+U+2100 to U+215F
+U+2183 to U+2184
+U+2189 to U+2189
+U+2212 to U+2212
+U+25CC to U+25CC
+U+2C60 to U+2C7F
+U+2E00 to U+2E5D
+U+A640 to U+A66E
+U+A673 to U+A673
+U+A67E to U+A69D
+U+A700 to U+A7CA
+U+A7D0 to U+A7D1
+U+A7D3 to U+A7D3
+U+A7D5 to U+A7D9
+U+A7F2 to U+A7FF
+U+A92E to U+A92E
+U+AB30 to U+AB6B
+U+FB00 to U+FB06
+U+FFFC to U+FFFD
 and the glyph .notdef, each glyph a simple glyph
-(196 glyphs made of glyphs were made simple), no hinting instructions, no
+(918 glyphs made of glyphs were made simple), no hinting instructions, no
 OpenType layout tables; the 0 pair adjustments of its table kern between
 these characters. The subset carries the name "Noto Sans LGC".
 License of the source: SIL OFL 1.1, no Reserved Font Name.

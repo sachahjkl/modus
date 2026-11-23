@@ -201,7 +201,7 @@ subset_character :: proc(glyph: int) -> rune {
 // past_cache_ranges_of gives the runs of the characters past the glyph
 // cache that the subset of a font holds, which each process draws from the
 // outlines into its private glyph cache
-// (src/md/features/glyphs_on_demand.md): for the regular weight of the
+// (src/md/features/glyphs_on_demand.md): for the two weights of the
 // interface font, for the two weights of the font of the cells and for the
 // font of the missing scripts; none for each other font. The lists are in the contract of the outlines,
 // which the golden hashes of these glyphs read too. The tool adds them
@@ -209,7 +209,7 @@ subset_character :: proc(glyph: int) -> rune {
 // caches of the build do not change.
 past_cache_ranges_of :: proc(name: string) -> []font_outlines.Character_Range {
 	switch name {
-	case INTERFACE_VECTOR_FONT:
+	case INTERFACE_VECTOR_FONT, INTERFACE_EMPHASIS_VECTOR_FONT:
 		return font_outlines.interface_past_cache_ranges[:]
 	case DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT:
 		return font_outlines.cell_past_cache_ranges[:]
@@ -298,7 +298,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 			report.problem = fmt.tprintf("the table kern: %s", vector_font.font_problem_names[pair_problem])
 			return nil, report, false
 		}
-		kern, report.pairs = kern_table_write(&font, &pair_table)
+		kern, report.pairs = kern_table_write(&font, &pair_table, past_cache_characters_of(candidate.name))
 	}
 	// The glyphs, each as a simple glyph: .notdef, the characters of a
 	// glyph cache, then the characters past the glyph cache.
@@ -422,11 +422,12 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 		// The list of the added characters goes on with the characters past
 		// the glyph cache: a comma ends it.
 		fmt.sbprint(&added, ",")
-		fmt.sbprint(&past_cache, "the characters that each process draws from the outlines,")
+		// One run of characters on each line: a list of hundreds of runs
+		// on one line is a line that a reader cannot read.
+		fmt.sbprintf(&past_cache, "the %d characters that each process draws from the outlines, in these runs:\n", len(past_cache_characters))
 		for range in past_cache_ranges_of(candidate.name) {
-			fmt.sbprintf(&past_cache, " U+%04X to U+%04X", int(range.first), int(range.last))
+			fmt.sbprintf(&past_cache, "U+%04X to U+%04X\n", int(range.first), int(range.last))
 		}
-		fmt.sbprint(&past_cache, ",\n")
 	}
 	report.license_text = fmt.aprintf(
 		"%s\n\nThis file is a subset of %s, made by \"modustool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126, the characters U+00A0 to U+00FF, the characters%s\n%sand the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
@@ -438,14 +439,27 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 
 // kern_table_write gives a kern table of version 0 with one subtable of
 // format 0: the pairs of the characters of the subset whose adjustment is
-// not 0, by the glyphs of the subset (subset_character). The loops go in
-// the order of the glyphs, so the pairs are sorted.
+// not 0, by the glyphs of the subset (subset_character, then the
+// characters past the glyph cache), so a Greek letter or a curly quote
+// beside a letter keeps the pair of its font. The loops go in the order of
+// the glyphs, so the pairs are sorted.
 @(private = "file")
-kern_table_write :: proc(font: ^vector_font.Font_File, pair_table: ^vector_font.Pair_Table) -> (table: []u8, count: int) {
+kern_table_write :: proc(font: ^vector_font.Font_File, pair_table: ^vector_font.Pair_Table, past_cache_characters: []rune) -> (table: []u8, count: int) {
+	character_of_glyph :: proc(glyph: int, past_cache_characters: []rune) -> rune {
+		if glyph < SUBSET_GLYPHS {
+			return subset_character(glyph)
+		}
+		return past_cache_characters[glyph - SUBSET_GLYPHS]
+	}
+	// A font with no pair needs no search of the square of its glyphs.
+	if pair_table.count == 0 {
+		return nil, 0
+	}
+	glyph_count := SUBSET_GLYPHS + len(past_cache_characters)
 	pairs := make([dynamic]u8, context.temp_allocator)
-	for left in 1 ..< SUBSET_GLYPHS {
-		for right in 1 ..< SUBSET_GLYPHS {
-			adjustment := vector_font.character_pair_adjustment(font, pair_table, subset_character(left), subset_character(right))
+	for left in 1 ..< glyph_count {
+		for right in 1 ..< glyph_count {
+			adjustment := vector_font.character_pair_adjustment(font, pair_table, character_of_glyph(left, past_cache_characters), character_of_glyph(right, past_cache_characters))
 			if adjustment != 0 {
 				append_u16(&pairs, u16(left))
 				append_u16(&pairs, u16(right))

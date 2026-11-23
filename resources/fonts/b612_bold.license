@@ -1,10 +1,103 @@
 Copyright 2012 The B612 Project Authors (https://github.com/polarsys/b612)
 
 This file is a subset of b612_bold, made by "modustool vector_fonts" (docs/FONTS.md):
-the characters 32 to 126, the characters U+00A0 to U+00FF, the characters U+20AC
+the characters 32 to 126, the characters U+00A0 to U+00FF, the characters U+20AC,
+the 326 characters that each process draws from the outlines, in these runs:
+U+0152 to U+0153
+U+0160 to U+0161
+U+0178 to U+0178
+U+0192 to U+0192
+U+02C6 to U+02C7
+U+02D8 to U+02DD
+U+0391 to U+039F
+U+03A1 to U+03A1
+U+03A3 to U+03A9
+U+03B1 to U+03C0
+U+03C2 to U+03C9
+U+03D1 to U+03D2
+U+03D5 to U+03D6
+U+2010 to U+2010
+U+2013 to U+2016
+U+2018 to U+201A
+U+201C to U+201E
+U+2020 to U+2023
+U+2026 to U+2026
+U+2030 to U+2035
+U+2039 to U+203A
+U+2042 to U+2042
+U+2051 to U+2051
+U+2070 to U+2071
+U+2074 to U+208E
+U+20B9 to U+20B9
+U+2103 to U+2103
+U+2109 to U+2109
+U+2111 to U+2111
+U+2113 to U+2113
+U+2118 to U+2118
+U+211C to U+211C
+U+2122 to U+2122
+U+2126 to U+2126
+U+212B to U+212B
+U+2134 to U+2135
+U+2153 to U+216B
+U+2170 to U+217B
+U+2190 to U+2199
+U+21A9 to U+21AA
+U+21B3 to U+21B3
+U+21B5 to U+21B7
+U+21D0 to U+21D9
+U+21DE to U+21E3
+U+21E7 to U+21E7
+U+21EA to U+21EA
+U+2200 to U+2205
+U+2207 to U+2209
+U+220B to U+220C
+U+2212 to U+2213
+U+2218 to U+2218
+U+221A to U+221A
+U+221D to U+221E
+U+2222 to U+2222
+U+2225 to U+2225
+U+2227 to U+222B
+U+222E to U+222E
+U+2234 to U+2235
+U+223C to U+223C
+U+2243 to U+2243
+U+2245 to U+2245
+U+2248 to U+2248
+U+2259 to U+2259
+U+2260 to U+2261
+U+2264 to U+2265
+U+2282 to U+2283
+U+2286 to U+2287
+U+2295 to U+2298
+U+22A5 to U+22A5
+U+22C6 to U+22C6
+U+22EE to U+22EE
+U+2302 to U+2302
+U+2308 to U+230B
+U+231C to U+231F
+U+25B6 to U+25B9
+U+25BC to U+25BF
+U+25C9 to U+25C9
+U+25CE to U+25D3
+U+2600 to U+2603
+U+2605 to U+2605
+U+260E to U+260E
+U+2610 to U+2612
+U+2639 to U+263A
+U+263C to U+263C
+U+263E to U+263E
+U+2660 to U+2663
+U+2690 to U+2691
+U+26A0 to U+26A1
+U+2708 to U+2709
+U+2713 to U+2713
+U+2780 to U+2794
+U+FB00 to U+FB06
 and the glyph .notdef, each glyph a simple glyph
 (0 glyphs made of glyphs were made simple), no hinting instructions, no
-OpenType layout tables; the 914 pair adjustments of its table kern between
+OpenType layout tables; the 1061 pair adjustments of its table kern between
 these characters. The subset carries the name "B612 ASCII Bold".
 License of the source: SIL OFL 1.1, no Reserved Font Name.
 

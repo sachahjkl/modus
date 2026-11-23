@@ -184,10 +184,10 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 		testing.expect_value(t, glyph_placed.cluster, u32(index))
 	}
 	testing.expect_value(t, width, 3 * i64(zero))
-	// The first character past Latin Extended-A (ƀ, U+0180) is outside
-	// the cache and no font has it: two bytes and one replacement glyph, so
-	// the glyph after it starts at byte 3.
-	OUTSIDE_THE_CACHE :: rune(0x0180)
+	// The first Armenian letter (Ա, U+0531) is outside the cache and no
+	// font has it: two bytes and one replacement glyph, so the glyph after
+	// it starts at byte 3.
+	OUTSIDE_THE_CACHE :: rune(0x0531)
 	_, in_cache := font_characters.character_index(OUTSIDE_THE_CACHE)
 	testing.expect(t, !in_cache)
 	text: [2 + text_encoding.CHARACTER_BYTES_LIMIT]u8
@@ -227,8 +227,8 @@ an_empty_text_and_a_character_outside_the_cache :: proc(t: ^testing.T) {
 // has is a fallback glyph with the advance of its font file at the size of
 // the spacing and no pair; the advance is the same at each measure,
 // whatever the private glyph cache holds. A character that no font has
-// (ƀ, U+0180, and Ѡ, U+0460, each one past a run of Noto Sans), an
-// invalid sequence, and a code point past Unicode are the
+// (Ա, U+0531, Armenian, and א, U+05D0, Hebrew), an invalid sequence, and a
+// code point past Unicode are the
 // replacement glyph, with the advance of "0". A spacing with no face
 // places the replacement glyph with no advance, last.
 @(test)
@@ -239,7 +239,7 @@ a_fallback_glyph_has_the_advance_of_its_font :: proc(t: ^testing.T) {
 	defer delete(memory)
 	testing.expect_value(t, spacing.face, Face.Interface)
 	OMEGA :: rune(0x03A9)
-	text := "AΩB\xffƀѠ─"
+	text := "AΩB\xffԱא─"
 	zero := advance_at('0')
 	placed: [8]Placed_Glyph
 	count, width, shaped := shape(&spacing, transmute([]u8)text, placed[:])

@@ -101,10 +101,10 @@ GREEK: [3]string
 // The box-drawing characters of GREEK_SENTENCE: each one from Paper Mono.
 BOX_CHARACTERS := [?]rune{0x250C, 0x2500, 0x252C, 0x2510, 0x2592, 0x2593, 0x2588}
 // Characters that no font of the chain of the interface has: the first
-// letter past Latin Extended-A, past the basic Cyrillic letters and of the
-// Cyrillic Supplement. Noto Sans, the last font, has the capital pi and
-// the small rho that B612 lacks, and the basic Cyrillic letters.
-MISSING_CHARACTERS := [?]rune{0x0180, 0x0460, 0x0500}
+// letter of Armenian, of Hebrew and of Thai. Noto Sans, the last font, has
+// the capital pi and the small rho that B612 lacks, Latin Extended-B and
+// the whole Cyrillic block.
+MISSING_CHARACTERS := [?]rune{0x0531, 0x05D0, 0x0E01}
 
 fallback_told: bool // The lines of the characters of the fallback chain are on the log.
 

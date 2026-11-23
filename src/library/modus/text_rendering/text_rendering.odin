@@ -255,11 +255,15 @@ scripts := [Script]Script_Row {
 	.Box_Drawing = {ranges = {{0x2500, 0x259F}, {}, {}, {}}, range_count = 1, chains = {.Interface = {.Paper_Mono, .None, .None, .None}, .Interface_Bold = {.Paper_Mono_Semibold, .None, .None, .None}, .Cells = {.Paper_Mono, .None, .None, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .None, .None, .None}}},
 }
 
-// The chain of each face for a character of no script.
+// The chain of each face for a character of no script. A proportional
+// face takes Noto Sans before Paper Mono: a letter that B612 lacks (ș, ł,
+// č) then has the advance of a proportional font beside the letters of
+// B612, not the cell of a monospace font. A face of cells takes Paper Mono
+// first, so a letter that it has keeps its cell.
 @(rodata)
 default_chains := [Chain_Kind]Chain {
-	.Interface      = {.B612, .Paper_Mono, .Noto_Sans, .None},
-	.Interface_Bold = {.B612_Bold, .Paper_Mono_Semibold, .Noto_Sans, .None},
+	.Interface      = {.B612, .Noto_Sans, .Paper_Mono, .None},
+	.Interface_Bold = {.B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None},
 	.Cells          = {.Paper_Mono, .B612, .Noto_Sans, .None},
 	.Cells_Bold     = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .None},
 }

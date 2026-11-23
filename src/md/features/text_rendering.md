@@ -138,7 +138,7 @@ The numbers:
 | | The glyph caches and the demand cache | Every glyph drawn by its process |
 |---|---|---|
 | The sizes that they serve | Lines of 16, 32 and 48 pixels only. The scale factor from 1 to 2 gives lines of 16 to 32 pixels: of these nine sizes, 16 and 32 are sizes of a cache | Each size |
-| The boot image | More than 1.3 MB of caches: 390 624 and 397 344 bytes for Paper Mono with and without the grid fit, 424 784 and 108 324 bytes for B612 and B612 Bold, and the cache of Paper Mono SemiBold | The font outlines only: about 195 KB, already in the image |
+| The boot image | More than 1.3 MB of caches: 390 624 and 397 344 bytes for Paper Mono with and without the grid fit, 424 784 and 108 324 bytes for B612 and B612 Bold, and the cache of Paper Mono SemiBold | The font outlines only: about 195 KB then, 975 KB since the subsets hold every character of their sources ([glyphs_on_demand.md](glyphs_on_demand.md), "Every character that a font of the system has") |
 | The start of the machine | The root service checks the hash of each cache: 796 to 966 µs for 390 624 bytes, about 3 ms for all | Nothing more |
 | Shared memory | The demand cache: 4 395 008 bytes, 1 073 pages that the root service pays, and the process `glyphs` at each start | None |
 | The first frame of a window | 0 µs for the 192 characters at the three sizes | Each glyph once: 3.3 to 4.1 µs for a glyph of cells and 16.2 µs for a placed glyph at a line of 16 ([glyphs_on_demand.md](glyphs_on_demand.md), "The measures") |

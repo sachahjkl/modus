@@ -98,8 +98,8 @@ a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 	built := Canvas{pixels = raw_data(built_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	drawn := Canvas{pixels = raw_data(fallback_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 
-	// The replacement glyph: no outlines, no font for Ѡ (U+0460, past the
-	// Cyrillic letters of Noto Sans), and Spleen.
+	// The replacement glyph: no outlines, no font for Ա (U+0531, the first
+	// Armenian letter), and Spleen.
 	Case :: enum {
 		No_Outlines,
 		No_Font,
@@ -114,7 +114,7 @@ a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 			text_rendering.state = {}
 		case .No_Font:
 			words = fallback_open_for_test(t)
-			text = "Ѡ"
+			text = "Ա"
 		case .Spleen:
 			words = fallback_open_for_test(t)
 			text_choice_set(.Spleen, .Red_Green_Blue)
@@ -157,14 +157,14 @@ a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_state.bold_face, text_rendering.Face.Cells_Bold)
 	text_faces_use(.Cells, .Cells_Bold)
 
-	// ═ of Paper Mono, α of B612, and Ж, Π and Ł of Noto Sans: each from
+	// ═ of Paper Mono, α of B612, and Ж, Π and ạ of Noto Sans: each from
 	// the private glyph cache, and each in its cell.
 	Cell_Case :: struct {
 		text:      string,
 		character: rune,
 		font:      text_rendering.Outline_Font,
 	}
-	cell_cases := [5]Cell_Case{{"═", 0x2550, .Paper_Mono}, {"α", 0x03B1, .B612}, {"Ж", 0x0416, .Noto_Sans}, {"Π", 0x03A0, .Noto_Sans}, {"Ł", 0x0141, .Noto_Sans}}
+	cell_cases := [5]Cell_Case{{"═", 0x2550, .Paper_Mono}, {"α", 0x03B1, .B612}, {"Ж", 0x0416, .Noto_Sans}, {"Π", 0x03A0, .Noto_Sans}, {"ạ", 0x1EA1, .Noto_Sans}}
 	for each in cell_cases {
 		for scale in 1 ..= 3 {
 			text_rendering.frame_begin()

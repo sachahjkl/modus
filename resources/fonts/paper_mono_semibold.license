@@ -2,9 +2,93 @@ Copyright 2025 The Paper Mono Project Authors (https://github.com/paper-design/p
 
 This file is a subset of paper_mono_semibold, made by "modustool vector_fonts" (docs/FONTS.md):
 the characters 32 to 126, the characters U+00A0 to U+00FF, the characters U+20AC,
-the characters that each process draws from the outlines, U+039B to U+039B U+03A9 to U+03A9 U+03BB to U+03BC U+03C0 to U+03C0 U+2500 to U+257F U+2580 to U+259F,
+the 448 characters that each process draws from the outlines, in these runs:
+U+0100 to U+0113
+U+0116 to U+012B
+U+012E to U+0137
+U+0139 to U+0148
+U+014A to U+014D
+U+0150 to U+017E
+U+018F to U+018F
+U+0192 to U+0192
+U+01CD to U+01CE
+U+01E4 to U+01E9
+U+0218 to U+021B
+U+0237 to U+0237
+U+0259 to U+0259
+U+02C6 to U+02C7
+U+02D8 to U+02DD
+U+039B to U+039B
+U+03A9 to U+03A9
+U+03BB to U+03BC
+U+03C0 to U+03C0
+U+0E3F to U+0E3F
+U+1E20 to U+1E21
+U+1E80 to U+1E85
+U+1E9E to U+1E9E
+U+1EBC to U+1EBD
+U+1EF2 to U+1EF3
+U+1EF8 to U+1EF9
+U+2013 to U+2014
+U+2018 to U+201A
+U+201C to U+201E
+U+2020 to U+2022
+U+2026 to U+2026
+U+2030 to U+2030
+U+2032 to U+2033
+U+2039 to U+203A
+U+2044 to U+2044
+U+2070 to U+2070
+U+2074 to U+2079
+U+2080 to U+2089
+U+20AA to U+20AA
+U+20B1 to U+20B1
+U+20B4 to U+20B4
+U+20B9 to U+20B9
+U+20BD to U+20BD
+U+2116 to U+2117
+U+2122 to U+2122
+U+2153 to U+2155
+U+215B to U+215E
+U+2190 to U+2199
+U+21A9 to U+21AA
+U+21B0 to U+21B1
+U+21B3 to U+21B5
+U+21B9 to U+21B9
+U+21C6 to U+21C6
+U+21E4 to U+21E5
+U+21E7 to U+21E7
+U+21EA to U+21EA
+U+2202 to U+2202
+U+2206 to U+2206
+U+220F to U+220F
+U+2211 to U+2212
+U+221A to U+221A
+U+221E to U+221E
+U+222B to U+222B
+U+2236 to U+2236
+U+2248 to U+2248
+U+2260 to U+2260
+U+2264 to U+2265
+U+2303 to U+2303
+U+2318 to U+2318
+U+2325 to U+2327
+U+232B to U+232B
+U+238B to U+238B
+U+23CE to U+23CE
+U+2460 to U+2468
+U+24EA to U+24EA
+U+24FF to U+259F
+U+25CA to U+25CB
+U+25CF to U+25CF
+U+25E6 to U+25E6
+U+2776 to U+277E
+U+3003 to U+3003
+U+301C to U+301C
+U+A78B to U+A78C
+U+FB01 to U+FB02
 and the glyph .notdef, each glyph a simple glyph
-(66 glyphs made of glyphs were made simple), no hinting instructions, no
+(240 glyphs made of glyphs were made simple), no hinting instructions, no
 OpenType layout tables;
 the character 0 is the glyph 304 of the source, the slashed zero of its
 feature zero. The subset carries the name "Paper Mono ASCII SemiBold".
