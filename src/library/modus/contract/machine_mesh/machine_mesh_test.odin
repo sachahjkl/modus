@@ -90,8 +90,9 @@ sign_grant :: proc(grant: ^Signed_Grant, signing_priv: ^ed25519.Private_Key) {
 
 @(private = "file")
 sign_revocation_list :: proc(list: ^Revocation_List, signing_priv: ^ed25519.Private_Key) {
-	buf: [MAX_REVOCATION_LIST_SIGNING_BYTES]u8
-	written, status := revocation_list_signing_bytes(list, buf[:])
+	buf := make([]u8, revocation_list_signing_bytes_size(list.revoked_count))
+	defer delete(buf)
+	written, status := revocation_list_signing_bytes(list, buf)
 	assert(status == .Accepted)
 	ed25519.sign(signing_priv, buf[:written], list.signature[:])
 }
@@ -1120,7 +1121,7 @@ signed_grant_refuses_all_adversarial_inputs :: proc(t: ^testing.T) {
 	testing.expect_value(t, revocation_list_validate(&grantor_list, nil, &bad_rev, ed25519_verify_callback), Revocation_List_Status.Refused_Not_Strictly_Sorted)
 	bad_rev.revoked_serials[0] = 0
 	testing.expect_value(t, revocation_list_validate(&grantor_list, nil, &bad_rev, ed25519_verify_callback), Revocation_List_Status.Refused_Zero_Serial)
-	bad_rev.revoked_count = MAX_REVOKED_GRANTS + 1
+	bad_rev.revoked_count = INLINE_REVOKED_GRANTS + 1
 	testing.expect_value(t, revocation_list_validate(&grantor_list, nil, &bad_rev, ed25519_verify_callback), Revocation_List_Status.Refused_Too_Many_Entries)
 
 	// Malformed wire grant refusals.
@@ -1582,4 +1583,146 @@ sync_object_of_200_kibibytes_crosses_in_pieces :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, session.state, Sync_Session_State.Reconciled)
 	testing.expect(t, string(assembly) == string(blob))
+}
+
+@(test)
+revocation_list_crosses_inline_tier_and_fails_closed :: proc(t: ^testing.T) {
+	grantor_root_priv, grantor_root_pub := make_keypair(0xD0)
+	_, grantee_root_pub := make_keypair(0xD4)
+	machine_entry, machine_signing_priv := make_machine_entry(0xD8, true, .Active, 1_000, 0)
+	grantor_list := Signed_Machine_List {
+		principal_root_public_key = grantor_root_pub,
+		sequence_number           = 1,
+		entry_count               = 1,
+	}
+	grantor_list.entries[0] = machine_entry
+	sign_machine_list(&grantor_list, &grantor_root_priv)
+
+	issued := u64(50_000)
+	make_long_grant :: proc(serial: u64, epoch: u64, grantor_root: Principal_Root_Public_Key, entry: Machine_Entry, grantee: Principal_Root_Public_Key, issued_at: u64, priv: ^ed25519.Private_Key) -> Signed_Grant {
+		g := Signed_Grant {
+			grant_serial               = serial,
+			grantor_root_public_key    = grantor_root,
+			grantor_signing_public_key = entry.signing_public_key,
+			serving_machine_id         = entry.machine_id,
+			grantee_root_public_key    = grantee,
+			target_kind                = .Store_Object,
+			target_hash                = make_hash(0xE1),
+			rights                     = {.Read},
+			issued_at_ms               = issued_at,
+			expires_at_ms              = issued_at + 10 * MAX_SHORT_GRANT_LIFE_MS,
+			revocation_list_epoch      = epoch,
+		}
+		sign_grant(&g, priv)
+		return g
+	}
+
+	// 1. Exact inline bound (64 revocations) verifies with nil scratch and slow_tier_uses == 0.
+	rev_64 := Revocation_List {
+		grantor_root_public_key = grantor_root_pub,
+		signer_public_key       = machine_entry.signing_public_key,
+		epoch                   = 1,
+		revoked_count           = INLINE_REVOKED_GRANTS,
+	}
+	for i in 0 ..< INLINE_REVOKED_GRANTS {
+		rev_64.revoked_serials[i] = u64(i + 1)
+	}
+	sign_revocation_list(&rev_64, &machine_signing_priv)
+	testing.expect_value(t, revocation_list_validate(&grantor_list, nil, &rev_64, ed25519_verify_callback), Revocation_List_Status.Accepted)
+	testing.expect_value(t, rev_64.slow_tier_uses, u64(0))
+	testing.expect(t, revocation_list_contains_serial(&rev_64, 1))
+	testing.expect(t, revocation_list_contains_serial(&rev_64, INLINE_REVOKED_GRANTS))
+	testing.expect(t, !revocation_list_contains_serial(&rev_64, INLINE_REVOKED_GRANTS + 1))
+
+	// 2. One past inline bound (65 revocations) without external_serials fails closed.
+	rev_65_no_ext := Revocation_List {
+		grantor_root_public_key = grantor_root_pub,
+		signer_public_key       = machine_entry.signing_public_key,
+		epoch                   = 2,
+		revoked_count           = INLINE_REVOKED_GRANTS + 1,
+	}
+	testing.expect_value(t, revocation_list_validate(&grantor_list, &rev_64, &rev_65_no_ext, ed25519_verify_callback), Revocation_List_Status.Refused_Too_Many_Entries)
+
+	// 3. One past inline bound (65 revocations) with external_serials:
+	//    - nil or 1-byte-short scratch fails closed (Refused_Buffer_Too_Small, slow_tier_uses unchanged)
+	//    - signed_grant_check without scratch fails closed (Refused_Bad_Revocation_List)
+	//    - exact scratch succeeds, increments slow_tier_uses, revokes #65, accepts #66.
+	serials_65 := make([]u64, INLINE_REVOKED_GRANTS + 1)
+	defer delete(serials_65)
+	for i in 0 ..< len(serials_65) {
+		serials_65[i] = u64(i + 1)
+	}
+	rev_65 := Revocation_List {
+		grantor_root_public_key = grantor_root_pub,
+		signer_public_key       = machine_entry.signing_public_key,
+		epoch                   = 2,
+		revoked_count           = u16(len(serials_65)),
+		external_serials        = serials_65,
+	}
+	sign_revocation_list(&rev_65, &machine_signing_priv)
+
+	required_65 := revocation_list_signing_bytes_size(rev_65.revoked_count)
+	scratch_65 := make([]u8, required_65)
+	defer delete(scratch_65)
+
+	testing.expect_value(t, revocation_list_validate(&grantor_list, &rev_64, &rev_65, ed25519_verify_callback), Revocation_List_Status.Refused_Buffer_Too_Small)
+	testing.expect_value(t, revocation_list_validate(&grantor_list, &rev_64, &rev_65, ed25519_verify_callback, nil, scratch_65[:required_65 - 1]), Revocation_List_Status.Refused_Buffer_Too_Small)
+	testing.expect_value(t, rev_65.slow_tier_uses, u64(0))
+
+	grant_65 := make_long_grant(65, 2, grantor_root_pub, machine_entry, grantee_root_pub, issued, &machine_signing_priv)
+	grant_66 := make_long_grant(66, 2, grantor_root_pub, machine_entry, grantee_root_pub, issued, &machine_signing_priv)
+	testing.expect_value(t, signed_grant_check(&grant_65, &grantor_list, machine_entry.machine_id, grantee_root_pub, issued + 10, &rev_65, ed25519_verify_callback), Grant_Check_Status.Refused_Bad_Revocation_List)
+	testing.expect_value(t, signed_grant_check(&grant_65, &grantor_list, machine_entry.machine_id, grantee_root_pub, issued + 10, &rev_65, ed25519_verify_callback, nil, scratch_65), Grant_Check_Status.Refused_Revoked)
+	testing.expect_value(t, rev_65.slow_tier_uses, u64(1))
+	testing.expect_value(t, signed_grant_check(&grant_66, &grantor_list, machine_entry.machine_id, grantee_root_pub, issued + 10, &rev_65, ed25519_verify_callback, nil, scratch_65), Grant_Check_Status.Accepted)
+	testing.expect_value(t, rev_65.slow_tier_uses, u64(2))
+
+	// 4. Larger tier (256 revocations): validates cleanly, refuses unsorted/duplicate/zero serial past 64,
+	//    and refused apply_update leaves state unchanged.
+	serials_256 := make([]u64, 256)
+	defer delete(serials_256)
+	for i in 0 ..< len(serials_256) {
+		serials_256[i] = u64((i + 1) * 10)
+	}
+	rev_256 := Revocation_List {
+		grantor_root_public_key = grantor_root_pub,
+		signer_public_key       = machine_entry.signing_public_key,
+		epoch                   = 3,
+		revoked_count           = 256,
+		external_serials        = serials_256,
+	}
+	sign_revocation_list(&rev_256, &machine_signing_priv)
+	scratch_256 := make([]u8, revocation_list_signing_bytes_size(256))
+	defer delete(scratch_256)
+
+	state := rev_64
+	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &rev_256, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Accepted)
+	testing.expect_value(t, state.epoch, u64(3))
+	testing.expect_value(t, state.revoked_count, u16(256))
+	testing.expect(t, state.slow_tier_uses == 1)
+	testing.expect(t, revocation_list_contains_serial(&state, 2560))
+	testing.expect(t, !revocation_list_contains_serial(&state, 2555))
+
+	// Unsorted entry at index 200 refused, leaving state unchanged.
+	bad_serials := make([]u64, 256)
+	defer delete(bad_serials)
+	copy(bad_serials, serials_256)
+	bad_serials[200] = bad_serials[199]
+	bad_rev := rev_256
+	bad_rev.epoch = 4
+	bad_rev.external_serials = bad_serials
+	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &bad_rev, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Refused_Not_Strictly_Sorted)
+	testing.expect_value(t, state.epoch, u64(3))
+
+	// Zero serial at index 200 refused.
+	bad_serials[200] = 0
+	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &bad_rev, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Refused_Zero_Serial)
+	testing.expect_value(t, state.epoch, u64(3))
+
+	// External slice shorter than revoked_count refused.
+	short_rev := rev_256
+	short_rev.epoch = 4
+	short_rev.external_serials = serials_256[:255]
+	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &short_rev, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Refused_Too_Many_Entries)
+	testing.expect_value(t, state.epoch, u64(3))
 }

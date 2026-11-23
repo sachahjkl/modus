@@ -119,15 +119,20 @@ heading_set :: proc "contextless" (text: string, color: graphics.Color) {
 }
 
 // view_rows gives the rows of the page that the window shows: the rows of
-// the text column under the heading. A heading of many lines leaves one
-// row at least.
+// the text column under the heading from the solved layout.
 view_rows :: proc "contextless" () -> int {
+	if last_boxes.text_column.height > 0 {
+		return max(last_boxes.text_column.height / CELL_HEIGHT, 1)
+	}
 	return max(ROWS - heading_rows, 1)
 }
 
 // rows_top gives the y of the first row that the window shows: under the
-// heading.
+// heading from the solved layout.
 rows_top :: proc "contextless" () -> int {
+	if last_boxes.text_column.y > 0 {
+		return last_boxes.text_column.y
+	}
 	return MARGIN + heading_rows * CELL_HEIGHT
 }
 
@@ -658,7 +663,7 @@ record_described :: proc "contextless" (index: int, name: string) -> bool {
 // link_at_place gives the number of the link that opens a page at a place
 // of the window, or 0.
 link_at_place :: proc "contextless" (x, y: int) -> int {
-	left := LIST_WIDTH + MARGIN
+	left := last_boxes.text_column.x > 0 ? last_boxes.text_column.x : LIST_WIDTH + MARGIN
 	top := rows_top()
 	if y < top || y >= top + view_rows() * CELL_HEIGHT {
 		return 0

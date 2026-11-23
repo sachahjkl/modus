@@ -17,8 +17,15 @@ import "modus:contract/enum_word"
 // require an accompanying revocation list check (24 hours).
 MAX_SHORT_GRANT_LIFE_MS :: u64(86_400_000)
 
-// Maximum revoked grant serials carried in one signed revocation list.
-MAX_REVOKED_GRANTS :: 64
+// Inline capacity for revoked grant serials carried inside Revocation_List
+// (observed common case: <= 64 active revocations per grantor verify in a
+// stack signing buffer without caller scratch). Lists past this threshold
+// move to external_serials up to the wire u16 format bound MAX_REVOKED_GRANTS
+// and count accepted slow-tier validations in slow_tier_uses.
+INLINE_REVOKED_GRANTS :: 64
+
+// Format property: exact upper bound of the u16 revoked_count wire field.
+MAX_REVOKED_GRANTS :: 65535
 
 // Domain separation prefixes for Ed25519 signatures.
 SIGNED_GRANT_SIGNING_DOMAIN :: "modus signed grant v1"
@@ -76,6 +83,7 @@ SIGNED_GRANT_WIRE_SIZE :: 4 + 1 + 1 + 2 + 8 + PUBLIC_KEY_SIZE * 4 + blake3.HASH_
 //   [96..104] epoch (u64 LE)
 //   followed by revoked_count * 8 bytes (u64 LE serials, strictly increasing)
 REVOCATION_LIST_SIGNING_HEADER_SIZE :: len(REVOCATION_LIST_SIGNING_DOMAIN) + 1 + 1 + 2 + 4 + PUBLIC_KEY_SIZE * 2 + 8
+INLINE_REVOCATION_LIST_SIGNING_BYTES :: REVOCATION_LIST_SIGNING_HEADER_SIZE + INLINE_REVOKED_GRANTS * 8
 MAX_REVOCATION_LIST_SIGNING_BYTES :: REVOCATION_LIST_SIGNING_HEADER_SIZE + MAX_REVOKED_GRANTS * 8
 
 #assert(SIGNED_GRANT_SIGNING_BYTES_SIZE == 224)
@@ -113,13 +121,18 @@ Signed_Grant :: struct {
 }
 
 // Monotonic list of revoked grant serials signed by an active per-machine
-// signing key of the grantor.
+// signing key of the grantor. Lists of at most INLINE_REVOKED_GRANTS (64)
+// entries live inline in revoked_serials; larger lists supply external_serials
+// (length >= revoked_count, up to MAX_REVOKED_GRANTS) and validate with a
+// caller-supplied signing_scratch buffer.
 Revocation_List :: struct {
 	grantor_root_public_key: Principal_Root_Public_Key,
 	signer_public_key:       [PUBLIC_KEY_SIZE]u8,
 	epoch:                   u64,
 	revoked_count:           u16,
-	revoked_serials:         [MAX_REVOKED_GRANTS]u64,
+	revoked_serials:         [INLINE_REVOKED_GRANTS]u64,
+	external_serials:        []u64,
+	slow_tier_uses:          u64,
 	signature:               [SIGNATURE_SIZE]u8,
 }
 
@@ -250,8 +263,38 @@ signed_grant_signing_bytes :: proc "contextless" (
 	return signing_bytes, .Accepted
 }
 
+// revocation_list_signing_bytes_size returns the exact signing payload length
+// in bytes for a Revocation_List carrying revoked_count serials.
+revocation_list_signing_bytes_size :: proc "contextless" (revoked_count: u16) -> int {
+	return REVOCATION_LIST_SIGNING_HEADER_SIZE + int(revoked_count) * 8
+}
+
+// revocation_list_serials returns the active slice of revoked serials and
+// whether list uses the slower external_serials tier. Returns ok == false
+// (fail closed) when revoked_count exceeds the active backing capacity.
+@(private)
+revocation_list_serials :: proc "contextless" (list: ^Revocation_List) -> (serials: []u64, slow_tier: bool, ok: bool) {
+	if list == nil {
+		return nil, false, false
+	}
+	count := int(list.revoked_count)
+	if count > MAX_REVOKED_GRANTS {
+		return nil, false, false
+	}
+	if len(list.external_serials) > 0 {
+		if count > len(list.external_serials) {
+			return nil, true, false
+		}
+		return list.external_serials[:count], true, true
+	}
+	if count > INLINE_REVOKED_GRANTS {
+		return nil, true, false
+	}
+	return list.revoked_serials[:count], false, true
+}
+
 // validate_revocation_list_structure checks all structural invariants of list
-// (keys, epoch, entry count, non-zero strictly sorted serials).
+// (keys, epoch, entry count within active tier, non-zero strictly sorted serials).
 @(private)
 validate_revocation_list_structure :: proc "contextless" (list: ^Revocation_List) -> Revocation_List_Status {
 	if list == nil {
@@ -263,15 +306,16 @@ validate_revocation_list_structure :: proc "contextless" (list: ^Revocation_List
 	if list.epoch == 0 {
 		return .Refused_Zero_Epoch
 	}
-	if int(list.revoked_count) > MAX_REVOKED_GRANTS {
+	serials, _, ok := revocation_list_serials(list)
+	if !ok {
 		return .Refused_Too_Many_Entries
 	}
-	for index in 0 ..< int(list.revoked_count) {
-		serial := list.revoked_serials[index]
+	for index in 0 ..< len(serials) {
+		serial := serials[index]
 		if serial == 0 {
 			return .Refused_Zero_Serial
 		}
-		if index > 0 && serial <= list.revoked_serials[index - 1] {
+		if index > 0 && serial <= serials[index - 1] {
 			return .Refused_Not_Strictly_Sorted
 		}
 	}
@@ -288,7 +332,8 @@ revocation_list_signing_bytes :: proc "contextless" (
 	if structure_status != .Accepted {
 		return 0, structure_status
 	}
-	required := REVOCATION_LIST_SIGNING_HEADER_SIZE + int(list.revoked_count) * 8
+	serials, _, _ := revocation_list_serials(list)
+	required := revocation_list_signing_bytes_size(list.revoked_count)
 	if len(output) < required {
 		return 0, .Refused_Buffer_Too_Small
 	}
@@ -303,22 +348,27 @@ revocation_list_signing_bytes :: proc "contextless" (
 	copy(output[32:64], list.grantor_root_public_key[:])
 	copy(output[64:96], list.signer_public_key[:])
 	byte_order.write_u64_little_endian(output, 96, list.epoch)
-	for index in 0 ..< int(list.revoked_count) {
+	for index in 0 ..< len(serials) {
 		offset := REVOCATION_LIST_SIGNING_HEADER_SIZE + index * 8
-		byte_order.write_u64_little_endian(output, offset, list.revoked_serials[index])
+		byte_order.write_u64_little_endian(output, offset, serials[index])
 	}
 	return required, .Accepted
 }
 
 // revocation_list_validate checks a revocation list against the grantor's
 // machine list, an optional previous revocation list (enforcing monotonic
-// epochs), and the signer's Ed25519 signature.
+// epochs), and the signer's Ed25519 signature. Lists of at most
+// INLINE_REVOKED_GRANTS serials verify in an inline stack buffer; larger lists
+// require a caller-supplied signing_scratch of at least
+// revocation_list_signing_bytes_size(candidate.revoked_count) bytes and fail
+// closed with Refused_Buffer_Too_Small when scratch is absent or too short.
 revocation_list_validate :: proc "contextless" (
 	grantor_machine_list: ^Signed_Machine_List,
 	current: ^Revocation_List,
 	candidate: ^Revocation_List,
 	verify_signature: Signature_Verify_Proc,
 	user_data: rawptr = nil,
+	signing_scratch: []u8 = nil,
 ) -> Revocation_List_Status {
 	if grantor_machine_list == nil || candidate == nil {
 		return .Refused_Nil_Input
@@ -344,13 +394,27 @@ revocation_list_validate :: proc "contextless" (
 	if verify_signature == nil {
 		return .Refused_Invalid_Signature
 	}
-	signing_buffer: [MAX_REVOCATION_LIST_SIGNING_BYTES]u8
-	signing_length, signing_status := revocation_list_signing_bytes(candidate, signing_buffer[:])
+	_, slow_tier, _ := revocation_list_serials(candidate)
+	required := revocation_list_signing_bytes_size(candidate.revoked_count)
+	inline_buffer: [INLINE_REVOCATION_LIST_SIGNING_BYTES]u8
+	signing_slice: []u8
+	if required <= INLINE_REVOCATION_LIST_SIGNING_BYTES {
+		signing_slice = inline_buffer[:]
+	} else {
+		if len(signing_scratch) < required {
+			return .Refused_Buffer_Too_Small
+		}
+		signing_slice = signing_scratch[:required]
+	}
+	signing_length, signing_status := revocation_list_signing_bytes(candidate, signing_slice)
 	if signing_status != .Accepted {
 		return signing_status
 	}
-	if !verify_signature(candidate.signer_public_key, signing_buffer[:signing_length], candidate.signature, user_data) {
+	if !verify_signature(candidate.signer_public_key, signing_slice[:signing_length], candidate.signature, user_data) {
 		return .Refused_Invalid_Signature
+	}
+	if slow_tier {
+		candidate.slow_tier_uses += 1
 	}
 	return .Accepted
 }
@@ -364,12 +428,13 @@ revocation_list_apply_update :: proc "contextless" (
 	candidate: ^Revocation_List,
 	verify_signature: Signature_Verify_Proc,
 	user_data: rawptr = nil,
+	signing_scratch: []u8 = nil,
 ) -> Revocation_List_Status {
 	if state == nil || candidate == nil {
 		return .Refused_Nil_Input
 	}
 	current_ptr: ^Revocation_List = has_current ? state : nil
-	status := revocation_list_validate(grantor_machine_list, current_ptr, candidate, verify_signature, user_data)
+	status := revocation_list_validate(grantor_machine_list, current_ptr, candidate, verify_signature, user_data, signing_scratch)
 	if status != .Accepted {
 		return status
 	}
@@ -380,14 +445,18 @@ revocation_list_apply_update :: proc "contextless" (
 // revocation_list_contains_serial checks whether serial is listed in a
 // structurally validated Revocation_List via binary search.
 revocation_list_contains_serial :: proc "contextless" (list: ^Revocation_List, serial: u64) -> bool {
-	if list == nil || serial == 0 || int(list.revoked_count) > MAX_REVOKED_GRANTS {
+	if list == nil || serial == 0 {
+		return false
+	}
+	serials, _, ok := revocation_list_serials(list)
+	if !ok {
 		return false
 	}
 	low := 0
-	high := int(list.revoked_count)
+	high := len(serials)
 	for low < high {
 		middle := low + (high - low) / 2
-		candidate := list.revoked_serials[middle]
+		candidate := serials[middle]
 		if candidate == serial {
 			return true
 		}
@@ -422,6 +491,7 @@ signed_grant_check :: proc "contextless" (
 	revocation_list: ^Revocation_List,
 	verify_signature: Signature_Verify_Proc,
 	user_data: rawptr = nil,
+	revocation_scratch: []u8 = nil,
 ) -> Grant_Check_Status {
 	if grant == nil || grantor_machine_list == nil {
 		return .Refused_Nil_Input
@@ -466,7 +536,7 @@ signed_grant_check :: proc "contextless" (
 		}
 	}
 	if revocation_list != nil {
-		rev_status := revocation_list_validate(grantor_machine_list, nil, revocation_list, verify_signature, user_data)
+		rev_status := revocation_list_validate(grantor_machine_list, nil, revocation_list, verify_signature, user_data, revocation_scratch)
 		if rev_status != .Accepted {
 			return .Refused_Bad_Revocation_List
 		}

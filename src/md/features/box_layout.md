@@ -70,14 +70,16 @@ Then one pass snaps each edge (not each size) to the nearest whole logical pixel
 
 Built: the package `modus:layout` with the four passes, the snap and the clip, the split pane, the table columns, the state table, the input of a box, the element tokens and their stack, and host tests, which `modustool check` runs.
 
-Its owners are seven windows of the system, each building its tree at each frame from the live window size and taking its colors and spacing from `tokens_for`:
+Its owners are nine windows of the system, each building its tree at each frame from the live window size and taking its colors and spacing from `tokens_for`:
 
 - `monitor` places its summary, its three graphs and the process table via `table_columns` ([monitor_window.md](monitor_window.md), "The layout").
-- `settings` is resizable: it places its four section cards in one column or two by the width, wraps the value buttons of each setting in lines that the builder breaks from their measured widths (the solver has no wrap), scrolls its view with the scroll offset of the tree, and builds the tree a second time with the scroll bar when the content is taller than the view ([settings_window.md](settings_window.md)).
+- `settings` is resizable: it places its section cards (including dynamically discovered module settings) in one column or two by the width, wraps the value buttons of each setting in lines that the builder breaks from their measured widths (the solver has no wrap), scrolls its view with the scroll offset of the tree, and builds the tree a second time with the scroll bar when the content is taller than the view ([settings_window.md](settings_window.md)).
 - `edit` is resizable with a top band, the text with its scroll bar, a draggable split pane for store versions (`Ctrl+H`), and a status band.
 - `debugger_window` is resizable with a top band, a draggable split pane of two card columns (`THREADS`, `BREAKPOINTS`, `SOURCE`, `MEMORY`, `STACK`, `VARIABLES`), and a status band.
 - `notes` places its lines one under the other and its action bar at the bottom, solving twice so the wrapped status fits cleanly.
 - `inspect` places the process list card at the left and address space / modules / threads / bytes at the right, taking all four tables' columns from `table_columns`.
 - `log` places the counts, process cards, column heads, and records table columns from `table_columns`.
+- `assistant` places the conversation view, its scroll bar, the request input field, and the running Stop button in two rows with dark and light element tokens ([assistant.md](assistant.md)).
+- `manual` places the left module list pane (filter field, exports header, module rows) beside the right page pane (heading, text column, scroll bar) and footer row (action bar, row status) with dark and light element tokens.
 
 **What the windows taught.** A split pane is sized before the tree is built: the width of the workspace is known from the size of the view, so `split_pane` gives the widths of the two parts as `Pixels` boxes, and the divider is a box with an identity whose state keeps the ratio and whose input gives the drag. Fixed siblings stay strict so the one fill box of a column takes the room left. Left: the elements of the interface package, making the remaining fixed-budget windows resizable, and the other windows, which [ROADMAP.md](../../../ROADMAP.md) names.

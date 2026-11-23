@@ -14,10 +14,9 @@ REQUEST_TEXT_BYTES :: 4096
 // act, as the window shows them.
 REPLY_TEXT_BYTES :: 16 * 1024
 
-// The bytes of the line of one act. A line of Lex that the bridge reads is
-// one call: a line of the console holds 256 bytes, and an act line is one
-// call with literal arguments.
-ACT_LINE_BYTES :: 200
+// Plan value: matches line_editor.LINE_CAPACITY (4096 bytes) so any line the
+// console accepts can be proposed as an act without truncation or refusal.
+ACT_LINE_BYTES :: 4096
 
 // The entries of the conversation that one run of the window keeps: a
 // request, a step reply, a refused reply, an act and a loop end take one

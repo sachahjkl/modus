@@ -13,7 +13,10 @@ import "modus:contract/text_encoding"
 // The most bytes of a search query: UTF-8 with no control character.
 SEARCH_QUERY_CAPACITY :: 1024
 
-// Inline match capacity when the caller supplies no external match buffer.
+// Inline capacity for search matches matching TEXT_CAPACITY: a document
+// within the 32 KiB inline text tier has at most TEXT_CAPACITY matches. Past
+// this threshold search_ensure_capacity moves to external_matches and
+// increments tier_moves.
 MATCH_CAPACITY :: TEXT_CAPACITY
 
 // Caller-supplied growth callback for the search match offset array.
@@ -43,6 +46,7 @@ Search :: struct {
 	match_count:       int,
 	active_match:      int, // Index in matches[:match_count], or -1 when there is no match.
 	matches_truncated: bool, // True if the text had more matches than the caller's match budget held.
+	tier_moves:        u64, // Visible counter of moves onto or growths of external_matches.
 }
 
 // search_init_buffer attaches a caller-supplied match buffer and optional
@@ -55,6 +59,7 @@ search_init_buffer :: proc "contextless" (search: ^Search, buffer: []i32, grow: 
 	search.match_count = 0
 	search.active_match = -1
 	search.matches_truncated = false
+	search.tier_moves = 0
 }
 
 @(private)
@@ -88,6 +93,7 @@ search_ensure_capacity :: proc "contextless" (search: ^Search, needed: int, used
 	}
 	search.external_matches = grown
 	search.matches = grown
+	search.tier_moves += 1
 	return true
 }
 

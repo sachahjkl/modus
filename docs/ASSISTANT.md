@@ -79,7 +79,7 @@ The model replies with one JSON object:
 - `text`: 1 byte to 16 KiB; a line end becomes a space.
 - `acts`: 0 to 16 acts; a reply with no act is the final answer.
 - The whole reply holds at most 256 KiB.
-- In each act, `kind` is `eval_lex`; `line` is one call of Lex, `service.export(arguments)` with literal arguments, 1 to 200 bytes.
+- In each act, `kind` is `eval_lex`; `line` is one call of Lex, `service.export(arguments)` with literal arguments, 1 to 4096 bytes.
 
 Any other form is refused whole, and the window shows its error record:
 

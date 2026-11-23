@@ -528,11 +528,12 @@ describe_refuses_a_palette_row_that_does_not_fit :: proc(t: ^testing.T) {
 		module_name: string,
 		source:      string,
 	}
-	// 25 bytes: one past a button and a name of a row.
+	// 25 bytes: one past a button; 33 bytes: one past a name of a row (SETTING_NAME_CAPACITY = 32).
 	PAST :: "abcdefghijklmnopqrstuvwxy"
+	PAST_ROW :: "abcdefghijklmnopqrstuvwxyz0123456"
 	cases := [?]Case {
 		{"an act name of 33 bytes", "a_module_name_of_26_bytes_", "package p\nMode :: enum u32 {Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
-		{"a name of a row of 25 bytes", "m", "package p\nMode :: enum u32 {Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (" + PAST + ": Mode) -> i64 {return 0}\n"},
+		{"a name of a row of 33 bytes", "m", "package p\nMode :: enum u32 {Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (" + PAST_ROW + ": Mode) -> i64 {return 0}\n"},
 		{"a button of 25 bytes", "m", "package p\nMode :: enum u32 {" + PAST + " = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 	}
 	for item in cases {

@@ -484,7 +484,8 @@ mesh_revocation_list_update :: proc "contextless" (candidate: ^machine_mesh.Revo
 	case .Refused_Replay_Or_Downgrade:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Versions, 1, i64(candidate.epoch), 0, i64(mesh.revocations.epoch))
 	case .Refused_Too_Many_Entries:
-		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(candidate.revoked_count), machine_mesh.MAX_REVOKED_GRANTS)
+		active_limit := len(candidate.external_serials) > 0 ? i64(min(len(candidate.external_serials), machine_mesh.MAX_REVOKED_GRANTS)) : i64(machine_mesh.INLINE_REVOKED_GRANTS)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(candidate.revoked_count), active_limit)
 	case .Refused_Buffer_Too_Small:
 		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1)
 	case .Refused_Nil_Input, .Refused_Zero_Key, .Refused_Zero_Epoch, .Refused_Zero_Serial, .Refused_Not_Strictly_Sorted:

@@ -666,3 +666,98 @@ the_clean_length_is_the_count_of_the_clean_copy :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+@(test)
+inline_to_external_tier_crossing_and_counter :: proc(t: ^testing.T) {
+	// Start with nil external buffer + grow callback (the edit/notes path):
+	// documents up to TEXT_CAPACITY (32 KiB) stay on the inline fast path with
+	// zero tier moves; 1 byte past TEXT_CAPACITY crosses to external_bytes and
+	// increments tier_moves.
+	BUDGET :: 128 * 1024
+	backing := make([]u8, BUDGET)
+	defer delete(backing)
+	res := Test_Reservation{backing = backing, committed = 0, budget_cap = BUDGET}
+
+	text := new(Text)
+	defer free(text)
+	text_init_buffer(text, nil, test_bytes_grow, &res)
+
+	exact := make([]u8, TEXT_CAPACITY)
+	defer delete(exact)
+	for i in 0 ..< len(exact) {
+		exact[i] = u8('a' + (i % 26))
+	}
+	testing.expect_value(t, text_insert(text, exact), Edit_Problem.None)
+	testing.expect_value(t, text_length(text), TEXT_CAPACITY)
+	testing.expect_value(t, len(text.external_bytes), 0)
+	testing.expect_value(t, text.tier_moves, u64(0))
+	testing.expect_value(t, text_capacity(text), TEXT_CAPACITY)
+
+	// Move gap to the middle while still on inline tier, then insert 1 byte to cross 32 KiB + 1.
+	selection_set(text, 1000, 1000)
+	testing.expect_value(t, text_insert_character(text, '!'), Edit_Problem.None)
+	testing.expect_value(t, text_length(text), TEXT_CAPACITY + 1)
+	testing.expect(t, len(text.external_bytes) >= TEXT_CAPACITY + 1)
+	testing.expect_value(t, text.tier_moves, u64(1))
+	testing.expect_value(t, byte_at(text, 999), exact[999])
+	testing.expect_value(t, byte_at(text, 1000), u8('!'))
+	testing.expect_value(t, byte_at(text, 1001), exact[1000])
+	testing.expect_value(t, byte_at(text, TEXT_CAPACITY), exact[TEXT_CAPACITY - 1])
+
+	// Next tier growth: insert 64 KiB more to cross 64 KiB -> 128 KiB.
+	extra := make([]u8, 64 * 1024)
+	defer delete(extra)
+	for &b in extra {
+		b = 'K'
+	}
+	testing.expect_value(t, text_insert(text, extra), Edit_Problem.None)
+	testing.expect_value(t, text_length(text), TEXT_CAPACITY + 1 + 64 * 1024)
+	testing.expect_value(t, text.tier_moves, u64(2))
+
+	// Refusal past budget leaves text length and tier_moves unchanged.
+	too_much := make([]u8, BUDGET)
+	defer delete(too_much)
+	for &b in too_much {
+		b = 'x'
+	}
+	before_len := text_length(text)
+	before_moves := text.tier_moves
+	testing.expect_value(t, text_insert(text, too_much), Edit_Problem.Too_Long)
+	testing.expect_value(t, text_length(text), before_len)
+	testing.expect_value(t, text.tier_moves, before_moves)
+
+	// Layout and Search start on inline tier and count their crossing past ROW_CAPACITY / MATCH_CAPACITY.
+	lines_count :: TEXT_CAPACITY + 2
+	lines := make([]u8, lines_count)
+	defer delete(lines)
+	for &b in lines {
+		b = '\n'
+	}
+	testing.expect_value(t, text_replace_whole(text, lines), Edit_Problem.None)
+
+	row_backing := make([]u8, 80_000 * size_of(Row))
+	defer delete(row_backing)
+	row_res := Test_Reservation{backing = row_backing, committed = 0, budget_cap = len(row_backing)}
+	layout := new(Layout)
+	defer free(layout)
+	layout_init_buffer(layout, nil, test_rows_grow, &row_res)
+	testing.expect_value(t, layout_compute(layout, text, COLUMNS, .Character), Layout_Problem.None)
+	testing.expect_value(t, layout.row_count, lines_count + 1)
+	testing.expect(t, layout.tier_moves >= 1)
+
+	match_backing := make([]u8, 80_000 * size_of(i32))
+	defer delete(match_backing)
+	match_res := Test_Reservation{backing = match_backing, committed = 0, budget_cap = len(match_backing)}
+	search := new(Search)
+	defer free(search)
+	search_init_buffer(search, nil, test_matches_grow, &match_res)
+	search_open(search, text)
+	for &b in lines {
+		b = 'a'
+	}
+	testing.expect_value(t, text_replace_whole(text, lines), Edit_Problem.None)
+	testing.expect_value(t, search_query_set(search, text, transmute([]u8)string("a")), Edit_Problem.None)
+	testing.expect(t, !search.matches_truncated)
+	testing.expect_value(t, search.match_count, lines_count)
+	testing.expect(t, search.tier_moves >= 1)
+}

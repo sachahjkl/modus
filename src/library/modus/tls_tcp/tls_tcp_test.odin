@@ -746,4 +746,121 @@ test_strict_handshake_framing_ccs_sid_compression_and_ee :: proc(t: ^testing.T) 
 	}
 }
 
+@(test)
+test_large_multi_record_handshake_reassembly_and_bound_refusal :: proc(t: ^testing.T) {
+	// 1. Multi-record Certificate message > 4096 bytes (e.g. 20 KiB split across
+	//    two TLS 1.3 records, simulating a real X.509 certificate chain) succeeds
+	//    and preserves the transcript for CertificateVerify.
+	{
+		client_cfg, server_cfg := make_test_configs(.TLS_AES_128_GCM_SHA256, true)
+		client := new(Tls_Session)
+		server := new(Tls_Session)
+		defer free(client)
+		defer free(server)
+		testing.expect_value(t, tls_session_init(client, &client_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_session_init(server, &server_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_client_start(client), Tls_Refusal.None)
+		testing.expect_value(t, pump_stream(client, server, 0), Tls_Refusal.None)
+
+		// Deliver ServerHello and EncryptedExtensions from server to client.
+		wire := make([]u8, MAX_WIRE_BUFFER)
+		defer delete(wire)
+		_ = tls_take_outgoing(server, wire)
+		sh_len := RECORD_HEADER_SIZE + int(byte_order.read_u16_big_endian(wire, 3))
+		ee_len := RECORD_HEADER_SIZE + int(byte_order.read_u16_big_endian(wire, sh_len + 3))
+		testing.expect_value(t, tls_feed_incoming(client, wire[:sh_len + ee_len]), Tls_Refusal.None)
+		testing.expect_value(t, client.state, Tls_State.Client_Wait_Certificate)
+
+		// Build a 20 KiB Certificate message (pinned Ed25519 SPKI + 20 000 bytes
+		// of entry extensions, well past the old 4096-byte cap) and split across
+		// two encrypted TLS records.
+		ext_pad_len :: 20_000
+		entry_len := 3 + ED25519_SPKI_SIZE + 2 + ext_pad_len
+		body_len := 1 + 3 + entry_len
+		total_msg := HANDSHAKE_HEADER_SIZE + body_len
+		testing.expect(t, total_msg > 16384 && total_msg <= MAX_HANDSHAKE_REASSEMBLY)
+
+		cert_msg := make([]u8, total_msg)
+		defer delete(cert_msg)
+		cert_msg[0] = u8(Tls_Handshake_Type.Certificate)
+		cert_msg[1] = u8((body_len >> 16) & 0xFF)
+		cert_msg[2] = u8((body_len >> 8) & 0xFF)
+		cert_msg[3] = u8(body_len & 0xFF)
+		pos := HANDSHAKE_HEADER_SIZE
+		cert_msg[pos] = 0 // certificate_request_context len = 0
+		pos += 1
+		cert_msg[pos] = u8((entry_len >> 16) & 0xFF)
+		cert_msg[pos + 1] = u8((entry_len >> 8) & 0xFF)
+		cert_msg[pos + 2] = u8(entry_len & 0xFF)
+		pos += 3
+		cert_msg[pos] = 0
+		cert_msg[pos + 1] = 0
+		cert_msg[pos + 2] = u8(ED25519_SPKI_SIZE)
+		pos += 3
+		prefix := ED25519_SPKI_PREFIX
+		copy(cert_msg[pos:pos + 12], prefix[:])
+		pos += 12
+		copy(cert_msg[pos:pos + ED25519_KEY_SIZE], client_cfg.pinned_server_public_key[:])
+		pos += ED25519_KEY_SIZE
+		byte_order.write_u16_big_endian(cert_msg, pos, u16(ext_pad_len))
+		pos += 2
+		for i := 0; i < ext_pad_len; i += 1 {
+			cert_msg[pos + i] = u8((i * 7 + 3) & 0xFF)
+		}
+
+		// Encrypt and feed as two records: 12 000 bytes + remainder.
+		enc_keys := client.recv_keys
+		rec_buf := make([]u8, MAX_CIPHERTEXT_SIZE + RECORD_HEADER_SIZE)
+		defer delete(rec_buf)
+		split := 12_000
+		n1, ref1 := record_encrypt(&enc_keys, .Handshake, cert_msg[:split], 0, rec_buf)
+		testing.expect_value(t, ref1, Tls_Refusal.None)
+		testing.expect_value(t, tls_feed_incoming(client, rec_buf[:n1]), Tls_Refusal.None)
+		testing.expect_value(t, client.state, Tls_State.Client_Wait_Certificate)
+		testing.expect_value(t, client.handshake_len, split)
+
+		n2, ref2 := record_encrypt(&enc_keys, .Handshake, cert_msg[split:], 0, rec_buf)
+		testing.expect_value(t, ref2, Tls_Refusal.None)
+		testing.expect_value(t, tls_feed_incoming(client, rec_buf[:n2]), Tls_Refusal.None)
+		testing.expect_value(t, client.state, Tls_State.Client_Wait_Certificate_Verify)
+		testing.expect_value(t, client.handshake_len, 0)
+		testing.expect(t, client.transcript_len > 20_000)
+	}
+
+	// 2. Exact MAX_HANDSHAKE_REASSEMBLY + 1 (65536 bytes) declared in handshake
+	//    header is refused cleanly with Record_Too_Large.
+	{
+		client_cfg, server_cfg := make_test_configs(.TLS_AES_128_GCM_SHA256, true)
+		client := new(Tls_Session)
+		server := new(Tls_Session)
+		defer free(client)
+		defer free(server)
+		testing.expect_value(t, tls_session_init(client, &client_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_session_init(server, &server_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_client_start(client), Tls_Refusal.None)
+		testing.expect_value(t, pump_stream(client, server, 0), Tls_Refusal.None)
+
+		wire := make([]u8, MAX_WIRE_BUFFER)
+		defer delete(wire)
+		_ = tls_take_outgoing(server, wire)
+		sh_len := RECORD_HEADER_SIZE + int(byte_order.read_u16_big_endian(wire, 3))
+		ee_len := RECORD_HEADER_SIZE + int(byte_order.read_u16_big_endian(wire, sh_len + 3))
+		testing.expect_value(t, tls_feed_incoming(client, wire[:sh_len + ee_len]), Tls_Refusal.None)
+
+		oversize_body := MAX_HANDSHAKE_REASSEMBLY + 1 - HANDSHAKE_HEADER_SIZE
+		hdr_frag: [16]u8
+		hdr_frag[0] = u8(Tls_Handshake_Type.Certificate)
+		hdr_frag[1] = u8((oversize_body >> 16) & 0xFF)
+		hdr_frag[2] = u8((oversize_body >> 8) & 0xFF)
+		hdr_frag[3] = u8(oversize_body & 0xFF)
+		enc_keys := client.recv_keys
+		rec_buf := make([]u8, 128)
+		defer delete(rec_buf)
+		fn, eref := record_encrypt(&enc_keys, .Handshake, hdr_frag[:], 0, rec_buf)
+		testing.expect_value(t, eref, Tls_Refusal.None)
+		testing.expect_value(t, tls_feed_incoming(client, rec_buf[:fn]), Tls_Refusal.Record_Too_Large)
+		testing.expect_value(t, client.state, Tls_State.Failed)
+	}
+}
+
 
