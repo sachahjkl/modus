@@ -77,14 +77,16 @@ Call_Result_Kind :: enum {
 }
 
 Call_Result :: struct {
-	outcome:  Call_Result_Kind,
-	lines:    [dynamic]string, // What the tool prints, one line each.
-	rows:     int, // A Table: its count of rows.
-	value:    i64,
-	text:     string, // A Text: its bytes, whole, for one test step; the lines hold them too.
-	answer_bytes: int, // The bytes of the answer on its stream: its header and its result.
-	datagrams: int, // The datagrams of `remote` that the peer received during the call.
-	new_connection: bool, // The call made a new QUIC connection.
+	outcome:           Call_Result_Kind,
+	lines:             [dynamic]string, // What the tool prints, one line each.
+	rows:              int, // A Table: its count of rows.
+	value:             i64,
+	text:              string, // A Text: its bytes, whole, for one test step; the lines hold them too.
+	answer_bytes:      int, // The bytes of the answer on its stream: its header and its result.
+	datagrams:         int, // The datagrams of `remote` that the peer received during the call.
+	new_connection:    bool, // The call made a new QUIC connection.
+	error:             errors.Error_Record, // Failed or Refused: the error record of the answer.
+	transport_outcome: Remote_Call_Outcome, // When the call did not get an answer.
 }
 
 // A call that the tool can send again and again: the measures.
@@ -713,6 +715,7 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 	outcome.answer_bytes = transport.answer_bytes
 	outcome.new_connection = transport.new_connection
 	if !answered {
+		outcome.transport_outcome = transport.outcome
 		#partial switch transport.outcome {
 		case .Key_Refused, .No_Key, .Client_Refused:
 			outcome.outcome = .No_Answer
@@ -742,6 +745,7 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 	call_ended, record, request_refused := remote.answer_outcome(answer)
 	if request_refused {
 		outcome.outcome = .Refused
+		outcome.error = answer.error
 		field := ""
 		if record.argument >= 1 && record.argument <= len(remote.REQUEST_FIELD_NAMES) {
 			field = remote.REQUEST_FIELD_NAMES[record.argument - 1]
@@ -756,6 +760,7 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 	answer.error = record
 	if call_ended != .Succeeded {
 		outcome.outcome = .Failed
+		outcome.error = answer.error
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
 		sentence.write_part(&writer, "error: ")

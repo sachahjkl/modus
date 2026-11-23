@@ -131,21 +131,26 @@ run_assistant :: proc(args: []string) -> int {
 		return foundation.EXIT_FAILURE
 	}
 	defer agent_bridge.bridge_destroy(&bridge)
-	runner := Runner{client = &client, bridge = &bridge, model = model}
+	runner := Runner{client = &client, window = remote_window_port(&client), bridge = &bridge, model = model}
 	defer conversation_close(&runner)
 	for {
 		report := runner_turn(&runner)
 		report_print(report)
 		free_all(context.temp_allocator)
-		switch report.outcome {
-		case .Window_Failed:
-			return foundation.EXIT_FAILURE
-		case .No_Request:
+		if !report.has_request {
+			if report.end == .Window_Failed || report.end == .Grant_Ended {
+				return foundation.EXIT_FAILURE
+			}
 			if once {
 				return 0
 			}
 			time.sleep(IDLE_PAUSE)
-		case .Answered, .Reply_Refused, .Model_Failed:
+			continue
+		}
+		switch report.end {
+		case .Window_Failed, .Grant_Ended:
+			return foundation.EXIT_FAILURE
+		case .Final_Reply, .Step_Limit, .Repeated_Step, .Stopped_By_Principal, .Model_Failed:
 			if once {
 				return 0
 			}
@@ -168,14 +173,15 @@ runner_policy :: proc(client_key: [32]u8, principal_id: u64) -> contract.Bridge_
 // report_print writes one line for a turn. It names no secret: a problem
 // of the model names its variable, never its value.
 report_print :: proc(report: Turn_Report) {
-	if report.outcome == .No_Request {
+	if !report.has_request && report.end != .Window_Failed && report.end != .Grant_Ended {
 		return
 	}
 	builder := strings.builder_make(context.temp_allocator)
 	report_write(&builder, report)
 	rest := strings.to_string(builder)
+	is_error := report.end == .Window_Failed || report.end == .Grant_Ended
 	for line in strings.split_lines_iterator(&rest) {
-		if report.outcome == .Window_Failed {
+		if is_error {
 			fmt.eprintfln("modustool: assistant: %s", line)
 		} else {
 			fmt.printfln("modustool: assistant: %s", line)

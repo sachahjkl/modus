@@ -9,9 +9,9 @@ import "core:unicode/utf8"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
 
-// The bytes of a whole model reply at most: the text, four acts and the
-// JSON around them, with room for escapes.
-MODEL_REPLY_BYTES :: 16 * 1024
+// The bytes of a whole model reply at most: the text, up to 16 acts and
+// the JSON around them, with room for escapes.
+MODEL_REPLY_BYTES :: 256 * 1024
 
 // The field that a refusal of a model reply names, as the argument of its
 // error record: 0 the reply as a whole.

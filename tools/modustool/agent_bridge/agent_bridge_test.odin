@@ -1128,3 +1128,35 @@ the_kind_of_a_column_comes_from_its_field :: proc(t: ^testing.T) {
 		testing.expect(t, contract.lex_column_unit_valid(kind, unit))
 	}
 }
+
+// The metadata exports of manual that discover services and exports run
+// read-only; the exports of manual that inspect running processes or change
+// its window stop for principal approval.
+@(test)
+test_manual_discovery_exports_are_read_only_and_others_wait :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	state: Fake_Transport_State
+	state.next_lex_result = Lex_Eval_Result{value_kind = .Text, text_value = "processes() -> Table"}
+	clock := Fake_Clock{now_ms = 2_000}
+	bridge: Agent_Bridge
+	testing.expect(t, bridge_init(&bridge, make_full_policy(make_test_key(0x55)), make_fake_transport(&state)))
+	defer bridge_destroy(&bridge)
+	bridge.clock_ms_proc = fake_clock_now_ms
+	bridge.clock_user_data = &clock
+
+	for line in ([?]string{"manual.show(\"monitor\")", "manual.overview()", "manual.running()", "manual.edges()"}) {
+		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{{"line":%q}}}}`, line)
+		resp := bridge_handle_json_line(&bridge, req)
+		expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+	}
+	testing.expect_value(t, state.eval_lex_calls, 0)
+
+	allowed := [?]string{"manual.modules()", "manual.exports(\"monitor\")", "manual.signature(\"monitor\", 1)"}
+	for line, index in allowed {
+		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":%d,"method":"eval_lex","params":{{"line":%q}}}}`, index + 2, line)
+		res := expect_json_result(t, bridge_handle_json_line(&bridge, req))
+		testing.expect_value(t, res["status"].(json.String), "Ok")
+		testing.expect_value(t, state.last_lex_line, line)
+	}
+	testing.expect_value(t, state.eval_lex_calls, len(allowed))
+}

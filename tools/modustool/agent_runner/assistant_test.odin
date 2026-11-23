@@ -6,11 +6,14 @@ import "core:strings"
 import "core:net"
 import "core:testing"
 import "core:time"
+import "internal:assistant/conversation"
 import "modustool:agent_bridge"
+import bridge_contract "modus:contract/agent_bridge"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/call_outcome"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
+import "modus:contract/remote"
 
 @(private = "file")
 refused_with :: proc(t: ^testing.T, reply: string, kind: errors.Kind, field: Reply_Field, act: int = 0, loc := #caller_location) {
@@ -54,8 +57,17 @@ the_border_refuses_each_malformed_model_reply :: proc(t: ^testing.T) {
 	refused_with(t, `{"text": "a", "acts": [{"kind": "eval_lex", "line": "a\nb"}]}`, .Bad_Value, .Line, 1)
 	refused_with(t, strings.concatenate({`{"text": "a", "acts": [{"kind": "eval_lex", "line": "`, line_most, `b"}]}`}, context.temp_allocator), .Too_Long, .Line, 1)
 	refused_with(t, `{"text": "a", "acts": [{"kind": "eval_lex", "line": "x", "safe": true}]}`, .Bad_Value, .Acts, 1)
-	five := `{"kind": "eval_lex", "line": "x"}`
-	refused_with(t, strings.concatenate({`{"text": "a", "acts": [`, five, ",", five, ",", five, ",", five, ",", five, "]}"}, context.temp_allocator), .Too_Long, .Acts)
+	one_act := `{"kind": "eval_lex", "line": "x"}`
+	too_many := strings.builder_make(context.temp_allocator)
+	strings.write_string(&too_many, `{"text": "a", "acts": [`)
+	for index in 0 ..< assistant_contract.MODEL_ACT_CAPACITY + 1 {
+		if index > 0 {
+			strings.write_byte(&too_many, ',')
+		}
+		strings.write_string(&too_many, one_act)
+	}
+	strings.write_string(&too_many, "]}")
+	refused_with(t, strings.to_string(too_many), .Too_Long, .Acts)
 	_, record, _ := model_reply_decode(strings.repeat(" ", MODEL_REPLY_BYTES + 1, context.temp_allocator))
 	testing.expect_value(t, record.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, record.limit, i64(MODEL_REPLY_BYTES))
@@ -74,11 +86,20 @@ the_border_passes_a_whole_model_reply :: proc(t: ^testing.T) {
 	testing.expect_value(t, reply.text, "two lines été \"q\" 😀")
 	testing.expect_value(t, reply.act_count, 0)
 	act := `{"line": "monitor.processes()", "kind": "eval_lex"}`
-	reply, _, ok = model_reply_decode(strings.concatenate({`{"text": "a", "acts": [`, act, ",", act, ",", act, ",", act, "]}"}, context.temp_allocator))
+	max_acts := strings.builder_make(context.temp_allocator)
+	strings.write_string(&max_acts, `{"text": "a", "acts": [`)
+	for index in 0 ..< assistant_contract.MODEL_ACT_CAPACITY {
+		if index > 0 {
+			strings.write_byte(&max_acts, ',')
+		}
+		strings.write_string(&max_acts, act)
+	}
+	strings.write_string(&max_acts, "]}")
+	reply, _, ok = model_reply_decode(strings.to_string(max_acts))
 	testing.expect(t, ok)
 	testing.expect_value(t, reply.act_count, assistant_contract.MODEL_ACT_CAPACITY)
-	testing.expect_value(t, reply.acts[3].line, "monitor.processes()")
-	testing.expect_value(t, reply.acts[3].kind, assistant_contract.Act_Kind.Eval_Lex)
+	testing.expect_value(t, reply.acts[assistant_contract.MODEL_ACT_CAPACITY - 1].line, "monitor.processes()")
+	testing.expect_value(t, reply.acts[assistant_contract.MODEL_ACT_CAPACITY - 1].kind, assistant_contract.Act_Kind.Eval_Lex)
 }
 
 // An endpoint is plain HTTP with a host, a port and a path: each other form
@@ -324,7 +345,7 @@ an_endpoint_that_stalls_fails_the_model :: proc(t: ^testing.T) {
 	testing.expect(t, bound_error == nil)
 	model := Http_Model{endpoint = {host = "127.0.0.1", port = bound.port, path = "/v1"}, key = "k", model_name = "m", answer_deadline = STALL_TEST_DEADLINE}
 	_, outcome, record, problem := model_answer(http_model(&model), nil)
-	testing.expect_value(t, outcome, Turn_Outcome.Model_Failed)
+	testing.expect_value(t, outcome, Model_Answer_Kind.Model_Failed)
 	testing.expect_value(t, record.kind, i64(errors.Kind.No_Answer))
 	testing.expectf(t, strings.contains(problem, "no whole answer"), "%q", problem)
 }
@@ -379,7 +400,8 @@ the_names_of_an_act_come_from_the_parser_of_the_bridge :: proc(t: ^testing.T) {
 a_table_of_the_bridge_crosses_typed_within_the_bounds :: proc(t: ^testing.T) {
 	rows := strings.builder_make(context.temp_allocator)
 	integers := strings.builder_make(context.temp_allocator)
-	for index in 0 ..< 20 {
+	extra_rows := assistant_contract.ACT_TABLE_ROW_CAPACITY + 10
+	for index in 0 ..< extra_rows {
 		strings.write_byte(&rows, ',')
 		strings.write_byte(&integers, ',')
 		fmt.sbprintf(&rows, `["%d","name\u0001%d","","%d"]`, index, index, 100 * index)
@@ -387,7 +409,7 @@ a_table_of_the_bridge_crosses_typed_within_the_bounds :: proc(t: ^testing.T) {
 	}
 	long := strings.repeat("ab", assistant_contract.ACT_TABLE_CELL_BYTES, context.temp_allocator)
 	// The braces of JSON are no format of fmt: the answer is joined.
-	answer := strings.concatenate({`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"table","record_name":"Process","columns":["slot","name","hash","resident"],"column_kinds":["integer","text","text","size"],"column_units":[0,0,0,3],"rows":[["99","x\u0085y","`, long, `","7"]`, strings.to_string(rows), `],"row_integers":[[99,0,0,7]`, strings.to_string(integers), `],"total_rows":21}}`}, context.temp_allocator)
+	answer := strings.concatenate({`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"table","record_name":"Process","columns":["slot","name","hash","resident"],"column_kinds":["integer","text","text","size"],"column_units":[0,0,0,3],"rows":[["99","x\u0085y","`, long, `","7"]`, strings.to_string(rows), `],"row_integers":[[99,0,0,7]`, strings.to_string(integers), `],"total_rows":`, fmt.tprintf("%d", extra_rows + 1), `}}`}, context.temp_allocator)
 	report := bridge_answer_read(answer)
 	testing.expect_value(t, report.state, assistant_contract.Act_State.Done)
 	table := report.table
@@ -396,7 +418,7 @@ a_table_of_the_bridge_crosses_typed_within_the_bounds :: proc(t: ^testing.T) {
 	testing.expect(t, table.kinds[0] == .Integer && table.kinds[1] == .Text && table.kinds[3] == .Size && table.units[3] == 3)
 	testing.expect_value(t, table.row_count, assistant_contract.ACT_TABLE_ROW_CAPACITY)
 	testing.expect_value(t, len(table.cells), 4 * assistant_contract.ACT_TABLE_ROW_CAPACITY)
-	testing.expect_value(t, table.total_rows, 21)
+	testing.expect_value(t, table.total_rows, i64(extra_rows + 1))
 	// A number column: its value, and no text.
 	testing.expect(t, table.cells[0] == "" && table.integers[0] == 99)
 	testing.expect(t, table.cells[7] == "" && table.integers[7] == 0)
@@ -471,4 +493,503 @@ a_table_that_is_not_whole_crosses_as_words_only :: proc(t: ^testing.T) {
 	// The whole form, last: a table.
 	report := bridge_answer_read(strings.concatenate({head, `"value_kind":"table","record_name":"P","columns":["a"],`, whole, `"rows":[["1"]],"total_rows":1}}`}, context.temp_allocator))
 	testing.expect(t, report.table.present)
+}
+
+// The system instructions name no service and tell the model to discover
+// commands through manual.modules(), manual.exports(name) and
+// manual.signature(name, n).
+@(test)
+system_prompt_names_no_service_and_explains_discovery :: proc(t: ^testing.T) {
+	testing.expect(t, strings.contains(SYSTEM_PROMPT, "manual.modules()"))
+	testing.expect(t, strings.contains(SYSTEM_PROMPT, "manual.exports(name)"))
+	testing.expect(t, strings.contains(SYSTEM_PROMPT, "manual.signature(name, n)"))
+	for forbidden in ([]string{"monitor", "log.records", "compositor", "plans", "recipes", "projects", "storage", "settings"}) {
+		testing.expectf(t, !strings.contains(SYSTEM_PROMPT, forbidden), "SYSTEM_PROMPT named service %q", forbidden)
+	}
+}
+
+// What the model reads from a bridge result is bounded to 64 rows, 24
+// columns and the step byte budget (<= 16 KiB), with a count of omitted
+// rows and columns.
+@(test)
+model_result_bounds_rows_columns_and_bytes :: proc(t: ^testing.T) {
+	cols := strings.builder_make(context.temp_allocator)
+	kinds := strings.builder_make(context.temp_allocator)
+	units := strings.builder_make(context.temp_allocator)
+	col_count := MODEL_RESULT_COLUMN_CAPACITY + 4
+	for c in 0 ..< col_count {
+		if c > 0 {
+			strings.write_byte(&cols, ',')
+			strings.write_byte(&kinds, ',')
+			strings.write_byte(&units, ',')
+		}
+		fmt.sbprintf(&cols, `"c%d"`, c)
+		strings.write_string(&kinds, `"text"`)
+		strings.write_string(&units, "0")
+	}
+	rows := strings.builder_make(context.temp_allocator)
+	ints := strings.builder_make(context.temp_allocator)
+	row_count := MODEL_RESULT_ROW_CAPACITY + 20
+	for r in 0 ..< row_count {
+		if r > 0 {
+			strings.write_byte(&rows, ',')
+			strings.write_byte(&ints, ',')
+		}
+		strings.write_byte(&rows, '[')
+		strings.write_byte(&ints, '[')
+		for c in 0 ..< col_count {
+			if c > 0 {
+				strings.write_byte(&rows, ',')
+				strings.write_byte(&ints, ',')
+			}
+			fmt.sbprintf(&rows, `"v%d_%d"`, r, c)
+			strings.write_byte(&ints, '0')
+		}
+		strings.write_byte(&rows, ']')
+		strings.write_byte(&ints, ']')
+	}
+	answer := strings.concatenate({
+		`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"table","record_name":"Big","columns":[`,
+		strings.to_string(cols),
+		`],"column_kinds":[`,
+		strings.to_string(kinds),
+		`],"column_units":[`,
+		strings.to_string(units),
+		`],"rows":[`,
+		strings.to_string(rows),
+		`],"row_integers":[`,
+		strings.to_string(ints),
+		`],"total_rows":`,
+		fmt.tprintf("%d", row_count),
+		`}}`,
+	}, context.temp_allocator)
+	report := bridge_answer_read(answer, 2048)
+	testing.expect_value(t, report.state, assistant_contract.Act_State.Done)
+	testing.expect(t, len(report.model_text) <= 2048)
+	testing.expect(t, strings.contains(report.model_text, "4 columns more not shown"))
+	testing.expect(t, strings.contains(report.model_text, cut_mark.MARK_START))
+	full := bridge_answer_read(answer, MODEL_STEP_RESULT_BYTES)
+	testing.expect(t, len(full.model_text) <= MODEL_STEP_RESULT_BYTES)
+	testing.expect(t, !strings.contains(full.model_text, "v70_0"))
+	testing.expect(t, !strings.contains(full.model_text, "c25 "))
+}
+
+// In-memory Window_Port backed by the real conversation border, so host
+// tests exercise the full runner + bridge + conversation loop end to end.
+@(private = "file")
+Memory_Window :: struct {
+	talk:               ^conversation.Conversation,
+	acts_for_principal: bool,
+}
+
+@(private = "file")
+memory_window_port :: proc(win: ^Memory_Window) -> Window_Port {
+	return {
+		user_data = win,
+		request_serial = proc(user_data: rawptr) -> (serial: i64, problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			err: errors.Error_Record
+			r := conversation.request_serial(w.talk, w.acts_for_principal, &err)
+			if r < 0 {
+				return 0, "request_serial refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return r, "", false
+		},
+		request_text = proc(user_data: rawptr, serial: i64) -> (text: string, problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			buf := make([]u8, assistant_contract.REQUEST_TEXT_BYTES, context.temp_allocator)
+			err: errors.Error_Record
+			r, _ := conversation.request_text(w.talk, w.acts_for_principal, serial, buf, &err)
+			if r < 0 {
+				return "", "request_text refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return string(buf[:r]), "", false
+		},
+		stop_requested = proc(user_data: rawptr, serial: i64) -> (stopped: bool, problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			err: errors.Error_Record
+			r := conversation.stop_requested(w.talk, w.acts_for_principal, serial, &err)
+			if r < 0 {
+				return false, "stop_requested refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return r != 0, "", false
+		},
+		reply = proc(user_data: rawptr, serial: i64, text: string, acts: int) -> (problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			err: errors.Error_Record
+			r, _ := conversation.reply(w.talk, w.acts_for_principal, serial, text, i64(acts), &err)
+			if r < 0 {
+				return "reply refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return "", false
+		},
+		reply_refused = proc(user_data: rawptr, serial: i64, record: errors.Error_Record) -> (problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			err: errors.Error_Record
+			r, _ := conversation.reply_refused(w.talk, w.acts_for_principal, serial, record.kind, record.unit, record.argument, record.value, record.limit, &err)
+			if r < 0 {
+				return "reply_refused refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return "", false
+		},
+		act = proc(user_data: rawptr, serial: i64, kind: assistant_contract.Act_Kind, line, service, export: string) -> (number: i64, problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			err: errors.Error_Record
+			r, _ := conversation.act(w.talk, w.acts_for_principal, serial, i64(kind), line, service, export, &err)
+			if r < 0 {
+				return 0, "act refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return r, "", false
+		},
+		act_result = proc(user_data: rawptr, number: i64, state: assistant_contract.Act_State, text: string) -> (problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			err: errors.Error_Record
+			r, _ := conversation.act_result(w.talk, w.acts_for_principal, number, i64(state), text, &err)
+			if r < 0 {
+				return "act_result refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return "", false
+		},
+		act_table = proc(user_data: rawptr, number: i64, table: Act_Result_Table) -> (problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			cols := make([]assistant_contract.Act_Table_Column, len(table.columns), context.temp_allocator)
+			for name, i in table.columns {
+				copy(cols[i].name[:], name)
+				cols[i].kind = i64(table.kinds[i])
+				cols[i].unit = table.units[i]
+			}
+			cells := make([]assistant_contract.Act_Table_Cell, len(table.cells), context.temp_allocator)
+			for text, i in table.cells {
+				copy(cells[i].text[:], text)
+				cells[i].integer = table.integers[i]
+			}
+			err: errors.Error_Record
+			r, _ := conversation.act_table(w.talk, w.acts_for_principal, number, i64(table.shape), table.name, table.total_rows, cols, cells, &err)
+			if r < 0 {
+				return "act_table refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return "", false
+		},
+		loop_end = proc(user_data: rawptr, serial: i64, cause: Agent_Loop_End) -> (problem: string, grant_ended: bool) {
+			w := (^Memory_Window)(user_data)
+			err: errors.Error_Record
+			r, _ := conversation.loop_end(w.talk, w.acts_for_principal, serial, i64(cause), &err)
+			if r < 0 {
+				return "loop_end refused", err.kind == i64(errors.Kind.No_Grant)
+			}
+			return "", false
+		},
+	}
+}
+
+// Fake transport that serves discovery (manual.*) and monitor.processes()
+// and records every line executed, with an optional callback after a call.
+@(private = "file")
+Loop_Transport :: struct {
+	lines:     [dynamic]string,
+	after_act: proc(state: ^Loop_Transport),
+	stop_talk: ^conversation.Conversation,
+	vary:      bool, // Each call of manual.signature gives another text: a state that moves.
+}
+
+@(private = "file")
+loop_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: agent_bridge.Lex_Eval_Result, err: string, ok: bool) {
+	state := (^Loop_Transport)(user_data)
+	append(&state.lines, strings.clone(line, allocator))
+	if state.after_act != nil {
+		state.after_act(state)
+	}
+	switch {
+	case line == "manual.modules()":
+		cols := make([]string, 2, allocator)
+		cols[0], cols[1] = "name", "exports"
+		kinds := make([]bridge_contract.Lex_Column_Kind, 2, allocator)
+		kinds[0], kinds[1] = .Text, .Integer
+		units := make([]i64, 2, allocator)
+		r0 := make([]string, 2, allocator)
+		r0[0], r0[1] = "monitor", "5"
+		i0 := make([]i64, 2, allocator)
+		i0[1] = 5
+		rows := make([][]string, 1, allocator)
+		rows[0] = r0
+		row_ints := make([][]i64, 1, allocator)
+		row_ints[0] = i0
+		return {value_kind = .Table, record_name = "Module", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, "", true
+	case strings.has_prefix(line, "manual.exports("):
+		cols := make([]string, 1, allocator)
+		cols[0] = "name"
+		kinds := make([]bridge_contract.Lex_Column_Kind, 1, allocator)
+		kinds[0] = .Text
+		units := make([]i64, 1, allocator)
+		r0 := make([]string, 1, allocator)
+		r0[0] = "processes"
+		i0 := make([]i64, 1, allocator)
+		rows := make([][]string, 1, allocator)
+		rows[0] = r0
+		row_ints := make([][]i64, 1, allocator)
+		row_ints[0] = i0
+		return {value_kind = .Table, record_name = "Export", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, "", true
+	case strings.has_prefix(line, "manual.signature("):
+		if state.vary {
+			return {value_kind = .Text, text_value = fmt.aprintf("processes() -> Table, call %d", len(state.lines), allocator = allocator)}, "", true
+		}
+		return {value_kind = .Text, text_value = "processes() -> Table"}, "", true
+	case:
+		cols := make([]string, 2, allocator)
+		cols[0], cols[1] = "slot", "name"
+		kinds := make([]bridge_contract.Lex_Column_Kind, 2, allocator)
+		kinds[0], kinds[1] = .Integer, .Text
+		units := make([]i64, 2, allocator)
+		r0 := make([]string, 2, allocator)
+		r0[0], r0[1] = "1", "root"
+		i0 := make([]i64, 2, allocator)
+		i0[0] = 1
+		rows := make([][]string, 1, allocator)
+		rows[0] = r0
+		row_ints := make([][]i64, 1, allocator)
+		row_ints[0] = i0
+		return {value_kind = .Table, record_name = "Process", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, "", true
+	}
+}
+
+// Multi-step loop: discovery (manual.modules -> manual.exports & signature)
+// -> query (monitor.processes) -> final answer (0 acts). Verifies tool
+// outcomes feed back in the tool role, older steps fold in the window, and
+// the latest action step stays open.
+@(test)
+multi_step_loop_discovers_queries_and_answers :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "which processes run") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport{lines = make([dynamic]string, context.temp_allocator)}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 9}, 0), {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	replies := []string {
+		`{"text": "Finding modules.", "acts": [{"kind": "eval_lex", "line": "manual.modules()"}]}`,
+		`{"text": "Checking monitor exports.", "acts": [{"kind": "eval_lex", "line": "manual.exports(\"monitor\")"}, {"kind": "eval_lex", "line": "manual.signature(\"monitor\", 1)"}]}`,
+		`{"text": "Listing processes.", "acts": [{"kind": "eval_lex", "line": "monitor.processes()"}]}`,
+		`{"text": "One process runs: root."}`,
+	}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+
+	report := runner_turn(&runner)
+	testing.expect(t, report.has_request)
+	testing.expect_value(t, report.end, Agent_Loop_End.Final_Reply)
+	testing.expect_value(t, report.step_count, 4)
+	testing.expect_value(t, report.total_acts, 4)
+	testing.expect_value(t, len(lt.lines), 4)
+	testing.expect_value(t, lt.lines[0], "manual.modules()")
+	testing.expect_value(t, lt.lines[3], "monitor.processes()")
+	// Tool results fed back in the tool role for every act.
+	tool_turns := 0
+	for turn in runner.conversation {
+		if turn.role == .Outcome {
+			tool_turns += 1
+			testing.expect(t, turn.call_id != "")
+		}
+	}
+	testing.expect_value(t, tool_turns, 4)
+	// Older steps folded in conversation; latest action step (act 4) stays open.
+	testing.expect(t, conversation.act_folded(talk, conversation.act_of(talk, 1)))
+	testing.expect(t, conversation.act_folded(talk, conversation.act_of(talk, 2)))
+	testing.expect(t, !conversation.act_folded(talk, conversation.act_of(talk, 4)))
+	testing.expect_value(t, conversation.request_of(talk, 1).turn, conversation.Turn_State.Ended)
+	testing.expect_value(t, conversation.request_of(talk, 1).end_cause, Agent_Loop_End.Final_Reply)
+}
+
+// Step limit: 16 steps with distinct acts stop cleanly at Step_Limit and
+// never call the model a 17th time.
+@(test)
+multi_step_loop_stops_at_step_limit :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "check signatures") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport{lines = make([dynamic]string, context.temp_allocator)}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 10}, 0), {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	replies := make([]string, assistant_contract.AGENT_LOOP_STEP_CAPACITY + 2, context.temp_allocator)
+	for i in 0 ..< len(replies) {
+		// The braces of JSON are no format of fmt: the reply is joined.
+		replies[i] = strings.concatenate({`{"text": "Step `, fmt.tprintf("%d", i + 1), `", "acts": [{"kind": "eval_lex", "line": "manual.signature(\"monitor\", `, fmt.tprintf("%d", i + 1), `)"}]}`}, context.temp_allocator)
+	}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+
+	report := runner_turn(&runner)
+	testing.expect_value(t, report.end, Agent_Loop_End.Step_Limit)
+	testing.expect_value(t, report.step_count, assistant_contract.AGENT_LOOP_STEP_CAPACITY)
+	testing.expect_value(t, fake.next, assistant_contract.AGENT_LOOP_STEP_CAPACITY)
+	testing.expect_value(t, len(lt.lines), assistant_contract.AGENT_LOOP_STEP_CAPACITY)
+	testing.expect_value(t, conversation.request_of(talk, 1).end_cause, Agent_Loop_End.Step_Limit)
+}
+
+// Repeated step: proposing the exact same acts as the previous step ends
+// cleanly with Repeated_Step without running the duplicate acts.
+@(test)
+multi_step_loop_stops_on_repeated_step :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "repeat") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport{lines = make([dynamic]string, context.temp_allocator)}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 11}, 0), {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	replies := []string {
+		`{"text": "Try 1", "acts": [{"kind": "eval_lex", "line": "manual.modules()"}]}`,
+		`{"text": "Try 2", "acts": [{"kind": "eval_lex", "line": "manual.modules()"}]}`,
+		`{"text": "Never reached"}`,
+	}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+
+	report := runner_turn(&runner)
+	testing.expect_value(t, report.end, Agent_Loop_End.Repeated_Step)
+	// A repeat is known from its results: the second step ran, and the
+	// model gets no third reply.
+	testing.expect_value(t, report.step_count, 2)
+	testing.expect_value(t, len(lt.lines), 2)
+	testing.expect_value(t, fake.next, 2)
+	testing.expect_value(t, conversation.request_of(talk, 1).end_cause, Agent_Loop_End.Repeated_Step)
+}
+
+// The same acts whose results changed are no repeat: the loop goes on to
+// the final reply. The same acts in another order, or one act more, are no
+// repeat either.
+@(test)
+the_same_acts_with_new_results_are_no_repeat :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "wait for a change") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport{lines = make([dynamic]string, context.temp_allocator), vary = true}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 15}, 0), {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	same := `{"text": "Again", "acts": [{"kind": "eval_lex", "line": "manual.signature(\"monitor\", 1)"}]}`
+	replies := []string{same, same, same, `{"text": "It changed three times."}`}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+	report := runner_turn(&runner)
+	testing.expect_value(t, report.end, Agent_Loop_End.Final_Reply)
+	testing.expect_value(t, report.step_count, 4)
+	testing.expect_value(t, len(lt.lines), 3)
+	// The rule alone, at its edges.
+	a := Model_Act{kind = .Eval_Lex, line = "manual.modules()"}
+	b := Model_Act{kind = .Eval_Lex, line = "manual.exports(\"monitor\")"}
+	testing.expect(t, step_repeats({a, b}, {a, b}, {"x", "y"}, {"x", "y"}))
+	testing.expect(t, !step_repeats({a, b}, {b, a}, {"x", "y"}, {"y", "x"}))
+	testing.expect(t, !step_repeats({a, b}, {a}, {"x", "y"}, {"x"}))
+	testing.expect(t, !step_repeats({a}, {a}, {"x"}, {"x2"}))
+	testing.expect(t, !step_repeats({}, {}, {}, {}))
+}
+
+// Principal stop: pressing Stop during step 1 stops the loop before step 2
+// runs, ending cleanly with Stopped_By_Principal.
+@(test)
+multi_step_loop_stops_when_principal_stops :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "stop me") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport {
+		lines     = make([dynamic]string, context.temp_allocator),
+		stop_talk = talk,
+		after_act = proc(state: ^Loop_Transport) {
+			conversation.principal_stop(state.stop_talk)
+		},
+	}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 12}, 0), {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	replies := []string {
+		`{"text": "Step 1", "acts": [{"kind": "eval_lex", "line": "manual.modules()"}]}`,
+		`{"text": "Step 2", "acts": [{"kind": "eval_lex", "line": "monitor.processes()"}]}`,
+	}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+
+	report := runner_turn(&runner)
+	testing.expect_value(t, report.end, Agent_Loop_End.Stopped_By_Principal)
+	testing.expect_value(t, report.step_count, 1)
+	testing.expect_value(t, len(lt.lines), 1)
+	testing.expect_value(t, fake.next, 1)
+	testing.expect_value(t, conversation.request_of(talk, 1).end_cause, Agent_Loop_End.Stopped_By_Principal)
+}
+
+// Malformed model replies are refused on step 1 or on a later step; no act
+// of the malformed reply runs and the window records Reply_Refused.
+@(test)
+multi_step_loop_refuses_malformed_reply_on_any_step :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "bad step 2") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport{lines = make([dynamic]string, context.temp_allocator)}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 13}, 0), {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	replies := []string {
+		`{"text": "Step 1", "acts": [{"kind": "eval_lex", "line": "manual.modules()"}]}`,
+		`{"text": "Bad", "acts": [{"kind": "approve", "line": "plans.apply(\"home\")"}]}`,
+	}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+
+	report := runner_turn(&runner)
+	testing.expect_value(t, report.end, Agent_Loop_End.Model_Failed)
+	testing.expect(t, report.reply_refused)
+	testing.expect_value(t, report.step_count, 1)
+	testing.expect_value(t, len(lt.lines), 1)
+	testing.expect_value(t, conversation.request_of(talk, 1).end_cause, Agent_Loop_End.Model_Failed)
+}
+
+// Losing the bridge permission or the window grant ends the loop with
+// Grant_Ended.
+@(test)
+multi_step_loop_ends_on_grant_ended :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	// 1. Bridge lacks Eval_Lex permission.
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "no bridge grant") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport{lines = make([dynamic]string, context.temp_allocator)}
+	no_lex_policy := bridge_contract.Bridge_Client_Policy {
+		client_key_public   = {1 = 14},
+		permissions_word    = bridge_contract.bridge_permissions_to_word({.Read_Log_Facts}),
+		remote_uses_word    = remote.client_uses_word({.Calls}),
+		collector_available = true,
+	}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, no_lex_policy, {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	replies := []string {
+		`{"text": "Step 1", "acts": [{"kind": "eval_lex", "line": "manual.modules()"}]}`,
+		`{"text": "Step 2"}`,
+	}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+	report := runner_turn(&runner)
+	testing.expect_value(t, report.end, Agent_Loop_End.Grant_Ended)
+	testing.expect_value(t, len(lt.lines), 0)
+	testing.expect_value(t, conversation.request_of(talk, 1).end_cause, Agent_Loop_End.Grant_Ended)
+
+	// 2. Window caller lost Acts_For_Principal.
+	win2 := Memory_Window{talk = talk, acts_for_principal = false}
+	runner2 := Runner{window = memory_window_port(&win2), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner2)
+	report2 := runner_turn(&runner2)
+	testing.expect_value(t, report2.end, Agent_Loop_End.Grant_Ended)
 }

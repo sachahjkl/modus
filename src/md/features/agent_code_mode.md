@@ -96,7 +96,7 @@ The agent does not get a list of capabilities written for it. It gets one, the s
 
 - `help()`: the table of the commands that the agent console can call, each with one line of help, from the descriptions of the modules of its reach and the built-in commands of the console. A service out of the reach is not in it.
 - `describe(name)`: the signature and the whole help of one command, or a short guide of a word of Lex.
-- The exports of `manual` that read module metadata, `manual.modules()`, `manual.exports(name)` and `manual.signature(name)`, which join the read-only list.
+- The exports of `manual` that read module metadata, `manual.modules()`, `manual.exports(name)` and `manual.signature(name, n)` (the export numbered `n` from 1), which are on the read-only list. Before the agent console, in the first layer, they are the whole of discovery: the instructions of the runner tell the model to call them, and name no service.
 
 A new module with a described export is a new command of the agent at its first start, with no change of the instructions of the runner. The instructions of the runner hold the form of a step, the grammar of Lex, and the rule to call `help()` first; they name no service.
 
@@ -212,7 +212,9 @@ Why this order: each layer gives a working loop; the reach grows only after the 
 
 ## State
 
-Designed, not built. Built before it: the host bridge with its read-only list and single calls, and the agent runner with one step for each request and at most 4 acts. Left: each layer above.
+The first layer is built: the runner runs up to 16 steps of up to 16 single calls of the read-only list for one request, through the bridge; `manual.modules`, `manual.exports` and `manual.signature` are on the read-only list, and the instructions of the runner name no service; the window shows each step once, folds the results of the older steps, and stops the loop with Stop or Escape through the export `stop_requested`; each end of the loop is a member of `Agent_Loop_End`, which the window shows with `loop_end`. The design of the first layer as built is in [assistant.md](assistant.md), "The agent loop". Left: the layers 2 to 5.
+
+In the first layer a step is the acts of one model reply, not lines of an agent console. The repeat check compares the acts of two steps and their outcomes, as the model reads them: the acts of a repeat run once more before the loop ends, which costs nothing, because each act of the first layer reads only.
 
 Open:
 

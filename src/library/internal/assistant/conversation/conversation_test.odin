@@ -91,6 +91,14 @@ each_border_refuses_a_caller_that_does_not_act_for_the_principal :: proc(t: ^tes
 	expect_refusal(t, outcome, result, error, .No_Grant)
 	refused_outcome, refused_value = act_state(talk, false, 1, &error)
 	expect_refusal(t, refused_outcome, refused_value, error, .No_Grant)
+	refused_outcome, refused_value = stop_requested(talk, false, 1, &error)
+	expect_refusal(t, refused_outcome, refused_value, error, .No_Grant)
+	outcome, result, kept = loop_end(talk, false, 1, i64(assistant_contract.Agent_Loop_End.Step_Limit), &error)
+	expect_refusal(t, outcome, result, error, .No_Grant)
+	testing.expect(t, kept == nil)
+	outcome, result, kept = act_table_rows(talk, false, 1, nil, &error)
+	expect_refusal(t, outcome, result, error, .No_Grant)
+	testing.expect(t, kept == nil)
 	testing.expect_value(t, talk.entry_count, before)
 	testing.expect_value(t, talk.entries[0].turn, Turn_State.Waiting)
 }
@@ -226,6 +234,12 @@ act_refuses_each_bad_input_and_each_act_past_the_turn :: proc(t: ^testing.T) {
 	testing.expect(t, first == 1 && kept != nil && kept.state == .Proposed)
 	_, second, _ := act(talk, true, 1, 1, "x |> y", "", "", &error)
 	testing.expect_value(t, second, 2)
+	testing.expect_value(t, talk.entries[0].turn, Turn_State.Waiting)
+	outcome, result, _ = act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+	// A final reply with 0 acts ends the loop.
+	outcome, result, _ = reply(talk, true, 1, "done", 0, &error)
+	testing.expect_value(t, result, 4)
 	testing.expect_value(t, talk.entries[0].turn, Turn_State.Ended)
 	outcome, result, _ = act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
 	expect_refusal(t, outcome, result, error, .State, 1)
@@ -471,22 +485,24 @@ act_table_refuses_each_form_that_is_not_a_whole_table :: proc(t: ^testing.T) {
 	hidden[0].text[5] = 'x'
 	outcome, result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], hidden[:], &error)
 	expect_refusal(t, outcome, result, error, .Bad_Value, 6)
-	testing.expect(t, !act_of(talk, 1).table.present)
+	testing.expect(t, act_table_of(talk, act_of(talk, 1)) == nil)
 	// A whole table, last: it is kept once.
 	kept: ^Entry
 	outcome, result, kept = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
-	testing.expect(t, result == 1 && kept != nil && kept.table.present)
-	testing.expect(t, kept.table.row_count == 2 && kept.table.column_count == 2 && kept.table.total_rows == 18)
-	testing.expect_value(t, act_table_cell_text(&kept.table, 1, 1), "devices")
-	testing.expect_value(t, act_table_column_name(&kept.table, 0), "slot")
-	testing.expect_value(t, act_table_name(&kept.table), "Process")
+	kept_table := act_table_of(talk, kept)
+	testing.expect(t, result == 1 && kept != nil && kept_table != nil && kept_table.present)
+	testing.expect(t, kept_table.row_count == 2 && kept_table.column_count == 2 && kept_table.total_rows == 18)
+	testing.expect_value(t, act_table_cell_text(kept_table, 1, 1), "devices")
+	testing.expect_value(t, act_table_column_name(kept_table, 0), "slot")
+	testing.expect_value(t, act_table_name(kept_table), "Process")
 	outcome, result, _ = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
 	expect_refusal(t, outcome, result, error, .State, 1)
 	// A record of one row, and an empty cell, pass on a new act.
 	talk = done_conversation(t)
 	one := [2]assistant_contract.Act_Table_Cell{cell_of("3"), {}}
 	outcome, result, kept = act_table(talk, true, 1, record, "Process", 1, columns[:], one[:], &error)
-	testing.expect(t, result == 1 && kept.table.shape == .Record && act_table_cell_text(&kept.table, 0, 1) == "")
+	record_table := act_table_of(talk, kept)
+	testing.expect(t, result == 1 && record_table != nil && record_table.shape == .Record && act_table_cell_text(record_table, 0, 1) == "")
 }
 
 // A column kind that names no member, a unit that does not fit its kind, a
@@ -520,14 +536,15 @@ act_table_refuses_a_column_kind_or_a_cell_of_the_other_form :: proc(t: ^testing.
 		outcome, result, _ := act_table(talk, true, 1, table, "Process", 1, columns[:], wrong[:], &error)
 		expect_refusal(t, outcome, result, error, .Bad_Value, 6)
 	}
-	testing.expect(t, !act_of(talk, 1).table.present)
+	testing.expect(t, act_table_of(talk, act_of(talk, 1)) == nil)
 	outcome, result, kept := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
-	testing.expect(t, outcome == .Succeeded && result == 1 && kept != nil)
-	unit, is_size := act_table_column_form(&kept.table, 1).(value_kinds.Size_Unit)
+	kept_table := act_table_of(talk, kept)
+	testing.expect(t, outcome == .Succeeded && result == 1 && kept != nil && kept_table != nil)
+	unit, is_size := act_table_column_form(kept_table, 1).(value_kinds.Size_Unit)
 	testing.expect(t, is_size && unit == .Pages)
-	_, is_text := act_table_column_form(&kept.table, 0).(Text_Form)
+	_, is_text := act_table_column_form(kept_table, 0).(Text_Form)
 	testing.expect(t, is_text)
-	testing.expect_value(t, act_table_cell_integer(&kept.table, 0, 1), 9052)
+	testing.expect_value(t, act_table_cell_integer(kept_table, 0, 1), 9052)
 }
 
 // The two words of a column become its form at one border: each kind with
@@ -556,4 +573,216 @@ the_words_of_a_column_become_its_form_once :: proc(t: ^testing.T) {
 	hexadecimal, is_hexadecimal := form.(Hexadecimal_Form)
 	testing.expect(t, ok && is_hexadecimal && hexadecimal.bytes == 8)
 	testing.expect(t, form_is_text(Text_Form{}) && !form_is_text(value_kinds.Size_Unit.Pages))
+}
+
+// Multi-step loop: 16 steps of 4 acts each fit in the conversation without
+// evicting the request; step 17 is refused with Too_Long; loop_end closes
+// the request once.
+@(test)
+multi_step_loop_bounds_steps_and_refuses_step_17 :: proc(t: ^testing.T) {
+	talk := taken_conversation(t)
+	error: errors.Error_Record
+	for step in 1 ..= assistant_contract.AGENT_LOOP_STEP_CAPACITY {
+		r, kept := reply(talk, true, 1, "step", assistant_contract.MODEL_ACT_CAPACITY, &error)
+		testing.expectf(t, r == 4 && kept != nil && int(kept.step) == step, "step %d reply", step)
+		for _ in 0 ..< assistant_contract.MODEL_ACT_CAPACITY {
+			num, act_entry := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+			testing.expect(t, num > 0 && act_entry != nil && int(act_entry.step) == step)
+		}
+	}
+	// The request is still in the ring and refuses step 17.
+	testing.expect(t, request_of(talk, 1) != nil)
+	outcome, result, _ := reply(talk, true, 1, "step 17", 0, &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 1)
+	testing.expect_value(t, error.limit, i64(assistant_contract.AGENT_LOOP_STEP_CAPACITY))
+	outcome, result, _ = reply_refused(talk, true, 1, i64(errors.Kind.Bad_Value), i64(errors.Unit.Bytes), 1, 0, 0, &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 1)
+	// loop_end closes the request with Step_Limit once; a second call fails with State.
+	ended, end_entry := loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Step_Limit), &error)
+	testing.expect(t, ended == 1 && end_entry != nil && end_entry.kind == .Loop_End)
+	testing.expect_value(t, end_entry.end_cause, assistant_contract.Agent_Loop_End.Step_Limit)
+	testing.expect_value(t, int(end_entry.step), assistant_contract.AGENT_LOOP_STEP_CAPACITY)
+	outcome, result, _ = loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Step_Limit), &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+}
+
+// stop_requested and loop_end refuse bad serials, untaken requests, unknown
+// end cause words, and already-ended requests; principal_stop sets the flag
+// once on the running request; loop_end is accepted both in Waiting and
+// mid-step in Acts_Coming.
+@(test)
+stop_requested_and_loop_end_enforce_borders :: proc(t: ^testing.T) {
+	talk := taken_conversation(t)
+	request_keep(talk, "untaken second")
+	error: errors.Error_Record
+	for serial in BAD_SERIALS {
+		expect_refusal(t, stop_requested(talk, true, serial, &error), error, .Absent, 1)
+		outcome, result, _ := loop_end(talk, true, serial, i64(assistant_contract.Agent_Loop_End.Stopped_By_Principal), &error)
+		expect_refusal(t, outcome, result, error, .Absent, 1)
+	}
+	for cause in ([?]i64{0, -1, 8, 255, max(i64), min(i64)}) {
+		outcome, result, _ := loop_end(talk, true, 1, cause, &error)
+		expect_refusal(t, outcome, result, error, .Bad_Value, 2)
+	}
+	testing.expect_value(t, stop_requested(talk, true, 1, &error), 0)
+	stopped := principal_stop(talk)
+	testing.expect(t, stopped != nil && stopped.serial == 1)
+	testing.expect_value(t, stop_requested(talk, true, 1, &error), 1)
+	// Calling principal_stop again does not trigger a second event.
+	testing.expect(t, principal_stop(talk) == nil)
+	// Mid-step loop_end in Acts_Coming ends the request cleanly.
+	reply(talk, true, 1, "step 1", 2, &error)
+	act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	testing.expect_value(t, request_of(talk, 1).turn, Turn_State.Acts_Coming)
+	ended, end_entry := loop_end(talk, true, 1, i64(assistant_contract.Agent_Loop_End.Stopped_By_Principal), &error)
+	testing.expect(t, ended == 1 && end_entry != nil && end_entry.end_cause == .Stopped_By_Principal)
+	testing.expect(t, request_running(talk) == nil)
+	// No act or reply after loop_end.
+	outcome, result, _ := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+	outcome, result, _ = reply(talk, true, 1, "late", 0, &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+}
+
+// Older steps fold their completed results by default, open and close on
+// toggle, and never fold proposed or waiting acts; the latest action step
+// stays open even after the final answer arrives.
+@(test)
+older_steps_fold_their_results_and_toggle :: proc(t: ^testing.T) {
+	talk := taken_conversation(t)
+	error: errors.Error_Record
+	// Step 1: one act, Done.
+	reply(talk, true, 1, "discover", 1, &error)
+	_, act1 := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	// Proposed act never folds.
+	testing.expect(t, !act_folded(talk, act1))
+	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "42 rows of Module", &error)
+	// Latest step stays open.
+	testing.expect(t, !act_folded(talk, act1))
+	// Step 2 proposes another act: step 1 folds by default, step 2 stays open.
+	reply(talk, true, 1, "query", 1, &error)
+	_, act2 := act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	act_result(talk, true, 2, i64(assistant_contract.Act_State.Done), "12 rows of Process", &error)
+	testing.expect(t, act_folded(talk, act1))
+	testing.expect(t, !act_folded(talk, act2))
+	// Final answer (step 3, 0 acts): step 1 stays folded, step 2 (latest action step) stays open.
+	reply(talk, true, 1, "12 processes run.", 0, &error)
+	testing.expect(t, act_folded(talk, act1))
+	testing.expect(t, !act_folded(talk, act2))
+	// Toggling step 1 opens it, then folds it again.
+	act_fold_toggle(talk, act1)
+	testing.expect(t, !act_folded(talk, act1))
+	act_fold_toggle(talk, act1)
+	testing.expect(t, act_folded(talk, act1))
+	// A new request folds step 2 as well.
+	request_keep(talk, "second request")
+	testing.expect(t, act_folded(talk, act2))
+}
+
+// act_table_rows appends batches up to ACT_TABLE_ROW_CAPACITY (64) rows,
+// refuses rows past the capacity or past total_rows, refuses on a record
+// or an act without a table, and leaves the table unchanged on any cell
+// border failure.
+@(test)
+act_table_rows_appends_and_enforces_bounds :: proc(t: ^testing.T) {
+	talk := done_conversation(t)
+	error: errors.Error_Record
+	columns := [2]assistant_contract.Act_Table_Column{column_of("slot", .Integer), column_of("name")}
+	first := [2]assistant_contract.Act_Table_Cell{cell_of("", 1), cell_of("root")}
+	// Refused before act_table.
+	outcome, result, _ := act_table_rows(talk, true, 1, first[:], &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+	// Refused for bad act numbers.
+	for number in ([?]i64{0, -1, 99, max(i64)}) {
+		outcome, result, _ = act_table_rows(talk, true, number, first[:], &error)
+		expect_refusal(t, outcome, result, error, .Absent, 1)
+	}
+	// Start a 64-row table with 1 row.
+	outcome, result, _ = act_table(talk, true, 1, i64(assistant_contract.Act_Table_Shape.Table), "Process", 64, columns[:], first[:], &error)
+	testing.expect_value(t, result, 1)
+	// Empty cells and partial rows refused.
+	outcome, result, _ = act_table_rows(talk, true, 1, nil, &error)
+	expect_refusal(t, outcome, result, error, .Empty, 2)
+	outcome, result, _ = act_table_rows(talk, true, 1, first[:1], &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 2)
+	// Bad cell (text in integer column) refused without changing row_count.
+	bad_batch := [2]assistant_contract.Act_Table_Cell{cell_of("oops", 2), cell_of("x")}
+	outcome, result, _ = act_table_rows(talk, true, 1, bad_batch[:], &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 2)
+	testing.expect_value(t, act_table_of(talk, act_of(talk, 1)).row_count, 1)
+	// Append remaining 63 rows.
+	batch := make([]assistant_contract.Act_Table_Cell, 63 * 2, context.temp_allocator)
+	for row in 0 ..< 63 {
+		batch[row * 2] = cell_of("", i64(row + 2))
+		batch[row * 2 + 1] = cell_of("proc")
+	}
+	outcome, result, _ = act_table_rows(talk, true, 1, batch, &error)
+	testing.expect_value(t, result, i64(assistant_contract.ACT_TABLE_ROW_CAPACITY))
+	// Row 65 is refused with Too_Long.
+	outcome, result, _ = act_table_rows(talk, true, 1, first[:], &error)
+	expect_refusal(t, outcome, result, error, .Too_Long, 2)
+	// Record refuses act_table_rows with State.
+	talk2 := done_conversation(t)
+	outcome, result, _ = act_table(talk2, true, 1, i64(assistant_contract.Act_Table_Shape.Record), "One", 1, columns[:], first[:], &error)
+	testing.expect_value(t, result, 1)
+	outcome, result, _ = act_table_rows(talk2, true, 1, first[:], &error)
+	expect_refusal(t, outcome, result, error, .State, 1)
+}
+
+// Each entry has a number that grows and stays while older entries leave
+// the ring; each change of what the window shows of an entry grows its
+// revision and the layout serial; a refused call changes neither.
+@(test)
+the_numbers_and_revisions_follow_each_change_and_no_refusal :: proc(t: ^testing.T) {
+	talk := taken_conversation(t)
+	error: errors.Error_Record
+	request := request_of(talk, 1)
+	testing.expect_value(t, request.number, 1)
+	serial := talk.layout_serial
+	reply(talk, true, 1, "one act", 1, &error)
+	_, entry := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	testing.expect_value(t, entry.number, 3)
+	testing.expect(t, talk.layout_serial > serial)
+	revision, serial_before := entry.revision, talk.layout_serial
+	// A refused outcome changes nothing.
+	outcome, result, _ := act_result(talk, true, 1, 99, "x", &error)
+	expect_refusal(t, outcome, result, error, .Bad_Value, 2)
+	testing.expect(t, entry.revision == revision && talk.layout_serial == serial_before)
+	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "42 rows of Module", &error)
+	testing.expect(t, entry.revision > revision && talk.layout_serial > serial_before)
+	revision = entry.revision
+	entry_expand_toggle(talk, entry)
+	testing.expect(t, entry.expanded && entry.revision > revision)
+	entry_expand_toggle(talk, entry)
+	testing.expect(t, !entry.expanded)
+	// The ring turns: the numbers stay with their entries and keep growing.
+	for _ in 0 ..< assistant_contract.CONVERSATION_ENTRY_CAPACITY {
+		request_keep(talk, "more")
+	}
+	testing.expect(t, act_of(talk, 1) == nil)
+	first := entry_at(talk, 0)
+	last := entry_at(talk, talk.entry_count - 1)
+	testing.expect_value(t, last.number, u64(3 + assistant_contract.CONVERSATION_ENTRY_CAPACITY))
+	testing.expect_value(t, last.number - first.number, u64(talk.entry_count - 1))
+}
+
+// The fold of an act needs no search: the acts of the newest request fold
+// when a later step of it has acts, and every act of an older request folds.
+@(test)
+the_fold_of_an_act_follows_the_newest_request :: proc(t: ^testing.T) {
+	talk := taken_conversation(t)
+	error: errors.Error_Record
+	reply(talk, true, 1, "one", 1, &error)
+	_, first := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "done", &error)
+	testing.expect_value(t, talk.newest_last_act_step, 1)
+	testing.expect(t, !act_folded(talk, first))
+	// A final reply with no act keeps the step of the last acts.
+	reply(talk, true, 1, "answer", 0, &error)
+	testing.expect_value(t, talk.newest_last_act_step, 1)
+	testing.expect(t, !act_folded(talk, first))
+	// A new request: every act of the request before folds.
+	request_keep(talk, "next")
+	testing.expect_value(t, talk.newest_last_act_step, 0)
+	testing.expect(t, act_folded(talk, first))
 }
