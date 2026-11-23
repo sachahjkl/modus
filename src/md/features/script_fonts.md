@@ -35,8 +35,14 @@ This design gives the system fonts past the boot image, a fallback chain for eac
 | Noto Sans Telugu | `noto_sans_telugu` | Telugu | `glyf` | 787 664 |
 | Noto Sans Kannada | `noto_sans_kannada` | Kannada | `glyf` | 557 872 |
 | Noto Sans Malayalam | `noto_sans_malayalam` | Malayalam | `glyf` | 392 048 |
+| Noto Sans Khmer | `noto_sans_khmer` | Khmer | `glyf` | 259 980 |
+| Noto Sans Myanmar | `noto_sans_myanmar` | Myanmar | `glyf` | 656 176 |
+| Noto Serif Tibetan | `noto_serif_tibetan` | Tibetan: Noto has no sans form | `glyf` | 1 968 044 |
+| Noto Sans Balinese | `noto_sans_balinese` | Balinese | `glyf` | 155 276 |
+| Noto Sans Javanese | `noto_sans_javanese` | Javanese | `glyf` | 206 772 |
+| Noto Sans Sundanese | `noto_sans_sundanese` | Sundanese | `glyf` | 17 480 |
 
-The set is 40 030 968 bytes, 15 fonts (`font_outlines.FONT_LIMIT` is 16).
+The set is 43 294 696 bytes of fonts, 21 fonts (`font_outlines.FONT_LIMIT` is 255).
 
 **The plan names it; the boot image names the default.** The plan of principal 0 names the set by its hash, in one entry of the kind `Script_Fonts` (`plans_recipes.plan_entry_make_script_fonts`), as the settings study plans a typed row of a policy of the machine (`src/md/features/module_settings.md` of the branch of that study, "Machine policy: the plan holds it"): a row that names a data object by its hash, which the evaluation of a declaration fills when that study is built. The entry travels to the core with the roles of the plan (`Plan_Roles_Set.script_fonts`), so the core takes the set and the roles whole, or refuses both. With no entry, the resource `script_fonts_name` of the boot image names the set, and a plan with no entry after a plan that named one gives the set back to the boot image: before the read, at once; after it, at the next start (`role_policy.script_fonts_plan_choice`, whose host test makes that rollback). The resource is the 32 bytes of its hash, which the build writes from the set that it made (`modustool script_fonts`), and which the signed system description lists as each resource. A plan of another principal that names a set is refused (`Machine_Only`): one set serves the machine.
 

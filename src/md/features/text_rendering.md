@@ -114,7 +114,7 @@ Each module that draws text compiled the whole package: the clusters with their 
 **Two parts of one package.** The define `WRITTEN_SHAPING_COMPILED_IN` chooses them at compile time:
 
 - **The fast part, in each module.** The faces of the boot image and their chains, the character map, the advances, the pairs of `kern`, the line breaks, the rasterizer of `glyf` outlines and the private glyph cache. It places a text whose every character is simple (below), each character its own cluster.
-- **The written part, in the library module `text_rendering` only.** The clusters and their marks, the compositions, Arabic, Thai, the scripts of India, the engine of the lookups and its budget, the bidirectional algorithm, the script font set with the caches of its walk and of CFF, and the reader of CFF. The module row defines `WRITTEN_SHAPING_COMPILED_IN`; a host build compiles both parts, so the host tests shape each script.
+- **The written part, in the library module `text_rendering` only.** The clusters and their marks, the compositions, Arabic, Thai, the scripts of India, Khmer, Myanmar and the scripts of the Universal Shaping Engine with their chains, the engine of the lookups and its budget, the bidirectional algorithm, the script font set with the caches of its walk and of CFF, and the reader of CFF. The module row defines `WRITTEN_SHAPING_COMPILED_IN`; a host build compiles both parts, so the host tests shape each script.
 
 A module of the system then carries the text code of the build before the written shaping. Three modules compile the written part in, as none of them can import a module:
 

@@ -272,8 +272,15 @@ the_cache_answers_as_the_walk_with_a_repeated_script :: proc(t: ^testing.T) {
 	entries: [64]Layout_Cache_Entry
 	indices: [64]u16
 	cache := Layout_Cache{entries = entries[:], indices = indices[:]}
-	complete, _ := layout_cache_fill(&cached, &cache)
-	testing.expect(t, complete && cached.layout_cache == &cache)
+	fill_status, _ := layout_cache_fill(&cached, &cache)
+	testing.expect(t, fill_status == .Complete && cached.layout_cache == &cache)
+	// Inline capacity edge: an empty pool returns Pool_Full (not Refused)
+	// for a valid font, leaves layout_cache nil, and layout_lookups falls
+	// back to the uncached table walk with the same results.
+	small_cached := walked
+	small_cache := Layout_Cache{}
+	small_status, _ := layout_cache_fill(&small_cached, &small_cache)
+	testing.expect(t, small_status == .Pool_Full && small_cached.layout_cache == nil)
 	for script in ([2]Feature_Tag{DFLT, XXXX}) {
 		for tag in ([2]Feature_Tag{AAAA, BBBB}) {
 			from_walk, from_cache: Layout_Lookups

@@ -94,11 +94,52 @@ Engine_Glyph :: struct {
 	attach_dx: i32, // A mark: the anchor of the glyph that it attaches to, less its own.
 	attach_dy: i32,
 	attach:    i8, // The glyph that a mark attaches to; -1: none.
+	flags:     Engine_Glyph_Flags, // What the substitutions did to it.
+	// The ligature that it belongs to, as HarfBuzz records it: 0 for none;
+	// else the number of a ligature of the buffer, on the ligature and on
+	// each mark that it passed over.
+	ligature:  u8,
+	// On a ligature, its count of components; on a mark that a ligature
+	// passed over, the component after which it stands, from 1; on a part
+	// of a multiple substitution, its place in the sequence, from 0.
+	component: u8,
+}
+// A glyph is 32 bytes: the buffer of a syllable stays on the stack of a call.
+#assert(size_of(Engine_Glyph) == 32)
+
+// What the substitutions of GSUB did to a glyph, as HarfBuzz records it:
+// the Universal Shaping Engine reads which glyph a feature changed, and the
+// part of a multiple substitution that it moves.
+Engine_Glyph_Flag :: enum u8 {
+	Substituted, // A substitution changed it since the flags were last cleared.
+	Ligated, // A ligature substitution made it.
+	Multiplied, // A multiple substitution made it.
+}
+Engine_Glyph_Flags :: bit_set[Engine_Glyph_Flag;u8]
+
+// engine_glyph_part gives the place of a glyph in the sequence of a
+// multiple substitution: 0 for the first part, and for a glyph that a
+// ligature made and no multiple substitution split (HarfBuzz,
+// _hb_glyph_info_get_lig_comp).
+engine_glyph_part :: #force_inline proc "contextless" (glyph: Engine_Glyph) -> int {
+	if .Ligated in glyph.flags && .Multiplied not_in glyph.flags {
+		return 0
+	}
+	return int(glyph.component)
+}
+
+// engine_substitutions_forget clears the flag Substituted of each glyph, so
+// that the next stage tells which glyph it changed.
+engine_substitutions_forget :: proc "contextless" (buffer: ^Engine_Buffer) {
+	for &glyph in buffer.glyphs[:clamp(buffer.count, 0, ENGINE_GLYPH_LIMIT)] {
+		glyph.flags -= {.Substituted}
+	}
 }
 
 Engine_Buffer :: struct {
-	glyphs: [ENGINE_GLYPH_LIMIT]Engine_Glyph,
-	count:  int,
+	glyphs:         [ENGINE_GLYPH_LIMIT]Engine_Glyph,
+	count:          int,
+	last_ligature:  u8, // The number of the last ligature made: each new ligature takes the next, 0 skipped.
 }
 
 // The table of a stage.
@@ -425,6 +466,7 @@ engine_replace :: proc "contextless" (engine: ^Engine, index, substitute: int) -
 	}
 	glyph := &engine.buffer.glyphs[index]
 	glyph.glyph = u16(substitute)
+	glyph.flags += {.Substituted}
 	glyph.class = glyph_class_of(&engine.gdef, substitute)
 	glyph.x_advance = i32(glyph_advance(engine.font, substitute))
 	return true
@@ -450,6 +492,14 @@ engine_insert :: proc "contextless" (engine: ^Engine, index: int, sequence: []in
 	for value, offset in sequence {
 		buffer.glyphs[index + offset] = buffer.glyphs[index]
 		engine_replace(engine, index + offset, value)
+		if len(sequence) > 1 {
+			buffer.glyphs[index + offset].flags += {.Multiplied}
+			// A part of a mark that a ligature passed over keeps its
+			// component.
+			if buffer.glyphs[index + offset].ligature == 0 {
+				buffer.glyphs[index + offset].component = u8(offset)
+			}
+		}
 	}
 	buffer.count += extra
 	return true
@@ -533,12 +583,46 @@ engine_ligature :: proc "contextless" (engine: ^Engine, head: ^Lookup_Head, subt
 		if !matched || !engine_replace(engine, index, ligature) {
 			continue
 		}
+		engine.buffer.glyphs[index].flags += {.Ligated}
+		positions[0] = u8(index)
+		engine_ligature_record(engine.buffer, positions[:components])
 		for component := components - 1; component >= 1; component -= 1 {
 			engine_remove(engine, int(positions[component]))
 		}
 		return true
 	}
 	return false
+}
+
+// engine_ligature_record gives a ligature that its components made, the
+// first in its place, its number, and each mark that it passed over the
+// component after which it stands (ligate_input of HarfBuzz): a mark then
+// attaches to that component of the ligature. A ligature of a base and
+// marks only, or of marks only, records nothing, as in HarfBuzz. A
+// component that was itself a ligature counts as one.
+@(private)
+engine_ligature_record :: proc "contextless" (buffer: ^Engine_Buffer, positions: []u8) {
+	if len(positions) < 2 {
+		return
+	}
+	others_marks := true
+	for position in positions[1:] {
+		others_marks &&= buffer.glyphs[position].class == .Mark
+	}
+	if first := buffer.glyphs[positions[0]].class; others_marks && (first == .Base || first == .Mark) {
+		return
+	}
+	buffer.last_ligature = buffer.last_ligature == max(u8) ? 1 : buffer.last_ligature + 1
+	number := buffer.last_ligature
+	for component in 1 ..< len(positions) {
+		for between in int(positions[component - 1]) + 1 ..< int(positions[component]) {
+			buffer.glyphs[between].ligature = number
+			buffer.glyphs[between].component = u8(component)
+		}
+	}
+	ligature := &buffer.glyphs[positions[0]]
+	ligature.ligature = number
+	ligature.component = u8(len(positions))
 }
 
 // The forms of the items of a sequence of a contextual rule.
@@ -971,8 +1055,8 @@ engine_mark_to_base :: proc "contextless" (engine: ^Engine, subtable: []u8, inde
 	return true
 }
 
-// A mark-to-ligature attachment (GPOS 5): the mark on the last component
-// of the ligature before it.
+// A mark-to-ligature attachment (GPOS 5): the mark on the component of the
+// ligature before it after which it stands, else on its last component.
 @(private)
 engine_mark_to_ligature :: proc "contextless" (engine: ^Engine, subtable: []u8, index: int) -> bool {
 	buffer := engine.buffer
@@ -1001,7 +1085,13 @@ engine_mark_to_ligature :: proc "contextless" (engine: ^Engine, subtable: []u8, 
 	if class < 0 || class >= class_count || components < 1 || mark_anchor == 0 {
 		return false
 	}
-	anchor_offset := read_u16(attach, 2 + 2 * ((components - 1) * class_count + class)) or_else 0
+	// The component that the mark stands after, when the ligature passed
+	// over it; else the last.
+	component := components - 1
+	if mark := buffer.glyphs[index]; mark.ligature != 0 && mark.ligature == buffer.glyphs[ligature].ligature && mark.component > 0 {
+		component = min(components, int(mark.component)) - 1
+	}
+	anchor_offset := read_u16(attach, 2 + 2 * (component * class_count + class)) or_else 0
 	if anchor_offset == 0 {
 		return false
 	}

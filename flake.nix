@@ -204,6 +204,12 @@
         "noto_sans_telugu=${pkgs.noto-fonts}/share/fonts/noto/NotoSansTelugu.ttf"
         "noto_sans_kannada=${pkgs.noto-fonts}/share/fonts/noto/NotoSansKannada.ttf"
         "noto_sans_malayalam=${pkgs.noto-fonts}/share/fonts/noto/NotoSansMalayalam.ttf"
+        "noto_sans_khmer=${pkgs.noto-fonts}/share/fonts/noto/NotoSansKhmer.ttf"
+        "noto_sans_myanmar=${pkgs.noto-fonts}/share/fonts/noto/NotoSansMyanmar.ttf"
+        "noto_serif_tibetan=${pkgs.noto-fonts}/share/fonts/noto/NotoSerifTibetan.ttf"
+        "noto_sans_balinese=${pkgs.noto-fonts}/share/fonts/noto/NotoSansBalinese.ttf"
+        "noto_sans_javanese=${pkgs.noto-fonts}/share/fonts/noto/NotoSansJavanese.ttf"
+        "noto_sans_sundanese=${pkgs.noto-fonts}/share/fonts/noto/NotoSansSundanese.ttf"
       ];
       # The Unicode Character Database, for the command "unicode_tables"
       # (src/md/features/written_shaping.md).

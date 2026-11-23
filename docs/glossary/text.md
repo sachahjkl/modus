@@ -402,6 +402,26 @@ The design: `src/md/features/written_shaping.md`, "Devanagari".
 
 Do not use: akshara (for this), cluster (for this), grapheme.
 
+### Universal Shaping Engine
+
+The Universal Shaping Engine (USE) is the OpenType model that shapes many scripts of South and Southeast Asia by one grammar of a cluster and one order of its features, from a category of each character.
+
+HarfBuzz chooses it for a script, and the system follows that choice: Tibetan, Balinese, Javanese and Sundanese take it. Its categories come from the syllabic and positional categories of Unicode, with the changes that HarfBuzz makes to them. Khmer and Myanmar have models of their own, and the scripts of India theirs. It is a model, not a program: the shaper of the system implements it over the engine of the lookups. Example: in ꦏꦺ, the vowel sign taling moves before the consonant ka.
+
+The design: `src/md/features/written_shaping.md`, "Khmer, Myanmar and the Universal Shaping Engine".
+
+Do not use: universal shaper, USE engine, generic shaper.
+
+### Syllable machine
+
+A syllable machine is the grammar of the syllables of one model of shaping, run over the categories of a window of characters to find where a syllable ends.
+
+The shapers of Khmer, Myanmar and the Universal Shaping Engine each have one, taken from the grammars of HarfBuzz. It keeps the set of the places of the window that a match can reach, and takes the longest match, the first pattern on a tie. A syllable that only the broken pattern matches stands on a dotted circle. Example: in Khmer, ក្រុ is one syllable, and ុ alone is a broken syllable.
+
+The design: `src/md/features/written_shaping.md`, "The syllable machine".
+
+Do not use: state machine (for this), syllable parser, Ragel machine.
+
 ### Feature variation
 
 A feature variation is a record of a table `GSUB` or `GPOS` 1.1 that puts another feature table in the place of a feature, at the coordinates of a variable font that its conditions name.
@@ -606,7 +626,7 @@ Do not use: static part, light renderer, basic shaper.
 
 The written part is the part of the text rendering module that places every text that is not simple, and reads the script font set.
 
-It holds the clusters and their compositions, the shapers of Arabic, Thai and the scripts of India, the engine of the lookups, the order of a line of mixed direction, the script font set with its caches, and the reader of CFF. The library module `text_rendering`, the drawing module and the root service compile it in; each other module calls the library module for it, over the fonts of its process. The define `WRITTEN_SHAPING_COMPILED_IN` chooses it at compile time.
+It holds the clusters and their compositions, the shapers of Arabic, Thai, the scripts of India, Khmer, Myanmar and the Universal Shaping Engine with their chains, the engine of the lookups, the order of a line of mixed direction, the script font set with its caches, and the reader of CFF. The library module `text_rendering`, the drawing module and the root service compile it in; each other module calls the library module for it, over the fonts of its process. The define `WRITTEN_SHAPING_COMPILED_IN` chooses it at compile time.
 
 The design: `src/md/features/text_rendering.md`, "Where the written shaping lives".
 
@@ -786,7 +806,7 @@ Do not use: attachment point (for this), mark offset, diacritic position.
 
 The script font set is the fonts of the scripts that the boot image lacks, one data object that a plan names by its hash and that a process opens at a fixed range.
 
-It holds fifteen whole Noto fonts, Arabic, Thai, nine scripts of India and CJK among them, 40.0 MB. `modustool script_fonts` writes it; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
+It holds 21 whole Noto fonts, Arabic, Thai, nine scripts of India, Khmer, Myanmar, Tibetan and CJK among them, 43.3 MB. `modustool script_fonts` writes it; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
 
 The design: `src/md/features/script_fonts.md`.
 

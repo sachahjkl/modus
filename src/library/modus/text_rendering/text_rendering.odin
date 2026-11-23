@@ -121,6 +121,13 @@ Outline_Font :: enum u8 {
 	Noto_Sans_Telugu,
 	Noto_Sans_Kannada,
 	Noto_Sans_Malayalam,
+	// The scripts of the syllabic shapers past India (syllabic.odin).
+	Noto_Sans_Khmer,
+	Noto_Sans_Myanmar,
+	Noto_Serif_Tibetan, // Tibetan has no sans form in Noto.
+	Noto_Sans_Balinese,
+	Noto_Sans_Javanese,
+	Noto_Sans_Sundanese,
 }
 // The fonts of the font outlines of the boot image, and the fonts of the
 // script font set.
@@ -128,7 +135,7 @@ BOOT_FONTS :: Outline_Fonts{.B612, .B612_Bold, .Paper_Mono, .Paper_Mono_Semibold
 // The fonts of the boot image: the room of a set that opens them only
 // (font_set_test checks it against BOOT_FONTS).
 BOOT_FONT_COUNT :: 5
-SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam}
+SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam, .Noto_Sans_Khmer, .Noto_Sans_Myanmar, .Noto_Serif_Tibetan, .Noto_Sans_Balinese, .Noto_Sans_Javanese, .Noto_Sans_Sundanese}
 Outline_Fonts :: bit_set[Outline_Font]
 // The font field of the key of the private glyph cache and of a direct
 // glyph (src/md/features/script_fonts.md, "Subtle points"): wide enough for
@@ -196,6 +203,18 @@ outline_font_name :: proc "contextless" (font: Outline_Font) -> string {
 		return "noto_sans_kannada"
 	case .Noto_Sans_Malayalam:
 		return "noto_sans_malayalam"
+	case .Noto_Sans_Khmer:
+		return "noto_sans_khmer"
+	case .Noto_Sans_Myanmar:
+		return "noto_sans_myanmar"
+	case .Noto_Serif_Tibetan:
+		return "noto_serif_tibetan"
+	case .Noto_Sans_Balinese:
+		return "noto_sans_balinese"
+	case .Noto_Sans_Javanese:
+		return "noto_sans_javanese"
+	case .Noto_Sans_Sundanese:
+		return "noto_sans_sundanese"
 	}
 	return ""
 }
@@ -498,6 +517,8 @@ State :: struct {
 	layout_entries_used, layout_indices_used: int,
 	cff_caches_used:                          int,
 	layout_refused:                           Outline_Fonts, // The script fonts refused at their open (layout_cache_of).
+	layout_uncached:                          Outline_Fonts, // Valid script fonts that passed the inline cache pool and walk GSUB/GPOS uncached.
+	layout_cache_overflows:                   u64, // Count of moves to the slower uncached table walk tier.
 	layout_fill_reads:                        [Outline_Font]int, // The reads of the fill of each, a measure for the tests.
 }
 
@@ -507,13 +528,15 @@ state: State
 @(private)
 state_room: Font_Room
 
-// The memory of the caches of the walk of GSUB and GPOS of the script
+// Inline capacity of the caches of the walk of GSUB and GPOS of the script
 // fonts of the state (vector_font.layout_cache_fill): one pool, which each
-// font that opens takes its part of. A font past the pool is refused at its
-// open and logged (layout_refused_fonts). The 15 fonts of the set take 437
-// entries and 1 222 lookup indices (the_cache_of_each_font_of_the_set):
-// the pool holds more than twice that.
-LAYOUT_CACHE_ENTRY_LIMIT :: 1024
+// font that opens takes its part of. Sized from the measured set: the 21
+// fonts of the set take 519 entries and 1 578 lookup indices
+// (the_cache_of_each_font_of_the_set), and the pool holds more than twice
+// that. Past this inline capacity, a valid font moves to the slower uncached
+// table walk tier without refusing, and increments state.layout_cache_overflows;
+// only a malformed font or one past LAYOUT_FILL_READ_LIMIT is refused.
+LAYOUT_CACHE_ENTRY_LIMIT :: 1280
 LAYOUT_CACHE_INDEX_LIMIT :: 4096
 
 // The script fonts of CFF outlines whose Private dictionaries the state
@@ -534,22 +557,28 @@ layout_cache_pool: Layout_Cache_Pool
 
 // layout_cache_of fills the cache of the walk of a script font of the
 // state from the rest of the pool, and the cache of its Private
-// dictionaries when its outlines are CFF. false when the fill fails: the
-// tables pass the bound of a fill (vector_font.LAYOUT_FILL_READ_LIMIT), a
-// walk refuses them, or they pass the rest of the pool. The caller then
-// refuses the font, so no call walks its tables again.
+// dictionaries when its outlines are CFF. Returns false only when the font's
+// tables are malformed or pass vector_font.LAYOUT_FILL_READ_LIMIT; a valid
+// font past the inline pool stays open on the uncached table walk tier and
+// records the move in state.layout_uncached and state.layout_cache_overflows.
 @(private)
 layout_cache_of :: proc "contextless" (font: Outline_Font, file: ^vector_font.Font_File) -> bool {
 	pool := &layout_cache_pool
 	cache := &pool.caches[font]
 	cache^ = {entries = pool.entries[state.layout_entries_used:], indices = pool.indices[state.layout_indices_used:]}
-	complete, reads := vector_font.layout_cache_fill(file, cache)
-	if !complete {
+	fill_status, reads := vector_font.layout_cache_fill(file, cache)
+	switch fill_status {
+	case .Refused:
 		return false
+	case .Pool_Full:
+		state.layout_fill_reads[font] = reads
+		state.layout_uncached += {font}
+		state.layout_cache_overflows += 1
+	case .Complete:
+		state.layout_fill_reads[font] = reads
+		state.layout_entries_used += cache.entry_count
+		state.layout_indices_used += cache.index_count
 	}
-	state.layout_fill_reads[font] = reads
-	state.layout_entries_used += cache.entry_count
-	state.layout_indices_used += cache.index_count
 	if file.cff.version != 0 && state.cff_caches_used < CFF_CACHE_FONT_LIMIT {
 		vector_font.cff_private_cache_fill(file, &pool.cff_caches[state.cff_caches_used])
 		state.cff_caches_used += 1
@@ -558,11 +587,17 @@ layout_cache_of :: proc "contextless" (font: Outline_Font, file: ^vector_font.Fo
 }
 
 // layout_refused_fonts gives the script fonts that the state refused at
-// their open, as their tables of GSUB and GPOS passed the bound of their
-// fill or the pool: each draws the replacement glyph, and the process says
-// so once (display.fallback_load).
+// their open, as their tables of GSUB and GPOS were malformed or passed
+// LAYOUT_FILL_READ_LIMIT: each draws the replacement glyph, and the process
+// says so once (display.fallback_load).
 layout_refused_fonts :: proc "contextless" () -> Outline_Fonts {
 	return state.layout_refused
+}
+
+// layout_uncached_fonts gives the valid script fonts that exceeded the
+// inline layout cache pool and moved to the slower uncached table walk tier.
+layout_uncached_fonts :: proc "contextless" () -> Outline_Fonts {
+	return state.layout_uncached
 }
 
 // state_set gives the set of the state, with its room.
@@ -783,6 +818,13 @@ chain_of :: proc "contextless" (face: Face, character: rune) -> Chain {
 	if script, found := script_of(character); found {
 		return scripts[script].chains[kind]
 	}
+	// The scripts of the syllabic shapers past India: rows of the written
+	// part only (src/md/features/written_shaping.md, "The chains").
+	when WRITTEN_SHAPING_COMPILED_IN {
+		if chain, found := syllabic_chain_of(kind, character); found {
+			return chain
+		}
+	}
 	return default_chains[kind]
 }
 
@@ -820,7 +862,9 @@ fonts_of_face :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
 		chain_add(&fonts, scripts[script].chains[kind])
 	}
 	chain_add(&fonts, default_chains[kind])
-	return fonts
+	// Each chain of the syllabic scripts past India names the font of its
+	// script, and only fonts of the boot image besides.
+	return fonts + SYLLABIC_SCRIPT_FONTS
 }
 
 // font_glyph_of gives the first font of the chain of a face that has a

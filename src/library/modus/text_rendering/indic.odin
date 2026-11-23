@@ -246,7 +246,7 @@ indic_decomposed :: proc "contextless" (character: rune, parts: ^[3]rune) -> (co
 		parts[0] = character
 		return 1
 	}
-	first, second, found := indic_decomposition_of(character)
+	first, second, found := syllabic_decomposition_of(character)
 	if !found {
 		parts[0] = character
 		return 1
@@ -257,7 +257,7 @@ indic_decomposed :: proc "contextless" (character: rune, parts: ^[3]rune) -> (co
 		return 1
 	}
 	// A part that is itself of two parts (Kannada: ೋ is ೊ and ೕ).
-	if inner_first, inner_second, inner := indic_decomposition_of(first); inner && indic_category_of(character) == .Vowel_Dependent {
+	if inner_first, inner_second, inner := syllabic_decomposition_of(first); inner && indic_category_of(character) == .Vowel_Dependent {
 		parts[0], parts[1], parts[2] = inner_first, inner_second, second
 		return 3
 	}
@@ -1045,41 +1045,14 @@ indic_shaped :: #force_no_inline proc "contextless" (shaper: ^Shaper, shaped: ^S
 		return false
 	}
 	row := &indic_script_rows[syllable.script]
-	shaped^ = {start = shaper.place, end = syllable.end, script = vector_font.layout_has_script(file, file.gsub, row.tags[0]) ? row.tags[0] : row.tags[1], syllable = true}
-	scale := measures_in_frame_of(shaper.set, spacing.face, font).advance
-	limit := i64(spacing.size)
-	// The clusters never go down along the glyphs, as in HarfBuzz: a glyph
-	// that the reordering moved before the characters of the glyphs after
-	// it takes their first byte.
-	clusters: [vector_font.ENGINE_GLYPH_LIMIT]u32
-	lowest := max(u32)
-	for index := buffer.count - 1; index >= 0; index -= 1 {
+	// The first byte of the character of each glyph (shaped_of_syllable
+	// makes them never go down along the glyphs).
+	glyph_starts: [vector_font.ENGINE_GLYPH_LIMIT]u32
+	for index in 0 ..< buffer.count {
 		source := int(sources[min(int(buffer.glyphs[index].place), INDIC_SYLLABLE_LIMIT - 1)])
-		lowest = min(lowest, syllable.places[min(source, syllable.count - 1)])
-		clusters[index] = lowest
+		glyph_starts[index] = syllable.places[min(source, syllable.count - 1)]
 	}
-	pen: i64
-	for glyph, index in buffer.glyphs[:min(buffer.count, 1 + CLUSTER_MARK_LIMIT)] {
-		resolved := resolve_index(spacing, font, int(glyph.glyph))
-		resolved.advance = i32(clamp(units_at_size(int(glyph.x_advance), spacing.size, scale), 0, i64(advance_limit_of_size(spacing.size))))
-		resolved.cluster = clusters[index]
-		if index == 0 {
-			shaped.base = resolved
-		} else {
-			if glyph.x_offset != 0 || glyph.y_offset != 0 || resolved.advance == 0 {
-				resolved.placement = .Anchored
-				resolved.offset_x = i32(clamp(pen + units_at_size(int(glyph.x_offset), spacing.size, scale), -limit, limit))
-				resolved.offset_y = i32(clamp(units_at_size(int(glyph.y_offset), spacing.size, scale), -limit, limit))
-			}
-			shaped.marks[shaped.mark_count] = resolved
-			shaped.mark_count += 1
-		}
-		pen += i64(resolved.advance)
-	}
-	shaper.place = syllable.end
-	shaper.previous = .None
-	shaper.sara_am_taken = -1
-	shaper.after_letter = true
+	shaped_of_syllable(shaper, shaped, font, &buffer, &glyph_starts, syllable.end, vector_font.layout_has_script(file, file.gsub, row.tags[0]) ? row.tags[0] : row.tags[1])
 	return true
 }
 // The positions between two syllables: dist and kern of GPOS.

@@ -35,84 +35,152 @@ Layout_Cache :: struct {
 // Bengali; the test the_cache_of_each_font_of_the_set prints each).
 LAYOUT_FILL_READ_LIMIT :: 1 << 17
 
+// Layout_Cache_Fill_Status: the outcome of filling a font's layout cache.
+Layout_Cache_Fill_Status :: enum u8 {
+	Complete  = 0, // Both tables passed validation and fit the inline pool; font.layout_cache is set.
+	Pool_Full = 1, // Both tables passed validation and LAYOUT_FILL_READ_LIMIT, but did not fit the inline pool; font walks tables uncached.
+	Refused   = 2, // A table is malformed, a walk refused it, or it passed LAYOUT_FILL_READ_LIMIT.
+}
+
 // layout_cache_fill walks each table of a font into a cache, and gives the
-// cache to the font when both tables fit it. complete is false for a table
-// that does not fit the memory of the cache, that a walk refuses, or whose
-// walks pass LAYOUT_FILL_READ_LIMIT: the font then keeps no cache, and its
-// owner refuses it (text_rendering), so no call of a hostile font walks
-// its tables again and again.
-layout_cache_fill :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache) -> (complete: bool, reads: int) {
+// cache to the font when both tables fit it. Pool_Full means both tables
+// passed validation and LAYOUT_FILL_READ_LIMIT, so the font can stay open on
+// the slower uncached walk path; Refused means a table is malformed or passed
+// LAYOUT_FILL_READ_LIMIT, so the caller refuses the font.
+layout_cache_fill :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache) -> (status: Layout_Cache_Fill_Status, reads: int) {
 	cache.entry_count, cache.index_count = 0, 0
-	complete = true
+	status = .Complete
 	for kind in Layout_Kind {
-		cache.complete[kind] = layout_cache_fill_table(font, cache, kind, &reads)
-		complete &&= cache.complete[kind]
+		table_status := layout_cache_fill_table(font, cache, kind, &reads)
+		cache.complete[kind] = table_status == .Complete
+		if table_status == .Refused {
+			status = .Refused
+		} else if table_status == .Pool_Full && status == .Complete {
+			status = .Pool_Full
+		}
 	}
-	if complete {
+	if status == .Complete {
 		font.layout_cache = cache
+	} else {
+		font.layout_cache = nil
 	}
-	return complete, reads
+	return status, reads
 }
 
 @(private)
-layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache, kind: Layout_Kind, reads: ^int) -> bool {
+layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache, kind: Layout_Kind, reads: ^int) -> Layout_Cache_Fill_Status {
 	place := kind == .Substitution ? font.gsub : font.gpos
 	cache.script_counts[kind] = 0
 	if place.length == 0 {
-		return true
+		return .Complete
 	}
 	if place.offset < 0 || place.length < 0 || place.offset + place.length > len(font.bytes) {
-		return false
+		return .Refused
 	}
 	table := font.bytes[place.offset:][:place.length]
-	script_list := part_at(table, read_u16(table, 4) or_return) or_return
-	feature_list := part_at(table, read_u16(table, 6) or_return) or_return
-	feature_count := read_u16(feature_list, 0) or_return
-	script_count := read_u16(script_list, 0) or_return
-	if script_count > LAYOUT_CACHE_SCRIPT_LIMIT {
-		return false
+	script_list_offset, ok1 := read_u16(table, 4)
+	feature_list_offset, ok2 := read_u16(table, 6)
+	if !ok1 || !ok2 {
+		return .Refused
 	}
+	script_list, ok3 := part_at(table, script_list_offset)
+	feature_list, ok4 := part_at(table, feature_list_offset)
+	if !ok3 || !ok4 {
+		return .Refused
+	}
+	feature_count, ok5 := read_u16(feature_list, 0)
+	script_count, ok6 := read_u16(script_list, 0)
+	if !ok5 || !ok6 {
+		return .Refused
+	}
+	pool_full := script_count > LAYOUT_CACHE_SCRIPT_LIMIT
 	// The walk takes the first record of a tag and stops there: a later
 	// record of the same tag is never read, so the cache skips it too.
 	seen: [LAYOUT_CACHE_SCRIPT_LIMIT]Feature_Tag
 	seen_count := 0
 	scripts: for script_number in 0 ..< script_count {
-		script_tag := tag_at(script_list, 2 + 6 * script_number) or_return
-		for earlier in seen[:seen_count] {
-			if earlier == script_tag {
-				continue scripts
+		reads^ += 1
+		if reads^ > LAYOUT_FILL_READ_LIMIT {
+			return .Refused
+		}
+		script_tag, tag_ok := tag_at(script_list, 2 + 6 * script_number)
+		if !tag_ok {
+			return .Refused
+		}
+		if script_count <= LAYOUT_CACHE_SCRIPT_LIMIT {
+			for earlier in seen[:seen_count] {
+				if earlier == script_tag {
+					continue scripts
+				}
+			}
+			seen[seen_count] = script_tag
+			seen_count += 1
+		} else {
+			for earlier_number in 0 ..< script_number {
+				reads^ += 1
+				if reads^ > LAYOUT_FILL_READ_LIMIT {
+					return .Refused
+				}
+				earlier_tag, earlier_ok := tag_at(script_list, 2 + 6 * earlier_number)
+				if !earlier_ok {
+					return .Refused
+				}
+				if earlier_tag == script_tag {
+					continue scripts
+				}
 			}
 		}
-		seen[seen_count] = script_tag
-		seen_count += 1
-		script := part_at(script_list, read_u16(script_list, 6 + 6 * script_number) or_return) or_return
-		default_offset := read_u16(script, 0) or_return
+		script_offset, soff_ok := read_u16(script_list, 6 + 6 * script_number)
+		if !soff_ok {
+			return .Refused
+		}
+		script, script_ok := part_at(script_list, script_offset)
+		if !script_ok {
+			return .Refused
+		}
+		default_offset, doff_ok := read_u16(script, 0)
+		if !doff_ok {
+			return .Refused
+		}
 		if default_offset == 0 {
 			continue
 		}
-		system := part_at(script, default_offset) or_return
-		cache.scripts[kind][cache.script_counts[kind]] = script_tag
-		cache.script_counts[kind] += 1
-		for index_number in 0 ..< (read_u16(system, 4) or_return) {
+		system, sys_ok := part_at(script, default_offset)
+		if !sys_ok {
+			return .Refused
+		}
+		if !pool_full {
+			cache.scripts[kind][cache.script_counts[kind]] = script_tag
+			cache.script_counts[kind] += 1
+		}
+		index_count, ic_ok := read_u16(system, 4)
+		if !ic_ok {
+			return .Refused
+		}
+		for index_number in 0 ..< index_count {
 			reads^ += 1
 			if reads^ > LAYOUT_FILL_READ_LIMIT {
-				return false
+				return .Refused
 			}
-			feature_index := read_u16(system, 6 + 2 * index_number) or_return
-			if feature_index >= feature_count {
-				return false
+			feature_index, fi_ok := read_u16(system, 6 + 2 * index_number)
+			if !fi_ok || feature_index >= feature_count {
+				return .Refused
 			}
-			tag := tag_at(feature_list, 2 + 6 * feature_index) or_return
-			if layout_cache_find(cache, kind, script_tag, tag) != nil {
+			tag, ftag_ok := tag_at(feature_list, 2 + 6 * feature_index)
+			if !ftag_ok {
+				return .Refused
+			}
+			if !pool_full && layout_cache_find(cache, kind, script_tag, tag) != nil {
 				continue
 			}
 			// The walk itself gives the lookups, so the cache answers as it.
 			lookups: Layout_Lookups
 			if layout_lookups_walk(font, place, script_tag, script_tag, tag, &lookups, reads) != .None || reads^ > LAYOUT_FILL_READ_LIMIT {
-				return false
+				return .Refused
 			}
-			if cache.entry_count == len(cache.entries) || cache.index_count + lookups.count > len(cache.indices) {
-				return false
+			if pool_full || cache.entry_count == len(cache.entries) || cache.index_count + lookups.count > len(cache.indices) {
+				pool_full = true
+				continue
 			}
 			cache.entries[cache.entry_count] = {kind = kind, script = script_tag, tag = tag, first = u16(cache.index_count), count = u16(lookups.count)}
 			cache.entry_count += 1
@@ -120,7 +188,7 @@ layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_
 			cache.index_count += lookups.count
 		}
 	}
-	return true
+	return pool_full ? .Pool_Full : .Complete
 }
 
 @(private)

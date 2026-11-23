@@ -39,3 +39,31 @@ the_cache_of_each_font_of_the_set :: proc(t: ^testing.T) {
 	}
 	fmt.printfln("text_rendering: the caches of the %d script fonts take %d entries of %d and %d lookup indices of %d", card(SCRIPT_FONTS), state.layout_entries_used, LAYOUT_CACHE_ENTRY_LIMIT, state.layout_indices_used, LAYOUT_CACHE_INDEX_LIMIT)
 }
+
+// Crossing the inline pool capacity: a valid script font that does not fit
+// the remaining pool stays open on the slower uncached walk tier, increments
+// layout_cache_overflows, and is never marked refused.
+@(test)
+layout_cache_inline_capacity_moves_to_uncached_tier :: proc(t: ^testing.T) {
+	test_state_take()
+	words, script_words, missing := script_set_open(t, []string{"noto_sans_devanagari"})
+	defer delete(words)
+	defer delete(script_words)
+	testing.expect(t, .Noto_Sans_Devanagari not_in missing)
+	file := font_at(&state.font_set, .Noto_Sans_Devanagari).file
+	file.layout_cache = nil
+	// Set remaining pool entries to 1 (strictly less than Devanagari needs).
+	state.layout_entries_used = LAYOUT_CACHE_ENTRY_LIMIT - 1
+	state.layout_indices_used = 0
+	state.layout_uncached = {}
+	state.layout_cache_overflows = 0
+	testing.expect(t, layout_cache_of(.Noto_Sans_Devanagari, &file))
+	testing.expect(t, file.layout_cache == nil)
+	testing.expect(t, .Noto_Sans_Devanagari in layout_uncached_fonts())
+	testing.expect_value(t, state.layout_cache_overflows, u64(1))
+	testing.expect_value(t, layout_refused_fonts(), Outline_Fonts{})
+	// Lookups still succeed via the uncached walk tier.
+	lookups: vector_font.Layout_Lookups
+	testing.expect_value(t, vector_font.layout_lookups(&file, file.gsub, {'d', 'e', 'v', '2'}, {'D', 'F', 'L', 'T'}, {'r', 'p', 'h', 'f'}, &lookups), vector_font.Font_Problem.None)
+	testing.expect(t, lookups.count > 0)
+}

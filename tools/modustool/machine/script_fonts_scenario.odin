@@ -96,7 +96,7 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Wait, text = fmt.tprintf("root: the boot image names the script font set %s", digits), any_order = true},
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
-		{kind = .Wait, text = "15 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
+		{kind = .Wait, text = "21 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
 		{kind = .Launch, text = "interface_font"},
 		{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
 		{kind = .Wait, text = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws ", fails_on = "interface_font: the script font set is mapped, and the character "},

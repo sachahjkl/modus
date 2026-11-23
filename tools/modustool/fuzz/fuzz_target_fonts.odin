@@ -197,7 +197,7 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 	// One budget for the checks of this font, as one shaping call has.
 	budget := vector_font.layout_budget_of_text(64)
 	cached := font^
-	if filled, _ := vector_font.layout_cache_fill(&cached, &cache); !filled {
+	if fill_status, _ := vector_font.layout_cache_fill(&cached, &cache); fill_status != .Complete {
 		cached.layout_cache = nil
 	}
 	for script in fuzz_layout_scripts {

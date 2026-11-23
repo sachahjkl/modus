@@ -202,27 +202,172 @@ bracket_of :: proc "contextless" (character: rune) -> (pair: rune, opening, foun
 	return 0, false, false
 }
 
-// A canonical decomposition of two characters of the scripts of India.
-Indic_Decomposition :: struct {
+// A canonical decomposition of two characters of a syllabic script.
+Syllabic_Decomposition :: struct {
 	character, first, second: rune,
 }
 
-// indic_decomposition_of gives the canonical decomposition of a character
-// of the scripts of India into two characters, when it has one.
-indic_decomposition_of :: proc "contextless" (character: rune) -> (first, second: rune, found: bool) {
-	low, high := 0, len(indic_decompositions)
+// syllabic_decomposition_of gives the canonical decomposition of a
+// character of a syllabic script (the scripts of India, Khmer, Myanmar and
+// the scripts of USE) into two characters, when it has one.
+syllabic_decomposition_of :: proc "contextless" (character: rune) -> (first, second: rune, found: bool) {
+	low, high := 0, len(syllabic_decompositions)
 	for low < high {
 		middle := low + (high - low) / 2
 		switch {
-		case character < indic_decompositions[middle].character:
+		case character < syllabic_decompositions[middle].character:
 			high = middle
-		case character > indic_decompositions[middle].character:
+		case character > syllabic_decompositions[middle].character:
 			low = middle + 1
 		case:
-			return indic_decompositions[middle].first, indic_decompositions[middle].second, true
+			return syllabic_decompositions[middle].first, syllabic_decompositions[middle].second, true
 		}
 	}
 	return 0, 0, false
+}
+
+// The category of a character in the model of Khmer (the categories of
+// hb-ot-shaper-khmer-machine.rl of HarfBuzz). Its values stay under 64: a
+// set of them is one word of the syllable machine.
+Khmer_Category :: enum u8 {
+	Other,
+	Consonant,
+	Vowel_Independent,
+	Coeng, // The subscript sign U+17D2: a virama that makes the next consonant a subscript.
+	Non_Joiner,
+	Joiner,
+	Placeholder,
+	Dotted_Circle,
+	Ro, // U+179A, which forms the pre-base subscript with a coeng.
+	Vowel_Above,
+	Vowel_Below,
+	Vowel_Pre,
+	Vowel_Post,
+	Robatic, // The signs above that change the register of a consonant.
+	Group_X, // The signs above and the virama marks after the vowels.
+	Group_Y, // The signs after the syllable: the visarga, the yuukaleapintu.
+}
+
+Khmer_Range :: struct {
+	first, last: rune,
+	category:    Khmer_Category,
+}
+
+// The category of a character in the model of Myanmar
+// (hb-ot-shaper-myanmar-machine.rl).
+Myanmar_Category :: enum u8 {
+	Other,
+	Consonant,
+	Vowel_Independent,
+	Dot_Below,
+	Virama,
+	Non_Joiner,
+	Joiner,
+	Syllable_Modifier, // The visarga and the tones of Shan.
+	Placeholder,
+	Dotted_Circle,
+	Anusvara, // The signs above that come after the vowels: the anusvara and the vowel sign ai.
+	Ra, // The ra of a kinzi.
+	Consonant_With_Stacker,
+	Syllable_Modifier_Post,
+	Vowel_Above,
+	Vowel_Below,
+	Vowel_Pre,
+	Vowel_Post,
+	Asat,
+	Medial_Ha,
+	Medial_Ra,
+	Medial_Wa,
+	Medial_Ya,
+	Pwo_Tone,
+	Variation_Selector,
+	Medial_La,
+}
+
+Myanmar_Range :: struct {
+	first, last: rune,
+	category:    Myanmar_Category,
+}
+
+// The category of a character in the Universal Shaping Engine (the
+// categories of the specification of USE, hb-ot-shaper-use-machine.rl).
+Universal_Category :: enum u8 {
+	Other,
+	Base,
+	Number,
+	Base_Other,
+	Grapheme_Joiner, // A joiner and a mark of no width that the match leaves out.
+	Consonant_Subjoined,
+	Halant,
+	Halant_Number,
+	Non_Joiner,
+	Word_Joiner,
+	Repha,
+	Consonant_With_Stacker,
+	Invisible_Stacker,
+	Sakot,
+	Hieroglyph,
+	Hieroglyph_Joiner,
+	Hieroglyph_Segment_Begin,
+	Hieroglyph_Segment_End,
+	Halant_Or_Vowel_Modifier,
+	Hieroglyph_Modifier,
+	Hieroglyph_Mirror,
+	Reordering_Killer,
+	Final_Above,
+	Final_Below,
+	Final_Post,
+	Medial_Above,
+	Medial_Below,
+	Medial_Post,
+	Medial_Pre,
+	Consonant_Modifier_Above,
+	Consonant_Modifier_Below,
+	Vowel_Above,
+	Vowel_Below,
+	Vowel_Post,
+	Vowel_Pre,
+	Vowel_Modifier_Above,
+	Vowel_Modifier_Below,
+	Vowel_Modifier_Post,
+	Vowel_Modifier_Pre,
+	Symbol_Modifier_Above,
+	Symbol_Modifier_Below,
+	Final_Modifier_Above,
+	Final_Modifier_Below,
+	Final_Modifier_Post,
+}
+
+Universal_Range :: struct {
+	first, last: rune,
+	category:    Universal_Category,
+	mark:        bool, // Its general category is Mn, Mc or Me.
+}
+
+// A set of categories is one word of the syllable machine (syllable_machine.odin).
+#assert(len(Khmer_Category) <= 64 && len(Myanmar_Category) <= 64 && len(Universal_Category) <= 64)
+
+khmer_category_of :: proc "contextless" (character: rune) -> Khmer_Category {
+	if index := range_index(character, khmer_category_ranges[:]); index >= 0 {
+		return khmer_category_ranges[index].category
+	}
+	return .Other
+}
+
+myanmar_category_of :: proc "contextless" (character: rune) -> Myanmar_Category {
+	if index := range_index(character, myanmar_category_ranges[:]); index >= 0 {
+		return myanmar_category_ranges[index].category
+	}
+	return .Other
+}
+
+// universal_category_of gives the category of USE of a character of the
+// blocks that the system shapes by USE, and if it is a mark.
+universal_category_of :: proc "contextless" (character: rune) -> (category: Universal_Category, mark: bool) {
+	if index := range_index(character, universal_category_ranges[:]); index >= 0 {
+		return universal_category_ranges[index].category, universal_category_ranges[index].mark
+	}
+	return .Other, false
 }
 
 indic_category_of :: proc "contextless" (character: rune) -> Indic_Category {
