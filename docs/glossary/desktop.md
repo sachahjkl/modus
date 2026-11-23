@@ -4,7 +4,7 @@
 
 A surface is a memory object that one process draws into and the compositor shows as the content of a window.
 
-A surface keeps the pixels out of the kernel and out of the rings: the process writes the pixels in the memory of the surface, and the compositor reads the same memory. The compositor makes each surface with a budget that the process gives for it alone, and gives the process a copy with Read and Write, so the process pays for its surface and can never take back the mapping of the compositor. A process opens a surface with `display.open(ctx, width, height, title)`, which needs the grant of the display and waits for the answer of the compositor. It draws a picture, then sends `Present` with the rectangle that changed. The compositor sends the input of the window back on the same ring. A surface is not a framebuffer: only the compositor writes the screen.
+A surface keeps pixels out of the kernel and rings: the process writes pixels directly and the compositor reads them. The compositor allocates each surface from a budget the process supplies and grants Read and Write back, so the process pays for it and cannot revoke the compositor's mapping. A process opens one with `display.open(ctx, width, height, title)`, sends `Present` with changed rectangles, and receives input on the same ring. It is not a framebuffer: only the compositor writes the screen.
 
 The design: `docs/DESIGN.md`, "3. Surfaces".
 

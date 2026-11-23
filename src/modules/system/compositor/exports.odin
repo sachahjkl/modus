@@ -518,7 +518,7 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 // of the trusted display (in milliseconds, 500 to 10000: nothing makes it
 // shorter than 500). The change holds at once; the keeper writes it to the
 // store of the role after, on its worker, so a restart of the compositor
-// keeps it (src/md/features/module_settings.md, modus:kept_choices). A
+// keeps it (src/md/features/module_settings.md; modus:kept_choices). A
 // write that the store refuses leaves the change for this run only, with
 // one line of the log. The result is 1, or -1 with an error record:
 // No_Grant for a caller that does not act for the principal, Absent for a

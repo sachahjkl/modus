@@ -1,6 +1,7 @@
 // The screen and the mark of a wide grant on the trusted display, and the
 // rule of the input of a viewer under a grant (src/md/features/wide_grants.md,
-// "The screen", "The mark" and "The path of a grant, end to end"). A pure
+// "The screen of a wide grant"; src/md/features/wide_grants.md, "The mark";
+// src/md/features/wide_grants.md, "The path of a grant, end to end"). A pure
 // part of the compositor: no call of the kernel, no drawing. The compositor
 // gives each window an id that it never gives again in one run, and asks
 // this part what each line, each key and each press does.

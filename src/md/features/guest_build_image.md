@@ -11,7 +11,7 @@ A recipe of the guest builder names a Linux kernel and an initial archive by the
 
 - The kernel of Nixpkgs builds virtio, its ring, the transport of the windows and the block device as modules: the archive carries them and `init` loads them before it reads a disk (`tools/modustool/build/linux_guest_modules.odin`).
 - A file of the output disk carries the BLAKE3 hash of its bytes (MODGBD1): the writer of the disk computes BLAKE3. A shell script of busybox cannot.
-- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "19. A command is a function": the command of the spec is text that goes into the guest, a foreign world, and nowhere else.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "19. A command is a function: no text between processes": the command of the spec is text that goes into the guest, a foreign world, and nowhere else.
 - A source of `src/` that is not a test imports `base:` and `modus:` only: the guest program reaches Linux through its system calls, made by a few lines of assembly, not through the core library of Odin.
 
 ## The chosen form

@@ -290,10 +290,10 @@ browse_tree_pages_escaping_damage_and_wrong_kind :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(tree2_html, "not held"))
 	testing.expect(t, !strings.contains(tree2_html, strings.concatenate({"/blob/", string(unheld_hex[:])}, context.temp_allocator)))
 
-	// Huge tree: 512 entries (MAX_TREE_ENTRIES) -> 6 pages, page 7 is 404.
+	// Huge tree: MAX_TREE_ENTRIES (4096) entries -> 41 pages, page 42 is 404.
 	big_entries := make([]tree_hash.Tree_Entry, tree_hash.MAX_TREE_ENTRIES, context.temp_allocator)
 	for idx in 0 ..< tree_hash.MAX_TREE_ENTRIES {
-		name := fmt.tprintf("entry_%03d", idx)
+		name := fmt.tprintf("entry_%04d", idx)
 		big_entries[idx], _ = tree_hash.tree_entry_make(.Object, name, held_hash)
 	}
 	big_buf := make([]u8, tree_hash.tree_encoded_size(big_entries), context.temp_allocator)
@@ -303,29 +303,31 @@ browse_tree_pages_escaping_damage_and_wrong_kind :: proc(t: ^testing.T) {
 	put_big := make_signed_put_object_request(.Tree, big_hash, u64(len(big_buf)), &private_key, public_key)
 	testing.expect_value(t, test_put_object_on_server(&server, &put_big, big_buf), object_cache.Cache_Response_Status.Ok)
 
+	PAGE_SIZE :: 100
+	last_page := (tree_hash.MAX_TREE_ENTRIES + PAGE_SIZE - 1) / PAGE_SIZE
 	big_p1 := cache_browse_tree(&server, settings, big_hash, 1)
 	testing.expect_value(t, big_p1.status, Status_Answer.Ok)
-	testing.expect(t, strings.contains(string(big_p1.body), "entry_000"))
-	testing.expect(t, strings.contains(string(big_p1.body), "entry_099"))
-	testing.expect(t, !strings.contains(string(big_p1.body), "entry_100"))
-	testing.expect(t, strings.contains(string(big_p1.body), "Page 1 of 6"))
+	testing.expect(t, strings.contains(string(big_p1.body), "entry_0000"))
+	testing.expect(t, strings.contains(string(big_p1.body), "entry_0099"))
+	testing.expect(t, !strings.contains(string(big_p1.body), "entry_0100"))
+	testing.expect(t, strings.contains(string(big_p1.body), fmt.tprintf("Page 1 of %d", last_page)))
 	testing.expect(t, strings.contains(string(big_p1.body), "?page=2"))
 	testing.expect(t, !strings.contains(string(big_p1.body), "Previous page"))
 
 	big_p2 := cache_browse_tree(&server, settings, big_hash, 2)
 	testing.expect_value(t, big_p2.status, Status_Answer.Ok)
-	testing.expect(t, strings.contains(string(big_p2.body), "entry_100"))
+	testing.expect(t, strings.contains(string(big_p2.body), "entry_0100"))
 	testing.expect(t, strings.contains(string(big_p2.body), "Previous page"))
 	testing.expect(t, !strings.contains(string(big_p2.body), "?page=1"))
 
-	big_p6 := cache_browse_tree(&server, settings, big_hash, 6)
-	testing.expect_value(t, big_p6.status, Status_Answer.Ok)
-	testing.expect(t, strings.contains(string(big_p6.body), "entry_500"))
-	testing.expect(t, strings.contains(string(big_p6.body), "entry_511"))
-	testing.expect(t, !strings.contains(string(big_p6.body), "Next page"))
+	big_last := cache_browse_tree(&server, settings, big_hash, last_page)
+	testing.expect_value(t, big_last.status, Status_Answer.Ok)
+	testing.expect(t, strings.contains(string(big_last.body), fmt.tprintf("entry_%04d", (last_page - 1) * PAGE_SIZE)))
+	testing.expect(t, strings.contains(string(big_last.body), fmt.tprintf("entry_%04d", tree_hash.MAX_TREE_ENTRIES - 1)))
+	testing.expect(t, !strings.contains(string(big_last.body), "Next page"))
 
-	big_p7 := cache_browse_tree(&server, settings, big_hash, 7)
-	testing.expect_value(t, big_p7.status, Status_Answer.Not_Found)
+	big_past := cache_browse_tree(&server, settings, big_hash, last_page + 1)
+	testing.expect_value(t, big_past.status, Status_Answer.Not_Found)
 
 	// Wrong kind: /tree/<blob hash> links to /blob/<blob hash>.
 	wrong_kind := cache_browse_tree(&server, settings, held_hash, 1)

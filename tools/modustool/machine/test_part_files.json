@@ -5,6 +5,8 @@
   "random": ["random_scenario.odin"],
   "quic": ["quic_scenario.odin"],
   "remote_display": ["remote_display_scenario.odin"],
+  "screen_of_memory": ["screen_of_memory_scenario.odin"],
+  "large_disk": ["large_disk_scenario.odin"],
   "gpu_scanout": ["gpu_scanout_scenario.odin"],
   "wide_grant": ["wide_grant_scenario.odin"],
   "network": ["network_scenario.odin"],

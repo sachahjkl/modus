@@ -1,5 +1,5 @@
 // The hostile caller of the trusted display of a plan difference
-// (src/md/features/declarations.md, "The memory object of a difference").
+// (src/md/features/declarations.md, "The apply as built").
 // It acts for its principal, as the plans service does, so the display
 // reads what it gives, and it gives two objects that would stop a display
 // that maps them:

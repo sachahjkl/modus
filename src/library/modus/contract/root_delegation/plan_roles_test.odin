@@ -3,14 +3,17 @@ package root_delegation
 
 import "core:testing"
 
-// The step Loaded is a member of the border; the word after the last step
-// and the largest word are refused.
+// The steps Loaded and Committed are members of the border; the word after the
+// last step and the largest word are refused.
 @(test)
 plan_roles_step_border_takes_loaded :: proc(t: ^testing.T) {
 	step, known := plan_roles_step_of_word(4)
 	testing.expect(t, known)
 	testing.expect_value(t, step, Plan_Roles_Step.Loaded)
-	for word in ([?]u64{0, 5, max(u64)}) {
+	committed, committed_known := plan_roles_step_of_word(5)
+	testing.expect(t, committed_known)
+	testing.expect_value(t, committed, Plan_Roles_Step.Committed)
+	for word in ([?]u64{0, u64(max(Plan_Roles_Step)) + 1, max(u64)}) {
 		_, refused_known := plan_roles_step_of_word(word)
 		testing.expectf(t, !refused_known, "word %v", word)
 	}

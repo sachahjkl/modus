@@ -581,7 +581,7 @@ set :: proc "c" (
 	case .Bad_Value:
 		// A Presence word past Given is the value that the record holds;
 		// otherwise the word that names no member.
-		if _, presence_ok := module.presence_of_word(presences[refused]); !presence_ok {
+		if _, presence_ok := module.presence_of_word(u64(presences[refused])); !presence_ok {
 			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, i64(presences[refused]))
 		}
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, i64(words[refused]))

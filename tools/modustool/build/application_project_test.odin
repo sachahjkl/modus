@@ -392,7 +392,7 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 
 // application_test_workspace gives an evaluation workspace with the pools
 // of the scale 0, which hold each project of these tests.
-@(private = "file")
+@(private)
 application_test_workspace :: proc() -> ^lex_evaluator.Declaration_Workspace {
 	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
 	pools := lex_evaluator.declaration_pools_of_scale(0)

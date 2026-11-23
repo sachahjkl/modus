@@ -66,7 +66,7 @@ Do not use: thread-local storage, TLS, TEB.
 
 The word wait is the one way for a thread to wait for something else than a time: the thread waits while each 32-bit word of a list holds a given value.
 
-`Word_Wait` takes a list of words, each with the value that it holds while the thread waits, and a deadline. Another thread changes a word, then calls `Word_Wake` on it, which needs Write on the word: a wake is a signal, and a process that only reads a page gives none. If a word does not hold its value when the thread enters the wait, the wait ends at once, so no wake is lost. Two processes that map one memory object wait on one word. Every wait of the system uses it: a ring waits on its counters, a lock on its word, a thread on its event word.
+`Word_Wait` takes a list of words, each with the value it holds while waiting, and a deadline. Another thread changes a word and calls `Word_Wake`, which requires Write permission: a wake is a signal, so a read-only mapping cannot wake. If a word already differs on entry, the wait returns at once, so no wake is lost. Two processes mapping one memory object wait on one word. Rings, locks, and thread event words all use word waits.
 
 The design: `docs/ARCHITECTURE.md`, "K4. Rings and wait".
 
@@ -76,7 +76,9 @@ Do not use: futex.
 
 A wait room is the room of one thread for the words of its waits past the 64 that the kernel holds for each thread, in pages that the budget of its process pays.
 
-A thread that waits on the rings of many clients asks the kernel for it once, with `Thread_Control_Command.Wait_Room` and the count of its words; the library asks at the first wait with a wait set (`system.Wait_Set`). The kernel keeps an entry of 64 bytes for each word, 64 in a page, and one page that names the others: a room of 1036 words, the wait of the root service on a machine of 1 GiB, takes 17 pages. A wait holds at most 32768 words (`op.WORD_WAIT_MOST`). The room is of the thread, and every wait set of the thread shares it: the kernel writes its words in the thread record (`Thread_Record.wait_room_words`). The room ends with its thread, and its pages return to the budget of its process. Example: the compositor asks for 539 words, 2 for the ring of each of its 128 clients, 2 more while a client waits for room, and its fixed words. The design: `src/md/data/table_sizes.md`, "A wait holds 64 words on the stack, and more in a wait set of its caller".
+A thread requests a wait room once with `Thread_Control_Command.Wait_Room` and the word count; `system.Wait_Set` requests it on the first wait. Each word takes 64 bytes (64 per page) plus one directory page, up to `op.WORD_WAIT_MOST` (32768). Every wait set of the thread shares this room (`Thread_Record.wait_room_words`), which ends with the thread and returns its pages.
+
+The design: `src/md/data/table_sizes.md`, "A wait holds 64 words on the stack, and more in a wait set of its caller".
 
 Do not use: wait buffer, wait capacity.
 
@@ -848,7 +850,7 @@ Do not use: child weight, inherited weight, creation weight.
 
 A process weight is a number from 256 to 8192 that the share policy divides between the threads of one process: the share of processor time of that process against the other processes.
 
-The principal sets it for the processes with one name: `scheduler.share("paint", 2048)`. A process with no setting has 8192. It is a setting of the process `scheduler`: the kernel knows the weight of each thread only. The least value is 256, 1/32 of the full weight, and it still gives each of the 256 threads of a process a weight of 1 or more. It has an effect only while the share policy is on. Example: with the process weight 8192, the 8 threads of a process that compute have the weight 1024 each.
+The principal sets it per process name with `scheduler.share("paint", 2048)`. A process with no setting has 8192. It is a setting of `scheduler`: the kernel knows thread weights only. The least value is 256, 1/32 of the full weight, which still gives each of 256 threads a weight of at least 1. It applies only while the share policy is on. Example: with weight 8192, 8 computing threads get weight 1024 each.
 
 The design: `docs/SCHEDULING.md`, "A share for each process".
 

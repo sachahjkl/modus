@@ -1,6 +1,7 @@
 package build
 
 import "modus:contract/call_outcome"
+import "modus:contract/memory_screen"
 import "modus:contract/tpm_service"
 import "modus:network"
 import "modus:contract/value_kinds"
@@ -69,6 +70,11 @@ device_text_bytes_most :: proc() -> map[string]u32 {
 		bound_most = max(bound_most, len(tpm_service.wait_bound_words[bound]))
 	}
 	most["ending_bound"] = u32(bound_most)
+	resize_most := 0
+	for sentence_text in memory_screen.RESIZE_REFUSAL_SENTENCES {
+		resize_most = max(resize_most, len(sentence_text))
+	}
+	most["resize_refusal"] = u32(resize_most)
 	return most
 }
 

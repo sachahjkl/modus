@@ -1,7 +1,8 @@
 // The screen of a wide grant, the mark of a grant that holds, the bound of
 // the input of a viewer under it, and the act records of the trusted
-// display (src/md/features/wide_grants.md, "The screen", "The mark" and
-// "The path of a grant, end to end"). The rules are the pure part
+// display (src/md/features/wide_grants.md, "The screen of a wide grant";
+// src/md/features/wide_grants.md, "The mark";
+// src/md/features/wide_grants.md, "The path of a grant, end to end"). The rules are the pure part
 // internal:compositor/wide_grant_view; this file draws them, reads the
 // desktop for them, and writes the records.
 //

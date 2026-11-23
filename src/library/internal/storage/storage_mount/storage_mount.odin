@@ -164,7 +164,7 @@ STORE_TABLE_OWNER :: format.STORE_TABLE_OWNER
 COUNT_TREE_OWNER :: format.COUNT_TREE_OWNER
 
 // Where the open and the service take the count of names and the owner of
-// a block (src/md/data/storage_capacity.md, "The open has two forms").
+// a block (src/md/data/storage_capacity.md, "The counts of names live on the disk").
 Count_Form :: enum u8 {
 	// The tables of the memory hold each block: the open walks each store
 	// and checks each block; the count tree on the disk follows the tables.

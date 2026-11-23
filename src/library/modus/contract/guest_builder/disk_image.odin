@@ -686,7 +686,7 @@ disk_stream_write_entry :: proc "contextless" (
 		return .Too_Many_Inputs
 	}
 	path_bytes := transmute([]u8)path
-	if !validate_relative_path(path_bytes) {
+	if !validate_relative_path(path_bytes, MAX_DISK_PATH_BYTES) {
 		return .Invalid_Mount_Path
 	}
 	index := int(writer.written_entries)
@@ -731,11 +731,11 @@ disk_stream_write_entry :: proc "contextless" (
 	entry_offset := DISK_HEADER_SIZE + index * DISK_ENTRY_SIZE
 	byte_order.write_u16_little_endian(writer.disk, entry_offset, u16(len(path_bytes)))
 	byte_order.write_u16_little_endian(writer.disk, entry_offset + 2, 0)
-	copy(writer.disk[entry_offset + 4:][:len(path_bytes)], path_bytes)
-	byte_order.write_u64_little_endian(writer.disk, entry_offset + 128, writer.data_cursor)
-	byte_order.write_u64_little_endian(writer.disk, entry_offset + 136, payload_size)
+	copy(writer.disk[entry_offset + DISK_ENTRY_PATH_AT:][:len(path_bytes)], path_bytes)
+	byte_order.write_u64_little_endian(writer.disk, entry_offset + DISK_ENTRY_DATA_OFFSET_AT, writer.data_cursor)
+	byte_order.write_u64_little_endian(writer.disk, entry_offset + DISK_ENTRY_DATA_SIZE_AT, payload_size)
 	content_hash := blake3.hash(content)
-	copy(writer.disk[entry_offset + 144:][:blake3.HASH_SIZE], content_hash[:])
+	copy(writer.disk[entry_offset + DISK_ENTRY_HASH_AT:][:blake3.HASH_SIZE], content_hash[:])
 	if payload_size > 0 {
 		copy(writer.disk[writer.data_cursor:][:payload_size], content)
 		writer.data_cursor += payload_size

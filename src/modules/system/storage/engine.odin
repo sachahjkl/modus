@@ -719,7 +719,7 @@ blocks_of :: format.object_blocks
 // objects. A commit of pending changes adds, in the memory of the pool of
 // its connection, the room of its own changes (plan_tables_bind); a state
 // too large to release in the room of a commit is released in steps
-// (src/md/data/storage_capacity.md, "Releases in steps").
+// (src/md/data/storage_capacity.md, "A large state is released in steps").
 DELTA_CAPACITY :: 1 << 19 // Power of 2.
 WRITE_CAPACITY :: 4096
 COMMIT_SLOT_PAGES :: 24 // 1536 object nodes: one call region spread over a large object.

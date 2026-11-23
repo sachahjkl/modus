@@ -576,8 +576,8 @@ the_words_of_a_column_become_its_form_once :: proc(t: ^testing.T) {
 }
 
 // Multi-step loop: 16 steps of 4 acts each fit in the conversation without
-// evicting the request; step 17 is refused with Too_Long; loop_end closes
-// the request once.
+// evicting the request; a seventeenth step is refused with Too_Long; loop_end
+// closes the request once.
 @(test)
 multi_step_loop_bounds_steps_and_refuses_step_17 :: proc(t: ^testing.T) {
 	talk := taken_conversation(t)
@@ -590,7 +590,7 @@ multi_step_loop_bounds_steps_and_refuses_step_17 :: proc(t: ^testing.T) {
 			testing.expect(t, acted == .Succeeded && num > 0 && act_entry != nil && int(act_entry.step) == step)
 		}
 	}
-	// The request is still in the ring and refuses step 17.
+	// The request is still in the ring and refuses a seventeenth step.
 	testing.expect(t, request_of(talk, 1) != nil)
 	outcome, result, _ := reply(talk, true, 1, "step 17", 0, &error)
 	expect_refusal(t, outcome, result, error, .Too_Long, 1)

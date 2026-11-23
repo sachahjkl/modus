@@ -57,7 +57,7 @@ STATE_PAGES_OF_16_GIB :: 10704
 // blocks: storage_mount.state_layout gives 10 704 pages), which is more
 // than the form that reads the counts from the count tree takes with its
 // largest cache (8 326 pages): a larger disk opens from its count tree
-// (src/md/data/storage_capacity.md, "The open has two forms"). With them,
+// (src/md/data/storage_capacity.md, "The counts of names live on the disk"). With them,
 // the regions of the connections and the rest of the pages that the
 // service had before the tool counted (1 829 pages).
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 12533, processes = 1, threads = 1}
@@ -730,7 +730,7 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused)
 	}
 	// The caller makes a share to give it to another process (docs/STORAGE.md,
-	// "4.3 Read only, and revocation", which states the rule): the two
+	// "4.3 Read only, and revocation"): the two
 	// handles carry Give. The revocation of unshare ends each copy, in each
 	// process that has one.
 	given_ring, give_status := system.give(caller.connection.ring_memory, ring_memory, {.Give, .Read, .Write})

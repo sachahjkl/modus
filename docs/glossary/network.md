@@ -221,7 +221,7 @@ Do not use: router, default route.
 
 The prefix length is the count of the first bits of an IPv4 address that name its network: 24 for 10.0.2.15 on the network of the tests.
 
-It is a field of the address of the interface of the network service (`network.Interface_Address`), beside the local address and the gateway. The mask of the link, the next hop of each address and the broadcast address come from it, so an address on the link is reached by its hardware address, and any other address through the gateway. A prefix of 0 or past 32 bits, a local address that is the network or the broadcast address of its prefix, and a gateway off the link are refused at the start of the service. A prefix length is not a mask written in the code.
+It is a field of `network.Interface_Address`, beside the local address and gateway. The link mask, next hop, and broadcast address derive from it, so link addresses use hardware addresses and other addresses use the gateway. At start, the service refuses a prefix of 0 or above 32, a local address equal to the network or broadcast address, and an off-link gateway. A prefix length is not a mask hardcoded in code.
 
 The design: `docs/NETWORK.md`, "The parts".
 
@@ -231,7 +231,7 @@ Do not use: netmask, subnet mask.
 
 The window scale is the shift of the window field of the TCP segments of one side, which each side offers in its SYN (RFC 7323).
 
-The window field has 16 bits, so with no scale a window is 65 535 bytes at most. When both SYNs carry the option, the window of each later segment is its field shifted left by the scale of its sender, up to about 1 GiB; the TCP library gives the least shift whose window holds its receive buffer. When one SYN has no option, no window is scaled in either way. The window of a SYN is never scaled. A window scale is not a change of the size of the receive buffer: the process chooses that buffer.
+The TCP window field has 16 bits, so without scaling a window holds at most 65 535 bytes. When both SYNs carry the option, each later segment shifts its window left by its sender's scale, up to about 1 GiB. The TCP library picks the least shift that covers its receive buffer. If either SYN omits the option, neither side scales. A SYN window is never scaled. It does not change the receive buffer size chosen by the process.
 
 The design: `docs/NETWORK.md`, "The TCP library".
 

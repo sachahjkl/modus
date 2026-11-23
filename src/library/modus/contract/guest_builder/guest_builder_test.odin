@@ -1048,10 +1048,10 @@ disk_stream_writer_scales_to_thousands_of_entries :: proc(t: ^testing.T) {
 	testing.expect_value(t, big_dec, Guest_Builder_Refusal.None)
 	testing.expect_value(t, big_decoded, big_spec)
 }
-// The edges of an output disk: a directory of 512 files, the most of one
-// tree node, unpacks and 513 are refused; 4096 entries unpack and a header
-// that says 4097 is refused; a total size one past the bound of the output
-// is refused, and the bound itself is taken.
+// The edges of an output disk: a directory of MAX_TREE_ENTRIES (4096) files,
+// the most of one tree node, unpacks; 4096 entries across 8 directories unpack
+// and 4097 entries or a header that says 4097 are refused; a total size one
+// past the bound of the output is refused, and the bound itself is taken.
 @(test)
 unpack_output_disk_edges :: proc(t: ^testing.T) {
 	workspace := new(Disk_Unpack_Workspace)
@@ -1063,28 +1063,23 @@ unpack_output_disk_edges :: proc(t: ^testing.T) {
 	content := []u8{'x'}
 	files := make([]Disk_File_Input, MAX_DISK_ENTRIES + 1)
 	defer delete(files)
-	image := make([]u8, 1024 * 1024)
+	image := make([]u8, DISK_HEADER_SIZE + MAX_DISK_ENTRIES * (DISK_ENTRY_SIZE + len(content)) + 4096)
 	defer delete(image)
 
-	// One directory of count files.
-	for count in ([?]int{tree_hash.MAX_TREE_ENTRIES, tree_hash.MAX_TREE_ENTRIES + 1}) {
-		for index in 0 ..< count {
-			paths[index] = fmt_path("d/f", index)
-			files[index] = {path = paths[index], content = content}
-		}
-		for &value in image {
-			value = 0
-		}
-		written, pack_refusal := pack_disk_image(.Output_Writable, files[:count], 0, image)
-		testing.expect_value(t, pack_refusal, Guest_Builder_Refusal.None)
-		_, _, refusal := unpack_output_disk(image, u64(len(image)), workspace, tree_out)
-		if count == tree_hash.MAX_TREE_ENTRIES {
-			testing.expect_value(t, refusal, Guest_Builder_Refusal.None)
-		} else {
-			testing.expect_value(t, refusal, Guest_Builder_Refusal.Output_Extraction_Failed)
-		}
-		_ = written
+	// One directory of MAX_TREE_ENTRIES files unpacks into one tree node;
+	// one more exceeds MAX_DISK_ENTRIES (equal to MAX_TREE_ENTRIES) at pack.
+	for index in 0 ..< tree_hash.MAX_TREE_ENTRIES {
+		paths[index] = fmt_path("d/f", index)
+		files[index] = {path = paths[index], content = content}
 	}
+	for &value in image {
+		value = 0
+	}
+	one_dir_written, one_dir_pack := pack_disk_image(.Output_Writable, files[:tree_hash.MAX_TREE_ENTRIES], 0, image)
+	testing.expect_value(t, one_dir_pack, Guest_Builder_Refusal.None)
+	testing.expect(t, one_dir_written > 0)
+	_, _, one_dir_refusal := unpack_output_disk(image, u64(len(image)), workspace, tree_out)
+	testing.expect_value(t, one_dir_refusal, Guest_Builder_Refusal.None)
 
 	// 4096 entries in 8 directories of 512, then a header that says 4097.
 	for index in 0 ..< MAX_DISK_ENTRIES {

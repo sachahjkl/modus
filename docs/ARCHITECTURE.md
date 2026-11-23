@@ -828,17 +828,17 @@ A process names one of its threads as its fault handler (`Fault_Handler_Set`, op
 
 ```byte-layout operation.Thread_Record operation.Fault_Record
 operation.Thread_Record, 1072 bytes: the start of the first page of the thread area of a thread
-offset  size  field           type
-     0     8  self            u64
-     8     8  parameter       u64
-    16     8  number          u64
-    24     4  events          u32
-    28     4  processors      u32
-    32     4  fault_written   u32
-    36     4  fault_read      u32
-    40     4  fault_full      u32
-    44     4  wait_room_words u32
-    48  1024  fault_records   [FAULT_RECORD_CAPACITY]Fault_Record
+offset  size  field            type
+     0     8  self             u64
+     8     8  parameter        u64
+    16     8  number           u64
+    24     4  events           u32
+    28     4  processors       u32
+    32     4  fault_written    u32
+    36     4  fault_read       u32
+    40     4  fault_full       u32
+    44     4  wait_room_words  u32
+    48  1024  fault_records    [FAULT_RECORD_CAPACITY]Fault_Record
 
 operation.Fault_Record, 64 bytes: one record of the fault ring
 offset  size  field        type

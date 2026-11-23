@@ -1008,7 +1008,7 @@ Do not use: binary cache, substituter, package repository.
 
 An object frame is one part of 1 MiB of an object, as the cache protocol carries it, checked alone against the hash of the whole object.
 
-Frame k holds the bytes from k × 1 MiB; the last frame holds the rest, and the empty blob is one frame of 0 bytes. A frame is a node of the tree of BLAKE3, so its proof, the chaining values of the siblings on its path, joins it to the hash of the blob. A reader checks each frame before it keeps it, and so holds one frame in memory for an object of any size. A tree is always one frame. An object frame is not a chunk of BLAKE3, which is 1 KiB, and not a frame of the wire: a frame of the wire is one request or one answer, which carries at most one object frame. Example: a blob of 100 MiB and 1 byte is 101 object frames, and the last one holds 1 byte.
+Frame k holds bytes from k × 1 MiB; the last frame holds the rest, and the empty blob is one frame of 0 bytes. Each frame is a BLAKE3 tree node whose proof of sibling chaining values joins it to the blob hash. A reader checks each frame before keeping it, holding one frame in memory for any blob size. A tree is always one frame. It is not a 1 KiB BLAKE3 chunk, and not a wire frame.
 
 The design: `src/md/features/recipes.md`, "Objects of any size".
 
@@ -1018,7 +1018,7 @@ Do not use: chunk, block, piece, segment.
 
 An outboard is the file of the chaining values of the tree of frames of a blob, which an object cache keeps beside the blob to give the proof of each frame.
 
-It holds the chaining values of the two children of each parent of the tree of frames, 64 bytes each, in pre-order: (n − 1) × 64 bytes for a blob of n frames, none for a blob of one frame. The proof of a frame is one entry for each level of its path, so a get of one frame reads no other part of the blob. The server builds it during a put, or from the blob, 16 frames at each get, while the get answers `Busy`. It is the outboard of Bao, with frames of 1 MiB in place of chunks of 1 KiB. An outboard is not trusted: each frame that the server serves is checked against the hash of the blob. Example: the outboard of a blob of 100 MiB holds 99 entries, 6 336 bytes.
+It holds the two child chaining values of each parent in the frame tree, 64 bytes each, in pre-order: (n − 1) × 64 bytes for n frames, none for one frame. One proof holds one entry per level, so getting one frame reads no other part of the blob. The server builds it during a put or in 16-frame steps while answering `Busy`. An outboard is not trusted: each served frame is checked against the blob hash.
 
 The design: `src/md/features/recipes.md`, "Objects of any size".
 
@@ -1068,7 +1068,7 @@ Do not use: radian, degree (for an angle in code).
 
 An inline capacity is a fast path sized for the common case, with a slower path past it that goes on with no refusal.
 
-It holds the usual amount in place (in a thread, a record or a fixed table) and moves to the next tier when the use passes it: an arena, a structure that grows, the disk. Its size comes from a measure of the observed use. Tests cross each tier, and each move to a slower tier is counted. Example: a thread holds 64 words of a wait in place; past them, its wait room in the budget of its process holds the rest. It is not a limit: no call is refused because the inline place is full.
+It holds the common amount in place (in a thread, record, or fixed table) and moves to a slower tier past it: an arena, a growing structure, or the disk. Its size comes from measured use. Tests cross each tier, and each move is counted. Example: a thread holds 64 wait words in place; past them, its wait room in the process budget holds the rest. It is not a limit: no call is refused when the inline place fills.
 
 The rule: `AGENTS.md`, "Work".
 

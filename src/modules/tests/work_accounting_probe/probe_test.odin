@@ -43,9 +43,9 @@ Fake_Kernel_Runtime :: struct {
 	next_handle:               u32,
 	next_address:              uintptr,
 	clock_ns:                  u64,
-	budgets:                   [32]Fake_Budget,
-	memories:                  [64]Fake_Memory,
-	threads:                   [32]Fake_Thread,
+	budgets:                   [work_budget.MAX_ACCOUNTED_CONNECTIONS + 8]Fake_Budget,
+	memories:                  [work_budget.MAX_ACCOUNTED_CONNECTIONS * 4 + 16]Fake_Memory,
+	threads:                   [work_budget.MAX_ACCOUNTED_CONNECTIONS + 8]Fake_Thread,
 	non_budget_handle:         op.Handle,
 	force_thread_create_fail:  op.Status,
 }

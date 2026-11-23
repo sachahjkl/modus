@@ -1,6 +1,6 @@
 // The screen through the scanout of the virtual GPU
 // (src/md/infrastructure/whole_frame.md, "The screen through the scanout of
-// the virtual GPU", and src/md/features/gpu_access.md).
+// the virtual GPU"; src/md/features/gpu_access.md).
 //
 // When the root service started gpu_device, it passes its client ring at
 // GRANT_GPU_RING. The compositor then creates its screen memory (the pixels

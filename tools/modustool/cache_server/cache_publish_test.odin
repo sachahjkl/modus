@@ -547,7 +547,7 @@ the_cache_test_recipe_is_a_constant_that_each_reader_computes :: proc(t: ^testin
 	recipe_digits := hash_to_hex(first.recipe_hash)
 	output_digits := hash_to_hex(first.output_hash)
 	testing.expect_value(t, string(recipe_digits[:]), "e43cdb437d27f9bc310ccc794cfa9eeac17d6b219ee2cd33505f5aeb24815980")
-	testing.expect_value(t, string(output_digits[:]), "93de1a935ebd7cb72a40c0ef6d9438948b45e883c0f9d56a8dbf51d02a4d2f07")
+	testing.expect_value(t, string(output_digits[:]), "3f634a7294dbd98884bf883feb9e286691ea0bed71234a8e5d849db7d7e7041f")
 }
 
 @(test)

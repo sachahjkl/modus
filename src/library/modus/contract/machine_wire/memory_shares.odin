@@ -1,7 +1,7 @@
 package machine_wire
 
 // The shares of the memory of the mesh (src/md/features/several_machines.md,
-// "The memory of the mesh"): the tables of a peer grow from the budget of
+// "State"): the tables of a peer grow from the budget of
 // its process, and the process keeps a part of that budget for its other
 // work. One store, and the stores of one partner, hold at most a share of
 // what the mesh may take, so one partner cannot hold the mesh: a partner

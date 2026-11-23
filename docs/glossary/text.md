@@ -398,7 +398,7 @@ An Indic syllable is the unit that the shaper of the scripts of India shapes at 
 
 An independent vowel starts a syllable of its own, and a sign with no consonant before it stands on a dotted circle. The shaper reorders the glyphs of a syllable (the reph after its base, the vowel sign ि before it), so a placed glyph of a syllable can stand before the glyph of a character that comes before it in the text. A syllable holds at most 16 characters. Example: नमस्ते is three syllables, न, म and स्ते.
 
-The design: `src/md/features/written_shaping.md`, "Devanagari".
+The design: `src/md/features/written_shaping.md`, "The scripts of India".
 
 Do not use: akshara (for this), cluster (for this), grapheme.
 

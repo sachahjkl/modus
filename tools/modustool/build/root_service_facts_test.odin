@@ -1131,12 +1131,12 @@ the_script_font_facts_of_the_root_service_write_their_lines :: proc(t: ^testing.
 			expect(t, render(t, file, "Script_Fonts_Refused_Form", {{"problem_value", value}, {"problem", problem}}), line_of_before("root: the script font set is refused: ", problem, ", value ", value, ": ", none, " until the next start"))
 		}
 	}
-	for word in ([3]u64{u64(min(op.Status)), u64(max(op.Status)), u64(max(op.Status)) + 1}) {
-		status_text := line_of_before(word)
-		if name, named := module.contract_enum_member_name(.Status, word); named {
-			status_text = name
+	for word in ([3]u64{u64(min(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)) + 1}) {
+		outcome_text := line_of_before(word)
+		if name, named := module.contract_enum_member_name(.Call_Outcome, word); named {
+			outcome_text = name
 		}
-		expect(t, render(t, file, "Script_Fonts_Not_Read", {{"status", word}}), line_of_before("root: the script font set was not read: status ", status_text, ": ", none, " until the next start"))
+		expect(t, render(t, file, "Script_Fonts_Not_Read", {{"outcome", word}}), line_of_before("root: the script font set was not read: ", outcome_text, ": ", none, " until the next start"))
 	}
 	for size in ([?]u64{0, max(u64)}) {
 		for limit in ([?]u64{0, max(u64)}) {

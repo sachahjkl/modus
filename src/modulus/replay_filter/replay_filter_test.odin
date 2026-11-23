@@ -124,8 +124,9 @@ replay_handle_map_edges :: proc(t: ^testing.T) {
 	testing.expect_value(t, removed, u64(1042))
 	_, still_there := replay_handle_map_lookup(&table, 42)
 	testing.expect(t, !still_there)
-	testing.expect(t, replay_handle_map_insert(&table, 999, 5555))
-	real2, ok2 := replay_handle_map_lookup(&table, 999)
+	fresh := u64(REPLAY_HANDLE_MAP_CAPACITY) + 100
+	testing.expect(t, replay_handle_map_insert(&table, fresh, 5555))
+	real2, ok2 := replay_handle_map_lookup(&table, fresh)
 	testing.expect(t, ok2)
 	testing.expect_value(t, real2, u64(5555))
 }

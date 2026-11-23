@@ -79,7 +79,7 @@ the_texts_of_the_facts_from_imports_to_workers_come_last_and_whole :: proc(t: ^t
 		{"kernel_events", {{"child", len("the child that faults")}, {"verdict", len("as it must")}, {"operation", len("an unknown operation")}}},
 		{"limits", {}},
 		{"locker", {}},
-		{"locks", {{"lock", 7}}},
+		{"locks", {{"lock", 7}, {"verdict", len("as it must")}}},
 		{"net", {{"problem", 128}, {"address", len("255.255.255.255")}, {"link", len("down")}, {"hardware", len("ff:ff:ff:ff:ff:ff")}, {"remote", len("255.255.255.255")}, {"wrong_mark", len(" (WRONG)")}}},
 		{"persistence_check", {{"date", len("2026-11-20 10:20:30")}, {"note_text", 60}}},
 		{"origin", {{"case_text", len("revoke a handle that the process does not have")}}},

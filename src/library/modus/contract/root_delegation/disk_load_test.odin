@@ -404,7 +404,6 @@ the_kind_of_a_load_bounds_its_file :: proc(t: ^testing.T) {
 	edges := [?]Edge {
 		{.Module, MODULE_BYTES_LIMIT, true},
 		{.Module, MODULE_BYTES_LIMIT + 1, false},
-		{.Script_Fonts, MODULE_BYTES_LIMIT + 1, true},
 		{.Script_Fonts, load_bytes_limit(.Script_Fonts), true},
 		{.Script_Fonts, load_bytes_limit(.Script_Fonts) + 1, false},
 		{.Script_Fonts, max(u64), false},

@@ -1211,7 +1211,8 @@ test_manual_discovery_exports_are_read_only_and_others_wait :: proc(t: ^testing.
 	for line, index in allowed {
 		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":%d,"method":"eval_lex","params":{{"line":%q}}}}`, index + 2, line)
 		res := expect_json_result(t, bridge_handle_json_line(&bridge, req))
-		testing.expect_value(t, res["status"].(json.String), "Ok")
+		testing.expect_value(t, res["state"].(json.String), "Ended")
+		testing.expect_value(t, res["outcome"].(json.String), "Succeeded")
 		testing.expect_value(t, state.last_lex_line, line)
 	}
 	testing.expect_value(t, state.eval_lex_calls, len(allowed))

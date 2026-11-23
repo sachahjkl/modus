@@ -33,7 +33,7 @@
 // or parts, never both. The cut depends on the count of the entries only,
 // so one folder has one form and one hash, and a folder of at most
 // MAX_TREE_ENTRIES entries is one node as before (src/md/data/storage_capacity.md,
-// "Folders of more than 4096 entries").
+// "A folder of more than 4096 entries is a tree of several nodes").
 //
 // The tree hash uses BLAKE3 derive-key mode under TREE_HASH_DOMAIN so a tree
 // hash can never collide with a plain object hash (blake3.hash).

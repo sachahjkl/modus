@@ -384,7 +384,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/lex_evaluator",
 	foundation.SOURCE_FOLDER_INTERNAL + "/console/console_stream",
 	foundation.SOURCE_FOLDER_PUBLIC + "/kept_choices",
-	foundation.SOURCE_FOLDER_PUBLIC + "/plan_reader",
+	foundation.SOURCE_FOLDER_INTERNAL + "/console/plan_reader",
 	foundation.SOURCE_FOLDER_PUBLIC + "/key_path",
 	foundation.SOURCE_FOLDER_PUBLIC + "/kind_icons",
 	foundation.SOURCE_FOLDER_CONTRACT + "/manual_pages",

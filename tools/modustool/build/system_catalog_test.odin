@@ -174,7 +174,7 @@ system_catalog_is_deterministic_and_evaluates_with_lex_evaluator :: proc(t: ^tes
 	testing.expect(t, catalog_first == catalog_reversed, "catalog output must not depend on boot image entry order")
 
 	// Evaluate the generated catalog.lex with the real lex_evaluator.
-	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	workspace := application_test_workspace()
 	cfg := lex_evaluator.Declaration_Config{stack_bytes = CATALOG_TEST_STACK}
 	root := lex_evaluator.declaration_evaluate(workspace, catalog_first, "", cfg)
 	testing.expectf(t, root.ok && root.value.kind == .Record_Literal, "catalog.lex must evaluate to a record: %v", root)
@@ -250,7 +250,7 @@ release_catalog_holds_shipped_modules_and_no_test_module :: proc(t: ^testing.T) 
 	testing.expect_value(t, p2, "")
 	testing.expect(t, from_release_image == from_boot_image, "release catalog from boot_release.image and from boot.image must be identical")
 
-	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	workspace := application_test_workspace()
 	cfg := lex_evaluator.Declaration_Config{stack_bytes = CATALOG_TEST_STACK}
 	root := lex_evaluator.declaration_evaluate(workspace, from_release_image, "", cfg)
 	testing.expectf(t, root.ok && root.value.kind == .Record_Literal, "catalog_release.lex must evaluate to a record: %v", root)

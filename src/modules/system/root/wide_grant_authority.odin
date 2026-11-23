@@ -1,6 +1,6 @@
 // The authority key of the wide grants, and the path of a grant through the
 // root service (src/md/features/wide_grants.md, "The deliberate act: the
-// proof of the principal" and "The path of a grant, end to end").
+// proof of the principal"; src/md/features/wide_grants.md, "The path of a grant, end to end").
 //
 // At its start, right after it seeds its random generator, this service
 // draws a fresh authority key, and refuses a seed weaker than Processor. It

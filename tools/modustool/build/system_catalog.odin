@@ -141,7 +141,7 @@ system_catalog_of_modules :: proc(modules: []Module_Hash, release_number: string
 	strings.write_string(&out, "  c = {\n")
 	fmt.sbprintf(&out, "    compiler = module(blake3:%s),\n", c_compiler_hex)
 	fmt.sbprintf(&out, "    assembler = module(blake3:%s),\n", assemble_hex)
-	fmt.sbprintf(&out, "    module = (path) => recipe(module(blake3:%s), {\n", c_compiler_hex)
+	fmt.sbprintf(&out, "    module = (path) => recipe(module(blake3:%s), {{\n", c_compiler_hex)
 	fmt.sbprintf(&out, "      assembler = module(blake3:%s),\n", assemble_hex)
 	strings.write_string(&out, "      path = path,\n")
 	strings.write_string(&out, "      source = here(),\n")

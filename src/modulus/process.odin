@@ -21,7 +21,7 @@ import "modulus:word_table"
 //
 // The tables of the processes, the threads and the memory objects have the
 // size that the kernel chose at its start from the memory of the machine
-// (tables.odin; src/md/data/table_sizes.md, which gives their cost). They
+// (tables.odin; their cost is in src/md/data/table_sizes.md). They
 // are bounds of the kernel tables, not budgets: a process gets its slot,
 // its threads and its pages from a budget, which the root service divides.
 

@@ -622,15 +622,13 @@ commands_out_of_order_and_short_lent_memory_are_refused :: proc(t: ^testing.T) {
 	cancel(&machine)
 	testing.expect_value(t, load_begin(&machine, &good).kind, Action_Kind.Ask_Size)
 }
-// A load of the script font set reads one object past the limit of a
-// module file, walks no import even when its bytes look like a module
-// that imports, and sends Module_Filled; the core then ends the load, so
-// a Continue is refused. A set past its own limit is refused before any
-// memory is asked, and the edge of the limit is taken.
+// A load of the script font set reads one object, walks no import even when its
+// bytes look like a module that imports, and sends Module_Filled; the core then
+// ends the load, so a Continue is refused. A set past its own limit is refused
+// before any memory is asked, and the edge of the limit is taken.
 @(test)
 a_load_of_the_script_font_set_reads_one_object_and_scans_nothing :: proc(t: ^testing.T) {
-	filler := int(rd.MODULE_BYTES_LIMIT) + 1
-	file := module_file({blake3.Hash{1 = 1}}, filler)
+	file := module_file({blake3.Hash{1 = 1}})
 	entries := [?]Store_Entry{{name = "script_fonts", bytes = file, class = .Object}}
 	store := Store{entries = entries[:]}
 	machine := machine_make()

@@ -390,7 +390,7 @@ Do not use: default budget, minimum budget.
 
 The largest budget is the most that a starter gives to one process for each part of a budget request.
 
-A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service for a process of the boot image is one share of the pages and of the threads of the machine, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages and 32 threads, with 8 processes (`module.largest_budget_of_machine`). A disk process, and a module of another project, has a smaller one, 16384 pages, one process and 4 threads; one stated budget of 32768 pages, 4 processes and 16 threads pays all of them together (`src/library/modus/disk_process/budget.odin`).
+Any part above it starts the process at the largest budget and logs one line. For a boot-image process, the root service grants one share of machine pages and threads (a quarter unless the plan of principal 0 sets another share), at least 16384 pages and 32 threads, with 8 processes (`module.largest_budget_of_machine`). A disk or outside process gets at most 16384 pages, 1 process, and 4 threads, all paid from one stated budget of 32768 pages, 4 processes, and 16 threads.
 
 Do not use: maximum budget, cap, ceiling.
 

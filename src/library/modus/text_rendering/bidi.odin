@@ -34,7 +34,7 @@ placed_character :: proc "contextless" (text: []u8, glyph: Placed_Glyph) -> (cha
 }
 
 // is_strong_right says if a class counts as right to left for the
-// neutrals (N1): R, and the numbers.
+// neutrals under UAX #9 rule N1: R, and the numbers.
 @(private)
 direction_of :: #force_inline proc "contextless" (class: Bidi_Class) -> Bidi_Class {
 	switch class {
@@ -263,7 +263,7 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 	}
 	sos := max(level, before) % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
 	eos := max(level, after) % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
-	// W1: a mark takes the class of the glyph before it; after an isolate
+	// Rule W1: a mark takes the class of the glyph before it; after an isolate
 	// initiator or a PDI, it is a neutral.
 	previous := sos
 	for place in sequence {
@@ -292,7 +292,7 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 			classes[place] = .R
 		}
 	}
-	// W4: one separator between two numbers of one kind.
+	// Rule W4: one separator between two numbers of one kind.
 	for position in 1 ..< max(len(sequence) - 1, 1) {
 		index := int(sequence[position])
 		before_class, after_class := classes[sequence[position - 1]], classes[sequence[position + 1]]
@@ -303,7 +303,7 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 			classes[index] = before_class
 		}
 	}
-	// W5: a run of terminators beside a European number.
+	// Rule W5: a run of terminators beside a European number.
 	for position := 0; position < len(sequence); {
 		if classes[sequence[position]] != .ET {
 			position += 1
@@ -338,7 +338,7 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 	}
 	embedding := level % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
 	brackets_resolve(classes, sequence, sos, embedding, text, placed) or_return
-	// N1 and N2: a run of neutrals, the isolate characters too, takes the
+	// Rules N1 and N2: a run of neutrals, the isolate characters too, takes the
 	// direction around it when both sides agree, else the direction of the
 	// embedding level.
 	for position := 0; position < len(sequence); {

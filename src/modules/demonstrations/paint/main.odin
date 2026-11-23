@@ -80,8 +80,8 @@ LARGEST_HEIGHT :: 1080
 //
 // The picture: its pixels, its copy before a stroke, the stack of a fill
 // and the history are arenas that the budget pays, sized to the picture
-// (src/md/features/paint_application.md, "The memory of a picture" and "The
-// memory of the history"). The budget states the picture of a photo of a
+// (src/md/features/paint_application.md, "The memory of a picture";
+// src/md/features/paint_application.md, "The memory of the history"). The budget states the picture of a photo of a
 // phone of 24 MP, 6000 x 4000: three arenas of 23438 pages (the picture,
 // its copy, and the history at its bound of one copy), the stack of a fill
 // of 733 pages, and the frame lists of the four reservations, at most 640
