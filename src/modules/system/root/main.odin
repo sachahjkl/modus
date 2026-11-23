@@ -798,6 +798,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	disk_process_page_create()
 	fresh_bytes_create() // fresh_bytes.odin
 	replacement_table_create()
+	session_table_create() // session_table.odin
 	remote_clients_create()
 	// The control ring exists with no compositor too: the loop waits on it,
 	// and a record for a compositor that is absent stays there.

@@ -12,9 +12,11 @@ import "modus:system"
 // **Who reads it.** A reader wires `log.follow` through its connection to
 // this service, with the end Connected, which the root service gives only
 // to a caller that acts for the principal (src/md/features/module_outputs.md,
-// "The wiring and its rights"). So each reader of follow has the scope of
-// the whole log, and one record output serves them all: the writer never
-// knows which ring is which connection, and needs not.
+// "The wiring and its rights"). One record output serves them all: the
+// writer never knows which ring is which connection. So follow gives each
+// record to each follower, of any principal: the scope of a principal
+// (principal_scope.odin) does not hold here yet, and needs a pair of
+// outputs for each principal (src/md/features/log_reader_scope.md, "State").
 //
 // **The loss.** The log of the kernel stays lossy below it. When the
 // kernel wrote over records before this service wrote them into follow,

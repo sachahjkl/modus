@@ -118,6 +118,10 @@ GRANT_TPM_SERVICE :: 12 // The TPM service, with Read.
 // The handle 12 of the process with the grant Remote_Clients: the client
 // table, with **Read** (modus:contract/remote).
 GRANT_CLIENT_TABLE :: 12 // Memory, with Read: the client table.
+// The handle 6 of the process with the grant Log_Records: the session
+// table, with **Read**: the principal of each process that the root
+// service started (modus:contract/log_scope).
+GRANT_SESSION_TABLE :: 6 // Memory, with Read: the session table.
 // The handle 13 of a process with the grant Network: the datagram region of
 // its endpoint.
 GRANT_DATAGRAM_REGION :: 13 // Memory: the datagram region of the endpoint.
@@ -199,6 +203,7 @@ START_GRANT_SET_HANDLE_SLOTS := [root_ring.Start_Grant_Set_Handle]int {
 	.Tpm_Service     = GRANT_TPM_SERVICE,
 	.Tpm_Region      = GRANT_TPM_REGION,
 	.Client_Table    = GRANT_CLIENT_TABLE,
+	.Session_Table   = GRANT_SESSION_TABLE,
 	.Device_Service  = GRANT_DEVICE_SERVICE,
 	.Log             = op.CONTEXT_LOG,
 }

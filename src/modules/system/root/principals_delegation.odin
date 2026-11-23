@@ -400,7 +400,7 @@ principals_sync :: proc "contextless" () {
 	}
 	for number in u64(1) ..< principals.PRINCIPAL_CAPACITY {
 		record := &principal_records[number]
-		if !principals_mirror.registered[number] && (record.state == .Locked || record.state == .Unlocked) {
+		if !principals_mirror.registered[number] && (record.state == .Locked || record.state == .In_Front) {
 			input := rd.Register_Principal_Input{principal_id = number, public_key = record.public_key}
 			input.name_length = u8(copy(input.name[:], record.name[:clamp(record.name_length, 0, principals.NAME_LIMIT)]))
 			if !principals_command_send(.Register_Principal, &input, size_of(input)) {
@@ -411,7 +411,7 @@ principals_sync :: proc "contextless" () {
 		if !principals_mirror.registered[number] {
 			continue
 		}
-		unlocked := record.state == .Unlocked
+		unlocked := record.state == .In_Front
 		if unlocked == principals_mirror.unlocked[number] {
 			continue
 		}

@@ -59,7 +59,7 @@
 // thread and the time of each record.
 //
 // **Its exports** (`exports.odin`): `records`, `value_runs` and
-// `fact_records`: the whole log to a caller that
+// `fact_records`: the records of its principal to a caller that
 // [acts for the principal](term:acts-for-the-principal), and its
 // [own records](term:own-records) to each other caller.
 // `process_records` and `process_value_runs`: the records of one process
@@ -791,6 +791,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// first record, also when it joins before the first pass of the pump.
 	follow_next = intrinsics.atomic_load(&reader_head.written)
 	log_memory = ctx.handles[system.GRANT_LOG_RECORDS]
+	session_table_open(ctx) // principal_scope.odin
 	// The catalog of the facts: with no image, each fact shows raw.
 	if address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); mapped == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -829,6 +830,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The followers of log.follow: the records since the last pass, or
 		// the record that a full ring refused at it, and a gap where the
 		// kernel wrote over records first (follow.odin).
+		principals_read() // principal_scope.odin
 		follow_pump()
 		for event in interface.window_next_event(&hand_picture.drawing, &window) {
 			// A new appearance or a new font: each pixel of the window

@@ -894,6 +894,7 @@ Start_Grant_Set_Handle :: enum u8 {
 	Tpm_Service, // Tpm.
 	Tpm_Region, // Tpm.
 	Client_Table, // Remote_Clients.
+	Session_Table, // Log_Records: the principal of each process (modus:contract/log_scope).
 	Device_Service, // Data_Disk, Scratch_Disk, Network_Device or Sound_Device: the device service, with Read, so that its stop ends a wait for its answer.
 	Log, // Each process: the log.
 }
@@ -918,7 +919,7 @@ start_grant_set_handles :: proc "contextless" (start_grant_set: bit_set[start_gr
 		handles += {.Image}
 	}
 	if .Log_Records in start_grant_set {
-		handles += {.Log_Records}
+		handles += {.Log_Records, .Session_Table}
 	}
 	if .Serve in start_grant_set {
 		handles += {.Service_Ring}

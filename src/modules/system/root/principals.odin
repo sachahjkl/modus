@@ -1,5 +1,6 @@
 package root
 
+import "internal:root/session_states"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
 import "modus:contract/ring"
@@ -36,7 +37,9 @@ import "modus:system"
 // of the named principal (persisted_grant_table.odin).
 
 Principal_Record :: struct {
-	state:       root_ring.Principal_State,
+	// The state of its session: session_change writes it. Principal 0 has
+	// no session state, and keeps Absent: principal_read says Machine.
+	state:       session_states.Session_State,
 	name:        [principals.NAME_LIMIT]u8,
 	name_length: int,
 	public_key:  [32]u8, // Ed25519: the key that signs the grants of the principal. Principal 0: none in this system yet.
@@ -45,6 +48,56 @@ Principal_Record :: struct {
 }
 
 principal_records: [principals.PRINCIPAL_CAPACITY]Principal_Record
+
+// The seat: what the screen shows, and the session in front. It is a fact
+// of its own, not the set of the unlocked records
+// (src/md/features/several_principals.md, "The states"). seat_change
+// writes it.
+seat: session_states.Seat
+
+// session_change changes the state of the session of a named principal:
+// the one place that writes it. A refused event changes nothing, and says
+// so: each caller checked the state before, so a refusal is a fault of
+// this service.
+session_change :: proc "contextless" (number: u64, event: session_states.Session_Event) -> bool {
+	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY {
+		system.log_fact(.Warning, Session_Event_Refused{principal = number, event_code = u64(event), state_code = 0})
+		return false
+	}
+	record := &principal_records[number]
+	next, ok := session_states.session_next(record.state, event)
+	if !ok {
+		system.log_fact(.Warning, Session_Event_Refused{principal = number, event_code = u64(event), state_code = u64(record.state)})
+		return false
+	}
+	record.state = next
+	return true
+}
+
+// seat_change changes the seat: the one place that writes it.
+seat_change :: proc "contextless" (event: session_states.Seat_Event, principal: u64 = principals.MACHINE) -> bool {
+	next, ok := session_states.seat_next(seat, event, principal)
+	if !ok {
+		system.log_fact(.Warning, Seat_Event_Refused{principal = principal, event_code = u64(event), state_code = u64(seat.state)})
+		return false
+	}
+	seat = next
+	return true
+}
+
+// seat_unlock_window_settle puts the seat on the window of unlock when the
+// chooser holds it and an unlock or a creation runs: a window that a
+// session asked for (a change, a proof) leaves the seat to that session.
+seat_unlock_window_settle :: proc "contextless" () {
+	if seat.state != .Chooser || (unlock_run.stage != .Running && unlock_run.stage != .Stop_Asked) {
+		return
+	}
+	switch unlock_run.mode {
+	case .Unlock, .Unlock_Machine_Key_Held, .Create_Principal:
+		seat_change(.Unlock_Window_Opened)
+	case .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant:
+	}
+}
 
 // What the one `unlock` of this service does now. One `unlock` runs at a
 // time: two runs would share the ring of the principals and the ring and
@@ -103,15 +156,10 @@ principal_name :: proc "contextless" (number: u64) -> string {
 }
 
 // desktop_principal gives the principal of a process that the desktop
-// starts (the menu, the palette): the named principal whose session runs,
+// starts (the menu, the palette): the principal of the session in front,
 // else the machine.
 desktop_principal :: proc "contextless" () -> u64 {
-	for &record, number in principal_records {
-		if number != principals.MACHINE && record.state == .Unlocked {
-			return u64(number)
-		}
-	}
-	return principals.MACHINE
+	return session_states.principal_in_front(seat)
 }
 
 // principals_start makes the record of principal 0 from the trust record
@@ -119,7 +167,8 @@ desktop_principal :: proc "contextless" () -> u64 {
 principals_start :: proc "contextless" () {
 	persisted_tables_start()
 	machine_record := &principal_records[principals.MACHINE]
-	machine_record^ = {state = .Machine, name_length = len(principals.MACHINE_NAME)}
+	machine_record^ = {name_length = len(principals.MACHINE_NAME)}
+	seat_change(.Machine_Alone)
 	copy(machine_record.name[:], principals.MACHINE_NAME)
 	trust := &trust_boot_report.trust
 	if trust.measure == u64(info.Measure_State.Measured) {
@@ -151,6 +200,10 @@ unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string, 
 		unlock_run.name_length = 0
 		unlock_run.principal = principals.MACHINE
 		unlock_run.stage = outcome == .Succeeded ? .Running : .Stopped
+		if outcome == .Succeeded && mode == .Create_Principal {
+			session_change(1, .Creation_Begun)
+		}
+		seat_unlock_window_settle()
 	}
 	if outcome != .Succeeded {
 		system.log_fact(.Warning, Unlock_Start_Failed{outcome = outcome})
@@ -217,6 +270,9 @@ principal_create :: proc "contextless" (name: string, values: ^[7]u64) -> call_o
 	if principals.name_problem(name) != .None {
 		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 1)
 	}
+	if principal_records[1].state == .Creating {
+		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
+	}
 	// One named principal: several are not built.
 	if principal_records[1].state != .Absent {
 		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
@@ -239,7 +295,7 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 5)
 	}
 	record := &principal_records[1]
-	if record.state != .Absent {
+	if record.state != .Absent && record.state != .Creating {
 		// The same record again (a second start of `unlock`) has the same
 		// number; another one has no place.
 		if record.public_key != public_key || string(record.name[:record.name_length]) != string(name[:name_length]) {
@@ -248,7 +304,12 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 		completion^[0] = 1
 		return .Succeeded
 	}
-	record^ = {state = .Locked, name = name, name_length = name_length, public_key = public_key}
+	if !session_change(1, .Record_Given) {
+		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 0, 1)
+	}
+	record^ = {state = record.state, name = name, name_length = name_length, public_key = public_key}
+	seat_change(.Named_Principal_Recorded)
+	seat_unlock_window_settle()
 	// Only a record that `unlock` made in this run lets its first key write
 	// over a table that does not verify (principal_key_take).
 	principal_created_in_this_run[1] = unlock_creating()
@@ -278,7 +339,11 @@ principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) ->
 	if outcome := principal_key_take(number, values, completion); outcome != .Succeeded {
 		return outcome
 	}
-	principal_records[number].state = .Unlocked
+	// The seat first: a refusal there leaves the session locked. The state
+	// was checked Locked above, so the session then changes.
+	if !seat_change(.Session_Unlocked, number) || !session_change(number, .Unlocked) {
+		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
+	}
 	// The client keys that the principal allowed take calls again.
 	remote_clients_session_changed(number, false)
 	// The proofs of wide grants not given count from 0 again.
@@ -314,7 +379,8 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> call_outcome.Call_
 			}
 		}
 	}
-	principal_records[number].state = .Locked
+	session_change(number, .Locked)
+	seat_change(.Session_Locked, number)
 	// A call from another machine acts for no principal whose session is
 	// locked: the connections of its client keys end.
 	remote_clients_session_changed(number, true)
@@ -350,6 +416,12 @@ unlock_stopped :: proc "contextless" () {
 	// the stage Stopped says that no `unlock` creates.
 	asked := unlock_run.stage == .Stop_Asked
 	unlock_run.stage = .Stopped
+	if principal_records[1].state == .Creating {
+		session_change(1, .Creation_Abandoned)
+	}
+	if seat.state == .Unlock_Window {
+		seat_change(.Unlock_Window_Closed)
+	}
 	// The run that proves a wide grant ends by itself, and unlocks nothing:
 	// its stop is no failed unlock.
 	if asked || !principal_locked() || unlock_run.mode == .Prove_Wide_Grant {
@@ -480,7 +552,7 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 		mode = .New_Recovery_Key
 	}
 	number := caller.principal
-	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .Unlocked {
+	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .In_Front {
 		system.log_fact(.Warning, Passphrase_Change_Refused_No_Session{})
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Principals), false
 	}
@@ -511,10 +583,7 @@ principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> call_
 		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
 	}
 	record := &principal_records[number]
-	state := record.state
-	if state == .Absent && number != principals.MACHINE && find("unlock") != nil && unlock_creating() {
-		state = .Creating
-	}
+	state := session_states.principal_state_word(number, record.state)
 	if state == .Absent {
 		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(number))
 	}

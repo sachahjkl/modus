@@ -3,9 +3,10 @@
 // proof of the principal" and "The path of a grant, end to end").
 //
 // At its start, right after it seeds its random generator, this service
-// draws a fresh authority key, and refuses a seed weaker than Processor. It
-// gives the key to each collector that it starts, in the values 5 to 8 of
-// its context, with a ring and a region at the handles 10 and 11 for the
+// draws a fresh key of the run, and refuses a seed weaker than Processor.
+// It makes from it the authority key of each principal, then erases it. It
+// gives each collector that it starts the key of its principal only, in
+// the values 5 to 8 of its context, with a ring and a region at the handles 10 and 11 for the
 // grants. It then drives one grant at a time through the pure steps of
 // wide_grant_flow: the ask of a console, the screen of the trusted display,
 // the proof of `unlock`, Create_Grant in the collector, the wiring of the
@@ -33,9 +34,15 @@ import "modus:system"
 COLLECTOR_REGION_PAGES :: 1
 #assert(size_of(wide_grants.Create_Grant_Request) <= COLLECTOR_REGION_PAGES * system.PAGE_SIZE)
 
-// Authority key held exclusively by the unlock authority (this service) and
-// delivered to the collector in its context at start.
+// The key of the run: it makes the key of each principal at the start,
+// then this service erases it. It never leaves this service.
 wide_grant_authority: wide_grants.Wide_Grant_Authority
+// The key of each principal: this service signs the proofs of a principal
+// with it, and gives it to the collector of that principal only, so a
+// collector makes no proof that the collector of another principal
+// accepts (src/md/features/wide_grants.md, "The deliberate act: the proof
+// of the principal").
+wide_grant_principal_authorities: [principals.PRINCIPAL_CAPACITY]wide_grants.Wide_Grant_Authority
 
 // The ring of the collector of one principal, which this service made at
 // its start.
@@ -87,6 +94,14 @@ wide_grant_authority_start :: proc "contextless" () {
 		system.log_fact(.Warning, Wide_Grant_Authority_Key_Refused{status_code = u64(wide_grant_authority.status)})
 		return
 	}
+	// Each slot gets its key now: a slot is never used again in a run, so
+	// the key of the run is needed no more.
+	for &authority, principal in wide_grant_principal_authorities {
+		if !wide_grants.authority_init_for_principal(&authority, &wide_grant_authority, u64(principal)) {
+			system.log_fact(.Warning, Wide_Grant_Authority_Key_Refused{status_code = u64(authority.status)})
+		}
+	}
+	wide_grants.authority_erase(&wide_grant_authority)
 	system.log_fact(.Info, Wide_Grant_Authority_Key_Ready{})
 }
 
@@ -96,13 +111,14 @@ wide_grant_authority_start :: proc "contextless" () {
 // grant; with no ring, it serves its spaces only.
 wide_grant_collector_context :: proc "contextless" (work: ^Start_Work) {
 	system.value_put(&work.values, system.GRANT_VALUE_SERVICE_PRINCIPAL, work.principal)
-	key_words, ok := wide_grants.authority_context_words(&wide_grant_authority)
+	if work.principal >= principals.PRINCIPAL_CAPACITY {
+		return
+	}
+	// The key of its principal only.
+	key_words, ok := wide_grants.authority_context_words(&wide_grant_principal_authorities[work.principal])
 	defer intrinsics.mem_zero_volatile(&key_words, size_of(key_words))
 	if ok {
 		system.values_put(&work.values, system.GRANT_VALUE_WIDE_GRANT_AUTHORITY_KEY, key_words[:])
-	}
-	if work.principal >= principals.PRINCIPAL_CAPACITY {
-		return
 	}
 	link := &collector_links[work.principal]
 	collector_link_close(link)
@@ -314,7 +330,7 @@ wide_grant_ask_open :: proc "contextless" (command: root_ring.Root_Command, prin
 	if display_holder == 0 {
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Services)
 	}
-	if wide_grant_authority.status != .Ready {
+	if principal >= principals.PRINCIPAL_CAPACITY || !wide_grants.authority_ready_for_principal(&wide_grant_principal_authorities[principal], principal) {
 		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .None)
 	}
 	serial, refusal := wide_grant_flow.flow_ask(&wide_grant_flow_state, principal, key, authorities_word, duration_ms, system.time())
@@ -484,7 +500,7 @@ wide_grant_create_send :: proc "contextless" (now_ms: u64) -> bool {
 	}
 	request: wide_grants.Create_Grant_Request
 	request.terms = flow.terms
-	proof, refusal := wide_grants.authority_mint_proof(&wide_grant_authority, &request.terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, now_ms)
+	proof, refusal := wide_grants.authority_mint_proof(&wide_grant_principal_authorities[flow.principal], &request.terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, now_ms)
 	if refusal != .None {
 		system.log_fact(.Warning, Wide_Grant_Proof_Refused{principal = flow.principal, refusal_code = u64(refusal)})
 		return false

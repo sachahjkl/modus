@@ -603,8 +603,9 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 	other_key := blake3.hash(transmute([]u8)string("fresh-start-key-2"))
 	verifier := blake3.hash(transmute([]u8)string("passphrase-verified"))
 
-	auth: wide_grants.Wide_Grant_Authority
-	testing.expect(t, wide_grants.authority_init_from_bytes(&auth, fresh_key, .Entropy))
+	run, auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&run, fresh_key, .Entropy))
+	testing.expect(t, wide_grants.authority_init_for_principal(&auth, &run, PRINCIPAL))
 	key_words, words_ok := wide_grants.authority_context_words(&auth)
 	testing.expect(t, words_ok)
 	collector_key := wide_grants.authority_key_from_words(key_words)
@@ -625,9 +626,10 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, wide_grants.wide_grant_terms_seal(&terms), wide_grants.Wide_Grant_Refusal.None)
 
-	// Proof from another key is refused.
-	other_auth: wide_grants.Wide_Grant_Authority
-	testing.expect(t, wide_grants.authority_init_from_bytes(&other_auth, other_key, .Processor))
+	// Proof from the key of another start is refused.
+	other_run, other_auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&other_run, other_key, .Processor))
+	testing.expect(t, wide_grants.authority_init_for_principal(&other_auth, &other_run, PRINCIPAL))
 	wrong_proof, _ := wide_grants.authority_mint_proof(&other_auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 100)
 	_, wrong_refusal := collector_core.manager_create_grant(manager, &terms, &wrong_proof, 100, 100 + terms.duration_ms)
 	testing.expect_value(t, wrong_refusal, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
