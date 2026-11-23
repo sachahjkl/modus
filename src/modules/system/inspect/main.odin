@@ -59,6 +59,7 @@ import "modus:contract/value_kinds"
 import "internal:inspect/addresses"
 import "modus:display"
 import "modus:graphics"
+import "modus:interface"
 import "modus:layout"
 import "modus:system"
 
@@ -449,19 +450,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			now := system.wait_end(&wait, next)
 			system.service_run(&service)
 			changed := false
-			for event in display.next_event(&window) {
+			for event in interface.window_next_event(&window_memory.drawing, &window) {
 				// The keys and the pointer of the window are the process's own:
-				// the interface package draws, and takes no input here.
+				// its frames take no pointer, so the window layer gives the
+				// pointer to their input only while the layout scrolls, for
+				// the bars of the window.
 				if event.kind == .Key && event.pressed {
 					key(event)
 					changed = true
 				} else if event.kind == .Pointer && event.buttons & display.BUTTON_LEFT != 0 {
+					// The list is in the coordinates of the layout, which the
+					// window scrolls when it does not fit the work area.
 					if position, inside := list_place(event.x, event.y); inside {
 						choose(position)
 						changed = true
 					}
 				}
 			}
+			// The bars, the wheel and the page keys of a window that
+			// scrolls need a frame.
+			changed ||= interface.window_scroll_frame_take(&window_memory.drawing)
 			if changed {
 				draw(&window)
 			}

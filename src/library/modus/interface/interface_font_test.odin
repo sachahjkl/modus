@@ -66,27 +66,6 @@ test_interface_font :: proc(t: ^testing.T) -> (result: Test_Interface_Font) {
 	return result
 }
 
-// A draw of a text in the interface font changes the blend tables of the
-// text state of the process, and its private glyph cache, so one thread of
-// a process draws at a time (src/md/features/glyphs_on_demand.md, "Subtle
-// points"). The test runner runs the tests on several threads: each test
-// of this file that draws holds this lock from its first draw to its last
-// check, and fills the table of the blend before, through blend_table.
-@(private = "file")
-interface_text_drawing_lock: sync.Mutex
-
-@(private = "file")
-@(deferred_none = interface_text_drawing_end)
-interface_text_drawing_begin :: proc() {
-	_ = blend_table()
-	sync.mutex_lock(&interface_text_drawing_lock)
-}
-
-@(private = "file")
-interface_text_drawing_end :: proc() {
-	sync.mutex_unlock(&interface_text_drawing_lock)
-}
-
 @(private = "file")
 Font_Tables :: struct {
 	records: [256]Draw_Record,
@@ -175,7 +154,7 @@ build_labels :: proc(table: ^Draw_Table, seed: u32, changed: int) {
 // differ in one part (or in none).
 @(test)
 damage_of_interface_text_equals_the_whole_frame :: proc(t: ^testing.T) {
-	interface_text_drawing_begin()
+	process_drawing_begin()
 	font := test_interface_font(t)
 	first, second := new(Font_Tables), new(Font_Tables)
 	defer free(first)
@@ -257,6 +236,7 @@ interface_text_record_of :: proc(fields: draw_record.Text_Fields, left, top, rig
 // places, with no box.
 @(test)
 no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	font := test_interface_font(t)
 	LONG :: "a name far too long for its box, WWWWW MMMMM, and more text after it"
 	Element_Case :: struct {
@@ -323,6 +303,7 @@ no_element_passes_its_box_in_either_font :: proc(t: ^testing.T) {
 // limit, it is a text of the font of the cells, measured as one.
 @(test)
 the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	font := test_interface_font(t)
 	with_font, without_font := new(Font_Tables), new(Font_Tables)
 	defer free(with_font)
@@ -374,7 +355,7 @@ the_font_of_a_text_is_the_font_of_its_measure :: proc(t: ^testing.T) {
 // is equal to no record.
 @(test)
 hostile_interface_text_records_draw_nothing :: proc(t: ^testing.T) {
-	interface_text_drawing_begin()
+	process_drawing_begin()
 	font := test_interface_font(t)
 	memory := new(Font_Tables)
 	defer free(memory)
@@ -452,7 +433,7 @@ cells_text_reference :: proc(canvas: graphics.Canvas, x, y: int, text: string, f
 // for several texts, each text size token and each weight.
 @(test)
 each_text_draws_the_pixels_of_its_old_kind :: proc(t: ^testing.T) {
-	interface_text_drawing_begin()
+	process_drawing_begin()
 	font := test_interface_font(t)
 	WIDTH :: 400
 	HEIGHT :: 64
@@ -695,7 +676,7 @@ the_baseline_of_a_font_follows_its_face :: proc(t: ^testing.T) {
 // is the record of the font in use, last.
 @(test)
 the_interface_text_follows_the_setting_of_the_font :: proc(t: ^testing.T) {
-	interface_text_drawing_begin()
+	process_drawing_begin()
 	font := test_interface_font(t)
 	saved_page := display.settings_page
 	saved_font, saved_order := graphics.text_state.font, graphics.text_state.order
@@ -755,7 +736,7 @@ the_interface_text_follows_the_setting_of_the_font :: proc(t: ^testing.T) {
 // size, the H of " H" started 2 pixels inside the first cell at 1.25.
 @(test)
 spleen_at_a_scale_draws_each_character_in_its_measured_cell :: proc(t: ^testing.T) {
-	interface_text_drawing_begin()
+	process_drawing_begin()
 	saved_font, saved_order := graphics.text_state.font, graphics.text_state.order
 	defer graphics.text_choice_set(saved_font, saved_order)
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)

@@ -95,7 +95,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			logged = true
 			system.log_fact(.Info, Boot_Shown{stages = u64(data.boot.stage_count), memory_ranges = u64(data.boot.range_count), processes = u64(data.process_total)})
 		}
-		for _ in display.next_event(&window) {}
-		system.sleep(system.time() + INTERVAL)
+		// The wait reads the events: the scroll of a window that does not
+		// fit the work area follows them at once.
+		interface.hand_picture_wait_until(&hand_picture, &window, system.time() + INTERVAL)
 	}
 }

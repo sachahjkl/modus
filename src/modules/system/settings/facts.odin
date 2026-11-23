@@ -233,6 +233,14 @@ Records_Repeated :: struct {
 	records: u64,
 }
 
+// The element with the focus was past an edge of the view: the view moves
+// to show it, so Tab reaches each control of a window that does not fit
+// the work area (src/md/features/window_scroll.md).
+@(log_fact = "settings: the focus moves the view to the line {first}")
+View_Follows_Focus :: struct {
+	first: u64,
+}
+
 // The window drew a new choice: its values.
 @(log_fact = "settings: drawn with font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}")
 Values_Drawn :: struct {

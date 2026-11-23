@@ -207,16 +207,8 @@ keyboard_window_end :: proc "contextless" (keep: bool) {
 	case .Move:
 		system.log_fact(.Info, Window_Moved{x = u64(max(client.x, 0)), y = u64(client.y), window = window_field(client.title[:])})
 	case .Resize:
-		width, height := keyboard_resize_width, keyboard_resize_height
 		// One request at a time, as at the release of a drag.
-		if client.resize_asked || !bar.drag_asks_size(client.released, client.resize_pictures != nil, width == client.width && height == client.height) {
-			return
-		}
-		client.resize_asked = true
-		client.resize_asked_width, client.resize_asked_height = width, height
-		client.resize_edges = {.Right, .Bottom}
-		send(client, .Resized, {0 = u64(width), 1 = u64(height)})
-		system.log_fact(.Info, Draw_Size_Asked{width = u64(width), height = u64(height), window = window_field(client.title[:])})
+		_ = window_size_ask(client, keyboard_resize_width, keyboard_resize_height, {.Right, .Bottom}) // window_resize.odin
 	}
 }
 

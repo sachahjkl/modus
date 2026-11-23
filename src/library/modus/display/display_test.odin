@@ -1,6 +1,7 @@
 #+build !freestanding
 package display
 
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
@@ -19,6 +20,27 @@ the_focus_of_a_settings_raise_refuses_a_word_that_names_no_member :: proc(t: ^te
 	for member in Settings_Raise_Focus {
 		read, ok := settings_raise_focus_of_word(u64(member))
 		testing.expect(t, ok && read == member)
+	}
+}
+
+// The layout of a window from its view: a fixed window keeps the size that
+// it opened with, at each view, the smallest too; a resizable window takes
+// its least size under a view below it, on each axis alone, and the view
+// at and above the least size.
+@(test)
+the_layout_of_a_window_keeps_its_least_size :: proc(t: ^testing.T) {
+	limits := Size_Limits{least_width = 400, least_height = 320, largest_width = 1024, largest_height = 800}
+	for view in ([?][2]int{{1, 1}, {560, 482}, {560, 688}}) {
+		width, height := layout_size_of(view[0], view[1], false, limits, 560, 688)
+		testing.expectf(t, width == 560 && height == 688, "a fixed window in %v lays out at %dx%d", view, width, height)
+	}
+	Case :: struct {
+		view, layout: [2]int,
+	}
+	cases := [?]Case{{{1, 1}, {400, 320}}, {{399, 482}, {400, 482}}, {{560, 319}, {560, 320}}, {{400, 320}, {400, 320}}, {{560, 482}, {560, 482}}, {{1024, 800}, {1024, 800}}}
+	for each in cases {
+		width, height := layout_size_of(each.view[0], each.view[1], true, limits, 560, 688)
+		testing.expectf(t, width == each.layout[0] && height == each.layout[1], "a resizable window in %v lays out at %dx%d", each.view, width, height)
 	}
 }
 
@@ -321,6 +343,29 @@ surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
 		status := surface_resize(&window, each.width, each.height)
 		testing.expectf(t, status == each.status, "case %d gives %v, not %v", index, status, each.status)
 		testing.expectf(t, window == before, "case %d changed the window", index)
+	}
+}
+
+// The error record of a size past the largest limit of a resizable window
+// names the axis that passes it: the argument 2 for the width, also a
+// width of 0, and 3 for the height. A size below the least size is a clamp
+// of the compositor, which the window takes: no error names it.
+@(test)
+surface_resize_names_the_axis_past_the_largest_limit :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	cases := [?]struct {
+		width, height, argument: int,
+	}{{1217, 384, 2}, {0, 384, 2}, {880, 641, 3}}
+	for each in cases {
+		for &value in ring_memory {
+			value = 0
+		}
+		window := resizable_window_of_test(ring_memory)
+		window.resize_asked_width, window.resize_asked_height = each.width, each.height
+		error: errors.Error_Record
+		status := surface_resize(&window, each.width, each.height, &error)
+		testing.expectf(t, status == .Bad_Operation && error.argument == i64(each.argument), "%dx%d gives %v with the argument %d", each.width, each.height, status, error.argument)
 	}
 }
 

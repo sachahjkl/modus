@@ -742,7 +742,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		draw(&window)
 		display.wait(&window)
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			if event.kind == .Key && event.pressed {
 				after_key()
 			}

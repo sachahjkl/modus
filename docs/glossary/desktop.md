@@ -1304,7 +1304,7 @@ Do not use: pill (for this), badge, chip.
 
 The window bound is the largest size of a window of the system: at most 1000 × 708 for the surface, which with a title of at most 40 lines fits under the bar at the default scale, 1.25, and at 1.375.
 
-It keeps a window of the system whole on the screen at the default scale. It does not bound the scale: at a larger scale a window of the bound is taller than the work area, keeps its title on the screen, and is moved, or resized when it is resizable, to show the rest; the least work area that each holder of the display leaves, `scale_factor.WORK_AREA_LEAST_HEIGHT`, holds the window of settings at each scale. A window larger than the bound is a fault of its layout.
+It keeps a window of the system whole on the screen at the default scale. It does not bound the scale: at a larger scale a window of the bound gets a surface of the work area and scrolls its layout; the least work area that each holder of the display leaves, `scale_factor.WORK_AREA_LEAST_HEIGHT`, holds the window of settings at each scale. A window larger than the bound is a fault of its layout.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and `src/md/features/roles_and_contracts.md`, "The work area".
 

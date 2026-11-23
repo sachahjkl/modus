@@ -375,7 +375,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		after = interface.draw_text(table, x, y, "lock waits ", graphics.colors.kernel)
 		interface.draw_unsigned(table, after, y, u64(job.lock.waits), graphics.colors.kernel)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
-		for _ in display.next_event(&window) {}
+		for _ in interface.window_next_event(&window_memory.drawing, &window) {}
 		display.wait(&window, now + FRAME_TIME)
 	}
 }

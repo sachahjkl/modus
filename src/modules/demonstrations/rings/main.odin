@@ -214,7 +214,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	buttons: u32
 	for {
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window, .Every_Event) {
 			switch event.kind {
 			case .Key:
 				if !event.pressed {
@@ -235,7 +235,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The action bar takes the pointer from the input of the
 				// next frame; a press on it, or while its list is open, is
 				// not a press on a square.
-				interface.input_add(&window_memory.drawing.input, event)
+				// The squares are in the coordinates of the layout, which
+				// the window scrolls when it does not fit the work area.
 				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
 					continue
 				}

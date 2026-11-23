@@ -1352,7 +1352,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		draw(&window)
 		display.wait(&window)
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			chosen := -1
 			switch event.kind {
 			case .Key:
@@ -1367,8 +1367,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 			case .Pointer:
+				// The event is in the coordinates of the layout, which the
+				// window scrolls when it does not fit the work area: over a
+				// scroll bar of the window it reaches no case.
 				down := event.buttons & 1 != 0
-				if down && !pressed {
+				if down && !pressed && event.y != interface.WINDOW_POINTER_AWAY {
 					chosen = case_at(event.y)
 				}
 				pressed = down

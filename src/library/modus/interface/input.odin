@@ -224,6 +224,10 @@ Frame :: struct {
 	act_name_count:      int, // The entries of `act_names` in use.
 	act_names_dropped:   int, // The act names that the frame did not keep: too long, empty, or past the capacity.
 	element_places:      Element_Places, // The named elements of this frame, so far (element_name): a window writes their changes on the log.
+	// The area of the element with the focus in this frame: a window that
+	// scrolls brings it into its view (window_scroll.odin).
+	focus_area:          Area,
+	focus_area_known:    bool,
 	copied:              []u8, // The text that the element with the focus gives to a copy: memory of the caller, until the end of the frame.
 	copy_given:          bool, // An element took the copy of this frame.
 	paste_taken:         bool, // An element took the paste of this frame, inserted or refused.
@@ -326,6 +330,9 @@ element_interact :: proc "contextless" (frame: ^Frame, element: Element_Identity
 		}
 	}
 	result.focused = state.focus == element
+	if result.focused {
+		frame.focus_area, frame.focus_area_known = area, true
+	}
 	// A text input takes Enter in the order of its keys (text_input).
 	if result.focused && kind != .Text_Input {
 		for &key in input.keys[:input.key_count] {

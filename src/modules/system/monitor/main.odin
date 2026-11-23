@@ -836,7 +836,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, Window_Ready{})
 			logged = true
 		}
-		for _ in display.next_event(&window) {}
+		for _ in interface.window_next_event(&window_memory.drawing, &window) {}
 		// The calls run while the monitor waits for its next picture.
 		next := system.time() + INTERVAL
 		for {
@@ -845,8 +845,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.service_wait(&wait, &service)
 			now := system.wait_end(&wait, next)
 			system.service_run(&service)
-			for _ in display.next_event(&window) {}
-			if now >= next {
+			for _ in interface.window_next_event(&window_memory.drawing, &window) {}
+			// The bars, the wheel and the page keys of a window that
+			// scrolls draw at once.
+			if now >= next || interface.window_scroll_frame_take(&window_memory.drawing) {
 				break
 			}
 		}

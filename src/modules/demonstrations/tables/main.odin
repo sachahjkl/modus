@@ -778,7 +778,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			interface.hand_picture_show(&hand_picture, &window)
 		}
 		display.wait(&window)
-		for _ in display.next_event(&window) {
-		}
+		_ = interface.hand_picture_events(&hand_picture, &window)
 	}
 }

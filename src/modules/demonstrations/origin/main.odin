@@ -203,7 +203,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.cell_text(&frame, interface.column_take(&column, LINE), system.format(line[:], "copy a handle, then close the copy: ", copy_time, " ns, 2 kernel entries"), graphics.colors.dim)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
-		for _ in display.next_event(&window) {
+		for _ in interface.window_next_event(&window_memory.drawing, &window) {
 		}
 	}
 }

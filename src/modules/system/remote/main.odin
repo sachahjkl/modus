@@ -1086,7 +1086,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if has_window {
 				draw(&window)
 				display.wait(&window, system.time() + 1000)
-				for event in display.next_event(&window) {
+				for event in interface.window_next_event(&window_memory.drawing, &window) {
 					_ = event
 				}
 			} else {

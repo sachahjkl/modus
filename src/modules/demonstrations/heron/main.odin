@@ -894,7 +894,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	logged := false
 	for {
 		system.service_run(&service)
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			switch event.kind {
 			case .Key:
 				if event.pressed {

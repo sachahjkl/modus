@@ -1170,8 +1170,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for event in display.next_event(&window) {
 			switch event.kind {
 			case .Pointer:
-				interface.input_add(&window_memory.drawing.input, event)
-				pointer_event(event)
+				// The places of the text are in the coordinates of the
+				// layout, which the window scrolls when it does not fit.
+				// An event over a bar with no drag of the text is the bar's.
+				place, in_layout, _ := interface.window_scroll_event(&window_memory.drawing, &window, event, .Every_Event)
+				if in_layout {
+					pointer_event(place)
+				} else {
+					pointer_buttons_before = event.buttons
+				}
 			case .Key:
 				if !event.pressed {
 					continue

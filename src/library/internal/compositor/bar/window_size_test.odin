@@ -32,6 +32,39 @@ drag :: proc(start: Resize_Start, pointer_x, pointer_y: int, sizes := SIZES_OF_T
 	return resize_drag(start, pointer_x, pointer_y, sizes, FRAME_WIDTH_OF_TEST, FRAME_HEIGHT_OF_TEST, SCREEN_WIDTH_OF_TEST, SCREEN_HEIGHT_OF_TEST)
 }
 
+// A window partly off the screen: its held edge never grows it past the
+// work area less the frame. At x -400 the right edge counts its room from
+// off the screen; with its right side off the screen the left edge does;
+// with its bottom off the screen the top edge does. One pixel past the cut
+// and the farthest pointer give the cut; a drag inside it keeps its size.
+@(test)
+a_drag_never_grows_a_window_past_the_work_area :: proc(t: ^testing.T) {
+	WORK_WIDTH :: SCREEN_WIDTH_OF_TEST - FRAME_WIDTH_OF_TEST
+	WORK_HEIGHT :: SCREEN_HEIGHT_OF_TEST - HEIGHT - FRAME_HEIGHT_OF_TEST
+	start := start_of({.Right}, 0, 100)
+	start.x = -400
+	for pointer in ([?]int{WORK_WIDTH - 816 + 1, max(int) / 4}) {
+		_, _, width, _ := drag(start, pointer, 100)
+		testing.expectf(t, width == WORK_WIDTH, "the right edge at %d gives %d", pointer, width)
+	}
+	_, _, width, _ := drag(start, 100, 100)
+	testing.expect_value(t, width, 916)
+	start = start_of({.Left}, 900, 100)
+	start.x = 900
+	x, _, left_width, _ := drag(start, -10_000, 100)
+	testing.expect_value(t, left_width, WORK_WIDTH)
+	testing.expect_value(t, x, 900 + FRAME_WIDTH_OF_TEST + 816 - FRAME_WIDTH_OF_TEST - WORK_WIDTH)
+	start = start_of({.Top}, 100, 600)
+	start.y = 600
+	_, y, _, height := drag(start, 100, -10_000)
+	testing.expect_value(t, height, WORK_HEIGHT)
+	testing.expect(t, y >= HEIGHT)
+	start = start_of({.Bottom, .Right}, 0, 0)
+	start.x, start.y = -400, -50
+	_, _, both_width, both_height := drag(start, max(int) / 4, max(int) / 4)
+	testing.expect(t, both_width == WORK_WIDTH && both_height == WORK_HEIGHT)
+}
+
 // The places that are no edge come first: one pixel past the reach on each
 // side, far away, the largest and the least coordinates, the surface, and
 // the title bar, which moves the window.
@@ -309,6 +342,39 @@ answer_of_test :: proc() -> Surface_Resize_Facts {
 		asked_width = 880,
 		asked_height = 384,
 	}
+}
+
+// A clamp to the work area: the compositor asked a size below the least
+// size of a resizable window. Without the clamp it is refused; with it, it
+// is taken. A fixed window is refused with and without a clamp: it answers
+// its clamp by a release and an offer, which holds one surface at a time.
+// A clamp still needs the asked size, a request, readable memory that holds
+// two pictures, and a size of at most 32 bits.
+@(test)
+a_clamp_answer_passes_the_least_size_and_never_resizes_a_fixed_window :: proc(t: ^testing.T) {
+	below := answer_of_test()
+	below.limits.least_height = 400
+	testing.expect_value(t, surface_resize_refusal(below), Surface_Resize_Refusal.Outside_Limits)
+	below.clamp = true
+	testing.expect_value(t, surface_resize_refusal(below), Surface_Resize_Refusal.None)
+	fixed := answer_of_test()
+	fixed.resizable = false
+	testing.expect_value(t, surface_resize_refusal(fixed), Surface_Resize_Refusal.Not_Resizable)
+	fixed.clamp = true
+	testing.expect_value(t, surface_resize_refusal(fixed), Surface_Resize_Refusal.Not_Resizable)
+	fixed = below
+	unasked := fixed
+	unasked.asked = false
+	testing.expect_value(t, surface_resize_refusal(unasked), Surface_Resize_Refusal.Not_Asked)
+	other := fixed
+	other.width += 1
+	testing.expect_value(t, surface_resize_refusal(other), Surface_Resize_Refusal.Other_Size)
+	small := fixed
+	small.memory_bytes -= 1
+	testing.expect_value(t, surface_resize_refusal(small), Surface_Resize_Refusal.Too_Small)
+	huge := fixed
+	huge.width, huge.asked_width = u64(max(i32)) + 1, int(max(i32)) + 1
+	testing.expect_value(t, surface_resize_refusal(huge), Surface_Resize_Refusal.Outside_Limits)
 }
 
 // Each rule that a Surface_Resize can break, from the edges: a handle that

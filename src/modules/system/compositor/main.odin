@@ -257,7 +257,22 @@ Client :: struct {
 	// waits, the edges of the window take no new drag.
 	resize_asked: bool,
 	resize_asked_width, resize_asked_height: int,
+	// The request is a clamp to the work area: the compositor cut the size
+	// asked, or asked a fixed window, and the window scrolls its layout in
+	// the smaller surface (src/md/features/window_scroll.md).
+	resize_asked_clamp: bool,
+	// The size of the request before the cut to the work area: the window
+	// wants it once it takes the request.
+	resize_asked_wanted_width, resize_asked_wanted_height: int,
+	// The clamps that ended with no new surface, in a row: the compositor
+	// asks a clamp again at most CLAMP_ASKS_MOST times (window_resize.odin).
+	clamp_asks: int,
 	resize_edges: bar.Resize_Edges, // The edges that the drag of the request held.
+	// The size of the surface that the window opened with, or that the
+	// principal asked last and the window took: the fit to the work area
+	// starts from it, so a clamped window gets it back when the work area
+	// grows.
+	wanted_width, wanted_height: int,
 	resizes_refused: u64, // The Surface_Resize and Resize_Declined records that the compositor refused.
 	// The measures of the window (quality_measures.odin): the times of its
 	// start, from Client_Started and from its first flip; its first picture
@@ -1173,6 +1188,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 			// first, and gets the scale when its fit request ends (scale.odin).
 			if rescaled && client.created {
 				client.scale_due, client.fit_due = true, true
+				client.clamp_asks = 0
 			}
 			if !window_scale_step(&client) {
 				settings_changed_send(&client)
@@ -1353,6 +1369,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.surface = {pixels = client.pictures, width = int(screen_width), height = int(screen_height), stride = int(screen_width)}
 	client.surface_serial, client.surface_scale = 1, surface_scale
 	client.width, client.height = int(facts.width), int(facts.height)
+	client.wanted_width, client.wanted_height = client.width, client.height
 	// The process read another scale than the scale in force: the
 	// compositor names its own, and the window rescales to it. Until then
 	// its surface is cut to its interior.
@@ -1384,6 +1401,16 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// The take of the window, by the display contract: the window writes
 	// the fact of the contract when it reads it.
 	work_area_send(client)
+	// A window larger than the work area gets at most the work area from its
+	// first surface, and scrolls its layout (src/md/features/window_scroll.md).
+	// A window of another scale releases its surface at the Settings_Changed
+	// above, and a window between two surfaces declines a request: its fit
+	// waits for its surface of the scale in force (window_fit_after_scale).
+	if surface_scale != scale {
+		client.fit_after_scale = true
+	} else {
+		window_fit_now(client) // scale.odin
+	}
 	palette_entries_refresh() // A window appeared.
 	taskbar_preview_dismiss()
 	windows_menu_rows_build() // start_menu.odin

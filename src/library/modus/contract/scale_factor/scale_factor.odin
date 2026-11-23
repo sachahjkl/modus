@@ -80,13 +80,10 @@ window_surface_largest :: proc "contextless" (logical_width, logical_height, lea
 // the display leaves its windows at each scale: the least height of the
 // window of settings, 320 lines, with a title of at most 40 lines that the
 // holder draws over it. So at each scale the principal reaches the bar and
-// the one window that sets the scale back. A window taller than the work
-// area keeps its title on the screen. The principal reaches the rest by a
-// move, or by a resize when the window is resizable and its least height,
-// with its title, fits the work area, as the window of settings does. A
-// window that is not resizable shows only its upper part until windows
-// scroll in the work area (ROADMAP.md, "A window that scrolls when it does
-// not fit the work area"). A window never sets the range of the scale.
+// the one window that sets the scale back. The compositor gives each window
+// a surface of at most the work area, and a window whose layout is larger
+// scrolls it (src/md/features/window_scroll.md). A window never sets the
+// range of the scale.
 WORK_AREA_LEAST_HEIGHT :: 360
 
 // The most lines of the logical screen that a holder of the display keeps

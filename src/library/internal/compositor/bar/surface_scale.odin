@@ -86,6 +86,62 @@ Surface_Rescale_Facts :: struct {
 	window_width, window_height: int, // The logical size of the window.
 }
 
+// What a Surface_Release does to the request of the size that waits
+// (src/md/features/window_resize.md, "The clamp of a fixed window").
+Release_End :: enum u8 {
+	No_Request, // No request waited.
+	Request_Ended, // A request that is no clamp (a size of the principal): it ends with no new size.
+	Clamp_Answered, // A fixed window holds the asked size as its view: the release answers its clamp, and the window offers that size next.
+	Clamp_Ended, // A clamp that the release does not answer: it ends with no new size, and the fit waits for the surface of the scale in force.
+}
+
+// release_end_of decides what a Surface_Release does to the request that
+// waits, from the record (the view that the window holds, words of the
+// ring) and the request. A fixed window answers its clamp by a release
+// that names the asked size as its view, so it holds one surface at a time.
+// A release that names another view was sent for a rescale before the
+// window read the clamp, which it then declines: taken as the answer, the
+// compositor would wait for a size that the window never offers. A clamp of
+// a resizable window, a window with a pending surface, and a size of 0 are
+// never answered by a release.
+release_end_of :: proc "contextless" (asked, clamp, resizable, pending: bool, held_width, held_height: u64, asked_width, asked_height: int) -> Release_End {
+	switch {
+	case !asked:
+		return .No_Request
+	case !clamp:
+		return .Request_Ended
+	case resizable || pending || asked_width < 1 || asked_height < 1:
+		return .Clamp_Ended
+	case held_width != u64(asked_width) || held_height != u64(asked_height):
+		return .Clamp_Ended
+	}
+	return .Clamp_Answered
+}
+
+// fit_first_waits says if a fit that comes before the scale waits for the
+// surface of the scale in force: a window that is released, or that has a
+// surface pending, takes no request, so the fit asked now would ask
+// nothing and be lost.
+fit_first_waits :: proc "contextless" (released, pending: bool) -> bool {
+	return released || pending
+}
+
+// serial_after_refused_offer gives the serial that the compositor holds as
+// released after it refused a Surface_Rescale. The window counts each offer:
+// after Rescale_Refused it waits in Released with the serial of the offer,
+// and its next offer names the serial after it. So a refused offer of the
+// next serial, from a released window with no pending surface, moves the
+// serial released to it; with no move, each later offer named a serial
+// past the one expected, and the window never showed a surface again. Any
+// other refused record (another serial, a window that is not released)
+// moves nothing.
+serial_after_refused_offer :: proc "contextless" (released, pending: bool, released_serial, offered_serial: u64) -> u64 {
+	if released && !pending && released_serial != max(u64) && offered_serial == released_serial + 1 {
+		return offered_serial
+	}
+	return released_serial
+}
+
 // The rule that a Surface_Rescale breaks. None: the compositor takes it.
 Surface_Rescale_Refusal :: enum {
 	None,

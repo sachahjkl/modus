@@ -829,12 +829,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// the record that a full ring refused at it, and a gap where the
 		// kernel wrote over records first (follow.odin).
 		follow_pump()
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&hand_picture.drawing, &window) {
 			// A new appearance or a new font: each pixel of the window
 			// changes, with no new record.
 			if event.kind == .Settings_Changed {
 				picture_owed = true
 			}
+		}
+		// The scroll of a window that does not fit the work area: its bars,
+		// the wheel and the page keys need a picture.
+		if interface.window_scroll_frame_take(&hand_picture.drawing) {
+			picture_owed = true
 		}
 		// This service never waits for the compositor: while the
 		// compositor did not take the last picture, the window owes its

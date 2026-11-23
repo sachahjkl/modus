@@ -55,6 +55,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:display"
+import "modus:interface"
 import "modus:quic"
 import "modus:quic_server"
 import "modus:random"
@@ -391,7 +392,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for {
 			draw(&window)
 			display.wait(&window, system.time() + 1000)
-			for event in display.next_event(&window) {
+			for event in interface.window_next_event(&window_memory.drawing, &window) {
 				_ = event
 			}
 		}
@@ -441,9 +442,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if count > 0 {
 			changed = true
 		}
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			_ = event
 		}
+		// The bars, the wheel and the page keys of a window that scrolls.
+		changed ||= interface.window_scroll_frame_take(&window_memory.drawing)
 		now := system.time()
 		// This service never waits for the compositor: while the
 		// compositor did not take the last picture, the picture waits,

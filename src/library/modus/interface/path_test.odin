@@ -553,6 +553,7 @@ a_path_record_written_by_hand_that_names_wrong_points_draws_nothing :: proc(t: ^
 // are the same.
 @(test)
 a_path_whose_points_leave_their_alignment_is_damaged :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	before_memory, now_memory := new(Path_Tables), new(Path_Tables)
 	defer free(before_memory)
 	defer free(now_memory)
@@ -606,6 +607,7 @@ a_path_whose_points_leave_their_alignment_is_damaged :: proc(t: ^testing.T) {
 // text table damages nothing; a moved point damages the box of the path.
 @(test)
 the_difference_compares_the_points_of_a_path :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	before_memory, now_memory := new(Path_Tables), new(Path_Tables)
 	defer free(before_memory)
 	defer free(now_memory)

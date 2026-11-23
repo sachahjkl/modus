@@ -313,6 +313,7 @@ action_bar_press_on_an_item_gives_its_key :: proc(t: ^testing.T) {
 
 @(test)
 action_bar_list_by_pointer_and_by_keys :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Bar_Memory
 	table := bar_table_of(&memory)
 	state: Interface_State

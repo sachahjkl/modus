@@ -72,7 +72,7 @@ Rescale_Machine :: struct {
 // What the window does after a step.
 Rescale_Action :: enum u8 {
 	None,
-	Release, // Send Surface_Release with the serial of the machine.
+	Release, // Send Surface_Release with the serial of the machine and the view of the window.
 	Offer, // Let the old surface go, make a surface of the scale of the machine with its serial, and send Surface_Rescale.
 }
 
@@ -85,6 +85,7 @@ Rescale_Input_Kind :: enum u8 {
 	Resize_Offered, // The window sent Surface_Resize with the next serial (surface_resize).
 	Resize_Taken, // The answer Resize_Taken of a serial.
 	Resize_Refused, // The answer Resize_Refused of a serial.
+	Clamp_Asked, // A fixed window takes the clamp of the compositor: it releases its surface, then offers the surface of the clamped size.
 }
 
 Rescale_Input :: struct {
@@ -123,6 +124,13 @@ rescale_step :: proc "contextless" (machine: ^Rescale_Machine, input: Rescale_In
 			return rescale_offer(machine), false
 		case .Releasing, .Offered, .Resizing:
 			// The answer of the request comes first: one request at a time.
+		}
+	case .Clamp_Asked:
+		// The view is the clamped size already: the offer after the release
+		// makes the surface of it, at the scale wanted.
+		if machine.phase == .Steady {
+			machine.phase = .Releasing
+			return .Release, false
 		}
 	case .Resize_Offered:
 		if machine.phase == .Steady {
@@ -191,9 +199,38 @@ resize_end_of :: proc "contextless" (before: Rescale_Machine, input: Rescale_Inp
 		return .Keep_New
 	case .Resize_Refused:
 		return .Back_To_Shown
-	case .Scale_Named, .Released, .Taken, .Refused, .Resize_Offered:
+	case .Scale_Named, .Released, .Taken, .Refused, .Resize_Offered, .Clamp_Asked:
 	}
 	return .None
+}
+
+// clamp_refused says if a fixed window declines a clamp of the compositor:
+// a size of 0, or larger than the window opened with on an axis, is no
+// clamp; and a window between two surfaces, or in a resize, has no surface
+// to release, so it takes a clamp in Steady only. The compositor asks it
+// again when the request ends.
+clamp_refused :: proc "contextless" (machine: Rescale_Machine, width, height, opened_width, opened_height: int) -> bool {
+	return width < 1 || height < 1 || width > opened_width || height > opened_height || machine.phase != .Steady
+}
+
+// clamp_take answers the clamp of a fixed window to the work area: the
+// window takes the size as its view, with no choice of the process, and
+// releases its surface; at Released it offers the surface of the view at
+// the scale wanted, as a rescale (src/md/features/window_resize.md, "The
+// clamp of a fixed window"). So it holds one surface at a time, which its
+// budget pays. A clamp that clamp_refused refuses is declined.
+@(private)
+clamp_take :: proc "contextless" (window: ^Window, width, height: int) {
+	if clamp_refused(window.rescale, width, height, window.opened_width, window.opened_height) {
+		// A full ring keeps the request: the next present declines it.
+		_ = resize_decline(window)
+		return
+	}
+	// The release answers the request: no decline goes before it.
+	window.resize_asked = false
+	window.view_width, window.view_height = width, height
+	window.resized_picture_due = true
+	rescale_take(window, {kind = .Clamp_Asked})
 }
 
 // picture_owed_of says if a window owes the compositor a picture: it holds
@@ -267,7 +304,8 @@ Resize_Refused :: struct {
 Kept_Surface :: struct {
 	memory:        system.Handle, // 0: no surface is kept.
 	pictures:      [PICTURE_COUNT]graphics.Canvas,
-	width, height: int, // The logical size of the window with it.
+	width, height: int, // The view of the window with it: the logical size of the surface.
+	layout_width, layout_height: int, // The layout of the window with it.
 }
 
 // kept_surface_close lets a kept surface go.
@@ -326,7 +364,7 @@ rescale_take :: proc "contextless" (window: ^Window, input: Rescale_Input) {
 	case .Back_To_Shown:
 		// The compositor shows the surface before the resize: the window
 		// draws it again, at its size, and the new one goes.
-		refused_width, refused_height := window.width, window.height
+		refused_width, refused_height := window.view_width, window.view_height
 		if window.surface != 0 {
 			system.memory_unmap(rawptr(window.pictures[0].pixels))
 			system.close(window.surface)
@@ -334,7 +372,8 @@ rescale_take :: proc "contextless" (window: ^Window, input: Rescale_Input) {
 		kept := window.before_resize
 		window.before_resize = {}
 		window.surface, window.pictures = kept.memory, kept.pictures
-		window.width, window.height = kept.width, kept.height
+		window.view_width, window.view_height = kept.width, kept.height
+		window.width, window.height = kept.layout_width, kept.layout_height
 		window.picture = 0
 		window.canvas = window.pictures[0]
 		window.resized_picture_due = true
@@ -380,7 +419,10 @@ rescale_due_run :: proc "contextless" (window: ^Window) {
 		if window.resize_asked && !resize_decline(window) {
 			return
 		}
-		if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Release), values = {0 = window.rescale.serial}}) {
+		// The view names the surface that the window offers next: the
+		// compositor takes a clamp only when it is the asked size
+		// (window_resize.md, "The clamp of a fixed window").
+		if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Release), values = {0 = window.rescale.serial, 1 = u64(max(window.view_width, 0)), 2 = u64(max(window.view_height, 0))}}) {
 			return
 		}
 	case .Offer:
@@ -408,7 +450,7 @@ rescale_offer_send :: proc "contextless" (window: ^Window) -> (sent: bool) {
 		window.surface = 0
 	}
 	scale := window.rescale.scale
-	screen_width, screen_height := surface_size_of(window.width, window.height, scale)
+	screen_width, screen_height := surface_size_of(window.view_width, window.view_height, scale)
 	memory, address, granted, status := surface_make(window, screen_width, screen_height)
 	if status != .Ok {
 		system.log_fact(.Warning, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = op.Status_Word(status), window = window_fact_title(window)})

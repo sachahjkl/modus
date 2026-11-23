@@ -1569,7 +1569,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if interface.text_settings_follow(&drawing) {
 			dirty = true
 		}
-		for event in display.next_event(&window) {
+		// The window layer takes each event first: the bars, the wheel and
+		// the page keys of a window that does not fit the work area, and
+		// the pointer in the coordinates of the layout.
+		for event in interface.window_next_event(&drawing, &window, .Every_Event) {
 			// A new font: each record of the frame is the same, each pixel
 			// of text is not. The next frame of each picture is whole.
 			if event.kind == .Settings_Changed {
@@ -1614,8 +1617,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// the wheel over the view of a scroll bar, or the list of the
 			// action bar is open.
 			if event.kind == .Pointer {
-				interface.input_add(&drawing.input, event)
-				if interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) || interface.action_bar_wants_frame(&bar, &drawing.input) {
+				if interface.window_scroll_frame_take(&drawing) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) || interface.action_bar_wants_frame(&bar, &drawing.input) {
 					dirty = true
 				} else {
 					// A notch over no view moves nothing: it must not wait

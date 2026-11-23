@@ -990,7 +990,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait, deadline)
 		changed |= step_due && system.time() >= step_time
 		changed |= system.service_run(&service) > 0
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window, .Every_Event) {
 			switch event.kind {
 			case .Settings_Changed:
 				// A new font: each record is the same, each pixel of text is
@@ -1019,9 +1019,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			case .Pointer:
 				// The scroll bar of the text and the action bar take the
-				// pointer from the input of the next frame.
-				interface.input_add(&window_memory.drawing.input, event)
-				if interface.scroll_bar_wants_frame(&window_memory.drawing.state, &window_memory.drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &window_memory.drawing.input) {
+				// pointer from the input of the next frame. The list and the
+				// links are in the coordinates of the layout, which the
+				// window scrolls when it does not fit the work area.
+				pointer := event
+				if interface.window_scroll_frame_take(&window_memory.drawing) || interface.scroll_bar_wants_frame(&window_memory.drawing.state, &window_memory.drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &window_memory.drawing.input) {
 					changed = true
 				} else {
 					// A notch over no view moves nothing, and does not wait
@@ -1032,12 +1034,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// A press on the action bar, or anywhere while its list is
 				// open, is the bar's: it does not choose a module or open
 				// a link under it.
-				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
+				if interface.action_bar_takes_pointer(&bar, pointer.x, pointer.y) {
 					pressed = down
 					continue
 				}
-				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH {
-					if place := list_place_at(event.y); place >= 0 {
+				if down && !pressed && pointer.x >= 0 && pointer.x < LIST_WIDTH {
+					if place := list_place_at(pointer.y); place >= 0 {
 						item := list_items[place]
 						switch {
 						case item.module >= 0:
@@ -1053,8 +1055,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						changed = true
 					}
 				}
-				if down && !pressed && event.x >= LIST_WIDTH {
-					if number := link_at_place(event.x, event.y); number > 0 {
+				if down && !pressed && pointer.x >= LIST_WIDTH {
+					if number := link_at_place(pointer.x, pointer.y); number > 0 {
 						link_open(number)
 						changed = true
 					}

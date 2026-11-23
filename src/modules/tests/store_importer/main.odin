@@ -71,6 +71,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The window is drawn again after each event, as a change of the
 		// settings changes the font; another event gives the same picture.
 		display.wait(&window)
-		for _ in display.next_event(&window) {}
+		for _ in interface.window_next_event(&window_memory.drawing, &window) {}
 	}
 }

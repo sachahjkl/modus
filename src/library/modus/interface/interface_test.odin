@@ -396,6 +396,7 @@ one_number_damages_its_place :: proc(t: ^testing.T) {
 
 @(test)
 text_at_another_place_is_equal :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	first, second: Tables
 	before, now := table_of(&first), table_of(&second)
 	draw_text(&before, 0, 0, "same", graphics.colors.text)
@@ -452,6 +453,7 @@ fewer_records_damage_the_rest :: proc(t: ^testing.T) {
 
 @(test)
 full_table_says_so :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	records: [2]Draw_Record
 	text: [4]u8
 	table := Draw_Table{records = records[:], text = text[:]}
@@ -516,6 +518,7 @@ pointer_presses_on_release :: proc(t: ^testing.T) {
 
 @(test)
 text_input_and_list :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Tables
 	table := table_of(&memory)
 	state: Interface_State
@@ -559,6 +562,7 @@ text_input_and_list :: proc(t: ^testing.T) {
 // before the characters of its frame would act on an empty field.
 @(test)
 text_input_keys_in_their_order :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Tables
 	table := table_of(&memory)
 	state: Interface_State
@@ -582,6 +586,7 @@ text_input_keys_in_their_order :: proc(t: ^testing.T) {
 // removes it whole, and a character whose bytes do not fit is not typed.
 @(test)
 text_input_of_characters_outside_ascii :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Tables
 	table := table_of(&memory)
 	state: Interface_State
@@ -645,6 +650,7 @@ Case_Builder :: proc(table: ^Draw_Table, variant: int)
 // for one kind would leave old pixels on the screen.
 @(test)
 damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	cases := [?]struct {
 		name:  string,
 		build: Case_Builder,
@@ -935,6 +941,7 @@ picture_inside_its_picture_memory :: proc(t: ^testing.T) {
 // and the record differs, so its rectangle is damaged.
 @(test)
 text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	text := [4]u8{'a', 'b', 'c', 'd'}
 	text_record :: proc(first: u32) -> Draw_Record {
 		return draw_record.record_of(draw_record.Draw_Text{first = first, count = 4, color = draw_record.opaque(0), origin_x = draw_record.units_of_pixels(8), size = BODY_TEXT_SIZE}, 0, draw_record.units_of_pixels(8), 0, draw_record.units_of_pixels(16), draw_record.units_of_pixels(16))
@@ -981,6 +988,7 @@ grid_text :: proc(words: []u32) -> []u8 {
 // with no gap between two rows, at a place that is a multiple of 4.
 @(test)
 text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	cells_now: [3 * 8]Text_Grid_Cell
 	for &cell, index in cells_now {
 		cell = {character = rune('a' + index % 26), color = 0xFFFFFF}
@@ -1062,6 +1070,7 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 // none draws, and the difference damages each one whole.
 @(test)
 text_grid_records_of_a_hostile_caller :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	words: [32]u32
 	bytes := grid_text(words[:])
 	table := Draw_Table{text = bytes, text_count = len(bytes)}
@@ -1191,6 +1200,7 @@ two_pictures_present_what_the_screen_shows :: proc(t: ^testing.T) {
 // Present, and one frame in 50 has a new font: no picture is known.
 @(test)
 two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	WIDTH :: 120
 	HEIGHT :: 120
 	COLUMNS :: 12
@@ -1605,6 +1615,7 @@ grid_tables_make :: proc(tables: ^Grid_Tables, columns, rows, stride: int) {
 // is the frame drawn whole.
 @(test)
 grid_damage_for_each_change :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	Change :: enum {
 		Cells,
 		Columns,
@@ -1645,6 +1656,7 @@ grid_damage_for_each_change :: proc(t: ^testing.T) {
 // its end.
 @(test)
 grid_damage_with_too_few_cells_before :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	tables: Grid_Tables
 	grid_tables_make(&tables, 12, 6, 16)
 	draw_text_grid(&tables.now, 20, 30, tables.grid)
@@ -1668,6 +1680,7 @@ grid_damage_with_too_few_cells_before :: proc(t: ^testing.T) {
 // frame.
 @(test)
 text_grid_in_rectangles_equals_whole :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	tables: Grid_Tables
 	grid_tables_make(&tables, 20, 12, 20)
 	draw_text_grid(&tables.now, -13, -21, tables.grid)
@@ -1694,6 +1707,7 @@ text_grid_in_rectangles_equals_whole :: proc(t: ^testing.T) {
 // next frame of that picture whole.
 @(test)
 draw_table_copy_with_too_little_room :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Tables
 	source := table_of(&memory)
 	draw_rectangle(&source, 0, 0, 4, 4, 1)
@@ -1824,6 +1838,7 @@ two_pictures_unknown_shown_picture_presents_all :: proc(t: ^testing.T) {
 // still covers it.
 @(test)
 coordinates_cut_by_their_edges :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Tables
 	table := table_of(&memory)
 	draw_rectangle(&table, -3_000_000_000, -3_000_000_000, 5_000_000_000, 5_000_000_000, 1)
@@ -1853,6 +1868,7 @@ coordinates_cut_by_their_edges :: proc(t: ^testing.T) {
 // is refused with no change of full.
 @(test)
 grid_numbers_that_wrap_are_refused :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	cells: [16]Text_Grid_Cell
 	wrapping := [?]Text_Grid {
 		{cells = cells[:], columns = 4, rows = max(int) / 2, stride = 4},
@@ -1890,6 +1906,8 @@ grid_numbers_that_wrap_are_refused :: proc(t: ^testing.T) {
 // screen, and a damage that missed a pixel of the screen shows.
 @(test)
 window_frame_end_shows_each_frame_whole :: proc(t: ^testing.T) {
+	// Each Present starts a frame of the glyph cache of the process.
+	process_drawing_begin()
 	LOGICAL_SIZE :: 96
 	SCALE :: scale_factor.Scale.Eleven_Eighths
 	WIDTH :: (LOGICAL_SIZE * int(SCALE) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE
@@ -2402,6 +2420,7 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 // pixels at the caption, where the cell of the size is 7.
 @(test)
 a_text_of_a_refused_size_is_not_written :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	memory: Tables
 	table := table_of(&memory)
 	refused := [4]u16{1, draw_record.TEXT_SIZE_MINIMUM - 1, draw_record.TEXT_SIZE_LIMIT + 1, max(u16)}
@@ -2570,6 +2589,7 @@ a_refused_record_damages_its_box :: proc(t: ^testing.T) {
 // and the plain text take the same path.
 @(test)
 a_text_at_another_place_in_the_text_table_damages_nothing :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	before_memory, now_memory: Tables
 	before := table_of(&before_memory)
 	now := table_of(&now_memory)
@@ -2714,6 +2734,7 @@ a_refused_clip_keeps_the_cut :: proc(t: ^testing.T) {
 // Picture record of a picture memory past the list of the table.
 @(test)
 grid_of_and_picture_of_refuse_what_the_table_does_not_hold :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	words: [32]u32
 	table := Draw_Table{text = grid_text(words[:]), text_count = len(words) * 4}
 	refused := [?]draw_record.Draw_Text_Grid {

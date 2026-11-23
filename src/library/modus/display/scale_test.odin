@@ -358,3 +358,135 @@ a_declined_scale_waits_for_another_scale :: proc(t: ^testing.T) {
 		testing.expectf(t, other == before, "a decline in %v changed the machine", phase)
 	}
 }
+
+// The clamp of a fixed window in the machine: taken in Steady only, where
+// it releases; in each other phase it changes nothing (the window declines
+// it). The release then offers the next serial at the scale wanted, as a
+// rescale, and the answer taken ends it in Steady. A scale named during the
+// release is the scale of the offer: one surface, at the new scale.
+@(test)
+a_clamp_releases_then_offers :: proc(t: ^testing.T) {
+	for phase in ([?]Rescale_Phase{.Releasing, .Released, .Offered, .Resizing}) {
+		machine := Rescale_Machine{phase = phase, scale = .Sixteen_Eighths, wanted = .Sixteen_Eighths, serial = 3}
+		before := machine
+		action, refused := rescale_step(&machine, {kind = .Clamp_Asked})
+		testing.expectf(t, action == .None && !refused && machine == before, "a clamp in %v changed the machine", phase)
+	}
+	machine := steady_at(.Sixteen_Eighths, 1)
+	action, _ := rescale_step(&machine, {kind = .Clamp_Asked})
+	testing.expect(t, action == .Release && machine.phase == .Releasing && machine.serial == 1 && !rescale_draws(&machine))
+	// A second clamp while the first waits changes nothing.
+	before := machine
+	action, _ = rescale_step(&machine, {kind = .Clamp_Asked})
+	testing.expect(t, action == .None && machine == before)
+	action, _ = rescale_step(&machine, {kind = .Released, serial = 1})
+	testing.expect_value(t, action, Rescale_Action.Offer)
+	testing.expect_value(t, machine, Rescale_Machine{phase = .Offered, scale = .Sixteen_Eighths, wanted = .Sixteen_Eighths, serial = 2})
+	_, _ = rescale_step(&machine, {kind = .Taken, serial = 2})
+	testing.expect_value(t, machine, steady_at(.Sixteen_Eighths, 2))
+	// The scale named during the release.
+	machine = steady_at(.Ten_Eighths, 4)
+	_, _ = rescale_step(&machine, {kind = .Clamp_Asked})
+	_, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	action, _ = rescale_step(&machine, {kind = .Released, serial = 4})
+	testing.expect(t, action == .Offer && machine.scale == .Sixteen_Eighths && machine.serial == 5)
+	// An offer that the compositor refuses (another size): Released, and
+	// the window waits for the next scale.
+	refused: bool
+	action, refused = rescale_step(&machine, {kind = .Refused, serial = 5})
+	testing.expect(t, action == .None && refused && machine.phase == .Released)
+	// A budget that does not pay the clamped surface: Released, declined;
+	// the same scale offers nothing, another scale offers again.
+	machine = steady_at(.Sixteen_Eighths, 1)
+	_, _ = rescale_step(&machine, {kind = .Clamp_Asked})
+	_, _ = rescale_step(&machine, {kind = .Released, serial = 1})
+	rescale_declined_step(&machine)
+	testing.expect(t, machine.phase == .Released && machine.declined && machine.serial == 2)
+	action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect_value(t, action, Rescale_Action.None)
+	action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Ten_Eighths})
+	testing.expect(t, action == .Offer && machine.serial == 3)
+}
+
+// A fixed window refuses a clamp of 0 or of one past the size that it
+// opened with on either axis, and each clamp outside Steady; it takes a
+// clamp of its whole size and of 1 x 1.
+@(test)
+a_fixed_window_refuses_each_clamp_that_is_none :: proc(t: ^testing.T) {
+	steady := steady_at(.Sixteen_Eighths, 1)
+	for size in ([?][2]int{{0, 482}, {816, 0}, {-1, 482}, {817, 482}, {816, 561}, {max(int), max(int)}}) {
+		testing.expectf(t, clamp_refused(steady, size[0], size[1], 816, 560), "%v is taken", size)
+	}
+	for phase in ([?]Rescale_Phase{.Releasing, .Released, .Offered, .Resizing}) {
+		machine := steady
+		machine.phase = phase
+		testing.expectf(t, clamp_refused(machine, 816, 482, 816, 560), "a clamp in %v is taken", phase)
+	}
+	testing.expect(t, !clamp_refused(steady, 816, 560, 816, 560))
+	testing.expect(t, !clamp_refused(steady, 1, 1, 816, 560))
+}
+
+// clamp_take on a window with a ring in plain memory: a refused clamp sends
+// Resize_Declined and changes no size; a clamp in flight is declined; a
+// clamp taken sets the view, keeps the layout, answers the request and
+// sends Surface_Release of the serial, with no decline before it. Behind a
+// full ring the release waits as the due action, and goes alone when the
+// ring has room.
+@(test)
+clamp_take_releases_once_and_declines_the_rest :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	fixed_window :: proc(ring_memory: []u8) -> Window {
+		for &value in ring_memory {
+			value = 0
+		}
+		window: Window
+		opened, ok := ring.open(raw_data(ring_memory), ring.PAGE_COUNT)
+		assert(ok)
+		window.ring = opened
+		window.width, window.height = 816, 560
+		window.view_width, window.view_height = 816, 560
+		window.opened_width, window.opened_height = 816, 560
+		window.rescale = steady_at(.Sixteen_Eighths, 1)
+		window.resize_asked = true
+		window.resize_asked_width, window.resize_asked_height = 816, 482
+		return window
+	}
+	window := fixed_window(ring_memory)
+	clamp_take(&window, 816, 561)
+	declined, has := ring.pop(&window.ring.commands)
+	testing.expect(t, has && declined.kind == u32(Command.Resize_Declined))
+	testing.expect(t, window.view_height == 560 && window.height == 560 && window.rescale.phase == .Steady && !window.resize_asked)
+	window = fixed_window(ring_memory)
+	window.rescale.phase = .Releasing
+	clamp_take(&window, 816, 482)
+	declined, has = ring.pop(&window.ring.commands)
+	testing.expect(t, has && declined.kind == u32(Command.Resize_Declined) && window.view_height == 560)
+	window = fixed_window(ring_memory)
+	clamp_take(&window, 816, 482)
+	released, has_released := ring.pop(&window.ring.commands)
+	testing.expect(t, has_released && released.kind == u32(Command.Surface_Release) && released.values[0] == 1)
+	_, more := ring.pop(&window.ring.commands)
+	testing.expect(t, !more)
+	testing.expect(t, window.view_width == 816 && window.view_height == 482 && window.width == 816 && window.height == 560)
+	testing.expect(t, !window.resize_asked && window.rescale.phase == .Releasing)
+	// The second clamp while the first waits is declined, and the view stays.
+	window.resize_asked = true
+	clamp_take(&window, 816, 400)
+	declined, has = ring.pop(&window.ring.commands)
+	testing.expect(t, has && declined.kind == u32(Command.Resize_Declined) && window.view_height == 482)
+	// Behind a full ring.
+	window = fixed_window(ring_memory)
+	for ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Present)}) {
+	}
+	clamp_take(&window, 816, 482)
+	testing.expect(t, window.rescale_due == .Release && window.rescale.phase == .Releasing)
+	for _ in 0 ..< ring.capacity(&window.ring.commands) {
+		_, _ = ring.pop(&window.ring.commands)
+	}
+	rescale_due_run(&window)
+	released, has_released = ring.pop(&window.ring.commands)
+	testing.expect(t, has_released && released.kind == u32(Command.Surface_Release) && released.values[0] == 1)
+	_, more = ring.pop(&window.ring.commands)
+	testing.expect(t, !more && window.rescale_due == .None)
+}

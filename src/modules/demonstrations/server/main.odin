@@ -55,6 +55,7 @@ import "modus:contract/datagram"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:display"
+import "modus:interface"
 import "modus:network"
 import "modus:storage"
 import "modus:random"
@@ -575,9 +576,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if count > 0 || service.calls != calls_before {
 			changed = true
 		}
-		for event in display.next_event(&window) {
-			_ = event
-		}
+		// The scroll of a window that does not fit the work area shows the
+		// picture again at once.
+		_ = interface.hand_picture_events(&hand_picture, &window)
 		now := system.time()
 		// This service never waits for the compositor: while the
 		// compositor did not take the last picture, the picture waits,

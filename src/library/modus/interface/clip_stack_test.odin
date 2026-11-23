@@ -127,6 +127,7 @@ draw_clip_pop_with_no_push_is_refused :: proc(t: ^testing.T) {
 // 16 written, is cut to the deepest one.
 @(test)
 draw_clip_push_past_the_bound_is_refused :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	AFTER_FILL :: graphics.Color(0x0020E040)
 	memory: Clip_Tables
 	table := clip_table_of(&memory)

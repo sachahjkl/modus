@@ -181,7 +181,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	logged := false
 	for {
 		system.service_run(&service)
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			switch event.kind {
 			case .Key:
 				if event.pressed {
@@ -195,6 +195,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				}
 			case .Pointer:
+				// The event is in the coordinates of the layout, which the
+				// window scrolls when it does not fit the work area: over a
+				// scroll bar of the window its place is off the board.
 				x, y := event.x / CELL, event.y / CELL
 				if event.buttons & display.BUTTON_LEFT != 0 && event.x >= 0 && event.y >= 0 && x < COLUMNS && y < ROWS {
 					cells[shown][y][x] = 1
