@@ -623,6 +623,78 @@ Grow_Facts :: struct {
 // force, and the one of the size that replaces it.
 EXTRAS_PER_PROCESS :: 2
 
+// An extra budget that a process holds: its handle in the process, the
+// number of its growth, and the size that it pays. A handle of 0 is none.
+Held_Extra :: struct {
+	handle:        u64,
+	growth:        u64,
+	width, height: u64,
+}
+
+// The extra budgets that the compositor or the service of the remote
+// display holds (src/md/features/screen_of_memory.md, "The growth of the
+// budgets"). Both processes keep them with these procedures, and close the
+// handles and send the releases that they give.
+Held_Extras :: struct {
+	extras: [EXTRAS_PER_PROCESS]Held_Extra,
+}
+
+// held_extras_take keeps an extra budget that the root service gave. false:
+// a handle of 0, a number of 0, a number held already, or no free place;
+// nothing changed, and the process closes the handle with no use.
+held_extras_take :: proc "contextless" (held: ^Held_Extras, extra: Held_Extra) -> bool {
+	if extra.handle == 0 || extra.growth == 0 {
+		return false
+	}
+	free := -1
+	for kept, place in held.extras {
+		if kept.handle != 0 && (kept.growth == extra.growth || kept.handle == extra.handle) {
+			return false
+		}
+		if kept.handle == 0 && free < 0 {
+			free = place
+		}
+	}
+	if free < 0 {
+		return false
+	}
+	held.extras[free] = extra
+	return true
+}
+
+// held_extras_of_size gives the newest extra budget of a size. ok false:
+// none pays it.
+held_extras_of_size :: proc "contextless" (held: ^Held_Extras, width, height: u64) -> (extra: Held_Extra, ok: bool) {
+	for kept in held.extras {
+		if kept.handle != 0 && kept.width == width && kept.height == height && kept.growth > extra.growth {
+			extra, ok = kept, true
+		}
+	}
+	return
+}
+
+// held_extras_give_back removes each extra budget that holds none of the
+// pictures of the process: all but the one of holding_growth (0: the
+// budget of the process holds them, and each goes). It gives them; the
+// process closes each handle and sends the release of each number. A
+// handle of 0 is none.
+held_extras_give_back :: proc "contextless" (held: ^Held_Extras, holding_growth: u64) -> (given: [EXTRAS_PER_PROCESS]Held_Extra) {
+	for &kept, place in held.extras {
+		if kept.handle != 0 && kept.growth != holding_growth {
+			given[place] = kept
+			kept = {}
+		}
+	}
+	return
+}
+
+// face_ended_goes_to_start says if the compositor goes back to the start
+// size when the capture face ends: its pictures are in an extra budget, and
+// with no viewer a machine pays only its start size.
+face_ended_goes_to_start :: proc "contextless" (screen_of_memory: bool, pictures_growth: u64) -> bool {
+	return screen_of_memory && pictures_growth != 0
+}
+
 // screen_budget_grow_decide decides a growth for both processes together:
 // the sender, the screen, the size, the extra budgets that each process
 // holds, then the share of each process, in this order. A process that

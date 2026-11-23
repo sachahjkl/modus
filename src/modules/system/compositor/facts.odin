@@ -863,6 +863,23 @@ Screen_Of_Memory_Started :: struct {
 	height: u64,
 }
 
+// The capture face ended with the screen of memory past its start size: no
+// viewer looks, and the screen went back to its start size.
+@(log_fact = "compositor: no viewer looks: the screen of memory is back to {width} x {height}, and {windows} windows fit it again")
+Screen_Of_Memory_Back_To_Start :: struct {
+	width:   u64,
+	height:  u64,
+	windows: u64,
+}
+
+// The screen of memory did not go back to its start size when no viewer
+// looked: the kernel had fewer pages than the budget of the compositor says.
+@(log_fact = "compositor: no viewer looks, and the screen of memory did not go back to {width} x {height}: the kernel made no frame and no background of that size")
+Screen_Of_Memory_Not_Back_To_Start :: struct {
+	width:  u64,
+	height: u64,
+}
+
 // A viewer asked a size of the screen of memory, and the compositor took it.
 @(log_fact = "compositor: the screen of memory is now {width} x {height}, which a viewer asked: {windows} windows fit it again")
 Screen_Of_Memory_Resized :: struct {

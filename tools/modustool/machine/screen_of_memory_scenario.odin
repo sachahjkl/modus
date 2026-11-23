@@ -12,8 +12,10 @@ import "modustool:foundation"
 // remote_display, and receives that size and the whole screen; asks for
 // 3840 x 2160, which replaces both extra budgets, and receives that size
 // and the whole screen; asks for 1280 x 720, which gives both extra budgets
-// back, and receives that size and the whole screen;
-// then asks a size past the bounds, which ends its session with Bad_Record.
+// back, and receives that size and the whole screen; asks for 2560 x 1440
+// again; then asks a size past the bounds, which ends its session with
+// Bad_Record: with no viewer left, the compositor goes back to 1920 x 1080
+// and both extra budgets go back.
 
 TEST_OUTPUT_SCREEN_OF_MEMORY :: foundation.BUILD_FOLDER + "/test_output_screen_of_memory.txt"
 
@@ -59,10 +61,19 @@ scenario_screen_of_memory := [?]Step {
 	{kind = .Wait, text = "compositor: the screen of memory is now 1280 x 720, which a viewer asked: ", any_order = true},
 	{kind = .Wait, text = "remote_display: the screen is now 1280 x 720: 1 viewers receive its size and the whole screen", any_order = true},
 	{kind = .Wait, text = "compositor: the capture face is open: a copy of 1280x720 after each frame", any_order = true},
+	// The screen grows a third time.
+	{kind = .Remote_Display_Case, text = "ask 2560x1440"},
+	{kind = .Wait, text = "root: the budgets of the screen of memory grow for 2560 x 1440, growth 3: an extra budget of ", any_order = true},
+	{kind = .Wait, text = "remote_display: the screen is now 2560 x 1440: 1 viewers receive its size and the whole screen", any_order = true},
 	// A size past the bounds is a fault of the viewer: its border ends the
-	// session.
+	// session. The last viewer has left after a growth: the face closes, the
+	// compositor goes back to its start size, and both extra budgets go back,
+	// as a machine with no viewer pays only its start size.
 	{kind = .Remote_Display_Case, text = "ask 7681x4320 ends Bad_Record"},
 	{kind = .Wait, text = ": it names a place outside the screen: the connection ends with the code Bad_Record", any_order = true},
+	{kind = .Wait, text = "compositor: no viewer looks: the screen of memory is back to 1920 x 1080, and ", any_order = true},
+	{kind = .Wait, text = "root: compositor gave back its extra budget of growth 3 of the screen of memory: its pages return", any_order = true},
+	{kind = .Wait, text = "root: remote_display gave back its extra budget of growth 3 of the screen of memory: its pages return", any_order = true},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

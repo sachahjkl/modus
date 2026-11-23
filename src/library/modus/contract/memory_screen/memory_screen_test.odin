@@ -429,3 +429,81 @@ a_grow_refusal_word_at_its_border :: proc(t: ^testing.T) {
 	testing.expect_value(t, resize_refusal_of_grow(.Past_Compositor_Share), Resize_Refusal.Compositor_Budget)
 	testing.expect_value(t, resize_refusal_of_grow(.Past_Service_Share), Resize_Refusal.Service_Budget)
 }
+
+// The extra budgets of a process refuse a handle of 0, a number of 0, a
+// number or a handle held already, and a third one, and change nothing.
+@(test)
+a_process_holds_two_extra_budgets_at_most :: proc(t: ^testing.T) {
+	held: Held_Extras
+	testing.expect(t, !held_extras_take(&held, {0, 1, 2560, 1440}))
+	testing.expect(t, !held_extras_take(&held, {5, 0, 2560, 1440}))
+	testing.expect(t, held == {})
+	testing.expect(t, held_extras_take(&held, {5, 1, 2560, 1440}))
+	before := held
+	testing.expect(t, !held_extras_take(&held, {9, 1, 3840, 2160}), "a number held already was taken")
+	testing.expect(t, !held_extras_take(&held, {5, 2, 3840, 2160}), "a handle held already was taken")
+	testing.expect(t, held == before)
+	testing.expect(t, held_extras_take(&held, {9, 2, 3840, 2160}))
+	before = held
+	testing.expect(t, !held_extras_take(&held, {13, 3, 1920, 1200}), "a third extra budget was taken")
+	testing.expect(t, held == before)
+	extra, ok := held_extras_of_size(&held, 3840, 2160)
+	testing.expect(t, ok && extra.growth == 2)
+	_, ok = held_extras_of_size(&held, 3840, 2161)
+	testing.expect(t, !ok, "a size that no extra budget pays was paid")
+}
+
+// A replacement gives back the old extra budget once the pictures are in
+// the new one; a refused size gives back the new one and keeps the one
+// that holds the pictures.
+@(test)
+a_replacement_gives_back_what_holds_no_picture :: proc(t: ^testing.T) {
+	held: Held_Extras
+	held_extras_take(&held, {5, 1, 2560, 1440})
+	held_extras_take(&held, {9, 2, 3840, 2160})
+	given := held_extras_give_back(&held, 2)
+	testing.expect(t, given == {0 = {5, 1, 2560, 1440}})
+	testing.expect(t, held.extras == {1 = {9, 2, 3840, 2160}})
+	held_extras_take(&held, {13, 3, 5120, 2880})
+	given = held_extras_give_back(&held, 2)
+	testing.expect(t, given == {0 = {13, 3, 5120, 2880}}, "the extra budget of a refused size was kept")
+	testing.expect(t, held.extras == {1 = {9, 2, 3840, 2160}})
+}
+
+// A growth no longer needed while the face is closed: the pictures are in
+// the extra budget of growth 1, the one of growth 2 never held one. The
+// face ends: the compositor goes back to its start size, and both go back;
+// the service, with no copy, gives both back too.
+@(test)
+a_growth_not_needed_with_the_face_closed_goes_back :: proc(t: ^testing.T) {
+	compositor, service: Held_Extras
+	for held in ([2]^Held_Extras{&compositor, &service}) {
+		held_extras_take(held, {5, 1, 2560, 1440})
+		held_extras_take(held, {9, 2, 3840, 2160})
+	}
+	pictures_growth := u64(1)
+	testing.expect(t, face_ended_goes_to_start(true, pictures_growth))
+	pictures_growth = 0 // The pictures of the start size are made from the budget of the process.
+	given := held_extras_give_back(&compositor, pictures_growth)
+	testing.expect(t, given == {{5, 1, 2560, 1440}, {9, 2, 3840, 2160}})
+	testing.expect(t, compositor == {})
+	given = held_extras_give_back(&service, 0)
+	testing.expect(t, given == {{5, 1, 2560, 1440}, {9, 2, 3840, 2160}})
+	testing.expect(t, service == {})
+}
+
+// The last viewer leaves after a growth: the face ends with the pictures
+// in an extra budget, the compositor goes back to its start size, and the
+// extra budget goes back. A screen at its start size, or a screen of a
+// device, does not change, and with no extra budget nothing goes back.
+@(test)
+the_last_viewer_leaving_after_a_growth_returns_to_the_start_size :: proc(t: ^testing.T) {
+	held: Held_Extras
+	held_extras_take(&held, {5, 3, 2560, 1440})
+	testing.expect(t, face_ended_goes_to_start(true, 3))
+	given := held_extras_give_back(&held, 0)
+	testing.expect(t, given == {0 = {5, 3, 2560, 1440}})
+	testing.expect(t, !face_ended_goes_to_start(true, 0), "a screen at its start size changed at the end of the face")
+	testing.expect(t, !face_ended_goes_to_start(false, 3), "a screen of a device changed at the end of the face")
+	testing.expect(t, held_extras_give_back(&held, 0) == {})
+}

@@ -15,19 +15,12 @@ screen_of_memory: bool
 // The size of the screen of memory at the start: the budget of this
 // process pays its frame and its background at this size and below.
 screen_start_width, screen_start_height: int
-// An extra budget that the root service gave for a size larger than the
+// The extra budgets that the root service gave for sizes larger than the
 // start size (src/md/features/screen_of_memory.md, "The growth of the
-// budgets"): it pays the frame and the background of that size. A handle of
-// 0 is none.
-Screen_Extra :: struct {
-	handle:        system.Handle,
-	growth:        u64, // The number of its growth, which names it in a release.
-	width, height: u64,
-}
-
-// The extra budgets held: the one of the size in force, and during a
-// replacement the one of the size that replaces it.
-screen_extras: [memory_screen.EXTRAS_PER_PROCESS]Screen_Extra
+// budgets"): the one of the size in force, and during a replacement the
+// one of the size that replaces it. Each pays the frame and the background
+// of its size.
+screen_extras: memory_screen.Held_Extras
 // The growth of the extra budget that holds the frame and the background
 // of the size in force. 0: the budget of this process holds them.
 screen_pictures_growth: u64
@@ -37,34 +30,16 @@ screen_pictures_growth: u64
 // no use: the root service ends it at the stop of this process.
 screen_budget_take :: proc "contextless" (budget: system.Handle, pages, width, height, growth: u64) {
 	kind, _, _ := system.handle_state(budget)
-	free := -1
-	for extra, place in screen_extras {
-		if extra.handle == 0 {
-			free = place
-		}
-	}
-	if kind != .Budget || growth == 0 || free < 0 {
+	if kind != .Budget || !memory_screen.held_extras_take(&screen_extras, {u64(budget), growth, width, height}) {
 		if budget != 0 {
 			system.close(budget)
 		}
 		system.log_fact(.Warning, Screen_Budget_Not_Taken{width = width, height = height})
 		return
 	}
-	screen_extras[free] = {budget, growth, width, height}
 	system.log_fact(.Info, Screen_Budget_Taken{width = width, height = height, pages = value_kinds.Size_In_Pages(pages)})
 }
 
-// screen_extra_of_size gives the newest extra budget of a size. ok false:
-// none pays it.
-@(private = "file")
-screen_extra_of_size :: proc "contextless" (width, height: u64) -> (extra: Screen_Extra, ok: bool) {
-	for held in screen_extras {
-		if held.handle != 0 && held.width == width && held.height == height && held.growth > extra.growth {
-			extra, ok = held, true
-		}
-	}
-	return
-}
 
 // screen_size_paid_at_start says if the budget of this process pays the
 // pictures of a size: at most the start size on each side.
@@ -79,16 +54,15 @@ screen_size_paid_at_start :: proc "contextless" (width, height: u64) -> bool {
 // return.
 @(private = "file")
 screen_budgets_give_back :: proc "contextless" () {
-	for &extra in screen_extras {
-		if extra.handle == 0 || extra.growth == screen_pictures_growth {
+	for extra in memory_screen.held_extras_give_back(&screen_extras, screen_pictures_growth) {
+		if extra.handle == 0 {
 			continue
 		}
-		system.close(extra.handle)
+		system.close(system.Handle(extra.handle))
 		if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Screen_Budget_Release), values = {0 = extra.growth}}) {
 			// The root service ends the budget at the stop of this process.
 			system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
 		}
-		extra = {}
 	}
 }
 
@@ -103,20 +77,24 @@ screen_of_memory_resize :: proc "contextless" (client: ^Client, width, height: u
 	// A size that the start paid comes from the budget of this process; a
 	// larger one from the extra budget of that size, with none no page.
 	paid_at_start := screen_size_paid_at_start(width, height)
-	paying, paying_known := screen_extra_of_size(width, height)
+	paying, paying_known := memory_screen.held_extras_of_size(&screen_extras, width, height)
 	pages_left: u64
 	if paid_at_start || paying_known {
 		if paid_at_start {
 			paying = {}
 		}
-		if budget, budget_status := system.budget_read(paying.handle); budget_status == .Ok {
+		if budget, budget_status := system.budget_read(system.Handle(paying.handle)); budget_status == .Ok {
 			pages_left = u64(budget.pages)
 		}
 	}
 	refusal, same := memory_screen.resize_decide(screen_of_memory, width, height, u32(screen.width), u32(screen.height), pages_left)
-	if refusal == .None && !same && !screen_of_memory_take(int(width), int(height), paying) {
-		// The kernel had fewer pages than the budget says: the same cause.
-		refusal = .Compositor_Budget
+	if refusal == .None && !same {
+		if windows, taken := screen_of_memory_take(int(width), int(height), paying); taken {
+			system.log_fact(.Info, Screen_Of_Memory_Resized{width = width, height = height, windows = u64(windows)})
+		} else {
+			// The kernel had fewer pages than the budget says: the same cause.
+			refusal = .Compositor_Budget
+		}
 	}
 	screen_budgets_give_back()
 	if refusal != .None {
@@ -133,15 +111,15 @@ screen_of_memory_resize :: proc "contextless" (client: ^Client, width, height: u
 // in force, the background and the bar, the work area and the fit of each
 // window, and the whole screen as damage.
 @(private = "file")
-screen_of_memory_take :: proc "contextless" (width, height: int, paying: Screen_Extra) -> bool {
-	new_frame, new_frame_memory, frame_made := canvas_try_create(width, height, paying.handle)
+screen_of_memory_take :: proc "contextless" (width, height: int, paying: memory_screen.Held_Extra) -> (windows: int, ok: bool) {
+	new_frame, new_frame_memory, frame_made := canvas_try_create(width, height, system.Handle(paying.handle))
 	if !frame_made {
-		return false
+		return 0, false
 	}
-	new_background, new_background_memory, background_made := canvas_try_create(width, height, paying.handle)
+	new_background, new_background_memory, background_made := canvas_try_create(width, height, system.Handle(paying.handle))
 	if !background_made {
 		canvas_free(new_frame, new_frame_memory)
-		return false
+		return 0, false
 	}
 	// The pictures of the capture face have the old size: the face stops
 	// to write them before the frame changes (capture.odin).
@@ -160,7 +138,6 @@ screen_of_memory_take :: proc "contextless" (width, height: int, paying: Screen_
 	bar_layout_update()
 	pointer_drawn_valid = false
 	pointer_update(0)
-	windows := 0
 	for &client in clients {
 		if client.ring.head == nil || !client.created {
 			continue
@@ -171,6 +148,25 @@ screen_of_memory_take :: proc "contextless" (width, height: int, paying: Screen_
 	}
 	damage_whole_screen()
 	palette_refresh() // An open panel is measured again for the new desktop.
-	system.log_fact(.Info, Screen_Of_Memory_Resized{width = u64(width), height = u64(height), windows = u64(windows)})
-	return true
+	return windows, true
+}
+
+// screen_of_memory_face_ended runs when the capture face ends: the service
+// closed it as its last viewer left, or the service stopped. No viewer
+// looks, so a machine with no viewer pays only its start size: a grown
+// screen goes back to the start size, from the budget of this process, and
+// each extra budget goes back, also the new one of a growth whose size was
+// never sent (src/md/features/screen_of_memory.md, "The growth of the
+// budgets"). The next face asks the size and gets the start size.
+screen_of_memory_face_ended :: proc "contextless" () {
+	if memory_screen.face_ended_goes_to_start(screen_of_memory, screen_pictures_growth) {
+		if windows, taken := screen_of_memory_take(screen_start_width, screen_start_height, {}); taken {
+			system.log_fact(.Info, Screen_Of_Memory_Back_To_Start{width = u64(screen_start_width), height = u64(screen_start_height), windows = u64(windows)})
+		} else {
+			// The pictures stay in their extra budget, which stays too: the
+			// next answer to a size gives it back.
+			system.log_fact(.Warning, Screen_Of_Memory_Not_Back_To_Start{width = u64(screen_start_width), height = u64(screen_start_height)})
+		}
+	}
+	screen_budgets_give_back()
 }

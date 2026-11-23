@@ -320,14 +320,9 @@ screen_reverting: bool
 requests: ring.Ring
 request_tag: u32
 screen_start: protocol.Screen
-Service_Extra :: struct {
-	handle:        system.Handle, // 0: none.
-	growth:        u64, // The number of its growth, which names it in a release.
-	width, height: u64, // The size that it pays.
-}
 // The extra budget of the size in force, and during a replacement the one
 // of the size that replaces it.
-extras: [memory_screen.EXTRAS_PER_PROCESS]Service_Extra
+extras: memory_screen.Held_Extras
 copies_growth: u64 // The growth of the extra budget that holds the copies of the face in force; 0: the budget of this process.
 // A Grow went for the ask of a viewer: its answer sends the size to the
 // compositor, or the refusal to the viewer.
@@ -1225,11 +1220,8 @@ root_completions_work :: proc "contextless" () {
 // one, is closed with no use: the root service ends it at the stop of this
 // process.
 extra_take :: proc "contextless" (handle: system.Handle, growth, width, height: u64) {
-	for &extra in extras {
-		if extra.handle == 0 && growth != 0 {
-			extra = {handle, growth, width, height}
-			return
-		}
+	if memory_screen.held_extras_take(&extras, {u64(handle), growth, width, height}) {
+		return
 	}
 	if handle != 0 {
 		system.close(handle)
@@ -1237,16 +1229,6 @@ extra_take :: proc "contextless" (handle: system.Handle, growth, width, height: 
 	system.log_fact(.Warning, Screen_Budget_Not_Taken{width = width, height = height})
 }
 
-// extra_of_size gives the newest extra budget of a size. ok false: none
-// pays it.
-extra_of_size :: proc "contextless" (width, height: u64) -> (extra: Service_Extra, ok: bool) {
-	for held in extras {
-		if held.handle != 0 && held.width == width && held.height == height && held.growth > extra.growth {
-			extra, ok = held, true
-		}
-	}
-	return
-}
 
 // extras_give_back closes each extra budget that holds none of the copies
 // of the face in force: the old one of a replacement, or the new one of a
@@ -1254,17 +1236,16 @@ extra_of_size :: proc "contextless" (width, height: u64) -> (extra: Service_Extr
 // number of each, and the root service closes its own handle: the pages
 // return.
 extras_give_back :: proc "contextless" () {
-	for &extra in extras {
-		if extra.handle == 0 || extra.growth == copies_growth {
+	for extra in memory_screen.held_extras_give_back(&extras, copies_growth) {
+		if extra.handle == 0 {
 			continue
 		}
-		system.close(extra.handle)
+		system.close(system.Handle(extra.handle))
 		request_tag += 1
 		if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Release), 1 = extra.growth}}) {
 			// The root service ends the budget at the stop of this process.
 			system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
 		}
-		extra = {}
 	}
 }
 
@@ -1404,14 +1385,14 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	// A size past the size of the first face is paid by the extra budget of
 	// that size.
 	larger := !screen_paid_at_start({u32(width), u32(height)})
-	paying, paying_known := extra_of_size(width, height)
+	paying, paying_known := memory_screen.held_extras_of_size(&extras, width, height)
 	if !larger {
 		paying = {}
 	}
 	if larger && !paying_known {
 		status = .No_Budget
 	} else {
-		mirror_memory, status = system.memory_create(copy_pages, paying.handle)
+		mirror_memory, status = system.memory_create(copy_pages, system.Handle(paying.handle))
 	}
 	mirror_address: rawptr
 	if status == .Ok {
@@ -1421,7 +1402,7 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	}
 	if status == .Ok {
 		mirror = ([^]u32)(mirror_address)
-		if capture_memory, status = system.memory_create(pages, paying.handle); status != .Ok {
+		if capture_memory, status = system.memory_create(pages, system.Handle(paying.handle)); status != .Ok {
 			capture_memory = 0
 		}
 	}
@@ -1560,6 +1541,9 @@ capture_follow :: proc "contextless" () {
 		// each pass. The next viewer, after none, asks again.
 		if bound == 0 {
 			capture_state = .Closed
+			// A refused face holds no copy: each extra budget goes back.
+			copies_growth = 0
+			extras_give_back()
 		}
 	case .Open:
 		if bound == 0 {
@@ -1569,6 +1553,10 @@ capture_follow :: proc "contextless" () {
 			held_picture = -1
 			mirror_release()
 			capture_state = .Closed
+			// No copy is left: each extra budget goes back. The compositor
+			// goes back to its start size, which the next face takes.
+			copies_growth = 0
+			extras_give_back()
 			system.log_fact(.Info, Capture_Face_Closed{pictures = captures})
 		}
 	}

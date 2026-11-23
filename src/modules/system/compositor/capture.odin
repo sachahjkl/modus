@@ -339,6 +339,7 @@ capture_end :: proc "contextless" (why: string) {
 		damage_capture_popover(old_count)
 	}
 	damage_bar()
+	screen_of_memory_face_ended() // screen_of_memory.odin
 }
 
 // capture_frame_due makes the next frame come, so that it writes the
