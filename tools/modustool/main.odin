@@ -1223,6 +1223,9 @@ run_check :: proc(args: []string) -> int {
 	if !checks.text_cut_check() {
 		return foundation.EXIT_FAILURE
 	}
+	if !checks.cut_line_mark_check() {
+		return foundation.EXIT_FAILURE
+	}
 	if !checks.comment_rule_check() {
 		return foundation.EXIT_FAILURE
 	}

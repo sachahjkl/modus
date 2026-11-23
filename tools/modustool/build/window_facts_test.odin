@@ -600,6 +600,11 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["viewer_key_head"] = 8
 	most["resource"] = 95
 	most["plan"] = 48
+	// The act dialog: the border of the dialog refuses an asker past
+	// PLAN_DIFFERENCE_NAME_BYTES and an act past PLAN_DIFFERENCE_ITEM_BYTES,
+	// 48 bytes each.
+	most["asker"] = 48
+	most["act"] = 48
 	most["kind"] = u32(len("screen_reader"))
 	most["nickname"] = value_kinds.MODULE_NAME_FIELD_BYTES - 1
 	facts_expect_text_fields_last(t, file, most)
