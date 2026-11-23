@@ -990,7 +990,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait, deadline)
 		changed |= step_due && system.time() >= step_time
 		changed |= system.service_run(&service) > 0
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			switch event.kind {
 			case .Settings_Changed:
 				// A new font: each record is the same, each pixel of text is
@@ -1022,8 +1022,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// pointer from the input of the next frame. The list and the
 				// links are in the coordinates of the layout, which the
 				// window scrolls when it does not fit the work area.
-				pointer, _, scroll_due := interface.window_scroll_event(&window_memory.drawing, &window, event)
-				if scroll_due || interface.scroll_bar_wants_frame(&window_memory.drawing.state, &window_memory.drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &window_memory.drawing.input) {
+				pointer := event
+				if interface.window_scroll_frame_take(&window_memory.drawing) || interface.scroll_bar_wants_frame(&window_memory.drawing.state, &window_memory.drawing.input, scroll_area(), scroll_identity(), text_view_area()) || interface.action_bar_wants_frame(&bar, &window_memory.drawing.input) {
 					changed = true
 				} else {
 					// A notch over no view moves nothing, and does not wait

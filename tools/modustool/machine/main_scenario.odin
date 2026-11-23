@@ -3302,6 +3302,10 @@ scenario := [?]Step {
 	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
+	// The work area grows: settings gets back the size that it wants, which
+	// the clamp at 2 cut, after it shows its surface at 1.25. It can come
+	// before or after the last window shows its surface.
+	{kind = .Wait, text = "compositor: window settings resized from 560x482 to 560x688", any_order = true, fails_on = "no surface of"},
 	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},

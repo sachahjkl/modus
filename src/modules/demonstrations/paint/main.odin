@@ -1331,8 +1331,14 @@ events_take :: proc "contextless" (window: ^display.Window) {
 			// The canvas is in the coordinates of the layout, which the
 			// window scrolls when it does not fit the work area; over a
 			// scroll bar of the window the place is on no canvas.
-			place, _, _ := interface.window_scroll_event(drawing, window, event)
-			pointer_paint(place)
+			// An event over a bar with no drag of paint is the bar's.
+			place, in_layout, _ := interface.window_scroll_event(drawing, window, event)
+			if in_layout {
+				pointer_paint(place)
+			} else {
+				buttons_before = event.buttons & (display.BUTTON_LEFT | display.BUTTON_RIGHT)
+				pointer_on_canvas = false
+			}
 		case .Key:
 			interface.input_add(&drawing.input, event)
 		case .Resized:

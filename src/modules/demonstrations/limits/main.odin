@@ -222,7 +222,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_text(table, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), graphics.colors.dim)
 		interface.draw_text(table, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.colors.process : graphics.colors.failed)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
-		for _ in display.next_event(&window) {}
-		system.sleep(system.time() + INTERVAL)
+		// The wait reads the events: the bars, the wheel and the page keys
+		// of a window that scrolls draw at once.
+		next := system.time() + INTERVAL
+		for system.time() < next {
+			for _ in interface.window_next_event(&window_memory.drawing, &window) {}
+			if interface.window_scroll_frame_take(&window_memory.drawing) {
+				break
+			}
+			_ = display.wait(&window, next)
+		}
 	}
 }

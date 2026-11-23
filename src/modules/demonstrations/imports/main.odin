@@ -543,7 +543,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		interface.draw_text(table, 12, y, system.format(line[:], "the load of agenda and calendar: ", u64(load), " us; with the replacement: ", u64(replaced_load), " us"), graphics.colors.dim)
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
-		for _ in display.next_event(&window) {
+		for _ in interface.window_next_event(&window_memory.drawing, &window) {
 		}
 	}
 }

@@ -480,12 +480,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_end(&wait)
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			switch event.kind {
 			case .Pointer:
-				// The pointer reaches the action bar only: the next turn
+				// The pointer reaches the action bar only: the window layer
+				// gave it to the input of the next frame, and the next turn
 				// draws a frame with it.
-				interface.input_add(&window_memory.drawing.input, event)
 			case .Key:
 				if !event.pressed {
 					continue

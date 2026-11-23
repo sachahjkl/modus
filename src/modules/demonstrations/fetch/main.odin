@@ -561,8 +561,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Connection_Ended{})
 	for {
 		display.wait(&window)
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			_ = event
+		}
+		// The bars, the wheel and the page keys of a window that scrolls.
+		if interface.window_scroll_frame_take(&window_memory.drawing) {
+			draw(&window)
 		}
 	}
 }

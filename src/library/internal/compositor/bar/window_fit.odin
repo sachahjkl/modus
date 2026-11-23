@@ -42,6 +42,24 @@ fit_order :: proc "contextless" (width, height, fitted_width, fitted_height: int
 	return .Fit_First
 }
 
+// The request of a size: the size that Resized asks, cut to the room of the
+// work area under the frame, and the size that the window wants once it
+// takes it, which is the size before the cut. cut says that the two differ.
+Size_Request :: struct {
+	asked_width, asked_height:   int,
+	wanted_width, wanted_height: int,
+	cut:                         bool,
+}
+
+// size_request_of gives the request of a size: each path that asks a size
+// (a drag, a maximize, a fit to a new work area) gives the size that it
+// wants, never a size that a work area cut before, so the window keeps it
+// as wanted and gets it back when the work area grows.
+size_request_of :: proc "contextless" (wanted_width, wanted_height, chrome_width, chrome_height: int, work: Work_Box) -> Size_Request {
+	_, _, width, height := window_fit({width = wanted_width, height = wanted_height, chrome_width = chrome_width, chrome_height = chrome_height}, work)
+	return {asked_width = width, asked_height = height, wanted_width = wanted_width, wanted_height = wanted_height, cut = width != wanted_width || height != wanted_height}
+}
+
 // window_fit gives the place and the size of a window in the work area: the
 // wanted size, cut to the room under the frame on each axis, and never
 // below 1. It has no floor at the least size and none for a fixed window:

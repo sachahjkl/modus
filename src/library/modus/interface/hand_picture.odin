@@ -111,11 +111,10 @@ hand_picture_show :: proc "contextless" (picture: ^Hand_Picture, window: ^displa
 // took the picture before; the pixels of the picture stay as the process
 // drew them. It gives true when an event came.
 hand_picture_events :: proc "contextless" (picture: ^Hand_Picture, window: ^display.Window) -> (came: bool) {
-	for event in display.next_event(window) {
+	for _ in window_next_event(&picture.drawing, window) {
 		came = true
-		_, _, show_due := window_scroll_event(&picture.drawing, window, event)
-		picture.scroll_show_due ||= show_due
 	}
+	picture.scroll_show_due ||= window_scroll_frame_take(&picture.drawing)
 	// A canvas that the compositor still reads keeps the show due: the wait
 	// of the window ends when the compositor has read it.
 	if picture.scroll_show_due && display.canvas_free(window) {

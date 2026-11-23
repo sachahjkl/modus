@@ -160,6 +160,7 @@ a_press_reaches_the_element_that_a_scrolled_view_shows :: proc(t: ^testing.T) {
 // One unit inside the inner view, the element sees it.
 @(test)
 the_pointer_over_a_bar_strip_belongs_to_the_bar :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
 	defer delete(pixels)
 	view := window_scroll_view_of(LAYOUT_WIDTH, LAYOUT_HEIGHT, VIEW_WIDTH, VIEW_HEIGHT)
@@ -186,6 +187,7 @@ the_pointer_over_a_bar_strip_belongs_to_the_bar :: proc(t: ^testing.T) {
 // takes no page key, and its scroll is 0.
 @(test)
 the_page_keys_move_the_view_of_a_window_that_scrolls :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
 	defer delete(pixels)
 	view := window_scroll_view_of(LAYOUT_WIDTH, LAYOUT_HEIGHT, VIEW_WIDTH, VIEW_HEIGHT)
@@ -226,6 +228,7 @@ the_page_keys_move_the_view_of_a_window_that_scrolls :: proc(t: ^testing.T) {
 // show it with its gap.
 @(test)
 a_focus_below_the_view_comes_into_it :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
 	defer delete(pixels)
 	view := window_scroll_view_of(LAYOUT_WIDTH, LAYOUT_HEIGHT, VIEW_WIDTH, VIEW_HEIGHT)
@@ -255,6 +258,7 @@ a_focus_below_the_view_comes_into_it :: proc(t: ^testing.T) {
 // begin gives the input its places in the view back first.
 @(test)
 a_second_begin_moves_the_input_once :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
 	defer delete(pixels)
 	test := new(Scroll_Test_Window)
@@ -278,6 +282,7 @@ a_second_begin_moves_the_input_once :: proc(t: ^testing.T) {
 // keys go to the input only when the layout scrolls.
 @(test)
 a_raw_event_maps_to_the_layout :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
 	defer delete(pixels)
 	view := window_scroll_view_of(LAYOUT_WIDTH, LAYOUT_HEIGHT, VIEW_WIDTH, VIEW_HEIGHT)
@@ -348,6 +353,7 @@ the_points_of_a_path_move_in_the_text_table :: proc(t: ^testing.T) {
 // would pass the limit draws nothing.
 @(test)
 the_move_of_a_frame_hides_each_record_past_the_limit :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
 	defer delete(pixels)
 	test := new(Scroll_Test_Window)
@@ -389,6 +395,7 @@ the_move_of_a_frame_hides_each_record_past_the_limit :: proc(t: ^testing.T) {
 // serial than the frame before has no picture known.
 @(test)
 a_new_surface_serial_draws_the_next_frame_whole :: proc(t: ^testing.T) {
+	process_drawing_begin()
 	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
 	defer delete(pixels)
 	test := new(Scroll_Test_Window)
@@ -401,4 +408,46 @@ a_new_surface_serial_draws_the_next_frame_whole :: proc(t: ^testing.T) {
 	test.window.rescale.serial += 1
 	_ = window_frame_begin_at(drawing, &test.window, nil, 0)
 	testing.expect(t, !drawing.debts.known[0] && !drawing.debts.known[1])
+}
+
+// A drag of any button that a press in the layout started stays in the
+// layout over a bar, its release included, so a stroke or a selection ends
+// where the pointer left it; the next event over the bar is the bar's. A
+// press on a bar is the bar's, and so is its release over the bar. The
+// scroll asks a frame once for each event that needs one.
+@(test)
+a_drag_from_the_layout_ends_in_the_layout_over_a_bar :: proc(t: ^testing.T) {
+	process_drawing_begin()
+	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
+	defer delete(pixels)
+	view := window_scroll_view_of(LAYOUT_WIDTH, LAYOUT_HEIGHT, VIEW_WIDTH, VIEW_HEIGHT)
+	BAR_X :: VIEW_WIDTH - 5
+	for button in ([?]u32{display.BUTTON_RIGHT, display.BUTTON_LEFT}) {
+		test := new(Scroll_Test_Window)
+		defer free(test)
+		drawing, _ := scroll_test_window(test, pixels, .Ten_Eighths)
+		drawing.scroll_x, drawing.scroll_y = 5, 50
+		event, in_layout, _ := window_scroll_event(drawing, &test.window, {kind = .Pointer, x = 20, y = 30, buttons = button})
+		testing.expect(t, in_layout && event.x == 25 && event.y == 80)
+		event, in_layout, _ = window_scroll_event(drawing, &test.window, {kind = .Pointer, x = BAR_X, y = 30, buttons = button})
+		testing.expectf(t, in_layout && event.x == BAR_X + 5 && event.y == 80, "button %d: the drag over the bar is at %d,%d", button, event.x, event.y)
+		event, in_layout, _ = window_scroll_event(drawing, &test.window, {kind = .Pointer, x = BAR_X, y = 30})
+		testing.expectf(t, in_layout && event.x == BAR_X + 5 && event.y == 80, "button %d: the release over the bar is at %d,%d", button, event.x, event.y)
+		event, in_layout, _ = window_scroll_event(drawing, &test.window, {kind = .Pointer, x = BAR_X, y = 31})
+		testing.expect(t, !in_layout && event.x == WINDOW_POINTER_AWAY && event.y == WINDOW_POINTER_AWAY)
+		// A press on the bar: its drag into the layout is in the layout,
+		// and its release back over the bar is the bar's.
+		event, in_layout, _ = window_scroll_event(drawing, &test.window, {kind = .Pointer, x = BAR_X, y = 30, buttons = button})
+		testing.expect(t, !in_layout)
+		event, in_layout, _ = window_scroll_event(drawing, &test.window, {kind = .Pointer, x = 20, y = 30, buttons = button})
+		testing.expect(t, in_layout && event.x == 25)
+		event, in_layout, _ = window_scroll_event(drawing, &test.window, {kind = .Pointer, x = view.inner_width, y = 30})
+		testing.expect(t, !in_layout)
+	}
+	test := new(Scroll_Test_Window)
+	defer free(test)
+	drawing, _ := scroll_test_window(test, pixels, .Ten_Eighths)
+	testing.expect(t, !window_scroll_frame_take(drawing))
+	_, _, due := window_scroll_event(drawing, &test.window, {kind = .Pointer, x = 20, y = 30, wheel = 1})
+	testing.expect(t, due && window_scroll_frame_take(drawing) && !window_scroll_frame_take(drawing))
 }

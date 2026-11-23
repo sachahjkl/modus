@@ -182,7 +182,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window_memory.drawing.before.picture_memories = picture_memories[:]
 	ready := false
 	for {
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			if event.kind != .Key || !event.pressed || event.character < '1' || event.character >= '1' + WORKER_COUNT {
 				continue
 			}

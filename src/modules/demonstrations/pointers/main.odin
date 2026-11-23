@@ -410,12 +410,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		display.wait(&window)
 		came := false
-		for event in display.next_event(&window) {
-			// The elements of the frame are in the coordinates of the
-			// layout, which the window scrolls when it does not fit.
-			layout_event, _, show_due := interface.window_scroll_event(&hand_picture.drawing, &window, event)
-			came = interface.input_add(&input, layout_event) || show_due || came
+		// The elements of the frame are in the coordinates of the layout,
+		// which the window scrolls when it does not fit.
+		for event in interface.window_next_event(&hand_picture.drawing, &window) {
+			came = interface.input_add(&input, event) || came
 		}
+		came ||= interface.window_scroll_frame_take(&hand_picture.drawing)
 		if came {
 			frame_draw(&window)
 		}

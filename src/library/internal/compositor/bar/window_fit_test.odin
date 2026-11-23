@@ -83,3 +83,26 @@ a_smaller_window_keeps_its_size_and_moves_on_the_screen :: proc(t: ^testing.T) {
 		testing.expectf(t, x == each.kept_x && y == each.kept_y && width == 400 && height == 200, "%v gives %d, %d, %dx%d", each, x, y, width, height)
 	}
 }
+
+// The work area of the scale 1.25 under a bar of 32 lines: 1536 x 832.
+@(private = "file")
+WORK_AT_1_25 :: Work_Box{left = 0, top = 32, width = 1536, height = 832}
+
+// A request keeps the size before the cut as wanted: settings wants
+// 560 x 688; at 2 it is asked the room under its frame, 482 lines, and
+// still wants 688; the fit back at 1.25 starts from that wanted size and
+// asks it whole. A size that fits is no cut; one line past the room is.
+// A wanted size of 0 or a negative one asks 1, and wants what it gave.
+@(test)
+a_request_keeps_the_size_before_the_cut_as_wanted :: proc(t: ^testing.T) {
+	at_2 := size_request_of(560, 688, 2, 26, WORK_AT_2)
+	testing.expect(t, at_2.cut && at_2.asked_width == 560 && at_2.asked_height == 508 - 26 && at_2.wanted_width == 560 && at_2.wanted_height == 688)
+	back := size_request_of(at_2.wanted_width, at_2.wanted_height, 2, 26, WORK_AT_1_25)
+	testing.expect(t, !back.cut && back.asked_width == 560 && back.asked_height == 688 && back.wanted_height == 688)
+	fits := size_request_of(560, 508 - 26, 2, 26, WORK_AT_2)
+	testing.expect(t, !fits.cut && fits.asked_height == 482)
+	past := size_request_of(560, 508 - 26 + 1, 2, 26, WORK_AT_2)
+	testing.expect(t, past.cut && past.asked_height == 482 && past.wanted_height == 483)
+	empty := size_request_of(0, -5, 2, 26, WORK_AT_2)
+	testing.expect(t, empty.asked_width == 1 && empty.asked_height == 1 && empty.wanted_width == 0 && empty.wanted_height == -5)
+}

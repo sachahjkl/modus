@@ -456,7 +456,9 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 }
 
 // window_size_ask asks the process of a window for a size with the one
-// event Resized, as at the release of a drag of its edges. The compositor
+// event Resized, as at the release of a drag of its edges. width and height
+// are the size that the window wants, never a size that a work area cut:
+// the window keeps it as wanted (bar.size_request_of). The compositor
 // cuts the size to the room of the work area under the frame, so no surface
 // passes the work area; a cut size, a size below the least size, or any
 // size of a fixed window is a clamp, which the window scrolls its layout in
@@ -466,15 +468,16 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 window_size_ask :: proc "contextless" (client: ^Client, width, height: int, edges: bar.Resize_Edges) -> (asked: bool) {
 	chrome_width, chrome_height := window_chrome_of(client)
 	top := desktop_work_top()
-	_, _, asked_width, asked_height := bar.window_fit({width = width, height = height, chrome_width = chrome_width, chrome_height = chrome_height}, {left = 0, top = top, width = desktop_width, height = desktop_work_bottom() - top})
+	request := bar.size_request_of(width, height, chrome_width, chrome_height, {left = 0, top = top, width = desktop_width, height = desktop_work_bottom() - top})
+	asked_width, asked_height := request.asked_width, request.asked_height
 	limits := size_range_of(client)
-	clamp := !client.resizable || asked_width != width || asked_height != height || asked_width < limits.least_width || asked_height < limits.least_height
+	clamp := !client.resizable || request.cut || asked_width < limits.least_width || asked_height < limits.least_height
 	if client.resize_asked || !bar.drag_asks_size(client.released, client.resize_pictures != nil, asked_width == client.width && asked_height == client.height) {
 		return false
 	}
 	client.resize_asked, client.resize_asked_clamp = true, clamp
 	client.resize_asked_width, client.resize_asked_height = asked_width, asked_height
-	client.resize_asked_wanted_width, client.resize_asked_wanted_height = width, height
+	client.resize_asked_wanted_width, client.resize_asked_wanted_height = request.wanted_width, request.wanted_height
 	client.resize_edges = edges
 	send(client, .Resized, {0 = u64(asked_width), 1 = u64(asked_height)})
 	system.log_fact(.Info, Draw_Size_Asked{width = u64(asked_width), height = u64(asked_height), window = window_field(client.title[:])})

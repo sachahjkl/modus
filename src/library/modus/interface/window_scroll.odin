@@ -111,14 +111,17 @@ window_layout_point :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 // window_scroll_event takes an event that a process read itself with
 // display.next_event, for a window that draws through a Window_Drawing
 // with no window_events: a hand picture, or a frame that the process
-// builds from its own loop. The pointer, and PageUp and PageDown when the
+// builds from its own loop. A process reads its events with
+// window_next_event, which calls it for each one; a process that needs
+// in_layout calls it itself. The pointer, and PageUp and PageDown when the
 // layout scrolls, go to the input of the next frame, where the bars and the
 // keys of the window take them. It gives the event with its place in the
-// coordinates of the layout, which the process tests its elements against,
-// in_layout false over a bar, except for a drag that a press in the layout
-// started, and show_due when the scroll needs a frame: a wheel, a press, a release,
-// a pointer over a bar or a lit or held bar, or a page key. A process that
-// draws only when its own state changes then draws.
+// coordinates of the layout, which the process tests its elements against;
+// in_layout false over a bar, except for a drag of any button that a press
+// in the layout started, its release included, which stays in the layout;
+// and show_due when the scroll needs a frame: a wheel, a press, a release,
+// a pointer over a bar or a lit or held bar, or a page key. A caller skips
+// an event with in_layout false: no drag of its own is active then.
 window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, event: display.Event) -> (layout_event: display.Event, in_layout: bool, show_due: bool) {
 	layout_event, in_layout = event, true
 	view_width, view_height := display.view_size(window)
@@ -129,14 +132,24 @@ window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 		scroll_x := window_scroll_clamp(drawing.scroll_x, view.most_x)
 		scroll_y := window_scroll_clamp(drawing.scroll_y, view.most_y)
 		held_before := drawing.input.button_held
-		_, _, press_in_layout := layout_point_of_view(view, scroll_x, scroll_y, view_width, view_height, drawing.input.press_x, drawing.input.press_y)
 		_ = input_add(&drawing.input, event)
 		held := event.buttons & display.BUTTON_LEFT != 0
 		layout_event.x, layout_event.y, in_layout = layout_point_of_view(view, scroll_x, scroll_y, view_width, view_height, event.x, event.y)
+		// The drag of any button: a press from no button starts it where it
+		// lands; it lasts to the event that releases the last button.
+		buttons_before := drawing.event_buttons
+		if event.buttons != 0 && buttons_before == 0 {
+			drawing.drag_from_layout = in_layout
+		}
 		// A drag that a press in the layout started stays in the layout
-		// over a bar: a selection follows the pointer to the edge.
-		if !in_layout && held && held_before && press_in_layout {
+		// over a bar, to its release: a selection or a stroke follows the
+		// pointer to the edge, and the release ends it in the layout.
+		if !in_layout && buttons_before != 0 && drawing.drag_from_layout {
 			layout_event.x, layout_event.y, in_layout = event.x + scroll_x, event.y + scroll_y, true
+		}
+		drawing.event_buttons = event.buttons
+		if event.buttons == 0 {
+			drawing.drag_from_layout = false
 		}
 		show_due = scrolls && (event.wheel != 0 || !in_layout || held != held_before || drawing.state.scroll_bar_lit != 0 || drawing.state.scroll_bar_part != .None)
 	case .Key:
@@ -147,6 +160,31 @@ window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 		// The window layer reads no other event here: a new surface is
 		// drawn whole by its serial (window_frame_begin_at).
 	}
+	drawing.scroll_frame_due ||= show_due
+	return
+}
+
+// window_next_event reads the next event of a window, for a process that
+// reads its events itself, in place of display.next_event: each event goes
+// to the scroll of the window first (window_scroll_event), so the bars, the
+// wheel and the page keys of a window that does not fit the work area work
+// in each such loop. A pointer event comes in the coordinates of the
+// layout; over a bar, with no drag of the process, its place is
+// WINDOW_POINTER_AWAY, which no element reaches. A process that draws only
+// when its own state changes also draws when window_scroll_frame_take says
+// so.
+window_next_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> (event: display.Event, ok: bool) {
+	read := display.next_event(window) or_return
+	event, _, _ = window_scroll_event(drawing, window, read)
+	return event, true
+}
+
+// window_scroll_frame_take says if the scroll of the window needs a frame
+// since the last call: an event changed the bars or the scroll. It gives
+// it once.
+window_scroll_frame_take :: proc "contextless" (drawing: ^Window_Drawing) -> (due: bool) {
+	due = drawing.scroll_frame_due
+	drawing.scroll_frame_due = false
 	return
 }
 

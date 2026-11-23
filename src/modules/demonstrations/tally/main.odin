@@ -244,11 +244,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.service_wait(&wait, &service)
 		system.wait_end(&wait)
 		system.service_run(&service)
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			switch event.kind {
 			case .Pointer:
-				// The pointer reaches the action bar only.
-				interface.input_add(&window_memory.drawing.input, event)
+				// The pointer reaches the action bar only: the window layer
+				// gave it to the input of the next frame.
 			case .Key:
 				if !event.pressed {
 					continue

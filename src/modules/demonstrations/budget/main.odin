@@ -207,7 +207,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		interface.window_frame_end(&window_memory.drawing, &frame, &window)
 		display.wait(&window)
-		for _ in display.next_event(&window) {
+		for _ in interface.window_next_event(&window_memory.drawing, &window) {
 		}
 	}
 }

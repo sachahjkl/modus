@@ -131,10 +131,10 @@ window_scale_step :: proc "contextless" (client: ^Client) -> (sent: bool) {
 	if client.fit_due {
 		client.fit_due = false
 		client.fit_after_scale = false
-		x, y, width, height := window_fit_target(client)
+		x, y, width, height, wanted_width, wanted_height := window_fit_target(client)
 		switch bar.fit_order(client.width, client.height, width, height) {
 		case .Fit_First:
-			window_place_and_size_take(client, x, y, width, height) // window_resize.odin
+			window_place_and_size_take(client, x, y, wanted_width, wanted_height) // window_resize.odin
 			if client.resize_asked {
 				return false
 			}
@@ -156,17 +156,20 @@ window_fit_after_scale :: proc "contextless" (client: ^Client) {
 		return
 	}
 	client.fit_after_scale = false
-	x, y, width, height := window_fit_target(client)
-	window_place_and_size_take(client, x, y, width, height) // window_resize.odin
+	x, y, _, _, wanted_width, wanted_height := window_fit_target(client)
+	window_place_and_size_take(client, x, y, wanted_width, wanted_height) // window_resize.odin
 }
 
 // window_fit_target gives the place and the size of a window in the work
 // area in force (bar.window_fit): its wanted size, or for a maximized
 // window the work area within its limits, cut to the room under the frame;
 // each window is moved onto the screen, a maximized one to the corner of
-// the work area. The size is the surface of the window, as
-// window_size_ask asks it.
-window_fit_target :: proc "contextless" (client: ^Client) -> (x, y, width, height: int) {
+// the work area. width and height are the surface that the fit asks, cut
+// to the work area, which bar.fit_order compares; wanted_width and
+// wanted_height are the size before the cut, which the fit gives to
+// window_size_ask, so the window keeps it as wanted and gets it back when
+// the work area grows.
+window_fit_target :: proc "contextless" (client: ^Client) -> (x, y, width, height, wanted_width, wanted_height: int) {
 	chrome_width, chrome_height := window_chrome_of(client) // window_resize.odin
 	x, y = client.x, client.y
 	width, height = client.wanted_width, client.wanted_height
@@ -180,6 +183,7 @@ window_fit_target :: proc "contextless" (client: ^Client) -> (x, y, width, heigh
 			height = clamp(outer_height - chrome_height, limits.least_height, limits.largest_height)
 		}
 	}
+	wanted_width, wanted_height = width, height
 	top := desktop_work_top()
 	work := bar.Work_Box{left = 0, top = top, width = desktop_width, height = desktop_work_bottom() - top}
 	fitted_x, fitted_y: int
@@ -194,8 +198,8 @@ window_fit_target :: proc "contextless" (client: ^Client) -> (x, y, width, heigh
 // creation of its surface, a window larger than the work area gets at most
 // the work area, and scrolls its layout (src/md/features/window_scroll.md).
 window_fit_now :: proc "contextless" (client: ^Client) {
-	x, y, width, height := window_fit_target(client)
-	window_place_and_size_take(client, x, y, width, height) // window_resize.odin
+	x, y, _, _, wanted_width, wanted_height := window_fit_target(client)
+	window_place_and_size_take(client, x, y, wanted_width, wanted_height) // window_resize.odin
 }
 
 // windows_declined_tell names a new count of the windows that declined the

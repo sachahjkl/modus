@@ -399,7 +399,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		draw(&window)
 		display.wait(&window)
-		for _ in display.next_event(&window) {
+		for _ in interface.window_next_event(&window_memory.drawing, &window) {
 		}
 	}
 }

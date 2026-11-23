@@ -214,7 +214,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	buttons: u32
 	for {
-		for event in display.next_event(&window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
 			switch event.kind {
 			case .Key:
 				if !event.pressed {
@@ -237,12 +237,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// not a press on a square.
 				// The squares are in the coordinates of the layout, which
 				// the window scrolls when it does not fit the work area.
-				place, _, _ := interface.window_scroll_event(&window_memory.drawing, &window, event)
-				if interface.action_bar_takes_pointer(&bar, place.x, place.y) {
+				if interface.action_bar_takes_pointer(&bar, event.x, event.y) {
 					continue
 				}
 				for center, index in centers {
-					if abs(place.x - center.x) > NODE_SIZE / 2 || abs(place.y - center.y) > NODE_SIZE / 2 {
+					if abs(event.x - center.x) > NODE_SIZE / 2 || abs(event.y - center.y) > NODE_SIZE / 2 {
 						continue
 					}
 					if pressed & display.BUTTON_LEFT != 0 {

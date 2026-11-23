@@ -70,6 +70,13 @@ Window_Drawing :: struct {
 	view_pointer_x, view_pointer_y: int,
 	view_press_x, view_press_y:     int,
 	input_moved:                    bool,
+	// The events that a process reads itself (window_scroll_event): the
+	// buttons of the last pointer event, and that the drag of the buttons
+	// held started in the layout; and that the scroll needs a frame
+	// (window_scroll_frame_take).
+	event_buttons:    u32,
+	drag_from_layout: bool,
+	scroll_frame_due: bool,
 	// The surface serial of the window at the last frame that began: a new
 	// surface (a resize, a clamp, a rescale) has no picture known, so the
 	// frame after it draws whole, whichever loop read the event.
