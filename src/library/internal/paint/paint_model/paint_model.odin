@@ -370,14 +370,21 @@ fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics
 }
 // The history of undo and redo.
 
-HISTORY_BYTES :: 4 * 1024 * 1024 // The arena of the compressed rectangles.
+HISTORY_BYTES :: 1024 * 1024 // The arena of the compressed rectangles.
 HISTORY_STEPS_LIMIT :: 64 // The changes that the history keeps.
+// The rows of a box that one LZ4 block holds: a step is a list of blocks of
+// strips, so the scratch of a step is one strip, never a whole picture.
+HISTORY_STRIP_ROWS :: 32
+HISTORY_STRIP_PIXELS :: HISTORY_STRIP_ROWS * PICTURE_WIDTH_LIMIT
+HISTORY_STRIP_BYTES :: HISTORY_STRIP_PIXELS * size_of(graphics.Color)
+// The bytes before each block in the arena: its length, a little-endian u32.
+HISTORY_BLOCK_HEAD_BYTES :: 4
 
 // One change of the picture: its box, and the pixels of the box before and
-// after it, each an LZ4 block in the arena.
+// after it, each a list of LZ4 blocks of strips in the arena.
 History_Step :: struct {
 	box:          Box,
-	offset:       int, // The first byte of the step in the arena: the block before, then the block after.
+	offset:       int, // The first byte of the step in the arena: the blocks before, then the blocks after.
 	before_bytes: int,
 	after_bytes:  int,
 }
@@ -395,12 +402,11 @@ History :: struct {
 	used:  int, // The bytes of the arena in use.
 }
 
-// The memory that a step needs on its way into and out of the arena, which
-// the caller keeps: the pixels of a box as one block, and its compressed
-// form.
+// The memory that a strip needs on its way into and out of the arena,
+// which the caller keeps: the pixels of one strip, and its compressed form.
 History_Scratch :: struct {
-	pixels:     [PICTURE_PIXELS]graphics.Color,
-	compressed: [PICTURE_BYTES + PICTURE_BYTES / 255 + 16]u8,
+	pixels:     [HISTORY_STRIP_PIXELS]graphics.Color,
+	compressed: [HISTORY_STRIP_BYTES + HISTORY_STRIP_BYTES / 255 + 16]u8,
 	hash_table: lz4.Hash_Table,
 }
 
@@ -443,6 +449,31 @@ box_unpack :: proc "contextless" (pixels: []graphics.Color, box: Box, block: []g
 	}
 }
 
+// strip_of gives the strip of a box from its row top: HISTORY_STRIP_ROWS
+// rows, or the rows left.
+@(private)
+strip_of :: proc "contextless" (box: Box, top: int) -> Box {
+	return {box.left, top, box.right, min(top + HISTORY_STRIP_ROWS, box.bottom)}
+}
+
+// history_part_write writes the pixels of a box as the blocks of its strips
+// at a place of the arena, and gives their bytes. ok is false when a block
+// does not fit in the arena past that place.
+@(private)
+history_part_write :: proc "contextless" (history: ^History, pixels: []graphics.Color, box: Box, offset: int, scratch: ^History_Scratch) -> (bytes: int, ok: bool) {
+	at := offset
+	for top := box.top; top < box.bottom; top += HISTORY_STRIP_ROWS {
+		written, refused := lz4.compress_block(box_pack(pixels, strip_of(box, top), scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
+		if refused != .None || at + HISTORY_BLOCK_HEAD_BYTES + written > len(history.arena) {
+			return 0, false
+		}
+		word_write(history.arena, at, u32(written))
+		intrinsics.mem_copy_non_overlapping(&history.arena[at + HISTORY_BLOCK_HEAD_BYTES], raw_data(scratch.compressed[:]), written)
+		at += HISTORY_BLOCK_HEAD_BYTES + written
+	}
+	return at - offset, true
+}
+
 // history_drop_oldest removes the oldest step and moves the bytes of the
 // others to the start of the arena. It gives the bytes that it freed.
 @(private)
@@ -482,62 +513,74 @@ history_record :: proc "contextless" (history: ^History, before, after: []graphi
 		last := history.steps[history.count - 1]
 		history.used = last.offset + last.before_bytes + last.after_bytes
 	}
-	before_bytes, refused := lz4.compress_block(box_pack(before, box, scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
-	if refused != .None || before_bytes > len(history.arena) {
-		history_clear(history)
-		return .Too_Large
-	}
-	for history.count > 0 && (history.used + before_bytes > len(history.arena) || history.count >= HISTORY_STEPS_LIMIT) {
+	for history.count >= HISTORY_STEPS_LIMIT {
 		history_drop_oldest(history)
 	}
-	if history.used + before_bytes > len(history.arena) {
-		history_clear(history)
-		return .Too_Large
+	// The blocks go past the bytes in use; when they do not fit, the
+	// oldest step goes and the blocks are written again at the new end.
+	for {
+		offset := history.used
+		before_bytes, before_ok := history_part_write(history, before, box, offset, scratch)
+		if before_ok {
+			after_bytes, after_ok := history_part_write(history, after, box, offset + before_bytes, scratch)
+			if after_ok {
+				history.steps[history.count] = {box = box, offset = offset, before_bytes = before_bytes, after_bytes = after_bytes}
+				history.count += 1
+				history.done = history.count
+				history.used = offset + before_bytes + after_bytes
+				return .Kept
+			}
+		}
+		if history.count == 0 {
+			history_clear(history)
+			return .Too_Large
+		}
+		history_drop_oldest(history)
 	}
-	// The block before waits in the arena past the bytes in use: the
-	// scratch then takes the block after.
-	offset := history.used
-	intrinsics.mem_copy_non_overlapping(&history.arena[offset], raw_data(scratch.compressed[:]), before_bytes)
-	after_bytes: int
-	after_bytes, refused = lz4.compress_block(box_pack(after, box, scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
-	for refused == .None && history.count > 0 && offset + before_bytes + after_bytes > len(history.arena) {
-		// The drop moves the bytes in use; the block before moves with
-		// the room that it freed.
-		freed := history_drop_oldest(history)
-		intrinsics.mem_copy(&history.arena[offset - freed], &history.arena[offset], before_bytes)
-		offset -= freed
-	}
-	if refused != .None || offset + before_bytes + after_bytes > len(history.arena) {
-		history_clear(history)
-		return .Too_Large
-	}
-	intrinsics.mem_copy_non_overlapping(&history.arena[offset + before_bytes], raw_data(scratch.compressed[:]), after_bytes)
-	history.steps[history.count] = {box = box, offset = offset, before_bytes = before_bytes, after_bytes = after_bytes}
-	history.count += 1
-	history.done = history.count
-	history.used = offset + before_bytes + after_bytes
-	return .Kept
 }
 
-// history_step_apply writes one block of a step into the picture. false:
-// the block does not give the pixels of its box, and the picture does not
+// history_part_apply writes the blocks of one part of a step into the
+// picture. Each block is checked first: a block that does not give the
+// pixels of its strip refuses the whole part, and the picture does not
 // change.
 @(private)
-history_step_apply :: proc "contextless" (picture: ^Picture, step: History_Step, block: []u8, scratch: ^History_Scratch) -> bool {
-	box := step.box
+history_part_apply :: proc "contextless" (picture: ^Picture, box: Box, part: []u8, scratch: ^History_Scratch) -> bool {
 	if box_empty(box) || box.left < 0 || box.top < 0 || box.right > PICTURE_WIDTH_LIMIT || box.bottom > PICTURE_HEIGHT_LIMIT {
 		return false
 	}
-	wanted := (box.right - box.left) * (box.bottom - box.top) * size_of(graphics.Color)
-	written, refused := lz4.decompress_block(block, ([^]u8)(raw_data(scratch.pixels[:]))[:PICTURE_BYTES])
-	if refused != .None || written != wanted {
-		return false
+	strip_bytes := ([^]u8)(raw_data(scratch.pixels[:]))[:HISTORY_STRIP_BYTES]
+	for pass in 0 ..< 2 {
+		at := 0
+		for top := box.top; top < box.bottom; top += HISTORY_STRIP_ROWS {
+			strip := strip_of(box, top)
+			if at + HISTORY_BLOCK_HEAD_BYTES > len(part) {
+				return false
+			}
+			length := int(word_read(part, at))
+			at += HISTORY_BLOCK_HEAD_BYTES
+			if length > len(part) - at {
+				return false
+			}
+			wanted := (strip.right - strip.left) * (strip.bottom - strip.top) * size_of(graphics.Color)
+			written, refused := lz4.decompress_block(part[at:][:length], strip_bytes)
+			if refused != .None || written != wanted {
+				return false
+			}
+			at += length
+			if pass == 1 {
+				box_unpack(picture.pixels, strip, scratch.pixels[:])
+			}
+		}
+		if at != len(part) {
+			return false
+		}
+		if pass == 0 {
+			// The extent never shrinks while the history lives, so the box
+			// is in it; grow it first in each case: a growth paints paper,
+			// which must not cover the pixels that the step writes.
+			picture_extend(picture, box.right, box.bottom)
+		}
 	}
-	// The extent never shrinks while the history lives, so the box is in
-	// it; grow it first in each case: a growth paints paper, which must not
-	// cover the pixels that the step writes.
-	picture_extend(picture, box.right, box.bottom)
-	box_unpack(picture.pixels, box, scratch.pixels[:])
 	picture_changed(picture)
 	return true
 }
@@ -549,7 +592,7 @@ history_undo :: proc "contextless" (history: ^History, picture: ^Picture, scratc
 		return false
 	}
 	step := history.steps[history.done - 1]
-	if !history_step_apply(picture, step, history.arena[step.offset:][:step.before_bytes], scratch) {
+	if !history_part_apply(picture, step.box, history.arena[step.offset:][:step.before_bytes], scratch) {
 		return false
 	}
 	history.done -= 1
@@ -563,7 +606,7 @@ history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratc
 		return false
 	}
 	step := history.steps[history.done]
-	if !history_step_apply(picture, step, history.arena[step.offset + step.before_bytes:][:step.after_bytes], scratch) {
+	if !history_part_apply(picture, step.box, history.arena[step.offset + step.before_bytes:][:step.after_bytes], scratch) {
 		return false
 	}
 	history.done += 1
@@ -599,6 +642,7 @@ File_Problem :: enum u8 {
 	Bad_Row     = 5, // A row of the file is not FILE_ROW_PIXELS pixels.
 	Bad_Length  = 6, // The file is not the header and the rows of its height.
 	Bad_Pixel   = 7, // A pixel has a top byte that is not 0.
+	Bad_Margin  = 8, // A pixel past the width is not paper: a row of the file holds only paper past the width.
 }
 
 @(private)
@@ -671,28 +715,47 @@ picture_decode :: proc "contextless" (file: []u8, picture: ^Picture) -> File_Pro
 	if len(file) < FILE_HEADER_BYTES {
 		return .Too_Short
 	}
-	if string(file[:4]) != FILE_MAGIC {
+	return picture_decode_parts(file[:FILE_HEADER_BYTES], file[FILE_HEADER_BYTES:], picture)
+}
+
+// picture_decode_parts reads a file whose header and rows are in two
+// buffers: a read puts the rows in memory of the size of a picture, and
+// the header apart. The rows may be in the pixels of another picture, never
+// in the pixels of this one.
+picture_decode_parts :: proc "contextless" (header, rows: []u8, picture: ^Picture) -> File_Problem {
+	if len(header) < FILE_HEADER_BYTES {
+		return .Too_Short
+	}
+	if string(header[:4]) != FILE_MAGIC {
 		return .Bad_Magic
 	}
-	if word_read(file, 4) != FILE_VERSION {
+	if word_read(header, 4) != FILE_VERSION {
 		return .Bad_Version
 	}
-	width, height := int(word_read(file, 8)), int(word_read(file, 12))
+	width, height := int(word_read(header, 8)), int(word_read(header, 12))
 	if width < 1 || width > PICTURE_WIDTH_LIMIT || height < 1 || height > PICTURE_HEIGHT_LIMIT {
 		return .Bad_Size
 	}
-	if word_read(file, 16) != u32(FILE_ROW_PIXELS) {
+	if word_read(header, 16) != u32(FILE_ROW_PIXELS) {
 		return .Bad_Row
 	}
-	if len(file) != file_size(height) {
+	if len(header) != FILE_HEADER_BYTES || len(rows) != height * FILE_ROW_BYTES {
 		return .Bad_Length
 	}
-	rows := file[FILE_HEADER_BYTES:]
 	// The top byte of each pixel, little endian: the fourth byte of each
 	// four. A pixel of the screen has none.
 	for place := 3; place < len(rows); place += 4 {
 		if rows[place] != 0 {
 			return .Bad_Pixel
+		}
+	}
+	// Past the width, a row holds paper: a keep writes the whole row, and
+	// the window paints paper there.
+	for row in 0 ..< height {
+		for column in width ..< FILE_ROW_PIXELS {
+			if graphics.Color(word_read(rows, (row * FILE_ROW_PIXELS + column) * 4)) != COLOR_PAPER {
+				return .Bad_Margin
+			}
 		}
 	}
 	for &pixel in picture.pixels[:PICTURE_PIXELS] {
@@ -757,6 +820,188 @@ keep_band :: proc "contextless" (rows: ^Changed_Rows, height: int) -> (top, bott
 // keep_taken empties the band when a keep took it.
 keep_taken :: proc "contextless" (rows: ^Changed_Rows) {
 	rows.top, rows.bottom, rows.changed, rows.whole = 0, 0, false, false
+}
+
+// The keep of the open picture as a state machine with no store and no
+// clock: the window gives it the facts of a turn of its loop, and it says
+// which job to ask, when the loop must wake, and whether the picture may
+// change (src/md/features/paint_application.md, "The keep is coalesced").
+
+KEEP_RETRY_MILLISECONDS :: 5000 // The wait after a keep that the store refused, before the next try.
+
+// An act of the panel, or of the start: it waits for the keep of the open
+// picture before it, except a delete, which keeps nothing.
+Store_Pending :: enum u8 {
+	None   = 0,
+	Read   = 1, // Open a picture of the store.
+	New    = 2, // Start a new picture with a name.
+	Rename = 3, // Give the open picture a new name.
+	Delete = 4, // Remove a picture that is not open.
+}
+
+Keep_State :: struct {
+	store_open:  bool, // The store is open, and listed.
+	named:       bool, // The open picture has a name: it can be kept.
+	reading:     bool, // A read of a picture runs, or its result waits: the picture must not change.
+	rows:        Changed_Rows,
+	pending:     Store_Pending,
+	retry_at:    u64, // After a refused keep: no keep before this time of the system.
+	// A keep runs as a series of jobs of one piece each: the band that it
+	// writes, and the bytes of the band written so far.
+	keeping:     bool,
+	keep_top:    int,
+	keep_bottom: int,
+	keep_done:   int,
+}
+
+// The bytes of one piece of a keep: a call of the store carries 64 KiB at
+// most, with its arguments.
+KEEP_PIECE_BYTES :: 32 * 1024
+// The bytes of rows between two commits of a keep: the store holds 4 MiB of
+// pending changes for all its connections.
+KEEP_COMMIT_BYTES :: 1024 * 1024
+
+// A piece of a keep: what the job writes, and whether it commits after.
+Keep_Piece :: struct {
+	first:  bool, // The first piece: the job writes the header and the size first.
+	offset: int, // The place of the piece in the object.
+	bytes:  int, // The bytes of rows of the piece, 0 for a band with no row.
+	row:    int, // The first byte of the piece in the rows of the picture: row offset in the array.
+	commit: bool, // The job commits after the piece.
+	last:   bool, // The last piece of the keep.
+}
+
+// keep_begin starts a keep of the band of changed rows of a picture of a
+// height, and empties the band: a change from now on goes to the next keep.
+keep_begin :: proc "contextless" (state: ^Keep_State, height: int) {
+	state.keep_top, state.keep_bottom = keep_band(&state.rows, height)
+	state.keep_bottom = max(state.keep_bottom, state.keep_top)
+	state.keep_done = 0
+	state.keeping = true
+	keep_taken(&state.rows)
+}
+
+// keep_piece gives the next piece of the keep that runs.
+keep_piece :: proc "contextless" (state: ^Keep_State) -> Keep_Piece {
+	band := (state.keep_bottom - state.keep_top) * FILE_ROW_BYTES
+	bytes := clamp(band - state.keep_done, 0, KEEP_PIECE_BYTES)
+	after := state.keep_done + bytes
+	return {
+		first  = state.keep_done == 0,
+		offset = file_row_offset(state.keep_top) + state.keep_done,
+		bytes  = bytes,
+		row    = state.keep_top * FILE_ROW_BYTES + state.keep_done,
+		commit = after >= band || after / KEEP_COMMIT_BYTES != state.keep_done / KEEP_COMMIT_BYTES,
+		last   = after >= band,
+	}
+}
+
+// keep_piece_written takes a piece that the store wrote: true when the
+// keep is whole.
+keep_piece_written :: proc "contextless" (state: ^Keep_State, piece: Keep_Piece) -> (whole: bool) {
+	state.keep_done += piece.bytes
+	if state.keep_done >= (state.keep_bottom - state.keep_top) * FILE_ROW_BYTES {
+		state.keeping = false
+		return true
+	}
+	return false
+}
+
+// What the window asks of the store in a turn.
+Keep_Step :: enum u8 {
+	Nothing = 0, // No job: none is due, or one runs, or the act waits.
+	Keep    = 1, // Write the changed rows of the open picture.
+	Pending = 2, // Run the act that waits: its keep is done, or it needs none.
+}
+
+// keep_step says which job to ask in a turn of the loop. job_running: a job
+// of the store runs or waits to be taken. drag_active: the principal is in
+// a stroke.
+keep_step :: proc "contextless" (state: ^Keep_State, now: u64, job_running, drag_active: bool) -> Keep_Step {
+	if !state.store_open || job_running {
+		return .Nothing
+	}
+	// A keep that runs goes on with its next piece before any other act.
+	if state.keeping {
+		return .Keep
+	}
+	// A delete removes a picture that is not open: it waits for no keep.
+	if state.pending == .Delete {
+		return .Pending
+	}
+	keep_waits := state.named && state.rows.changed
+	if keep_waits && now >= state.retry_at && (keep_due(&state.rows, now) || state.pending != .None) {
+		return .Keep
+	}
+	switch state.pending {
+	case .None, .Delete:
+		return .Nothing
+	case .Rename:
+		return keep_waits ? .Nothing : .Pending
+	case .Read, .New:
+		// A read and a new picture replace the picture of a stroke: they
+		// wait for its end. A read also takes the copy that a stroke holds
+		// for its undo, as the memory of its rows.
+		return keep_waits || drag_active ? .Nothing : .Pending
+	}
+	return .Nothing
+}
+
+// keep_wake gives the time at which the loop must wake for the keep, when a
+// turn can then ask for it: never while a job runs (its end wakes the loop),
+// with no store, or for a picture with no name.
+keep_wake :: proc "contextless" (state: ^Keep_State, job_running: bool) -> (time: u64, due: bool) {
+	if state.keeping && state.store_open && !job_running {
+		return 1, true // The next piece is due at once: a time in the past.
+	}
+	if !state.store_open || job_running || !state.named || !state.rows.changed {
+		return 0, false
+	}
+	return max(state.rows.last_change + KEEP_PAUSE_MILLISECONDS, state.retry_at), true
+}
+
+// keep_refused takes a keep that the store refused: its rows go back to the
+// band, the next try waits KEEP_RETRY_MILLISECONDS, and the act that waited
+// for it is dropped, which the window says. It gives that act.
+keep_refused :: proc "contextless" (state: ^Keep_State, now: u64, height: int) -> (dropped: Store_Pending) {
+	state.rows.whole = true
+	changed_rows_add(&state.rows, {0, 0, 1, max(height, 1)}, now)
+	state.keeping = false
+	state.retry_at = now + KEEP_RETRY_MILLISECONDS
+	dropped = state.pending
+	state.pending = .None
+	state.reading = false
+	return dropped
+}
+
+// change_allowed says if the picture may change now: not while a read of
+// another picture runs, whose result would replace the change.
+change_allowed :: proc "contextless" (state: ^Keep_State) -> bool {
+	return !state.reading
+}
+
+// pending_ask asks for an act. false: another act waits already, or the
+// store is not open; nothing changes. From the ask of a read to its take,
+// the picture must not change: the read replaces it.
+pending_ask :: proc "contextless" (state: ^Keep_State, act: Store_Pending) -> bool {
+	if !state.store_open || state.pending != .None || act == .None {
+		return false
+	}
+	state.pending = act
+	state.reading = act == .Read
+	return true
+}
+
+// pending_started says that the act that waited is asked of the store (or
+// done by the window): a read stays a read until its take.
+pending_started :: proc "contextless" (state: ^Keep_State) {
+	state.pending = .None
+}
+
+// read_taken says that the result of a read is taken: the picture may
+// change again.
+read_taken :: proc "contextless" (state: ^Keep_State) {
+	state.reading = false
 }
 
 // The drag of the pointer.

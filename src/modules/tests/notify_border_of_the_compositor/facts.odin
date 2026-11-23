@@ -7,7 +7,7 @@ import "modus:contract/errors"
 // "The export notify"). A Text field comes last.
 
 // Each check held.
-@(log_fact = "notify_border_of_the_compositor: ok, the cards of a caller stop at {limit} with Full and their count, a post within 500 ms is refused with Busy or came later by the clock, and the cards carry a name of {name_bytes} bytes")
+@(log_fact = "notify_border_of_the_compositor: ok, the cards of a caller stop at {limit} with Full and their count, an empty title, a long title and a long body change nothing, a post within 500 ms is refused with Busy or came later by the clock, and the cards carry a name of {name_bytes} bytes")
 Border_Held :: struct {
 	limit:      u64,
 	name_bytes: u64,

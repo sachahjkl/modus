@@ -27,9 +27,19 @@ Picture_Kept :: struct {
 	name:  [40]u8,
 }
 
-// A picture of the private store is the picture of the window.
-@(log_fact = "paint: the picture is open: {width} x {height} pixels from {name}")
+// A picture of the private store is the picture of the window, and it
+// holds a drawing: pixels that are not paper.
+@(log_fact = "paint: the picture is open with a drawing: {width} x {height} pixels, {drawn_pixels} not paper, from {name}")
 Picture_Opened :: struct {
+	width:        u64,
+	height:       u64,
+	drawn_pixels: u64,
+	name:         [40]u8,
+}
+
+// A picture of the private store is the picture of the window, all paper.
+@(log_fact = "paint: the picture is open, all paper: {width} x {height} pixels from {name}")
+Picture_Opened_Blank :: struct {
 	width:  u64,
 	height: u64,
 	name:   [40]u8,

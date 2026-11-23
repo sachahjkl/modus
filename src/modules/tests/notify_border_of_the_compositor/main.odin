@@ -5,6 +5,10 @@
 //
 // The checks, in this order:
 //
+// - an empty title, a title of 97 bytes and a body of 257 bytes are
+//   refused with Empty and Too_Long, and change nothing: the first card
+//   after them is accepted at once (no time of the rate was kept), and the
+//   bound below finds 3 cards (no card was added);
 // - a post right after an accepted one is refused with Busy, unit
 //   Milliseconds, limit 500; or it came 500 ms or more after the first by the
 //   clock of the system, and the rate was not tried: no check of a speed;
@@ -37,8 +41,7 @@ export: u32
 
 // post calls compositor.notify with a title, and gives its result and its
 // error record.
-post :: proc "contextless" (title: string) -> (result: i64, error: errors.Error_Record, status: system.Status) {
-	body := "the border of notify"
+post :: proc "contextless" (title: string, body := "the border of notify") -> (result: i64, error: errors.Error_Record, status: system.Status) {
 	arguments: [2]isolated.Argument
 	arguments[0].text = transmute([]u8)title
 	arguments[1].text = transmute([]u8)body
@@ -81,7 +84,38 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the root service gave no connection to the compositor")
 	}
 
-	// The rate: a post right after an accepted one.
+	// The refused posts: each changes nothing.
+	long_title: [97]u8
+	long_body: [257]u8
+	for &byte in long_title {
+		byte = 't'
+	}
+	for &byte in long_body {
+		byte = 'b'
+	}
+	refused_posts := [3]struct {
+		title, body: string,
+		kind:        errors.Kind,
+		argument:    i64,
+		limit:       i64,
+	} {
+		{"", "a body", .Empty, 1, 0},
+		{string(long_title[:]), "a body", .Too_Long, 1, 96},
+		{"a title", string(long_body[:]), .Too_Long, 2, 256},
+	}
+	for refused_post in refused_posts {
+		result, error, status := post(refused_post.title, refused_post.body)
+		if status != .Ok {
+			wrong("the call of a refused post did not come back")
+		}
+		if result >= 0 || !is_refusal(error, refused_post.kind, .Bytes) || error.argument != refused_post.argument || refused_post.kind == .Too_Long && error.limit != refused_post.limit {
+			system.log_fact(.Warning, Wrong_Refusal(errors.error_record_fact_fields(error)))
+			wrong("an empty title, a title of 97 bytes or a body of 257 bytes was not refused with its record")
+		}
+	}
+
+	// The rate: a post right after an accepted one. The first card comes
+	// right after the refused posts: they kept no time of the rate.
 	first_time := system.time()
 	result, error, status := post("the first card")
 	if status != .Ok || result <= 0 {

@@ -144,6 +144,15 @@ scenario := [?]Step {
 	{kind = .Click_Element, text = "paint", element = "blue"},
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
+	// No save action (docs/PROPERTIES.md, "Persistence: no save action,
+	// and versions for all processes"): the store keeps the picture after a
+	// pause of a second. A new start of paint opens it with its drawing.
+	{kind = .Wait, text = "paint: the store keeps the picture: "},
+	{kind = .Close, text = "paint"},
+	{kind = .Wait, text = "root: paint stopped"},
+	{kind = .Launch, text = "paint"},
+	{kind = .Wait, text = "paint: the picture is open with a drawing: 640 x 352 pixels, "},
+	{kind = .Move, text = "paint", to_x = 520, to_y = 408},
 	// The palette: the key super opens it. With no letter it lists the
 	// windows, the front one first, then the processes.
 	{kind = .Key, text = "meta_l"},

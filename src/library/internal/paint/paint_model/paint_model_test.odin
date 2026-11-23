@@ -335,6 +335,8 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		{-1, 0, len(bytes) - 1, .Bad_Length},
 		{FILE_HEADER_BYTES + 3, 0x01, -1, .Bad_Pixel}, // The top byte of the first pixel.
 		{len(bytes) - 1, 0xFF, -1, .Bad_Pixel}, // The top byte of the last pixel.
+		{FILE_HEADER_BYTES + 40 * 4, 0, -1, .Bad_Margin}, // The first pixel past the width is not paper.
+		{len(bytes) - 4, 0, -1, .Bad_Margin}, // The last pixel of the last row is not paper.
 	}
 	for test_case in cases {
 		copy(file, bytes)
@@ -544,4 +546,162 @@ the_colors_and_the_sizes :: proc(t: ^testing.T) {
 	testing.expect_value(t, size_index_step(max(int), 0), len(BRUSH_SIZES) - 1)
 	testing.expect_value(t, size_index_step(2, 1), 3)
 	testing.expect_value(t, len(PALETTE), len(PALETTE_NAMES))
+}
+
+// A keep waits for the store, for a name, and for the job that runs; the
+// loop wakes for it only when a turn can then ask for it.
+@(test)
+a_keep_waits_for_the_store_a_name_and_the_job :: proc(t: ^testing.T) {
+	state: Keep_State
+	changed_rows_add(&state.rows, {0, 0, 10, 10}, 1000)
+	due := u64(1000 + KEEP_PAUSE_MILLISECONDS)
+	testing.expect_value(t, keep_step(&state, due, false, false), Keep_Step.Nothing)
+	_, wake := keep_wake(&state, false)
+	testing.expect(t, !wake, "no store: the loop does not wake for a keep")
+	state.store_open = true
+	testing.expect_value(t, keep_step(&state, due, false, false), Keep_Step.Nothing)
+	_, wake = keep_wake(&state, false)
+	testing.expect(t, !wake, "no name: the loop does not wake for a keep")
+	state.named = true
+	testing.expect_value(t, keep_step(&state, due - 1, false, false), Keep_Step.Nothing)
+	testing.expect_value(t, keep_step(&state, due, true, false), Keep_Step.Nothing)
+	_, wake = keep_wake(&state, true)
+	testing.expect(t, !wake, "a job runs: its end wakes the loop")
+	time: u64
+	time, wake = keep_wake(&state, false)
+	testing.expect(t, wake && time == due)
+	testing.expect_value(t, keep_step(&state, due, false, false), Keep_Step.Keep)
+	testing.expect_value(t, keep_step(&state, max(u64), false, false), Keep_Step.Keep)
+}
+
+// A refused keep drops the act that waits for it and waits before the
+// next try: no keep at once, and no loop of tries.
+@(test)
+a_refused_keep_drops_its_act_and_waits :: proc(t: ^testing.T) {
+	state := Keep_State{store_open = true, named = true}
+	changed_rows_add(&state.rows, {0, 4, 10, 6}, 1000)
+	testing.expect(t, pending_ask(&state, .Read))
+	testing.expect(t, !pending_ask(&state, .New), "one act at a time")
+	testing.expect_value(t, keep_step(&state, 1001, false, false), Keep_Step.Keep)
+	keep_taken(&state.rows)
+	dropped := keep_refused(&state, 1200, 50)
+	testing.expect_value(t, dropped, Store_Pending.Read)
+	testing.expect_value(t, state.pending, Store_Pending.None)
+	testing.expect(t, change_allowed(&state), "a dropped read lets the picture change again")
+	testing.expect(t, state.rows.whole && state.rows.changed)
+	testing.expect_value(t, keep_step(&state, 1200 + KEEP_PAUSE_MILLISECONDS, false, false), Keep_Step.Nothing)
+	time, wake := keep_wake(&state, false)
+	testing.expect(t, wake && time == 1200 + KEEP_RETRY_MILLISECONDS)
+	testing.expect_value(t, keep_step(&state, 1200 + KEEP_RETRY_MILLISECONDS, false, false), Keep_Step.Keep)
+}
+
+// A delete does not wait for the keep: the store can be full, and the
+// delete is what makes room.
+@(test)
+a_delete_waits_for_no_keep :: proc(t: ^testing.T) {
+	state := Keep_State{store_open = true, named = true, retry_at = max(u64)}
+	changed_rows_add(&state.rows, {0, 0, 10, 10}, 1000)
+	testing.expect(t, pending_ask(&state, .Delete))
+	testing.expect_value(t, keep_step(&state, 1001, false, false), Keep_Step.Pending)
+	testing.expect_value(t, keep_step(&state, 1001, true, false), Keep_Step.Nothing)
+}
+
+// A new picture waits for the end of a stroke and for the keep; a read and
+// a rename wait for the keep.
+@(test)
+a_new_picture_waits_for_the_stroke_and_the_keep :: proc(t: ^testing.T) {
+	state := Keep_State{store_open = true, named = true}
+	testing.expect(t, pending_ask(&state, .New))
+	testing.expect_value(t, keep_step(&state, 0, false, true), Keep_Step.Nothing)
+	testing.expect_value(t, keep_step(&state, 0, false, false), Keep_Step.Pending)
+	changed_rows_add(&state.rows, {0, 0, 10, 10}, 1000)
+	testing.expect_value(t, keep_step(&state, 1000, false, false), Keep_Step.Keep)
+	keep_taken(&state.rows)
+	testing.expect_value(t, keep_step(&state, 1000, false, true), Keep_Step.Nothing)
+	testing.expect_value(t, keep_step(&state, 1000, false, false), Keep_Step.Pending)
+	for act in ([]Store_Pending{.Read, .Rename}) {
+		other := Keep_State{store_open = true, named = true}
+		changed_rows_add(&other.rows, {0, 0, 10, 10}, 1000)
+		testing.expect(t, pending_ask(&other, act))
+		testing.expect_value(t, keep_step(&other, 1000, false, true), Keep_Step.Keep)
+		keep_taken(&other.rows)
+		testing.expect_value(t, keep_step(&other, 1000, false, false), Keep_Step.Pending)
+	}
+	closed: Keep_State
+	testing.expect(t, !pending_ask(&closed, .Read), "no store: no act")
+	testing.expect(t, !pending_ask(&state, .None))
+}
+
+// A picture with no name is never kept, and the loop never wakes for it;
+// no change is allowed while a read runs.
+@(test)
+a_picture_with_no_name_and_a_read_in_flight :: proc(t: ^testing.T) {
+	state := Keep_State{store_open = true}
+	changed_rows_add(&state.rows, {0, 0, 10, 10}, 0)
+	for now in ([]u64{0, KEEP_PAUSE_MILLISECONDS, max(u64)}) {
+		testing.expect_value(t, keep_step(&state, now, false, false), Keep_Step.Nothing)
+	}
+	testing.expect(t, change_allowed(&state))
+	testing.expect(t, pending_ask(&state, .Read))
+	testing.expect(t, !change_allowed(&state), "a stroke from the ask of a read to its take would be lost")
+	pending_started(&state)
+	testing.expect(t, !change_allowed(&state), "the read runs")
+	read_taken(&state)
+	testing.expect(t, change_allowed(&state))
+}
+
+// A keep runs in pieces that fit a call: the first writes the header, a
+// commit comes after each KEEP_COMMIT_BYTES and after the last piece, and
+// the pieces cover the band once. A band with no row is one piece with the
+// header alone.
+@(test)
+a_keep_runs_in_pieces_that_fit_a_call :: proc(t: ^testing.T) {
+	state := Keep_State{store_open = true, named = true}
+	changed_rows_add(&state.rows, {0, 0, 10, PICTURE_HEIGHT_LIMIT}, 0)
+	state.rows.whole = true
+	keep_begin(&state, PICTURE_HEIGHT_LIMIT)
+	testing.expect(t, state.keeping && !state.rows.changed, "the band moved to the keep")
+	band := PICTURE_HEIGHT_LIMIT * FILE_ROW_BYTES
+	covered, pieces, commits := 0, 0, 0
+	for state.keeping {
+		piece := keep_piece(&state)
+		testing.expect(t, piece.bytes > 0 && piece.bytes <= KEEP_PIECE_BYTES)
+		testing.expect_value(t, piece.first, pieces == 0)
+		testing.expect_value(t, piece.offset, FILE_HEADER_BYTES + covered)
+		testing.expect_value(t, piece.row, covered)
+		commits += piece.commit ? 1 : 0
+		covered += piece.bytes
+		pieces += 1
+		whole := keep_piece_written(&state, piece)
+		testing.expect_value(t, whole, piece.last)
+		testing.expect(t, pieces <= band / KEEP_PIECE_BYTES + 1)
+	}
+	testing.expect_value(t, covered, band)
+	testing.expect_value(t, commits, (band + KEEP_COMMIT_BYTES - 1) / KEEP_COMMIT_BYTES)
+	// A keep of the header alone: a wider extent.
+	changed_rows_mark(&state.rows, 10)
+	keep_begin(&state, 40)
+	piece := keep_piece(&state)
+	testing.expect(t, piece.first && piece.bytes == 0 && piece.commit && piece.last)
+	testing.expect(t, keep_piece_written(&state, piece))
+	// A refused piece ends the keep, and its rows wait for the next one.
+	changed_rows_add(&state.rows, {0, 2, 10, 8}, 20)
+	keep_begin(&state, 40)
+	keep_refused(&state, 30, 40)
+	testing.expect(t, !state.keeping && state.rows.whole && state.rows.changed)
+	testing.expect_value(t, keep_step(&state, 30 + KEEP_RETRY_MILLISECONDS, false, false), Keep_Step.Keep)
+}
+
+// A read waits for the end of a stroke: it takes the copy that the stroke
+// holds for its undo as the memory of its rows. A keep that runs goes on
+// before the act.
+@(test)
+a_read_waits_for_the_end_of_a_stroke :: proc(t: ^testing.T) {
+	state := Keep_State{store_open = true, named = true}
+	testing.expect(t, pending_ask(&state, .Read))
+	testing.expect_value(t, keep_step(&state, 0, false, true), Keep_Step.Nothing)
+	testing.expect_value(t, keep_step(&state, 0, false, false), Keep_Step.Pending)
+	state.keeping = true
+	testing.expect_value(t, keep_step(&state, 0, false, false), Keep_Step.Keep)
+	testing.expect_value(t, keep_step(&state, 0, true, false), Keep_Step.Nothing)
 }
