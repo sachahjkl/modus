@@ -10,7 +10,8 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 	dialog: Plan_Difference_Dialog
 	long_name := strings.repeat("n", PLAN_DIFFERENCE_NAME_BYTES + 1, context.temp_allocator)
 	long_item := strings.repeat("i", PLAN_DIFFERENCE_ITEM_BYTES + 1, context.temp_allocator)
-	nine := "a, b, c, d, e, f, g, h, i"
+	// One item past the memory that the caller gives, on each side.
+	past_capacity := items_text(TEST_OPEN_ITEMS + 1)
 	cases := [?]struct {
 		name, added, removed: string,
 		refusal:              Plan_Difference_Refusal,
@@ -25,10 +26,12 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 		{"home", ",a", "", .Empty_Item, 2},
 		{"home", "a", " , ", .Empty_Item, 3},
 		{"home", long_item, "", .Item_Too_Long, 2},
-		{"home", "", nine, .Too_Many_Items, 3},
+		{"home", "", past_capacity, .Too_Many_Items, 3},
+		{"home", past_capacity, "", .Too_Many_Items, 2},
+		{"home", items_text(TEST_OPEN_ITEMS), "a", .Too_Many_Items, 3},
 	}
 	for test_case in cases {
-		serial, refusal, argument := plan_difference_open(&dialog, test_case.name, test_case.added, test_case.removed, 1000)
+		serial, refusal, argument := test_open(&dialog, test_case.name, test_case.added, test_case.removed, 1000)
 		testing.expectf(t, serial == 0 && refusal == test_case.refusal && argument == test_case.argument, "%v: %v %v %v", test_case, serial, refusal, argument)
 		testing.expect(t, !dialog.open)
 		testing.expect_value(t, dialog.serial, 0)
@@ -38,26 +41,39 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 	// most items.
 	edge_name := strings.repeat("n", PLAN_DIFFERENCE_NAME_BYTES, context.temp_allocator)
 	edge_item := strings.repeat("i", PLAN_DIFFERENCE_ITEM_BYTES, context.temp_allocator)
-	serial, refusal, _ := plan_difference_open(&dialog, edge_name, edge_item, "a, b, c, d, e, f, g, h", 1000)
+	serial, refusal, _ := test_open(&dialog, edge_name, edge_item, items_text(TEST_SIDE_ITEMS), 1000)
 	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
 	testing.expect_value(t, serial, 1)
 	testing.expect_value(t, plan_difference_name(&dialog), edge_name)
 	testing.expect_value(t, dialog.added_count, 1)
 	testing.expect_value(t, plan_difference_item_text(&dialog.added[0]), edge_item)
-	testing.expect_value(t, dialog.removed_count, PLAN_DIFFERENCE_ITEM_CAPACITY)
-	testing.expect_value(t, plan_difference_item_text(&dialog.removed[7]), "h")
+	testing.expect_value(t, dialog.removed_count, TEST_SIDE_ITEMS)
+	testing.expect_value(t, plan_difference_item_text(&dialog.removed[TEST_SIDE_ITEMS - 1]), "item 299")
 	// A second difference while one shows is refused, and the first stays.
-	serial, refusal, _ = plan_difference_open(&dialog, "other", "x", "", 1200)
+	serial, refusal, _ = test_open(&dialog, "other", "x", "", 1200)
 	testing.expect_value(t, serial, 0)
 	testing.expect_value(t, refusal, Plan_Difference_Refusal.Busy)
 	testing.expect_value(t, plan_difference_name(&dialog), edge_name)
 	testing.expect_value(t, dialog.shown_at_milliseconds, 1000)
 }
 
+// The memory that the open needs: one item for each comma of a list that is
+// not blank, and one more; a blank list needs none.
+@(test)
+plan_difference_items_needed_counts_each_item :: proc(t: ^testing.T) {
+	testing.expect_value(t, plan_difference_items_needed("", ""), 0)
+	testing.expect_value(t, plan_difference_items_needed("  ", " "), 0)
+	testing.expect_value(t, plan_difference_items_needed("a", ""), 1)
+	testing.expect_value(t, plan_difference_items_needed("a", "b, c"), 3)
+	// A list that the open refuses still counts: the memory comes first.
+	testing.expect_value(t, plan_difference_items_needed("a,,b", ","), 5)
+	testing.expect_value(t, plan_difference_items_needed(items_text(TEST_SIDE_ITEMS), items_text(TEST_SIDE_ITEMS)), TEST_OPEN_ITEMS)
+}
+
 @(test)
 plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
-	_, refusal, _ := plan_difference_open(&dialog, "home", "notes: store documents", "paint: network", 1000)
+	_, refusal, _ := test_open(&dialog, "home", "notes: store documents", "paint: network", 1000)
 	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
 	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Refuse)
 	testing.expect_value(t, plan_difference_key(&dialog, .Next, 1000), Plan_Difference_Decision.Pending)
@@ -88,11 +104,11 @@ plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 @(test)
 plan_difference_enter_on_the_first_focus_refuses :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
-	plan_difference_open(&dialog, "home", "notes: store documents", "", 1000)
+	test_open(&dialog, "home", "notes: store documents", "", 1000)
 	testing.expect_value(t, plan_difference_key(&dialog, .Act, 2000), Plan_Difference_Decision.Refused)
 	testing.expect(t, !dialog.open)
 	// Two moves of the focus come back to Refuse.
-	plan_difference_open(&dialog, "home", "", "paint: network", 3000)
+	test_open(&dialog, "home", "", "paint: network", 3000)
 	testing.expect_value(t, dialog.serial, 2)
 	plan_difference_key(&dialog, .Next, 3000)
 	plan_difference_key(&dialog, .Next, 3000)
@@ -102,7 +118,7 @@ plan_difference_enter_on_the_first_focus_refuses :: proc(t: ^testing.T) {
 @(test)
 plan_difference_escape_refuses_at_once :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
-	plan_difference_open(&dialog, "home", "notes: store documents", "", 1000)
+	test_open(&dialog, "home", "notes: store documents", "", 1000)
 	plan_difference_key(&dialog, .Next, 1000)
 	testing.expect_value(t, plan_difference_key(&dialog, .Escape, 1000), Plan_Difference_Decision.Refused)
 	testing.expect(t, !dialog.open)
@@ -113,7 +129,7 @@ plan_difference_escape_refuses_at_once :: proc(t: ^testing.T) {
 plan_difference_press_acts_on_its_buttons_only :: proc(t: ^testing.T) {
 	SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM :: 1280, 32, 768
 	dialog: Plan_Difference_Dialog
-	plan_difference_open(&dialog, "home", "notes: store documents, paint: network", "clock: settings", 1000)
+	test_open(&dialog, "home", "notes: store documents, paint: network", "clock: settings", 1000)
 	x, y, width, height := plan_difference_place(&dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM)
 	testing.expect(t, y >= WORK_TOP && y + height <= WORK_BOTTOM)
 	accept_x, accept_y, accept_width, accept_height := plan_difference_button_place(x, y, width, height, .Accept)
@@ -130,7 +146,7 @@ plan_difference_press_acts_on_its_buttons_only :: proc(t: ^testing.T) {
 	// The last pixel of Accept accepts.
 	testing.expect_value(t, plan_difference_press(&dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM, accept_x + accept_width - 1, accept_y + accept_height - 1, 5000), Plan_Difference_Decision.Accepted)
 	// Refuse, by a press, on the next dialog.
-	plan_difference_open(&dialog, "home", "x", "", 6000)
+	test_open(&dialog, "home", "x", "", 6000)
 	_, refuse_y_again, _, _ := plan_difference_button_place(plan_difference_place(&dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM), Plan_Difference_Button.Refuse)
 	refuse_x_again, _, _, _ := plan_difference_button_place(plan_difference_place(&dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM), Plan_Difference_Button.Refuse)
 	testing.expect_value(t, plan_difference_press(&dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM, refuse_x_again, refuse_y_again, 7000), Plan_Difference_Decision.Refused)
@@ -141,13 +157,18 @@ plan_difference_press_acts_on_its_buttons_only :: proc(t: ^testing.T) {
 @(test)
 plan_difference_grows_with_its_items_and_stays_in_the_room :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
-	plan_difference_open(&dialog, "home", "a", "", 0)
+	test_open(&dialog, "home", "a", "", 0)
 	_, _, _, one := plan_difference_place(&dialog, 1280, 32, 768)
 	dialog.open = false
-	plan_difference_open(&dialog, "home", "a, b, c, d, e, f, g, h", "a, b, c, d, e, f, g, h", 0)
+	test_open(&dialog, "home", "a, b, c, d, e, f, g, h", "a, b, c, d, e, f, g, h", 0)
 	_, y, _, most := plan_difference_place(&dialog, 1280, 32, 768)
-	testing.expect_value(t, most - one, 7 * PLAN_DIFFERENCE_LINE + PLAN_DIFFERENCE_GAP + 9 * PLAN_DIFFERENCE_LINE)
-	// The most items fit the room of the windows of the reference screen.
+	// The view grows with the lines of the body, up to its visible lines.
+	testing.expect_value(t, most - one, (PLAN_DIFFERENCE_VISIBLE_LINES - 2) * PLAN_DIFFERENCE_LINE)
+	dialog.open = false
+	test_open(&dialog, "home", items_text(TEST_SIDE_ITEMS), items_text(TEST_SIDE_ITEMS), 0)
+	_, _, _, largest := plan_difference_place(&dialog, 1280, 32, 768)
+	testing.expect_value(t, largest, most)
+	// The view fits the room of the windows of the reference screen.
 	testing.expect(t, y >= 32 && y + most <= 768)
 	// A bar at the bottom: the room starts at 0.
 	_, bottom_y, _, _ := plan_difference_place(&dialog, 1280, 0, 736)
@@ -162,7 +183,7 @@ plan_difference_decision_of_serial_names_only_the_last_dialog :: proc(t: ^testin
 		decision, known := plan_difference_decision_of_serial(&dialog, serial)
 		testing.expectf(t, !known && decision == .Pending, "serial %v: %v %v", serial, decision, known)
 	}
-	first, _, _ := plan_difference_open(&dialog, "home", "notes: store documents", "", 1000)
+	first, _, _ := test_open(&dialog, "home", "notes: store documents", "", 1000)
 	decision, known := plan_difference_decision_of_serial(&dialog, first)
 	testing.expect(t, known && decision == .Pending)
 	// A serial one past the one shown names nothing.
@@ -174,7 +195,7 @@ plan_difference_decision_of_serial_names_only_the_last_dialog :: proc(t: ^testin
 	testing.expect(t, known && decision == .Accepted)
 	// A later dialog replaces the decision: the first serial is unknown, so a
 	// caller never reads the decision of another dialog as its own.
-	second, _, _ := plan_difference_open(&dialog, "home", "", "paint: network", 3000)
+	second, _, _ := test_open(&dialog, "home", "", "paint: network", 3000)
 	_, known = plan_difference_decision_of_serial(&dialog, first)
 	testing.expect(t, !known)
 	testing.expect_value(t, plan_difference_key(&dialog, .Escape, 3000), Plan_Difference_Decision.Refused)
@@ -226,7 +247,7 @@ plan_difference_act_open_refuses_each_word_that_is_no_identifier :: proc(t: ^tes
 	testing.expect_value(t, plan_difference_item_text(&dialog.added[0]), edge_act)
 	_, refusal, _ = plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
 	testing.expect_value(t, refusal, Plan_Difference_Refusal.Busy)
-	_, refusal, _ = plan_difference_open(&dialog, "home", "a", "", 1000)
+	_, refusal, _ = test_open(&dialog, "home", "a", "", 1000)
 	testing.expect_value(t, refusal, Plan_Difference_Refusal.Busy)
 }
 
@@ -242,7 +263,7 @@ plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
 	decision, known := plan_difference_decision_of_serial(&dialog, serial)
 	testing.expect(t, known && decision == .Refused)
-	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 5000)
+	plan_serial, _, _ := test_open(&dialog, "home", "a", "", 5000)
 	testing.expect_value(t, dialog.face, Plan_Difference_Face.Plan)
 	_, known = plan_difference_decision_of_serial(&dialog, serial)
 	testing.expect(t, !known)
@@ -284,7 +305,7 @@ plan_difference_act_face_arms_again_after_each_move_of_the_focus :: proc(t: ^tes
 	testing.expect(t, dialog.open)
 	// The plan face keeps its moves at any time.
 	dialog.open = false
-	plan_difference_open(&dialog, "home", "a", "", 30_000)
+	test_open(&dialog, "home", "a", "", 30_000)
 	plan_difference_key(&dialog, .Next, 30_000)
 	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
 }
@@ -320,7 +341,7 @@ plan_difference_act_ask_refuses_a_caller_without_the_grant_and_a_busy_display ::
 	testing.expect(t, serial == 0 && refusal == .No_Grant && !dialog.open)
 	serial, refusal, _ = plan_difference_act_ask(&dialog, {allowed = true}, true, "assistant", "plans.apply", 1000)
 	testing.expect(t, serial == 0 && refusal == .Busy && !dialog.open)
-	plan_difference_open(&dialog, "home", "a", "", 1000)
+	test_open(&dialog, "home", "a", "", 1000)
 	serial, refusal, _ = plan_difference_act_ask(&dialog, {allowed = true}, false, "assistant", "plans.apply", 1000)
 	testing.expect(t, serial == 0 && refusal == .Busy && dialog.face == .Plan)
 	testing.expect_value(t, dialog.serial, 1)
@@ -337,7 +358,7 @@ plan_difference_poll_gives_a_decision_to_its_face_and_its_asker_only :: proc(t: 
 	dialog: Plan_Difference_Dialog
 	asker := Plan_Difference_Caller{allowed = true, is_asker = true}
 	other := Plan_Difference_Caller{allowed = true}
-	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 1000)
+	plan_serial, _, _ := test_open(&dialog, "home", "a", "", 1000)
 	_, known, refusal := plan_difference_poll(&dialog, .Act, asker, i64(plan_serial))
 	testing.expect(t, !known && refusal == .None)
 	plan_difference_key(&dialog, .Escape, 1000)
@@ -371,7 +392,7 @@ plan_difference_poll_gives_a_decision_to_its_face_and_its_asker_only :: proc(t: 
 plan_difference_act_cancel_closes_the_dialog_of_its_asker_only :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
 	asker := Plan_Difference_Caller{allowed = true, is_asker = true}
-	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 1000)
+	plan_serial, _, _ := test_open(&dialog, "home", "a", "", 1000)
 	closed, refusal := plan_difference_act_cancel(&dialog, asker, i64(plan_serial))
 	testing.expect(t, !closed && refusal == .None && dialog.open)
 	dialog.open = false
@@ -393,4 +414,90 @@ plan_difference_act_cancel_closes_the_dialog_of_its_asker_only :: proc(t: ^testi
 	testing.expect_value(t, dialog.decision, Plan_Difference_Decision.Refused)
 	closed, _ = plan_difference_act_cancel(&dialog, asker, i64(serial))
 	testing.expect(t, !closed)
+}
+
+// items_text gives a list of count distinct names that commas separate.
+@(private = "file")
+// The items of a side in the tests: past the 64 of a dialog of a fixed
+// size. test_open gives the memory of two such sides.
+TEST_SIDE_ITEMS :: 300
+TEST_OPEN_ITEMS :: 2 * TEST_SIDE_ITEMS
+
+test_open :: proc(dialog: ^Plan_Difference_Dialog, plan_name, added, removed: string, now_milliseconds: u64) -> (serial: u64, refusal: Plan_Difference_Refusal, argument: int) {
+	items := make([]Plan_Difference_Item, TEST_OPEN_ITEMS, context.temp_allocator)
+	return plan_difference_open(dialog, plan_name, added, removed, now_milliseconds, items)
+}
+
+items_text :: proc(count: int) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	for index in 0 ..< count {
+		if index > 0 {
+			strings.write_string(&builder, ", ")
+		}
+		strings.write_string(&builder, "item ")
+		strings.write_int(&builder, index)
+	}
+	return strings.to_string(builder)
+}
+
+// A difference with more lines than the view: accept is no act until the
+// view reached the last line, whatever the time; the view stays inside the
+// body; each line of the body is a heading or an item, in order.
+@(test)
+plan_difference_accept_counts_only_after_the_last_line_showed :: proc(t: ^testing.T) {
+	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	dialog: Plan_Difference_Dialog
+	// A body of exactly the visible lines needs no scroll.
+	test_open(&dialog, "home", items_text(PLAN_DIFFERENCE_VISIBLE_LINES - 1), "", 0)
+	testing.expect(t, dialog.seen_through)
+	testing.expect(t, !plan_difference_scroll(&dialog, 1))
+	plan_difference_key(&dialog, .Escape, 0)
+
+	// One line more needs one line of scroll.
+	test_open(&dialog, "home", items_text(PLAN_DIFFERENCE_VISIBLE_LINES), "", 0)
+	testing.expect(t, !dialog.seen_through)
+	plan_difference_key(&dialog, .Next, 0)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, ARM), Plan_Difference_Decision.Pending)
+	testing.expect(t, dialog.open)
+	testing.expect_value(t, plan_difference_key(&dialog, .Line_Next, ARM), Plan_Difference_Decision.Pending)
+	testing.expect(t, dialog.seen_through)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, ARM), Plan_Difference_Decision.Accepted)
+
+	// The largest difference: 64 additions and 64 removals.
+	test_open(&dialog, "home", items_text(TEST_SIDE_ITEMS), items_text(TEST_SIDE_ITEMS), 1000)
+	body := plan_difference_body_lines(&dialog)
+	testing.expect_value(t, body, 2 + 2 * TEST_SIDE_ITEMS)
+	testing.expect_value(t, plan_difference_visible_lines(&dialog), PLAN_DIFFERENCE_VISIBLE_LINES)
+	// The lines: the heading of the additions, the 64 items, the heading of
+	// the removals, its 64 items, then no line.
+	first, _ := plan_difference_line(&dialog, 0)
+	testing.expect(t, first.heading && first.added)
+	last_added, _ := plan_difference_line(&dialog, TEST_SIDE_ITEMS)
+	testing.expect_value(t, plan_difference_item_text(last_added.item), "item 299")
+	removals, _ := plan_difference_line(&dialog, TEST_SIDE_ITEMS + 1)
+	testing.expect(t, removals.heading && !removals.added)
+	last, last_ok := plan_difference_line(&dialog, body - 1)
+	testing.expect(t, last_ok && !last.added)
+	testing.expect_value(t, plan_difference_item_text(last.item), "item 299")
+	_, past := plan_difference_line(&dialog, body)
+	testing.expect(t, !past)
+
+	// The view never leaves the body: up from the top, down past the end.
+	testing.expect(t, !plan_difference_scroll(&dialog, -1))
+	testing.expect_value(t, dialog.first_line, 0)
+	plan_difference_key(&dialog, .Next, 1000)
+	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
+	// Each page short of the end: accept is no act.
+	for dialog.first_line + PLAN_DIFFERENCE_VISIBLE_LINES < body - (PLAN_DIFFERENCE_VISIBLE_LINES - 1) {
+		plan_difference_key(&dialog, .Page_Next, 1000)
+		testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + ARM), Plan_Difference_Decision.Pending)
+		testing.expect(t, dialog.open)
+	}
+	testing.expect(t, plan_difference_scroll(&dialog, max(int) / 2))
+	testing.expect_value(t, dialog.first_line, body - PLAN_DIFFERENCE_VISIBLE_LINES)
+	testing.expect(t, dialog.seen_through)
+	// Back up: what was seen stays seen.
+	plan_difference_key(&dialog, .Page_Previous, 1000)
+	testing.expect(t, dialog.seen_through)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + ARM), Plan_Difference_Decision.Accepted)
 }

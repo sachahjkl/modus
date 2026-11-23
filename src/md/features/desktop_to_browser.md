@@ -249,7 +249,7 @@ What exists today:
 
 - **The lend of a handle for one call** (`system.lend`, `system.lend_end`; [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Lent handle"). The caller makes a copy of its handle with the rights of the description of the export, gives the callee a handle from that copy, and revokes the copy after the call. A table parameter in a memory object is lent with the rights of its direction, so a callee that only reads a table gets no Write. A revocation reaches each handle and each mapping that came from the copy, through each chain of gifts ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default", the revocation).
 - **The datagram region with no copy on send** ([../infrastructure/network_data_path.md](../infrastructure/network_data_path.md), "The send with no copy"). The device reads the data to send from the datagram region of the process; the network service copies and checks 8 bytes of the header only. On receive, the network service still copies each datagram once into the region of the process, and that copy is irreducible with one receive queue.
-- **The surfaces of the windows.** A process makes the memory of its surface and gives the compositor a handle with Read only (`display.open`). The compositor reads the pixels in place, with no copy through a ring.
+- **The surfaces of the windows.** A process gives the compositor a budget of its surface; the compositor makes the memory of the surface and gives the process a copy with Read and Write (`display.open`, [window_resize.md](window_resize.md), "The compositor makes each surface"). The compositor reads the pixels in place, with no copy through a ring.
 
 What is missing for a chain:
 

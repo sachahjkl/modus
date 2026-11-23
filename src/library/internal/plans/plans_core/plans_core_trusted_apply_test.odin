@@ -10,7 +10,10 @@ import "modus:contract/start_grant"
 // plans_test_state_init starts state with a memory store that the test frees.
 plans_test_state_init :: proc(state: ^Plans_State, display_slot: u32) -> ^pr.Memory_Private_Store {
 	store := new(pr.Memory_Private_Store)
-	state_init(state, display_slot, pr.memory_private_store_port(store))
+	// Room for the generation objects of the largest plans of the tests.
+	store.large_bytes = make([]u8, 4 * 1024 * 1024, context.temp_allocator)
+	memory := new(Test_Memory, context.temp_allocator)
+	state_init(state, display_slot, pr.memory_private_store_port(store), test_memory_port(memory))
 	return store
 }
 
@@ -68,7 +71,7 @@ trusted_test_hash :: proc(tag: u8) -> blake3.Hash {
 
 @(private = "file")
 module_plan :: proc(principal: u64, tag: u8, grants: u64) -> pr.Plan_Spec {
-	plan := pr.Plan_Spec{principal = principal, entry_count = 1}
+	plan := test_plan(principal, 1)
 	plan.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", trusted_test_hash(tag), grants)
 	return plan
 }
@@ -225,21 +228,13 @@ test_plans_apply_request_refuses_each_bad_input_and_asks_nothing :: proc(t: ^tes
 	_, no_display := apply_request(state, nil, "home", &plan, {}, &difference, &lists)
 	testing.expect_value(t, no_display, pr.Plan_Refusal.Consent_Required)
 
-	// A plan whose additions do not fit the dialog: nine entries.
-	nine := pr.Plan_Spec{principal = 0, entry_count = 9}
-	names := [9]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
-	for name, index in names {
-		nine.entries[index], _ = pr.plan_entry_make_module(.Disk_Module, name, trusted_test_hash(u8(index + 1)), 0)
-	}
-	_, too_many := apply_request(state, &port, "home", &nine, {}, &difference, &lists)
-	testing.expect_value(t, too_many, pr.Plan_Refusal.Display_Refused)
 	// An item past the bytes of an item: a name of 48 bytes after "disk ".
-	long_entry := pr.Plan_Spec{principal = 0, entry_count = 1}
+	long_entry := test_plan(0, 1)
 	long_entry.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, strings.repeat("m", 44, context.temp_allocator), trusted_test_hash(1), 0)
 	_, item_too_long := apply_request(state, &port, "home", &long_entry, {}, &difference, &lists)
 	testing.expect_value(t, item_too_long, pr.Plan_Refusal.Display_Refused)
 	// The last byte that fits: "disk " and 43 bytes.
-	edge_entry := pr.Plan_Spec{principal = 0, entry_count = 1}
+	edge_entry := test_plan(0, 1)
 	edge_entry.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, strings.repeat("m", 43, context.temp_allocator), trusted_test_hash(1), 0)
 
 	// The display that does not show the dialog: nothing is pending.
@@ -442,18 +437,20 @@ find_principal_for_test :: proc(state: ^Plans_State, principal: u64) -> ^Princip
 @(test)
 test_plans_display_lists_name_each_side :: proc(t: ^testing.T) {
 	store_bit := u64(1) << u64(start_grant.Grant.Store)
-	current := pr.Plan_Spec{principal = 0, entry_count = 3}
+	current := test_plan(0, 3)
 	current.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", trusted_test_hash(1), store_bit)
 	current.entries[1], _ = pr.plan_entry_make_store("notes", .Read_Write)
 	current.entries[2], _ = pr.plan_entry_make_module(.Start_Module, "clock", trusted_test_hash(2), 0)
-	proposed := pr.Plan_Spec{principal = 0, entry_count = 3}
+	proposed := test_plan(0, 3)
 	proposed.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", trusted_test_hash(1), 0)
 	proposed.entries[1], _ = pr.plan_entry_make_store("notes", .Read_Only)
 	proposed.entries[2], _ = pr.plan_entry_make_store("documents", .Read_Write)
-	difference: pr.Plan_Difference
+	difference := pr.Plan_Difference{changes = make([]pr.Plan_Diff_Item, 6, context.temp_allocator)}
 	testing.expect_value(t, pr.plan_diff_compute(&current, &proposed, &difference), pr.Plan_Refusal.None)
 	lists: Plan_Display_Lists
-	testing.expect_value(t, display_lists_of_difference(&difference, &lists), pr.Plan_Refusal.None)
+	lists_state := new(Plans_State, context.temp_allocator)
+	plans_test_state_init(lists_state, 5)
+	testing.expect_value(t, display_lists_of_difference(lists_state, &difference, &lists), pr.Plan_Refusal.None)
 	testing.expect_value(t, string(lists.added[:lists.added_length]), "store documents read write")
 	testing.expect_value(t, string(lists.removed[:lists.removed_length]), "disk calc narrowed, store notes read, start clock")
 }
@@ -587,4 +584,87 @@ test_plans_rollback_waits_for_the_decision_of_the_principal :: proc(t: ^testing.
 	current_generation_is(t, state, 2)
 	testing.expect_value(t, pending_ticket(state, 3), u64(0))
 	testing.expect_value(t, highest_generation(state, 3), u64(3))
+}
+
+// A plan has any count of entries: plans of 1, 32, 33 and 300 entries
+// (past the 32 of a plan of a fixed size), each addition an item of the
+// dialog. The plan of 300 commits, its generation object (past one call
+// of the store) reads back whole after the tables are forgotten, and its
+// difference to a plan of 1 entry removes 299 entries.
+@(private = "file")
+many_module_plan :: proc(count: int, tag: u8) -> pr.Plan_Spec {
+	plan := test_plan(0, u32(count), count)
+	for index in 0 ..< count {
+		name := strings.concatenate({"module_", strings.repeat("x", index % 7 + 1, context.temp_allocator), "_", string([]u8{u8('a' + index % 26), u8('a' + index / 26 % 26)}), "_", string([]u8{u8('a' + index / 676)})}, context.temp_allocator)
+		hash: blake3.Hash
+		hash[0], hash[1], hash[2] = u8(index), u8(index >> 8), tag
+		plan.entries[index], _ = pr.plan_entry_make_module(.Disk_Module, name, hash, 0)
+	}
+	return plan
+}
+
+@(test)
+test_plans_apply_shows_each_entry_of_a_plan_of_any_count :: proc(t: ^testing.T) {
+	for count in ([?]int{1, 32, 33, 300}) {
+		state := new(Plans_State)
+		defer free(state)
+		store := plans_test_state_init(state, 5)
+		defer free(store)
+		display: Test_Display
+		port := test_display_port(&display)
+		difference: pr.Plan_Difference
+		lists: Plan_Display_Lists
+		plan := many_module_plan(count, 1)
+		ticket, refusal := apply_request(state, &port, "home", &plan, {}, &difference, &lists)
+		testing.expectf(t, refusal == .None && ticket != 0, "%d entries: %v", count, refusal)
+		testing.expect_value(t, lists.added_count, count)
+		testing.expect_value(t, int(difference.change_count), count)
+		testing.expect_value(t, strings.count(display.added, ", "), count - 1)
+		display.decisions[ticket] = .Accepted
+		record, finished, poll_refusal := apply_poll(state, &port, 0, ticket, 100, &difference)
+		testing.expectf(t, finished && poll_refusal == .None, "%d entries: %v", count, poll_refusal)
+		// The tables read back from the store: the plan of each count.
+		forget(state)
+		read, read_record, found := current_plan(state, 0)
+		testing.expect(t, found && read_record == record && read.entry_count == u32(count))
+		if count == 300 {
+			small := many_module_plan(1, 1)
+			small_ticket, small_refusal := apply_request(state, &port, "home", &small, record.plan_hash, &difference, &lists)
+			testing.expect_value(t, small_refusal, pr.Plan_Refusal.None)
+			testing.expect_value(t, lists.removed_count, 299)
+			testing.expect_value(t, lists.added_count, 0)
+			_ = small_ticket
+		}
+		difference_release(state, &difference)
+		lists_release(state, &lists)
+		forget(state)
+	}
+}
+
+// A budget that pays no more: the apply is refused with No_Memory and
+// changes nothing, and each block that a refused step took comes back.
+@(test)
+test_plans_apply_refused_when_the_memory_ends :: proc(t: ^testing.T) {
+	state := new(Plans_State)
+	defer free(state)
+	store := plans_test_state_init(state, 5)
+	defer free(store)
+	memory := (^Test_Memory)(state.memory.user)
+	display: Test_Display
+	port := test_display_port(&display)
+	plan := many_module_plan(300, 2)
+	for bytes_left in ([?]int{0, 1, 300 * size_of(pr.Plan_Diff_Item), 300 * size_of(pr.Plan_Diff_Item) + 2 * 300 * 50}) {
+		difference: pr.Plan_Difference
+		lists: Plan_Display_Lists
+		memory.bytes_left = bytes_left
+		ticket, refusal := apply_request(state, &port, "home", &plan, {}, &difference, &lists)
+		testing.expectf(t, refusal == .No_Memory && ticket == 0, "%d bytes: %v", bytes_left, refusal)
+		testing.expect_value(t, pending_ticket(state, 0), u64(0))
+		difference_release(state, &difference)
+		lists_release(state, &lists)
+		testing.expect_value(t, memory.blocks_out, 0)
+	}
+	_, _, found := current_plan(state, 0)
+	testing.expect(t, !found)
+	testing.expect_value(t, store.writes, 0)
 }

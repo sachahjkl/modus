@@ -63,7 +63,12 @@ import "modus:system"
 // A command of a process to the compositor, on the ring of its window.
 Command :: enum u32 {
 	None           = 0, // Not a command.
-	Surface_Create = 1, // values: memory handle (in the compositor) with the word of the scale of the surface above its 32 bits (SURFACE_CREATE_SCALE_SHIFT), the logical width, the logical height, title (4 values). Its surface serial is 1.
+	// The first surface of the window. values: the handle of a budget that pays the surface alone (in the
+	// compositor, given with Spend and Read: surface_budget_pages) with the word of the scale of the surface
+	// above its 32 bits (SURFACE_CREATE_SCALE_SHIFT), the logical width, the logical height, title (4
+	// values). The compositor makes the surface with the budget and answers with Surface_Answer,
+	// Create_Taken and the copy of the surface for this process, or Create_Refused. Its surface serial is 1.
+	Surface_Create = 1,
 	// The pixels of the surface changed. values: the picture to show (0 or
 	// 1), then the rectangle that changed: x, y, width, height (width 0: the
 	// whole surface), then at PRESENT_KEY_SERIAL the serial of the newest
@@ -97,11 +102,13 @@ Command :: enum u32 {
 	// The surface of a new size, the answer to the event Resized: the
 	// compositor shows it from the next Present, and the old surface until
 	// then. Its size is the size of the event; the compositor takes one
-	// answer for each event, and refuses any other. values: memory handle
-	// (in the compositor), width, height in pixels of the screen at the
-	// scale of the surface shown, the next surface serial (surface_resize).
-	// The compositor answers with Surface_Answer, Resize_Taken or
-	// Resize_Refused; the window keeps the surface before it until then.
+	// answer for each event, and refuses any other. values: the handle of a
+	// budget that pays the surface alone (in the compositor), width, height
+	// in pixels of the screen at the scale of the surface shown, the next
+	// surface serial (surface_resize). The compositor makes the surface with
+	// the budget and answers with Surface_Answer, Resize_Taken and the copy
+	// of the surface for this process, or Resize_Refused; the window keeps
+	// the surface before it until then.
 	Surface_Resize = 7,
 	// The other answer to the event Resized: the window keeps its size,
 	// after a refused budget, or because the process does not take the
@@ -128,8 +135,11 @@ Command :: enum u32 {
 	// Capture_Size. No values.
 	Capture_Size_Ask = 12,
 	// The memory of the copy of the screen: a header page (Capture_Header),
-	// then two pictures of the size of the screen. values: memory handle
-	// (in the compositor), width, height.
+	// then two pictures of the size of the screen. values: the handle of a
+	// budget that pays that memory alone (in the compositor, given with
+	// Spend and Read: capture_budget_pages), width, height. The compositor
+	// makes the memory with it, so it never writes into memory that a
+	// client made, and answers with the event Capture_Opened.
 	Capture_Open     = 13,
 	// The process copied the picture of the last Capture_Frame, and the
 	// compositor may write it again. values: the picture.
@@ -156,10 +166,11 @@ Command :: enum u32 {
 	// released the old one (src/md/features/window_resize.md, "The
 	// rescale: one state machine on each side"): the same logical size,
 	// its pixels of the screen at the scale. The compositor answers with
-	// Surface_Answer, Rescale_Taken or Rescale_Refused, and shows a taken
-	// surface from the first Present of its serial. values: memory handle
-	// (in the compositor), the width and the height in pixels of the
-	// screen, the word of the scale, the surface serial.
+	// Surface_Answer, Rescale_Taken and the copy of the surface that it made
+	// for this process, or Rescale_Refused, and shows a taken surface from
+	// the first Present of its serial. values: the handle of a budget that
+	// pays the surface alone (in the compositor), the width and the height
+	// in pixels of the screen, the word of the scale, the surface serial.
 	Surface_Rescale  = 19,
 	// The window lets its surface of a serial go: the compositor unmaps
 	// it, shown or pending, ends a request of the principal, draws the
@@ -277,6 +288,14 @@ Capture_Header :: struct {
 // capture_pages gives the pages of the memory of a copy of a screen.
 capture_pages :: proc "contextless" (width, height: int) -> u64 {
 	return CAPTURE_HEADER_PAGES + (u64(PICTURE_COUNT * width * height * size_of(graphics.Color)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+}
+
+// capture_budget_pages gives the pages of a budget that pays the memory of
+// the capture face of a screen: its pages and its frame list, which the
+// client gives the compositor with Capture_Open.
+capture_budget_pages :: proc "contextless" (width, height: int) -> u64 {
+	pages := capture_pages(width, height)
+	return pages + op.memory_list_pages(pages)
 }
 
 // The kind of a content of the clipboard. A word of a record becomes a
@@ -530,6 +549,12 @@ Event_Kind :: enum u32 {
 	// A window sizes itself from it, never from the bar of one holder.
 	// values: the width, the height, each 1 to WORK_AREA_LIMIT.
 	Work_Area          = 12,
+	// The capture face: the answer of the compositor to Capture_Open. It made
+	// the memory of the copy of the screen with the budget that the client
+	// gave, and gives the client a copy with Read. values: that copy, as the
+	// client names it, or 0 when the compositor refused the budget. A window
+	// refuses it.
+	Capture_Opened     = 13,
 }
 
 // The largest width and height of a work area, in logical pixels: a place
@@ -771,6 +796,7 @@ Event :: struct {
 	windows_declined: int, // Settings_Changed: the windows that declined that scale, 0 to WINDOWS_DECLINED_LIMIT.
 	surface_answer: Surface_Answer_Kind, // Surface_Answer: the answer.
 	surface_serial: u64, // Surface_Answer: the serial that it names.
+	surface_memory: system.Handle, // Surface_Answer of a surface made (surface_answer_gives_surface): the copy for this process; else 0.
 }
 
 // One window of a process: its ring to the compositor and its surface.
@@ -795,7 +821,12 @@ Window :: struct {
 	decline_due:    bool,
 	decline_serial: u64,
 	decline_scale:  scale_factor.Scale,
-	before_resize: Kept_Surface, // The surface before a resize, kept until the answer of the compositor (scale.odin).
+	asked_surface: Asked_Surface, // The surface that the window asked the compositor to make, until the answer (scale.odin).
+	// The records that came before the answer of Surface_Create, while open
+	// waited for it: next_event gives them first, in their order.
+	early_records: [EARLY_RECORD_CAPACITY]Event_Record,
+	early_first, early_count: int,
+	early_records_dropped: u64, // The records past early_records: the compositor sends none (EARLY_RECORD_CAPACITY).
 	presented_serial: u64, // The surface serial of the last Present: 0 before the first one (picture_owed).
 	canvas:      graphics.Canvas, // Where the drawing module draws now, in pixels of the screen. A process that draws by hand draws in a logical picture of its own (interface.Hand_Picture).
 	pictures:    [2]graphics.Canvas, // The two pictures of the surface, in pixels of the screen.
@@ -891,21 +922,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	scale := scale_in_force()
 	window.rescale = {phase = .Steady, scale = scale, wanted = scale, serial = 1}
 	screen_width, screen_height := surface_size_of(width, height, scale)
-	address: rawptr
-	pages := (u64(screen_width * screen_height * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	window.surface, status = system.memory_create(pages, error = error)
-	if status != .Ok {
-		return {}, false
-	}
-	address, status = system.memory_map(window.surface, error = error)
-	if status != .Ok {
-		return {}, false
-	}
 	window.title_count = copy(window.title[:], title)
-	for &picture, index in window.pictures {
-		picture = {pixels = ([^]graphics.Color)(address)[index * screen_width * screen_height:], width = screen_width, height = screen_height, stride = screen_width}
-	}
-	window.canvas = window.pictures[0]
 
 	// The compositor maps the ring when the root service tells it of this
 	// process. Until then, the grant has no receiver.
@@ -914,7 +931,11 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	// loaded machine: succeeds on the first pass when the holder is ready.
 	OPEN_RING_WAIT_ATTEMPTS :: 2000
 	for attempt in 0 ..< OPEN_RING_WAIT_ATTEMPTS {
-		granted, status = system.give(window.ring_memory, window.surface, {.Read}, attempt == OPEN_RING_WAIT_ATTEMPTS - 1 ? error : nil) // The compositor reads the surface.
+		// The compositor makes the surface with a budget of it (scale.odin).
+		granted, status = surface_budget_give(&window, screen_width, screen_height, attempt == OPEN_RING_WAIT_ATTEMPTS - 1 ? error : nil)
+		if status == .No_Budget || status == .Bad_Operation {
+			break // The budget of this process does not pay the surface: no wait changes it.
+		}
 		if status == .Ok {
 			break
 		}
@@ -931,8 +952,115 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		kind = u32(Command.Surface_Create),
 		values = {u64(granted) | u64(scale) << SURFACE_CREATE_SCALE_SHIFT, u64(width), u64(height), name[0], name[1], name[2], name[3]},
 	}
+	// An answer of a surface that waits already is no answer of this
+	// open: an open before it failed, and the compositor answered late.
+	surface_answers_stale_close(&window)
 	system.send(&window.ring.commands, command)
+	memory, outcome := surface_create_answer_wait(&window, system.time() + SURFACE_CREATE_ANSWER_DEADLINE_MILLISECONDS)
+	mapped := outcome == .Taken && surface_answer_map(&window, memory, screen_width, screen_height)
+	if !mapped {
+		// The compositor may hold a window for this record (a late answer,
+		// a surface that did not map): the release of serial 1 before any
+		// Present ends it there, so a failed open leaves no window behind.
+		if outcome != .Refused {
+			system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Release), values = {0 = 1}})
+		}
+		system.ring_close(&window.ring)
+		errors.fail(error, 0, .Refused, .None, 0, i64(outcome))
+		return {}, false
+	}
 	return window, true
+}
+
+// What the wait of open for the answer of Surface_Create found.
+Create_Outcome :: enum u8 {
+	Taken, // Create_Taken: the compositor made the surface.
+	Refused, // Create_Refused: the compositor holds nothing.
+	Late, // No answer before the deadline.
+}
+
+// surface_answer_close closes the copy of a surface that an answer names
+// when it answers no request of the window: an answer that came late, or
+// of another serial. A number that came through no gift of the ring is no
+// handle of the window to close.
+@(private)
+surface_answer_close :: proc "contextless" (window: ^Window, memory: system.Handle) {
+	if memory == 0 {
+		return
+	}
+	if _, _, through := system.handle_state(memory, window.ring_memory); through {
+		system.close(memory)
+	}
+}
+
+// surface_answers_stale_close reads the records that wait before open sends
+// Surface_Create: an answer of a surface among them answers an open before
+// it, and its surface is closed; each other record is kept in order.
+@(private)
+surface_answers_stale_close :: proc "contextless" (window: ^Window) {
+	for record in system.receive(&window.ring.completions) {
+		if event, ok := event_of_record(record); ok && event.kind == .Surface_Answer {
+			surface_answer_close(window, event.surface_memory)
+			continue
+		}
+		early_record_keep(window, record)
+	}
+}
+
+// early_record_keep keeps a record that came before the answer of
+// Surface_Create, for next_event. A record past EARLY_RECORD_CAPACITY,
+// which the rule of the answer slot of the compositor never sends, is
+// counted, and the wait goes on.
+@(private)
+early_record_keep :: proc "contextless" (window: ^Window, record: Event_Record) {
+	if window.early_count == EARLY_RECORD_CAPACITY {
+		window.early_records_dropped += 1
+		return
+	}
+	window.early_records[(window.early_first + window.early_count) % EARLY_RECORD_CAPACITY] = record
+	window.early_count += 1
+}
+
+// surface_create_answer_wait waits for the answer of Surface_Create, until
+// deadline, and gives the copy of the surface that the compositor made.
+// Each other record that comes first is kept in order (early_record_keep),
+// which next_event gives first, so no event of a new window is lost; the
+// wait ends only at the answer or at the deadline.
+@(private)
+surface_create_answer_wait :: proc "contextless" (window: ^Window, deadline: u64) -> (memory: system.Handle, outcome: Create_Outcome) {
+	defer if window.early_records_dropped > 0 {
+		system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": ", window.early_records_dropped, " records came before the answer of the compositor, past the records that the window keeps: they are lost")
+	}
+	for {
+		record, received := system.receive(&window.ring.completions)
+		if !received {
+			if system.time() >= deadline {
+				return 0, .Late
+			}
+			list: system.Wait
+			system.wait_records(&list, &window.ring.completions)
+			system.wait_end(&list, deadline)
+			continue
+		}
+		event, read_ok := event_of_record(record)
+		if read_ok && event.kind == .Surface_Answer {
+			switch event.surface_answer {
+			case .Create_Taken:
+				if event.surface_serial == 1 {
+					return event.surface_memory, .Taken
+				}
+			case .Create_Refused:
+				if event.surface_serial == 1 {
+					return 0, .Refused
+				}
+			case .Released, .Rescale_Taken, .Rescale_Refused, .Resize_Taken, .Resize_Refused:
+				// A window with no surface made no request that these answer.
+			}
+			surface_answer_close(window, event.surface_memory)
+			continue
+		}
+		early_record_keep(window, record)
+	}
 }
 
 // The names of the arguments of open, for the sentence of a record that
@@ -944,6 +1072,38 @@ OPEN_ARGUMENTS := [?]string{"ctx", "width", "height", "title"}
 // that the process draws. The compositor refuses a surface with less
 // memory.
 PICTURE_COUNT :: 2
+
+// The records that open keeps while it waits for the answer of
+// Surface_Create. The compositor sends an answer of a surface to the ring,
+// or to the one answer slot of the window, which goes before each other
+// waiting event when the ring has room (bar.Answer_Slot): so no more
+// records than the ring holds come before the answer.
+EARLY_RECORD_CAPACITY :: ring.CAPACITY
+
+// A record of the ring of a window: the field ring of Window hides the
+// package inside the record.
+Event_Record :: ring.Record
+
+// The deadline of the wait of open for the answer of Surface_Create: a
+// deadline of the display contract, not a bound of a test. The compositor
+// answers in its next turn; the deadline only ends the wait for a
+// compositor that stopped.
+SURFACE_CREATE_ANSWER_DEADLINE_MILLISECONDS :: 10_000
+
+// surface_budget_pages gives the pages of a budget that pays the surface
+// of a size in pixels of the screen: its two pictures, and the frame list
+// of its memory object, which the budget pays too (op.memory_list_pages).
+// A window gives the compositor a budget of these pages, and the
+// compositor refuses one that holds fewer. A size past SURFACE_SCREEN_LIMIT
+// on a side gives 0: no budget pays it.
+surface_budget_pages :: proc "contextless" (screen_width, screen_height: u64) -> u64 {
+	if screen_width == 0 || screen_height == 0 || screen_width > u64(SURFACE_SCREEN_LIMIT) || screen_height > u64(SURFACE_SCREEN_LIMIT) {
+		return 0
+	}
+	bytes := screen_width * screen_height * size_of(graphics.Color) * PICTURE_COUNT
+	pages := (bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	return pages + op.memory_list_pages(pages)
+}
 
 // present tells the compositor that the picture in window.canvas is
 // complete. It gives false when the command ring was full: the compositor
@@ -1093,7 +1253,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	// The new surface keeps the scale of the window, which is the scale of
 	// the compositor in the phase Steady; it has the next serial.
 	screen_width, screen_height := surface_size_of(width, height, window.rescale.scale)
-	memory, address, granted, status := surface_make(window, screen_width, screen_height)
+	granted, status := surface_budget_give(window, screen_width, screen_height)
 	if status != .Ok {
 		errors.fail(error, 0, status == .No_Budget ? errors.Kind.Budget : errors.Kind.Refused, .None, 2, i64(screen_width), i64(screen_height))
 		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.view_width), "x", u64(window.view_height))
@@ -1101,18 +1261,15 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 		_ = resize_decline(window)
 		return status
 	}
-	// The machine takes the next serial and waits for the answer. The
-	// surface before it stays mapped until then: a refusal draws it again,
-	// as the compositor still shows it.
+	// The machine takes the next serial and waits for the answer, which
+	// names the surface that the compositor made (rescale_take). The
+	// surface before it stays the surface of the window until then: the
+	// compositor shows it, and a refusal keeps it.
 	_, _ = rescale_step(&window.rescale, {kind = .Resize_Offered})
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Resize), values = {0 = u64(granted), 1 = u64(screen_width), 2 = u64(screen_height), 3 = window.rescale.serial}})
 	window.resize_asked = false
-	window.before_resize = {memory = window.surface, pictures = window.pictures, width = window.view_width, height = window.view_height, layout_width = window.width, layout_height = window.height}
-	window.surface = 0 // surface_take lets go of no surface: the kept one stays mapped.
-	surface_take(window, memory, address, screen_width, screen_height)
-	window.view_width, window.view_height = width, height
-	window.width, window.height = layout_size_of(width, height, window.resizable, window.size_limits, window.opened_width, window.opened_height)
-	window.resized_picture_due = true
+	layout_width, layout_height := layout_size_of(width, height, window.resizable, window.size_limits, window.opened_width, window.opened_height)
+	window.asked_surface = {screen_width = screen_width, screen_height = screen_height, view_width = width, view_height = height, layout_width = layout_width, layout_height = layout_height}
 	return .Ok
 }
 
@@ -1275,6 +1432,10 @@ wait :: proc "contextless" (window: ^Window, deadline: u64 = system.WAIT_FOREVER
 // after canvas_free said no, the event of the surface: the wait also ends
 // when the compositor has read the ring of the window.
 wait_events :: proc "contextless" (list: ^system.Wait, window: ^Window) {
+	// The records that open kept are events that wait already.
+	if window.early_count > 0 {
+		list.full = true
+	}
 	system.wait_records(list, &window.ring.completions)
 	if window.wake_when_free {
 		canvas_event_wait(list, window)
@@ -1295,7 +1456,14 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 	// A record of the rescale that a full ring did not take goes first.
 	rescale_due_run(window)
 	for {
-		record := system.receive(&window.ring.completions) or_return
+		record: ring.Record
+		if window.early_count > 0 {
+			record = window.early_records[window.early_first]
+			window.early_first = (window.early_first + 1) % EARLY_RECORD_CAPACITY
+			window.early_count -= 1
+		} else {
+			record = system.receive(&window.ring.completions) or_return
+		}
 		read, read_ok := event_of_record(record)
 		if !read_ok {
 			system.log(.Warning, "display: ", string(window.title[:window.title_count]), ": the compositor sent a record of the kind ", u64(record.kind), ", which names no event or has a size out of its range: it is refused")
@@ -1312,6 +1480,11 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		if read.kind == .Surface_Answer {
 			kind: Rescale_Input_Kind
 			switch read.surface_answer {
+			case .Create_Taken, .Create_Refused:
+				// open took the answer of its Surface_Create: a second one
+				// answers no request. A copy that it names is closed.
+				surface_answer_close(window, read.surface_memory)
+				continue
 			case .Released:
 				kind = .Released
 			case .Rescale_Taken:
@@ -1323,7 +1496,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			case .Resize_Refused:
 				kind = .Resize_Refused
 			}
-			rescale_take(window, {kind = kind, serial = read.surface_serial})
+			rescale_take(window, {kind = kind, serial = read.surface_serial, memory = read.surface_memory})
 		}
 		if read.kind == .Resized {
 			window.resize_asked = true
@@ -1409,7 +1582,13 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		if !answer_ok || record.values[1] == 0 {
 			return {}, false
 		}
-		event.surface_answer, event.surface_serial = answer, record.values[1]
+		// The copy of a surface is a handle of 32 bits, in the answers that
+		// give one only.
+		memory := record.values[2]
+		if surface_answer_gives_surface(answer) ? memory == 0 || memory > u64(max(u32)) : memory != 0 {
+			return {}, false
+		}
+		event.surface_answer, event.surface_serial, event.surface_memory = answer, record.values[1], system.Handle(memory)
 	case .Go_To:
 		// A hash is 32 bits: a word past them names no act name.
 		if record.values[0] > u64(max(u32)) {
@@ -1448,7 +1627,7 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 			return {}, false
 		}
 		event.width, event.height = int(width), int(height)
-	case .Capture_Size, .Capture_Frame, .Capture_Disconnect:
+	case .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened:
 		// The records of the capture face: the service of the remote
 		// display reads them itself, and a window takes none.
 		return {}, false

@@ -904,7 +904,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Settings_Changed:
 				// A new font: each text of the band is drawn again.
 				interface.draw_whole_window_next(&window_memory.drawing)
-			case .None, .Pointer, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Surface_Answer, .Work_Area:
+			case .None, .Pointer, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

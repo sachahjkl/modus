@@ -99,11 +99,14 @@ import "modus:system"
 // (docs/QUIC.md, section 7); the mappings of the call ring and the call
 // region of each of its 128 connections to services (the share of the root
 // service, remote.SERVICE_CONNECTIONS), which the root service makes and
-// pays: up to 4 page tables and directories each, 512 pages; and the glyph
+// pays: up to 4 page tables and directories each, 512 pages; the glyph
 // memory of the copy of the text rendering of the drawing module, which
-// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 6912 + 512 + 354 =
-// 7778, under the least largest budget of a process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7778, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES); and a first share
+// for the tables of the mesh, its objects by hash and its exchanged stores:
+// 2048 pages. Those tables grow past it as far as the budget that the
+// starter gives pays (mesh.odin), so the share is no bound. 6912 + 512 +
+// 354 + 2048 = 9826, under the least largest budget of a process.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9826, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	@(require_results)
@@ -268,6 +271,9 @@ Record_Client :: struct {
 	// the machine of an open pairing (machine_wire.peer_admits). Its streams
 	// carry mesh frames only, and no call acts for a principal.
 	mesh_only:  bool,
+	// The connection closed, and the offers of its machine that stalled
+	// between two pages gave their pages back (mesh_partner_connection_end).
+	exchanges_ended: bool,
 }
 record_clients: [CAPACITY]Record_Client
 
@@ -746,6 +752,10 @@ calls_work :: proc "contextless" () {
 				call^ = {phase = .Reading, identifier = stream.identifier, generation = record.generation, phase_started_at = now}
 			}
 			call_work(connection, record.remote, call, call_buffers[place * STREAMS_PER_CONNECTION + slot][:], now)
+		}
+		if connection.state == .Closed && !client.exchanges_ended {
+			client.exchanges_ended = true
+			mesh_partner_connection_end(client.key) // mesh.odin
 		}
 		if connection.state == .Closed && !record_log.end_logged {
 			record_log.end_logged = true

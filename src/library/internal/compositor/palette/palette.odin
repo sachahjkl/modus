@@ -405,12 +405,13 @@ FRONT_WINDOW_ENTRY_COUNT :: 3
 // windows, the front one first; the names of the modules, in the order of
 // their table; the close of each window; then the entries of the palette
 // provider. table is the mapping of the table of the provider, or nil with
-// no provider: the list copies it and checks the copy
-// (palette_table.snapshot_take), and reads only the copy after that. A
+// no provider, and entries the place of its entries that the reader holds:
+// the list copies them and checks the copy (palette_table.snapshot_take),
+// and reads only the copy after that. A
 // table that fails gives a list with no entry of a provider, and its
 // problem. uses: what the panel remembers of the entries that the input
 // ran (panel_uses).
-list_collect :: proc "contextless" (list: ^List, uses: Uses, process_names: []string, windows: []Window, table: []u8) -> (problem: palette_table.Problem, problem_index: int) {
+list_collect :: proc "contextless" (list: ^List, uses: Uses, process_names: []string, windows: []Window, table: []u8, entries: palette_table.Entries_Source) -> (problem: palette_table.Problem, problem_index: int) {
 	list.entry_count = 0
 	list.provider = .Absent
 	for window in windows {
@@ -449,7 +450,7 @@ list_collect :: proc "contextless" (list: ^List, uses: Uses, process_names: []st
 		list.snapshot.entry_count = 0
 		return .None, 0
 	}
-	problem, problem_index = palette_table.snapshot_take(table, &list.snapshot)
+	problem, problem_index = palette_table.snapshot_take(table, entries, &list.snapshot)
 	if problem != .None {
 		list.provider = .Refused
 		return
@@ -545,7 +546,7 @@ entries_collect :: proc "contextless" (panel: ^Panel, process_names: []string, w
 	// The list is made in its own memory: what the panel showed is kept
 	// first.
 	shown := panel_shown(panel)
-	list_collect(panel.list, panel_uses(panel), process_names, windows, nil)
+	list_collect(panel.list, panel_uses(panel), process_names, windows, nil, {})
 	list_rank(panel.list, typed_text(panel))
 	return panel_adopt_after(panel, panel.list, shown)
 }

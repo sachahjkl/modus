@@ -74,7 +74,7 @@ roles_test_hash :: proc(tag: u8) -> blake3.Hash {
 
 @(private = "file")
 role_plan :: proc(principal: u64, role: role_contract.Role, tag: u8) -> pr.Plan_Spec {
-	plan := pr.Plan_Spec{principal = principal, entry_count = 1}
+	plan := test_plan(principal, 1)
 	plan.entries[0], _ = pr.plan_entry_make_role("holder", role, roles_test_hash(tag))
 	return plan
 }
@@ -152,7 +152,7 @@ test_plans_no_roles_port_refuses_a_role_only :: proc(t: ^testing.T) {
 	plan := role_plan(0, .Display, 1)
 	_, refusal := apply_now(state, &plan, {})
 	testing.expect_value(t, refusal, pr.Plan_Refusal.Roles_Refused)
-	module_only := pr.Plan_Spec{principal = 0, entry_count = 1}
+	module_only := test_plan(0, 1)
 	module_only.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", roles_test_hash(9), 0)
 	record, module_refusal := apply_now(state, &module_only, {})
 	testing.expect_value(t, module_refusal, pr.Plan_Refusal.None)
@@ -240,14 +240,14 @@ test_plans_store_failure_gives_the_core_its_roles_back :: proc(t: ^testing.T) {
 // one override: refused before the core is asked.
 @(test)
 test_plans_roles_set_of_refuses_two_outermost_holders :: proc(t: ^testing.T) {
-	plan := pr.Plan_Spec{principal = 0, entry_count = 2}
+	plan := test_plan(0, 2)
 	plan.entries[0], _ = pr.plan_entry_make_role("first", .Assistive, roles_test_hash(1))
 	plan.entries[1], _ = pr.plan_entry_make_role("second", .Assistive, roles_test_hash(2))
 	set: rd.Plan_Roles_Set
 	testing.expect(t, !plan_roles_set_of(&plan, 1, 0, &set))
 
 	// An interposer over the first module is the one that callers reach.
-	chained := pr.Plan_Spec{principal = 0, entry_count = 2}
+	chained := test_plan(0, 2)
 	chained.entries[0], _ = pr.plan_entry_make_role("inner", .Storage, roles_test_hash(1))
 	chained.entries[1], _ = pr.plan_entry_make_role("outer", .Storage, roles_test_hash(2))
 	chained.entries[1].interposed_over_hash = roles_test_hash(1)
@@ -439,7 +439,7 @@ test_plans_start_with_no_plan_asks_nothing :: proc(t: ^testing.T) {
 
 	// A plan of principal 0 with no role still is a current plan: the
 	// start gives its empty set, and says Applied.
-	module_only := pr.Plan_Spec{principal = 0, entry_count = 1}
+	module_only := test_plan(0, 1)
 	module_only.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", roles_test_hash(9), 0)
 	_, refusal := apply_now(state, &module_only, {})
 	testing.expect_value(t, refusal, pr.Plan_Refusal.None)

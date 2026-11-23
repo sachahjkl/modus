@@ -630,3 +630,47 @@ arena_trim_gives_back_the_pages_past_what_it_keeps :: proc(t: ^testing.T) {
 	testing.expect_value(t, large.pages_of_the_fake, large.committed_pages)
 	testing.expect(t, large.used_bytes <= large.committed_pages * PAGE_SIZE)
 }
+
+// An arena of exact commits: arena_push_commit_pages gives each page that
+// the push then takes from the budget, at the edges of a page and of the
+// budget; a push that the budget cannot pay changes nothing. With the step
+// of the growth, the count is the step.
+@(test)
+arena_push_commit_pages_names_each_page_that_the_push_takes :: proc(t: ^testing.T) {
+	fake := fake_reservation(1024, 3)
+	fake.arena.exact_commits = true
+	pages, fits := arena_push_commit_pages(&fake.arena, PAGE_SIZE, 8)
+	testing.expect(t, fits && pages == 1)
+	_, status := arena_push(&fake.arena, PAGE_SIZE, 8)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, fake.budget_pages, u64(2))
+	// One byte more needs one page; the two pages left pay two pages, not three.
+	pages, fits = arena_push_commit_pages(&fake.arena, 1, 1)
+	testing.expect(t, fits && pages == 1)
+	pages, fits = arena_push_commit_pages(&fake.arena, 2 * PAGE_SIZE, 1)
+	testing.expect(t, fits && pages == 2)
+	pages, fits = arena_push_commit_pages(&fake.arena, 2 * PAGE_SIZE + 1, 1)
+	testing.expect(t, fits && pages == 3)
+	_, status = arena_push(&fake.arena, 2 * PAGE_SIZE + 1, 1)
+	testing.expect_value(t, status, Status.No_Budget)
+	testing.expect(t, fake.budget_pages == 2 && fake.arena.committed_pages == 1)
+	_, status = arena_push(&fake.arena, 2 * PAGE_SIZE, 1)
+	testing.expect(t, status == .Ok && fake.budget_pages == 0)
+	// Inside the committed pages: no page.
+	fake.arena.used_bytes = PAGE_SIZE
+	pages, fits = arena_push_commit_pages(&fake.arena, PAGE_SIZE, 1)
+	testing.expect(t, fits && pages == 0)
+	// Past the reservation, a size of 0, a bad alignment: no push.
+	_, fits = arena_push_commit_pages(&fake.arena, 1024 * PAGE_SIZE, 1)
+	testing.expect(t, !fits)
+	_, fits = arena_push_commit_pages(&fake.arena, 0, 1)
+	testing.expect(t, !fits)
+	_, fits = arena_push_commit_pages(&fake.arena, 1, 3)
+	testing.expect(t, !fits)
+
+	stepped := fake_reservation(1024, 1000)
+	pages, fits = arena_push_commit_pages(&stepped.arena, 1, 1)
+	testing.expect(t, fits && pages == ARENA_GROWTH_STEP_FIRST_PAGES)
+	_, status = arena_push(&stepped.arena, 1, 1)
+	testing.expect(t, status == .Ok && stepped.budget_pages == 1000 - ARENA_GROWTH_STEP_FIRST_PAGES)
+}

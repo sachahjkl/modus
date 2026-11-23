@@ -257,7 +257,8 @@ display_refusal_case :: proc "contextless" (ctx: ^system.Context) {
 	name := "not the holder of plans"
 	added := "notes: store documents"
 	removed := ""
-	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {text = transmute([]u8)added}, {text = transmute([]u8)removed}}
+	// No object: the display refuses the caller before it reads one.
+	arguments := [4]isolated.Argument{{text = transmute([]u8)name}, {integer = 0}, {integer = u64(len(added))}, {integer = u64(len(removed))}}
 	error: errors.Error_Record
 	result, outcome := system.call_isolated(&connection, file, ask, arguments[:], &error)
 	if outcome != .Grant_Or_Right_Missing || result != 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {

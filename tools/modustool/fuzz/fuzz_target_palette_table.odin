@@ -100,7 +100,7 @@ fuzz_palette_entries_check :: proc() -> Fuzz_Verdict {
 	mem.copy(&header, raw_data(memory), size_of(header))
 	header_before := header
 	snapshot := fuzz_palette_snapshot
-	problem, index := palette_table.snapshot_take(memory, snapshot)
+	problem, index := palette_table.snapshot_take(memory, palette_table.entries_of_table(memory), snapshot)
 	mem.copy(&header, raw_data(memory), size_of(header))
 	if header != header_before {
 		return fuzz_broken(.Contract, "snapshot_take changed the header of the table")

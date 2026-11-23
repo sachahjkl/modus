@@ -32,29 +32,52 @@ store_row :: proc(name: string, rights: Plan_Store_Rights) -> (row: Plan_Entry_R
 
 @(private = "file")
 plan_is_zero :: proc(plan: ^Plan_Spec) -> bool {
-	return plan.entry_count == 0 && plan.principal == 0 && plan.entries[0].kind_word == 0
+	return plan.entry_count == 0 && plan.principal == 0
 }
 
 @(test)
 plan_of_rows_refuses_empty_and_past_the_bound :: proc(t: ^testing.T) {
-	plan: Plan_Spec
+	plan := test_plan(0, 0)
 	refusal, _ := plan_of_rows(3, nil, &plan)
 	testing.expect_value(t, refusal, Plan_Refusal.Empty_Plan)
 	testing.expect(t, plan_is_zero(&plan))
 
-	rows: [MAX_PLAN_ENTRIES + 1]Plan_Entry_Row
+	// 300 rows, past the 32 of a plan of a fixed size: a plan whose memory
+	// holds one row fewer refuses them, and one that holds them takes them.
+	ROWS :: 300
+	rows := make([]Plan_Entry_Row, ROWS, context.temp_allocator)
 	for index in 0 ..< len(rows) {
 		rows[index] = module_row("m", u8(index))
+		rows[index].module_hash[1] = u8(index >> 8)
 		rows[index].name[1] = 'a' + u8(index % 26)
 		rows[index].name[2] = 'a' + u8(index / 26)
 	}
-	refusal, _ = plan_of_rows(3, rows[:], &plan)
+	short := test_plan(0, 0, ROWS - 1)
+	refusal, _ = plan_of_rows(3, rows[:], &short)
 	testing.expect_value(t, refusal, Plan_Refusal.Too_Many_Entries)
-	testing.expect(t, plan_is_zero(&plan))
+	testing.expect(t, plan_is_zero(&short))
 
-	refusal, _ = plan_of_rows(3, rows[:MAX_PLAN_ENTRIES], &plan)
+	whole := test_plan(0, 0, ROWS)
+	refusal, _ = plan_of_rows(3, rows[:], &whole)
 	testing.expect_value(t, refusal, Plan_Refusal.None)
-	testing.expect_value(t, plan.entry_count, u32(MAX_PLAN_ENTRIES))
+	testing.expect_value(t, whole.entry_count, u32(ROWS))
+	// The rows of a generation of 300 entries cross the store and back.
+	digest, _ := plan_hash(&whole)
+	record := Applied_Plan_Record{plan_hash = digest, generation = 1, principal = 3}
+	object := make([]u8, plan_generation_size(ROWS), context.temp_allocator)
+	written, encode_refusal := encode_plan_generation(&record, &whole, object)
+	testing.expect(t, encode_refusal == .None && written == len(object))
+	count, count_ok := plan_generation_entry_count(object)
+	testing.expect(t, count_ok && count == ROWS)
+	_, count_ok = plan_generation_entry_count(object[:len(object) - 1])
+	testing.expect(t, !count_ok)
+	back := test_plan(0, 0, ROWS)
+	back_record, decode_refusal := decode_plan_generation(object, 3, 1, &back)
+	testing.expect(t, decode_refusal == .None && back_record == record && back.entry_count == ROWS)
+	small := test_plan(0, 0, ROWS - 1)
+	_, decode_refusal = decode_plan_generation(object, 3, 1, &small)
+	testing.expect_value(t, decode_refusal, Plan_Refusal.Buffer_Too_Small)
+	testing.expect(t, plan_is_zero(&small))
 
 	refusal, _ = plan_of_rows(3, rows[:1], nil)
 	testing.expect_value(t, refusal, Plan_Refusal.Buffer_Too_Small)
@@ -62,7 +85,7 @@ plan_of_rows_refuses_empty_and_past_the_bound :: proc(t: ^testing.T) {
 
 @(test)
 plan_of_rows_refuses_each_damaged_row_and_leaves_no_plan :: proc(t: ^testing.T) {
-	plan: Plan_Spec
+	plan := test_plan(0, 0)
 	good := module_row("server", 1)
 
 	empty_name := good
@@ -113,11 +136,11 @@ plan_of_rows_refuses_each_damaged_row_and_leaves_no_plan :: proc(t: ^testing.T) 
 @(test)
 plan_of_rows_gives_the_plan_of_the_makers :: proc(t: ^testing.T) {
 	rows := [2]Plan_Entry_Row{module_row("server", 1), store_row("home", .Read_Write)}
-	from_rows: Plan_Spec
+	from_rows := test_plan(0, 0)
 	refusal, _ := plan_of_rows(7, rows[:], &from_rows)
 	testing.expect_value(t, refusal, Plan_Refusal.None)
 
-	made: Plan_Spec
+	made := test_plan(0, 0)
 	made.principal = 7
 	made.entry_count = 2
 	made.entries[0], _ = plan_entry_make_module(.Start_Module, "server", blake3.Hash(row_hash(1)))
@@ -135,9 +158,9 @@ plan_of_rows_gives_the_plan_of_the_makers :: proc(t: ^testing.T) {
 @(test)
 difference_summary_and_rows_carry_the_consent :: proc(t: ^testing.T) {
 	rows := [1]Plan_Entry_Row{store_row("home", .Read_Write)}
-	proposed: Plan_Spec
+	proposed := test_plan(0, 0)
 	plan_of_rows(2, rows[:], &proposed)
-	difference: Plan_Difference
+	difference := test_difference()
 	testing.expect_value(t, plan_diff_compute(nil, &proposed, &difference), Plan_Refusal.None)
 	summary := plan_difference_summary_of(&difference)
 	consent, consent_ok := plan_consent_of_word(u64(summary.consent_word))
@@ -153,7 +176,7 @@ difference_summary_and_rows_carry_the_consent :: proc(t: ^testing.T) {
 
 	// Narrowing the store needs no consent.
 	narrower := [1]Plan_Entry_Row{store_row("home", .Read_Only)}
-	next: Plan_Spec
+	next := test_plan(0, 0)
 	plan_of_rows(2, narrower[:], &next)
 	testing.expect_value(t, plan_diff_compute(&proposed, &next, &difference), Plan_Refusal.None)
 	summary = plan_difference_summary_of(&difference)

@@ -1165,7 +1165,7 @@ table_make :: proc(given: []Given) -> []u8 {
 
 @(private = "file")
 collect_with_table :: proc(panel: ^Panel, table: []u8) -> palette_table.Problem {
-	problem, _ := list_collect(panel.list, {}, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}, table)
+	problem, _ := list_collect(panel.list, {}, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}, table, palette_table.entries_of_table(table))
 	list_build(panel)
 	return problem
 }
@@ -1566,7 +1566,7 @@ the_candidates_of_a_field :: proc(t: ^testing.T) {
 		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
 		candidate.length = u8(copy(candidate.name[:], name))
 	}
-	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Process))
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Process), 0, u64(len(names)), 0)
 	testing.expect_value(t, form.shown_count, 4)
 	testing.expect_value(t, form.candidate_choice, 0)
 	form_field_edit(panel, .Character, 'p')
@@ -1581,12 +1581,12 @@ the_candidates_of_a_field :: proc(t: ^testing.T) {
 	testing.expect(t, !form_candidate_take(form), "the field holds the candidate")
 	// A count past the area, a kind out of its range, a name with a byte
 	// that the font does not draw: no candidate.
-	form_candidates_set(form, table, palette_table.CANDIDATE_CAPACITY + 1, 1)
+	form_candidates_set(form, table, palette_table.CANDIDATE_CAPACITY + 1, 1, 0, palette_table.CANDIDATE_CAPACITY + 1, 0)
 	testing.expect_value(t, form.candidate_count, 0)
-	form_candidates_set(form, table, 4, 99)
+	form_candidates_set(form, table, 4, 99, 0, 4, 0)
 	testing.expect_value(t, form.candidate_count, 0)
 	table[palette_table.CANDIDATES_OFFSET + 3] = 1
-	form_candidates_set(form, table, 4, 1)
+	form_candidates_set(form, table, 4, 1, 0, 4, 0)
 	testing.expect_value(t, form.candidate_count, 0)
 	testing.expect_value(t, form.candidate_choice, NO_ROW)
 }
@@ -1859,7 +1859,7 @@ tab_waits_for_the_candidates :: proc(t: ^testing.T) {
 	}
 	// The answer: the wait ends, and Tab takes the candidate that the
 	// typed text chose.
-	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Process))
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Process), 0, u64(len(names)), 0)
 	testing.expect(t, !form.candidates_pending)
 	testing.expect_value(t, form_tab(form), Tab_Effect.Takes)
 	testing.expect_value(t, candidate_name(form, form.candidate_choice), "plasma")
@@ -2036,7 +2036,7 @@ the_pointer_on_the_candidates :: proc(t: ^testing.T) {
 		name := [2]u8{'a' + u8(index), 'x'}
 		candidate.length = u8(copy(candidate.name[:], name[:]))
 	}
-	form_candidates_set(form, table, COUNT, u64(palette_table.Candidate_Kind.Module))
+	form_candidates_set(form, table, COUNT, u64(palette_table.Candidate_Kind.Module), 0, COUNT, 0)
 	testing.expect_value(t, form.shown_count, COUNT)
 	testing.expect_value(t, candidate_at(panel, x, y, x + 8, y + LIST_TOP + 4), 0)
 	testing.expect_value(t, candidate_at(panel, x, y, x + 8, y + LIST_TOP + 3 * ROW_HEIGHT + 4), 3)
@@ -2283,23 +2283,23 @@ the_control_of_a_field :: proc(t: ^testing.T) {
 		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
 		candidate.length = u8(copy(candidate.name[:], name))
 	}
-	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED, 3, 0)
 	testing.expect_value(t, field_control(form, 0), Field_Control.Buttons)
 	testing.expect_value(t, key_action_for(panel, .Right), Action.Candidate_Next)
 	testing.expect_value(t, key_action_for(panel, .Home), Action.Field_Edit)
 	// Suggestions are a list, also when they are few.
-	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), 0)
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), 0, 3, 0)
 	testing.expect_value(t, field_control(form, 0), Field_Control.Candidate_List)
 	testing.expect_value(t, key_action_for(panel, .Right), Action.Field_Edit)
 	// More closed values than a row holds are a list.
-	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	form_candidates_set(form, table, u64(len(names)), u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED, u64(len(names)), 0)
 	testing.expect_value(t, field_control(form, 0), Field_Control.Candidate_List)
 	// A fact that the contract does not know: no candidate.
-	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), 2)
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), 2, 3, 0)
 	testing.expect_value(t, form.candidate_count, 0)
 	testing.expect_value(t, field_control(form, 0), Field_Control.Text)
 	// Right chooses fair, and Enter takes it before the form runs.
-	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED, 3, 0)
 	testing.expect(t, form_candidate_move(form, 1))
 	ready, _ := form_submit(panel, false)
 	testing.expect(t, ready)
@@ -2413,7 +2413,7 @@ a_press_on_a_button_of_a_field :: proc(t: ^testing.T) {
 		candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
 		candidate.length = u8(copy(candidate.name[:], name))
 	}
-	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED)
+	form_candidates_set(form, table, 3, u64(palette_table.Candidate_Kind.Strategy), palette_table.CANDIDATES_CLOSED, 3, 0)
 	screen := screen_make()
 	defer screen_free(screen)
 	panel_build(screen, panel)
@@ -2562,7 +2562,7 @@ any_count_of_entries_0_1_500_5000 :: proc(t: ^testing.T) {
 		defer panel_free(panel)
 		table := table_make_numbered(count)
 		defer delete(table)
-		problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+		problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table, palette_table.entries_of_table(table))
 		testing.expect_value(t, problem, palette_table.Problem.None)
 		testing.expect_value(t, panel.list.provider, Provider_State.Ready)
 		testing.expect_value(t, panel.list.entry_count, count)
@@ -2583,7 +2583,7 @@ any_count_of_entries_0_1_500_5000 :: proc(t: ^testing.T) {
 			// Verify frecency boosts a frequently-used deep entry to rank 0.
 			recent_note(panel, chosen_entry(panel))
 			recent_note(panel, chosen_entry(panel))
-			problem2, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+			problem2, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table, palette_table.entries_of_table(table))
 			testing.expect_value(t, problem2, palette_table.Problem.None)
 			line_editor.line_clear(&panel.line)
 			type_text(panel, ">cmd_")
@@ -2608,7 +2608,7 @@ virtual_viewport_scroll_offsets :: proc(t: ^testing.T) {
 	defer panel_free(panel)
 	table := table_make_numbered(COUNT)
 	defer delete(table)
-	problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+	problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table, palette_table.entries_of_table(table))
 	testing.expect_value(t, problem, palette_table.Problem.None)
 	panel_open(panel)
 	type_text(panel, ">cmd_")
@@ -2678,24 +2678,24 @@ malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
 	entries_buf := make([]palette_table.Entry, 4)
 	defer delete(entries_buf)
 	snap := palette_table.Snapshot{entries = entries_buf}
-	problem, _ := palette_table.snapshot_take(valid, &snap)
+	problem, _ := palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.None)
 	saved_first := entries_buf[0]
 
 	// Truncated by 1 byte -> Too_Small, entries_buf untouched.
-	problem, _ = palette_table.snapshot_take(valid[:len(valid) - 1], &snap)
+	problem, _ = palette_table.snapshot_take(valid[:len(valid) - 1], palette_table.entries_of_table(valid[:len(valid) - 1]), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
 	testing.expect_value(t, snap.entry_count, 0)
 	testing.expect_value(t, snap.generation, 0)
 	testing.expect_value(t, entries_buf[0], saved_first)
 
 	// Truncated below MIN_TABLE_BYTES -> Too_Small, entries_buf untouched.
-	problem, _ = palette_table.snapshot_take(valid[:palette_table.MIN_TABLE_BYTES - 1], &snap)
+	problem, _ = palette_table.snapshot_take(valid[:palette_table.MIN_TABLE_BYTES - 1], palette_table.entries_of_table(valid[:palette_table.MIN_TABLE_BYTES - 1]), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
 	testing.expect_value(t, entries_buf[0], saved_first)
 
 	// Empty slice -> Too_Small, entries_buf untouched.
-	problem, _ = palette_table.snapshot_take(nil, &snap)
+	problem, _ = palette_table.snapshot_take(nil, palette_table.entries_of_table(nil), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
 	testing.expect_value(t, entries_buf[0], saved_first)
 
@@ -2704,7 +2704,7 @@ malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
 	orig_len := header.byte_length
 	for bad_len in ([3]u64{0, orig_len + 1, max(u64)}) {
 		header.byte_length = bad_len
-		problem, _ = palette_table.snapshot_take(valid, &snap)
+		problem, _ = palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 		testing.expect_value(t, problem, palette_table.Problem.Bad_Byte_Length)
 		testing.expect_value(t, entries_buf[0], saved_first)
 	}
@@ -2712,12 +2712,12 @@ malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
 
 	// Corrupt magic / version -> refused, entries_buf untouched.
 	header.magic = 0
-	problem, _ = palette_table.snapshot_take(valid, &snap)
+	problem, _ = palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Bad_Magic)
 	testing.expect_value(t, entries_buf[0], saved_first)
 	header.magic = palette_table.MAGIC
 	header.version = palette_table.VERSION + 1
-	problem, _ = palette_table.snapshot_take(valid, &snap)
+	problem, _ = palette_table.snapshot_take(valid, palette_table.entries_of_table(valid), &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Bad_Version)
 	testing.expect_value(t, entries_buf[0], saved_first)
 }
@@ -2831,4 +2831,85 @@ palette_selection_cut_copy_paste :: proc(t: ^testing.T) {
 	drawn, changed, paste_ok = panel_paste(panel, string(long_arg[:palette_table.ARGUMENT_TEXT_CAPACITY]))
 	testing.expect(t, drawn && changed && paste_ok)
 	testing.expect_value(t, len(field_text(&panel.form, 1)), palette_table.ARGUMENT_TEXT_CAPACITY)
+}
+
+// A list of 300 candidates, past the 96 of one page: the form holds one
+// page, a move past its last candidate asks for the page after, a move
+// before its first asks for the page before and chooses its last
+// candidate, and a page outside its list is refused.
+@(test)
+the_candidates_of_a_field_come_by_pages :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	table := table_make(FORMS[:])
+	defer delete(table)
+	collect_with_table(panel, table)
+	type_text(panel, "start")
+	form_open(panel, chosen_entry(panel))
+	form := &panel.form
+	TOTAL :: 300
+	PAGE :: palette_table.CANDIDATE_CAPACITY
+	write_page :: proc(table: []u8, first: int) -> (count: int) {
+		count = min(PAGE, TOTAL - first)
+		for index in 0 ..< count {
+			candidate := (^palette_table.Candidate)(&table[palette_table.CANDIDATES_OFFSET + index * size_of(palette_table.Candidate)])
+			name := [5]u8{'m', u8('0' + (first + index) / 100), u8('0' + (first + index) / 10 % 10), u8('0' + (first + index) % 10), 0}
+			candidate.length = u8(copy(candidate.name[:], name[:4]))
+		}
+		return
+	}
+	module_kind := u64(palette_table.Candidate_Kind.Module)
+
+	// Pages that break their list are refused: past the list, a short page
+	// that does not end it, a count past the area.
+	for bad in ([?][3]u64{{PAGE, TOTAL, TOTAL}, {10, TOTAL, 0}, {PAGE + 1, TOTAL, 0}, {1, 0, 0}}) {
+		form_candidates_set(form, table, bad[0], module_kind, 0, bad[1], bad[2])
+		testing.expectf(t, form.candidate_count == 0, "page %v must be refused", bad)
+	}
+
+	count := write_page(table, 0)
+	form_candidates_set(form, table, u64(count), module_kind, 0, TOTAL, 0)
+	testing.expect_value(t, form.candidate_count, PAGE)
+	testing.expect_value(t, form.candidate_total, TOTAL)
+	testing.expect(t, !form_candidates_whole(form))
+	// Inside the page: no page is wanted.
+	_, wanted := form_candidate_page_wanted(form, 1)
+	testing.expect(t, !wanted)
+	_, wanted = form_candidate_page_wanted(form, -1)
+	testing.expect(t, !wanted, "the first page has no page before")
+	for _ in 0 ..< PAGE - 1 {
+		form_candidate_move(form, 1)
+	}
+	next_first, next_wanted := form_candidate_page_wanted(form, 1)
+	testing.expect(t, next_wanted)
+	testing.expect_value(t, next_first, PAGE)
+
+	// The last page: 300 - 288 = 12 candidates, which end the list.
+	last_first := TOTAL - TOTAL % PAGE
+	count = write_page(table, last_first)
+	// A page that starts at another place than the one asked is no answer.
+	form_candidates_set(form, table, u64(count), module_kind, 0, TOTAL, u64(last_first))
+	testing.expect_value(t, form.candidate_count, 0)
+	form.candidate_first_asked = last_first
+	form_candidates_set(form, table, u64(count), module_kind, 0, TOTAL, u64(last_first))
+	testing.expect_value(t, form.candidate_count, TOTAL % PAGE)
+	testing.expect_value(t, candidate_name(form, form.candidate_count - 1), "m299")
+	for _ in 0 ..< form.candidate_count - 1 {
+		form_candidate_move(form, 1)
+	}
+	_, wanted = form_candidate_page_wanted(form, 1)
+	testing.expect(t, !wanted, "the last page has no page after")
+
+	// Up from the first candidate of a page: the page before, its last
+	// candidate chosen when it comes.
+	form.candidate_choice = 0
+	before_first, before_wanted := form_candidate_page_wanted(form, -1)
+	testing.expect(t, before_wanted)
+	testing.expect_value(t, before_first, last_first - PAGE)
+	form.candidate_choose_last = true
+	form.candidate_first_asked = before_first
+	count = write_page(table, before_first)
+	form_candidates_set(form, table, u64(count), module_kind, 0, TOTAL, u64(before_first))
+	testing.expect_value(t, form.candidate_choice, PAGE - 1)
+	testing.expect_value(t, candidate_name(form, form.candidate_choice), "m287")
 }

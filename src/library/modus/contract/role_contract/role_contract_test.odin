@@ -171,7 +171,7 @@ display_contract_hash_is_deterministic_and_sensitive :: proc(t: ^testing.T) {
 		hex_buf[idx * 2] = hex_digits[b >> 4]
 		hex_buf[idx * 2 + 1] = hex_digits[b & 0x0F]
 	}
-	testing.expect_value(t, string(hex_buf[:]), "9f17b56560096bdbfc85b82bd8ab977f002125fc3af535598da2b91cd826fa94")
+	testing.expect_value(t, string(hex_buf[:]), "41667fda2758aeca1508582498ae10843dd9c372d7ee5bc45ccb7afe6f7a4db6")
 
 	mutated := display_contract()
 	mutated.version += 1

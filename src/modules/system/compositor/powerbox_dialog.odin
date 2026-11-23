@@ -8,7 +8,9 @@
 // revokes immediately on Ctrl+Shift+Escape.
 package compositor
 
+import "base:intrinsics"
 import "internal:compositor/bar"
+import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
 import "modus:contract/value_kinds"
@@ -21,7 +23,7 @@ import "modus:system"
 POWERBOX_DIALOG_WIDTH :: 440
 POWERBOX_DIALOG_HEIGHT :: 160
 POWERBOX_TEXT_LIMIT :: 96
-POWERBOX_PICKER_SLOTS :: 4
+POWERBOX_PICKER_SLOTS :: 4 // The rows of the list that show at once: the list scrolls past them.
 POWERBOX_TITLE_HEIGHT :: 30 // The title plate, inside the two lines of the frame.
 POWERBOX_MARGIN :: 16 // From the frame to the texts, the list and the buttons.
 POWERBOX_PICKER_LINE :: 24
@@ -38,10 +40,11 @@ Powerbox_Prompt_State :: struct {
 	process_len:     int,
 	resource_text:   [POWERBOX_TEXT_LIMIT]u8,
 	resource_len:    int,
+	// The place of the chosen store in the whole list of the principal,
+	// and the first row that shows: the list follows the chosen row. The
+	// names come from the powerbox by pages (powerbox_picker.odin).
 	picker_selected: int,
-	picker_count:    int,
-	picker_stores:   [POWERBOX_PICKER_SLOTS]string,
-	chosen_store:    string,
+	picker_first:    int,
 	last_decision:   powerbox.Item_Decision,
 }
 
@@ -67,7 +70,7 @@ trusted_dialog_open :: proc "contextless" () -> bool {
 	return powerbox_prompt.open || plan_difference_dialog.open
 }
 
-powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, process_name, resource_text: string) -> u64 {
+powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, process_name, resource_text: string, principal: u64 = 0) -> u64 {
 	if len(process_name) == 0 || len(resource_text) == 0 {
 		return 0
 	}
@@ -84,11 +87,10 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 		last_decision = .None,
 	}
 	if kind == .Store_Share {
-		// Candidate stores presented ONLY to the principal on the trusted display;
-		// the requesting process never sees this list and receives a share of the chosen store only.
-		powerbox_prompt.picker_stores = {"documents", "notes", "projects", "downloads"}
-		powerbox_prompt.picker_count = 4
-		powerbox_prompt.picker_selected = 0
+		// The stores of the principal, from the powerbox, shown only to the
+		// principal on the trusted display: the requesting process never
+		// sees the list.
+		powerbox_picker_open(principal)
 	}
 	copy(powerbox_prompt.process_name[:powerbox_prompt.process_len], process_name[:powerbox_prompt.process_len])
 	copy(powerbox_prompt.resource_text[:powerbox_prompt.resource_len], resource_text[:powerbox_prompt.resource_len])
@@ -100,18 +102,39 @@ powerbox_prompt_decide :: proc "contextless" (allow: bool) -> bool {
 	if !powerbox_prompt.open {
 		return false
 	}
-	powerbox_prompt.open = false
-	if allow && powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
-		powerbox_prompt.chosen_store = powerbox_prompt.picker_stores[powerbox_prompt.picker_selected]
-	} else {
-		powerbox_prompt.chosen_store = ""
+	if powerbox_prompt.kind == .Store_Share {
+		// A share needs a store that the powerbox checks: the prompt waits
+		// for its answer (powerbox_prompt_picked). With no store to pick,
+		// Allow does nothing.
+		if allow {
+			powerbox_picker_pick(powerbox_prompt.picker_selected)
+			return true
+		}
+		powerbox_picker_close()
 	}
+	powerbox_prompt.open = false
 	powerbox_prompt.last_decision = allow ? .Granted : .Refused
 	if allow {
-		window_grant_add(string(powerbox_prompt.process_name[:powerbox_prompt.process_len]), string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len]), powerbox_prompt.chosen_store)
+		window_grant_add(string(powerbox_prompt.process_name[:powerbox_prompt.process_len]), string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len]), "")
 	}
 	damage_whole_screen()
 	return true
+}
+
+// powerbox_prompt_picked takes the answer of the powerbox to a pick: the
+// grant holds only when the powerbox found the store at its place in its
+// copy of the list. A refusal closes the prompt with nothing granted: the
+// list changed, and the principal asks again.
+powerbox_prompt_picked :: proc "contextless" (accepted: bool, store: string) {
+	if !powerbox_prompt.open || powerbox_prompt.kind != .Store_Share {
+		return
+	}
+	powerbox_prompt.open = false
+	powerbox_prompt.last_decision = accepted ? .Granted : .Refused
+	if accepted {
+		window_grant_add(string(powerbox_prompt.process_name[:powerbox_prompt.process_len]), string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len]), store)
+	}
+	damage_whole_screen()
 }
 
 // window_grant_add records a grant that the principal kept, so the menu
@@ -157,22 +180,200 @@ window_grants_window_closed :: proc "contextless" (process_name: string) {
 	}
 }
 
-// plan_difference_show shows the difference of a plan on the trusted
-// display, and gives its serial, or 0 with the refusal and the argument
-// that it names, from 1.
-plan_difference_show :: proc "contextless" (plan_name, added, removed: string) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
-	if powerbox_prompt.open {
+// The memory of the difference that shows: a copy of the two sides that
+// the asker gave, and the items of the dialog. A difference has any count
+// of items, so the arena reserves the pages of the budget of the
+// compositor and commits them as a difference needs them; the next
+// difference starts it again.
+plan_difference_arena: system.Arena
+
+// The pages of the budget of the compositor that a difference never takes:
+// the windows, the palette and the frames keep their room whatever the
+// size of a difference.
+PLAN_DIFFERENCE_KEPT_PAGES :: 2048
+
+// plan_difference_push takes bytes of the arena when the budget keeps its
+// margin after the exact pages of the push.
+@(private = "file")
+plan_difference_push :: proc "contextless" (bytes, alignment: u64) -> (address: rawptr, ok: bool) {
+	pages, fits := system.arena_push_commit_pages(&plan_difference_arena, bytes, alignment)
+	amounts, status := system.budget_read()
+	if !fits || status != .Ok || amounts.pages < PLAN_DIFFERENCE_KEPT_PAGES || pages > amounts.pages - PLAN_DIFFERENCE_KEPT_PAGES {
+		return nil, false
+	}
+	pushed, push_status := system.arena_push(&plan_difference_arena, bytes, alignment)
+	return pushed, push_status == .Ok
+}
+
+// plan_difference_memory_step gives the pages of a difference back to the
+// budget once its dialog closed: a large difference holds its pages only
+// while the principal reads it.
+plan_difference_memory_step :: proc "contextless" () {
+	plan_difference_reading_step()
+	if !plan_difference_dialog.open && plan_reading_stage() == .Idle && plan_difference_arena.used_bytes > 0 {
+		system.arena_trim(&plan_difference_arena, 0)
+	}
+}
+
+// The reading of a difference on the worker of the compositor. stage is
+// the one word that the two threads share: the interface thread writes
+// Requested with each field of the job, the worker reads the object and
+// writes Published with its reading, and the interface thread adopts it
+// and writes Idle. The arena of the difference belongs to the worker
+// while the stage is Requested, and to the interface thread else.
+Plan_Reading_Stage :: enum u32 {
+	Idle      = 0,
+	Requested = 1,
+	Published = 2,
+}
+
+Plan_Reading_Job :: struct {
+	stage:         u32,
+	serial:        u64,
+	memory:        system.Handle, // The object of the two sides, which this process holds with Read until the reading ends.
+	added_bytes:   int,
+	removed_bytes: int,
+	read:          bar.Plan_Difference_Read,
+}
+
+plan_reading: Plan_Reading_Job
+plan_difference_worker_running: bool
+
+// plan_difference_worker_start starts the thread that reads each
+// difference. With none, a difference is refused with Busy.
+plan_difference_worker_start :: proc "contextless" () {
+	if _, status := system.thread_start(plan_difference_worker, nil); status == .Ok {
+		plan_difference_worker_running = true
+	}
+}
+
+@(private = "file")
+plan_reading_stage :: proc "contextless" () -> Plan_Reading_Stage {
+	return Plan_Reading_Stage(intrinsics.atomic_load_explicit(&plan_reading.stage, .Acquire))
+}
+
+@(private = "file")
+plan_reading_stage_set :: proc "contextless" (stage: Plan_Reading_Stage) {
+	intrinsics.atomic_store_explicit(&plan_reading.stage, u32(stage), .Release)
+	system.word_wake(&plan_reading.stage)
+}
+
+@(private = "file")
+plan_reading_take :: proc "contextless" (_: rawptr, bytes, alignment: int) -> rawptr {
+	address, ok := plan_difference_push(u64(bytes), u64(alignment))
+	return ok ? address : nil
+}
+
+// plan_reading_copy copies the object of the job through the kernel
+// (system.memory_read), never through a mapping: the caller made the
+// object, and a page with no frame or a revocation during the read is
+// then a status, where a read through a mapping would fault and stop the
+// trusted display.
+@(private = "file")
+plan_reading_copy :: proc "contextless" (_: rawptr, into: []u8) -> bool {
+	_, status := system.memory_read(plan_reading.memory, 0, into)
+	return status == .Ok
+}
+
+// plan_difference_worker is the entry of the thread of the readings: it
+// copies the object into the arena of the difference and parses it there
+// (bar.plan_difference_read), and publishes the reading. Its work is in
+// proportion to the difference, so it never runs on the interface thread.
+plan_difference_worker :: proc "c" (_: rawptr) -> ! {
+	for {
+		system.word_wait(&plan_reading.stage, u32(Plan_Reading_Stage.Idle))
+		if plan_reading_stage() != .Requested {
+			// Published waits for the interface thread.
+			system.word_wait(&plan_reading.stage, u32(Plan_Reading_Stage.Published))
+			continue
+		}
+		read := bar.Plan_Difference_Read{refusal = .Too_Many_Items, argument = 2}
+		if plan_difference_arena.base == nil {
+			if amounts, budget_status := system.budget_read(); budget_status == .Ok {
+				if arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages)); arena_status == .Ok {
+					arena.exact_commits = true
+					plan_difference_arena = arena
+				}
+			}
+		}
+		if plan_difference_arena.base != nil {
+			system.arena_reset(&plan_difference_arena)
+			source := bar.Plan_Difference_Source{bytes = plan_reading.added_bytes + plan_reading.removed_bytes, copy = plan_reading_copy}
+			read = bar.plan_difference_read(source, plan_reading.added_bytes, plan_reading.removed_bytes, {take = plan_reading_take})
+		}
+		plan_reading.read = read
+		plan_reading_stage_set(.Published)
+	}
+}
+
+// plan_difference_show checks the object of a difference at its border
+// and opens its dialog in its reading state; the worker reads it. It gives
+// the serial, or 0 with the refusal and its argument, from 1: the name,
+// the object. memory is the handle as this process names it, which the
+// caller gave through the call ring of its connection: each refusal
+// closes it, and the end of the reading too.
+plan_difference_show :: proc "contextless" (plan_name: string, memory: system.Handle, added_bytes, removed_bytes: i64) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
+	caller := system.service_caller()
+	kind := op.Object_Kind.None
+	rights: system.Rights
+	through := false
+	if caller != nil && memory != 0 {
+		kind, rights, through = system.handle_state(memory, caller.ring_memory)
+	}
+	// Only a handle that came through the ring of this caller is this
+	// process's to close: a number of another handle is no handle of it.
+	defer if refusal != .None && through {
+		system.close(memory)
+	}
+	pages: u64
+	flags: op.Memory_Flags
+	if through && kind == .Memory {
+		pages, flags, _ = system.memory_size_and_flags(memory)
+	}
+	if refusal = bar.plan_difference_object_check(kind, rights, through, pages, flags, added_bytes, removed_bytes); refusal != .None {
+		return 0, refusal, 2
+	}
+	if powerbox_prompt.open || !plan_difference_worker_running || plan_reading_stage() != .Idle {
 		return 0, .Busy, 0
 	}
-	serial, refusal, argument = bar.plan_difference_open(&plan_difference_dialog, plan_name, added, removed, system.time())
+	serial, refusal, argument = bar.plan_difference_reading_open(&plan_difference_dialog, plan_name, system.time())
 	if refusal != .None {
 		return
 	}
-	system.log_fact(.Info, Plan_Difference_Shown{added = u64(plan_difference_dialog.added_count), removed = u64(plan_difference_dialog.removed_count), plan = value_kinds.text_field(plan_name, PLAN_NAME_FIELD_BYTES)})
+	// The fields of the job, then the stage: the worker reads them after it.
+	plan_reading.serial, plan_reading.memory = serial, memory
+	plan_reading.added_bytes, plan_reading.removed_bytes = int(added_bytes), int(removed_bytes)
+	plan_reading.read = {}
+	plan_reading_stage_set(.Requested)
 	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
-	dialog_asker_bind(system.service_caller())
+	dialog_asker_bind(caller)
 	damage_whole_screen()
 	return
+}
+
+// plan_difference_reading_step adopts a reading that the worker published,
+// in constant time, for the dialog that still shows it, and closes its
+// object: a dialog that ended while the worker read takes no line.
+plan_difference_reading_step :: proc "contextless" () {
+	if plan_reading_stage() != .Published {
+		return
+	}
+	adopted := bar.plan_difference_adopt(&plan_difference_dialog, plan_reading.serial, &plan_reading.read, system.time())
+	system.close(plan_reading.memory)
+	plan_reading.serial, plan_reading.memory, plan_reading.read = 0, 0, {}
+	plan_reading_stage_set(.Idle)
+	if adopted && plan_difference_dialog.open {
+		system.log_fact(.Info, Plan_Difference_Shown{added = u64(plan_difference_dialog.added_count), removed = u64(plan_difference_dialog.removed_count), plan = value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)})
+	}
+	damage_whole_screen()
+}
+
+// plan_difference_reading_wait adds the stage of the reading to the wait of
+// the interface thread, so a publication wakes it.
+plan_difference_reading_wait :: proc "contextless" (wait: ^system.Wait) {
+	if plan_reading_stage() == .Requested {
+		system.wait_word(wait, &plan_reading.stage, u32(Plan_Reading_Stage.Requested))
+	}
 }
 
 // act_dialog_show shows one act of an agent on the trusted display: the
@@ -325,6 +526,20 @@ wide_grant_mark_set :: proc "contextless" (active: bool, grant_id: u64) {
 	damage_bar()
 }
 
+// powerbox_picker_follow_choice moves the view of the list so that it holds
+// the chosen store.
+powerbox_picker_follow_choice :: proc "contextless" () {
+	prompt := &powerbox_prompt
+	if prompt.picker_selected < prompt.picker_first {
+		prompt.picker_first = prompt.picker_selected
+	}
+	if prompt.picker_selected >= prompt.picker_first + POWERBOX_PICKER_SLOTS {
+		prompt.picker_first = prompt.picker_selected - POWERBOX_PICKER_SLOTS + 1
+	}
+	prompt.picker_first = clamp(prompt.picker_first, 0, max(powerbox_picker_total() - POWERBOX_PICKER_SLOTS, 0))
+	powerbox_picker_show(prompt.picker_first, POWERBOX_PICKER_SLOTS)
+}
+
 powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, modifiers: u32) -> bool {
 	if !pressed {
 		return false
@@ -338,8 +553,16 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 	if plan_difference_dialog.open {
 		key: bar.Plan_Difference_Key
 		switch code {
-		case display.KEY_TAB, display.KEY_LEFT, display.KEY_RIGHT, display.KEY_UP, display.KEY_DOWN:
+		case display.KEY_TAB, display.KEY_LEFT, display.KEY_RIGHT:
 			key = .Next
+		case display.KEY_UP:
+			key = .Line_Previous
+		case display.KEY_DOWN:
+			key = .Line_Next
+		case display.KEY_PAGE_UP:
+			key = .Page_Previous
+		case display.KEY_PAGE_DOWN:
+			key = .Page_Next
 		case display.KEY_ENTER:
 			key = .Act
 		case display.KEY_ESCAPE:
@@ -348,8 +571,9 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 			key = .Other
 		}
 		focus := plan_difference_dialog.focus
+		first_line := plan_difference_dialog.first_line
 		plan_difference_answer(bar.plan_difference_key(&plan_difference_dialog, key, system.time()))
-		if plan_difference_dialog.open && plan_difference_dialog.focus != focus {
+		if plan_difference_dialog.open && (plan_difference_dialog.focus != focus || plan_difference_dialog.first_line != first_line) {
 			damage_whole_screen()
 		}
 		return true
@@ -359,14 +583,16 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 	}
 	switch code {
 	case display.KEY_UP:
-		if powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
-			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + powerbox_prompt.picker_count - 1) % powerbox_prompt.picker_count
+		if total := powerbox_picker_total(); powerbox_prompt.kind == .Store_Share && total > 0 {
+			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + total - 1) % total
+			powerbox_picker_follow_choice()
 			damage_whole_screen()
 		}
 		return true
 	case display.KEY_DOWN:
-		if powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
-			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + 1) % powerbox_prompt.picker_count
+		if total := powerbox_picker_total(); powerbox_prompt.kind == .Store_Share && total > 0 {
+			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + 1) % total
+			powerbox_picker_follow_choice()
 			damage_whole_screen()
 		}
 		return true
@@ -414,14 +640,28 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		list_width, list_height := text_room, POWERBOX_PICKER_SLOTS * POWERBOX_PICKER_LINE + 2
 		interface.draw_rectangle(table, list_x, list_y, list_width, list_height, graphics.colors.recess)
 		interface.draw_outline(table, list_x, list_y, list_width, list_height, 1, graphics.colors.track)
-		for i in 0 ..< powerbox_prompt.picker_count {
-			ry := list_y + 1 + i * POWERBOX_PICKER_LINE
+		// Only the rows of the view: the list has any count of stores.
+		visible_end := min(powerbox_prompt.picker_first + POWERBOX_PICKER_SLOTS, powerbox_picker_total())
+		switch {
+		case picker.stage == .Opening:
+			interface.draw_text(table, list_x + 12, list_y + 5, "Reading the stores", graphics.colors.dim, interface.FONT_INTERFACE)
+		case picker.stage == .No_List:
+			interface.draw_text(table, list_x + 12, list_y + 5, interface.text_fit(table, interface.FONT_INTERFACE, "The stores did not come. Refuse, then ask again.", list_width - 24), graphics.colors.dim, interface.FONT_INTERFACE)
+		case powerbox_picker_total() == 0:
+			interface.draw_text(table, list_x + 12, list_y + 5, "No store", graphics.colors.dim, interface.FONT_INTERFACE)
+		}
+		for i in powerbox_prompt.picker_first ..< visible_end {
+			name, shown := powerbox_picker_name(i)
+			if !shown {
+				continue // Its page comes.
+			}
+			ry := list_y + 1 + (i - powerbox_prompt.picker_first) * POWERBOX_PICKER_LINE
 			sel := i == powerbox_prompt.picker_selected
 			if sel {
 				interface.draw_vertical_gradient(table, list_x + 1, ry, list_width - 2, POWERBOX_PICKER_LINE, graphics.colors.chosen, graphics.shade(graphics.colors.chosen, 86))
 				interface.draw_rectangle(table, list_x + 2, ry, list_width - 4, 1, graphics.shade(graphics.colors.chosen, 140))
 			}
-			interface.draw_text(table, list_x + 12, ry + 4, powerbox_prompt.picker_stores[i], sel ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
+			interface.draw_text(table, list_x + 12, ry + 4, interface.text_fit(table, interface.FONT_INTERFACE, name, list_width - 24), sel ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		}
 		interface.draw_text(table, x + POWERBOX_MARGIN, button_y + (POWERBOX_BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2, "Up/Down: choose", graphics.colors.dim, interface.FONT_INTERFACE)
 	}
@@ -485,32 +725,34 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	text_offset := (bar.PLAN_DIFFERENCE_LINE - graphics.CELL_HEIGHT) / 2
 	name_x := interface.draw_text(table, text_x, line_y + text_offset, name_label, graphics.colors.dim, interface.FONT_INTERFACE) + bar.PLAN_DIFFERENCE_GAP
 	interface.draw_text(table, name_x, line_y + text_offset, interface.text_fit(table, interface.FONT_INTERFACE_BOLD, bar.plan_difference_name(dialog), x + width - bar.PLAN_DIFFERENCE_MARGIN - name_x), graphics.colors.text_strong, interface.FONT_INTERFACE_BOLD)
-	line_y += bar.PLAN_DIFFERENCE_LINE
-	sides := [2]struct {
-		heading, sign: string,
-		items:         []bar.Plan_Difference_Item,
-		color:         graphics.Color,
-	} {
-		{add_heading, "+", dialog.added[:dialog.added_count], graphics.colors.process},
-		{"removes", "-", dialog.removed[:dialog.removed_count], graphics.colors.failed},
+	line_y += bar.PLAN_DIFFERENCE_LINE + bar.PLAN_DIFFERENCE_GAP
+	// The lines of the view only: the body scrolls over each change of the
+	// difference.
+	visible := bar.plan_difference_visible_lines(dialog)
+	if dialog.reading {
+		interface.draw_text(table, text_x, line_y + text_offset, "Reading the difference", graphics.colors.dim, interface.FONT_INTERFACE)
 	}
-	for &side in sides {
-		if len(side.items) == 0 {
-			continue
+	for index in dialog.first_line ..< dialog.first_line + visible {
+		line, ok := bar.plan_difference_line(dialog, index)
+		if !ok {
+			break
 		}
-		line_y += bar.PLAN_DIFFERENCE_GAP
-		interface.draw_text(table, text_x, line_y + text_offset, side.heading, graphics.colors.dim, interface.FONT_CAPTION)
+		color := line.added ? graphics.colors.process : graphics.colors.failed
+		if line.heading {
+			interface.draw_text(table, text_x, line_y + text_offset, line.added ? add_heading : "removes", graphics.colors.dim, interface.FONT_CAPTION)
+		} else {
+			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, line.added ? "+" : "-", color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
+			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(line.item), text_x + text_room - item_x)
+			interface.draw_text(table, item_x, line_y + text_offset, shown, color, item_font)
+		}
 		line_y += bar.PLAN_DIFFERENCE_LINE
-		for &item in side.items {
-			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, side.sign, side.color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
-			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(&item), text_x + text_room - item_x)
-			interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, item_font)
-			line_y += bar.PLAN_DIFFERENCE_LINE
-		}
 	}
 	accept_x, button_y, button_width, button_height := bar.plan_difference_button_place(x, y, width, height, .Accept)
 	refuse_x, _, _, _ := bar.plan_difference_button_place(x, y, width, height, .Refuse)
-	interface.draw_text(table, text_x, button_y + (button_height - graphics.CELL_HEIGHT) / 2, "Tab: move", graphics.colors.dim, interface.FONT_INTERFACE)
+	// Until the view showed the last line, the hint says how to reach it:
+	// the accept counts only after.
+	hint := dialog.seen_through ? "Tab: move" : "Down: read all"
+	interface.draw_text(table, text_x, button_y + (button_height - graphics.CELL_HEIGHT) / 2, hint, graphics.colors.dim, interface.FONT_INTERFACE)
 	plan_difference_button_records(table, accept_x, button_y, button_width, button_height, accept, "Enter", true, dialog.focus == .Accept)
 	plan_difference_button_records(table, refuse_x, button_y, button_width, button_height, "Refuse", "Esc", false, dialog.focus == .Refuse)
 }

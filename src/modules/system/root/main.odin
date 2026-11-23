@@ -202,6 +202,12 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	if caller == &debug_store_reader {
 		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, false) | isolated.CALLER_READS_ONLY
 	}
+	// The connection that lists the stores of a principal for the picker
+	// of the trusted display: it acts for that principal, so `stores`
+	// gives its stores, and it reads only (powerbox_picker.odin).
+	if caller == &picker_store_lister {
+		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, true) | isolated.CALLER_READS_ONLY
+	}
 	// The log service: the own records of the caller, named by its process
 	// slot and its process serial; with the grant to act for the principal,
 	// the whole log (src/md/features/log_reader_scope.md). A disk process
@@ -1082,6 +1088,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	if gpu_client_ring_memory != 0 {
 		system.grant_put(&context_grants, COMPOSITOR_GRANT_GPU_RING, {gpu_client_ring_memory, {.Read, .Write}})
 	}
+	display_picker_grants_put(&context_grants) // powerbox_picker.odin
 	display_name := role_holder_name(.Display)
 	start_grant_set := start_grant_set_of(display_name)
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
@@ -1179,6 +1186,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 		}
 	}
 	started_log(display_name, principals.MACHINE, false)
+	powerbox_service_start() // powerbox_picker.odin
 	return .Ok
 }
 
@@ -1245,6 +1253,7 @@ root_loop_pass :: proc "contextless" () {
 	wiring_request_step(&wait)
 	devices_answers(&wait)
 	principals_answers(&wait)
+	powerbox_answers(&wait) // powerbox_picker.odin
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
@@ -1259,7 +1268,7 @@ root_loop_pass :: proc "contextless" () {
 	// read of the entropy device in flight (entropy.odin), the hang
 	// bound of a start policy that runs, and any in-flight request to
 	// the delegated wiring service.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake()))
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake(), picker_listing_deadline()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -2417,6 +2426,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	disk_processes_service_end(item)
 	devices_service_end(item)
 	principals_service_end(item)
+	powerbox_service_end(item) // powerbox_picker.odin
 	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {

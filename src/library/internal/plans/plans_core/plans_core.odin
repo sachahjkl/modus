@@ -57,8 +57,10 @@ Pending_Apply :: struct {
 	display_serial:     u64,
 	expected_plan_hash: blake3.Hash,
 	proposed_plan_hash: blake3.Hash,
-	// Apply: the plan that the principal saw.
+	// Apply: the plan that the principal saw, in plan_memory, a block of
+	// the memory of the core.
 	plan:               pr.Plan_Spec,
+	plan_memory:        []u8,
 	// Rollback: the generation that the principal saw.
 	target_generation:  u64,
 }
@@ -71,8 +73,23 @@ Principal_Plans_State :: struct {
 	highest_generation: u64,
 	history_count:      u32,
 	history:            [MAX_HISTORY_PER_PRINCIPAL]pr.Applied_Plan_Record,
+	// The plan of each generation, each in its block of the memory of the
+	// core: a plan has any count of entries.
 	plans:              [MAX_HISTORY_PER_PRINCIPAL]pr.Plan_Spec,
+	plan_memory:        [MAX_HISTORY_PER_PRINCIPAL][]u8,
 	pending:            Pending_Apply,
+}
+
+// The memory of the core: a block of bytes for each plan that it keeps,
+// and for the bytes of an object of the store, a difference and its lists
+// for the time of one step. The service binds it to memory of its budget;
+// a host test to the heap. take gives a block of at least bytes bytes
+// that starts at a multiple of 8, or nil when the budget pays no more;
+// give takes back a block that take gave, whole.
+Memory_Port :: struct {
+	user: rawptr,
+	take: proc "contextless" (user: rawptr, bytes: int) -> []u8,
+	give: proc "contextless" (user: rawptr, memory: []u8),
 }
 
 // Aggregate counters for status inspection.
@@ -183,9 +200,10 @@ Plans_State :: struct {
 	roles_set:            rd.Plan_Roles_Set,
 	principals:           [MAX_PRINCIPALS]Principal_Plans_State,
 	counters:             Plans_Counters,
-	// The bytes of one object of the store: a generation object is too
-	// large for the stack of a service.
-	object_bytes:         [pr.PLAN_GENERATION_WIRE_MOST]u8,
+	memory:               Memory_Port,
+	// The bytes of a current object. A generation object has the size of
+	// its plan, in a block of the memory.
+	current_bytes:        [pr.PLAN_CURRENT_WIRE_SIZE]u8,
 }
 
 // The port of the trusted display: it shows the difference of a plan and
@@ -200,24 +218,148 @@ Trusted_Display_Port :: struct {
 
 // The two lists of a difference that the trusted display shows: the items
 // that add or widen a grant, and the items that remove or narrow one, each
-// a list of items that commas separate.
+// a list of items that commas separate. Both lie in memory, a block of the
+// core of the size of the difference, which the next lists use again.
 Plan_Display_Lists :: struct {
-	added:          [pr.PLAN_DISPLAY_ITEM_CAPACITY * (pr.PLAN_DISPLAY_ITEM_BYTES + 2)]u8,
+	added:          []u8,
 	added_length:   int,
 	added_count:    int,
-	removed:        [pr.PLAN_DISPLAY_ITEM_CAPACITY * (pr.PLAN_DISPLAY_ITEM_BYTES + 2)]u8,
+	removed:        []u8,
 	removed_length: int,
 	removed_count:  int,
+	memory:         []u8,
 }
 
+// The bytes of one item of a list, with the comma and the space before it.
+@(private = "file")
+DISPLAY_LIST_ITEM_MOST :: pr.PLAN_DISPLAY_ITEM_BYTES + 2
+
 // state_init resets state, binds the trusted Display role holder slot used
-// to verify Show_Plan_Difference consent answers, and binds the private
-// store that keeps the generations.
-state_init :: proc "contextless" (state: ^Plans_State, trusted_display_slot: u32, store: pr.Private_Store_Port) {
+// to verify Show_Plan_Difference consent answers, binds the private store
+// that keeps the generations, and the memory of the plans.
+state_init :: proc "contextless" (state: ^Plans_State, trusted_display_slot: u32, store: pr.Private_Store_Port, memory: Memory_Port) {
 	state^ = {}
 	state.initialized = true
 	state.trusted_display_slot = trusted_display_slot
 	state.store = store
+	state.memory = memory
+}
+
+@(private = "file")
+memory_take :: proc "contextless" (state: ^Plans_State, bytes: int) -> []u8 {
+	if bytes <= 0 || state.memory.take == nil {
+		return nil
+	}
+	memory := state.memory.take(state.memory.user, bytes)
+	if len(memory) < bytes || uintptr(raw_data(memory)) % 8 != 0 {
+		if memory != nil && state.memory.give != nil {
+			state.memory.give(state.memory.user, memory)
+		}
+		return nil
+	}
+	return memory
+}
+
+@(private = "file")
+memory_give :: proc "contextless" (state: ^Plans_State, memory: []u8) {
+	if memory != nil && state.memory.give != nil {
+		state.memory.give(state.memory.user, memory)
+	}
+}
+
+// plan_take gives an empty plan of principal with room for count entries,
+// in a block of the memory, or ok false.
+@(private = "file")
+plan_take :: proc "contextless" (state: ^Plans_State, principal: u64, count: u32) -> (plan: pr.Plan_Spec, memory: []u8, ok: bool) {
+	bytes, bytes_ok := pr.plan_bytes_for(int(count))
+	if !bytes_ok || count == 0 {
+		return {}, nil, false
+	}
+	memory = memory_take(state, bytes)
+	if memory == nil {
+		return {}, nil, false
+	}
+	return pr.plan_of_memory(principal, memory), memory, true
+}
+
+// plan_keep copies plan into a block of the memory: the copy that the core
+// keeps, which no caller can change.
+@(private = "file")
+plan_keep :: proc "contextless" (state: ^Plans_State, plan: ^pr.Plan_Spec) -> (kept: pr.Plan_Spec, memory: []u8, ok: bool) {
+	kept, memory = plan_take(state, plan.principal, plan.entry_count) or_return
+	if !pr.plan_copy(&kept, plan) {
+		memory_give(state, memory)
+		return {}, nil, false
+	}
+	return kept, memory, true
+}
+
+// difference_room makes room in difference for the items of a difference
+// of current and proposed: its own changes when they hold them, else a
+// block of the memory, which replaces the block that it held.
+@(private = "file")
+difference_room :: proc "contextless" (state: ^Plans_State, difference: ^pr.Plan_Difference, current, proposed: ^pr.Plan_Spec) -> bool {
+	// A count past the memory of its plan takes no memory: plan_diff_compute
+	// refuses that plan.
+	if (current != nil && int(current.entry_count) > len(current.entries)) || (proposed != nil && int(proposed.entry_count) > len(proposed.entries)) {
+		return true
+	}
+	most := pr.plan_difference_changes_most(current, proposed)
+	if len(difference.changes) >= most {
+		return true
+	}
+	memory := memory_take(state, most * size_of(pr.Plan_Diff_Item))
+	if memory == nil {
+		return false
+	}
+	memory_give(state, difference.changes_memory)
+	difference.changes_memory = memory
+	difference.changes = ([^]pr.Plan_Diff_Item)(raw_data(memory))[:most]
+	return true
+}
+
+// difference_release gives back the block of the items of a difference
+// that the core took, and leaves the difference empty.
+difference_release :: proc "contextless" (state: ^Plans_State, difference: ^pr.Plan_Difference) {
+	memory_give(state, difference.changes_memory)
+	difference^ = {}
+}
+
+// lists_release gives back the block of two lists, and leaves them empty.
+lists_release :: proc "contextless" (state: ^Plans_State, lists: ^Plan_Display_Lists) {
+	memory_give(state, lists.memory)
+	lists^ = {}
+}
+
+// difference_clear makes a difference empty and keeps its block.
+@(private = "file")
+difference_clear :: proc "contextless" (difference: ^pr.Plan_Difference) {
+	difference^ = {changes = difference.changes, changes_memory = difference.changes_memory}
+}
+
+// lists_clear makes two lists empty and keeps their block.
+@(private = "file")
+lists_clear :: proc "contextless" (lists: ^Plan_Display_Lists) {
+	lists^ = {memory = lists.memory}
+}
+
+// entry_release gives back the blocks of the plans of a principal and of
+// its pending step, and leaves its table empty.
+@(private = "file")
+entry_release :: proc "contextless" (state: ^Plans_State, entry: ^Principal_Plans_State) {
+	for memory in entry.plan_memory {
+		memory_give(state, memory)
+	}
+	memory_give(state, entry.pending.plan_memory)
+	entry^ = {}
+}
+
+// pending_clear ends the pending step of a principal and gives back the
+// block of its plan.
+@(private = "file")
+pending_clear :: proc "contextless" (state: ^Plans_State, entry: ^Principal_Plans_State) {
+	memory_give(state, entry.pending.plan_memory)
+	entry.pending = {}
 }
 
 // roles_port_bind gives the state the port of the roles of the machine,
@@ -363,7 +505,7 @@ plan_roles_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation, serial
 	if plan == nil {
 		return true
 	}
-	count := min(plan.entry_count, pr.MAX_PLAN_ENTRIES)
+	count := plan.entry_count
 	named: [role_contract.Role]bool
 	for index in 0 ..< count {
 		entry := &plan.entries[index]
@@ -457,7 +599,7 @@ principal_entry :: proc "contextless" (state: ^Plans_State, principal: u64) -> (
 		return nil, .History_Full
 	}
 	current_name := pr.plan_object_name(principal, 0, true)
-	bytes, status := pr.private_store_read(&state.store, pr.private_object_name_text(&current_name), state.object_bytes[:])
+	bytes, status := pr.private_store_read(&state.store, pr.private_object_name_text(&current_name), state.current_bytes[:])
 	switch status {
 	case .Ok:
 	case .Absent:
@@ -477,30 +619,69 @@ principal_entry :: proc "contextless" (state: ^Plans_State, principal: u64) -> (
 	}
 	entry^ = {principal = principal}
 	for generation in u64(1) ..= current.highest_generation {
-		name := pr.plan_object_name(principal, generation, false)
-		generation_bytes, generation_status := pr.private_store_read(&state.store, pr.private_object_name_text(&name), state.object_bytes[:])
-		if generation_status != .Ok {
-			entry^ = {}
-			return nil, generation_status == .Failed ? .Store_Failed : .Store_Damaged
-		}
 		index := entry.history_count
-		record, decode_refusal := pr.decode_plan_generation(generation_bytes, principal, generation, &entry.plans[index])
-		if decode_refusal != .None {
-			entry^ = {}
-			return nil, .Store_Damaged
+		record, load_refusal := generation_load(state, principal, generation, &entry.plans[index], &entry.plan_memory[index])
+		if load_refusal != .None {
+			entry_release(state, entry)
+			return nil, load_refusal
 		}
 		entry.history[index] = record
 		entry.history_count += 1
 	}
 	current_record := entry.history[current.current_generation - 1]
 	if current_record.plan_hash != current.current_plan_hash {
-		entry^ = {}
+		entry_release(state, entry)
 		return nil, .Store_Damaged
 	}
 	entry.current_generation = current.current_generation
 	entry.highest_generation = current.highest_generation
 	entry.active = true
 	return entry, .None
+}
+
+// generation_load reads the generation object of principal and generation
+// into a block of the memory of the size of its plan: the size first,
+// then the bytes, then the plan. A refusal keeps no block.
+@(private = "file")
+generation_load :: proc "contextless" (state: ^Plans_State, principal, generation: u64, plan: ^pr.Plan_Spec, plan_memory: ^[]u8) -> (record: pr.Applied_Plan_Record, refusal: pr.Plan_Refusal) {
+	name := pr.plan_object_name(principal, generation, false)
+	size, size_status := pr.private_store_size(&state.store, pr.private_object_name_text(&name))
+	switch size_status {
+	case .Ok:
+	case .Absent, .Too_Large:
+		return {}, .Store_Damaged
+	case .Failed:
+		return {}, .Store_Failed
+	}
+	object := memory_take(state, size)
+	if object == nil {
+		return {}, size == 0 ? .Store_Damaged : .No_Memory
+	}
+	defer memory_give(state, object)
+	bytes, status := pr.private_store_read(&state.store, pr.private_object_name_text(&name), object[:size])
+	switch status {
+	case .Ok:
+	case .Absent, .Too_Large:
+		return {}, .Store_Damaged
+	case .Failed:
+		return {}, .Store_Failed
+	}
+	count, count_ok := pr.plan_generation_entry_count(bytes)
+	if !count_ok {
+		return {}, .Store_Damaged
+	}
+	taken, memory, taken_ok := plan_take(state, principal, count)
+	if !taken_ok {
+		return {}, .No_Memory
+	}
+	record, refusal = pr.decode_plan_generation(bytes, principal, generation, &taken)
+	if refusal != .None {
+		memory_give(state, memory)
+		return {}, .Store_Damaged
+	}
+	plan^ = taken
+	plan_memory^ = memory
+	return record, .None
 }
 
 @(private = "file")
@@ -548,17 +729,21 @@ compute_difference :: proc "contextless" (state: ^Plans_State, proposed: ^pr.Pla
 		return .Buffer_Too_Small
 	}
 	if proposed == nil {
-		out_diff^ = {}
+		difference_clear(out_diff)
 		state.counters.total_refusals += 1
 		return .Empty_Plan
 	}
 	entry, entry_refusal := principal_entry(state, proposed.principal)
 	if entry_refusal != .None {
-		out_diff^ = {}
+		difference_clear(out_diff)
 		state.counters.total_refusals += 1
 		return entry_refusal
 	}
 	cur_plan, _, _ := entry_current_plan(entry)
+	if !difference_room(state, out_diff, cur_plan, proposed) {
+		state.counters.total_refusals += 1
+		return .No_Memory
+	}
 	refusal := pr.plan_diff_compute(cur_plan, proposed, out_diff)
 	if refusal != .None {
 		state.counters.total_refusals += 1
@@ -584,12 +769,27 @@ commit_generation :: proc "contextless" (state: ^Plans_State, entry: ^Principal_
 		timestamp_ms       = now_ms,
 		principal          = plan.principal,
 	}
-	written, encode_refusal := pr.encode_plan_generation(&record, plan, state.object_bytes[:])
+	// The copy that the history keeps, and the bytes of its object: taken
+	// before any write, so a budget that pays no more changes nothing.
+	kept, kept_memory, kept_ok := plan_keep(state, plan)
+	if !kept_ok {
+		return {}, .No_Memory
+	}
+	kept_by_history := false
+	defer if !kept_by_history {
+		memory_give(state, kept_memory)
+	}
+	object := memory_take(state, pr.plan_generation_size(plan.entry_count))
+	if object == nil {
+		return {}, .No_Memory
+	}
+	defer memory_give(state, object)
+	written, encode_refusal := pr.encode_plan_generation(&record, &kept, object)
 	if encode_refusal != .None {
 		return {}, encode_refusal
 	}
 	generation_name := pr.plan_object_name(plan.principal, next_generation, false)
-	if pr.private_store_write(&state.store, pr.private_object_name_text(&generation_name), state.object_bytes[:written]) != .Ok {
+	if pr.private_store_write(&state.store, pr.private_object_name_text(&generation_name), object[:written]) != .Ok {
 		return {}, .Store_Failed
 	}
 	current := pr.Plan_Current_Record {
@@ -598,24 +798,26 @@ commit_generation :: proc "contextless" (state: ^Plans_State, entry: ^Principal_
 		highest_generation = next_generation,
 		current_plan_hash  = record.plan_hash,
 	}
-	current_written, current_refusal := pr.encode_plan_current(&current, state.object_bytes[:])
+	current_written, current_refusal := pr.encode_plan_current(&current, state.current_bytes[:])
 	if current_refusal != .None {
 		return {}, current_refusal
 	}
 	// The roles go to the core before the commit: a set that the core
 	// refuses commits nothing.
-	if refusal = roles_give(state, plan.principal, plan, next_generation, .Apply); refusal != .None {
+	if refusal = roles_give(state, plan.principal, &kept, next_generation, .Apply); refusal != .None {
 		return {}, refusal
 	}
 	current_name := pr.plan_object_name(plan.principal, 0, true)
-	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.object_bytes[:current_written]) != .Ok {
+	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.current_bytes[:current_written]) != .Ok {
 		// The core took the roles of a generation that the store did not
 		// commit: it gets the roles of the generation in force again.
 		roles_compensate(state, plan.principal, entry)
 		return {}, .Store_Failed
 	}
 	slot_index := entry.history_count
-	entry.plans[slot_index] = plan^
+	entry.plans[slot_index] = kept
+	entry.plan_memory[slot_index] = kept_memory
+	kept_by_history = true
 	entry.history[slot_index] = record
 	entry.history_count += 1
 	entry.highest_generation = next_generation
@@ -643,17 +845,21 @@ apply_plan :: proc "contextless" (
 		return {}, .Buffer_Too_Small
 	}
 	if proposed == nil {
-		out_diff^ = {}
+		difference_clear(out_diff)
 		state.counters.total_refusals += 1
 		return {}, .Empty_Plan
 	}
 	entry, entry_refusal := principal_entry(state, proposed.principal)
 	if entry_refusal != .None {
-		out_diff^ = {}
+		difference_clear(out_diff)
 		state.counters.total_refusals += 1
 		return {}, entry_refusal
 	}
 	cur_plan, _, _ := entry_current_plan(entry)
+	if !difference_room(state, out_diff, cur_plan, proposed) {
+		state.counters.total_refusals += 1
+		return {}, .No_Memory
+	}
 	refusal = pr.plan_diff_compute(cur_plan, proposed, out_diff)
 	if refusal != .None {
 		state.counters.total_refusals += 1
@@ -708,11 +914,29 @@ apply_plan :: proc "contextless" (
 // shows for difference. An item names the kind and the name of its entry;
 // an added entry, and a changed one that adds or widens a grant or changes a
 // module, is on the side of the additions; a removed entry, and a changed
-// one that only narrows, is on the side of the removals. A difference that
-// the dialog cannot show whole is refused with Display_Refused: the
-// principal never accepts a line that it did not see.
-display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Difference, lists: ^Plan_Display_Lists) -> pr.Plan_Refusal {
-	lists^ = {}
+// one that only narrows, is on the side of the removals. The lists have
+// any count of items; an item past PLAN_DISPLAY_ITEM_BYTES, which the
+// dialog cannot show whole, is refused with Display_Refused: the principal
+// never accepts a line that it did not see.
+display_lists_of_difference :: proc "contextless" (state: ^Plans_State, difference: ^pr.Plan_Difference, lists: ^Plan_Display_Lists) -> pr.Plan_Refusal {
+	// Each side has room for each item: an item goes to one side, and the
+	// side is not known before its item.
+	side_bytes := int(difference.change_count) * DISPLAY_LIST_ITEM_MOST
+	memory := lists.memory
+	if len(memory) < 2 * side_bytes {
+		taken := memory_take(state, 2 * side_bytes)
+		if taken == nil && side_bytes > 0 {
+			lists_release(state, lists)
+			return .No_Memory
+		}
+		memory_give(state, memory)
+		memory = taken
+	}
+	lists^ = {memory = memory}
+	if side_bytes > 0 {
+		lists.added = memory[:side_bytes]
+		lists.removed = memory[side_bytes:][:side_bytes]
+	}
 	for index in 0 ..< int(difference.change_count) {
 		item := &difference.changes[index]
 		text: [pr.PLAN_DISPLAY_ITEM_BYTES + 1]u8 // One more byte: an item past the bound is refused, not cut.
@@ -755,18 +979,12 @@ display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Differen
 			return .Display_Refused
 		}
 		if addition {
-			if lists.added_count >= pr.PLAN_DISPLAY_ITEM_CAPACITY {
-				return .Display_Refused
-			}
 			if lists.added_count > 0 {
 				lists.added_length = text_put(lists.added[:], lists.added_length, ", ")
 			}
 			lists.added_length = text_put(lists.added[:], lists.added_length, string(text[:length]))
 			lists.added_count += 1
 		} else {
-			if lists.removed_count >= pr.PLAN_DISPLAY_ITEM_CAPACITY {
-				return .Display_Refused
-			}
 			if lists.removed_count > 0 {
 				lists.removed_length = text_put(lists.removed[:], lists.removed_length, ", ")
 			}
@@ -814,8 +1032,8 @@ apply_request :: proc "contextless" (
 	if out_diff == nil || lists == nil {
 		return 0, .Buffer_Too_Small
 	}
-	out_diff^ = {}
-	lists^ = {}
+	difference_clear(out_diff)
+	lists_clear(lists)
 	if proposed == nil {
 		return 0, .Empty_Plan
 	}
@@ -826,10 +1044,13 @@ apply_request :: proc "contextless" (
 	if entry_refusal != .None {
 		return 0, entry_refusal
 	}
-	if refusal = pending_dialog_clear(entry, display); refusal != .None {
+	if refusal = pending_dialog_clear(state, entry, display); refusal != .None {
 		return 0, refusal
 	}
 	cur_plan, _, _ := entry_current_plan(entry)
+	if !difference_room(state, out_diff, cur_plan, proposed) {
+		return 0, .No_Memory
+	}
 	if refusal = pr.plan_diff_compute(cur_plan, proposed, out_diff); refusal != .None {
 		return 0, refusal
 	}
@@ -839,20 +1060,24 @@ apply_request :: proc "contextless" (
 	if !out_diff.has_changes || out_diff.change_count == 0 {
 		return 0, .No_Change
 	}
-	if out_diff.change_count > pr.MAX_PLAN_DIFF_CHANGES {
-		return 0, .Display_Refused
-	}
 	if entry.history_count >= MAX_HISTORY_PER_PRINCIPAL {
 		return 0, .History_Full
 	}
-	if refusal = display_lists_of_difference(out_diff, lists); refusal != .None {
+	if refusal = display_lists_of_difference(state, out_diff, lists); refusal != .None {
 		return 0, refusal
 	}
+	// The plan that the principal sees is the copy that the core keeps: a
+	// caller that changes its plan after the dialog changes nothing here.
 	if display == nil || display.ask == nil {
 		return 0, .Consent_Required
 	}
+	kept, kept_memory, kept_ok := plan_keep(state, proposed)
+	if !kept_ok {
+		return 0, .No_Memory
+	}
 	serial, shown := display.ask(display.user, plan_name, string(lists.added[:lists.added_length]), string(lists.removed[:lists.removed_length]))
 	if !shown || serial == 0 {
+		memory_give(state, kept_memory)
 		return 0, .Display_Refused
 	}
 	state.counters.total_diffs += 1
@@ -862,7 +1087,8 @@ apply_request :: proc "contextless" (
 		display_serial     = serial,
 		expected_plan_hash = out_diff.current_plan_hash,
 		proposed_plan_hash = out_diff.proposed_plan_hash,
-		plan               = proposed^,
+		plan               = kept,
+		plan_memory        = kept_memory,
 	}
 	return serial, .None
 }
@@ -871,7 +1097,7 @@ apply_request :: proc "contextless" (
 // earlier apply or rollback of the principal still shows, and drops a
 // pending step whose dialog closed or was replaced, uncommitted.
 @(private = "file")
-pending_dialog_clear :: proc "contextless" (entry: ^Principal_Plans_State, display: ^Trusted_Display_Port) -> pr.Plan_Refusal {
+pending_dialog_clear :: proc "contextless" (state: ^Plans_State, entry: ^Principal_Plans_State, display: ^Trusted_Display_Port) -> pr.Plan_Refusal {
 	if !entry.pending.active {
 		return .None
 	}
@@ -879,7 +1105,7 @@ pending_dialog_clear :: proc "contextless" (entry: ^Principal_Plans_State, displ
 	if polled && decision == .Pending {
 		return .Apply_Pending
 	}
-	entry.pending = {}
+	pending_clear(state, entry)
 	return .None
 }
 
@@ -889,23 +1115,23 @@ pending_dialog_clear :: proc "contextless" (entry: ^Principal_Plans_State, displ
 // that does not answer drop the pending step; accepted is true only for an
 // accepted dialog of the step.
 @(private = "file")
-pending_decision :: proc "contextless" (entry: ^Principal_Plans_State, display: ^Trusted_Display_Port, ticket: u64, step: Pending_Step) -> (accepted: bool, finished: bool, refusal: pr.Plan_Refusal) {
+pending_decision :: proc "contextless" (state: ^Plans_State, entry: ^Principal_Plans_State, display: ^Trusted_Display_Port, ticket: u64, step: Pending_Step) -> (accepted: bool, finished: bool, refusal: pr.Plan_Refusal) {
 	if ticket == 0 || !entry.pending.active || entry.pending.step != step || entry.pending.display_serial != ticket {
 		return false, true, .No_Pending_Apply
 	}
 	decision, polled := display_poll(display, ticket)
 	if !polled {
-		entry.pending = {}
+		pending_clear(state, entry)
 		return false, true, .Display_Refused
 	}
 	switch decision {
 	case .Pending:
 		return false, false, .None
 	case .Refused:
-		entry.pending = {}
+		pending_clear(state, entry)
 		return false, true, .Refused_By_Principal
 	case .Unknown:
-		entry.pending = {}
+		pending_clear(state, entry)
 		return false, true, .Display_Refused
 	case .Accepted:
 	}
@@ -946,12 +1172,15 @@ apply_poll :: proc "contextless" (
 		return {}, true, entry_refusal
 	}
 	accepted: bool
-	accepted, finished, refusal = pending_decision(entry, display, ticket, .Apply)
+	accepted, finished, refusal = pending_decision(state, entry, display, ticket, .Apply)
 	if !accepted {
 		return {}, finished, refusal
 	}
-	defer entry.pending = {}
+	defer pending_clear(state, entry)
 	cur_plan, _, _ := entry_current_plan(entry)
+	if !difference_room(state, out_diff, cur_plan, &entry.pending.plan) {
+		return {}, true, .No_Memory
+	}
 	if refusal = pr.plan_diff_compute(cur_plan, &entry.pending.plan, out_diff); refusal != .None {
 		return {}, true, refusal
 	}
@@ -1001,13 +1230,13 @@ rollback_request :: proc "contextless" (
 	if out_diff == nil || lists == nil {
 		return 0, .Buffer_Too_Small
 	}
-	out_diff^ = {}
-	lists^ = {}
+	difference_clear(out_diff)
+	lists_clear(lists)
 	entry, entry_refusal := principal_entry(state, principal)
 	if entry_refusal != .None {
 		return 0, entry_refusal
 	}
-	if refusal = pending_dialog_clear(entry, display); refusal != .None {
+	if refusal = pending_dialog_clear(state, entry, display); refusal != .None {
 		return 0, refusal
 	}
 	if entry.history_count == 0 || entry.current_generation == 0 {
@@ -1023,6 +1252,9 @@ rollback_request :: proc "contextless" (
 		return 0, .Unknown_Generation
 	}
 	cur_plan, _, _ := entry_current_plan(entry)
+	if !difference_room(state, out_diff, cur_plan, &entry.plans[selected_index]) {
+		return 0, .No_Memory
+	}
 	if refusal = pr.plan_diff_compute(cur_plan, &entry.plans[selected_index], out_diff); refusal != .None {
 		return 0, refusal
 	}
@@ -1032,10 +1264,7 @@ rollback_request :: proc "contextless" (
 	if !out_diff.has_changes || out_diff.change_count == 0 {
 		return 0, .No_Change
 	}
-	if out_diff.change_count > pr.MAX_PLAN_DIFF_CHANGES {
-		return 0, .Display_Refused
-	}
-	if refusal = display_lists_of_difference(out_diff, lists); refusal != .None {
+	if refusal = display_lists_of_difference(state, out_diff, lists); refusal != .None {
 		return 0, refusal
 	}
 	if display == nil || display.ask == nil {
@@ -1079,12 +1308,12 @@ rollback_poll :: proc "contextless" (
 		return {}, true, entry_refusal
 	}
 	accepted: bool
-	accepted, finished, refusal = pending_decision(entry, display, ticket, .Rollback)
+	accepted, finished, refusal = pending_decision(state, entry, display, ticket, .Rollback)
 	if !accepted {
 		return {}, finished, refusal
 	}
 	pending := entry.pending
-	entry.pending = {}
+	pending_clear(state, entry)
 	_, current_record, current_found := entry_current_plan(entry)
 	if !current_found || current_record.plan_hash != pending.expected_plan_hash {
 		return {}, true, .Stale_Current_Plan
@@ -1133,7 +1362,7 @@ rollback_commit :: proc "contextless" (
 		highest_generation = entry.highest_generation,
 		current_plan_hash  = selected.plan_hash,
 	}
-	written, encode_refusal := pr.encode_plan_current(&current, state.object_bytes[:])
+	written, encode_refusal := pr.encode_plan_current(&current, state.current_bytes[:])
 	if encode_refusal != .None {
 		return {}, encode_refusal
 	}
@@ -1147,7 +1376,7 @@ rollback_commit :: proc "contextless" (
 		return {}, refusal
 	}
 	current_name := pr.plan_object_name(principal, 0, true)
-	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.object_bytes[:written]) != .Ok {
+	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.current_bytes[:written]) != .Ok {
 		// The core holds the roles of a generation that the store did not
 		// make current: it gets the roles of the generation in force again.
 		roles_compensate(state, principal, entry)
@@ -1208,6 +1437,6 @@ history_snapshot :: proc "contextless" (
 // that starts again does.
 forget :: proc "contextless" (state: ^Plans_State) {
 	for &entry in state.principals {
-		entry = {}
+		entry_release(state, &entry)
 	}
 }

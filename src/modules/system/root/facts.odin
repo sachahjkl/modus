@@ -557,3 +557,19 @@ Plan_Role_Contract_Not_Filled :: struct {
 // procedures of the contract, whose host tests give the edges of a cut.
 module_name_field :: value_kinds.module_name_field
 text_field :: value_kinds.text_field
+
+// The powerbox did not start after the holder of Display: the trusted
+// display has no picker of stores until a start of the powerbox.
+@(log_fact = "root: the powerbox did not start after the compositor: status {status_number}; the picker of stores of the trusted display shows no store")
+Powerbox_Start_Failed :: struct {
+	status_number: u64,
+}
+
+// The powerbox asked for the stores of a principal, and this service gave
+// no connection: the principal is not unlocked, or the storage service
+// gave no connection. The picker shows no list, and the principal asks
+// again.
+@(log_fact = "root: gave the powerbox no list of the stores of the principal {principal}: the principal is not unlocked, or the storage service gave no connection")
+Picker_Listing_Refused :: struct {
+	principal: u64,
+}

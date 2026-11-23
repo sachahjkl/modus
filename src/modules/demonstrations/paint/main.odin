@@ -1867,7 +1867,7 @@ events_take :: proc "contextless" (window: ^display.Window) {
 				display.paste_refuse(window, drawing.input.paste)
 			}
 			drawing.input.paste, drawing.input.paste_window = event, window
-		case .None, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Work_Area:
+		case .None, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area:
 			// next_event never gives None, and this window does nothing for the other events.
 		}
 	}

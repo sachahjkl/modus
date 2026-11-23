@@ -28,24 +28,30 @@ VERSION_NODE_HASH_DOMAIN :: "modus version node v1"
 CONFLICT_FORK_HASH_DOMAIN :: "modus sync conflict fork v1"
 CONFLICT_VALUE_HASH_DOMAIN :: "modus sync conflict value v1"
 
-// Bounds on counts and payloads carried in one sync frame.
+// Bounds on counts and payloads carried in one sync frame. An object of any
+// size crosses in pieces of at most SYNC_CHUNK_BYTES: each Send_Object frame
+// names the size of the whole object and the offset of its piece, and the
+// receiver checks the hash of the whole object once its last piece came. A
+// want list of more objects than one frame names is several rounds.
 MAX_SYNC_HEADS :: 16
 MAX_SYNC_WANT_OBJECTS :: 64
-MAX_SYNC_OBJECT_BYTES :: 64 * 1024
+SYNC_CHUNK_BYTES :: 64 * 1024
 
 // Exact wire body sizes for fixed-size frames and variable frame headers.
 SYNC_HEADS_OFFER_HEADER_SIZE :: blake3.HASH_SIZE + blake3.HASH_SIZE + 1 + 1 + 2
 SYNC_WANT_OBJECTS_HEADER_SIZE :: blake3.HASH_SIZE + 1 + 3
-SYNC_SEND_OBJECT_HEADER_SIZE :: blake3.HASH_SIZE + blake3.HASH_SIZE + 1 + 3 + 4
+// The store, the hash, the kind and three zero bytes, the bytes of the
+// piece, the size of the whole object, the offset of the piece.
+SYNC_SEND_OBJECT_HEADER_SIZE :: blake3.HASH_SIZE + blake3.HASH_SIZE + 1 + 3 + 4 + 8 + 8
 SYNC_ACK_BODY_SIZE :: blake3.HASH_SIZE * 3
 SYNC_REFUSAL_BODY_SIZE :: blake3.HASH_SIZE + 1 + 3
 
-MAX_SYNC_BODY_BYTES :: SYNC_SEND_OBJECT_HEADER_SIZE + MAX_SYNC_OBJECT_BYTES
+MAX_SYNC_BODY_BYTES :: SYNC_SEND_OBJECT_HEADER_SIZE + SYNC_CHUNK_BYTES
 
 #assert(SYNC_FRAME_HEADER_SIZE == 12)
 #assert(SYNC_HEADS_OFFER_HEADER_SIZE == 68)
 #assert(SYNC_WANT_OBJECTS_HEADER_SIZE == 36)
-#assert(SYNC_SEND_OBJECT_HEADER_SIZE == 72)
+#assert(SYNC_SEND_OBJECT_HEADER_SIZE == 88)
 #assert(SYNC_ACK_BODY_SIZE == 96)
 #assert(SYNC_REFUSAL_BODY_SIZE == 36)
 
@@ -107,7 +113,9 @@ Sync_Frame :: struct {
 	want_hashes:          [MAX_SYNC_WANT_OBJECTS]blake3.Hash,
 	object_hash:          blake3.Hash,
 	object_kind:          Sync_Object_Kind,
-	payload:              []u8,
+	object_total_bytes:   u64, // Send_Object: the size of the whole object.
+	chunk_offset:         u64, // Send_Object: the offset of the piece in the object.
+	payload:              []u8, // Send_Object: the bytes of the piece.
 	acked_head_hash:      blake3.Hash,
 	new_common_base_hash: blake3.Hash,
 	refusal_reason:       Sync_Refusal_Reason,
@@ -184,6 +192,12 @@ Sync_Session :: struct {
 	expected_hashes:      [MAX_SYNC_WANT_OBJECTS]blake3.Hash,
 	expected_kinds:       [MAX_SYNC_WANT_OBJECTS]Sync_Object_Kind,
 	received_mask:        u64,
+	// The object that arrives in pieces now: its slot of the expected
+	// objects, its size, and the bytes received in the buffer of the caller.
+	assembly_active:      bool,
+	assembly_slot:        int,
+	assembly_total:       u64,
+	assembly_received:    u64,
 	reconcile_result:     Reconcile_Result,
 	last_refusal_reason:  Sync_Refusal_Reason,
 }
@@ -201,16 +215,17 @@ sync_refusal_reason_of_word :: proc "contextless" (word: u64) -> (reason: Sync_R
 	return enum_word.member_of_word(Sync_Refusal_Reason, word)
 }
 
-// sync_object_payload_bound gives the maximum payload size for object_kind.
+// sync_object_payload_bound gives the maximum size of a whole object of
+// object_kind: a tree has the bound of its encoding; a blob and a version
+// node have none of the contract, and the buffer of the receiver bounds
+// them.
 @(private)
-sync_object_payload_bound :: proc "contextless" (kind: Sync_Object_Kind) -> int {
+sync_object_payload_bound :: proc "contextless" (kind: Sync_Object_Kind) -> u64 {
 	switch kind {
-	case .Blob:
-		return MAX_SYNC_OBJECT_BYTES
+	case .Blob, .Version_Node:
+		return max(u64)
 	case .Tree:
 		return tree_hash.MAX_ENCODED_TREE_BYTES
-	case .Version_Node:
-		return MAX_SYNC_OBJECT_BYTES
 	}
 	return 0
 }
@@ -277,8 +292,11 @@ validate_sync_frame :: proc "contextless" (frame: ^Sync_Frame) -> (checked_kind:
 		if !obj_ok {
 			return {}, 0, .Bad_Object_Kind
 		}
-		if len(frame.payload) > sync_object_payload_bound(obj_kind) {
+		if len(frame.payload) > SYNC_CHUNK_BYTES || frame.object_total_bytes > sync_object_payload_bound(obj_kind) {
 			return {}, 0, .Too_Large
+		}
+		if frame.chunk_offset > frame.object_total_bytes || u64(len(frame.payload)) > frame.object_total_bytes - frame.chunk_offset || (len(frame.payload) == 0 && frame.object_total_bytes != 0) {
+			return {}, 0, .Bad_Count
 		}
 		return kind, SYNC_SEND_OBJECT_HEADER_SIZE + len(frame.payload), .None
 	case .Sync_Ack:
@@ -352,6 +370,8 @@ sync_frame_encode :: proc "contextless" (frame: ^Sync_Frame, output: []u8) -> (w
 		body[66] = 0
 		body[67] = 0
 		byte_order.write_u32_little_endian(body, 68, u32(len(frame.payload)))
+		byte_order.write_u64_little_endian(body, 72, frame.object_total_bytes)
+		byte_order.write_u64_little_endian(body, 80, frame.chunk_offset)
 		copy(body[SYNC_SEND_OBJECT_HEADER_SIZE:], frame.payload)
 	case .Sync_Ack:
 		copy(body[32:64], frame.acked_head_hash[:])
@@ -510,9 +530,16 @@ sync_frame_decode :: proc "contextless" (input: []u8) -> (frame: Sync_Frame, ref
 			return {}, .Reserved_Nonzero
 		}
 		raw_payload_length := byte_order.read_u32_little_endian(body, 68)
-		if u64(raw_payload_length) > u64(sync_object_payload_bound(obj_kind)) {
+		total := byte_order.read_u64_little_endian(body, 72)
+		offset := byte_order.read_u64_little_endian(body, 80)
+		if u64(raw_payload_length) > SYNC_CHUNK_BYTES || total > sync_object_payload_bound(obj_kind) {
 			return {}, .Too_Large
 		}
+		if offset > total || u64(raw_payload_length) > total - offset || (raw_payload_length == 0 && total != 0) {
+			return {}, .Bad_Count
+		}
+		frame.object_total_bytes = total
+		frame.chunk_offset = offset
 		expected_body := SYNC_SEND_OBJECT_HEADER_SIZE + int(raw_payload_length)
 		if len(body) < expected_body {
 			return {}, .Truncated
@@ -738,7 +765,7 @@ sync_object_verify :: proc "contextless" (
 	if !kind_ok {
 		return false
 	}
-	if len(payload) > sync_object_payload_bound(checked_kind) {
+	if u64(len(payload)) > sync_object_payload_bound(checked_kind) {
 		return false
 	}
 	switch checked_kind {
@@ -810,15 +837,20 @@ sync_session_begin_receive :: proc "contextless" (
 	return session, true
 }
 
-// sync_session_receive_object processes one incoming Send_Object frame.
-// Refuses wrong state, wrong store, unexpected object hash, mismatched object
-// kind, duplicate delivery, or hash mismatch without mutating previously
-// verified progress. Once every missing object is verified, the session
-// transitions to Reconciled with the deterministic fast-forward or
-// conflict-fork outcome.
+// sync_session_receive_object processes one incoming Send_Object frame: one
+// piece of an expected object. The pieces of one object come in order, one
+// object at a time, into assembly, memory of the caller that holds the
+// whole object. Refuses wrong state, wrong store, unexpected object hash,
+// mismatched object kind, duplicate delivery, a piece out of order, an
+// object larger than assembly, or a hash mismatch of the whole object,
+// without mutating previously verified progress: a refused piece ends the
+// object in assembly, which starts again at its first piece. Once every
+// missing object is verified, the session transitions to Reconciled with
+// the deterministic fast-forward or conflict-fork outcome.
 sync_session_receive_object :: proc "contextless" (
 	session: ^Sync_Session,
 	frame: ^Sync_Frame,
+	assembly: []u8,
 ) -> (reason: Sync_Refusal_Reason, ok: bool) {
 	if session == nil || frame == nil {
 		return .Protocol_Error, false
@@ -850,7 +882,30 @@ sync_session_receive_object :: proc "contextless" (
 	if session.received_mask & bit != 0 {
 		return .Protocol_Error, false
 	}
-	if !sync_object_verify(checked_kind, frame.object_hash, frame.payload) {
+	if frame.chunk_offset > frame.object_total_bytes || u64(len(frame.payload)) > frame.object_total_bytes - frame.chunk_offset {
+		session.assembly_active = false
+		return .Protocol_Error, false
+	}
+	if frame.chunk_offset == 0 {
+		if frame.object_total_bytes > u64(len(assembly)) || frame.object_total_bytes > sync_object_payload_bound(checked_kind) {
+			session.assembly_active = false
+			return .Object_Too_Large, false
+		}
+		session.assembly_active = true
+		session.assembly_slot = slot
+		session.assembly_total = frame.object_total_bytes
+		session.assembly_received = 0
+	} else if !session.assembly_active || session.assembly_slot != slot || session.assembly_total != frame.object_total_bytes || session.assembly_received != frame.chunk_offset {
+		session.assembly_active = false
+		return .Protocol_Error, false
+	}
+	copy(assembly[session.assembly_received:], frame.payload)
+	session.assembly_received += u64(len(frame.payload))
+	if session.assembly_received < session.assembly_total {
+		return {}, true
+	}
+	session.assembly_active = false
+	if !sync_object_verify(checked_kind, frame.object_hash, assembly[:session.assembly_total]) {
 		return .Hash_Mismatch, false
 	}
 	session.received_mask |= bit

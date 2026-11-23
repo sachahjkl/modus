@@ -13,6 +13,7 @@ package display
 // pixels, which mean the same at each scale.
 
 import "modus:contract/enum_word"
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
@@ -46,6 +47,20 @@ Surface_Answer_Kind :: enum u64 {
 	Rescale_Refused = 3, // The compositor holds nothing of the offered surface.
 	Resize_Taken    = 4, // The compositor holds the surface of the new size; its next Present shows it.
 	Resize_Refused  = 5, // The compositor holds nothing of the surface of the new size, and shows the surface before it.
+	Create_Taken    = 6, // The compositor made the first surface of the window (serial 1); open maps it.
+	Create_Refused  = 7, // The compositor made no first surface: the budget that the window gave failed its border, or paid no surface.
+}
+
+// surface_answer_gives_surface says if an answer names the copy of a
+// surface that the compositor made for the window: values[2] of the
+// record, which is 0 in each other answer.
+surface_answer_gives_surface :: proc "contextless" (kind: Surface_Answer_Kind) -> bool {
+	switch kind {
+	case .Rescale_Taken, .Resize_Taken, .Create_Taken:
+		return true
+	case .Released, .Rescale_Refused, .Resize_Refused, .Create_Refused:
+	}
+	return false
 }
 
 // The phases of the surface of a window: its rescale and its resize
@@ -93,6 +108,7 @@ Rescale_Input :: struct {
 	kind:   Rescale_Input_Kind,
 	scale:  scale_factor.Scale, // Scale_Named: the scale of the compositor.
 	serial: u64, // The answers: the serial that they name.
+	memory: system.Handle, // Taken and Resize_Taken: the copy of the surface that the compositor made, as this process names it.
 }
 
 // What the end of a resize does to the two surfaces that the window holds.
@@ -251,11 +267,12 @@ picture_owed :: proc "contextless" (window: ^Window) -> bool {
 	return picture_owed_of(window.rescale, window.presented_serial)
 }
 
-// rescale_draws says if the window draws in its phase: in Steady, Offered
-// and Resizing. In Releasing and Released the compositor holds no surface
-// that a Present of the window could name.
+// rescale_draws says if the window draws in its phase: in Steady only. In
+// Releasing and Released the compositor holds no surface that a Present of
+// the window could name; in Offered and Resizing the window asked the
+// compositor for a surface, and has none of it until the answer.
 rescale_draws :: proc "contextless" (machine: ^Rescale_Machine) -> bool {
-	return machine.phase == .Steady || machine.phase == .Offered || machine.phase == .Resizing
+	return machine.phase == .Steady
 }
 
 // surface_answer_of_word is the border of the kind of a Surface_Answer: a
@@ -299,24 +316,24 @@ Resize_Refused :: struct {
 	window:      [40]u8,
 }
 
-// The surface that a window keeps during a resize, until the answer of the
-// compositor: the compositor shows it until the first Present of the new
-// one, and shows it again when it refuses the new one.
-Kept_Surface :: struct {
-	memory:        system.Handle, // 0: no surface is kept.
-	pictures:      [PICTURE_COUNT]graphics.Canvas,
-	width, height: int, // The view of the window with it: the logical size of the surface.
-	layout_width, layout_height: int, // The layout of the window with it.
+// The surface that a window asked the compositor to make, until the
+// answer: its pixels of the screen, and for a resize the view and the
+// layout that the window takes with it. The window draws nothing until
+// then: the compositor shows the surface before it.
+Asked_Surface :: struct {
+	screen_width, screen_height: int,
+	view_width, view_height:     int, // A resize: the logical size of the new surface.
+	layout_width, layout_height: int, // A resize: the layout of the window with it.
 }
 
-// kept_surface_close lets a kept surface go.
-@(private)
-kept_surface_close :: proc "contextless" (kept: ^Kept_Surface) {
-	if kept.memory != 0 {
-		system.memory_unmap(rawptr(kept.pictures[0].pixels))
-		system.close(kept.memory)
-	}
-	kept^ = {}
+// The compositor gave a surface that the window cannot map: a handle that
+// is no gift through the ring of the window, no memory with Read and
+// Write, or smaller than the surface that the window asked for. The
+// window lets it go: it releases the serial, and offers a surface again.
+@(log_fact = "display: {window}: the surface {serial} that the holder of the display gave does not map: the window releases it")
+Surface_Not_Mapped :: struct {
+	serial: u64,
+	window: [40]u8,
 }
 
 // The compositor took the surface of the window at a new scale: from the
@@ -358,32 +375,40 @@ rescale_take :: proc "contextless" (window: ^Window, input: Rescale_Input) {
 	if refused && input.kind == .Refused {
 		system.log_fact(.Warning, Surface_Refused{serial = input.serial, scale = u64(offered.scale), window = window_fact_title(window)})
 	}
+	asked := window.asked_surface
+	// A Taken of another serial, or in another phase, answers an older
+	// request: the copy of the surface that it names is closed.
+	taken_now := resize_end == .Keep_New || input.kind == .Taken && offered.phase == .Offered && input.serial == offered.serial
+	if !taken_now {
+		surface_answer_close(window, input.memory)
+	}
 	switch resize_end {
 	case .None:
 	case .Keep_New:
-		kept_surface_close(&window.before_resize)
-	case .Back_To_Shown:
-		// The compositor shows the surface before the resize: the window
-		// draws it again, at its size, and the new one goes.
-		refused_width, refused_height := window.view_width, window.view_height
-		if window.surface != 0 {
-			system.memory_unmap(rawptr(window.pictures[0].pixels))
-			system.close(window.surface)
+		// The compositor made the surface of the new size: the window maps
+		// it, lets the one before it go, and draws the new size.
+		if surface_answer_map(window, input.memory, asked.screen_width, asked.screen_height) {
+			window.view_width, window.view_height = asked.view_width, asked.view_height
+			window.width, window.height = asked.layout_width, asked.layout_height
+			window.resized_picture_due = true
+		} else {
+			action = surface_not_mapped(window, input.serial)
 		}
-		kept := window.before_resize
-		window.before_resize = {}
-		window.surface, window.pictures = kept.memory, kept.pictures
-		window.view_width, window.view_height = kept.width, kept.height
-		window.width, window.height = kept.layout_width, kept.layout_height
-		window.picture = 0
-		window.canvas = window.pictures[0]
-		window.resized_picture_due = true
-		system.log_fact(.Warning, Resize_Refused{width = u64(refused_width), height = u64(refused_height), kept_width = u64(kept.width), kept_height = u64(kept.height), window = window_fact_title(window)})
+	case .Back_To_Shown:
+		// The compositor shows the surface before the resize, which the
+		// window still holds and draws.
+		system.log_fact(.Warning, Resize_Refused{width = u64(asked.view_width), height = u64(asked.view_height), kept_width = u64(window.view_width), kept_height = u64(window.view_height), window = window_fact_title(window)})
 	}
-	// The compositor holds the offered surface: the line that a reader of
-	// the log waits for after a change of the scale.
+	// The compositor made the offered surface: the window maps it and
+	// presents it. The line that a reader of the log waits for after a
+	// change of the scale.
 	if input.kind == .Taken && offered.phase == .Offered && input.serial == offered.serial {
-		system.log_fact(.Info, Surface_Rescaled{width = u64(window.canvas.width), height = u64(window.canvas.height), scale = u64(offered.scale), window = window_fact_title(window)})
+		if surface_answer_map(window, input.memory, asked.screen_width, asked.screen_height) {
+			rescale_first_picture(window)
+			system.log_fact(.Info, Surface_Rescaled{width = u64(window.canvas.width), height = u64(window.canvas.height), scale = u64(offered.scale), window = window_fact_title(window)})
+		} else {
+			action = surface_not_mapped(window, input.serial)
+		}
 	}
 	// A due Release or Offer waits for no answer that could give a new
 	// action, so a new action never takes the place of one. A due decline
@@ -439,10 +464,11 @@ rescale_due_run :: proc "contextless" (window: ^Window) {
 }
 
 // rescale_offer_send lets the old surface go, which the compositor no
-// longer maps, makes the surface of the logical size of the window at the
-// scale of the machine, from the budget of the window, gives it to the
-// compositor with Read and sends Surface_Rescale. A surface that the budget
-// cannot pay declines the scale (rescale_decline), and gives false.
+// longer maps, gives the compositor the budget of the surface of the
+// logical size of the window at the scale of the machine, and sends
+// Surface_Rescale; the answer Rescale_Taken names the surface that the
+// compositor made. A budget of the process that cannot give that budget
+// declines the scale (rescale_decline), and gives false.
 @(private)
 rescale_offer_send :: proc "contextless" (window: ^Window) -> (sent: bool) {
 	if window.surface != 0 {
@@ -450,17 +476,17 @@ rescale_offer_send :: proc "contextless" (window: ^Window) -> (sent: bool) {
 		system.close(window.surface)
 		window.surface = 0
 	}
+	window.pictures, window.canvas = {}, {}
 	scale := window.rescale.scale
 	screen_width, screen_height := surface_size_of(window.view_width, window.view_height, scale)
-	memory, address, granted, status := surface_make(window, screen_width, screen_height)
+	granted, status := surface_budget_give(window, screen_width, screen_height)
 	if status != .Ok {
 		system.log_fact(.Warning, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = op.Status_Word(status), window = window_fact_title(window)})
 		rescale_decline(window)
 		return false
 	}
+	window.asked_surface = {screen_width = screen_width, screen_height = screen_height}
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Rescale), values = {0 = u64(granted), 1 = u64(screen_width), 2 = u64(screen_height), 3 = u64(scale), 4 = window.rescale.serial}})
-	surface_take(window, memory, address, screen_width, screen_height)
-	rescale_first_picture(window)
 	return true
 }
 
@@ -514,28 +540,72 @@ window_fact_title :: proc "contextless" (window: ^Window) -> [WINDOW_FACT_TEXT_B
 	return value_kinds.text_field(string(window.title[:window.title_count]), WINDOW_FACT_TEXT_BYTES)
 }
 
-// surface_make creates the memory of a surface of two pictures of a size in
-// pixels of the screen, maps it and gives it to the compositor with Read.
-// On a status other than Ok it holds nothing: each handle that it made is
-// closed again.
+// surface_budget_give makes a budget of the budget of this process that
+// pays the surface of a size in pixels of the screen, and nothing more
+// (surface_budget_pages), and gives the compositor a copy of it with
+// Spend and Read through the ring of the window; it closes its own
+// handle. The compositor makes the surface with it, so it never maps a
+// memory object that this process made (window_resize.md, "The
+// compositor makes each surface"). It gives the number of the copy.
 @(private)
-surface_make :: proc "contextless" (window: ^Window, screen_width, screen_height: int) -> (memory: system.Handle, address: rawptr, granted: system.Handle, status: system.Status) {
-	pages := (u64(screen_width * screen_height * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	memory, status = system.memory_create(pages)
-	if status != .Ok {
-		return
+surface_budget_give :: proc "contextless" (window: ^Window, screen_width, screen_height: int, error: ^errors.Error_Record = nil) -> (granted: system.Handle, status: system.Status) {
+	pages := surface_budget_pages(u64(max(screen_width, 0)), u64(max(screen_height, 0)))
+	if pages == 0 {
+		errors.fail(error, 0, .Out_Of_Range, .None, 2, i64(screen_width), i64(SURFACE_SCREEN_LIMIT), i64(screen_height))
+		return 0, .Bad_Operation
 	}
-	address, status = system.memory_map(memory)
+	budget: system.Handle
+	budget, status = system.budget_create({pages = pages}, error = error)
 	if status != .Ok {
+		return 0, status
+	}
+	// The copy of the compositor holds the budget until it made the surface.
+	defer system.close(budget)
+	return system.give(window.ring_memory, budget, {.Spend, .Read}, error)
+}
+
+// surface_answer_map maps the surface that the compositor made, which an
+// answer names: a gift through the ring of the window, a memory object
+// with Read and Write that holds the two pictures of the size that the
+// window asked for. It then makes it the surface of the window. A handle
+// that fails is closed when it came through the ring; a number that did
+// not is no handle of the window to close.
+@(private)
+surface_answer_map :: proc "contextless" (window: ^Window, memory: system.Handle, screen_width, screen_height: int) -> (mapped: bool) {
+	if memory == 0 {
+		return false
+	}
+	kind, rights, through := system.handle_state(memory, window.ring_memory)
+	if !through {
+		return false
+	}
+	defer if !mapped {
 		system.close(memory)
-		return
 	}
-	granted, status = system.give(window.ring_memory, memory, {.Read})
-	if status != .Ok {
-		system.memory_unmap(address)
-		system.close(memory)
+	needed := (u64(max(screen_width, 0) * max(screen_height, 0) * size_of(graphics.Color) * PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	if kind != .Memory || rights & {.Read, .Write} != {.Read, .Write} || needed == 0 {
+		return false
 	}
-	return
+	if pages, size_status := system.memory_size(memory); size_status != .Ok || pages < needed {
+		return false
+	}
+	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		return false
+	}
+	surface_take(window, memory, address, screen_width, screen_height)
+	return true
+}
+
+// surface_not_mapped answers a surface that the window cannot map: it
+// writes one fact and releases the serial, so the compositor lets the
+// surface go and the window offers a surface again at Released.
+@(private)
+surface_not_mapped :: proc "contextless" (window: ^Window, serial: u64) -> Rescale_Action {
+	system.log_fact(.Warning, Surface_Not_Mapped{serial = serial, window = window_fact_title(window)})
+	window.pictures, window.canvas = {}, {}
+	window.rescale.phase = .Releasing
+	return .Release
 }
 
 // surface_take makes a new surface the surface of the window: an old one

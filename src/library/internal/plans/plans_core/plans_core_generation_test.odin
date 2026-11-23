@@ -15,7 +15,7 @@ generation_test_hash :: proc(tag: u8) -> blake3.Hash {
 // test needs no consent, and returns its record.
 @(private = "file")
 apply_zero_grant_plan :: proc(t: ^testing.T, state: ^Plans_State, principal: u64, tag: u8, expected_current_hash: blake3.Hash, now_ms: u64) -> pr.Applied_Plan_Record {
-	plan := pr.Plan_Spec{principal = principal, entry_count = 1}
+	plan := test_plan(principal, 1)
 	plan.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", generation_test_hash(tag), 0)
 	scratch_diff: pr.Plan_Difference
 	record, refusal := apply_plan(state, &plan, expected_current_hash, nil, nil, now_ms, &scratch_diff)
@@ -170,12 +170,12 @@ test_plans_difference_counts_only_accepted_plans :: proc(t: ^testing.T) {
 
 	diff: pr.Plan_Difference
 	testing.expect_value(t, compute_difference(state, nil, &diff), pr.Plan_Refusal.Empty_Plan)
-	plan := pr.Plan_Spec{principal = 0, entry_count = 1}
+	plan := test_plan(0, 1)
 	plan.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", generation_test_hash(1), 0)
 	testing.expect_value(t, compute_difference(state, &plan, nil), pr.Plan_Refusal.Buffer_Too_Small)
 
 	// An entry count past the bound of the plan is refused.
-	too_many := plan
+	too_many := test_plan_copy(&plan)
 	too_many.entry_count = max(u32)
 	testing.expect(t, compute_difference(state, &too_many, &diff) != .None, "an entry count past the bound is refused")
 	testing.expect_value(t, state.counters.total_diffs, u64(0))

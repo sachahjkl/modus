@@ -24,7 +24,18 @@ import "modustool:foundation"
 //      it through the pair of collector.forward. The console reads the two
 //      audit spaces, checks each chain and the refusal of a space that
 //      does not exist, stops the collector, and finds both spaces whole in
-//      the collector that the next connection starts.
+//      the collector that the next connection starts. Last, the store
+//      picker: `store_asker` asks the trusted display for a store, the
+//      picker lists the stores of principal 0 through the powerbox, the
+//      principal picks one, and the one grant of the windows is the grant
+//      of store_asker; `store_stranger` gets No_Grant for the grants and
+//      for a picker of its own. Last, `difference_hostile` gives the
+//      trusted display an Uncommitted object and an object that it revokes
+//      during the reading, and the display serves after each;
+//      `memory_read_border` gives Memory_Read each argument that it refuses,
+//      and prints the time of one read of 1 MiB; `surface_budget_edges`
+//      gives the compositor the budgets of a surface that it must refuse,
+//      then one that it makes the surface with.
 //   2. The same disk: the plans service gives the roles of the stored plan
 //      before the start policy, so the row "settings" of the start list
 //      starts settings_stand_in, with the boot pass, and never
@@ -46,6 +57,20 @@ AUDIT_SPACES_LOADED_LINE :: "collector: read 2 audit spaces with 40 records from
 // service that refuses the roles of the two plans that the principal
 // accepts.
 PLAN_APPLIER_WRONG :: "plan_applier: WRONG"
+
+// The failures of the store picker: the asker found a fault, or the
+// picker received no list.
+STORE_ASKER_WRONG :: "store_asker: WRONG"
+STORE_PICKER_NO_LIST_LINE :: "compositor: the store picker received no list of stores"
+
+// A fault that the hostile caller of the trusted display found.
+DIFFERENCE_HOSTILE_WRONG :: "difference_hostile: WRONG"
+
+// A refusal of Memory_Read that did not hold.
+MEMORY_READ_BORDER_WRONG :: "memory_read_border: WRONG"
+
+// A budget of a surface that the compositor took or refused against its rule.
+SURFACE_BUDGET_EDGES_WRONG :: "surface_budget_edges: WRONG"
 
 scenario_plan_and_audit_first := [?]Step {
 	// The plans service reads the store before the start policy, and finds
@@ -128,6 +153,60 @@ scenario_plan_and_audit_first := [?]Step {
 	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "collector.space_verify(2)"},
 	{kind = .Wait, text = "[console] 0"},
+	// The store picker (src/md/features/powerbox.md, "The picker ring"):
+	// principal 0 holds several stores on this disk by now (those of the
+	// console, plans, the collector and settings_stand_in). store_asker
+	// asks the trusted display for a store and sees no list; the picker
+	// lists the stores that the storage service gives through the
+	// powerbox; the principal picks one, and the one grant of the windows
+	// is the grant of store_asker. store_stranger, which does not act for
+	// the principal, gets neither that grant nor a list.
+	{kind = .Type, text = "start(\"store_asker\")"},
+	{kind = .Wait, text = "store_asker: the trusted display shows the store picker for request ", fails_on = STORE_ASKER_WRONG},
+	{kind = .Wait, text = "compositor: the store picker lists ", fails_on = STORE_PICKER_NO_LIST_LINE, any_order = true},
+	{kind = .Key, text = "down"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: store_asker holds the grant ", fails_on = STORE_ASKER_WRONG},
+	{kind = .Type, text = "connect(\"compositor\")"},
+	{kind = .Wait, text = "[console]   module     compositor"},
+	{kind = .Type, text = "compositor.window_grants()"},
+	{kind = .Wait, text = "store_asker"},
+	{kind = .Wait, text = "[console] 1 row of Window_Grant_Row"},
+	{kind = .Type, text = "start(\"store_stranger\")"},
+	{kind = .Wait, text = "store_stranger: the display refused window_grants and powerbox_pick_store with No_Grant: this process sees no store of the principal, as it must", fails_on = "store_stranger: WRONG"},
+	{kind = .Wait, text = "root: store_stranger stopped: itself, done"},
+	// The grant of store_asker held while the stranger asked: still one row.
+	{kind = .Type, text = "compositor.window_grants()"},
+	{kind = .Wait, text = "[console] 1 row of Window_Grant_Row"},
+	{kind = .Type, text = "stop(\"store_asker\")"},
+	{kind = .Wait, text = "root: store_asker stopped: ", fails_on = STORE_ASKER_WRONG},
+	// A hostile caller of the trusted display of a plan difference: an
+	// Uncommitted object is refused at the border, and an object revoked
+	// while the worker reads it ends its dialog or leaves the lines that the
+	// worker read, which Escape refuses. The display serves after each.
+	{kind = .Type, text = "start(\"difference_hostile\")"},
+	{kind = .Wait, text = "difference_hostile: the display refused an Uncommitted object with Bad_Value, kept no copy of it, and still serves: as it must", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	{kind = .Wait, text = "difference_hostile: the object of the difference ", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "difference_hostile: the dialog of the revoked difference ended with the decision ", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	{kind = .Wait, text = "root: difference_hostile stopped: itself, done", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	// The border of Memory_Read: each refusal, none that writes a byte, and
+	// the time of one read of 1 MiB, printed as a measure.
+	{kind = .Type, text = "start(\"memory_read_border\")"},
+	{kind = .Wait, text = "memory_read_border: each refusal of Memory_Read holds, and none wrote a byte: as it must", fails_on = MEMORY_READ_BORDER_WRONG},
+	{kind = .Wait, text = "memory_read_border: one Memory_Read of 1 MiB took ", fails_on = MEMORY_READ_BORDER_WRONG},
+	{kind = .Wait, text = "root: memory_read_border stopped: itself, done", fails_on = MEMORY_READ_BORDER_WRONG},
+	// The budget of a surface: the compositor refuses a budget one page
+	// short, a revoked copy and a budget with no Spend, and makes the
+	// surface of a budget whose handle the window closed; it shows it.
+	{kind = .Type, text = "start(\"surface_budget_edges\")"},
+	{kind = .Wait, text = "surface_budget_edges: the compositor refused a budget one page short, a revoked copy and a budget with no Spend: as it must", fails_on = SURFACE_BUDGET_EDGES_WRONG},
+	{kind = .Wait, text = "surface_budget_edges: the compositor made the surface of ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
+	{kind = .Wait, text = "compositor: surface surface_budget_edges ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
+	// The cost of the end of the budget of a surface, as a measure.
+	{kind = .Wait, text = "surface_budget_edges: the end of the budget of a surface took ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
+	{kind = .Type, text = "stop(\"surface_budget_edges\")"},
+	{kind = .Wait, text = "root: surface_budget_edges stopped: ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

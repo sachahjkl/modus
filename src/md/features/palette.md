@@ -165,14 +165,27 @@ Refused forms:
 
 ## Any count of entries
 
-The list of the panel draws only the visible viewport window (`first_visible ..< first_visible + LIST_ROWS`), so drawing cost per frame is O(`LIST_ROWS`) regardless of entry count. The provider protocol (`modus:contract/palette_table`, version 8) removes the fixed 256-entry cap:
+The list of the panel draws only the visible viewport window (`first_visible ..< first_visible + LIST_ROWS`), so drawing cost per frame is O(`LIST_ROWS`) regardless of entry count. The provider protocol (`modus:contract/palette_table`, since version 8) has no fixed cap of entries:
 
-- `Header` carries `entry_count` and `byte_length`, checked strictly at the border (`header_read` and `snapshot_take`): `byte_length` must equal `ENTRIES_OFFSET + entry_count * size_of(Entry)` without overflow and must fit within the mapped region. Truncated regions and malformed headers are refused with no state change.
-- `Snapshot` holds a caller-sized `entries: []Entry` slice instead of a fixed array. When a provider's entry count exceeds its current shared memory object, it allocates a memory object sized for the entries, writes the table, gives a read-only handle through the palette ring, and sends `Outcome.Table_Replaced`; the compositor proves the handle, checks the header, maps it read-only, and replaces the old mapping.
+- `Header` carries `entry_count`, `byte_length` and `entries_object`, checked strictly at the border (`header_read` and `snapshot_take`): `byte_length` must equal `ENTRIES_OFFSET + entry_count * size_of(Entry)` without overflow, `entries_object` must name the place of the entries that the reader holds, and the entries must fit in that place. Truncated regions and malformed headers are refused with no state change.
+- `Snapshot` holds a caller-sized `entries: []Entry` slice instead of a fixed array. The entries stay in the table that the root service made while they fit. Past it, the provider makes an object of the entries alone, gives a read-only handle through the palette ring, and sends `Outcome.Table_Replaced` with the number of the object; the header names that number from its next write. The header, the result area and the candidates never leave the table.
+- **The compositor never maps memory of the provider.** The provider made the object of the entries: it could revoke it in the compositor while the compositor reads it, or make it Uncommitted and leave pages with no frame, and a read through a mapping would then fault and stop the trusted display. So the ranking thread proves the object (it came through the ring, a memory object, Read with no Write and no Execute, not Uncommitted, a number past the one held) and copies its entries by the kernel (`system.memory_read`, the operation `Memory_Read`), which gives a status where a mapping would fault: the snapshot is then `Entries_Lost`, and the list has no entry of the provider. The interface thread reads only the table that the root service made, which the provider can neither revoke in the compositor nor leave with no frame. A header that names an object that the ranking thread does not hold yet is `Entries_Moving`: the list shows no entry of the provider for that turn, and the log has no line, because the `Table_Replaced` comes.
+- Refused: the object of the entries mapped, as the table before it was (the faults above); the whole table moved to the object of the provider (the interface thread would read memory of the provider: the change count, the result, the candidates); the root service making the larger object (it would pay with its own budget for a provider whose count of entries has no bound).
 - In `internal:compositor/palette`, `List` stores caller-sized slices (`entries`, `rows`, `candidates`, `ranked`, and `snapshot.entries`) with `u32` entry indexes. `rows_rank` matches all entries off the main thread using `line_editor.fuzzy_match` (SIMD) with frecency bonus and sorts matches in place in O(M log M) without heap allocation. The compositor's ranking thread grows its two double-buffered list memory objects on demand off the main thread, never during a frame.
 - Viewport scroll offset clamping (`list_first_row`) clamps `first_row` to `0 ..= max(row_count - LIST_ROWS, 0)` across drawing, hit testing, and scrolling so top, middle, bottom, and past-end offsets always show a valid viewport.
 
 Refused: a larger fixed table, which moves the bound and costs its memory on each machine; pages of entries asked on a scroll, which make each scroll a request to the provider. Built.
+
+## The candidates of a field, by pages
+
+A parameter has any count of candidates: the modules of a large image, the processes of a busy machine, the members of a large enum. The candidate area of the table holds one page (`palette_table.CANDIDATE_CAPACITY`), and the list goes by pages (version 9 of the table):
+
+- **The request names a cursor and a search text.** `Candidates` carries the place in the list where the page starts; an `Argument` of the same tag before it carries the text of the field. The provider counts each name that the text matches (`line_editor.fuzzy_match`), writes the names of the page, and answers the count of the page, the count of the whole list that matches, and the cursor of the page.
+- **The panel checks the page against its list** (`palette_table.candidate_page_valid`): a page inside the list, no more names than the area holds, and a page that ends the list or is full. A page that fails gives no candidate.
+- **A page that holds the whole list** is narrowed by the panel itself, as each key types, with no request. **A page that does not** asks the provider again at each change of the text: the provider holds the whole list.
+- **A move of the choice past the edge of a page** asks for the page after, or the page before with its last candidate chosen when it comes. Tab waits for that page, as it waits for the first.
+
+Refused: a candidate area that grows with the list in the table of the provider, which moves the entries at each request; a search in the panel only, which never finds a name past the first page.
 
 ## The film
 

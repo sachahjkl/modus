@@ -62,7 +62,9 @@ Mesh_Client_Phase :: enum u8 {
 Mesh_Client_Request :: struct {
 	phase:            Mesh_Client_Phase,
 	kind:             machine_wire.Mesh_Request_Kind,
-	identifier:       u64, // The identifier of the session.
+	identifier:       u64, // The identifier that the caller holds: of the first request of the session for it.
+	session_identifier: u64, // The identifier of the request of the session now: a fetch and a sync send one request for each piece and page.
+	offset:           u64, // A fetch: the offset of the piece asked now.
 	stream:           u64,
 	has_stream:       bool,
 	request_length:   int,
@@ -278,6 +280,7 @@ mesh_client_begin :: proc "contextless" (identity: [32]u8, frame: []u8, error: ^
 		item.phase = .Sending
 		item.kind = kind
 		item.identifier = session_identifier
+		item.session_identifier = session_identifier
 		item.request_length = copy(item.request[:], frame)
 		return &item, .Succeeded, i64(session_identifier)
 	}
@@ -415,13 +418,21 @@ mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, va
 			case .Hash_Mismatch:
 				return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 2)
 			case .Full:
-				return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 2, 0, machine_wire.OBJECT_CAPACITY)
+				return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 2, 0, i64(len(mesh.objects.objects)))
 			case .Too_Large:
-				return call_outcome.fail(error, .Answer_Unreadable, .Out_Of_Range, .Bytes, 2, 0, machine_wire.OBJECT_BYTES_LIMIT)
+				return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Bytes, 2, 0, i64(len(mesh.objects.bytes) - mesh.objects.bytes_used))
+			case .Partial:
+				// The next piece could not leave: the object is not whole.
+				return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Objects, 2)
 			case .Refused, .Malformed, .Other_Object:
 				return call_outcome.fail(error, .Answer_Unreadable, .Malformed, .Objects, 2, 0, 0, i64(ended.fetch))
 			}
 		case .Store_Offer:
+			if ended.store == .Stopped_Between_Pages {
+				// A page went, and the next answer did not come: the other
+				// machine took a part of the exchange.
+				return call_outcome.fail(error, .Stopped_After_A_Partial_Change, .No_Answer, .Stores, 2, 0, 0, i64(ended.store))
+			}
 			if ended.store != .Ok {
 				return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Stores, 2, 0, 0, i64(ended.store))
 			}
@@ -529,7 +540,7 @@ mesh_pairing_abandon :: proc "contextless" (link: ^Mesh_Client_Link, kind: machi
 @(private = "file")
 mesh_request_end :: proc "contextless" (link: ^Mesh_Client_Link, identifier: u64, outcome: call_outcome.Call_Outcome) {
 	for &item in link.requests {
-		if item.phase != .Free && item.phase != .Ended && item.identifier == identifier {
+		if item.phase != .Free && item.phase != .Ended && item.session_identifier == identifier {
 			item.outcome = outcome
 			item.phase = .Ended
 			mesh_pairing_abandon(link, item.kind, false)
@@ -537,11 +548,34 @@ mesh_request_end :: proc "contextless" (link: ^Mesh_Client_Link, identifier: u64
 	}
 }
 
+// mesh_client_continue sends the next frame of a request whose answer asks
+// for more (a piece of an object, a page of a store): a new request of the
+// session in the same place, under the identifier that the caller holds.
+// It gives false when the session refuses it; the request then ends.
+@(private = "file")
+mesh_client_continue :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Client_Request, frame: []u8) -> bool {
+	if frame == nil {
+		return false
+	}
+	session_identifier, status := machine_wire.mesh_request_begin(&link.session, frame, system.time(), MESH_REQUEST_BOUND_MILLISECONDS)
+	if status != .Ok {
+		return false
+	}
+	item.session_identifier = session_identifier
+	item.phase = .Sending
+	item.has_stream = false
+	item.written = 0
+	item.received = 0
+	item.outcome = .None
+	item.request_length = copy(item.request[:], frame)
+	return true
+}
+
 // mesh_answer_take reads the answer of one request and applies its effect.
 @(private = "file")
 mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Client_Request) {
 	answer := item.answer[:item.received]
-	_, outcome, reason, detail, found := machine_wire.mesh_answer_accept(&link.session, item.identifier, answer)
+	_, outcome, reason, detail, found := machine_wire.mesh_answer_accept(&link.session, item.session_identifier, answer)
 	if !found {
 		item.phase = .Ended
 		item.outcome = .Answer_Unreadable
@@ -558,17 +592,33 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 	}
 	switch item.kind {
 	case .Object_Request:
-		item.fetch, _ = machine_wire.object_response_accept(&mesh, item.object_kind, item.hash, answer)
+		next: u64
+		// The object in assembly belongs to the partner of this link, whose
+		// share pays its pages (mesh_object_grow).
+		mesh_assembly_partner = link.session.pinned_identity
+		item.fetch, _, next = machine_wire.object_response_accept(&mesh, item.object_kind, item.hash, answer, item.offset)
+		// An object of several pieces: the same request asks for the next
+		// piece, and the caller reads its end once the object is whole.
+		if item.fetch == .Partial && mesh_client_continue(link, item, machine_wire.object_request_write(mesh_frame_buffer[:], item.object_kind, item.hash, next)) {
+			item.offset = next
+		}
 	case .Store_Offer:
 		if store := machine_wire.store_exchange_find(&mesh.stores, item.hash); store != nil {
-			item.store, _, _ = machine_wire.store_offer_reply_accept(store, answer)
+			more: bool
+			item.store, _, _, more = machine_wire.store_offer_reply_accept(store, answer)
+			// A version of several pages: the same request sends the next
+			// page, or asks for the next page of the reply.
+			if item.store == .Ok && more && !mesh_client_continue(link, item, machine_wire.store_offer_next(store, mesh_frame_buffer[:])) {
+				// The next page could not leave: the exchange is not whole.
+				item.store = .Stopped_Between_Pages
+			}
 		} else {
 			item.store = .Refused_Unknown_Store
 		}
 	case .Role_Call:
 		frame, _ := machine_wire.frame_decode(answer)
 		reply, read_ok := machine_wire.role_reply_read(frame.body)
-		if !read_ok || reply.identifier != item.identifier {
+		if !read_ok || reply.identifier != item.session_identifier {
 			item.outcome = .Answer_Unreadable
 			return
 		}
@@ -657,7 +707,7 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 		ended, count := machine_wire.mesh_link_expire(&link.session, now_ms)
 		for end in ended[:count] {
 			for &item in link.requests {
-				if item.phase != .Free && item.phase != .Ended && item.identifier == end.identifier && item.has_stream {
+				if item.phase != .Free && item.phase != .Ended && item.session_identifier == end.identifier && item.has_stream {
 					quic.stream_reset(connection, item.stream, u64(remote.Stream_Error.Timeout))
 				}
 			}
@@ -692,7 +742,7 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 						extra, finished, reset = quic.stream_read(connection, item.stream, probe[:])
 						if extra > 0 {
 							quic.stream_reset(connection, item.stream, u64(remote.Stream_Error.Too_Large))
-							machine_wire.mesh_answer_accept(&link.session, item.identifier, nil)
+							machine_wire.mesh_answer_accept(&link.session, item.session_identifier, nil)
 							item.phase = .Ended
 							item.outcome = .Answer_Unreadable
 							mesh_pairing_abandon(&link, item.kind, false)
@@ -702,7 +752,7 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 					if reset {
 						// The other machine reset the stream after the request
 						// left: it can have run.
-						machine_wire.mesh_answer_accept(&link.session, item.identifier, nil)
+						machine_wire.mesh_answer_accept(&link.session, item.session_identifier, nil)
 						item.phase = .Ended
 						item.outcome = .Connection_Ended_During_The_Call
 						mesh_pairing_abandon(&link, item.kind, false)

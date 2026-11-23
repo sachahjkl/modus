@@ -3,13 +3,22 @@
 // (src/md/features/desktop_to_browser.md;
 // docs/ARCHITECTURE.md, section U6).
 //
+// The tables of documents and grants are memory of the caller: the service
+// sizes them from its budget, so a principal with thousands of documents is
+// one larger table, never a constant of this package. A full table is the
+// refusal Table_Full, a value.
+//
+// The picker reads the documents of one principal by pages: a cursor (the
+// identifier after which the page starts) and a search text. A page holds
+// what the screen shows; the next page starts after the last identifier of
+// the page before, so a document added or removed between two pages moves
+// no other document out of reach.
+//
 // Zero dynamic allocations, zero kernel operations, strict drop-only delivery.
 package document_picker
 
 import "modus:contract/enum_word"
 
-MAX_DOCUMENTS :: 64
-MAX_DOC_GRANTS :: 128
 MAX_DOC_NAME_BYTES :: 64
 
 Document_Right :: enum u8 {
@@ -30,6 +39,8 @@ Picker_Refusal :: enum u8 {
 	Duplicate_Doc    = 7,
 	Drop_Not_Active  = 8,
 	Self_Drop        = 9,
+	Empty_Page       = 10, // A page with no room for one document.
+	Invalid_Query    = 11, // A search text longer than a name.
 }
 
 Document_Record :: struct {
@@ -48,18 +59,38 @@ Document_Grant :: struct {
 	rights:       Document_Rights,
 }
 
+// The service holds its tables in memory that the caller gives
+// (document_service_init); their lengths are their capacities.
 Document_Service :: struct {
-	documents:     [MAX_DOCUMENTS]Document_Record,
-	grants:        [MAX_DOC_GRANTS]Document_Grant,
+	documents:     []Document_Record,
+	grants:        []Document_Grant,
 	next_doc_id:   u64,
 	next_grant_id: u64,
 }
 
-document_service_init :: proc "contextless" (s: ^Document_Service) {
+// One page of the documents of a principal, in the order of their
+// identifiers. next_cursor is the cursor of the page after it; more is
+// false when no matching document follows the page.
+Document_Page :: struct {
+	count:       int,
+	next_cursor: u64,
+	more:        bool,
+}
+
+// document_service_init binds the tables of the service to memory of the
+// caller and empties them. The service refuses each document and each grant
+// with Table_Full when its table has no free row.
+document_service_init :: proc "contextless" (s: ^Document_Service, documents: []Document_Record, grants: []Document_Grant) {
 	if s == nil {
 		return
 	}
-	s^ = {next_doc_id = 1, next_grant_id = 1}
+	for &record in documents {
+		record = {}
+	}
+	for &grant in grants {
+		grant = {}
+	}
+	s^ = {documents = documents, grants = grants, next_doc_id = 1, next_grant_id = 1}
 }
 
 document_register :: proc "contextless" (s: ^Document_Service, principal_id: u64, name: string) -> (doc_id: u64, refusal: Picker_Refusal) {
@@ -100,6 +131,117 @@ document_register :: proc "contextless" (s: ^Document_Service, principal_id: u64
 	rec^ = {active = true, doc_id = id, principal_id = principal_id, name_len = u8(len(nbytes))}
 	copy(rec.name[:], nbytes)
 	return id, .None
+}
+
+// ascii_lower gives the lower case of an ASCII letter, and each other byte as it is.
+@(private = "file")
+ascii_lower :: proc "contextless" (value: u8) -> u8 {
+	if value >= 'A' && value <= 'Z' {
+		return value + ('a' - 'A')
+	}
+	return value
+}
+
+// name_matches says if a name holds the search text, with the case of ASCII
+// folded. An empty search text matches each name.
+@(private = "file")
+name_matches :: proc "contextless" (name: []u8, query: []u8) -> bool {
+	if len(query) == 0 {
+		return true
+	}
+	if len(query) > len(name) {
+		return false
+	}
+	for start in 0 ..= len(name) - len(query) {
+		found := true
+		for index in 0 ..< len(query) {
+			if ascii_lower(name[start + index]) != ascii_lower(query[index]) {
+				found = false
+				break
+			}
+		}
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// document_page writes into out the documents of one principal whose
+// identifier is past cursor and whose name holds query, in the order of
+// their identifiers, as many as out holds. A cursor of 0 starts at the first
+// document; the cursor of the next page is next_cursor. The work is one pass
+// over the table for each document of the page, and one more for `more`:
+// a page of k documents in a table of n rows reads k + 1 times n rows.
+document_page :: proc "contextless" (s: ^Document_Service, principal_id: u64, cursor: u64, query: string, out: []Document_Record) -> (page: Document_Page, refusal: Picker_Refusal) {
+	if s == nil {
+		return {}, .Nil_State
+	}
+	if len(out) == 0 {
+		return {}, .Empty_Page
+	}
+	if len(query) > MAX_DOC_NAME_BYTES {
+		return {}, .Invalid_Query
+	}
+	query_bytes := transmute([]u8)query
+	// Each step takes the smallest identifier past the last one taken: the
+	// table is in the order of its free rows, not of the identifiers.
+	last := cursor
+	for page.count < len(out) {
+		next: ^Document_Record
+		for &d in s.documents {
+			if !d.active || d.principal_id != principal_id || d.doc_id <= last {
+				continue
+			}
+			if !name_matches(d.name[:d.name_len], query_bytes) {
+				continue
+			}
+			if next == nil || d.doc_id < next.doc_id {
+				next = &d
+			}
+		}
+		if next == nil {
+			page.next_cursor = last
+			return page, .None
+		}
+		out[page.count] = next^
+		page.count += 1
+		last = next.doc_id
+	}
+	page.next_cursor = last
+	for &d in s.documents {
+		if d.active && d.principal_id == principal_id && d.doc_id > last && name_matches(d.name[:d.name_len], query_bytes) {
+			page.more = true
+			break
+		}
+	}
+	return page, .None
+}
+
+// document_remove ends a document and each grant on it.
+document_remove :: proc "contextless" (s: ^Document_Service, doc_id: u64) -> Picker_Refusal {
+	if s == nil {
+		return .Nil_State
+	}
+	if doc_id == 0 {
+		return .Invalid_Id
+	}
+	found := false
+	for &d in s.documents {
+		if d.active && d.doc_id == doc_id {
+			d = {}
+			found = true
+		}
+	}
+	if !found {
+		return .Not_Found
+	}
+	for &g in s.grants {
+		if g.active && g.doc_id == doc_id {
+			g = {}
+		}
+	}
+	return .None
 }
 
 // document_grant_on_pick mints a capability grant ONLY after explicit principal pick.

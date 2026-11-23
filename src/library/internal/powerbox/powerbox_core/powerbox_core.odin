@@ -31,12 +31,6 @@ MAX_TOTAL_PENDING_DIALOGS :: MAX_SESSIONS * MAX_PENDING_DIALOGS
 // Maximum distinct asking processes tracked for frequency and refusal bounds.
 MAX_ASKERS :: 32
 
-// Maximum registered session stores across all sessions.
-MAX_SESSION_STORES :: 32
-
-// Maximum active held grants tracked across all processes.
-MAX_HELD_GRANTS :: 128
-
 // Maximum powerbox-requested grants held concurrently by one process.
 MAX_REQUESTED_GRANTS_PER_PROCESS :: 32
 
@@ -172,52 +166,218 @@ Powerbox_Counters :: struct {
 	total_expired_dialogs:  u64,
 }
 
-// Complete fixed-capacity state of the powerbox policy engine.
+// The tables of the powerbox that grow with the principal: its stores and
+// the grants that processes hold. They are memory of the caller, which sizes
+// them from its budget (docs/PROPERTIES.md, "14. Memory is supplied by the
+// caller"); a full table is a refusal, a value.
+Powerbox_Tables :: struct {
+	stores:      []Session_Store,
+	held_grants: []Held_Grant,
+	// The index of the stores by principal and name, and by principal and
+	// store id: a length that is a power of two, at least four times the
+	// rows (two keys of each row, at most half full). Empty: the checks of a
+	// new store scan the table.
+	store_index: []u32,
+	// The growth of the stores: after it, state.stores holds at least
+	// rows_least rows with the rows of before in place, and
+	// state.store_index the index memory for them, of any content (the
+	// core writes it again). false: the budget pays no more.
+	stores_grow:      Stores_Grow,
+	stores_grow_user: rawptr,
+}
+
+Stores_Grow :: #type proc "contextless" (user: rawptr, state: ^Powerbox_State, rows_least: int) -> bool
+
+// The state of the powerbox policy engine.
 Powerbox_State :: struct {
 	trusted_display_slot: u32,
 	next_dialog_serial:   u64,
 	next_handle_id:       u64,
 	picker_change_count:  u64,
-	stores:               [MAX_SESSION_STORES]Session_Store,
+	stores:               []Session_Store,
+	store_index:          []u32,
+	stores_grow:          Stores_Grow,
+	stores_grow_user:     rawptr,
+	store_count:          int, // The rows that are active.
+	store_free_from:      int, // No free row comes before this one.
 	pending:              [MAX_TOTAL_PENDING_DIALOGS]Pending_Dialog,
 	askers:               [MAX_ASKERS]Asker_Record,
-	held_grants:          [MAX_HELD_GRANTS]Held_Grant,
+	held_grants:          []Held_Grant,
 	always_rows:          [MAX_ALWAYS_ROWS]Always_Grant_Row,
 	counters:             Powerbox_Counters,
 }
 
-// state_init resets a Powerbox_State and binds the trusted Display role holder
-// slot. Only answers originating from this slot can resolve dialogs.
-state_init :: proc "contextless" (state: ^Powerbox_State, trusted_display_slot: u32) {
+// state_init resets a Powerbox_State, binds its tables to memory of the
+// caller, and binds the trusted Display role holder slot. Only answers
+// originating from this slot can resolve dialogs.
+state_init :: proc "contextless" (state: ^Powerbox_State, trusted_display_slot: u32, tables: Powerbox_Tables) {
 	state^ = {}
+	for &store in tables.stores {
+		store = {}
+	}
+	for &grant in tables.held_grants {
+		grant = {}
+	}
+	state.stores = tables.stores
+	state.store_index = tables.store_index
+	state.stores_grow = tables.stores_grow
+	state.stores_grow_user = tables.stores_grow_user
+	for &slot in state.store_index {
+		slot = 0
+	}
+	state.held_grants = tables.held_grants
 	state.trusted_display_slot = trusted_display_slot
 	state.next_dialog_serial = 1
 	state.next_handle_id = 1
 	state.picker_change_count = 1
 }
 
-// register_session_store adds a principal-owned store to the picker candidate
-// catalog. Candidates are strictly scoped to their principal.
-register_session_store :: proc "contextless" (state: ^Powerbox_State, principal: u64, name: string, store_id: u64) -> bool {
-	candidate, ok := powerbox.picker_candidate_make(name, store_id)
-	if !ok {
+// The two keys of a row in the index of the stores.
+@(private = "file")
+Store_Key :: enum u8 {
+	Name,
+	Id,
+}
+
+@(private = "file")
+store_key_of :: proc "contextless" (key: Store_Key, principal: u64, name_hash: blake3.Hash, store_id: u64) -> u64 {
+	value: u64
+	switch key {
+	case .Name:
+		for index in 0 ..< 8 {
+			value |= u64(name_hash[index]) << (8 * u64(index))
+		}
+	case .Id:
+		value = store_id * 0x9E37_79B9_7F4A_7C15
+	}
+	// The principal and the kind of the key move the slot, so two
+	// principals or two keys of one value do not share a chain.
+	value ~= (principal + 1) * 0xC2B2_AE3D_27D4_EB4F
+	value ~= u64(key) * 0x1656_67B1_9E37_79F9
+	value ~= value >> 29
+	return value
+}
+
+@(private = "file")
+store_row_matches :: proc "contextless" (store: ^Session_Store, key: Store_Key, principal: u64, name_hash: blake3.Hash, store_id: u64) -> bool {
+	if !store.active || store.principal != principal {
 		return false
 	}
-	for &existing in state.stores {
-		if existing.active && existing.principal == principal {
-			if existing.candidate.store_id == store_id || existing.candidate.name_hash == candidate.name_hash {
-				return false
-			}
-		}
-	}
-	for &slot in state.stores {
-		if !slot.active {
-			slot = {active = true, principal = principal, candidate = candidate}
-			state.picker_change_count += 1
-			return true
-		}
+	switch key {
+	case .Name:
+		return store.candidate.name_hash == name_hash
+	case .Id:
+		return store.candidate.store_id == store_id
 	}
 	return false
+}
+
+// store_index_find says if a row of the principal has the key.
+@(private = "file")
+store_index_find :: proc "contextless" (state: ^Powerbox_State, key: Store_Key, principal: u64, name_hash: blake3.Hash, store_id: u64) -> bool {
+	if len(state.store_index) == 0 {
+		for &store in state.stores {
+			if store_row_matches(&store, key, principal, name_hash, store_id) {
+				return true
+			}
+		}
+		return false
+	}
+	mask := u64(len(state.store_index) - 1)
+	slot := store_key_of(key, principal, name_hash, store_id) & mask
+	for _ in 0 ..< len(state.store_index) {
+		row := state.store_index[slot]
+		if row == 0 {
+			return false
+		}
+		if int(row - 1) < len(state.stores) && store_row_matches(&state.stores[row - 1], key, principal, name_hash, store_id) {
+			return true
+		}
+		slot = (slot + 1) & mask
+	}
+	return false
+}
+
+@(private = "file")
+store_index_put :: proc "contextless" (state: ^Powerbox_State, row: int) {
+	if len(state.store_index) == 0 {
+		return
+	}
+	store := &state.stores[row]
+	mask := u64(len(state.store_index) - 1)
+	for key in Store_Key {
+		slot := store_key_of(key, store.principal, store.candidate.name_hash, store.candidate.store_id) & mask
+		for state.store_index[slot] != 0 {
+			slot = (slot + 1) & mask
+		}
+		state.store_index[slot] = u32(row + 1)
+	}
+}
+
+// store_index_rebuild writes the index of each active row again.
+@(private = "file")
+store_index_rebuild :: proc "contextless" (state: ^Powerbox_State) {
+	for &slot in state.store_index {
+		slot = 0
+	}
+	for &store, row in state.stores {
+		if store.active {
+			store_index_put(state, row)
+		}
+	}
+}
+
+// store_index_has_room says if the index takes two more keys and stays at
+// most half full.
+@(private = "file")
+store_index_has_room :: proc "contextless" (state: ^Powerbox_State) -> bool {
+	return len(state.store_index) == 0 || 4 * (state.store_count + 1) <= len(state.store_index)
+}
+
+// register_session_store adds a principal-owned store to the picker
+// candidate catalog. Candidates are strictly scoped to their principal. A
+// name or a store id that the principal holds already is refused, by the
+// index; a table with no free row grows from the budget, and a budget
+// that pays no more refuses the store with Table_Full. Each refusal leaves
+// the table as it was.
+register_session_store :: proc "contextless" (state: ^Powerbox_State, principal: u64, name: string, store_id: u64) -> powerbox.Picker_Store_Refusal {
+	candidate, ok := powerbox.picker_candidate_make(name, store_id)
+	if !ok {
+		return .Not_Display_Text
+	}
+	if store_index_find(state, .Name, principal, candidate.name_hash, store_id) || store_index_find(state, .Id, principal, candidate.name_hash, store_id) {
+		return .Repeated
+	}
+	free := -1
+	for row in state.store_free_from ..< len(state.stores) {
+		if !state.stores[row].active {
+			free = row
+			break
+		}
+	}
+	if free < 0 || !store_index_has_room(state) {
+		rows := len(state.stores)
+		wanted := free < 0 ? max(2 * rows, 16) : rows
+		if state.stores_grow == nil || !state.stores_grow(state.stores_grow_user, state, wanted) || len(state.stores) < wanted {
+			return .Table_Full
+		}
+		for &store in state.stores[rows:] {
+			store = {}
+		}
+		store_index_rebuild(state)
+		if !store_index_has_room(state) {
+			return .Table_Full
+		}
+		if free < 0 {
+			free = rows
+		}
+	}
+	state.stores[free] = {active = true, principal = principal, candidate = candidate}
+	state.store_count += 1
+	state.store_free_from = free + 1
+	store_index_put(state, free)
+	state.picker_change_count += 1
+	return .None
 }
 
 // register_start_grant records an already-held capability from a process's
@@ -779,18 +939,23 @@ submit_batch :: proc "contextless" (
 	}
 
 	if need_picker {
+		// The dialog carries the first page and the count of the whole
+		// list; the trusted display reads the other pages (picker_page_take).
 		dialog.picker_change_count = state.picker_change_count
 		cand_count: u32 = 0
+		total: u32 = 0
 		for &store in state.stores {
 			if !store.active || store.principal != batch.asker_principal {
 				continue
 			}
-			if cand_count >= powerbox.MAX_PICKER_CANDIDATES {
-				break
+			if cand_count < powerbox.PICKER_PAGE_CANDIDATES {
+				dialog.picker_candidates[cand_count] = store.candidate
+				dialog.picker_candidates[cand_count].list_index = total
+				cand_count += 1
 			}
-			dialog.picker_candidates[cand_count] = store.candidate
-			cand_count += 1
+			total += 1
 		}
+		dialog.picker_candidate_total = total
 		dialog.picker_candidate_count = cand_count
 	}
 
@@ -967,14 +1132,32 @@ resolve_answer :: proc "contextless" (
 		return resolution
 	}
 
-	// Two-phase commit pre-check: ensure capacity for every granted item before
-	// minting any handle so a refusal never leaks partial grants.
+	// Two-phase commit pre-check: ensure capacity for every granted item, and
+	// find each store that a pick names in the whole list, before minting any
+	// handle so a refusal never leaks partial grants.
 	grants_needed := 0
+	picked_stores: [powerbox.MAX_REQUEST_ITEMS]u64
 	for index in u32(0) ..< answer.item_count {
 		dec, _ := powerbox.item_decision_from_word(answer.items[index].decision_word)
-		if dec == .Granted {
-			grants_needed += 1
+		if dec != .Granted {
+			continue
 		}
+		grants_needed += 1
+		kind, _ := powerbox.request_item_kind_from_word(entry.dialog.items[index].kind_word)
+		if kind != .Store_Share {
+			continue
+		}
+		// The list changed since the dialog: its places name other stores.
+		if state.picker_change_count != entry.dialog.picker_change_count {
+			resolution.refusal = .Picker_Selection_Invalid
+			return resolution
+		}
+		picked := principal_store_at(state, entry.dialog.session_principal, answer.items[index].picker_index)
+		if picked == nil || picked.candidate.name_hash != answer.items[index].picker_name_hash {
+			resolution.refusal = .Picker_Selection_Invalid
+			return resolution
+		}
+		picked_stores[index] = picked.candidate.store_id
 	}
 	if grants_needed > 0 {
 		existing_count := count_requested_grants_of_process(state, entry.dialog.asker_process_slot)
@@ -1036,8 +1219,7 @@ resolve_answer :: proc "contextless" (
 			case .Store_Share:
 				// Picker isolation: mint an attenuated handle for ONLY the
 				// single store chosen by the principal.
-				chosen := &entry.dialog.picker_candidates[item_ans.picker_index]
-				store_id = chosen.store_id
+				store_id = picked_stores[dialog_idx]
 				store_access, _ = powerbox.store_access_mode_from_word(req_item.store_access_word)
 			case .Service_Connection:
 			case .Plan_Difference:
@@ -1179,4 +1361,181 @@ active_grant_count :: proc "contextless" (state: ^Powerbox_State) -> u32 {
 		}
 	}
 	return count
+}
+
+// principal_store_at gives the store at a place of the list of a principal,
+// in the order of the table, or nil past its end.
+principal_store_at :: proc "contextless" (state: ^Powerbox_State, principal: u64, list_index: u32) -> ^Session_Store {
+	place: u32 = 0
+	for &store in state.stores {
+		if !store.active || store.principal != principal {
+			continue
+		}
+		if place == list_index {
+			return &store
+		}
+		place += 1
+	}
+	return nil
+}
+
+// picker_page_take writes one page of the candidates of a pending dialog
+// for the trusted display: the stores of the principal of the dialog from
+// the place request.first on, whose names hold the search text of the
+// request. Only the trusted display reads a page, and the asking process
+// never sees one. A list that changed since the dialog is refused: its
+// places name other stores, and the principal asks again.
+picker_page_take :: proc "contextless" (state: ^Powerbox_State, display_holder_slot: u32, request: ^powerbox.Picker_Page_Request, page: ^powerbox.Picker_Page) -> powerbox.Powerbox_Refusal {
+	page^ = {}
+	if state.trusted_display_slot == 0 || display_holder_slot != state.trusted_display_slot {
+		return .Untrusted_Answer
+	}
+	if refusal := powerbox.picker_page_request_validate(request); refusal != .None {
+		return refusal
+	}
+	entry: ^Pending_Dialog
+	for &candidate in state.pending {
+		if (candidate.state == .Queued || candidate.state == .Shown) && candidate.dialog.dialog_serial == request.dialog_serial {
+			entry = &candidate
+			break
+		}
+	}
+	// A dialog of an asker with no picker has no page; the picker of the
+	// display has its page, empty for a principal with no store.
+	picker_of_the_display := entry != nil && entry.dialog.asker_process_slot == 0 && entry.dialog.items[0].kind_word == u64(powerbox.Request_Item_Kind.Store_Share)
+	if entry == nil || (entry.dialog.picker_candidate_total == 0 && !picker_of_the_display) {
+		return .Untrusted_Answer
+	}
+	if state.picker_change_count != entry.dialog.picker_change_count {
+		return .Picker_Selection_Invalid
+	}
+	query := request.query_bytes[:request.query_length]
+	page.dialog_serial = request.dialog_serial
+	page.change_count = entry.dialog.picker_change_count
+	page.first = min(request.first, entry.dialog.picker_candidate_total)
+	page.total = entry.dialog.picker_candidate_total
+	page.next = page.total
+	place: u32 = 0
+	for &store in state.stores {
+		if !store.active || store.principal != entry.dialog.session_principal {
+			continue
+		}
+		defer place += 1
+		if place < page.first || !powerbox.picker_name_matches(store.candidate.name_bytes[:store.candidate.name_length], query) {
+			continue
+		}
+		if page.candidate_count == powerbox.PICKER_PAGE_CANDIDATES {
+			page.next = place
+			page.more = true
+			break
+		}
+		page.candidates[page.candidate_count] = store.candidate
+		page.candidates[page.candidate_count].list_index = place
+		page.candidate_count += 1
+	}
+	return .None
+}
+// stores_replace_begin ends each store of principal in the table: the list
+// that follows replaces it. The change count moves, so a dialog that showed
+// the old list refuses each page and each pick.
+stores_replace_begin :: proc "contextless" (state: ^Powerbox_State, principal: u64) {
+	for &store in state.stores {
+		if store.active && store.principal == principal {
+			store = {}
+			state.store_count -= 1
+		}
+	}
+	state.store_free_from = 0
+	store_index_rebuild(state)
+	state.picker_change_count += 1
+}
+
+// The picker of the trusted display for a caller that acts for its
+// principal: a pending dialog with no asking process (its asker slot is
+// 0), whose candidates are the stores of the principal. It expires as each
+// dialog does, and its pages and its pick are checked against the copy of
+// the list, as the pages and the pick of the dialog of an asker are.
+picker_dialog_open :: proc "contextless" (state: ^Powerbox_State, principal: u64, now_ms: u64) -> (dialog_serial: u64, refusal: powerbox.Powerbox_Refusal) {
+	free: ^Pending_Dialog
+	for &entry in state.pending {
+		if entry.state != .Queued && entry.state != .Shown {
+			free = &entry
+			break
+		}
+	}
+	if free == nil {
+		return 0, .Dialog_Queue_Full
+	}
+	total: u32 = 0
+	for &store in state.stores {
+		if store.active && store.principal == principal {
+			total += 1
+		}
+	}
+	dialog_serial = state.next_dialog_serial
+	state.next_dialog_serial += 1
+	free^ = {state = .Shown, created_ms = now_ms, shown_ms = now_ms}
+	free.dialog.action_word = u64(powerbox.Dialog_Action.Show_Grant_Dialog)
+	free.dialog.dialog_serial = dialog_serial
+	free.dialog.session_principal = principal
+	free.dialog.item_count = 1
+	free.dialog.items[0].kind_word = u64(powerbox.Request_Item_Kind.Store_Share)
+	free.dialog.picker_change_count = state.picker_change_count
+	free.dialog.picker_candidate_total = total
+	state.counters.pending_dialogs += 1
+	return dialog_serial, .None
+}
+
+// picker_dialog_find gives the picker dialog of a serial that still shows.
+@(private = "file")
+picker_dialog_find :: proc "contextless" (state: ^Powerbox_State, dialog_serial: u64) -> ^Pending_Dialog {
+	for &entry in state.pending {
+		if (entry.state == .Queued || entry.state == .Shown) && entry.dialog.dialog_serial == dialog_serial && entry.dialog.asker_process_slot == 0 && entry.dialog.items[0].kind_word == u64(powerbox.Request_Item_Kind.Store_Share) {
+			return &entry
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+picker_dialog_end :: proc "contextless" (state: ^Powerbox_State, entry: ^Pending_Dialog) {
+	entry.state = .Resolved
+	if state.counters.pending_dialogs > 0 {
+		state.counters.pending_dialogs -= 1
+	}
+}
+
+// picker_dialog_pick checks the pick of the trusted display against the
+// copy of the list: the dialog, the change count, the place in the whole
+// list and the hash of the name. It ends the dialog, picked or refused.
+picker_dialog_pick :: proc "contextless" (state: ^Powerbox_State, display_holder_slot: u32, dialog_serial: u64, list_index: u32, change_count: u64, name_hash: blake3.Hash) -> (picked: Session_Store, refusal: powerbox.Powerbox_Refusal) {
+	if state.trusted_display_slot == 0 || display_holder_slot != state.trusted_display_slot {
+		return {}, .Untrusted_Answer
+	}
+	entry := picker_dialog_find(state, dialog_serial)
+	if entry == nil {
+		return {}, .Untrusted_Answer
+	}
+	defer picker_dialog_end(state, entry)
+	if change_count != entry.dialog.picker_change_count || state.picker_change_count != change_count {
+		return {}, .Picker_Selection_Invalid
+	}
+	store := principal_store_at(state, entry.dialog.session_principal, list_index)
+	if store == nil || store.candidate.name_hash != name_hash {
+		return {}, .Picker_Selection_Invalid
+	}
+	return store^, .None
+}
+
+// picker_dialog_close ends a picker dialog with no pick.
+picker_dialog_close :: proc "contextless" (state: ^Powerbox_State, display_holder_slot: u32, dialog_serial: u64) -> powerbox.Powerbox_Refusal {
+	if state.trusted_display_slot == 0 || display_holder_slot != state.trusted_display_slot {
+		return .Untrusted_Answer
+	}
+	entry := picker_dialog_find(state, dialog_serial)
+	if entry == nil {
+		return .Untrusted_Answer
+	}
+	picker_dialog_end(state, entry)
+	return .None
 }

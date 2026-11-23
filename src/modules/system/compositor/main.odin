@@ -164,8 +164,10 @@ import "base:intrinsics"
 // are paid as the windows map, so a machine with a smaller share still runs
 // the desktop, with fewer such windows. A screen whose frame and background
 // the budget cannot pay is named on one line, and the compositor stops
-// (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21810, processes = 1, threads = 2, screen_pictures = 2}
+// (entry). Three threads: the interface, the ranking of the palette, and
+// the reading of a plan difference (powerbox_dialog.odin), whose work is in
+// proportion to the difference.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21810, processes = 1, threads = 3, screen_pictures = 2}
 #assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES)
 // The request on the machine of the machine tests, whose screen is the
 // reference screen: 21810 working pages, 2 x 2025 pages of the frame and
@@ -234,6 +236,11 @@ Client :: struct {
 	created:     bool,
 	surface:     graphics.Canvas, // pixels is nil before Surface_Create, and while the surface is released.
 	pictures:    [^]graphics.Color, // The memory of the surface: two pictures. surface is one of them. nil with surface.pixels.
+	// The handle of the memory object of the surface, which this process made
+	// with the budget that the window gave: it is the origin of the copy of
+	// the window, so the compositor can revoke that copy and the window
+	// cannot revoke this mapping. 0 with pictures nil.
+	pictures_memory: system.Handle,
 	surface_serial: u64, // The surface serial of the surface shown, or of the one released.
 	surface_scale: scale_factor.Scale, // The scale at which the process made the surface shown.
 	released:    bool, // The process let its surface go: the compositor draws the frame with the background.
@@ -294,6 +301,7 @@ Client :: struct {
 	// the surface of the window. It keeps the logical size and the scale
 	// that the compositor checked, so that Present computes nothing again.
 	resize_pictures: [^]graphics.Color,
+	resize_memory: system.Handle, // The handle of the object of resize_pictures, as pictures_memory.
 	resize_width, resize_height: int, // Pixels of the screen.
 	resize_logical_width, resize_logical_height: int,
 	resize_scale: scale_factor.Scale,
@@ -801,6 +809,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	input_status, control_status: system.Status
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
 	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
+	powerbox_picker_open_ring(ctx) // powerbox_picker.odin
 	// The same test as the root service makes before it starts this
 	// process: the two never disagree on a screen. With no framebuffer and
 	// a size, the frame is a screen of memory (screen_of_memory.odin).
@@ -873,6 +882,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// script, once at each boot: the log names what no font has.
 	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
+	plan_difference_worker_start() // powerbox_dialog.odin
 	bar_layout_update()
 	settings_seen: u32
 	// settings_seen starts at 0: when the boot pass of settings wrote the page
@@ -912,6 +922,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
+		powerbox_picker_step() // powerbox_picker.odin
+		plan_difference_memory_step() // powerbox_dialog.odin
+		powerbox_picker_wait(&wait)
+		plan_difference_reading_wait(&wait) // powerbox_dialog.odin
 		window_events_wait(&wait) // window_events.odin
 		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())
 		if wake := pointer_wake(); wake != 0 {
@@ -1349,6 +1363,30 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if client.ring_memory != memory {
 			continue
 		}
+		window_leave(index)
+		if client.commands_refused != 0 {
+			system.log_fact(.Info, Window_Closed_After_Refused_Commands{window = window_field(client.title[:]), refused = client.commands_refused})
+		}
+		clipboard_client_remove(index) // clipboard.odin
+		if capture.client == index {
+			capture_end("its service stopped") // capture.odin
+		}
+		quality_window_gone(index) // quality_measures.odin
+		window_queue_close(index) // window_events.odin
+		system.ring_close(&client.ring)
+		system.close(client.ring_memory)
+		client = {}
+		window_left_tell()
+		return
+	}
+}
+
+// window_leave takes the window of a client out of the screen and of each
+// list that names it, and lets its surfaces go: the part of client_remove
+// that is about the window, which window_unmade shares.
+window_leave :: proc "contextless" (index: int) {
+	client := &clients[index]
+	{
 		for position in 0 ..< order_count {
 			if order[position] == index {
 				copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
@@ -1376,36 +1414,46 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			resizing = -1
 		}
 		keyboard_window_gone(index) // keyboard_desktop.odin
-		damage_window(&client)
+		damage_window(client)
 		damage_focus()
-		if client.pictures != nil {
-			system.memory_unmap(client.pictures)
-		}
-		if client.resize_pictures != nil {
-			system.memory_unmap(client.resize_pictures)
-		}
-		if client.commands_refused != 0 {
-			system.log_fact(.Info, Window_Closed_After_Refused_Commands{window = window_field(client.title[:]), refused = client.commands_refused})
-		}
-		clipboard_client_remove(index) // clipboard.odin
-		if capture.client == index {
-			capture_end("its service stopped") // capture.odin
-		}
+		surface_memory_end(&client.pictures, &client.pictures_memory) // window_resize.odin
+		surface_memory_end(&client.resize_pictures, &client.resize_memory)
 		desktop_window_closed(index) // desktop_features.odin
-		quality_window_gone(index) // quality_measures.odin
-		window_queue_close(index) // window_events.odin
-		system.ring_close(&client.ring)
-		system.close(client.ring_memory)
 		if client.created {
 			window_grants_window_closed(system.name_of(client.title[:])) // powerbox_dialog.odin
 		}
-		client = {}
-		windows_declined_tell() // scale.odin: a window that declined the scale left.
-		palette_entries_refresh() // A window left.
-		taskbar_preview_dismiss()
-		windows_menu_rows_build() // start_menu.odin
-		return
 	}
+}
+
+// window_left_tell tells the parts of the desktop that a window left.
+window_left_tell :: proc "contextless" () {
+	windows_declined_tell() // scale.odin: a window that declined the scale left.
+	palette_entries_refresh() // A window left.
+	taskbar_preview_dismiss()
+	windows_menu_rows_build() // start_menu.odin
+}
+
+// window_unmade ends a window that its process released before its first
+// Present: an open that failed (display.open, the answer of Surface_Create
+// came too late, or its surface did not map). The window leaves the screen
+// and each list, its surfaces go, and the client is again as Client_Add
+// made it, with no window: so a failed open leaves no window behind, and
+// the next Surface_Create of the process makes one again.
+window_unmade :: proc "contextless" (index: int) {
+	window_leave(index)
+	client := &clients[index]
+	kept := Client {
+		ring_memory      = client.ring_memory,
+		ring             = client.ring,
+		capture_allowed  = client.capture_allowed,
+		from_disk        = client.from_disk,
+		nickname         = client.nickname,
+		hash_prefix      = client.hash_prefix,
+		answer_due       = client.answer_due,
+		commands_refused = client.commands_refused,
+	}
+	client^ = kept
+	window_left_tell()
 }
 
 surface_create :: proc "contextless" (index: int, record: ring.Record) {
@@ -1417,46 +1465,55 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// gift of this process: the compositor neither uses it nor closes it.
 	// The handle is in the low 32 bits of the first word; the word of the
 	// scale of the surface is above them (display.SURFACE_CREATE_SCALE_SHIFT).
-	memory := system.Handle(record.values[0] & 0xFFFF_FFFF)
-	kind, rights, through := system.handle_state(memory, client.ring_memory)
-	// No log line: a process could send this command without end.
-	if !through {
-		return
-	}
-	// The handle is a gift of this process: each return below closes it.
-	defer system.close(memory)
+	// The handle names a budget that pays the surface alone: the compositor
+	// makes the surface with it (src/md/features/window_resize.md, "The
+	// compositor makes each surface").
+	budget := system.Handle(record.values[0] & 0xFFFF_FFFF)
+	kind, rights, through := system.handle_state(budget, client.ring_memory)
 	if client.created {
+		// The window has its first surface: a second one answers nothing.
+		if through {
+			system.close(budget)
+		}
 		return
 	}
-	// The process chose these numbers: check them against the memory
+	// No log line: a process could send this command without end. Each
+	// refusal is answered, since display.open waits for the answer.
+	refused :: proc "contextless" (client: ^Client) {
+		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Create_Refused), 1 = 1})
+	}
+	if !through {
+		refused(client)
+		return
+	}
+	// The budget is a gift of this process: each return below closes it.
+	defer system.close(budget)
+	// The process chose these numbers: check them against the budget
 	// itself. The record names the logical size and the scale: the pixels of
 	// the screen follow from the rule of each edge, so a logical size past
 	// the limit, a word that names no scale, and a surface of pixels that
 	// no logical size gives, are each refused (bar.surface_create_refusal).
 	facts := bar.Surface_Create_Facts {
-		is_memory  = kind == .Memory,
-		readable   = .Read in rights,
 		scale_word = record.values[0] >> display.SURFACE_CREATE_SCALE_SHIFT,
 		width      = record.values[1],
 		height     = record.values[2],
 		screen_side_limit = bar.surface_screen_side_limit(screen.width, screen.height),
 	}
-	if facts.is_memory {
-		if pages, size_status := system.memory_size(memory); size_status == .Ok {
-			facts.memory_bytes = pages * system.PAGE_SIZE
-		}
-	}
+	facts.is_budget, facts.can_spend, facts.budget_pages = surface_budget_facts(budget, kind, rights) // window_resize.odin
 	refusal, surface_scale, screen_width, screen_height := bar.surface_create_refusal(facts)
 	if refusal != .None {
+		refused(client)
 		return
 	}
-	address, status := system.memory_map(memory, {}) // Read only.
-	if status != .Ok {
+	pictures, memory, given, made := surface_make(client, budget, screen_width, screen_height) // window_resize.odin
+	if !made {
+		refused(client)
 		return
 	}
+	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Create_Taken), 1 = 1, 2 = u64(given)})
 	client.created = true
 	desktop_window_opened(index) // desktop_features.odin
-	client.pictures = ([^]graphics.Color)(address)
+	client.pictures, client.pictures_memory = pictures, memory
 	client.surface = {pixels = client.pictures, width = int(screen_width), height = int(screen_height), stride = int(screen_width)}
 	client.surface_serial, client.surface_scale = 1, surface_scale
 	client.width, client.height = int(facts.width), int(facts.height)

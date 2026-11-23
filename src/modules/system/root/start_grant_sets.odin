@@ -518,6 +518,25 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// plan names, and the grant to act for the principal, which plans.apply
 	// asks.
 	{name = "plan_applier", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	// The asker of the test of the store picker: a connection to the
+	// holder of Display and to no other service, the boot image for the
+	// description of its exports, and the grant to act for the principal,
+	// which powerbox_pick_store asks.
+	{name = "store_asker", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "display"}}},
+	// The stranger of the same test: the same connection with no grant to
+	// act for the principal, so the display refuses it each grant and each
+	// list.
+	{name = "store_stranger", grants = {.Connect, .Image}, terms = {callable = {0 = "display"}}},
+	// The hostile caller of the trusted display of a plan difference: the
+	// grant to act for the principal, so the display reads the objects that
+	// it gives, and a connection to the holder of Display only.
+	{name = "difference_hostile", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "display"}}},
+	// The machine case of the border of Memory_Read: the boot image, which
+	// the kernel names as device memory, for the refusal of device memory.
+	{name = "memory_read_border", grants = {.Image}},
+	// The machine case of the budget of a surface: the ring of its window
+	// only, which each start gives.
+	{name = "surface_budget_edges", grants = {}},
 	// The driver of the machine test of the builders: it registers and
 	// builds recipes with the service recipes, which takes a caller that
 	// acts for its principal; the boot image gives the hash of the test

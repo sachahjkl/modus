@@ -527,7 +527,9 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 	if plan_difference_dialog.open {
 		return call_outcome.fail(error, .Callee_Busy, .Busy, .Requests, 0, 1, 1)
 	}
-	id := powerbox_prompt_open(.Store_Share, process_name^, mode^)
+	caller := system.service_caller()
+	principal := caller == nil ? 0 : isolated.caller_principal(caller.grant)
+	id := powerbox_prompt_open(.Store_Share, process_name^, mode^, principal)
 	if id == 0 {
 		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1)
 	}
@@ -668,11 +670,13 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 	return .Succeeded, 1
 }
 
-// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Busy (a dialog of the trusted display shows); Empty (no name, or nothing added and nothing removed); Too_Long (a name past 48 bytes, or more than 8 items on one side); Bad_Value (an empty item in a list).
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, and a memory object that holds the grants and roles that it adds, then the ones that it removes, each a list of names that commas separate, of any count. The caller gives the object through the call ring of its connection, with Read only; `difference` is that handle as the display names it, and the display keeps it until it read the object. The dialog shows at once, with "Reading the difference"; a worker of the display reads the lines. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller does not act for the principal); Busy (Callee_Busy: a dialog of the trusted display shows); Empty (Argument_Refused: no name, or nothing added and nothing removed); Too_Long (Argument_Refused: a name past 48 bytes); Bad_Value (Argument_Refused, argument 2: the object did not come through the ring of the caller, is no memory object, holds another right than Read, or has other pages than its two sides). An empty item or an item past 48 bytes, which the worker finds, ends the dialog with no decision: a poll gives unknown (3).
 //
 // **The act.** The focus starts on Refuse. An act counts 500 ms after the
-// dialog showed: Enter acts on the button that has the focus, Tab and the
-// arrows move it, a press on a button acts on it. Escape refuses at once.
+// dialog showed: Enter acts on the button that has the focus, Tab, Left and
+// Right move it, a press on a button acts on it. Escape refuses at once.
+// Up, Down, Page Up and Page Down scroll the items; with more items than the
+// view holds, Accept counts only once the view showed the last one.
 // While the dialog shows, no window receives a key or a press.
 //
 // **Grant**: the caller must be the holder of the role Plans, which the
@@ -681,15 +685,27 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 //
 // ```
 // connect("compositor")
-// compositor.plan_diff_ask("home", "notes: store documents", "paint: network")
+// compositor.plan_diff_ask("home", difference, 22, 14)
 // ```
 @(export, link_name = "plan_diff_ask")
-plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if !plan_display_caller() {
+plan_diff_ask_export :: proc "c" (plan_name: ^string, difference: i64, added_bytes: i64, removed_bytes: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	memory := difference > 0 && difference <= i64(max(u32)) ? system.Handle(difference) : 0
+	if !plan_display_caller() || plan_name == nil {
+		// The object that a refused caller gave is not kept.
+		if caller := system.service_caller(); caller != nil && memory != 0 {
+			if _, _, through := system.handle_state(memory, caller.ring_memory); through {
+				system.close(memory)
+			}
+		}
+		if plan_name == nil {
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+		}
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
-	serial, refusal, argument := plan_difference_show(plan_name^, added^, removed^)
+	serial, refusal, argument := plan_difference_show(plan_name^, memory, added_bytes, removed_bytes)
 	switch refusal {
+	case .Not_A_Difference:
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, i64(argument), difference)
 	case .None:
 		return .Succeeded, i64(serial)
 	case .Busy:
@@ -699,13 +715,13 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 	case .Name_Too_Long:
 		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(plan_name^)), bar.PLAN_DIFFERENCE_NAME_BYTES)
 	case .No_Change:
-		return call_outcome.fail(error, .Argument_Refused, .Empty, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Records, i64(argument))
 	case .Empty_Item:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, i64(argument))
 	case .Item_Too_Long:
 		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Too_Many_Items:
-		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Records, i64(argument))
 	case .Not_A_Name, .Not_An_Act, .No_Grant, .Bad_Serial:
 		// The plan face checks no identifier, and its caller is checked
 		// above: only the act face and a poll give these.
@@ -717,7 +733,6 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 //
 #assert(bar.PLAN_DIFFERENCE_NAME_BYTES == pr.PLAN_DISPLAY_NAME_BYTES)
 #assert(bar.PLAN_DIFFERENCE_ITEM_BYTES == pr.PLAN_DISPLAY_ITEM_BYTES)
-#assert(bar.PLAN_DIFFERENCE_ITEM_CAPACITY == pr.PLAN_DISPLAY_ITEM_CAPACITY)
 
 // Return the principal's decision for a trusted plan difference dialog.
 //
@@ -752,7 +767,7 @@ dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
 		// A poll shows nothing: it gives none of the refusals of a show.
 		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
@@ -818,7 +833,7 @@ act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> (outco
 	case .Not_A_Name, .Not_An_Act:
 		// The argument of the export is the act; the asker is no argument.
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
-	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Bad_Serial:
+	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Bad_Serial, .Not_A_Difference:
 		// The act face gives none of the refusals of a plan or of a poll.
 	}
 	return call_outcome.fail(error, .Argument_Refused, .Refused)
@@ -862,7 +877,7 @@ act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (out
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
 		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
 	if !closed {

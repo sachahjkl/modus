@@ -17,8 +17,13 @@ import "modus:contract/value_kinds"
 import "internal:powerbox/powerbox_core"
 import "modus:system"
 
-// Working memory budget for the freestanding powerbox service process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256, processes = 1, threads = 1}
+// The pages of the arena that holds the grants that processes hold.
+TABLE_PAGES :: 512
+
+// Working memory budget for the freestanding powerbox service process: the
+// grants (TABLE_PAGES), the stores of the picker and their index, which
+// grow from the rest (512 pages: about 10 000 stores), and its data.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = TABLE_PAGES + 512 + 256, processes = 1, threads = 1}
 
 // Status record returned by the status() export required by Role.Powerbox.
 Powerbox_Status :: struct {
@@ -37,11 +42,98 @@ service_ring: ring.Ring
 display_ring: ring.Ring
 service_region_base: [^]u8
 service_region_bytes: u64
+service_ring_memory: system.Handle
 
 // Buffers in BSS for copy-then-check reading of shared-memory records.
 copied_batch: powerbox.Request_Batch
 copied_answer: powerbox.Grant_Answer
 outbound_dialog: powerbox.Dialog_Record
+copied_page_request: powerbox.Picker_Page_Request
+outbound_page: powerbox.Picker_Page
+table_arena: system.Arena
+
+// The stores of the principals for the picker grow in an arena of their
+// own, in place, as large as the budget; their index is written again
+// in a second arena at each growth. Both commit the exact pages of each
+// growth, and keep STORE_KEPT_PAGES of the budget for the rest of the
+// service.
+store_arena: system.Arena
+store_index_arena: system.Arena
+STORE_KEPT_PAGES :: 64
+
+@(private = "file")
+store_push_allowed :: proc "contextless" (arena: ^system.Arena, bytes, alignment: u64) -> bool {
+	pages, fits := system.arena_push_commit_pages(arena, bytes, alignment)
+	amounts, status := system.budget_read()
+	return fits && status == .Ok && amounts.pages >= STORE_KEPT_PAGES && pages <= amounts.pages - STORE_KEPT_PAGES
+}
+
+// stores_grow gives the core rows_least rows in place, and a new index of
+// four slots for each row, a power of two.
+@(private = "file")
+stores_grow :: proc "contextless" (_: rawptr, state: ^powerbox_core.Powerbox_State, rows_least: int) -> bool {
+	rows := len(state.stores)
+	if rows_least > rows {
+		bytes := u64(rows_least - rows) * size_of(powerbox_core.Session_Store)
+		if !store_push_allowed(&store_arena, bytes, align_of(powerbox_core.Session_Store)) {
+			return false
+		}
+		if _, status := system.arena_push(&store_arena, bytes, align_of(powerbox_core.Session_Store)); status != .Ok {
+			return false
+		}
+		state.stores = ([^]powerbox_core.Session_Store)(store_arena.base)[:rows_least]
+	}
+	slots := 1
+	for slots < 4 * len(state.stores) {
+		slots *= 2
+	}
+	// The index of before is no longer read: its pages hold the new one.
+	system.arena_reset(&store_index_arena)
+	bytes := u64(slots) * size_of(u32)
+	if !store_push_allowed(&store_index_arena, bytes, align_of(u32)) {
+		state.store_index = nil
+		return false
+	}
+	address, status := system.arena_push(&store_index_arena, bytes, align_of(u32))
+	if status != .Ok {
+		state.store_index = nil
+		return false
+	}
+	state.store_index = ([^]u32)(address)[:slots]
+	return true
+}
+
+// tables_make takes the held grants from the table arena, and starts the
+// stores empty, in their arena of the size of the budget.
+@(private = "file")
+tables_make :: proc "contextless" () -> (tables: powerbox_core.Powerbox_Tables, ok: bool) {
+	status: system.Status
+	table_arena, status = system.arena_create(TABLE_PAGES)
+	if status != .Ok {
+		return {}, false
+	}
+	amounts, budget_status := system.budget_read()
+	if budget_status != .Ok {
+		return {}, false
+	}
+	reserve := system.arena_reservation_pages(amounts.pages)
+	if store_arena, status = system.arena_create(reserve); status != .Ok {
+		return {}, false
+	}
+	if store_index_arena, status = system.arena_create(reserve); status != .Ok {
+		return {}, false
+	}
+	store_arena.exact_commits = true
+	store_index_arena.exact_commits = true
+	grant_rows := u64(TABLE_PAGES) * system.PAGE_SIZE / size_of(powerbox_core.Held_Grant)
+	grants, grant_status := system.arena_push(&table_arena, grant_rows * size_of(powerbox_core.Held_Grant), align_of(powerbox_core.Held_Grant))
+	if grant_status != .Ok {
+		return {}, false
+	}
+	tables.held_grants = ([^]powerbox_core.Held_Grant)(grants)[:grant_rows]
+	tables.stores_grow = stores_grow
+	return tables, true
+}
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
@@ -157,17 +249,10 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) -> (dis
 			if region_range_valid(dialog_offset, size_of(powerbox.Dialog_Record)) {
 				intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[dialog_offset]), &outbound_dialog, size_of(powerbox.Dialog_Record))
 			}
-			if ring.count(&display_ring.commands) < ring.capacity(&display_ring.commands) {
-				ring.push(
-					&display_ring.commands,
-					ring.Record{
-						kind   = u32(outbound_dialog.action_word),
-						tag    = command.tag,
-						values = {outbound_dialog.dialog_serial, outbound_dialog.request_serial, dialog_offset, u64(outbound_dialog.item_count), u64(outbound_dialog.picker_candidate_count), 0, 0},
-					},
-				)
-				display_notified = true
-			}
+			// The dialog of an asker waits in the region of the root service,
+			// which gives it to the trusted display: the picker ring is the
+			// ring of the commands of the display, which this service only
+			// answers.
 		}
 		ring.push(
 			&service_ring.completions,
@@ -237,6 +322,46 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) -> (dis
 			},
 		)
 		return false
+	case .Picker_Page:
+		// values[0]: the offset of the request in the region, values[1]: the
+		// offset of the page, values[2]: the slot of the trusted display.
+		request_offset := command.values[0]
+		page_offset := command.values[1]
+		if !region_range_valid(request_offset, size_of(powerbox.Picker_Page_Request)) || !region_range_valid(page_offset, size_of(powerbox.Picker_Page)) {
+			ring.push(
+				&service_ring.completions,
+				ring.Record{
+					kind   = u32(powerbox.Service_Ring_Status.Bad_Command),
+					tag    = command.tag,
+					values = errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 1, i64(request_offset), i64(service_region_bytes)),
+				},
+			)
+			return false
+		}
+		// Copy once out of shared memory before the check.
+		intrinsics.mem_copy_non_overlapping(&copied_page_request, rawptr(&service_region_base[request_offset]), size_of(powerbox.Picker_Page_Request))
+		refusal := powerbox_core.picker_page_take(&service_state, u32(command.values[2]), &copied_page_request, &outbound_page)
+		if refusal == .None {
+			intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[page_offset]), &outbound_page, size_of(powerbox.Picker_Page))
+		}
+		status_word := refusal == .None ? u32(powerbox.Service_Ring_Status.Ok) : u32(powerbox.Service_Ring_Status.Refused)
+		ring.push(
+			&service_ring.completions,
+			ring.Record{
+				kind   = status_word,
+				tag    = command.tag,
+				values = {u64(refusal), copied_page_request.dialog_serial, u64(outbound_page.candidate_count), u64(outbound_page.next), u64(outbound_page.total), outbound_page.more ? 1 : 0, 0},
+			},
+		)
+		return false
+	case .Stores_Connection:
+		stores_connection_take(command)
+		return false
+	case .Stores_Refused:
+		if stores_refused_take(command) {
+			system.wake_reader(&display_ring.completions)
+		}
+		return false
 	case .Query_Counts:
 		counters := service_state.counters
 		ring.push(
@@ -268,12 +393,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	has_delegated := false
 	if ctx.handles[powerbox.SERVICE_RING_SLOT] != 0 && ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT] != 0 {
 		status_open: system.Status
-		if service_ring, status_open = system.ring_open(ctx.handles[powerbox.SERVICE_RING_SLOT]); status_open == .Ok {
+		// The root service gives the handles of a connection to the
+		// storage service through this ring (Stores_Connection).
+		service_ring_memory = ctx.handles[powerbox.SERVICE_RING_SLOT]
+		if service_ring, status_open = system.ring_open(service_ring_memory, receive_handles = true); status_open == .Ok {
 			if display_ring, status_open = system.ring_open(ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT]); status_open == .Ok {
 				has_delegated = true
 			}
 		}
 	}
+	picker_region_open(ctx)
 	if !export_ok && !has_delegated {
 		fail("no powerbox service ring")
 	}
@@ -293,7 +422,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	display_slot := u32(ctx.values[powerbox.CONTEXT_VALUE_DISPLAY_SLOT])
-	powerbox_core.state_init(&service_state, display_slot)
+	tables, tables_ok := tables_make()
+	if !tables_ok {
+		fail("no memory for the tables of the powerbox")
+	}
+	powerbox_core.state_init(&service_state, display_slot, tables)
 
 	contract_digest := declared_contract_hash()
 	_ = contract_digest
@@ -323,18 +456,31 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				drained += 1
 			}
 
-			if answered {
+			if picker_ring_serve(now_ms) {
+				system.wake_reader(&display_ring.completions)
+			}
+			if stores_call_step(now_ms) {
+				answered = true
+				system.wake_reader(&display_ring.completions)
+			}
+			if answered || stores_wanted_sent {
+				stores_wanted_sent = false
 				system.wake_reader(&service_ring.completions)
 			}
-			if display_notified {
-				system.wake_reader(&display_ring.commands)
-			}
+			_ = display_notified
 			if drained == powerbox.REQUESTS_PER_PASS && ring.count(&service_ring.commands) > 0 {
 				continue
 			}
 			system.wait_records(&wait, &service_ring.commands)
+			system.wait_records(&wait, &display_ring.commands)
+			if stores_call.active {
+				system.wait_records(&wait, &stores_call.client.calls.completions)
+			}
 		}
-		if service_state.counters.pending_dialogs > 0 {
+		if picker_open_wait.active || stores_call.active {
+			// An Open that waits ends at its bound: the loop runs then.
+			system.wait_end(&wait, picker_wait_deadline())
+		} else if service_state.counters.pending_dialogs > 0 {
 			system.wait_end(&wait, now_ms + 1000)
 		} else {
 			system.wait_end(&wait)

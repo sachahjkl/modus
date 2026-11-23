@@ -15,6 +15,23 @@ the_window_ring_of_the_contract_counts_each_event :: proc(t: ^testing.T) {
 	testing.expect_value(t, u32(max(Event_Kind)), role_contract.DISPLAY_WINDOW_EVENT_COUNT)
 }
 
+// The records that come before the answer of Surface_Create: kept in their
+// order up to the capacity of the ring, and one past it is counted and not
+// kept, so the wait for the answer goes on.
+@(test)
+early_records_keep_their_order_up_to_the_ring :: proc(t: ^testing.T) {
+	window := new(Window)
+	defer free(window)
+	testing.expect_value(t, window.early_count, 0)
+	for index in 0 ..= EARLY_RECORD_CAPACITY {
+		early_record_keep(window, ring.Record{kind = u32(Event_Kind.Work_Area), values = {0 = u64(index + 1), 1 = 700}})
+	}
+	testing.expect_value(t, window.early_count, EARLY_RECORD_CAPACITY)
+	testing.expect_value(t, window.early_records_dropped, 1)
+	testing.expect_value(t, window.early_records[window.early_first].values[0], 1)
+	testing.expect_value(t, window.early_records[(window.early_first + EARLY_RECORD_CAPACITY - 1) % EARLY_RECORD_CAPACITY].values[0], u64(EARLY_RECORD_CAPACITY))
+}
+
 // The border of a Work_Area, refusals first: a width or a height of 0, one
 // past WORK_AREA_LIMIT, and the largest word. Each refusal gives the zero
 // event. The bounds 1 and WORK_AREA_LIMIT are taken last.

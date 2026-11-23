@@ -46,7 +46,21 @@ palette_destroying_commands := [?]string{"shutdown", "stop", "revoke", "lock", "
 
 palette_ring: ring.Ring // The ring from the compositor: its choices, and the answers of the console.
 palette_table_handle, palette_ring_handle: system.Handle
-palette_memory: []u8 // The mapping of the entry table.
+palette_memory: []u8 // The mapping of the entry table, which the root service made.
+// The object of the entries alone, once they passed the table, and its
+// number as Header.entries_object names it: 0 and nil while the entries
+// are in the table.
+palette_entries_object_handle: system.Handle
+palette_entries_object: []u8
+palette_entries_object_number: u32
+
+// palette_entries_place gives the bytes where the entries go now.
+palette_entries_place :: proc "contextless" () -> []u8 {
+	if palette_entries_object != nil {
+		return palette_entries_object
+	}
+	return palette_memory[palette_table.ENTRIES_OFFSET:]
+}
 // 1: the console is the palette provider. The two threads read it; it goes
 // to 0 once, before the grant ends.
 palette_provided: u32
@@ -738,17 +752,16 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	if !palette_active() {
 		return
 	}
-	// If the current shared table cannot hold all entries, allocate a new
-	// memory object sized for count and give a read-only handle to the
-	// compositor through the palette ring. Do not update palette_entries or
-	// palette_entry_count until the replacement succeeds so a failed grow
-	// retries cleanly on the next write.
-	if expected_bytes > u64(len(palette_memory)) {
-		needed_pages, pages_ok := palette_table.table_pages_for(u64(count))
-		if !pages_ok {
-			return
-		}
-		old_pages := u64(len(palette_memory)) / system.PAGE_SIZE
+	// The entries go in the table while they fit, then in an object of the
+	// entries alone that this console makes and gives to the compositor with
+	// Read through the palette ring (modus:contract/palette_table, "The object
+	// of the entries"). The header, the result and the candidates stay in the
+	// table that the root service made. palette_entries and
+	// palette_entry_count change only after a move succeeded, so a failed
+	// move tries again at the next write.
+	if u64(size) > u64(len(palette_entries_place())) {
+		needed_pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		old_pages := u64(len(palette_entries_object)) / system.PAGE_SIZE
 		new_pages := needed_pages
 		if old_pages <= max(u64) / 2 {
 			new_pages = max(needed_pages, old_pages * 2)
@@ -762,14 +775,7 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 			system.close(new_handle)
 			return
 		}
-		new_memory := ([^]u8)(new_addr)[:new_pages * system.PAGE_SIZE]
-		copy(new_memory[:palette_table.ENTRIES_OFFSET], palette_memory[:palette_table.ENTRIES_OFFSET])
-		if size > 0 {
-			copy(new_memory[palette_table.ENTRIES_OFFSET:], next_bytes)
-		}
-		generation := header.change_count + 2
-		new_header := (^palette_table.Header)(new_addr)
-		new_header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = generation, entry_count = u32(count), byte_length = expected_bytes}
+		number := palette_entries_object_number + 1
 		given, give_status := system.give(palette_ring_handle, new_handle, {.Read})
 		if give_status != .Ok {
 			system.memory_unmap(new_addr)
@@ -777,7 +783,7 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 			return
 		}
 		system.lock(&palette_send_lock)
-		sent := system.send(&palette_ring.completions, ring.Record{values = {0 = u64(palette_table.Outcome.Table_Replaced), 1 = u64(given), 2 = u64(len(new_memory))}})
+		sent := system.send(&palette_ring.completions, ring.Record{values = {0 = u64(palette_table.Outcome.Table_Replaced), 1 = u64(given), 2 = new_pages * system.PAGE_SIZE, 3 = u64(number)}})
 		system.unlock(&palette_send_lock)
 		if !sent {
 			// Revoke the handle already transferred into the compositor so
@@ -787,16 +793,15 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 			system.close(new_handle)
 			return
 		}
-		if size > 0 {
-			copy(([^]u8)(&palette_entries[0])[:size], next_bytes)
+		// The compositor keeps its copy of the object before: it reads the
+		// place that the header names, and retires the one before itself.
+		if palette_entries_object != nil {
+			system.memory_unmap(raw_data(palette_entries_object))
+			system.close(palette_entries_object_handle)
 		}
-		palette_entry_count = count
-		system.memory_unmap(raw_data(palette_memory))
-		system.close(palette_table_handle)
-		palette_table_handle = new_handle
-		palette_memory = new_memory
-		system.log_fact(.Info, Palette_Table_Written{entries = u64(count), table_generation = u64(generation)})
-		return
+		palette_entries_object_handle = new_handle
+		palette_entries_object = ([^]u8)(new_addr)[:new_pages * system.PAGE_SIZE]
+		palette_entries_object_number = number
 	}
 	if size > 0 {
 		copy(([^]u8)(&palette_entries[0])[:size], next_bytes)
@@ -804,10 +809,11 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	palette_entry_count = count
 	intrinsics.atomic_add(&header.change_count, 1)
 	if size > 0 {
-		copy(palette_memory[palette_table.ENTRIES_OFFSET:], next_bytes)
+		copy(palette_entries_place(), next_bytes)
 	}
 	header.entry_count = u32(count)
 	header.byte_length = expected_bytes
+	header.entries_object = palette_entries_object_number
 	generation := intrinsics.atomic_add(&header.change_count, 1) + 1
 	system.word_wake(&header.change_count, 64)
 	system.log_fact(.Info, Palette_Table_Written{entries = u64(count), table_generation = u64(generation)})
@@ -1157,22 +1163,56 @@ palette_candidates_closed :: proc "contextless" (kind: palette_table.Candidate_K
 	return false
 }
 
-// palette_candidates_give answers a request for the candidates of one
-// parameter of one entry: it writes their names in the candidate area of
-// the table, then their kind and their count on the ring. A name that
-// does not fit a candidate is left out. With no candidate the count is 0.
+// One page of the candidates of a parameter, as palette_candidates_give
+// makes it: the names of the page, and the count of the whole list that
+// matches the search text.
+Palette_Candidate_Page :: struct {
+	query:      string, // The search text; empty: each name.
+	first:      int, // The place in the list where the page starts.
+	matched:    int, // The names of the whole list that match.
+	count:      int, // The names of the page.
+	candidates: [palette_table.CANDIDATE_CAPACITY]palette_table.Candidate,
+}
+
+// palette_candidate_add counts one name in the list of a page when it
+// matches the search text, and keeps it when its place is on the page. A
+// name that does not fit a candidate is left out.
+palette_candidate_add :: proc "contextless" (page: ^Palette_Candidate_Page, added: string) {
+	if len(added) == 0 || len(added) > palette_table.CANDIDATE_NAME_CAPACITY || !text_encoding.text_valid(transmute([]u8)added) {
+		return
+	}
+	if len(page.query) > 0 {
+		if _, _, matched := line_editor.fuzzy_match(page.query, added); !matched {
+			return
+		}
+	}
+	place := page.matched
+	page.matched += 1
+	if place < page.first || page.count >= palette_table.CANDIDATE_CAPACITY {
+		return
+	}
+	page.candidates[page.count].length = u8(copy(page.candidates[page.count].name[:], added))
+	page.count += 1
+}
+
+// palette_candidates_give answers a request for one page of the candidates
+// of one parameter of one entry: it writes the names of the page in the
+// candidate area of the table, then their kind, their count, the count of
+// the whole list and the cursor of the page on the ring. The search text
+// is the Text of an Argument command of the same tag, for the same
+// parameter. With no candidate the count is 0.
 palette_candidates_give :: proc "contextless" (record: ring.Record) {
 	entry, named := palette_entry_named(record)
 	kind := palette_table.Candidate_Kind.None
 	if named {
 		kind = palette_candidate_kind(string(entry.name[:entry.name_length]), record.values[3])
 	}
-	candidates: [palette_table.CANDIDATE_CAPACITY]palette_table.Candidate
-	count := 0
-	add :: proc "contextless" (into: ^[palette_table.CANDIDATE_CAPACITY]palette_table.Candidate, used: ^int, added: string) {
-		if used^ < palette_table.CANDIDATE_CAPACITY && len(added) > 0 && len(added) <= palette_table.CANDIDATE_NAME_CAPACITY && text_encoding.text_valid(transmute([]u8)added) {
-			into[used^].length = u8(copy(into[used^].name[:], added))
-			used^ += 1
+	page: Palette_Candidate_Page
+	page.first = int(min(record.values[4], u64(max(i32))))
+	if palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[3] < palette_table.PARAMETER_CAPACITY && int(record.values[3]) in palette_arguments_given {
+		argument := &palette_arguments[record.values[3]]
+		if argument.kind == .Text {
+			page.query = string(argument.text[:argument.length])
 		}
 	}
 	switch kind {
@@ -1183,7 +1223,7 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 				continue
 			}
 			value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
-			add(&candidates, &count, palette_strategy_value(&value_buffer, strategy))
+			palette_candidate_add(&page, palette_strategy_value(&value_buffer, strategy))
 		}
 	case .Member:
 		// The members of the enum of the parameter, as its module file
@@ -1193,23 +1233,25 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 			if described, problem := module.enum_type(found.file, enum_index); problem == .None {
 				for number in 0 ..< described.member_count {
 					member, _ := module.enum_member(found.file, described, number)
-					add(&candidates, &count, module.string_at(found.file, member.name_offset, member.name_count))
+					palette_candidate_add(&page, module.string_at(found.file, member.name_offset, member.name_count))
 				}
 			}
 		}
 	case .Grant:
 		for grant in system.Root_Grant {
-			add(&candidates, &count, system.root_grant_names[grant])
+			palette_candidate_add(&page, system.root_grant_names[grant])
 		}
 	case .Module:
 		entries := system.image_entries(image)
 		for &image_entry in entries {
-			add(&candidates, &count, system.name_of(image_entry.name[:]))
+			palette_candidate_add(&page, system.name_of(image_entry.name[:]))
 		}
 	case .Process:
 		// The processes that run, from the reports of the machine, as the
 		// completion of the edit line reads them.
 		report: op.System_Report
+		seen_names: [op.PROCESS_SLOTS_OF_THE_MACHINE]u64
+		seen_count := 0
 		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status == .Ok {
 			for slot in 1 ..< report.process_slots {
 				process: op.Process_Report
@@ -1219,33 +1261,40 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 				if process.state == .None || process.state == .Stopped {
 					continue
 				}
-				// One row for each name: two processes can have one.
+				// One row for each name: two processes can have one. The
+				// hashes of the names before keep the order of the list the
+				// same for each page.
 				name := system.name_of(process.name[:])
+				name_hash := palette_table.name_hash(name)
 				known := false
-				for &candidate in candidates[:count] {
-					if string(candidate.name[:candidate.length]) == name {
+				for earlier in seen_names[:seen_count] {
+					if earlier == name_hash {
 						known = true
 					}
 				}
 				if !known {
-					add(&candidates, &count, name)
+					if seen_count < len(seen_names) {
+						seen_names[seen_count] = name_hash
+						seen_count += 1
+					}
+					palette_candidate_add(&page, name)
 				}
 			}
 		}
 	}
 	system.lock(&palette_table_lock)
 	if palette_active() {
-		bytes := ([^]u8)(&candidates[0])[:count * size_of(palette_table.Candidate)]
+		bytes := ([^]u8)(&page.candidates[0])[:page.count * size_of(palette_table.Candidate)]
 		copy(palette_memory[palette_table.CANDIDATES_OFFSET:], bytes)
 	}
 	system.unlock(&palette_table_lock)
 	if !palette_active() {
 		return
 	}
-	system.log_fact(.Info, Palette_Candidates_Given{candidates = u64(count), parameter = record.values[3], entry_name = value_kinds.text_field(string(entry.name[:named ? int(entry.name_length) : 0]), ENTRY_NAME_FIELD_BYTES)})
+	system.log_fact(.Info, Palette_Candidates_Given{candidates = u64(page.count), parameter = record.values[3], entry_name = value_kinds.text_field(string(entry.name[:named ? int(entry.name_length) : 0]), ENTRY_NAME_FIELD_BYTES)})
 	system.lock(&palette_send_lock)
 	facts: u64 = palette_candidates_closed(kind) ? palette_table.CANDIDATES_CLOSED : 0
-	system.send(&palette_ring.completions, ring.Record{tag = record.tag, values = {0 = u64(palette_table.Outcome.Candidates_Ready), 1 = u64(kind), 2 = u64(count), 3 = facts}})
+	system.send(&palette_ring.completions, ring.Record{tag = record.tag, values = {0 = u64(palette_table.Outcome.Candidates_Ready), 1 = u64(kind), 2 = u64(page.count), 3 = facts, 4 = u64(page.matched), 5 = u64(page.first)}})
 	system.unlock(&palette_send_lock)
 }
 

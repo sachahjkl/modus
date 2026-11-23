@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The kernel operations are the widest border of the system: each process writes command records, and the kernel reads their arguments and the records at their addresses. The hostile cases of the machine test are the cases that their writers thought of. This file records how the tool fuzzes that border: a test machine runs operation sequences that the tool builds from the forms of the 35 operations, a test kernel tells the tool which kernel edges each sequence reached, and the oracles are the checks of the kernel, the form table and the budgets.
+The kernel operations are the widest border of the system: each process writes command records, and the kernel reads their arguments and the records at their addresses. The hostile cases of the machine test are the cases that their writers thought of. This file records how the tool fuzzes that border: a test machine runs operation sequences that the tool builds from the forms of the 36 operations, a test kernel tells the tool which kernel edges each sequence reached, and the oracles are the checks of the kernel, the form table and the budgets.
 
 The engine, the mutators, the minimizer and the corpus format are the ones of the host targets ([fuzzing.md](fuzzing.md)). This file records what the machine adds.
 

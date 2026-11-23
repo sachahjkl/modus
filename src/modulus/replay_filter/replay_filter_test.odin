@@ -86,7 +86,7 @@ replay_operation_policy_covers_every_operation :: proc(t: ^testing.T) {
 		case .Thread_Create, .Guest_Run:
 			testing.expect_value(t, policy, Replay_Operation_Policy.Refused)
 			refused_count += 1
-		case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Log_Read:
+		case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Log_Read, .Memory_Read:
 			testing.expect_value(t, policy, Replay_Operation_Policy.Synthetic)
 			synthetic_count += 1
 		}

@@ -6,6 +6,7 @@ package bar
 // procedures: a host test gives them each refused case, and each corner.
 
 import "modus:contract/scale_factor"
+import "modus:display"
 
 // The largest logical width and height of a window: the limit of
 // display.SURFACE_LIMIT, which this package does not import.
@@ -39,9 +40,12 @@ scale_after_read :: proc "contextless" (in_force, read: scale_factor.Scale, read
 // What the compositor knows when a window creates its surface: the words of
 // the record Surface_Create and the facts of the handle.
 Surface_Create_Facts :: struct {
-	is_memory:     bool,
-	readable:      bool,
-	memory_bytes:  u64, // 0 when the kernel refused to give the size.
+	// The window gives a budget, and the compositor makes the surface with
+	// it (src/md/features/window_resize.md, "The compositor makes each
+	// surface").
+	is_budget:     bool, // The handle names a budget.
+	can_spend:     bool, // The handle has Spend and Read: the compositor reads what the budget pays, and makes the surface with it.
+	budget_pages:  u64, // The pages that the budget can pay. 0 when the kernel refused to read them.
 	scale_word:    u64, // The bits of the first word above its handle.
 	width, height: u64, // The logical size: the words of the record.
 	screen_side_limit: u64, // surface_screen_side_limit of the screen in force.
@@ -50,12 +54,12 @@ Surface_Create_Facts :: struct {
 // The rule that a Surface_Create breaks. None: the compositor takes it.
 Surface_Create_Refusal :: enum {
 	None,
-	Not_Memory,
-	No_Read,
+	Not_Budget, // The handle names no budget.
+	No_Spend, // The budget handle has not Spend and Read.
 	No_Scale, // The word names no scale of the range.
 	Size_Out_Of_Range, // A logical side of 0, or past WINDOW_LOGICAL_LIMIT.
 	Past_Screen, // A side in pixels of the screen past screen_side_limit.
-	Too_Small, // The memory does not hold two pictures of its pixels of the screen.
+	Too_Small, // The budget does not pay two pictures of its pixels of the screen and their frame list (display.surface_budget_pages).
 }
 
 // surface_create_refusal decides a Surface_Create, and gives the pixels of
@@ -63,10 +67,10 @@ Surface_Create_Refusal :: enum {
 // by the rule of each edge. The words are read as words.
 surface_create_refusal :: proc "contextless" (facts: Surface_Create_Facts) -> (refusal: Surface_Create_Refusal, scale: scale_factor.Scale, screen_width, screen_height: u64) {
 	switch {
-	case !facts.is_memory:
-		return .Not_Memory, {}, 0, 0
-	case !facts.readable:
-		return .No_Read, {}, 0, 0
+	case !facts.is_budget:
+		return .Not_Budget, {}, 0, 0
+	case !facts.can_spend:
+		return .No_Spend, {}, 0, 0
 	case facts.width == 0 || facts.height == 0 || facts.width > WINDOW_LOGICAL_LIMIT || facts.height > WINDOW_LOGICAL_LIMIT:
 		return .Size_Out_Of_Range, {}, 0, 0
 	}
@@ -80,7 +84,7 @@ surface_create_refusal :: proc "contextless" (facts: Surface_Create_Facts) -> (r
 	if screen_width > facts.screen_side_limit || screen_height > facts.screen_side_limit {
 		return .Past_Screen, {}, 0, 0
 	}
-	if facts.memory_bytes / SURFACE_BYTES_FOR_EACH_PIXEL / screen_width < screen_height {
+	if facts.budget_pages < display.surface_budget_pages(screen_width, screen_height) {
 		return .Too_Small, {}, 0, 0
 	}
 	return .None, scale, screen_width, screen_height
@@ -91,9 +95,12 @@ surface_create_refusal :: proc "contextless" (facts: Surface_Create_Facts) -> (r
 // and the state of the window and of the compositor.
 Surface_Rescale_Facts :: struct {
 	gift:          bool, // The handle is a gift of this process through its ring.
-	is_memory:     bool,
-	readable:      bool,
-	memory_bytes:  u64,
+	// The window gives a budget, and the compositor makes the surface with
+	// it (src/md/features/window_resize.md, "The compositor makes each
+	// surface").
+	is_budget:     bool, // The handle names a budget.
+	can_spend:     bool, // The handle has Spend and Read: the compositor reads what the budget pays, and makes the surface with it.
+	budget_pages:  u64, // The pages that the budget can pay. 0 when the kernel refused to read them.
 	width, height: u64, // Pixels of the screen: words of the record.
 	scale_word:    u64,
 	serial:        u64,
@@ -167,8 +174,8 @@ serial_after_refused_offer :: proc "contextless" (released, pending: bool, relea
 Surface_Rescale_Refusal :: enum {
 	None,
 	Not_A_Gift, // The handle is no gift of this process: neither used nor closed.
-	Not_Memory,
-	No_Read,
+	Not_Budget, // The handle names no budget.
+	No_Spend, // The budget handle has not Spend and Read.
 	No_Window, // No Surface_Create came before.
 	Not_Released, // The compositor still shows a surface of the window.
 	Pending, // A surface waits for its Present.
@@ -177,7 +184,7 @@ Surface_Rescale_Refusal :: enum {
 	Other_Scale, // Not the scale of the compositor.
 	Other_Size, // Not the logical size of the window at that scale, to the pixel.
 	Past_Screen, // A side in pixels of the screen past screen_side_limit.
-	Too_Small, // The memory does not hold two pictures of the size.
+	Too_Small, // The budget does not pay two pictures of the size and their frame list (display.surface_budget_pages).
 }
 
 // The facts of a Surface_Declined: the window could not pay its surface at
@@ -242,10 +249,10 @@ surface_rescale_refusal :: proc "contextless" (facts: Surface_Rescale_Facts) -> 
 	switch {
 	case !facts.gift:
 		return .Not_A_Gift
-	case !facts.is_memory:
-		return .Not_Memory
-	case !facts.readable:
-		return .No_Read
+	case !facts.is_budget:
+		return .Not_Budget
+	case !facts.can_spend:
+		return .No_Spend
 	case !facts.created:
 		return .No_Window
 	case facts.pending:
@@ -272,7 +279,7 @@ surface_rescale_refusal :: proc "contextless" (facts: Surface_Rescale_Facts) -> 
 	if wanted_width > facts.screen_side_limit || wanted_height > facts.screen_side_limit {
 		return .Past_Screen
 	}
-	if facts.memory_bytes / SURFACE_BYTES_FOR_EACH_PIXEL / wanted_width < wanted_height {
+	if facts.budget_pages < display.surface_budget_pages(wanted_width, wanted_height) {
 		return .Too_Small
 	}
 	return .None

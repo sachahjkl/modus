@@ -218,44 +218,54 @@ text_field_length :: proc "contextless" (field: []u8) -> (length: int, ok: bool)
 }
 
 // plan_of_rows is the border of a plan that an export takes: it fills out
-// from rows for principal, then checks it whole with plan_validate. On a
-// refusal, out is zero.
+// from rows for principal, then checks it whole with plan_validate. out
+// holds the plan in its own memory: more rows than it holds are
+// Too_Many_Entries. On a refusal, out is empty and keeps its memory.
 plan_of_rows :: proc "contextless" (principal: u64, rows: []Plan_Entry_Row, out: ^Plan_Spec) -> (refusal: Plan_Refusal, bad_index: u32) {
 	if out == nil {
 		return .Buffer_Too_Small, 0
 	}
-	out^ = {}
+	plan_clear(out)
 	if len(rows) == 0 {
 		return .Empty_Plan, 0
 	}
-	if len(rows) > MAX_PLAN_ENTRIES {
+	if len(rows) > int(PLAN_ENTRY_COUNT_LIMIT) || len(rows) > len(out.entries) || len(rows) > len(out.order) {
 		return .Too_Many_Entries, 0
 	}
 	out.principal = principal
 	for index in 0 ..< len(rows) {
-		row := &rows[index]
-		length, text_ok := text_field_length(row.name[:])
-		if !text_ok || length == 0 {
-			out^ = {}
+		if !plan_entry_of_row(&rows[index], &out.entries[index]) {
+			plan_clear(out)
 			return .Invalid_Name, u32(index)
 		}
-		entry := &out.entries[index]
-		entry.kind_word = u64(row.kind_word)
-		copy(entry.name_bytes[:length], row.name[:length])
-		entry.name_length = u8(length)
-		entry.role_word = u64(row.role_word)
-		entry.module_hash = blake3.Hash(row.module_hash)
-		entry.interposed_over_hash = blake3.Hash(row.interposed_over_hash)
-		entry.recipe_hash = blake3.Hash(row.recipe_hash)
-		entry.start_grants_mask = u64(row.start_grants_mask)
-		entry.store_rights_word = u64(row.store_rights_word)
 	}
 	out.entry_count = u32(len(rows))
 	refusal, bad_index = plan_validate(out)
 	if refusal != .None {
-		out^ = {}
+		plan_clear(out)
 	}
 	return refusal, bad_index
+}
+
+// plan_entry_of_row writes the entry of a row: false when the name of the
+// row is no text or is empty. The other fields are checked whole by
+// plan_validate.
+plan_entry_of_row :: proc "contextless" (row: ^Plan_Entry_Row, entry: ^Plan_Entry) -> bool {
+	length, text_ok := text_field_length(row.name[:])
+	if !text_ok || length == 0 {
+		return false
+	}
+	entry^ = {}
+	entry.kind_word = u64(row.kind_word)
+	copy(entry.name_bytes[:length], row.name[:length])
+	entry.name_length = u8(length)
+	entry.role_word = u64(row.role_word)
+	entry.module_hash = blake3.Hash(row.module_hash)
+	entry.interposed_over_hash = blake3.Hash(row.interposed_over_hash)
+	entry.recipe_hash = blake3.Hash(row.recipe_hash)
+	entry.start_grants_mask = u64(row.start_grants_mask)
+	entry.store_rights_word = u64(row.store_rights_word)
+	return true
 }
 
 // plan_entry_row_of_entry gives the row of an entry, the form back of

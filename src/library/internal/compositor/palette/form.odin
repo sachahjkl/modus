@@ -24,8 +24,16 @@ Form :: struct {
 	field_count:      int, // The fields: the parameters of the entry.
 	current:          int, // The field that has the caret.
 	fields:           [FIELD_CAPACITY]line_editor.Line, // The text of each field, and the caret in it.
-	candidates:       [palette_table.CANDIDATE_CAPACITY]palette_table.Candidate, // What the provider gave for the current field: a checked copy.
-	candidate_count:  int, // The candidates in use.
+	candidates:       [palette_table.CANDIDATE_CAPACITY]palette_table.Candidate, // One page of what the provider gave for the current field: a checked copy.
+	candidate_count:  int, // The candidates of the page in use.
+	candidate_total:  int, // The candidates of the whole list that the provider matched.
+	candidate_page_first: int, // The place of the page in that list.
+	// The place of the page that the last request asked: an answer that
+	// starts at another place is no answer to it.
+	candidate_first_asked: int,
+	// The page that the owner asked for comes after a move up past the
+	// first candidate of the page before: its last candidate is chosen.
+	candidate_choose_last: bool,
 	candidate_kind:   palette_table.Candidate_Kind, // What they are.
 	candidates_closed: bool, // The provider says that they are the only values of the parameter, not suggestions.
 	shown:            [palette_table.CANDIDATE_CAPACITY]u8, // The candidates that the text of the field matches, in their order.
@@ -277,6 +285,9 @@ form_field_move :: proc "contextless" (panel: ^Panel, step: int) -> bool {
 form_candidates_clear :: proc "contextless" (form: ^Form) {
 	form.candidates_pending = false
 	form.candidate_count = 0
+	form.candidate_total = 0
+	form.candidate_page_first = 0
+	form.candidate_choose_last = false
 	form.shown_count = 0
 	form.candidate_choice = NO_ROW
 	form.candidate_first = 0
@@ -386,16 +397,19 @@ form_caret_put :: proc "contextless" (panel: ^Panel, field: int, caret: int) -> 
 	return field_changed
 }
 
-// form_candidates_set gives the form the candidates of its current field,
-// as the provider wrote them in the candidate area of its table: memory is
-// the mapping of the table, count, kind and facts the numbers of the
-// answer. The form copies the area and checks the copy; an area that
-// fails, a kind out of its range, and a bit of facts that the contract does
-// not know, give no candidate.
-form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64, kind: u64, facts: u64 = 0) {
+// form_candidates_set gives the form one page of the candidates of its
+// current field, as the provider wrote them in the candidate area of its
+// table: memory is the mapping of the table, count, kind, facts, total and
+// first the numbers of the answer (total: the matching candidates of the
+// whole list; first: the place of the page). The form copies the area and
+// checks the copy; an area that fails, a kind out of its range, a bit of
+// facts that the contract does not know, and a page outside its list give no
+// candidate.
+form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64, kind: u64, facts: u64, total: u64, first: u64) {
+	choose_last := form.candidate_choose_last
 	form_candidates_clear(form)
 	candidate_kind, kind_ok := enum_word.member_of_word(palette_table.Candidate_Kind, kind)
-	if !kind_ok || candidate_kind == .None || facts &~ palette_table.CANDIDATES_CLOSED != 0 {
+	if !kind_ok || candidate_kind == .None || facts &~ palette_table.CANDIDATES_CLOSED != 0 || !palette_table.candidate_page_valid(count, total, first) || first != u64(max(form.candidate_first_asked, 0)) {
 		return
 	}
 	copied, ok := palette_table.candidates_copy(memory, count, &form.candidates)
@@ -403,9 +417,39 @@ form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64
 		return
 	}
 	form.candidate_count = copied
+	form.candidate_total = int(total)
+	form.candidate_page_first = int(first)
 	form.candidate_kind = candidate_kind
 	form.candidates_closed = facts & palette_table.CANDIDATES_CLOSED != 0
 	form_candidates_filter(form)
+	if choose_last && form.shown_count > 0 {
+		form.candidate_choice = form.shown_count - 1
+		candidates_follow_choice(form)
+	}
+}
+
+// form_candidates_whole says if the page holds the whole list of the
+// candidates: the form then narrows them by the text of the field itself,
+// with no new request.
+form_candidates_whole :: proc "contextless" (form: ^Form) -> bool {
+	return form.candidate_page_first == 0 && form.candidate_count == form.candidate_total
+}
+
+// form_candidate_page_wanted says which page a move of the choice needs: the
+// page after, from the last candidate of a page that does not end the list,
+// or the page before, from the first candidate of a page that does not start
+// it. wanted is false when the move stays in the page.
+form_candidate_page_wanted :: proc "contextless" (form: ^Form, step: int) -> (first: int, wanted: bool) {
+	if form.candidate_count == 0 || form.shown_count == 0 {
+		return 0, false
+	}
+	if step > 0 && form.candidate_choice == form.shown_count - 1 && form.candidate_page_first + form.candidate_count < form.candidate_total {
+		return form.candidate_page_first + form.candidate_count, true
+	}
+	if step < 0 && form.candidate_choice == 0 && form.candidate_page_first > 0 {
+		return max(form.candidate_page_first - palette_table.CANDIDATE_CAPACITY, 0), true
+	}
+	return 0, false
 }
 
 // candidate_name gives the name of a shown candidate.
@@ -421,7 +465,7 @@ candidate_name :: proc "contextless" (form: ^Form, shown: int) -> string {
 // field matches, by the fuzzy match of the list, in the order that the
 // provider gave. The chosen candidate stays chosen when it is still shown,
 // at the place that it has now; else the first one is chosen. The work is
-// one match for each of at most 96 short names.
+// one match for each of the short names of one page.
 form_candidates_filter :: proc "contextless" (form: ^Form) {
 	chosen_before := -1
 	if form.candidate_choice >= 0 && form.candidate_choice < form.shown_count {

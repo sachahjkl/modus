@@ -139,15 +139,46 @@ display_disconnect :: proc "contextless" () {
 	}
 }
 
-// display_ask calls plan_diff_ask of the trusted display.
+// display_ask calls plan_diff_ask of the trusted display. The two sides
+// go in one memory object of this service, added then removed, which the
+// display keeps past the call: this service gives it a copy of the
+// handle with Read only through the call ring of the connection, and
+// passes the number of that copy. The display reads it on a worker and
+// closes it; a call that the display did not take revokes the copy.
 display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: string, removed: string) -> (serial: u64, ok: bool) {
-	if !display_connect() {
+	total := len(added) + len(removed)
+	if total == 0 || !display_connect() {
 		return 0, false
 	}
-	arguments := [3]isolated.Argument{{text = transmute([]u8)plan_name}, {text = transmute([]u8)added}, {text = transmute([]u8)removed}}
+	pages := (u64(total) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	memory, status := system.memory_create(pages)
+	if status != .Ok {
+		return 0, false
+	}
+	defer system.close(memory)
+	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		return 0, false
+	}
+	bytes := ([^]u8)(address)[:total]
+	copy(bytes, added)
+	copy(bytes[len(added):], removed)
+	system.memory_unmap(address)
+	connection := &display_connection.connection
+	given, give_status := system.give(connection.ring_memory, memory, {.Read})
+	if give_status != .Ok {
+		return 0, false
+	}
+	arguments := [4]isolated.Argument{{text = transmute([]u8)plan_name}, {integer = u64(given)}, {integer = u64(len(added))}, {integer = u64(len(removed))}}
 	error: errors.Error_Record
-	result, outcome := system.call_isolated(&display_connection.connection, display_connection.file, display_connection.ask_export, arguments[:], &error)
+	result, outcome := system.call_isolated(connection, display_connection.file, display_connection.ask_export, arguments[:], &error)
 	if outcome != .Succeeded || result <= 0 {
+		// The display closes the copy of a call that it refused; a call
+		// that did not reach it leaves the copy there, which this revokes.
+		// The copy is the one holding that came from memory. The display
+		// reads the object by system.memory_read, so a revocation during a
+		// reading is a status there, never a fault.
+		system.handle_revoke(memory)
 		if system.connection_to_renew(outcome) {
 			display_disconnect()
 		}

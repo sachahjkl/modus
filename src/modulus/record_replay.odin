@@ -1988,6 +1988,9 @@ record_command_output_range :: proc "contextless" (command: ring.Record, status:
 		return v[3], results[0]
 	case .Log_Read:
 		return v[4], results[0] * size_of(op.Log_Record)
+	case .Memory_Read:
+		// The bytes that the copy wrote: the replay gives them again.
+		return v[2], results[0]
 	case .Thread_Control:
 		sub, sub_ok := enum_word.member_of_word(op.Thread_Control_Command, v[2])
 		if !sub_ok {
@@ -2943,7 +2946,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 						exec_command.values[0] = real_handle
 						run_local = true
 					}
-				case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Guest_Run, .Log_Read:
+				case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Guest_Run, .Log_Read, .Memory_Read:
 				}
 			}
 		}

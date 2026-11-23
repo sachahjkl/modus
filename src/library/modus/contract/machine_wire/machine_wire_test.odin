@@ -9,6 +9,7 @@ import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/call_outcome"
 import "modus:contract/machine_mesh"
+import "modus:contract/machine_sync"
 import "modus:contract/object_cache"
 import "modus:contract/remote"
 import "modus:contract/role_contract"
@@ -92,12 +93,12 @@ Machine :: struct {
 }
 
 @(private = "file")
-machine_make :: proc(seed: u8) -> ^Machine {
+machine_make :: proc(seed: u8, memory: Maybe(Peer_Memory) = nil) -> ^Machine {
 	machine := new(Machine)
 	public_key: [32]u8
 	machine.private_key, public_key = key_pair(seed)
 	machine.random.seed = seed
-	ok := peer_init(&machine.peer, public_key, Peer_Services{signature_verify = verify_ed25519, fill_random = fill_test_random, role_holder = test_role_holder, user_data = &machine.random})
+	ok := peer_init(&machine.peer, public_key, Peer_Services{signature_verify = verify_ed25519, fill_random = fill_test_random, role_holder = test_role_holder, user_data = &machine.random}, memory.? or_else test_peer_memory())
 	assert(ok)
 	return machine
 }
@@ -239,8 +240,8 @@ frame_border_refuses_each_malformed_frame :: proc(t: ^testing.T) {
 	request: [FRAME_LIMIT]u8
 	serve_context := Serve_Context{peer_identity = stranger}
 	expect_refusal(t, serve(&empty_peer.peer, &serve_context, object_request_write(request[:], .Blob, blake3.hash([]u8{1})), empty_peer.output[:]), .No_Identity, 0)
-	testing.expect(t, !peer_init(&empty_peer.peer, {}, Peer_Services{signature_verify = verify_ed25519, fill_random = fill_test_random}))
-	testing.expect(t, !peer_init(&empty_peer.peer, stranger, Peer_Services{fill_random = fill_test_random}))
+	testing.expect(t, !peer_init(&empty_peer.peer, {}, Peer_Services{signature_verify = verify_ed25519, fill_random = fill_test_random}, test_peer_memory()))
+	testing.expect(t, !peer_init(&empty_peer.peer, stranger, Peer_Services{fill_random = fill_test_random}, test_peer_memory()))
 }
 
 // ---- Pairing ----
@@ -380,35 +381,35 @@ object_fetch_keeps_only_bytes_that_hash_to_the_request :: proc(t: ^testing.T) {
 	for bit in 0 ..< len(text) * 8 {
 		place := payload_start + bit / 8
 		tampered[place] ~= u8(1) << uint(bit % 8)
-		status, _ := object_response_accept(&laptop.peer, .Blob, hash, tampered[:len(answer)])
+		status, _, _ := object_response_accept(&laptop.peer, .Blob, hash, tampered[:len(answer)])
 		testing.expect_value(t, status, Object_Fetch_Status.Hash_Mismatch)
 		tampered[place] ~= u8(1) << uint(bit % 8)
 	}
 	testing.expect_value(t, laptop.peer.objects.count, 0)
 
 	// The answer of another object, a wrong kind, a count that lies.
-	status, _ := object_response_accept(&laptop.peer, .Blob, other_hash, answer)
+	status, _, _ := object_response_accept(&laptop.peer, .Blob, other_hash, answer)
 	testing.expect_value(t, status, Object_Fetch_Status.Other_Object)
-	status, _ = object_response_accept(&laptop.peer, .Tree, hash, answer)
+	status, _, _ = object_response_accept(&laptop.peer, .Tree, hash, answer)
 	testing.expect_value(t, status, Object_Fetch_Status.Other_Object)
 	byte_order.write_u32_little_endian(tampered[:], FRAME_HEADER_SIZE + 4, u32(len(text) + 1))
-	status, _ = object_response_accept(&laptop.peer, .Blob, hash, tampered[:len(answer)])
+	status, _, _ = object_response_accept(&laptop.peer, .Blob, hash, tampered[:len(answer)])
 	testing.expect_value(t, status, Object_Fetch_Status.Malformed)
-	status, _ = object_response_accept(&laptop.peer, .Blob, hash, answer[:FRAME_HEADER_SIZE + 4])
+	status, _, _ = object_response_accept(&laptop.peer, .Blob, hash, answer[:FRAME_HEADER_SIZE + 4])
 	testing.expect_value(t, status, Object_Fetch_Status.Malformed)
 	testing.expect_value(t, laptop.peer.objects.count, 0)
 
 	// The true answer is kept, once.
-	status, _ = object_response_accept(&laptop.peer, .Blob, hash, answer)
+	status, _, _ = object_response_accept(&laptop.peer, .Blob, hash, answer)
 	testing.expect_value(t, status, Object_Fetch_Status.Stored)
-	status, _ = object_response_accept(&laptop.peer, .Blob, hash, answer)
+	status, _, _ = object_response_accept(&laptop.peer, .Blob, hash, answer)
 	testing.expect_value(t, status, Object_Fetch_Status.Already_Stored)
 	kept := object_lookup(&laptop.peer, hash)
 	testing.expect(t, string(kept) == text)
 
 	// An absent hash, the same hash asked as a tree, a bad kind word, a zero word set.
 	reason: Refusal_Reason
-	status, reason = object_response_accept(&laptop.peer, .Blob, blake3.hash([]u8{0}), exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, blake3.hash([]u8{0}))))
+	status, reason, _ = object_response_accept(&laptop.peer, .Blob, blake3.hash([]u8{0}), exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, blake3.hash([]u8{0}))))
 	testing.expect(t, status == .Refused && reason == .Object_Absent)
 	expect_refusal(t, exchange(home, identity_of(laptop), object_request_write(request[:], .Tree, hash)), .Object_Absent, 0)
 	bad := object_request_write(request[:], .Blob, hash)
@@ -433,12 +434,25 @@ object_hash :: proc(text: string) -> blake3.Hash {
 	return blake3.hash(transmute([]u8)text)
 }
 
-// store_offer_to runs one whole exchange: the client offers, the server answers.
+// store_offer_to runs one whole exchange: the client offers page by page,
+// the server answers each page, and the client asks for each page of the
+// reply. pages counts the requests.
 @(private = "file")
-store_offer_to :: proc(server: ^Machine, client: ^Machine, store: ^Exchanged_Store) -> (status: Store_Status, reason: Refusal_Reason, detail: u32) {
+store_offer_to :: proc(server: ^Machine, client: ^Machine, store: ^Exchanged_Store, pages: ^int = nil) -> (status: Store_Status, reason: Refusal_Reason, detail: u32) {
 	request: [FRAME_LIMIT]u8
-	answer := exchange(server, identity_of(client), store_offer_begin(store, request[:]))
-	return store_offer_reply_accept(store, answer)
+	frame := store_offer_begin(store, request[:])
+	for {
+		if pages != nil {
+			pages^ += 1
+		}
+		answer := exchange(server, identity_of(client), frame)
+		more: bool
+		status, reason, detail, more = store_offer_reply_accept(store, answer)
+		if status != .Ok || !more {
+			return
+		}
+		frame = store_offer_next(store, request[:])
+	}
 }
 
 @(private = "file")
@@ -544,20 +558,20 @@ store_offer_survives_a_lost_reply_and_a_write_in_flight :: proc(t: ^testing.T) {
 	// Home offers now: its common version is not the common version of the
 	// laptop, so the laptop refuses, and nothing changes there.
 	home_offer: [FRAME_LIMIT]u8
-	laptop_before := laptop_store^
+	laptop_before := test_store_state(laptop_store)
 	answer := exchange(laptop, identity_of(home), store_offer_begin(home_store, home_offer[:]))
 	expect_refusal(t, answer, .Store_Refused, u32(Store_Status.Refused_Base_Differs))
-	testing.expect(t, laptop_store^ == laptop_before)
-	status, reason, detail := store_offer_reply_accept(home_store, answer)
+	testing.expect(t, test_store_state(laptop_store) == laptop_before)
+	status, reason, detail, _ := store_offer_reply_accept(home_store, answer)
 	testing.expect(t, status == .Refused_Nil_Input && reason == .Store_Refused && detail == u32(Store_Status.Refused_Base_Differs))
 
 	// (b) The laptop writes while its offer is in flight, then sends the same
 	// offer again: home answers the same reply, and changes nothing.
 	store_write(laptop_store, object_hash("fourth"), object_hash("fourth, laptop"))
-	home_before := home_store^
+	home_before := test_store_state(home_store)
 	status, _, _ = store_offer_to(home, laptop, laptop_store)
 	testing.expect_value(t, status, Store_Status.Ok)
-	testing.expect(t, home_store^ == home_before)
+	testing.expect(t, test_store_state(home_store) == home_before)
 	testing.expect(t, store_version_hash(&home_store.common) == store_version_hash(&laptop_store.common))
 	// The write in flight stays on the laptop, and crosses at the next exchange.
 	testing.expect_value(t, store_version_lookup(&laptop_store.current, object_hash("fourth")), object_hash("fourth, laptop"))
@@ -568,7 +582,7 @@ store_offer_survives_a_lost_reply_and_a_write_in_flight :: proc(t: ^testing.T) {
 	testing.expect(t, store_version_hash(&home_store.current) == store_version_hash(&laptop_store.current))
 	testing.expect_value(t, home_store.current.count, 4)
 	// A second reply to an offer that is done is refused.
-	status, _, _ = store_offer_reply_accept(laptop_store, lost)
+	status, _, _, _ = store_offer_reply_accept(laptop_store, lost)
 	testing.expect_value(t, status, Store_Status.Refused_No_Offer)
 
 	// A write in flight on an object that the merge also changes: a conflict
@@ -577,7 +591,7 @@ store_offer_survives_a_lost_reply_and_a_write_in_flight :: proc(t: ^testing.T) {
 	store_write(laptop_store, first, object_hash("first, laptop"))
 	offer := store_offer_begin(laptop_store, request[:])
 	store_write(laptop_store, first, object_hash("first, laptop in flight"))
-	status, _, _ = store_offer_reply_accept(laptop_store, exchange(home, identity_of(laptop), offer))
+	status, _, _, _ = store_offer_reply_accept(laptop_store, exchange(home, identity_of(laptop), offer))
 	testing.expect_value(t, status, Store_Status.Ok)
 	testing.expect(t, store_conflict_find(&laptop_store.current, first) != nil)
 	status, _, _ = store_offer_to(home, laptop, laptop_store)
@@ -633,17 +647,19 @@ store_offer_refuses_unknown_stores_strangers_and_malformed_versions :: proc(t: ^
 		name := [2]u8{'h', u8(index)}
 		store_write(home_store, blake3.hash(name[:]), blake3.hash(name[:]))
 	}
-	home_before := home_store^
+	home_before := test_store_state(home_store)
 
-	// Malformed versions, each refused before any change: unsorted, a
+	// Malformed pages, each refused before any change: unsorted, a
 	// duplicate identifier, a zero hash, a zero identifier, counts that lie
-	// or pass the capacity, a forged conflict record, another common version.
+	// or pass the capacity, a forged conflict record, another common
+	// version, a phase that names no member, a hash of the whole version
+	// that its entries do not have, a page that starts past a first page.
 	laptop_store, _ := store_exchange_add(&laptop.peer.stores, notes, identity_of(home))
 	store_write(laptop_store, object_hash("b"), object_hash("b, 1"))
 	store_write(laptop_store, object_hash("c"), object_hash("c, 1"))
 	request: [FRAME_LIMIT]u8
 	offer := store_offer_begin(laptop_store, request[:])
-	entries := FRAME_HEADER_SIZE + STORE_OFFER_HEADER_SIZE
+	entries := FRAME_HEADER_SIZE + STORE_PAGE_HEADER_SIZE
 	cases := [?]struct {
 		change: proc(offer: []u8, entries: int),
 		status: Store_Status,
@@ -652,11 +668,19 @@ store_offer_refuses_unknown_stores_strangers_and_malformed_versions :: proc(t: ^
 		{proc(offer: []u8, entries: int) {copy(offer[entries + STORE_ENTRY_WIRE_SIZE:][:32], offer[entries:][:32])}, .Refused_Duplicate_Identifier},
 		{proc(offer: []u8, entries: int) {for index in 0 ..< 32 {offer[entries + 32 + index] = 0}}, .Refused_Zero_Hash},
 		{proc(offer: []u8, entries: int) {for index in 0 ..< 32 {offer[entries + index] = 0}}, .Refused_Zero_Identifier},
-		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 64, 3)}, .Refused_Bad_Count},
-		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 64, STORE_ENTRY_CAPACITY + 1)}, .Refused_Bad_Count},
-		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 68, 1)}, .Refused_Bad_Count},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 116, 3)}, .Refused_Bad_Count},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 120, 1)}, .Refused_Bad_Count},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 124, 1)}, .Refused_Bad_Count},
 		{proc(offer: []u8, entries: int) {offer[FRAME_HEADER_SIZE + 32] ~= 1}, .Refused_Base_Differs},
 		{proc(offer: []u8, entries: int) {for index in 0 ..< 32 {offer[FRAME_HEADER_SIZE + index] = 0}}, .Refused_Unknown_Store},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 96, 0)}, .Refused_Bad_Phase},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 96, u32(Store_Page_Phase.Reply_Page) + 1)}, .Refused_Bad_Phase},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 96, u32(Store_Page_Phase.Reply_Page))}, .Refused_Bad_Phase},
+		{proc(offer: []u8, entries: int) {offer[FRAME_HEADER_SIZE + 64] ~= 1}, .Refused_Version_Hash},
+		{proc(offer: []u8, entries: int) {
+				byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 100, 3)
+				byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 108, 1)
+			}, .Refused_Out_Of_Order},
 	}
 	for item, index in cases {
 		changed: [FRAME_LIMIT]u8
@@ -665,36 +689,57 @@ store_offer_refuses_unknown_stores_strangers_and_malformed_versions :: proc(t: ^
 		answer := exchange(home, identity_of(laptop), changed[:len(offer)])
 		_, got_reason, got_detail, _ := answer_expect(answer, .Store_Offer_Reply)
 		testing.expectf(t, got_reason == .Store_Refused && got_detail == u32(item.status), "case %d: %v %d", index, got_reason, got_detail)
-		testing.expectf(t, home_store^ == home_before, "case %d changed the store", index)
+		testing.expectf(t, test_store_state(home_store) == home_before, "case %d changed the store", index)
+	}
+	// A total past the capacity, up to the largest of the field, is a claim
+	// that its pages must prove: the first page is taken, it reserves the
+	// room of its own records only, and the store does not change.
+	for total in ([2]u32{TEST_STORE_ENTRIES + 1, max(u32)}) {
+		changed: [FRAME_LIMIT]u8
+		copy(changed[:], offer)
+		byte_order.write_u32_little_endian(changed[:], FRAME_HEADER_SIZE + 100, total)
+		entries_before := len(home_store.incoming.entries)
+		answer := exchange(home, identity_of(laptop), changed[:len(offer)])
+		_, got_reason, _, _ := answer_expect(answer, .Store_Offer_Reply)
+		testing.expectf(t, got_reason != .Store_Refused, "a total of %d was refused at its first page", total)
+		testing.expect_value(t, len(home_store.incoming.entries), entries_before)
+		testing.expect(t, test_store_state(home_store) == home_before)
 	}
 
 	// A forged conflict record: its hash does not match its entry.
-	forged_store := Exchanged_Store{in_use = true, store_identifier = notes}
-	store_write(&forged_store, object_hash("d"), object_hash("not a conflict value"))
+	forged_store := new(Exchanged_Store, context.temp_allocator)
+	store_exchange_memory_bind(forged_store, make([]Store_Entry, STORE_VERSIONS_OF_A_STORE * 4, context.temp_allocator), make([]Store_Conflict, STORE_VERSIONS_OF_A_STORE * 4, context.temp_allocator))
+	forged_store.in_use = true
+	forged_store.store_identifier = notes
+	store_write(forged_store, object_hash("d"), object_hash("not a conflict value"))
 	forged_store.current.conflicts[0] = Store_Conflict{identifier = object_hash("d"), value = {base_hash = object_hash("1"), local_hash = object_hash("2"), remote_hash = object_hash("3")}}
 	forged_store.current.conflict_count = 1
 	forged: [FRAME_LIMIT]u8
-	expect_refusal(t, exchange(home, identity_of(laptop), store_offer_begin(&forged_store, forged[:])), .Store_Refused, u32(Store_Status.Refused_Bad_Conflict))
-	testing.expect(t, home_store^ == home_before)
+	expect_refusal(t, exchange(home, identity_of(laptop), store_offer_begin(forged_store, forged[:])), .Store_Refused, u32(Store_Status.Refused_Bad_Conflict))
+	testing.expect(t, test_store_state(home_store) == home_before)
 
-	// A version that does not fit: 20 objects on home, 20 others on the
-	// laptop, 32 at most. The offer is refused whole, with no partial write.
-	for index in 0 ..< 20 {
-		name := [2]u8{'l', u8(index)}
-		store_write(laptop_store, blake3.hash(name[:]), blake3.hash(name[:]))
+	// A merge that does not fit: 20 objects on home, 390 others on the
+	// laptop, TEST_STORE_ENTRIES in a version of the tests. The offer takes
+	// two pages; its last page is refused whole, with no partial write.
+	for index in 0 ..< 390 {
+		name := [3]u8{'l', u8(index), u8(index >> 8)}
+		testing.expect_value(t, store_write(laptop_store, blake3.hash(name[:]), blake3.hash(name[:])), Store_Status.Ok)
 	}
 	laptop_store.has_offer = false
-	_, reason, detail = store_offer_to(home, laptop, laptop_store)
+	pages := 0
+	_, reason, detail = store_offer_to(home, laptop, laptop_store, &pages)
 	testing.expect(t, reason == .Store_Refused && detail == u32(Store_Status.Refused_Full))
-	testing.expect(t, home_store^ == home_before)
+	testing.expect_value(t, pages, 2)
+	testing.expect(t, test_store_state(home_store) == home_before)
 
 	// A reply that names another store is refused by the sender, which keeps its offer.
 	reply: [FRAME_LIMIT]u8
 	other_version: Store_Version
-	laptop_before := laptop_store^
-	status, _, _ := store_offer_reply_accept(laptop_store, store_offer_write(reply[:], .Store_Offer_Reply, object_hash("other"), {}, &other_version))
+	laptop_before := test_store_state(laptop_store)
+	other_frame, _ := store_page_write(reply[:], .Store_Offer_Reply, .Reply_Page, object_hash("other"), {}, {}, &other_version, {})
+	status, _, _, _ := store_offer_reply_accept(laptop_store, other_frame)
 	testing.expect_value(t, status, Store_Status.Refused_Other_Store)
-	testing.expect(t, laptop_store^ == laptop_before)
+	testing.expect(t, test_store_state(laptop_store) == laptop_before)
 	_, zero := store_exchange_add(&home.peer.stores, {}, identity_of(laptop))
 	testing.expect_value(t, zero, Store_Status.Refused_Zero_Identifier)
 	testing.expect_value(t, store_write(laptop_store, {}, object_hash("x")), Store_Status.Refused_Zero_Identifier)
@@ -1223,12 +1268,12 @@ each_request_needs_a_pairing_and_its_use :: proc(t: ^testing.T) {
 	// nothing else: each other request is refused before any table is read.
 	machine_mesh.pairing_offer(&home.peer.pairing, identity_of(home), [8]u8{4, 4, 4, 4, 5, 6, 7, 8}, 1_000)
 	testing.expect(t, peer_admits(&home.peer, identity_of(joiner), 1_000))
-	store_before, relay_before, objects_before := store^, home.peer.relay, home.peer.objects.count
+	store_before, relay_before, objects_before := test_store_state(store), home.peer.relay, home.peer.objects.count
 	request: [FRAME_LIMIT]u8
 	for item in REQUEST_CASES {
 		expect_refusal(t, exchange(home, identity_of(joiner), request_of(item.message, request[:]), 1_000, root), .Not_Paired, 0)
 	}
-	testing.expect(t, store^ == store_before && home.peer.relay == relay_before && home.peer.objects.count == objects_before)
+	testing.expect(t, test_store_state(store) == store_before && home.peer.relay == relay_before && home.peer.objects.count == objects_before)
 	testing.expect_value(t, home.peer.pairing.phase, machine_mesh.Pairing_Phase.Code_Ready)
 
 	// (b) A paired machine with no grant, then with one use at a time: each
@@ -1333,9 +1378,542 @@ crossing_store_offers_with_later_write_converge_to_one_common_version :: proc(t:
 	next_offer := store_offer_begin(sa, next_buf[:])
 	testing.expect(t, next_offer != nil)
 	reply := exchange(b, identity_of(a), next_offer, 200)
-	acc_st, acc_reason, _ := store_offer_reply_accept(sa, reply)
+	acc_st, acc_reason, _, _ := store_offer_reply_accept(sa, reply)
 	testing.expect_value(t, acc_st, Store_Status.Ok)
 	testing.expect_value(t, acc_reason, Refusal_Reason.None)
 	testing.expect_value(t, store_version_hash(&sa.current), store_version_hash(&sb.current))
 	testing.expect_value(t, store_version_lookup(&sb.current, k3), a1_hash)
+}
+
+// note_identifier gives the identifier of the note number index.
+@(private = "file")
+note_identifier :: proc(index: int, side: u8) -> blake3.Hash {
+	name := [3]u8{side, u8(index), u8(index >> 8)}
+	return blake3.hash(name[:])
+}
+
+// 300 notes, past the 32 objects of an exchange that did not page: the
+// offer of the laptop crosses in two pages, then the reply of home, with
+// 300 notes of its own, crosses in two pages that the laptop asks for. A
+// reply lost after the merge of home is answered again, page by page, with
+// no change on home.
+@(test)
+store_exchange_of_300_notes_crosses_in_pages :: proc(t: ^testing.T) {
+	home := machine_make(0x51)
+	laptop := machine_make(0x61)
+	defer machine_free(home, laptop)
+	notes := object_hash("three hundred notes")
+	home_store, laptop_store := stores_paired(t, home, laptop, notes)
+	NOTES :: 300
+	PAGE_ENTRIES :: STORE_PAGE_ITEM_BYTES / STORE_ENTRY_WIRE_SIZE
+	#assert(NOTES > PAGE_ENTRIES && NOTES <= 2 * PAGE_ENTRIES)
+
+	// The laptop offers 300 notes to a home with none: two pages of offer,
+	// one page of reply (an empty version).
+	for index in 0 ..< NOTES {
+		testing.expect_value(t, store_write(laptop_store, note_identifier(index, 'l'), note_identifier(index, 'v')), Store_Status.Ok)
+	}
+	pages := 0
+	status, _, _ := store_offer_to(home, laptop, laptop_store, &pages)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect_value(t, pages, 2)
+	testing.expect_value(t, home_store.current.count, NOTES)
+	testing.expect(t, store_version_hash(&home_store.common) == store_version_hash(&laptop_store.common))
+
+	// Home writes notes up to the 400 entries that a version of the tests
+	// holds; the next one is refused.
+	for index in 0 ..< TEST_STORE_ENTRIES - NOTES {
+		testing.expect_value(t, store_write(home_store, note_identifier(index, 'h'), note_identifier(index, 'w')), Store_Status.Ok)
+	}
+	testing.expect_value(t, home_store.current.count, TEST_STORE_ENTRIES)
+	home_full := store_write(home_store, note_identifier(999, 'h'), note_identifier(999, 'w'))
+	testing.expect_value(t, home_full, Store_Status.Refused_Full)
+
+	// The laptop offers its 300 notes again: the first page is taken, the
+	// second merges on home, and the first page of the reply of home, 400
+	// notes, is lost.
+	request: [FRAME_LIMIT]u8
+	frame := store_offer_begin(laptop_store, request[:])
+	more: bool
+	status, _, _, more = store_offer_reply_accept(laptop_store, exchange(home, identity_of(laptop), frame))
+	testing.expect(t, status == .Ok && more)
+	testing.expect_value(t, laptop_store.offer_cursor.entry, PAGE_ENTRIES)
+	frame = store_offer_next(laptop_store, request[:])
+	_ = exchange(home, identity_of(laptop), frame)
+	home_after := test_store_state(home_store)
+	testing.expect_value(t, home_store.common.count, TEST_STORE_ENTRIES)
+	// The laptop starts again from its first page, as after a lost answer:
+	// home answers the same reply, page by page, and changes nothing.
+	pages = 0
+	status, _, _ = store_offer_to(home, laptop, laptop_store, &pages)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect_value(t, pages, 2)
+	testing.expect(t, test_store_state(home_store) == home_after)
+	testing.expect_value(t, laptop_store.current.count, TEST_STORE_ENTRIES)
+	testing.expect(t, store_version_hash(&home_store.current) == store_version_hash(&laptop_store.current))
+	testing.expect(t, store_version_hash(&home_store.common) == store_version_hash(&laptop_store.common))
+	last_home_note := TEST_STORE_ENTRIES - NOTES - 1
+	testing.expect_value(t, store_version_lookup(&laptop_store.current, note_identifier(last_home_note, 'h')), note_identifier(last_home_note, 'w'))
+
+	// A request for a page of a reply that home never gave is refused.
+	stray, _ := store_page_write(request[:], .Store_Offer, .Reply_Page_Request, notes, store_version_hash(&laptop_store.common), object_hash("never offered"), &laptop_store.current, {})
+	expect_refusal(t, exchange(home, identity_of(laptop), stray), .Store_Refused, u32(Store_Status.Refused_Base_Differs))
+	// A page of an offer that names no first page is out of order.
+	late, _ := store_page_write(request[:], .Store_Offer, .Offer_Page, notes, store_version_hash(&home_store.common), store_version_hash(&laptop_store.current), &laptop_store.current, {1, 0})
+	expect_refusal(t, exchange(home, identity_of(laptop), late), .Store_Refused, u32(Store_Status.Refused_Out_Of_Order))
+}
+
+// The stores of a peer are the rows that its memory holds: six stores
+// exchange, past the two of the table that did not grow, and the seventh is
+// refused.
+@(test)
+store_table_holds_the_stores_of_its_memory :: proc(t: ^testing.T) {
+	memory := test_peer_memory()
+	STORES :: 6
+	memory.stores = make([]Exchanged_Store, STORES, context.temp_allocator)
+	memory.store_entries = make([]Store_Entry, STORES * STORE_VERSIONS_OF_A_STORE * 8, context.temp_allocator)
+	memory.store_conflicts = make([]Store_Conflict, STORES * STORE_VERSIONS_OF_A_STORE * 2, context.temp_allocator)
+	home := machine_make(0x52, memory)
+	defer machine_free(home)
+	partner := [32]u8{0 = 9, 31 = 9}
+	for index in 0 ..< STORES {
+		name := [2]u8{'s', u8(index)}
+		store, status := store_exchange_add(&home.peer.stores, blake3.hash(name[:]), partner)
+		testing.expect_value(t, status, Store_Status.Ok)
+		testing.expect_value(t, len(store.current.entries), 8)
+		// Each store writes into its own memory.
+		testing.expect_value(t, store_write(store, blake3.hash(name[:]), blake3.hash(name[:])), Store_Status.Ok)
+	}
+	_, full := store_exchange_add(&home.peer.stores, object_hash("seventh"), partner)
+	testing.expect_value(t, full, Store_Status.Refused_Full)
+	for index in 0 ..< STORES {
+		name := [2]u8{'s', u8(index)}
+		store := store_exchange_find(&home.peer.stores, blake3.hash(name[:]))
+		testing.expect(t, store != nil && store.current.count == 1 && store_version_lookup(&store.current, blake3.hash(name[:])) == blake3.hash(name[:]))
+	}
+	// A peer with no memory of stores refuses the first.
+	empty := machine_make(0x53, Peer_Memory{object_rows = memory.object_rows, object_bytes = memory.object_bytes})
+	defer machine_free(empty)
+	_, none := store_exchange_add(&empty.peer.stores, object_hash("first"), partner)
+	testing.expect_value(t, none, Store_Status.Refused_Full)
+}
+
+// An object of 2 MiB crosses in pieces, past the 16 KiB of one frame: the
+// laptop asks for each piece at the offset of the answer before, and keeps
+// the object only when it is whole and hashes to its hash. A piece with
+// one changed bit, a piece out of order, and an offset past the end are
+// refused, and nothing is kept.
+@(test)
+object_of_two_megabytes_crosses_in_pieces :: proc(t: ^testing.T) {
+	SIZE :: 2 * 1024 * 1024 + 3
+	memory := test_peer_memory()
+	memory.object_bytes = make([]u8, SIZE + OBJECT_CHUNK_BYTES, context.temp_allocator)
+	home := machine_make(0x54, memory)
+	laptop_memory := test_peer_memory()
+	laptop_memory.object_bytes = make([]u8, SIZE + OBJECT_CHUNK_BYTES, context.temp_allocator)
+	laptop := machine_make(0x64, laptop_memory)
+	defer machine_free(home, laptop)
+	testing.expect(t, pair(t, home, laptop, 1_000))
+	grant_uses(t, home, laptop, {.Objects})
+	big := make([]u8, SIZE, context.temp_allocator)
+	for index in 0 ..< SIZE {
+		big[index] = u8(index * 7 + index / 251)
+	}
+	hash := home_publish(home, big)
+	testing.expect(t, object_lookup(&home.peer, hash) != nil)
+	request: [FRAME_LIMIT]u8
+
+	// An offset past the end is refused by home.
+	expect_refusal(t, exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, hash, SIZE + 1)), .Malformed, 0)
+	expect_refusal(t, exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, hash, SIZE)), .Malformed, 0)
+	// A piece that is not the first starts nothing.
+	status, _, _ := object_response_accept(&laptop.peer, .Blob, hash, exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, hash, OBJECT_CHUNK_BYTES)), OBJECT_CHUNK_BYTES)
+	testing.expect_value(t, status, Object_Fetch_Status.Malformed)
+	// An answer for another offset than the request is refused.
+	status, _, _ = object_response_accept(&laptop.peer, .Blob, hash, exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, hash, 0)), OBJECT_CHUNK_BYTES)
+	testing.expect_value(t, status, Object_Fetch_Status.Malformed)
+
+	// Each piece, with one bit changed in the middle piece: the whole object
+	// is refused at its end, and nothing is kept.
+	fetch :: proc(t: ^testing.T, home, laptop: ^Machine, hash: blake3.Hash, flip_piece: int) -> (status: Object_Fetch_Status, pieces: int) {
+		request: [FRAME_LIMIT]u8
+		offset: u64 = 0
+		for {
+			answer := exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, hash, offset))
+			if pieces == flip_piece {
+				answer[len(answer) - 1] ~= 1
+			}
+			pieces += 1
+			next: u64
+			status, _, next = object_response_accept(&laptop.peer, .Blob, hash, answer, offset)
+			if status != .Partial {
+				return
+			}
+			testing.expect_value(t, next, offset + OBJECT_CHUNK_BYTES)
+			offset = next
+		}
+	}
+	PIECES :: (SIZE + OBJECT_CHUNK_BYTES - 1) / OBJECT_CHUNK_BYTES
+	pieces: int
+	status, pieces = fetch(t, home, laptop, hash, PIECES / 2)
+	testing.expect_value(t, status, Object_Fetch_Status.Hash_Mismatch)
+	testing.expect_value(t, pieces, PIECES)
+	testing.expect_value(t, laptop.peer.objects.count, 0)
+	testing.expect_value(t, laptop.peer.objects.bytes_used, 0)
+
+	// The true pieces: the object is kept whole, once.
+	status, pieces = fetch(t, home, laptop, hash, -1)
+	testing.expect_value(t, status, Object_Fetch_Status.Stored)
+	testing.expect_value(t, pieces, PIECES)
+	kept := object_lookup(&laptop.peer, hash)
+	testing.expect_value(t, len(kept), SIZE)
+	testing.expect(t, string(kept) == string(big))
+	status, pieces = fetch(t, home, laptop, hash, -1)
+	testing.expect_value(t, status, Object_Fetch_Status.Already_Stored)
+	testing.expect_value(t, pieces, 1)
+
+	// An object larger than the free bytes is refused at its first piece.
+	other := make([]u8, SIZE, context.temp_allocator)
+	other[0] = 1
+	other_hash := blake3.hash(other)
+	home_bytes_before := home.peer.objects.bytes_used
+	testing.expect_value(t, object_publish(&home.peer, .Blob, other_hash, other), machine_sync.Object_Store_Status.Refused_Too_Large)
+	testing.expect_value(t, home.peer.objects.bytes_used, home_bytes_before)
+}
+
+// A budget of the tests: the tables of a peer grow from it, as remote
+// commits pages of its budget, until it pays no more.
+@(private = "file")
+Test_Budget :: struct {
+	bytes_left: int,
+	growths:    int,
+	trims:      int,
+}
+
+// The trims give back to the budget the bytes past what the table keeps.
+@(private = "file")
+test_version_trim :: proc "contextless" (user: rawptr, version: ^Store_Version) {
+	budget := (^Test_Budget)(user)
+	budget.bytes_left += len(version.entries) * size_of(Store_Entry) + len(version.conflicts) * size_of(Store_Conflict)
+	budget.trims += 1
+	version.entries, version.conflicts = nil, nil
+}
+
+@(private = "file")
+test_object_trim :: proc "contextless" (user: rawptr, store: ^machine_sync.Object_Store) {
+	budget := (^Test_Budget)(user)
+	budget.bytes_left += len(store.bytes) - store.bytes_used
+	budget.trims += 1
+	store.bytes = store.bytes[:store.bytes_used]
+}
+
+@(private = "file")
+test_budget_take :: proc "contextless" (budget: ^Test_Budget, bytes: int) -> bool {
+	if bytes > budget.bytes_left {
+		return false
+	}
+	budget.bytes_left -= bytes
+	budget.growths += 1
+	return true
+}
+
+// The growths double a table, at least to what is asked, and copy it: the
+// contract asks only that the content stays.
+@(private = "file")
+test_version_grow :: proc "contextless" (user: rawptr, version: ^Store_Version, entries_least, conflicts_least: int) -> bool {
+	context = runtime.default_context()
+	budget := (^Test_Budget)(user)
+	entries := max(entries_least, 2 * len(version.entries))
+	conflicts := max(conflicts_least, 2 * len(version.conflicts))
+	if !test_budget_take(budget, (entries - len(version.entries)) * size_of(Store_Entry) + (conflicts - len(version.conflicts)) * size_of(Store_Conflict)) {
+		return false
+	}
+	grown_entries := make([]Store_Entry, entries, context.temp_allocator)
+	grown_conflicts := make([]Store_Conflict, conflicts, context.temp_allocator)
+	copy(grown_entries, version.entries[:version.count])
+	copy(grown_conflicts, version.conflicts[:version.conflict_count])
+	version.entries, version.conflicts = grown_entries, grown_conflicts
+	return true
+}
+
+@(private = "file")
+test_table_grow :: proc "contextless" (user: rawptr, table: ^Store_Table, rows_least: int) -> bool {
+	context = runtime.default_context()
+	budget := (^Test_Budget)(user)
+	if !test_budget_take(budget, (rows_least - len(table.rows)) * size_of(Exchanged_Store)) {
+		return false
+	}
+	// The rows stay in place: a version of a row names its memory, so the
+	// test makes room once, as a reservation does, and shows more of it.
+	if rows_least > TEST_ROWS_RESERVED {
+		return false
+	}
+	table.rows = test_rows[:rows_least]
+	return true
+}
+
+@(private = "file")
+TEST_ROWS_RESERVED :: 64
+@(private = "file")
+test_rows: [TEST_ROWS_RESERVED]Exchanged_Store
+
+@(private = "file")
+test_object_grow :: proc "contextless" (user: rawptr, store: ^machine_sync.Object_Store, bytes_least, rows_least: int) -> bool {
+	context = runtime.default_context()
+	budget := (^Test_Budget)(user)
+	bytes := max(bytes_least, 2 * len(store.bytes))
+	rows := max(rows_least, 2 * len(store.objects))
+	if !test_budget_take(budget, bytes - len(store.bytes) + (rows - len(store.objects)) * size_of(machine_sync.Stored_Object)) {
+		return false
+	}
+	grown_bytes := make([]u8, bytes, context.temp_allocator)
+	grown_rows := make([]machine_sync.Stored_Object, rows, context.temp_allocator)
+	// The whole table: an object in assembly lies past the bytes in use.
+	copy(grown_bytes, store.bytes)
+	copy(grown_rows, store.objects[:store.count])
+	store.bytes, store.objects = grown_bytes, grown_rows
+	return true
+}
+
+// Peers whose tables start empty and grow from a budget: 1000 notes, past
+// any table of a fixed size, 20 stores, and an object of 3 MiB cross. A
+// budget that pays no more refuses the next growth, and the store keeps
+// what it held.
+@(test)
+peer_tables_grow_from_the_budget :: proc(t: ^testing.T) {
+	home_budget := Test_Budget{bytes_left = 64 * 1024 * 1024}
+	laptop_budget := Test_Budget{bytes_left = 64 * 1024 * 1024}
+	growing :: proc(budget: ^Test_Budget, rows: []Exchanged_Store) -> Peer_Memory {
+		return {object_grow = test_object_grow, store_table_grow = test_table_grow, version_grow = test_version_grow, grow_user = budget, stores = rows}
+	}
+	home := machine_make(0x71, growing(&home_budget, nil))
+	// The laptop holds its own rows: the table of the tests is one.
+	laptop_rows := make([]Exchanged_Store, 4, context.temp_allocator)
+	laptop := machine_make(0x72, growing(&laptop_budget, laptop_rows))
+	defer machine_free(home, laptop)
+	testing.expect(t, pair(t, home, laptop, 1_000))
+	grant_uses(t, home, laptop, {.Stores, .Objects})
+	grant_uses(t, laptop, home, {.Stores})
+
+	notes := object_hash("a thousand notes")
+	home_store, home_status := store_exchange_add(&home.peer.stores, notes, identity_of(laptop))
+	laptop_store, laptop_status := store_exchange_add(&laptop.peer.stores, notes, identity_of(home))
+	testing.expect(t, home_status == .Ok && laptop_status == .Ok)
+	NOTES :: 1000
+	for index in 0 ..< NOTES {
+		testing.expect_value(t, store_write(laptop_store, note_identifier(index, 'g'), note_identifier(index, 'n')), Store_Status.Ok)
+	}
+	pages := 0
+	status, _, _ := store_offer_to(home, laptop, laptop_store, &pages)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect_value(t, pages, NOTES / (STORE_PAGE_ITEM_BYTES / STORE_ENTRY_WIRE_SIZE) + 1)
+	testing.expect_value(t, home_store.current.count, NOTES)
+	testing.expect(t, store_version_hash(&home_store.common) == store_version_hash(&laptop_store.common))
+
+	// 20 stores on home: the table grows by rows.
+	partner := [32]u8{0 = 8, 31 = 8}
+	for index in 0 ..< 20 {
+		name := [2]u8{'r', u8(index)}
+		_, added := store_exchange_add(&home.peer.stores, blake3.hash(name[:]), partner)
+		testing.expect_value(t, added, Store_Status.Ok)
+	}
+	testing.expect_value(t, len(home.peer.stores.rows), 21)
+
+	// An object of 3 MiB: the store of objects of the laptop grows.
+	SIZE :: 3 * 1024 * 1024
+	big := make([]u8, SIZE, context.temp_allocator)
+	for index in 0 ..< SIZE {
+		big[index] = u8(index * 5 + index / 257)
+	}
+	hash := blake3.hash(big)
+	testing.expect_value(t, object_publish(&home.peer, .Blob, hash, big), machine_sync.Object_Store_Status.Stored)
+	request: [FRAME_LIMIT]u8
+	offset: u64 = 0
+	fetch: Object_Fetch_Status
+	for {
+		next: u64
+		fetch, _, next = object_response_accept(&laptop.peer, .Blob, hash, exchange(home, identity_of(laptop), object_request_write(request[:], .Blob, hash, offset)), offset)
+		if fetch != .Partial {
+			break
+		}
+		offset = next
+	}
+	testing.expect_value(t, fetch, Object_Fetch_Status.Stored)
+	testing.expect(t, string(object_lookup(&laptop.peer, hash)) == string(big))
+
+	// A budget that pays no more: the next write that needs room is
+	// refused, and the version keeps each note that it held.
+	laptop_budget.bytes_left = 0
+	refused := Store_Status.Ok
+	for index in 0 ..< len(laptop_store.current.entries) + 1 {
+		refused = store_write(laptop_store, note_identifier(index, 'z'), note_identifier(index, 'z'))
+		if refused != .Ok {
+			break
+		}
+	}
+	testing.expect_value(t, refused, Store_Status.Refused_Full)
+	testing.expect(t, laptop_store.current.count >= NOTES)
+	testing.expect_value(t, store_version_lookup(&laptop_store.current, note_identifier(NOTES - 1, 'g')), note_identifier(NOTES - 1, 'n'))
+	other := make([]u8, len(laptop.peer.objects.bytes) - laptop.peer.objects.bytes_used + 1, context.temp_allocator)
+	other[1] = 9
+	testing.expect_value(t, object_publish(&laptop.peer, .Blob, blake3.hash(other), other), machine_sync.Object_Store_Status.Refused_Too_Large)
+}
+
+// A receiver whose budget pays for about a hundred notes: an offer of a
+// thousand is refused at the page that passes the budget, the store keeps
+// what it held, and the receiver commits no room for the total that the
+// first page states. An object whose pieces pass the budget ends at the
+// piece that does not fit, and nothing of it is kept.
+@(test)
+peer_tables_refuse_past_the_budget :: proc(t: ^testing.T) {
+	small_budget := Test_Budget{bytes_left = 100 * (size_of(Store_Entry) + size_of(Store_Conflict))}
+	large_budget := Test_Budget{bytes_left = 64 * 1024 * 1024}
+	home_rows := make([]Exchanged_Store, 1, context.temp_allocator)
+	laptop_rows := make([]Exchanged_Store, 1, context.temp_allocator)
+	home := machine_make(0x73, {object_grow = test_object_grow, store_table_grow = nil, version_grow = test_version_grow, version_trim = test_version_trim, object_trim = test_object_trim, grow_user = &small_budget, stores = home_rows})
+	laptop := machine_make(0x74, {object_grow = test_object_grow, version_grow = test_version_grow, grow_user = &large_budget, stores = laptop_rows})
+	defer machine_free(home, laptop)
+	testing.expect(t, pair(t, home, laptop, 1_000))
+	grant_uses(t, home, laptop, {.Stores, .Objects})
+	grant_uses(t, laptop, home, {.Stores, .Objects})
+	notes := object_hash("too many notes")
+	home_store, _ := store_exchange_add(&home.peer.stores, notes, identity_of(laptop))
+	laptop_store, _ := store_exchange_add(&laptop.peer.stores, notes, identity_of(home))
+	testing.expect(t, home_store != nil && laptop_store != nil)
+	for index in 0 ..< 1000 {
+		store_write(laptop_store, note_identifier(index, 'g'), note_identifier(index, 'n'))
+	}
+	home_before := test_store_state(home_store)
+	_, reason, detail := store_offer_to(home, laptop, laptop_store)
+	testing.expect(t, reason == .Store_Refused && detail == u32(Store_Status.Refused_Full))
+	testing.expect(t, test_store_state(home_store) == home_before)
+	testing.expect(t, small_budget.bytes_left >= 0)
+	// The offer that was refused gave its pages back: the incoming version
+	// holds no table, and the budget holds what it held before.
+	testing.expect(t, small_budget.trims == 1 && len(home_store.incoming.entries) == 0)
+	testing.expect_value(t, small_budget.bytes_left, 100 * (size_of(Store_Entry) + size_of(Store_Conflict)))
+
+	// An object of 1 MiB to a store of objects that the budget pays for
+	// less: the fetch ends at a piece, and the store keeps no byte of it.
+	SIZE :: 1024 * 1024
+	big := make([]u8, SIZE, context.temp_allocator)
+	for index in 0 ..< SIZE {
+		big[index] = u8(index * 3)
+	}
+	hash := blake3.hash(big)
+	testing.expect_value(t, object_publish(&laptop.peer, .Blob, hash, big), machine_sync.Object_Store_Status.Stored)
+	small_budget.bytes_left = SIZE / 2
+	request: [FRAME_LIMIT]u8
+	offset: u64 = 0
+	fetch: Object_Fetch_Status
+	pieces := 0
+	for {
+		next: u64
+		fetch, _, next = object_response_accept(&home.peer, .Blob, hash, exchange(laptop, identity_of(home), object_request_write(request[:], .Blob, hash, offset)), offset)
+		if fetch != .Partial {
+			break
+		}
+		pieces += 1
+		offset = next
+	}
+	testing.expect_value(t, fetch, Object_Fetch_Status.Too_Large)
+	testing.expect(t, pieces > 0 && pieces < SIZE / OBJECT_CHUNK_BYTES)
+	testing.expect_value(t, home.peer.objects.count, 0)
+	testing.expect_value(t, home.peer.objects.bytes_used, 0)
+	testing.expect(t, object_lookup(&home.peer, hash) == nil)
+	// The pieces that came gave their bytes back.
+	testing.expect(t, small_budget.trims == 2 && len(home.peer.objects.bytes) == 0)
+}
+
+// A store that the plan stops exchanging gives the memory of its versions
+// back, and the store that takes its row later starts with no page of it.
+@(test)
+a_removed_store_gives_its_versions_back :: proc(t: ^testing.T) {
+	budget := Test_Budget{bytes_left = 1 << 20}
+	table := Store_Table{rows = make([]Exchanged_Store, 1, context.temp_allocator), version_grow = test_version_grow, version_grow_user = &budget, version_trim = test_version_trim}
+	first_identifier, second_identifier: blake3.Hash
+	first_identifier[0], second_identifier[0] = 1, 2
+	first_partner, second_partner: [machine_mesh.PUBLIC_KEY_SIZE]u8
+	first_partner[0], second_partner[0] = 3, 4
+	store, status := store_exchange_add(&table, first_identifier, first_partner)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect(t, version_room(&store.current, 100, 2) && version_room(&store.incoming, 50, 0))
+	// The owner counts the pages of the versions.
+	store.memory_pages = 7
+	before := budget.bytes_left
+	// A store that the table does not hold: refused, and nothing changes.
+	testing.expect_value(t, store_exchange_remove(&table, second_identifier), Store_Status.Refused_Unknown_Store)
+	testing.expect(t, budget.bytes_left == before && store.memory_pages == 7 && len(store.current.entries) >= 100)
+	testing.expect_value(t, store_exchange_remove(&table, first_identifier), Store_Status.Ok)
+	testing.expect(t, budget.bytes_left > before && store.current.entries == nil && store.incoming.entries == nil)
+	testing.expect_value(t, store.memory_pages, 0)
+	testing.expect(t, !store.in_use)
+	// The row taken again: another store of another partner, with no page.
+	reused, reused_status := store_exchange_add(&table, second_identifier, second_partner)
+	testing.expect_value(t, reused_status, Store_Status.Ok)
+	testing.expect(t, reused == store && reused.memory_pages == 0 && reused.current.count == 0 && reused.partner_identity == second_partner)
+	// Its versions still grow from the owner.
+	testing.expect(t, version_room(&reused.current, 10, 0))
+}
+
+// An offer that stalls between two pages gives its pages back when an
+// offer starts again from its first page.
+@(test)
+a_stalled_offer_gives_its_pages_back_at_a_restart :: proc(t: ^testing.T) {
+	budget := Test_Budget{bytes_left = 1 << 20}
+	version := Store_Version{grow = test_version_grow, grow_user = &budget, trim = test_version_trim}
+	assembly: Store_Assembly
+	items: [2 * STORE_ENTRY_WIRE_SIZE]u8
+	for index in 0 ..< 2 {
+		items[index * STORE_ENTRY_WIRE_SIZE] = u8(index + 1) // The identifiers, in their order.
+		items[index * STORE_ENTRY_WIRE_SIZE + blake3.HASH_SIZE] = 9 // A hash that is not zero.
+	}
+	// The first page of an offer of 2 entries carries 1: the offer stalls.
+	first := Store_Page{entry_total = 2, entry_count = 1, items = items[:STORE_ENTRY_WIRE_SIZE]}
+	first.version_hash[0] = 5
+	whole, status := assembly_take_page(&assembly, &version, &first)
+	testing.expect(t, !whole && status == .Ok && assembly.active && version.count == 1)
+	trims := budget.trims
+	// A page that does not follow: refused, and the pages stay for the caller.
+	out_of_order := first
+	out_of_order.first = {entry = 2}
+	_, refused := assembly_take_page(&assembly, &version, &out_of_order)
+	testing.expect_value(t, refused, Store_Status.Refused_Out_Of_Order)
+	testing.expect_value(t, budget.trims, trims)
+	// The sender starts again from its first page: the stalled pages go back.
+	whole, status = assembly_take_page(&assembly, &version, &first)
+	testing.expect(t, !whole && status == .Ok && version.count == 1)
+	testing.expect_value(t, budget.trims, trims + 1)
+}
+
+// The connection of a partner ends while its offer waits for its next
+// page: the pages of that offer go back, and only those of that partner.
+@(test)
+a_stalled_offer_gives_its_pages_back_when_its_partner_leaves :: proc(t: ^testing.T) {
+	budget := Test_Budget{bytes_left = 1 << 20}
+	table := Store_Table{rows = make([]Exchanged_Store, 2, context.temp_allocator), version_grow = test_version_grow, version_grow_user = &budget, version_trim = test_version_trim}
+	leaving, staying: [machine_mesh.PUBLIC_KEY_SIZE]u8
+	leaving[0], staying[0] = 1, 2
+	first_identifier, second_identifier: blake3.Hash
+	first_identifier[0], second_identifier[0] = 3, 4
+	left, _ := store_exchange_add(&table, first_identifier, leaving)
+	kept, _ := store_exchange_add(&table, second_identifier, staying)
+	items: [STORE_ENTRY_WIRE_SIZE]u8
+	items[0], items[blake3.HASH_SIZE] = 1, 9
+	page := Store_Page{entry_total = 2, entry_count = 1, items = items[:]}
+	for store in ([2]^Exchanged_Store{left, kept}) {
+		whole, status := assembly_take_page(&store.incoming_assembly, &store.incoming, &page)
+		testing.expect(t, !whole && status == .Ok && store.incoming_assembly.active)
+	}
+	// A key that names no partner of a store, and the zero key: nothing ends.
+	nobody: [machine_mesh.PUBLIC_KEY_SIZE]u8
+	testing.expect_value(t, store_exchange_partner_end(&table, nobody), 0)
+	testing.expect_value(t, store_exchange_partner_end(nil, leaving), 0)
+	trims := budget.trims
+	testing.expect_value(t, store_exchange_partner_end(&table, leaving), 1)
+	testing.expect(t, !left.incoming_assembly.active && left.incoming.count == 0 && left.incoming.entries == nil)
+	testing.expect_value(t, budget.trims, trims + 1)
+	// The other partner keeps its offer, and a second end ends nothing more.
+	testing.expect(t, kept.incoming_assembly.active && kept.incoming.count == 1)
+	testing.expect_value(t, store_exchange_partner_end(&table, leaving), 0)
 }

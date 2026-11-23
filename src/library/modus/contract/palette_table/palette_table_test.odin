@@ -33,12 +33,12 @@ a_good_table_is_copied :: proc(t: ^testing.T) {
 	for count in ([]int{0, 1, 3, 500, 5000}) {
 		memory := table_of_test(count)
 		defer delete(memory)
-		header, header_problem := header_read(memory)
+		header, header_problem := header_read(memory, entries_of_table(memory))
 		testing.expect_value(t, header_problem, Problem.None)
 		testing.expect_value(t, int(header.entry_count), count)
 		expected_bytes, _ := table_bytes_for(u64(count))
 		testing.expect_value(t, header.byte_length, expected_bytes)
-		problem, _ := snapshot_take(memory, &snapshot)
+		problem, _ := snapshot_take(memory, entries_of_table(memory), &snapshot)
 		testing.expect_value(t, problem, Problem.None)
 		testing.expect_value(t, snapshot.entry_count, count)
 		testing.expect_value(t, snapshot.generation, 2)
@@ -46,6 +46,83 @@ a_good_table_is_copied :: proc(t: ^testing.T) {
 	result, result_ok := result_kind_of(&snapshot.entries[4999])
 	testing.expect(t, result_ok)
 	testing.expect_value(t, result, Value_Kind.Integer)
+}
+
+// The entries of a provider that passed its table are in an object of the
+// entries alone: the reader takes them from the place that it holds, and
+// refuses each other claim of the header before it copies anything.
+@(test)
+entries_in_an_object_of_their_own :: proc(t: ^testing.T) {
+	entries := make([]Entry, 8)
+	defer delete(entries)
+	snapshot := Snapshot{entries = entries}
+	// The entries of a table of 5, moved to an object of their own.
+	whole := table_of_test(5)
+	defer delete(whole)
+	object := whole[ENTRIES_OFFSET:]
+	memory := make([]u8, MIN_TABLE_BYTES)
+	defer delete(memory)
+	copy(memory, whole[:MIN_TABLE_BYTES])
+	header := (^Header)(raw_data(memory))
+	header.entries_object = 1
+	Object :: struct {
+		bytes:  []u8,
+		copied: int,
+	}
+	place := Object{bytes = object}
+	copy_object :: proc "contextless" (user: rawptr, into: []u8) -> bool {
+		object := (^Object)(user)
+		object.copied += 1
+		intrinsics.mem_copy_non_overlapping(raw_data(into), raw_data(object.bytes), len(into))
+		return true
+	}
+	source := Entries_Source{user = &place, bytes = u64(len(object)), object = 1, copy = copy_object}
+
+	// The header names the object while the reader holds the table: the
+	// entries move, and no byte of the table past its header is read.
+	problem, _ := snapshot_take(memory, entries_of_table(memory), &snapshot)
+	testing.expect_value(t, problem, Problem.Entries_Moving)
+	testing.expect_value(t, snapshot.entry_count, 0)
+	_, header_problem := header_read(memory, entries_of_table(memory))
+	testing.expect_value(t, header_problem, Problem.Entries_Moving)
+	// The reader holds object 2, the header names object 1.
+	later := source
+	later.object = 2
+	problem, _ = snapshot_take(memory, later, &snapshot)
+	testing.expect_value(t, problem, Problem.Entries_Moving)
+	testing.expect_value(t, place.copied, 0)
+
+	// An object one byte smaller than its entries.
+	small := source
+	small.bytes = u64(len(object) - 1)
+	problem, _ = snapshot_take(memory, small, &snapshot)
+	testing.expect_value(t, problem, Problem.Too_Small)
+	testing.expect_value(t, place.copied, 0)
+
+	// An object that gives no bytes: a page with no frame, a revoked handle.
+	lost := Entries_Source{bytes = u64(len(object)), object = 1, copy = proc "contextless" (_: rawptr, _: []u8) -> bool {
+		return false
+	}}
+	problem, _ = snapshot_take(memory, lost, &snapshot)
+	testing.expect_value(t, problem, Problem.Entries_Lost)
+	testing.expect_value(t, snapshot.entry_count, 0)
+	testing.expect_value(t, snapshot.generation, 0)
+	// A source with no copy at all.
+	problem, _ = snapshot_take(memory, {bytes = u64(len(object)), object = 1}, &snapshot)
+	testing.expect_value(t, problem, Problem.Entries_Lost)
+	// A table with no entry reads no byte of the object.
+	header.entry_count, header.byte_length = 0, MIN_TABLE_BYTES
+	problem, _ = snapshot_take(memory, source, &snapshot)
+	testing.expect_value(t, problem, Problem.None)
+	testing.expect_value(t, place.copied, 0)
+
+	// The place that the header names: the entries of the object.
+	header.entry_count, header.byte_length = 5, u64(len(whole))
+	problem, _ = snapshot_take(memory, source, &snapshot)
+	testing.expect_value(t, problem, Problem.None)
+	testing.expect_value(t, snapshot.entry_count, 5)
+	testing.expect_value(t, place.copied, 1)
+	testing.expect_value(t, string(snapshot.entries[4].name[:snapshot.entries[4].name_length]), "time")
 }
 
 // The copy is checked, not the memory: a problem names its entry, and the
@@ -62,42 +139,42 @@ a_bad_entry_is_named :: proc(t: ^testing.T) {
 	entry.reserved = 1
 	// A stable generation that is not 0: a refusal must not give it.
 	(^Header)(raw_data(memory)).change_count = 4
-	problem, index := snapshot_take(memory, &snapshot)
+	problem, index := snapshot_take(memory, entries_of_table(memory), &snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Kind)
 	testing.expect_value(t, index, 4)
 	testing.expect_value(t, snapshot.entry_count, 0)
 	testing.expect_value(t, snapshot.generation, 0)
 	entry.reserved = 0
 	entry.signature_length = 2 // Shorter than the name.
-	problem, index = snapshot_take(memory, &snapshot)
+	problem, index = snapshot_take(memory, entries_of_table(memory), &snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Signature)
 	entry.signature_length = u8(len("time() -> Integer"))
 	// A header whose byte_length does not match entry_count is refused.
 	(^Header)(raw_data(memory)).byte_length -= 1
-	problem, _ = snapshot_take(memory, &snapshot)
+	problem, _ = snapshot_take(memory, entries_of_table(memory), &snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Byte_Length)
-	_, header_problem := header_read(memory)
+	_, header_problem := header_read(memory, entries_of_table(memory))
 	testing.expect_value(t, header_problem, Problem.Bad_Byte_Length)
 	(^Header)(raw_data(memory)).byte_length = max(u64)
-	problem, _ = snapshot_take(memory, &snapshot)
+	problem, _ = snapshot_take(memory, entries_of_table(memory), &snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Byte_Length)
 	expected_5, _ := table_bytes_for(5)
 	(^Header)(raw_data(memory)).byte_length = expected_5
 	// Truncated memory (1 byte short of byte_length) is refused.
-	problem, _ = snapshot_take(memory[:len(memory) - 1], &snapshot)
+	problem, _ = snapshot_take(memory[:len(memory) - 1], entries_of_table(memory[:len(memory) - 1]), &snapshot)
 	testing.expect_value(t, problem, Problem.Too_Small)
-	_, header_problem = header_read(memory[:len(memory) - 1])
+	_, header_problem = header_read(memory[:len(memory) - 1], entries_of_table(memory[:len(memory) - 1]))
 	testing.expect_value(t, header_problem, Problem.Too_Small)
 	// Below MIN_TABLE_BYTES is refused.
-	problem, _ = snapshot_take(memory[:MIN_TABLE_BYTES - 1], &snapshot)
+	problem, _ = snapshot_take(memory[:MIN_TABLE_BYTES - 1], entries_of_table(memory[:MIN_TABLE_BYTES - 1]), &snapshot)
 	testing.expect_value(t, problem, Problem.Too_Small)
 	// A snapshot buffer smaller than entry_count is refused with Too_Many_Entries.
 	small_snapshot := Snapshot{entries = entries[:4]}
-	problem, _ = snapshot_take(memory, &small_snapshot)
+	problem, _ = snapshot_take(memory, entries_of_table(memory), &small_snapshot)
 	testing.expect_value(t, problem, Problem.Too_Many_Entries)
 	// A table that its writer changes with no end is no table.
 	(^Header)(raw_data(memory)).change_count = 9
-	problem, _ = snapshot_take(memory, &snapshot)
+	problem, _ = snapshot_take(memory, entries_of_table(memory), &snapshot)
 	testing.expect_value(t, problem, Problem.Never_Stable)
 	// Overflow in table_bytes_for / table_pages_for.
 	_, overflow_ok := table_bytes_for(max(u64))
@@ -611,11 +688,30 @@ concurrent_seqlock_writer_never_causes_torn_read_refusal :: proc(t: ^testing.T) 
 	entries_buf: [MAX_ENTRIES]Entry
 	snapshot := Snapshot{entries = entries_buf[:]}
 	for _ in 0 ..< 20_000 {
-		problem, _ := snapshot_take(memory, &snapshot)
+		problem, _ := snapshot_take(memory, entries_of_table(memory), &snapshot)
 		testing.expectf(t, problem == .None || problem == .Never_Stable, "torn read caused false hard error: %v", problem)
 		if problem == .None {
 			testing.expect(t, snapshot.entry_count == 2 || snapshot.entry_count == MAX_ENTRIES)
 			testing.expect(t, snapshot.generation & 1 == 0)
 		}
 	}
+}
+
+// The numbers of a page of candidates: the edges first, then pages that
+// a list of 300 candidates gives.
+@(test)
+candidate_pages_stay_inside_their_list :: proc(t: ^testing.T) {
+	testing.expect(t, candidate_page_valid(0, 0, 0))
+	testing.expect(t, !candidate_page_valid(0, 0, 1))
+	testing.expect(t, candidate_page_valid(1, 1, 0))
+	testing.expect(t, !candidate_page_valid(1, 2, 0), "a short page that does not end its list")
+	testing.expect(t, candidate_page_valid(CANDIDATE_CAPACITY, 300, 0))
+	testing.expect(t, candidate_page_valid(300 - 3 * CANDIDATE_CAPACITY, 300, 3 * CANDIDATE_CAPACITY))
+	testing.expect(t, !candidate_page_valid(CANDIDATE_CAPACITY + 1, 300, 0))
+	testing.expect(t, !candidate_page_valid(CANDIDATE_CAPACITY, 300, 299))
+	testing.expect(t, !candidate_page_valid(1, max(u64), max(u64)))
+	testing.expect(t, !candidate_page_valid(max(u64), max(u64), 0))
+	// The bound of the whole list, and one past it.
+	testing.expect(t, candidate_page_valid(0, CANDIDATE_TOTAL_LIMIT, CANDIDATE_TOTAL_LIMIT))
+	testing.expect(t, !candidate_page_valid(0, CANDIDATE_TOTAL_LIMIT + 1, CANDIDATE_TOTAL_LIMIT + 1))
 }
