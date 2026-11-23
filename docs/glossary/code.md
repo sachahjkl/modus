@@ -974,7 +974,7 @@ Do not use: chunk, block, piece, segment.
 
 An outboard is the file of the chaining values of the tree of frames of a blob, which an object cache keeps beside the blob to give the proof of each frame.
 
-It holds the chaining values of the two children of each parent of the tree of frames, 64 bytes each, in pre-order: (n − 1) × 64 bytes for a blob of n frames, none for a blob of one frame. The proof of a frame is one entry for each level of its path, so a get of one frame reads no other part of the blob. The server builds it during a put, or from the blob at its first get. It is the outboard of Bao, with frames of 1 MiB in place of chunks of 1 KiB. An outboard is not trusted: each frame that the server serves is checked against the hash of the blob. Example: the outboard of a blob of 100 MiB holds 99 entries, 6 336 bytes.
+It holds the chaining values of the two children of each parent of the tree of frames, 64 bytes each, in pre-order: (n − 1) × 64 bytes for a blob of n frames, none for a blob of one frame. The proof of a frame is one entry for each level of its path, so a get of one frame reads no other part of the blob. The server builds it during a put, or from the blob, 16 frames at each get, while the get answers `Busy`. It is the outboard of Bao, with frames of 1 MiB in place of chunks of 1 KiB. An outboard is not trusted: each frame that the server serves is checked against the hash of the blob. Example: the outboard of a blob of 100 MiB holds 99 entries, 6 336 bytes.
 
 The design: `src/md/features/recipes.md`, "Objects of any size".
 

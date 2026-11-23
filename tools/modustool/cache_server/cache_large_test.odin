@@ -24,11 +24,12 @@ Tracked_Loopback_Server :: struct {
 }
 
 @(private = "file")
-tracked_server_start :: proc(t: ^testing.T, directory: string, authorized: [][object_cache.PUBLIC_KEY_SIZE]u8) -> ^Tracked_Loopback_Server {
+tracked_server_start :: proc(t: ^testing.T, directory: string, authorized: [][object_cache.PUBLIC_KEY_SIZE]u8, outboard_build_frames_per_exchange := OUTBOARD_BUILD_FRAMES_PER_EXCHANGE) -> ^Tracked_Loopback_Server {
 	running := new(Tracked_Loopback_Server)
 	open_ok: bool
 	running.server, open_ok = cache_server_open(directory, authorized)
 	testing.expect(t, open_ok)
+	running.server.outboard_build_frames_per_exchange = outboard_build_frames_per_exchange
 	listen_err: net.Network_Error
 	running.listener, listen_err = net.listen_tcp({net.IP4_Loopback, 0})
 	testing.expect_value(t, listen_err, nil)
@@ -290,7 +291,67 @@ large_object_refusals_ranges_alignment_lying_sender_and_halfway_stop :: proc(t: 
 	testing.expect_value(t, ooo_st, object_cache.Cache_Response_Status.Refused)
 	testing.expect(t, !conn.put.active)
 
-	// 6. Stream stopped halfway over TCP: Put_Object + frame 0 + frame 1, then disconnect.
+	temp_folder_is_empty :: proc(t: ^testing.T, dir: string) {
+		entries, read_error := os.read_all_directory_by_path(fmt.tprintf("%s/tmp", dir), context.temp_allocator)
+		testing.expect_value(t, read_error, nil)
+		testing.expect_value(t, len(entries), 0)
+	}
+	send_frame :: proc(server: ^Cache_Server, conn: ^Cache_Connection, request: ^object_cache.Cache_Request) -> object_cache.Cache_Response_Status {
+		written, refusal := object_cache.encode_request(request, conn.request_buffer)
+		assert(refusal == .None)
+		_, status := cache_server_handle_connection_frame(server, conn, conn.request_buffer[:written])
+		return status
+	}
+
+	// 6. A signed head whose size passes the free space of the disk: the
+	// largest object of the protocol. Too_Large before any frame, and tmp/
+	// holds nothing.
+	huge_head := make_signed_put_object_request(.Blob, true_hash, object_cache.MAX_OBJECT_BYTES, &priv, pub)
+	testing.expect_value(t, send_frame(&server, &conn, &huge_head), object_cache.Cache_Response_Status.Too_Large)
+	testing.expect(t, !conn.put.active)
+	temp_folder_is_empty(t, dir)
+
+	// 7. An aligned frame with no open upload.
+	lone_frame := object_cache.Cache_Request {
+		kind        = .Put_Object_Frame,
+		object_hash = true_hash,
+		offset      = 0,
+		payload     = three_frame[:object_cache.FRAME_PAYLOAD_BYTES],
+	}
+	testing.expect_value(t, send_frame(&server, &conn, &lone_frame), object_cache.Cache_Response_Status.Refused)
+
+	// 8. A frame for another hash during an upload: refused, and the upload
+	// ends, so its own frame 0 is then refused too.
+	testing.expect_value(t, send_frame(&server, &conn, &corrupt_head), object_cache.Cache_Response_Status.Ok)
+	other_frame := lone_frame
+	other_frame.object_hash = blake3.hash(transmute([]u8)string("another object"))
+	testing.expect_value(t, send_frame(&server, &conn, &other_frame), object_cache.Cache_Response_Status.Refused)
+	testing.expect(t, !conn.put.active)
+	testing.expect_value(t, send_frame(&server, &conn, &lone_frame), object_cache.Cache_Response_Status.Refused)
+	temp_folder_is_empty(t, dir)
+
+	// 9. A frame after the last: the upload of an object of one frame ends
+	// with its frame 0, so a next frame, aligned or again at 0, is refused.
+	small := three_frame[:100]
+	small_hash := blake3.hash(small)
+	small_head := make_signed_put_object_request(.Blob, small_hash, u64(len(small)), &priv, pub)
+	testing.expect_value(t, send_frame(&server, &conn, &small_head), object_cache.Cache_Response_Status.Ok)
+	small_frame := object_cache.Cache_Request {
+		kind        = .Put_Object_Frame,
+		object_hash = small_hash,
+		offset      = 0,
+		payload     = small,
+	}
+	testing.expect_value(t, send_frame(&server, &conn, &small_frame), object_cache.Cache_Response_Status.Ok)
+	testing.expect(t, cache_server_has(&server, small_hash))
+	after_last := small_frame
+	after_last.offset = object_cache.FRAME_PAYLOAD_BYTES
+	after_last.payload = small[:1]
+	testing.expect_value(t, send_frame(&server, &conn, &after_last), object_cache.Cache_Response_Status.Refused)
+	testing.expect_value(t, send_frame(&server, &conn, &small_frame), object_cache.Cache_Response_Status.Refused)
+	temp_folder_is_empty(t, dir)
+
+	// 10. Stream stopped halfway over TCP: Put_Object + frame 0 + frame 1, then disconnect.
 	//    Verify Has is false while in flight AND after disconnect, and objects/, outboards/, tmp/ are all empty.
 	running := tracked_server_start(t, dir, authorized[:])
 	defer {
@@ -334,12 +395,186 @@ large_object_refusals_ranges_alignment_lying_sender_and_halfway_stop :: proc(t: 
 	testing.expect_value(t, ah_out, Cache_Client_Outcome.Done)
 	testing.expect_value(t, after_has, u64(0))
 
-	for sub in ([3]string{"objects", "outboards", "tmp"}) {
+	true_hex := hash_to_hex(true_hash)
+	true_object_path, _ := store_path_for_hex(dir, .Objects, string(true_hex[:]), context.temp_allocator)
+	testing.expect(t, !os.exists(true_object_path))
+	for sub in ([2]string{"outboards", "tmp"}) {
 		entries, rerr := os.read_all_directory_by_path(fmt.tprintf("%s/%s", dir, sub), context.temp_allocator)
 		testing.expect_value(t, rerr, nil)
 		testing.expect_value(t, len(entries), 0)
 	}
 }
+
+@(test)
+the_open_of_a_store_empties_its_temporary_folder :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		_ = os.remove_all(dir)
+		delete(dir)
+	}
+	first, first_ok := cache_server_open(dir, nil)
+	testing.expect(t, first_ok)
+	cache_server_destroy(&first)
+	// The parts that a run of the server ended with: an upload and an
+	// outboard in progress.
+	for name in ([2]string{"aa.1.tmp", "bb.2.outboard.tmp"}) {
+		testing.expect_value(t, os.write_entire_file(fmt.tprintf("%s/tmp/%s", dir, name), transmute([]u8)string("part")), nil)
+	}
+	second, second_ok := cache_server_open(dir, nil)
+	testing.expect(t, second_ok)
+	defer cache_server_destroy(&second)
+	entries, read_error := os.read_all_directory_by_path(fmt.tprintf("%s/tmp", dir), context.temp_allocator)
+	testing.expect_value(t, read_error, nil)
+	testing.expect_value(t, len(entries), 0)
+}
+
+// The outboard of data, in pre-order, as a server keeps it.
+@(private = "file")
+test_outboard :: proc(data: []u8) -> []u8 {
+	size := u64(len(data))
+	builder, _ := object_cache.frame_tree_builder_start(size)
+	outboard_bytes, _ := object_cache.object_outboard_bytes(size)
+	outboard := make([]u8, int(outboard_bytes))
+	for frame_index in u64(0) ..< builder.frame_count {
+		length, _ := object_cache.object_frame_length(size, frame_index)
+		start := int(frame_index * object_cache.FRAME_PAYLOAD_BYTES)
+		parents: [object_cache.MAX_PROOF_DEPTH]object_cache.Frame_Parent
+		count, _ := object_cache.frame_tree_builder_add(&builder, data[start:start + int(length)], &parents)
+		for parent in parents[:count] {
+			entry := object_cache.frame_parent_entry(parent)
+			copy(outboard[int(parent.index) * object_cache.OUTBOARD_ENTRY_SIZE:], entry[:])
+		}
+	}
+	return outboard
+}
+
+// The answer of a server to the get of one frame of data, which states
+// stated_size and carries the proof that the outboard of data gives for the
+// path of the frame under stated_size.
+@(private = "file")
+test_frame_answer :: proc(data: []u8, outboard: []u8, stated_size: u64, frame_index: u64) -> []u8 {
+	count, _ := object_cache.object_frame_count(stated_size)
+	path, _ := object_cache.object_frame_path(count, frame_index)
+	proof := make([]u8, path.depth * object_cache.PROOF_ENTRY_SIZE, context.temp_allocator)
+	for level in 0 ..< path.depth {
+		entry: [object_cache.OUTBOARD_ENTRY_SIZE]u8
+		place := int(path.parent_index[level]) * object_cache.OUTBOARD_ENTRY_SIZE
+		copy(entry[:], outboard[place:place + object_cache.OUTBOARD_ENTRY_SIZE])
+		sibling := object_cache.frame_proof_entry(entry, path.in_left[level])
+		copy(proof[level * object_cache.PROOF_ENTRY_SIZE:], sibling[:])
+	}
+	length, _ := object_cache.object_frame_length(stated_size, frame_index)
+	start := int(frame_index * object_cache.FRAME_PAYLOAD_BYTES)
+	answer := object_cache.Cache_Response {
+		request_kind = .Get_Object,
+		status       = .Ok,
+		object_kind  = .Blob,
+		object_size  = stated_size,
+		offset       = frame_index * object_cache.FRAME_PAYLOAD_BYTES,
+		proof        = proof,
+		payload      = data[start:start + int(length)],
+	}
+	size, size_refusal := object_cache.encoded_response_size(&answer)
+	assert(size_refusal == .None)
+	frame := make([]u8, size, context.temp_allocator)
+	_, refusal := object_cache.encode_response(&answer, frame)
+	assert(refusal == .None)
+	return frame
+}
+
+@(private = "file")
+test_busy_answer :: proc(frames_built, frame_count: u64) -> []u8 {
+	answer := object_cache.Cache_Response {
+		request_kind = .Get_Object,
+		status       = .Busy,
+		frames_built = frames_built,
+		frame_count  = frame_count,
+	}
+	frame := make([]u8, object_cache.FRAME_HEADER_SIZE + object_cache.BUSY_RESPONSE_BODY_SIZE, context.temp_allocator)
+	_, refusal := object_cache.encode_response(&answer, frame)
+	assert(refusal == .None)
+	return frame
+}
+
+@(private = "file")
+scripted_get_object :: proc(t: ^testing.T, answers: [][]u8, object_hash: blake3.Hash) -> Cache_Client_Outcome {
+	server := scripted_server_start(t, answers)
+	defer scripted_server_stop(server)
+	client, connect_outcome := cache_client_connect(server.endpoint)
+	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
+	defer cache_client_close(&client)
+	payload, outcome := cache_client_get_object(&client, .Blob, object_hash)
+	delete(payload)
+	return outcome
+}
+
+@(test)
+a_server_that_changes_the_size_or_never_ends_a_build_is_refused :: proc(t: ^testing.T) {
+	work := make_temp_store_dir(t)
+	defer {
+		_ = os.remove_all(work)
+		delete(work)
+	}
+	// Four frames, the last of 7 bytes. A size of 3 MiB and 9 bytes is four
+	// frames too: frame 1 has the same path under both sizes, so its answer
+	// with the other size verifies, and only the comparison with the size of
+	// frame 0 refuses it.
+	size :: u64(3 * object_cache.FRAME_PAYLOAD_BYTES + 7)
+	other_size :: u64(3 * object_cache.FRAME_PAYLOAD_BYTES + 9)
+	data := make([]u8, size)
+	defer delete(data)
+	for &b, i in data {
+		b = u8((i * 23 + 11) & 0xFF)
+	}
+	root := blake3.hash(data)
+	outboard := test_outboard(data)
+	defer delete(outboard)
+	frame_0 := test_frame_answer(data, outboard, size, 0)
+	frame_1_other_size := test_frame_answer(data, outboard, other_size, 1)
+	testing.expect_value(t, frame_1_other_size[object_cache.FRAME_HEADER_SIZE:][8], u8(other_size & 0xFF))
+
+	// Frame 1 states another size than frame 0: a get into memory.
+	{
+		answers := [2][]u8{frame_0, frame_1_other_size}
+		testing.expect_value(t, scripted_get_object(t, answers[:], root), Cache_Client_Outcome.Damaged_Answer)
+	}
+	// The same answers for a get to a file: no output file and no part file.
+	{
+		answers := [2][]u8{frame_0, frame_1_other_size}
+		server := scripted_server_start(t, answers[:])
+		defer scripted_server_stop(server)
+		client, _ := cache_client_connect(server.endpoint)
+		defer cache_client_close(&client)
+		output := fmt.tprintf("%s/changed_size.bin", work)
+		root_hex := hash_to_hex(root)
+		_, _, outcome := cache_client_get_file(&client, root, output)
+		testing.expect_value(t, outcome, Cache_Client_Outcome.Damaged_Answer)
+		testing.expect(t, !os.exists(output))
+		testing.expect(t, !os.exists(fmt.tprintf("%s.%s.part", output, string(root_hex[:]))))
+	}
+	// A Busy that shows no more frames built, and a Busy whose count changes.
+	{
+		answers := [2][]u8{test_busy_answer(1, 4), test_busy_answer(1, 4)}
+		testing.expect_value(t, scripted_get_object(t, answers[:], root), Cache_Client_Outcome.Damaged_Answer)
+	}
+	{
+		answers := [2][]u8{test_busy_answer(1, 4), test_busy_answer(2, 5)}
+		testing.expect_value(t, scripted_get_object(t, answers[:], root), Cache_Client_Outcome.Damaged_Answer)
+	}
+	// Last: two Busy answers that progress, then the four frames.
+	{
+		answers := [6][]u8 {
+			test_busy_answer(1, 4),
+			test_busy_answer(3, 4),
+			frame_0,
+			test_frame_answer(data, outboard, size, 1),
+			test_frame_answer(data, outboard, size, 2),
+			test_frame_answer(data, outboard, size, 3),
+		}
+		testing.expect_value(t, scripted_get_object(t, answers[:], root), Cache_Client_Outcome.Done)
+	}
+}
+
 
 @(test)
 hostile_server_refused_on_short_proof_corrupt_chunk_and_lying_size :: proc(t: ^testing.T) {
@@ -464,7 +699,9 @@ edge_sizes_outboard_rebuild_bitrot_and_get_resume :: proc(t: ^testing.T) {
 	}
 	priv, pub, _ := make_test_keypair(0x82)
 	authorized := [1][object_cache.PUBLIC_KEY_SIZE]u8{pub}
-	running := tracked_server_start(t, dir, authorized[:])
+	// One frame of an outboard for each exchange, so an object of four
+	// frames takes several gets to build.
+	running := tracked_server_start(t, dir, authorized[:], 1)
 	defer {
 		_ = tracked_server_stop(running)
 	}
@@ -476,57 +713,135 @@ edge_sizes_outboard_rebuild_bitrot_and_get_resume :: proc(t: ^testing.T) {
 	recv_buf := make([]u8, object_cache.FRAME_HEADER_SIZE + object_cache.MAX_RESPONSE_BODY_BYTES)
 	defer delete(recv_buf)
 
-	// 1. Edge sizes: 0 bytes, 1 byte, exact 1 MiB, 1 MiB + 1 byte.
+	// The objects: blobs of 0 bytes, 1 byte, 1 MiB, 1 MiB and 1 byte, one
+	// of four frames, and one of two frames that a fault of the disk damages.
 	edge_sizes := [4]u64{0, 1, object_cache.FRAME_PAYLOAD_BYTES, object_cache.FRAME_PAYLOAD_BYTES + 1}
+	edge_hashes: [4]blake3.Hash
 	for sz, idx in edge_sizes {
-		src_path := fmt.tprintf("%s/edge_%d.bin", work, idx)
-		dst_path := fmt.tprintf("%s/edge_%d.out", work, idx)
-		expected_hash := write_pattern_file(t, src_path, sz, u8(idx + 1))
-
-		put_hash, put_size, put_out := cache_client_put_file(&client, &priv, src_path)
+		edge_hashes[idx] = write_pattern_file(t, fmt.tprintf("%s/edge_%d.bin", work, idx), sz, u8(idx + 1))
+		put_hash, put_size, put_out := cache_client_put_file(&client, &priv, fmt.tprintf("%s/edge_%d.bin", work, idx))
 		testing.expect_value(t, put_out, Cache_Client_Outcome.Done)
-		testing.expect_value(t, put_hash, expected_hash)
+		testing.expect_value(t, put_hash, edge_hashes[idx])
 		testing.expect_value(t, put_size, sz)
-
-		// Second put returns Already_Present cleanly without re-uploading.
-		put_hash2, _, put_out2 := cache_client_put_file(&client, &priv, src_path)
-		testing.expect_value(t, put_out2, Cache_Client_Outcome.Done)
-		testing.expect_value(t, put_hash2, expected_hash)
-
-		// Outboard exists if and only if sz > FRAME_PAYLOAD_BYTES.
-		hex_h := hash_to_hex(expected_hash)
-		out_path, _ := store_path_for_hex(dir, .Outboards, string(hex_h[:]), context.temp_allocator)
-		testing.expect_value(t, os.exists(out_path), sz > object_cache.FRAME_PAYLOAD_BYTES)
-
-		// Range past the end returns Out_Of_Range.
-		frame_count, _ := object_cache.object_frame_count(sz)
-		_, oor_out := cache_client_get_frame(&client, .Blob, expected_hash, frame_count * object_cache.FRAME_PAYLOAD_BYTES, recv_buf)
-		testing.expect_value(t, oor_out, Cache_Client_Outcome.Out_Of_Range)
-
-		// Get to file and verify exact bytes and hash.
-		got_size, resumed, get_out := cache_client_get_file(&client, expected_hash, dst_path)
-		testing.expect_value(t, get_out, Cache_Client_Outcome.Done)
-		testing.expect_value(t, got_size, sz)
-		testing.expect_value(t, resumed, u64(0))
-		got_hash, disk_size := hash_file_streaming(t, dst_path)
-		testing.expect_value(t, disk_size, sz)
-		testing.expect_value(t, got_hash, expected_hash)
 	}
-
-	// 2. Outboard missing on disk for a multi-frame blob -> transparently rebuilt on Get_Object.
 	multi_src := fmt.tprintf("%s/multi_3m.bin", work)
 	multi_size :: u64(3 * object_cache.FRAME_PAYLOAD_BYTES + 19)
 	multi_hash := write_pattern_file(t, multi_src, multi_size, 0x44)
 	_, _, multi_put_out := cache_client_put_file(&client, &priv, multi_src)
 	testing.expect_value(t, multi_put_out, Cache_Client_Outcome.Done)
-
 	multi_hex := hash_to_hex(multi_hash)
 	multi_out_path, _ := store_path_for_hex(dir, .Outboards, string(multi_hex[:]), context.temp_allocator)
-	testing.expect(t, os.exists(multi_out_path))
-	testing.expect_value(t, os.remove(multi_out_path), nil)
-	testing.expect(t, !os.exists(multi_out_path))
+	rot_src := fmt.tprintf("%s/rot_2m.bin", work)
+	rot_size :: u64(object_cache.FRAME_PAYLOAD_BYTES + 5)
+	rot_hash := write_pattern_file(t, rot_src, rot_size, 0x66)
+	_, _, rot_put_out := cache_client_put_file(&client, &priv, rot_src)
+	testing.expect_value(t, rot_put_out, Cache_Client_Outcome.Done)
+	rot_hex := hash_to_hex(rot_hash)
 
-	// Fetching frame 3 (the 19-byte tail) triggers outboard rebuild and returns valid proof.
+	// Refusals first.
+	// A frame past the end of each object.
+	for sz, idx in edge_sizes {
+		frame_count, _ := object_cache.object_frame_count(sz)
+		_, oor_out := cache_client_get_frame(&client, .Blob, edge_hashes[idx], frame_count * object_cache.FRAME_PAYLOAD_BYTES, recv_buf)
+		testing.expect_value(t, oor_out, Cache_Client_Outcome.Out_Of_Range)
+	}
+	// A get into memory past the bound of its caller, before it allocates.
+	too_large, too_large_out := cache_client_get_object(&client, .Blob, multi_hash, context.allocator, 1024)
+	testing.expect_value(t, too_large_out, Cache_Client_Outcome.Too_Large)
+	testing.expect(t, too_large == nil)
+	// A part file changed on the disk: the hash of the whole file before the
+	// rename refuses it, and neither the output nor the part file stays.
+	bad_resume_dst := fmt.tprintf("%s/bad_resumed.bin", work)
+	bad_part_path := fmt.tprintf("%s.%s.part", bad_resume_dst, string(multi_hex[:]))
+	{
+		src_f, _ := os.open(multi_src)
+		defer os.close(src_f)
+		part_f, _ := os.create(bad_part_path)
+		defer os.close(part_f)
+		tmp := make([]u8, object_cache.FRAME_PAYLOAD_BYTES)
+		defer delete(tmp)
+		testing.expect(t, file_read_exact_at(src_f, tmp, 0))
+		tmp[42] ~= 0x01
+		testing.expect(t, file_write_all(part_f, tmp))
+	}
+	_, _, bad_res_out := cache_client_get_file(&client, multi_hash, bad_resume_dst)
+	testing.expect_value(t, bad_res_out, Cache_Client_Outcome.Hash_Mismatch)
+	testing.expect(t, !os.exists(bad_resume_dst))
+	testing.expect(t, !os.exists(bad_part_path))
+	// A byte of an object changed on the disk of the server: the get of its
+	// frame is Bad_Hash, the object moves to damaged/, Has stops answering
+	// present, the next get is Not_Found, and the page counts it.
+	rot_obj_path, _ := store_path_for_hex(dir, .Objects, string(rot_hex[:]), context.temp_allocator)
+	rot_damaged_path, _ := store_path_for_hex(dir, .Damaged, string(rot_hex[:]), context.temp_allocator)
+	{
+		of, oerr := os.open(rot_obj_path, {.Read, .Write})
+		testing.expect_value(t, oerr, nil)
+		defer os.close(of)
+		orig: [1]u8
+		testing.expect(t, file_read_exact_at(of, orig[:], 100))
+		flip := [1]u8{orig[0] ~ 0x01}
+		testing.expect(t, file_write_all_at(of, flip[:], 100))
+	}
+	objects_before := cache_status_snapshot(&running.server.status).counts.objects
+	_, rot_out := cache_client_get_frame(&client, .Blob, rot_hash, 0, recv_buf)
+	testing.expect_value(t, rot_out, Cache_Client_Outcome.Server_Refused)
+	testing.expect_value(t, client.server_status, object_cache.Cache_Response_Status.Bad_Hash)
+	testing.expect(t, !os.exists(rot_obj_path))
+	testing.expect(t, os.exists(rot_damaged_path))
+	rot_hashes := [1]blake3.Hash{rot_hash}
+	rot_present, rot_has_out := cache_client_has(&client, rot_hashes[:])
+	testing.expect_value(t, rot_has_out, Cache_Client_Outcome.Done)
+	testing.expect_value(t, rot_present, u64(0))
+	_, rot_again := cache_client_get_frame(&client, .Blob, rot_hash, 0, recv_buf)
+	testing.expect_value(t, rot_again, Cache_Client_Outcome.Not_Found)
+	rot_counts := cache_status_snapshot(&running.server.status).counts
+	testing.expect_value(t, rot_counts.objects, objects_before - 1)
+	testing.expect_value(t, rot_counts.damaged_objects, u64(1))
+	// A put of the object writes it again.
+	_, _, rot_again_put := cache_client_put_file(&client, &priv, rot_src)
+	testing.expect_value(t, rot_again_put, Cache_Client_Outcome.Done)
+	testing.expect(t, os.exists(rot_obj_path))
+
+	// Then the successes.
+	for sz, idx in edge_sizes {
+		src_path := fmt.tprintf("%s/edge_%d.bin", work, idx)
+		dst_path := fmt.tprintf("%s/edge_%d.out", work, idx)
+		// A second put answers Already_Present and sends no frame.
+		put_hash2, _, put_out2 := cache_client_put_file(&client, &priv, src_path)
+		testing.expect_value(t, put_out2, Cache_Client_Outcome.Done)
+		testing.expect_value(t, put_hash2, edge_hashes[idx])
+		// An outboard exists only for an object of several frames.
+		edge_hex := hash_to_hex(edge_hashes[idx])
+		out_path, _ := store_path_for_hex(dir, .Outboards, string(edge_hex[:]), context.temp_allocator)
+		testing.expect_value(t, os.exists(out_path), sz > object_cache.FRAME_PAYLOAD_BYTES)
+		got_size, resumed, get_out := cache_client_get_file(&client, edge_hashes[idx], dst_path)
+		testing.expect_value(t, get_out, Cache_Client_Outcome.Done)
+		testing.expect_value(t, got_size, sz)
+		testing.expect_value(t, resumed, u64(0))
+		got_hash, disk_size := hash_file_streaming(t, dst_path)
+		testing.expect_value(t, disk_size, sz)
+		testing.expect_value(t, got_hash, edge_hashes[idx])
+	}
+
+	// An outboard missing on the disk: each get builds one more frame of it
+	// and answers Busy with its progress, until the last frame.
+	testing.expect_value(t, os.remove(multi_out_path), nil)
+	{
+		request := object_cache.Cache_Request {
+			kind        = .Get_Object,
+			object_kind = .Blob,
+			object_hash = multi_hash,
+			offset      = 3 * object_cache.FRAME_PAYLOAD_BYTES,
+		}
+		send_buf: [object_cache.FRAME_HEADER_SIZE + object_cache.GET_OBJECT_BODY_SIZE]u8
+		for expected_built in u64(1) ..< 4 {
+			busy, busy_out := cache_client_exchange_into(&client, &request, send_buf[:], recv_buf)
+			testing.expect_value(t, busy_out, Cache_Client_Outcome.Busy)
+			testing.expect_value(t, busy.frames_built, expected_built)
+			testing.expect_value(t, busy.frame_count, u64(4))
+			testing.expect(t, !os.exists(multi_out_path))
+		}
+	}
 	tail_resp, tail_out := cache_client_get_frame(&client, .Blob, multi_hash, 3 * object_cache.FRAME_PAYLOAD_BYTES, recv_buf)
 	testing.expect_value(t, tail_out, Cache_Client_Outcome.Done)
 	testing.expect_value(t, tail_resp.object_size, multi_size)
@@ -534,7 +849,8 @@ edge_sizes_outboard_rebuild_bitrot_and_get_resume :: proc(t: ^testing.T) {
 	testing.expect(t, os.exists(multi_out_path))
 
 	// A damaged outboard of the right size: the frame does not verify with
-	// it, the server builds it again from the object and serves the frame.
+	// it, the server builds it again, the client asks through the Busy
+	// answers, and the frame comes.
 	{
 		outboard_file, outboard_error := os.open(multi_out_path, {.Read, .Write})
 		testing.expect_value(t, outboard_error, nil)
@@ -549,17 +865,13 @@ edge_sizes_outboard_rebuild_bitrot_and_get_resume :: proc(t: ^testing.T) {
 	testing.expect_value(t, repaired_out, Cache_Client_Outcome.Done)
 	testing.expect_value(t, len(repaired_resp.payload), object_cache.FRAME_PAYLOAD_BYTES)
 
-	// A get into memory refuses an object past the bound of its caller
-	// before it allocates; the same object passes under a larger bound.
-	too_large, too_large_out := cache_client_get_object(&client, .Blob, multi_hash, context.allocator, 1024)
-	testing.expect_value(t, too_large_out, Cache_Client_Outcome.Too_Large)
-	testing.expect(t, too_large == nil)
 	whole, whole_out := cache_client_get_object(&client, .Blob, multi_hash)
 	testing.expect_value(t, whole_out, Cache_Client_Outcome.Done)
 	testing.expect_value(t, blake3.hash(whole), multi_hash)
 	delete(whole)
 
-	// 3. Resume of an interrupted Get transfer (2 MiB valid + 137 torn trailing bytes).
+	// A resume: two whole frames and 137 bytes of a torn third. The torn
+	// bytes go, the two frames stay, and the file is hashed whole once more.
 	resume_dst := fmt.tprintf("%s/resumed.bin", work)
 	part_path := fmt.tprintf("%s.%s.part", resume_dst, string(multi_hex[:]))
 	{
@@ -590,41 +902,33 @@ edge_sizes_outboard_rebuild_bitrot_and_get_resume :: proc(t: ^testing.T) {
 	testing.expect_value(t, res_disk_size, multi_size)
 	testing.expect_value(t, res_hash, multi_hash)
 
-	// 4. Tampered .part file on disk is caught before rename: Hash_Mismatch, no output file created.
-	bad_resume_dst := fmt.tprintf("%s/bad_resumed.bin", work)
-	bad_part_path := fmt.tprintf("%s.%s.part", bad_resume_dst, string(multi_hex[:]))
-	{
-		src_f, _ := os.open(multi_src)
-		defer os.close(src_f)
-		part_f, _ := os.create(bad_part_path)
-		defer os.close(part_f)
-		tmp := make([]u8, object_cache.FRAME_PAYLOAD_BYTES)
-		defer delete(tmp)
-		testing.expect(t, file_read_exact_at(src_f, tmp, 0))
-		tmp[42] ~= 0x01 // corrupt byte inside resumed frame 0
-		testing.expect(t, file_write_all(part_f, tmp))
+	// A part file at the end of the object (4 MiB of whole frames for an
+	// object of 3 MiB and 19 bytes) and one past it (5 MiB): the first frame
+	// asked is past the end, so the get starts again at offset 0.
+	for whole_frames in ([2]int{4, 5}) {
+		restart_dst := fmt.tprintf("%s/restart_%d.bin", work, whole_frames)
+		restart_part := fmt.tprintf("%s.%s.part", restart_dst, string(multi_hex[:]))
+		{
+			part_f, perr := os.create(restart_part)
+			testing.expect_value(t, perr, nil)
+			defer os.close(part_f)
+			filler := make([]u8, object_cache.FRAME_PAYLOAD_BYTES)
+			defer delete(filler)
+			for _ in 0 ..< whole_frames {
+				testing.expect(t, file_write_all(part_f, filler))
+			}
+		}
+		restart_size, restart_kept, restart_out := cache_client_get_file(&client, multi_hash, restart_dst)
+		testing.expect_value(t, restart_out, Cache_Client_Outcome.Done)
+		testing.expect_value(t, restart_size, multi_size)
+		testing.expect_value(t, restart_kept, u64(0))
+		testing.expect(t, !os.exists(restart_part))
+		restart_hash, restart_disk_size := hash_file_streaming(t, restart_dst)
+		testing.expect_value(t, restart_disk_size, multi_size)
+		testing.expect_value(t, restart_hash, multi_hash)
 	}
-	_, _, bad_res_out := cache_client_get_file(&client, multi_hash, bad_resume_dst)
-	testing.expect_value(t, bad_res_out, Cache_Client_Outcome.Hash_Mismatch)
-	testing.expect(t, !os.exists(bad_resume_dst))
-	testing.expect(t, !os.exists(bad_part_path))
-
-	// 5. On-disk corruption of a multi-frame blob is detected by server -> Bad_Hash.
-	multi_obj_path, _ := store_path_for_hex(dir, .Objects, string(multi_hex[:]), context.temp_allocator)
-	{
-		of, oerr := os.open(multi_obj_path, {.Read, .Write})
-		testing.expect_value(t, oerr, nil)
-		defer os.close(of)
-		flip := [1]u8{0xFF}
-		orig: [1]u8
-		testing.expect(t, file_read_exact_at(of, orig[:], i64(object_cache.FRAME_PAYLOAD_BYTES + 100)))
-		flip[0] = orig[0] ~ 0x01
-		testing.expect(t, file_write_all_at(of, flip[:], i64(object_cache.FRAME_PAYLOAD_BYTES + 100)))
-	}
-	_, rot_out := cache_client_get_frame(&client, .Blob, multi_hash, object_cache.FRAME_PAYLOAD_BYTES, recv_buf)
-	testing.expect_value(t, rot_out, Cache_Client_Outcome.Server_Refused)
-	testing.expect_value(t, client.server_status, object_cache.Cache_Response_Status.Bad_Hash)
 }
+
 
 @(test)
 hundred_mib_loopback_with_bounded_memory :: proc(t: ^testing.T) {

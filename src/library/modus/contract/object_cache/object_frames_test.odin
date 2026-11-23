@@ -302,3 +302,60 @@ real_one_mib_frames_match_blake3_at_boundaries :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+@(test)
+the_deepest_path_holds_in_one_answer :: proc(t: ^testing.T) {
+	// The largest count of frames, and one less: each path stays within
+	// MAX_PROOF_DEPTH levels and names parents of the tree only.
+	for count in ([2]u64{MAX_FRAME_COUNT, MAX_FRAME_COUNT - 1}) {
+		for index in ([4]u64{0, 1, count / 2, count - 1}) {
+			path, path_ok := object_frame_path(count, index)
+			testing.expect(t, path_ok)
+			testing.expect(t, path.depth >= 1 && path.depth <= MAX_PROOF_DEPTH)
+			testing.expect_value(t, path.parent_index[0], u64(0))
+			for level in 0 ..< path.depth {
+				testing.expect(t, path.parent_index[level] < count - 1)
+			}
+			if count == MAX_FRAME_COUNT {
+				testing.expect_value(t, path.depth, MAX_PROOF_DEPTH)
+			}
+		}
+	}
+	// One past the largest count, and the frame past the end.
+	_, past_count := object_frame_path(MAX_FRAME_COUNT + 1, 0)
+	testing.expect(t, !past_count)
+	_, past_frame := object_frame_path(MAX_FRAME_COUNT, MAX_FRAME_COUNT)
+	testing.expect(t, !past_frame)
+
+	// The last frame of the largest object, with its 32 levels: the answer
+	// fits MAX_RESPONSE_BODY_BYTES, and a proof that the root does not
+	// accept is a mismatch, not a fault of the reader.
+	proof: [MAX_PROOF_DEPTH * PROOF_ENTRY_SIZE]u8
+	for &b, i in proof {
+		b = u8(i * 7 + 1)
+	}
+	frame := make([]u8, FRAME_PAYLOAD_BYTES)
+	defer delete(frame)
+	buffer := make([]u8, FRAME_HEADER_SIZE + MAX_RESPONSE_BODY_BYTES)
+	defer delete(buffer)
+	last_offset := (MAX_FRAME_COUNT - 1) * FRAME_PAYLOAD_BYTES
+	answer := Cache_Response {
+		request_kind = .Get_Object,
+		status       = .Ok,
+		object_kind  = .Blob,
+		object_size  = MAX_OBJECT_BYTES,
+		offset       = last_offset,
+		proof        = proof[:],
+		payload      = frame,
+	}
+	written, encode_refusal := encode_response(&answer, buffer)
+	testing.expect_value(t, encode_refusal, Wire_Refusal.None)
+	testing.expect_value(t, written, len(buffer))
+	decoded, decode_refusal := decode_response(buffer[:written])
+	testing.expect_value(t, decode_refusal, Wire_Refusal.None)
+	testing.expect_value(t, len(decoded.proof), MAX_PROOF_DEPTH * PROOF_ENTRY_SIZE)
+	some_hash := blake3.hash(proof[:])
+	testing.expect_value(t, object_frame_verify(.Blob, some_hash, MAX_OBJECT_BYTES, MAX_FRAME_COUNT - 1, decoded.proof, decoded.payload), Substitution_Decision.Refuse_Hash_Mismatch)
+	// One level short is refused before any hash.
+	testing.expect_value(t, object_frame_verify(.Blob, some_hash, MAX_OBJECT_BYTES, MAX_FRAME_COUNT - 1, decoded.proof[PROOF_ENTRY_SIZE:], decoded.payload), Substitution_Decision.Refuse_Malformed)
+}

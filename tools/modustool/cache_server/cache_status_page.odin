@@ -228,6 +228,8 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 	} else {
 		write(&b, "none")
 	}
+	write(&b, "</dd>\n<dt>Damaged objects</dt><dd>")
+	number(&b, snapshot.counts.damaged_objects)
 	write(&b, "</dd>\n<dt>Free on the disk</dt><dd>")
 	if disk_free_known {
 		site.site_value(&b, .Size, cache_page_bytes_text(disk_free), false)
@@ -333,7 +335,7 @@ cache_status_json :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snap
 		}
 		json_hex(&b, key)
 	}
-	fmt.sbprintf(&b, "],\n  \"objects\": %d,\n  \"object_bytes\": %d,\n  \"largest_object_bytes\": %d,\n  \"realisations\": %d,\n  \"realisation_bytes\": %d,\n  \"disk_free_bytes\": ", snapshot.counts.objects, snapshot.counts.object_bytes, snapshot.counts.largest_object_bytes, snapshot.counts.realisations, snapshot.counts.realisation_bytes)
+	fmt.sbprintf(&b, "],\n  \"objects\": %d,\n  \"object_bytes\": %d,\n  \"largest_object_bytes\": %d,\n  \"damaged_objects\": %d,\n  \"realisations\": %d,\n  \"realisation_bytes\": %d,\n  \"disk_free_bytes\": ", snapshot.counts.objects, snapshot.counts.object_bytes, snapshot.counts.largest_object_bytes, snapshot.counts.damaged_objects, snapshot.counts.realisations, snapshot.counts.realisation_bytes)
 	if disk_free_known {
 		fmt.sbprintf(&b, "%d", disk_free)
 	} else {

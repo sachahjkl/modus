@@ -30,6 +30,7 @@ Cache_Client_Outcome :: enum u8 {
 	Deadline_Passed  = 11, // The request and its whole answer took longer than the bound of one exchange.
 	Out_Of_Range     = 12, // The requested offset is past the end of the object.
 	Local_File_Fault = 13, // A local file was not opened, read, written or renamed.
+	Busy             = 14, // The server builds the outboard of the object; the get asks again.
 }
 
 // One connection to an object cache.
@@ -64,7 +65,7 @@ cache_client_outcome_text :: proc(outcome: Cache_Client_Outcome, server_status: 
 			return "the object cache found bytes that do not have their hash"
 		case .Too_Large:
 			return "the object cache refused its size"
-		case .Refused, .Ok, .Not_Found, .Out_Of_Range:
+		case .Refused, .Ok, .Not_Found, .Out_Of_Range, .Busy:
 			return "the object cache refused it"
 		}
 	case .Hash_Mismatch:
@@ -81,6 +82,8 @@ cache_client_outcome_text :: proc(outcome: Cache_Client_Outcome, server_status: 
 		return "the object cache did not give its whole answer within the bound of one exchange"
 	case .Out_Of_Range:
 		return "the requested range is past the end of the object"
+	case .Busy:
+		return "the object cache did not end the build of the outboard of the object"
 	case .Local_File_Fault:
 		return "the local file was not read or written"
 	}
@@ -228,6 +231,14 @@ cache_client_answer_outcome :: proc(request_kind: object_cache.Cache_Request_Kin
 		case .Get_Object, .Get_Realisation:
 			return .Not_Found
 		case .Has, .Put_Object, .Put_Object_Frame, .Put_Realisation:
+			return .Damaged_Answer
+		}
+		return .Damaged_Answer
+	case .Busy:
+		switch request_kind {
+		case .Get_Object:
+			return .Busy
+		case .Has, .Get_Realisation, .Put_Object, .Put_Object_Frame, .Put_Realisation:
 			return .Damaged_Answer
 		}
 		return .Damaged_Answer
@@ -407,11 +418,12 @@ cache_client_put_object :: proc(
 	case .Accept_Frames:
 	}
 
+	// A put does not resume, so the server asks for the frames from 0.
 	frame_count, count_ok := object_cache.object_frame_count(object_size)
-	start_frame, idx_ok := object_cache.object_offset_to_frame_index(next_offset)
-	if !count_ok || !idx_ok || start_frame >= frame_count {
+	if !count_ok || next_offset != 0 {
 		return object_hash, .Damaged_Answer
 	}
+	start_frame: u64 = 0
 
 	send_buf := make([]u8, object_cache.FRAME_HEADER_SIZE + object_cache.MAX_REQUEST_BODY_BYTES)
 	defer delete(send_buf)
@@ -500,10 +512,11 @@ cache_client_put_file :: proc(
 	case .Accept_Frames:
 	}
 
-	start_frame, idx_ok := object_cache.object_offset_to_frame_index(next_offset)
-	if !idx_ok || start_frame >= builder.frame_count {
+	// A put does not resume, so the server asks for the frames from 0.
+	if next_offset != 0 {
 		return object_hash, file_size, .Damaged_Answer
 	}
+	start_frame: u64 = 0
 
 	// Pass 2: stream frames in place through send_buf.
 	recv_buf: [object_cache.FRAME_HEADER_SIZE + 32]u8
@@ -603,7 +616,23 @@ cache_client_get_frame :: proc(
 		offset      = offset,
 	}
 	send_buf: [object_cache.FRAME_HEADER_SIZE + object_cache.GET_OBJECT_BODY_SIZE]u8
-	response, outcome = cache_client_exchange_into(client, &request, send_buf[:], recv_buf)
+	// A server answers Busy while it builds the outboard, a bounded part at
+	// each request. Each Busy must show more frames built of the same count,
+	// so a server that never ends its build is refused after at most
+	// frame_count answers.
+	frames_built: u64 = 0
+	frame_count: u64 = 0
+	for {
+		response, outcome = cache_client_exchange_into(client, &request, send_buf[:], recv_buf)
+		if outcome != .Busy {
+			break
+		}
+		if frame_count != 0 && (response.frame_count != frame_count || response.frames_built <= frames_built) {
+			return {}, .Damaged_Answer
+		}
+		frames_built = response.frames_built
+		frame_count = response.frame_count
+	}
 	if outcome != .Done {
 		return {}, outcome
 	}
@@ -731,11 +760,31 @@ verify_file_root :: proc(file: ^os.File, object_size: u64, expected_hash: blake3
 	return builder.finished && object_cache.hashes_equal_constant_time(builder.root, expected_hash)
 }
 
-// cache_client_get_file streams a blob of any size to output_path via a
-// verified .part file, keeping client memory bounded to one 1 MiB frame buffer.
-// If <output_path>.<hash>.part already exists, it keeps whole aligned frames,
-// downloads only the remaining frames, re-hashes the whole file before rename,
-// and atomically renames to output_path only when the root matches.
+// get_outcome_names_the_server says whether an outcome says that the server
+// gave a false answer, not that the transfer was cut.
+@(private = "file")
+get_outcome_names_the_server :: proc(outcome: Cache_Client_Outcome) -> bool {
+	switch outcome {
+	case .Damaged_Answer, .Hash_Mismatch:
+		return true
+	case .Done, .Unreachable, .Not_Found, .Server_Refused, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Bad_Request, .Deadline_Passed, .Out_Of_Range, .Local_File_Fault, .Busy:
+		return false
+	}
+	return false
+}
+
+// cache_client_get_file streams a blob of any size to output_path through
+// <output_path>.<hash>.part, with one buffer of one frame.
+//
+// - Each frame is checked before it is written.
+// - A part file from an earlier run keeps its whole frames; the get asks for
+//   the frames after them, and hashes the whole file once more before the
+//   rename, because a file on the disk is not a check.
+// - A part file at or past the end of the object starts again at offset 0.
+// - A cut transfer keeps the part file for the next run; a false answer of
+//   the server removes it.
+// - The size of the part file is compared with the size of the object
+//   before the rename, on every path, so a file with a tail is never renamed.
 cache_client_get_file :: proc(
 	client: ^Cache_Client,
 	object_hash: blake3.Hash,
@@ -753,49 +802,61 @@ cache_client_get_file :: proc(
 	part_file: ^os.File
 	keep_bytes: u64 = 0
 	start_frame: u64 = 0
-
-	if os.exists(part_path) {
-		opened, open_err := os.open(part_path, {.Read, .Write})
-		if open_err == nil {
-			existing_size, sz_err := os.file_size(opened)
-			if sz_err == nil && existing_size > 0 {
-				aligned := u64(existing_size) - (u64(existing_size) % object_cache.FRAME_PAYLOAD_BYTES)
-				if u64(existing_size) != aligned {
-					_ = os.truncate(opened, i64(aligned))
-				}
-				keep_bytes = aligned
-				start_frame = aligned / object_cache.FRAME_PAYLOAD_BYTES
-				part_file = opened
-			} else {
-				_ = os.close(opened)
-			}
-		}
-	}
 	defer if part_file != nil {
 		_ = os.close(part_file)
 	}
+	discard_part :: proc(part_file: ^^os.File, part_path: string) {
+		if part_file^ != nil {
+			_ = os.close(part_file^)
+			part_file^ = nil
+		}
+		_ = os.remove(part_path)
+	}
+
+	if os.exists(part_path) {
+		opened, open_error := os.open(part_path, {.Read, .Write})
+		if open_error != nil {
+			return 0, 0, .Local_File_Fault
+		}
+		part_file = opened
+		existing_size, size_error := os.file_size(part_file)
+		if size_error != nil || existing_size < 0 {
+			return 0, 0, .Local_File_Fault
+		}
+		aligned := u64(existing_size) - (u64(existing_size) % object_cache.FRAME_PAYLOAD_BYTES)
+		if u64(existing_size) != aligned && os.truncate(part_file, i64(aligned)) != nil {
+			return 0, 0, .Local_File_Fault
+		}
+		keep_bytes = aligned
+		start_frame = aligned / object_cache.FRAME_PAYLOAD_BYTES
+	}
 
 	first, first_outcome := cache_client_get_frame(client, .Blob, object_hash, start_frame * object_cache.FRAME_PAYLOAD_BYTES, recv_buf)
-	// If a stale .part file reached or passed the true object size, restart from offset 0.
 	if first_outcome == .Out_Of_Range && start_frame > 0 {
+		// The part file reaches the end of the object or passes it: it is no
+		// prefix of whole frames before the last one, so the get starts again.
+		if os.truncate(part_file, 0) != nil {
+			return 0, 0, .Local_File_Fault
+		}
 		keep_bytes = 0
 		start_frame = 0
-		if part_file != nil {
-			_ = os.truncate(part_file, 0)
-		}
 		first, first_outcome = cache_client_get_frame(client, .Blob, object_hash, 0, recv_buf)
 	}
 	if first_outcome != .Done {
+		if get_outcome_names_the_server(first_outcome) {
+			discard_part(&part_file, part_path)
+		}
 		return 0, 0, first_outcome
 	}
 
 	object_size = first.object_size
 	frame_count, count_ok := object_cache.object_frame_count(object_size)
 	if !count_ok {
+		discard_part(&part_file, part_path)
 		return 0, 0, .Damaged_Answer
 	}
 
-	// Check free disk space in the destination directory before writing.
+	// The disk of the output holds the frames that are not kept yet.
 	needed := object_size > keep_bytes ? object_size - keep_bytes : 0
 	if free_bytes, free_known := cache_disk_free_bytes(parent_directory_of(output_path)); free_known {
 		if needed > free_bytes {
@@ -818,41 +879,42 @@ cache_client_get_file :: proc(
 	for frame_index in start_frame + 1 ..< frame_count {
 		offset := frame_index * object_cache.FRAME_PAYLOAD_BYTES
 		frame_resp, frame_outcome := cache_client_get_frame(client, .Blob, object_hash, offset, recv_buf)
-		if frame_outcome != .Done {
-			// Keep already-verified frames in part_path so a later run can resume.
-			return 0, keep_bytes, frame_outcome
+		if frame_outcome == .Done && frame_resp.object_size != object_size {
+			frame_outcome = .Damaged_Answer
 		}
-		if frame_resp.object_size != object_size {
-			return 0, keep_bytes, .Damaged_Answer
+		if frame_outcome != .Done {
+			if get_outcome_names_the_server(frame_outcome) {
+				discard_part(&part_file, part_path)
+				return 0, 0, frame_outcome
+			}
+			return 0, keep_bytes, frame_outcome
 		}
 		if len(frame_resp.payload) > 0 && !file_write_all_at(part_file, frame_resp.payload, i64(offset)) {
 			return 0, keep_bytes, .Local_File_Fault
 		}
 	}
 
+	part_size, part_size_error := os.file_size(part_file)
+	if part_size_error != nil || part_size < 0 || u64(part_size) != object_size {
+		discard_part(&part_file, part_path)
+		return 0, 0, .Local_File_Fault
+	}
 	// The frames kept from an earlier run were checked then, but a file on the
 	// disk is not a check: another program or a fault of the disk changes it.
 	// So a resumed file is hashed whole once more before its rename.
-	if keep_bytes > 0 {
-		if !verify_file_root(part_file, object_size, object_hash, recv_buf) {
-			_ = os.close(part_file)
-			part_file = nil
-			_ = os.remove(part_path)
-			return 0, 0, .Hash_Mismatch
-		}
+	if keep_bytes > 0 && !verify_file_root(part_file, object_size, object_hash, recv_buf) {
+		discard_part(&part_file, part_path)
+		return 0, 0, .Hash_Mismatch
 	}
 
-	if close_err := os.close(part_file); close_err != nil {
-		part_file = nil
-		return 0, keep_bytes, .Local_File_Fault
-	}
+	synced := file_sync_and_close(part_file)
 	part_file = nil
-
-	if rename_err := os.rename(part_path, output_path); rename_err != nil {
+	if !synced || !file_rename_durable(part_path, output_path) {
 		return 0, keep_bytes, .Local_File_Fault
 	}
 	return object_size, keep_bytes, .Done
 }
+
 
 // cache_client_realisation_check keeps a realisation only when it names the
 // recipe asked, its signer is the trusted signer that the caller gave (never

@@ -26,6 +26,9 @@ Store_Counts :: struct {
 	objects:              u64,
 	object_bytes:         u64,
 	largest_object_bytes: u64,
+	// The objects that left objects/ because their bytes do not hash to
+	// their name.
+	damaged_objects:      u64,
 	realisations:         u64,
 	realisation_bytes:    u64,
 	last_write:           time.Time,
@@ -100,6 +103,20 @@ cache_status_record_object :: proc(status: ^Cache_Status, size: u64, added: bool
 	status.counts.last_write = time_later(status.counts.last_write, written)
 }
 
+// cache_status_record_damaged counts one object that moved from objects/ to
+// damaged/. The largest size stays: it is the largest object that the store
+// held since the start, and the listing of the next start gives it again.
+cache_status_record_damaged :: proc(status: ^Cache_Status, size: u64, moved: time.Time) {
+	sync.mutex_lock(&status.lock)
+	defer sync.mutex_unlock(&status.lock)
+	if status.counts.objects > 0 {
+		status.counts.objects -= 1
+	}
+	status.counts.object_bytes -= min(size, status.counts.object_bytes)
+	status.counts.damaged_objects += 1
+	status.counts.last_write = time_later(status.counts.last_write, moved)
+}
+
 // cache_status_record_realisation counts one realisation that the server
 // wrote and puts it at the top of the list.
 cache_status_record_realisation :: proc(status: ^Cache_Status, record: object_cache.Realisation_Record, added: bool, written: time.Time) {
@@ -144,7 +161,7 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 	newest: [RECENT_REALISATION_COUNT]Listed_Realisation
 	newest_count := 0
 
-	for directory in ([2]Store_Directory{.Objects, .Realisations}) {
+	for directory in ([3]Store_Directory{.Objects, .Realisations, .Damaged}) {
 		path := strings.concatenate({server.root_directory, "/", store_directory_name(directory)}, context.temp_allocator)
 		folder, open_error := os.open(path)
 		if open_error != nil {
@@ -185,6 +202,8 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 					newest[place].written = entry.modification_time
 					newest_count = min(newest_count + 1, RECENT_REALISATION_COUNT)
 				}
+			case .Damaged:
+				counts.damaged_objects += 1
 			case .Temp, .Outboards:
 			}
 		}

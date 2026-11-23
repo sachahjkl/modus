@@ -230,7 +230,7 @@ a_cut_or_damaged_answer_is_refused_by_the_client :: proc(t: ^testing.T) {
 		unknown_kind := answer_head(word, u8(object_cache.Cache_Response_Status.Not_Found), 0)
 		testing.expect_value(t, fake_get_object(t, unknown_kind[:], asked), Cache_Client_Outcome.Damaged_Answer)
 	}
-	for word in ([3]u8{0, 9, 255}) {
+	for word in ([3]u8{0, 10, 255}) {
 		unknown_status := answer_head(u8(object_cache.Cache_Request_Kind.Get_Object), word, 0)
 		testing.expect_value(t, fake_get_object(t, unknown_status[:], asked), Cache_Client_Outcome.Damaged_Answer)
 	}

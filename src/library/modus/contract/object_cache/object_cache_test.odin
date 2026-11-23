@@ -150,7 +150,7 @@ enum_borders_refuse_unknown_words :: proc(t: ^testing.T) {
 		testing.expect_value(t, got, member)
 	}
 
-	for bad in ([]u64{0, 9, 10, 255, max(u64)}) {
+	for bad in ([]u64{0, 10, 11, 255, max(u64)}) {
 		_, ok := cache_response_status_of_word(bad)
 		testing.expect(t, !ok)
 	}
@@ -399,7 +399,8 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 	testing.expect_value(t, got_pr.realisation, realisation)
 
 	for status in Cache_Response_Status {
-		if status == .Ok {
+		// Ok has a body, and Busy answers Get_Object only (below).
+		if status == .Ok || status == .Busy {
 			continue
 		}
 		err_resp := Cache_Response {
@@ -413,6 +414,37 @@ request_and_response_roundtrips :: proc(t: ^testing.T) {
 		testing.expect_value(t, d_err, Wire_Refusal.None)
 		testing.expect_value(t, got_err.status, status)
 	}
+
+	// Busy: refused for another request than Get_Object, for a progress that
+	// is not some of the frames of an object of several frames, and for a
+	// body of 15 or 17 bytes; then the answer that the protocol gives.
+	busy_put := Cache_Response{request_kind = .Put_Realisation, status = .Busy, frames_built = 1, frame_count = 2}
+	_, busy_put_ref := encode_response(&busy_put, buffer[:])
+	testing.expect_value(t, busy_put_ref, Wire_Refusal.Bad_Response_Status)
+	Busy_Case :: struct {
+		built, count: u64,
+	}
+	for bad in ([]Busy_Case{{0, 2}, {2, 2}, {3, 2}, {1, 1}, {0, 0}, {1, MAX_FRAME_COUNT + 1}, {max(u64), max(u64)}}) {
+		bad_busy := Cache_Response{request_kind = .Get_Object, status = .Busy, frames_built = bad.built, frame_count = bad.count}
+		_, bad_busy_ref := encode_response(&bad_busy, buffer[:])
+		testing.expect_value(t, bad_busy_ref, Wire_Refusal.Bad_Count)
+	}
+	busy := Cache_Response{request_kind = .Get_Object, status = .Busy, frames_built = MAX_FRAME_COUNT - 1, frame_count = MAX_FRAME_COUNT}
+	n_busy, busy_ref := encode_response(&busy, buffer[:])
+	testing.expect_value(t, busy_ref, Wire_Refusal.None)
+	testing.expect_value(t, n_busy, FRAME_HEADER_SIZE + BUSY_RESPONSE_BODY_SIZE)
+	for cut_length in ([2]u32{BUSY_RESPONSE_BODY_SIZE - 1, BUSY_RESPONSE_BODY_SIZE + 1}) {
+		odd: [FRAME_HEADER_SIZE + BUSY_RESPONSE_BODY_SIZE + 1]u8
+		copy(odd[:], buffer[:n_busy])
+		byte_order.write_u32_little_endian(odd[:], 8, cut_length)
+		_, odd_ref := decode_response(odd[:FRAME_HEADER_SIZE + int(cut_length)])
+		testing.expect(t, odd_ref == .Truncated || odd_ref == .Trailing_Bytes)
+	}
+	got_busy, got_busy_ref := decode_response(buffer[:n_busy])
+	testing.expect_value(t, got_busy_ref, Wire_Refusal.None)
+	testing.expect_value(t, got_busy.status, Cache_Response_Status.Busy)
+	testing.expect_value(t, got_busy.frames_built, MAX_FRAME_COUNT - 1)
+	testing.expect_value(t, got_busy.frame_count, MAX_FRAME_COUNT)
 }
 
 @(test)
@@ -602,7 +634,7 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 	}
 	rn, rr := encode_response(&resp_ok, buffer[:])
 	testing.expect_value(t, rr, Wire_Refusal.None)
-	for bad_status in ([]u8{0, 9, 255}) {
+	for bad_status in ([]u8{0, 10, 255}) {
 		buffer[6] = bad_status
 		_, st_ref := decode_response(buffer[:rn])
 		testing.expect_value(t, st_ref, Wire_Refusal.Bad_Response_Status)

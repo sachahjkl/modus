@@ -65,6 +65,7 @@ REALISATION_WIRE_SIZE :: blake3.HASH_SIZE + blake3.HASH_SIZE + 1 + 3 + PUBLIC_KE
 HAS_RESPONSE_BODY_SIZE :: 8
 GET_OBJECT_RESPONSE_HEADER_SIZE :: 1 + 1 + 2 + 4 + 8 + 8
 PUT_OBJECT_RESPONSE_BODY_SIZE :: 1 + 7 + 8
+BUSY_RESPONSE_BODY_SIZE :: 8 + 8
 
 // Maximum valid body lengths for any request or response frame.
 // Both are bounded by one frame (FRAME_PAYLOAD_BYTES), never by object size.
@@ -127,6 +128,10 @@ Cache_Response_Status :: enum u8 {
 	Bad_Signature = 6,
 	Unauthorized  = 7,
 	Out_Of_Range  = 8,
+	// Get_Object only: the server builds the outboard of the object, a
+	// bounded part at each get; the client asks again. The body says how
+	// many frames are built of how many.
+	Busy          = 9,
 }
 
 // Closed set of states returned by Put_Object when accepted.
@@ -222,6 +227,9 @@ Cache_Response :: struct {
 	proof:          []u8,
 	payload:        []u8,
 	put_state:      Put_Object_State,
+	// Busy: the frames of the outboard built, of frame_count.
+	frames_built:   u64,
+	frame_count:    u64,
 	realisation:    Realisation_Record,
 }
 
@@ -800,6 +808,22 @@ validate_get_object_response :: proc "contextless" (
 	return u8(path.depth), .None
 }
 
+// busy_progress_check refuses a Busy answer to another request than
+// Get_Object, and a progress that is not some of the frames of an object of
+// several frames: a server builds the outboard of such an object only.
+@(private)
+busy_progress_check :: proc "contextless" (kind: Cache_Request_Kind, frames_built, frame_count: u64) -> Wire_Refusal {
+	switch kind {
+	case .Get_Object:
+	case .Has, .Get_Realisation, .Put_Object, .Put_Realisation, .Put_Object_Frame:
+		return .Bad_Response_Status
+	}
+	if frame_count < 2 || frame_count > MAX_FRAME_COUNT || frames_built == 0 || frames_built >= frame_count {
+		return .Bad_Count
+	}
+	return .None
+}
+
 // validate_response checks all fields of response and returns the exact wire
 // body length required to encode it.
 @(private)
@@ -814,6 +838,12 @@ validate_response :: proc "contextless" (response: ^Cache_Response) -> (checked_
 	status, status_ok := cache_response_status_of_word(u64(response.status))
 	if !status_ok {
 		return {}, {}, 0, .Bad_Response_Status
+	}
+	if status == .Busy {
+		if busy_refusal := busy_progress_check(kind, response.frames_built, response.frame_count); busy_refusal != .None {
+			return {}, {}, 0, busy_refusal
+		}
+		return kind, status, BUSY_RESPONSE_BODY_SIZE, .None
 	}
 	if status != .Ok {
 		return kind, status, 0, .None
@@ -890,6 +920,11 @@ encode_response :: proc "contextless" (response: ^Cache_Response, output: []u8) 
 	output[6] = u8(status)
 	output[7] = 0
 	byte_order.write_u32_little_endian(output, 8, u32(body_length))
+	if status == .Busy {
+		byte_order.write_u64_little_endian(output, FRAME_HEADER_SIZE, response.frames_built)
+		byte_order.write_u64_little_endian(output, FRAME_HEADER_SIZE + 8, response.frame_count)
+		return total_size, .None
+	}
 	if status != .Ok {
 		return total_size, .None
 	}
@@ -987,6 +1022,20 @@ decode_response :: proc "contextless" (frame: []u8) -> (response: Cache_Response
 	response.request_kind = kind
 	response.status = status
 	body := frame[FRAME_HEADER_SIZE:expected_total]
+	if status == .Busy {
+		if len(body) < BUSY_RESPONSE_BODY_SIZE {
+			return {}, .Truncated
+		}
+		if len(body) > BUSY_RESPONSE_BODY_SIZE {
+			return {}, .Trailing_Bytes
+		}
+		response.frames_built = byte_order.read_u64_little_endian(body, 0)
+		response.frame_count = byte_order.read_u64_little_endian(body, 8)
+		if busy_refusal := busy_progress_check(kind, response.frames_built, response.frame_count); busy_refusal != .None {
+			return {}, busy_refusal
+		}
+		return response, .None
+	}
 	if status != .Ok {
 		if len(body) > 0 {
 			return {}, .Trailing_Bytes

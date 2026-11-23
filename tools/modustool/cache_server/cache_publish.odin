@@ -281,7 +281,7 @@ cache_connect_or_say :: proc(command, endpoint: string) -> (client: Cache_Client
 		return client, true
 	case .Bad_Request:
 		fmt.eprintfln("modustool: %s: %s is not host:port", command, endpoint)
-	case .Unreachable, .Damaged_Answer, .Not_Found, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed, .Out_Of_Range, .Local_File_Fault:
+	case .Unreachable, .Damaged_Answer, .Not_Found, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed, .Out_Of_Range, .Local_File_Fault, .Busy:
 		fmt.eprintfln("modustool: %s: no connection to %s", command, endpoint)
 	}
 	return {}, false

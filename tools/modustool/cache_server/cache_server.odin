@@ -23,6 +23,7 @@
 //     sending bytes to a client.
 package cache_server
 
+import "base:runtime"
 import "core:fmt"
 import "core:io"
 import "core:net"
@@ -45,6 +46,32 @@ Store_Directory :: enum u8 {
 	Realisations = 2,
 	Temp         = 3,
 	Outboards    = 4,
+	// An object whose bytes do not hash to its name leaves objects/ for
+	// this folder at the first mismatch: Has stops answering present, and
+	// the next get answers Not_Found with no read.
+	Damaged      = 5,
+}
+
+// The frames of an outboard that one exchange builds at most: no exchange
+// hashes more than these frames and the one frame that it answers, whatever
+// the size of the object (src/md/features/recipes.md, "Objects of any size").
+OUTBOARD_BUILD_FRAMES_PER_EXCHANGE :: u64(16)
+
+// The outboards that the server builds at once; a new build past it ends the
+// build that waited longest.
+OUTBOARD_BUILDS_AT_ONCE :: 4
+
+// The build of an outboard that a get found missing: it goes on at each get of
+// the object, OUTBOARD_BUILD_FRAMES_PER_EXCHANGE frames at a time, and the
+// get answers Busy until it ends.
+Outboard_Build :: struct {
+	active:      bool,
+	object_hash: blake3.Hash,
+	object_size: u64,
+	temp_path:   string,
+	temp_file:   ^os.File,
+	builder:     object_cache.Frame_Tree_Builder,
+	last_used:   u64,
 }
 
 // In-flight streaming upload state held per connection.
@@ -79,6 +106,12 @@ Cache_Server :: struct {
 	temp_sequence:      u64,
 	stop:               bool,
 	status:             Cache_Status,
+	// Only the thread of the protocol uses the builds.
+	outboard_builds:    [OUTBOARD_BUILDS_AT_ONCE]Outboard_Build,
+	outboard_build_use: u64,
+	// OUTBOARD_BUILD_FRAMES_PER_EXCHANGE; a host test sets 1, so a small
+	// object takes several exchanges to build.
+	outboard_build_frames_per_exchange: u64,
 }
 
 // Configuration passed to cache_server_serve.
@@ -132,6 +165,8 @@ store_directory_name :: proc(directory: Store_Directory) -> string {
 		return "tmp"
 	case .Outboards:
 		return "outboards"
+	case .Damaged:
+		return "damaged"
 	}
 	return ""
 }
@@ -288,6 +323,12 @@ cache_server_open :: proc(
 			return {}, false
 		}
 	}
+	// The server is the one writer of its folder, so a file of tmp/ is a part
+	// of an upload or of an outboard that ended with an earlier run.
+	if !store_temp_folder_empty(strings.concatenate({trimmed, "/", store_directory_name(.Temp)}, context.temp_allocator)) {
+		return {}, false
+	}
+	server.outboard_build_frames_per_exchange = OUTBOARD_BUILD_FRAMES_PER_EXCHANGE
 	server.root_directory = strings.clone(trimmed, allocator)
 	server.authorized_signers = make([dynamic][object_cache.PUBLIC_KEY_SIZE]u8, 0, len(authorized_signers), allocator)
 	for key in authorized_signers {
@@ -309,6 +350,9 @@ cache_server_open :: proc(
 cache_server_destroy :: proc(server: ^Cache_Server, allocator := context.allocator) {
 	if server == nil {
 		return
+	}
+	for &build in server.outboard_builds {
+		outboard_build_abort(&build)
 	}
 	delete(server.root_directory, allocator)
 	delete(server.authorized_signers)
@@ -363,15 +407,85 @@ store_write_atomic :: proc(
 	added = !os.exists(final_path)
 	sequence := sync.atomic_add(&server.temp_sequence, 1)
 	temp_path := fmt.tprintf("%s/%s/%s.%d.tmp", server.root_directory, store_directory_name(.Temp), hex_name, sequence)
-	if write_err := os.write_entire_file(temp_path, content); write_err != nil {
+	temp_file, create_error := os.create(temp_path)
+	if create_error != nil {
+		return false, false
+	}
+	if !file_write_all(temp_file, content) || !file_sync_and_close(temp_file) {
 		_ = os.remove(temp_path)
 		return false, false
 	}
-	if rename_err := os.rename(temp_path, final_path); rename_err != nil {
+	if !file_rename_durable(temp_path, final_path) {
 		_ = os.remove(temp_path)
 		return false, false
 	}
 	return true, added
+}
+
+// file_sync_and_close writes the bytes of file to the disk, then closes it.
+// The file is closed in both outcomes.
+file_sync_and_close :: proc(file: ^os.File) -> bool {
+	sync_error := os.sync(file)
+	close_error := os.close(file)
+	return sync_error == nil && close_error == nil
+}
+
+// file_rename_durable renames a file whose bytes are on the disk, then writes
+// its folder to the disk, so that a crash after the call keeps the new name
+// with whole bytes, never a name with bytes that did not reach the disk. It
+// is false only when the rename did not happen: once the name exists, a
+// write of the folder that fails cannot take the rename back, and the next
+// write of the folder carries it.
+file_rename_durable :: proc(from_path, to_path: string) -> bool {
+	if os.rename(from_path, to_path) != nil {
+		return false
+	}
+	slash := strings.last_index_byte(to_path, '/')
+	folder_path := slash > 0 ? to_path[:slash] : "."
+	if folder, open_error := os.open(folder_path); open_error == nil {
+		_ = file_sync_and_close(folder)
+	}
+	return true
+}
+
+// store_temp_folder_empty removes each entry of tmp/, one entry of the listing
+// at a time.
+@(private = "file")
+store_temp_folder_empty :: proc(temp_folder: string) -> bool {
+	folder, open_error := os.open(temp_folder)
+	if open_error != nil {
+		return false
+	}
+	defer os.close(folder)
+	iterator := os.read_directory_iterator_create(folder)
+	defer os.read_directory_iterator_destroy(&iterator)
+	for entry in os.read_directory_iterator(&iterator) {
+		if entry.type != .Regular {
+			continue
+		}
+		if os.remove(strings.concatenate({temp_folder, "/", entry.name}, context.temp_allocator)) != nil {
+			return false
+		}
+	}
+	_, iterator_error := os.read_directory_iterator_error(&iterator)
+	return iterator_error == nil
+}
+
+// store_move_damaged moves an object whose bytes do not hash to its name out
+// of objects/, and removes its outboard. Has then stops answering present, a
+// get answers Not_Found with no read, and a put writes the object again.
+store_move_damaged :: proc(server: ^Cache_Server, hex_name: string, object_size: u64) {
+	object_path, object_ok := store_path_for_hex(server.root_directory, .Objects, hex_name, context.temp_allocator)
+	damaged_path, damaged_ok := store_path_for_hex(server.root_directory, .Damaged, hex_name, context.temp_allocator)
+	outboard_path, outboard_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
+	if !object_ok || !damaged_ok || !outboard_ok {
+		return
+	}
+	_ = os.remove(outboard_path)
+	if os.rename(object_path, damaged_path) != nil {
+		return
+	}
+	cache_status_record_damaged(&server.status, object_size, time.now())
 }
 
 // cache_server_verify_ed25519 verifies an Ed25519 signature using the modus
@@ -468,101 +582,200 @@ read_proof_from_outboard :: proc(
 	return true
 }
 
-// ensure_outboard opens the pre-order outboard file for a multi-frame blob.
-// If the outboard is missing or has the wrong size, it streams obj_file once
-// using scratch_frame (at least FRAME_PAYLOAD_BYTES), verifies the BLAKE3
-// root against expected_hash, and writes the outboard atomically.
-@(private = "file")
-ensure_outboard :: proc(
-	server: ^Cache_Server,
-	obj_file: ^os.File,
-	hex_name: string,
-	expected_hash: blake3.Hash,
-	object_size: u64,
-	scratch_frame: []u8,
-) -> (outboard_file: ^os.File, status: object_cache.Cache_Response_Status) {
-	expected_bytes, out_ok := object_cache.object_outboard_bytes(object_size)
-	if !out_ok || expected_bytes == 0 {
-		return nil, .Refused
-	}
-	outboard_path, path_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
-	if !path_ok {
-		return nil, .Refused
-	}
-	if os.exists(outboard_path) {
-		existing, open_err := os.open(outboard_path)
-		if open_err == nil {
-			sz, sz_err := os.file_size(existing)
-			if sz_err == nil && u64(sz) == expected_bytes {
-				return existing, .Ok
-			}
-			_ = os.close(existing)
-		}
-	}
-
-	// Build outboard by streaming obj_file in 1 MiB frames.
-	builder, start_ok := object_cache.frame_tree_builder_start(object_size)
-	if !start_ok {
-		return nil, .Refused
-	}
-	sequence := sync.atomic_add(&server.temp_sequence, 1)
-	temp_path := fmt.tprintf("%s/%s/%s.%d.outboard.tmp", server.root_directory, store_directory_name(.Temp), hex_name, sequence)
-	temp_file, create_err := os.create(temp_path)
-	if create_err != nil {
-		return nil, .Refused
-	}
-	cleaned := false
-	defer if !cleaned {
-		_ = os.close(temp_file)
-		_ = os.remove(temp_path)
-	}
-
-	for frame_index in u64(0) ..< builder.frame_count {
-		frame_len, len_ok := object_cache.object_frame_length(object_size, frame_index)
-		if !len_ok {
-			return nil, .Refused
-		}
-		frame_slice := scratch_frame[:int(frame_len)]
-		if frame_len > 0 && !file_read_exact_at(obj_file, frame_slice, i64(frame_index * object_cache.FRAME_PAYLOAD_BYTES)) {
-			return nil, .Refused
-		}
-		parents: [object_cache.MAX_PROOF_DEPTH]object_cache.Frame_Parent
-		parent_count, add_ok := object_cache.frame_tree_builder_add(&builder, frame_slice, &parents)
-		if !add_ok {
-			return nil, .Refused
-		}
-		for p in 0 ..< parent_count {
-			entry := object_cache.frame_parent_entry(parents[p])
-			pos := i64(parents[p].index * object_cache.OUTBOARD_ENTRY_SIZE)
-			if !file_write_all_at(temp_file, entry[:], pos) {
-				return nil, .Refused
-			}
-		}
-	}
-	if !builder.finished || !object_cache.hashes_equal_constant_time(builder.root, expected_hash) {
-		return nil, .Bad_Hash
-	}
-	if close_err := os.close(temp_file); close_err != nil {
-		_ = os.remove(temp_path)
-		cleaned = true
-		return nil, .Refused
-	}
-	if rename_err := os.rename(temp_path, outboard_path); rename_err != nil {
-		_ = os.remove(temp_path)
-		cleaned = true
-		return nil, .Refused
-	}
-	cleaned = true
-
-	reopened, reopen_err := os.open(outboard_path)
-	if reopen_err != nil {
-		return nil, .Refused
-	}
-	return reopened, .Ok
+// The outcome of one step of the outboard of a blob of several frames.
+Outboard_Step :: enum u8 {
+	Ready   = 1, // The outboard is in place, and its file is open.
+	Busy    = 2, // The build goes on at the next get of the object.
+	Damaged = 3, // The bytes of the object do not hash to its name.
+	Refused = 4, // A file of the store was not read or written.
 }
 
-// object_already_present_verified checks whether the store already holds a
-// verified object with the exact requested hash, kind, and size.
+@(private = "file")
+outboard_build_temp_path :: proc(server: ^Cache_Server, object_hash: blake3.Hash, sequence: u64) -> string {
+	hex := hash_to_hex(object_hash)
+	return fmt.tprintf("%s/%s/%s.%d.outboard.tmp", server.root_directory, store_directory_name(.Temp), string(hex[:]), sequence)
+}
+
+// outboard_build_abort ends a build and removes its temporary file.
+outboard_build_abort :: proc(build: ^Outboard_Build) {
+	if !build.active {
+		return
+	}
+	if build.temp_file != nil {
+		_ = os.close(build.temp_file)
+	}
+	_ = os.remove(build.temp_path)
+	delete(build.temp_path, runtime.default_allocator())
+	build^ = {}
+}
+
+// outboard_build_find gives the build of an object, or starts one in a free
+// place, or in the place of the build that waited longest.
+@(private = "file")
+outboard_build_find :: proc(server: ^Cache_Server, object_hash: blake3.Hash, object_size: u64) -> ^Outboard_Build {
+	for &build in server.outboard_builds {
+		if build.active && build.object_hash == object_hash && build.object_size == object_size {
+			return &build
+		}
+	}
+	oldest: ^Outboard_Build
+	for &build in server.outboard_builds {
+		if !build.active {
+			oldest = &build
+			break
+		}
+		if oldest == nil || build.last_used < oldest.last_used {
+			oldest = &build
+		}
+	}
+	outboard_build_abort(oldest)
+	builder, start_ok := object_cache.frame_tree_builder_start(object_size)
+	if !start_ok {
+		return nil
+	}
+	sequence := sync.atomic_add(&server.temp_sequence, 1)
+	// The path is kept with the allocator of the build: the builds outlive
+	// one connection and one request.
+	temp_path := strings.clone(outboard_build_temp_path(server, object_hash, sequence), runtime.default_allocator())
+	temp_file, create_error := os.create(temp_path)
+	if create_error != nil {
+		delete(temp_path, runtime.default_allocator())
+		return nil
+	}
+	oldest^ = Outboard_Build {
+		active      = true,
+		object_hash = object_hash,
+		object_size = object_size,
+		temp_path   = temp_path,
+		temp_file   = temp_file,
+		builder     = builder,
+	}
+	return oldest
+}
+
+// outboard_open_or_build opens the outboard of a blob of several frames.
+// When it is missing or has the wrong size, it builds it from the object, at
+// most outboard_build_frames_per_exchange frames for each call, so no request
+// hashes more than a bounded part of the object; the outboard is renamed into
+// the store only when the root of the object matches its name. scratch holds
+// one frame.
+outboard_open_or_build :: proc(
+	server: ^Cache_Server,
+	object_file: ^os.File,
+	hex_name: string,
+	object_hash: blake3.Hash,
+	object_size: u64,
+	scratch: []u8,
+) -> (outboard_file: ^os.File, step: Outboard_Step, frames_built: u64, frame_count: u64) {
+	expected_bytes, size_ok := object_cache.object_outboard_bytes(object_size)
+	outboard_path, path_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
+	if !size_ok || expected_bytes == 0 || !path_ok {
+		return nil, .Refused, 0, 0
+	}
+	if existing, open_error := os.open(outboard_path); open_error == nil {
+		existing_size, size_error := os.file_size(existing)
+		if size_error == nil && existing_size >= 0 && u64(existing_size) == expected_bytes {
+			return existing, .Ready, 0, 0
+		}
+		_ = os.close(existing)
+	}
+	build := outboard_build_find(server, object_hash, object_size)
+	if build == nil {
+		return nil, .Refused, 0, 0
+	}
+	server.outboard_build_use += 1
+	build.last_used = server.outboard_build_use
+	frames_per_exchange := server.outboard_build_frames_per_exchange
+	if frames_per_exchange == 0 {
+		frames_per_exchange = OUTBOARD_BUILD_FRAMES_PER_EXCHANGE
+	}
+	for _ in 0 ..< frames_per_exchange {
+		if build.builder.finished {
+			break
+		}
+		frame_index := build.builder.next_frame
+		frame_length, length_ok := object_cache.object_frame_length(object_size, frame_index)
+		if !length_ok {
+			outboard_build_abort(build)
+			return nil, .Refused, 0, 0
+		}
+		frame := scratch[:int(frame_length)]
+		if frame_length > 0 && !file_read_exact_at(object_file, frame, i64(frame_index * object_cache.FRAME_PAYLOAD_BYTES)) {
+			outboard_build_abort(build)
+			return nil, .Refused, 0, 0
+		}
+		parents: [object_cache.MAX_PROOF_DEPTH]object_cache.Frame_Parent
+		parent_count, add_ok := object_cache.frame_tree_builder_add(&build.builder, frame, &parents)
+		if !add_ok {
+			outboard_build_abort(build)
+			return nil, .Refused, 0, 0
+		}
+		for parent in parents[:parent_count] {
+			entry := object_cache.frame_parent_entry(parent)
+			if !file_write_all_at(build.temp_file, entry[:], i64(parent.index * object_cache.OUTBOARD_ENTRY_SIZE)) {
+				outboard_build_abort(build)
+				return nil, .Refused, 0, 0
+			}
+		}
+	}
+	if !build.builder.finished {
+		return nil, .Busy, build.builder.next_frame, build.builder.frame_count
+	}
+	if !object_cache.hashes_equal_constant_time(build.builder.root, object_hash) {
+		outboard_build_abort(build)
+		return nil, .Damaged, 0, 0
+	}
+	temp_file := build.temp_file
+	build.temp_file = nil
+	if !file_sync_and_close(temp_file) || !file_rename_durable(build.temp_path, outboard_path) {
+		outboard_build_abort(build)
+		return nil, .Refused, 0, 0
+	}
+	delete(build.temp_path, runtime.default_allocator())
+	build^ = {}
+	reopened, reopen_error := os.open(outboard_path)
+	if reopen_error != nil {
+		return nil, .Refused, 0, 0
+	}
+	return reopened, .Ready, 0, 0
+}
+
+// stored_frame_verifies checks one frame of a stored blob of several frames
+// with the proof that its outboard gives.
+@(private = "file")
+stored_frame_verifies :: proc(
+	object_file: ^os.File,
+	outboard_file: ^os.File,
+	object_hash: blake3.Hash,
+	object_size: u64,
+	frame_count: u64,
+	frame_index: u64,
+	scratch: []u8,
+) -> bool {
+	frame_length, length_ok := object_cache.object_frame_length(object_size, frame_index)
+	path, path_ok := object_cache.object_frame_path(frame_count, frame_index)
+	if !length_ok || !path_ok {
+		return false
+	}
+	proof_buffer: [object_cache.MAX_PROOF_DEPTH * object_cache.PROOF_ENTRY_SIZE]u8
+	proof := proof_buffer[:path.depth * object_cache.PROOF_ENTRY_SIZE]
+	if !read_proof_from_outboard(outboard_file, &path, proof) {
+		return false
+	}
+	frame := scratch[:int(frame_length)]
+	if frame_length > 0 && !file_read_exact_at(object_file, frame, i64(frame_index * object_cache.FRAME_PAYLOAD_BYTES)) {
+		return false
+	}
+	return object_cache.object_frame_verify(.Blob, object_hash, object_size, frame_index, proof, frame) == .Trust_By_Hash
+}
+
+// object_already_present_verified says whether the store holds the object, at
+// a bounded cost: the size, then the one frame of a small object, or the last
+// frame of a blob of several frames with the proof of its outboard. The last
+// frame proves the size. A damaged frame in the middle is found by the get of
+// that frame, which moves the object to damaged/, so the next put writes it
+// again. A blob with no outboard is not present: the put writes it again with
+// its outboard, which costs no more than a build of the outboard.
 @(private = "file")
 object_already_present_verified :: proc(
 	server: ^Cache_Server,
@@ -596,29 +809,32 @@ object_already_present_verified :: proc(
 	if kind != .Blob {
 		return false
 	}
-	// The whole object is hashed again: a read of the disk costs less than
-	// the upload that it saves, and a stored object with a damaged byte is
-	// then written again instead of kept. The outboard is checked frame by
-	// frame at each get, and built again when a frame does not verify.
-	builder, start_ok := object_cache.frame_tree_builder_start(object_size)
-	if !start_ok {
+	outboard_bytes, outboard_size_ok := object_cache.object_outboard_bytes(object_size)
+	outboard_path, outboard_path_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
+	if !outboard_size_ok || !outboard_path_ok {
 		return false
 	}
-	for frame_index in u64(0) ..< frame_count {
-		frame_length, length_ok := object_cache.object_frame_length(object_size, frame_index)
-		if !length_ok {
-			return false
-		}
-		frame := conn.response_buffer[:int(frame_length)]
-		if frame_length > 0 && !file_read_exact_at(obj_file, frame, i64(frame_index * object_cache.FRAME_PAYLOAD_BYTES)) {
-			return false
-		}
-		parents: [object_cache.MAX_PROOF_DEPTH]object_cache.Frame_Parent
-		if _, add_ok := object_cache.frame_tree_builder_add(&builder, frame, &parents); !add_ok {
-			return false
-		}
+	outboard_file, outboard_error := os.open(outboard_path)
+	if outboard_error != nil {
+		return false
 	}
-	return builder.finished && object_cache.hashes_equal_constant_time(builder.root, expected_hash)
+	defer os.close(outboard_file)
+	outboard_size, outboard_size_error := os.file_size(outboard_file)
+	if outboard_size_error != nil || outboard_size < 0 || u64(outboard_size) != outboard_bytes {
+		return false
+	}
+	return stored_frame_verifies(obj_file, outboard_file, expected_hash, object_size, frame_count, frame_count - 1, conn.response_buffer)
+}
+
+@(private = "file")
+busy_response :: proc(buffer: []u8, frames_built, frame_count: u64) -> (frame: []u8, status: object_cache.Cache_Response_Status) {
+	response := object_cache.Cache_Response {
+		request_kind = .Get_Object,
+		status       = .Busy,
+		frames_built = frames_built,
+		frame_count  = frame_count,
+	}
+	return encode_response_into(buffer, &response)
 }
 
 // handle_get_object serves one aligned frame of a stored object with its
@@ -650,8 +866,8 @@ handle_get_object :: proc(
 	}
 	object_size := u64(raw_size)
 
-	// A multi-frame or oversized blob cannot be a canonical Tree: report Not_Found
-	// so blob/tree confusion matches the single-frame behavior.
+	// A blob past the bound of a tree is no tree: Not_Found, as for a small
+	// blob asked as a tree.
 	if request.object_kind == .Tree && object_size > u64(object_cache.MAX_TREE_PAYLOAD_BYTES) {
 		return status_response(conn.response_buffer, .Get_Object, .Not_Found)
 	}
@@ -677,14 +893,16 @@ handle_get_object :: proc(
 		if frame_len > 0 && !file_read_exact_at(obj_file, payload_dst, 0) {
 			return status_response(conn.response_buffer, .Get_Object, .Refused)
 		}
-		// Re-verify stored bytes against requested hash and kind to prevent
-		// blob/tree confusion and detect on-disk corruption.
+		// The stored bytes are checked against the hash and the kind asked:
+		// a blob asked as a tree is Not_Found, and a damaged object leaves
+		// objects/.
 		decision := object_cache.verify_object_content(request.object_kind, request.object_hash, payload_dst)
 		if decision != .Trust_By_Hash {
 			other := opposite_object_kind(request.object_kind)
 			if object_cache.verify_object_content(other, request.object_hash, payload_dst) == .Trust_By_Hash {
 				return status_response(conn.response_buffer, .Get_Object, .Not_Found)
 			}
+			store_move_damaged(server, hex_name, object_size)
 			return status_response(conn.response_buffer, .Get_Object, .Bad_Hash)
 		}
 		response := object_cache.Cache_Response {
@@ -702,8 +920,8 @@ handle_get_object :: proc(
 	// A blob of several frames: the proof comes from its outboard. A frame
 	// that does not verify is checked once more with an outboard built again
 	// from the object, so a damaged outboard is repaired and a damaged
-	// object is refused. The outboard is built in the answer buffer, before
-	// the proof and the frame are read into it.
+	// object leaves objects/. The outboard is built in the answer buffer,
+	// before the proof and the frame are read into it.
 	path, path_ok2 := object_cache.object_frame_path(frame_count, frame_index)
 	if !path_ok2 {
 		return status_response(conn.response_buffer, .Get_Object, .Refused)
@@ -720,9 +938,16 @@ handle_get_object :: proc(
 			}
 			_ = os.remove(outboard_path)
 		}
-		outboard_file, out_status := ensure_outboard(server, obj_file, hex_name, request.object_hash, object_size, conn.response_buffer)
-		if out_status != .Ok {
-			return status_response(conn.response_buffer, .Get_Object, out_status)
+		outboard_file, step, frames_built, steps_frame_count := outboard_open_or_build(server, obj_file, hex_name, request.object_hash, object_size, conn.response_buffer)
+		switch step {
+		case .Ready:
+		case .Busy:
+			return busy_response(conn.response_buffer, frames_built, steps_frame_count)
+		case .Damaged:
+			store_move_damaged(server, hex_name, object_size)
+			return status_response(conn.response_buffer, .Get_Object, .Bad_Hash)
+		case .Refused:
+			return status_response(conn.response_buffer, .Get_Object, .Refused)
 		}
 		proof_read := read_proof_from_outboard(outboard_file, &path, proof_dst)
 		_ = os.close(outboard_file)
@@ -745,8 +970,12 @@ handle_get_object :: proc(
 			return encode_response_into(conn.response_buffer, &response)
 		}
 	}
+	// An outboard built again from bytes whose root matched, and a frame that
+	// still does not verify: the bytes changed during the get.
+	store_move_damaged(server, hex_name, object_size)
 	return status_response(conn.response_buffer, .Get_Object, .Bad_Hash)
 }
+
 
 // handle_put_object validates authorization, signature, size, and free disk
 // space, then either answers Already_Present or opens temporary staging files
@@ -928,27 +1157,30 @@ handle_put_object_frame :: proc(
 		put_session_abort(session)
 		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
 	}
-	if close_err := os.close(session.data_file); close_err != nil {
-		session.data_file = nil
+	// Each file reaches the disk before its rename, and each folder after it,
+	// so a crash never leaves a name whose bytes did not reach the disk.
+	data_synced := file_sync_and_close(session.data_file)
+	session.data_file = nil
+	if !data_synced {
 		put_session_abort(session)
 		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
 	}
-	session.data_file = nil
 
+	object_size := session.object_size
+	added := !os.exists(final_obj_path)
+	final_out_path := ""
 	if session.outboard_file != nil {
-		if out_close_err := os.close(session.outboard_file); out_close_err != nil {
-			session.outboard_file = nil
-			put_session_abort(session)
-			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
-		}
+		outboard_synced := file_sync_and_close(session.outboard_file)
 		session.outboard_file = nil
-		final_out_path, out_path_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
-		if !out_path_ok {
+		out_path_ok: bool
+		final_out_path, out_path_ok = store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
+		if !outboard_synced || !out_path_ok {
 			put_session_abort(session)
 			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
 		}
-		// Rename outboard before object so objects/<hex> is the single publication barrier.
-		if out_rename_err := os.rename(session.outboard_temp_path, final_out_path); out_rename_err != nil {
+		// The outboard comes before the object: the rename of objects/<hex>
+		// is the one moment when the object exists.
+		if !file_rename_durable(session.outboard_temp_path, final_out_path) {
 			put_session_abort(session)
 			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
 		}
@@ -956,9 +1188,12 @@ handle_put_object_frame :: proc(
 		session.outboard_temp_path = ""
 	}
 
-	object_size := session.object_size
-	added := !os.exists(final_obj_path)
-	if rename_err := os.rename(session.data_temp_path, final_obj_path); rename_err != nil {
+	if !file_rename_durable(session.data_temp_path, final_obj_path) {
+		// An outboard with no object is removed; the outboard of an object
+		// that the store held already is the outboard of the same bytes.
+		if added && final_out_path != "" && !os.exists(final_obj_path) {
+			_ = os.remove(final_out_path)
+		}
 		put_session_abort(session)
 		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
 	}
