@@ -56,7 +56,9 @@ PROBLEM_SENTENCES := [Problem_Kind]string {
 	.Read_Only          = "The store is read only. Changes are refused.",
 }
 
-PROMPT_INPUT_MAX :: 64
+// Format property: STORAGE7 entry name maximum is 255 bytes, so prompts
+// (Confirm_Remove, New_Object, New_Tree) never truncate a valid entry name.
+PROMPT_INPUT_MAX :: ENTRY_NAME_MAX_BYTES
 
 Session_State :: struct {
 	mode:                Sidebar_Mode,
@@ -128,20 +130,52 @@ session_prompt_close :: proc "contextless" (s: ^Session_State) {
 	s.prompt_len = 0
 }
 
-session_prompt_push_ascii :: proc "contextless" (s: ^Session_State, ch: rune) -> bool {
-	if ch < 0x20 || ch > 0x7E || s.prompt_len >= PROMPT_INPUT_MAX {
+// session_prompt_push_rune encodes a printable Unicode scalar value into UTF-8
+// inside s.prompt_buf. Refuses C0/DEL control characters, surrogates, and overflow.
+session_prompt_push_rune :: proc "contextless" (s: ^Session_State, ch: rune) -> bool {
+	code := u32(ch)
+	if code < 0x20 || code == 0x7F || (code >= 0xD800 && code <= 0xDFFF) || code > 0x10FFFF {
 		return false
 	}
-	s.prompt_buf[s.prompt_len] = u8(ch)
-	s.prompt_len += 1
+	encoded: [4]u8
+	width := 0
+	switch {
+	case code < 0x80:
+		encoded[0] = u8(code)
+		width = 1
+	case code < 0x800:
+		encoded[0] = u8(0xC0 | (code >> 6))
+		encoded[1] = u8(0x80 | (code & 0x3F))
+		width = 2
+	case code < 0x10000:
+		encoded[0] = u8(0xE0 | (code >> 12))
+		encoded[1] = u8(0x80 | ((code >> 6) & 0x3F))
+		encoded[2] = u8(0x80 | (code & 0x3F))
+		width = 3
+	case:
+		encoded[0] = u8(0xF0 | (code >> 18))
+		encoded[1] = u8(0x80 | ((code >> 12) & 0x3F))
+		encoded[2] = u8(0x80 | ((code >> 6) & 0x3F))
+		encoded[3] = u8(0x80 | (code & 0x3F))
+		width = 4
+	}
+	if s.prompt_len + width > PROMPT_INPUT_MAX {
+		return false
+	}
+	copy(s.prompt_buf[s.prompt_len:][:width], encoded[:width])
+	s.prompt_len += width
 	return true
 }
 
+// session_prompt_backspace removes one complete UTF-8 character from prompt_buf.
 session_prompt_backspace :: proc "contextless" (s: ^Session_State) -> bool {
 	if s.prompt_len <= 0 {
 		return false
 	}
 	s.prompt_len -= 1
+	for s.prompt_len > 0 && (s.prompt_buf[s.prompt_len] & 0xC0) == 0x80 {
+		s.prompt_len -= 1
+	}
 	return true
 }
 

@@ -222,7 +222,10 @@ bar_items :: proc "contextless" (items: ^[7]interface.Action_Bar_Item) -> int {
 @(private = "file")
 prompt_submit :: proc "contextless" () {
 	mode := session.prompt
-	text := core.session_prompt_text(&session)
+	// Copy prompt text before closing/resetting prompt_len.
+	submitted_buf: [core.PROMPT_INPUT_MAX]u8
+	submitted_len := copy(submitted_buf[:], core.session_prompt_text(&session))
+	submitted := string(submitted_buf[:submitted_len])
 	core.session_prompt_close(&session)
 	bar = {}
 
@@ -230,20 +233,20 @@ prompt_submit :: proc "contextless" () {
 	case .None:
 	case .Filter:
 		ui_request = {kind = .Apply_Filter}
-		ui_request.text_len = copy(ui_request.text[:], text)
+		ui_request.text_len = copy(ui_request.text[:], submitted)
 		list_first_row = 0
 		dispatch_request(&ui_request)
 	case .New_Object:
 		ui_request = {kind = .Create_Object}
-		ui_request.text_len = copy(ui_request.text[:], text)
+		ui_request.text_len = copy(ui_request.text[:], submitted)
 		dispatch_request(&ui_request)
 	case .New_Tree:
 		ui_request = {kind = .Create_Tree}
-		ui_request.text_len = copy(ui_request.text[:], text)
+		ui_request.text_len = copy(ui_request.text[:], submitted)
 		dispatch_request(&ui_request)
 	case .Confirm_Remove:
 		ui_request = {kind = .Remove_Entry}
-		ui_request.text_len = copy(ui_request.text[:], text)
+		ui_request.text_len = copy(ui_request.text[:], submitted)
 		dispatch_request(&ui_request)
 	}
 }
@@ -268,7 +271,7 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 			}
 		case:
 			if session.prompt != .Confirm_Remove && press.character != 0 {
-				_ = core.session_prompt_push_ascii(&session, press.character)
+				_ = core.session_prompt_push_rune(&session, press.character)
 			}
 		}
 		return
@@ -452,7 +455,8 @@ draw_sidebar :: proc "contextless" (table: ^interface.Draw_Table, lay: ^core.Win
 	room := max(int(sb.width) - 2 * core.PANE_PADDING, 0)
 
 	if session.mode == .Versions {
-		interface.draw_text(table, left, int(sb.y) + (core.PANE_HEADING_HEIGHT - graphics.CELL_HEIGHT) / 2, "VERSIONS", tokens.text_dim, interface.FONT_INTERFACE_BOLD)
+		heading := snap.versions_truncated ? "VERSIONS (oldest 128)" : "VERSIONS"
+		interface.draw_text(table, left, int(sb.y) + (core.PANE_HEADING_HEIGHT - graphics.CELL_HEIGHT) / 2, interface.text_fit(table, interface.FONT_INTERFACE_BOLD, heading, room), tokens.text_dim, interface.FONT_INTERFACE_BOLD)
 		rows_y := int(sb.y) + core.PANE_HEADING_HEIGHT
 		visible := max((int(sb.height) - core.PANE_HEADING_HEIGHT) / core.PANE_ROW_HEIGHT, 1)
 		chosen_vis := snap.version_count - 1 - snap.version_chosen
@@ -540,6 +544,9 @@ draw_entries_list :: proc "contextless" (frame: ^interface.Frame, lay: ^core.Win
 		core.append_text(hdr_buf[:], &pos, "  [filter: ")
 		core.append_text(hdr_buf[:], &pos, string(snap.filter_text[:snap.filter_len]))
 		core.append_text(hdr_buf[:], &pos, "]")
+	}
+	if snap.entries_truncated {
+		core.append_text(hdr_buf[:], &pos, "  (first 512 shown)")
 	}
 	interface.draw_text(
 		table,

@@ -131,6 +131,39 @@ hex_inspector_and_streaming_blake3_handle_large_and_binary_objects :: proc(t: ^t
 	mock_bad := Mock_Reader{data = big, overrun_attack = true}
 	prob = inspect_object_stream(snap, "bad.bin", 4, 1, reader_proc, &mock_bad, chunk[:])
 	testing.expect_value(t, prob, Problem_Kind.Object_Damaged)
+
+	// Refusal & edge cases: size 0, negative size, 0-byte short read, nil read_fn, empty chunk_buf.
+	empty_reader := Mock_Reader{data = nil}
+	prob = inspect_object_stream(snap, "empty.txt", 0, 1, reader_proc, &empty_reader, chunk[:])
+	testing.expect_value(t, prob, Problem_Kind.None)
+	testing.expect(t, snap.has_hash && snap.object_hash == blake3.hash(nil) && snap.preview_len == 0 && snap.preview_is_utf8)
+
+	prob = inspect_object_stream(snap, "neg", -1, 1, reader_proc, &empty_reader, chunk[:])
+	testing.expect_value(t, prob, Problem_Kind.Object_Unreadable)
+
+	prob = inspect_object_stream(snap, "short", 10, 1, reader_proc, &empty_reader, chunk[:])
+	testing.expect_value(t, prob, Problem_Kind.Object_Damaged)
+
+	prob = inspect_object_stream(snap, "nil_fn", 4, 1, nil, nil, chunk[:])
+	testing.expect_value(t, prob, Problem_Kind.Object_Unreadable)
+
+	prob = inspect_object_stream(snap, "empty_buf", 4, 1, reader_proc, &mock_bin, nil)
+	testing.expect_value(t, prob, Problem_Kind.Object_Unreadable)
+
+	// Multi-byte UTF-8 character ("€" = E2 82 AC) straddling PREVIEW_MAX_BYTES boundary stays valid UTF-8 text.
+	split_utf8 := make([]u8, PREVIEW_MAX_BYTES + 16, context.temp_allocator)
+	for i in 0 ..< len(split_utf8) {
+		split_utf8[i] = 'a'
+	}
+	split_utf8[PREVIEW_MAX_BYTES - 1] = 0xE2
+	split_utf8[PREVIEW_MAX_BYTES] = 0x82
+	split_utf8[PREVIEW_MAX_BYTES + 1] = 0xAC
+	mock_split := Mock_Reader{data = split_utf8}
+	prob = inspect_object_stream(snap, "utf8_edge.txt", i64(len(split_utf8)), 3, reader_proc, &mock_split, chunk[:])
+	testing.expect_value(t, prob, Problem_Kind.None)
+	testing.expect(t, snap.preview_is_utf8, "UTF-8 character split across PREVIEW_MAX_BYTES boundary must trim cleanly")
+	testing.expect_value(t, snap.preview_len, PREVIEW_MAX_BYTES - 1)
+	testing.expect(t, snap.object_hash == blake3.hash(split_utf8), "full BLAKE3 hash still covers untrimmed bytes")
 }
 
 @(test)
@@ -141,6 +174,20 @@ stores_listing_parser_and_formatters_work :: proc(t: ^testing.T) {
 	testing.expect_value(t, n, 2)
 	testing.expect_value(t, string(stores[0].name[:stores[0].name_len]), "notes")
 	testing.expect_value(t, string(stores[1].name[:stores[1].name_len]), "db_browser")
+
+	// Edge & refusal cases for parse_stores_listing: empty, header-only, >32-byte name, invalid UTF-8, full out slice.
+	testing.expect_value(t, parse_stores_listing(nil, stores[:]), 0)
+	testing.expect_value(t, parse_stores_listing(transmute([]u8)string("disk: 1024 blocks\n"), stores[:]), 0)
+	overlong := "disk: 1024 blocks\nthis_store_name_is_far_longer_than_thirty_two_bytes: 1 block\nok: 2 blocks\n"
+	testing.expect_value(t, parse_stores_listing(transmute([]u8)overlong, stores[:]), 1)
+	testing.expect_value(t, string(stores[0].name[:stores[0].name_len]), "ok")
+
+	bad_utf8_listing := [?]u8{'d', '\n', 0xFF, 0xFE, ':', ' ', '1', '\n', 'a', ':', ' ', '2', '\n'}
+	testing.expect_value(t, parse_stores_listing(bad_utf8_listing[:], stores[:]), 1)
+	testing.expect_value(t, string(stores[0].name[:stores[0].name_len]), "a")
+
+	small_out: [1]Store_Item
+	testing.expect_value(t, parse_stores_listing(transmute([]u8)listing, small_out[:]), 1)
 
 	buf: [128]u8
 	usage := Usage_Info{objects = 5, trees = 2, versions = 11, blocks = 48, limit = 1024, has_usage = true}
@@ -236,6 +283,28 @@ session_state_and_writing_rules_hold :: proc(t: ^testing.T) {
 	session_mark_revoked(&s)
 	testing.expect(t, !s.store_connected && s.read_only)
 	testing.expect(t, !session_can_restore(&s, snap))
+
+	// UTF-8 prompt input, whole-rune backspace, 255-byte capacity, and control refusal.
+	session_prompt_open(&s, .New_Object)
+	testing.expect(t, !session_prompt_push_rune(&s, '\n'), "control rune refused in prompt")
+	testing.expect(t, session_prompt_push_rune(&s, 'c'))
+	testing.expect(t, session_prompt_push_rune(&s, 'a'))
+	testing.expect(t, session_prompt_push_rune(&s, 'f'))
+	testing.expect(t, session_prompt_push_rune(&s, 'é'))
+	testing.expect(t, session_prompt_push_rune(&s, '€'))
+	testing.expect_value(t, session_prompt_text(&s), "café€")
+	testing.expect(t, session_prompt_backspace(&s))
+	testing.expect_value(t, session_prompt_text(&s), "café")
+	testing.expect(t, session_prompt_backspace(&s))
+	testing.expect_value(t, session_prompt_text(&s), "caf")
+
+	long_name: [ENTRY_NAME_MAX_BYTES]u8
+	for &b in long_name {
+		b = 'z'
+	}
+	session_prompt_open(&s, .Confirm_Remove, string(long_name[:]))
+	testing.expect_value(t, len(session_prompt_text(&s)), ENTRY_NAME_MAX_BYTES)
+	testing.expect(t, !session_prompt_push_rune(&s, 'x'), "256th byte refused")
 
 	// docs/WRITING.md audit on every Problem_Kind sentence.
 	forbidden := [?]string{"invalid", "illegal", "fatal", "please", "sorry", "failed", "Error", "n't", "can't", "won't"}

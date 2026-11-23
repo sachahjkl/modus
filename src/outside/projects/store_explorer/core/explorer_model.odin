@@ -13,16 +13,20 @@ ENTRY_NAME_MAX_BYTES :: 255
 // Format property: STORAGE7 store name maximum length is 32 bytes.
 STORE_NAME_MAX_BYTES :: store.NAME_CAPACITY
 
-// Inline capacities sized for interactive browsing inside store_explorer's budget.
+// Plan values: fixed snapshot table bounds sized for store_explorer's 8 MiB
+// working-memory budget (two double-buffered snapshots in module memory).
 MAX_STORES :: 64
 MAX_PATH_DEPTH :: 16
 MAX_TREE_ENTRIES :: 512
-PREVIEW_MAX_BYTES :: 65536 // 64 KiB inline preview; larger objects still hash whole in chunks.
-MAX_PREVIEW_LINES :: 2048  // Pre-indexed UTF-8 text line offsets for O(1) viewport rendering.
+MAX_PREVIEW_LINES :: 2048 // Pre-indexed UTF-8 line offsets for O(1) viewport rendering.
 MAX_VERSION_ROWS :: 128
 MAX_DIFF_RANGES :: 64
 FILTER_MAX_BYTES :: 64
 HEX_BYTES_PER_ROW :: 16
+
+// Inline capacity: first 64 KiB load into memory for instant text/hex preview;
+// larger objects continue streaming in 32 KiB chunks for full BLAKE3 hashing.
+PREVIEW_MAX_BYTES :: 65536
 
 Entry_Kind :: enum u8 {
 	None   = 0,
@@ -114,12 +118,13 @@ Explorer_Snapshot :: struct {
 	preview_line_count: int,
 
 	// Version history & comparison state for selected object.
-	versions:          [MAX_VERSION_ROWS]Version_Row,
-	version_count:     int,
-	version_chosen:    int,
+	versions:           [MAX_VERSION_ROWS]Version_Row,
+	version_count:      int,
+	versions_truncated: bool,
+	version_chosen:     int,
 	preview_generation: i64,
-	diff_ranges:       [MAX_DIFF_RANGES]Diff_Range,
-	diff_count:        int,
+	diff_ranges:        [MAX_DIFF_RANGES]Diff_Range,
+	diff_count:         int,
 
 	usage:             Usage_Info,
 }

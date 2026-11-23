@@ -172,8 +172,9 @@ load_usage :: proc "contextless" (snap: ^core.Explorer_Snapshot) {
 	}
 }
 
-// load_accessible_stores asks the storage service `stores` export when the
-// connection acts for the principal, falling back cleanly to the private store.
+// load_accessible_stores always places this process's private store ("private",
+// matching place_stack[0] == storage.ROOT) at index 0, then appends any other
+// principal stores returned by the storage service `stores` export.
 @(private = "file")
 load_accessible_stores :: proc "contextless" (snap: ^core.Explorer_Snapshot) {
 	snap.store_count = 0
@@ -181,24 +182,33 @@ load_accessible_stores :: proc "contextless" (snap: ^core.Explorer_Snapshot) {
 	if !worker_store_opened {
 		return
 	}
+	priv := &snap.stores[0]
+	priv^ = {}
+	copy(priv.name[:], "private")
+	priv.name_len = 7
+	snap.store_count = 1
+
 	_, text, st, _ := storage.call(&worker_store, "stores", nil)
-	if st == .Ok && len(text) > 0 {
-		snap.store_count = core.parse_stores_listing(text, snap.stores[:])
+	if st == .Ok && len(text) > 0 && core.MAX_STORES > 1 {
+		extra := core.parse_stores_listing(text, snap.stores[1:])
+		snap.store_count = 1 + extra
 	}
-	if snap.store_count == 0 {
-		// Standard private-store grant: expose this process's private store.
-		item := &snap.stores[0]
-		item^ = {}
-		copy(item.name[:], "private")
-		item.name_len = 7
-		snap.store_count = 1
-	}
+}
+
+@(private = "file")
+clear_version_state :: proc "contextless" (snap: ^core.Explorer_Snapshot) {
+	snap.version_count = 0
+	snap.versions_truncated = false
+	snap.version_chosen = 0
+	snap.preview_generation = 0
+	snap.diff_count = 0
 }
 
 @(private = "file")
 load_tree_entries :: proc "contextless" (snap: ^core.Explorer_Snapshot, keep_filter: bool) -> core.Problem_Kind {
 	snap.entry_count = 0
 	snap.entries_truncated = false
+	clear_version_state(snap)
 	if !check_store_connected() {
 		return .Store_Revoked
 	}
@@ -353,7 +363,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		load_accessible_stores(snap)
 		res.problem = load_tree_entries(snap, false)
 		if res.problem == .None && snap.filtered_count > 0 {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		system.log_fact(.Info, Store_Opened{entries = u64(snap.entry_count), stores = u64(snap.store_count)})
 		res.snapshot_index = back_idx
@@ -377,24 +387,25 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 			worker_publish_result(&res, true)
 			return
 		}
-		store_name := core.snapshot_store_name(snap, req.index)
-		close_all_places()
-		snap.path_depth = 0
-		if store_name == "private" && snap.store_count == 1 {
+		// Index 0 is always this process's private store (storage.ROOT).
+		if req.index == 0 {
+			close_all_places()
 			place_stack[0] = storage.ROOT
 			active_store_custom_root = false
 		} else {
+			// Open the target store BEFORE mutating place_stack or snap so a refusal
+			// leaves the previously open store and its entries intact.
+			store_name := core.snapshot_store_name(snap, req.index)
 			err: errors.Error_Record
 			opened, st := storage.open_store(&worker_store, store_name, &err)
 			if st != .Ok {
-				// Fall back to private ROOT if open_store requires wider grants.
-				place_stack[0] = storage.ROOT
-				active_store_custom_root = false
 				res.problem = st == .Gone ? .Store_Revoked : .Store_Open_Refused
 				if st == .Gone {
 					worker_store_opened = false
 					worker_store_read_only = true
 					system.log_fact(.Info, Store_Revoked{})
+				} else {
+					system.log_fact(.Info, Store_Call_Refused(errors.error_record_fact_fields(err)))
 				}
 				res.snapshot_index = back_idx
 				res.store_connected = worker_store_opened
@@ -402,13 +413,15 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 				worker_publish_result(&res, true)
 				return
 			}
+			close_all_places()
 			place_stack[0] = opened
 			active_store_custom_root = true
 		}
+		snap.path_depth = 0
 		snap.active_store = req.index
 		res.problem = load_tree_entries(snap, false)
 		if res.problem == .None {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened
@@ -463,7 +476,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.selected_entry = 0
 		res.problem = load_tree_entries(snap, false)
 		if res.problem == .None {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened
@@ -487,7 +500,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.selected_entry = 0
 		res.problem = load_tree_entries(snap, false)
 		if res.problem == .None {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened
@@ -500,8 +513,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.serial = req.serial
 		if req.index >= 0 && req.index < snap.filtered_count {
 			snap.selected_entry = req.index
-			snap.preview_generation = 0
-			snap.diff_count = 0
+			clear_version_state(snap)
 			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
@@ -515,6 +527,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.serial = req.serial
 		q := string(req.text[:min(req.text_len, core.FILTER_MAX_BYTES)])
 		core.filter_entries_off_thread(snap, q)
+		clear_version_state(snap)
 		res.problem = inspect_selected_object(snap, 0)
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened
@@ -534,7 +547,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.serial = req.serial
 		res.problem = load_tree_entries(snap, true)
 		if res.problem == .None {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened
@@ -580,7 +593,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.serial = req.serial
 		res.problem = load_tree_entries(snap, true)
 		if res.problem == .None {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened
@@ -619,7 +632,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.serial = req.serial
 		res.problem = load_tree_entries(snap, true)
 		if res.problem == .None {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened
@@ -646,7 +659,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		}
 		raw_vers: [core.MAX_VERSION_ROWS]storage.Version
 		err: errors.Error_Record
-		rows, _, st := storage.versions(&worker_store, current_place(), string(entry.name[:entry.name_len]), raw_vers[:], &err)
+		rows, total, st := storage.versions(&worker_store, current_place(), string(entry.name[:entry.name_len]), raw_vers[:], &err)
 		if st != .Ok || len(rows) == 0 {
 			res.problem = st == .Gone ? .Store_Revoked : .Version_Unreadable
 			if st == .Gone {
@@ -661,6 +674,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 			return
 		}
 		snap.version_count = len(rows)
+		snap.versions_truncated = total > i64(len(rows))
 		for row, i in rows {
 			snap.versions[i] = {
 				generation = row.generation,
@@ -703,12 +717,19 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		snap.preview_generation = req.generation
 		res.problem = inspect_selected_object(snap, req.generation)
 
-		// Compare previewed version against current version via storage.compare.
+		// Compare previewed version against the true current version (from the
+		// current == true row, falling back to entry.generation when versions are truncated).
 		snap.diff_count = 0
 		entry, ok := core.snapshot_filtered_entry(snap, snap.selected_entry)
-		if ok && entry.kind == .Object && snap.version_count > 0 {
-			current_gen := snap.versions[snap.version_count - 1].generation
-			if current_gen != req.generation {
+		if ok && entry.kind == .Object {
+			current_gen := entry.generation
+			for i in 0 ..< snap.version_count {
+				if snap.versions[i].current {
+					current_gen = snap.versions[i].generation
+					break
+				}
+			}
+			if current_gen > 0 && current_gen != req.generation {
 				raw_diff: [core.MAX_DIFF_RANGES]storage.Byte_Range
 				diff_rows, diff_st := storage.compare(&worker_store, current_place(), string(entry.name[:entry.name_len]), req.generation, current_gen, raw_diff[:])
 				if diff_st == .Ok {
@@ -758,11 +779,9 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 			return
 		}
 		system.log_fact(.Info, Version_Restored{from_generation = req.generation, to_generation = new_gen})
-		snap.preview_generation = 0
-		snap.diff_count = 0
 		res.problem = load_tree_entries(snap, true)
 		if res.problem == .None {
-			_ = inspect_selected_object(snap, 0)
+			res.problem = inspect_selected_object(snap, 0)
 		}
 		res.snapshot_index = back_idx
 		res.store_connected = worker_store_opened

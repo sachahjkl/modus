@@ -43,7 +43,7 @@ The system gives each process a private copy-on-write store with nested B+ trees
 ## Refused forms
 
 - **Filtering, hashing, or storage reads on the interface thread.** Any O(N) scan or storage RPC on the interface thread stalls rendering and input.
-- **Unbounded object reads into RAM.** Objects up to `PREVIEW_MAX_BYTES` (64 KiB, inline capacity) load for preview and BLAKE3 hashing; larger objects stream in 48 KiB chunks for BLAKE3 hashing while showing the first 64 KiB with a clear truncation indicator, preventing budget exhaustion.
+- **Unbounded object reads into RAM.** Objects up to `PREVIEW_MAX_BYTES` (64 KiB, inline capacity) load for preview and BLAKE3 hashing; larger objects stream in 32 KiB chunks for BLAKE3 hashing while showing the first 64 KiB with a clear truncation indicator, preventing budget exhaustion.
 - **Raw error numbers or storage status codes in the UI.** Every refusal maps to a plain [`docs/WRITING.md`](../../../docs/WRITING.md) sentence.
 - **Deleting without confirmation.** `Ctrl+D` always enters an explicit confirmation state naming the entry and requiring `Enter` to delete or `Esc` to keep.
 

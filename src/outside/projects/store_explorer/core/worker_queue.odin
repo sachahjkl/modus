@@ -4,7 +4,8 @@ package store_explorer_core
 
 import "modus:contract/blake3"
 
-// Inline capacity: pending interactive requests between UI and worker thread.
+// Plan value: 16 queued interactive requests between UI and worker; full queues
+// refuse new requests explicitly (.Queue_Full) without blocking the UI thread.
 QUEUE_CAPACITY :: 16
 
 Request_Kind :: enum u8 {
