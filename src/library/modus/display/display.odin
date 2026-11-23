@@ -160,7 +160,10 @@ Command :: enum u32 {
 	// The window lets its surface of a serial go: the compositor unmaps
 	// it, shown or pending, ends a request of the principal, draws the
 	// frame of the window with the background, and answers with
-	// Surface_Answer, Released. values: the surface serial.
+	// Surface_Answer, Released. values: the surface serial, then the width
+	// and the height of the view that the window holds, the size of the
+	// surface that it offers next: a release answers a clamp only when that
+	// view is the asked size (src/md/features/window_resize.md).
 	Surface_Release  = 20,
 	// The budget of the window could not pay its surface at the scale of
 	// the compositor, after its release: the window declines that scale and
