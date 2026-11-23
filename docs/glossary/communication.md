@@ -526,15 +526,35 @@ The design: `src/md/features/supervision.md`, "What a client sees when the holde
 
 Do not use: heartbeat, status channel, reconnect event.
 
+### Call outcome
+
+A call outcome is the one word that says how a call ended and what its caller can do next (`call_outcome.Call_Outcome`).
+
+It is one closed enum for every call: an export, an isolated call, a ring command, a kernel operation, a call from another machine. Each member is a whole phrase: `Succeeded`, `Argument_Refused`, `Nothing_Has_That_Name`, `Callee_Busy`, `Callee_Stopped_During_The_Call`, and twelve more. A direct call gives it first, in `rax`, then the value; a completion gives it in its `kind`. The error record explains it. A word that names no member is read as `Answer_Unreadable`. Designed, not built.
+
+The design: `src/md/api/call_outcome.md`, "The members".
+
+Do not use: status (for this), error code, return code, result code.
+
+### Effect group
+
+An effect group is what a call did to the state, as one of four groups that each call outcome belongs to: `Whole_Work_Done`, `Nothing_Changed`, `Partial_Change_Stated`, `Change_In_Doubt`.
+
+The group is a fixed function of the outcome (`call_outcome.effect_group_of`), and the four groups never change. Generic code (a relay, a replay, a test, a library that calls again) switches on the group, never on the outcomes. A new outcome joins `Nothing_Changed` only. No border, relay or export gives a group that promises more than what it received or caused. Designed, not built.
+
+The design: `src/md/api/call_outcome.md`, "The effect groups".
+
+Do not use: severity, error class, side effect (for this).
+
 ### Call in doubt
 
-A call in doubt is a call that a holder took from its call ring and did not answer before it stopped: it ran, or it did not.
+A call in doubt is a call whose outcome is in the effect group `Change_In_Doubt`: it ran in whole, in part or not at all, and nobody can tell its caller which.
 
-The library of the client knows it: the holder serial changed, the command was read, and no completion came. At the new holder serial, the library writes it again once, if its export is idempotent or carries a request serial. A call of an export that is neither, and a call whose replay met a second stop, goes to its caller with the status `Holder_Stopped`.
+Its outcome says why: `Callee_Stopped_During_The_Call`, `Connection_Ended_During_The_Call`, `Deadline_Passed_During_The_Call` or `Answer_Unreadable`. When a holder stops, the library knows the call is in doubt from the holder serial, the read command and the missing completion, and writes it again once if its export is idempotent or carries a request serial. A call that did not leave is not in doubt: it gets `Callee_Unavailable`.
 
-The design: `src/md/features/supervision.md`, "The calls in flight".
+The design: `src/md/api/call_outcome.md`, "The failures of the path"; `src/md/features/supervision.md`, "The calls in flight".
 
-Do not use: pending call, lost call, retry.
+Do not use: unknown outcome, Unknown_Outcome (for this), pending call, lost call, retry.
 
 ### Request serial
 
