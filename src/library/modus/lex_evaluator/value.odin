@@ -4,6 +4,7 @@
 package lex_evaluator
 
 import "modus:console_condition"
+import "modus:console_language"
 import "modus:contract/blake3"
 import module "modus:contract/module"
 import "modus:hash_table"
@@ -28,9 +29,48 @@ HASH_CAPACITY :: 64 + lex_parser.TEXT_BYTES_MOST / 71
 TAGGED_RECORD_CAPACITY :: 4
 LITERAL_FIELD_CAPACITY :: module.RECORD_SIZE_LIMIT / 4
 
-// Built-in pure function names handled directly by the evaluator.
+// Built-in pure function names handled directly by the evaluator (collision-free
+// with all console commands).
 MAP_NAME :: "map"
 FILTER_NAME :: "filter"
+FOLD_NAME :: "fold"
+ZIP_NAME :: "zip"
+FIELDS_NAME :: "fields"
+VALUES_NAME :: "values"
+HAS_NAME :: "has"
+EXTEND_NAME :: "extend"
+MERGE_DEEP_NAME :: "merge_deep"
+ASSERT_NAME :: "assert"
+TRACE_NAME :: "trace"
+
+// Recursive depth bound for `merge_deep(a, b)` (Plan value: 64 nested record
+// levels exceeds real declarations while preventing unbounded nesting).
+MERGE_DEEP_DEPTH_LIMIT :: 64
+
+// Maximum force/call frames captured in a diagnostic stack trace.
+DIAGNOSTIC_FRAME_LIMIT :: 32
+
+// Bounded trace entry ring for `trace(msg, value)` (Plan value: zero I/O,
+// drops excess entries with a counter when full).
+TRACE_LOG_CAPACITY :: 64
+
+Trace_Entry :: struct {
+	place:   lex_parser.Place,
+	message: string,
+}
+
+Trace_Log :: struct {
+	entries: [TRACE_LOG_CAPACITY]Trace_Entry,
+	count:   int,
+	dropped: u32,
+}
+
+// One frame in a diagnostic force/call stack captured on refusal.
+Diagnostic_Frame :: struct {
+	chunk_id: u16,
+	node:     lex_parser.Node_Index,
+	place:    lex_parser.Place,
+}
 
 // Evaluation mode: console forces lines eagerly and permits host effects;
 // declaration evaluates lazily and refuses all effects.
@@ -254,29 +294,39 @@ Refusal :: enum u8 {
 	With_Pairs_Full       = 33,
 	Imports_Full          = 34,
 	Assertion_Failed      = 35,
+	Interpolation_Kind    = 36,
+	Pattern_Not_A_Record  = 37,
+	Pattern_Extra_Field   = 38,
 }
 
-// First refusal of an evaluation, with exact diagnostic fields.
+// First refusal of an evaluation, with exact diagnostic fields, byte span,
+// force/call frame stack, and OSA nearest-name suggestions.
 Refusal_Record :: struct {
-	refusal:      Refusal,
-	place:        lex_parser.Place,
-	node:         lex_parser.Node_Index,
-	chunk_id:     u16,
-	operator:     lex_parser.Operator,
-	left_kind:    Kind,
-	right_kind:   Kind,
-	left:         i64,
-	right:        i64,
-	text_refusal: lex_parser.Refusal,
-	command:      string,
-	steps:        u32,
-	parameter:    int,
-	field:        string,
-	field_item:   module.Field,
-	file:         []u8,
-	detail:       u32,
-	other_file:   []u8,
-	other_detail: u32,
+	refusal:          Refusal,
+	place:            lex_parser.Place,
+	span_start:       u32,
+	span_end:         u32,
+	node:             lex_parser.Node_Index,
+	chunk_id:         u16,
+	operator:         lex_parser.Operator,
+	left_kind:        Kind,
+	right_kind:       Kind,
+	left:             i64,
+	right:            i64,
+	text_refusal:     lex_parser.Refusal,
+	command:          string,
+	steps:            u32,
+	parameter:        int,
+	field:            string,
+	field_item:       module.Field,
+	file:             []u8,
+	detail:           u32,
+	other_file:       []u8,
+	other_detail:     u32,
+	frames:           [DIAGNOSTIC_FRAME_LIMIT]Diagnostic_Frame,
+	frame_count:      int,
+	suggestions:      [console_language.NEAREST_NAME_CAPACITY]string,
+	suggestion_count: int,
 }
 
 // Command signature reported by the host before arguments run.

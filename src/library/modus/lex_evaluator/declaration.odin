@@ -7,6 +7,7 @@
 // EVALUATION_BUDGET_STEPS to defeat exponential DAG expansion.
 package lex_evaluator
 
+import "modus:console_language"
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
 import "modus:contract/plans_recipes"
@@ -125,18 +126,26 @@ Declaration_Config :: struct {
 	text_bytes_most: int, // 0 -> lex_parser.DECLARATION_TEXT_BYTES_MOST
 	node_limit:      int, // 0 -> full carved node pool
 	profile:         ^Evaluation_Profile,
+	trace_log:       ^Trace_Log,
 }
 
 // Result of evaluating a .lex declaration (and optionally forcing a field path).
 Declaration_Result :: struct {
-	ok:           bool,
-	value:        Value,
-	failure_kind: declaration_eval.Failure_Kind,
-	line:         u32,
-	column:       u32,
-	offset:       u32,
-	detail:       string,
-	steps_taken:  u32,
+	ok:               bool,
+	value:            Value,
+	failure_kind:     declaration_eval.Failure_Kind,
+	line:             u32,
+	column:           u32,
+	offset:           u32,
+	span_start:       u32,
+	span_end:         u32,
+	detail:           string,
+	steps_taken:      u32,
+	traced:           bool,
+	frames:           [DIAGNOSTIC_FRAME_LIMIT]Diagnostic_Frame,
+	frame_count:      int,
+	suggestions:      [console_language.NEAREST_NAME_CAPACITY]string,
+	suggestion_count: int,
 }
 
 // Cached state for one imported .lex file or declaration hash.
@@ -253,6 +262,8 @@ Decl_Layout :: struct {
 	max_shapes:          int,
 	max_shape_fields:    int,
 	max_shape_idx_slots: int,
+	max_pat_descs:       int,
+	max_pat_fields:      int,
 	max_regs:            int,
 	max_frames:       int,
 	max_thunks:       int,
@@ -298,6 +309,8 @@ compute_layout :: proc "contextless" (pools: Declaration_Pools) -> Decl_Layout {
 		max_shapes          = max(256, n / 4),
 		max_shape_fields    = max(1024, n),
 		max_shape_idx_slots = hash_table.slice_index_groups_for_entries(max(1024, n)) * hash_table.GROUP_WIDTH,
+		max_pat_descs       = max(128, n / 32),
+		max_pat_fields      = max(512, n / 8),
 		max_regs            = max(4096, EVALUATION_DEPTH_LIMIT * 4),
 		max_frames       = EVALUATION_DEPTH_LIMIT + 16,
 		max_thunks       = n * 2,
@@ -359,6 +372,8 @@ declaration_workspace_bytes :: proc "contextless" (pools: Declaration_Pools) -> 
 	at = align_up(at, l.max_shape_fields * size_of(lex_parser.Sym_Id))
 	at = align_up(at, l.max_shape_idx_slots * size_of(u8))
 	at = align_up(at, l.max_shape_idx_slots * size_of(u32))
+	at = align_up(at, l.max_pat_descs * size_of(Pattern_Desc))
+	at = align_up(at, l.max_pat_fields * size_of(Pattern_Field_Desc))
 	// Compile scratch
 	at = align_up(at, l.max_let_protos * size_of(Compile_Local))
 	at = align_up(at, l.max_let_descs * size_of(Compile_Let_Scope))
@@ -442,6 +457,8 @@ declaration_workspace_carve :: proc "contextless" (ws: ^Declaration_Workspace, m
 		shape_fields       = carve_slice(lex_parser.Sym_Id, base, &at, l.max_shape_fields),
 		shape_idx_controls = carve_slice(u8, base, &at, l.max_shape_idx_slots),
 		shape_idx_refs     = carve_slice(u32, base, &at, l.max_shape_idx_slots),
+		pat_descs          = carve_slice(Pattern_Desc, base, &at, l.max_pat_descs),
+		pat_fields         = carve_slice(Pattern_Field_Desc, base, &at, l.max_pat_fields),
 		interner           = interner,
 		compile_scratch   = {
 			locals     = carve_slice(Compile_Local, base, &at, l.max_let_protos),
@@ -553,6 +570,7 @@ declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: 
 	}
 	evaluation_start_with_pools(&ws.evaluation, &ws.trees[0], .Declaration, host, ws.vm_pools, budget, stack_bytes, depth_limit)
 	ws.evaluation.profile = config.profile
+	ws.evaluation.trace_log = config.trace_log
 
 	// Parse root source into tree 0.
 	lex_parser.parse_declaration(source, decl_tree_storage(ws), &ws.trees[0], ws.text_bytes_most, ws.parse_depth_limit)
@@ -581,14 +599,14 @@ declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: 
 	}
 
 	if len(field_path) == 0 {
-		return {ok = true, value = root_val, steps_taken = ws.evaluation.steps}
+		return {ok = true, value = root_val, steps_taken = ws.evaluation.steps, traced = ws.evaluation.traced}
 	}
 
 	selected, sel_ok := declaration_force_path(ws, root_val, field_path)
 	if !sel_ok {
 		return decl_result_from_refusal(ws)
 	}
-	return {ok = true, value = selected, steps_taken = ws.evaluation.steps}
+	return {ok = true, value = selected, steps_taken = ws.evaluation.steps, traced = ws.evaluation.traced}
 }
 
 // declaration_force_path lazily forces a dotted field path ("outputs.tools")
@@ -820,7 +838,7 @@ parse_refusal_to_failure_kind :: proc "contextless" (r: lex_parser.Refusal) -> d
 		return .Depth_Bound_Reached
 	case .Nodes_Full:
 		return .Pool_Exhausted
-	case .Text_Too_Long, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe:
+	case .Text_Too_Long, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe, .Escape_Not_Valid, .Interpolation_Close_Missing, .Pattern_Field_Missing, .Pattern_Close_Missing, .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace:
 		return .Parse_Error
 	}
 	return .Parse_Error
@@ -840,15 +858,36 @@ decl_result_from_refusal :: proc "contextless" (ws: ^Declaration_Workspace) -> D
 	r := ws.evaluation.refusal
 	if ws.host_failure_kind != .None {
 		place := ws.host_failure_place.line != 0 ? ws.host_failure_place : r.place
-		return {
-			ok           = false,
-			failure_kind = ws.host_failure_kind,
-			line         = place.line,
-			column       = place.column,
-			offset       = place.offset,
-			detail       = ws.host_failure_detail,
-			steps_taken  = ws.evaluation.steps,
+		out := Declaration_Result {
+			ok               = false,
+			failure_kind     = ws.host_failure_kind,
+			line             = place.line,
+			column           = place.column,
+			offset           = place.offset,
+			span_start       = r.span_start,
+			span_end         = r.span_end,
+			detail           = ws.host_failure_detail,
+			steps_taken      = ws.evaluation.steps,
+			traced           = ws.evaluation.traced,
+			frames           = r.frames,
+			frame_count      = r.frame_count,
+			suggestions      = r.suggestions,
+			suggestion_count = r.suggestion_count,
 		}
+		if out.suggestion_count == 0 && (ws.host_failure_kind == .Unknown_Name || ws.host_failure_kind == .Unknown_Command) && len(ws.host_failure_detail) > 0 {
+			nearest := console_language.nearest_names_start(ws.host_failure_detail)
+			for i in 0 ..< ws.binding_count {
+				console_language.nearest_name_offer(&nearest, ws.bindings[i].name)
+			}
+			for std_name in ([?]string{MAP_NAME, FILTER_NAME, FOLD_NAME, ZIP_NAME, FIELDS_NAME, VALUES_NAME, HAS_NAME, EXTEND_NAME, MERGE_DEEP_NAME, ASSERT_NAME, TRACE_NAME, "module", "recipe", "plan", "project", "import", "declaration", "here", "follow", "store"}) {
+				console_language.nearest_name_offer(&nearest, std_name)
+			}
+			out.suggestion_count = nearest.count
+			for i in 0 ..< nearest.count {
+				out.suggestions[i] = nearest.names[i]
+			}
+		}
+		return out
 	}
 	kind := declaration_eval.Failure_Kind.Parse_Error
 	detail := r.command
@@ -871,10 +910,10 @@ decl_result_from_refusal :: proc "contextless" (ws: ^Declaration_Workspace) -> D
 		kind = .Division_By_Zero
 	case .Overflow:
 		kind = .Overflow
-	case .Field_Unknown, .Literal_Field_Unknown:
+	case .Field_Unknown, .Literal_Field_Unknown, .Pattern_Extra_Field:
 		kind = .Field_Unknown
 		detail = r.field
-	case .Operator_Kinds, .Negate_Kind, .With_Kinds, .With_Records_Differ, .Not_A_Function, .Function_Arguments, .Not_A_List, .Condition_Not_Boolean, .Argument_Unknown, .Argument_Twice, .Argument_Missing, .Literal_No_Type, .Literal_Field_Missing, .Literal_Field_Kind, .Literal_Field_Range, .Member_No_Type, .Member_Unknown, .Value_At_Border, .List_Item_Kind:
+	case .Operator_Kinds, .Negate_Kind, .With_Kinds, .With_Records_Differ, .Not_A_Function, .Function_Arguments, .Not_A_List, .Condition_Not_Boolean, .Argument_Unknown, .Argument_Twice, .Argument_Missing, .Literal_No_Type, .Literal_Field_Missing, .Literal_Field_Kind, .Literal_Field_Range, .Member_No_Type, .Member_Unknown, .Value_At_Border, .List_Item_Kind, .Interpolation_Kind, .Pattern_Not_A_Record:
 		kind = .Type_Error
 		if len(detail) == 0 {
 			detail = r.field
@@ -890,13 +929,20 @@ decl_result_from_refusal :: proc "contextless" (ws: ^Declaration_Workspace) -> D
 		kind = .Assertion_Failed
 	}
 	return {
-		ok           = false,
-		failure_kind = kind,
-		line         = r.place.line,
-		column       = r.place.column,
-		offset       = r.place.offset,
-		detail       = detail,
-		steps_taken  = ws.evaluation.steps,
+		ok               = false,
+		failure_kind     = kind,
+		line             = r.place.line,
+		column           = r.place.column,
+		offset           = r.place.offset,
+		span_start       = r.span_start,
+		span_end         = r.span_end,
+		detail           = detail,
+		steps_taken      = ws.evaluation.steps,
+		traced           = ws.evaluation.traced,
+		frames           = r.frames,
+		frame_count      = r.frame_count,
+		suggestions      = r.suggestions,
+		suggestion_count = r.suggestion_count,
 	}
 }
 

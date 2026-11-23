@@ -41,6 +41,7 @@ Pending_Proto :: struct {
 	parent_let_scope: i32,
 	param_count:      u16,
 	param_syms:       [lex_parser.ARGUMENT_CAPACITY]lex_parser.Sym_Id,
+	param_patterns:   [lex_parser.ARGUMENT_CAPACITY]lex_parser.Node_Index,
 	fn_node:          lex_parser.Node_Index,
 	fn_open_off:      u32,
 	fn_arrow_end:     u32,
@@ -128,6 +129,7 @@ compile_tree :: proc "contextless" (eval: ^Evaluation, tree: ^lex_parser.Syntax_
 		rec_desc_start  = u32(eval.rec_desc_count),
 		site_start      = u32(eval.site_count),
 		field_sym_start = u32(eval.field_sym_count),
+		pat_desc_start  = u32(eval.pat_desc_count),
 	}
 
 	c := Compiler {
@@ -160,6 +162,7 @@ compile_tree :: proc "contextless" (eval: ^Evaluation, tree: ^lex_parser.Syntax_
 	chunk.rec_desc_count = u32(eval.rec_desc_count) - chunk.rec_desc_start
 	chunk.site_count = u32(eval.site_count) - chunk.site_start
 	chunk.field_sym_count = u32(eval.field_sym_count) - chunk.field_sym_start
+	chunk.pat_desc_count = u32(eval.pat_desc_count) - chunk.pat_desc_start
 	return cid, true
 }
 
@@ -432,6 +435,19 @@ compile_proto_body :: proc "contextless" (c: ^Compiler, item: Pending_Proto) {
 	}
 
 	code_start := u32(c.eval.code_count)
+	// Lower any destructuring function parameters (`({ a, b = 10, ... }) => ...`)
+	// into OP_DESTRUCTURE instructions before compiling the function body.
+	if item.kind == .Function_Body {
+		for pi in 0 ..< int(item.param_count) {
+			pat_node := item.param_patterns[pi]
+			if pat_node != lex_parser.NO_NODE && pat_node != 0 {
+				// Note: check node kind because NO_NODE is -1 while zero-init is 0.
+				if pn := lex_parser.node_at(c.tree, pat_node); pn != nil && pn.kind == .Pattern_Record {
+					compile_pattern_destructure(c, pat_node, u8(pi))
+				}
+			}
+		}
+	}
 	dst := u8(item.param_count)
 	reserve_reg(c, dst)
 	compile_expr(c, item.ast_node, dst, true)
@@ -570,10 +586,42 @@ compile_expr :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Inde
 
 	case .Text:
 		start, end := lex_parser.node_span(c.tree, node_idx)
-		inner_start := min(start + 1, end)
-		inner_end := max(end - 1, inner_start)
-		ci := add_const(c, {kind = .Text, offset = u32(inner_start), length = u32(inner_end - inner_start)})
-		emit_abx_wide(c, .Load_Const, dst, ci, node_idx)
+		is_segment := (node.sub & lex_parser.TEXT_FLAG_SEGMENT) != 0
+		inner_start := is_segment ? start : min(start + 1, end)
+		inner_end := is_segment ? end : max(end - 1, inner_start)
+		if (node.sub & lex_parser.TEXT_FLAG_ESCAPED) != 0 {
+			raw := c.tree.text[inner_start:inner_end]
+			need, _, dec_ok := lex_parser.decode_text_escapes(raw, nil)
+			if !dec_ok {
+				emit_abx_wide(c, .Refuse_Parse, dst, u32(node_idx), node_idx)
+				return
+			}
+			if need == 0 {
+				ci := add_const(c, {kind = .Text, offset = 0, length = 0})
+				emit_abx_wide(c, .Load_Const, dst, ci, node_idx)
+			} else if need > len(c.eval.text_arena) - c.eval.text_used {
+				compiler_fail_pool(c)
+				return
+			} else {
+				aoff := c.eval.text_used
+				written, _, _ := lex_parser.decode_text_escapes(raw, c.eval.text_arena[aoff:aoff + need])
+				c.eval.text_used += written
+				ci := add_const(c, {kind = .Arena_Text, offset = u32(aoff), length = u32(written)})
+				emit_abx_wide(c, .Load_Const, dst, ci, node_idx)
+			}
+		} else {
+			ci := add_const(c, {kind = .Text, offset = u32(inner_start), length = u32(inner_end - inner_start)})
+			emit_abx_wide(c, .Load_Const, dst, ci, node_idx)
+		}
+
+	case .Text_Interp:
+		children := lex_parser.node_children(c.tree, node_idx)
+		emit(c, inst_abc(.Str_Begin, 0, 0, 0), node_idx)
+		for child in children {
+			compile_expr(c, child, dst, false)
+			emit(c, inst_abc(.Str_Push, dst, 0, 0), child)
+		}
+		emit(c, inst_abc(.Str_End, dst, 0, 0), node_idx)
 
 	case .Hash:
 		start, end := lex_parser.node_span(c.tree, node_idx)
@@ -610,9 +658,30 @@ compile_expr :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Inde
 		compile_expr(c, child, dst, false)
 		emit(c, inst_abc(.Neg, dst, dst, 0), node_idx)
 
+	case .Logical_Not:
+		child := lex_parser.node_child(c.tree, node_idx)
+		compile_expr(c, child, dst, false)
+		emit(c, inst_abc(.Not, dst, dst, 0), node_idx)
+
 	case .Binary:
 		left, right := lex_parser.node_binary_children(c.tree, node_idx)
 		op := lex_parser.node_operator(c.tree, node_idx)
+		if op == .Logical_And {
+			compile_expr(c, left, dst, false)
+			jmp_end := emit_jmp(c, .Jmp_If_False_Keep, dst, node_idx)
+			compile_expr(c, right, dst, false)
+			emit(c, inst_abc(.Check_Bool, dst, u8(lex_parser.Operator.Logical_And), 0), node_idx)
+			patch_jmp(c, jmp_end, node_idx)
+			return
+		}
+		if op == .Logical_Or {
+			compile_expr(c, left, dst, false)
+			jmp_end := emit_jmp(c, .Jmp_If_True_Keep, dst, node_idx)
+			compile_expr(c, right, dst, false)
+			emit(c, inst_abc(.Check_Bool, dst, u8(lex_parser.Operator.Logical_Or), 0), node_idx)
+			patch_jmp(c, jmp_end, node_idx)
+			return
+		}
 		compile_expr(c, left, dst, false)
 		if dst == 255 {
 			compiler_fail_pool(c)
@@ -628,6 +697,7 @@ compile_expr :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Inde
 		case .Multiply:         vm_op = .Mul
 		case .Divide:           vm_op = .Div
 		case .Remainder:        vm_op = .Rem
+		case .List_Concat:      vm_op = .List_Concat
 		case .Equal:            vm_op = .Eq
 		case .Not_Equal:        vm_op = .Neq
 		case .Less:             vm_op = .Lt
@@ -635,7 +705,7 @@ compile_expr :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Inde
 		case .Greater:          vm_op = .Gt
 		case .Greater_Or_Equal: vm_op = .Ge
 		case .With:             vm_op = .With
-		case .None:
+		case .Logical_And, .Logical_Or, .None:
 			emit_abx_wide(c, .Refuse_Parse, dst, u32(node_idx), node_idx)
 			return
 		}
@@ -716,8 +786,117 @@ compile_expr :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Inde
 		}
 		emit_abx_wide(c, .Refuse_Parse, dst, u32(node_idx), node_idx)
 
-	case .Condition, .Fact_Name, .Field_Names, .Literal_Field, .Named_Argument, .Let_Binding, .Parameter, .Placeholder:
+	case .Condition, .Fact_Name, .Field_Names, .Literal_Field, .Named_Argument, .Let_Binding, .Parameter, .Placeholder, .Pattern_Record, .Pattern_Field:
 		emit_abx_wide(c, .Refuse_Parse, dst, u32(node_idx), node_idx)
+	}
+}
+
+// compile_pattern_destructure allocates let-slots and a Pattern_Desc for a
+// `.Pattern_Record` node, registers its bound names in a new Compile_Let_Scope,
+// and emits `OP_DESTRUCTURE(src_reg, pat_desc_rel)`.
+@(private)
+compile_pattern_destructure :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.Node_Index, src_reg: u8) {
+	pn := lex_parser.node_at(c.tree, pat_node)
+	if pn == nil || pn.kind != .Pattern_Record {
+		return
+	}
+	has_rest := (pn.sub & lex_parser.PAT_FLAG_REST) != 0
+	has_as := (pn.sub & lex_parser.PAT_FLAG_HAS_AS) != 0
+	children := lex_parser.node_children(c.tree, pat_node)
+	field_count := 0
+	for ch in children {
+		if cn := lex_parser.node_at(c.tree, ch); cn != nil && cn.kind == .Pattern_Field {
+			field_count += 1
+		}
+	}
+	total_slots := field_count + (has_as ? 1 : 0)
+	sc := cur_scope(c)
+	if c.local_count + total_slots > len(c.scratch.locals) ||
+	   c.let_scope_count >= len(c.scratch.let_scopes) ||
+	   c.eval.pat_desc_count >= len(c.eval.pat_descs) ||
+	   c.eval.pat_field_count + field_count > len(c.eval.pat_fields) ||
+	   int(sc.next_let_slot) + total_slots > int(max(u16)) {
+		compiler_fail_pool(c)
+		return
+	}
+
+	// Default expressions evaluate in the enclosing scope (before the pattern's
+	// own bindings enter scope, so earlier params/lets are visible).
+	enclosing_ls := sc.current_let_scope
+
+	locals_start := u32(c.local_count)
+	fields_start := u32(c.eval.pat_field_count)
+	as_slot := u16(0)
+
+	for ch in children {
+		cn := lex_parser.node_at(c.tree, ch)
+		if cn == nil {
+			continue
+		}
+		if cn.kind == .Parameter && has_as {
+			as_sym := intern_str(c, lex_parser.node_text(c.tree, ch))
+			as_slot = sc.next_let_slot
+			sc.next_let_slot += 1
+			c.scratch.locals[c.local_count] = {sym = as_sym, slot = as_slot}
+			c.local_count += 1
+		} else if cn.kind == .Pattern_Field {
+			fsym := intern_str(c, lex_parser.node_text(c.tree, ch))
+			fslot := sc.next_let_slot
+			sc.next_let_slot += 1
+			c.scratch.locals[c.local_count] = {sym = fsym, slot = fslot}
+			c.local_count += 1
+
+			def_node := lex_parser.node_child(c.tree, ch)
+			has_def := def_node != lex_parser.NO_NODE
+			def_proto_rel := u32(0)
+			if has_def {
+				p_idx, p_ok := alloc_proto(c, def_node)
+				if !p_ok {
+					return
+				}
+				def_proto_rel = p_idx - c.chunk.proto_start
+				enqueue_pending(c, {
+					kind             = .Expr_Proto,
+					proto_idx        = p_idx,
+					ast_node         = def_node,
+					parent_let_scope = enclosing_ls,
+				})
+			}
+			c.eval.pat_fields[c.eval.pat_field_count] = {
+				sym           = fsym,
+				let_slot      = fslot,
+				has_default   = has_def,
+				default_proto = def_proto_rel,
+				node_idx      = ch,
+			}
+			c.eval.pat_field_count += 1
+		}
+	}
+
+	pat_desc_rel := u32(c.eval.pat_desc_count) - c.chunk.pat_desc_start
+	c.eval.pat_descs[c.eval.pat_desc_count] = {
+		has_rest     = has_rest,
+		has_as       = has_as,
+		as_let_slot  = as_slot,
+		fields_start = fields_start,
+		field_count  = u16(field_count),
+		node_idx     = pat_node,
+	}
+	c.eval.pat_desc_count += 1
+
+	// Emit OP_DESTRUCTURE before activating the new scope (already runs at runtime
+	// before body uses the new slots).
+	emit_abx_wide(c, .Destructure, src_reg, pat_desc_rel, pat_node)
+
+	if total_slots > 0 {
+		new_scope_id := i32(c.let_scope_count)
+		c.scratch.let_scopes[c.let_scope_count] = {
+			parent       = enclosing_ls,
+			locals_start = locals_start,
+			locals_count = u32(total_slots),
+		}
+		c.let_scope_count += 1
+		sc.current_let_scope = new_scope_id
 	}
 }
 
@@ -726,10 +905,14 @@ compile_let :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Index
 	children := lex_parser.node_children(c.tree, node_idx)
 	body := lex_parser.NO_NODE
 	binding_count := 0
+	has_pattern := false
 	for child in children {
 		cn := lex_parser.node_at(c.tree, child)
 		if cn != nil && cn.kind == .Let_Binding {
 			binding_count += 1
+			if _, is_pat := lex_parser.let_binding_pattern(c.tree, child); is_pat {
+				has_pattern = true
+			}
 		} else {
 			body = child
 		}
@@ -752,29 +935,40 @@ compile_let :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Index
 		locals_start := u32(c.local_count)
 		protos_start := u32(c.eval.let_proto_count)
 
-		// Register all binding names FIRST so mutual recursion resolves cleanly.
+		// Register all plain binding names FIRST so mutual recursion resolves cleanly.
+		// Pattern bindings receive a hidden RHS slot (NO_SYM) destructured right after Let_Enter.
 		b_idx := 0
+		plain_registered := 0
 		for child in children {
 			cn := lex_parser.node_at(c.tree, child)
 			if cn == nil || cn.kind != .Let_Binding {
 				continue
 			}
-			b_sym := intern_str(c, lex_parser.node_text(c.tree, child))
-			c.scratch.locals[c.local_count] = {sym = b_sym, slot = slot_start + u16(b_idx)}
-			c.local_count += 1
-			c.eval.let_syms[int(protos_start) + b_idx] = b_sym
-			c.eval.let_nodes[int(protos_start) + b_idx] = child
+			if _, is_pat := lex_parser.let_binding_pattern(c.tree, child); is_pat {
+				c.eval.let_syms[int(protos_start) + b_idx] = lex_parser.NO_SYM
+				c.eval.let_nodes[int(protos_start) + b_idx] = child
+			} else {
+				b_sym := intern_str(c, lex_parser.node_text(c.tree, child))
+				c.scratch.locals[c.local_count] = {sym = b_sym, slot = slot_start + u16(b_idx)}
+				c.local_count += 1
+				plain_registered += 1
+				c.eval.let_syms[int(protos_start) + b_idx] = b_sym
+				c.eval.let_nodes[int(protos_start) + b_idx] = child
+			}
 			b_idx += 1
 		}
 
-		new_scope_id := i32(c.let_scope_count)
-		c.scratch.let_scopes[c.let_scope_count] = {
-			parent       = prev_let_scope,
-			locals_start = locals_start,
-			locals_count = u32(binding_count),
+		new_scope_id := prev_let_scope
+		if plain_registered > 0 {
+			new_scope_id = i32(c.let_scope_count)
+			c.scratch.let_scopes[c.let_scope_count] = {
+				parent       = prev_let_scope,
+				locals_start = locals_start,
+				locals_count = u32(plain_registered),
+			}
+			c.let_scope_count += 1
+			sc.current_let_scope = new_scope_id
 		}
-		c.let_scope_count += 1
-		sc.current_let_scope = new_scope_id
 
 		// Allocate child Proto for each binding RHS (with visibility = new_scope_id).
 		b_idx = 0
@@ -809,6 +1003,22 @@ compile_let :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Index
 		}
 		c.eval.let_desc_count += 1
 		emit_abx_wide(c, .Let_Enter, 0, desc_rel, node_idx)
+
+		// Lower each pattern binding: force RHS to WHNF and destructure into let-slots.
+		if has_pattern {
+			b_idx = 0
+			for child in children {
+				cn := lex_parser.node_at(c.tree, child)
+				if cn == nil || cn.kind != .Let_Binding {
+					continue
+				}
+				if pat_node, is_pat := lex_parser.let_binding_pattern(c.tree, child); is_pat {
+					emit(c, inst_abx(.Get_Let, dst, slot_start + u16(b_idx)), child)
+					compile_pattern_destructure(c, pat_node, dst)
+				}
+				b_idx += 1
+			}
+		}
 	}
 
 	if body == lex_parser.NO_NODE {
@@ -823,6 +1033,10 @@ compile_let :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Index
 compile_function :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Index, dst: u8) {
 	children := lex_parser.node_children(c.tree, node_idx)
 	param_syms: [lex_parser.ARGUMENT_CAPACITY]lex_parser.Sym_Id
+	param_patterns: [lex_parser.ARGUMENT_CAPACITY]lex_parser.Node_Index
+	for i in 0 ..< lex_parser.ARGUMENT_CAPACITY {
+		param_patterns[i] = lex_parser.NO_NODE
+	}
 	param_count := u16(0)
 	body := lex_parser.NO_NODE
 	for child in children {
@@ -830,6 +1044,12 @@ compile_function :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_
 		if cn != nil && cn.kind == .Parameter {
 			if int(param_count) < lex_parser.ARGUMENT_CAPACITY {
 				param_syms[param_count] = intern_str(c, lex_parser.node_text(c.tree, child))
+				param_count += 1
+			}
+		} else if cn != nil && cn.kind == .Pattern_Record {
+			if int(param_count) < lex_parser.ARGUMENT_CAPACITY {
+				param_syms[param_count] = lex_parser.NO_SYM
+				param_patterns[param_count] = child
 				param_count += 1
 			}
 		} else {
@@ -848,6 +1068,7 @@ compile_function :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_
 		parent_let_scope = cur_scope(c).current_let_scope,
 		param_count      = param_count,
 		param_syms       = param_syms,
+		param_patterns   = param_patterns,
 		fn_node          = node_idx,
 		fn_open_off      = u32(open_off),
 		fn_arrow_end     = u32(arrow_end),
@@ -1109,15 +1330,49 @@ compile_call :: proc "contextless" (c: ^Compiler, call_idx: lex_parser.Node_Inde
 		return
 	}
 
-	// Fast path 2: positional 2-arg `map(list, fn)` / `filter(list, fn)`.
-	if !is_lexical && !has_named && !has_special && !has_refused && arg_count == 2 && (name == MAP_NAME || name == FILTER_NAME) && int(dst) + 2 < 255 {
-		reserve_reg(c, dst + 1)
-		reserve_reg(c, dst + 2)
-		compile_expr(c, arg_nodes[0], dst + 1, false)
-		compile_expr(c, arg_nodes[1], dst + 2, false)
-		bid := name == MAP_NAME ? Builtin_Id.Map : Builtin_Id.Filter
-		emit(c, inst_abc(.Call_Builtin, dst, u8(bid), 2), call_idx)
+	// Fast path 2a: compiler special forms `assert(cond, msg, value)` and `trace(msg, value)`.
+	if !is_lexical && !has_named && !has_special && !has_refused && name == ASSERT_NAME && arg_count == 3 {
+		compile_expr(c, arg_nodes[0], dst, false)
+		jmp_ok := emit_jmp(c, .Jmp_If_True_Keep, dst, arg_nodes[0])
+		// Condition was false: force msg and fail with Assertion_Failed.
+		compile_expr(c, arg_nodes[1], dst, false)
+		emit(c, inst_abc(.Assert_Fail, dst, 0, 0), call_idx)
+		patch_jmp(c, jmp_ok, call_idx)
+		// Condition was true: never force msg; evaluate value in tail position!
+		compile_expr(c, arg_nodes[2], dst, in_tail)
 		return
+	}
+	if !is_lexical && !has_named && !has_special && !has_refused && name == TRACE_NAME && arg_count == 2 {
+		compile_expr(c, arg_nodes[0], dst, false)
+		emit(c, inst_abc(.Trace, dst, 0, 0), call_idx)
+		compile_expr(c, arg_nodes[1], dst, in_tail)
+		return
+	}
+
+	// Fast path 2b: pure built-in stdlib calls.
+	if !is_lexical && !has_named && !has_special && !has_refused && int(dst) + arg_count < 255 {
+		bid := Builtin_Id.None
+		expected_argc := -1
+		switch name {
+		case MAP_NAME:        bid, expected_argc = .Map, 2
+		case FILTER_NAME:     bid, expected_argc = .Filter, 2
+		case FOLD_NAME:       bid, expected_argc = .Fold, 3
+		case ZIP_NAME:        bid, expected_argc = .Zip, 2
+		case FIELDS_NAME:     bid, expected_argc = .Fields, 1
+		case VALUES_NAME:     bid, expected_argc = .Values, 1
+		case HAS_NAME:        bid, expected_argc = .Has, 2
+		case EXTEND_NAME:     bid, expected_argc = .Extend, 2
+		case MERGE_DEEP_NAME: bid, expected_argc = .Merge_Deep, 2
+		}
+		if bid != .None && arg_count == expected_argc {
+			for i in 0 ..< arg_count {
+				reg := dst + u8(i + 1)
+				reserve_reg(c, reg)
+				compile_expr(c, arg_nodes[i], reg, false)
+			}
+			emit(c, inst_abc(.Call_Builtin, dst, u8(bid), u8(arg_count)), call_idx)
+			return
+		}
 	}
 
 	// General Call_Site path (host commands, named args, console special forms,
@@ -1229,7 +1484,7 @@ refusal_inside_ast :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, root: l
 			return idx
 		}
 		switch n.kind {
-		case .Negate, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Condition:
+		case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Condition, .Pattern_Field:
 			if ch := lex_parser.node_child(tree, idx); ch != lex_parser.NO_NODE && top < len(stack) {
 				stack[top] = ch
 				top += 1
@@ -1244,7 +1499,7 @@ refusal_inside_ast :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, root: l
 				stack[top] = l
 				top += 1
 			}
-		case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If:
+		case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record:
 			children := lex_parser.node_children(tree, idx)
 			for i := len(children) - 1; i >= 0; i -= 1 {
 				if top < len(stack) {

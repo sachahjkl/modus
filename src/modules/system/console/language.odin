@@ -676,7 +676,13 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 	case .With_Pairs_Full, .Imports_Full:
 		fail("the evaluation ran out of room for declarations")
 	case .Assertion_Failed:
-		fail("assertion failed: ", record.command)
+		fail("assertion did not hold: ", record.command)
+	case .Interpolation_Kind:
+		fail("a string interpolation does not format ", kind_names[record.left_kind])
+	case .Pattern_Not_A_Record:
+		fail("a record pattern needs a record, not ", kind_names[record.left_kind])
+	case .Pattern_Extra_Field:
+		fail("the record has an extra field ", record.field, " that the pattern does not list; add \"...\" to allow extra fields")
 	}
 }
 
@@ -824,6 +830,20 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		fail("|>: _ names an argument of the call on the right of |>, not of a nested call")
 	case .Placeholder_Without_Pipe:
 		fail("_ is a place of the call on the right of |>; this call has no |> before it")
+	case .Escape_Not_Valid:
+		fail("unknown escape sequence in text: use \\\\, \\\", \\n, \\r, \\t, \\$, or \\u{...}")
+	case .Interpolation_Close_Missing:
+		fail("\"}\" is missing at the end of a string interpolation")
+	case .Pattern_Field_Missing:
+		fail("a record pattern holds field names or \"...\": { a, b = 1, ... }")
+	case .Pattern_Close_Missing:
+		fail("\",\" or \"}\" is missing in a record pattern")
+	case .Pattern_Field_Twice:
+		fail("the field ", lex_parser.node_text(&line_tree, record.node), " appears twice in one record pattern")
+	case .Pattern_Rest_Not_Last:
+		fail("\"...\" must be the last item of a record pattern")
+	case .Pattern_At_Missing_Brace:
+		fail("\"@\" in a pattern must be followed by \"{ ... }\"")
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -1057,8 +1077,21 @@ nearest_names_text :: proc "contextless" (nearest: ^console_language.Nearest_Nam
 // the names of the commands near it, or the way to the list of all.
 command_unknown_fail :: proc "contextless" (name: string) -> Value {
 	nearest := console_language.nearest_names_start(name)
-	console_language.nearest_name_offer(&nearest, lex_evaluator.MAP_NAME)
-	console_language.nearest_name_offer(&nearest, lex_evaluator.FILTER_NAME)
+	for builtin_name in ([?]string{
+		lex_evaluator.MAP_NAME,
+		lex_evaluator.FILTER_NAME,
+		lex_evaluator.FOLD_NAME,
+		lex_evaluator.ZIP_NAME,
+		lex_evaluator.FIELDS_NAME,
+		lex_evaluator.VALUES_NAME,
+		lex_evaluator.HAS_NAME,
+		lex_evaluator.EXTEND_NAME,
+		lex_evaluator.MERGE_DEEP_NAME,
+		lex_evaluator.ASSERT_NAME,
+		lex_evaluator.TRACE_NAME,
+	}) {
+		console_language.nearest_name_offer(&nearest, builtin_name)
+	}
 	for &command in commands[:command_count] {
 		console_language.nearest_name_offer(&nearest, command.name)
 	}

@@ -25,49 +25,68 @@ Opcode :: enum u8 {
 	Get_Upval,        // R[A] = force(frame.env[Bx])
 	Get_Let,          // R[A] = force(frame.let_slots[Bx])
 	Let_Enter,        // allocate N thunks from let_descs[Bx]; Console mode forces left-to-right
-	// Arithmetic & comparisons
-	Neg,              // R[A] = -R[B]
-	Add,              // R[A] = R[B] + R[C]
-	Sub,              // R[A] = R[B] - R[C]
-	Mul,              // R[A] = R[B] * R[C]
-	Div,              // R[A] = R[B] / R[C]
-	Rem,              // R[A] = R[B] % R[C]
-	Eq,               // R[A] = (R[B] == R[C])
-	Neq,              // R[A] = (R[B] != R[C])
-	Lt,               // R[A] = (R[B] <  R[C])
-	Le,               // R[A] = (R[B] <= R[C])
-	Gt,               // R[A] = (R[B] >  R[C])
-	Ge,               // R[A] = (R[B] >= R[C])
-	// Control flow
-	Jmp,              // ip += sBx
-	Jmp_If_False,     // if !bool(R[A]) -> ip += sBx (refuses non-Bool)
+	// Arithmetic, boolean & comparisons
+	Neg,               // R[A] = -R[B]
+	Not,               // R[A] = !R[B] (strict Boolean)
+	Add,               // R[A] = R[B] + R[C]
+	Sub,               // R[A] = R[B] - R[C]
+	Mul,               // R[A] = R[B] * R[C]
+	Div,               // R[A] = R[B] / R[C]
+	Rem,               // R[A] = R[B] % R[C]
+	List_Concat,       // R[A] = R[B] ++ R[C] (List ++ List)
+	Eq,                // R[A] = (R[B] == R[C])
+	Neq,               // R[A] = (R[B] != R[C])
+	Lt,                // R[A] = (R[B] <  R[C])
+	Le,                // R[A] = (R[B] <= R[C])
+	Gt,                // R[A] = (R[B] >  R[C])
+	Ge,                // R[A] = (R[B] >= R[C])
+	// Control flow & short-circuit booleans
+	Jmp,               // ip += sBx
+	Jmp_If_False,      // if !bool(R[A]) -> ip += sBx (refuses non-Bool with Condition_Not_Boolean)
+	Jmp_If_False_Keep, // short-circuit &&: refuses non-Bool with Operator_Kinds(.Logical_And)
+	Jmp_If_True_Keep,  // short-circuit || / assert: if bool(R[A]) -> ip += sBx (refuses non-Bool)
+	Check_Bool,        // validate R[A] is Boolean (B = u8(Operator) for Operator_Kinds)
 	// Functions & calls
-	Closure,          // R[A] = Closure(protos[Bx], captured upvals)
-	Check_Call,       // validate R[A] is Function with B params before evaluating args
-	Call,             // R[A] = call R[A](R[A+1 .. A+B]) (fast positional)
-	Tail_Call,        // tail-call R[A](R[A+1 .. A+B]) (O(1) frame reuse)
-	Call_Builtin,     // R[A] = builtin B on args R[A+1 .. A+C]
-	Call_Site,        // R[A] = execute call_sites[Bx] (host commands, named args, console forms)
-	Ret,              // return R[A]
-	// Records & lists
-	Make_Record,      // R[A] = Lazy_Record(record_descs[Bx]); Console forces fields in source order
-	Get_Field,        // R[A] = R[B].field_syms[C] (or Extra_Arg if C == 255)
-	With,             // R[A] = R[B] with R[C] (strictly override-only)
-	List_Begin,       // push list scratch mark
-	List_Push,        // push R[A] onto list scratch (validates Console item kind)
-	List_End,         // R[A] = finalized List from scratch mark
+	Closure,           // R[A] = Closure(protos[Bx], captured upvals)
+	Check_Call,        // validate R[A] is Function with B params before evaluating args
+	Call,              // R[A] = call R[A](R[A+1 .. A+B]) (fast positional)
+	Tail_Call,         // tail-call R[A](R[A+1 .. A+B]) (O(1) frame reuse)
+	Call_Builtin,      // R[A] = builtin B on args R[A+1 .. A+C]
+	Call_Site,         // R[A] = execute call_sites[Bx] (host commands, named args, console forms)
+	Ret,               // return R[A]
+	// Records, destructuring, lists & string interpolation
+	Make_Record,       // R[A] = Lazy_Record(record_descs[Bx]); Console forces fields in source order
+	Get_Field,         // R[A] = R[B].field_syms[C] (or Extra_Arg if C == 255)
+	With,              // R[A] = R[B] with R[C] (strictly override-only)
+	Destructure,       // destructure R[A] using pattern_descs[Bx] into frame.let_slots
+	List_Begin,        // push list scratch mark
+	List_Push,         // push R[A] onto list scratch (validates Console item kind)
+	List_End,          // R[A] = finalized List from scratch mark
+	Str_Begin,         // push interpolation scratch mark
+	Str_Push,          // validate & push formatted interpolation piece R[A]
+	Str_End,           // R[A] = concatenated interpolated Text in text_arena
+	// Diagnostics & tracing
+	Assert_Fail,       // refuse with Assertion_Failed carrying Text R[A]
+	Trace,             // append Text R[A] to caller Trace_Log and mark eval.traced = true
 	// Host & console special forms
-	Load_Global,      // R[A] = host.name_value(consts[Bx])
-	Refuse_Parse,     // emit Refusal.Text for partial-parse Refused AST node (node_idx = Bx)
+	Load_Global,       // R[A] = host.name_value(consts[Bx])
+	Refuse_Parse,      // emit Refusal.Text for partial-parse Refused AST node (node_idx = Bx)
 	// Wide 24-bit prefix operand for the immediately following instruction.
 	Extra_Arg,
 }
 
 // Fast built-in function identifiers for OP_CALL_BUILTIN.
 Builtin_Id :: enum u8 {
-	None   = 0,
-	Map    = 1,
-	Filter = 2,
+	None       = 0,
+	Map        = 1,
+	Filter     = 2,
+	Fold       = 3,
+	Zip        = 4,
+	Fields     = 5,
+	Values     = 6,
+	Has        = 7,
+	Extend     = 8,
+	Merge_Deep = 9,
 }
 
 // Instruction encode/decode helpers.
@@ -117,11 +136,12 @@ inst_ax_val :: #force_inline proc "contextless" (inst: Instruction) -> u32 {
 
 // Constant pool entry inside a compiled Chunk.
 Const_Kind :: enum u8 {
-	Integer = 0,
-	Text    = 1, // source[offset : offset + length]
-	Sym     = 2, // Interned Sym_Id
-	Hash    = 3, // Decoded 32-byte BLAKE3 hash
-	Member  = 4, // Interned member name Sym_Id + node_idx
+	Integer    = 0,
+	Text       = 1, // source[offset : offset + length]
+	Sym        = 2, // Interned Sym_Id
+	Hash       = 3, // Decoded 32-byte BLAKE3 hash
+	Member     = 4, // Interned member name Sym_Id + node_idx
+	Arena_Text = 5, // text_arena[offset : offset + length] (decoded escaped literal)
 }
 
 Const_Entry :: struct {
@@ -228,21 +248,43 @@ Call_Site_Desc :: struct {
 	pad:             u16,
 }
 
+// Compiled record destructuring pattern (`{ a, b = 10, ... }` or `r @ { a, b }`).
+Pattern_Field_Desc :: struct {
+	sym:           lex_parser.Sym_Id,
+	let_slot:      u16,
+	has_default:   bool,
+	pad:           u8,
+	default_proto: u32, // Relative proto_id in chunk when has_default == true.
+	node_idx:      lex_parser.Node_Index,
+}
+
+Pattern_Desc :: struct {
+	has_rest:     bool,
+	has_as:       bool,
+	as_let_slot:  u16,
+	fields_start: u32, // Slice into eval.pattern_fields[fields_start : fields_start + field_count].
+	field_count:  u16,
+	pad:          u16,
+	node_idx:     lex_parser.Node_Index,
+}
+
 // Compiled bytecode chunk for one source file / console line.
 Chunk :: struct {
-	source:         string,
-	tree:           ^lex_parser.Syntax_Tree, // Retained for console Condition/Fact_Name/place lookup.
-	root_proto:     u32,
-	proto_start:    u32,
-	proto_count:    u32,
-	const_start:    u32,
-	const_count:    u32,
-	let_desc_start: u32,
-	let_desc_count: u32,
-	rec_desc_start: u32,
-	rec_desc_count: u32,
-	site_start:     u32,
-	site_count:     u32,
+	source:          string,
+	tree:            ^lex_parser.Syntax_Tree, // Retained for console Condition/Fact_Name/place lookup.
+	root_proto:      u32,
+	proto_start:     u32,
+	proto_count:     u32,
+	const_start:     u32,
+	const_count:     u32,
+	let_desc_start:  u32,
+	let_desc_count:  u32,
+	rec_desc_start:  u32,
+	rec_desc_count:  u32,
+	site_start:      u32,
+	site_count:      u32,
 	field_sym_start: u32,
 	field_sym_count: u32,
+	pat_desc_start:  u32,
+	pat_desc_count:  u32,
 }

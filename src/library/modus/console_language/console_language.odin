@@ -44,7 +44,7 @@ Token :: struct {
 	end:   int, // The byte after the last.
 }
 
-OPERATOR_BYTES :: "+-*/%=(),:.{}[]<>!" // The bytes that are an operator alone. "<", ">" and "!" are the parts of the operators of a condition: <, <=, >, >=, !=. "[" and "]" hold a list.
+OPERATOR_BYTES :: "+-*/%=(),:.{}[]<>!@" // The bytes that are an operator alone. "<", ">" and "!" are the parts of the operators of a condition: <, <=, >, >=, !=, and unary !. "[" and "]" hold a list. "@" binds an as-pattern.
 
 // A line that is finished: no name is still being typed.
 NO_CARET :: -1
@@ -193,11 +193,54 @@ number_end :: proc "contextless" (text: string, start: int) -> int {
 }
 
 // text_end gives the end of the text whose quote is at start: after its end
-// quote, or the end of the line with finished false.
+// quote, or the end of the line with finished false. Handles backslash escapes
+// and nested `${...}` interpolation expressions (bounded depth).
 text_end :: proc "contextless" (text: string, start: int) -> (end: int, finished: bool) {
+	return text_end_depth(text, start, 0)
+}
+
+@(private = "file")
+TEXT_INTERP_SCAN_DEPTH :: 32
+
+@(private = "file")
+text_end_depth :: proc "contextless" (text: string, start: int, depth: int) -> (end: int, finished: bool) {
 	place := clamp(start, 0, len(text)) + 1
 	for place < len(text) {
-		if text[place] == '"' {
+		ch := text[place]
+		if ch == '\\' {
+			// Skip escaped byte so `\"`, `\\`, and `\$` do not terminate or interpolate.
+			if place + 1 < len(text) {
+				place += 2
+				continue
+			}
+			return len(text), false
+		}
+		if ch == '$' && place + 1 < len(text) && text[place + 1] == '{' && depth < TEXT_INTERP_SCAN_DEPTH {
+			place += 2
+			brace_depth := 1
+			for place < len(text) && brace_depth > 0 {
+				ic := text[place]
+				if ic == '"' {
+					nested_end, nested_ok := text_end_depth(text, place, depth + 1)
+					if !nested_ok {
+						return len(text), false
+					}
+					place = nested_end
+					continue
+				}
+				if ic == '{' {
+					brace_depth += 1
+				} else if ic == '}' {
+					brace_depth -= 1
+				}
+				place += 1
+			}
+			if brace_depth != 0 {
+				return len(text), false
+			}
+			continue
+		}
+		if ch == '"' {
 			return place + 1, true
 		}
 		place += 1
@@ -227,8 +270,16 @@ token_next :: proc "contextless" (text: string, position: int, multiline := fals
 		return {kind = .Arrow, start = start, end = start + 2}
 	case character == '|' && start + 1 < len(text) && text[start + 1] == '>':
 		return {kind = .Pipe, start = start, end = start + 2}
+	case character == '|' && start + 1 < len(text) && text[start + 1] == '|':
+		return {kind = .Operator, start = start, end = start + 2}
+	case character == '&' && start + 1 < len(text) && text[start + 1] == '&':
+		return {kind = .Operator, start = start, end = start + 2}
+	case character == '+' && start + 1 < len(text) && text[start + 1] == '+':
+		return {kind = .Operator, start = start, end = start + 2}
 	case character == '=' && start + 1 < len(text) && text[start + 1] == '>':
 		return {kind = .Function_Arrow, start = start, end = start + 2}
+	case character == '.' && start + 2 < len(text) && text[start + 1] == '.' && text[start + 2] == '.':
+		return {kind = .Operator, start = start, end = start + 3}
 	case character == '.' && start + 1 < len(text) && name_first(text[start + 1]):
 		// The name of a member holds no '.': `.a.b` is a member and a '.'.
 		end := start + 1
@@ -550,7 +601,7 @@ bound_by_let :: proc "contextless" (text: string, token: Token) -> bool {
 // Covers up to 12 parameters, commas, destructuring patterns, and parens
 // while bounding lookahead to O(1) per `(` (preventing O(N^2) scanning on
 // deeply nested expressions).
-FUNCTION_HEAD_TOKEN_LIMIT :: 64
+FUNCTION_HEAD_TOKEN_LIMIT :: 96
 
 // function_head says if the '(' at open starts a function: its group
 // closes within FUNCTION_HEAD_TOKEN_LIMIT tokens, and "=>" follows its ')'.

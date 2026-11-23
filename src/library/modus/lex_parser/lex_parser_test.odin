@@ -99,6 +99,27 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 	switch node.kind {
 	case .Integer, .Text, .Member, .Parameter, .Hash, .Boolean, .Placeholder:
 		strings.write_string(builder, node_text(tree, index))
+	case .Logical_Not:
+		strings.write_string(builder, "!(")
+		node_form_write(builder, tree, node_child(tree, index))
+		strings.write_string(builder, ")")
+	case .Text_Interp:
+		strings.write_string(builder, "interp(")
+		children_write(builder, tree, node_children(tree, index), "; ")
+		strings.write_string(builder, ")")
+	case .Pattern_Record:
+		strings.write_string(builder, "pat{")
+		children_write(builder, tree, node_children(tree, index), ", ")
+		if (node.sub & PAT_FLAG_REST) != 0 {
+			strings.write_string(builder, ", ...")
+		}
+		strings.write_string(builder, "}")
+	case .Pattern_Field:
+		strings.write_string(builder, node_text(tree, index))
+		if def := node_child(tree, index); def != NO_NODE {
+			strings.write_string(builder, " = ")
+			node_form_write(builder, tree, def)
+		}
 	case .If:
 		strings.write_string(builder, "if(")
 		children_write(builder, tree, node_children(tree, index), "; ")
@@ -1123,4 +1144,73 @@ project {
 
 	parse_declaration("1 + 2 + 3", storage, tree, text_bytes_most = 4)
 	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
+}
+
+// L4 parser features and refusals: string escapes, ${...} interpolation,
+// && / || / ! / ++ precedence, and record destructuring patterns.
+@(test)
+lex_v2_l4_parser_forms_and_refusals :: proc(t: ^testing.T) {
+	// Escapes decoder edge cases.
+	buf: [64]u8
+	w, _, ok := decode_text_escapes(`a\nb\rc\td\\e\"f\$g\u{41}\u{1F600}`, buf[:])
+	testing.expect(t, ok)
+	testing.expect_value(t, string(buf[:w]), "a\nb\rc\td\\e\"f$gA😀")
+
+	bad_escapes := [?]string{
+		`\q`,
+		`\`,
+		`\u{}`,
+		`\u{1234567}`,
+		`\u{D800}`,
+		`\u{DFFF}`,
+		`\u{110000}`,
+		`\u{41`,
+		`\u41`,
+	}
+	for bad in bad_escapes {
+		_, _, bok := decode_text_escapes(bad, buf[:])
+		testing.expectf(t, !bok, "escape %q should be refused", bad)
+	}
+
+	// Refused forms in parser.
+	Refusal_Case :: struct {
+		text:    string,
+		refusal: Refusal,
+	}
+	bad_cases := [?]Refusal_Case {
+		{`"bad \q"`, .Escape_Not_Valid},
+		{`"surrogate \u{D800}"`, .Escape_Not_Valid},
+		{`"too high \u{110000}"`, .Escape_Not_Valid},
+		{`"interp ${1 + 2"`, .Interpolation_Close_Missing},
+		{`let { a, a } = r in a`, .Pattern_Field_Twice},
+		{`let { ..., a } = r in a`, .Pattern_Rest_Not_Last},
+		{`let { 123 } = r in 1`, .Pattern_Field_Missing},
+		{`let { a b } = r in a`, .Pattern_Close_Missing},
+		{`let r @ x = 1 in r`, .Pattern_At_Missing_Brace},
+		{`({ a, a }) => a`, .Pattern_Field_Twice},
+		{`({ ..., a }) => a`, .Pattern_Rest_Not_Last},
+		{`(r @ x) => r`, .Pattern_At_Missing_Brace},
+	}
+	bufs := new(Console_Tree_Buffers, context.temp_allocator)
+	tree := new(Syntax_Tree, context.temp_allocator)
+	for bc in bad_cases {
+		parse_console(bc.text, {}, bufs, tree)
+		testing.expectf(t, tree.refusal.refusal == bc.refusal, "%q: got %v, want %v", bc.text, tree.refusal.refusal, bc.refusal)
+	}
+
+	// Accepted forms & precedence.
+	ok_cases := [?]string {
+		`"hello\nworld"`,
+		`"a ${1 + 2} b ${"nested"} c"`,
+		`!true && false || 1 = 1`,
+		`[1, 2] ++ [3, 4] = [1, 2, 3, 4]`,
+		`let { a, b = 10, ... } = r in a + b`,
+		`let whole @ { a, b } = r in a`,
+		`({ a, b = 2 }) => a + b`,
+		`(r @ { a, ... }) => a`,
+	}
+	for src in ok_cases {
+		parse_console(src, {}, bufs, tree)
+		testing.expectf(t, tree.refusal.refusal == .None, "%q: unexpected refusal %v", src, tree.refusal.refusal)
+	}
 }

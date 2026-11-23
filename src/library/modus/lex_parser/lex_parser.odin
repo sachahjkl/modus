@@ -106,11 +106,27 @@ Node_Kind :: enum u8 {
 	Field_Select   = 22, // span_off..b (field name), base = a
 	Pipe           = 23, // span_off ("|>"), aux = 2, left = a, right_call = b
 	Placeholder    = 24, // span_off..a ("_")
+	Logical_Not    = 25, // span_off..b ("!"), child = a
+	Text_Interp    = 26, // span_off ('"'), extra_children[a : a + b] (Text segments & exprs)
+	Pattern_Record = 27, // span_off ('{' or as_name), sub = PAT_FLAG_*, extra_children[a : a + b]
+	Pattern_Field  = 28, // span_off..b (field name), a = default expr or NO_NODE_U32
 }
 
 // Flags stored in Ast_Node.sub for .Call nodes.
 CALL_FLAG_IN_PIPE :: u8(1 << 0)
 CALL_FLAG_HAS_PLACEHOLDER :: u8(1 << 1)
+
+// Flags stored in Ast_Node.sub for .Text nodes.
+TEXT_FLAG_ESCAPED :: u8(1 << 0)
+TEXT_FLAG_SEGMENT :: u8(1 << 1)
+
+// Flags stored in Ast_Node.sub for .Pattern_Record nodes.
+PAT_FLAG_REST :: u8(1 << 0)
+PAT_FLAG_HAS_AS :: u8(1 << 1)
+
+// Flag stored in Ast_Node.sub for .Let_Binding when LHS is a Pattern_Record
+// (in which case a = rhs_expr, b = pattern_node).
+LET_BINDING_PATTERN :: u8(1 << 0)
 
 // Operators of a Binary node.
 Operator :: enum u8 {
@@ -127,6 +143,9 @@ Operator :: enum u8 {
 	Less_Or_Equal    = 10,
 	Greater          = 11,
 	Greater_Or_Equal = 12,
+	Logical_And      = 13,
+	Logical_Or       = 14,
+	List_Concat      = 15,
 }
 
 @(rodata)
@@ -144,6 +163,9 @@ OPERATOR_TEXTS := [Operator]string {
 	.Less_Or_Equal    = "<=",
 	.Greater          = ">",
 	.Greater_Or_Equal = ">=",
+	.Logical_And      = "&&",
+	.Logical_Or       = "||",
+	.List_Concat      = "++",
 }
 
 @(rodata)
@@ -211,10 +233,17 @@ Refusal :: enum u8 {
 	Pipe_Line_End             = 34, // Text ends after "|>".
 	Pipe_Not_A_Call           = 35, // "|>" not followed by a call or command name.
 	Lone_Bar                  = 36, // "|" with no ">" after it.
-	Placeholder_Not_Whole     = 37, // "_" used inside an expression in a piped call argument.
-	Placeholder_Twice         = 38, // Two "_" placeholders in one piped call.
-	Placeholder_Nested        = 39, // "_" inside a call nested in a piped call.
-	Placeholder_Without_Pipe  = 40, // "_" as a call argument with no preceding "|>".
+	Placeholder_Not_Whole       = 37, // "_" used inside an expression in a piped call argument.
+	Placeholder_Twice           = 38, // Two "_" placeholders in one piped call.
+	Placeholder_Nested          = 39, // "_" inside a call nested in a piped call.
+	Placeholder_Without_Pipe    = 40, // "_" as a call argument with no preceding "|>".
+	Escape_Not_Valid            = 41, // Unknown backslash escape or out-of-range/surrogate \u{...}.
+	Interpolation_Close_Missing = 42, // Missing "}" closing a "${...}" string interpolation.
+	Pattern_Field_Missing       = 43, // Missing field name inside a destructuring pattern "{ ... }".
+	Pattern_Close_Missing       = 44, // Missing "}" closing a destructuring pattern.
+	Pattern_Field_Twice         = 45, // Duplicate field name inside one destructuring pattern.
+	Pattern_Rest_Not_Last       = 46, // Fields written after "..." in a destructuring pattern.
+	Pattern_At_Missing_Brace    = 47, // "name @" not followed by "{ ... }".
 }
 
 // Source position computed on demand from byte offset.
@@ -513,13 +542,20 @@ node_span :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (star
 	case .Integer, .Boolean, .Text, .Name, .Member, .Hash, .Parameter, .Placeholder, .Fact_Name, .Field_Names:
 		start = min(int(node.span_off), text_len)
 		end = clamp(int(node.a), start, text_len)
-	case .Negate, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Call:
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Named_Argument, .Refused, .Call, .Pattern_Field:
 		start = min(int(node.span_off), text_len)
 		end = clamp(int(node.b), start, text_len)
+	case .Let_Binding:
+		start = min(int(node.span_off), text_len)
+		if (node.sub & LET_BINDING_PATTERN) != 0 {
+			end = clamp(start + 1, start, text_len)
+		} else {
+			end = clamp(int(node.b), start, text_len)
+		}
 	case .Binary, .Pipe:
 		start = min(int(node.span_off), text_len)
 		end = clamp(start + int(node.aux), start, text_len)
-	case .Record_Literal, .List_Literal:
+	case .Record_Literal, .List_Literal, .Text_Interp, .Pattern_Record:
 		start = min(int(node.span_off), text_len)
 		end = clamp(start + 1, start, text_len)
 	case .Let:
@@ -586,23 +622,24 @@ node_refusal :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Re
 	switch node.kind {
 	case .Refused, .Fact_Name, .Field_Names, .Condition:
 		return Refusal(node.sub)
-	case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Record_Literal, .Literal_Field, .Named_Argument, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder:
+	case .Integer, .Text, .Text_Interp, .Name, .Call, .Negate, .Logical_Not, .Binary, .Record_Literal, .Literal_Field, .Named_Argument, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder, .Pattern_Record, .Pattern_Field:
 		return .None
 	}
 	return .None
 }
 
-// node_child returns the single child of a 1-child node (Negate, Field_Select,
-// Literal_Field, Let_Binding, Named_Argument, Refused, Condition).
+// node_child returns the single child of a 1-child node (Negate, Logical_Not,
+// Field_Select, Literal_Field, Let_Binding, Named_Argument, Refused, Condition,
+// Pattern_Field).
 node_child :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
 	node := node_at(tree, index)
 	if node == nil {
 		return NO_NODE
 	}
 	switch node.kind {
-	case .Negate, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition:
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field:
 		return Node_Index(i32(node.a))
-	case .Integer, .Text, .Name, .Call, .Binary, .Fact_Name, .Field_Names, .Record_Literal, .Let, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Pipe, .Placeholder:
+	case .Integer, .Text, .Text_Interp, .Name, .Call, .Binary, .Fact_Name, .Field_Names, .Record_Literal, .Let, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Pipe, .Placeholder, .Pattern_Record:
 		return NO_NODE
 	}
 	return NO_NODE
@@ -618,7 +655,7 @@ node_binary_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Inde
 }
 
 // node_children returns the contiguous child slice for variable-arity nodes
-// (.Call, .Record_Literal, .List_Literal, .Let, .Function, .If).
+// (.Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record).
 node_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> []Node_Index {
 	node := node_at(tree, index)
 	if node == nil {
@@ -628,9 +665,9 @@ node_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> [
 	switch node.kind {
 	case .Call, .Function, .If:
 		start, count = int(node.a), int(node.aux)
-	case .Record_Literal, .List_Literal, .Let:
+	case .Record_Literal, .List_Literal, .Let, .Text_Interp, .Pattern_Record:
 		start, count = int(node.a), int(node.b)
-	case .Integer, .Text, .Name, .Negate, .Binary, .Condition, .Fact_Name, .Refused, .Field_Names, .Literal_Field, .Let_Binding, .Named_Argument, .Member, .Parameter, .Hash, .Boolean, .Field_Select, .Pipe, .Placeholder:
+	case .Integer, .Text, .Name, .Negate, .Logical_Not, .Binary, .Condition, .Fact_Name, .Refused, .Field_Names, .Literal_Field, .Let_Binding, .Named_Argument, .Member, .Parameter, .Hash, .Boolean, .Field_Select, .Pipe, .Placeholder, .Pattern_Field:
 		return nil
 	}
 	if count <= 0 || start < 0 || start > tree.extra_count || count > tree.extra_count - start {
@@ -657,6 +694,16 @@ node_function_offsets :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Ind
 		return 0, 0
 	}
 	return int(node.span_off), int(node.b)
+}
+
+// let_binding_pattern returns the .Pattern_Record node for a destructuring
+// `let { ... } = expr` binding, or (NO_NODE, false) for a plain `let x = expr`.
+let_binding_pattern :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (pattern: Node_Index, ok: bool) {
+	node := node_at(tree, index)
+	if node == nil || node.kind != .Let_Binding || (node.sub & LET_BINDING_PATTERN) == 0 {
+		return NO_NODE, false
+	}
+	return Node_Index(i32(node.b)), true
 }
 
 node_binding :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
@@ -929,6 +976,140 @@ named_ahead :: proc "contextless" (parser: ^Parser) -> bool {
 	return equal.kind == .Operator && text[equal.start] == '=' && !(equal.end < len(text) && text[equal.end] == '=')
 }
 
+// decode_text_escapes validates and decodes backslash escape sequences inside
+// a raw string body (without surrounding quotes). Supported escapes:
+//   \\  \"  \n  \r  \t  \$  \u{XXXXXX} (1..6 hex digits; refuses surrogates
+//   0xD800..0xDFFF and values > 0x10FFFF).
+// When `out` is nil, validates and computes `written` without writing bytes.
+decode_text_escapes :: proc "contextless" (raw: string, out: []u8) -> (written: int, bad_offset: int, ok: bool) {
+	i := 0
+	w := 0
+	for i < len(raw) {
+		ch := raw[i]
+		if ch != '\\' {
+			if out != nil {
+				if w >= len(out) {
+					return w, i, false
+				}
+				out[w] = ch
+			}
+			w += 1
+			i += 1
+			continue
+		}
+		esc_pos := i
+		if i + 1 >= len(raw) {
+			return w, esc_pos, false
+		}
+		next := raw[i + 1]
+		switch next {
+		case '\\', '"', '$':
+			if out != nil {
+				if w >= len(out) {
+					return w, esc_pos, false
+				}
+				out[w] = next
+			}
+			w += 1
+			i += 2
+		case 'n':
+			if out != nil {
+				if w >= len(out) {
+					return w, esc_pos, false
+				}
+				out[w] = '\n'
+			}
+			w += 1
+			i += 2
+		case 'r':
+			if out != nil {
+				if w >= len(out) {
+					return w, esc_pos, false
+				}
+				out[w] = '\r'
+			}
+			w += 1
+			i += 2
+		case 't':
+			if out != nil {
+				if w >= len(out) {
+					return w, esc_pos, false
+				}
+				out[w] = '\t'
+			}
+			w += 1
+			i += 2
+		case 'u':
+			if i + 2 >= len(raw) || raw[i + 2] != '{' {
+				return w, esc_pos, false
+			}
+			j := i + 3
+			cp := u32(0)
+			digits := 0
+			for j < len(raw) && raw[j] != '}' {
+				c := raw[j]
+				v: u32
+				switch c {
+				case '0' ..= '9':
+					v = u32(c - '0')
+				case 'a' ..= 'f':
+					v = u32(c - 'a' + 10)
+				case 'A' ..= 'F':
+					v = u32(c - 'A' + 10)
+				case:
+					return w, esc_pos, false
+				}
+				digits += 1
+				if digits > 6 {
+					return w, esc_pos, false
+				}
+				cp = (cp << 4) | v
+				j += 1
+			}
+			if digits == 0 || j >= len(raw) || raw[j] != '}' {
+				return w, esc_pos, false
+			}
+			if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+				return w, esc_pos, false
+			}
+			// Encode Unicode scalar value to UTF-8.
+			utf8_buf: [4]u8
+			ulen := 0
+			switch {
+			case cp <= 0x7F:
+				utf8_buf[0] = u8(cp)
+				ulen = 1
+			case cp <= 0x7FF:
+				utf8_buf[0] = 0xC0 | u8(cp >> 6)
+				utf8_buf[1] = 0x80 | u8(cp & 0x3F)
+				ulen = 2
+			case cp <= 0xFFFF:
+				utf8_buf[0] = 0xE0 | u8(cp >> 12)
+				utf8_buf[1] = 0x80 | u8((cp >> 6) & 0x3F)
+				utf8_buf[2] = 0x80 | u8(cp & 0x3F)
+				ulen = 3
+			case:
+				utf8_buf[0] = 0xF0 | u8(cp >> 18)
+				utf8_buf[1] = 0x80 | u8((cp >> 12) & 0x3F)
+				utf8_buf[2] = 0x80 | u8((cp >> 6) & 0x3F)
+				utf8_buf[3] = 0x80 | u8(cp & 0x3F)
+				ulen = 4
+			}
+			if out != nil {
+				if w + ulen > len(out) {
+					return w, esc_pos, false
+				}
+				copy(out[w:w + ulen], utf8_buf[:ulen])
+			}
+			w += ulen
+			i = j + 1
+		case:
+			return w, esc_pos, false
+		}
+	}
+	return w, 0, true
+}
+
 // ---- Grammar (native |> at lowest precedence, left-associative).
 
 @(private)
@@ -947,10 +1128,12 @@ pipeline_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		if parser.position + 1 < len(text) && text[parser.position + 1] == '>' {
 			return refuse(parser, .Pipe_No_Left, parser.position, parser.position + 2, NO_NODE)
 		}
-		return refuse(parser, .Lone_Bar, parser.position, parser.position + 1, NO_NODE)
+		if !(parser.position + 1 < len(text) && text[parser.position + 1] == '|') {
+			return refuse(parser, .Lone_Bar, parser.position, parser.position + 1, NO_NODE)
+		}
 	}
 
-	left := comparison_read(parser)
+	left := or_read(parser)
 	for !refused(parser) {
 		skip_spaces(parser)
 		if parser.position >= len(text) || text[parser.position] != '|' {
@@ -977,6 +1160,66 @@ pipeline_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 			return left
 		}
 		left = pipe_node
+	}
+	return left
+}
+
+@(private)
+or_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	left := and_read(parser)
+	text := parser.tree.text
+	for !refused(parser) {
+		if peek(parser) != '|' || parser.position + 1 >= len(text) || text[parser.position + 1] != '|' {
+			return left
+		}
+		op_start := parser.position
+		parser.position += 2
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		right := and_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		binary := node_add_raw(parser, {
+			kind     = .Binary,
+			sub      = u8(Operator.Logical_Or),
+			aux      = 2,
+			span_off = u32(op_start),
+			a        = u32(left),
+			b        = u32(right),
+		})
+		if binary == NO_NODE {
+			return left
+		}
+		left = binary
+	}
+	return left
+}
+
+@(private)
+and_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	left := comparison_read(parser)
+	text := parser.tree.text
+	for !refused(parser) {
+		if peek(parser) != '&' || parser.position + 1 >= len(text) || text[parser.position + 1] != '&' {
+			return left
+		}
+		op_start := parser.position
+		parser.position += 2
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		right := comparison_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		binary := node_add_raw(parser, {
+			kind     = .Binary,
+			sub      = u8(Operator.Logical_And),
+			aux      = 2,
+			span_off = u32(op_start),
+			a        = u32(left),
+			b        = u32(right),
+		})
+		if binary == NO_NODE {
+			return left
+		}
+		left = binary
 	}
 	return left
 }
@@ -1103,20 +1346,44 @@ with_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 @(private)
 sum_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	left := term_read(parser)
+	text := parser.tree.text
 	for !refused(parser) {
 		operator: Operator
+		op_len := 1
 		switch peek(parser) {
 		case '+':
-			operator = .Add
+			if parser.position + 1 < len(text) && text[parser.position + 1] == '+' {
+				operator = .List_Concat
+				op_len = 2
+			} else {
+				operator = .Add
+			}
 		case '-':
-			if console_language.token_next(parser.tree.text, parser.position, parser.multiline).kind == .Arrow {
+			if console_language.token_next(text, parser.position, parser.multiline).kind == .Arrow {
 				return left
 			}
 			operator = .Subtract
 		case:
 			return left
 		}
-		left = binary_read(parser, operator, left, term_read)
+		op_start := parser.position
+		parser.position += op_len
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		right := term_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		binary := node_add_raw(parser, {
+			kind     = .Binary,
+			sub      = u8(operator),
+			aux      = u16(op_len),
+			span_off = u32(op_start),
+			a        = u32(left),
+			b        = u32(right),
+		})
+		if binary == NO_NODE {
+			return left
+		}
+		left = binary
 	}
 	return left
 }
@@ -1190,6 +1457,18 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 			a        = u32(child),
 			b        = u32(start + 1),
 		})
+	case character == '!':
+		parser.position += 1
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		child := factor_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		return node_add_raw(parser, {
+			kind     = .Logical_Not,
+			span_off = u32(start),
+			a        = u32(child),
+			b        = u32(start + 1),
+		})
 	case character == '(':
 		if close, arrow_end, found := console_language.function_head(text, start, parser.multiline); found {
 			return function_read(parser, start, close, arrow_end)
@@ -1215,12 +1494,7 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		}
 		return integer_node_add(parser, start, end, value)
 	case character == '"':
-		end, finished := console_language.text_end(text, start)
-		parser.position = end
-		if !finished {
-			return refuse(parser, .Text_Without_End_Quote, start, end, NO_NODE)
-		}
-		return node_add_raw(parser, {kind = .Text, span_off = u32(start), a = u32(end)})
+		return text_literal_read(parser, start)
 	case character == '{':
 		parser.position += 1
 		saved_direct := parser.in_direct_pipe_arg
@@ -1309,6 +1583,9 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		if start + 1 < len(text) && text[start + 1] == '>' {
 			return refuse(parser, .Pipe_No_Left, start, start + 2, NO_NODE)
 		}
+		if start + 1 < len(text) && text[start + 1] == '|' {
+			return refuse(parser, .Unexpected, start, start + 2, NO_NODE)
+		}
 		return refuse(parser, .Lone_Bar, start, start + 1, NO_NODE)
 	case:
 		return refuse(parser, .Unexpected, start, len(text), NO_NODE)
@@ -1317,6 +1594,131 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		return node
 	}
 	return postfix_read(parser, node)
+}
+
+@(private)
+text_literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	text := parser.tree.text
+	// Fast scan to check whether any `${` interpolation appears and find closing `"`.
+	i := start + 1
+	has_escape := false
+	has_interp := false
+	closed := false
+	for i < len(text) {
+		ch := text[i]
+		if ch == '\\' {
+			has_escape = true
+			if i + 1 >= len(text) {
+				parser.position = len(text)
+				return refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE)
+			}
+			i += 2
+			continue
+		}
+		if ch == '$' && i + 1 < len(text) && text[i + 1] == '{' {
+			has_interp = true
+			break
+		}
+		if ch == '"' {
+			closed = true
+			i += 1
+			break
+		}
+		i += 1
+	}
+	if !has_interp {
+		if !closed {
+			parser.position = len(text)
+			return refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE)
+		}
+		parser.position = i
+		if has_escape {
+			raw := text[start + 1:i - 1]
+			if _, bad_off, ok := decode_text_escapes(raw, nil); !ok {
+				return refuse(parser, .Escape_Not_Valid, start + 1 + bad_off, start + 1 + bad_off + 1, NO_NODE)
+			}
+			return node_add_raw(parser, {kind = .Text, sub = TEXT_FLAG_ESCAPED, span_off = u32(start), a = u32(i)})
+		}
+		return node_add_raw(parser, {kind = .Text, span_off = u32(start), a = u32(i)})
+	}
+
+	// Interpolated string `"prefix ${expr} suffix"`: emit `.Text_Interp` with
+	// alternating literal `.Text` segments (TEXT_FLAG_SEGMENT) and expression children.
+	interp := node_add_raw(parser, {kind = .Text_Interp, span_off = u32(start)})
+	if interp == NO_NODE {
+		return NO_NODE
+	}
+	mark := parser.scratch_top
+	pos := start + 1
+	for !refused(parser) {
+		seg_start := pos
+		seg_escaped := false
+		for pos < len(text) {
+			ch := text[pos]
+			if ch == '\\' {
+				seg_escaped = true
+				if pos + 1 >= len(text) {
+					parser.position = len(text)
+					scratch_push(parser, refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE))
+					break
+				}
+				pos += 2
+				continue
+			}
+			if ch == '"' || (ch == '$' && pos + 1 < len(text) && text[pos + 1] == '{') {
+				break
+			}
+			pos += 1
+		}
+		if refused(parser) {
+			break
+		}
+		if pos > seg_start {
+			if seg_escaped {
+				if _, bad_off, ok := decode_text_escapes(text[seg_start:pos], nil); !ok {
+					parser.position = seg_start + bad_off
+					scratch_push(parser, refuse(parser, .Escape_Not_Valid, seg_start + bad_off, seg_start + bad_off + 1, NO_NODE))
+					break
+				}
+			}
+			seg_flags := TEXT_FLAG_SEGMENT | (seg_escaped ? TEXT_FLAG_ESCAPED : 0)
+			seg := node_add_raw(parser, {kind = .Text, sub = seg_flags, span_off = u32(seg_start), a = u32(pos)})
+			scratch_push(parser, seg)
+			if refused(parser) {
+				break
+			}
+		}
+		if pos >= len(text) {
+			parser.position = len(text)
+			scratch_push(parser, refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE))
+			break
+		}
+		if text[pos] == '"' {
+			parser.position = pos + 1
+			break
+		}
+		// Parse `${expr}`.
+		parser.position = pos + 2
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		expr := pipeline_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		scratch_push(parser, expr)
+		if refused(parser) {
+			break
+		}
+		if !accept(parser, '}') {
+			scratch_push(parser, refuse(parser, .Interpolation_Close_Missing, parser.position, parser.position, NO_NODE))
+			break
+		}
+		pos = parser.position
+	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if n := node_at(parser.tree, interp); n != nil {
+		n.a = cstart
+		n.b = ccount
+	}
+	return interp
 }
 
 @(private)
@@ -1648,6 +2050,118 @@ literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	return literal
 }
 
+// pattern_record_read reads `{ a, b = 10, ... }` (optionally prefixed with
+// `as_name @` already consumed by the caller).
+@(private)
+pattern_record_read :: proc "contextless" (parser: ^Parser, start: int, has_as: bool, as_start, as_end: int) -> Node_Index {
+	text := parser.tree.text
+	pat := node_add_raw(parser, {
+		kind     = .Pattern_Record,
+		sub      = has_as ? PAT_FLAG_HAS_AS : 0,
+		span_off = u32(start),
+	})
+	if pat == NO_NODE {
+		return NO_NODE
+	}
+	mark := parser.scratch_top
+	if has_as {
+		as_node := node_add_raw(parser, {kind = .Parameter, span_off = u32(as_start), a = u32(as_end)})
+		scratch_push(parser, as_node)
+	}
+	hashed := false
+	has_rest := false
+	if !accept(parser, '}') {
+		for {
+			skip_spaces(parser)
+			fstart := parser.position
+			// Check for `...` open-rest marker.
+			if fstart + 2 < len(text) && text[fstart] == '.' && text[fstart + 1] == '.' && text[fstart + 2] == '.' {
+				parser.position = fstart + 3
+				has_rest = true
+				if accept(parser, ',') {
+					if parser.trailing_commas && accept(parser, '}') {
+						break
+					}
+					skip_spaces(parser)
+					if accept(parser, '}') {
+						break
+					}
+					scratch_push(parser, refuse(parser, .Pattern_Rest_Not_Last, parser.position, parser.position, NO_NODE))
+					break
+				}
+				if !accept(parser, '}') {
+					scratch_push(parser, refuse(parser, .Pattern_Close_Missing, parser.position, parser.position, NO_NODE))
+				}
+				break
+			}
+			tok := console_language.token_next(text, fstart, parser.multiline)
+			if tok.kind != .Name {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Missing, fstart, fstart, NO_NODE))
+				break
+			}
+			fname := read_name(parser)
+			if word_of_lex(fname) {
+				scratch_push(parser, refuse(parser, .Word_As_Name, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			dotted := false
+			for ch in fname {
+				if ch == '.' {
+					dotted = true
+					break
+				}
+			}
+			if dotted {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Missing, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			if scratch_child_named(parser, pat, mark, .Pattern_Field, fname, &hashed) != NO_NODE {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Twice, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			def_node := NO_NODE
+			if equal_accept(parser) {
+				saved_direct := parser.in_direct_pipe_arg
+				parser.in_direct_pipe_arg = false
+				def_node = pipeline_read(parser)
+				parser.in_direct_pipe_arg = saved_direct
+			}
+			fnode := node_add_raw(parser, {
+				kind     = .Pattern_Field,
+				span_off = u32(fstart),
+				a        = u32(def_node),
+				b        = u32(fstart + len(fname)),
+			})
+			if hashed && fnode != NO_NODE {
+				dup_insert(parser, pat, fname, fnode)
+			}
+			scratch_push(parser, fnode)
+			if refused(parser) {
+				break
+			}
+			if accept(parser, '}') {
+				break
+			}
+			if !accept(parser, ',') {
+				scratch_push(parser, refuse(parser, .Pattern_Close_Missing, parser.position, parser.position, NO_NODE))
+				break
+			}
+			if accept(parser, '}') {
+				break
+			}
+		}
+	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if pn := node_at(parser.tree, pat); pn != nil {
+		if has_rest {
+			pn.sub |= PAT_FLAG_REST
+		}
+		pn.a = cstart
+		pn.b = ccount
+	}
+	return pat
+}
+
 @(private)
 let_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	text := parser.tree.text
@@ -1661,40 +2175,101 @@ let_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	for {
 		skip_spaces(parser)
 		name_start := parser.position
-		if console_language.token_next(text, name_start, parser.multiline).kind != .Name {
-			scratch_push(parser, refuse(parser, .Let_Name_Missing, name_start, name_start, NO_NODE))
-			break
+		if peek(parser) == '{' {
+			// Record destructuring `let { a, b = 1, ... } = expr`.
+			parser.position += 1
+			pat := pattern_record_read(parser, name_start, false, 0, 0)
+			if refused(parser) {
+				scratch_push(parser, pat)
+				break
+			}
+			if !equal_accept(parser) {
+				scratch_push(parser, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
+				break
+			}
+			binding := node_add_raw(parser, {
+				kind     = .Let_Binding,
+				sub      = LET_BINDING_PATTERN,
+				span_off = u32(name_start),
+				a        = NO_NODE_U32,
+				b        = u32(pat),
+			})
+			if binding == NO_NODE {
+				break
+			}
+			val := pipeline_read(parser)
+			if bn := node_at(parser.tree, binding); bn != nil {
+				bn.a = u32(val)
+			}
+			scratch_push(parser, binding)
+		} else {
+			if console_language.token_next(text, name_start, parser.multiline).kind != .Name {
+				scratch_push(parser, refuse(parser, .Let_Name_Missing, name_start, name_start, NO_NODE))
+				break
+			}
+			name := read_name(parser)
+			if word_of_lex(name) {
+				scratch_push(parser, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
+				break
+			}
+			if accept(parser, '@') {
+				// As-pattern destructuring `let r @ { a, b } = expr`.
+				if !accept(parser, '{') {
+					scratch_push(parser, refuse(parser, .Pattern_At_Missing_Brace, parser.position, parser.position, NO_NODE))
+					break
+				}
+				pat := pattern_record_read(parser, name_start, true, name_start, name_start + len(name))
+				if refused(parser) {
+					scratch_push(parser, pat)
+					break
+				}
+				if !equal_accept(parser) {
+					scratch_push(parser, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
+					break
+				}
+				binding := node_add_raw(parser, {
+					kind     = .Let_Binding,
+					sub      = LET_BINDING_PATTERN,
+					span_off = u32(name_start),
+					a        = NO_NODE_U32,
+					b        = u32(pat),
+				})
+				if binding == NO_NODE {
+					break
+				}
+				val := pipeline_read(parser)
+				if bn := node_at(parser.tree, binding); bn != nil {
+					bn.a = u32(val)
+				}
+				scratch_push(parser, binding)
+			} else {
+				if scratch_child_named(parser, let_node, mark, .Let_Binding, name, &hashed) != NO_NODE {
+					scratch_push(parser, refuse(parser, .Let_Name_Twice, name_start, name_start + len(name), NO_NODE))
+					break
+				}
+				if !equal_accept(parser) {
+					scratch_push(parser, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
+					break
+				}
+				binding := node_add_raw(parser, {
+					kind     = .Let_Binding,
+					span_off = u32(name_start),
+					a        = NO_NODE_U32,
+					b        = u32(name_start + len(name)),
+				})
+				if binding == NO_NODE {
+					break
+				}
+				if hashed {
+					dup_insert(parser, let_node, name, binding)
+				}
+				val := pipeline_read(parser)
+				if bn := node_at(parser.tree, binding); bn != nil {
+					bn.a = u32(val)
+				}
+				scratch_push(parser, binding)
+			}
 		}
-		name := read_name(parser)
-		if word_of_lex(name) {
-			scratch_push(parser, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
-			break
-		}
-		if scratch_child_named(parser, let_node, mark, .Let_Binding, name, &hashed) != NO_NODE {
-			scratch_push(parser, refuse(parser, .Let_Name_Twice, name_start, name_start + len(name), NO_NODE))
-			break
-		}
-		if !equal_accept(parser) {
-			scratch_push(parser, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
-			break
-		}
-		binding := node_add_raw(parser, {
-			kind     = .Let_Binding,
-			span_off = u32(name_start),
-			a        = NO_NODE_U32,
-			b        = u32(name_start + len(name)),
-		})
-		if binding == NO_NODE {
-			break
-		}
-		if hashed {
-			dup_insert(parser, let_node, name, binding)
-		}
-		val := pipeline_read(parser)
-		if bn := node_at(parser.tree, binding); bn != nil {
-			bn.a = u32(val)
-		}
-		scratch_push(parser, binding)
 		if refused(parser) {
 			break
 		}
@@ -1766,40 +2341,64 @@ function_read :: proc "contextless" (parser: ^Parser, open, close, arrow_end: in
 				ok_head = false
 				break
 			}
-			token := console_language.token_next(text, name_start, parser.multiline)
-			if token.kind != .Name {
-				scratch_push(parser, refuse(parser, .Parameter_Name_Missing, name_start, name_start, NO_NODE))
-				ok_head = false
-				break
-			}
-			name := read_name(parser)
-			if word_of_lex(name) {
-				scratch_push(parser, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
-				ok_head = false
-				break
-			}
-			dotted := false
-			for character in name {
-				if character == '.' {
-					dotted = true
+			if peek(parser) == '{' {
+				parser.position += 1
+				pat := pattern_record_read(parser, name_start, false, 0, 0)
+				scratch_push(parser, pat)
+				if refused(parser) {
+					ok_head = false
 					break
 				}
-			}
-			if dotted {
-				scratch_push(parser, refuse(parser, .Parameter_Name_Missing, name_start, name_start + len(name), NO_NODE))
-				ok_head = false
-				break
-			}
-			if scratch_child_named(parser, function, mark, .Parameter, name, &hashed) != NO_NODE {
-				scratch_push(parser, refuse(parser, .Parameter_Twice, name_start, name_start + len(name), NO_NODE))
-				ok_head = false
-				break
-			}
-			param := node_add_raw(parser, {kind = .Parameter, span_off = u32(name_start), a = u32(name_start + len(name))})
-			scratch_push(parser, param)
-			if refused(parser) {
-				ok_head = false
-				break
+			} else {
+				token := console_language.token_next(text, name_start, parser.multiline)
+				if token.kind != .Name {
+					scratch_push(parser, refuse(parser, .Parameter_Name_Missing, name_start, name_start, NO_NODE))
+					ok_head = false
+					break
+				}
+				name := read_name(parser)
+				if word_of_lex(name) {
+					scratch_push(parser, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
+					ok_head = false
+					break
+				}
+				dotted := false
+				for character in name {
+					if character == '.' {
+						dotted = true
+						break
+					}
+				}
+				if dotted {
+					scratch_push(parser, refuse(parser, .Parameter_Name_Missing, name_start, name_start + len(name), NO_NODE))
+					ok_head = false
+					break
+				}
+				if accept(parser, '@') {
+					if !accept(parser, '{') {
+						scratch_push(parser, refuse(parser, .Pattern_At_Missing_Brace, parser.position, parser.position, NO_NODE))
+						ok_head = false
+						break
+					}
+					pat := pattern_record_read(parser, name_start, true, name_start, name_start + len(name))
+					scratch_push(parser, pat)
+					if refused(parser) {
+						ok_head = false
+						break
+					}
+				} else {
+					if scratch_child_named(parser, function, mark, .Parameter, name, &hashed) != NO_NODE {
+						scratch_push(parser, refuse(parser, .Parameter_Twice, name_start, name_start + len(name), NO_NODE))
+						ok_head = false
+						break
+					}
+					param := node_add_raw(parser, {kind = .Parameter, span_off = u32(name_start), a = u32(name_start + len(name))})
+					scratch_push(parser, param)
+					if refused(parser) {
+						ok_head = false
+						break
+					}
+				}
 			}
 			count += 1
 			if accept(parser, ')') {
@@ -1899,13 +2498,13 @@ names_bind :: proc "contextless" (parser: ^Parser, owner: Node_Index, binding_ki
 		}
 	}
 	switch node.kind {
-	case .Negate, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition:
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field:
 		names_bind(parser, owner, binding_kind, node_child(tree, index), hashed)
 	case .Binary, .Pipe:
 		left, right := node_binary_children(tree, index)
 		names_bind(parser, owner, binding_kind, left, hashed)
 		names_bind(parser, owner, binding_kind, right, hashed)
-	case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If:
+	case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record:
 		for child in node_children(tree, index) {
 			names_bind(parser, owner, binding_kind, child, hashed)
 		}

@@ -40,6 +40,8 @@ CONSOLE_FIELD_SYM_CAPACITY :: 512
 CONSOLE_SHAPE_CAPACITY :: 256
 CONSOLE_SHAPE_FIELD_CAPACITY :: 1024
 CONSOLE_SHAPE_IDX_SLOTS :: 2048
+CONSOLE_PAT_DESC_CAPACITY :: 64
+CONSOLE_PAT_FIELD_CAPACITY :: 256
 CONSOLE_INTERN_SYMS :: 1024
 CONSOLE_INTERN_GROUPS :: 74 // ceil(1024 / 14)
 CONSOLE_INTERN_BYTES :: 16 * 1024
@@ -65,6 +67,7 @@ Frame_Kind :: enum u8 {
 	Filter            = 2,
 	Console_Let_Force = 3,
 	Console_Rec_Force = 4,
+	Fold              = 5,
 }
 
 // One frame on the arena-backed VM frame stack.
@@ -113,6 +116,8 @@ Eval_Pools :: struct {
 	shape_fields:       []lex_parser.Sym_Id,
 	shape_idx_controls: []u8,
 	shape_idx_refs:     []u32,
+	pat_descs:          []Pattern_Desc,
+	pat_fields:         []Pattern_Field_Desc,
 	interner:           lex_parser.String_Interner,
 	compile_scratch:   Compile_Scratch,
 	// Runtime pools
@@ -161,6 +166,8 @@ Console_Eval_Buffers :: struct {
 	shape_fields:       [CONSOLE_SHAPE_FIELD_CAPACITY]lex_parser.Sym_Id,
 	shape_idx_controls: [CONSOLE_SHAPE_IDX_SLOTS]u8,
 	shape_idx_refs:     [CONSOLE_SHAPE_IDX_SLOTS]u32,
+	pat_descs:          [CONSOLE_PAT_DESC_CAPACITY]Pattern_Desc,
+	pat_fields:         [CONSOLE_PAT_FIELD_CAPACITY]Pattern_Field_Desc,
 	intern_controls:    [CONSOLE_INTERN_GROUPS * hash_table.GROUP_WIDTH]u8,
 	intern_refs:       [CONSOLE_INTERN_GROUPS * hash_table.GROUP_WIDTH]u32,
 	intern_spans:      [CONSOLE_INTERN_SYMS + 1]lex_parser.Sym_Span,
@@ -222,6 +229,8 @@ console_eval_pools :: proc "contextless" (buf: ^Console_Eval_Buffers, seed: u64 
 		shape_fields       = buf.shape_fields[:],
 		shape_idx_controls = buf.shape_idx_controls[:],
 		shape_idx_refs     = buf.shape_idx_refs[:],
+		pat_descs          = buf.pat_descs[:],
+		pat_fields         = buf.pat_fields[:],
 		interner           = interner,
 		compile_scratch   = {
 			locals     = buf.scratch_locals[:],
@@ -265,6 +274,12 @@ Evaluation :: struct {
 	stack_deepest:         uint,
 	refusal:               Refusal_Record,
 	profile:               ^Evaluation_Profile,
+	trace_log:             ^Trace_Log,
+	traced:                bool,
+	zip_shape_id:          u32,
+	has_zip_shape:         bool,
+	dep_data:              rawptr,
+	on_shape_dep:          proc "contextless" (data: rawptr, shape_hash: u64),
 	root_chunk_id:         u16,
 	root_forced:           bool,
 	root_value:            Value,
@@ -309,6 +324,10 @@ Evaluation :: struct {
 	shape_idx_controls:    []u8,
 	shape_idx_refs:        []u32,
 	shape_idx_used:        int,
+	pat_descs:             []Pattern_Desc,
+	pat_desc_count:        int,
+	pat_fields:            []Pattern_Field_Desc,
+	pat_field_count:       int,
 	interner:              lex_parser.String_Interner,
 	compile_scratch:       Compile_Scratch,
 	// Runtime pools
@@ -407,6 +426,8 @@ evaluation_start_with_pools :: proc "contextless" (
 		shape_fields       = pools.shape_fields,
 		shape_idx_controls = pools.shape_idx_controls,
 		shape_idx_refs     = pools.shape_idx_refs,
+		pat_descs          = pools.pat_descs,
+		pat_fields         = pools.pat_fields,
 		interner           = pools.interner,
 		compile_scratch   = pools.compile_scratch,
 		reg_stack         = pools.reg_stack,
@@ -439,13 +460,42 @@ refused :: #force_inline proc "contextless" (eval: ^Evaluation) -> bool {
 refuse :: proc "contextless" (eval: ^Evaluation, record: Refusal_Record) -> (Value, bool) {
 	if !refused(eval) {
 		r := record
-		if r.place.line == 0 && r.node != lex_parser.NO_NODE {
+		if r.node != lex_parser.NO_NODE {
+			tree: ^lex_parser.Syntax_Tree
 			if int(r.chunk_id) < eval.chunk_count && eval.chunks[r.chunk_id].tree != nil {
-				r.place = lex_parser.node_place(eval.chunks[r.chunk_id].tree, r.node)
-			} else if eval.tree != nil {
-				r.place = lex_parser.node_place(eval.tree, r.node)
+				tree = eval.chunks[r.chunk_id].tree
+			} else {
+				tree = eval.tree
+			}
+			if tree != nil {
+				if r.place.line == 0 {
+					r.place = lex_parser.node_place(tree, r.node)
+				}
+				ss, se := lex_parser.node_span(tree, r.node)
+				r.span_start = u32(ss)
+				r.span_end = u32(se)
 			}
 		}
+		// Capture force/call frame stack (most recent first, up to DIAGNOSTIC_FRAME_LIMIT).
+		fc := 0
+		for i := eval.frame_count - 1; i >= 0 && fc < DIAGNOSTIC_FRAME_LIMIT; i -= 1 {
+			fr := &eval.frames[i]
+			fnode := lex_parser.NO_NODE
+			if fr.kind == .Bytecode && int(fr.chunk_id) < eval.chunk_count {
+				if fr.ip > 0 && int(fr.ip - 1) < len(eval.code_nodes) {
+					fnode = eval.code_nodes[fr.ip - 1]
+				}
+			} else {
+				fnode = fr.cont_node
+			}
+			fplace: lex_parser.Place
+			if fnode != lex_parser.NO_NODE && int(fr.chunk_id) < eval.chunk_count && eval.chunks[fr.chunk_id].tree != nil {
+				fplace = lex_parser.node_place(eval.chunks[fr.chunk_id].tree, fnode)
+			}
+			r.frames[fc] = {chunk_id = fr.chunk_id, node = fnode, place = fplace}
+			fc += 1
+		}
+		r.frame_count = fc
 		eval.refusal = r
 	}
 	return {}, false
@@ -949,7 +999,7 @@ line_force_value :: proc "contextless" (eval: ^Evaluation) -> (value: Value, ok:
 	switch tree.refusal.refusal {
 	case .Text_Too_Long, .Nodes_Full, .Nesting_Too_Deep, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe:
 		return refuse(eval, {refusal = .Text, text_refusal = tree.refusal.refusal, place = tree.refusal.place, node = tree.root})
-	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing:
+	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Escape_Not_Valid, .Interpolation_Close_Missing, .Pattern_Field_Missing, .Pattern_Close_Missing, .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace:
 	}
 
 	cid, comp_ok := compile_tree(eval, tree)
@@ -1333,6 +1383,8 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				eval.reg_stack[reg_base + a] = value_int(ce.integer)
 			case .Text:
 				eval.reg_stack[reg_base + a] = value_text_source(frame.chunk_id, ce.offset, ce.length)
+			case .Arena_Text:
+				eval.reg_stack[reg_base + a] = value_text_arena(ce.offset, ce.length)
 			case .Sym:
 				eval.reg_stack[reg_base + a] = value_text_sym(lex_parser.Sym_Id(ce.offset))
 			case .Hash:
@@ -1428,6 +1480,23 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				return false
 			}
 			eval.reg_stack[reg_base + a] = value_int(opp)
+
+		case .Not:
+			v := eval.reg_stack[reg_base + int(inst_b(inst))]
+			if v.kind != .Boolean {
+				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, left_kind = v.kind})
+				return false
+			}
+			eval.reg_stack[reg_base + a] = value_bool(!value_boolean(v))
+
+		case .List_Concat:
+			lv := eval.reg_stack[reg_base + int(inst_b(inst))]
+			rv := eval.reg_stack[reg_base + int(inst_c(inst))]
+			res, lok := vm_list_concat(eval, lv, rv, frame.chunk_id, node_idx)
+			if !lok {
+				return false
+			}
+			eval.reg_stack[reg_base + a] = res
 
 		case .Add:
 			lv := eval.reg_stack[reg_base + int(inst_b(inst))]
@@ -1574,6 +1643,42 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				}
 			}
 
+		case .Jmp_If_False_Keep:
+			cond := eval.reg_stack[reg_base + a]
+			if cond.kind != .Boolean {
+				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, operator = .Logical_And, left_kind = cond.kind})
+				return false
+			}
+			if !value_boolean(cond) {
+				if has_extra {
+					frame.ip = extra
+				} else {
+					frame.ip = u32(i64(frame.ip) + i64(inst_sbx(inst)))
+				}
+			}
+
+		case .Jmp_If_True_Keep:
+			cond := eval.reg_stack[reg_base + a]
+			if cond.kind != .Boolean {
+				refuse(eval, {refusal = .Condition_Not_Boolean, chunk_id = frame.chunk_id, node = node_idx, operator = .Logical_Or, left_kind = cond.kind})
+				return false
+			}
+			if value_boolean(cond) {
+				if has_extra {
+					frame.ip = extra
+				} else {
+					frame.ip = u32(i64(frame.ip) + i64(inst_sbx(inst)))
+				}
+			}
+
+		case .Check_Bool:
+			val := eval.reg_stack[reg_base + a]
+			if val.kind != .Boolean {
+				op_kind := lex_parser.Operator(inst_b(inst))
+				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, operator = op_kind, left_kind = .Boolean, right_kind = val.kind})
+				return false
+			}
+
 		case .Closure:
 			p_rel := has_extra ? extra : u32(inst_bx(inst))
 			eoff, elen, eok := capture_upvals(eval, frame, frame.chunk_id, p_rel, node_idx)
@@ -1672,9 +1777,9 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 
 		case .Call_Builtin:
 			bid := Builtin_Id(inst_b(inst))
-			list_val := eval.reg_stack[reg_base + a + 1]
-			fn_val := eval.reg_stack[reg_base + a + 2]
-			if !vm_start_map_filter(eval, frame, bid, list_val, fn_val, u8(a), node_idx) {
+			argc := int(inst_c(inst))
+			args := eval.reg_stack[reg_base + a + 1 : reg_base + a + 1 + argc]
+			if !vm_exec_builtin(eval, frame, bid, args, u8(a), node_idx) {
 				return false
 			}
 
@@ -1751,7 +1856,14 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				refuse(eval, {refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = node_idx, field = fname, left_kind = .Record, file = hv.file, detail = hv.detail})
 				return false
 			}
-			refuse(eval, {refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = node_idx, field = lex_parser.sym_text(&eval.interner, sym), left_kind = base.kind})
+			fname := lex_parser.sym_text(&eval.interner, sym)
+			rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = node_idx, field = fname, left_kind = base.kind}
+			if is_lazy_record(base.kind) {
+				if sid, sok := lazy_record_base_shape(eval, base); sok {
+					suggest_shape_fields(eval, sid, fname, &rec)
+				}
+			}
+			refuse(eval, rec)
 			return false
 
 		case .With:
@@ -1763,7 +1875,14 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			}
 			eval.reg_stack[reg_base + a] = res
 
-		case .List_Begin:
+		case .Destructure:
+			pat_rel := has_extra ? extra : u32(inst_bx(inst))
+			src_val := eval.reg_stack[reg_base + a]
+			if !vm_destructure(eval, frame, src_val, pat_rel, node_idx) {
+				return false
+			}
+
+		case .List_Begin, .Str_Begin:
 			if eval.list_mark_count >= len(eval.list_marks) {
 				refuse(eval, {refusal = .Lists_Full, chunk_id = frame.chunk_id, node = node_idx})
 				return false
@@ -1797,6 +1916,47 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			copy(eval.list_items[first:], eval.list_scratch[mark:mark + u32(cnt)])
 			eval.list_item_count += cnt
 			eval.reg_stack[reg_base + a] = {kind = .List, data = u64(first), meta = u32(cnt)}
+
+		case .Str_Push:
+			if !vm_str_interp_push(eval, eval.reg_stack[reg_base + a], frame.chunk_id, node_idx) {
+				return false
+			}
+
+		case .Str_End:
+			res, sok := vm_str_interp_end(eval, frame.chunk_id, node_idx)
+			if !sok {
+				return false
+			}
+			eval.reg_stack[reg_base + a] = res
+
+		case .Assert_Fail:
+			mv := eval.reg_stack[reg_base + a]
+			if mv.kind != .Text {
+				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, command = ASSERT_NAME, left_kind = mv.kind})
+				return false
+			}
+			refuse(eval, {refusal = .Assertion_Failed, chunk_id = frame.chunk_id, node = node_idx, command = value_text(eval, mv)})
+			return false
+
+		case .Trace:
+			mv := eval.reg_stack[reg_base + a]
+			if mv.kind != .Text {
+				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, command = TRACE_NAME, left_kind = mv.kind})
+				return false
+			}
+			eval.traced = true
+			if eval.trace_log != nil {
+				if eval.trace_log.count < TRACE_LOG_CAPACITY {
+					place: lex_parser.Place
+					if int(frame.chunk_id) < eval.chunk_count && eval.chunks[frame.chunk_id].tree != nil && node_idx != lex_parser.NO_NODE {
+						place = lex_parser.node_place(eval.chunks[frame.chunk_id].tree, node_idx)
+					}
+					eval.trace_log.entries[eval.trace_log.count] = {place = place, message = value_text(eval, mv)}
+					eval.trace_log.count += 1
+				} else {
+					eval.trace_log.dropped += 1
+				}
+			}
 
 		case .Load_Global:
 			ci := has_extra ? extra : u32(inst_bx(inst))
@@ -2000,6 +2160,22 @@ vm_step_continuation :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame,
 		}
 		args := [1]Value{arg}
 		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, args[:], 0, NO_THUNK, frame.cont_node)
+
+	case .Fold:
+		acc := eval.reg_stack[frame.reg_base]
+		if frame.cont_index >= frame.cont_count {
+			vm_return_to_caller(eval, target_depth, acc)
+			return true
+		}
+		item := eval.list_items[frame.cont_list_off + frame.cont_index]
+		frame.cont_index += 1
+		cl := eval.closures[int(frame.cont_fn.data)]
+		eval.call_count += 1
+		if eval.profile != nil {
+			eval.profile.calls_total += 1
+		}
+		args := [2]Value{acc, item}
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, args[:], 0, NO_THUNK, frame.cont_node)
 	}
 	return true
 }
@@ -2193,7 +2369,10 @@ vm_with :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: 
 		rfields := eval.shape_fields[int(rshape.fields_off):int(rshape.fields_off) + int(rshape.field_count)]
 		for sym in rfields {
 			if _, exists := shape_lookup_sym(eval, left_shape_id, sym); !exists {
-				return refuse(eval, {refusal = .Field_Unknown, chunk_id = chunk_id, node = node_idx, field = lex_parser.sym_text(&eval.interner, sym), left_kind = left.kind})
+				fname := lex_parser.sym_text(&eval.interner, sym)
+				rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = chunk_id, node = node_idx, field = fname, left_kind = left.kind}
+				suggest_shape_fields(eval, left_shape_id, fname, &rec)
+				return refuse(eval, rec)
 			}
 		}
 		patch_rec := lazy_record_compact(eval, right, chunk_id, node_idx) or_return
@@ -2258,10 +2437,10 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 	Callee_Kind :: enum u8 {
 		Host     = 0,
 		Function = 1,
-		Map      = 2,
-		Filter   = 3,
+		Builtin  = 2,
 	}
 	callee := Callee_Kind.Host
+	builtin_id := Builtin_Id.None
 	fn_val: Value
 	sig: Command_Signature
 
@@ -2280,13 +2459,41 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 			sig.names[i] = lex_parser.sym_text(&eval.interner, cproto.param_syms[i])
 		}
 	} else if name == MAP_NAME {
-		callee = .Map
+		callee, builtin_id = .Builtin, .Map
 		sig = {parameter_count = 2, untyped = true}
 		sig.names[0], sig.names[1] = "list", "function"
 	} else if name == FILTER_NAME {
-		callee = .Filter
+		callee, builtin_id = .Builtin, .Filter
 		sig = {parameter_count = 2, untyped = true}
 		sig.names[0], sig.names[1] = "list", "function"
+	} else if name == FOLD_NAME {
+		callee, builtin_id = .Builtin, .Fold
+		sig = {parameter_count = 3, untyped = true}
+		sig.names[0], sig.names[1], sig.names[2] = "list", "init", "function"
+	} else if name == ZIP_NAME {
+		callee, builtin_id = .Builtin, .Zip
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "left", "right"
+	} else if name == FIELDS_NAME {
+		callee, builtin_id = .Builtin, .Fields
+		sig = {parameter_count = 1, untyped = true}
+		sig.names[0] = "record"
+	} else if name == VALUES_NAME {
+		callee, builtin_id = .Builtin, .Values
+		sig = {parameter_count = 1, untyped = true}
+		sig.names[0] = "record"
+	} else if name == HAS_NAME {
+		callee, builtin_id = .Builtin, .Has
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "record", "name"
+	} else if name == EXTEND_NAME {
+		callee, builtin_id = .Builtin, .Extend
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "left", "right"
+	} else if name == MERGE_DEEP_NAME {
+		callee, builtin_id = .Builtin, .Merge_Deep
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "left", "right"
 	} else {
 		if eval.host.command_find == nil {
 			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
@@ -2510,10 +2717,8 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 
 	// Step 5: Invoke callee.
 	switch callee {
-	case .Map:
-		return vm_start_map_filter(eval, frame, .Map, vm_args[0], vm_args[1], dst_reg, site.node_idx)
-	case .Filter:
-		return vm_start_map_filter(eval, frame, .Filter, vm_args[0], vm_args[1], dst_reg, site.node_idx)
+	case .Builtin:
+		return vm_exec_builtin(eval, frame, builtin_id, vm_args[:param_count], dst_reg, site.node_idx)
 	case .Function:
 		cl := eval.closures[int(fn_val.data)]
 		eval.call_count += 1

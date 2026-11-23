@@ -19,7 +19,7 @@ One grammar, one parser (`src/library/modus/lex_parser`), and one lazy evaluator
 | Where it runs | The console process (`src/modules/system/console`) | The sandboxed evaluation process (`src/modules/system/declaration_eval`) |
 | Evaluation strategy | Forces each line whole, left to right, including every `let` binding | Lazy thunk graph: forces only the requested field path and its dependencies |
 | Effects and calls | Allowed: built-in commands, loaded exports, isolated calls, service calls, record streams | Refused at the border with `Effect_Refused` before arguments run |
-| Input format | One line of up to 4096 bytes; supports top-level `name = expr` variable assignment | Multi-line `.lex` file up to 64 KiB; supports trailing commas; refuses top-level assignment |
+| Input format | One line of up to 4096 bytes; supports top-level `name = expr` variable assignment | Multi-line `.lex` file up to 16 MiB; supports trailing commas; refuses top-level assignment |
 | Authority | Acts for the principal of the console session | Zero authority: read-only input bundle, no writable store, no network, no root ring |
 | Cross-file loading | Not performed directly; declaration expressions return a typed declaration reference | `import("path.lex")` and `declaration(blake3:...)` read from the caller-supplied read-only bundle |
 
@@ -31,19 +31,21 @@ One grammar, one parser (`src/library/modus/lex_parser`), and one lazy evaluator
 
 ### Complete grammar
 
-The parser reads the nested form of a text after `pipe_nested_form` (`src/library/modus/console_language`) rewrites each pipe operator `|>` into nested calls.
+The parser reads `|>` and `_` directly into the compact 16-byte syntax tree without text rewriting.
 
 ```
 line          = name "=" pipeline | pipeline
-pipeline      = expression { "|>" stage }
+pipeline      = logical_or { "|>" stage }
 stage         = name | name "(" [ arguments ] ")"
-expression    = comparison { "with" comparison }
-comparison    = sum [ ("=" | "!=" | "<" | "<=" | ">" | ">=") sum ]
-sum           = term { ("+" | "-") term }
+logical_or    = logical_and { "||" logical_and }
+logical_and   = comparison { "&&" comparison }
+comparison    = with_expr [ ("=" | "!=" | "<" | "<=" | ">" | ">=") with_expr ]
+with_expr     = sum { "with" sum }
+sum           = term { ("+" | "-" | "++") term }
 term          = factor { ("*" | "/" | "%") factor }
-factor        = "-" factor
-              | "if" expression "then" expression "else" expression
-              | "let" binding { "," binding } "in" expression
+factor        = ("-" | "!") factor
+              | "if" pipeline "then" pipeline "else" pipeline
+              | "let" binding { "," binding } "in" pipeline
               | postfix
 postfix       = primary { "." field_name }
 primary       = integer
@@ -54,19 +56,22 @@ primary       = integer
               | name "(" [ arguments ] ")"
               | name record_lit
               | name
-              | "(" [ name { "," name } ] ")" "=>" expression
-              | "(" expression ")"
+              | "(" [ param { "," param } ] ")" "=>" pipeline
+              | "(" pipeline ")"
               | record_lit
-              | "[" [ expression { "," expression } [ "," ] ] "]"
+              | "[" [ pipeline { "," pipeline } [ "," ] ] "]"
+param         = name | record_pat
+binding       = (name | record_pat) "=" pipeline
+record_pat    = [ name "@" ] "{" [ pat_field { "," pat_field } [ "," ] ] [ "..." [ "," ] ] "}"
+pat_field     = name [ "=" pipeline ]
 record_lit    = "{" [ field_init { "," field_init } [ "," ] ] "}"
-field_init    = name "=" expression
-binding       = name "=" expression
+field_init    = name "=" pipeline
 arguments     = argument { "," argument }
-argument      = [ name "=" ] expression
+argument      = [ name "=" ] (pipeline | "_")
               | condition
               | fact_name
               | field_names
-condition     = name ("=" | "!=" | "<" | "<=" | ">" | ">=") expression
+condition     = name ("=" | "!=" | "<" | "<=" | ">" | ">=") pipeline
 fact_name     = name "." name
 field_names   = name { "," name }
 hash          = "blake3:" 64 * lower_hex_digit
@@ -89,7 +94,7 @@ Every value of Lex carries one explicit kind (`lex_evaluator.Kind`).
 |---|---|---|
 | `Integer` | Decimal digits: `0`, `42`, `-7` | Signed 64-bit integer (`-9223372036854775808` to `9223372036854775807`). Overflow on `+`, `-`, `*`, or `/` is refused; no operation wraps. Minimum literal: `-9223372036854775807 - 1`. |
 | `Boolean` | `true`, `false`, or comparison result | Used by `if ... then ... else ...` and `filter`. Integers never coerce to booleans. |
-| `Text` | `"hello"` | Valid UTF-8 bytes between double quotes. No escape sequences exist, so a text literal holds no quote. |
+| `Text` | `"hello\n${name}"` | Valid UTF-8 bytes between double quotes. Supports `\\`, `\"`, `\n`, `\r`, `\t`, `\$`, `\u{XXXXXX}` (rejecting surrogates and values above `0x10FFFF`), and `${expr}` interpolation (formatting `Text`, `Integer`, `Boolean`, `Hash`, and `Member`). |
 | `Hash` | `blake3:<64 lowercase hex>` | Exact 32-byte BLAKE3 digest. Uppercase hex, wrong length, or invalid hex is refused as `Hash_Not_Valid`. |
 | `Enum` / `Member` | `.french`, `.Verify`, or getter call | A member literal `.name` has no enum until its receiving parameter types it. Numbers are refused where an enum is required. |
 | `Record` / `Record_Literal` | `{ x = 0, width = 10 }` | Untyped until received by a typed parameter or `with`. Unknown fields, missing fields, and wrong field kinds are refused. |
@@ -120,20 +125,24 @@ The console draws unit-annotated record fields with their unit (`memory  256 MiB
 - **Arithmetic:** `+`, `-`, `*`, `/`, `%` operate on `Integer` values with standard precedence. Unary `-` negates an `Integer`. Division or remainder by `0` fails with `Division_By_Zero`. Dividing `-9223372036854775808` by `-1` fails with `Overflow`; its remainder `%` is `0`.
 - **Addition on non-integers:** `+` joins two `Text` values (`"a" + "b"` gives `"ab"`). In mode `console`, `+` concatenates two `Table` values that share one equal record description (used to join wiring lists).
 - **Comparisons:** `=`, `!=`, `<`, `<=`, `>`, `>=` return a `Boolean`. Equality (`=` and `!=`) compares `Integer`, `Boolean`, `Text`, `Hash`, and `Member` values of matching kinds. Ordering (`<`, `<=`, `>`, `>=`) compares `Integer` and `Text` (lexicographic byte order).
+- **Boolean logic:** `&&`, `||`, and `!` operate strictly on `Boolean` values (non-booleans are refused). `&&` and `||` short-circuit: the right operand is never evaluated when the left determines the result.
+- **List concatenation:** `++` concatenates two `List` values (`[1, 2] ++ [3, 4]` gives `[1, 2, 3, 4]`) and refuses non-list operands.
 - **Conditionals:** `if condition then first else second` forces `condition`, refuses any non-`Boolean` result (`Condition_Not_Boolean`), and forces only the chosen branch.
-- **Bindings (`let ... in ...`):**
+- **Bindings and record destructuring (`let ... in ...`, function parameters):**
   ```
   let
     width = 6,
-    height = width + 1,
-    area_fn = (w, h) => w * h
+    { host, port = 8080, ... } = config,
+    r @ { a, b } = pair,
+    area_fn = ({ w, h = w }) => w * h
   in
-    area_fn(width, height)
+    area_fn({ w = width })
   ```
-  Bindings can reference earlier or later bindings in the same `let`. An inner `let` or function parameter hides an outer name. In mode `console`, every binding forces once from left to right before the body. In mode `declaration`, each binding stays a lazy thunk until read.
-- **Record composition (`with`):** `base with override` produces a record with every field of `override` replacing the same-named field of `base`.
-  - In mode `console`, `base` must be a typed `Record`, and `override` must be a record literal of valid fields of `base` or a `Record` of equal description.
-  - In mode `declaration`, `a with b` stays a lazy `Record_With` node: selecting `x` forces `b.x` if `b` defines `x`, and otherwise forces `a.x`.
+  Bindings can reference earlier or later bindings in the same `let`. Record destructuring is strict by default (extra fields are refused unless `...` appears), forces only referenced fields on lazy records, and evaluates default expressions only when the field is absent.
+- **Record composition (`with`, `extend`, `merge_deep`):**
+  - `base with override` is strictly override-only in both modes: every field of `override` must already exist in `base`'s shape (checked eagerly without forcing field values), catching typos immediately.
+  - `extend(a, b)` performs shallow lazy field addition and override without forcing field values.
+  - `merge_deep(a, b)` performs recursive lazy merging of nested records (depth- and step-bounded).
 - **Call on a record literal:** `name { ... }` is exact syntax sugar for `name({ ... })`. Both `plan { ... }` and `project { ... }` use this form.
 - **Named arguments:** `grow(r, by = 2)` passes arguments by parameter name. Once a named argument appears, every remaining argument in that call must be named. Optional enum parameters can be left out (`settings.set(font = .spleen)`).
 
@@ -151,33 +160,41 @@ a |> f(b, _)    // rewrites to: f(b, a)
 a |> f(by = _)  // rewrites to: f(by = a)
 ```
 
-**Rewriting rules.** Before parsing, `pipe_nested_form` rewrites every `|>` into ordinary nested calls:
-
-```
-compile(src, t) |> bytes(t, 0, _) |> assemble(f)
-// becomes:
-assemble(bytes(t, 0, compile(src, t)), f)
-```
-
-Because `|>` is pure syntax sugar, piped and nested forms share one evaluation order and one set of error rules. In `g() |> f(h(), _)`, argument 1 (`h()`) forces before argument 2 (`g()`).
+**Native parsing.** The parser parses `|>` and `_` directly into `Pipe` and `Placeholder` AST nodes with zero source rewriting and no stage limit, preserving exact original byte spans for diagnostics. In `g() |> f(h(), _)`, argument 1 (`h()`) forces before argument 2 (`g()`).
 
 **Refusals before any call runs:**
-- `|` alone is not an operator; write `|>`.
+- `|` alone is not an operator; write `|>` for pipes or `||` for logical OR.
 - Missing left operand (`|> f`), missing right stage (`a |>`), or non-call right stage (`a |> 12`).
 - `_` used as part of a larger expression (`a |> f(_ + 1)`), repeated twice in one call (`a |> f(_, _)`), placed inside a nested call (`a |> f(g(_))`), or used without a preceding `|>`.
 
-### List transforms: `map` and `filter`
+### Built-in pure standard functions
 
-Both `map` and `filter` are built into the evaluator (`lex_evaluator`), not host commands, so they work identically in mode `console` and mode `declaration`:
+Eleven pure functions are built into the evaluator (`lex_evaluator`), collision-free with console commands, so they work identically in mode `console` and mode `declaration`:
 
 ```
-map([1, 2, 3], (x) => x * 2)                  // [2, 4, 6]
-filter([1, 2, 3, 4], (x) => x % 2 = 0)        // [2, 4]
-[1, 2, 3, 4] |> filter((x) => x > 1) |> map((x) => x * 10)  // [20, 30, 40]
+map([1, 2, 3], (x) => x * 2)                                // [2, 4, 6]
+filter([1, 2, 3, 4], (x) => x % 2 = 0)                      // [2, 4]
+[1, 2, 3, 4] |> fold(0, (acc, x) => acc + x)                // 10
+zip([10, 20], [1, 2]) |> map(({ first, second }) => first + second) // [11, 22]
+fields({ b = 2, a = 1 })                                    // ["a", "b"] (non-forcing)
+has({ a = 1 }, "a")                                         // true (non-forcing)
+extend({ a = 1 }, { b = 2 })                                // { a = 1, b = 2 } (lazy)
+merge_deep({ net = { port = 80 } }, { net = { host = "h" } })
+assert(port > 0, "port must be positive", port)
+trace("resolved port", port)
 ```
 
-- `map(list, fn)` requires a `List` as argument 1 (`Not_A_List`) and a one-parameter `Function` as argument 2 (`Not_A_Function` / `Function_Arguments`). It applies `fn` to each item in order and returns a new `List`.
-- `filter(list, predicate)` requires a `List` and a one-parameter `Function` that returns a `Boolean` (`Condition_Not_Boolean`). It keeps every item for which `predicate(item)` is `true`.
+- `map(list, fn)` applies a 1-parameter function to each item in order.
+- `filter(list, predicate)` keeps items where the 1-parameter `Boolean` predicate returns `true`.
+- `fold(list, init, fn)` runs an iterative left fold `fn(acc, item)` in O(1) stack space.
+- `zip(left, right)` pairs elements as `{ first = left[i], second = right[i] }` up to the shorter length.
+- `fields(rec)` returns the record's field names in canonical ascending UTF-8 order without forcing field values.
+- `values(rec)` forces and returns the record's field values in canonical ascending UTF-8 key order.
+- `has(rec, name)` checks whether `name` exists in `rec`'s shape without forcing any field.
+- `extend(a, b)` lazily adds and overrides fields from `b` onto `a` without forcing values.
+- `merge_deep(a, b)` recursively merges nested records lazily within `MERGE_DEEP_DEPTH_LIMIT` (64 levels) and step bounds.
+- `assert(cond, msg, value)` checks `Boolean` `cond`; on `false` forces `Text` `msg` and refuses with `Assertion_Failed`; on `true` skips `msg` and evaluates `value` in tail position.
+- `trace(msg, value)` appends `Text` `msg` to a caller-supplied bounded `Trace_Log` (zero ambient I/O, zero effect on canonical output) and evaluates `value` in tail position.
 
 ### Table transforms: `where`, `sort`, and friends
 
@@ -305,32 +322,20 @@ An output ring compartment holds records up to 256 bytes. A record output whose 
 
 ### Eager console evaluation (mode `console`)
 
-In mode `console`, every line rewrites pipes first, parses into a fixed syntax tree, and forces the root and all `let` bindings from left to right. Effects execute in strict data-flow order.
+In mode `console`, every line parses directly (including native `|>` and `_`) into a compact 16-byte SoA AST, compiles to flat 32-bit register bytecode, and runs on the shared VM forcing the root and all `let` bindings from left to right. Effects execute in strict data-flow order.
 
 ```
   Console line:  "let x = f(1) in g(2) |> h(x, _)"
          |
          v
-  [1] pipe_nested_form (console_language)
-         |   rewrites "|>" and "_" before parsing
-         v
-      "let x = f(1) in h(x, g(2))"
+  [1] lex_parser.parse_console (16-byte SoA Ast_Node, native |> and _)
          |
          v
-  [2] lex_parser.parse (fixed 201-node Syntax_Tree)
+  [2] lex_evaluator compiler (32-bit register bytecode + sorted Record_Shapes)
          |
          v
-               Let
-              /   \
-     Let_Binding   Call("h")
-       x = f(1)     /     \
-                 Name(x)  Call("g")
-                            |
-                         Integer(2)
-         |
-         v
-  [3] lex_evaluator (Mode = .Console)
-         |-- force binding x  ---> calls host f(1)   [effect 1, memoized in thunk]
+  [3] lex_evaluator VM (Mode = .Console, flat arena-backed frames, O(1) TCO)
+         |-- force binding x  ---> calls host f(1)   [effect 1, memoized in 24B Thunk]
          |-- force Call("h"):
          |     |-- arg 1: Name(x) ---> reads memoized thunk (0 extra calls)
          |     |-- arg 2: Call("g") -> calls host g(2) [effect 2]
@@ -409,9 +414,9 @@ error: Rectangle has no field widht; its fields are x, y, width, height
 | `Parse_Error` (`Text_Without_End_Quote`, `Unexpected`, `Hash_Not_Valid`, `Word_As_Name`, `If_Then_Missing`, `Let_In_Missing`) | `let with = 1 in with` or `blake3:ABCD` | Invalid syntax, reserved word used as a name, or malformed 64-hex lowercase BLAKE3 hash | Rename bindings away from reserved words; write `blake3:` with exactly 64 lowercase hex digits; close all quotes, braces, and branches |
 | `Effect_Refused` | `plans.apply(p)` or `collector.verify("server.log")` inside `project.lex` | A command with an effect ran in mode `declaration` | Move the effect command to the console; keep `.lex` declarations pure values |
 | `Cycle_Detected` (`Cycle`) | `let a = b, b = a in a` or `a.lex` imports `b.lex` imports `a.lex` | A thunk or imported file forced itself while still computing | Break the circular dependency so each binding or import forms a directed acyclic graph |
-| `Step_Bound_Reached` (`Budget_Exceeded`) | `let f = (n) => f(n + 1) in f(0)` | Evaluation exceeded `EVALUATION_BUDGET_STEPS` (1 048 576 steps) | Add a base case with `if ... then ... else ...` so recursion terminates |
-| `Depth_Bound_Reached` (`Depth_Exceeded`) | 300 nested calls or `with` layers | Force recursion exceeded `EVALUATION_DEPTH_LIMIT` (256) | Flatten nested records or split deep expressions |
-| `Stack_Bound_Reached` (`Stack_Exceeded`) | Deep unbounded recursion | Evaluator thread stack exceeded `EVALUATION_STACK_BYTES` (512 KiB) | Reduce recursion depth or express the transform with `map` / `filter` |
+| `Step_Bound_Reached` (`Budget_Exceeded`) | `let f = (n) => f(n + 1) in f(0)` | Evaluation exceeded `EVALUATION_BUDGET_STEPS` (33 554 432 steps; charged across VM ops, thunk forces, bulk ops, `=`, and canonical serialization) | Add a base case with `if ... then ... else ...` so recursion terminates |
+| `Depth_Bound_Reached` (`Depth_Exceeded`) | 5000 nested non-tail calls or >64 nested `merge_deep` layers | Arena-backed VM frame depth exceeded `EVALUATION_DEPTH_LIMIT` (4096) or `MERGE_DEEP_DEPTH_LIMIT` (64) | Convert recursion to tail calls (O(1) stack) or flatten nested merges |
+| `Assertion_Failed` | `assert(port > 0, "port must be positive", port)` | `assert` condition evaluated to `false` | Fix the value that violated the assertion; the refusal detail holds the message |
 | `Unknown_Name` / `Unknown_Command` | `unknwon_var` or `foo(1)` | Identifier is not bound in `let`, parameters, variables, or command table | Load or connect the module (`load("...")`, `connect("...")`), or fix the spelling |
 | `Field_Unknown` / `Literal_Field_Unknown` | `{ widht = 3 }` or `r.missing` | Record does not declare that field | Check the listed field names in the error sentence |
 | `Literal_Field_Missing` | `area({ x = 0, y = 0, width = 3 })` | Required record field omitted; fields have no implicit zero default | Supply every field of the record, or modify an existing record with `r with { width = 3 }` |
