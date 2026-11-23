@@ -96,6 +96,8 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 		return root_ring.refuse(answer, .Callee_Busy, u32(root_ring.Root_Command.Plan_Roles), .Refused, .Records, 0, 0, 0, i64(rd.Plan_Roles_Refusal.Grants_Busy))
 	}
 	plan_roles_grants_send()
+	// The script font set of the plan holds with its roles.
+	script_fonts_planned(plan_roles_copy.script_fonts)
 	system.log_fact(.Info, Plan_Roles_Replaced{generation = role_override_names.generation, serial = role_override_names.serial, overrides = plan_roles_copy.override_count, rollback = step == .Rollback ? 1 : 0})
 	answer^ = {0 = role_override_names.serial, 1 = role_override_names.generation}
 	return .Succeeded

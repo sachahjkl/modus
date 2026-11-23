@@ -37,7 +37,7 @@ import op "modus:contract/operation"
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
 SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
-SLOT_COUNT :: 18 // The slots of the band: the values 0 to 17 of Fixed_Range, the slots 3, 4, 5, 9, 10 and 13 with no member.
+SLOT_COUNT :: 19 // The slots of the band: the values 0 to 18 of Fixed_Range, the slots 3, 4, 5, 9, 10 and 13 with no member.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a process places by its own choice.
 OWN_CHOICE_START :: BAND_END
@@ -123,6 +123,10 @@ Fixed_Range :: enum u8 {
 	Edit_Target_Page = 17, // The target store name and object path, read-only, in an editor started with edit(store, name) (modus:contract/root_ring).
 	// One page, read-only, that the root service writes before the editor
 	// starts when a principal opens an object of a store with edit(store, name).
+	Script_Fonts = 18, // The script font set, read-only (modus:contract/font_outlines; src/md/features/script_fonts.md).
+	// The fonts past the boot image, one data object that the plan of the
+	// principal names by its hash: the root service checks it and maps it
+	// beside the font outlines.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -179,6 +183,7 @@ FONT_OUTLINES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Font_Outlines)
 FRESH_BYTES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Fresh_Bytes_Page)
 START_POLICY_PAGES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Start_Policy_Pages)
 EDIT_TARGET_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Edit_Target_Page)
+SCRIPT_FONTS_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Script_Fonts)
 
 // The addresses of one range.
 Address_Range :: struct {

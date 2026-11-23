@@ -605,7 +605,8 @@ proof_outlines_open :: proc(t: ^testing.T) {
 	bytes := ([^]u8)(raw_data(proof_outlines_words))[:size]
 	_, written := font_outlines.resource_write(fonts[:], bytes)
 	testing.expect(t, written)
-	outlines, problem := font_outlines.validate(bytes)
+	room := new(font_outlines.Record_Room, context.temp_allocator)
+	outlines, problem := font_outlines.validate(bytes, room[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	text_rendering.memory_give(new(text_rendering.Glyph_Memory, runtime.heap_allocator()))
 	_ = text_rendering.open(&outlines)

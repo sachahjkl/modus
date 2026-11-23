@@ -49,16 +49,17 @@ import "modus:system"
 import "modus:text_rendering"
 
 WIDTH :: 800
-HEIGHT :: 720
+HEIGHT :: 760
 
 // The glyph memory of its two copies of the text rendering: its own, which
 // draws the lines of B612 and the Greek letters by hand, and the one of
 // the drawing module, which draws its labels. Each reserves its memory at
-// its first glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES). And the
-// picture of its window, which it draws by hand at its logical size: 800 x
-// 720 pixels of 4 bytes, 563 pages (interface.hand_picture_pages). 708 +
-// 563 = 1271.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1271, window_width = WIDTH, window_height = HEIGHT}
+// its first glyph. 2 x 354 pages (display.TEXT_MEMORY_PAGES). The picture
+// of its window, which it draws by hand at its logical size: 800 x 760
+// pixels of 4 bytes, 594 pages (interface.hand_picture_pages). And the page
+// tables of the script font set, 64 MiB at most: 32 pages. 708 + 594 + 32 =
+// 1334.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1334, window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels (interface.Hand_Picture).
 hand_picture: interface.Hand_Picture
@@ -100,11 +101,17 @@ greek_capitals, greek_small: [LINE_LIMIT]u8
 GREEK: [3]string
 // The box-drawing characters of GREEK_SENTENCE: each one from Paper Mono.
 BOX_CHARACTERS := [?]rune{0x250C, 0x2500, 0x252C, 0x2510, 0x2592, 0x2593, 0x2588}
-// Characters that no font of the chain of the interface has: the first
-// letter past Latin Extended-A, past the basic Cyrillic letters and of the
-// Cyrillic Supplement. Noto Sans, the last font, has the capital pi and
-// the small rho that B612 lacks, and the basic Cyrillic letters.
-MISSING_CHARACTERS := [?]rune{0x0180, 0x0460, 0x0500}
+// Characters that no font of the system has, the script font set
+// included: the first letter of Armenian and of Sinhala. Noto Sans, the
+// last font of the boot image, has the capital pi and the small rho that
+// B612 lacks, Latin Extended-B and the whole Cyrillic block.
+MISSING_CHARACTERS := [?]rune{0x0531, 0x0D9A}
+
+// A line of the scripts of the script font set (src/md/features/script_fonts.md):
+// Hebrew, Arabic, which joins, Thai with SARA AM, Devanagari with a
+// conjunct and a reph, ideographs, an emoji and a geometric shape. With the set mapped, each glyph of it has a font; with
+// no set, each character of those scripts is the replacement glyph.
+SCRIPT_LINE :: "שלום  مرحبا  น้ำ  नमस्ते  धर्म  中文  😀 ■"
 
 fallback_told: bool // The lines of the characters of the fallback chain are on the log.
 
@@ -220,6 +227,66 @@ fallback_lines_tell :: proc "contextless" () {
 		}
 	}
 	system.log_fact(.Info, Replacement_Glyph_Drawn{characters = u64(len(MISSING_CHARACTERS))})
+	script_line_tell(face)
+}
+
+// script_line_tell writes what the line of the script font set drew: with
+// the set, each placed glyph has a font and each base glyph has ink; with
+// no set, one line says that those scripts draw the replacement glyph.
+script_line_tell :: proc "contextless" (face: text_rendering.Face) {
+	for font in text_rendering.SCRIPT_FONTS {
+		if !text_rendering.font_at(&text_rendering.state.font_set, font).opened {
+			system.log_fact(.Info, Script_Fonts_Not_Mapped{})
+			return
+		}
+		// This module has the fast part only: the library module holds
+		// each font of the set (src/md/features/text_rendering.md, "Where
+		// the written shaping lives").
+		when !text_rendering.WRITTEN_SHAPING_COMPILED_IN {
+			if !text_rendering.font_at(&text_rendering.state.font_set, font).held {
+				system.log_fact(.Error, Script_Font_Not_Held{font = u64(font)})
+				return
+			}
+		}
+	}
+	text := transmute([]u8)string(SCRIPT_LINE)
+	placed: [LINE_LIMIT]text_rendering.Placed_Glyph
+	count, _, _ := text_rendering.shape(&regular_spacing, text, placed[:])
+	if count > len(placed) {
+		system.log_fact(.Warning, Script_Line_Too_Long{glyphs = u64(count)})
+		return
+	}
+	size := text_rendering.size_of_scale(1)
+	for glyph in placed[:count] {
+		character, _, _ := text_encoding.character_decode(text, int(glyph.cluster))
+		if glyph.glyph == text_rendering.REPLACEMENT_GLYPH {
+			system.log_fact(.Warning, Script_Line_Box{character = u64(character)})
+			return
+		}
+		// A space, a mark and a format character draw no ink of their own.
+		if character == ' ' || glyph.advance == 0 || glyph.glyph == text_rendering.INVISIBLE_GLYPH {
+			continue
+		}
+		rows: u16
+		source: text_rendering.Glyph_Source
+		if font, index, direct := text_rendering.direct_glyph_parts(glyph.glyph); direct {
+			entry: text_rendering.Glyph_Entry
+			entry, _, source = text_rendering.glyph_by_index(face, font, index, size, 0)
+			rows = entry.row_count
+		} else {
+			entry: text_rendering.Glyph_Entry
+			entry, _, source = text_rendering.glyph(face, character, size, 0)
+			rows = entry.row_count
+		}
+		if source != .Private_Cache || rows == 0 {
+			system.log_fact(.Warning, Script_Line_Without_Ink{character = u64(character), ink_rows = u64(rows)})
+			return
+		}
+	}
+	system.log_fact(.Info, Script_Line_Drawn{glyphs = u64(count)})
+	when !text_rendering.WRITTEN_SHAPING_COMPILED_IN {
+		system.log_fact(.Info, Script_Line_Through_Module{fonts = u64(card(text_rendering.SCRIPT_FONTS))})
+	}
 }
 
 // line_width gives the width of a text in 1/64 of a pixel.
@@ -234,7 +301,8 @@ PAIRS_TOP :: 152
 ENLARGED_TOP :: 256
 DIGITS_TOP :: 392
 GREEK_TOP :: 552
-TIME_TOP :: 616
+SCRIPT_TOP :: 612
+TIME_TOP :: 656
 
 draw :: proc "contextless" (window: ^display.Window) {
 	interface.draw_whole_window_next(&window_memory.drawing)
@@ -250,6 +318,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		{ENLARGED_TOP - 24, "one word at 0, 1/3 and 2/3 of a pixel, enlarged 4 times"},
 		{DIGITS_TOP - 24, "digits in columns: each digit has the same advance, so a column aligns"},
 		{GREEK_TOP - 24, "the fallback chain: Greek of B612, box drawing of Paper Mono, the next font of its chain"},
+		{SCRIPT_TOP - 8, "the script font set: Hebrew, Arabic, Thai, Devanagari, ideographs, an emoji, a shape; the box with no set"},
 	}
 	for label in labels {
 		interface.draw_text(frame.table, content.x, content.y + label.top, label.text, graphics.colors.dim)
@@ -300,6 +369,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	for line, index in GREEK {
 		line_draw(canvas, x, content.y + GREEK_TOP + index * 20, line, &regular_spacing, 1, graphics.colors.text)
 	}
+	line_draw(canvas, x, content.y + SCRIPT_TOP + 8, SCRIPT_LINE, &regular_spacing, 1, graphics.colors.text)
 	interface.hand_picture_show(&hand_picture, window)
 	fallback_lines_tell()
 }
@@ -373,7 +443,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measure()
 	system.log_fact(.Info, Line_Measured{characters = u64(len(PARAGRAPH[1])), shaping = value_kinds.Time_In_Nanoseconds(shaping_time), drawing = value_kinds.Time_In_Nanoseconds(drawing_time), first_drawing = value_kinds.Time_In_Nanoseconds(first_drawing_time)})
 	draw(&window)
-	system.log_fact(.Info, Fonts_Ready{regular_pairs = u64(text_rendering.state.fonts[.B612].pairs.count), bold_pairs = u64(text_rendering.state.fonts[.B612_Bold].pairs.count)})
+	system.log_fact(.Info, Fonts_Ready{regular_pairs = u64(text_rendering.font_at(&text_rendering.state.font_set, .B612).pairs.count), bold_pairs = u64(text_rendering.font_at(&text_rendering.state.font_set, .B612_Bold).pairs.count)})
 	for {
 		// The input of the window: each event gives a frame.
 		list: system.Wait

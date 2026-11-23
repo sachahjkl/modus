@@ -119,6 +119,7 @@ import terminal "modus:terminal"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
+import "modus:contract/font_outlines"
 import "modus:contract/input_context"
 import "modus:contract/log_scope"
 import "modus:contract/root_ring"
@@ -189,7 +190,13 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	// module files, with its limit, the flag that it reads only, and no
 	// grant to act for a principal (disk_processes_delegation.odin).
 	if caller == &disk_reader {
-		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, false) | isolated.CALLER_READS_ONLY
+		// The reader of the script font set reads the store of the machine
+		// that holds it, with the limit of that store.
+		limit := u64(disk_process.STORE_BLOCKS_LIMIT)
+		if system.name_of(disk_reader.name[:]) == font_outlines.SCRIPT_FONTS_STORE_NAME {
+			limit = font_outlines.SCRIPT_FONTS_STORE_BLOCKS
+		}
+		return isolated.caller_grant_make(limit, caller.principal, false) | isolated.CALLER_READS_ONLY
 	}
 	// The connection of this service for the disk grant table of a
 	// principal, an object of the store of the module files of that
@@ -1244,6 +1251,9 @@ root_loop_pass :: proc "contextless" () {
 	// After reap: the processes of a failed start policy are gone, and the
 	// rescue can start (start_policy.odin).
 	start_policy_step()
+	// After the start policy: the read of the script font set starts when
+	// the machine is usable (script_fonts.odin).
+	script_fonts_step()
 	// After reap: a principal that is locked has a window of unlock.
 	unlock_for_a_locked_principal()
 	// After reap: a storage service that stopped ended its connections.

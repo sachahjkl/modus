@@ -11,6 +11,7 @@ import "core:time"
 import "modus:contract/blake3"
 import "modus:contract/font_outlines"
 import "modus:contract/font_characters"
+import "modus:contract/text_encoding"
 import "modus:vector_font"
 
 @(private = "file")
@@ -63,7 +64,7 @@ resource_of :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input) -> (outlin
 	written, ok := font_outlines.resource_write(fonts, bytes)
 	testing.expect(t, ok && written == size)
 	problem: font_outlines.Problem
-	outlines, problem = font_outlines.validate(bytes)
+	outlines, problem = font_outlines.validate(bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	return outlines, words
 }
@@ -251,7 +252,7 @@ a_glyph_index_past_the_font_is_refused :: proc(t: ^testing.T) {
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
 	for font in ([?]Outline_Font{.B612, .Paper_Mono}) {
-		count := state.fonts[font].file.glyph_count
+		count := font_at(&state.font_set, font).file.glyph_count
 		face := font == .B612 ? Face.Interface : Face.Cells
 		for index in ([?]int{count, count + 1, -1, max(int)}) {
 			_, problem := glyph_raster(face, font, index, TEXT_SIZE_OF_SCALE_ONE, 0)
@@ -397,13 +398,15 @@ LATIN_EXTENDED_A_FIRST :: rune(0x0100)
 LATIN_EXTENDED_A_LAST :: rune(0x017F)
 
 // A script that no font covers is named: with outlines that lack Noto
-// Sans, the chains draw no Cyrillic letter, 47 of the 49 Greek letters
-// (B612 has no Π, U+03A0, nor ρ, U+03C1) and no letter of Latin
-// Extended-A. The characters past the runs have no font: U+03A2 is no
-// character, U+0180 and U+0460 are past the subset of Noto Sans. Last,
-// with each font of the resource, every chain of every face draws every
-// letter of Greek, of Cyrillic and of Latin Extended-A, and each
-// box-drawing character comes from Paper Mono.
+// Sans, the chains draw no Cyrillic letter and 47 of the 49 Greek letters
+// (B612 has no Π, U+03A0, nor ρ, U+03C1), and the letters of Latin
+// Extended-A that neither B612 nor Paper Mono has (Ĕ, U+0114, and ſ,
+// U+017F) have no font. Last, with each font of the resource, every chain
+// of every face draws every letter of Greek, of Cyrillic and of Latin
+// Extended-A: a face of cells takes the 119 letters of Paper Mono and a
+// face of the interface the 123 letters of Noto Sans that B612 lacks.
+// Armenian, Hebrew, an ideograph and the black square have no font, and
+// U+03A2 is no character.
 @(test)
 a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 	test_state_take()
@@ -421,6 +424,7 @@ a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 		{.Cells, .Cyrillic, 0, 96},
 		{.Interface_Bold, .Cyrillic, 0, 96},
 		{.Interface, .Greek, 47, 49},
+		{.Interface_Bold, .Greek, 47, 49},
 		{.Cells, .Greek, 47, 49},
 		{.Cells_Bold, .Greek, 47, 49},
 	}
@@ -429,7 +433,7 @@ a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 		testing.expectf(t, drawn == each.drawn && total == each.total, "without Noto Sans, %v, %v: %v of %v; expected %v of %v", each.face, each.script, drawn, total, each.drawn, each.total)
 	}
 	for face in chain_faces {
-		for character in ([?]rune{0x03A0, 0x03C1, 0x0416, LATIN_EXTENDED_A_FIRST, LATIN_EXTENDED_A_LAST}) {
+		for character in ([?]rune{0x03A0, 0x03C1, 0x0416, 0x0114, LATIN_EXTENDED_A_LAST}) {
 			testing.expectf(t, font_of(face, character) == .None, "without Noto Sans, %v has no font for U+%04X", face, int(character))
 		}
 	}
@@ -438,18 +442,28 @@ a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
 	for face in chain_faces {
-		for script in Script {
+		// The scripts of the fonts of the boot image; those of the script
+		// fonts are in the_scripts_of_the_script_fonts.
+		for script in ([?]Script{.Greek, .Cyrillic, .Box_Drawing}) {
 			drawn, total := coverage(face, script)
 			testing.expectf(t, drawn == total && total > 0, "%v, %v: %v of %v", face, script, drawn, total)
 		}
-		for character in ([?]rune{0x03A2, LATIN_EXTENDED_A_LAST + 1, 0x0460}) {
+		for character in ([?]rune{0x03A2, 0x0531, 0x05D0, 0x4E00, 0x25A0}) {
 			testing.expectf(t, font_of(face, character) == .None, "%v has no font for U+%04X", face, int(character))
 		}
-		latin_extended_a := 0
+		with_font, from_first, from_noto := 0, 0, 0
 		for character in LATIN_EXTENDED_A_FIRST ..= LATIN_EXTENDED_A_LAST {
-			latin_extended_a += int(font_of(face, character) == .Noto_Sans)
+			font := font_of(face, character)
+			with_font += int(font != .None)
+			from_first += int(font == face_forms[face].primary)
+			from_noto += int(font == .Noto_Sans)
 		}
-		testing.expectf(t, latin_extended_a == 128, "%v draws %v of the 128 letters of Latin Extended-A from Noto Sans", face, latin_extended_a)
+		testing.expectf(t, with_font == 128, "%v draws %v of the 128 letters of Latin Extended-A", face, with_font)
+		if face_forms[face].proportional {
+			testing.expectf(t, from_noto == 123, "%v draws %v letters of Latin Extended-A from Noto Sans, not 123", face, from_noto)
+		} else {
+			testing.expectf(t, from_first == 119, "%v draws %v letters of Latin Extended-A from its first font, not 119", face, from_first)
+		}
 		testing.expect_value(t, font_of(face, 0x03A0), Outline_Font.Noto_Sans)
 		testing.expect_value(t, font_of(face, 0x03C1), Outline_Font.Noto_Sans)
 		testing.expect_value(t, font_of(face, 0x0416), Outline_Font.Noto_Sans)
@@ -470,47 +484,177 @@ a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 	testing.expect_value(t, font_of(.Interface, 0x03B1), Outline_Font.B612)
 	testing.expect_value(t, font_of(.Cells, 0x03B1), Outline_Font.B612)
 	testing.expect_value(t, font_of(.Cells, 0x03BB), Outline_Font.Paper_Mono)
-	testing.expect_value(t, font_of(.Cells_Bold, 0x03B1), Outline_Font.B612)
+	testing.expect_value(t, font_of(.Cells_Bold, 0x03B1), Outline_Font.B612_Bold)
 }
 
-// Every glyph of Noto Sans past the 192 characters draws: each letter of
-// Latin Extended-A, Greek and Cyrillic, in every face, at the sizes of the
-// scales 1, 2 and 3 and at each position of the face, with no glyph that
-// the renderer refuses and no replacement glyph, each with ink and with an
-// advance above zero.
+// The characters of ordinary text past the 192: the dashes, the curly
+// quotes, the ellipsis, the arrows, the operators and the letters of
+// Central Europe, Romanian, Greek and Russian. In each face each has a
+// font of its chain and a glyph with ink, from the font that the rule of
+// the chain names: a proportional face takes B612 first, then Noto Sans;
+// a face of cells takes Paper Mono first, so ș keeps its cell. A
+// character that no font of the system has is refused first: it has no
+// font, no advance and no glyph, and the shaper places the replacement
+// glyph with the advance of "0".
 @(test)
-each_glyph_of_the_missing_scripts_draws :: proc(t: ^testing.T) {
+the_characters_of_ordinary_text_have_a_glyph :: proc(t: ^testing.T) {
 	test_state_take()
 	fonts := repository_fonts()
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
-	drawn := 0
-	for face in chain_faces {
-		for scale in 1 ..= 3 {
-			frame_begin()
-			for range in font_outlines.script_fallback_past_cache_ranges {
-				for character in range.first ..= range.last {
-					for position in 0 ..< positions_of(face) {
-						entry, _, source := glyph(face, character, size_of_scale(scale), position)
-						if !testing.expectf(t, source == .Private_Cache || source == .Not_Kept, "%v, scale %v, U+%04X at the position %v: %v", face, scale, int(character), position, source) {
-							continue
-						}
-						testing.expectf(t, entry.row_count > 0 && entry.width > 0, "%v, scale %v, U+%04X: no ink", face, scale, int(character))
-						drawn += 1
+	frame_begin()
+	for character in ([?]rune{0x0531, 0x05D0, 0x0E01, 0x4E00, 0x25A0, 0xE000}) {
+		for face in chain_faces {
+			testing.expectf(t, font_of(face, character) == .None, "%v: U+%04X has a font", face, int(character))
+			_, found := advance(face, character, TEXT_SIZE_OF_SCALE_ONE)
+			testing.expectf(t, !found, "%v: U+%04X has an advance", face, int(character))
+			_, glyph_words, source := glyph(face, character, TEXT_SIZE_OF_SCALE_ONE, 0)
+			testing.expectf(t, source == .Missing && glyph_words == nil, "%v: U+%04X has a glyph", face, int(character))
+		}
+		spacing, ok := spacing_of(.Interface, TEXT_SIZE_OF_SCALE_ONE)
+		testing.expect(t, ok)
+		text: [8]u8
+		length := text_encoding.character_encode(character, text[:])
+		placed: [1]Placed_Glyph
+		count, _, shaped := shape(&spacing, text[:length], placed[:])
+		zero, _ := advance(.Interface, '0', TEXT_SIZE_OF_SCALE_ONE)
+		testing.expect(t, shaped && count == 1)
+		testing.expectf(t, placed[0].glyph == REPLACEMENT_GLYPH && placed[0].advance == zero, "U+%04X: the glyph %v with the advance %v", int(character), placed[0].glyph, placed[0].advance)
+	}
+	Case :: struct {
+		character:        rune,
+		interface, cells: Outline_Font,
+	}
+	cases := [?]Case {
+		{0x2014, .B612, .Paper_Mono}, // — em dash
+		{0x2013, .B612, .Paper_Mono}, // – en dash
+		{0x2026, .B612, .Paper_Mono}, // … ellipsis
+		{0x201C, .B612, .Paper_Mono}, // “
+		{0x201D, .B612, .Paper_Mono}, // ”
+		{0x2018, .B612, .Paper_Mono}, // ‘
+		{0x2019, .B612, .Paper_Mono}, // ’
+		{0x2192, .B612, .Paper_Mono}, // →
+		{0x2190, .B612, .Paper_Mono}, // ←
+		{0x2191, .B612, .Paper_Mono}, // ↑
+		{0x2193, .B612, .Paper_Mono}, // ↓
+		{0x2260, .B612, .Paper_Mono}, // ≠
+		{0x2264, .B612, .Paper_Mono}, // ≤
+		{0x2265, .B612, .Paper_Mono}, // ≥
+		{0x221E, .B612, .Paper_Mono}, // ∞
+		{0x2212, .B612, .Paper_Mono}, // − minus
+		{0x0153, .B612, .Paper_Mono}, // œ
+		{0x0219, .Noto_Sans, .Paper_Mono}, // ș
+		{0x021B, .Noto_Sans, .Paper_Mono}, // ț
+		{0x0103, .Noto_Sans, .Paper_Mono}, // ă
+		{0x0142, .Noto_Sans, .Paper_Mono}, // ł
+		{0x017C, .Noto_Sans, .Paper_Mono}, // ż
+		{0x010D, .Noto_Sans, .Paper_Mono}, // č
+		{0x0159, .Noto_Sans, .Paper_Mono}, // ř
+		{0x03C0, .B612, .Paper_Mono}, // π
+		{0x03B1, .B612, .B612}, // α
+		{0x0416, .Noto_Sans, .Noto_Sans}, // Ж
+		{0x1EA1, .Noto_Sans, .Noto_Sans}, // ạ of Vietnamese
+		{0x20BF, .Noto_Sans, .Noto_Sans}, // ₿
+		{0x20BD, .Noto_Sans, .Paper_Mono}, // ₽
+		{0x2588, .Paper_Mono, .Paper_Mono}, // █
+	}
+	for each in cases {
+		testing.expectf(t, font_of(.Interface, each.character) == each.interface, "Interface: U+%04X from %v, expected %v", int(each.character), font_of(.Interface, each.character), each.interface)
+		testing.expectf(t, font_of(.Cells, each.character) == each.cells, "Cells: U+%04X from %v, expected %v", int(each.character), font_of(.Cells, each.character), each.cells)
+		for face in chain_faces {
+			entry, _, source := glyph(face, each.character, TEXT_SIZE_OF_SCALE_ONE, 0)
+			testing.expectf(t, source == .Private_Cache && entry.row_count > 0, "%v: U+%04X: %v with %v rows of ink", face, int(each.character), source, entry.row_count)
+			value, found := advance(face, each.character, TEXT_SIZE_OF_SCALE_ONE)
+			testing.expectf(t, found && value > 0, "%v: U+%04X: the advance %v", face, int(each.character), value)
+		}
+	}
+	// A text of them, shaped: no replacement glyph, and a fallback glyph
+	// for each character past the 192.
+	spacing, ok := spacing_of(.Interface, TEXT_SIZE_OF_SCALE_ONE)
+	testing.expect(t, ok)
+	text := "“Œuvre” — π → ș… Жλ"
+	placed: [32]Placed_Glyph
+	count, _, shaped := shape(&spacing, transmute([]u8)text, placed[:])
+	testing.expect(t, shaped && count == 19)
+	for glyph_placed in placed[:count] {
+		testing.expectf(t, glyph_placed.glyph != REPLACEMENT_GLYPH && glyph_placed.advance > 0, "the glyph at the byte %v is the replacement glyph", glyph_placed.cluster)
+	}
+}
+
+// Every character of the subsets past the 192 draws in each face that can
+// reach it, and the private glyph cache evicts by the order of use: the
+// characters of the three lists (font_outlines), at the size of the body,
+// in the face Interface at each of its three positions and in the face
+// Cells, are more keys than the cache has entries. Each glyph comes from
+// the cache, never from the render memory alone, as each frame holds 512
+// of them; a glyph with no ink is a space. The first glyph is evicted, and
+// drawn again it has the words of its outline drawn whole.
+@(test)
+each_character_of_the_subsets_draws_and_the_cache_evicts :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	no_ink :: proc(character: rune) -> bool {
+		return character >= 0x2000 && character <= 0x200A || character == 0x202F || character == 0x205F
+	}
+	lists := [?][]font_outlines.Character_Range{font_outlines.interface_past_cache_ranges[:], font_outlines.cell_past_cache_ranges[:], font_outlines.script_fallback_past_cache_ranges[:]}
+	FRAME_GLYPHS :: 512
+	Key :: struct {
+		face:      Face,
+		character: rune,
+		position:  int,
+	}
+	first: Key
+	keys := 0
+	frame_begin()
+	for list in lists {
+		for range in list {
+			for character in range.first ..= range.last {
+				for key in ([4]Key{{.Interface, character, 0}, {.Interface, character, 1}, {.Interface, character, 2}, {.Cells, character, 0}}) {
+					if keys % FRAME_GLYPHS == 0 {
+						frame_begin()
 					}
-					value, found := advance(face, character, size_of_scale(scale))
-					testing.expectf(t, found && value > 0, "%v, scale %v, U+%04X: the advance %v", face, scale, int(character), value)
+					if keys == 0 {
+						first = key
+					}
+					keys += 1
+					entry, _, source := glyph(key.face, key.character, TEXT_SIZE_OF_SCALE_ONE, key.position)
+					if !testing.expectf(t, source == .Private_Cache, "%v U+%04X at the position %v: %v", key.face, int(key.character), key.position, source) {
+						continue
+					}
+					testing.expectf(t, entry.row_count > 0 || no_ink(key.character), "%v U+%04X: no ink", key.face, int(key.character))
 				}
+				value, found := advance(.Interface, character, TEXT_SIZE_OF_SCALE_ONE)
+				testing.expectf(t, found && (value > 0 || is_mark(character)), "U+%04X: the advance %v", int(character), value)
 			}
 		}
 	}
+	testing.expectf(t, keys > ENTRY_CAPACITY, "%v keys, not more than the %v entries", keys, ENTRY_CAPACITY)
+	testing.expect(t, counts().evicted > 0)
+	testing.expect_value(t, counts().not_kept, u64(0))
 	testing.expect_value(t, counts().refused, u64(0))
-	positions := 0
-	for face in chain_faces {
-		positions += positions_of(face)
+	font, glyph_index := font_glyph_of(first.face, first.character)
+	testing.expect_value(t, entry_find(test_cache(), key_of(first.face, font, glyph_index, TEXT_SIZE_OF_SCALE_ONE, first.position)), -1)
+	frame_begin()
+	again, again_words, source := glyph(first.face, first.character, TEXT_SIZE_OF_SCALE_ONE, first.position)
+	testing.expect_value(t, source, Glyph_Source.Private_Cache)
+	count := int(again.row_count) * int(again.width)
+	kept := make([]u32, count)
+	defer delete(kept)
+	copy(kept, again_words[:count])
+	box, problem := glyph_raster(first.face, font, glyph_index, TEXT_SIZE_OF_SCALE_ONE, first.position)
+	testing.expect_value(t, problem, Raster_Problem.None)
+	testing.expect(t, box.row_count == int(again.row_count) && box.width == int(again.width))
+	differ := 0
+	for row in 0 ..< box.row_count {
+		for column in 0 ..< box.width {
+			differ += int(test_words()[box.first_word + row * box.stride + column] != kept[row * box.width + column])
+		}
 	}
-	testing.expect_value(t, drawn, 3 * font_outlines.SCRIPT_FALLBACK_PAST_CACHE_COUNT * positions)
+	testing.expectf(t, differ == 0, "%v words of the glyph drawn again differ from its outline", differ)
 }
+
 // The runs of blocks: a count of 0, a negative count, a count one past the
 // largest block and the largest value have no run; each run splits by
 // halves and joins its free neighbour again, up to the largest block, so
@@ -620,7 +764,7 @@ the_cache_at_its_bound_of_entries :: proc(t: ^testing.T) {
 // glyph_index_of gives the glyph of a character in an opened font.
 @(private = "file")
 glyph_index_of :: proc(font: Outline_Font, character: rune) -> int {
-	index, _ := vector_font.glyph_of(&state.fonts[font].file, character)
+	index, _ := vector_font.glyph_of(&font_at(&state.font_set, font).file, character)
 	return index
 }
 
@@ -816,7 +960,7 @@ golden_bytes_of :: proc(t: ^testing.T, face: Face, size: int, bytes: ^[dynamic]u
 	for position in 0 ..< positions_of(face) {
 		for index in 0 ..< font_characters.CHARACTER_COUNT {
 			character, _ := font_characters.character_of_index(index)
-			glyph_index, glyph_problem := vector_font.glyph_of(&state.fonts[form.primary].file, character)
+			glyph_index, glyph_problem := vector_font.glyph_of(&font_at(&state.font_set, form.primary).file, character)
 			testing.expectf(t, glyph_problem == .None, "%v U+%04X: a glyph of its font", face, int(character))
 			box, raster_problem := glyph_raster(face, form.primary, glyph_index, size, position)
 			testing.expectf(t, raster_problem == .None, "%v U+%04X at size %v: %v", face, int(character), size, raster_problem)
@@ -924,12 +1068,25 @@ Golden_Characters :: enum {
 	// The 192 characters, by their character index, at each position of
 	// the face (positions_of).
 	The_192_Characters,
-	// The characters past the 192 that the subset of the first font of the
-	// face holds (font_outlines.interface_past_cache_ranges,
-	// cell_past_cache_ranges), in the order of the code points, at the
-	// positions of golden_forms: the glyphs that the demand cache held.
+	// The characters past the 192 that the demand cache held
+	// (golden_interface_ranges, golden_cell_ranges), in the order of the
+	// code points, at the positions of golden_forms.
 	Past_The_192_Characters,
 }
+
+// The characters past the 192 that the demand cache held, and whose golden
+// hashes were taken from it: the Greek letters of B612, and the five Greek
+// letters, the box-drawing characters and the block elements of Paper
+// Mono. The subsets hold more characters now (font_outlines); these keep
+// their pixels, so the hashes of these sets stay.
+@(private = "file")
+golden_interface_ranges := [?]font_outlines.Character_Range{{0x0391, 0x039F}, {0x03A1, 0x03A1}, {0x03A3, 0x03A9}, {0x03B1, 0x03C0}, {0x03C2, 0x03C9}}
+@(private = "file")
+GOLDEN_INTERFACE_COUNT :: 47
+@(private = "file")
+golden_cell_ranges := [?]font_outlines.Character_Range{{0x039B, 0x039B}, {0x03A9, 0x03A9}, {0x03BB, 0x03BC}, {0x03C0, 0x03C0}, {0x2500, 0x257F}, {0x2580, 0x259F}}
+@(private = "file")
+GOLDEN_CELL_COUNT :: 165
 
 // One stored golden hash.
 Golden_Hash :: struct {
@@ -1037,10 +1194,10 @@ the_glyphs_past_the_192_characters_keep_their_golden_hashes :: proc(t: ^testing.
 		count:  int,
 	}
 	cases := [?]Case {
-		{.Interface, font_outlines.interface_past_cache_ranges[:], font_outlines.INTERFACE_PAST_CACHE_COUNT},
-		{.Cells, font_outlines.cell_past_cache_ranges[:], font_outlines.CELL_PAST_CACHE_COUNT},
-		{.Cells_Without_Grid_Fit, font_outlines.cell_past_cache_ranges[:], font_outlines.CELL_PAST_CACHE_COUNT},
-		{.Cells_Bold, font_outlines.cell_past_cache_ranges[:], font_outlines.CELL_PAST_CACHE_COUNT},
+		{.Interface, golden_interface_ranges[:], GOLDEN_INTERFACE_COUNT},
+		{.Cells, golden_cell_ranges[:], GOLDEN_CELL_COUNT},
+		{.Cells_Without_Grid_Fit, golden_cell_ranges[:], GOLDEN_CELL_COUNT},
+		{.Cells_Bold, golden_cell_ranges[:], GOLDEN_CELL_COUNT},
 	}
 	for each in cases {
 		form := face_forms[each.face]

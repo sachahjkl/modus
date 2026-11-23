@@ -114,16 +114,16 @@ scenario := [?]Step {
 	// Characters past the glyph cache: the terminal draws each one itself,
 	// in its private glyph cache. α is not in Paper Mono: it comes from
 	// B612, the second font of the chain of the cells; Ж is in neither: it
-	// comes from Noto Sans, the last font of the chain. Ѡ (U+0460) is in no
-	// font of the system: the replacement glyph. The terminal tells the
+	// comes from Noto Sans, the last font of the chain. Ա (U+0531, Armenian)
+	// is in no font of the system: the replacement glyph. The terminal tells the
 	// first and the last such cell of its view, once for each font.
 	{kind = .Type, text = "character(945) + character(1046)"},
 	{kind = .Wait, text = "terminal: console shows the character 945 in its cells, drawn by this process from the font b612 of its fallback chain", any_order = true},
 	{kind = .Wait, text = "terminal: console shows the character 1046 in its cells, drawn by this process from the font noto_sans of its fallback chain", any_order = true},
 	{kind = .Wait, text = "[console] αЖ"},
-	{kind = .Type, text = "character(1120)"},
-	{kind = .Wait, text = "terminal: console shows the character 1120 in its cells as the replacement glyph: no font of its fallback chain has it", any_order = true},
-	{kind = .Wait, text = "[console] Ѡ"},
+	{kind = .Type, text = "character(1329)"},
+	{kind = .Wait, text = "terminal: console shows the character 1329 in its cells as the replacement glyph: no font of its fallback chain has it", any_order = true},
+	{kind = .Wait, text = "[console] Ա"},
 	// A Greek letter and a box-drawing character of Paper Mono, the first
 	// font of the chain: ─ is now the last such cell of the view. The
 	// picture console below shows them.
@@ -2893,7 +2893,7 @@ scenario := [?]Step {
 	// src/library/modus/text_rendering and drawn by graphics.text_proportional.
 	// Its Greek letters are past the glyph cache: the process draws them
 	// from B612, the box-drawing characters from Paper Mono, the second
-	// font of the chain, and ƀ, Ѡ and Ԁ, which no font of the system has,
+	// font of the chain, and Ա, א and ก, which no font of the system has,
 	// draw the replacement glyph
 	// (docs/FONTS.md, "13. Glyphs past the glyph cache"). The lines come
 	// after the first frame; the picture after them.
@@ -2901,7 +2901,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_font: one line of "},
 	{kind = .Wait, text = "interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must", fails_on = "interface_font: not each Greek letter of B612 is drawn"},
 	{kind = .Wait, text = "interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: 7 characters: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
-	{kind = .Wait, text = "interface_font: 3 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
+	{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
+	// The main machine holds no script font set: the line of those scripts
+	// draws the box (script_fonts_scenario.odin draws it with the set).
+	{kind = .Wait, text = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph", any_order = true},
 	{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 	{kind = .Shot, text = "interface_font"},
 	{kind = .Close, text = "interface_font"},

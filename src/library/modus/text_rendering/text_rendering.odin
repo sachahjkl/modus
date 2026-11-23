@@ -102,10 +102,42 @@ Outline_Font :: enum u8 {
 	Paper_Mono, // Paper Mono: the font of the cells.
 	Paper_Mono_Semibold, // Paper Mono SemiBold: the bold weight of the cells.
 	Noto_Sans, // Noto Sans: the scripts that the fonts of the faces lack, the last font of each chain.
+	// The script fonts: past the boot image, in the script font set
+	// (src/md/features/script_fonts.md).
+	Noto_Sans_Hebrew,
+	Noto_Sans_Arabic,
+	Noto_Sans_Symbols_2, // The geometric shapes, the symbols, the dingbats: CFF outlines.
+	Noto_Emoji, // The emoji, in the color of the text.
+	Noto_Sans_CJK, // The ideographs, the kana and Hangul: CFF2 outlines, a collection.
+	Noto_Sans_Thai, // Thai, whose marks its GPOS places.
+	Noto_Sans_Devanagari, // Devanagari, which the engine of the lookups shapes (indic.odin).
+	// The other scripts of India, which the same shaper shapes.
+	Noto_Sans_Bengali,
+	Noto_Sans_Gurmukhi,
+	Noto_Sans_Gujarati,
+	Noto_Sans_Oriya,
+	Noto_Sans_Tamil,
+	Noto_Sans_Telugu,
+	Noto_Sans_Kannada,
+	Noto_Sans_Malayalam,
 }
+// The fonts of the font outlines of the boot image, and the fonts of the
+// script font set.
+BOOT_FONTS :: Outline_Fonts{.B612, .B612_Bold, .Paper_Mono, .Paper_Mono_Semibold, .Noto_Sans}
+// The fonts of the boot image: the room of a set that opens them only
+// (font_set_test checks it against BOOT_FONTS).
+BOOT_FONT_COUNT :: 5
+SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam}
 Outline_Fonts :: bit_set[Outline_Font]
-// The font is 4 bits in the key of the private glyph cache.
-#assert(int(max(Outline_Font)) < 1 << 4)
+// The font field of the key of the private glyph cache and of a direct
+// glyph (src/md/features/script_fonts.md, "Subtle points"): wide enough for
+// the fonts of the boot image and the largest script font set that the
+// format of the font outlines allows (font_outlines.FONT_LIMIT), with None.
+// A set is sized by its header, so a script added to it meets the bound of
+// the format, never this field.
+FONT_FIELD_BITS :: 9
+#assert(1 + BOOT_FONT_COUNT + font_outlines.FONT_LIMIT <= 1 << FONT_FIELD_BITS)
+#assert(int(max(Outline_Font)) < 1 << FONT_FIELD_BITS)
 
 // outline_font_name gives the name of the record of a font in the resource
 // of the outlines: the name of its file in resources/fonts.
@@ -123,6 +155,36 @@ outline_font_name :: proc "contextless" (font: Outline_Font) -> string {
 		return "paper_mono_semibold"
 	case .Noto_Sans:
 		return "noto_sans"
+	case .Noto_Sans_Hebrew:
+		return "noto_sans_hebrew"
+	case .Noto_Sans_Arabic:
+		return "noto_sans_arabic"
+	case .Noto_Sans_Symbols_2:
+		return "noto_sans_symbols_2"
+	case .Noto_Emoji:
+		return "noto_emoji"
+	case .Noto_Sans_CJK:
+		return "noto_sans_cjk"
+	case .Noto_Sans_Thai:
+		return "noto_sans_thai"
+	case .Noto_Sans_Devanagari:
+		return "noto_sans_devanagari"
+	case .Noto_Sans_Bengali:
+		return "noto_sans_bengali"
+	case .Noto_Sans_Gurmukhi:
+		return "noto_sans_gurmukhi"
+	case .Noto_Sans_Gujarati:
+		return "noto_sans_gujarati"
+	case .Noto_Sans_Oriya:
+		return "noto_sans_oriya"
+	case .Noto_Sans_Tamil:
+		return "noto_sans_tamil"
+	case .Noto_Sans_Telugu:
+		return "noto_sans_telugu"
+	case .Noto_Sans_Kannada:
+		return "noto_sans_kannada"
+	case .Noto_Sans_Malayalam:
+		return "noto_sans_malayalam"
 	}
 	return ""
 }
@@ -212,6 +274,21 @@ Script :: enum u8 {
 	Greek, // The Greek letters: U+0391 to U+03A9, U+03B1 to U+03C9, with no U+03A2.
 	Cyrillic, // The basic Cyrillic letters: U+0400 to U+045F.
 	Box_Drawing, // The box-drawing characters and the block elements: U+2500 to U+259F.
+	Hebrew, // U+0590 to U+05FF, the presentation forms of Hebrew.
+	Arabic, // The Arabic blocks and their presentation forms.
+	Symbols, // The geometric shapes, the miscellaneous symbols, the dingbats, the arrows and symbols past them.
+	Han, // The ideographs, the kana, Bopomofo, Hangul, the fullwidth forms.
+	Emoji, // U+1F000 to U+1FAFF.
+	Thai, // U+0E00 to U+0E7F.
+	Devanagari, // U+0900 to U+097F.
+	Bengali, // U+0980 to U+09FF.
+	Gurmukhi, // U+0A00 to U+0A7F.
+	Gujarati, // U+0A80 to U+0AFF.
+	Oriya, // U+0B00 to U+0B7F.
+	Tamil, // U+0B80 to U+0BFF.
+	Telugu, // U+0C00 to U+0C7F.
+	Kannada, // U+0C80 to U+0CFF.
+	Malayalam, // U+0D00 to U+0D7F.
 }
 
 // script_name gives the name of a script for the log.
@@ -223,12 +300,42 @@ script_name :: proc "contextless" (script: Script) -> string {
 		return "cyrillic"
 	case .Box_Drawing:
 		return "box drawing"
+	case .Hebrew:
+		return "hebrew"
+	case .Arabic:
+		return "arabic"
+	case .Symbols:
+		return "symbols"
+	case .Han:
+		return "han"
+	case .Emoji:
+		return "emoji"
+	case .Thai:
+		return "thai"
+	case .Devanagari:
+		return "devanagari"
+	case .Bengali:
+		return "bengali"
+	case .Gurmukhi:
+		return "gurmukhi"
+	case .Gujarati:
+		return "gujarati"
+	case .Oriya:
+		return "oriya"
+	case .Tamil:
+		return "tamil"
+	case .Telugu:
+		return "telugu"
+	case .Kannada:
+		return "kannada"
+	case .Malayalam:
+		return "malayalam"
 	}
 	return ""
 }
 
-CHAIN_LIMIT :: 4 // The fonts of one chain.
-RANGE_LIMIT :: 4 // The runs of one script.
+CHAIN_LIMIT :: 5 // The fonts of one chain.
+RANGE_LIMIT :: 9 // The runs of one script.
 
 // A chain: its fonts in order, None after the last.
 Chain :: [CHAIN_LIMIT]Outline_Font
@@ -242,6 +349,10 @@ Script_Row :: struct {
 	ranges:      [RANGE_LIMIT]Character_Range,
 	range_count: int,
 	chains:      [Chain_Kind]Chain,
+	// The log of the compositor counts what the chains draw of it; the
+	// scripts of the planes of the ideographs and of the emoji are too
+	// large to count at each start.
+	counted:     bool,
 }
 
 // The fallback chains by script: the data of the choice of a font. A new
@@ -250,18 +361,44 @@ Script_Row :: struct {
 // chains name Noto Sans alone.
 @(rodata)
 scripts := [Script]Script_Row {
-	.Greek = {ranges = {{0x0391, 0x03A1}, {0x03A3, 0x03A9}, {0x03B1, 0x03C9}, {}}, range_count = 3, chains = {.Interface = {.B612, .Paper_Mono, .Noto_Sans, .None}, .Interface_Bold = {.B612_Bold, .B612, .Paper_Mono_Semibold, .Noto_Sans}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612_Bold, .B612, .Noto_Sans}}},
-	.Cyrillic = {ranges = {{0x0400, 0x045F}, {}, {}, {}}, range_count = 1, chains = {.Interface = {.Noto_Sans, .None, .None, .None}, .Interface_Bold = {.Noto_Sans, .None, .None, .None}, .Cells = {.Noto_Sans, .None, .None, .None}, .Cells_Bold = {.Noto_Sans, .None, .None, .None}}},
-	.Box_Drawing = {ranges = {{0x2500, 0x259F}, {}, {}, {}}, range_count = 1, chains = {.Interface = {.Paper_Mono, .None, .None, .None}, .Interface_Bold = {.Paper_Mono_Semibold, .None, .None, .None}, .Cells = {.Paper_Mono, .None, .None, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .None, .None, .None}}},
+	.Greek = {ranges = {0 = {0x0391, 0x03A1}, 1 = {0x03A3, 0x03A9}, 2 = {0x03B1, 0x03C9}}, range_count = 3, counted = true, chains = {.Interface = {.B612, .Paper_Mono, .Noto_Sans, .None, .None}, .Interface_Bold = {.B612_Bold, .B612, .Paper_Mono_Semibold, .Noto_Sans, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .None, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612_Bold, .B612, .Noto_Sans, .None}}},
+	.Cyrillic = {ranges = {0 = {0x0400, 0x045F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans, .None, .None, .None, .None}, .Interface_Bold = {.Noto_Sans, .None, .None, .None, .None}, .Cells = {.Noto_Sans, .None, .None, .None, .None}, .Cells_Bold = {.Noto_Sans, .None, .None, .None, .None}}},
+	.Box_Drawing = {ranges = {0 = {0x2500, 0x259F}}, range_count = 1, counted = true, chains = {.Interface = {.Paper_Mono, .None, .None, .None, .None}, .Interface_Bold = {.Paper_Mono_Semibold, .None, .None, .None, .None}, .Cells = {.Paper_Mono, .None, .None, .None, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .None, .None, .None, .None}}},
+	.Hebrew = {ranges = {0 = {0x0590, 0x05FF}, 1 = {0xFB1D, 0xFB4F}}, range_count = 2, counted = true, chains = {.Interface = {.Noto_Sans_Hebrew, .None, .None, .None, .None}, .Interface_Bold = {.Noto_Sans_Hebrew, .None, .None, .None, .None}, .Cells = {.Noto_Sans_Hebrew, .None, .None, .None, .None}, .Cells_Bold = {.Noto_Sans_Hebrew, .None, .None, .None, .None}}},
+	.Arabic = {ranges = {0 = {0x0600, 0x06FF}, 1 = {0x0750, 0x077F}, 2 = {0x08A0, 0x08FF}, 3 = {0xFB50, 0xFDFF}, 4 = {0xFE70, 0xFEFF}}, range_count = 5, counted = true, chains = {.Interface = {.Noto_Sans_Arabic, .None, .None, .None, .None}, .Interface_Bold = {.Noto_Sans_Arabic, .None, .None, .None, .None}, .Cells = {.Noto_Sans_Arabic, .None, .None, .None, .None}, .Cells_Bold = {.Noto_Sans_Arabic, .None, .None, .None, .None}}},
+	// The dotted circle (U+25CC), the base of a mark with no base, is of
+	// Noto Sans: each chain of the symbols names it.
+	.Symbols = {ranges = {0 = {0x25A0, 0x25FF}, 1 = {0x2600, 0x27BF}, 2 = {0x2B00, 0x2BFF}}, range_count = 3, counted = true, chains = {.Interface = {.B612, .Paper_Mono, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}, .Interface_Bold = {.B612_Bold, .Paper_Mono_Semibold, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}, .Cells_Bold = {.Paper_Mono_Semibold, .B612_Bold, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Emoji}}},
+	.Han = {ranges = {0 = {0x1100, 0x11FF}, 1 = {0x2E80, 0x33FF}, 2 = {0x3400, 0x4DBF}, 3 = {0x4E00, 0x9FFF}, 4 = {0xAC00, 0xD7AF}, 5 = {0xF900, 0xFAFF}, 6 = {0xFE30, 0xFE4F}, 7 = {0xFF00, 0xFFEF}, 8 = {0x20000, 0x3FFFF}}, range_count = 9, chains = {.Interface = {.Noto_Sans_CJK, .Paper_Mono, .None, .None, .None}, .Interface_Bold = {.Noto_Sans_CJK, .Paper_Mono_Semibold, .None, .None, .None}, .Cells = {.Noto_Sans_CJK, .Paper_Mono, .None, .None, .None}, .Cells_Bold = {.Noto_Sans_CJK, .Paper_Mono_Semibold, .None, .None, .None}}},
+	.Emoji = {ranges = {0 = {0x1F000, 0x1FAFF}}, range_count = 1, chains = {.Interface = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}, .Interface_Bold = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}, .Cells = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}, .Cells_Bold = {.Noto_Emoji, .Noto_Sans_Symbols_2, .None, .None, .None}}},
+	// The fonts of the boot image first: Paper Mono draws the baht sign
+	// (U+0E3F) with no script font set.
+	.Thai = {ranges = {0 = {0x0E00, 0x0E7F}}, range_count = 1, counted = true, chains = {.Interface = {.B612, .Noto_Sans, .Paper_Mono, .Noto_Sans_Thai, .None}, .Interface_Bold = {.B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .Noto_Sans_Thai, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Thai, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Thai, .None}}},
+	// The script font first: a syllable takes each of its glyphs from the
+	// font that shapes it (indic.odin), so a danda or a digit beside it
+	// comes from the same font.
+	.Devanagari = {ranges = {0 = {0x0900, 0x097F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Devanagari, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Devanagari, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Devanagari, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Devanagari, .None}}},
+	.Bengali = {ranges = {0 = {0x0980, 0x09FF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Bengali, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Bengali, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Bengali, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Bengali, .None}}},
+	.Gurmukhi = {ranges = {0 = {0x0A00, 0x0A7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Gurmukhi, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Gurmukhi, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Gurmukhi, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Gurmukhi, .None}}},
+	.Gujarati = {ranges = {0 = {0x0A80, 0x0AFF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Gujarati, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Gujarati, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Gujarati, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Gujarati, .None}}},
+	.Oriya = {ranges = {0 = {0x0B00, 0x0B7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Oriya, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Oriya, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Oriya, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Oriya, .None}}},
+	.Tamil = {ranges = {0 = {0x0B80, 0x0BFF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Tamil, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Tamil, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Tamil, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Tamil, .None}}},
+	.Telugu = {ranges = {0 = {0x0C00, 0x0C7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Telugu, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Telugu, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Telugu, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Telugu, .None}}},
+	.Kannada = {ranges = {0 = {0x0C80, 0x0CFF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Kannada, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Kannada, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Kannada, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Kannada, .None}}},
+	.Malayalam = {ranges = {0 = {0x0D00, 0x0D7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Malayalam, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Malayalam, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Malayalam, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Malayalam, .None}}},
 }
 
-// The chain of each face for a character of no script.
+// The chain of each face for a character of no script. A proportional
+// face takes Noto Sans before Paper Mono: a letter that B612 lacks (ș, ł,
+// č) then has the advance of a proportional font beside the letters of
+// B612, not the cell of a monospace font. A face of cells takes Paper Mono
+// first, so a letter that it has keeps its cell.
 @(rodata)
 default_chains := [Chain_Kind]Chain {
-	.Interface      = {.B612, .Paper_Mono, .Noto_Sans, .None},
-	.Interface_Bold = {.B612_Bold, .Paper_Mono_Semibold, .Noto_Sans, .None},
-	.Cells          = {.Paper_Mono, .B612, .Noto_Sans, .None},
-	.Cells_Bold     = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .None},
+	.Interface      = {.B612, .Noto_Sans, .Paper_Mono, .Noto_Sans_Symbols_2, .Noto_Sans_CJK},
+	.Interface_Bold = {.B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .Noto_Sans_Symbols_2, .Noto_Sans_CJK},
+	.Cells          = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Sans_CJK},
+	.Cells_Bold     = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Symbols_2, .Noto_Sans_CJK},
 }
 
 // Where a glyph comes from.
@@ -276,6 +413,10 @@ Glyph_Source :: enum u8 {
 // One font file of the outlines, opened.
 Font :: struct {
 	opened: bool,
+	// A font of the script font set that the library module text_rendering
+	// holds for this process (written_part.odin): its measures and its
+	// glyph count are here, its file is not; its glyphs come from the module.
+	held:   bool,
 	file:   vector_font.Font_File,
 	hash:   [32]u8, // The hash that its record names.
 	own:    vector_font.Font_Measures, // From its outlines: the frame of a font of cells.
@@ -289,25 +430,144 @@ Font :: struct {
 // Font_Set: the fonts of one resource of outlines, opened. A process has
 // one in its state (open); a call of the library module text_rendering
 // opens one from the bytes of its caller, for that call only.
+//
+// A font lives in the room that the owner of the set gives (room): the
+// state gives a room for every font, a call of the library module a room
+// for the fonts of the boot image on its stack. So a script font that a
+// call never opens takes none of the stack of the call, and each font
+// added to the script font set costs the call nothing.
 Font_Set :: struct {
 	opened: bool,
-	fonts:  [Outline_Font]Font,
+	fonts:  [Outline_Font]^Font, // nil: closed (font_at).
+	room:   []Font, // The memory of the fonts that it opens, from its owner.
+	used:   int, // The fonts of the room in use.
+}
+
+// Font_Room: a room for every font.
+Font_Room :: [len(Outline_Font)]Font
+
+// A font that is not open: all zero, never written.
+@(rodata, private)
+closed_font: Font
+
+// font_at gives a font of a set: the closed font, all zero, for a font
+// that the set has not opened.
+font_at :: #force_inline proc "contextless" (set: ^Font_Set, font: Outline_Font) -> ^Font {
+	if opened := set.fonts[font]; opened != nil {
+		return opened
+	}
+	return &closed_font
+}
+
+// font_slot gives the place of a font in a set: its slot when the set has
+// one for it, else a new slot of the room, all zero, which stays the
+// font's. false when the room is full.
+@(private)
+font_slot :: proc "contextless" (set: ^Font_Set, font: Outline_Font) -> (slot: ^Font, ok: bool) {
+	if slot = set.fonts[font]; slot != nil {
+		return slot, true
+	}
+	if set.used >= len(set.room) {
+		return nil, false
+	}
+	slot = &set.room[set.used]
+	slot^ = {}
+	set.used += 1
+	set.fonts[font] = slot
+	return slot, true
 }
 
 // State: the state of this copy of the package. All zero: nothing is
 // opened, and no face draws: each caller draws in Spleen.
 State :: struct {
-	using font_set: Font_Set,
-	frame:          u64, // The number of the frame: frame_begin adds one.
+	using font_set:    Font_Set,
+	frame:             u64, // The number of the frame: frame_begin adds one.
+	// The parts of the pool of the caches that the fonts of this state took
+	// (layout_cache_pool): a state of all zero takes it from its start.
+	layout_entries_used, layout_indices_used: int,
+	cff_caches_used:                          int,
+	layout_refused:                           Outline_Fonts, // The script fonts refused at their open (layout_cache_of).
+	layout_fill_reads:                        [Outline_Font]int, // The reads of the fill of each, a measure for the tests.
 }
 
 state: State
+
+// The room of the fonts of the state.
+@(private)
+state_room: Font_Room
+
+// The memory of the caches of the walk of GSUB and GPOS of the script
+// fonts of the state (vector_font.layout_cache_fill): one pool, which each
+// font that opens takes its part of. A font past the pool is refused at its
+// open and logged (layout_refused_fonts). The 15 fonts of the set take 437
+// entries and 1 222 lookup indices (the_cache_of_each_font_of_the_set):
+// the pool holds more than twice that.
+LAYOUT_CACHE_ENTRY_LIMIT :: 1024
+LAYOUT_CACHE_INDEX_LIMIT :: 4096
+
+// The script fonts of CFF outlines whose Private dictionaries the state
+// keeps (vector_font.cff_private_cache_fill): Noto Sans Symbols 2 and Noto
+// Sans CJK today.
+CFF_CACHE_FONT_LIMIT :: 4
+
+@(private)
+Layout_Cache_Pool :: struct {
+	caches:     [Outline_Font]vector_font.Layout_Cache,
+	entries:    [LAYOUT_CACHE_ENTRY_LIMIT]vector_font.Layout_Cache_Entry,
+	indices:    [LAYOUT_CACHE_INDEX_LIMIT]u16,
+	cff_caches: [CFF_CACHE_FONT_LIMIT]vector_font.Cff_Private_Cache,
+}
+
+@(private)
+layout_cache_pool: Layout_Cache_Pool
+
+// layout_cache_of fills the cache of the walk of a script font of the
+// state from the rest of the pool, and the cache of its Private
+// dictionaries when its outlines are CFF. false when the fill fails: the
+// tables pass the bound of a fill (vector_font.LAYOUT_FILL_READ_LIMIT), a
+// walk refuses them, or they pass the rest of the pool. The caller then
+// refuses the font, so no call walks its tables again.
+@(private)
+layout_cache_of :: proc "contextless" (font: Outline_Font, file: ^vector_font.Font_File) -> bool {
+	pool := &layout_cache_pool
+	cache := &pool.caches[font]
+	cache^ = {entries = pool.entries[state.layout_entries_used:], indices = pool.indices[state.layout_indices_used:]}
+	complete, reads := vector_font.layout_cache_fill(file, cache)
+	if !complete {
+		return false
+	}
+	state.layout_fill_reads[font] = reads
+	state.layout_entries_used += cache.entry_count
+	state.layout_indices_used += cache.index_count
+	if file.cff.version != 0 && state.cff_caches_used < CFF_CACHE_FONT_LIMIT {
+		vector_font.cff_private_cache_fill(file, &pool.cff_caches[state.cff_caches_used])
+		state.cff_caches_used += 1
+	}
+	return true
+}
+
+// layout_refused_fonts gives the script fonts that the state refused at
+// their open, as their tables of GSUB and GPOS passed the bound of their
+// fill or the pool: each draws the replacement glyph, and the process says
+// so once (display.fallback_load).
+layout_refused_fonts :: proc "contextless" () -> Outline_Fonts {
+	return state.layout_refused
+}
+
+// state_set gives the set of the state, with its room.
+@(private)
+state_set :: proc "contextless" () -> ^Font_Set {
+	if state.font_set.room == nil {
+		state.font_set.room = state_room[:]
+	}
+	return &state.font_set
+}
 
 // open opens the fonts of the outlines into the state of this copy
 // (fonts_open). A second open does nothing: the outlines never change.
 open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outline_Fonts) {
 	outline := outline_of(&outline_memory)
-	return fonts_open(&state.font_set, outlines, &outline)
+	return fonts_open(state_set(), outlines, &outline)
 }
 
 // fonts_open opens the fonts of the outlines into a set, with the memory of
@@ -318,28 +578,81 @@ open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outl
 // (fonts_of_face), as each open reads the outlines of 94 characters for
 // the measures of its font; a font that is not wanted stays closed, and is
 // not missing.
-fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline, wanted: Outline_Fonts = ~Outline_Fonts{}) -> (missing: Outline_Fonts) {
+fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline, wanted: Outline_Fonts = BOOT_FONTS) -> (missing: Outline_Fonts) {
 	if set.opened {
 		return {}
 	}
+	missing = fonts_of_outlines_open(set, outlines, outline, wanted & BOOT_FONTS)
+	set.opened = true
+	return missing
+}
+
+// script_fonts_open opens the fonts of the script font set that the
+// starter mapped (src/md/features/script_fonts.md) into the state of this
+// copy, after open: each script font that the set holds draws from now
+// on, and a character of a script font that the set lacks stays the
+// replacement glyph. It gives the script fonts that the set lacks or that
+// the parser refuses. A font of the set that is open stays as it is.
+script_fonts_open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outline_Fonts) {
+	outline := outline_of(&outline_memory)
+	return script_fonts_open_in(state_set(), outlines, &outline)
+}
+
+// written_part_open asks the library module text_rendering to open the
+// fonts of this process for the written part, after open: the fonts of
+// the boot image, and the script font set when the starter mapped it. It
+// takes the fonts of the set that the module holds into the state, and
+// gives those that the set lacks or that the module refused. In a copy
+// with the written part compiled in it does nothing: script_fonts_open
+// opens the set.
+written_part_open :: proc "contextless" () -> (missing: Outline_Fonts) {
+	missing, _ = held_fonts_open()
+	return missing
+}
+
+// script_fonts_open_in is script_fonts_open over a set of fonts.
+script_fonts_open_in :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline) -> (missing: Outline_Fonts) {
+	wanted: Outline_Fonts
+	for font in SCRIPT_FONTS {
+		if !font_at(set, font).opened {
+			wanted += {font}
+		}
+	}
+	return fonts_of_outlines_open(set, outlines, outline, wanted)
+}
+
+// fonts_of_outlines_open opens the wanted fonts that a resource holds, by
+// their names, and gives those that it lacks or that the parser refuses.
+@(private)
+fonts_of_outlines_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline, wanted: Outline_Fonts) -> (missing: Outline_Fonts) {
 	for font in Outline_Font {
 		if font == .None || font not_in wanted {
 			continue
 		}
 		missing += {font}
 		name := outline_font_name(font)
-		for index in 0 ..< min(outlines.count, font_outlines.FONT_LIMIT) {
+		for index in 0 ..< min(outlines.count, len(outlines.records)) {
 			record := &outlines.records[index]
 			if font_outlines.name_of(record) != name {
 				continue
 			}
 			if font_file_open(set, font, font_outlines.font_bytes(outlines, index), outline) == .None {
-				set.fonts[font].hash = record.hash
+				font_at(set, font).hash = record.hash
 				missing -= {font}
+				// A script font of the state keeps the walk of its tables; a
+				// font whose tables pass the bound of the fill is refused. The
+				// fast part opens no script font for its state: the library
+				// module holds them (written_part.odin).
+				when WRITTEN_SHAPING_COMPILED_IN {
+					if font in SCRIPT_FONTS && set == &state.font_set && !layout_cache_of(font, &font_at(set, font).file) {
+						font_at(set, font)^ = {}
+						missing += {font}
+						state.layout_refused += {font}
+					}
+				}
 			}
 		}
 	}
-	set.opened = true
 	return missing
 }
 
@@ -355,27 +668,59 @@ font_file_open :: proc "contextless" (set: ^Font_Set, font: Outline_Font, bytes:
 	if font == .None {
 		return .Unknown_Format
 	}
-	opened := &set.fonts[font]
+	// The font is read in its place in the set, not in a copy on the
+	// stack: a call of the library module opens its set on a stack of a
+	// worker thread. A refused font is closed again, all zero.
+	// The slot stays the font's, open or refused: a refused font is all
+	// zero, which is closed.
+	opened, has_room := font_slot(set, font)
+	if !has_room {
+		return .No_Room
+	}
 	opened^ = {}
-	file: vector_font.Font_File
-	file, problem = vector_font.font_open(bytes)
+	defer if problem != .None {
+		opened^ = {}
+	}
+	// A collection (Noto Sans CJK) opens at its first face.
+	directory: int
+	directory, problem = vector_font.collection_face_offset(bytes, 0)
 	if problem != .None {
 		return problem
 	}
-	own, stated: vector_font.Font_Measures
-	own, problem = vector_font.font_measures_of_outline(&file, outline)
+	opened.file, problem = vector_font.font_open(bytes, directory)
 	if problem != .None {
 		return problem
 	}
-	stated, problem = vector_font.proportional_measures(&file, own)
+	// A font of the boot image is a TrueType subset that the tool writes:
+	// a font with CFF outlines in its place is refused, so a call of the
+	// library module never runs the reader of CFF, whose stack does not
+	// fit beside the font set in a call (CALL_STACK_BOUND).
+	if font in BOOT_FONTS && opened.file.cff.version != 0 {
+		return .Unknown_Format
+	}
+	measure := outline^
+	measure.points = measure.points[:min(len(measure.points), MEASURE_POINT_LIMIT)]
+	measure.contour_ends = measure.contour_ends[:min(len(measure.contour_ends), MEASURE_CONTOUR_LIMIT)]
+	opened.own, problem = vector_font.font_measures_of_outline(&opened.file, &measure)
+	if problem != .None && font in SCRIPT_FONTS {
+		// A font of one script has no Latin letters to measure: the
+		// heights that it states give its frame (it is never the first
+		// font of a face).
+		opened.own, problem = vector_font.font_measures_stated(&opened.file)
+	}
 	if problem != .None {
 		return problem
 	}
-	pairs, pair_problem := vector_font.pair_table_open(&file)
+	opened.stated, problem = vector_font.proportional_measures(&opened.file, opened.own)
+	if problem != .None {
+		return problem
+	}
+	pair_problem: vector_font.Font_Problem
+	opened.pairs, pair_problem = vector_font.pair_table_open(&opened.file)
 	if pair_problem != .None {
-		pairs = {}
+		opened.pairs = {}
 	}
-	opened^ = {opened = true, file = file, own = own, stated = stated, pairs = pairs}
+	opened.opened = true
 	return .None
 }
 
@@ -384,7 +729,7 @@ font_file_open :: proc "contextless" (set: ^Font_Set, font: Outline_Font, bytes:
 // face. false for the face None. A face that is not opened draws nothing,
 // so its caller draws in Spleen or in the font of the cells.
 face_opened :: proc "contextless" (face: Face) -> bool {
-	return face != .None && state.opened && state.fonts[face_forms[face].primary].opened
+	return face != .None && state.opened && font_at(&state.font_set, face_forms[face].primary).opened
 }
 
 // frame_begin starts a frame of the process: the order of use of the
@@ -438,7 +783,7 @@ chain_fonts :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
 		return {}
 	}
 	for font in fonts_of_face(face) {
-		if state.fonts[font].opened {
+		if font_at(&state.font_set, font).opened {
 			fonts += {font}
 		}
 	}
@@ -478,23 +823,8 @@ font_glyph_of :: proc "contextless" (face: Face, character: rune) -> (font: Outl
 
 // font_glyph_in is font_glyph_of over a set of fonts.
 font_glyph_in :: proc "contextless" (set: ^Font_Set, face: Face, character: rune) -> (font: Outline_Font, glyph_index: int) {
-	if face == .None || !set.opened || !character_valid(character) || !set.fonts[face_forms[face].primary].opened {
-		return .None, 0
-	}
-	chain := chain_of(face, character)
-	for each in chain {
-		if each == .None {
-			break
-		}
-		opened := &set.fonts[each]
-		if !opened.opened {
-			continue
-		}
-		if index, problem := vector_font.glyph_of(&opened.file, character); problem == .None {
-			return each, index
-		}
-	}
-	return .None, 0
+	font, glyph_index, _ = chain_glyph(set, face, character, .Take)
+	return font, glyph_index
 }
 
 // font_of gives the first font of the chain of a face that has a glyph for
@@ -522,12 +852,12 @@ measures_in_frame :: proc "contextless" (face: Face, font: Outline_Font) -> vect
 @(private)
 measures_in_frame_of :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font) -> vector_font.Font_Measures {
 	form := face_forms[face]
-	first := &set.fonts[form.primary]
+	first := font_at(set, form.primary)
 	primary := form.proportional ? first.stated : first.own
 	if font == form.primary {
 		return primary
 	}
-	measures := set.fonts[font].stated
+	measures := font_at(set, font).stated
 	// The open accepted each font only with a cap height above 0, so the
 	// divisor is not 0; the units of a cell stay above 0, as they divide an
 	// advance.
@@ -582,7 +912,7 @@ glyph_advance_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outlin
 	if !face_forms[face].proportional {
 		return i32(vector_font.divide_rounded(i64(size), 2)), true
 	}
-	units := vector_font.glyph_advance(&set.fonts[font].file, glyph_index)
+	units := vector_font.glyph_advance(&font_at(set, font).file, glyph_index)
 	return i32(clamp(units_at_size(units, size, measures_in_frame_of(set, face, font).advance), 0, advance_limit_of_size(size))), true
 }
 
@@ -595,7 +925,7 @@ glyph_pair_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_F
 	if font == .None || face == .None || !face_forms[face].proportional || size_check(size) != .None {
 		return 0
 	}
-	units := vector_font.pair_adjustment(&set.fonts[font].pairs, left_index, right_index)
+	units := vector_font.pair_adjustment(&font_at(set, font).pairs, left_index, right_index)
 	if units == 0 {
 		return 0
 	}
@@ -631,6 +961,37 @@ glyph :: proc "contextless" (face: Face, character: rune, size, position: int) -
 	}
 	font, glyph_index := font_glyph_of(face, character)
 	if font == .None {
+		return {}, nil, .Missing
+	}
+	return private_glyph(face, font, glyph_index, size, cell_position_of(face, character, position))
+}
+
+// cell_position_of gives the position of a glyph in the key and in the
+// placement: a face of cells has the one position 0, so a wide character
+// (cell_width_of: Two) takes the position 1 there, the mark of a glyph of
+// two cells (src/md/features/script_fonts.md, "A wide character takes two
+// cells").
+@(private)
+cell_position_of :: #force_inline proc "contextless" (face: Face, character: rune, position: int) -> int {
+	if face_forms[face].proportional || cell_width_of(character) != .Two {
+		return position
+	}
+	return WIDE_CELL_POSITION
+}
+
+// The position of a glyph of two cells in a face of cells.
+WIDE_CELL_POSITION :: 1
+
+// glyph_by_index gives a glyph of a font of the chains of a face by its
+// glyph index: a form or a ligature that a substitution gave
+// (DIRECT_GLYPH_FIRST), with no character. source is Missing for a font
+// that the face does not name or that is not open, an index past the
+// font, and as for glyph.
+glyph_by_index :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (entry: Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) {
+		return {}, nil, .Missing
+	}
+	if font == .None || font not_in fonts_of_face(face) || !font_at(&state.font_set, font).opened || glyph_index <= 0 || glyph_index >= font_at(&state.font_set, font).file.glyph_count {
 		return {}, nil, .Missing
 	}
 	return private_glyph(face, font, glyph_index, size, position)

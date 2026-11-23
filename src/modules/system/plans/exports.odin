@@ -94,6 +94,10 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: p
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Store, 0, 0, 0, found)
 	case .Roles_Refused:
 		return call_outcome.fail(error, .Argument_Refused, .Refused, .Grants, 1, 0, 0, found)
+	case .Machine_Only:
+		// An entry that only the plan of principal 0 names: the plan of
+		// another principal has no grant for it.
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Records, 1, i64(bad_index), 0, found)
 	}
 	return call_outcome.fail(error, .Argument_Refused, .Refused, .None, 0, 0, 0, found)
 }

@@ -1682,10 +1682,12 @@ A module whose source is in a folder of another project is an outside module (`g
 
 ```
 name: my_process
-imports: drawing
+imports: drawing text_rendering
 defines: DRAWING_THROUGH_MODULE=true
 library: no
 ```
+
+A module that draws text imports `text_rendering`: it compiles the fast part of the text in, and calls that library module for each line that is not simple (`FONTS.md`, "12.3 The text shaping module").
 
 Only `name` is required. `imports` names modules of the system, in the order of the import table. `library: yes` makes a library module (section "A library as a module").
 

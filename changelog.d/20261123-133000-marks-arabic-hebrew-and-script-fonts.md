@@ -1,0 +1,3 @@
+type: Added
+
+**Combining marks, Arabic, Hebrew, the ideographs and emoji**: a letter and its combining marks draw the composed letter (e and U+0301 draw é, Vietnamese stacked marks draw ệ), a mark that does not compose draws over its letter, and a mark with no letter stands on a dotted circle. Arabic letters join in their initial, medial and final forms with the lam-alef ligature, and a line that mixes left-to-right and right-to-left text keeps each run in its order, with mirrored brackets. The fonts of Hebrew, Arabic, the geometric shapes, the emoji and the CJK ideographs are one script font set of 35.8 MB outside the boot image, checked by its hash; a process with no set still draws the box for those scripts, and the plan field that names the set comes next.

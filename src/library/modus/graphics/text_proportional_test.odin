@@ -71,11 +71,11 @@ a_text_of_a_face_draws_the_pixels_of_its_glyphs :: proc(t: ^testing.T) {
 		text_proportional_with(.Interface, &square_root, tables, .Red_Green_Blue, drawn, 0, 0, each, text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
 		testing.expect(t, built_pixels == drawn_pixels)
 	}
-	// A character that no font has, Ѡ (U+0460, past the Cyrillic letters
-	// of Noto Sans), as a fallback glyph: the replacement glyph.
+	// A character that no font has, Ա (U+0531, the first Armenian letter),
+	// as a fallback glyph: the replacement glyph.
 	words := fallback_open_for_test(t)
 	defer delete(words)
-	no_font := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.FALLBACK_GLYPH_FIRST + 0x0460}}
+	no_font := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.FALLBACK_GLYPH_FIRST + 0x0531}}
 	no_glyph := [1]text_rendering.Placed_Glyph{{glyph = text_rendering.REPLACEMENT_GLYPH}}
 	clear(built, DARK_CARD_BOTTOM)
 	clear(drawn, DARK_CARD_BOTTOM)

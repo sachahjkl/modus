@@ -542,6 +542,14 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// acts for its principal; the boot image gives the hash of the test
 	// builder and the descriptions of the exports of recipes.
 	{name = "build_check", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "recipes"}}},
+	// The planners of the tests of the script font set: the grants of
+	// plan_applier, for a plan of one entry Script_Fonts. They get the
+	// font outlines, as each process that draws text, and hash them.
+	{name = "script_fonts_planner", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	{name = "script_fonts_cut_planner", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	// The writer of the test of the mapping of the script font set: it
+	// needs no grant; it gets the set where the font outlines go.
+	{name = "script_fonts_writer"},
 	// The holder of Settings that the plan of that test names: it writes
 	// its line and stops, and needs no grant.
 	{name = "settings_stand_in"},

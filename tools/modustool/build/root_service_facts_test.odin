@@ -40,7 +40,7 @@ LARGEST_OF := [?]string{"a process", "a disk process"}
 @(private = "file")
 PAYING_BUDGETS := [?]string{"this service", "the disk processes"}
 @(private = "file")
-MAPPINGS := [?]string{"the date page", "the debug image", "the disk process page", "the fresh bytes page", "the settings page and the font outlines", "the file of the storage service", "the file of the service", "the machine parts page", "the start list"}
+MAPPINGS := [?]string{"the date page", "the debug image", "the disk process page", "the fresh bytes page", "the settings page and the font outlines", "the script font set", "the file of the storage service", "the file of the service", "the machine parts page", "the start list"}
 @(private = "file")
 NETWORK_CAUSES := [?]string{"the network service did not start", "the network service stopped"}
 @(private = "file")
@@ -1087,4 +1087,54 @@ the_devices_and_principals_bridge_facts_of_the_root_service_write_their_lines ::
 	expect(t, render(t, file, "Devices_Service_Stopped", {}), "root: the delegated devices service stopped")
 	expect(t, render(t, file, "Principals_Service_Stopped", {}), "root: the delegated principals service stopped")
 	expect(t, render(t, file, "Principals_Service_Silent", {}), "root: the principals service gave no answer to the call of a disk grant table in time: it is stopped, and it starts again with no key until the next unlock")
+}
+
+// The facts of the script font set (src/md/features/script_fonts.md): each
+// line at the edges of its fields, the hashes whole, the size of a set of
+// 0 bytes and of the largest size, each status by the name of its member
+// or by its number past the members, and each sentence of a problem of the
+// font outlines.
+@(test)
+the_script_font_facts_of_the_root_service_write_their_lines :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	hash: [module.HASH_SIZE]u8
+	for &value, index in hash {
+		value = u8(0x3C + index)
+	}
+	none := "Hebrew, Arabic, the ideographs and the emoji draw the replacement glyph"
+	expect(t, render(t, file, "Script_Fonts_Unnamed", {}), line_of_before("root: no plan and no resource of the boot image names a script font set: ", none))
+	expect(t, render(t, file, "Script_Fonts_Without_Data_Disk", {}), line_of_before("root: the machine has no data disk, so it holds no script font set: ", none))
+	expect(t, render(t, file, "Script_Fonts_Named_By_Image", {{"hash", hash}}), line_of_before("root: the boot image names the script font set ", sentence.Hash{hash[:]}))
+	expect(t, render(t, file, "Script_Fonts_Named_By_Plan", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names the script font set ", sentence.Hash{hash[:]}))
+	expect(t, render(t, file, "Script_Fonts_Next_Start", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names the script font set ", sentence.Hash{hash[:]}, ": it holds at the next start of the machine"))
+	expect(t, render(t, file, "Script_Fonts_Back_To_Image", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names no script font set: the set ", sentence.Hash{hash[:]}, " of the boot image is the set of this start again"))
+	expect(t, render(t, file, "Script_Fonts_Back_To_Image_Next_Start", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names no script font set: the set ", sentence.Hash{hash[:]}, " of the boot image holds at the next start of the machine"))
+	expect(t, render(t, file, "Script_Fonts_Reading", {{"hash", hash}}), line_of_before("root: reads the script font set ", sentence.Hash{hash[:]}, " from the store script_fonts of the machine"))
+	expect(t, render(t, file, "Script_Fonts_Not_On_Disk", {{"hash", hash}}), line_of_before("root: the data disk holds no script font set ", sentence.Hash{hash[:]}, ": ", none))
+	for size in ([?]u64{0, 1, 35_772_620, u64(max(i64))}) {
+		for count in ([?]u64{0, 5, max(u64)}) {
+			expect(t, render(t, file, "Script_Fonts_Mapped", {{"hash", hash}, {"set_size", size}, {"fonts", count}}), line_of_before("root: the script font set ", sentence.Hash{hash[:]}, " (", sentence.Size{size, .Bytes}, ", ", count, " fonts) is checked: each process that starts from now maps it, read-only"))
+		}
+		expect(t, render(t, file, "Script_Fonts_Name_Refused", {{"name_bytes", size}}), line_of_before("root: the resource script_fonts_name holds ", sentence.Size{size, .Bytes}, ", not one hash of 32 bytes: it names no script font set"))
+	}
+	for problem in font_outlines.problem_sentences {
+		for value in ([?]u64{0, max(u64)}) {
+			expect(t, render(t, file, "Script_Fonts_Refused_Form", {{"problem_value", value}, {"problem", problem}}), line_of_before("root: the script font set is refused: ", problem, ", value ", value, ": ", none, " until the next start"))
+		}
+	}
+	for word in ([3]u64{u64(min(op.Status)), u64(max(op.Status)), u64(max(op.Status)) + 1}) {
+		status_text := line_of_before(word)
+		if name, named := module.contract_enum_member_name(.Status, word); named {
+			status_text = name
+		}
+		expect(t, render(t, file, "Script_Fonts_Not_Read", {{"status", word}}), line_of_before("root: the script font set was not read: status ", status_text, ": ", none, " until the next start"))
+	}
+	for size in ([?]u64{0, max(u64)}) {
+		for limit in ([?]u64{0, max(u64)}) {
+			expect(t, render(t, file, "Script_Fonts_Refused_Too_Large", {{"object_bytes", size}, {"set_bytes_limit", limit}}), line_of_before("root: refused the script font set: the object has ", size, " bytes, and a script font set has at most ", limit))
+		}
+	}
 }

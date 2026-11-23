@@ -40,6 +40,7 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 		{.Fresh_Bytes_Page, FRESH_BYTES_PAGE_ADDRESS},
 		{.Start_Policy_Pages, START_POLICY_PAGES_ADDRESS},
 		{.Edit_Target_Page, EDIT_TARGET_PAGE_ADDRESS},
+		{.Script_Fonts, SCRIPT_FONTS_ADDRESS},
 	}
 	for each in named {
 		testing.expectf(t, each.address == range_of(each.range).address, "%v: the named address is the address of its member", each.range)
@@ -110,6 +111,7 @@ the_members_keep_their_values :: proc(t: ^testing.T) {
 		{.Fresh_Bytes_Page, 15},
 		{.Start_Policy_Pages, 16},
 		{.Edit_Target_Page, 17},
+		{.Script_Fonts, 18},
 	}
 	count := 0
 	for range in Fixed_Range {

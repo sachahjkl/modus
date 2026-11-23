@@ -11,11 +11,15 @@ package vector_font
 //
 // The table is hostile input like the rest of the file: each offset is
 // checked against the length of the table before a read, each count
-// bounds its loop, and the work is bounded: at most SUBSTITUTION_FEATURE_LIMIT
-// features of the tag, SUBSTITUTION_LOOKUP_LIMIT lookups of a feature,
-// SUBSTITUTION_SUBTABLE_LIMIT subtables of a lookup, and a binary search
-// in each coverage (a coverage out of order gives no glyph, never a read
-// out of the table).
+// bounds its loop, and the work is bounded: a walk of the scripts, the
+// features and the lookups reads at most LAYOUT_WALK_READ_LIMIT entries,
+// at most SUBSTITUTION_FEATURE_LIMIT features of the tag and
+// SUBSTITUTION_LOOKUP_LIMIT lookups of a feature; the readers of one
+// glyph (single_substitution, script_substitution, gsub_find) try at most
+// SUBSTITUTION_SUBTABLE_LIMIT subtables of a lookup; a binary search in
+// each coverage (a coverage out of order gives no glyph, never a read out
+// of the table). The engine of the lookups (layout_engine.odin) bounds its
+// own work by the budget of the call.
 
 SUBSTITUTION_FEATURE_LIMIT :: 16
 SUBSTITUTION_LOOKUP_LIMIT :: 64
@@ -47,40 +51,258 @@ tag_at :: proc "contextless" (bytes: []u8, at: int) -> (tag: Feature_Tag, ok: bo
 // no table GSUB, no such feature in its default language system, or no
 // single substitution of the glyph in its lookups.
 single_substitution :: proc "contextless" (font: ^Font_File, tag: Feature_Tag, glyph: int) -> (substitute: int, problem: Font_Problem) {
-	if font.gsub.length == 0 {
-		return 0, .No_Feature
-	}
-	if font.gsub.offset < 0 || font.gsub.length < 0 || font.gsub.offset + font.gsub.length > len(font.bytes) {
+	return gsub_find(font, {'D', 'F', 'L', 'T'}, {'l', 'a', 't', 'n'}, tag, glyph)
+}
+
+// script_single_substitution is single_substitution in the default
+// language system of a script, else of DFLT: the forms of the letters of
+// Arabic are the features isol, init, medi and fina of the script arab.
+script_single_substitution :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyph: int) -> (substitute: int, problem: Font_Problem) {
+	return gsub_find(font, script, {'D', 'F', 'L', 'T'}, tag, glyph)
+}
+
+
+// script_substitution applies the lookups of a feature of a script (else
+// of DFLT) to one glyph, in the order of the lookup list, as a shaper does
+// on a glyph alone: a single substitution (type 1) changes the glyph, and a
+// multiple substitution (type 2) puts a sequence in its place, whose first
+// glyph the next lookups take; the others follow it. It writes the glyphs
+// into out and gives their count: 1 and the glyph itself when no lookup
+// takes it, .No_Feature when the font has no such feature. A sequence past
+// len(out) keeps its first len(out) glyphs. Noto Sans Arabic makes beh a
+// dotless body and a dot below by the feature ccmp, then the form of the
+// body by init, medi or fina.
+script_substitution :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyph: int, out: []int, budget: ^Layout_Budget) -> (count: int, problem: Font_Problem) {
+	if len(out) == 0 {
 		return 0, .Too_Short
 	}
-	table := font.bytes[font.gsub.offset:][:font.gsub.length]
+	// One feature: at most SUBSTITUTION_LOOKUP_LIMIT lookups, as a walk gives.
+	walked: [SUBSTITUTION_LOOKUP_LIMIT]u16
+	indices, _ := layout_feature_indices(font, font.gsub, script, {'D', 'F', 'L', 'T'}, tag, walked[:]) or_return
+	out[0] = glyph
+	count = 1
+	for index in indices {
+		lookup := layout_lookup_of(font, font.gsub, int(index)) or_else nil
+		if lookup == nil {
+			return 0, .Too_Short
+		}
+		// A lookup and each of its subtables take from the work of the call.
+		if !layout_budget_take(budget, 1 + (read_u16(lookup, 4) or_else 0)) {
+			return 0, .Too_Much_Work
+		}
+		substitute: int
+		found := lookup_single_substitution(lookup, out[0], &substitute) or_return
+		if found {
+			if substitute <= 0 || substitute >= font.glyph_count {
+				return 0, .Unknown_Format
+			}
+			out[0] = substitute
+			continue
+		}
+		sequence: [SEQUENCE_LIMIT]int
+		length: int
+		length, found = lookup_multiple_substitution(lookup, out[0], sequence[:]) or_return
+		if !found {
+			continue
+		}
+		for value in sequence[:length] {
+			if value <= 0 || value >= font.glyph_count {
+				return 0, .Unknown_Format
+			}
+		}
+		// The sequence in the place of the first glyph, before the rest.
+		rest := min(count - 1, len(out) - length)
+		if rest > 0 {
+			copy(out[length:][:rest], out[1:][:rest])
+		}
+		taken := copy(out, sequence[:length])
+		count = taken + max(rest, 0)
+	}
+	return count, .None
+}
+
+// The most glyphs of the sequence of one multiple substitution.
+SEQUENCE_LIMIT :: 8
+
+
+// Layout_Lookups: the lookups of one feature of a table GSUB or GPOS, in
+// the order of the lookup list, which is the order in which a shaper
+// applies them.
+Layout_Lookups :: struct {
+	parts:   [SUBSTITUTION_LOOKUP_LIMIT][]u8,
+	indices: [SUBSTITUTION_LOOKUP_LIMIT]u16, // The index of each in the lookup list.
+	count:   int,
+}
+
+// layout_has_script says if the script list of a table GSUB or GPOS names
+// a script.
+layout_has_script :: proc "contextless" (font: ^Font_File, place: Table, script: Feature_Tag) -> bool {
+	if place.length == 0 || place.offset < 0 || place.length < 0 || place.offset + place.length > len(font.bytes) {
+		return false
+	}
+	table := font.bytes[place.offset:][:place.length]
+	script_list_offset := read_u16(table, 4) or_return
+	script_list := part_at(table, script_list_offset) or_return
+	count := read_u16(script_list, 0) or_return
+	for index in 0 ..< count {
+		tag := tag_at(script_list, 2 + 6 * index) or_return
+		if tag == script {
+			return true
+		}
+	}
+	return false
+}
+
+// layout_lookups finds the lookups of a feature in the default language
+// system of a script (else of a second script) of a table GSUB or GPOS: the
+// two tables share the lists of scripts, features and lookups.
+// .No_Feature when the font has no such table, script or feature. A font
+// with a cache (layout_cache_fill) answers from it, with no walk.
+layout_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag, out: ^Layout_Lookups) -> (problem: Font_Problem) {
+	if cached, found := layout_cache_lookups(font, place, script, other_script, tag, out); found {
+		return cached
+	}
+	reads := 0
+	return layout_lookups_walk(font, place, script, other_script, tag, out, &reads)
+}
+
+// The records of the variations of the features that a walk reads: the
+// first record whose conditions hold is the one that applies.
+FEATURE_VARIATION_LIMIT :: 64
+
+// feature_variation_of gives the feature table that the variations of the
+// features of a table GSUB or GPOS 1.1 put in the place of a feature, at
+// the default coordinates of the font, which the system draws: the first
+// record whose conditions hold (a condition of format 1 holds when its
+// range holds 0; a condition of another format does not hold), and its
+// substitution of that feature, if it has one.
+@(private)
+feature_variation_of :: proc "contextless" (table: []u8, feature_index: int, reads: ^int) -> (feature: []u8, substituted: bool, problem: Font_Problem) {
+	variations_offset, has_offset := read_u32(table, 10)
+	if !has_offset || variations_offset == 0 {
+		return nil, false, .None
+	}
+	if variations_offset >= len(table) {
+		return nil, false, .Too_Short
+	}
+	variations := table[variations_offset:]
+	record_count := read_u32(variations, 4) or_else -1
+	// A count past the bound is refused, not cut: a cut would take a
+	// record that the font does not mean to apply.
+	if record_count < 0 || record_count > FEATURE_VARIATION_LIMIT {
+		return nil, false, .Unknown_Format
+	}
+	for record in 0 ..< record_count {
+		condition_set_offset := read_u32(variations, 8 + 8 * record) or_else -1
+		substitution_offset := read_u32(variations, 12 + 8 * record) or_else -1
+		if condition_set_offset < 0 || substitution_offset < 0 {
+			return nil, false, .Too_Short
+		}
+		holds := true
+		if condition_set_offset != 0 {
+			if condition_set_offset >= len(variations) {
+				return nil, false, .Too_Short
+			}
+			condition_set := variations[condition_set_offset:]
+			condition_count := read_u16(condition_set, 0) or_else -1
+			if condition_count < 0 || condition_count > FEATURE_VARIATION_LIMIT {
+				return nil, false, .Unknown_Format
+			}
+			for condition_number in 0 ..< condition_count {
+				reads^ += 1
+				condition_offset := read_u32(condition_set, 2 + 4 * condition_number) or_else -1
+				if condition_offset < 0 || condition_offset >= len(condition_set) {
+					return nil, false, .Too_Short
+				}
+				condition := condition_set[condition_offset:]
+				format := read_u16(condition, 0) or_else -1
+				low := read_i16(condition, 4) or_else 1
+				high := read_i16(condition, 6) or_else -1
+				if format != 1 || low > 0 || high < 0 {
+					holds = false
+					break
+				}
+			}
+		}
+		if !holds {
+			continue
+		}
+		// The first record that holds applies, whether or not it names this
+		// feature.
+		if substitution_offset == 0 || substitution_offset >= len(variations) {
+			return nil, false, .Too_Short
+		}
+		substitution := variations[substitution_offset:]
+		count := read_u16(substitution, 4) or_else 0
+		for number in 0 ..< count {
+			reads^ += 1
+			if reads^ > LAYOUT_WALK_READ_LIMIT {
+				return nil, false, .Too_Much_Work
+			}
+			index := read_u16(substitution, 6 + 6 * number) or_else -1
+			if index < 0 {
+				return nil, false, .Too_Short
+			}
+			if index != feature_index {
+				continue
+			}
+			alternate_offset := read_u32(substitution, 8 + 6 * number) or_else 0
+			if alternate_offset == 0 || alternate_offset >= len(substitution) {
+				return nil, false, .Too_Short
+			}
+			return substitution[alternate_offset:], true, .None
+		}
+		return nil, false, .None
+	}
+	return nil, false, .None
+}
+
+// The reads of one walk of the scripts, the features and the lookups of a
+// table: a walk past them is refused with Too_Much_Work. A walk of the
+// fonts of the set reads some hundreds.
+LAYOUT_WALK_READ_LIMIT :: 1 << 16
+
+// layout_lookups_walk is layout_lookups by a walk of the table.
+@(private)
+layout_lookups_walk :: proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag, out: ^Layout_Lookups, total_reads: ^int) -> (problem: Font_Problem) {
+	reads := 0
+	defer total_reads^ += reads
+	out.count = 0
+	if place.length == 0 {
+		return .No_Feature
+	}
+	if place.offset < 0 || place.length < 0 || place.offset + place.length > len(font.bytes) {
+		return .Too_Short
+	}
+	table := font.bytes[place.offset:][:place.length]
 	major, major_read := read_u16(table, 0)
 	minor, minor_read := read_u16(table, 2)
 	script_list_offset, script_read := read_u16(table, 4)
 	feature_list_offset, feature_read := read_u16(table, 6)
 	lookup_list_offset, lookup_read := read_u16(table, 8)
 	if !major_read || !minor_read || !script_read || !feature_read || !lookup_read {
-		return 0, .Too_Short
+		return .Too_Short
 	}
 	if major != 1 || minor > 1 {
-		return 0, .Unknown_Format
+		return .Unknown_Format
 	}
 	script_list, script_list_ok := part_at(table, script_list_offset)
 	feature_list, feature_list_ok := part_at(table, feature_list_offset)
 	lookup_list, lookup_list_ok := part_at(table, lookup_list_offset)
 	if !script_list_ok || !feature_list_ok || !lookup_list_ok {
-		return 0, .Too_Short
+		return .Too_Short
 	}
-	// The default language system of DFLT, else of latn.
+	// The default language system of the script, else of the other one.
 	language_system: []u8
 	system_found := false
 	script_count := read_u16(script_list, 0) or_else 0
-	for wanted in ([2]Feature_Tag{{'D', 'F', 'L', 'T'}, {'l', 'a', 't', 'n'}}) {
+	for wanted in ([2]Feature_Tag{script, other_script}) {
 		for index in 0 ..< script_count {
+			reads += 1
 			script_tag, tag_read := tag_at(script_list, 2 + 6 * index)
 			script_offset, offset_read := read_u16(script_list, 6 + 6 * index)
 			if !tag_read || !offset_read {
-				return 0, .Too_Short
+				return .Too_Short
 			}
 			if script_tag != wanted {
 				continue
@@ -88,12 +310,12 @@ single_substitution :: proc "contextless" (font: ^Font_File, tag: Feature_Tag, g
 			script, script_ok := part_at(script_list, script_offset)
 			default_offset, default_read := read_u16(script, 0)
 			if !script_ok || !default_read {
-				return 0, .Too_Short
+				return .Too_Short
 			}
 			if default_offset != 0 {
 				system_part, system_ok := part_at(script, default_offset)
 				if !system_ok {
-					return 0, .Too_Short
+					return .Too_Short
 				}
 				language_system = system_part
 				system_found = true
@@ -105,28 +327,32 @@ single_substitution :: proc "contextless" (font: ^Font_File, tag: Feature_Tag, g
 		}
 	}
 	if !system_found {
-		return 0, .No_Feature
+		return .No_Feature
 	}
 	// The features of the language system with the tag, then their lookups.
 	feature_count := read_u16(feature_list, 0) or_else 0
 	index_count, index_count_read := read_u16(language_system, 4)
 	if !index_count_read {
-		return 0, .Too_Short
+		return .Too_Short
 	}
 	lookup_count := read_u16(lookup_list, 0) or_else 0
 	features_seen := 0
 	for index_number in 0 ..< index_count {
+		reads += 1
+		if reads > LAYOUT_WALK_READ_LIMIT {
+			return .Too_Much_Work
+		}
 		feature_index, index_read := read_u16(language_system, 6 + 2 * index_number)
 		if !index_read {
-			return 0, .Too_Short
+			return .Too_Short
 		}
 		if feature_index >= feature_count {
-			return 0, .Unknown_Format
+			return .Unknown_Format
 		}
 		feature_tag, feature_tag_read := tag_at(feature_list, 2 + 6 * feature_index)
 		feature_offset, feature_offset_read := read_u16(feature_list, 6 + 6 * feature_index)
 		if !feature_tag_read || !feature_offset_read {
-			return 0, .Too_Short
+			return .Too_Short
 		}
 		if feature_tag != tag {
 			continue
@@ -136,36 +362,197 @@ single_substitution :: proc "contextless" (font: ^Font_File, tag: Feature_Tag, g
 			break
 		}
 		feature, feature_ok := part_at(feature_list, feature_offset)
+		if minor == 1 {
+			alternate, substituted, variation_problem := feature_variation_of(table, feature_index, &reads)
+			if variation_problem != .None {
+				return variation_problem
+			}
+			if substituted {
+				feature, feature_ok = alternate, true
+			}
+		}
 		lookups_of_feature, lookups_read := read_u16(feature, 2)
 		if !feature_ok || !lookups_read {
-			return 0, .Too_Short
+			return .Too_Short
 		}
-		for lookup_number in 0 ..< min(lookups_of_feature, SUBSTITUTION_LOOKUP_LIMIT) {
+		for lookup_number in 0 ..< lookups_of_feature {
+			reads += 1 + out.count
+			if reads > LAYOUT_WALK_READ_LIMIT {
+				return .Too_Much_Work
+			}
 			lookup_index, lookup_index_read := read_u16(feature, 4 + 2 * lookup_number)
 			if !lookup_index_read {
-				return 0, .Too_Short
+				return .Too_Short
 			}
 			if lookup_index >= lookup_count {
-				return 0, .Unknown_Format
+				return .Unknown_Format
+			}
+			// Each lookup once, in the order of the lookup list.
+			place_of := out.count
+			seen := false
+			for existing, position in out.indices[:out.count] {
+				if int(existing) == lookup_index {
+					seen = true
+					break
+				}
+				if int(existing) > lookup_index {
+					place_of = position
+					break
+				}
+			}
+			if seen {
+				continue
+			}
+			if out.count == SUBSTITUTION_LOOKUP_LIMIT {
+				break
 			}
 			lookup_offset, lookup_offset_read := read_u16(lookup_list, 2 + 2 * lookup_index)
 			lookup, lookup_ok := part_at(lookup_list, lookup_offset)
 			if !lookup_offset_read || !lookup_ok {
-				return 0, .Too_Short
+				return .Too_Short
 			}
-			found, lookup_problem := lookup_single_substitution(lookup, glyph, &substitute)
-			if lookup_problem != .None {
-				return 0, lookup_problem
+			for position := out.count; position > place_of; position -= 1 {
+				out.indices[position] = out.indices[position - 1]
+				out.parts[position] = out.parts[position - 1]
 			}
-			if found {
-				if substitute <= 0 || substitute >= font.glyph_count {
-					return 0, .Unknown_Format
-				}
-				return substitute, .None
+			out.indices[place_of] = u16(lookup_index)
+			out.parts[place_of] = lookup
+			out.count += 1
+		}
+	}
+	if out.count == 0 {
+		return .No_Feature
+	}
+	return .None
+}
+
+// layout_lookup_of gives the lookup of an index in the lookup list of a
+// table GSUB or GPOS: a nested lookup of a contextual lookup names its
+// index.
+layout_lookup_of :: proc "contextless" (font: ^Font_File, place: Table, index: int) -> (lookup: []u8, ok: bool) {
+	if place.length < 10 || place.offset < 0 || place.offset + place.length > len(font.bytes) {
+		return nil, false
+	}
+	table := font.bytes[place.offset:][:place.length]
+	list := part_at(table, read_u16(table, 8) or_else -1) or_return
+	count := read_u16(list, 0) or_return
+	if index < 0 || index >= count {
+		return nil, false
+	}
+	return part_at(list, read_u16(list, 2 + 2 * index) or_else -1)
+}
+
+// gsub_find finds the glyph that a feature of the default language system
+// of a script (else of a second script) gives for a glyph by a single
+// substitution: the first lookup that takes it. A ligature is read by the
+// engine of the lookups (layout_engine.odin).
+@(private)
+gsub_find :: proc "contextless" (font: ^Font_File, script, other_script, tag: Feature_Tag, glyph: int) -> (substitute: int, problem: Font_Problem) {
+	lookups: Layout_Lookups
+	layout_lookups(font, font.gsub, script, other_script, tag, &lookups) or_return
+	for lookup in lookups.parts[:lookups.count] {
+		found, lookup_problem := lookup_single_substitution(lookup, glyph, &substitute)
+		if lookup_problem != .None {
+			return 0, lookup_problem
+		}
+		if found {
+			if substitute <= 0 || substitute >= font.glyph_count {
+				return 0, .Unknown_Format
 			}
+			return substitute, .None
 		}
 	}
 	return 0, .No_Feature
+}
+
+// lookup_subtable gives a subtable of a lookup, through an extension (type
+// 7 of GSUB, type 9 of GPOS) when the lookup is one: false with no problem
+// when the subtable is of another type than wanted.
+@(private)
+lookup_subtable :: proc "contextless" (lookup: []u8, number: int, wanted, extension: int) -> (subtable: []u8, taken: bool, problem: Font_Problem) {
+	lookup_type, type_read := read_u16(lookup, 0)
+	subtable_offset, offset_read := read_u16(lookup, 6 + 2 * number)
+	if !type_read || !offset_read {
+		return nil, false, .Too_Short
+	}
+	subtable_ok: bool
+	subtable, subtable_ok = part_at(lookup, subtable_offset)
+	if !subtable_ok {
+		return nil, false, .Too_Short
+	}
+	if lookup_type == extension {
+		extension_format, format_read := read_u16(subtable, 0)
+		held_type, held_read := read_u16(subtable, 2)
+		held_offset, held_offset_read := read_u32(subtable, 4)
+		if !format_read || !held_read || !held_offset_read {
+			return nil, false, .Too_Short
+		}
+		if extension_format != 1 {
+			return nil, false, .Unknown_Format
+		}
+		if held_type != wanted {
+			return nil, false, .None
+		}
+		subtable, subtable_ok = part_at(subtable, held_offset)
+		if !subtable_ok {
+			return nil, false, .Too_Short
+		}
+		return subtable, true, .None
+	}
+	return subtable, lookup_type == wanted, .None
+}
+
+// lookup_multiple_substitution reads one lookup of type 2, or of type 7
+// that holds a type 2: the sequence of glyphs in the place of one glyph.
+// A sequence of no glyph, which deletes the glyph, and one past len(out),
+// are refused.
+@(private)
+lookup_multiple_substitution :: proc "contextless" (lookup: []u8, glyph: int, out: []int) -> (count: int, found: bool, problem: Font_Problem) {
+	subtable_count, count_read := read_u16(lookup, 4)
+	if !count_read {
+		return 0, false, .Too_Short
+	}
+	for number in 0 ..< min(subtable_count, SUBSTITUTION_SUBTABLE_LIMIT) {
+		subtable, taken := lookup_subtable(lookup, number, 2, 7) or_return
+		if !taken {
+			continue
+		}
+		format, format_read := read_u16(subtable, 0)
+		coverage_offset, coverage_read := read_u16(subtable, 2)
+		sequence_count, sequence_count_read := read_u16(subtable, 4)
+		coverage, coverage_ok := part_at(subtable, coverage_offset)
+		if !format_read || !coverage_read || !sequence_count_read || !coverage_ok {
+			return 0, false, .Too_Short
+		}
+		if format != 1 {
+			return 0, false, .Unknown_Format
+		}
+		index := coverage_index_of(coverage, glyph) or_return
+		if index < 0 {
+			continue
+		}
+		if index >= sequence_count {
+			return 0, false, .Unknown_Format
+		}
+		sequence_offset, sequence_offset_read := read_u16(subtable, 6 + 2 * index)
+		sequence, sequence_ok := part_at(subtable, sequence_offset)
+		glyph_count, glyph_count_read := read_u16(sequence, 0)
+		if !sequence_offset_read || !sequence_ok || !glyph_count_read {
+			return 0, false, .Too_Short
+		}
+		if glyph_count == 0 || glyph_count > len(out) {
+			return 0, false, .Unknown_Format
+		}
+		for place in 0 ..< glyph_count {
+			value, value_read := read_u16(sequence, 2 + 2 * place)
+			if !value_read {
+				return 0, false, .Too_Short
+			}
+			out[place] = value
+		}
+		return glyph_count, true, .None
+	}
+	return 0, false, .None
 }
 
 // lookup_single_substitution reads one lookup: type 1, or type 7 (an
@@ -244,6 +631,7 @@ lookup_single_substitution :: proc "contextless" (lookup: []u8, glyph: int, subs
 	}
 	return false, .None
 }
+
 
 // coverage_index_of gives the index of a glyph in a coverage table, or -1:
 // a binary search in format 1 (a sorted list of glyphs) and in format 2

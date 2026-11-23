@@ -505,6 +505,11 @@ plan_roles_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation, serial
 	if plan == nil {
 		return true
 	}
+	// The script font set travels with the roles: the core takes the set
+	// whole or refuses it whole, so a plan never holds in part.
+	if named, found := pr.plan_script_fonts(plan); found {
+		set.script_fonts = named
+	}
 	count := plan.entry_count
 	named: [role_contract.Role]bool
 	for index in 0 ..< count {
@@ -953,6 +958,9 @@ display_lists_of_difference :: proc "contextless" (state: ^Plans_State, differen
 			kind_text = "disk "
 		case .Store_Grant:
 			kind_text = "store "
+		case .Script_Fonts:
+		// Its one name, script_fonts, says what it is: a kind before it
+		// would say it twice.
 		}
 		length = text_put(text[:], length, kind_text)
 		length = text_put(text[:], length, string(item.name_bytes[:item.name_length]))

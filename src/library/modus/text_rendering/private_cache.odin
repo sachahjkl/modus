@@ -46,13 +46,14 @@ INDEX_GROUP_COUNT :: 340
 #assert(ENTRY_CAPACITY < 1 << 16 && BLOCK_COUNT < 1 << 16)
 
 // The fields of a key, from bit 0: the face (4 bits), the font of the
-// chain (4 bits), the glyph index (16 bits), the text size (16 bits) and
-// the position (2 bits). A key is never 0, as a face of a key is never
-// None.
+// chain (FONT_FIELD_BITS), the glyph index (16 bits), the text size (16
+// bits) and the position (2 bits). A key is never 0, as a face of a key is
+// never None.
 KEY_FONT_SHIFT :: 4
-KEY_GLYPH_SHIFT :: 8
-KEY_SIZE_SHIFT :: 24
-KEY_POSITION_SHIFT :: 40
+KEY_GLYPH_SHIFT :: KEY_FONT_SHIFT + FONT_FIELD_BITS
+KEY_SIZE_SHIFT :: KEY_GLYPH_SHIFT + 16
+KEY_POSITION_SHIFT :: KEY_SIZE_SHIFT + 16
+#assert(KEY_POSITION_SHIFT + 2 <= 64)
 #assert(POSITION_LIMIT <= 1 << 2)
 
 // Glyph_Entry: one drawn glyph, the box of its words. Its words are

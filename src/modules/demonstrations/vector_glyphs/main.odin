@@ -85,6 +85,7 @@ open_times: [len(candidates)]u64
 // The font set of the candidate that draws now: the candidate as the font
 // of the cells (with_font), and the memory of one outline for its open.
 candidate_set: text_rendering.Font_Set
+candidate_room: [1]text_rendering.Font
 candidate_outline: text_rendering.Outline_Memory
 
 window_memory: interface.Window_Memory(256, 8192)
@@ -94,6 +95,7 @@ window_memory: interface.Window_Memory(256, 8192)
 with_font :: proc "contextless" (index: int) -> (ok: bool) {
 	outline := text_rendering.outline_of(&candidate_outline)
 	start := system.nanoseconds()
+	candidate_set.room = candidate_room[:]
 	problem := text_rendering.font_file_open(&candidate_set, .Paper_Mono, candidates[index].bytes, &outline)
 	if problem != .None {
 		system.log_fact(.Info, Font_Refused{font = font_field(candidates[index].name), font_problem = value_kinds.text_field(vector_font.font_problem_names[problem], FONT_PROBLEM_FIELD_BYTES)})

@@ -93,3 +93,51 @@ Fonts_Ready :: struct {
 }
 
 #assert(size_of(Box_Character_Wrong) == 16 + FONT_NAME_FIELD_BYTES)
+
+// The machine maps no script font set: the line of Hebrew, Arabic, CJK and
+// an emoji draws the replacement glyph.
+@(log_fact = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph")
+Script_Fonts_Not_Mapped :: struct {}
+
+// Each glyph of the line of the script font set has a font, and each base
+// glyph has ink.
+@(log_fact = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws {glyphs} glyphs, with no replacement glyph: as it must")
+Script_Line_Drawn :: struct {
+	glyphs: u64,
+}
+
+// This module compiles the fast part of the text only: the library module
+// text_rendering shaped the line, and gave the outline of each glyph of a
+// font of the set.
+@(log_fact = "interface_font: the library module text_rendering shaped the line and holds the {fonts} fonts of the set, as this module compiles no written part")
+Script_Line_Through_Module :: struct {
+	fonts: u64,
+}
+
+// A font of the set is open in this module but not held by the library
+// module: the fast part would have opened a script font itself.
+@(log_fact = "interface_font: WRONG: the font {font} of the script font set is open in this module, not held by the library module text_rendering")
+Script_Font_Not_Held :: struct {
+	font: u64,
+}
+
+// A character of the line of the script font set is the replacement glyph
+// with the set mapped.
+@(log_fact = "interface_font: the script font set is mapped, and the character {character} of its line draws the replacement glyph")
+Script_Line_Box :: struct {
+	character: u64,
+}
+
+// A glyph of the line of the script font set has no ink.
+@(log_fact = "interface_font: the script font set is mapped, and the character {character} of its line has {ink_rows} rows of ink")
+Script_Line_Without_Ink :: struct {
+	character: u64,
+	ink_rows:  u64,
+}
+
+// The line of the script font set has more glyphs than the table of one
+// line.
+@(log_fact = "interface_font: the line of the script font set has {glyphs} glyphs, more than one line holds")
+Script_Line_Too_Long :: struct {
+	glyphs: u64,
+}

@@ -25,8 +25,12 @@
 // 3 Cells, 4 Cells_Without_Grid_Fit, 5 Cells_Bold); a text size is the
 // height of a line in 1/64 of a pixel, from 256 to 16384.
 //
-// **What it does not do**: no ligature, no direction other than left to
-// right, no shaping of a complex script.
+// **What it does not do**, over the bytes of the caller: no script font
+// (the caller gives the font outlines only, so Hebrew, Arabic, the
+// ideographs and the emoji are the replacement glyph), no shaping of the
+// scripts of India and of Southeast Asia. The exports over the fonts of the
+// process do both (process_fonts.odin). The composition of the marks and the order of a line of mixed
+// direction are those of the package.
 package text_rendering_module
 
 import "modus:contract/call_outcome"
@@ -40,14 +44,51 @@ import "modus:text_rendering"
 @(private)
 TABLE_LIMIT :: u64(1) << 40
 
-// The fonts of one call, opened from the bytes of the caller, and the
-// memory of one outline for their measures: about 16 KiB on the stack of
-// the call.
+// The fonts of one call, opened from the bytes of the caller, on the stack
+// of the call. A call runs on the stack of a worker thread of its caller,
+// 64 KiB: the whole call stays under CALL_STACK_BOUND, which a host test
+// measures. The records of the outlines and the memory of the outlines of
+// the measures serve the open only: they are on the frame of call_spacing,
+// which ends before the shaping.
 @(private)
 Call_Fonts :: struct {
-	set:     text_rendering.Font_Set,
-	outline: text_rendering.Outline_Memory,
+	set:  text_rendering.Font_Set,
+	// The room of the set: a call opens the fonts of the boot image only,
+	// so a script font takes none of the stack of a call.
+	room: [text_rendering.BOOT_FONT_COUNT]text_rendering.Font,
 }
+
+// The records of the outlines of a caller that a call takes: the fonts of
+// the boot image, and room for three more.
+CALL_RECORD_LIMIT :: text_rendering.BOOT_FONT_COUNT + 3
+
+// The most stack that one call uses, its locals and those of each
+// procedure that it calls: a quarter of the stack of a worker thread.
+CALL_STACK_BOUND :: 16 << 10
+// The fonts of a call take less than two thirds of it: the shaper, the
+// order of a line and the open of a font take the rest
+// (one_call_stays_under_its_stack_bound measures the whole call).
+#assert(size_of(Call_Fonts) <= 10 << 10)
+// The open of the fonts of a call: the fonts, and on the frame of
+// call_spacing the records of the outlines and the memory of the measures.
+#assert(size_of(Call_Fonts) + CALL_RECORD_LIMIT * size_of(font_outlines.Font_Record) + size_of(text_rendering.Measure_Memory) <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
+// The records of the deepest path of shape, counted by the depth at which
+// they run together (text_rendering.SHAPE_STACK_RECORDS_BYTES), with the
+// fonts and the outlines of a call, leave an eighth of the bound, 2 KiB,
+// for the other locals and the frames of the calls. A call over bytes
+// opens the fonts of the boot image only (Call_Fonts.room), and the shaper
+// of the scripts of India takes a font of the script font set only, so no
+// such call runs the engine of the lookups. The freestanding build runs on
+// no host, so this is its bound; the host measures whole calls, with a line
+// of marks that the anchors of GPOS of its font place
+// (one_call_stays_under_its_stack_bound).
+#assert(size_of(Call_Fonts) + size_of(font_outlines.Outlines) + text_rendering.SHAPE_STACK_RECORDS_BYTES <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
+// A call over the fonts of the process (process_fonts.odin) runs the
+// engine of the lookups, and holds no fonts on its stack: they are data of
+// the module. Its deepest path is the records of shape and the spacing; the
+// host measures each export with a line of the scripts of India, Arabic,
+// Hebrew and marks (the_exports_over_the_fonts_of_the_process).
+#assert(size_of(text_rendering.Spacing) + text_rendering.SHAPE_STACK_RECORDS_BYTES <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
 
 // face_and_size_check refuses a face (argument 2) and a text size
 // (argument 3) with an error record.
@@ -77,18 +118,24 @@ face_and_size_check :: proc "contextless" (face_word, size: i64, error: ^errors.
 // bytes than TABLE_LIMIT (Too_Long), and for outlines with no first font of
 // the face (Absent: value the text_rendering.Outline_Font).
 @(private)
-call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_To_Read, face: text_rendering.Face, size: i64, error: ^errors.Error_Record) -> (spacing: text_rendering.Spacing, ok: bool) {
+call_spacing :: #force_no_inline proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_To_Read, face: text_rendering.Face, size: i64, error: ^errors.Error_Record) -> (spacing: text_rendering.Spacing, ok: bool) {
+	// The room of the records of the outlines of the caller: the font
+	// outlines of a boot image hold the fonts of the boot image. A resource
+	// with more records is refused (font_outlines.No_Room).
+	records: [CALL_RECORD_LIMIT]font_outlines.Font_Record
+	measure: text_rendering.Measure_Memory
 	count := outlines.count
 	if count > TABLE_LIMIT {
 		errors.fail(error, 0, .Too_Long, .Bytes, 1, i64(min(count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 		return {}, false
 	}
-	resource, problem := font_outlines.validate(outlines.bytes[:count])
+	resource, problem := font_outlines.validate(outlines.bytes[:count], records[:])
 	if problem.kind != .None {
 		errors.fail(error, 0, .Bad_Value, .Bytes, 1, i64(problem.kind), 0, i64(problem.index) + 1)
 		return {}, false
 	}
-	outline := text_rendering.outline_of(&fonts.outline)
+	fonts.set.room = fonts.room[:]
+	outline := text_rendering.measure_outline_of(&measure)
 	// Only the fonts that the chains of the face name: each open reads the
 	// outlines of 94 characters for its measures.
 	_ = text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(face))

@@ -14,6 +14,12 @@ import "modus:text_rendering"
 // text_frame_begin: interface.window_frame_begin and the drawing module
 // call it, and a process that draws text by hand calls it at its frame.
 
+// The room of the records of the font outlines and of the script font set:
+// any count that the format allows. One room serves both, as each is
+// opened in turn and no record is kept past its open.
+@(private)
+outlines_room: font_outlines.Record_Room
+
 // fallback_load opens the font outlines that the starter mapped. The
 // problem is Not_Mapped when the starter gave no outlines: the text of the
 // process is then Spleen. missing names the fonts of the chains that the
@@ -22,20 +28,40 @@ import "modus:text_rendering"
 // (interface_module) opens them with it too.
 fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
 	outlines: font_outlines.Outlines
-	outlines, problem = font_outlines.open(&ctx.values)
+	outlines, problem = font_outlines.open(&ctx.values, outlines_room[:])
 	if problem.kind != .None {
 		return problem, {}
 	}
-	return {}, text_rendering.open(&outlines)
+	missing = text_rendering.open(&outlines)
+	// The script font set, when the plan names one and the starter mapped
+	// it: with none, each character of those scripts is the replacement
+	// glyph, and no line says so: a machine with no such set is the usual
+	// case (src/md/features/script_fonts.md).
+	when text_rendering.WRITTEN_SHAPING_COMPILED_IN {
+		if scripts, script_problem := font_outlines.script_fonts_open(&ctx.values, outlines_room[:]); script_problem.kind == .None {
+			missing += text_rendering.script_fonts_open(&scripts)
+		}
+	} else {
+		// The library module opens the fonts of the process for each line
+		// that is not simple, the script font set with them
+		// (src/md/features/text_rendering.md, "Where the written shaping
+		// lives").
+		missing += text_rendering.written_part_open()
+	}
+	return {}, missing
 }
 
-// script_coverage_tell writes, for each script of the fallback chains, how
+// script_coverage_tell writes, for each script of the fallback chains that
+// it counts (Script_Row.counted), how
 // many of its characters the chain of the interface and the chain of the
 // cells draw, and says when no font of the system has the others. One
 // process writes it once, after text_settings_open: the compositor, which
 // starts once at each boot. The lines start with the name of the caller.
 script_coverage_tell :: proc "contextless" (caller: string) {
 	for script in text_rendering.Script {
+		if !text_rendering.scripts[script].counted {
+			continue
+		}
 		interface_drawn, total := text_rendering.coverage(.Interface, script)
 		cells_drawn, _ := text_rendering.coverage(.Cells, script)
 		if interface_drawn == total && cells_drawn == total {

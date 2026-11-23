@@ -39,6 +39,7 @@ A parameter that the description cannot carry, by its kind, is a sign that the b
 | The wrappers of a kernel entry and of a ring | A few instructions; the loader cannot be loaded by itself |
 | The loader, the isolated call and the hash, in a starter | They are the machinery that loads a module |
 | A small, hot state of the process (the random generator) | A call for each use costs more than the code |
+| The fast part of the text: a line of simple characters in the fonts of the boot image | A window measures 30 to 200 texts in a frame. The written shaping is large and serves a few lines, so it is behind the library module `text_rendering`, one call for each line ([../features/text_rendering.md](../features/text_rendering.md), "Where the written shaping lives") |
 | All that the root service, the boot program and the call host use | They import nothing: the kernel starts the root service with no loader for imports, and it must not get one |
 
 The last row is a bundle with no table of what it holds yet. A fault in the text code is corrected in the drawing module and stays in the root service until the root service is built again. A replacement does not reach it.

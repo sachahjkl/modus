@@ -791,3 +791,51 @@ plan_validate_of_a_plan_of_a_thousand_entries :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_diff_compute(&chain, &one, &short), Plan_Refusal.Buffer_Too_Small)
 	testing.expect_value(t, short.change_count, u32(0))
 }
+
+// The entry Script_Fonts names the script font set of the machine: the
+// plan of principal 0 takes one; the plan of another principal, a second
+// entry, another name, a zero hash, a role, an interposed hash, a start
+// grant and store rights are each refused at the border. A change of the
+// set is an item of the difference that grants nothing.
+@(test)
+the_script_font_set_of_a_plan :: proc(t: ^testing.T) {
+	_, made := plan_entry_make_script_fonts({})
+	testing.expect(t, !made, "a zero hash makes no entry")
+	entry, ok := plan_entry_make_script_fonts(make_hash(1))
+	testing.expect(t, ok)
+	plan := Plan_Spec{principal = 0, entry_count = 1}
+	plan.entries[0] = entry
+	refusal, _ := plan_validate(&plan)
+	testing.expect_value(t, refusal, Plan_Refusal.None)
+	named, found := plan_script_fonts(&plan)
+	testing.expect(t, found && named == make_hash(1))
+	Broken :: struct {
+		change:  proc(plan: ^Plan_Spec),
+		refusal: Plan_Refusal,
+	}
+	cases := [?]Broken {
+		{proc(plan: ^Plan_Spec) {plan.principal = 1}, .Machine_Only},
+		{proc(plan: ^Plan_Spec) {plan.entries[1] = plan.entries[0]; plan.entries[1].module_hash = make_hash(2); plan.entry_count = 2}, .Duplicate_Entry},
+		{proc(plan: ^Plan_Spec) {plan.entries[0].name_length = u8(copy(plan.entries[0].name_bytes[:], "fonts"))}, .Invalid_Name},
+		{proc(plan: ^Plan_Spec) {plan.entries[0].module_hash = {}}, .Zero_Module_Hash},
+		{proc(plan: ^Plan_Spec) {plan.entries[0].role_word = 1}, .Bad_Role},
+		{proc(plan: ^Plan_Spec) {plan.entries[0].interposed_over_hash = make_hash(3)}, .Bad_Entry_Kind},
+		{proc(plan: ^Plan_Spec) {plan.entries[0].start_grants_mask = 1}, .Bad_Start_Grant},
+		{proc(plan: ^Plan_Spec) {plan.entries[0].store_rights_word = 1}, .Bad_Store_Rights},
+		{proc(plan: ^Plan_Spec) {plan.entries[0].kind_word = u64(max(Plan_Entry_Kind)) + 1}, .Bad_Entry_Kind},
+	}
+	for broken, index in cases {
+		changed := plan
+		broken.change(&changed)
+		found_refusal, _ := plan_validate(&changed)
+		testing.expectf(t, found_refusal == broken.refusal, "case %d: %v, expected %v", index, found_refusal, broken.refusal)
+	}
+	other := plan
+	other.entries[0].module_hash = make_hash(2)
+	difference: Plan_Difference
+	testing.expect_value(t, plan_diff_compute(&plan, &other, &difference), Plan_Refusal.None)
+	testing.expect(t, difference.has_changes && difference.change_count == 1 && !difference.any_grant_added)
+	item := difference.changes[0]
+	testing.expect(t, item.change == .Changed && item.entry_kind == .Script_Fonts && item.old_module_hash == make_hash(1) && item.new_module_hash == make_hash(2))
+	testing.expect_value(t, difference.added_grants_count + difference.removed_grants_count, u32(0))
+}

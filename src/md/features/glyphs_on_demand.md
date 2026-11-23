@@ -67,16 +67,16 @@ The fallback chain is data: `fallback_glyphs.scripts`, one row for each script, 
 | Greek | B612, Paper Mono, Noto Sans | B612 Bold, B612, Paper Mono SemiBold, Noto Sans | Paper Mono, B612, Noto Sans | Paper Mono SemiBold, B612 Bold, B612, Noto Sans |
 | Cyrillic | Noto Sans | Noto Sans | Noto Sans | Noto Sans |
 | Box drawing and block elements | Paper Mono | Paper Mono SemiBold | Paper Mono | Paper Mono SemiBold |
-| Each other character, Latin Extended-A too | B612, Paper Mono, Noto Sans | B612 Bold, Paper Mono SemiBold, Noto Sans | Paper Mono, B612, Noto Sans | Paper Mono SemiBold, B612, Noto Sans |
+| Each other character, Latin Extended-A too | B612, Noto Sans, Paper Mono | B612 Bold, Noto Sans, Paper Mono SemiBold | Paper Mono, B612, Noto Sans | Paper Mono SemiBold, B612, Noto Sans |
 
 The face `Cells_Without_Grid_Fit` takes the chain of `Cells`. A new font is one record of the resource, one member of `fallback_glyphs.Outline_Font`, and its place in the rows.
 
 ### The font of the missing scripts
 
-B612 has no Π (U+03A0), no ρ (U+03C1), no Cyrillic letter and no letter of Latin Extended-A, and Paper Mono has five Greek letters only. A principal who writes Greek, Russian or a language of Central Europe needs them in every window and in the cells. Noto Sans closes each chain: the subset "Noto Sans LGC" holds the 192 characters, which give its measures, then Latin Extended-A (U+0100 to U+017F), the 49 Greek letters and the 96 basic Cyrillic letters (U+0400 to U+045F), each a simple glyph (`font_outlines.script_fallback_past_cache_ranges`). So every chain of every face draws the 49 Greek letters, the 96 Cyrillic letters and the 128 letters of Latin Extended-A. The compositor writes, at its start, one line for each script with the count that each chain draws, so the log names what is missing once at each boot (`display.script_coverage_tell`); a later chain with a gap shows there.
+B612 has no Π (U+03A0), no ρ (U+03C1), no Cyrillic letter and five letters of Latin Extended-A, and Paper Mono has five Greek letters only. A principal who writes Greek, Russian, Vietnamese or a language of Central Europe needs them in every window and in the cells. Noto Sans closes each chain: the subset "Noto Sans LGC" holds the 192 characters, which give its measures, then 2 381 characters past them, each a simple glyph (`font_outlines.script_fallback_past_cache_ranges`): Latin Extended-A, B and Additional, the whole Greek and Cyrillic blocks, General Punctuation and the currency signs. So every chain of every face draws the 49 Greek letters, the 96 basic Cyrillic letters and the 128 letters of Latin Extended-A, and more. The compositor writes, at its start, one line for each script with the count that each chain draws, so the log names what is missing once at each boot (`display.script_coverage_tell`); a later chain with a gap shows there.
 
 - **The last font of each chain, never the first.** A letter that B612 or Paper Mono has keeps its glyph: the Greek letters of B612, and the pixels that their golden hashes hold, do not change. The Cyrillic chains name Noto Sans alone, as no font of the faces has a Cyrillic letter.
-- **One weight.** Noto Sans Bold would cost another 87 KB of the boot image for the titles and the bold cells only. A bold Cyrillic letter draws in the regular weight, in the frame of the bold face.
+- **One weight.** Noto Sans Bold would cost another 548 KB of the boot image for the titles and the bold cells only. A bold Cyrillic letter draws in the regular weight, in the frame of the bold face.
 - **The 192 characters in the subset too.** The open of a font reads the outlines of the characters 33 to 126 for its measures (`vector_font.font_measures`), and the tool writes each subset in one layout. They cost about 30 KB.
 - **Its cost in a call of the library module.** A call opens the fonts of the chains of its face (`fonts_of_face`): Noto Sans is in each chain, so each call reads the outlines of its 94 characters for its measures, as it does for each other font of the chain.
 
@@ -85,6 +85,22 @@ Refused:
 - **A subset of the missing letters alone, made by hand with another tool.** It has no outline of the characters 33 to 126, so the open refuses it for its measures; and a subset that the modus tool does not write has no record of its source and no check of its license.
 - **A Cyrillic or Greek row in the cells with a monospace font.** No monospace candidate of the system has Cyrillic. In the frame of the first font, cut to its cell, a letter of Noto Sans stands beside Paper Mono, as a Greek letter of B612 does.
 - **Noto Sans in place of B612.** The interface font keeps its form; Noto Sans only fills the gaps.
+
+### Every character that a font of the system has
+
+The subsets once held a chosen few characters past the 192: the Greek letters of B612, the box-drawing characters of Paper Mono, and three scripts of Noto Sans. So the em dash, the curly quotes, the ellipsis, the arrows and ș drew the replacement glyph, although each font of the system has them. Now each subset holds every character of its source past U+00FF with an advance above zero that is not a combining mark, a format character, a separator of lines or paragraphs, a private use character or a control character: 326 for each weight of B612, 448 for each weight of Paper Mono, 2 381 for Noto Sans. The rule is in the lists of `font_outlines`, which the modus tool writes into each subset, and the tool refuses a list character that its source lacks. A character draws the replacement glyph only when no font of the system has it.
+
+- **The private glyph cache already keys any character.** Its key is the face, the font of the chain, the glyph index, the size and the position, in a Swiss table of 4 096 entries that evicts by the order of use ([text_rendering.md](text_rendering.md), "The cache"). Nothing in it depends on the 192 characters: the limit was in the subsets. The key keeps the glyph index, not the code point (`text_rendering.md`, "The refused forms").
+- **No direct table for ASCII.** A hit in the Swiss table costs one compare of 16 tags and one compare of a key, 2.07 ns on the host; the blend of a glyph costs about 109 ns. A table by character index beside the hash table saves under 2 % of a glyph, and is a second form of one entry to keep in step.
+- **A proportional face takes Noto Sans before Paper Mono.** The default chain of `Interface` is B612, Noto Sans, Paper Mono, and of `Interface_Bold` B612 Bold, Noto Sans, Paper Mono SemiBold. A letter that B612 lacks (ș, ł, č) then has a proportional advance beside the letters of B612. The chains of the cells keep Paper Mono first, so ș, — and → keep their cell.
+- **The pairs of every character of the subset.** The tool keeps each pair of `kern` between two characters of a subset of B612, not only between two of the 192: 1 017 pairs in Regular and 1 061 in Bold.
+- **The cost.** The font outlines grow from about 282 KB to 975 096 bytes, 548 128 of them Noto Sans: Greek Extended and Latin Extended Additional hold 918 glyphs made of glyphs, which the subset makes simple. The root service checks their hash once at the start; a process reads only the pages of the glyphs that it draws.
+
+Refused:
+
+- **A list of chosen characters, as before.** Each new need of a principal (a quote, an arrow, a currency sign) was a change of the list, the subsets and their tests, while the font already had the glyph.
+- **Combining marks in the subsets.** The drawing gives each character its own place; a mark with no advance would draw cut at the left of its place. A mark joins when the shaper places marks on their base ([text_rendering.md](text_rendering.md), "What waits").
+- **The whole source font, with its OpenType tables.** The reader reads `glyf` and `kern` only, and the variable font of Noto Sans is 1.5 MB.
 
 ### A fallback font in the frame of the first font
 

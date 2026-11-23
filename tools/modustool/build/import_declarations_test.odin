@@ -564,6 +564,11 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 		if slice.contains(build.defines, foundation.DRAWING_THROUGH_MODULE) {
 			append(&paths, foundation.SOURCE_FOLDER_PUBLIC + "/interface/window_drawing.odin")
 		}
+		// The declarations of the library module text_rendering are in the
+		// fast part of the package, for each module that draws text.
+		if slice.contains(build.imports, foundation.TEXT_RENDERING_MODULE) {
+			append(&paths, foundation.SOURCE_FOLDER_PUBLIC + "/text_rendering/written_part.odin")
+		}
 		compared := 0
 		for path in paths {
 			if strings.has_suffix(path, "_test.odin") {

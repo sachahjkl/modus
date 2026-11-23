@@ -92,7 +92,7 @@ The module is a support package, `text_rendering`. It is the package `fallback_g
 - **The measure is compiled in. The draw is in the drawing module.** An element measures its texts 30 to 200 times in a frame. The drawing module draws them two times in a frame. So the measure is in each process, and the rasterizer, the private glyph cache and the blend are in the drawing module, which compiles the same package. Both read the same font outlines with the same code, so they give the same advances.
 - **The line breaks** keep the order of [text_box.md](text_box.md): the last space that fits; in a word wider than the room, the last `/`, `:` or `_` that fits; else the last character that fits. A break is always between two whole characters. The rule of today breaks the bytes, and can cut a character of several bytes ([text_box.md](text_box.md), "Subtle points"). The line height is the text size.
 - **Fallback faces** stay as they are: the first font of the chain of its script that has the glyph gives it, in the frame of the first font. No font: the replacement glyph, with the advance of `0`.
-- **What waits.** The bidirectional algorithm: a text draws in the order of its bytes. The shaping of complex scripts: substitutions past the single substitution of the slashed zero, the positions of marks, the joining of Arabic, the order of the scripts of India; the cluster of a placed glyph is ready for them. The line breaking of Unicode (UAX #14) and hyphenation. CFF outlines, variable fonts and color glyphs. A cell of two columns for an ideograph. Each of them is an entry of `ROADMAP.md` when a principal needs it. The design of the direction, of the line breaks of UAX #14 and of the shaping of complex scripts by a library module built from HarfBuzz is [interface_language.md](interface_language.md).
+- **What waits.** The bidirectional algorithm: a text draws in the order of its bytes. The shaping of complex scripts: substitutions past the single substitution of the slashed zero, the positions of marks, the joining of Arabic, the order of the scripts of India; the cluster of a placed glyph is ready for them. The line breaking of Unicode (UAX #14) and hyphenation. CFF outlines, variable fonts and color glyphs. A cell of two columns for an ideograph. Each of them is an entry of `ROADMAP.md` when a principal needs it. The design of the direction and of the line breaks of UAX #14 is [interface_language.md](interface_language.md); the shaping of complex scripts is [written_shaping.md](written_shaping.md).
 
 ### The library module
 
@@ -105,7 +105,59 @@ The library module `text_rendering` exports `shape_text`, `measure_texts` and `b
 - **Refused: a copy of the outlines into the module.** About 195 KB at each call, for bytes that each read already checks.
 - **Refused: a cache of the opened fonts between calls.** The fonts point into the bytes of the caller, which may not exist at the next call; a key by the hash of the bytes costs a hash of 195 KB at each call, more than the open.
 
-The drawing module compiles the package in. It does not import the library module: the draw table crosses the border once for a frame ([../api/library_modules.md](../api/library_modules.md)).
+The drawing module compiles the package in, both parts (below). Its draw table crosses the border once for a frame ([../api/library_modules.md](../api/library_modules.md)).
+
+### Where the written shaping lives
+
+Each module that draws text compiled the whole package: the clusters with their compositions, the shapers of Arabic, Thai and the scripts of India, the engine of the lookups of GSUB and GPOS, the bidirectional algorithm, the reader of CFF, the open of the script font set with its caches, and the Unicode tables of all of them. That is about 160 KB of code and tables in each of about 53 modules: 8.7 MB of the boot image, which then did not fit its volume of 64 MiB beside the debug image. Most of that code serves the scripts of the script font set, and a module of the system writes Latin.
+
+**Two parts of one package.** The define `WRITTEN_SHAPING_COMPILED_IN` chooses them at compile time:
+
+- **The fast part, in each module.** The faces of the boot image and their chains, the character map, the advances, the pairs of `kern`, the line breaks, the rasterizer of `glyf` outlines and the private glyph cache. It places a text whose every character is simple (below), each character its own cluster.
+- **The written part, in the library module `text_rendering` only.** The clusters and their marks, the compositions, Arabic, Thai, the scripts of India, the engine of the lookups and its budget, the bidirectional algorithm, the script font set with the caches of its walk and of CFF, and the reader of CFF. The module row defines `WRITTEN_SHAPING_COMPILED_IN`; a host build compiles both parts, so the host tests shape each script.
+
+A module of the system then carries the text code of the build before the written shaping. Three modules compile the written part in, as none of them can import a module:
+
+- the library module `text_rendering`, its home;
+- the drawing module: a library module has no import slot, as the loader would write that slot into a segment that is shared by each importer;
+- the root service, which the kernel starts with no loader for imports.
+
+So the boot image holds three copies of the written part, where it held one for each module that draws text.
+
+**The decision is one table.** A character is simple when Unicode says that it needs no shaping: its script is Latin, Greek, Cyrillic or Common; its combining class is 0; its general category is no mark, no format character, no control and no surrogate; its bidirectional class is L, EN, ES, ET, CS, WS or ON; it joins nothing. `modustool unicode_tables` writes these characters as `simple_ranges`. A text of simple characters takes the fast part when, for each character, a font of the boot image in its chain draws it before any font of the set. Both parts place such a text the same way: each character is a cluster of no mark, no pair crosses a syllable, and the reorder of UAX #9 moves nothing in a line with no class of right to left. A host test shapes texts of each face by both parts and compares each placed glyph.
+
+**A mark apart goes to the module.** A text in NFC holds é as one character. A mark after its letter (e then U+0301) needs the compositions, the combining classes and the anchors of GPOS: 16 KB of tables and the walk of GPOS, for a form that a text of the system rarely has. So a mark is not simple, and its line goes to the module.
+
+**One call for a line.** The fast part calls the module for a whole text that it does not place: `line_shape` for the placed glyphs, `line_widths` for the widths, each a field of its range, so a width below 0 is told apart from a refusal, `line_fit` for the longest start that fits. The reorder of UAX #9 needs the whole line, and the pairs and the syllables cross clusters, so the border is the line. A call checks its face, its size and its text at the border, as the other exports do.
+
+**The fonts of a process are data of the module.** The loader gives each process one copy of the data of a module, and puts each module in a process once. `process_fonts_open` opens that copy once, from the fixed ranges of the process: the fonts of the boot image and the script font set, with the caches of the walk. `display.text_settings_load` calls it after it opens the fast part, so before the first frame. A call of a line before that open is refused, and the fast part then places the line one character at a time. A second thread that calls during the open waits for its end. The open reads the font outlines, opens the fonts of the boot image, and only then reads the records of the set into the same room, as `display.fallback_load` does: a record of the set never stands for a font of the boot image. After the open the state of the module is only read, so two threads of a process shape at once with no lock.
+
+**The draw of a glyph of the set.** The rasterizer and the private glyph cache stay in the fast part. A placed glyph of a font of the set takes its outline from the module (`glyph_outline`), with the measures of its font in the frame of the face, so the reader of CFF stays in the module. A cell of a grid (the terminal) whose cluster is not simple is read by the module (`cluster_read`), and a character that the fast part finds in no font of the boot image is found by the module (`glyph_find`).
+
+**The stack and the work.** The fast part has no engine: its work is one lookup of the character map, one advance and one pair for each character. A call of the module runs the written part with the budget of one call ([written_shaping.md](written_shaping.md), "One budget of work for one call"), on the stack of the caller. Its fonts are in its data, not on its stack, so its deepest path is the records of the shaper; the host test of the module measures the stack of each export with a line of Devanagari, of Arabic and of mixed direction, against `CALL_STACK_BOUND`: 13 815 bytes in a debug build. The freestanding build counts the records of its deepest path at the depth at which they run together (`SHAPE_STACK_RECORDS_BYTES`): 5 273 bytes; its frames are not measured.
+
+**A set of the caller.** A candidate font and a set of a test are not the fonts of the process, which the module holds. In a module without the written part, the fast part places such a set one character at a time.
+
+**The forms that were refused.**
+
+- **The Unicode tables mapped read-only from one place, as the script font set.** The tables are 50 KB of the 160 KB. The code of the engine, of the shapers and of CFF stays in each module.
+- **The written part in the drawing module alone, with each module importing it for its text.** The measure of a window is in each module, and a module that draws by hand with `graphics` does not import the drawing module; the drawing module holds the code of the draw tables, which such a module does not need. The library module `text_rendering` holds the text and nothing else.
+- **A call of the module for each cluster.** The reorder of a line and the pairs across clusters need the whole line.
+- **A procedure value that the start of a process sets to choose the part.** It is state that no table shows. The define is a fact of the build that the row of each module states.
+- **A copy of the fonts on the stack of each call, as the exports over bytes do.** Each call would open the script font set again: the caches of its walk read up to 5 595 entries for one font.
+
+**The sizes.** One `modustool build` of each form, on the host of the development:
+
+| | The written part in each module | The two parts |
+|---|---|---|
+| `boot.image` | 37 622 008 bytes | 30 994 680 bytes |
+| The debug image | 37 861 359 bytes | 30 631 919 bytes |
+| The volume of 64 MiB | 19 of 27 volumes do not fit | each of the 27 fits, 5.5 MB free |
+| `text_rendering` and `vector_font` in `tally` | 74 KB and 57 KB of code, 50 KB of tables | 23 KB and 9 KB of code, 7 KB of tables |
+
+With the two parts, the file of the library module `text_rendering` has 212 992 bytes and the file of the drawing module 330 523 bytes; each holds the written part once.
+
+The boot image of the last build before the written shaping held 28 938 488 bytes. The 2.1 MB past it are the three copies of the written part, the fast part in each module, and the code of the other steps since then. The tables that stay in each module are the simple characters (1.5 KB), the marks for the widths of the cells (2.9 KB), the widths of the cells and the scripts of the chains. The cluster breaks of a cell are the 27 characters of the classes WS, S and B, written in the code, so the table of the bidirectional classes, 10 KB, stays in the written part.
 
 ### The cache
 
@@ -138,7 +190,7 @@ The numbers:
 | | The glyph caches and the demand cache | Every glyph drawn by its process |
 |---|---|---|
 | The sizes that they serve | Lines of 16, 32 and 48 pixels only. The scale factor from 1 to 2 gives lines of 16 to 32 pixels: of these nine sizes, 16 and 32 are sizes of a cache | Each size |
-| The boot image | More than 1.3 MB of caches: 390 624 and 397 344 bytes for Paper Mono with and without the grid fit, 424 784 and 108 324 bytes for B612 and B612 Bold, and the cache of Paper Mono SemiBold | The font outlines only: about 195 KB, already in the image |
+| The boot image | More than 1.3 MB of caches: 390 624 and 397 344 bytes for Paper Mono with and without the grid fit, 424 784 and 108 324 bytes for B612 and B612 Bold, and the cache of Paper Mono SemiBold | The font outlines only: about 195 KB then, 975 KB since the subsets hold every character of their sources ([glyphs_on_demand.md](glyphs_on_demand.md), "Every character that a font of the system has") |
 | The start of the machine | The root service checks the hash of each cache: 796 to 966 µs for 390 624 bytes, about 3 ms for all | Nothing more |
 | Shared memory | The demand cache: 4 395 008 bytes, 1 073 pages that the root service pays, and the process `glyphs` at each start | None |
 | The first frame of a window | 0 µs for the 192 characters at the three sizes | Each glyph once: 3.3 to 4.1 µs for a glyph of cells and 16.2 µs for a placed glyph at a line of 16 ([glyphs_on_demand.md](glyphs_on_demand.md), "The measures") |

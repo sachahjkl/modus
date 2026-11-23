@@ -60,6 +60,9 @@ cell_width_ranges := [?]Cell_Width_Range {
 // point (negative, a surrogate, past U+10FFFF) takes one cell: a terminal
 // draws it as the replacement character.
 cell_width_of :: proc "contextless" (character: rune) -> Cell_Width {
+	if is_mark(character) {
+		return .Zero // Each mark of Unicode, of each script (unicode_tables.odin).
+	}
 	low, high := 0, len(cell_width_ranges)
 	for low < high {
 		middle := (low + high) / 2
@@ -99,9 +102,17 @@ cell_part :: proc "contextless" (text: []u8, room: int) -> (bytes: int, cells: i
 // character.
 cell_count :: proc "contextless" (text: []u8) -> int {
 	cells := 0
+	has_base := false
 	for place := 0; place < len(text); {
-		character, length, _ := text_encoding.character_decode(text, place)
-		cells += int(cell_width_of(character))
+		character, length, valid := text_encoding.character_decode(text, place)
+		width := int(cell_width_of(character))
+		// A mark with no base stands on a dotted circle, which takes one
+		// cell (cluster_read).
+		if width == 0 && !has_base {
+			width = 1
+		}
+		has_base = width > 0 && valid && !is_cluster_break(character) || width == 0
+		cells += width
 		place += max(length, 1)
 	}
 	return cells

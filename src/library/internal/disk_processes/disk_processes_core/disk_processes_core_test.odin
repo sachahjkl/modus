@@ -155,6 +155,7 @@ Run :: struct {
 
 @(private = "file")
 request_of :: proc(nickname: string, hash: blake3.Hash, replacements: []blake3.Hash = nil) -> (request: rd.Load_Request) {
+	request.kind = u8(rd.Load_Kind.Module)
 	request.principal = 3
 	request.module_hash = hash
 	request.nickname_length = u8(copy(request.nickname[:], nickname))
@@ -195,7 +196,7 @@ run :: proc(machine: ^Machine, store: ^Store, request: ^rd.Load_Request, lend_sh
 		}
 		report := machine.report
 		append(&result.events, Seen{event = action.event, report = report})
-		if !rd.event_report_check(step, action.event, &report, len(result.kept_hashes), candidate_loans) {
+		if !rd.event_report_check(rd.Load_Kind(request.kind), step, action.event, &report, len(result.kept_hashes), candidate_loans) {
 			result.border_ok = false
 		}
 		switch action.event {
@@ -620,4 +621,62 @@ commands_out_of_order_and_short_lent_memory_are_refused :: proc(t: ^testing.T) {
 	// After Cancel the next load runs.
 	cancel(&machine)
 	testing.expect_value(t, load_begin(&machine, &good).kind, Action_Kind.Ask_Size)
+}
+// A load of the script font set reads one object past the limit of a
+// module file, walks no import even when its bytes look like a module
+// that imports, and sends Module_Filled; the core then ends the load, so
+// a Continue is refused. A set past its own limit is refused before any
+// memory is asked, and the edge of the limit is taken.
+@(test)
+a_load_of_the_script_font_set_reads_one_object_and_scans_nothing :: proc(t: ^testing.T) {
+	filler := int(rd.MODULE_BYTES_LIMIT) + 1
+	file := module_file({blake3.Hash{1 = 1}}, filler)
+	entries := [?]Store_Entry{{name = "script_fonts", bytes = file, class = .Object}}
+	store := Store{entries = entries[:]}
+	machine := machine_make()
+	request := request_of("script_fonts", blake3.hash(file))
+	request.kind = u8(rd.Load_Kind.Script_Fonts)
+	result := run(&machine, &store, &request)
+	testing.expect(t, result.border_ok)
+	testing.expect_value(t, len(result.events), 3)
+	testing.expect_value(t, result.events[0].event, rd.Disk_Load_Event.Memory_Wanted)
+	testing.expect_value(t, result.events[1].event, rd.Disk_Load_Event.Module_Filled)
+	testing.expect_value(t, last(&result).event, rd.Disk_Load_Event.Command_Refused)
+	testing.expect(t, string(result.module) == string(file))
+	testing.expect_value(t, machine.scan.wanted_count, 0)
+	testing.expect_value(t, machine.counters.starts_requested, 0)
+	Edge :: struct {
+		bytes:   u64,
+		refused: bool,
+	}
+	limit := rd.load_bytes_limit(.Script_Fonts)
+	for edge in ([?]Edge{{limit, false}, {limit + 1, true}}) {
+		sized := Store{hostile = proc(action: Action, answer: ^Storage_Answer, calls: int) -> bool {
+			if action.kind != .Ask_Size {
+				return false
+			}
+			answer^ = {kind = .Value, value = calls == 1 ? i64(rd.load_bytes_limit(.Script_Fonts)) : 0}
+			return true
+		}}
+		if edge.refused {
+			sized.hostile = proc(action: Action, answer: ^Storage_Answer, calls: int) -> bool {
+				if action.kind != .Ask_Size {
+					return false
+				}
+				answer^ = {kind = .Value, value = i64(rd.load_bytes_limit(.Script_Fonts) + 1)}
+				return true
+			}
+		}
+		sized_machine := machine_make()
+		action := load_begin(&sized_machine, &request)
+		testing.expect_value(t, action.kind, Action_Kind.Ask_Size)
+		answer := store_answer(&sized, action)
+		action = storage_answered(&sized_machine, &answer)
+		testing.expect_value(t, action.kind, Action_Kind.Send_Event)
+		if edge.refused {
+			testing.expectf(t, action.event == .Refused && sized_machine.report.refusal == u32(rd.Disk_Load_Refusal.Object_Too_Large) && sized_machine.report.byte_count == edge.bytes, "%d bytes: %v", edge.bytes, action.event)
+		} else {
+			testing.expectf(t, action.event == .Memory_Wanted && sized_machine.report.byte_count == edge.bytes, "%d bytes: %v", edge.bytes, action.event)
+		}
+	}
 }

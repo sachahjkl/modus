@@ -33,7 +33,8 @@ b612_open :: proc(t: ^testing.T) {
 	bytes := ([^]u8)(raw_data(outlines_words))[:size]
 	_, written := font_outlines.resource_write(fonts[:], bytes)
 	testing.expect(t, written)
-	outlines, problem := font_outlines.validate(bytes)
+	room := new(font_outlines.Record_Room, context.temp_allocator)
+	outlines, problem := font_outlines.validate(bytes, room[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	_ = text_rendering.open(&outlines)
 	outlines_opened = true

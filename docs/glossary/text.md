@@ -366,7 +366,7 @@ Do not use: kerning pair (for this).
 
 A font feature is a named choice of glyph forms that a font offers in its table `GSUB`, by a tag of four letters.
 
-Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators). A feature leads to one or more lookups, and each lookup changes glyphs. The system uses one feature, `zero` of Paper Mono, and only at the build: the tool reads it with `vector_font.single_substitution` and draws its glyph for the character `0` in the subset. The subset holds no `GSUB`, and no process reads features at run time.
+Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators), `half` (the half forms of Devanagari). A feature leads to one or more lookups, and each lookup changes glyphs. The tool reads `zero` of Paper Mono at the build and draws its glyph for the character `0` in the subset, which holds no `GSUB`. At run time, a process reads the features of the script fonts: the forms of Arabic, and the features of Devanagari through the engine of the lookups.
 
 The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
@@ -376,11 +376,41 @@ Do not use: OpenType feature (for this), font option.
 
 A single substitution is a lookup of the table `GSUB` that puts one glyph in the place of another (lookup type 1).
 
-It is the simplest lookup: a coverage table lists the glyphs that it changes, and a delta or a list gives the substitute of each one. The feature `zero` of Paper Mono is one: it puts the glyph `zero.zero` in the place of the glyph of the character `0`. The system reads no other kind of lookup: no ligature, no contextual form.
+It is the simplest lookup: a coverage table lists the glyphs that it changes, and a delta or a list gives the substitute of each one. The feature `zero` of Paper Mono is one: it puts the glyph `zero.zero` in the place of the glyph of the character `0`. The engine of the lookups reads the other kinds: ligatures and contextual forms.
 
 The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
 Do not use: glyph swap, alternate.
+
+### Engine of the lookups
+
+The engine of the lookups applies the lookups of `GSUB` and `GPOS` of a font to a buffer of at most 32 glyphs, feature by feature, in stages.
+
+A shaper of a script fills the buffer with one syllable and the features of each glyph, then asks for each stage of its model. The engine reads each lookup type but the cursive one, with the lookup flags of `GDEF`. Its nesting, its steps and its rules tried are bounded. It is not a shaper: a shaper reorders its script. Example: the conjunct द्ध of Noto Sans Devanagari is a chaining lookup that calls a ligature.
+
+The design: `src/md/features/written_shaping.md`, "The engine of the lookups".
+
+Do not use: layout engine, shaping engine, OpenType engine.
+
+### Indic syllable
+
+An Indic syllable is the unit that the shaper of the scripts of India shapes at once: consonants joined by viramas, then their vowel signs and their modifiers.
+
+An independent vowel starts a syllable of its own, and a sign with no consonant before it stands on a dotted circle. The shaper reorders the glyphs of a syllable (the reph after its base, the vowel sign ि before it), so a placed glyph of a syllable can stand before the glyph of a character that comes before it in the text. A syllable holds at most 16 characters. Example: नमस्ते is three syllables, न, म and स्ते.
+
+The design: `src/md/features/written_shaping.md`, "Devanagari".
+
+Do not use: akshara (for this), cluster (for this), grapheme.
+
+### Feature variation
+
+A feature variation is a record of a table `GSUB` or `GPOS` 1.1 that puts another feature table in the place of a feature, at the coordinates of a variable font that its conditions name.
+
+The system draws the default instance of a variable font, so the walk of the features takes the first record whose conditions hold at the default coordinates. Example: Noto Sans Oriya gives its feature `rclt` an empty table and its lookups through a feature variation, so ka takes its other form only through it.
+
+The design: `src/md/features/written_shaping.md`, "The scripts of India".
+
+Do not use: feature substitution (alone), variable feature.
 
 ### Slashed zero
 
@@ -546,11 +576,41 @@ Do not use: font face (for this), font slot, typeface.
 
 The text rendering module is the support package `text_rendering` and its library module, which shape, measure, break, keep and draw a text at any text size.
 
-Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_rendering` with the font outlines as bytes, a face and a text size. It is not a service: no process asks another for a glyph.
+Each process compiles the measure in, its fast part; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_rendering` with the font outlines as bytes, a face and a text size. It is not a service: no process asks another for a glyph.
 
 The design: `src/md/features/text_rendering.md`.
 
 Do not use: font engine, text service, font server.
+
+### Simple character
+
+A simple character is a character that the fast part of the text rendering module places alone, as the written part would place it.
+
+Its script is Latin, Greek, Cyrillic or Common, its combining class is 0, and it is no mark, no format character, no control and no character of right to left; it joins nothing. `modustool unicode_tables` writes them as one table (`simple_ranges`). A text of simple characters that the fonts of the boot image draw is a simple text. For example, `Settings` and `€ 12,50` are simple texts, and `e` followed by U+0301 is not.
+
+The design: `src/md/features/text_rendering.md`, "Where the written shaping lives".
+
+Do not use: easy character, Latin character, ASCII text.
+
+### Fast part
+
+The fast part is the part of the text rendering module that each module that draws text compiles in: it places a simple text and draws each glyph.
+
+It holds the faces of the boot image, their chains, the character map, the advances, the pairs of `kern`, the line breaks, the rasterizer of `glyf` outlines and the private glyph cache. A line that is not simple goes to the written part, in one call for the line. The fast part never shapes a script of the script font set.
+
+The design: `src/md/features/text_rendering.md`, "Where the written shaping lives".
+
+Do not use: static part, light renderer, basic shaper.
+
+### Written part
+
+The written part is the part of the text rendering module that places every text that is not simple, and reads the script font set.
+
+It holds the clusters and their compositions, the shapers of Arabic, Thai and the scripts of India, the engine of the lookups, the order of a line of mixed direction, the script font set with its caches, and the reader of CFF. The library module `text_rendering`, the drawing module and the root service compile it in; each other module calls the library module for it, over the fonts of its process. The define `WRITTEN_SHAPING_COMPILED_IN` chooses it at compile time.
+
+The design: `src/md/features/text_rendering.md`, "Where the written shaping lives".
+
+Do not use: complex part, slow path, full shaper.
 
 ### Text size token
 
@@ -681,6 +741,56 @@ A grapheme cluster is the text that a reader sees as one character: one or more 
 The design: `src/md/features/interface_language.md`, "5. Text processing".
 
 Do not use: character (for this), letter, glyph (for this).
+
+### Combining mark
+
+A combining mark is a character that draws on the character before it, its base: an accent, a dot below, a vowel sign of Hebrew or Arabic.
+
+The shaper reads a base and its marks as one cluster. It composes them by the compositions of Unicode when a font draws the result: `e` then U+0301 is é. A mark that does not compose is a placed glyph with the advance 0, placed by the mark anchors of its font, else centred on its base. A mark with no base, at the start of a text or after a space, stands on a dotted circle (U+25CC). In a grid of cells a mark takes no cell.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: accent (for this), diacritic (for the character), zero-width character.
+
+### Joining form
+
+A joining form is the shape that a letter of Arabic takes by its neighbours: isolated, initial, medial or final.
+
+The shaper gives each letter its form from its joining type (Unicode) and the joining types of the letters on each side; a mark or an invisible format character between two letters does not break the join. The form is the substitution of the font: Noto Sans Arabic makes beh a dotless body and its dot, then the form of the body. A font that makes no form takes the presentation form that Unicode names. Lam then alef is one glyph, their ligature. Example: in بيت the beh is initial, the yeh medial and the teh final.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: contextual form, positional form, glyph variant.
+
+### Line direction
+
+The line direction is the order on the screen of the runs of one line that mixes left-to-right and right-to-left text, by the rules of UAX #9.
+
+The first strong letter of the text, outside any isolate, gives the direction of the line; each run of the other direction is reversed in place, numbers keep their order, and a bracket in a right-to-left run draws its mirrored glyph. An isolate (LRI, RLI or FSI to PDI) is one unit of the line around it, with its own direction inside; its controls draw nothing. The placed glyphs stay in the order of the text; only their x changes. Example: `abc אבג 123` shows a b c, then 1 2 3, then ג ב א.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: bidi (alone), RTL mode, visual order (for the text).
+
+### Mark anchor
+
+A mark anchor is a point that a font gives a glyph, where a mark attaches: the anchor of the mark falls on the anchor of its base, or of the mark before it.
+
+The table `GPOS` of a font holds them (the features `mark` and `mkmk`). The shaper places each mark of a cluster by them, with an x from the origin of its base and a y above the baseline; a mark that no anchor places is centred on its base. The dots of a letter of Arabic, the points of Hebrew and the tone marks of Thai stacked on a vowel are placed so. Example: in ก่ำ the tone mark sits on the NIKHAHIT of SARA AM, which sits on ก.
+
+The design: `src/md/features/written_shaping.md`.
+
+Do not use: attachment point (for this), mark offset, diacritic position.
+
+### Script font set
+
+The script font set is the fonts of the scripts that the boot image lacks, one data object that a plan names by its hash and that a process opens at a fixed range.
+
+It holds fifteen whole Noto fonts, Arabic, Thai, nine scripts of India and CJK among them, 40.0 MB. `modustool script_fonts` writes it; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
+
+The design: `src/md/features/script_fonts.md`.
+
+Do not use: font pack, font download, extra fonts.
 
 ### Collation
 

@@ -186,6 +186,28 @@
         "b612_bold=${b612File "B612-Bold.ttf" "sha256-kXSVQax7LDKLWIMrfixN+AnX4ro41io6WqP444snGBQ="}"
         "noto_sans=${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf"
       ];
+      # The script fonts (src/md/features/script_fonts.md): whole files,
+      # for the command "script_fonts" and the host tests of the text.
+      SCRIPT_FONT_SOURCES = builtins.concatStringsSep ";" [
+        "noto_sans_hebrew=${pkgs.noto-fonts}/share/fonts/noto/NotoSansHebrew.ttf"
+        "noto_sans_arabic=${pkgs.noto-fonts}/share/fonts/noto/NotoSansArabic.ttf"
+        "noto_sans_symbols_2=${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols2-Regular.otf"
+        "noto_emoji=${pkgs.noto-fonts-monochrome-emoji}/share/fonts/noto/NotoEmoji.ttf"
+        "noto_sans_cjk=${pkgs.noto-fonts-cjk-sans}/share/fonts/opentype/noto-cjk/NotoSansCJK-VF.otf.ttc"
+        "noto_sans_thai=${pkgs.noto-fonts}/share/fonts/noto/NotoSansThai.ttf"
+        "noto_sans_devanagari=${pkgs.noto-fonts}/share/fonts/noto/NotoSansDevanagari.ttf"
+        "noto_sans_bengali=${pkgs.noto-fonts}/share/fonts/noto/NotoSansBengali.ttf"
+        "noto_sans_gurmukhi=${pkgs.noto-fonts}/share/fonts/noto/NotoSansGurmukhi.ttf"
+        "noto_sans_gujarati=${pkgs.noto-fonts}/share/fonts/noto/NotoSansGujarati.ttf"
+        "noto_sans_oriya=${pkgs.noto-fonts}/share/fonts/noto/NotoSansOriya.ttf"
+        "noto_sans_tamil=${pkgs.noto-fonts}/share/fonts/noto/NotoSansTamil.ttf"
+        "noto_sans_telugu=${pkgs.noto-fonts}/share/fonts/noto/NotoSansTelugu.ttf"
+        "noto_sans_kannada=${pkgs.noto-fonts}/share/fonts/noto/NotoSansKannada.ttf"
+        "noto_sans_malayalam=${pkgs.noto-fonts}/share/fonts/noto/NotoSansMalayalam.ttf"
+      ];
+      # The Unicode Character Database, for the command "unicode_tables"
+      # (src/md/features/written_shaping.md).
+      UNICODE_DATA_SOURCE = "${pkgs.unicode-character-database}/share/unicode";
     };
 
     # chibicc, the C compiler of the module c_compiler: its source at one

@@ -62,7 +62,7 @@ text_settings_create :: proc "contextless" () {
 	system.memory_unmap(address)
 	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
 		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
-		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
+		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size], font_records_room[:]); problem.kind == .None {
 			font_outlines_mapping = mapping
 		} else {
 			system.log_fact(.Warning, Font_Outlines_Refused{problem_value = problem.value, problem = text_field(font_outlines.problem_sentences[problem.kind], 80)})
@@ -71,6 +71,7 @@ text_settings_create :: proc "contextless" () {
 	if font_outlines_mapping.page_count == 0 {
 		system.log_fact(.Warning, Font_Outlines_Absent{})
 	}
+	script_fonts_name_read()
 }
 
 // text_settings_give adds the settings page and the font outlines,
@@ -96,6 +97,8 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 		mappings[count^].flags = {}
 		count^ += 1
 		system.range_mapped_put(values, .Font_Outlines)
+		// The script font set goes where the font outlines go.
+		script_fonts_give(mappings, count, values)
 	}
 }
 
