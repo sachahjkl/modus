@@ -11,17 +11,23 @@ package disk_process
 // and no kernel operation: the host tests run each rule
 // (import_scan_test.odin).
 
-// The most objects of the root tree that one scan notes. The line of a
-// refusal says when the store has more.
-SCAN_ENTRY_CAPACITY :: 64
+import op "modus:contract/operation"
+
+// The most objects of the root tree that one scan notes: the installed
+// programs and libraries of a principal. The line of a refusal says when
+// the store has more.
+SCAN_ENTRY_CAPACITY :: 256
 
 // The most hashes that one scan wants: the modules of the store that one
-// disk process imports, at each level together.
-SCAN_WANTED_CAPACITY :: 8
+// disk process imports, at each level together. A process holds
+// op.PROCESS_MODULE_CAPACITY modules, its own one with them, so a scan never
+// needs more.
+SCAN_WANTED_CAPACITY :: op.PROCESS_MODULE_CAPACITY
 
 // The most levels of imports: the imports of the process are level 1,
-// their imports level 2.
-SCAN_DEPTH_LIMIT :: 4
+// their imports level 2. A chain of libraries deeper than 16 levels is a
+// cycle in all but name.
+SCAN_DEPTH_LIMIT :: 16
 
 // The most reads of one scan: each entry one time, and two reads more for
 // each wanted hash. A storage service that gives other bytes at each read

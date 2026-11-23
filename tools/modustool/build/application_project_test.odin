@@ -222,7 +222,8 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	count, loaded := projects_core.load_project(table, state, 1, name, evaluation[:evaluation_length], file_bytes(files, "pins.lex"))
 	testing.expect_value(t, loaded, pr.Project_Refusal.None)
 	testing.expect_value(t, count, 0)
-	_, inputs_refusal := projects_core.inputs_recipe(table, state, 1, name)
+	inputs_spec := new(pr.Recipe_Spec, context.temp_allocator)
+	inputs_refusal := projects_core.inputs_recipe(table, state, 1, name, inputs_spec)
 	testing.expect_value(t, inputs_refusal, pr.Project_Refusal.Pin_Not_Found)
 
 	// The recipe of the output, on the path of the export

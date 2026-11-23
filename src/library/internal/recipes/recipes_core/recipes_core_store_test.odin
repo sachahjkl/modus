@@ -80,7 +80,8 @@ the_recipe_hash_is_deterministic_and_names_each_part :: proc(t: ^testing.T) {
 	swapped_hash, _ := pr.recipe_hash(&swapped)
 	testing.expect(t, swapped_hash == first, "the inputs are hashed in the order of their names")
 	// A changed input hash, input kind, builder or output kind gives another hash.
-	changes := [4]pr.Recipe_Spec{spec, spec, spec, spec}
+	changes := new([4]pr.Recipe_Spec, context.temp_allocator)
+	changes^ = {spec, spec, spec, spec}
 	changes[0].inputs[0], _ = pr.recipe_input_make("src", .Tree, store_test_hash(9))
 	changes[1].inputs[1], _ = pr.recipe_input_make("lib", .Tree, store_test_hash(2))
 	changes[2].builder_hash = store_test_hash(7)

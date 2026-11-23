@@ -825,7 +825,8 @@ bootstrap_chain_verify :: proc(chain: ^Bootstrap_Chain) -> Bootstrap_Chain_Verif
 			if recipe_refusal != .None {
 				return bootstrap_chain_fail(.Invalid_Recipe_Spec, index, stage.name, "stage `%s` recipe refused (%v at input %d)", stage.name, recipe_refusal, bad_input)
 			}
-			sandbox, sandbox_prep_refusal := plans_recipes.builder_sandbox_prepare(&stage.recipe)
+			sandbox: plans_recipes.Builder_Sandbox_Spec
+			sandbox_prep_refusal := plans_recipes.builder_sandbox_prepare(&stage.recipe, &sandbox)
 			if sandbox_prep_refusal != .None {
 				return bootstrap_chain_fail(.Recipe_Sandbox_Violation, index, stage.name, "stage `%s` sandbox prepare failed (%v)", stage.name, sandbox_prep_refusal)
 			}

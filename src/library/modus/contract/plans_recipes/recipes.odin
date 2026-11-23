@@ -6,6 +6,7 @@
 // calls no kernel operation, and allocates no memory.
 package plans_recipes
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/object_cache"
@@ -15,10 +16,13 @@ import "modus:contract/tree_hash"
 // hashes are cryptographically separated from objects, trees, and plans.
 RECIPE_HASH_DOMAIN :: "modus recipe v1"
 
-// Structural bounds on recipes and deterministic builder arguments.
-MAX_RECIPE_INPUTS :: 32
-MAX_RECIPE_ARG_BYTES :: 4096
-MAX_RECIPE_CANONICAL_BYTES :: 8192
+// Structural bounds on recipes and deterministic builder arguments: the
+// link step of a real program names hundreds of objects, and a release
+// recipe carries a long argument record. A record of the largest bounds is
+// about 90 KiB: a holder keeps it in its memory, never on a stack, and the
+// recipe hash reads it in pieces with no canonical buffer.
+MAX_RECIPE_INPUTS :: 256
+MAX_RECIPE_ARG_BYTES :: 64 * 1024
 
 // Context slots for the delegated recipes service.
 RECIPES_SERVICE_RING_SLOT :: 10
@@ -334,6 +338,12 @@ sort_recipe_input_indices :: proc "contextless" (spec: ^Recipe_Spec, order: ^[MA
 
 // recipe_hash validates spec and computes its canonical, input-order-independent
 // domain-separated BLAKE3 digest under RECIPE_HASH_DOMAIN ("modus recipe v1").
+// The canonical bytes go to the incremental hash in the order of their
+// form, so no buffer holds them whole: the builder hash, the output kind,
+// the source date and the output block limit, then the count and each input
+// in the order of its name (its name with a length of 4 bytes, its kind,
+// its hash), then the arguments with a length of 4 bytes. Each number is
+// little endian.
 recipe_hash :: proc "contextless" (spec: ^Recipe_Spec) -> (digest: blake3.Hash, refusal: Recipe_Refusal) {
 	validation_refusal, _ := recipe_validate(spec)
 	if validation_refusal != .None {
@@ -343,57 +353,77 @@ recipe_hash :: proc "contextless" (spec: ^Recipe_Spec) -> (digest: blake3.Hash, 
 	order: [MAX_RECIPE_INPUTS]u32
 	sort_recipe_input_indices(spec, &order)
 
-	canonical_buffer: [MAX_RECIPE_CANONICAL_BYTES]u8
-	encoder := Canonical_Encoder{buffer = canonical_buffer[:]}
-	encoder_raw_bytes(&encoder, spec.builder_hash[:])
-	encoder_byte(&encoder, u8(spec.output_kind))
-	encoder_u64(&encoder, spec.source_date_unix)
-	encoder_u64(&encoder, spec.output_block_limit)
-	encoder_u32(&encoder, spec.input_count)
+	hasher := blake3.hasher_make_derive_key(RECIPE_HASH_DOMAIN)
+	blake3.hasher_update(&hasher, spec.builder_hash[:])
+	hash_byte(&hasher, u8(spec.output_kind))
+	hash_u64(&hasher, spec.source_date_unix)
+	hash_u64(&hasher, spec.output_block_limit)
+	hash_u32(&hasher, spec.input_count)
 	for pos in u32(0) ..< spec.input_count {
 		input := &spec.inputs[order[pos]]
-		encoder_bytes(&encoder, input.name_bytes[:input.name_length])
-		encoder_byte(&encoder, u8(input.kind))
-		encoder_raw_bytes(&encoder, input.hash[:])
+		hash_u32(&hasher, u32(input.name_length))
+		blake3.hasher_update(&hasher, input.name_bytes[:input.name_length])
+		hash_byte(&hasher, u8(input.kind))
+		blake3.hasher_update(&hasher, input.hash[:])
 	}
-	encoder_bytes(&encoder, spec.arguments[:spec.arguments_length])
-	if encoder.overflow {
-		return {}, .Buffer_Too_Small
-	}
-	return blake3.derive_key(RECIPE_HASH_DOMAIN, canonical_buffer[:encoder.position]), .None
+	hash_u32(&hasher, spec.arguments_length)
+	blake3.hasher_update(&hasher, spec.arguments[:spec.arguments_length])
+	return blake3.hasher_finish(&hasher), .None
+}
+
+@(private = "file")
+hash_byte :: proc "contextless" (hasher: ^blake3.Hasher, value: u8) {
+	bytes := [1]u8{value}
+	blake3.hasher_update(hasher, bytes[:])
+}
+
+@(private = "file")
+hash_u32 :: proc "contextless" (hasher: ^blake3.Hasher, value: u32) {
+	bytes := transmute([4]u8)u32le(value)
+	blake3.hasher_update(hasher, bytes[:])
+}
+
+@(private = "file")
+hash_u64 :: proc "contextless" (hasher: ^blake3.Hasher, value: u64) {
+	bytes := transmute([8]u8)u64le(value)
+	blake3.hasher_update(hasher, bytes[:])
 }
 
 // builder_sandbox_prepare derives the deterministic, zero-network sandbox
-// configuration for executing a validated Recipe_Spec.
-builder_sandbox_prepare :: proc "contextless" (spec: ^Recipe_Spec) -> (sandbox: Builder_Sandbox_Spec, refusal: Recipe_Refusal) {
+// configuration for executing a validated Recipe_Spec into sandbox, which
+// the caller holds: a sandbox of the largest bounds is about 90 KiB, too
+// large for a value on a stack. On a refusal sandbox is zero.
+builder_sandbox_prepare :: proc "contextless" (spec: ^Recipe_Spec, sandbox: ^Builder_Sandbox_Spec) -> Recipe_Refusal {
+	if sandbox == nil {
+		return .Buffer_Too_Small
+	}
+	intrinsics.mem_zero(sandbox, size_of(Builder_Sandbox_Spec))
 	rhash, hash_refusal := recipe_hash(spec)
 	if hash_refusal != .None {
-		return {}, hash_refusal
+		return hash_refusal
 	}
 	order: [MAX_RECIPE_INPUTS]u32
 	sort_recipe_input_indices(spec, &order)
 
-	sandbox = {
-		recipe_hash        = rhash,
-		builder_hash       = spec.builder_hash,
-		output_kind        = spec.output_kind,
-		random_seed        = rhash,
-		frozen_date_unix   = spec.source_date_unix,
-		output_block_limit = spec.output_block_limit,
-		allow_network      = false,
-		allow_root_ring    = false,
-		inputs_read_only   = true,
-		output_store_empty = true,
-		input_count        = spec.input_count,
-		arguments_length   = spec.arguments_length,
-	}
+	sandbox.recipe_hash = rhash
+	sandbox.builder_hash = spec.builder_hash
+	sandbox.output_kind = spec.output_kind
+	sandbox.random_seed = rhash
+	sandbox.frozen_date_unix = spec.source_date_unix
+	sandbox.output_block_limit = spec.output_block_limit
+	sandbox.allow_network = false
+	sandbox.allow_root_ring = false
+	sandbox.inputs_read_only = true
+	sandbox.output_store_empty = true
+	sandbox.input_count = spec.input_count
+	sandbox.arguments_length = spec.arguments_length
 	for pos in u32(0) ..< spec.input_count {
 		sandbox.inputs[pos] = spec.inputs[order[pos]]
 	}
 	if spec.arguments_length > 0 {
 		copy(sandbox.arguments[:spec.arguments_length], spec.arguments[:spec.arguments_length])
 	}
-	return sandbox, .None
+	return .None
 }
 
 // builder_sandbox_validate verifies every sandbox isolation invariant before

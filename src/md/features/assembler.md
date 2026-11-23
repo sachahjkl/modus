@@ -104,7 +104,7 @@ The package refuses each text that it does not assemble whole, with a `Refusal_R
 - a `quad` of a label in the section code or off 8 bytes of the section data, or a label with its offset below 0 or past 2^63 − 1;
 - an alignment that is not a power of two from 1 to 4096, a name that two units make global, `global` of a digit, words after `unit`;
 - a distance past ±2 GiB between a jump or a `%rip` operand and its label;
-- a section past its buffer in the workspace or past 1 TiB of extent, more labels, operands that name a label or `quad` values of a label than the workspace holds, more than 32 exports;
+- a section past its buffer in the workspace or past 1 TiB of extent, more labels, operands that name a label, `quad` values of a label or exports than the workspace holds;
 - an export twice, a name that is not a name of the module format, more than 12 parameters;
 - a text with no instruction.
 
@@ -112,21 +112,28 @@ The module gives a refusal as the error record `Bad_Byte` of the argument `sourc
 
 ### The bounds of the workspace
 
-The caller gives the memory of the workspace: `workspace_make` takes a slice for the code, the data, the labels, the slots of the table of names, the operands that name a label, the `quad` values of a label and their rebases. The lengths of the slices are the bounds of a text. The package itself takes a text of at most `TEXT_BYTES_MOST`, 16 MiB: a place holds its offset in 32 bits.
+The caller gives the memory of the workspace: `workspace_make` takes a slice for the code, the data, the labels, the slots of the table of names, the operands that name a label, the `quad` values of a label and their rebases, and the exports with their parts. The lengths of the slices are the bounds of a text. The package itself takes a text of at most `TEXT_BYTES_MOST`, 256 MiB: a place holds its offset in 32 bits.
 
-The module `assemble` gives the slices of a `Workspace_Memory` of its data, with the bounds of the table below, and takes a text of at most 256 KiB. Its copy of the text and the workspace are memory of the module, about 1 MiB (263 pages; the `Workspace_Memory` is 802 816 bytes), and the budget of the call host pays them: 512 pages, with the module `host`, the stack of 64 pages and the page tables. The call host keeps about 147 pages free. `modustool c-self-host` gives a workspace of 2 MiB of code, 1 MiB of data, 65536 labels and 131072 operands for the program of `chibicc` (docs/TOOLS.md, "The self-hosting of the C compiler").
+The module `assemble` takes a text of at most 256 MiB, and carves a workspace of a scale from an arena of the budget of its call host at each call (`workspace_carve`): the scale 0 has the bounds of the table below, and each scale doubles each bound. It starts at the scale whose share of text holds the text (256 KiB at the scale 0, `workspace_scale_of_text`), so a text of one source takes one assembly. A refusal of a full table gives the next scale, and a section past its buffer gives the first scale whose buffer holds it (`workspace_scale_after`); the module ends the arena, carves the larger workspace and assembles again. It stops at a text that passes, at a refusal that no table makes, at the scale 12 (512 MiB of code, more than a jump of 2 GiB reaches), or when the budget refuses the workspace: then the call fails with the error record of the budget. The workspace of the scale 0 is about 1 MiB (the `Workspace_Memory`), which a call host of 512 pages pays; the program of `chibicc` (2 MiB of text, 295 KiB of code, 6928 labels) takes the scale 3, about 8 MiB. `modustool c-self-host` gives a workspace of 2 MiB of code, 1 MiB of data, 65536 labels, 131072 operands and 1024 exports for the program of `chibicc` (docs/TOOLS.md, "The self-hosting of the C compiler").
 
-| Bound of `Workspace_Memory` | Value | What it holds |
+| Bound of `Workspace_Memory`, the scale 0 | Value | What it holds |
 |---|---|---|
-| `SOURCE_BYTES_MOST` of the module | 256 KiB | The text |
+| `UNIT_TEXT_BYTES_MOST` | 256 KiB | The share of text of the scale 0 |
 | `CODE_BYTES_MOST` | 128 KiB | The code of a text of 256 KiB that `chibicc` writes: about 20 bytes of text for an instruction of about 5 bytes gives 64 KiB, and the bound doubles it |
 | `DATA_BYTES_MOST` | 128 KiB | The strings and the initialized globals; `zero` does not count |
 | `LABEL_CAPACITY` | 2048 | A label of `chibicc` for each 10 lines or so: the labels of each branch, of each return and of each string. The table of names has 4 slots for each |
 | `REFERENCE_CAPACITY` | 4096 | An operand that names a label for each 5 lines or so: the jumps, the calls and the `%rip` operands |
 | `REBASE_CAPACITY` | 2048 | A `quad` of a label: each pointer of a global initializer |
+| `EXPORT_CAPACITY` | 128 | An `export` directive: a library of a program has many |
 
 - **Why tables of the caller, and not tables of the size of the text.** The package allocates nothing and calls no kernel operation; the caller sizes the tables for its texts. A text past a bound is refused whole, with its line, so a bound costs a refusal, never a wrong file.
-- **Why the module keeps the small bounds.** Each table of the module is memory of the module, and the budget of the call host pays it at each load, whatever the text. The program of `chibicc` (295 KiB of code) passes them: an assembly of a whole program on modus waits for the export `build`, whose builder has a budget of its own.
+- **Why a scale that doubles, and not two fixed tiers.** The tiers `Unit` and `Program` held `chibicc` and refused the next program: SQLite or Lua passes a bound of a fixed tier, and each new program would need a new tier. A doubling reaches any text that the budget pays, in a count of assemblies that grows with the logarithm of the text, and the first scale from the size of the text skips the small ones.
+- **Why the exports are slices of the workspace.** At 32 exports they were an array of the record; a record of thousands is a value of hundreds of KiB on the stack of the call host. As slices they scale as the other tables.
+- **Why the place of a text too long is its first byte.** The length is refused before any byte is read; a place at the bound would read the text up to it.
+
+Changed: the module had a tier of one source and a tier of a program, a text of 4 MiB, 32 exports, and a text of the package of 16 MiB.
+
+.
 
 ## The machine step: a module from the memory of the console
 
@@ -142,7 +149,7 @@ The console isolates a module from memory, a module whose file is in a memory ob
 
 - **Why a copy.** The memory object `f` stays with the console and the module of `assemble` can write it again; the descriptions that the commands read must not change under them.
 - **Why `isolate` and not `load`.** A direct call runs the code with every handle of the console. A module that a program wrote a moment before is code that nobody checked; the call host gives it its call ring and nothing else.
-- **What it refuses.** A name that is not a name, a size of 0 or past the memory object, a size past 4 MiB, a file that `module.validate` refuses, a module with an import (the boot image is the load source of a call host, and an import of a module from memory is a later step), a module loaded already.
+- **What it refuses.** A name that is not a name, a size of 0 or past the memory object, a size past 64 MiB (`disk_process.FILE_BYTES_LIMIT`), a file that `module.validate` refuses, a module with an import (the boot image is the load source of a call host, and an import of a module from memory is a later step), a module loaded already.
 
 ## The refused forms
 

@@ -334,6 +334,7 @@ Remote_Recipes_Host :: struct {
 	publish:          Object_Publish_Proc,
 	user_data:        rawptr,
 	spec:             pr.Recipe_Spec,
+	sandbox:          pr.Builder_Sandbox_Spec, // The sandbox of the build that runs: too large for the stack.
 	staging:          [DISTRIBUTED_OUTPUT_LIMIT]u8,
 }
 
@@ -367,11 +368,12 @@ remote_recipes_serve :: proc "contextless" (host: ^Remote_Recipes_Host, export_w
 		if host.builder_invoke == nil || host.sign_realisation == nil || remote_build_arguments_read(arguments, &host.spec) != .None {
 			return 0, 0, .Refused
 		}
-		sandbox, sandbox_refusal := pr.builder_sandbox_prepare(&host.spec)
-		if sandbox_refusal != .None || pr.builder_sandbox_validate(&sandbox) != .None {
+		sandbox_refusal := pr.builder_sandbox_prepare(&host.spec, &host.sandbox)
+		if sandbox_refusal != .None || pr.builder_sandbox_validate(&host.sandbox) != .None {
 			return 0, 0, .Refused
 		}
-		count, built := host.builder_invoke(&sandbox, host.staging[:], host.user_data)
+		sandbox := &host.sandbox
+		count, built := host.builder_invoke(sandbox, host.staging[:], host.user_data)
 		if !built || count < 0 || count > len(host.staging) {
 			return 0, 0, .Refused
 		}
@@ -979,7 +981,8 @@ local_build_into :: proc "contextless" (policy: ^Distributed_Policy, spec: ^pr.R
 	if policy.local_builder == nil {
 		return 0, .No_Builder
 	}
-	sandbox, sandbox_refusal := pr.builder_sandbox_prepare(spec)
+	sandbox: pr.Builder_Sandbox_Spec
+	sandbox_refusal := pr.builder_sandbox_prepare(spec, &sandbox)
 	if sandbox_refusal != .None || pr.builder_sandbox_validate(&sandbox) != .None {
 		return 0, .Local_Build_Failed
 	}
@@ -1019,4 +1022,3 @@ output_record :: proc "contextless" (builder: ^Distributed_Builder, index: int, 
 	result.output_hash = hash
 	result.output_length = count
 }
-

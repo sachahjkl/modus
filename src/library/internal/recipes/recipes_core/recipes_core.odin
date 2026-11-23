@@ -95,6 +95,9 @@ Recipes_State :: struct {
 	cache_staging:  [MAX_OBJECT_BYTES]u8,
 	build_staging:  [MAX_OBJECT_BYTES]u8,
 	counters:       Recipes_Counters,
+	// The sandbox of the build that runs: about 90 KiB, too large for the
+	// stack of the service.
+	sandbox:        pr.Builder_Sandbox_Spec,
 	store:          pr.Private_Store_Port,
 	// One realisation object of the private store: its head and its output.
 	store_staging:  [pr.REALISATION_OBJECT_HEAD_SIZE + MAX_OBJECT_BYTES]u8,
@@ -406,14 +409,15 @@ build_recipe :: proc "contextless" (
 	}
 
 	// Step 3: invoke sandboxed builder (Build_Only, Cache_First fallback, or Verify).
-	sandbox, sb_refusal := pr.builder_sandbox_prepare(spec)
+	sandbox := &state.sandbox
+	sb_refusal := pr.builder_sandbox_prepare(spec, sandbox)
 	if sb_refusal != .None {
 		state.counters.total_refusals += 1
 		result.outcome = .Refused
 		result.refusal = sb_refusal
 		return result
 	}
-	if check_sb := pr.builder_sandbox_validate(&sandbox); check_sb != .None {
+	if check_sb := pr.builder_sandbox_validate(sandbox); check_sb != .None {
 		state.counters.total_refusals += 1
 		result.outcome = .Refused
 		result.refusal = check_sb
@@ -425,7 +429,7 @@ build_recipe :: proc "contextless" (
 		result.refusal = .Builder_Failed
 		return result
 	}
-	built_len, built_ok := builder_invoke(&sandbox, state.build_staging[:], user_data)
+	built_len, built_ok := builder_invoke(sandbox, state.build_staging[:], user_data)
 	if !built_ok || built_len < 0 || built_len > MAX_OBJECT_BYTES {
 		state.counters.total_refusals += 1
 		result.outcome = .Refused

@@ -350,7 +350,7 @@ Do not use: backtrace, call stack (for this), unwind.
 
 A module record is what the kernel keeps of one module in a process (`op.Module_Record`, 88 bytes): its base address, its size, its hash, the hash that a replacement put it in place of, and its module writer.
 
-The loader writes the record with `Process_Module` after it mapped the module. The kernel does not read the module: the record is what the loader asserts. The kernel uses it to name the module of a fault address and of each frame of a stack trace, and `Inspect` gives the records of a process. A process has at most 16 module records.
+The loader writes the record with `Process_Module` after it mapped the module. The kernel does not read the module: the record is what the loader asserts. The kernel uses it to name the module of a fault address and of each frame of a stack trace, and `Inspect` gives the records of a process. A process has at most 64 module records (`op.PROCESS_MODULE_CAPACITY`).
 
 The module records of a process that runs are its identity: `manual.running()` and `manual.edges()` read them.
 

@@ -27,7 +27,14 @@ DECLARATION_RECIPE_CAPACITY :: 256
 DECLARATION_TAGGED_RECORD_CAPACITY :: 128
 DECLARATION_TEXT_ARENA :: 64 * 1024
 DECLARATION_BINDING_CAPACITY :: 32
-DECLARATION_RECORD_FIELDS_LIMIT :: 128
+// The fields of one record that a value writes: a recipe takes
+// plans_recipes.MAX_RECIPE_INPUTS inputs as fields, and its other fields.
+DECLARATION_RECORD_FIELDS_LIMIT :: 1024
+// The names of the records that one write holds at once, from the outer
+// record to the inner one: a pool of the workspace, as a record of 1024
+// fields is too large for a frame of the stack at each level.
+DECLARATION_RECORD_NAME_POOL :: 2048
+#assert(DECLARATION_RECORD_FIELDS_LIMIT >= plans_recipes.MAX_RECIPE_INPUTS + 8)
 
 // Caller-supplied pure loader for `import(path)` and `declaration(hash)`.
 // Neither callback performs I/O inside the evaluator; in the sandboxed
@@ -116,6 +123,8 @@ Declaration_Workspace :: struct {
 	tagged_records:      [DECLARATION_TAGGED_RECORD_CAPACITY]Value,
 	text_arena:          [DECLARATION_TEXT_ARENA]u8,
 	text_used:           int,
+	record_names:        [DECLARATION_RECORD_NAME_POOL]string,
+	record_names_used:   int,
 	pipe_stages:         [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage,
 	imports:             [DECLARATION_TREE_CAPACITY]Import_Entry,
 	import_count:        int,
@@ -978,7 +987,7 @@ declaration_serialize_value :: proc "contextless" (ws: ^Declaration_Workspace, v
 // (Record_Literal or Record_With), then sorts them in strict ascending byte
 // order for deterministic canonical encoding.
 @(private)
-collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value: Value, names: ^[DECLARATION_RECORD_FIELDS_LIMIT]string, count: ^int, depth: int) -> bool {
+collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value: Value, names: []string, count: ^int, depth: int) -> bool {
 	if depth >= declaration_eval.OUTPUT_DEPTH_LIMIT {
 		return false
 	}
@@ -1006,7 +1015,7 @@ collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value
 				}
 			}
 			if !exists {
-				if count^ >= DECLARATION_RECORD_FIELDS_LIMIT {
+				if count^ >= len(names) {
 					return false
 				}
 				names[count^] = fname
@@ -1128,11 +1137,16 @@ serialize_value_into :: proc "contextless" (ws: ^Declaration_Workspace, writer: 
 		}
 		return .None
 	case .Record_Literal, .Record_With:
-		names: [DECLARATION_RECORD_FIELDS_LIMIT]string
+		// The names of this record from the pool, given back at the return:
+		// the records inside it take theirs after them.
+		names_start := ws.record_names_used
+		names := ws.record_names[names_start:min(names_start + DECLARATION_RECORD_FIELDS_LIMIT, len(ws.record_names))]
+		defer ws.record_names_used = names_start
 		field_count := 0
-		if !collect_lazy_record_fields(&ws.evaluation, value, &names, &field_count, 0) {
+		if !collect_lazy_record_fields(&ws.evaluation, value, names, &field_count, 0) {
 			return .Pool_Exhausted
 		}
+		ws.record_names_used = names_start + field_count
 		insertion_sort_names(names[:field_count])
 		declaration_eval.output_write_u8(writer, u8(declaration_eval.Value_Tag.Record))
 		declaration_eval.output_write_u32(writer, u32(field_count))

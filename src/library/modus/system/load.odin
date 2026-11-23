@@ -225,7 +225,12 @@ Source_File :: struct {
 }
 
 MODULE_SPACE_CAPACITY :: op.PROCESS_MODULE_CAPACITY // The modules of one space: the module records that the kernel keeps for one process.
-IMPORT_CAPACITY :: 8 // The imports of one module that this loader binds.
+// The imports of one module that this loader binds: each import of a
+// module can be another module of the space, so the bound follows the
+// module records of a process. A load keeps one table of bound imports on
+// the stack for each level of its imports (place).
+IMPORT_CAPACITY :: MODULE_SPACE_CAPACITY
+#assert(IMPORT_CAPACITY <= 255) // import_places holds each place in one byte.
 
 // One module that a loader put in a process: a place of a module space.
 Placed :: struct {

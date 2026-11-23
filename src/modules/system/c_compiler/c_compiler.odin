@@ -40,11 +40,13 @@ import "modus:contract/value_kinds"
 import "internal:c_compiler/program_files"
 import "modus:system"
 
-// The bytes of a source that the module takes. The source is copied
-// before the C part reads it: in an isolated call it is in the call
-// region, which the caller can change during the call. The copy is in the
-// arena, so a short source does not pay for the bound.
-SOURCE_BYTES_MOST :: 256 * 1024
+// The bytes of a source that the module takes: 64 MiB, more than one
+// amalgamation of SQLite (9 MB). The source is copied before the C part
+// reads it: in an isolated call it is in the call region or in a memory
+// object, which the caller can change during the call. The copy is in the
+// arena, so a short source does not pay for the bound, and a budget that
+// cannot pay a long one refuses it with its error record.
+SOURCE_BYTES_MOST :: 64 * 1024 * 1024
 
 // The bytes of an export list of compile_unit: each export, with one
 // separator after it.
@@ -355,8 +357,15 @@ unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_C
 		arena_refusal_give(error, refusal)
 		return false
 	}
-	names: [program_files.EXPORTS_MOST]string
-	export_count, export_refusal := program_files.export_list_read(string(exports_copy[:unit.exports_count]), names[:])
+	// The views of the names are in the arena: a table of EXPORTS_MOST
+	// views is too large for the stack of the call host.
+	names_address, names_status := system.arena_push(&arena, program_files.EXPORTS_MOST * size_of(string), align_of(string), &refusal)
+	if names_status != .Ok {
+		arena_refusal_give(error, refusal)
+		return false
+	}
+	names := ([^]string)(names_address)[:program_files.EXPORTS_MOST]
+	export_count, export_refusal := program_files.export_list_read(string(exports_copy[:unit.exports_count]), names)
 	if export_refusal.refusal != .None {
 		program_refusal_give(error, export_refusal, UNIT_ARGUMENT_EXPORTS, unit.exports_count)
 		return false
@@ -499,7 +508,7 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 
 // compile writes the text of assembly of a C source into a memory object, and gives the bytes of the text.
 //
-// `source` is the C source, 1 byte to 256 KiB, with no byte 0. `output` is a memory object that the caller lends to
+// `source` is the C source, 1 byte to 64 MiB, with no byte 0. `output` is a memory object that the caller lends to
 // write; the text starts at its first byte, and the module `assemble` takes it. Each function that is not `static`
 // becomes an `export` of the text: its `int` and `long` parameters and result are Integers. A call host compiles one
 // source: a second call that reaches the compiler fails with `Refused`, and `unload` then `isolate` give a new one. A
@@ -515,9 +524,9 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 //
 // `name` is the name of the source, 1 to 255 bytes: its folder is the folder of its quoted includes, and the diagnostic
 // names it. `source` is the C source, as for `compile`. `files` is the file list of the other files of the program, its
-// headers, at most 256 files and 2 MiB: records of a name size and a content size of 4 bytes each, little endian, then
+// headers, at most 4096 files and 64 MiB: records of a name size and a content size of 4 bytes each, little endian, then
 // the name and the content; an empty list has no file. `exports` names the exports of the program, separated by
-// spaces or new lines, at most 32; an empty text makes each function that is not `static` an export. The text starts
+// spaces or new lines, at most 4096; an empty text makes each function that is not `static` an export. The text starts
 // with `unit`, and each function and variable that is not `static` is `global`, so the module `assemble` joins the texts
 // of the units into one module. A call host compiles one unit, as for `compile`. A file list or an export list that
 // breaks its form fails before the C part runs: `Out_Of_Range` for a record that passes the end of the list,

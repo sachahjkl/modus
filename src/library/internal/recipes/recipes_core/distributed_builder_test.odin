@@ -378,7 +378,8 @@ cache_prepare :: proc(world: ^World, spec: ^pr.Recipe_Spec, signer: ^Sim_Machine
 // of a recipe, signed by signer, with its output.
 @(private = "file")
 cache_prepare_on :: proc(cache: ^Sim_Machine, spec: ^pr.Recipe_Spec, signer: ^Sim_Machine) {
-	sandbox, refusal := pr.builder_sandbox_prepare(spec)
+	sandbox: pr.Builder_Sandbox_Spec
+	refusal := pr.builder_sandbox_prepare(spec, &sandbox)
 	assert(refusal == .None)
 	builds := cache.builds
 	count, ok := sim_build(&sandbox, cache.cache_payload[:], cache)
@@ -808,7 +809,8 @@ distributed_graph_refuses_bad_counts_and_checks_the_local_store :: proc(t: ^test
 
 	// The local store answers with no build when its bytes hash to the
 	// output hash of its realisation.
-	sandbox, _ := pr.builder_sandbox_prepare(&alpha)
+	sandbox: pr.Builder_Sandbox_Spec
+	pr.builder_sandbox_prepare(&alpha, &sandbox)
 	local_store_fixture.length, _ = sim_build(&sandbox, local_store_fixture.payload[:], world.laptop)
 	output_hash, _ := pr.recipe_hash_output(.Blob, local_store_fixture.payload[:local_store_fixture.length])
 	local_store_fixture.record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = .Blob}

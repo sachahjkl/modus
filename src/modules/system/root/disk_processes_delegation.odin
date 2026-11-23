@@ -37,6 +37,8 @@ import "modus:system"
 #assert(rd.MODULE_BYTES_LIMIT == disk_process.FILE_BYTES_LIMIT)
 #assert(rd.NICKNAME_CAPACITY == disk_process.NAME_LIMIT)
 #assert(rd.LOAD_CANDIDATE_LOAN_LIMIT == disk_process.SCAN_READ_LIMIT)
+#assert(rd.LOAD_SCAN_ENTRY_CAPACITY == disk_process.SCAN_ENTRY_CAPACITY)
+#assert(rd.STORE_BLOCKS_LIMIT == disk_process.STORE_BLOCKS_LIMIT)
 
 // The starts of the service in a row, at most: past them a load from the
 // disk is refused until the machine starts again. A load that reaches

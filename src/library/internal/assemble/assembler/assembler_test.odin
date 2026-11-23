@@ -308,11 +308,17 @@ data_bytes_and_zero_bytes :: proc(t: ^testing.T) {
 texts_past_their_bounds_are_refused :: proc(t: ^testing.T) {
 	expect_refusal(t, "", .Text_Empty, 1, 1)
 
-	// The bound of the text, then one byte more.
-	at_bound := strings.concatenate({"ret", strings.repeat("\n", TEXT_BYTES_MOST - 3, context.temp_allocator)}, context.temp_allocator)
-	expect_code(t, at_bound, {0xC3})
-	past_bound := strings.concatenate({at_bound, "\n"}, context.temp_allocator)
-	record := expect_refusal(t, past_bound, .Text_Too_Long, TEXT_BYTES_MOST - 2, 1)
+	// One byte past the bound of the text, in pages that the host gives as
+	// zero bytes when they are read and that hold no memory: the length is
+	// refused before any byte is read, at the first byte. A text of the
+	// bound is read whole, which a test of 256 MiB of statements would pay
+	// at each run; the comparison is the one of the refusal.
+	reserved, reserve_error := virtual.reserve_and_commit(TEXT_BYTES_MOST + 1)
+	if !testing.expect_value(t, reserve_error, virtual.Allocator_Error.None) {
+		return
+	}
+	defer virtual.release(raw_data(reserved), len(reserved))
+	record := expect_refusal(t, string(reserved[:TEXT_BYTES_MOST + 1]), .Text_Too_Long, 1, 1)
 	testing.expect_value(t, record.value, u64(TEXT_BYTES_MOST + 1))
 
 	// A line of the bound, then a line of one byte more.
@@ -557,7 +563,7 @@ tables_past_their_capacity_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal.refusal, Refusal.None)
 	expect_refusal(t, strings.concatenate({references_at_bound, "jmp x"}, context.temp_allocator), .References_Full, REFERENCE_CAPACITY + 1, 5)
 
-	// 32 exports, then 33.
+	// The exports of the workspace, then one more.
 	exports := strings.builder_make(context.temp_allocator)
 	for index in 0 ..< EXPORT_CAPACITY {
 		fmt.sbprintf(&exports, "export f%d()\nf%d: ret\n", index, index)
@@ -976,10 +982,13 @@ a_workspace_of_the_caller_bounds_the_text :: proc(t: ^testing.T) {
 	references: [2]Reference
 	data_references: [2]Data_Reference
 	rebases: [1]u64
-	workspace := workspace_make(code[:], data[:], labels[:], slots[:], references[:], data_references[:], rebases[:])
+	exports: [1]Export_Declaration
+	export_parts: [2]writer.Export_Part
+	workspace := workspace_make(code[:], data[:], labels[:], slots[:], references[:], data_references[:], rebases[:], exports[:], export_parts[:])
 	testing.expect_value(t, len(workspace.label_slots), 16)
 	testing.expect_value(t, len(workspace.labels), 3)
 	testing.expect_value(t, len(workspace.data_references), 1)
+	testing.expect_value(t, len(workspace.export_parts), 1)
 
 	_, refusal := assemble("a: b: c: ret", &workspace)
 	testing.expect_value(t, refusal.refusal, Refusal.None)
@@ -999,7 +1008,7 @@ a_workspace_of_the_caller_bounds_the_text :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal.refusal, Refusal.Section_Past_Capacity)
 	testing.expect_value(t, refusal.value, u64(17))
 	// 13 bytes and 3 of padding pass a buffer of 14 bytes.
-	small := workspace_make(code[:14], data[:], labels[:], slots[:], references[:], data_references[:], rebases[:])
+	small := workspace_make(code[:14], data[:], labels[:], slots[:], references[:], data_references[:], rebases[:], exports[:], export_parts[:])
 	_, refusal = assemble(strings.concatenate({strings.repeat("ret\n", 13, context.temp_allocator), "align 4"}, context.temp_allocator), &small)
 	testing.expect_value(t, refusal.refusal, Refusal.Section_Past_Capacity)
 	testing.expect_value(t, refusal.value, u64(16))
@@ -1008,12 +1017,80 @@ a_workspace_of_the_caller_bounds_the_text :: proc(t: ^testing.T) {
 	_, refusal = assemble("f: ret; section data; quad f; quad f", &workspace)
 	testing.expect_value(t, refusal.refusal, Refusal.Rebases_Full)
 	testing.expect_value(t, refusal.value, u64(1))
+	// One export, then two: the second is past the table of the caller.
+	_, refusal = assemble("export f(); f: ret", &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.None)
+	_, refusal = assemble("export f(); export g(); f: ret; g: ret", &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.Exports_Full)
+	testing.expect_value(t, refusal.value, u64(1))
 
 	// No slot: no label.
-	empty := workspace_make(code[:], data[:], labels[:], nil, references[:], data_references[:], rebases[:])
+	empty := workspace_make(code[:], data[:], labels[:], nil, references[:], data_references[:], rebases[:], exports[:], export_parts[:])
 	_, refusal = assemble("f: ret", &empty)
 	testing.expect_value(t, refusal.refusal, Refusal.Labels_Full)
 	testing.expect_value(t, refusal.value, u64(0))
 	_, refusal = assemble("ret", &empty)
 	testing.expect_value(t, refusal.refusal, Refusal.None)
+}
+
+// The scale of a workspace: the first scale of a text by its size, each
+// bound doubled at each scale, and the next scale after a refusal: one more
+// for a full table, the scale whose buffer holds a section, and none for a
+// refusal that no table makes, a section past the largest buffer, or the
+// largest scale.
+@(test)
+the_scale_of_a_workspace_follows_the_text :: proc(t: ^testing.T) {
+	testing.expect_value(t, workspace_scale_of_text(0), uint(0))
+	testing.expect_value(t, workspace_scale_of_text(UNIT_TEXT_BYTES_MOST), uint(0))
+	testing.expect_value(t, workspace_scale_of_text(UNIT_TEXT_BYTES_MOST + 1), uint(1))
+	testing.expect_value(t, workspace_scale_of_text(TEXT_BYTES_MOST), uint(10))
+	testing.expect_value(t, workspace_scale_of_text(max(u64)), uint(WORKSPACE_SCALE_MOST))
+
+	unit := workspace_bounds_of_scale(0)
+	testing.expect_value(t, unit, Workspace_Bounds{code_bytes = CODE_BYTES_MOST, data_bytes = DATA_BYTES_MOST, labels = LABEL_CAPACITY, references = REFERENCE_CAPACITY, rebases = REBASE_CAPACITY, exports = EXPORT_CAPACITY})
+	twice := workspace_bounds_of_scale(1)
+	testing.expect_value(t, twice.labels, 2 * unit.labels)
+	testing.expect_value(t, twice.exports, 2 * unit.exports)
+	testing.expect(t, workspace_bytes(twice) >= 2 * workspace_bytes(unit) - 2 * WORKSPACE_ALIGNMENT * 9)
+
+	next, ok := workspace_scale_after({refusal = .Labels_Full}, 0)
+	testing.expect(t, ok && next == 1)
+	next, ok = workspace_scale_after({refusal = .Exports_Full}, 3)
+	testing.expect(t, ok && next == 4)
+	_, ok = workspace_scale_after({refusal = .References_Full}, WORKSPACE_SCALE_MOST)
+	testing.expect(t, !ok)
+	next, ok = workspace_scale_after({refusal = .Section_Past_Capacity, value = 2 * CODE_BYTES_MOST + 1}, 0)
+	testing.expect(t, ok && next == 2)
+	_, ok = workspace_scale_after({refusal = .Section_Past_Capacity, value = SECTION_EXTENT_MOST}, 0)
+	testing.expect(t, !ok)
+	_, ok = workspace_scale_after({refusal = .Mnemonic_Unknown}, 0)
+	testing.expect(t, !ok)
+
+	// A workspace carved at a scale holds a text that the scale 0 refuses.
+	labels := strings.builder_make(context.temp_allocator)
+	for index in 0 ..< LABEL_CAPACITY + 1 {
+		fmt.sbprintf(&labels, "l%d:\n", index)
+	}
+	strings.write_string(&labels, "ret")
+	small := test_workspace_new()
+	defer test_workspace_free(small)
+	_, refusal := assemble(strings.to_string(labels), small)
+	testing.expect_value(t, refusal.refusal, Refusal.Labels_Full)
+	next, ok = workspace_scale_after(refusal, 0)
+	testing.expect(t, ok && next == 1)
+	bounds := workspace_bounds_of_scale(next)
+	memory, memory_error := virtual.reserve_and_commit(uint(workspace_bytes(bounds)))
+	if !testing.expect_value(t, memory_error, virtual.Allocator_Error.None) {
+		return
+	}
+	defer virtual.release(raw_data(memory), len(memory))
+	larger, carved := workspace_carve(memory, bounds)
+	testing.expect(t, carved)
+	_, refusal = assemble(strings.to_string(labels), &larger)
+	testing.expect_value(t, refusal.refusal, Refusal.None)
+	// A block one byte short, or off its alignment, is no workspace.
+	_, carved = workspace_carve(memory[:len(memory) - 1], bounds)
+	testing.expect(t, !carved)
+	_, carved = workspace_carve(memory[1:], bounds)
+	testing.expect(t, !carved)
 }

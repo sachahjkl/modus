@@ -11,6 +11,7 @@ import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/remote"
 import "modus:contract/role_contract"
+import "modus:contract/store"
 
 // Maximum total rows accepted in a single Disk_Rows_Set_Request: up to
 // STORE_ROWS_LIMIT disk process rows plus CLIENT_KEY_ROWS_LIMIT client keys.
@@ -19,8 +20,9 @@ CLIENT_KEY_ROWS_LIMIT :: remote.CLIENT_ROWS_OF_ONE_PRINCIPAL
 DISK_ROWS_CAPACITY :: STORE_ROWS_LIMIT + CLIENT_KEY_ROWS_LIMIT
 
 // Maximum blocks that a Store row may grant to a disk process, matching the
-// module_files store ceiling.
-STORE_BLOCKS_LIMIT :: 4096
+// module_files store ceiling: each block that the storage service uses on
+// its disk, so the disk bounds the store and no quota of the code does.
+STORE_BLOCKS_LIMIT :: store.DISK_BLOCKS_LIMIT
 
 // Context handle slots used by the delegated principals service.
 PRINCIPALS_RING_SLOT :: 10 // Memory (Read, Write): the ring from the core, opened with Receive_Handles.

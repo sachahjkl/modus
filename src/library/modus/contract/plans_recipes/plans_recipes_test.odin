@@ -367,7 +367,8 @@ test_recipe_hash_stability_and_tampered_cache_refusal :: proc(t: ^testing.T) {
 	testing.expect_value(t, dup_ref, Recipe_Refusal.Duplicate_Input)
 
 	// Sandbox preparation enforces zero network, read-only inputs, empty out, seed == recipe_hash.
-	sandbox, sb_ref := builder_sandbox_prepare(&spec1)
+	sandbox: Builder_Sandbox_Spec
+	sb_ref := builder_sandbox_prepare(&spec1, &sandbox)
 	testing.expect_value(t, sb_ref, Recipe_Refusal.None)
 	testing.expect_value(t, builder_sandbox_validate(&sandbox), Recipe_Refusal.None)
 	testing.expect_value(t, sandbox.random_seed, h1)

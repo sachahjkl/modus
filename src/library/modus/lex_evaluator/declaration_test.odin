@@ -525,7 +525,10 @@ the_largest_recipe_fits_its_written_arguments :: proc(t: ^testing.T) {
 	// The record of the other fields: its head (5 bytes), the name "t" (5),
 	// the tag (1) and the length of the text (4), then the text.
 	text_bytes := plans_recipes.MAX_RECIPE_ARG_BYTES - 15
-	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = 64 * 1024}
+	// The source holds the text of the largest arguments and the lines of
+	// each input: past the bound of a declaration file, which a caller
+	// raises with text_bytes_most.
+	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = 256 * 1024}
 	res := declaration_evaluate(ws, recipe_source(builder_lit, text_bytes), "", cfg)
 	testing.expectf(t, res.ok && res.value.kind == .Recipe_Ref, "the largest recipe converts: %v %s", res.failure_kind, res.detail)
 	testing.expect_value(t, ws.recipe_spec.input_count, u32(plans_recipes.MAX_RECIPE_INPUTS))

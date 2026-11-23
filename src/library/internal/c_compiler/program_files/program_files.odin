@@ -19,15 +19,19 @@
 // kernel operation.
 package program_files
 
-// The bounds of a file list. A name is a name of the table of files of the
-// thin libc: chibicc compares it whole, and the module copies it with a
-// byte 0 after it.
-FILES_MOST :: 256
+// The bounds of a file list: the headers of a real program, as the
+// sources of SQLite or of a compiler hold them. A name is a name of the
+// table of files of the thin libc: chibicc compares it whole, and the
+// module copies it with a byte 0 after it. The module copies a list into
+// the arena of its call, so the budget of the call host bounds a list
+// before these bounds do.
+FILES_MOST :: 4096
 NAME_BYTES_MOST :: 255
-LIST_BYTES_MOST :: 2 * 1024 * 1024
+LIST_BYTES_MOST :: 64 * 1024 * 1024
 RECORD_HEAD_BYTES :: 8
-// The exports of one unit: the bound of the exports of the assembler.
-EXPORTS_MOST :: 32
+// The exports of one unit: a library of thousands of functions. The
+// assembler grows its table of exports with the scale of its workspace.
+EXPORTS_MOST :: 4096
 
 // What is wrong with a file list, an export list, or the name of a source.
 // The module answers each with its error record.

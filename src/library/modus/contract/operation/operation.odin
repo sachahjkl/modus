@@ -1745,8 +1745,10 @@ module_writer_name :: proc "contextless" (writer: Module_Writer) -> string {
 
 // The module records of one process: its own module, the modules that
 // it imports and the modules that it loads while it runs. `Process_Module`
-// gives `No_Slot` for one more.
-PROCESS_MODULE_CAPACITY :: 16
+// gives `No_Slot` for one more. 64 records hold a program with tens of
+// libraries and plugins; each record is 88 bytes of the process table of
+// the kernel, and a `Module_Report` holds all of them.
+PROCESS_MODULE_CAPACITY :: 64
 
 // Where a process stopped on a fault (Process_State). Zero: the process
 // runs, or it stopped with no fault.

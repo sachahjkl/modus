@@ -276,15 +276,21 @@ update_pin :: proc "contextless" (
 // of the pin. The recipes service builds such a recipe itself, so a build of
 // the inputs of a project needs no sandbox (src/md/features/recipes.md,
 // "The inputs tree builder"). A project with no pin has no input to build.
-inputs_recipe :: proc "contextless" (table: ^Loaded_Projects, state: ^Projects_State, principal: u64, name: []u8) -> (spec: pr.Recipe_Spec, refusal: pr.Project_Refusal) {
+// The recipe goes into spec, which the caller holds: a recipe of the
+// largest bounds is too large for a value on a stack. On a refusal spec is
+// zero.
+inputs_recipe :: proc "contextless" (table: ^Loaded_Projects, state: ^Projects_State, principal: u64, name: []u8, spec: ^pr.Recipe_Spec) -> (refusal: pr.Project_Refusal) {
+	spec^ = {}
 	project, project_refusal := project_of(table, state, principal, name)
 	if project_refusal != .None {
 		state.counters.total_refusals += 1
-		return {}, project_refusal
+		spec^ = {}
+		return project_refusal
 	}
 	if project.pin_count == 0 {
 		state.counters.total_refusals += 1
-		return {}, .Pin_Not_Found
+		spec^ = {}
+		return .Pin_Not_Found
 	}
 	spec.builder_hash = pr.inputs_tree_builder_hash()
 	spec.output_kind = .Tree
@@ -293,14 +299,16 @@ inputs_recipe :: proc "contextless" (table: ^Loaded_Projects, state: ^Projects_S
 		input, input_refusal := pr.recipe_input_make(string(pin.name_bytes[:pin.name_length]), .Tree, pin.tree_hash)
 		if input_refusal != .None {
 			state.counters.total_refusals += 1
-			return {}, .Invalid_Pin_Name
+			spec^ = {}
+		return .Invalid_Pin_Name
 		}
 		spec.inputs[index] = input
 	}
 	spec.input_count = u32(project.pin_count)
-	if recipe_refusal, _ := pr.recipe_validate(&spec); recipe_refusal != .None {
+	if recipe_refusal, _ := pr.recipe_validate(spec); recipe_refusal != .None {
 		state.counters.total_refusals += 1
-		return {}, .Invalid_Pin_Name
+		spec^ = {}
+		return .Invalid_Pin_Name
 	}
-	return spec, .None
+	return .None
 }

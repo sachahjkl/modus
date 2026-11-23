@@ -64,8 +64,10 @@ recipe_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: 
 //
 // - **head**: the builder hash, the output kind, the date of the recipe and
 //   the bound of its output in blocks.
-// - **inputs**: one row for each input, a name and a hash, at most 32.
-// - **arguments**: the bytes of the argument record, at most 4096.
+// - **inputs**: one row for each input, a name and a hash, at most 256.
+// - **arguments**: the bytes of the argument record, at most 64 KiB. A
+//   table or bytes past the call region come in a memory object that the
+//   caller lends.
 // - **result**: one row: the recipe hash.
 //
 // The result is 1, or a negative number with an error record:

@@ -15,11 +15,12 @@ import "modus:contract/tree_hash"
 // The context of the hash of the native C builder.
 C_BUILDER_DOMAIN :: "modus builder c v1"
 
-// The bounds of a C build. A source has the bound of the export compile
-// of the module c_compiler. The text of the assembly is many times its
-// source: one line of C gives several lines of assembly. The module is an
+// The bounds of a C build of one source by the service recipes. The module
+// c_compiler takes a larger source (64 MiB): these bounds are the memory
+// objects that the service makes for each build, and the module is an
 // object of the local store of recipes, which keeps it beside its
-// realisation.
+// realisation in a slot of 64 KiB. The text of the assembly is many times
+// its source: one line of C gives several lines of assembly.
 C_SOURCE_BYTES_LIMIT :: 256 * 1024
 C_TEXT_BYTES_LIMIT :: 1024 * 1024
 C_MODULE_BYTES_LIMIT :: 64 * 1024
@@ -119,12 +120,13 @@ c_builder_hash :: proc "contextless" (compiler_hash, assembler_hash: blake3.Hash
 // bytes), no argument, and a module file as its output. The refusal is the
 // one of recipe_validate: a name of the source that no tree takes.
 c_build_recipe :: proc "contextless" (compiler_hash, assembler_hash: blake3.Hash, source_name: string, source_hash: blake3.Hash, spec: ^Recipe_Spec) -> Recipe_Refusal {
-	spec^ = {
-		builder_hash       = c_builder_hash(compiler_hash, assembler_hash),
-		output_kind        = .Blob,
-		output_block_limit = C_BUILD_OUTPUT_BLOCK_LIMIT,
-		input_count        = 1,
-	}
+	// Field by field: a literal of the whole record would be a value of
+	// about 90 KiB on the stack.
+	spec^ = {}
+	spec.builder_hash = c_builder_hash(compiler_hash, assembler_hash)
+	spec.output_kind = .Blob
+	spec.output_block_limit = C_BUILD_OUTPUT_BLOCK_LIMIT
+	spec.input_count = 1
 	if len(source_name) == 0 || len(source_name) > MAX_ENTRY_NAME_BYTES {
 		spec^ = {}
 		return .Invalid_Input_Name

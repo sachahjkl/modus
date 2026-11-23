@@ -43,8 +43,11 @@ BUILD_PLACE :: "build" // The place of the one build that runs.
 INPUT_PLACE :: "in" // Under BUILD_PLACE: the objects of the inputs, the root of the input store.
 OUTPUT_PLACE :: "out" // Under BUILD_PLACE: the root of the store "out".
 
-// The most objects of the inputs of one build: each is one clone.
-MAX_INPUT_OBJECTS :: 256
+// The most objects of the inputs of one build: each is one clone. 4096
+// objects hold the sources of a real program, its headers and its
+// libraries; the walk keeps their hashes in the memory of the service,
+// 128 KiB for the taken ones and 160 KiB for the trees that wait.
+MAX_INPUT_OBJECTS :: 4096
 
 // The parts of the context of a builder: each holds a handle, and no other
 // slot does.

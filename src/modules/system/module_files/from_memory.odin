@@ -33,14 +33,14 @@ nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_proce
 
 // put stores the module file that the caller lends in memory in the store module_files under a nickname.
 //
-// The service copies the first `size` bytes of the memory object one time, writes them as the object `nickname` of the
-// root tree of the store `module_files` of its principal in one commit, then gives the 64 hexadecimal digits of the
-// BLAKE3 hash of the bytes. A file of the same nickname is replaced, and the store keeps the one before as a version.
+// The service copies the first `size` bytes of the memory object one time, by pieces, writes them as the object
+// `nickname` of the root tree of the store `module_files` of its principal in commits of 1 MiB, then gives the 64
+// hexadecimal digits of the BLAKE3 hash of the bytes. A file of the same nickname is replaced, and the store keeps the one before as a version.
 //
 // - **nickname**: the name of the entry, 1 to 23 bytes, with no zero byte and no `/`; not `module_files` and not
 //   `grant_table`.
 // - **module**: a memory object with the bytes, which the caller lends with Read.
-// - **size**: the count of the bytes, 1 to 4 MiB, at most the bytes of the memory object.
+// - **size**: the count of the bytes, 1 byte to 64 MiB, at most the bytes of the memory object.
 // - **result**: the 64 hexadecimal digits of the hash.
 //
 // The caller must act for the principal of the store (**Acts_For_Principal**). The result is 64, or a negative number
@@ -50,7 +50,7 @@ nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_proce
 // - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
 //   store keeps.
 // - `Refused` (-6): the service has no store, or the storage service refused the file.
-// - `Out_Of_Range` (-7, argument 3): a size of 0, past 4 MiB, or past the memory object; `Refused` (-7): the memory
+// - `Out_Of_Range` (-7, argument 3): a size of 0, past 64 MiB, or past the memory object; `Refused` (-7): the memory
 //   object does not map.
 //
 // Example: `module_files.put("hello", module, 4096)`.
@@ -79,13 +79,22 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 	if map_status != .Ok {
 		return errors.fail(error, ERROR_MEMORY, .Refused, .None, 2, 0, 0, i64(map_status))
 	}
-	// One copy: the caller can change its memory object during the call,
-	// and the hash names the bytes that the store holds.
-	intrinsics.mem_copy_non_overlapping(raw_data(file), address, int(size))
-	system.memory_unmap(address)
+	// Each piece is copied one time, then hashed and written from the
+	// copy: the caller can change its memory object during the call, and
+	// the hash names the bytes that the store holds.
 	count := int(size)
-	hash := blake3.hash(file[:count])
-	if failure := file_write(name, count, error); failure != 0 {
+	stream := File_Stream{hasher = blake3.hasher_make()}
+	for stream.written < count {
+		taken := min(len(piece), count - stream.written)
+		intrinsics.mem_copy_non_overlapping(&piece[0], rawptr(uintptr(address) + uintptr(stream.written)), taken)
+		if failure := file_stream_piece(&stream, name, piece[:taken], error); failure != 0 {
+			system.memory_unmap(address)
+			return failure
+		}
+	}
+	system.memory_unmap(address)
+	hash, failure := file_stream_end(&stream, name, error)
+	if failure != 0 {
 		return failure
 	}
 	digits: [disk_process.HASH_DIGITS]u8
@@ -139,15 +148,6 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 		return ERROR_STORE
 	}
 	count := int(object_size)
-	received := 0
-	for received < count {
-		bytes, status := storage.read_range(&store_client, storage.ROOT, name, u64(received), file[received:count], &store_error)
-		// An answer with no byte before the end would come again for ever.
-		if status != .Ok || len(bytes) == 0 {
-			return store_failure(error, &store_error, status == .Ok ? .Refused : status, .File, name)
-		}
-		received += len(bytes)
-	}
 	pages, pages_status := system.memory_size(module.handle)
 	if pages_status != .Ok {
 		pages = 0
@@ -160,28 +160,65 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 	if map_status != .Ok {
 		return errors.fail(error, ERROR_MEMORY, .Refused, .None, 2, 0, 0, i64(map_status))
 	}
-	intrinsics.mem_copy_non_overlapping(address, raw_data(file), count)
+	// The ranges go into the memory of the caller by pieces of this
+	// service: the file costs this service no memory of its size.
+	received := 0
+	for received < count {
+		bytes, status := storage.read_range(&store_client, storage.ROOT, name, u64(received), piece[:min(len(piece), count - received)], &store_error)
+		// An answer with no byte before the end would come again for ever.
+		if status != .Ok || len(bytes) == 0 {
+			system.memory_unmap(address)
+			return store_failure(error, &store_error, status == .Ok ? .Refused : status, .File, name)
+		}
+		intrinsics.mem_copy_non_overlapping(rawptr(uintptr(address) + uintptr(received)), raw_data(bytes), len(bytes))
+		received += len(bytes)
+	}
 	system.memory_unmap(address)
 	return i64(count)
 }
 
-// file_write writes the first count bytes of file as the object name, in
-// pieces, sets its size and commits it: one commit for the whole file.
-@(private = "file")
-file_write :: proc "contextless" (name: string, count: int, error: ^errors.Error_Record) -> i64 {
+// The write of one file of the store by pieces: the bytes written so far,
+// the bytes of the last commit, and the hash of the bytes written.
+File_Stream :: struct {
+	hasher:    blake3.Hasher,
+	written:   int,
+	committed: int,
+}
+
+// file_stream_piece writes one piece after the bytes written so far, as a
+// pending change of the object name, adds it to the hash, and commits the
+// pending changes at each COMMIT_STEP_BYTES. The piece is memory of this
+// service: the bytes hashed are the bytes written.
+file_stream_piece :: proc "contextless" (stream: ^File_Stream, name: string, bytes: []u8, error: ^errors.Error_Record) -> i64 {
 	store_error: errors.Error_Record
-	for piece_start := 0; piece_start < count; piece_start += WRITE_PIECE {
-		piece := file[piece_start:min(piece_start + WRITE_PIECE, count)]
-		if _, status := storage.write_range(&store_client, storage.ROOT, name, u64(piece_start), piece, &store_error); status != .Ok {
+	for at := 0; at < len(bytes); at += WRITE_PIECE {
+		part := bytes[at:min(at + WRITE_PIECE, len(bytes))]
+		if _, status := storage.write_range(&store_client, storage.ROOT, name, u64(stream.written), part, &store_error); status != .Ok {
 			return store_failure(error, &store_error, status, .File, name)
 		}
-	}
-	// An older file of the nickname can be longer.
-	if status := storage.set_size(&store_client, storage.ROOT, name, u64(count), &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, .File, name)
-	}
-	if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
-		return store_failure(error, &store_error, status, .File, name)
+		blake3.hasher_update(&stream.hasher, part)
+		stream.written += len(part)
+		if stream.written - stream.committed >= COMMIT_STEP_BYTES {
+			if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
+				return store_failure(error, &store_error, status, .File, name)
+			}
+			stream.committed = stream.written
+		}
 	}
 	return 0
+}
+
+// file_stream_end sets the size of the object to the bytes written, since
+// an older file of the nickname can be longer, commits it, and gives the
+// hash of the bytes written.
+file_stream_end :: proc "contextless" (stream: ^File_Stream, name: string, error: ^errors.Error_Record) -> (hash: blake3.Hash, failure: i64) {
+	store_error: errors.Error_Record
+	if status := storage.set_size(&store_client, storage.ROOT, name, u64(stream.written), &store_error); status != .Ok {
+		return {}, store_failure(error, &store_error, status, .File, name)
+	}
+	if _, status := storage.commit(&store_client, storage.ROOT, name, &store_error); status != .Ok {
+		return {}, store_failure(error, &store_error, status, .File, name)
+	}
+	stream.committed = stream.written
+	return blake3.hasher_finish(&stream.hasher), 0
 }

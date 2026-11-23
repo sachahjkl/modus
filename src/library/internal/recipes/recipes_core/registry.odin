@@ -59,7 +59,12 @@ register_recipe :: proc "contextless" (registry: ^Recipe_Registry, spec: ^pr.Rec
 	if free < 0 {
 		return {}, .Recipe_Limit_Reached
 	}
-	registry.recipes[free] = {active = true, recipe_hash = recipe_hash, spec = spec^}
+	// Field by field: a literal of the slot would be a value of about
+	// 90 KiB on the stack.
+	slot := &registry.recipes[free]
+	slot.active = true
+	slot.recipe_hash = recipe_hash
+	slot.spec = spec^
 	return recipe_hash, .None
 }
 

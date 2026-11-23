@@ -1,6 +1,7 @@
 #+build !freestanding
 package program_files
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 
@@ -54,14 +55,7 @@ file_lists_that_break_their_form_are_refused :: proc(t: ^testing.T) {
 	// One more file than the bound, and than the room of the caller.
 	many := make([]File, FILES_MOST + 1, context.temp_allocator)
 	for index in 0 ..< len(many) {
-		buf: [16]u8
-		buf[0] = 'h'
-		buf[1] = u8('0' + (index / 100) % 10)
-		buf[2] = u8('0' + (index / 10) % 10)
-		buf[3] = u8('0' + index % 10)
-		buf[4] = '.'
-		buf[5] = 'h'
-		many[index] = {name = strings.clone(string(buf[:6]), context.temp_allocator)}
+		many[index] = {name = fmt.aprintf("h%d.h", index, allocator = context.temp_allocator)}
 	}
 	many_list := list_of(many)
 	files: [FILES_MOST]File
@@ -151,8 +145,7 @@ export_lists_are_read_and_their_breaks_refused :: proc(t: ^testing.T) {
 	// The bound of the exports, and one past it.
 	builder := strings.builder_make(context.temp_allocator)
 	for index in 0 ..< EXPORTS_MOST + 1 {
-		strings.write_string(&builder, strings.repeat("x", index + 1, context.temp_allocator))
-		strings.write_byte(&builder, ' ')
+		fmt.sbprintf(&builder, "x%d ", index)
 	}
 	all := strings.to_string(builder)
 	count, refusal = export_list_read(all, names[:])

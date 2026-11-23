@@ -526,7 +526,8 @@ bootstrap_recipe_catalog_verify :: proc(entries: []Bootstrap_Recipe_Entry) -> (c
 		if hash_refusal != .None {
 			return {}, .Invalid_Recipe_Spec
 		}
-		sandbox, prep_refusal := plans_recipes.builder_sandbox_prepare(&entry.recipe)
+		sandbox: plans_recipes.Builder_Sandbox_Spec
+		prep_refusal := plans_recipes.builder_sandbox_prepare(&entry.recipe, &sandbox)
 		if prep_refusal != .None || plans_recipes.builder_sandbox_validate(&sandbox) != .None {
 			return {}, .Sandbox_Violation
 		}
@@ -566,7 +567,8 @@ bootstrap_recipe_catalog_verify :: proc(entries: []Bootstrap_Recipe_Entry) -> (c
 			if test_refusal != .None {
 				return {}, .Invalid_Self_Test_Recipe
 			}
-			test_sandbox, test_prep := plans_recipes.builder_sandbox_prepare(&entry.self_test_recipe)
+			test_sandbox: plans_recipes.Builder_Sandbox_Spec
+			test_prep := plans_recipes.builder_sandbox_prepare(&entry.self_test_recipe, &test_sandbox)
 			if test_prep != .None || plans_recipes.builder_sandbox_validate(&test_sandbox) != .None {
 				return {}, .Sandbox_Violation
 			}
