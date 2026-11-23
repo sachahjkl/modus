@@ -9,7 +9,9 @@ import "modustool:foundation"
 // before Session_Start, a second Session_Start, a Viewer_Frame_Taken out of
 // order, a kind that names no record, a record of the other direction, a
 // damaged request, a record past its bound, input from a key of the view
-// alone, a viewer that never takes its viewer frame, and a third viewer.
+// alone and an ask of a size from it, a viewer that never takes its viewer
+// frame, and a viewer past the capacity of the service. The screen of the
+// machine is a screen of a device: an ask of a size gets its refusal.
 // Then the viewer rebuilds the screen from the screen pieces, the tool
 // compares it with a picture of QEMU of the same moment, an allow that adds
 // the input keeps the session, the pointer of the viewer goes over the
@@ -55,9 +57,13 @@ scenario_remote_display := [?]Step {
 	{kind = .Remote_Display_Case, text = "input from a key of the view"},
 	{kind = .Wait, text = " sent input, and principal 0 allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed", any_order = true},
 	{kind = .Wait, text = " pictures, 0 keys and 0 pointer records of viewers, 0 refused commands", any_order = true},
+	// An ask of a size of the screen is input: a key of the view alone that
+	// asks ends as for a key.
+	{kind = .Remote_Display_Case, text = "ask 2560x1440 ends Input_Not_Allowed"},
+	{kind = .Wait, text = " sent input, and principal 0 allowed it for the view only: nothing reaches the desktop, and the connection ends with the code Input_Not_Allowed", any_order = true},
 	{kind = .Remote_Display_Case, text = "never takes its frame"},
 	{kind = .Wait, text = " did not take its viewer frame in its bound of 10000 ms: the connection ends with the code Timeout", any_order = true},
-	{kind = .Remote_Display_Case, text = "a third viewer"},
+	{kind = .Remote_Display_Case, text = "a viewer past the capacity"},
 	// The view: the whole screen, then the damage, equal to the screen.
 	{kind = .Remote_Display_Case, text = "view"},
 	{kind = .Wait, text = "compositor: the capture face is open: a copy of ", any_order = true},
@@ -72,6 +78,11 @@ scenario_remote_display := [?]Step {
 	{kind = .Type, text = "remote_display_allow(\"{viewer key}\", \"view_and_input\")"},
 	{kind = .Wait, text = " more uses: view and input"},
 	{kind = .Remote_Display_Case, text = "same session"},
+	// A screen of a device has the size that the firmware gave: an ask of
+	// a size is refused with its cause, and the session goes on.
+	{kind = .Remote_Display_Case, text = "ask 2560x1440 refused Device_Screen"},
+	{kind = .Wait, text = "compositor: refused a screen of 2560 x 1440 that a viewer asked: the machine has a screen of a device, whose size the system does not set", any_order = true},
+	{kind = .Wait, text = "remote_display: refused the screen of 2560 x 1440 that the viewer ", any_order = true},
 	{kind = .Remote_Display_Case, text = "pointer over the clock"},
 	{kind = .Remote_Display_Case, text = "super"},
 	{kind = .Wait, text = "compositor: the first key of a viewer of the remote display goes along the path of the keys", any_order = true},

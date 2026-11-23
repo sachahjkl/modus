@@ -9,11 +9,12 @@ import "modustool:foundation"
 // each one removes the part from QEMU, waits for the line that names it,
 // and checks a later step that still works.
 //
-//   1. No display device (`-vga none`): the root service writes its line
-//      and starts no input service, no compositor and no console; the boot
-//      pass of `settings`, which needs the block service and the storage
-//      service of the data disk, and `unlock` then run, and the start ends.
-//      No step of this machine reads the screen.
+//   1. No display device (`-vga none`): the root service writes its line,
+//      and the default start list starts the compositor on a screen of
+//      memory with the console in it (the test part screen_of_memory adds a
+//      viewer); the boot pass of `settings`, which needs the block service
+//      and the storage service of the data disk, and `unlock` then run, and
+//      the start ends. No step of this machine reads the screen.
 //   2. No PS/2 controller (`-machine q35,i8042=off`): the input service
 //      writes its line and stops, and the desktop comes up with the console.
 //   3. An entropy device whose source never answers: the reads of the start
@@ -23,7 +24,7 @@ import "modustool:foundation"
 TEST_OUTPUT_MISSING_DEVICES :: foundation.BUILD_FOLDER + "/test_output_missing_devices_%d.txt"
 
 // The line of the root service on a machine with no screen.
-NO_SCREEN_LINE :: "root: no screen: no console, no window; the other services start"
+NO_SCREEN_LINE :: "root: no screen: a console and windows only on a screen of memory that the start list gives; the other services start"
 // The line of the input service on a machine with no PS/2 controller.
 NO_PS2_CONTROLLER_LINE :: "input: no PS/2 controller: no keyboard and no mouse"
 // The line of the root service when the two reads of the start of the
@@ -43,19 +44,20 @@ entropy_read_late_line :: proc() -> string {
 	return fmt.aprintf(ENTROPY_READ_LATE_LINE_FORMAT, entropy_read_deadline.READ_DEADLINE_MILLISECONDS / 1000)
 }
 
-// Machine 1: no screen. The line comes before any process starts, and no
-// compositor and no console start after it. The sign that the system runs
-// comes from the steps that the root service takes after the place of the
-// console: the boot pass of `settings` on a new data disk, through the
-// block service and the storage service, then `unlock`, then the line of
-// the end of the start. The tool ends QEMU: no console can stop the machine.
+// Machine 1: no screen. The line comes before any process starts; the
+// compositor then draws into a screen of memory, and the console starts in
+// it. The boot pass of `settings` on a new data disk, through the block
+// service and the storage service, then `unlock`, then the line of the end
+// of the start. The tool ends QEMU.
 @(private = "file")
 scenario_missing_devices_no_screen := [?]Step {
 	{kind = .Wait, text = NO_SCREEN_LINE, fails_on = "compositor: ok "},
+	{kind = .Wait, text = "compositor: no screen: a screen of memory of 1920 x 1080", any_order = true},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
 	{kind = .Wait, text = "root: settings stopped: itself, done", any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
-	{kind = .Wait, text = "root: the machine is usable, by the start policy ", fails_on = "root: started console"},
+	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
 	{kind = .Quit},
 }
 
@@ -112,7 +114,7 @@ missing_devices_silent_entropy_run :: proc(part: ^Test_Part_Run) -> bool {
 missing_devices_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// The tool ends QEMU of machines 1 and 2: status 0.
 	machine_test(part, scenario_missing_devices_no_screen[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_MISSING_DEVICES, 1), exit_status = 0, without_screen = true}) or_return
-	foundation.test_passed_print("%s", "no screen: the root service started no compositor and no console, and the settings, the storage and unlock ran")
+	foundation.test_passed_print("%s", "no screen: the compositor drew into a screen of memory with the console in it, and the settings, the storage and unlock ran")
 	machine_test(part, scenario_missing_devices_no_ps2_controller[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_MISSING_DEVICES, 2), exit_status = 0, without_ps2_controller = true}) or_return
 	foundation.test_passed_print("%s", "no PS/2 controller: the input service stopped with its line, and the desktop came up")
 	missing_devices_silent_entropy_run(part) or_return

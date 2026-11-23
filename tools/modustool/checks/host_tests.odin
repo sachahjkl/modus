@@ -368,6 +368,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/replacement_list",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/replacement_signature",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/start_policy_rules",
+	foundation.SOURCE_FOLDER_INTERNAL + "/root/screen_budgets",
 	foundation.SOURCE_FOLDER_INTERNAL + "/start_policy/wiring_rows",
 	foundation.SOURCE_FOLDER_CONTRACT + "/operation",
 	foundation.SOURCE_FOLDER_CONTRACT + "/operation_sequence",

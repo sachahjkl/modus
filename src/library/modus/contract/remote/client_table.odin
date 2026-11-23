@@ -25,13 +25,14 @@ import "base:intrinsics"
 // and the root service gives each of them a row again, with a new serial,
 // after the read of that table.
 
-// The handle of the context of the remote service: the client table, one
-// page, with the right Read.
+// The handle of the context of the remote service: the client table,
+// CLIENT_TABLE_PAGES pages, with the right Read.
 GRANT_CLIENT_TABLE :: 12
 
 // The rows of the table: the keys that the principals of one machine
-// allowed at one time. Remote_Client refuses one more with Full.
-CLIENT_CAPACITY :: 8
+// allowed at one time (laptops, phones, agents, build keys). Remote_Client
+// refuses one more with Full.
+CLIENT_CAPACITY :: 64
 // The rows of one principal at most: one principal that allows many keys
 // leaves rows to the others. Remote_Client refuses one more with Full.
 CLIENT_ROWS_OF_ONE_PRINCIPAL :: CLIENT_CAPACITY / 2
@@ -96,13 +97,17 @@ client_uses_of_word :: proc "contextless" (word: u64) -> (uses: Client_Uses, ok:
 	return uses, true
 }
 
-// The client table, in one page that the root service writes.
+// The client table, in the memory of CLIENT_TABLE_PAGES pages that the
+// root service writes.
 Client_Table :: struct {
 	version: u32, // Odd while the root service writes; one more at each start and each end of a write.
 	_:       u32,
 	clients: [CLIENT_CAPACITY]Client,
 }
-#assert(size_of(Client_Table) <= 4096)
+
+// The pages of the memory of the client table: the root service makes it
+// with this size, and each reader maps it whole.
+CLIENT_TABLE_PAGES :: (size_of(Client_Table) + 4095) / 4096
 
 // client_table_read copies the rows of a client table that another process
 // writes. It reads again while the table changes, so the copy is one state

@@ -12,7 +12,7 @@ import "core:testing"
 import "modus:random"
 
 HARNESS_RECORDS :: 16
-HARNESS_CLIENT_LIMIT :: 16
+HARNESS_CLIENT_LIMIT :: 32
 HARNESS_STREAMS :: 2 // The stream records of each record of the server and of each client.
 HARNESS_DELAY :: 5_000
 
@@ -48,16 +48,16 @@ Harness :: struct {
 	stream_echoes:        []Server_Stream_Echo,
 }
 
-harness_make :: proc(client_count: int, client_address := u32(0)) -> ^Harness {
+harness_make :: proc(client_count: int, client_address := u32(0), record_count := HARNESS_RECORDS, limits := SERVER_LIMITS_DEFAULT) -> ^Harness {
 	harness := new(Harness)
 	harness.cryptography = module_cryptography()
 	harness.now = 1_000_000
-	harness.connections = make([]Connection, HARNESS_RECORDS)
-	harness.records = make([]Server_Record, HARNESS_RECORDS)
+	harness.connections = make([]Connection, record_count)
+	harness.records = make([]Server_Record, record_count)
 	harness.clients = make([]Connection, client_count)
-	harness.streams = make([]Stream, HARNESS_RECORDS * HARNESS_STREAMS)
+	harness.streams = make([]Stream, record_count * HARNESS_STREAMS)
 	harness.client_streams = make([]Stream, max(client_count, 1) * HARNESS_STREAMS)
-	harness.stream_echoes = make([]Server_Stream_Echo, HARNESS_RECORDS * HARNESS_STREAMS)
+	harness.stream_echoes = make([]Server_Stream_Echo, record_count * HARNESS_STREAMS)
 	// generator_seed erases the seed that it takes: each generator gets a
 	// seed array of its own, made just before.
 	server_seed := harness_seed(0xA0)
@@ -73,7 +73,7 @@ harness_make :: proc(client_count: int, client_address := u32(0)) -> ^Harness {
 	secret := string(server_configuration.tls.server_private_key[:])
 	result := harness.client_configuration.tls.server_public_key[:]
 	harness.cryptography.ed25519_public_key(&secret, &result, &error)
-	server_init(&harness.server, harness.connections, harness.records, harness.streams, &server_configuration, &harness.cryptography, &harness.server_generator, SERVER_LIMITS_DEFAULT, &error)
+	server_init(&harness.server, harness.connections, harness.records, harness.streams, &server_configuration, &harness.cryptography, &harness.server_generator, limits, &error)
 	for index in 0 ..< client_count {
 		client_seed := harness_seed(u8(index))
 		random.generator_seed(&harness.client_generators[index], &client_seed, .Processor)
@@ -215,7 +215,7 @@ harness_step :: proc(harness: ^Harness) {
 		}
 	}
 	server_time_passes(&harness.server, harness.now)
-	released: [HARNESS_RECORDS]Remote
+	released: [HARNESS_CLIENT_LIMIT]Remote
 	count := server_sweep(&harness.server, released[:])
 	append(&harness.released, ..released[:count])
 	harness.most_in_use = max(harness.most_in_use, server_connections_in_use(&harness.server))
@@ -371,6 +371,31 @@ eight_clients_at_once :: proc(t: ^testing.T) {
 	for client in harness.clients {
 		testing.expectf(t, client.state == Connection_State.Connected, "%v, not %v; %s", client.state, Connection_State.Connected, harness_describe(harness))
 	}
+}
+
+// Thirty-two clients of one address, the host of remote, connect together
+// with the limits of a server of one address: none waits for a probe
+// timeout, and each one connects in the first seconds.
+@(test)
+thirty_two_clients_of_the_host_connect_together :: proc(t: ^testing.T) {
+	CLIENTS :: 32
+	harness := harness_make(CLIENTS, 0x0A00_0202, CLIENTS, server_limits_of_one_address(CLIENTS))
+	defer harness_free(harness)
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	start := harness.now
+	ended := harness_run(t, harness, 4096, 60_000_000)
+	testing.expectf(t, ended == CLIENTS, "%d clients ended their echo, not %d; %s", ended, CLIENTS, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.accepted == CLIENTS, "%v, not %v; %s", harness.server.counters.accepted, CLIENTS, harness_describe(harness))
+	counters := harness.server.counters
+	testing.expectf(t, counters.refused_remote_limit == 0 && counters.refused_handshake_limit == 0 && counters.over_address_budget == 0 && counters.over_source_budget == 0 && counters.refused_source_handshake_limit == 0, "%s", harness_describe(harness))
+	// The first probe timeout of a client is about a second: no client waited for one.
+	testing.expectf(t, harness.now - start < 1_000_000, "the clients took %d us; %s", harness.now - start, harness_describe(harness))
+	// The defaults make the same burst wait: a limit of the address refuses.
+	slow := harness_make(CLIENTS, 0x0A00_0202, CLIENTS)
+	defer harness_free(slow)
+	harness_run(t, slow, 4096, 2_000_000)
+	slow_counters := slow.server.counters
+	testing.expectf(t, slow_counters.refused_remote_limit + slow_counters.over_address_budget + slow_counters.refused_source_handshake_limit > 0, "%s", harness_describe(slow))
 }
 
 // Eight clients of one address: at most 2 of them in the handshake at once.

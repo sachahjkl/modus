@@ -257,6 +257,38 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	// A count of threads that passes the end of 64 bits is refused.
 	_, huge_ok := build.budget_count({threads = ~u64(0)}, 0, nil)
 	testing.expect(t, !huge_ok)
+
+	// The screen pictures go to the request as a part of their own, at
+	// the limit too; one past the limit is refused. They add no page: the
+	// starter pays them at the size of the screen of the machine.
+	_, past_screen_ok := build.budget_count({working_memory_pages = 10, screen_pictures = module.SCREEN_PICTURES_LIMIT + 1}, 4096, nil)
+	testing.expect(t, !past_screen_ok)
+	screen, screen_ok := build.budget_count({working_memory_pages = 10, screen_pictures = module.SCREEN_PICTURES_LIMIT}, 4096, nil)
+	testing.expect(t, screen_ok)
+	testing.expect_value(t, screen.request, module.Budget_Request{pages = 10 + 1 + 72, screen_pictures = module.SCREEN_PICTURES_LIMIT})
+}
+
+// The part screen_pictures of a source: read as a part, and refused past
+// the limit with its sentence.
+@(test)
+budget_request_read_takes_screen_pictures_and_refuses_one_past_the_limit :: proc(t: ^testing.T) {
+	good :: "package p\n\nimport \"modus:system\"\n\n// Its tables, and three copies of the screen.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 500, screen_pictures = 3}\n"
+	state: build.Describe_State
+	file, parsed := build.parse_source("screen.odin", good, &state)
+	if !testing.expect(t, parsed) {
+		return
+	}
+	budget: build.Budget_Description
+	testing.expect(t, build.budget_request_read(file, &budget))
+	testing.expect_value(t, budget.parts, build.Stated_Budget{working_memory_pages = 500, screen_pictures = 3})
+	past :: "package p\n\nimport \"modus:system\"\n\n// Too many copies.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 500, screen_pictures = 5}\n"
+	past_state: build.Describe_State
+	past_file, past_parsed := build.parse_source("past.odin", past, &past_state)
+	if !testing.expect(t, past_parsed) {
+		return
+	}
+	past_budget: build.Budget_Description
+	testing.expect(t, !build.budget_request_read(past_file, &past_budget))
 }
 
 // The measure of a build has one line with the request of each module.
@@ -347,7 +379,7 @@ file_with_budget :: proc(storage: ^[512]u8, count: u32, record_size: u32, reques
 // with no table, and the rule of the growth of a record.
 @(test)
 budget_request_reads_the_table :: proc(t: ^testing.T) {
-	asked := module.Budget_Request{pages = 4096, processes = 3, threads = 7}
+	asked := module.Budget_Request{pages = 4096, processes = 3, threads = 7, screen_pictures = 2}
 
 	storage: [512]u8
 	file := file_with_budget(&storage, 2, size_of(module.Budget_Request), asked)
@@ -379,9 +411,18 @@ budget_request_reads_the_table :: proc(t: ^testing.T) {
 	testing.expect(t, stated)
 	testing.expect_value(t, request, module.Budget_Request{pages = 4096})
 
-	// A record of a newer size, 32 bytes: the reader takes its first parts.
+	// A record of the size before the screen pictures, 24 bytes: no
+	// picture of the screen.
+	older_storage: [512]u8
+	older := file_with_budget(&older_storage, 2, 24, asked)
+	testing.expect_value(t, module.validate(older), module.Error.None)
+	request, stated = module.budget_request(older)
+	testing.expect(t, stated)
+	testing.expect_value(t, request, module.Budget_Request{pages = 4096, processes = 3, threads = 7})
+
+	// A record of a newer size, 40 bytes: the reader takes its first parts.
 	long_storage: [512]u8
-	long := file_with_budget(&long_storage, 2, 32, asked)
+	long := file_with_budget(&long_storage, 2, 40, asked)
 	testing.expect_value(t, module.validate(long), module.Error.None)
 	request, stated = module.budget_request(long)
 	testing.expect(t, stated)

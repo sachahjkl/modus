@@ -2,12 +2,63 @@
 package display
 
 import "modus:contract/errors"
+import "modus:contract/memory_screen"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "modus:contract/text_encoding"
 import "modus:key_path"
 import "core:testing"
+
+// A part of Capture_Viewers is refused with a count past the capacity, a
+// place that is not a multiple of a part or that is past the count, and a
+// bit of the input past the count; then the parts of 0, 1, 4, 5 and 8
+// viewers go through the border and give each key at its place, the last
+// part marked.
+@(test)
+capture_viewers_parts_round_trip_and_refuse_each_edge :: proc(t: ^testing.T) {
+	refused := [?][7]u64{
+		{0 = CAPTURE_VIEWER_CAPACITY + 1},
+		{0 = max(u64)},
+		{0 = 8, 2 = 1},
+		{0 = 8, 2 = 3},
+		{0 = 4, 2 = 4},
+		{0 = 8, 2 = 8},
+		{0 = 0, 1 = 1},
+		{0 = 3, 1 = 0b1000},
+		{0 = 8, 1 = 1 << 8},
+	}
+	for values in refused {
+		_, _, _, _, ok := capture_viewers_part_check(values)
+		testing.expectf(t, !ok, "the part %v was taken", values)
+	}
+	keys: [CAPTURE_VIEWER_CAPACITY]u64
+	for &key, index in keys {
+		key = u64(0x1000 + index)
+	}
+	for count in ([?]int{0, 1, CAPTURE_VIEWER_KEYS_OF_A_PART, CAPTURE_VIEWER_KEYS_OF_A_PART + 1, CAPTURE_VIEWER_CAPACITY}) {
+		parts: [CAPTURE_VIEWER_CAPACITY / CAPTURE_VIEWER_KEYS_OF_A_PART]ring.Record
+		part_count := capture_viewers_parts(keys[:count], max(u64), &parts)
+		testing.expect_value(t, part_count, max(1, (count + CAPTURE_VIEWER_KEYS_OF_A_PART - 1) / CAPTURE_VIEWER_KEYS_OF_A_PART))
+		seen: [CAPTURE_VIEWER_CAPACITY]u64
+		lasts := 0
+		for part in parts[:part_count] {
+			taken_count, input, place, last, ok := capture_viewers_part_check(part.values)
+			testing.expectf(t, ok && taken_count == count, "a part of %d viewers was refused: %v", count, part.values)
+			testing.expect_value(t, input, count == 0 ? 0 : (u64(1) << u64(count)) - 1)
+			for index in place ..< min(place + CAPTURE_VIEWER_KEYS_OF_A_PART, count) {
+				seen[index] = part.values[3 + index - place]
+			}
+			if last {
+				lasts += 1
+			}
+		}
+		testing.expect_value(t, lasts, 1)
+		for index in 0 ..< count {
+			testing.expect_value(t, seen[index], keys[index])
+		}
+	}
+}
 
 // The second word of Settings_Raise: one past the last member, a word of
 // 32 bits and the largest word are refused first; then each member.
@@ -720,4 +771,16 @@ the_record_of_the_act_names :: proc(t: ^testing.T) {
 	last[6] = 1
 	_, _, last_ok := act_names_of_values(last)
 	testing.expect(t, !last_ok)
+}
+
+// The pages of the copies of the service of the remote display, as the root
+// service counts them for a growth (memory_screen.service_copies_pages), are
+// the pages that the service makes: the capture face and the copy of the
+// screen, at each bound and at the screens between.
+@(test)
+the_pages_of_the_copies_agree_with_the_screen_of_memory :: proc(t: ^testing.T) {
+	for size in ([?][2]int{{320, 240}, {1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}, {7680, 4320}, {321, 241}}) {
+		mirror := (u64(size[0] * size[1] * 4) + 4095) / 4096
+		testing.expectf(t, capture_pages(size[0], size[1]) + mirror == memory_screen.service_copies_pages(u64(size[0]), u64(size[1])), "%v", size)
+	}
 }

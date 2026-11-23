@@ -2,35 +2,45 @@ package quic
 
 // Per-source-range admission budgets for new QUIC connections.
 //
-// A flood of Initial packets from one IPv4 /24 range must spend only that
-// range's budget, leaving other ranges free to connect without delay.
-// Each /24 prefix has a continuous token bucket (burst and per-second refill)
-// and an active handshake cap, stored in a fixed-capacity table with zero
-// heap allocations and LRU eviction when full.
+// A flood of Initial packets from one source range (an IPv4 prefix of
+// prefix_length bits, /24 by default) must spend only that range's budget,
+// leaving other ranges free to connect without delay. Each range has a
+// continuous token bucket (burst and per-second refill) and an active
+// handshake cap, stored in a bounded table with zero heap allocations: a
+// new range takes a free slot or the least recently seen slot whose bucket
+// refilled and that holds no handshake, so the table follows the ranges
+// that are active and forgets the others. The stack of the system carries
+// IPv4 only (quic.Remote holds a 32-bit address); an IPv6 source would
+// group by its /64 with the same table.
 
-// The number of distinct IPv4 /24 prefixes tracked at once.
-SOURCE_BUDGET_CAPACITY :: 64
+// The ranges tracked at once: a busy server sees clients from many
+// networks, and a range that the table forgot gets a fresh bucket, which is
+// the state of a new range anyway. A slot is 48 bytes, so the table is 48
+// KiB in the server record.
+SOURCE_BUDGET_CAPACITY :: 1024
 
-// The mask that maps an IPv4 address to its /24 source range prefix.
-SOURCE_RANGE_MASK :: u32(0xFFFF_FF00)
+// The prefix length of a source range by default: the /24 of an IPv4
+// network, the range of one site or one provider block.
+SOURCE_RANGE_PREFIX_LENGTH :: 24
 
-// The admission limits for one IPv4 /24 source range.
+// The admission limits for one source range.
 Source_Budget_Limits :: struct {
-	attempts_per_second:     int, // Continuous token refill rate per second for one /24 range.
-	burst:                   int, // Maximum burst of new-connection Initial attempts for one /24 range.
-	active_handshakes_limit: int, // Maximum concurrent connections in the handshake for one /24 range.
+	attempts_per_second:     int, // Continuous token refill rate per second for one source range.
+	burst:                   int, // Maximum burst of new-connection Initial attempts for one source range.
+	active_handshakes_limit: int, // Maximum concurrent connections in the handshake for one source range.
+	prefix_length:           u8, // The bits of the address that name a source range: 1 to 32.
 }
 
 // One slot of the per-source-range budget table.
 Source_Budget_Entry :: struct {
 	used:              bool,        // false: the slot is empty.
-	prefix:            u32,         // The IPv4 /24 prefix (address & SOURCE_RANGE_MASK).
-	bucket:            Work_Bucket, // Token bucket for this /24 prefix.
+	prefix:            u32,         // The prefix of the range: the address with its bits past prefix_length cleared.
+	bucket:            Work_Bucket, // Token bucket for this range.
 	last_seen:         u64,         // Monotonic timestamp in microseconds of the last attempt for LRU eviction.
 	active_handshakes: int,         // Count of active handshakes tracked for standalone callers.
 }
 
-// Fixed-capacity, zero-allocation table of per-/24 source-range budgets.
+// Bounded, zero-allocation table of the budgets of the source ranges.
 Source_Budget_Table :: struct {
 	entries:   [SOURCE_BUDGET_CAPACITY]Source_Budget_Entry,
 	has_time:  bool, // true after the first accepted timestamp.
@@ -40,17 +50,22 @@ Source_Budget_Table :: struct {
 
 // Outcome of one per-source-range admission check.
 Source_Budget_Result :: enum u8 {
-	Admitted             = 0, // The attempt passed the active handshake cap and spent one unit from its /24 bucket.
-	Over_Rate_Budget     = 1, // The /24 bucket held less than one unit; the attempt is dropped.
-	Over_Handshake_Limit = 2, // The /24 range already holds its maximum concurrent handshakes.
+	Admitted             = 0, // The attempt passed the active handshake cap and spent one unit from the bucket of its range.
+	Over_Rate_Budget     = 1, // The bucket of the range held less than one unit; the attempt is dropped.
+	Over_Handshake_Limit = 2, // The range already holds its maximum concurrent handshakes.
 	Backwards_Time       = 3, // The timestamp moved backwards relative to the table clock; nothing changed.
 	Invalid_Limits       = 4, // The supplied limits are outside their valid bounds; nothing changed.
-	Table_Full           = 5, // All 64 slots hold active handshakes or non-full buckets; new prefix refused.
+	Table_Full           = 5, // Each slot holds active handshakes or a non-full bucket; new prefix refused.
 }
 
-// source_range_prefix returns the IPv4 /24 prefix of an address.
-source_range_prefix :: proc "contextless" (address: u32) -> u32 {
-	return address & SOURCE_RANGE_MASK
+// source_range_prefix returns the prefix of the source range of an address:
+// its first prefix_length bits. A length of 0 or past 32 gives the address
+// whole; source_budget_limits_valid refuses such limits first.
+source_range_prefix :: proc "contextless" (address: u32, prefix_length: u8) -> u32 {
+	if prefix_length == 0 || prefix_length >= 32 {
+		return address
+	}
+	return address & (~u32(0) << (32 - u32(prefix_length)))
 }
 
 // source_budget_table_init clears a source-budget table to its empty state.
@@ -67,7 +82,7 @@ source_budget_table_init :: proc "contextless" (table: ^Source_Budget_Table) {
 SOURCE_BUDGET_BURST_MOST :: int(max(u64) / (2 * WORK_UNIT))
 
 source_budget_limits_valid :: proc "contextless" (limits: Source_Budget_Limits) -> bool {
-	return limits.burst > 0 && limits.burst <= SOURCE_BUDGET_BURST_MOST && limits.attempts_per_second >= 0 && limits.active_handshakes_limit > 0
+	return limits.burst > 0 && limits.burst <= SOURCE_BUDGET_BURST_MOST && limits.attempts_per_second >= 0 && limits.active_handshakes_limit > 0 && limits.prefix_length >= 1 && limits.prefix_length <= 32
 }
 
 // source_budget_find returns the index of prefix in table, or -1 if absent.
@@ -81,28 +96,40 @@ source_budget_find :: proc "contextless" (table: ^Source_Budget_Table, prefix: u
 	return -1
 }
 
-// source_budget_evict_slot selects an empty slot or the oldest full idle slot
-// (active_handshakes == 0 and refilled to burst). Never evicts an active or
-// non-full throttled bucket, returning -1 so a spoofing attacker cannot reset
-// throttled ranges or corrupt active-handshake counts.
+// source_budget_scan reads the table once: the slot of prefix if it holds
+// one (found), else the slot that a new range takes (free): the first empty
+// slot, or the least recently seen slot whose bucket refilled and that holds
+// no handshake. It never gives an active or a throttled slot, so a source
+// that forges its address cannot reset a throttled range or the count of
+// handshakes of a range: free is -1 then. A slot is checked for a full
+// bucket only when it is older than the best slot found, so most slots cost
+// one comparison.
 @(private)
-source_budget_evict_slot :: proc "contextless" (table: ^Source_Budget_Table, limits: Source_Budget_Limits, now: u64) -> int {
-	full_idle_slot := -1
+source_budget_scan :: proc "contextless" (table: ^Source_Budget_Table, prefix: u32, limits: Source_Budget_Limits, now: u64) -> (found, free: int) {
+	found, free = -1, -1
+	empty := -1
 	for &entry, index in table.entries {
 		if !entry.used {
-			return index
-		}
-		if entry.active_handshakes == 0 && work_bucket_is_full(&entry.bucket, limits.attempts_per_second, limits.burst, now) {
-			if full_idle_slot < 0 || entry.last_seen < table.entries[full_idle_slot].last_seen {
-				full_idle_slot = index
+			if empty < 0 {
+				empty = index
 			}
+			continue
+		}
+		if entry.prefix == prefix {
+			return index, -1
+		}
+		if empty >= 0 || entry.active_handshakes != 0 || (free >= 0 && entry.last_seen >= table.entries[free].last_seen) {
+			continue
+		}
+		if work_bucket_is_full(&entry.bucket, limits.attempts_per_second, limits.burst, now) {
+			free = index
 		}
 	}
-	return full_idle_slot
+	return -1, empty >= 0 ? empty : free
 }
 
 // source_budget_take admits or refuses one new-connection Initial attempt from
-// address under the per-/24 token bucket and active handshake limit.
+// address under the token bucket and the active handshake limit of its range.
 //
 // Pass active_handshakes >= 0 when the caller tracks exact live handshakes
 // externally (such as Server.records), or -1 to use the entry's tracked count.
@@ -120,8 +147,8 @@ source_budget_take :: proc "contextless" (
 	if table.has_time && now < table.last_time {
 		return .Backwards_Time
 	}
-	prefix := source_range_prefix(address)
-	place := source_budget_find(table, prefix)
+	prefix := source_range_prefix(address, limits.prefix_length)
+	place, slot := source_budget_scan(table, prefix, limits, now)
 	if place >= 0 {
 		entry := &table.entries[place]
 		current_handshakes := active_handshakes >= 0 ? active_handshakes : entry.active_handshakes
@@ -141,7 +168,6 @@ source_budget_take :: proc "contextless" (
 		table.last_time = now
 		return .Over_Handshake_Limit
 	}
-	slot := source_budget_evict_slot(table, limits, now)
 	if slot < 0 {
 		table.has_time = true
 		table.last_time = now
@@ -159,7 +185,7 @@ source_budget_take :: proc "contextless" (
 	return .Admitted
 }
 
-// source_budget_handshake_begin checks the per-/24 budget and active handshake
+// source_budget_handshake_begin checks the budget of the range and the active handshake
 // limit, and on admission increments the range's active handshake count.
 source_budget_handshake_begin :: proc "contextless" (
 	table: ^Source_Budget_Table,
@@ -171,20 +197,20 @@ source_budget_handshake_begin :: proc "contextless" (
 	if result != .Admitted {
 		return result
 	}
-	place := source_budget_find(table, source_range_prefix(address))
+	place := source_budget_find(table, source_range_prefix(address, limits.prefix_length))
 	if place >= 0 {
 		table.entries[place].active_handshakes += 1
 	}
 	return .Admitted
 }
 
-// source_budget_handshake_end releases one active handshake for the /24 range
-// of address. Returns false if the range is absent or already at zero.
-source_budget_handshake_end :: proc "contextless" (table: ^Source_Budget_Table, address: u32) -> bool {
+// source_budget_handshake_end releases one active handshake for the source
+// range of address. Returns false if the range is absent or already at zero.
+source_budget_handshake_end :: proc "contextless" (table: ^Source_Budget_Table, address: u32, prefix_length: u8 = SOURCE_RANGE_PREFIX_LENGTH) -> bool {
 	if table == nil {
 		return false
 	}
-	place := source_budget_find(table, source_range_prefix(address))
+	place := source_budget_find(table, source_range_prefix(address, prefix_length))
 	if place < 0 || table.entries[place].active_handshakes <= 0 {
 		return false
 	}
@@ -193,12 +219,12 @@ source_budget_handshake_end :: proc "contextless" (table: ^Source_Budget_Table, 
 }
 
 // source_budget_active_handshakes returns the tracked active handshake count
-// for the /24 range of address, or 0 if not present.
-source_budget_active_handshakes :: proc "contextless" (table: ^Source_Budget_Table, address: u32) -> int {
+// for the source range of address, or 0 if not present.
+source_budget_active_handshakes :: proc "contextless" (table: ^Source_Budget_Table, address: u32, prefix_length: u8 = SOURCE_RANGE_PREFIX_LENGTH) -> int {
 	if table == nil {
 		return 0
 	}
-	place := source_budget_find(table, source_range_prefix(address))
+	place := source_budget_find(table, source_range_prefix(address, prefix_length))
 	if place < 0 {
 		return 0
 	}

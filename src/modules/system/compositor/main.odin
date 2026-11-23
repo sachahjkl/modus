@@ -114,16 +114,21 @@ import "modus:contract/pointer_pictures"
 import "modus:contract/virtio_input"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/value_kinds"
+import module "modus:contract/module"
+import "modus:contract/reference_screen"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
-// working memory is the sum of these parts, at the reference screen of
-// 1920 x 1080:
-// - the frame and the background, each the size of the screen: 2 x 2025
-//   pages, and 2 x 5 page tables (8.1 MB need 4 tables of 2 MiB, and one
-//   more when the start is not on a 2 MiB edge);
-// - the two screen pages: device memory, which costs no page, but 15.8
-//   MiB of it need up to 9 page tables;
+// frame and the background are each the size of the screen: two screen
+// pictures (screen_pictures), which the root service pays at the size of
+// the screen of the machine, 2 x 2025 pages at 1920 x 1080 and 2 x 32 400
+// at 7680 x 4320. The working memory is the sum of these parts, at the
+// largest screen of 7680 x 4320, so a screen of any size up to it maps:
+// - the page tables of the frame and the background: 2 x 65 (132.7 MB need
+//   64 tables of 2 MiB, and one more when the start is not on a 2 MiB
+//   edge);
+// - the two screen pages: device memory, which costs no page, but 265 MB
+//   of it need up to 128 page tables;
 // - each of these three spans can cross a 1 GiB edge, and then needs a
 //   second page directory: 3 pages;
 // - the page of the display registers: a page table and a page directory,
@@ -152,15 +157,25 @@ import "base:intrinsics"
 //   (display.TEXT_MEMORY_PAGES) = 708 pages;
 // - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 9 pages, which the
 //   kernel takes at the first wait.
-// 4050 + 10 + 9 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 9 = 25621: the bound
-// of 128 windows at the largest surface, more than the least largest budget
+// 130 + 128 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 9 = 21810: the
+// bound of 128 windows at the largest surface, more than the least largest budget
 // of a process, and less than the share of a machine of 1 GiB. Page tables
 // are paid as the windows map, so a machine with a smaller share still runs
 // the desktop, with fewer such windows. A screen whose frame and background
 // the budget cannot pay is named on one line, and the compositor stops
 // (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 25621, processes = 1, threads = 2}
-#assert(MODULE_BUDGET.working_memory_pages == 4050 + 10 + 9 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES)
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21810, processes = 1, threads = 2, screen_pictures = 2}
+#assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES)
+// The request on the machine of the machine tests, whose screen is the
+// reference screen: 21810 working pages, 2 x 2025 pages of the frame and
+// the background, and the code, the data and the stacks that the tool
+// counts, under a bound of 8192 pages: 34052 pages, under the largest
+// budget of that machine (50 000 pages), so no boot of a test writes
+// Budget_Part_Limited for the compositor. It passes the least largest
+// budget (16384 pages): a machine whose root holds less than about 128 000
+// pages starts it with the least, and fewer windows at the largest surface.
+MODULE_PAGES_BOUND :: 8192
+#assert(MODULE_BUDGET.working_memory_pages + MODULE_BUDGET.screen_pictures * ((u64(reference_screen.WIDTH) * u64(reference_screen.HEIGHT) * 4 + 4095) / 4096) + MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -352,7 +367,9 @@ screen_page_debts: interface.Picture_Debts
 page_flips: u64 // The page flips since the start.
 frames_on_the_shown_page: u64 // The frames written into the screen page that the display showed.
 frame: graphics.Canvas // The picture that the compositor builds, then copies to the screen.
+frame_memory_handle: system.Handle
 background: graphics.Canvas
+background_memory_handle: system.Handle
 background_appearance: graphics.Appearance // The appearance of the pixels of `background` and of the mark of the bar.
 clients: [CLIENT_CAPACITY]Client
 order: [CLIENT_CAPACITY]int // The clients that have a surface, from back to front. The last one has focus.
@@ -658,17 +675,46 @@ damage_bar :: proc "contextless" () {
 	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
 }
 
-canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
-	memory, status := system.memory_create((u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-	address: rawptr
-	if status == .Ok {
-		address, status = system.memory_map(memory)
-	}
-	if status != .Ok {
+// canvas_create_with_handle makes a picture of the size of the screen at
+// the start: with no memory for it, the compositor stops.
+canvas_create_with_handle :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, handle: system.Handle) {
+	made, memory, ok := canvas_try_create(width, height)
+	if !ok {
 		system.log_fact(.Info, No_Memory{})
 		system.stop(.Failed)
 	}
-	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
+	return made, memory
+}
+
+// canvas_try_create makes a picture in one memory object, in contiguous
+// pages when the kernel has them, paid by budget (0: the budget of this
+// process). ok is false with no memory: nothing is
+// kept.
+canvas_try_create :: proc "contextless" (width, height: int, budget: system.Handle = 0) -> (canvas: graphics.Canvas, handle: system.Handle, ok: bool) {
+	pages := (u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	memory, status := system.memory_create(pages, budget, {.Contiguous})
+	if status != .Ok {
+		memory, status = system.memory_create(pages, budget)
+	}
+	if status != .Ok {
+		return {}, 0, false
+	}
+	address, map_status := system.memory_map(memory)
+	if map_status != .Ok {
+		system.close(memory)
+		return {}, 0, false
+	}
+	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}, memory, true
+}
+
+// canvas_free unmaps and closes a picture of canvas_try_create.
+canvas_free :: proc "contextless" (canvas: graphics.Canvas, handle: system.Handle) {
+	if canvas.pixels != nil {
+		system.memory_unmap(canvas.pixels)
+	}
+	if handle != 0 {
+		system.close(handle)
+	}
 }
 
 // screen_pages_open finds the second screen page: the memory of the
@@ -751,17 +797,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
 	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
 	// The same test as the root service makes before it starts this
-	// process: the two never disagree on a screen.
-	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
+	// process: the two never disagree on a screen. With no framebuffer and
+	// a size, the frame is a screen of memory (screen_of_memory.odin).
+	form := screen_presence.screen_form(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT])
+	if form == .None {
 		system.log_fact(.Info, No_Framebuffer{})
 		system.stop(.Failed)
 	}
+	screen_of_memory = form == .Memory
 	if input_status != .Ok || control_status != .Ok {
 		system.log_fact(.Info, No_Input_Or_Control_Ring{})
 		system.stop(.Failed)
 	}
-	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
-	screen_pages_open(ctx)
+	if screen_of_memory {
+		// No pixel of a device: the frame is the screen, and screen_put
+		// copies nothing. Its budget pays this size; a larger one is paid by
+		// an extra budget of the root service.
+		screen = {width = width, height = height, stride = width}
+		screen_start_width, screen_start_height = width, height
+	} else {
+		screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
+		screen_pages_open(ctx)
+	}
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
 	// The frame and the background have the size of the screen, and the
 	// budget is counted at the reference screen: a firmware that kept a
@@ -778,9 +835,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Screen_Past_Budget{width = u64(width), height = u64(height), needed_pages = needed_pages, budget_pages = u64(budget_left.pages)})
 		system.stop(.Failed)
 	}
-	frame = canvas_create(width, height)
-	gpu_scanout_open(ctx, width, height) // gpu_scanout.odin
-	background = canvas_create(width, height)
+	frame, frame_memory_handle = canvas_create_with_handle(width, height)
+	if !screen_of_memory {
+		gpu_scanout_open(ctx, width, height) // gpu_scanout.odin
+	}
+	background, background_memory_handle = canvas_create_with_handle(width, height)
+	if screen_of_memory {
+		system.log_fact(.Info, Screen_Of_Memory_Started{width = u64(width), height = u64(height)})
+	}
 	// The layout at the default scale until the settings page is read
 	// below: a page that the root service created holds it. The first take
 	// sets up the features of the desktop at that logical screen.
@@ -880,6 +942,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
+		screen_releases_owed_send() // screen_of_memory.odin
 		for record in system.receive(&control.commands) {
 			quality_record_read()
 			kind, kind_ok := display.control_of_ring_word(record.kind)
@@ -900,7 +963,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				quality_window_started(system.Handle(record.values[0]), record.values[1])
 			case .Settings_Raise:
 				settings_raise(record.values[0], record.values[1]) // tray_widgets.odin
-			case .None, .Start, .Stop, .Appearance_Next:
+			case .Screen_Budget_Give:
+				screen_budget_take(system.Handle(record.values[0]), record.values[1], record.values[2], record.values[3], record.values[4]) // screen_of_memory.odin
+			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release:
 				// The border refused None above. Start, Stop and
 				// Appearance_Next go from the compositor to the root service,
 				// never to the compositor.
@@ -1112,7 +1177,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					clipboard_answer_take(index, .Copy_Declined, record)
 				case .Paste_Taken:
 					clipboard_answer_take(index, .Paste_Taken, record)
-				case .Capture_Size_Ask, .Capture_Open, .Capture_Taken, .Capture_Close, .Capture_Viewers, .Remote_Key, .Remote_Pointer:
+				case .Capture_Size_Ask, .Capture_Open, .Capture_Taken, .Capture_Close, .Capture_Viewers, .Remote_Key, .Remote_Pointer, .Screen_Size_Set:
 					capture_command(index, command, record) // capture.odin
 				}
 			}
@@ -1806,6 +1871,10 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 // page that it showed owes the damage of this frame. A page that is not
 // known (the start, a refused flip) is copied whole.
 screen_put :: proc "contextless" (areas: []Rectangle) {
+	// A screen of memory is the frame: there is nothing to copy.
+	if screen_of_memory {
+		return
+	}
 	if screen_page_count < bochs_display.PAGE_COUNT {
 		for area in areas {
 			screen_copy(screen_pages[0], area, red_first)

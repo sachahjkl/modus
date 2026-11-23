@@ -1299,6 +1299,14 @@ error_records_name_the_argument_at_fault :: proc(t: ^testing.T) {
 	records: [1]Server_Record
 	testing.expect(t, !server_init(server, connections, records[:], streams, &configuration, &cryptography, &generator, SERVER_LIMITS_DEFAULT, &error))
 	expect_record(t, "server_init", error, .Bad_Value, 5, 0, i64(random.Seed_Strength.Processor))
+	// A prefix length of a source range of 0 or past 32 is refused first.
+	for length in ([?]u8{0, 33}) {
+		limits := SERVER_LIMITS_DEFAULT
+		limits.source_range_prefix_length = length
+		testing.expect(t, !server_init(server, connections, records[:], streams, &configuration, &cryptography, &generator, limits, &error))
+		testing.expect_value(t, error.kind, i64(errors.Kind.Out_Of_Range))
+		testing.expect_value(t, error.argument, 8)
+	}
 
 	// retry_packet_write: each identifier by its own number, with its size;
 	// an empty token is Empty, not a small buffer.

@@ -137,9 +137,168 @@ a_row_out_of_front_holds_no_view_and_no_input :: proc(t: ^testing.T) {
 	testing.expect(t, client_grant_holds(&clients, 0, 4, .View) && client_grant_holds(&clients, 0, 4, .Input))
 }
 
+// The table holds more keys than the clients of one person: the ninth key,
+// the thirty-third key and each key up to the last row take a free row and
+// hold their grant; the key past the last row finds no free row. The table
+// fits the pages that the root service makes for it, and one principal
+// holds half of the rows, so two principals fill it together.
+@(test)
+client_table_holds_many_clients_and_refuses_one_past_the_last_row :: proc(t: ^testing.T) {
+	testing.expect(t, CLIENT_CAPACITY >= 64, "the client table holds fewer than 64 keys")
+	testing.expect(t, CLIENT_ROWS_OF_ONE_PRINCIPAL >= 8, "one principal holds fewer than 8 keys")
+	testing.expect_value(t, CLIENT_ROWS_OF_ONE_PRINCIPAL * 2, CLIENT_CAPACITY)
+	testing.expect(t, size_of(Client_Table) <= CLIENT_TABLE_PAGES * 4096)
+	testing.expect(t, size_of(Client_Table) > (CLIENT_TABLE_PAGES - 1) * 4096, "the client table has a page that it does not use")
+	testing.expect(t, CONNECTION_CAPACITY >= 32, "the remote service holds fewer than 32 connections")
+	clients: [CLIENT_CAPACITY]Client
+	for index in 0 ..< CLIENT_CAPACITY {
+		key := [32]u8{0 = 0x50, 1 = u8(index), 2 = u8(index >> 8)}
+		action, place := client_restore_decision(&clients, key, 0)
+		testing.expectf(t, action == .Take_Row && place == index, "key %d: %v at %d", index + 1, action, place)
+		clients[place] = {key = key, principal = 0, serial = u64(index + 1), uses = client_uses_word({.Calls})}
+		testing.expectf(t, client_grant_holds(&clients, place, u64(index + 1), .Calls), "key %d holds no grant", index + 1)
+	}
+	for edge in ([?]int{8, 32, CLIENT_CAPACITY - 1}) {
+		testing.expect_value(t, client_find(&clients, clients[edge].key), edge)
+	}
+	action, place := client_restore_decision(&clients, [32]u8{0 = 0x60}, 0)
+	testing.expect(t, action == .No_Free_Row && place == -1)
+	testing.expect(t, !client_grant_holds(&clients, CLIENT_CAPACITY, 1, .Calls))
+}
+
 // The code of the end of a connection whose grant ended has its name.
 @(test)
 revoked_has_its_name :: proc(t: ^testing.T) {
 	testing.expect_value(t, stream_error_name(u64(Stream_Error.Revoked)), "Revoked")
 	testing.expect_value(t, stream_error_name(u64(Stream_Error.Revoked) + 1), "")
+}
+
+// A connection to a service ends when its grant ends, when no QUIC
+// connection of its row is open, and when it had no call for the idle
+// bound; a call that waits keeps it, and the grant comes first.
+@(test)
+a_service_connection_ends_with_its_last_client_or_its_idle_bound :: proc(t: ^testing.T) {
+	testing.expect_value(t, service_connection_end_of(false, true, true, 0), Service_Connection_End.Grant_Ended)
+	testing.expect_value(t, service_connection_end_of(true, false, false, 0), Service_Connection_End.No_Client)
+	testing.expect_value(t, service_connection_end_of(true, false, true, SERVICE_CONNECTION_IDLE_MILLISECONDS), Service_Connection_End.Idle)
+	testing.expect_value(t, service_connection_end_of(true, false, true, max(u64)), Service_Connection_End.Idle)
+	testing.expect_value(t, service_connection_end_of(true, true, false, max(u64)), Service_Connection_End.Keep)
+	testing.expect_value(t, service_connection_end_of(true, false, true, SERVICE_CONNECTION_IDLE_MILLISECONDS - 1), Service_Connection_End.Keep)
+	testing.expect_value(t, service_connection_end_of(true, false, true, 0), Service_Connection_End.Keep)
+}
+
+// A pass that ends SERVICE_CONNECTIONS connections, with a root
+// ring of 32 records that the root service empties between two passes:
+// the first pass sends 32 Disconnect records and the rest wait; the
+// passes after it send the rest; each place sends exactly one, and none is
+// lost. A ring with no room sends nothing.
+@(private = "file")
+test_owed: [SERVICE_CONNECTIONS]bool
+@(private = "file")
+test_sends: [SERVICE_CONNECTIONS]int
+@(private = "file")
+test_ring_room: int
+
+@(test)
+disconnects_past_the_room_of_the_ring_wait_for_the_next_pass :: proc(t: ^testing.T) {
+	RING :: 32
+	owes :: proc "contextless" (place: int) -> bool {return test_owed[place]}
+	send :: proc "contextless" (place: int) -> bool {
+		if test_ring_room == 0 {
+			return false
+		}
+		test_ring_room -= 1
+		test_owed[place] = false
+		test_sends[place] += 1
+		return true
+	}
+	for &owed in test_owed {
+		owed = true
+	}
+	test_sends = {}
+	test_ring_room = 0
+	testing.expect_value(t, disconnects_owed_send(len(test_owed), owes, send), 0)
+	passes := 0
+	total := 0
+	for total < len(test_owed) && passes < 10 {
+		test_ring_room = RING // The root service read the ring.
+		sent := disconnects_owed_send(len(test_owed), owes, send)
+		testing.expect(t, sent <= RING)
+		total += sent
+		passes += 1
+	}
+	testing.expect_value(t, passes, (SERVICE_CONNECTIONS + RING - 1) / RING)
+	for count, place in test_sends {
+		testing.expectf(t, count == 1 && !test_owed[place], "the place %d sent %d Disconnect records", place, count)
+	}
+	test_ring_room = RING
+	testing.expect_value(t, disconnects_owed_send(len(test_owed), owes, send), 0)
+}
+
+// A refusal of a connection whose end found the root ring full keeps its
+// Disconnect: a full ring sends nothing and the place still owes it, then
+// a ring with room sends it once. Each state owes a Disconnect only as
+// service_place_owes_disconnect says.
+@(private = "file")
+refused_places: [4]struct {
+	state: Service_Place_State,
+	owed:  bool,
+}
+@(private = "file")
+refused_ring_room: int
+
+@(test)
+a_refused_place_keeps_its_owed_disconnect :: proc(t: ^testing.T) {
+	for &place in refused_places {
+		// The end of the connection found the ring full: the place was Ending.
+		place.state, place.owed = service_place_after_refusal(.Ending)
+	}
+	state, owed := service_place_after_refusal(.Free)
+	testing.expect(t, state == .Refused && !owed, "a refusal whose Disconnect went owes one")
+	owes :: proc "contextless" (place: int) -> bool {return service_place_owes_disconnect(refused_places[place].state, refused_places[place].owed)}
+	send :: proc "contextless" (place: int) -> bool {
+		if refused_ring_room == 0 {
+			return false
+		}
+		refused_ring_room -= 1
+		refused_places[place].owed = false
+		return true
+	}
+	refused_ring_room = 0
+	testing.expect_value(t, disconnects_owed_send(len(refused_places), owes, send), 0)
+	for place in refused_places {
+		testing.expect(t, place.state == .Refused && place.owed, "a full ring lost the Disconnect of a Refused place")
+	}
+	refused_ring_room = 2
+	testing.expect_value(t, disconnects_owed_send(len(refused_places), owes, send), 2)
+	refused_ring_room = 8
+	testing.expect_value(t, disconnects_owed_send(len(refused_places), owes, send), 2)
+	testing.expect_value(t, disconnects_owed_send(len(refused_places), owes, send), 0)
+	for member in Service_Place_State {
+		testing.expect_value(t, service_place_owes_disconnect(member, false), member == .Ending)
+		testing.expect_value(t, service_place_owes_disconnect(member, true), member == .Ending || member == .Giving_Up || member == .Refused)
+	}
+}
+
+// A call for a service and a row whose earlier connection is Ending waits,
+// whatever the serial, so no second Connect of the row goes before its
+// Disconnect; a place of another service or row is skipped; each other
+// state gives its answer for the same serial only.
+@(test)
+a_call_waits_for_an_ending_place_of_its_service_and_row :: proc(t: ^testing.T) {
+	testing.expect_value(t, service_place_lookup(.Ending, true, false), Service_Place_Lookup.Pending)
+	testing.expect_value(t, service_place_lookup(.Ending, true, true), Service_Place_Lookup.Pending)
+	testing.expect_value(t, service_place_lookup(.Ending, false, true), Service_Place_Lookup.Skip)
+	for member in Service_Place_State {
+		testing.expect_value(t, service_place_lookup(member, false, true), Service_Place_Lookup.Skip)
+		if member != .Ending {
+			testing.expect_value(t, service_place_lookup(member, true, false), Service_Place_Lookup.Skip)
+		}
+	}
+	testing.expect_value(t, service_place_lookup(.Free, true, true), Service_Place_Lookup.Skip)
+	testing.expect_value(t, service_place_lookup(.Ready, true, true), Service_Place_Lookup.Use)
+	testing.expect_value(t, service_place_lookup(.Connecting, true, true), Service_Place_Lookup.Pending)
+	testing.expect_value(t, service_place_lookup(.Readying, true, true), Service_Place_Lookup.Pending)
+	testing.expect_value(t, service_place_lookup(.Refused, true, true), Service_Place_Lookup.Refusal)
+	testing.expect_value(t, service_place_lookup(.Giving_Up, true, true), Service_Place_Lookup.Given_Up)
 }

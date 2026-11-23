@@ -2,6 +2,7 @@ package machine
 
 import "base:runtime"
 import "modus:contract/font_outlines"
+import "modus:contract/remote"
 import "internal:compositor/bar"
 import "internal:compositor/palette"
 import "modus:text_rendering"
@@ -70,10 +71,11 @@ CONSOLE_SCROLL_BAR_ARROW_DOWN_Y :: 428 - 9 // The middle of the arrow button at 
 CONSOLE_SCROLL_BAR_THUMB_END_Y :: 428 - 17 - 4 // In the last pixels of the track: the thumb of a view that follows the last lines ends there, and is 8 pixels long at least.
 CONSOLE_SCROLL_BAR_TRACK_START_Y :: 17 + 4 // Near the start of the track: a thumb dragged there is at its first place.
 
-// The line of remote when the grant of a client key ends while no client of
-// it is connected, after one call to one service: the slot of that
-// connection is free, and no other slot is in use.
-REMOTE_ONE_SLOT_FREED :: "remote: the grants of 1 connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; 0 of 24 slots in use"
+// The line of remote when the last client of a client key leaves, after
+// one call to one service: the slot of that connection is free, and no
+// other slot is in use. The capacity is remote.SERVICE_CONNECTIONS.
+REMOTE_ONE_SLOT_FREED :: "remote: ended 1 connections to services that no client uses (the last client of their key left, or no call for 60 s): their slots are free; 0 of 128 slots in use"
+#assert(remote.SERVICE_CONNECTIONS == 128)
 
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.

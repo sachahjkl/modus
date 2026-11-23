@@ -4,6 +4,7 @@ import debug_object "modus:contract/debug_object"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
 import "modus:contract/call_outcome"
+import "modus:contract/memory_screen"
 import module "modus:contract/module"
 import "modus:contract/storage_status"
 import op "modus:contract/operation"
@@ -394,15 +395,26 @@ the_late_facts_of_the_device_services_write_the_lines_of_before :: proc(t: ^test
 	for count in counts {
 		other := max(u64) - count
 		facts_expect_line(t, fact_test_render(t, tpm, "tpm_device_service", "Count_Limits", {{"lockout_failures", count}, {"forgive_interval_seconds", other}, {"counted_failures", count}, {"lockout_recovery_seconds", other}}), line_of_before("tpm: the count limits of the TPM: a lockout after ", count, " wrong authorization values, one forgiven each ", other, " seconds; ", count, " counted now; the lockout hierarchy waits ", other, " seconds after a wrong value of its own"))
-		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Past_Reference", {{"width", count}, {"height", other}}), line_of_before("remote_display: the screen of ", count, "x", other, " is past the reference screen of the protocol: no capture face"))
+		for word in status_words() {
+			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Budget_Answer_Refused", {{"status", word}}), line_of_before("remote_display: the root service refused a command of the budgets of the screen of memory: status ", status_text(word)))
+		}
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Budget_Not_Taken", {{"width", count}, {"height", other}}), line_of_before("remote_display: closed an extra budget for ", count, " x ", other, " with no use: it has no number, or two are held already"))
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Change_Reverted", {{"width", count}, {"height", other}, {"back_width", other}, {"back_height", count}}), line_of_before("remote_display: no copies of the screen of ", count, " x ", other, ": the screen goes back to ", other, " x ", count))
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Changed", {{"width", count}, {"height", other}, {"viewers", count}}), line_of_before("remote_display: the screen is now ", count, " x ", other, ": ", count, " viewers receive its size and the whole screen"))
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Size_Refusal_Refused", {{"width", count}, {"height", other}, {"refusal_word", count}}), line_of_before("remote_display: refused an answer of the compositor: a refusal of ", count, " x ", other, " with the word ", count, ", which no ask in flight names or which names no cause"))
+		for cause in memory_screen.RESIZE_REFUSAL_SENTENCES {
+			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Size_Ask_Refused", {{"width", count}, {"height", other}, {"viewer_key_head", "0123456789abcdef"}, {"resize_refusal", cause}}), line_of_before("remote_display: refused the screen of ", count, " x ", other, " that the viewer 0123456789abcdef asked: ", cause))
+		}
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Past_Largest", {{"width", count}, {"height", other}}), line_of_before("remote_display: the screen of ", count, "x", other, " is past the largest screen of the protocol, 7680x4320: no capture face"))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Face_Opened", {{"width", count}, {"height", other}}), line_of_before("remote_display: the capture face is open: a copy of ", count, "x", other))
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Viewers_Ended_With_No_Screen", {{"viewers", count}}), line_of_before("remote_display: ended ", count, " viewers with the code Screen_Not_Held: the capture face of the screen in force was refused"))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Face_Closed", {{"pictures", count}}), line_of_before("remote_display: no viewer: the capture face is closed, after ", count, " pictures of the compositor"))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Listening", {{"listen_port", count}, {"viewer_capacity", other}}), line_of_before("remote_display: listening on the UDP port ", count, ", for the host 10.0.2.2 only, and for the viewer keys that a principal allowed: ", other, " viewers at one time"))
 		facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Listening", {{"listen_port", count}, {"connection_capacity", other}, {"calls_per_connection", count}}), line_of_before("remote: listening on the UDP port ", count, ", for the host 10.0.2.2 only, and for the client keys that a principal allowed: ", other, " connections, each with ", count, " calls at one time"))
 		for edge in edges {
 			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Whole_Screen_Measured", {{"width", count}, {"height", other}, {"screen_pieces", count}, {"piece_bytes", edge}, {"pixel_bytes", edge}, {"coded_time", edge}, {"taken_time", edge}}), line_of_before("remote_display: a measure: the whole screen of ", count, "x", other, " in one viewer frame: ", count, " screen pieces, ", edge, " bytes of screen pieces for ", edge, " bytes of pixels, coded in ", edge, " us, taken by the viewer ", edge, " us after its start"))
 			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Small_Damage_Measured", {{"pixels", count}, {"frames", other}, {"median_size", edge}, {"median_time", edge}, {"least_size", edge}, {"least_time", edge}}), line_of_before("remote_display: a measure: viewer frames of a small damage (at most ", count, " pixels), the median of ", other, ": ", edge, " bytes of screen pieces, ", edge, " us from Viewer_Frame_Start in the stream to Viewer_Frame_Taken; the least ", edge, " bytes and ", edge, " us"))
-			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Memory_Refused", {{"pages", edge}}), line_of_before("remote_display: no memory for the capture face: ", edge, " pages"))
+			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Memory_Refused", {{"width", count}, {"height", other}, {"pages", edge}}), line_of_before("remote_display: no capture face for the screen of ", count, "x", other, ": its two pictures and its copy need ", edge, " pages, which the budget of this process does not give"))
 			facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Window_Drawn", {{"picture_time", edge}}), line_of_before("remote: the window drew one picture in ", edge, " us"))
 			facts_expect_line(t, fact_test_render(t, remote, "remote_service", "Interface_Measured", {{"records", count}, {"damage_rectangles", other}, {"build_time", edge}, {"difference_time", edge}, {"draw_time", edge}}), line_of_before("remote: the interface: ", count, " records, ", other, " damage rectangles; build ", edge, " us, difference ", edge, " us, draw ", edge, " us"))
 			facts_expect_line(t, fact_test_render(t, sound, "sound_device_service", "Stream_Started", {{"frame_zero_time", edge}, {"held_time", edge}}), line_of_before("sound: the stream started: the frame 0 plays at ", edge, " ns of the system clock; the service holds ", edge, " ns"))
@@ -474,6 +486,8 @@ the_facts_with_no_value_write_the_lines_of_before :: proc(t: ^testing.T) {
 		{"start_policy", "start_policy", "No_Start_List", "start_policy: the context names no start list: no row starts"},
 		{"start_policy", "start_policy", "Machine_Parts_Page_Refused", "start_policy: the machine parts page is refused: no row starts"},
 		{"start_policy", "start_policy", "Machine_Usable", "start_policy: each needed row runs: the machine is usable"},
+		{"remote_display", "remote_display_service", "Screen_Budget_Release_Not_Sent", "remote_display: the root ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of this process"},
+		{"remote_display", "remote_display_service", "Screen_Budget_Release_Not_Sent", "remote_display: the root ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of this process"},
 		{"remote_display", "remote_display_service", "Capture_Memory_Not_Given", "remote_display: the memory of the capture face does not map, or the compositor does not take it"},
 		{"remote", "remote_service", "Seed_Weak", "remote: the random seed of this process is weak: it makes no key, and listens on nothing"},
 		{"module_files", "module_files", "Listing_Store_Answer_Refused", "module_files: the store module_files refused the listing of its root tree: the storage service gave no answer that its export allows"},

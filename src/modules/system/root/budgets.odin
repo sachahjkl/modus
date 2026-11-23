@@ -2,6 +2,7 @@ package root
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/reference_screen"
 import "modus:contract/value_kinds"
 import "modus:disk_process"
 import "modus:system"
@@ -58,6 +59,48 @@ budget_share_take :: proc "contextless" (word: u64) -> bool {
 	budget_share = share
 	largest_budget = module.largest_budget_of_machine(machine_at_start, budget_share)
 	return true
+}
+
+// screen_in_force gives the size of the screen of this machine: the screen
+// of the firmware, or with none, the size of the screen of memory at the
+// start of the compositor, else the reference screen. A size that a viewer
+// asks later is paid from the pages that each budget has left
+// (src/md/features/screen_of_memory.md).
+screen_in_force :: proc "contextless" () -> (width, height: u64) {
+	if root_screen_values[0] != 0 && root_screen_values[1] != 0 {
+		return root_screen_values[0], root_screen_values[1]
+	}
+	if screen_of_memory_size[0] != 0 && screen_of_memory_size[1] != 0 {
+		return u64(screen_of_memory_size[0]), u64(screen_of_memory_size[1])
+	}
+	return reference_screen.WIDTH, reference_screen.HEIGHT
+}
+
+// The rows of the plan that lower the pages of the screen pictures of a
+// module. The cost of the screen is a machine policy, which only a plan of
+// principal 0 gives, and which may lower that cost and never raise it
+// (module.budget_request_of_screen). The plan carries no row of machine
+// policy yet (src/md/features/declarations.md), so the table stays empty
+// and each module pays its whole screen.
+PLAN_SCREEN_ROW_CAPACITY :: 8
+Plan_Screen_Row :: struct {
+	name:  system.Name,
+	pages: u64,
+}
+plan_screen_rows: [PLAN_SCREEN_ROW_CAPACITY]Plan_Screen_Row
+plan_screen_row_count: int
+// The line of a refused request names the limit of screen pictures.
+#assert(module.SCREEN_PICTURES_LIMIT == 4)
+
+// plan_screen_pages_of gives the pages that a row of the plan gives the
+// screen pictures of a module, or 0: no row.
+plan_screen_pages_of :: proc "contextless" (name: string) -> u64 {
+	for &row in plan_screen_rows[:plan_screen_row_count] {
+		if system.name_of(row.name[:]) == name {
+			return row.pages
+		}
+	}
+	return 0
 }
 
 // The processor time of a process is one processor for each of its threads.
@@ -150,6 +193,21 @@ budget_decided :: proc "contextless" (file: []u8, name: string, largest: system.
 	if module.validate(file) == .None {
 		request, _ = module.budget_request(file)
 	}
+	// The screen pictures of the module have the size of the screen of this
+	// machine. A request past the limit of pictures gets no screen: the
+	// module gets the rest of its request, and one line names the part.
+	// A budget is a reservation of the pages of this service: the pictures
+	// of a screen of memory are paid at the size of its start, never at a
+	// size that a viewer may ask one day (src/md/features/screen_of_memory.md,
+	// "The budget of a screen of memory").
+	width, height := screen_in_force()
+	with_screen, screen_ok := module.budget_request_of_screen(request, width, height, plan_screen_pages_of(name))
+	if !screen_ok {
+		system.log_fact(.Warning, Budget_Screen_Pictures_Refused{screen_pictures = request.screen_pictures, started_process = module_name_field(name)})
+		with_screen = request
+		with_screen.screen_pictures = 0
+	}
+	request = with_screen
 	granted, limited := system.budget_decide(request, LEAST_BUDGET, largest)
 	for part in limited {
 		system.log_fact(.Warning, Budget_Part_Limited{asked = system.budget_part(request, part), largest = system.budget_part(largest, part), granted = system.budget_part(granted, part), started_process = module_name_field(name), budget_part = text_field(system.budget_part_names[part], 16), largest_of = text_field(who, 16)})

@@ -404,7 +404,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	// With no screen, or in a console image with no window server, the
 	// process gets no window, as a process of the boot image
 	// (start_view_give).
-	if !screen_absent && console_renderer == .Desktop_Terminal {
+	if !desktop_absent() && console_renderer == .Desktop_Terminal {
 		if display_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
 			return kernel_refused(refusal, kind, status)
 		}

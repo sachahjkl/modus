@@ -192,6 +192,8 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 			return grant == .Start_Policy
 		case .Plans:
 			return grant == .Plans
+		case .Screen_Capture:
+			return grant == .Screen_Capture
 		}
 		return false
 	}
@@ -212,6 +214,41 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, !sender_allowed(.Plan_Roles, {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy}))
 	testing.expect(t, !sender_allowed(.Plan_Roles, {.Plans} - ROOT_RING_GRANTS))
 	testing.expect(t, sender_allowed(.Plan_Roles, {.Plans}))
+	// The budgets of a screen of memory grow for the service of the remote
+	// display only: no console, no start policy, no holder of Connect.
+	testing.expect(t, !sender_allowed(.Screen_Budget, ROOT_RING_GRANTS - {.Screen_Capture}))
+	testing.expect(t, sender_allowed(.Screen_Budget, {.Screen_Capture}))
+	testing.expect(t, !sender_allowed(.Start, {.Screen_Capture}))
+	testing.expect(t, !sender_allowed(.Connect, {.Screen_Capture}))
+	// The word of its step at its border.
+	for word in ([?]u64{0, u64(max(Screen_Budget_Step)) + 1, max(u64)}) {
+		_, step_ok := screen_budget_step_of_word(word)
+		testing.expectf(t, !step_ok, "the step word %d was taken", word)
+		_, place, words_ok := screen_budget_words_of_values({0 = word, 1 = 2560, 2 = 1440})
+		testing.expect(t, !words_ok && place == 1)
+	}
+	// A Release names a growth: 0 is none; each word after the words of
+	// a step must be 0, at its place.
+	_, release_place, release_ok := screen_budget_words_of_values({0 = u64(Screen_Budget_Step.Release)})
+	testing.expect(t, !release_ok && release_place == 2, "a release of growth 0 was taken")
+	for place in 2 ..< 7 {
+		for word in ([?]u64{1, max(u64)}) {
+			values := [7]u64{0 = u64(Screen_Budget_Step.Release), 1 = 4}
+			values[place] = word
+			_, refused, ok := screen_budget_words_of_values(values)
+			testing.expectf(t, !ok && refused == place + 1, "a release with %d at %d was taken", word, place)
+		}
+	}
+	for place in 3 ..< 7 {
+		values := [7]u64{0 = u64(Screen_Budget_Step.Grow), 1 = 2560, 2 = 1440}
+		values[place] = 1
+		_, refused, ok := screen_budget_words_of_values(values)
+		testing.expectf(t, !ok && refused == place + 1, "a growth with a word at %d was taken", place)
+	}
+	grow, _, grow_ok := screen_budget_words_of_values({0 = u64(Screen_Budget_Step.Grow), 1 = 2560, 2 = 1440})
+	testing.expect(t, grow_ok && grow == {step = .Grow, width = 2560, height = 1440})
+	release, _, last_ok := screen_budget_words_of_values({0 = u64(Screen_Budget_Step.Release), 1 = max(u64)})
+	testing.expect(t, last_ok && release == {step = .Release, growth = max(u64)})
 	testing.expect(t, !sender_allowed(.Start, {.Plans}))
 	testing.expect(t, !sender_allowed(.Connect, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Connect, .Principals, .Debugger}))
@@ -514,5 +551,23 @@ the_refusal_of_a_replace_is_read_by_its_named_fields :: proc(t: ^testing.T) {
 		if item.refusal == .Table_Full {
 			testing.expect_value(t, record.limit, item.capacity)
 		}
+	}
+}
+
+// The word of a screen of memory: 0 is none; a side of 0, one past each
+// bound and the largest word are refused; the least and the largest size
+// read back.
+@(test)
+a_screen_of_memory_word_at_its_edges :: proc(t: ^testing.T) {
+	width, height, ok := screen_of_memory_of_word(0)
+	testing.expect(t, ok && width == 0 && height == 0)
+	refused := [?]u64{screen_of_memory_word(1920, 0), screen_of_memory_word(0, 1080), screen_of_memory_word(319, 240), screen_of_memory_word(320, 239), screen_of_memory_word(7681, 4320), screen_of_memory_word(7680, 4321), max(u64)}
+	for word in refused {
+		_, _, taken := screen_of_memory_of_word(word)
+		testing.expectf(t, !taken, "the word %x was taken", word)
+	}
+	for size in ([?][2]u32{{320, 240}, {1920, 1080}, {7680, 4320}}) {
+		width, height, ok = screen_of_memory_of_word(screen_of_memory_word(size[0], size[1]))
+		testing.expect(t, ok && width == size[0] && height == size[1])
 	}
 }

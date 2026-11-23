@@ -61,11 +61,19 @@ desktop_scale_take :: proc "contextless" (choice: settings.Choice, read_ok: bool
 	taken := bar.scale_after_read(scale, choice.scale, read_ok)
 	changed = taken != scale || desktop_width == 0
 	scale = taken
+	desktop_size_follow_screen(changed)
+	return changed
+}
+
+// desktop_size_follow_screen gives the desktop the logical size of the
+// screen at the scale in force, and keeps the pointer inside it: at a
+// change of the scale, and at a change of the size of a screen of memory
+// (screen_of_memory.odin). zones: the zones of the maximize and of the snap
+// follow the new logical screen, or a maximize would ask the size of the
+// old one.
+desktop_size_follow_screen :: proc "contextless" (zones: bool) {
 	desktop_width, desktop_height = logical_pixel_of(screen.width), logical_pixel_of(screen.height)
-	// The zones of the maximize and of the snap are in logical pixels of the
-	// screen: they follow the new logical screen, or a maximize at the new
-	// scale would ask the size of the old one.
-	if changed {
+	if zones {
 		desktop_features_resize(i32(desktop_width), i32(desktop_height), i32(BAR_HEIGHT)) // desktop_features.odin
 	}
 	before_x, before_y := pointer_x, pointer_y
@@ -74,7 +82,6 @@ desktop_scale_take :: proc "contextless" (choice: settings.Choice, read_ok: bool
 	if pointer_x != before_x || pointer_y != before_y {
 		capture_note_machine_pointer_move()
 	}
-	return changed
 }
 
 // interior_screen_box gives the box of the screen of the logical interior

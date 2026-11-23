@@ -1,0 +1,3 @@
+type: Added
+
+**A screen of memory that grows.** A viewer asks a screen of memory larger than its start size, and the root service gives the compositor and `remote_display` the pages of that size at the same step, within the share of a process, or refuses both with the cause. A screen that grew grows again: for a moment each process holds the pages of the old size and of the new one, when its share pays both, then the pages of the old size return. The pages return when the size comes back to at most the start size, when the last viewer leaves, as the screen goes back to its start size, or when either process stops. The root service counts the pages of an extra budget until no object of it is left, and makes at most one growth each second.

@@ -3,6 +3,7 @@ package build
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
 import "modus:contract/call_outcome"
+import "modus:contract/memory_screen"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/replacement_list"
@@ -78,6 +79,9 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 	// name 31, a file of the store disk_process.NAME_LIMIT, and a resource
 	// the name of an entry of the boot image.
 	most["principal_name"] = 23
+	for refusal in memory_screen.GROW_REFUSAL_SENTENCES {
+		most["grow_refusal"] = max(most["grow_refusal"], u32(len(refusal)))
+	}
 	most["store"] = 31
 	most["file"] = 23
 	most["resource"] = 31
@@ -148,13 +152,14 @@ TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the ca
 // The sentences of disk_process.table_problem_sentences that a Text field
 // holds; the three longer ones have a fact type each.
 @(private = "file")
-TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 1168 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
+TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 2288 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
 @(private = "file")
-TABLE_PROBLEM_OLDER_FORMAT :: "the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify"
+TABLE_PROBLEM_OLDER_FORMAT_CAUSE :: "it has the format of an older system (1008, 1136 or 1168 bytes), and no version of it can be restored to verify"
+TABLE_OLDER_FORMAT_TO_DO :: "to use a client again, pair it again with remote_allow, or remote_display_allow for a viewer, from a console of the principal; give each disk process its grants again"
 @(private = "file")
 TABLE_PROBLEM_BAD_ROW :: "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero"
 @(private = "file")
-TABLE_PROBLEM_BAD_CLIENT_KEYS :: "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero"
+TABLE_PROBLEM_BAD_CLIENT_KEYS :: "the client keys of remote in the table are more than 32, or one is zero bytes, or one comes two times, or a byte after the last key is not zero"
 @(private = "file")
 NEW_RECORDS := [?]string{"the new machine passphrase", "the new principal"}
 @(private = "file")
@@ -226,6 +231,15 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		for part in BUDGET_PARTS {
 			for who in LARGEST_OF {
 				expect(t, render(t, file, "Budget_Part_Limited", {{"asked", count}, {"largest", max(u64) - count}, {"granted", count}, {"started_process", process}, {"budget_part", part}, {"largest_of", who}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " ", part, ", and ", who, " gets at most ", max(u64) - count, ": it starts with ", count))
+				expect(t, render(t, file, "Screen_Budget_Grown", {{"width", count}, {"height", max(u64) - count}, {"growth", max(u64) - count}, {"compositor_pages", min(count, u64(max(i64)))}, {"service_pages", u64(max(i64)) - min(count, u64(max(i64)))}}), line_of_before("root: the budgets of the screen of memory grow for ", count, " x ", max(u64) - count, ", growth ", max(u64) - count, ": an extra budget of ", sentence.Size{min(count, u64(max(i64))), .Pages}, " for the compositor and of ", sentence.Size{u64(max(i64)) - min(count, u64(max(i64))), .Pages}, " for remote_display"))
+				for refusal in memory_screen.GROW_REFUSAL_SENTENCES {
+					expect(t, render(t, file, "Screen_Budget_Refused", {{"width", count}, {"height", max(u64) - count}, {"grow_refusal", refusal}}), line_of_before("root: refused to grow the budgets of the screen of memory for ", count, " x ", max(u64) - count, ": ", refusal))
+				}
+				expect(t, render(t, file, "Screen_Budget_Released", {{"growth", count}, {"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " gave back its extra budget of growth ", count, " of the screen of memory: its pages return when no object of it is left"))
+				expect(t, render(t, file, "Screen_Budget_Release_Refused", {{"growth", count}, {"holder", process}}), line_of_before("root: refused the release of the extra budget of growth ", count, " of the screen of memory from ", sentence.Module_Name{process}, ", which holds none of it"))
+				expect(t, render(t, file, "Screen_Budget_Ended_At_Stop", {{"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " stopped with an extra budget of the screen of memory: its pages return"))
+				expect(t, render(t, file, "Compositor_On_Screen_Of_Memory", {{"width", count}, {"height", max(u64) - count}}), line_of_before("root: the compositor starts on a screen of memory of ", count, " x ", max(u64) - count, ": the machine has no screen"))
+				expect(t, render(t, file, "Budget_Screen_Pictures_Refused", {{"screen_pictures", count}, {"started_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen"))
 			}
 			for holder in PAYING_BUDGETS {
 				expect(t, render(t, file, "Start_Refused_Budget_Part", {{"needed", count}, {"held", max(u64) - count}, {"refused_process", process}, {"budget_part", part}, {"paying_budget", holder}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": it gets ", count, " ", part, ", and the budget of ", holder, " holds ", max(u64) - count))
@@ -470,7 +484,7 @@ the_facts_with_no_field_of_the_root_service_write_the_lines_of_before :: proc(t:
 		{"Standard_Vga_Mode_Unknown", "root: the display registers of the standard VGA do not say the mode of the framebuffer of the firmware with two screen pages: the compositor writes the screen page that the display shows"},
 		{"Entropy_Service_Stopped", "root: the entropy service stopped: no more fresh bytes for the running processes"},
 		{"Failure_Shown", "root: the boot display shows the failure"},
-		{"No_Screen", "root: no screen: no console, no window; the other services start"},
+		{"No_Screen", "root: no screen: a console and windows only on a screen of memory that the start list gives; the other services start"},
 		{"Compositor_Stopped", "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on"},
 		{"Console_Renderer_Serial", "root: no compositor in the boot image: the console writes to the second serial port through serial_terminal"},
 		{"Console_Renderer_Grid", "root: no compositor in the boot image: the console draws a text grid on the screen through grid_terminal"},
@@ -861,7 +875,6 @@ the_table_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		{"Client_Key_Allowed_Kept", "; the disk grant table of the principal keeps the key across a restart"},
 	}
 	long_problems := [?][2]string {
-		{"Older_Format", TABLE_PROBLEM_OLDER_FORMAT},
 		{"Bad_Row", TABLE_PROBLEM_BAD_ROW},
 		{"Bad_Client_Keys", TABLE_PROBLEM_BAD_CLIENT_KEYS},
 	}
@@ -881,6 +894,12 @@ the_table_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 				expect(t, render(t, file, strings.concatenate({"Table_Refused_", problem[0], "_Written_Over"}, context.temp_allocator), {{"principal", principal}, {"new_record", record}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem[1], "; it gives no grant, and the table of ", record, " is written over it"))
 			}
 		}
+		// A table of an older format: the problem, its cause, and what the
+		// principal does to use its clients again.
+		for record in NEW_RECORDS {
+			expect(t, render(t, file, "Table_Refused_Older_Format_Written_Over", {{"principal", principal}, {"new_record", record}}), line_of_before("root: the disk grant table of principal ", principal, " in the store module_files was not read: ", TABLE_PROBLEM_OLDER_FORMAT_CAUSE, "; its client keys and disk grants do not hold, and the table of ", record, " is written over it; ", TABLE_OLDER_FORMAT_TO_DO))
+		}
+		expect(t, render(t, file, "Table_Refused_Older_Format_Kept", {{"principal", principal}}), line_of_before("root: the disk grant table of principal ", principal, " in the store module_files was not read: ", TABLE_PROBLEM_OLDER_FORMAT_CAUSE, "; its client keys and disk grants do not hold, and the table is kept: no change is written over it; ", TABLE_OLDER_FORMAT_TO_DO))
 		for problem in TABLE_PROBLEMS_IN_A_FIELD {
 			expect(t, render(t, file, "Table_Refused_Kept", {{"principal", principal}, {"table_problem", problem}}), line_of_before("root: refused the disk grant table of principal ", principal, " from the store module_files: ", problem, "; it gives no grant, and it is kept: no change is written over it"))
 		}

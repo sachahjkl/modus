@@ -509,8 +509,52 @@ Budget_Request :: struct {
 	pages:    u64, // Pages of memory: its modules, its stacks, its pictures and its working memory.
 	processes: u64, // Process slots: the process itself, and each child that runs at one time.
 	threads:  u64, // Thread slots: each thread that runs at one time, the first one included, and the threads of its children.
+	// Pictures of the size of the screen in force, 4 bytes a pixel, that the
+	// process holds: the copies of a screen of the compositor and of the
+	// remote display. A build cannot know the screen, so the starter adds
+	// their pages for the screen of the machine (budget_request_of_screen),
+	// and a 4K machine pays a 4K screen. SCREEN_PICTURES_LIMIT at most.
+	screen_pictures: u64,
 }
-#assert(size_of(Budget_Request) == 24)
+#assert(size_of(Budget_Request) == 32)
+
+// The most screen pictures that a module asks for: the compositor holds
+// two, the remote display three.
+SCREEN_PICTURES_LIMIT :: 4
+
+// screen_picture_pages gives the pages of one picture of a screen, 4 bytes a
+// pixel, the last page whole.
+screen_picture_pages :: proc "contextless" (width, height: u64) -> u64 {
+	return (width * height * 4 + PAGE_SIZE - 1) / PAGE_SIZE
+}
+
+// budget_request_of_screen gives the request of a module with the pages of
+// its screen pictures added, for a screen of width x height: the request
+// that the starter decides. plan_screen_pages is the most pages that a row
+// of the plan of principal 0 gives these pictures, 0 for no row: the screen
+// is a fact of the machine, and its cost a machine policy, which a plan may
+// lower and never raise. ok is false for a request of more than
+// SCREEN_PICTURES_LIMIT pictures, or a screen whose pages pass 64 bits:
+// the starter refuses the module, as a file that is not valid.
+//
+// Example: 3 pictures of 3840 x 2160 add 3 x 8100 pages; with a plan row of
+// 10 000 pages they add 10 000.
+budget_request_of_screen :: proc "contextless" (request: Budget_Request, width, height: u64, plan_screen_pages: u64 = 0) -> (with_screen: Budget_Request, ok: bool) {
+	if request.screen_pictures > SCREEN_PICTURES_LIMIT || width > 1 << 20 || height > 1 << 20 {
+		return {}, false
+	}
+	screen := request.screen_pictures * screen_picture_pages(width, height)
+	if plan_screen_pages != 0 {
+		screen = min(screen, plan_screen_pages)
+	}
+	with_screen = request
+	with_screen.pages += screen
+	with_screen.screen_pictures = 0
+	if with_screen.pages < request.pages {
+		return {}, false
+	}
+	return with_screen, true
+}
 
 // The largest budget of a process of the boot image is a share of the
 // memory and of the threads of the machine: a request above it starts with
@@ -540,6 +584,16 @@ budget_share_of_word :: proc "contextless" (word: u64) -> (share: u64, ok: bool)
 // pages at compile time.
 LARGEST_BUDGET_LEAST_PAGES :: 16384
 LARGEST_BUDGET_LEAST :: Budget_Request{pages = LARGEST_BUDGET_LEAST_PAGES, processes = 8, threads = 32}
+
+// The machine of the machine tests: 1 GiB (the tool checks it against its
+// machine), whose root service holds at least 200 000 pages at its start,
+// less the kernel. A system module whose request passes the largest budget
+// of that machine would write Budget_Part_Limited at each boot of a test:
+// a module that asks more than the least checks its sum against this one.
+TEST_MACHINE_MEMORY_MIB :: 1024
+TEST_MACHINE_ROOT_PAGES :: 200_000
+TEST_MACHINE_LARGEST_BUDGET_PAGES :: TEST_MACHINE_ROOT_PAGES / LARGEST_BUDGET_SHARE_OF_THE_MACHINE
+#assert(TEST_MACHINE_ROOT_PAGES <= TEST_MACHINE_MEMORY_MIB * 256)
 
 // largest_budget_of_machine gives the largest budget of a process of the
 // boot image on a machine whose root service holds machine at its start:

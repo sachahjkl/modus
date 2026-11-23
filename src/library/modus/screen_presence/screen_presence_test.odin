@@ -35,3 +35,23 @@ a_mapped_framebuffer_with_a_size_is_a_screen :: proc(t: ^testing.T) {
 	testing.expect(t, screen_present(.Ok, 1024, 768), "the screen of the test machine is a screen")
 	testing.expect(t, screen_present(.Ok, max(u64), max(u64)), "the largest size is a screen")
 }
+
+// The form of a screen: a refused map with no size, or with a size past
+// the bounds of a screen of memory, is no screen; a refused map with a
+// size inside them is a screen of memory, at each bound; a map that passed
+// with a size is a screen of a device, whatever the size.
+@(test)
+the_form_of_a_screen_at_its_edges :: proc(t: ^testing.T) {
+	testing.expect_value(t, screen_form(.Bad_Handle, 0, 0), Screen_Form.None)
+	testing.expect_value(t, screen_form(.Bad_Handle, 319, 240), Screen_Form.None)
+	testing.expect_value(t, screen_form(.Bad_Handle, 320, 239), Screen_Form.None)
+	testing.expect_value(t, screen_form(.Bad_Handle, 7681, 4320), Screen_Form.None)
+	testing.expect_value(t, screen_form(.Bad_Handle, 7680, 4321), Screen_Form.None)
+	testing.expect_value(t, screen_form(.Bad_Handle, max(u64), max(u64)), Screen_Form.None)
+	testing.expect_value(t, screen_form(.Ok, 0, 1080), Screen_Form.None)
+	testing.expect_value(t, screen_form(.Bad_Handle, 320, 240), Screen_Form.Memory)
+	testing.expect_value(t, screen_form(.Bad_Handle, 7680, 4320), Screen_Form.Memory)
+	testing.expect_value(t, screen_form(.Bad_Handle, 1920, 1080), Screen_Form.Memory)
+	testing.expect_value(t, screen_form(.Ok, 1, 1), Screen_Form.Device)
+	testing.expect_value(t, screen_form(.Ok, 1920, 1080), Screen_Form.Device)
+}

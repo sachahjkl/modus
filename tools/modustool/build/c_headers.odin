@@ -851,11 +851,13 @@ c_render_modus_module_h :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintln(&out, "\tuint64_t pages;")
 	fmt.sbprintln(&out, "\tuint64_t processes;")
 	fmt.sbprintln(&out, "\tuint64_t threads;")
+	fmt.sbprintln(&out, "\tuint64_t screen_pictures;")
 	fmt.sbprintln(&out, "} Modus_Module_Budget_Request;")
 	c_emit_size_assert(&out, "Modus_Module_Budget_Request", size_of(module.Budget_Request))
 	c_emit_offset_assert(&out, "Modus_Module_Budget_Request", "pages", offset_of(module.Budget_Request, pages))
 	c_emit_offset_assert(&out, "Modus_Module_Budget_Request", "processes", offset_of(module.Budget_Request, processes))
 	c_emit_offset_assert(&out, "Modus_Module_Budget_Request", "threads", offset_of(module.Budget_Request, threads))
+	c_emit_offset_assert(&out, "Modus_Module_Budget_Request", "screen_pictures", offset_of(module.Budget_Request, screen_pictures))
 	fmt.sbprintln(&out)
 
 	fmt.sbprintln(&out, "typedef struct Modus_Module_Fact {")

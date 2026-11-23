@@ -34,6 +34,7 @@ import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
+import "modus:contract/memory_screen"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
@@ -54,7 +55,7 @@ VALUE_LIST_SIZE :: 0
 
 // The bytes "STARTLST" and the version of the format of a list.
 LIST_MAGIC :: u64(0x54534C5452415453)
-LIST_VERSION :: 3
+LIST_VERSION :: 4
 // The rows of one list at most: a list is read into a table of this size,
 // in the memory of the start policy. A session that starts its services
 // and its programs at once has more than a few dozen; each process slot but
@@ -316,6 +317,9 @@ List :: struct {
 	row_count:    int,
 	wirings:      [WIRING_ROW_CAPACITY]Wiring_Row,
 	wiring_count: int,
+	// The parts of the machine parts page, which list_parts_take keeps: a
+	// start carries a screen of memory only on a machine with no screen.
+	page_parts:   Machine_Parts,
 }
 
 // One row as the list holds it: each field a word, which list_read reads.
@@ -328,8 +332,13 @@ Row_Record :: struct {
 	// Seconds of the clock of the system. 0: the whole run of the machine,
 	// so a row that names no window never reads the clock.
 	restart_window_seconds: u32,
+	// The row of the holder of Display only: the size of a screen of memory
+	// on a machine with no screen (src/md/features/screen_of_memory.md).
+	// 0 x 0: no screen of memory.
+	screen_of_memory_width:  u32,
+	screen_of_memory_height: u32,
 }
-#assert(size_of(Row_Record) == 56)
+#assert(size_of(Row_Record) == 64)
 
 // One row after the border: its words are members.
 Start_Row :: struct {
@@ -340,6 +349,9 @@ Start_Row :: struct {
 	usable_mark:            Usable_Mark,
 	restart_count:          u32,
 	restart_window_seconds: u32, // 0: the whole run.
+	// The size of a screen of memory of the row display; 0 x 0: none.
+	screen_of_memory_width:  u32,
+	screen_of_memory_height: u32,
 }
 
 // row_name gives the name of the module of a row.
@@ -375,6 +387,8 @@ List_Problem :: enum u8 {
 	Writer_Restarts      = 21, // The writer row of a wiring row has restarts: a restart applies its rows again, which a reader of one wiring refuses or not by its speed.
 	// A start row again: place is the start row from 0.
 	Window_Without_Restarts = 22, // A restart window on a row with no restart: a bound of nothing.
+	Screen_Size_Not_Display = 23, // A size of a screen of memory on a row that is not the row display.
+	Screen_Size_Refused     = 24, // A size of a screen of memory with one side 0, or outside the bounds of memory_screen.
 }
 
 @(rodata)
@@ -403,6 +417,8 @@ LIST_PROBLEM_TEXTS := [List_Problem]string {
 	.Writer_Restarts      = "a wiring row has a writer row with restarts",
 	// A start row again.
 	.Window_Without_Restarts = "a row has a restart window and no restart",
+	.Screen_Size_Not_Display = "a row that is not the row display has a size of a screen of memory",
+	.Screen_Size_Refused     = "a row has a size of a screen of memory outside 320 x 240 to 7680 x 4320",
 }
 
 // parts_of_word is the border of a word of Machine_Parts: a bit that names
@@ -464,7 +480,16 @@ row_of_record :: proc "contextless" (record: ^Row_Record) -> (row: Start_Row, pr
 	if record.restart_window_seconds != 0 && record.restart_count == 0 {
 		return {}, .Window_Without_Restarts
 	}
-	row = {module_name = record.module_name, name_length = length, needs = needs, absent_rule = rule, usable_mark = mark, restart_count = record.restart_count, restart_window_seconds = record.restart_window_seconds}
+	width, height := record.screen_of_memory_width, record.screen_of_memory_height
+	if width != 0 || height != 0 {
+		if root_procedure_of(string(record.module_name[:length])) != .Display {
+			return {}, .Screen_Size_Not_Display
+		}
+		if !memory_screen.size_in_bounds(u64(width), u64(height)) {
+			return {}, .Screen_Size_Refused
+		}
+	}
+	row = {module_name = record.module_name, name_length = length, needs = needs, absent_rule = rule, usable_mark = mark, restart_count = record.restart_count, restart_window_seconds = record.restart_window_seconds, screen_of_memory_width = width, screen_of_memory_height = height}
 	return row, .None
 }
 
@@ -605,7 +630,7 @@ list_size :: proc "contextless" (row_count: int, wiring_count: int = 0) -> int {
 
 // row_make gives the row of a module, for a writer of a list. ok is false
 // for a name that list_read refuses.
-row_make :: proc "contextless" (name: string, needs: Machine_Parts, absent_rule: Absent_Part_Rule, usable_mark: Usable_Mark, restart_count: u32 = 0, restart_window_seconds: u32 = 0) -> (row: Start_Row, ok: bool) {
+row_make :: proc "contextless" (name: string, needs: Machine_Parts, absent_rule: Absent_Part_Rule, usable_mark: Usable_Mark, restart_count: u32 = 0, restart_window_seconds: u32 = 0, screen_of_memory_width: u32 = 0, screen_of_memory_height: u32 = 0) -> (row: Start_Row, ok: bool) {
 	if len(name) == 0 || len(name) >= MODULE_NAME_SIZE {
 		return {}, false
 	}
@@ -616,6 +641,7 @@ row_make :: proc "contextless" (name: string, needs: Machine_Parts, absent_rule:
 	}
 	row.name_length, row.needs, row.absent_rule, row.usable_mark, row.restart_count = length, needs, absent_rule, usable_mark, restart_count
 	row.restart_window_seconds = restart_window_seconds
+	row.screen_of_memory_width, row.screen_of_memory_height = screen_of_memory_width, screen_of_memory_height
 	return row, true
 }
 
@@ -637,6 +663,8 @@ list_write :: proc "contextless" (rows: []Start_Row, wirings: []Wiring_Row_Recor
 			usable_mark            = u32(row.usable_mark),
 			restart_count          = row.restart_count,
 			restart_window_seconds = row.restart_window_seconds,
+			screen_of_memory_width  = row.screen_of_memory_width,
+			screen_of_memory_height = row.screen_of_memory_height,
 		}
 		intrinsics.mem_copy_non_overlapping(raw_data(bytes[size_of(List_Header) + index * size_of(Row_Record):]), &record, size_of(Row_Record))
 	}
@@ -692,6 +720,44 @@ wiring_pages_of_list :: proc "contextless" (list: ^List, record_sizes: []u32) ->
 		pages += row_pages
 	}
 	return pages, true
+}
+
+// screen_of_memory_of_list gives the size of the screen of memory that the
+// row display of a list gives, or 0 x 0.
+screen_of_memory_of_list :: proc "contextless" (list: ^List) -> (width, height: u32) {
+	for &row in list.rows[:list.row_count] {
+		if root_procedure_of(row_name(&row)) == .Display {
+			return row.screen_of_memory_width, row.screen_of_memory_height
+		}
+	}
+	return 0, 0
+}
+
+// parts_for_rows keeps the parts of the machine parts page in the list,
+// for row_screen_of_memory, and gives the parts that its rows see: they, and the part Screen on a machine with no
+// screen when the row display gives a screen of memory. The page still
+// says "no screen"; the screen of memory is a screen for each row that
+// needs one (src/md/features/screen_of_memory.md, "The start row gives the
+// size").
+parts_for_rows :: proc "contextless" (list: ^List, parts: Machine_Parts) -> Machine_Parts {
+	list.page_parts = parts
+	if .Screen in parts {
+		return parts
+	}
+	if width, height := screen_of_memory_of_list(list); width != 0 && height != 0 {
+		return parts + {.Screen}
+	}
+	return parts
+}
+
+// row_screen_of_memory gives the size that the start of a row carries: the
+// size of the row display on a machine with no screen (the parts of the
+// page that parts_for_rows kept), else 0 x 0.
+row_screen_of_memory :: proc "contextless" (list: ^List, row: ^Start_Row) -> (width, height: u32) {
+	if .Screen in list.page_parts || root_procedure_of(row_name(row)) != .Display {
+		return 0, 0
+	}
+	return row.screen_of_memory_width, row.screen_of_memory_height
 }
 
 // list_has_usable_row says if a list has a row with the mark Needed: with

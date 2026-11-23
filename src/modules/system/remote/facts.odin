@@ -207,6 +207,17 @@ Service_Connections_Ended :: struct {
 	capacity: u64,
 }
 
+// Connections to services that no client uses ended: the last client of
+// their key left, or no call went through them for the idle bound. This
+// process told the root service, which frees its place and the place of
+// the service.
+@(log_fact = "remote: ended {ended} connections to services that no client uses (the last client of their key left, or no call for 60 s): their slots are free; {in_use} of {capacity} slots in use")
+Unused_Service_Connections_Ended :: struct {
+	ended:    u64,
+	in_use:   u64,
+	capacity: u64,
+}
+
 // The root service connected this service to a service, for the principal
 // of a row of the client table.
 @(log_fact = "remote: connected to the service {service}, for principal {principal}")

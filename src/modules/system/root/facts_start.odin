@@ -15,6 +15,55 @@ import "modus:contract/value_kinds"
 // A Text field is [N]u8 with N written out, as the tool reads it, and N is
 // a multiple of 8, so the record has no padding.
 
+// The budgets of a screen of memory grew for a size that a viewer asked
+// (src/md/features/screen_of_memory.md, "The growth of the budgets").
+@(log_fact = "root: the budgets of the screen of memory grow for {width} x {height}, growth {growth}: an extra budget of {compositor_pages} for the compositor and of {service_pages} for remote_display")
+Screen_Budget_Grown :: struct {
+	width:            u64,
+	height:           u64,
+	growth:           u64,
+	compositor_pages: value_kinds.Size_In_Pages,
+	service_pages:    value_kinds.Size_In_Pages,
+}
+
+// A growth of the budgets of a screen of memory was refused: nothing was
+// made.
+@(log_fact = "root: refused to grow the budgets of the screen of memory for {width} x {height}: {grow_refusal}")
+Screen_Budget_Refused :: struct {
+	width:        u64,
+	height:       u64,
+	grow_refusal: [96]u8,
+}
+
+// A process closed its extra budget of a growth of a screen of memory: this
+// service closed its own handle.
+@(log_fact = "root: {holder} gave back its extra budget of growth {growth} of the screen of memory: its pages return when no object of it is left")
+Screen_Budget_Released :: struct {
+	growth: u64,
+	holder: value_kinds.Module_Name_Field,
+}
+
+// A release of an extra budget of a growth that the process does not hold.
+@(log_fact = "root: refused the release of the extra budget of growth {growth} of the screen of memory from {holder}, which holds none of it")
+Screen_Budget_Release_Refused :: struct {
+	growth: u64,
+	holder: value_kinds.Module_Name_Field,
+}
+
+// A process stopped with its extra budget of a screen of memory open.
+@(log_fact = "root: {holder} stopped with an extra budget of the screen of memory: its pages return")
+Screen_Budget_Ended_At_Stop :: struct {
+	holder: value_kinds.Module_Name_Field,
+}
+
+// The holder of Display starts on a machine with no screen, on the screen
+// of memory that its start row gives (src/md/features/screen_of_memory.md).
+@(log_fact = "root: the compositor starts on a screen of memory of {width} x {height}: the machine has no screen")
+Compositor_On_Screen_Of_Memory :: struct {
+	width:  u64,
+	height: u64,
+}
+
 // A process gets less of one part of its budget than its module asks for:
 // the starter gives it the largest budget of that part.
 @(log_fact = "root: {started_process} asks for {asked} {budget_part}, and {largest_of} gets at most {largest}: it starts with {granted}")
@@ -25,6 +74,14 @@ Budget_Part_Limited :: struct {
 	started_process: value_kinds.Module_Name_Field,
 	budget_part:     [16]u8,
 	largest_of:      [16]u8,
+}
+
+// A module asks for more pictures of the screen than a module may: the
+// starter gives it no page for its screen pictures.
+@(log_fact = "root: {started_process} asks for {screen_pictures} pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen")
+Budget_Screen_Pictures_Refused :: struct {
+	screen_pictures: u64,
+	started_process: value_kinds.Module_Name_Field,
 }
 
 // The one budget of the disk processes, made at the first of them.

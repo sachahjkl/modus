@@ -373,8 +373,8 @@ client_keys_and_start_policy_refuse_every_invalid_edge :: proc(t: ^testing.T) {
 	state: Principals_State
 	state_init(&state)
 
-	// Register and unlock two named principals so we can test global CLIENT_CAPACITY (8)
-	// as well as per-principal CLIENT_ROWS_OF_ONE_PRINCIPAL (4).
+	// Register and unlock two named principals so we can test global CLIENT_CAPACITY
+	// as well as per-principal CLIENT_ROWS_OF_ONE_PRINCIPAL (half of it).
 	for id in u64(1) ..= u64(2) {
 		inp := rd.Register_Principal_Input{principal_id = id, public_key = make_key(u8(id))}
 		inp.name[0] = 'u'
@@ -394,7 +394,7 @@ client_keys_and_start_policy_refuse_every_invalid_edge :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// Fill principal 0's 4 client key slots; 5th is refused with Principal_Client_Limit.
+	// Fill principal 0's client key slots; one more is refused with Principal_Client_Limit.
 	for i in u8(0) ..< u8(remote.CLIENT_ROWS_OF_ONE_PRINCIPAL) {
 		_, r := client_key_command(&state, &rd.Client_Key_Input{principal_id = 0, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(100 + i), client_uses_word = remote.client_uses_word({.Calls})})
 		testing.expect_value(t, r, Principals_Refusal.None)
@@ -416,7 +416,7 @@ client_keys_and_start_policy_refuse_every_invalid_edge :: proc(t: ^testing.T) {
 	testing.expect_value(t, r_wrong, Principals_Refusal.Wrong_Principal)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// Fill principal 1's 4 slots -> global table now has 8 / 8 keys; principal 2's 1st key is refused with Client_Table_Full.
+	// Fill principal 1's slots -> the global table is full; principal 2's 1st key is refused with Client_Table_Full.
 	for i in u8(0) ..< u8(remote.CLIENT_ROWS_OF_ONE_PRINCIPAL) {
 		_, r := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(150 + i), client_uses_word = remote.client_uses_word({.Calls})})
 		testing.expect_value(t, r, Principals_Refusal.None)

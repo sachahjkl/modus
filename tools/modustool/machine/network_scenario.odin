@@ -228,9 +228,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = ": no principal allowed it; the handshake ends before any call"},
 	{kind = .Remote_Case, text = "unknown client key"},
 	{kind = .Wait, text = ": no principal allowed it; the handshake ends before any call"},
-	// Three grants of the same key, each ended while no client of it is
-	// connected: each end frees the slot of its connection to a service,
-	// so the table of connections of remote never fills. Each allow gives
+	// Three grants of the same key, each used for one call: the close of
+	// its last client frees the slot of its connection to a service, so the
+	// table of connections of remote never fills, then the grant ends. Each allow gives
 	// the row a new serial, as an unlock does; principal 0 has no lock.
 	// remote no longer acts for the principal here (its grant was revoked
 	// above), so each round calls an export that needs no such grant.
@@ -238,20 +238,23 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "root: principal 0 allowed the client key "},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Remote_Case, text = "close"},
-	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
 	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
+	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 revoked the client key "},
 	{kind = .Type, text = "remote_allow(\"{client key}\")"},
 	{kind = .Wait, text = "root: principal 0 allowed the client key "},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Remote_Case, text = "close"},
-	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
 	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
+	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 revoked the client key "},
 	{kind = .Type, text = "remote_allow(\"{client key}\")"},
 	{kind = .Wait, text = "root: principal 0 allowed the client key "},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Remote_Case, text = "close"},
-	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
 	{kind = .Wait, text = REMOTE_ONE_SLOT_FREED},
+	{kind = .Type, text = "remote_disallow(\"{client key}\")"},
+	{kind = .Wait, text = "root: principal 0 revoked the client key "},
 	{kind = .Front, text = "remote"},
 	{kind = .Shot, text = "remote"},
 	// The desktop: the scenario closes remote and manual, the palette starts

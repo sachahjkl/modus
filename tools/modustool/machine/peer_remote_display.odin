@@ -4,10 +4,12 @@ import "core:encoding/endian"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
 import "modus:contract/errors"
+import "modus:contract/memory_screen"
 import protocol "modus:contract/remote_display"
 import "modus:display"
 import "modus:quic"
@@ -28,10 +30,11 @@ import "modustool:fuzz"
 // wait for its viewer frames, compare the screen that the viewer rebuilt
 // with a picture of QEMU of the same moment, and send what a viewer must
 // not send: each refusal is checked by the code of the end of the
-// connection. Viewer 0 runs the cases; viewers 1 and 2 are the second and
-// the third viewer of the case "a third viewer".
+// connection. Viewer 0 runs the cases; the next viewers fill the capacity
+// of the service in the case "a viewer past the capacity", and the last one
+// is the viewer past it.
 
-PEER_DISPLAY_VIEWERS :: 3
+PEER_DISPLAY_VIEWERS :: protocol.CONNECTION_CAPACITY + 1
 PEER_DISPLAY_PORT_FIRST :: 44000 // The local UDP port of the first connection of viewer 0; one more for each next one.
 PEER_DISPLAY_PORT_STEP :: 1000 // The ports of viewer n start at PEER_DISPLAY_PORT_FIRST + n * this.
 // The first byte of the fixed private key of the viewer of a machine test;
@@ -124,6 +127,15 @@ Peer_Remote_Display :: struct {
 	// whole screen: a failure of the small frames names what came.
 	last_frame_pixels:     u64,
 	smallest_frame_pixels: u64,
+	// The size of the screen of memory (protocol version 3): the count of
+	// the Screen_Size records of the session, the viewer frames since the
+	// last one, whether the first of them was the whole screen, and the last
+	// refusal of an ask.
+	screen_sizes:      int,
+	frames_at_size:    u64,
+	first_frame_whole: bool,
+	size_refusal:      protocol.Screen_Size_Refused_Body,
+	size_refused:      bool,
 }
 
 peer_display_make :: proc(number: int) -> ^Peer_Remote_Display {
@@ -132,8 +144,6 @@ peer_display_make :: proc(number: int) -> ^Peer_Remote_Display {
 	state.streams = make([]quic.Stream, 1)
 	state.incoming = make([]u8, protocol.RECORD_HEADER_SIZE + protocol.SCREEN_PIECE_BODY_LIMIT)
 	state.piece_pixels = make([]u32, protocol.SCREEN_PIECE_PIXEL_LIMIT)
-	state.pixels = make([]u32, protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT)
-	state.shown = make([]u32, protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT)
 	state.cryptography = fuzz.quic_cryptography_of_the_host()
 	// A seed of its own for each viewer: two viewers never draw the same
 	// connection identifiers.
@@ -270,10 +280,30 @@ peer_display_refuse :: proc(state: ^Peer_Remote_Display, why: string) {
 @(private = "file")
 peer_display_record :: proc(state: ^Peer_Remote_Display, record: protocol.Service_Record, length: int) {
 	switch record.kind {
-	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
+	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start, .Screen_Size_Ask:
 		peer_display_refuse(state, "a record of the other direction")
+	case .Screen_Size_Refused:
+		state.size_refusal, state.size_refused = record.screen_size_refused, true
 	case .Screen_Size:
+		// A Screen_Size comes first, and again after a change of the size of
+		// a screen of memory, between two viewer frames.
+		if state.in_frame {
+			peer_display_refuse(state, "a Screen_Size in the middle of a viewer frame")
+			return
+		}
+		state.screen_sizes += 1
+		state.frames_at_size, state.first_frame_whole = 0, false
 		state.screen = {record.screen_size.width, record.screen_size.height}
+		// The pixels of the viewer have the size of the screen of the
+		// session: a screen of 8K is 132 MB, which a screen of 1080p does
+		// not pay for.
+		pixel_count := int(state.screen.width) * int(state.screen.height)
+		if len(state.pixels) < pixel_count {
+			delete(state.pixels)
+			delete(state.shown)
+			state.pixels = make([]u32, pixel_count)
+			state.shown = make([]u32, pixel_count)
+		}
 	case .Pointer_Place:
 		state.pointer = record.pointer_place
 	case .Pointer_Shape:
@@ -339,6 +369,10 @@ peer_display_record :: proc(state: ^Peer_Remote_Display, record: protocol.Servic
 		if state.whole_measured && (state.smallest_frame_pixels == 0 || state.frame_pixels < state.smallest_frame_pixels) {
 			state.smallest_frame_pixels = state.frame_pixels
 		}
+		if state.frames_at_size == 0 {
+			state.first_frame_whole = state.frame_pixels == u64(pixel_count)
+		}
+		state.frames_at_size += 1
 		if !state.whole_measured && state.frame_pixels == u64(pixel_count) {
 			state.whole_measured = true
 			state.whole_bytes, state.whole_time = state.frame_bytes, spent
@@ -433,6 +467,7 @@ peer_display_tick_one :: proc(peer: ^Peer, state: ^Peer_Remote_Display) {
 		state.pointer_warp, state.has_pointer_warp = {}, false
 		state.inputs_sent, state.echo_tracker, state.last_echo_count = 0, {}, 0
 		state.in_frame, state.frames_taken = false, 0
+		state.screen_sizes, state.frames_at_size, state.first_frame_whole, state.size_refusal, state.size_refused = 0, 0, false, {}, false
 		state.port = state.next_port
 		state.next_port += 1
 		error: errors.Error_Record
@@ -655,12 +690,13 @@ peer_display_compare_run :: proc(machine: ^Machine, state: ^Peer_Remote_Display,
 	attempts := 0
 	// One copy for each try, in one buffer: a try costs the pixels of a
 	// screen.
-	shown := make([]u32, protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT)
+	shown: [dynamic]u32
 	defer delete(shown)
 	for time.tick_since(start) < foundation.HANG_BOUND {
 		sync.mutex_lock(&state.lock)
 		screen, pointer, frames, active := state.screen, state.shown_pointer, state.frames_taken, state.active
-		copy(shown, state.shown[:int(screen.width) * int(screen.height)])
+		resize(&shown, int(screen.width) * int(screen.height))
+		copy(shown[:], state.shown[:int(screen.width) * int(screen.height)])
 		sync.mutex_unlock(&state.lock)
 		if !active {
 			return false, fmt.tprintf("the session ended: %s", peer_display_end_text(state))
@@ -677,7 +713,7 @@ peer_display_compare_run :: proc(machine: ^Machine, state: ^Peer_Remote_Display,
 		if !dumped {
 			return false, "QEMU gave no picture of the screen"
 		}
-		different, compared := peer_display_compare(shown, screen, pointer, dump)
+		different, compared := peer_display_compare(shown[:], screen, pointer, dump)
 		dump_width, dump_height := dump.width, dump.height
 		delete(dump.file)
 		if different == -1 {
@@ -717,6 +753,9 @@ peer_display_refusal_case :: proc(state: ^Peer_Remote_Display, key: [32]u8, what
 remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, result: string) {
 	state := machine.peer.display_viewers[0]
 	viewer_key := peer_display_viewer_key(PEER_DISPLAY_VIEWER_KEY_FIRST)
+	if strings.has_prefix(name, "ask ") {
+		return peer_display_ask_case(state, viewer_key, name[len("ask "):])
+	}
 	switch name {
 	case "unknown key":
 		// A key that no principal allowed: the handshake ends with
@@ -743,7 +782,7 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 		return peer_display_refusal_case(state, viewer_key, "a Viewer_Frame_Taken of no viewer frame in flight", peer_display_record_bytes(.Viewer_Frame_Taken, protocol.Viewer_Frame_Taken_Body{serial = 1 << 40}), .Out_Of_Order)
 	case "unknown kind":
 		// The word between the two directions names no kind.
-		return peer_display_refusal_case(state, viewer_key, "a record whose kind names no record", peer_display_header_bytes(u32(protocol.Record_Kind.Pointer_Warp) + 1, 8), .Bad_Record)
+		return peer_display_refusal_case(state, viewer_key, "a record whose kind names no record", peer_display_header_bytes(u32(protocol.Record_Kind.Screen_Size_Refused) + 1, 8), .Bad_Record)
 	case "other direction":
 		return peer_display_refusal_case(state, viewer_key, "a Screen_Size from the viewer", peer_display_record_bytes(.Screen_Size, protocol.Screen_Size_Body{1, 1}), .Bad_Record)
 	case "damaged request":
@@ -769,26 +808,36 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 			return false, fmt.tprintf("a viewer that takes no viewer frame: %s", peer_display_end_text(state))
 		}
 		return true, "a viewer that took no viewer frame: the service ended the connection with the code Timeout"
-	case "a third viewer":
-		// Two viewers at one time; the third gets no record of the server,
-		// and its handshake ends at its deadline.
-		second, third := machine.peer.display_viewers[1], machine.peer.display_viewers[2]
-		if !peer_display_session(state, viewer_key) || !peer_display_session(second, viewer_key) {
-			return false, fmt.tprintf("two viewers at one time: %s; %s", peer_display_end_text(state), peer_display_end_text(second))
+	case "a viewer past the capacity":
+		// The viewers of the capacity at one time; the one past it gets no
+		// record of the server, and its handshake ends at its deadline.
+		viewers := machine.peer.display_viewers[:protocol.CONNECTION_CAPACITY]
+		past := machine.peer.display_viewers[protocol.CONNECTION_CAPACITY]
+		for viewer, number in viewers {
+			if !peer_display_session(viewer, viewer_key) {
+				return false, fmt.tprintf("viewer %d of %d at one time: %s", number + 1, protocol.CONNECTION_CAPACITY, peer_display_end_text(viewer))
+			}
 		}
-		if !peer_display_begin(third, viewer_key) || !peer_display_wait(third, .End) {
-			return false, "the third viewer did not end"
+		if !peer_display_begin(past, viewer_key) || !peer_display_wait(past, .End) {
+			return false, "the viewer past the capacity did not end"
 		}
-		sync.mutex_lock(&third.lock)
-		timeout, frames := third.handshake_timeout, third.frames_taken
-		sync.mutex_unlock(&third.lock)
-		if !timeout || frames != 0 || peer_display_frames(state) == 0 || peer_display_frames(second) == 0 {
-			return false, fmt.tprintf("the third viewer: %s, with %d viewer frames", peer_display_end_text(third), frames)
+		sync.mutex_lock(&past.lock)
+		timeout, frames := past.handshake_timeout, past.frames_taken
+		sync.mutex_unlock(&past.lock)
+		if !timeout || frames != 0 {
+			return false, fmt.tprintf("the viewer past the capacity: %s, with %d viewer frames", peer_display_end_text(past), frames)
 		}
-		if !peer_display_close(second) || !peer_display_close(state) {
-			return false, "the two viewers did not end"
+		for viewer, number in viewers {
+			if peer_display_frames(viewer) == 0 {
+				return false, fmt.tprintf("viewer %d took no viewer frame", number + 1)
+			}
 		}
-		return true, "two viewers took viewer frames at one time; the third got no record of the server, and its handshake ended at its deadline"
+		#reverse for viewer in viewers {
+			if !peer_display_close(viewer) {
+				return false, "the viewers of the capacity did not end"
+			}
+		}
+		return true, fmt.tprintf("%d viewers took viewer frames at one time; the one past them got no record of the server, and its handshake ended at its deadline", protocol.CONNECTION_CAPACITY)
 	case "view":
 		if !peer_display_session(state, viewer_key) {
 			return false, fmt.tprintf("no whole viewer frame came: %s", peer_display_end_text(state))
@@ -914,4 +963,94 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 		return true, "the service ended the open session of the key with the code Revoked, and refused the key in the next handshake"
 	}
 	return false, fmt.tprintf("no case \"%s\" of remote_display", name)
+}
+
+// peer_display_ask_case runs a case of the size of a screen of memory
+// (src/md/features/screen_of_memory.md), on the open session of viewer 0
+// or a new one. The words after "ask ":
+//   "<width>x<height>": the service sends Screen_Size of that size, then
+//   the whole screen in the first viewer frame of the size;
+//   "<width>x<height> refused <cause>": the service sends
+//   Screen_Size_Refused with that size and that cause, and the session
+//   goes on;
+//   "<width>x<height> ends <code>": the connection ends with that code: a
+//   size past the bounds ends with Bad_Record, an ask of a viewer with the
+//   view alone with Input_Not_Allowed.
+@(private = "file")
+peer_display_ask_case :: proc(state: ^Peer_Remote_Display, viewer_key: [32]u8, words: string) -> (passed: bool, result: string) {
+	fields := strings.fields(words, context.temp_allocator)
+	size := len(fields) > 0 ? strings.split(fields[0], "x", context.temp_allocator) : nil
+	if len(size) != 2 {
+		return false, fmt.tprintf("the case \"ask %s\" names no size", words)
+	}
+	width, width_ok := strconv.parse_u64(size[0])
+	height, height_ok := strconv.parse_u64(size[1])
+	if !width_ok || !height_ok || width > u64(max(u32)) || height > u64(max(u32)) {
+		return false, fmt.tprintf("the case \"ask %s\" names no size", words)
+	}
+	ask := protocol.Screen_Size_Body{u32(width), u32(height)}
+	if !state.active && !peer_display_session(state, viewer_key) {
+		return false, fmt.tprintf("no session: %s", peer_display_end_text(state))
+	}
+	if len(fields) == 3 && fields[1] == "ends" {
+		code, named := protocol.Display_Error(0), false
+		for member in protocol.Display_Error {
+			if protocol.DISPLAY_ERROR_NAMES[member] == fields[2] {
+				code, named = member, true
+			}
+		}
+		if !named {
+			return false, fmt.tprintf("the case \"ask %s\" names no code", words)
+		}
+		if !peer_display_send_and_end(state, peer_display_record_bytes(.Screen_Size_Ask, ask)) || !peer_display_ended_with(state, code) {
+			return false, fmt.tprintf("an ask of %dx%d: %s", width, height, peer_display_end_text(state))
+		}
+		return true, fmt.tprintf("an ask of %dx%d: the service ended the connection with the code %s", width, height, fields[2])
+	}
+	sync.mutex_lock(&state.lock)
+	state.size_refused = false
+	sizes_before := state.screen_sizes
+	queued := state.active && peer_display_queue(state, .Screen_Size_Ask, ask)
+	sync.mutex_unlock(&state.lock)
+	if !queued {
+		return false, fmt.tprintf("the ask did not go: %s", peer_display_end_text(state))
+	}
+	refused := len(fields) == 3 && fields[1] == "refused"
+	start := time.tick_now()
+	for time.tick_since(start) < foundation.HANG_BOUND {
+		sync.mutex_lock(&state.lock)
+		active, screen, sizes, frames, whole := state.active, state.screen, state.screen_sizes, state.frames_at_size, state.first_frame_whole
+		size_refused, refusal := state.size_refused, state.size_refusal
+		sync.mutex_unlock(&state.lock)
+		if !active {
+			return false, fmt.tprintf("the session ended: %s", peer_display_end_text(state))
+		}
+		switch {
+		case refused && size_refused:
+			cause := fmt.tprintf("%v", memory_screen.Resize_Refusal(refusal.refusal))
+			if refusal.width != ask.width || refusal.height != ask.height || cause != fields[2] {
+				return false, fmt.tprintf("the ask of %dx%d was refused for %dx%d with the cause %s, not %s", width, height, refusal.width, refusal.height, cause, fields[2])
+			}
+			return true, fmt.tprintf("the ask of %dx%d got Screen_Size_Refused with the cause %s, and the session goes on", width, height, cause)
+		case !refused && size_refused && memory_screen.Resize_Refusal(refusal.refusal) == .Too_Soon:
+			// The least time between two changes: the viewer asks again until
+			// the service takes the ask, within the bound of the case.
+			sync.mutex_lock(&state.lock)
+			state.size_refused = false
+			asked_again := state.active && peer_display_queue(state, .Screen_Size_Ask, ask)
+			sync.mutex_unlock(&state.lock)
+			if !asked_again {
+				return false, fmt.tprintf("the ask did not go again: %s", peer_display_end_text(state))
+			}
+		case !refused && size_refused:
+			return false, fmt.tprintf("the ask of %dx%d was refused with the cause %v", width, height, memory_screen.Resize_Refusal(refusal.refusal))
+		case !refused && sizes > sizes_before && screen == {ask.width, ask.height} && frames > 0:
+			if !whole {
+				return false, fmt.tprintf("the first viewer frame of %dx%d was not the whole screen", width, height)
+			}
+			return true, fmt.tprintf("the viewer asked %dx%d, received Screen_Size of that size, and the whole screen in the next viewer frame", width, height)
+		}
+		time.sleep(CONDITION_POLL_PERIOD)
+	}
+	return false, fmt.tprintf("no answer to the ask of %dx%d came in %v", width, height, foundation.HANG_BOUND)
 }

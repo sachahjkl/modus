@@ -9,8 +9,10 @@ import "modus:contract/enum_word"
 
 RFB_VERSION_BANNER :: "RFB 003.008\n"
 RFB_BANNER_BYTES :: 12
-MAX_GATEWAY_WIDTH :: u16(4096)
-MAX_GATEWAY_HEIGHT :: u16(4096)
+// The largest screen that a gateway carries: the largest screen of the
+// remote display, 8K UHD.
+MAX_GATEWAY_WIDTH :: u16(7680)
+MAX_GATEWAY_HEIGHT :: u16(4320)
 
 Gateway_Protocol :: enum u8 {
 	Vnc_Rfb = 1,

@@ -18,10 +18,11 @@ PRINCIPAL_NAME_CAPACITY :: 23
 #assert(PRINCIPAL_NAME_CAPACITY == NICKNAME_CAPACITY)
 
 // The transfer region of the principals service holds one place for each
-// command in flight, so two commands never share bytes. A place is one
-// page: the largest record, a whole Disk_Rows_Set_Request, fits in it.
+// command in flight, so two commands never share bytes. A place is two
+// pages: the largest record, a whole Disk_Rows_Set_Request with the client
+// keys of one principal, fits in it.
 PRINCIPALS_TRANSFER_PLACE_COUNT :: 8
-PRINCIPALS_TRANSFER_PLACE_BYTES :: op.PAGE_SIZE
+PRINCIPALS_TRANSFER_PLACE_BYTES :: 2 * op.PAGE_SIZE
 PRINCIPALS_REGION_PAGES :: PRINCIPALS_TRANSFER_PLACE_COUNT * PRINCIPALS_TRANSFER_PLACE_BYTES / op.PAGE_SIZE
 
 #assert(size_of(Disk_Rows_Set_Request) <= PRINCIPALS_TRANSFER_PLACE_BYTES)

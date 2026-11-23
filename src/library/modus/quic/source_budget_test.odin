@@ -7,7 +7,7 @@ import "core:testing"
 // timestamps: every refusal must leave table state completely unchanged.
 @(test)
 source_budget_refuses_invalid_limits_and_backwards_time_without_mutation :: proc(t: ^testing.T) {
-	valid_limits := Source_Budget_Limits{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2}
+	valid_limits := Source_Budget_Limits{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH}
 	testing.expect_value(t, source_budget_take(nil, 0x0A00_0101, valid_limits, 1_000_000), Source_Budget_Result.Invalid_Limits)
 	testing.expect(t, !source_budget_handshake_end(nil, 0x0A00_0101))
 	testing.expect_value(t, source_budget_active_handshakes(nil, 0x0A00_0101), 0)
@@ -15,11 +15,14 @@ source_budget_refuses_invalid_limits_and_backwards_time_without_mutation :: proc
 	table: Source_Budget_Table
 	source_budget_table_init(&table)
 	invalid_cases := [?]Source_Budget_Limits {
-		{attempts_per_second = 10, burst = 0, active_handshakes_limit = 2},
-		{attempts_per_second = 10, burst = -1, active_handshakes_limit = 2},
-		{attempts_per_second = -1, burst = 4, active_handshakes_limit = 2},
+		{attempts_per_second = 10, burst = 0, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH},
+		{attempts_per_second = 10, burst = -1, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH},
+		{attempts_per_second = -1, burst = 4, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH},
 		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 0},
 		{attempts_per_second = 10, burst = 4, active_handshakes_limit = -5},
+		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = 0},
+		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = 33},
+		{attempts_per_second = 10, burst = 4, active_handshakes_limit = 2, prefix_length = 255},
 	}
 	for bad in invalid_cases {
 		before := table
@@ -47,14 +50,14 @@ source_budget_refuses_invalid_limits_and_backwards_time_without_mutation :: proc
 source_budget_isolates_flooding_range_and_refills_monotonically :: proc(t: ^testing.T) {
 	table: Source_Budget_Table
 	source_budget_table_init(&table)
-	limits := Source_Budget_Limits{attempts_per_second = 2, burst = 5, active_handshakes_limit = 2}
+	limits := Source_Budget_Limits{attempts_per_second = 2, burst = 5, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH}
 	now: u64 = 10_000_000
 
 	// Prefix masking checks: edges 0, 1, 255, and max u32.
-	testing.expect_value(t, source_range_prefix(0x0A00_0100), u32(0x0A00_0100))
-	testing.expect_value(t, source_range_prefix(0x0A00_0101), u32(0x0A00_0100))
-	testing.expect_value(t, source_range_prefix(0x0A00_01FF), u32(0x0A00_0100))
-	testing.expect_value(t, source_range_prefix(max(u32)), u32(0xFFFF_FF00))
+	testing.expect_value(t, source_range_prefix(0x0A00_0100, SOURCE_RANGE_PREFIX_LENGTH), u32(0x0A00_0100))
+	testing.expect_value(t, source_range_prefix(0x0A00_0101, SOURCE_RANGE_PREFIX_LENGTH), u32(0x0A00_0100))
+	testing.expect_value(t, source_range_prefix(0x0A00_01FF, SOURCE_RANGE_PREFIX_LENGTH), u32(0x0A00_0100))
+	testing.expect_value(t, source_range_prefix(max(u32), SOURCE_RANGE_PREFIX_LENGTH), u32(0xFFFF_FF00))
 
 	// Five attempts from distinct hosts in 10.0.1.0/24 spend the burst.
 	for host in 1 ..= 5 {
@@ -91,14 +94,14 @@ source_budget_isolates_flooding_range_and_refills_monotonically :: proc(t: ^test
 	testing.expect(t, !source_budget_handshake_end(&table, 0x0A00_9901))
 }
 
-// Filling all 64 buckets and inserting a 65th+ distinct /24 range evicts the
-// oldest idle bucket cleanly without panic, corruption, or losing an actively
-// flooding hot /24 range.
+// Filling each slot of the table and inserting one more distinct /24 range
+// evicts the oldest idle bucket cleanly without panic, corruption, or losing
+// an actively flooding hot /24 range.
 @(test)
 source_budget_full_table_evicts_oldest_cleanly :: proc(t: ^testing.T) {
 	table: Source_Budget_Table
 	source_budget_table_init(&table)
-	limits := Source_Budget_Limits{attempts_per_second = 1, burst = 2, active_handshakes_limit = 2}
+	limits := Source_Budget_Limits{attempts_per_second = 1, burst = 2, active_handshakes_limit = 2, prefix_length = SOURCE_RANGE_PREFIX_LENGTH}
 	now: u64 = 1_000_000
 
 	// Exhaust 10.0.1.0/24 so it is actively throttled.
@@ -106,7 +109,7 @@ source_budget_full_table_evicts_oldest_cleanly :: proc(t: ^testing.T) {
 	testing.expect_value(t, source_budget_take(&table, 0x0A00_0102, limits, now), Source_Budget_Result.Admitted)
 	testing.expect_value(t, source_budget_take(&table, 0x0A00_0103, limits, now), Source_Budget_Result.Over_Rate_Budget)
 
-	// Fill the remaining 63 slots with distinct /24 ranges at increasing times,
+	// Fill the other SOURCE_BUDGET_CAPACITY - 1 slots with distinct /24 ranges at increasing times,
 	// while keeping 10.0.1.0/24 hot.
 	for range_index in 1 ..< SOURCE_BUDGET_CAPACITY {
 		now += 100
@@ -119,7 +122,7 @@ source_budget_full_table_evicts_oldest_cleanly :: proc(t: ^testing.T) {
 	now += 100
 	testing.expect_value(t, source_budget_take(&table, 0x0A00_0104, limits, now), Source_Budget_Result.Over_Rate_Budget)
 
-	// While all 64 slots hold non-full buckets, a 65th /24 is refused with
+	// While each slot holds a non-full bucket, one more /24 is refused with
 	// Table_Full instead of evicting throttled ranges.
 	now += 100
 	testing.expect_value(t, source_budget_take(&table, 0x0C00_0001, limits, now), Source_Budget_Result.Table_Full)
@@ -225,4 +228,57 @@ server_source_range_handshake_cap_blocks_same_range_and_admits_other_range :: pr
 	// Meanwhile 10.0.2.5 connects and completes its echo immediately.
 	ended := harness_run(t, harness, 4096, 10_000_000)
 	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
+}
+
+// The prefix length names the range: on a /16, two /24 of one /16 share one
+// bucket, and an address of another /16 has its own; on a /32, each address
+// is its own range. The table holds at least 1024 ranges.
+@(test)
+source_ranges_follow_their_prefix_length :: proc(t: ^testing.T) {
+	testing.expect(t, SOURCE_BUDGET_CAPACITY >= 1024)
+	testing.expect_value(t, source_range_prefix(0x0A01_0203, 16), u32(0x0A01_0000))
+	testing.expect_value(t, source_range_prefix(0x0A01_0203, 32), u32(0x0A01_0203))
+	testing.expect_value(t, source_range_prefix(0x0A01_0203, 1), u32(0x0000_0000))
+	testing.expect_value(t, source_range_prefix(0x8A01_0203, 1), u32(0x8000_0000))
+	table: Source_Budget_Table
+	source_budget_table_init(&table)
+	wide := Source_Budget_Limits{attempts_per_second = 1, burst = 2, active_handshakes_limit = 4, prefix_length = 16}
+	now := u64(1_000_000)
+	testing.expect_value(t, source_budget_take(&table, 0x0A01_0101, wide, now), Source_Budget_Result.Admitted)
+	testing.expect_value(t, source_budget_take(&table, 0x0A01_0201, wide, now), Source_Budget_Result.Admitted)
+	testing.expect_value(t, source_budget_take(&table, 0x0A01_0301, wide, now), Source_Budget_Result.Over_Rate_Budget)
+	testing.expect_value(t, source_budget_take(&table, 0x0A02_0101, wide, now), Source_Budget_Result.Admitted)
+	narrow := wide
+	narrow.prefix_length = 32
+	narrow_table: Source_Budget_Table
+	source_budget_table_init(&narrow_table)
+	for host in u32(0) ..< 3 {
+		testing.expect_value(t, source_budget_take(&narrow_table, 0x0A01_0100 + host, narrow, now), Source_Budget_Result.Admitted)
+		testing.expect_value(t, source_budget_take(&narrow_table, 0x0A01_0100 + host, narrow, now), Source_Budget_Result.Admitted)
+		testing.expect_value(t, source_budget_take(&narrow_table, 0x0A01_0100 + host, narrow, now), Source_Budget_Result.Over_Rate_Budget)
+	}
+}
+
+// A table whose every slot holds a throttled range, as a flood of forged
+// sources from SOURCE_BUDGET_CAPACITY ranges leaves it: a client of a new
+// range still connects, admitted by the shared budgets alone, and the
+// counter says so.
+@(test)
+a_new_source_connects_when_the_table_of_ranges_is_full :: proc(t: ^testing.T) {
+	harness := harness_make(1)
+	defer harness_free(harness)
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	harness.client_remotes[0] = {0xC0A8_070A, 53_000} // 192.168.7.10, a range that the table does not hold.
+	table := &harness.server.source_budgets
+	for &entry, index in table.entries {
+		// An empty bucket at the time of the harness: throttled, not evictable.
+		entry = {used = true, prefix = 0x0B00_0000 + u32(index) << 8, last_seen = harness.now}
+		entry.bucket = {level = 0, updated_at = harness.now, filled = true}
+	}
+	table.has_time = true
+	table.last_time = harness.now
+	ended := harness_run(t, harness, 4096, 10_000_000)
+	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
+	testing.expect(t, harness.server.counters.source_table_full > 0, "the new range was not admitted by the shared budgets")
+	testing.expect_value(t, table.evictions, u64(0))
 }

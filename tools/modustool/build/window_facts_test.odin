@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/memory_screen"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
@@ -483,6 +484,15 @@ the_other_facts_of_the_compositor_write_the_lines_of_before :: proc(t: ^testing.
 		facts_expect_line(t, render(t, file, "Bar_In_Interface_Font", {{"name_width", count}}), line_of_before("compositor: the bar is in the interface font: the widest name ", count, " pixels"))
 		facts_expect_line(t, render(t, file, "Screen_Past_Budget", {{"width", count}, {"height", other}, {"needed_pages", count}, {"budget_pages", other}}), line_of_before("compositor: a screen of ", count, "x", other, " needs ", count, " pages, the budget holds ", other))
 		facts_expect_line(t, render(t, file, "Compositor_Ready", {{"width", count}, {"height", other}}), line_of_before("compositor: ok ", count, "x", other))
+		facts_expect_line(t, render(t, file, "Screen_Budget_Taken", {{"width", count}, {"height", other}, {"pages", min(count, u64(max(i64)))}}), line_of_before("compositor: an extra budget of ", sentence.Size{min(count, u64(max(i64))), .Pages}, " for a screen of memory of ", count, " x ", other))
+		facts_expect_line(t, render(t, file, "Screen_Of_Memory_Back_To_Start", {{"width", count}, {"height", other}, {"windows", other}}), line_of_before("compositor: no viewer looks: the screen of memory is back to ", count, " x ", other, ", and ", other, " windows fit it again"))
+		facts_expect_line(t, render(t, file, "Screen_Of_Memory_Not_Back_To_Start", {{"width", count}, {"height", other}}), line_of_before("compositor: no viewer looks, and the screen of memory did not go back to ", count, " x ", other, ": the kernel made no frame and no background of that size"))
+		facts_expect_line(t, render(t, file, "Screen_Budget_Not_Taken", {{"width", count}, {"height", other}}), line_of_before("compositor: closed an extra budget for ", count, " x ", other, " with no use: it is no budget, has no number, or two are held already"))
+		facts_expect_line(t, render(t, file, "Screen_Of_Memory_Started", {{"width", count}, {"height", other}}), line_of_before("compositor: no screen: a screen of memory of ", count, " x ", other))
+		facts_expect_line(t, render(t, file, "Screen_Of_Memory_Resized", {{"width", count}, {"height", other}, {"windows", count}}), line_of_before("compositor: the screen of memory is now ", count, " x ", other, ", which a viewer asked: ", count, " windows fit it again"))
+		for cause in memory_screen.RESIZE_REFUSAL_SENTENCES {
+			facts_expect_line(t, render(t, file, "Screen_Of_Memory_Refused", {{"width", count}, {"height", other}, {"resize_refusal", cause}}), line_of_before("compositor: refused a screen of ", count, " x ", other, " that a viewer asked: ", cause))
+		}
 		facts_expect_line(t, render(t, file, "Left_Button_Pressed", {{"x", count}, {"y", other}}), line_of_before("compositor: a press of the left button at ", count, ",", other))
 		facts_expect_line(t, render(t, file, "Page_Flip_Refused", {{"screen_page", count}}), line_of_before("compositor: the display refused the page flip to the screen page ", count, ": each later frame is written into the screen page 0, which the display shows"))
 		facts_expect_line(t, render(t, file, "Screen_Draw_Refused", {{"error_kind", count}, {"error_argument", other}}), line_of_before("compositor: the drawing module refused execute_draw_table_in_rectangles_20 (the error kind ", count, ", the argument ", other, "): the part of the screen is not drawn. The compositor writes this line one time"))
@@ -564,6 +574,9 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["element"] = 32
 	most["capture_refusal"] = u32(len("a list of viewers past its capacity, or with no capture face"))
 	most["capture_end"] = u32(len("the service closed it"))
+	for sentence in memory_screen.RESIZE_REFUSAL_SENTENCES {
+		most["resize_refusal"] = max(most["resize_refusal"], u32(len(sentence)))
+	}
 	most["hash_prefix"] = 16
 	most["erms"] = 3
 	most["fsrm"] = 3
@@ -795,6 +808,7 @@ the_lines_of_the_windows_with_no_value_write_the_lines_of_before :: proc(t: ^tes
 		{"compositor", "compositor", "Two_Screen_Pages", "compositor: two screen pages: each frame reaches the screen whole, by a page flip"},
 		{"compositor", "compositor", "One_Screen_Page", "compositor: one screen page: each frame is written into the screen page that the display shows"},
 		{"compositor", "compositor", "No_Framebuffer", "compositor: no framebuffer"},
+		{"compositor", "compositor", "Screen_Budget_Release_Not_Sent", "compositor: the control ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of the compositor"},
 		{"compositor", "compositor", "No_Input_Or_Control_Ring", "compositor: no input ring or no control ring"},
 		{"compositor", "compositor", "First_Frame", "compositor: first frame"},
 		{"compositor", "compositor", "Start_Menu_Open", "compositor: the start menu is open"},

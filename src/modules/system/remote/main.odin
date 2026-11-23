@@ -93,14 +93,17 @@ import "modus:random"
 import "modus:contract/root_ring"
 import "modus:system"
 
-// 2 QUIC connections of about 85 KiB each, 8 streams of about 130 KiB for
+// 32 QUIC connections of about 89 KiB each, 4 streams of about 130 KiB for
 // each, and a buffer of a request or an answer of about 64 KiB for each
-// stream: about 820 pages, in one mapping of the process (docs/QUIC.md,
-// section 7), and the call regions of its connections to services: 3067
-// pages. And the glyph memory of the copy of the text rendering of the
-// drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 3067 + 354 = 3421.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3421, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// stream: 6912 pages (TABLE_PAGES), in one mapping of the process
+// (docs/QUIC.md, section 7); the mappings of the call ring and the call
+// region of each of its 128 connections to services (the share of the root
+// service, remote.SERVICE_CONNECTIONS), which the root service makes and
+// pays: up to 4 page tables and directories each, 512 pages; and the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 6912 + 512 + 354 =
+// 7778, under the least largest budget of a process.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7778, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	@(require_results)
@@ -144,6 +147,9 @@ CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
 STREAM_BYTES :: CALL_COUNT * size_of(quic.Stream)
 BUFFER_BYTES :: CALL_COUNT * CALL_BUFFER_SIZE
 TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + BUFFER_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+// The connections and their streams fit in the stated budget beside the
+// connections to services and the text memory.
+#assert(TABLE_PAGES + 4 * SERVICE_CONNECTION_CAPACITY + display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
 // The bounds of a call stream, in milliseconds of the machine. Each one
@@ -157,7 +163,8 @@ REQUEST_TIME_LIMIT :: 10_000
 ANSWER_TIME_LIMIT :: 10_000
 // After this side reset a stream, the host must end its own direction this
 // long after; else the connection ends (CONNECTION_CLOSE, Timeout): a
-// stream record that the host never ends would hold one call of the 8.
+// stream record that the host never ends would hold one call of the
+// CALLS_AT_ONCE of its connection.
 RELEASE_TIME_LIMIT :: 10_000
 // An isolated call blocks the QUIC of this process. After a call that took
 // SLOW_CALL_MILLISECONDS or more, the next call waits
@@ -268,19 +275,13 @@ record_clients: [CAPACITY]Record_Client
 // for the ready completion of the service are states of the loop, not
 // waits of it: a service that starts slowly, or never, holds no other
 // client (src/md/api/call_ring_ready.md).
-Service_Connection_State :: enum u8 {
-	Free, // The place is free.
-	Connecting, // Connect is sent; the answer of the root service has not come.
-	Readying, // The connection is mapped; the ready completion of the service has not come.
-	Ready, // Calls go through it.
-	Refused, // It did not become ready: refusal holds why, for the first call that waits for it.
-	Giving_Up, // Connect had no answer within the hang bound: Disconnect is sent, and a late answer of Connect has its handles closed.
-}
+Service_Connection_State :: remote.Service_Place_State
 
 // A connection to one service: the root service made it, for one row of
 // the client table.
 Service_Connection :: struct {
 	state:         Service_Connection_State,
+	disconnect_owed: bool, // Giving_Up and Refused: its Disconnect waits for room in the root ring.
 	connect_tag:   u32, // Connecting and Giving_Up: the tag of the Connect.
 	deadline:      u64, // Connecting, Readying and Giving_Up: the hang bound of the state.
 	refusal:       errors.Error_Record, // Refused and Giving_Up: why.
@@ -297,11 +298,21 @@ Service_Connection :: struct {
 	hash:          [32]u8, // The hash of the module file of the service.
 	tag:           u32,
 	count:         u64, // The calls through this connection.
+	last_used:     u64, // Milliseconds of the machine: when it became Ready, or its last call. Its idle bound starts here.
 }
 
-// The 9 services of the row of "remote" in start_grant_sets in the root service, for each of
-// the CAPACITY connections, each of which can have a key of another row.
-SERVICE_CONNECTION_CAPACITY :: 24
+// The connections to services that this process holds: one for each of
+// its clients and each service that it calls, within the share of the
+// root service (remote.SERVICE_CONNECTIONS). The root service gives the
+// rows of the client table half of its connection table
+// (remote.ROOT_PLACES_FOR_CLIENT_ROWS), so a local caller
+// always finds a place there, and each service keeps
+// isolated.SERVICE_CONNECTION_LOCAL_RESERVE of its callers for local
+// callers: a row past either bound gets the refusal of the root service
+// (Full), and its call ends with it. A connection holds its places only
+// while a client of its row is connected and calls it in the idle bound
+// (service_connections_of_ended_grants).
+SERVICE_CONNECTION_CAPACITY :: remote.SERVICE_CONNECTIONS
 
 service_connections: [SERVICE_CONNECTION_CAPACITY]Service_Connection
 
@@ -600,18 +611,22 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 }
 
 // service_connections_of_ended_grants ends each connection to a service
-// whose row no longer holds its serial: a revocation, a lock or an unlock
-// ended its grant. The root service ended its side already, so this
-// process tells it nothing. It runs whatever the state of the QUIC
-// connections: a grant can end while no client of its row is connected,
-// and its slot must not stay taken, or the table of connections fills.
+// that no client can use (remote.service_connection_end_of): its row no
+// longer holds its serial (a revocation, a lock or an unlock ended its
+// grant, and the root service ended its side already, so this process
+// tells it nothing); no QUIC connection of its row is open; or it had no
+// call for the idle bound. The last two tell the root service, which frees
+// its place and the place of the service: a client that left must not
+// keep them.
 service_connections_of_ended_grants :: proc "contextless" () {
 	ended := 0
+	unused := 0
 	in_use := 0
+	now := system.time()
 	for &item in service_connections {
 		if item.state == .Refused {
 			if !remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
-				item = {}
+				connection_forget(&item, item.disconnect_owed)
 			}
 			continue
 		}
@@ -620,16 +635,53 @@ service_connections_of_ended_grants :: proc "contextless" () {
 		if item.state != .Ready {
 			continue
 		}
-		if remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
+		grant_holds := remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls)
+		idle := now - min(item.last_used, now)
+		switch remote.service_connection_end_of(grant_holds, row_call_waits(item.row, item.serial), row_has_client(item.row, item.serial), idle) {
+		case .Keep:
 			in_use += 1
-			continue
+		case .Grant_Ended:
+			connection_end(&item, false)
+			ended += 1
+		case .No_Client, .Idle:
+			connection_end(&item, true)
+			unused += 1
 		}
-		connection_end(&item, false)
-		ended += 1
 	}
 	if ended > 0 && log_allowed() {
 		system.log_fact(.Info, Service_Connections_Ended{ended = u64(ended), in_use = u64(in_use), capacity = SERVICE_CONNECTION_CAPACITY})
 	}
+	if unused > 0 && log_allowed() {
+		system.log_fact(.Info, Unused_Service_Connections_Ended{ended = u64(unused), in_use = u64(in_use), capacity = SERVICE_CONNECTION_CAPACITY})
+	}
+}
+
+// row_has_client says if a QUIC connection of this process is open for the
+// row and the serial of a connection to a service.
+row_has_client :: proc "contextless" (row: int, serial: u64) -> bool {
+	for record, place in records {
+		client := &record_clients[place]
+		if record.in_use && client.bound && client.generation == record.generation && client.row == row && client.serial == serial && quic_connections[place].state != .Closed {
+			return true
+		}
+	}
+	return false
+}
+
+// row_call_waits says if a call of a client of the row waits for its turn
+// or for a connection: its connection to a service must not end under it.
+row_call_waits :: proc "contextless" (row: int, serial: u64) -> bool {
+	for &call, index in calls {
+		if call.phase != .Waiting {
+			continue
+		}
+		place := index / STREAMS_PER_CONNECTION
+		client := &record_clients[place]
+		if records[place].in_use && client.bound && client.generation == records[place].generation && client.row == row && client.serial == serial {
+			return true
+		}
+	}
+	return false
 }
 
 // calls_work moves each call stream of each record, and logs each new
@@ -642,6 +694,13 @@ calls_work :: proc "contextless" () {
 	client_table_version_seen = intrinsics.atomic_load_explicit(&client_table.version, .Acquire)
 	remote.client_table_read(client_table, &client_rows)
 	service_connections_of_ended_grants()
+	// A Disconnect that went frees a place: a call that waits for it, or for
+	// a place of its service and its row, asks for a connection again.
+	if disconnects_owed_work() > 0 {
+		for &call in calls {
+			call.service_pending = false
+		}
+	}
 	// An offer whose code ended admits no key: the connection of its
 	// machine ends below, in client_grant_check.
 	machine_wire.pairing_expire(&mesh, now)
@@ -873,21 +932,18 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 			free = &item
 			continue
 		}
-		if remote.name_text(&item.name) != name || item.row != client.row || item.serial != client.serial {
-			continue
-		}
-		switch item.state {
-		case .Ready:
+		switch remote.service_place_lookup(item.state, remote.name_text(&item.name) == name && item.row == client.row, item.serial == client.serial) {
+		case .Skip:
+		case .Use:
 			return &item, .Succeeded, {}, false
-		case .Connecting, .Readying:
+		case .Pending:
 			return nil, .Succeeded, {}, true
-		case .Refused:
-			kept := item
-			item = {}
-			return nil, kept.refused, kept.refusal, false
-		case .Giving_Up:
+		case .Refusal:
+			refused, refusal := item.refused, item.refusal
+			connection_forget(&item, item.disconnect_owed)
+			return nil, refused, refusal, false
+		case .Given_Up:
 			return nil, item.refused, item.refusal, false
-		case .Free:
 		}
 	}
 	// The table of the connections frees a place when a connection ends.
@@ -955,7 +1011,9 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 connection_refuse :: proc "contextless" (connection: ^Service_Connection, tell: bool, refused: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	kept := connection^
 	connection_end(connection, tell)
-	connection^ = {state = .Refused, refused = refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
+	// A Disconnect that the root ring did not take stays owed in Refused.
+	state, owed := remote.service_place_after_refusal(connection.state)
+	connection^ = {state = state, disconnect_owed = owed, refused = refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
 }
 
 // connections_progress moves each connection that waits: the answers of
@@ -971,7 +1029,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 				continue
 			}
 			switch connection.state {
-			case .Free, .Ready, .Readying, .Refused:
+			case .Free, .Ready, .Readying, .Refused, .Ending:
 			case .Connecting:
 				connection_answer(&connection, record, now)
 				changed = true
@@ -979,18 +1037,16 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 				// The late answer of a Connect given up: its handles are
 				// closed, and the Disconnect ends the side of the root service.
 				system.connect_answer_close(record)
-				connection = {}
+				connection_forget(&connection, connection.disconnect_owed)
 			}
 		}
 	}
 	for &connection in service_connections {
 		switch connection.state {
-		case .Free, .Ready, .Refused:
+		case .Free, .Ready, .Refused, .Ending:
 		case .Connecting:
 			if now >= connection.deadline {
-				packed := system.name_pack(remote.name_text(&connection.name))
-				request_tag += 1
-				system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
+				connection.disconnect_owed = !disconnect_send(&connection)
 				connection.state = .Giving_Up
 				connection.refused, connection.refusal = .Callee_Unavailable, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
 				connection.deadline = system.answer_deadline(now)
@@ -1004,6 +1060,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 			}
 			if reading == .Ready {
 				connection.state = .Ready
+				connection.last_used = now
 				system.log_fact(.Info, Service_Connected{principal = connection.principal, service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			} else {
 				connection_refuse(&connection, true, .Callee_Unavailable, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS))
@@ -1013,7 +1070,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 			// The root service did not answer the Connect nor end it: the
 			// place is free again after one more hang bound.
 			if now >= connection.deadline {
-				connection = {}
+				connection_forget(&connection, connection.disconnect_owed)
 			}
 		}
 	}
@@ -1079,7 +1136,7 @@ service_connections_reclaim_refused :: proc "contextless" () {
 		grant_holds := remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls)
 		slot := remote.Service_Slot_Key{name = item.name, row = item.row, serial = item.serial}
 		if remote.refused_slot_reclaimable(slot, grant_holds, waiting[:waiting_count]) {
-			item = {}
+			connection_forget(&item, item.disconnect_owed)
 		}
 	}
 }
@@ -1091,10 +1148,22 @@ connections_wait :: proc "contextless" (wait: ^system.Wait) -> (limit: u64) {
 	asked := false
 	for &connection in service_connections {
 		switch connection.state {
-		case .Free, .Ready, .Refused:
+		case .Free, .Ready:
+			continue
+		case .Refused:
+			if connection.disconnect_owed {
+				system.wait_room(wait, &requests.commands)
+			}
+			continue
+		case .Ending:
+			// An owed Disconnect goes when the root ring has room.
+			system.wait_room(wait, &requests.commands)
 			continue
 		case .Connecting, .Giving_Up:
 			asked = true
+			if connection.disconnect_owed {
+				system.wait_room(wait, &requests.commands)
+			}
 		case .Readying:
 			system.wait_records(wait, &connection.calls.completions)
 		}
@@ -1106,15 +1175,52 @@ connections_wait :: proc "contextless" (wait: ^system.Wait) -> (limit: u64) {
 	return limit
 }
 
+// disconnect_send asks the root service to end its side of a connection.
+// false: the root ring had no room, and the Disconnect is owed.
+disconnect_send :: proc "contextless" (connection: ^Service_Connection) -> bool {
+	packed := system.name_pack(remote.name_text(&connection.name))
+	request_tag += 1
+	return system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
+}
+
+// connection_forget frees a place, or keeps it as Ending with its name and
+// its row while its Disconnect is owed.
+connection_forget :: proc "contextless" (connection: ^Service_Connection, owed: bool) {
+	name, row := connection.name, connection.row
+	connection^ = {}
+	if owed {
+		connection.state, connection.name, connection.row = .Ending, name, row
+	}
+}
+
+// disconnects_owed_work sends the owed Disconnect records, as the root ring
+// takes them (remote.disconnects_owed_send).
+disconnects_owed_work :: proc "contextless" () -> (sent: int) {
+	owes :: proc "contextless" (place: int) -> bool {
+		item := &service_connections[place]
+		return remote.service_place_owes_disconnect(item.state, item.disconnect_owed)
+	}
+	send :: proc "contextless" (place: int) -> bool {
+		item := &service_connections[place]
+		if !disconnect_send(item) {
+			return false
+		}
+		if item.state == .Ending {
+			item^ = {}
+		} else {
+			item.disconnect_owed = false
+		}
+		return true
+	}
+	return remote.disconnects_owed_send(len(service_connections), owes, send)
+}
+
 // connection_end closes what this process holds of a connection to a
 // service. tell: ask the root service to end it too (the service still
-// runs).
+// runs); a Disconnect that the root ring does not take is owed, and the
+// place stays taken until it goes (disconnects_owed_work).
 connection_end :: proc "contextless" (connection: ^Service_Connection, tell: bool) {
-	if tell {
-		packed := system.name_pack(remote.name_text(&connection.name))
-		request_tag += 1
-		system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
-	}
+	owed := tell && !disconnect_send(connection)
 	if connection.calls.head != nil {
 		system.ring_close(&connection.calls)
 	}
@@ -1126,7 +1232,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 			system.close(handle)
 		}
 	}
-	connection^ = {}
+	connection_forget(connection, owed)
 }
 
 // isolated_call_make makes the isolated call of a request through a
@@ -1219,6 +1325,7 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	}
 	completion, path_outcome, call_error, called := isolated_call_make(connection, request, arguments)
 	connection.count += 1
+	connection.last_used = system.time()
 	counts.calls += 1
 	// The request ran: the relay outcome is Succeeded, and the outcome is
 	// the one of the call, from the service through its border, or from the
@@ -1364,12 +1471,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	quic_connections = ([^]quic.Connection)(table)[:CAPACITY]
 	streams = ([^]quic.Stream)(rawptr(uintptr(table) + CONNECTION_BYTES))[:CALL_COUNT]
 	call_buffers = ([^][CALL_BUFFER_SIZE]u8)(rawptr(uintptr(table) + CONNECTION_BYTES + STREAM_BYTES))[:CALL_COUNT]
-	// The limits of quic_echo, for a table of 2 records: one address (the
-	// host) may hold both, in the handshake too.
-	limits := quic.SERVER_LIMITS_DEFAULT
-	limits.connections_per_remote_address = CAPACITY
-	limits.handshakes_per_remote_address = CAPACITY
-	limits.handshakes_at_once = CAPACITY
+	// Each client comes through the host: one address and one source range
+	// may hold each record, in the handshake too.
+	limits := quic.server_limits_of_one_address(CAPACITY)
 	error: errors.Error_Record
 	if !quic.server_init(&server, quic_connections, records[:], streams, &configuration, &cryptography, &process_generator, limits, &error) {
 		fail("the server refused its configuration")

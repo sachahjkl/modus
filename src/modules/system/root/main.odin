@@ -108,6 +108,7 @@ import "modus:graphics"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
 import "modus:contract/isolated"
+import "modus:contract/remote"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -352,6 +353,10 @@ Started :: struct {
 	// child wiring budget (`wiring_budget`). Closed at stop.
 	budget:          system.Handle,
 	wiring_budget:   system.Handle,
+	// The pages of the budget of the process at its start: a growth of the
+	// budgets of a screen of memory adds an extra budget within its share
+	// (screen_budgets.odin).
+	budget_pages:    u64,
 	// The wiring ring of a process that declares record streams or asked
 	// for a list page: handed to the delegated `wiring` service, never
 	// mapped in the root core.
@@ -419,7 +424,10 @@ connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
 
 // The connections that this service holds: each client of each service,
 // at one time.
-CONNECTION_CAPACITY :: 256
+CONNECTION_CAPACITY :: isolated.ROOT_CONNECTION_CAPACITY
+// The connections for the rows of the client table take at most half of
+// the table (remote.ROOT_PLACES_FOR_CLIENT_ROWS): the other half stays for
+// local callers.
 
 connections: [CONNECTION_CAPACITY]Connection
 
@@ -439,11 +447,22 @@ display_holder: system.Handle
 control: ring.Ring
 control_memory: system.Handle
 // The machine has no screen: no framebuffer at the start, or a compositor
-// that stopped. With no screen this service starts no input service, no
-// compositor and no console, gives no process a window, and refuses a start
-// that needs a terminal: the other services start
-// (src/md/features/missing_hardware.md).
+// that stopped. With no screen and no screen of memory, this service gives
+// no process a window and refuses a start that needs a terminal: the other
+// services start (src/md/features/missing_hardware.md).
 screen_absent: bool
+// The compositor draws into a screen of memory on a machine with no screen
+// (src/md/features/screen_of_memory.md): from its start until it stops, the
+// machine has a desktop. screen_of_memory_size is its size at its start,
+// the screen in force of the budgets.
+desktop_of_memory: bool
+screen_of_memory_size: [2]u32
+
+// desktop_absent says if the machine has no desktop: no screen, and no
+// compositor on a screen of memory. A process then gets no window.
+desktop_absent :: proc "contextless" () -> bool {
+	return screen_absent && !desktop_of_memory
+}
 // The machine had no screen before the first start of a process, and not a
 // compositor that stopped later: it chooses the line of the absence.
 no_screen_at_the_start: bool
@@ -702,9 +721,9 @@ entropy_report: random.Entropy_Report
 //    each other process with the grants of its start grant set.
 //
 // With no screen before the first start (modus:screen_presence),
-// this service writes the line "root: no screen: no console, no window;
-// the other services start" once, and the machine parts page has no
-// screen: the processes that start with no screen are a decision of the
+// this service writes the line "root: no screen: a console and windows
+// only on a screen of memory that the start list gives; the other services
+// start" once, and the machine parts page has no screen: the processes that start with no screen are a decision of the
 // start list (src/md/features/start_policy.md), and this service starts
 // none in place of the console, and refuses a compositor. `unlock` starts,
 // as a machine key that the TPM releases needs no typing, and when it must
@@ -767,8 +786,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// and a record for a compositor that is absent stays there.
 	screen_rings_create(ctx)
 	// With no screen before the first start, the one line, and a machine
-	// parts page with no screen: the start list then starts no input
-	// service, no compositor and no console.
+	// parts page with no screen: the start list then starts the desktop on
+	// a screen of memory, or no input service, no compositor and no console.
 	if !screen_at_the_start {
 		no_screen_at_the_start = true
 		screen_absence_note()
@@ -999,10 +1018,13 @@ screen_absence_note :: proc "contextless" () {
 // here depends on the module of today: any module that fills the display
 // contract gets the same context. A start policy asks for it by the role
 // name "display": a failure is its status, with one line. With no screen it
-// is refused: a start list that asks for it on such a machine gets
-// Bad_State.
-display_holder_start :: proc "contextless" () -> system.Status {
-	if screen_absent {
+// is refused, unless the start gives the size of a screen of memory: the
+// holder then starts with no framebuffer, and draws into its own memory
+// (src/md/features/screen_of_memory.md). A start list that asks for it on
+// such a machine with no size gets Bad_State.
+display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> system.Status {
+	memory := screen_of_memory[0] != 0 && screen_of_memory[1] != 0
+	if screen_absent && !memory || !screen_absent && memory {
 		return .Bad_State
 	}
 	// A console image has no window server: grid_terminal takes the screen
@@ -1036,15 +1058,22 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	context_grants: system.Context_Grants
 	// The two screen pages of the standard VGA and its registers, in place
 	// of the framebuffer of the firmware: the compositor then puts each
-	// frame on the screen by a page flip.
-	pages_memory, display_registers := display_open(firmware_framebuffer_address, root_screen_values[0], root_screen_values[1], root_screen_values[2])
+	// frame on the screen by a page flip. A screen of memory has no
+	// framebuffer and no display registers: the compositor finds no
+	// framebuffer, and the size in its values.
+	pages_memory, display_registers: system.Handle
+	if !memory {
+		pages_memory, display_registers = display_open(firmware_framebuffer_address, root_screen_values[0], root_screen_values[1], root_screen_values[2])
+	}
 	defer if pages_memory != 0 {
 		system.close(pages_memory) // The compositor holds its own handle.
 	}
-	if pages_memory != 0 {
+	switch {
+	case memory:
+	case pages_memory != 0:
 		system.grant_put(&context_grants, COMPOSITOR_GRANT_FRAMEBUFFER, {pages_memory, {.Read, .Write}})
 		system.grant_put(&context_grants, COMPOSITOR_GRANT_DISPLAY_REGISTERS, {display_registers, {.Read, .Write}})
-	} else {
+	case:
 		system.grant_put(&context_grants, COMPOSITOR_GRANT_FRAMEBUFFER, {root_framebuffer, {.Read, .Write}})
 	}
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_INPUT, {input_memory, {.Read, .Write}})
@@ -1056,10 +1085,19 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	start_grant_set := start_grant_set_of(display_name)
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	values: system.Context_Values
-	system.value_put(&values, COMPOSITOR_VALUE_WIDTH, root_screen_values[0])
-	system.value_put(&values, COMPOSITOR_VALUE_HEIGHT, root_screen_values[1])
-	system.value_put(&values, COMPOSITOR_VALUE_PIXELS_PER_LINE, root_screen_values[2])
-	system.value_put(&values, COMPOSITOR_VALUE_FORMAT, root_screen_values[3])
+	screen_values := root_screen_values
+	if memory {
+		// The width is the pixels of a line, and the format is 0: the
+		// compositor reads no pixel of a device.
+		screen_values = {u64(screen_of_memory[0]), u64(screen_of_memory[1]), u64(screen_of_memory[0]), 0}
+		// The screen in force of the budgets: the budget of the compositor
+		// and of each module with screen pictures pays them at this size.
+		screen_of_memory_size = screen_of_memory
+	}
+	system.value_put(&values, COMPOSITOR_VALUE_WIDTH, screen_values[0])
+	system.value_put(&values, COMPOSITOR_VALUE_HEIGHT, screen_values[1])
+	system.value_put(&values, COMPOSITOR_VALUE_PIXELS_PER_LINE, screen_values[2])
+	system.value_put(&values, COMPOSITOR_VALUE_FORMAT, screen_values[3])
 	// The compositor is also a service (src/modules/system/compositor/exports.odin):
 	// a service ring and its own file, as start() gives to a service. Its
 	// values 0 to 3 are the screen, so the file is at values 4 and 5.
@@ -1112,7 +1150,9 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	display_holder_load_error: module.Load_Error
-	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
+	display_budget := budget_of(image_file_checked(display_name), display_name)
+	served.budget_pages = display_budget.pages
+	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
 	if status != .Ok {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -1122,6 +1162,10 @@ display_holder_start :: proc "contextless" () -> system.Status {
 		display_holder = 0
 		display_holder_place_free(served)
 		return status
+	}
+	desktop_of_memory = memory
+	if memory {
+		system.log_fact(.Info, Compositor_On_Screen_Of_Memory{width = u64(screen_of_memory[0]), height = u64(screen_of_memory[1])})
 	}
 	served.process = display_holder
 	served.process_slot, served.process_serial, _ = system.process_place(display_holder)
@@ -1176,6 +1220,7 @@ root_loop_pass :: proc "contextless" () {
 	// The stop of a process is an event.
 	wait := system.wait_begin(&root_wait_set)
 	control_ring_serve()
+	screen_budgets_drain() // screen_budgets.odin
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
@@ -1213,7 +1258,7 @@ root_loop_pass :: proc "contextless" () {
 	// read of the entropy device in flight (entropy.odin), the hang
 	// bound of a start policy that runs, and any in-flight request to
 	// the delegated wiring service.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline()))
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -1228,7 +1273,9 @@ control_ring_serve :: proc "contextless" () {
 		switch control_word {
 		case .Appearance_Next:
 			settings_appearance_next_start() // text_settings.odin
-		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise:
+		case .Screen_Budget_Release:
+			screen_budget_release(.Compositor, record.values[0], role_holder_name(.Display)) // screen_budgets.odin
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Screen_Budget_Give:
 			// This service sends these to the compositor, and takes none
 			// from it.
 			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
@@ -2127,10 +2174,18 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Argument_Refused, kind, .Bad_Value, .Services, 1)
 	}
 	count := 0
+	used := 0
+	used_for_client_rows := 0
 	for &connection in connections {
 		if connection.caller == nil {
 			free = &connection
-		} else if connection.service == service {
+			continue
+		}
+		used += 1
+		if connection.client.place != 0 {
+			used_for_client_rows += 1
+		}
+		if connection.service == service {
 			count += 1
 			if connection.caller == caller && connection.history == history && connection.client.place == client.place {
 				return nil, nil, 0, 0, root_ring.refuse(refusal, .Name_Already_Taken, kind, .Exists, .Connections, 1)
@@ -2141,8 +2196,11 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	if free == nil {
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Full, .Connections, 0, 0, i64(len(connections)))
 	}
-	if count == isolated.SERVICE_CONNECTION_CAPACITY {
-		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Full, .Connections, 0, 0, isolated.SERVICE_CONNECTION_CAPACITY)
+	// A connection for a row of the client table (a client of another
+	// machine) never takes the last places of the table or of the service:
+	// the clients that a principal allowed cannot shut out a local caller.
+	if !isolated.connection_place_open(client.place != 0, count, used, used_for_client_rows, CONNECTION_CAPACITY, remote.ROOT_PLACES_FOR_CLIENT_ROWS) {
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Full, .Connections, 0, i64(count), isolated.SERVICE_CONNECTION_CAPACITY)
 	}
 	// The service ring keeps room for one Disconnect for each connection:
 	// this service never waits for a service that does not read its ring.
@@ -2479,6 +2537,15 @@ reap :: proc "contextless" () {
 			// release closes the handle of the process, which is the handle
 			// of the compositor: no later start may give to it.
 			display_holder_reaped := item.process == display_holder
+			// The extra budget of a screen of memory of a process that stopped:
+			// the stop closed its handle and its objects, and this service
+			// closes its own, so the pages return (screen_budgets.odin).
+			if display_holder_reaped {
+				screen_budget_stopped(.Compositor, system.name_of(item.name[:]))
+			}
+			if .Screen_Capture in item.start_grant_set.grants {
+				screen_budget_stopped(.Service, system.name_of(item.name[:]))
+			}
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
 			stopped_for_the_rescue := item.stop_asked_by_root_service
@@ -2500,7 +2567,16 @@ reap :: proc "contextless" () {
 			// refused (start_view_give), and nothing starts here.
 			if display_holder_reaped {
 				display_holder = 0
-				if !stopped_for_the_rescue {
+				switch {
+				case desktop_of_memory:
+					// The machine had no screen already: the end of its
+					// desktop of memory is the line of a compositor that
+					// stopped.
+					desktop_of_memory = false
+					if !stopped_for_the_rescue {
+						system.log_fact(.Warning, Compositor_Stopped{})
+					}
+				case !stopped_for_the_rescue:
 					screen_absence_note()
 				}
 			}

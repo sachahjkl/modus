@@ -109,7 +109,7 @@ fuzz_tcp_segment_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		if len(header.data) > len(input) - tcp.HEADER {
 			return fuzz_broken(.Contract, "header_read gives more data than the segment holds: %d of %d", len(header.data), len(input))
 		}
-		offset := header.mss != 0 ? tcp.HEADER_MSS : tcp.HEADER
+		offset := tcp.header_size(header)
 		rewritten := make([]u8, offset + len(header.data), context.temp_allocator)
 		copy(rewritten[offset:], header.data)
 		tcp.header_write(rewritten, FUZZ_TCP_ADDRESS_A, FUZZ_TCP_ADDRESS_B, header, len(rewritten))
@@ -224,9 +224,12 @@ fuzz_tcp_connection_execute :: proc(input: []u8) -> Fuzz_Verdict {
 				flags            = transmute(tcp.Flags)fuzz_choice_byte(&choices),
 				window           = u16(fuzz_choice_word(&choices, 2)),
 				mss              = fuzz_choice_rare(&choices, 4) ? u16(fuzz_choice_word(&choices, 2)) : 0,
+				// A window scale option, on a SYN or on any other segment.
+				has_window_scale = fuzz_choice_rare(&choices, 4),
+				window_scale     = fuzz_choice_byte(&choices),
 			}
 			data_length := fuzz_choice_below(&choices, 64)
-			offset := header.mss != 0 ? tcp.HEADER_MSS : tcp.HEADER
+			offset := tcp.header_size(header)
 			segment := make([]u8, offset + data_length, context.temp_allocator)
 			fuzz_choice_fill(&choices, segment[offset:])
 			tcp.header_write(segment, FUZZ_TCP_ADDRESS_A, FUZZ_TCP_ADDRESS_B, header, len(segment))

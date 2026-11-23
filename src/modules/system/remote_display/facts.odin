@@ -3,6 +3,8 @@ package remote_display_service
 import "modus:contract/value_kinds"
 import "modus:quic"
 import "modus:quic_server"
+import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 
 // The log facts of the remote display (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the viewer keys that
@@ -36,6 +38,9 @@ ERROR_CODE_FIELD_BYTES :: 24
 // The bytes of the Text field of the step that a viewer did not do in its
 // bound: the longest sentence of VIEWER_BOUND_SENTENCES has 59 bytes.
 MISSED_STEP_FIELD_BYTES :: 64
+// The bytes of the Text field of the cause of a refused size: the longest
+// sentence of memory_screen.RESIZE_REFUSAL_SENTENCES has 79 bytes.
+RESIZE_REFUSAL_FIELD_BYTES :: 88
 
 // The handshake refused a viewer key.
 @(log_fact = "remote_display: refused the viewer key {viewer_key}: no principal allowed it for the view, or the session of its principal is locked; the handshake ends before any viewer frame")
@@ -178,18 +183,86 @@ Small_Damage_Measured :: struct {
 	least_time:  value_kinds.Time_In_Microseconds,
 }
 
-// The screen of the compositor is past the reference screen of the
+// The screen of the compositor is past the largest screen of the
 // protocol.
-@(log_fact = "remote_display: the screen of {width}x{height} is past the reference screen of the protocol: no capture face")
-Screen_Past_Reference :: struct {
+@(log_fact = "remote_display: the screen of {width}x{height} is past the largest screen of the protocol, 7680x4320: no capture face")
+Screen_Past_Largest :: struct {
 	width:  u64,
 	height: u64,
 }
 
-// No memory for the capture face.
-@(log_fact = "remote_display: no memory for the capture face: {pages}")
+// The budget of this process does not pay the two pictures of the capture
+// face and the copy of the screen, at the size of the screen in force.
+@(log_fact = "remote_display: no capture face for the screen of {width}x{height}: its two pictures and its copy need {pages}, which the budget of this process does not give")
 Capture_Memory_Refused :: struct {
-	pages: value_kinds.Size_In_Pages,
+	width:  u64,
+	height: u64,
+	pages:  value_kinds.Size_In_Pages,
+}
+
+// The capture face was refused: each viewer that waited for it ends with
+// the code Screen_Not_Held, so it does not wait with no screen.
+@(log_fact = "remote_display: ended {viewers} viewers with the code Screen_Not_Held: the capture face of the screen in force was refused")
+Viewers_Ended_With_No_Screen :: struct {
+	viewers: u64,
+}
+
+// The size that a viewer asked was refused: by the budget of this process,
+// or by the compositor. The viewer gets the record Screen_Size_Refused and
+// keeps its session.
+@(log_fact = "remote_display: refused the screen of {width} x {height} that the viewer {viewer_key_head} asked: {resize_refusal}")
+Screen_Size_Ask_Refused :: struct {
+	width:           u64,
+	height:          u64,
+	viewer_key_head: [24]u8,
+	resize_refusal:  [88]u8,
+}
+
+// The compositor gave a refusal of a size that no ask in flight named, or
+// a cause that names no member: the event changes nothing.
+@(log_fact = "remote_display: refused an answer of the compositor: a refusal of {width} x {height} with the word {refusal_word}, which no ask in flight names or which names no cause")
+Capture_Size_Refusal_Refused :: struct {
+	width:        u64,
+	height:       u64,
+	refusal_word: u64,
+}
+
+// The root service refused a Screen_Budget that no viewer waits for, or a
+// Release: the extra budget ends at the stop of this process.
+@(log_fact = "remote_display: the root service refused a command of the budgets of the screen of memory: {outcome}")
+Screen_Budget_Answer_Refused :: struct {
+	outcome: call_outcome.Call_Outcome_Word,
+}
+
+// The root service gave an extra budget with no number, or a third one: it
+// is closed with no use.
+@(log_fact = "remote_display: closed an extra budget for {width} x {height} with no use: it has no number, or two are held already")
+Screen_Budget_Not_Taken :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// The root ring had no room for the release of the extra budget.
+@(log_fact = "remote_display: the root ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of this process")
+Screen_Budget_Release_Not_Sent :: struct {}
+
+// The copies of a new size of the screen were refused: the compositor is
+// asked for the size before, and no viewer ends.
+@(log_fact = "remote_display: no copies of the screen of {width} x {height}: the screen goes back to {back_width} x {back_height}")
+Screen_Change_Reverted :: struct {
+	width:       u64,
+	height:      u64,
+	back_width:  u64,
+	back_height: u64,
+}
+
+// The screen of memory changed size: each viewer receives the new size
+// and the whole screen.
+@(log_fact = "remote_display: the screen is now {width} x {height}: {viewers} viewers receive its size and the whole screen")
+Screen_Changed :: struct {
+	width:   u64,
+	height:  u64,
+	viewers: u64,
 }
 
 // The memory of the capture face does not map, or the compositor does not

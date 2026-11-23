@@ -81,6 +81,7 @@ Stated_Budget :: struct {
 	window_height:        u64,
 	window_least_width:   u64, // The least size of a resizable window; 0: no cut of the window pages.
 	window_least_height:  u64,
+	screen_pictures:      u64, // Pictures of the size of the screen in force; module.SCREEN_PICTURES_LIMIT at most.
 }
 
 // The budget that a module asks for, as its source states it in the

@@ -36,6 +36,10 @@ Stated_Budget :: struct {
 	// out: no cut.
 	window_least_width:   u64,
 	window_least_height:  u64,
+	// Pictures of the size of the screen in force that the process holds (a
+	// copy of the screen, a frame): the starter adds their pages for the
+	// screen of the machine (module.budget_request_of_screen). Left out: none.
+	screen_pictures:      u64,
 }
 
 // One part of a budget request.

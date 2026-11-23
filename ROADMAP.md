@@ -4,6 +4,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
+
 ## Next
 
 - **The largest budget set by the plan of the principal.** The plan of principal 0 gives the share of the machine that one process gets through the border that the root service has for it (`budget_share_take`), in place of the default quarter, and a row of the plan gives a module a limit of processor time in place of a row in the code of the root service. [Design](src/md/features/module_budget_request.md)
@@ -39,6 +40,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The call outcome of the kernel.** After two services ran on the set of the call outcome, each kernel completion holds it in place of its status, so a call to the kernel and a call to a service end with the same word. [Design](src/md/api/call_outcome.md)
 
 ## Later
+
+- **The address of the network from the network.** The network service takes the prefix length of its interface as a field and checks it; DHCP, or the plan, then gives the address, the gateway and the prefix of a real network in place of the network of QEMU.
 
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)

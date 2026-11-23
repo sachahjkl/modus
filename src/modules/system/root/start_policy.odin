@@ -485,7 +485,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 // Give: its stop ends a wait of the start policy, and the start policy
 // lends it as the reader of a later wiring row. Each refusal writes its
 // outcome and its error record in values.
-start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, held: ^bool) -> call_outcome.Call_Outcome {
+start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, held: ^bool, screen_of_memory: [2]u32 = {}) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Start)
 	// The checks before any start (start_policy_rules.start_step, with its
 	// host tests): a list for a part of the system, whose procedure takes
@@ -523,7 +523,7 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	case .Input:
 		status = input_start()
 	case .Display:
-		status = display_holder_start()
+		status = display_holder_start(screen_of_memory)
 	case .Shortage:
 		status = shortage_start()
 	case .Operation_Fuzzing:

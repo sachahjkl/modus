@@ -7,7 +7,9 @@
 // output, the library reads and writes the frames. UDP and TCP are in the
 // process that holds the endpoint: this service reads the header of a
 // datagram or a segment, never its data. It has one static address
-// (10.0.2.15/24, the gateway 10.0.2.2: the network of QEMU).
+// (10.0.2.15, the gateway 10.0.2.2: the network of QEMU) and the length of
+// its prefix (24 bits there), from which it decides which address is on the
+// link: the length is a field of the interface, not a mask of /24.
 //
 // The root service names the grant of each endpoint. A datagram endpoint
 // reaches one remote address and one remote UDP port, or listens on one
@@ -83,6 +85,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/frame"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:network"
@@ -90,14 +93,25 @@ import "modus:system"
 
 LOCAL_ADDRESS :: 0x0A00020F // 10.0.2.15
 GATEWAY_ADDRESS :: 0x0A000202 // 10.0.2.2
-PREFIX :: 24
-NETWORK_MASK :: 0xFFFF_FF00 // The prefix of 24 bits.
+// The length of the prefix of the network of the machine: 24 bits on the
+// network of QEMU. The code reads the mask from it (interface_mask), so a
+// network of another length changes this one value.
+PREFIX_LENGTH :: 24
+// The address of the interface, which interface_address_check checks at the
+// start, and the mask of its prefix.
+interface_address := network.Interface_Address{local = LOCAL_ADDRESS, gateway = GATEWAY_ADDRESS, prefix_length = PREFIX_LENGTH}
+interface_mask: u32
 
 PLACE_COUNT :: 256 // The places of the frame region, frame.PLACE_SIZE bytes each.
 RECEIVE_PLACES :: 128 // Places 0 to 127: frames that arrive. 128 to 255: frames to send.
 REGION_PAGES :: PLACE_COUNT * frame.PLACE_SIZE / system.PAGE_SIZE
 
-ENDPOINT_CAPACITY :: 8
+// The endpoints of the processes: one for each process that holds a grant
+// of the network. The loop waits on the command queue of each endpoint, two
+// words of the wait each, beside the frame ring and the control ring, so
+// the count fits one wait of the kernel (op.WORD_WAIT_CAPACITY); the tags
+// of the read regions in the frame ring leave room for 100.
+ENDPOINT_CAPACITY :: 96
 RECEIVE_CAPACITY :: 128 // The Receive requests of one endpoint that wait at the same time.
 PORT_FIRST :: 49152 // The local UDP port of endpoint n is PORT_FIRST + n.
 TCP_PORT_FIRST :: 50176 // A client grant of endpoint n: the local TCP ports from TCP_PORT_FIRST + n * datagram.PORT_BLOCK.
@@ -277,7 +291,7 @@ next_identification :: proc "contextless" () -> u16 {
 
 // next_hop gives the address whose hardware address a frame to address needs.
 next_hop :: proc "contextless" (address: u32) -> u32 {
-	return address & NETWORK_MASK == LOCAL_ADDRESS & NETWORK_MASK ? address : GATEWAY_ADDRESS
+	return network.next_hop(interface_address, interface_mask, address)
 }
 
 neighbor_of :: proc "contextless" (address: u32) -> (hardware: network.Hardware, ok: bool) {
@@ -501,7 +515,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		for byte, place in hardware {
 			hardware_value |= u64(byte) << (8 * uint(place))
 		}
-		complete(endpoint, tag, .Succeeded, {LOCAL_ADDRESS, u64(endpoint.local_port), GATEWAY_ADDRESS, PREFIX, hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
+		complete(endpoint, tag, .Succeeded, {LOCAL_ADDRESS, u64(endpoint.local_port), GATEWAY_ADDRESS, PREFIX_LENGTH, hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
 	case .Send:
 		place, count := values[0], values[1]
 		if endpoint.region == nil {
@@ -753,7 +767,7 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 				network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Tcp, offset = offset, value = u32(packet.source_port), limit = u32(grant.port)}, .Endpoint)
 				return
 			}
-			if !network.source_valid(packet.source_address, LOCAL_ADDRESS, NETWORK_MASK) {
+			if !network.source_valid(packet.source_address, LOCAL_ADDRESS, interface_mask) {
 				network.problem_count(&endpoint.problems, {kind = .Bad_Header, layer = .Ipv4, offset = network.ETHERNET_HEADER + 12, value = packet.source_address}, .Endpoint)
 				return
 			}
@@ -819,7 +833,7 @@ udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.
 	case data_bytes < datagram.LISTEN_FIRST_LEAST:
 		network.problem_count(&endpoint.problems, {kind = .Bad_Length, layer = .Udp, offset = offset + 4, value = u32(data_bytes), limit = datagram.LISTEN_FIRST_LEAST}, .Endpoint)
 		return false
-	case !network.source_valid(packet.source_address, LOCAL_ADDRESS, NETWORK_MASK):
+	case !network.source_valid(packet.source_address, LOCAL_ADDRESS, interface_mask):
 		network.problem_count(&endpoint.problems, {kind = .Bad_Header, layer = .Ipv4, offset = network.ETHERNET_HEADER + 12, value = packet.source_address}, .Endpoint)
 		return false
 	case endpoint.posted_count == 0:
@@ -1263,6 +1277,19 @@ frame_service_check :: proc "contextless" () {
 // process that needs an endpoint (src/md/features/missing_hardware.md).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The address of the interface, before any frame: a prefix that does
+	// not fit the address would send each frame to the wrong hop.
+	mask, interface_problem := network.interface_address_check(interface_address)
+	switch interface_problem {
+	case .None:
+		interface_mask = mask
+	case .Prefix_Length:
+		fail("the prefix of the address of the interface is not 1 to 32 bits")
+	case .Local_Address:
+		fail("the address of the interface is not the address of a host of its prefix")
+	case .Gateway:
+		fail("the gateway is not a host on the link of the prefix of the interface")
+	}
 	frames_memory = ctx.handles[frame.GRANT_RING]
 	control_memory = ctx.handles[datagram.SERVICE_CONTROL]
 	status: system.Status
@@ -1313,7 +1340,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	text: [64]u8
 	writer := system.Writer{buffer = text[:]}
 	network.address_write(&writer, LOCAL_ADDRESS)
-	system.write_bytes(&writer, {'/', '2', '4', ' '})
+	system.write_bytes(&writer, {'/'})
+	system.write_unsigned(&writer, u64(interface_address.prefix_length))
+	system.write_bytes(&writer, {' '})
 	network.hardware_write(&writer, hardware)
 	// The state of the link is a case of the sentence: each one is a fact
 	// type.
@@ -1446,4 +1475,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 #assert(TAG_ATTACH >= PLACE_COUNT)
 #assert(TAG_READ_REGION_ADD > TAG_STATISTICS && TAG_READ_REGION_ADD + ENDPOINT_CAPACITY <= TAG_READ_REGION_REMOVE)
 #assert(ENDPOINT_CAPACITY <= frame.READ_REGION_CAPACITY) // The place of an endpoint is the place of its read region.
+// The wait of the loop holds the frame ring, the control ring and the
+// command queue of each endpoint, two words each.
+#assert(2 * (2 + ENDPOINT_CAPACITY) <= op.WORD_WAIT_CAPACITY)
+// The local ports of the endpoints do not meet: the UDP ports, then the
+// blocks of TCP ports, under the largest port.
+#assert(PORT_FIRST + ENDPOINT_CAPACITY <= TCP_PORT_FIRST && TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK <= 65536)
 #assert(SEND_HEADER_COPIED <= datagram.DATAGRAM_LEAST && SEND_HEADER_COPIED <= datagram.SEGMENT_LEAST)

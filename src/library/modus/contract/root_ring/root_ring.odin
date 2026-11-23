@@ -20,6 +20,7 @@ import "base:intrinsics"
 import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
+import "modus:contract/memory_screen"
 import "modus:contract/replacement_list"
 import "modus:contract/start_grant"
 
@@ -60,7 +61,9 @@ Root_Command :: enum u32 {
 	// values[5]: a Start_Answer. With Process_Handle, values[0] of
 	// the completion is a handle of the process with the right Read, which
 	// a Wire names; values[1..6] are the rings of the rows whose reader is
-	// the sender, in the order of the rows. values[6] is 0.
+	// the sender, in the order of the rows. values[6] is 0, or, from a start
+	// policy for the holder of Display on a machine with no screen, the size
+	// of a screen of memory (screen_of_memory_word).
 	Start      = 1,
 	// Stop the process with this name. The compositor and the terminal are
 	// refused with `Reserved`; a name that runs no process with `Absent`.
@@ -478,6 +481,79 @@ Root_Command :: enum u32 {
 	// the serial in force, values[1] its generation. Only the process with
 	// the start grant Plans sends this command.
 	Plan_Roles = 32,
+	// Screen_Budget grows the budgets of the compositor and of the service of
+	// the remote display for a size of a screen of memory past the size that
+	// their start paid, or ends a growth (src/md/features/screen_of_memory.md,
+	// "The growth of the budgets"). values[0] is a Screen_Budget_Step. Its
+	// name is not read. Only the process with the start grant Screen_Capture
+	// sends it.
+	//
+	// Grow: values[1] the width, values[2] the height, values[3..6] 0. The
+	// root service makes one extra budget for each process, both or neither
+	// (memory_screen.screen_budget_grow_decide), gives the compositor its
+	// handle with Screen_Budget_Give on the control ring, then answers:
+	// values[0] the handle of the extra budget of the sender, with Read and
+	// Spend, values[1] its pages, values[2] the number of the growth, never
+	// 0. A growth while the sender holds an extra budget is a replacement:
+	// the share pays both. A refusal has the status No_Budget, the kind
+	// Refused (unit Pages), the width as the value and the
+	// memory_screen.Grow_Refusal as the value found; nothing is made, and the
+	// extra budgets in force stay.
+	//
+	// Release: values[1] the number of a growth, values[2..6] 0. The sender
+	// closed its extra budget of that growth: the root service takes back
+	// each handle of it in other processes, and closes its own when all its
+	// pages are back; until then they count against the share. Refused with
+	// Bad_State and the kind Absent when the sender holds none of that
+	// growth.
+	Screen_Budget = 33,
+}
+
+// The step of a Screen_Budget, in values[0].
+Screen_Budget_Step :: enum u64 {
+	Grow    = 1,
+	Release = 2,
+}
+
+// screen_budget_step_of_word is the border of values[0] of a Screen_Budget.
+screen_budget_step_of_word :: proc "contextless" (word: u64) -> (step: Screen_Budget_Step, ok: bool) {
+	return enum_word.member_of_word(Screen_Budget_Step, word)
+}
+
+// The words of a Screen_Budget that passed its border.
+Screen_Budget_Words :: struct {
+	step:          Screen_Budget_Step,
+	width, height: u64, // Grow: the size, which the decision checks against its bounds.
+	growth:        u64, // Release: the number of a growth, never 0.
+}
+
+// screen_budget_words_of_values is the border of the values of a
+// Screen_Budget: a step that names no member, a number of growth of 0 in a
+// Release, or a word that must be 0 and is not, is refused, with the place
+// of the word (1 to 7) for its error record.
+screen_budget_words_of_values :: proc "contextless" (values: [7]u64) -> (words: Screen_Budget_Words, refused_place: int, ok: bool) {
+	step, step_ok := screen_budget_step_of_word(values[0])
+	if !step_ok {
+		return {}, 1, false
+	}
+	first_free: int
+	switch step {
+	case .Grow:
+		words = {step = step, width = values[1], height = values[2]}
+		first_free = 3
+	case .Release:
+		if values[1] == 0 {
+			return {}, 2, false
+		}
+		words = {step = step, growth = values[1]}
+		first_free = 2
+	}
+	for place in first_free ..< len(values) {
+		if values[place] != 0 {
+			return {}, place + 1, false
+		}
+	}
+	return words, 0, true
 }
 
 // values[5] of a Debug_Start: what it does.
@@ -552,6 +628,28 @@ Start_Answer :: enum u64 {
 // start_answer_of_word is the border of values[5] of a Start.
 start_answer_of_word :: proc "contextless" (word: u64) -> (answer: Start_Answer, ok: bool) {
 	return enum_word.member_of_word(Start_Answer, word)
+}
+
+// screen_of_memory_word gives values[6] of the Start of the holder of
+// Display on a machine with no screen: the width in the low 32 bits and the
+// height in the high 32 bits (src/md/features/screen_of_memory.md). 0: no
+// screen of memory.
+screen_of_memory_word :: proc "contextless" (width, height: u32) -> u64 {
+	return u64(width) | u64(height) << 32
+}
+
+// screen_of_memory_of_word is the border of values[6] of a Start: 0 is no
+// screen of memory, and any other word is a size inside the bounds of the
+// contract memory_screen, or refused.
+screen_of_memory_of_word :: proc "contextless" (word: u64) -> (width, height: u32, ok: bool) {
+	if word == 0 {
+		return 0, 0, true
+	}
+	width, height = u32(word), u32(word >> 32)
+	if !memory_screen.size_in_bounds(u64(width), u64(height)) {
+		return 0, 0, false
+	}
+	return width, height, true
 }
 
 // The enumerations below are words of the root ring: each value is the
@@ -658,6 +756,9 @@ Root_Command_Sender :: enum u8 {
 	// The process with the start grant Plans only: the holder of the role
 	// Plans names the holders of the roles of the machine.
 	Plans,
+	// The process with the start grant Screen_Capture only: the service of
+	// the remote display, for the budgets of a screen of memory.
+	Screen_Capture,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -697,12 +798,13 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Start_Edit             = .Root_Ring,
 	.Debug_Start            = .Debugger,
 	.Plan_Roles             = .Plans,
+	.Screen_Budget          = .Screen_Capture,
 }
 
 // The start grants that give a process a root ring. A process with none of
 // them has no root ring, so it sends no command: a disk process, whose
 // grants a command gives, and which no command gives one of these.
-ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans}
+ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture}
 
 // root_ring_given says if a process with these start grants receives a
 // root ring at its start.
@@ -825,6 +927,8 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 		return .Start_Policy in start_grant_set
 	case .Plans:
 		return .Plans in start_grant_set
+	case .Screen_Capture:
+		return .Screen_Capture in start_grant_set
 	}
 	return false
 }
@@ -1087,6 +1191,7 @@ root_command_names := [Root_Command]string {
 	.Start_Edit             = "Start_Edit",
 	.Debug_Start            = "Debug_Start",
 	.Plan_Roles             = "Plan_Roles",
+	.Screen_Budget          = "Screen_Budget",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1126,6 +1231,7 @@ root_first_argument_names := [Root_Command]string {
 	.Start_Edit             = "store",
 	.Debug_Start            = "name",
 	.Plan_Roles             = "override",
+	.Screen_Budget          = "step",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1166,6 +1272,7 @@ root_second_argument_names := [Root_Command]string {
 	.Start_Edit             = "name",
 	.Debug_Start            = "",
 	.Plan_Roles             = "",
+	.Screen_Budget          = "",
 }
 
 // command_of_record reads the command that an error record names: the

@@ -136,9 +136,13 @@ Command :: enum u32 {
 	Capture_Taken    = 14,
 	// The end of the copy: the compositor unmaps the memory. No values.
 	Capture_Close    = 15,
-	// The viewers that the bar names in its mark. values[0]: the count, 0
-	// to CAPTURE_VIEWER_CAPACITY; values[1]: bit n when viewer n has the
-	// input; values[2..]: the first 8 bytes of the key of each viewer.
+	// The viewers that the bar names in its mark, in parts of
+	// CAPTURE_VIEWER_KEYS_OF_A_PART keys: values[0]: the count, 0 to
+	// CAPTURE_VIEWER_CAPACITY; values[1]: bit n when viewer n has the
+	// input; values[2]: the place of the first key of this part, a
+	// multiple of CAPTURE_VIEWER_KEYS_OF_A_PART; values[3..6]: the first 8
+	// bytes of the key of each viewer of the part. The parts go in order,
+	// and the last one names the last viewer (capture_viewers_part_check).
 	Capture_Viewers  = 16,
 	// A key of a viewer, in the form of the input record Key: code,
 	// character, 1 when pressed, modifiers; values[4] viewer slot,
@@ -173,6 +177,11 @@ Command :: enum u32 {
 	// offers the next serial at the next scale. values: the serial of the
 	// offer, one past the serial released, and the word of the scale.
 	Surface_Declined = 21,
+	// The capture face: a size of a screen of memory that a viewer with the
+	// input asked (src/md/features/screen_of_memory.md). The compositor
+	// answers with the event Capture_Size: the new size, or with values[2]
+	// the cause of its refusal. values: width, height.
+	Screen_Size_Set  = 22,
 }
 
 // The place of the capture flag in the values of Client_Add.
@@ -181,8 +190,53 @@ CLIENT_ADD_CAPTURE :: 5
 // not a choice: 0 says the opposite.
 CLIENT_CAPTURE :: 1
 
-// The viewers that one record Capture_Viewers names.
-CAPTURE_VIEWER_CAPACITY :: 4
+// The viewers of the capture face: each viewer that the service of the
+// remote display holds has its place here, by the place of its record.
+CAPTURE_VIEWER_CAPACITY :: 8
+// The keys of one part of Capture_Viewers: the values after the count, the
+// mask of the input and the place.
+CAPTURE_VIEWER_KEYS_OF_A_PART :: 4
+// The mask of the input of the viewers fits one word of a record, and the
+// bit of each viewer of a warp fits a u32.
+#assert(CAPTURE_VIEWER_CAPACITY <= 32)
+
+// capture_viewers_part_check is the border of a part of Capture_Viewers:
+// it refuses a count past CAPTURE_VIEWER_CAPACITY, a bit of the input past
+// the count, and a place that is not a multiple of
+// CAPTURE_VIEWER_KEYS_OF_A_PART, or that is past the count (the place 0 of
+// a count of 0 passes: it names no viewer). last is true for the part
+// that names the last viewer.
+capture_viewers_part_check :: proc "contextless" (values: [7]u64) -> (count: int, input: u64, place: int, last: bool, ok: bool) {
+	if values[0] > CAPTURE_VIEWER_CAPACITY || values[2] % CAPTURE_VIEWER_KEYS_OF_A_PART != 0 {
+		return 0, 0, 0, false, false
+	}
+	if values[2] != 0 && values[2] >= values[0] {
+		return 0, 0, 0, false, false
+	}
+	if values[1] >> values[0] != 0 {
+		return 0, 0, 0, false, false
+	}
+	count, input, place = int(values[0]), values[1], int(values[2])
+	return count, input, place, place + CAPTURE_VIEWER_KEYS_OF_A_PART >= count, true
+}
+
+// capture_viewers_parts writes the records of Capture_Viewers for the keys
+// heads of the viewers and the mask of their input, and gives their count:
+// one part for each CAPTURE_VIEWER_KEYS_OF_A_PART keys, and one part for no
+// viewer. A count past CAPTURE_VIEWER_CAPACITY is cut to it.
+capture_viewers_parts :: proc "contextless" (keys: []u64, input: u64, parts: ^[CAPTURE_VIEWER_CAPACITY / CAPTURE_VIEWER_KEYS_OF_A_PART]ring.Record) -> (part_count: int) {
+	count := min(len(keys), CAPTURE_VIEWER_CAPACITY)
+	mask := count == 0 ? 0 : input & ((u64(1) << u64(count)) - 1)
+	for place := 0; place == 0 || place < count; place += CAPTURE_VIEWER_KEYS_OF_A_PART {
+		record := ring.Record{kind = u32(Command.Capture_Viewers), values = {0 = u64(count), 1 = mask, 2 = u64(place)}}
+		for index in place ..< min(place + CAPTURE_VIEWER_KEYS_OF_A_PART, count) {
+			record.values[3 + index - place] = keys[index]
+		}
+		parts[part_count] = record
+		part_count += 1
+	}
+	return part_count
+}
 // The rectangles of one record of a picture: the damage of the compositor.
 CAPTURE_RECTANGLE_CAPACITY :: 8
 // The pages of the header of the memory of a copy of the screen.
@@ -446,9 +500,12 @@ Event_Kind :: enum u32 {
 	// handle (in this process), the Clipboard_Kind, the count of bytes,
 	// the serial of the key, never 0.
 	Pasted           = 7,
-	// The capture face (Command.Capture_Size_Ask): the size of the screen.
-	// values: width, height. Only a client of the capture face gets it; a
-	// window refuses it (event_of_record).
+	// The capture face (Command.Capture_Size_Ask, Screen_Size_Set): the size
+	// of the screen. values: width, height, and 0, or the cause
+	// (memory_screen.Resize_Refusal) of a refused Screen_Size_Set with the
+	// size that it asked. The compositor sends it again after a change of
+	// the size of a screen of memory. Only a client of the capture face gets
+	// it; a window refuses it (event_of_record).
 	Capture_Size     = 8,
 	// The capture face: the compositor wrote a picture and its header.
 	// values: the picture, the count of its rectangles, the serial of the
@@ -512,6 +569,15 @@ Control :: enum u32 {
 	// that window, then a Settings_Raise_Focus. The root service names the
 	// window by the process that it started, so no other window can take it.
 	Settings_Raise          = 9,
+	// root to compositor: the extra budget of a growth of the screen of
+	// memory (src/md/features/screen_of_memory.md, "The growth of the
+	// budgets"). values: the handle (in the compositor) with Read and Spend,
+	// its pages, the width and the height that it pays, the number of its
+	// growth.
+	Screen_Budget_Give      = 10,
+	// compositor to root: the compositor closed its extra budget of a growth,
+	// as no picture of it is left. values: the number of the growth.
+	Screen_Budget_Release   = 11,
 }
 
 // Where the focus goes in the window that Settings_Raise raises. The values

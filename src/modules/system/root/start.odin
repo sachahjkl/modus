@@ -485,7 +485,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_
 // window server: there, a process with no terminal starts with no window.
 start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	terminal_wanted := .Terminal in work.start_grant_set.grants
-	if screen_absent && !(terminal_wanted && !role_policy.console_renderer_needs_screen(console_renderer)) {
+	if desktop_absent() && !(terminal_wanted && !role_policy.console_renderer_needs_screen(console_renderer)) {
 		if terminal_wanted {
 			return start_refuse(work, .Operation_Unsupported, .Unsupported, .Terminal)
 		}
@@ -720,6 +720,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		held_entry = &work.slot.held_entry
 		work.slot.held_for_replay = true
 	}
+	work.slot.budget_pages = process_budget.pages
 	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time

@@ -20,14 +20,20 @@ BYTES_PER_PIXEL :: 4
 PAGE_SIZE :: 4096
 
 // Minimum and maximum dimensions of a headless memory screen, in pixels.
-// The maximum matches the reference screen because the compositor budget and
-// window bounds are sized for it.
+// The maximum is the largest screen of the remote display, 8K UHD: the
+// screen of memory follows the size that its start row or a viewer asks,
+// and the compositor pays it as its screen pictures, at the size in force
+// (module.budget_request_of_screen). The byte budget of the caller bounds
+// a size that its budget does not pay. With no size asked, the screen of
+// memory has the size of the reference screen.
 MIN_WIDTH :: 320
 MIN_HEIGHT :: 240
-MAX_WIDTH :: reference_screen.WIDTH
-MAX_HEIGHT :: reference_screen.HEIGHT
+MAX_WIDTH :: 7680
+MAX_HEIGHT :: 4320
+DEFAULT_WIDTH :: reference_screen.WIDTH
+DEFAULT_HEIGHT :: reference_screen.HEIGHT
 
-// Maximum framebuffer size in bytes and pages (1920 x 1080 x 4 = 8,294,400 B).
+// Maximum framebuffer size in bytes and pages (7680 x 4320 x 4 = 132,710,400 B).
 MAX_FRAMEBUFFER_BYTES :: u64(MAX_WIDTH) * u64(MAX_HEIGHT) * BYTES_PER_PIXEL
 MAX_FRAMEBUFFER_PAGES :: (MAX_FRAMEBUFFER_BYTES + PAGE_SIZE - 1) / PAGE_SIZE
 
@@ -412,4 +418,365 @@ screen_apply_resize :: proc "contextless" (
 	}
 	_, _ = screen_commit_resize(screen)
 	return .None
+}
+
+// Why a size of the screen of memory that a viewer asked was refused
+// (src/md/features/screen_of_memory.md). The words cross the ring of the
+// capture face and the protocol of the remote display: a word that names
+// no member is refused at each border (resize_refusal_of_word).
+Resize_Refusal :: enum u32 {
+	None              = 0, // Not a refusal: refused at a border.
+	Device_Screen     = 1, // The machine has a screen of a device, whose size the system does not set.
+	Outside_Bounds    = 2, // The size is outside MIN_WIDTH x MIN_HEIGHT to MAX_WIDTH x MAX_HEIGHT.
+	Compositor_Budget = 3, // The pages left in the budget of the compositor do not pay a new frame and a new background.
+	Service_Budget    = 4, // The pages left in the budget of the service of the remote display do not pay its copies.
+	Too_Soon          = 5, // The screen changed size, or the viewer asked one, less than the least time ago.
+}
+
+// The words of each cause in a line of the log.
+@(rodata)
+RESIZE_REFUSAL_SENTENCES := [Resize_Refusal]string {
+	.None              = "no cause",
+	.Device_Screen     = "the machine has a screen of a device, whose size the system does not set",
+	.Outside_Bounds    = "the size is outside 320 x 240 to 7680 x 4320",
+	.Compositor_Budget = "the budget of the compositor does not pay a frame and a background of that size",
+	.Service_Budget    = "the budget of remote_display does not pay its copies of that size",
+	.Too_Soon          = "the screen changed size, or the viewer asked one, less than a second ago",
+}
+
+// resize_refusal_of_word is the border of a word of Resize_Refusal: a word
+// that names no member, or None, is refused.
+resize_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: Resize_Refusal, ok: bool) {
+	member := enum_word.member_of_word(Resize_Refusal, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// size_in_bounds says if a width and a height are a size of a screen of
+// memory: each side inside its bounds.
+size_in_bounds :: proc "contextless" (width, height: u64) -> bool {
+	return width >= MIN_WIDTH && width <= MAX_WIDTH && height >= MIN_HEIGHT && height <= MAX_HEIGHT
+}
+
+// picture_pages gives the pages of one picture of a screen, 4 bytes a
+// pixel, the last page whole. A size past the bounds gives 0.
+picture_pages :: proc "contextless" (width, height: u64) -> u64 {
+	if !size_in_bounds(width, height) {
+		return 0
+	}
+	return (width * height * BYTES_PER_PIXEL + PAGE_SIZE - 1) / PAGE_SIZE
+}
+
+// The pictures of the compositor that a size of the screen pays: the frame,
+// which is the screen of memory, and the background.
+COMPOSITOR_PICTURES :: 2
+
+// resize_decide decides a size that a viewer asked, in the compositor:
+// memory says if its screen is a screen of memory, current is the size in
+// force, and pages_left the pages that its budget has left. The new frame
+// and the new background are made before the old ones are freed, so the
+// pages left pay both. same: the size is the size in force, and nothing
+// changes.
+//
+// Example: a screen of memory of 1920 x 1080 with 10 000 pages left takes
+// 2560 x 1440 (2 x 3600 pages); with 7199 left it refuses Compositor_Budget.
+resize_decide :: proc "contextless" (memory: bool, width, height: u64, current_width, current_height: u32, pages_left: u64) -> (refusal: Resize_Refusal, same: bool) {
+	switch {
+	case !memory:
+		return .Device_Screen, false
+	case !size_in_bounds(width, height):
+		return .Outside_Bounds, false
+	case width == u64(current_width) && height == u64(current_height):
+		return .None, true
+	case pages_left < COMPOSITOR_PICTURES * picture_pages(width, height):
+		return .Compositor_Budget, false
+	}
+	return .None, false
+}
+
+// service_resize_decide decides a size in the service of the remote
+// display, before it asks the compositor: it frees its copies of today
+// before it makes the new ones, so the pages left and the pages that it
+// holds pay the pages that it needs.
+service_resize_decide :: proc "contextless" (width, height: u64, pages_needed, pages_held, pages_left: u64) -> Resize_Refusal {
+	switch {
+	case !size_in_bounds(width, height):
+		return .Outside_Bounds
+	case pages_held > max(u64) - pages_left || pages_left + pages_held < pages_needed:
+		return .Service_Budget
+	}
+	return .None
+}
+
+// The least time between two changes of the size of the screen of memory,
+// and between two asks of one viewer that the service sends on: a whole
+// screen goes to each viewer at each change, so a viewer that asks in a
+// loop would hold the service and the compositor in whole frames.
+RESIZE_INTERVAL_MILLISECONDS :: 1000
+
+// resize_interval_decide decides an ask by its time, in milliseconds of
+// the clock of the system: Too_Soon when the last change of the screen, or
+// the last ask of this viewer that went on, is less than
+// RESIZE_INTERVAL_MILLISECONDS ago. 0 is no change and no ask yet. A time
+// before a kept time (a clock that went back) counts as age 0.
+resize_interval_decide :: proc "contextless" (now, viewer_asked_at, screen_changed_at: u64) -> Resize_Refusal {
+	for last in ([2]u64{viewer_asked_at, screen_changed_at}) {
+		if last != 0 && now - min(last, now) < RESIZE_INTERVAL_MILLISECONDS {
+			return .Too_Soon
+		}
+	}
+	return .None
+}
+
+// The pages of the frame and the background of the compositor at a size:
+// the extra budget of a growth pays both new ones, as the compositor makes
+// them before it frees the old ones. A size past the bounds gives 0.
+compositor_grow_pages :: proc "contextless" (width, height: u64) -> u64 {
+	return COMPOSITOR_PICTURES * picture_pages(width, height)
+}
+
+// The pages of the copies of the service of the remote display at a size:
+// the memory of its capture face (one header page and two pictures) and
+// its copy of the screen. The display package makes them
+// (display.capture_pages); its host test checks that both agree. A size
+// past the bounds gives 0.
+service_copies_pages :: proc "contextless" (width, height: u64) -> u64 {
+	if !size_in_bounds(width, height) {
+		return 0
+	}
+	pixels := width * height * BYTES_PER_PIXEL
+	return 1 + (2 * pixels + PAGE_SIZE - 1) / PAGE_SIZE + (pixels + PAGE_SIZE - 1) / PAGE_SIZE
+}
+
+// Why the root service refuses a growth of the budgets of a screen of
+// memory (src/md/features/screen_of_memory.md, "The growth of the
+// budgets"). The word crosses the root ring in the error record of the
+// refusal: grow_refusal_of_word is its border.
+Grow_Refusal :: enum u64 {
+	None                  = 0, // Not a refusal: refused at the border.
+	Not_The_Service       = 1, // The sender does not hold the start grant Screen_Capture.
+	No_Screen_Of_Memory   = 2, // The machine has a screen of a device, or no compositor draws into a screen of memory.
+	Outside_Bounds        = 3, // The size is outside MIN_WIDTH x MIN_HEIGHT to MAX_WIDTH x MAX_HEIGHT.
+	Compositor_Replacing  = 4, // The compositor holds two extra budgets: its replacement is not finished.
+	Service_Replacing     = 5, // The service holds two extra budgets: its replacement is not finished.
+	Past_Compositor_Share = 6, // The budget of the compositor, its extra budget and the new one pass the share of a process.
+	Past_Service_Share    = 7, // The budget of the service, its extra budget and the new one pass the share of a process.
+	No_Pages              = 8, // The budget of the root service did not make an extra budget.
+	Too_Soon              = 9, // The last growth is less than RESIZE_INTERVAL_MILLISECONDS ago.
+}
+
+// The words of each refusal of a growth in a line of the log.
+@(rodata)
+GROW_REFUSAL_SENTENCES := [Grow_Refusal]string {
+	.None                  = "no cause",
+	.Not_The_Service       = "the sender does not hold the start grant Screen_Capture",
+	.No_Screen_Of_Memory   = "the compositor does not draw into a screen of memory",
+	.Outside_Bounds        = "the size is outside 320 x 240 to 7680 x 4320",
+	.Compositor_Replacing  = "the compositor holds two extra budgets: a replacement is not finished",
+	.Service_Replacing     = "remote_display holds two extra budgets: a replacement is not finished",
+	.Past_Compositor_Share = "the budget of the compositor would pass the share of a process",
+	.Past_Service_Share    = "the budget of remote_display would pass the share of a process",
+	.No_Pages              = "the budget of the root service did not make the extra budgets",
+	.Too_Soon              = "the last growth was less than a second ago",
+}
+
+// grow_refusal_of_word is the border of a word of Grow_Refusal: None and a
+// word past the members are refused.
+grow_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: Grow_Refusal, ok: bool) {
+	member := enum_word.member_of_word(Grow_Refusal, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// resize_refusal_of_grow gives the cause that a viewer gets for a refused
+// growth.
+resize_refusal_of_grow :: proc "contextless" (refusal: Grow_Refusal) -> Resize_Refusal {
+	switch refusal {
+	case .None:
+		return .None
+	case .No_Screen_Of_Memory:
+		return .Device_Screen
+	case .Outside_Bounds:
+		return .Outside_Bounds
+	case .Too_Soon:
+		return .Too_Soon
+	case .Compositor_Replacing, .Past_Compositor_Share:
+		return .Compositor_Budget
+	case .Not_The_Service, .Service_Replacing, .Past_Service_Share, .No_Pages:
+	}
+	return .Service_Budget
+}
+
+// What the root service knows of a growth when it reads the command.
+Grow_Facts :: struct {
+	from_service:          bool, // The sender holds the start grant Screen_Capture.
+	screen_of_memory:      bool, // The machine has no screen of a device, and the compositor draws into a screen of memory.
+	width, height:         u64,
+	compositor_extras:     int, // The extra budgets that the compositor holds: 0, 1, or 2 during a replacement.
+	service_extras:        int, // The extra budgets that the service holds.
+	compositor_paid:       u64, // The pages of the budget of the compositor at its start, and of the extra budgets that it holds.
+	service_paid:          u64, // The pages of the budget of the service at its start, and of the extra budgets that it holds.
+	share:                 u64, // The largest budget of a process of the machine, in pages.
+	now:                   u64, // The clock of the system, in milliseconds.
+	last_growth_at:        u64, // The time of the last growth; 0: none.
+}
+
+// The extra budgets that a process holds at most: the one of the size in
+// force, and the one of the size that replaces it.
+EXTRAS_PER_PROCESS :: 2
+
+// An extra budget that a process holds: its handle in the process, the
+// number of its growth, and the size that it pays. A handle of 0 is none.
+Held_Extra :: struct {
+	handle:        u64,
+	growth:        u64,
+	width, height: u64,
+}
+
+// The extra budgets that the compositor or the service of the remote
+// display holds (src/md/features/screen_of_memory.md, "The growth of the
+// budgets"). Both processes keep them with these procedures, and close the
+// handles and send the releases that they give.
+Held_Extras :: struct {
+	extras: [EXTRAS_PER_PROCESS]Held_Extra,
+}
+
+// held_extras_take keeps an extra budget that the root service gave. false:
+// a handle of 0, a number of 0, a number held already, or no free place;
+// nothing changed, and the process closes the handle with no use.
+held_extras_take :: proc "contextless" (held: ^Held_Extras, extra: Held_Extra) -> bool {
+	if extra.handle == 0 || extra.growth == 0 {
+		return false
+	}
+	free := -1
+	for kept, place in held.extras {
+		if kept.handle != 0 && (kept.growth == extra.growth || kept.handle == extra.handle) {
+			return false
+		}
+		if kept.handle == 0 && free < 0 {
+			free = place
+		}
+	}
+	if free < 0 {
+		return false
+	}
+	held.extras[free] = extra
+	return true
+}
+
+// held_extras_of_size gives the newest extra budget of a size. ok false:
+// none pays it.
+held_extras_of_size :: proc "contextless" (held: ^Held_Extras, width, height: u64) -> (extra: Held_Extra, ok: bool) {
+	for kept in held.extras {
+		if kept.handle != 0 && kept.width == width && kept.height == height && kept.growth > extra.growth {
+			extra, ok = kept, true
+		}
+	}
+	return
+}
+
+// held_extras_give_back removes each extra budget but the ones of
+// holding_growth, which holds the pictures of the process, and of
+// kept_growth, which the compositor keeps for a step back to the size that
+// the face confirmed last (0: none; the budget of the process holds the
+// pictures of the start size). It gives them; the process closes each
+// handle and sends the release of each number. A handle of 0 is none.
+held_extras_give_back :: proc "contextless" (held: ^Held_Extras, holding_growth: u64, kept_growth: u64 = 0) -> (given: [EXTRAS_PER_PROCESS]Held_Extra) {
+	for &kept, place in held.extras {
+		if kept.handle != 0 && kept.growth != holding_growth && kept.growth != kept_growth {
+			given[place] = kept
+			kept = {}
+		}
+	}
+	return
+}
+
+// The releases that a process sent to no ring yet: the ring had no room.
+// Each place holds the number of a growth; a process holds at most
+// EXTRAS_PER_PROCESS extra budgets, so at most as many releases are owed.
+Owed_Releases :: struct {
+	growths: [EXTRAS_PER_PROCESS]u64,
+}
+
+// owed_release_add keeps a release that the ring did not take. false: the
+// number is 0, or it is owed already, or no place is free; nothing changes.
+owed_release_add :: proc "contextless" (owed: ^Owed_Releases, growth: u64) -> bool {
+	if growth == 0 {
+		return false
+	}
+	free := -1
+	for kept, place in owed.growths {
+		if kept == growth {
+			return false
+		}
+		if kept == 0 && free < 0 {
+			free = place
+		}
+	}
+	if free < 0 {
+		return false
+	}
+	owed.growths[free] = growth
+	return true
+}
+
+// The send of the release of a growth on the ring of a process.
+Release_Send_Procedure :: #type proc "contextless" (growth: u64) -> bool
+
+// owed_releases_send sends the owed releases, oldest place first, and keeps
+// each one that the ring does not take for a later pass.
+owed_releases_send :: proc "contextless" (owed: ^Owed_Releases, send: Release_Send_Procedure) {
+	for &growth in owed.growths {
+		if growth != 0 && send(growth) {
+			growth = 0
+		}
+	}
+}
+
+// face_ended_goes_to_start says if the compositor goes back to the start
+// size when the capture face ends: its pictures are in an extra budget, and
+// with no viewer a machine pays only its start size.
+face_ended_goes_to_start :: proc "contextless" (screen_of_memory: bool, pictures_growth: u64) -> bool {
+	return screen_of_memory && pictures_growth != 0
+}
+
+// screen_budget_grow_decide decides a growth for both processes together:
+// the sender, the screen, the size, the least time since the last growth,
+// the extra budgets that each process holds, then the share of each
+// process, in this order. A process that
+// holds one extra budget keeps it until its new pictures are made, so the
+// share pays both. It gives the pages of each new extra budget, or the
+// refusal and no pages.
+//
+// Example: a growth to 2560 x 1440 gives the compositor 7200 pages and the
+// service 10801 pages, when each sum stays inside the share.
+screen_budget_grow_decide :: proc "contextless" (facts: Grow_Facts) -> (refusal: Grow_Refusal, compositor_pages, service_pages: u64) {
+	switch {
+	case !facts.from_service:
+		return .Not_The_Service, 0, 0
+	case !facts.screen_of_memory:
+		return .No_Screen_Of_Memory, 0, 0
+	case !size_in_bounds(facts.width, facts.height):
+		return .Outside_Bounds, 0, 0
+	case facts.last_growth_at != 0 && facts.now - min(facts.last_growth_at, facts.now) < RESIZE_INTERVAL_MILLISECONDS:
+		// A clock that went back counts as age 0.
+		return .Too_Soon, 0, 0
+	case facts.compositor_extras >= EXTRAS_PER_PROCESS:
+		return .Compositor_Replacing, 0, 0
+	case facts.service_extras >= EXTRAS_PER_PROCESS:
+		return .Service_Replacing, 0, 0
+	}
+	compositor_pages = compositor_grow_pages(facts.width, facts.height)
+	service_pages = service_copies_pages(facts.width, facts.height)
+	if facts.compositor_paid > facts.share || compositor_pages > facts.share - facts.compositor_paid {
+		return .Past_Compositor_Share, 0, 0
+	}
+	if facts.service_paid > facts.share || service_pages > facts.share - facts.service_paid {
+		return .Past_Service_Share, 0, 0
+	}
+	return .None, compositor_pages, service_pages
 }

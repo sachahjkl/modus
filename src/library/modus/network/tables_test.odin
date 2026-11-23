@@ -80,6 +80,27 @@ neighbors_full_table :: proc(t: ^testing.T) {
 	before := table
 	testing.expect_value(t, neighbor_learn(&table, 0x0A000300, OTHER_HARDWARE, 200, true, all[:]), Learned.Full)
 	testing.expect(t, before == table)
+	// Each entry in use but the newest: the scan reads the requests only
+	// for an entry older than the oldest found, and still finds that one.
+	newest := 0
+	for item, index in table {
+		if item.time > table[newest].time {
+			newest = index
+		}
+	}
+	newest_address := table[newest].address
+	all_but_newest: [ARP_CAPACITY - 1]u32
+	place := 0
+	for item, index in table {
+		if index != newest {
+			all_but_newest[place] = item.address
+			place += 1
+		}
+	}
+	testing.expect_value(t, neighbor_learn(&table, 0x0A000301, OTHER_HARDWARE, 300, true, all_but_newest[:]), Learned.Replaced)
+	_, newest_kept := neighbor_find(&table, newest_address)
+	_, taken := neighbor_find(&table, 0x0A000301)
+	testing.expect(t, !newest_kept && taken)
 }
 
 // The admitted remotes of a listen grant: a remote is admitted one time,

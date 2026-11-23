@@ -516,7 +516,7 @@ row_persists :: proc "contextless" (table: ^Grant_Table, row: ^Grant_Row) -> boo
 // The persisted table: the object that the root service keeps in a store
 // of the principal. Each number is little-endian.
 TABLE_MAGIC :: "DISKGRNT" // The first 8 bytes.
-TABLE_FORMAT :: u32(3) // A table of another format number is refused.
+TABLE_FORMAT :: u32(4) // A table of another format number is refused.
 KEY_SIZE :: 32 // The bytes of the key of the tag.
 TAG_SIZE :: 32 // The bytes of the tag: keyed BLAKE2b with an output of 32 bytes.
 TABLE_OFFSET_MAGIC :: 0 // 8 bytes.
@@ -545,23 +545,26 @@ TABLE_OFFSET_CLIENT_KEYS :: TABLE_HEADER_SIZE + ROW_CAPACITY * ROW_SIZE // 976.
 // The tag covers each byte before it. The rows after the count of the rows,
 // and the key rows after the count of the keys, are zero bytes: the table
 // always has this size.
-TABLE_OFFSET_TAG :: TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_CAPACITY * CLIENT_KEY_ROW_SIZE // 1136.
-TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 1168.
-#assert(TABLE_SIZE == 1168)
-// The bytes of tables of format 1 (no client keys) and format 2 (client keys
-// without uses). This system does not read them; the sizes name them as an
-// older format in the log.
+TABLE_OFFSET_TAG :: TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_CAPACITY * CLIENT_KEY_ROW_SIZE // 2256.
+TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 2288.
+#assert(TABLE_SIZE == 2288)
+// The bytes of tables of format 1 (no client keys), format 2 (client keys
+// without uses) and format 3 (4 client keys with uses). This system does not
+// read them; the sizes name them as an older format in the log.
 OLDER_FORMAT_TABLE_SIZE :: 1008
 OLDER_FORMAT_2_TABLE_SIZE :: 1136
-#assert(OLDER_FORMAT_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_2_TABLE_SIZE != TABLE_SIZE)
+OLDER_FORMAT_3_TABLE_SIZE :: 1168
+#assert(OLDER_FORMAT_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_2_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_3_TABLE_SIZE != TABLE_SIZE)
+// The count of the client keys is one byte of the header.
+#assert(CLIENT_KEY_CAPACITY <= 255)
 #assert(ROW_OFFSET_PERSISTENCE + 1 <= ROW_SIZE)
 
 // Why `table_decode` refused a table. The sentence of each one is in
 // `table_problem_sentences`.
 Table_File_Problem :: enum u8 {
 	None,
-	Wrong_Size, // Not TABLE_SIZE bytes, nor OLDER_FORMAT_TABLE_SIZE.
-	Older_Format, // OLDER_FORMAT_TABLE_SIZE bytes: a table of the format 1, which this system does not read.
+	Wrong_Size, // Not TABLE_SIZE bytes, nor the size of an older format.
+	Older_Format, // The size of a table of the format 1, 2 or 3, which this system does not read.
 	Not_Authentic, // The tag does not verify under the key: another key, or a changed byte.
 	Wrong_Magic,
 	Wrong_Format,
@@ -581,8 +584,8 @@ Table_File_Problem :: enum u8 {
 @(rodata)
 table_problem_sentences := [Table_File_Problem]string {
 	.None             = "",
-	.Wrong_Size       = "the table does not have 1168 bytes",
-	.Older_Format     = "the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify",
+	.Wrong_Size       = "the table does not have 2288 bytes",
+	.Older_Format     = "the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify",
 	.Not_Authentic    = "its tag does not verify under the key of the principal: another key wrote it, or a byte changed",
 	.Wrong_Magic      = "the table does not start with DISKGRNT",
 	.Wrong_Format     = "the table has another format number",
@@ -593,7 +596,7 @@ table_problem_sentences := [Table_File_Problem]string {
 	.Two_Start_Policies = "two rows hold the grant start_policy",
 	.Start_Policy_Of_A_Named_Principal = "the table of a named principal holds the grant start_policy, which only principal 0 gives",
 	.Bytes_After_Rows = "the table has bytes that are not zero after its last row",
-	.Bad_Client_Keys  = "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or its uses are refused, or a byte after the last key is not zero",
+	.Bad_Client_Keys  = "the client keys of remote in the table are more than 32, or one is zero bytes, or one comes two times, or its uses are refused, or a byte after the last key is not zero",
 }
 
 // table_principal_problem checks a table that its tag verified against its
@@ -698,7 +701,7 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 // change them after the check. kept is zero bytes unless the tag verified.
 table_decode_kept :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8, kept: ^[TABLE_SIZE]u8) -> (table: Grant_Table, problem: Table_File_Problem) {
 	kept^ = {}
-	if len(bytes) == OLDER_FORMAT_TABLE_SIZE || len(bytes) == OLDER_FORMAT_2_TABLE_SIZE {
+	if len(bytes) == OLDER_FORMAT_TABLE_SIZE || len(bytes) == OLDER_FORMAT_2_TABLE_SIZE || len(bytes) == OLDER_FORMAT_3_TABLE_SIZE {
 		return {}, .Older_Format
 	}
 	if len(bytes) != TABLE_SIZE {

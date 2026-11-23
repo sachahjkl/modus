@@ -66,15 +66,17 @@ REQUEST_LIMIT :: REQUEST_SIZE + REGION_SIZE
 // region.
 ANSWER_LIMIT :: ANSWER_SIZE + REGION_SIZE
 
-// The QUIC connections that the remote service holds at one time: the tool,
-// and one more while a tool starts again. A third client gets no record
-// until one ends.
-CONNECTION_CAPACITY :: 2
+// The QUIC connections that the remote service holds at one time: tools,
+// agents and other machines of a principal connect together. The client
+// past this count gets no record until one ends. Each connection costs its
+// stream records and their buffers (CALLS_AT_ONCE of each) in the budget
+// of the service, so the count and CALLS_AT_ONCE are chosen together.
+CONNECTION_CAPACITY :: 32
 // The calls of one connection at one time: its stream records. The server
 // gives the client this many streams (MAX_STREAMS), and one more each time
 // that a stream ends: a client that opens one more waits for MAX_STREAMS
 // (it sends STREAMS_BLOCKED), it is not refused.
-CALLS_AT_ONCE :: 8
+CALLS_AT_ONCE :: 4
 
 // The application error code of a RESET_STREAM or a STOP_SENDING of a call
 // stream, and of a CONNECTION_CLOSE of the application.

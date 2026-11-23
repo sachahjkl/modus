@@ -281,11 +281,19 @@ hostile_tables :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
 	_, problem = table_decode(good[:TABLE_SIZE - 1], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Wrong_Size)
-	// A table of format 1 or format 2 is named Older_Format, and a restore cannot help it.
+	// A table of format 1, 2 or 3 is named Older_Format, and a restore cannot help it.
 	_, problem = table_decode(good[:OLDER_FORMAT_TABLE_SIZE], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
 	_, problem = table_decode(good[:OLDER_FORMAT_2_TABLE_SIZE], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
+	_, problem = table_decode(good[:OLDER_FORMAT_3_TABLE_SIZE], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
+	// One byte past the table, and one byte past the table of format 3.
+	long: [TABLE_SIZE + 1]u8
+	_, problem = table_decode(long[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Wrong_Size)
+	_, problem = table_decode(good[:OLDER_FORMAT_3_TABLE_SIZE + 1], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Wrong_Size)
 	testing.expect(t, table_problem_is_format(.Older_Format) && table_problem_is_format(.Wrong_Format))
 	testing.expect(t, !table_problem_is_format(.Not_Authentic) && !table_problem_is_format(.Wrong_Size))
 	// Fields that the key signed and that break a rule: the tag is made

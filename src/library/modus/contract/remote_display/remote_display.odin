@@ -27,6 +27,7 @@ package remote_display
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
+import "modus:contract/memory_screen"
 import "modus:contract/pointer_pictures"
 
 // The UDP port of the listen grant of the service, on the address of the
@@ -38,15 +39,18 @@ LISTEN_PORT :: 7101
 // that offers another one fails the handshake.
 APPLICATION_PROTOCOL :: "modus-remote-display"
 
-// The viewers that the service holds at one time. A third client gets no
-// record until one ends.
-CONNECTION_CAPACITY :: 2
+// The viewers that the service holds at one time: a person on two
+// machines, agents and a colleague see the screen together. The viewer
+// past this count gets no record until one ends.
+CONNECTION_CAPACITY :: 8
 
-// The largest screen: the reference screen of the system
-// (src/md/features/desktop_to_browser.md). A record that names a larger
-// one is refused.
-SCREEN_WIDTH_LIMIT :: 1920
-SCREEN_HEIGHT_LIMIT :: 1080
+// The largest screen that the protocol carries: 8K UHD, so 1440p, 4K and
+// 5K screens pass. A record that names a larger one is refused. This bounds
+// the words of the protocol only: the memory of the service follows the
+// screen in force, and the bounds of a viewer frame follow the screen of
+// its session (viewer_frame_piece_limit, viewer_frame_bytes_limit).
+SCREEN_WIDTH_LIMIT :: 7680
+SCREEN_HEIGHT_LIMIT :: 4320
 
 // The largest screen piece. A rectangle of the damage goes as screen pieces of this size at
 // most, from its top left corner, row after row.
@@ -54,9 +58,9 @@ SCREEN_PIECE_WIDTH :: 128
 SCREEN_PIECE_HEIGHT :: 64
 SCREEN_PIECE_PIXEL_LIMIT :: SCREEN_PIECE_WIDTH * SCREEN_PIECE_HEIGHT
 
-// The most screen pieces of one viewer frame: a whole screen of the largest size, with the
-// partial screen pieces of 8 rectangles that do not meet.
-VIEWER_FRAME_PIECE_LIMIT :: 1024
+// The rectangles of one viewer frame at most: the damage set of the service
+// (interface.DAMAGE_CAPACITY), whose rectangles do not meet.
+VIEWER_FRAME_RECTANGLE_LIMIT :: 8
 
 // The application error code of a CONNECTION_CLOSE or a RESET_STREAM of a
 // connection to the service.
@@ -68,6 +72,7 @@ Display_Error :: enum u64 {
 	Revoked           = 4, // The grant of the key ended: a revocation, or a lock of the session of its principal.
 	Out_Of_Order      = 5, // A Viewer_Frame_Taken that names no viewer frame in flight.
 	Timeout           = 6, // The viewer did not take a viewer frame in its bound.
+	Screen_Not_Held   = 7, // The service cannot hold the screen in force: its budget does not pay the screen, or the screen is past the largest screen of the protocol.
 }
 
 // The name of each code, for the log of the two sides.
@@ -80,6 +85,7 @@ DISPLAY_ERROR_NAMES := [Display_Error]string {
 	.Revoked           = "Revoked",
 	.Out_Of_Order      = "Out_Of_Order",
 	.Timeout           = "Timeout",
+	.Screen_Not_Held   = "Screen_Not_Held",
 }
 
 // display_error_name gives the name of an application error code, or "" for
@@ -101,6 +107,7 @@ Record_Kind :: enum u32 {
 	Pointer_Shape        = 6, // Pointer_Shape_Body: pointer shape, form, size, and hot spot.
 	Pointer_Picture      = 7, // Pointer_Picture_Header, then size * size * 4 RGBA pixels.
 	Pointer_Warp         = 8, // Pointer_Warp_Body: machine-initiated pointer move and input echo count.
+	Screen_Size_Refused  = 9, // Screen_Size_Refused_Body: the size that a Screen_Size_Ask named, and the cause of its refusal.
 	Viewer_Frame_Taken   = 16, // Viewer_Frame_Taken_Body.
 	Screen_Piece_Request = 17, // Screen_Piece_Request_Body.
 	Key                  = 18, // Key_Body.
@@ -109,11 +116,16 @@ Record_Kind :: enum u32 {
 	// stream. The service writes nothing before it, and refuses it a
 	// second time.
 	Session_Start        = 20,
+	// Screen_Size_Body: a size of the screen of memory that a viewer with the
+	// input asks (src/md/features/screen_of_memory.md). The service answers
+	// with Screen_Size_Refused, or with a Screen_Size of that size between
+	// two viewer frames.
+	Screen_Size_Ask      = 21,
 }
 
 // The version of the protocol that Session_Start names. A viewer of
 // another version is refused.
-PROTOCOL_VERSION :: 2
+PROTOCOL_VERSION :: 3
 
 // The allowed pixel side of a pointer picture in protocol version 2.
 POINTER_SIZE_MINIMUM :: 24
@@ -142,6 +154,16 @@ Screen_Size_Body :: struct {
 	width:  u32,
 	height: u32,
 }
+
+// The refusal of a Screen_Size_Ask: the size that it named, the cause, a
+// reserved word. The viewer keeps its session.
+Screen_Size_Refused_Body :: struct {
+	width:    u32,
+	height:   u32,
+	refusal:  u32, // memory_screen.Resize_Refusal, not None.
+	reserved: u32, // 0.
+}
+#assert(size_of(Screen_Size_Refused_Body) == 16)
 
 Viewer_Frame_Start_Body :: struct {
 	serial:             u64, // One more for each viewer frame of the session, from 1.
@@ -270,11 +292,13 @@ BODY_SIZES := #sparse[Record_Kind]u32 {
 	.Pointer_Shape        = size_of(Pointer_Shape_Body),
 	.Pointer_Picture      = size_of(Pointer_Picture_Header),
 	.Pointer_Warp         = size_of(Pointer_Warp_Body),
+	.Screen_Size_Refused  = size_of(Screen_Size_Refused_Body),
 	.Viewer_Frame_Taken   = size_of(Viewer_Frame_Taken_Body),
 	.Screen_Piece_Request = size_of(Screen_Piece_Request_Body),
 	.Key                  = size_of(Key_Body),
 	.Pointer              = size_of(Pointer_Body),
 	.Session_Start        = size_of(Session_Start_Body),
+	.Screen_Size_Ask      = size_of(Screen_Size_Body),
 }
 
 // The bound of the length of a record of each direction. A record of the
@@ -286,16 +310,37 @@ POINTER_PICTURE_MIN_BODY :: size_of(Pointer_Picture_Header) + POINTER_SIZE_MINIM
 POINTER_PICTURE_BODY_LIMIT :: size_of(Pointer_Picture_Header) + POINTER_SIZE_MAXIMUM * POINTER_SIZE_MAXIMUM * 4
 SERVICE_BODY_LIMIT :: SCREEN_PIECE_BODY_LIMIT
 #assert(POINTER_PICTURE_BODY_LIMIT <= SERVICE_BODY_LIMIT)
-// The bytes of the screen pieces of one viewer frame at most: each pixel of the largest
-// screen in its worst code, and the headers of the most screen pieces.
-VIEWER_FRAME_BYTES_LIMIT :: SCREEN_WIDTH_LIMIT * SCREEN_HEIGHT_LIMIT * CODED_PIXEL_LIMIT + VIEWER_FRAME_PIECE_LIMIT * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header))
+// viewer_frame_piece_limit gives the most screen pieces of one viewer frame
+// of a screen: the pieces of the whole screen, and the partial pieces of
+// VIEWER_FRAME_RECTANGLE_LIMIT rectangles that do not meet. A rectangle of
+// w x h has at most (w / 128 + 1) * (h / 64 + 1) pieces: its area, then a
+// row and a column of partial pieces and a corner, each of which the area
+// of the screen does not count. The sum of the areas is at most the screen.
+viewer_frame_piece_limit :: proc "contextless" (screen: Screen) -> u64 {
+	across := u64((screen.width + SCREEN_PIECE_WIDTH - 1) / SCREEN_PIECE_WIDTH)
+	down := u64((screen.height + SCREEN_PIECE_HEIGHT - 1) / SCREEN_PIECE_HEIGHT)
+	return across * down + VIEWER_FRAME_RECTANGLE_LIMIT * (across + down + 1)
+}
+
+// viewer_frame_bytes_limit gives the bytes of the screen pieces of one
+// viewer frame of a screen at most: each pixel of the screen in its worst
+// code, and the headers of the most screen pieces.
+viewer_frame_bytes_limit :: proc "contextless" (screen: Screen) -> u64 {
+	return u64(screen.width) * u64(screen.height) * CODED_PIXEL_LIMIT + viewer_frame_piece_limit(screen) * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header))
+}
+
+// The largest screen, as a Screen.
+SCREEN_LARGEST :: Screen{SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT}
+// The pieces of a viewer frame of the largest screen fit the count of a
+// Viewer_Frame_Start.
+#assert((SCREEN_WIDTH_LIMIT / SCREEN_PIECE_WIDTH + 1) * (SCREEN_HEIGHT_LIMIT / SCREEN_PIECE_HEIGHT + 1) * (VIEWER_FRAME_RECTANGLE_LIMIT + 1) < 1 << 32)
 
 // Why a border refused a record.
 Record_Problem :: enum u8 {
 	None,
 	Unknown_Kind, // The kind names no member, or None.
 	Wrong_Direction, // A kind of the other direction.
-	Past_Bound, // A length past the bound of the direction, a viewer frame past VIEWER_FRAME_BYTES_LIMIT or VIEWER_FRAME_PIECE_LIMIT.
+	Past_Bound, // A length past the bound of the direction, a viewer frame past viewer_frame_bytes_limit or viewer_frame_piece_limit of its screen.
 	Wrong_Length, // A length that is not the length of the kind, or a body that is not that length.
 	Outside_Screen, // A rectangle or a place outside the screen, or a screen past its limit.
 	Empty_Rectangle, // A rectangle of width or height 0, or a screen piece larger than SCREEN_PIECE_WIDTH x SCREEN_PIECE_HEIGHT.
@@ -392,9 +437,9 @@ record_length_problem :: proc "contextless" (header: Record_Header, direction: D
 // kind_direction gives the direction of a kind.
 kind_direction :: proc "contextless" (kind: Record_Kind) -> Direction {
 	switch kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp, .Screen_Size_Refused:
 		return .To_Viewer
-	case .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
+	case .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start, .Screen_Size_Ask:
 		return .To_Service
 	}
 	return .To_Viewer
@@ -409,6 +454,7 @@ Viewer_Record :: struct {
 	screen_piece_request: Screen_Piece_Request_Body,
 	key:          Key_Body,
 	pointer:      Pointer_Body,
+	screen_size_ask: Screen_Size_Body,
 }
 
 // viewer_record_check is the border of a whole record from the viewer: the
@@ -423,9 +469,17 @@ viewer_record_check :: proc "contextless" (header: Record_Header, body: []u8, sc
 	}
 	record.kind = header.kind
 	switch header.kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp, .Screen_Size_Refused:
 		// record_length_problem took only a kind of this direction.
 		return {}, .Wrong_Direction
+	case .Screen_Size_Ask:
+		// A size of a screen of memory: each side inside the bounds of
+		// memory_screen, whatever the screen of the session.
+		ask := body_read(body, Screen_Size_Body)
+		if !memory_screen.size_in_bounds(u64(ask.width), u64(ask.height)) {
+			return {}, .Outside_Screen
+		}
+		record.screen_size_ask = ask
 	case .Session_Start:
 		start := body_read(body, Session_Start_Body)
 		if start.version != PROTOCOL_VERSION || start.reserved != 0 {
@@ -477,6 +531,8 @@ Service_Record :: struct {
 	pointer_form_member:  pointer_pictures.Pointer_Form,
 	pointer_pixels:       []u8, // A Pointer_Picture: its size * size * 4 pixel bytes, in the body that the caller gave.
 	pointer_warp:         Pointer_Warp_Body,
+	screen_size_refused:  Screen_Size_Refused_Body,
+	refusal:              memory_screen.Resize_Refusal, // A Screen_Size_Refused: its cause, a member.
 }
 
 // pointer_shape_fields_check validates the closed shape and form members,
@@ -509,9 +565,20 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 	}
 	record.kind = header.kind
 	switch header.kind {
-	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
+	case .None, .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start, .Screen_Size_Ask:
 		// record_length_problem took only a kind of this direction.
 		return {}, .Wrong_Direction
+	case .Screen_Size_Refused:
+		refused := body_read(body, Screen_Size_Refused_Body)
+		if problem = screen_problem({refused.width, refused.height}); problem != .None {
+			return {}, problem
+		}
+		refusal, refusal_ok := memory_screen.resize_refusal_of_word(u64(refused.refusal))
+		if !refusal_ok || refused.reserved != 0 {
+			return {}, .Bad_Field
+		}
+		record.screen_size_refused = refused
+		record.refusal = refusal
 	case .Screen_Size:
 		size := body_read(body, Screen_Size_Body)
 		if problem = screen_problem({size.width, size.height}); problem != .None {
@@ -523,7 +590,7 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 		switch {
 		case start.serial == 0 || start.reserved != 0:
 			return {}, .Bad_Field
-		case start.screen_piece_count > VIEWER_FRAME_PIECE_LIMIT || start.bytes > VIEWER_FRAME_BYTES_LIMIT:
+		case u64(start.screen_piece_count) > viewer_frame_piece_limit(screen) || start.bytes > viewer_frame_bytes_limit(screen):
 			return {}, .Past_Bound
 		case u64(start.screen_piece_count) * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header)) > start.bytes:
 			// Each screen piece has its two headers at least.
@@ -711,4 +778,65 @@ screen_piece_at :: proc "contextless" (x, y, width, height: u32, index: u32) -> 
 	piece_width = min(SCREEN_PIECE_WIDTH, x + width - piece_x)
 	piece_height = min(SCREEN_PIECE_HEIGHT, y + height - piece_y)
 	return
+}
+
+// The screens that a viewer may still name after changes of the size of a
+// screen of memory that it did not see: until it takes a viewer frame of
+// the size in force, its records name a place of any screen before it
+// (src/md/features/screen_of_memory.md, "The subtle points").
+Screen_Lag :: struct {
+	lagging:      bool,
+	largest:      Screen, // The largest width and the largest height of the screens before, since the viewer last saw the size in force.
+	until_serial: u64, // The first viewer frame of the size in force: its Viewer_Frame_Taken ends the lag.
+}
+
+// screen_lag_change takes a change of the size: before is the screen that
+// changed, and next_serial the serial of the next viewer frame of the
+// viewer. Two changes in a row keep the largest screen of both.
+screen_lag_change :: proc "contextless" (lag: ^Screen_Lag, before: Screen, next_serial: u64) {
+	if !lag.lagging {
+		lag.largest = before
+	}
+	lag.largest = {max(lag.largest.width, before.width), max(lag.largest.height, before.height)}
+	lag.lagging = true
+	lag.until_serial = next_serial
+}
+
+// screen_lag_taken ends the lag when the viewer took a viewer frame of the
+// size in force.
+screen_lag_taken :: proc "contextless" (lag: ^Screen_Lag, serial: u64) {
+	if lag.lagging && serial >= lag.until_serial {
+		lag^ = {}
+	}
+}
+
+// screen_lag_border gives the screen that the border reads the records of
+// a viewer against: the screen in force, or while it lags, the larger
+// side of it and of each screen before.
+screen_lag_border :: proc "contextless" (lag: ^Screen_Lag, screen: Screen) -> Screen {
+	if !lag.lagging {
+		return screen
+	}
+	return {max(screen.width, lag.largest.width), max(screen.height, lag.largest.height)}
+}
+
+// What the service does after it tried to make its copies of a size of
+// the screen (src/md/features/screen_of_memory.md).
+Screen_Change_Step :: enum u8 {
+	Open        = 0, // The copies hold: the face opens at the size.
+	Go_Back     = 1, // The copies of a new size were refused: the compositor goes back to the size before, and no viewer ends.
+	End_Viewers = 2, // The size before was refused too, or there is none: the viewers end with Screen_Not_Held.
+}
+
+// screen_change_step decides after the copies of a size: made says if they
+// hold, going_back if the size was the size before a refused change, and
+// has_before if a size before exists (a change, not the first face).
+screen_change_step :: proc "contextless" (made, going_back, has_before: bool) -> Screen_Change_Step {
+	switch {
+	case made:
+		return .Open
+	case !going_back && has_before:
+		return .Go_Back
+	}
+	return .End_Viewers
 }

@@ -159,7 +159,38 @@ REGION_PAGES :: 16
 //               Bit 63 (CALLER_ACTS_FOR_PRINCIPAL): the caller acts for that
 //               principal, and can see what the service holds for all
 //               callers. A caller without it sees what is its own only.
-SERVICE_CONNECTION_CAPACITY :: 8 // The callers of one service.
+// The callers of one service at one time: tools, consoles, agents through
+// `remote` and other services. A service waits on the call ring of each
+// one, two words of a wait each, and keeps half of a wait of the kernel
+// (op.WORD_WAIT_CAPACITY) for its other words.
+SERVICE_CONNECTION_CAPACITY :: 48
+// The connections that the root service holds at one time: each client of
+// each service. Stated once here, so the table of remote is sized from the
+// share that the root service gives it (remote.SERVICE_CONNECTIONS).
+ROOT_CONNECTION_CAPACITY :: 256
+// The places of each service that a caller for a client of another machine
+// (a connection of `remote` for a row of its client table) never takes:
+// the clients that a principal allowed cannot fill a service, and a local
+// console, a window or another service still connects.
+SERVICE_CONNECTION_LOCAL_RESERVE :: 16
+#assert(SERVICE_CONNECTION_LOCAL_RESERVE < SERVICE_CONNECTION_CAPACITY)
+
+// connection_place_open says if a new connection can take a place: of a
+// service that holds service_count callers, in a table of table_capacity
+// places of which table_used are taken, remote_used of them for clients of
+// other machines. A connection for a client of another machine takes at
+// most remote_share places of the table and leaves
+// SERVICE_CONNECTION_LOCAL_RESERVE places of each service; a local caller
+// takes any free place.
+connection_place_open :: proc "contextless" (for_remote_client: bool, service_count, table_used, remote_used, table_capacity, remote_share: int) -> bool {
+	if table_used >= table_capacity || service_count >= SERVICE_CONNECTION_CAPACITY {
+		return false
+	}
+	if for_remote_client {
+		return remote_used < remote_share && service_count < SERVICE_CONNECTION_CAPACITY - SERVICE_CONNECTION_LOCAL_RESERVE
+	}
+	return true
+}
 CALLER_AMOUNT_MASK :: u64(1) << 46 - 1 // The bits of the amount in values[6]: bits 0 to 45.
 CALLER_ERASES_VERSIONS :: u64(1) << 46 // The bit of values[6] set when the caller may erase the versions of its objects.
 CALLER_READS_ONLY :: u64(1) << 47 // The bit of values[6] set when the connection reads only.

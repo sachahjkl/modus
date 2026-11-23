@@ -234,6 +234,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.outcome = debug_start(item, name, record.values, &answer.values)
 	case .Plan_Roles:
 		answer.outcome = plan_roles_command(item, record.values, &answer.values)
+	case .Screen_Budget:
+		answer.outcome = screen_budget_command(item, record, &answer.values) // screen_budgets.odin
 	}
 	return answer
 }
@@ -247,13 +249,17 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 	command := root_ring.Root_Command.Start
 	list, list_ok := root_ring.start_wiring_list_of_word(record.values[4])
 	answer, answer_ok := root_ring.start_answer_of_word(record.values[5])
+	// The size of a screen of memory: only from a start policy, only for
+	// the holder of Display, and only on a machine with no screen
+	// (src/md/features/screen_of_memory.md).
+	memory_width, memory_height, memory_ok := start_policy_rules.screen_of_memory_of_start(record.values[6], .Start_Policy in item.start_grant_set.grants, name, !no_screen_at_the_start)
 	refusal: [7]u64
 	switch {
 	case !list_ok:
 		refusal = root_ring.word_refusal(command, 2, record.values[4], u64(max(root_ring.Start_Wiring_List)))
 	case !answer_ok:
 		refusal = root_ring.word_refusal(command, 3, record.values[5], u64(max(root_ring.Start_Answer)))
-	case record.values[6] != 0:
+	case !memory_ok:
 		refusal = root_ring.word_refusal(command, 4, record.values[6], 0)
 	}
 	if refusal != ([7]u64{}) {
@@ -263,7 +269,7 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		return .Argument_Refused
 	}
 	if .Start_Policy in item.start_grant_set.grants {
-		return start_policy_start(item, record.tag, name, list, values, held)
+		return start_policy_start(item, record.tag, name, list, values, held, {memory_width, memory_height})
 	}
 	// A process that a process starts belongs to the session of the
 	// process that asks, and the asker of its start is that process.
@@ -450,4 +456,3 @@ start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, s
 	system.memory_unmap(target_address)
 	return start("edit", item.principal, item, nil, nil, values, store_override = store_name, store_limit_override = edit_store_limit(store_name), edit_target_page = target_page)
 }
-

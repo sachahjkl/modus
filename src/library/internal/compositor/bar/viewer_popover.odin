@@ -6,7 +6,7 @@ package bar
 
 // Maximum viewers shown in the bar popover; asserted equal to
 // display.CAPTURE_VIEWER_CAPACITY in the compositor.
-VIEWER_CAPACITY :: 4
+VIEWER_CAPACITY :: 8
 
 // Geometry of the compact viewer list card under the bar mark.
 VIEWER_POPOVER_WIDTH :: 272

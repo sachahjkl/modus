@@ -3,6 +3,7 @@ package remote_display
 
 import "core:math/rand"
 import "core:testing"
+import "modus:contract/memory_screen"
 import "modus:contract/pointer_pictures"
 
 // The screen of the tests: the screen of the test machine.
@@ -36,7 +37,7 @@ service_check :: proc(kind: Record_Kind, body: $T) -> (Service_Record, Record_Pr
 // of the kind.
 @(test)
 record_length_problem_refuses_each_header_that_breaks_a_rule :: proc(t: ^testing.T) {
-	unknown := [?]u32{u32(Record_Kind.None), u32(Record_Kind.Pointer_Warp) + 1, u32(Record_Kind.Viewer_Frame_Taken) - 1, u32(max(Record_Kind)) + 1, 1 << 31, max(u32)}
+	unknown := [?]u32{u32(Record_Kind.None), u32(Record_Kind.Screen_Size_Refused) + 1, u32(Record_Kind.Viewer_Frame_Taken) - 1, u32(max(Record_Kind)) + 1, 1 << 31, max(u32)}
 	for word in unknown {
 		for direction in Direction {
 			problem := record_length_problem({kind = Record_Kind(word), length = 8}, direction)
@@ -171,8 +172,8 @@ service_record_check_refuses_each_viewer_frame_and_screen_piece_past_its_bound :
 		problem: Record_Problem,
 	} {
 		{{serial = 0, screen_piece_count = 1, bytes = 64}, .Bad_Field},
-		{{serial = 1, screen_piece_count = VIEWER_FRAME_PIECE_LIMIT + 1, bytes = VIEWER_FRAME_BYTES_LIMIT}, .Past_Bound},
-		{{serial = 1, screen_piece_count = 1, bytes = VIEWER_FRAME_BYTES_LIMIT + 1}, .Past_Bound},
+		{{serial = 1, screen_piece_count = u32(viewer_frame_piece_limit(SCREEN)) + 1, bytes = viewer_frame_bytes_limit(SCREEN)}, .Past_Bound},
+		{{serial = 1, screen_piece_count = 1, bytes = viewer_frame_bytes_limit(SCREEN) + 1}, .Past_Bound},
 		{{serial = 1, screen_piece_count = max(u32), bytes = max(u64)}, .Past_Bound},
 		{{serial = 1, screen_piece_count = 2, bytes = 2 * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header)) - 1}, .Wrong_Length},
 	}
@@ -216,8 +217,67 @@ service_record_check_refuses_each_viewer_frame_and_screen_piece_past_its_bound :
 	// The cases that hold: the largest screen, a viewer frame at its bounds.
 	_, size_held := service_check(.Screen_Size, Screen_Size_Body{SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT})
 	testing.expect_value(t, size_held, Record_Problem.None)
-	_, start_held := service_check(.Viewer_Frame_Start, Viewer_Frame_Start_Body{serial = 1, screen_piece_count = VIEWER_FRAME_PIECE_LIMIT, bytes = VIEWER_FRAME_BYTES_LIMIT})
+	_, start_held := service_check(.Viewer_Frame_Start, Viewer_Frame_Start_Body{serial = 1, screen_piece_count = u32(viewer_frame_piece_limit(SCREEN)), bytes = viewer_frame_bytes_limit(SCREEN)})
 	testing.expect_value(t, start_held, Record_Problem.None)
+}
+
+// The screens of real displays pass the border: 1440p, 4K, 5K and 8K, and
+// the reference screen; one pixel past 8K in either side is refused. A
+// viewer frame of an 8K screen at its bounds passes, and one piece or one
+// byte more is refused: the bounds follow the screen of the session, not
+// the largest screen.
+@(test)
+high_resolution_screens_pass_and_one_pixel_past_8k_is_refused :: proc(t: ^testing.T) {
+	refused := [?]Screen_Size_Body{{SCREEN_WIDTH_LIMIT + 1, SCREEN_HEIGHT_LIMIT}, {SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT + 1}, {max(u32), 1}, {1, max(u32)}, {0, SCREEN_HEIGHT_LIMIT}}
+	for size in refused {
+		_, problem := service_check(.Screen_Size, size)
+		testing.expectf(t, problem == .Outside_Screen, "the screen %v gave %v", size, problem)
+	}
+	testing.expect_value(t, SCREEN_WIDTH_LIMIT, 7680)
+	testing.expect_value(t, SCREEN_HEIGHT_LIMIT, 4320)
+	screens := [?]Screen{{1920, 1080}, {2560, 1440}, {3840, 2160}, {5120, 2880}, {7680, 4320}, {1, 1}}
+	for screen in screens {
+		bytes := body_bytes(Screen_Size_Body{screen.width, screen.height})
+		_, problem := service_record_check({kind = .Screen_Size, length = u32(len(bytes))}, bytes, {})
+		testing.expectf(t, problem == .None, "the screen %v gave %v", screen, problem)
+		at_bound := body_bytes(Viewer_Frame_Start_Body{serial = 1, screen_piece_count = u32(viewer_frame_piece_limit(screen)), bytes = viewer_frame_bytes_limit(screen)})
+		_, start_problem := service_record_check({kind = .Viewer_Frame_Start, length = u32(len(at_bound))}, at_bound, screen)
+		testing.expectf(t, start_problem == .None, "a viewer frame at the bounds of %v gave %v", screen, start_problem)
+		one_piece_more := body_bytes(Viewer_Frame_Start_Body{serial = 1, screen_piece_count = u32(viewer_frame_piece_limit(screen)) + 1, bytes = viewer_frame_bytes_limit(screen)})
+		_, piece_problem := service_record_check({kind = .Viewer_Frame_Start, length = u32(len(one_piece_more))}, one_piece_more, screen)
+		testing.expectf(t, piece_problem == .Past_Bound, "one piece past the bound of %v gave %v", screen, piece_problem)
+		one_byte_more := body_bytes(Viewer_Frame_Start_Body{serial = 1, screen_piece_count = 1, bytes = viewer_frame_bytes_limit(screen) + 1})
+		_, byte_problem := service_record_check({kind = .Viewer_Frame_Start, length = u32(len(one_byte_more))}, one_byte_more, screen)
+		testing.expectf(t, byte_problem == .Past_Bound, "one byte past the bound of %v gave %v", screen, byte_problem)
+	}
+	// A screen piece at the bottom right corner of an 8K screen passes, and
+	// one pixel past it is refused.
+	largest := Screen{SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT}
+	testing.expect_value(t, rectangle_problem(SCREEN_WIDTH_LIMIT - SCREEN_PIECE_WIDTH, SCREEN_HEIGHT_LIMIT - SCREEN_PIECE_HEIGHT, SCREEN_PIECE_WIDTH, SCREEN_PIECE_HEIGHT, largest), Record_Problem.None)
+	testing.expect_value(t, rectangle_problem(SCREEN_WIDTH_LIMIT - SCREEN_PIECE_WIDTH + 1, 0, SCREEN_PIECE_WIDTH, 1, largest), Record_Problem.Outside_Screen)
+}
+
+// The bound of the screen pieces of a viewer frame holds for the worst
+// damage: the most rectangles that do not meet, each cut so that each of
+// its rows and columns of pieces is partial, on each real screen.
+@(test)
+the_piece_bound_holds_for_the_most_rectangles_that_do_not_meet :: proc(t: ^testing.T) {
+	screens := [?]Screen{{1920, 1080}, {2560, 1440}, {3840, 2160}, {5120, 2880}, {7680, 4320}}
+	for screen in screens {
+		// VIEWER_FRAME_RECTANGLE_LIMIT bands side by side, each one pixel
+		// narrower than a whole count of pieces, and each one full height
+		// less one pixel: each band has a partial column and a partial row.
+		band := screen.width / VIEWER_FRAME_RECTANGLE_LIMIT
+		total: u64
+		for _ in 0 ..< VIEWER_FRAME_RECTANGLE_LIMIT {
+			total += u64(screen_piece_count(band - 1, screen.height - 1))
+		}
+		testing.expectf(t, total <= viewer_frame_piece_limit(screen), "the pieces of %v: %d past %d", screen, total, viewer_frame_piece_limit(screen))
+		// The whole screen as one rectangle.
+		testing.expect(t, u64(screen_piece_count(screen.width, screen.height)) <= viewer_frame_piece_limit(screen))
+	}
+	testing.expect_value(t, viewer_frame_piece_limit({1920, 1080}), u64(15 * 17 + VIEWER_FRAME_RECTANGLE_LIMIT * (15 + 17 + 1)))
+	testing.expect_value(t, viewer_frame_piece_limit({7680, 4320}), u64(60 * 68 + VIEWER_FRAME_RECTANGLE_LIMIT * (60 + 68 + 1)))
 }
 
 // What screen_piece_encode writes, screen_piece_decode reads to the same pixels, for each
@@ -310,8 +370,9 @@ screen_pieces_cover_a_rectangle_once :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, covered == u64(size[0]) * u64(size[1]), "the screen pieces of %v cover %d pixels", size, covered)
 	}
-	testing.expect_value(t, screen_piece_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT), 15 * 17)
-	testing.expect(t, screen_piece_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT) <= VIEWER_FRAME_PIECE_LIMIT)
+	testing.expect_value(t, screen_piece_count(1920, 1080), 15 * 17)
+	testing.expect_value(t, screen_piece_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT), 60 * 68)
+	testing.expect(t, u64(screen_piece_count(SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT)) <= viewer_frame_piece_limit({SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT}))
 }
 
 // Protocol version 2 borders: Pointer_Shape, Pointer_Picture, Pointer_Warp,
@@ -445,4 +506,91 @@ a_small_damage_is_a_share_of_the_screen :: proc(t: ^testing.T) {
 	testing.expect_value(t, small_damage_pixels(0, 1080), u64(0))
 	testing.expect_value(t, small_damage_pixels(1920, 0), u64(0))
 	testing.expect_value(t, small_damage_pixels(max(u32), max(u32)), u64(max(u32)) * u64(max(u32)) / SMALL_DAMAGE_SCREEN_DIVISOR)
+}
+
+// A Screen_Size_Ask: each side at its bounds, whatever the screen of the
+// session, and the kind in the other direction; then the least and the
+// largest size, which the border takes.
+@(test)
+a_screen_size_ask_at_its_edges :: proc(t: ^testing.T) {
+	refused := [?]Screen_Size_Body{{0, 0}, {0, 1080}, {1920, 0}, {319, 240}, {320, 239}, {7681, 4320}, {7680, 4321}, {max(u32), max(u32)}}
+	for size in refused {
+		record, problem := viewer_check(.Screen_Size_Ask, size)
+		testing.expectf(t, problem == .Outside_Screen && record.kind == .None, "%v gave %v", size, problem)
+	}
+	_, wrong_way := service_check(.Screen_Size_Ask, Screen_Size_Body{1920, 1080})
+	testing.expect_value(t, wrong_way, Record_Problem.Wrong_Direction)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Size_Ask, length = 9}, .To_Service), Record_Problem.Wrong_Length)
+	testing.expect_value(t, record_length_problem({kind = .Screen_Size_Ask, length = 7}, .To_Service), Record_Problem.Wrong_Length)
+	for size in ([?]Screen_Size_Body{{320, 240}, {2560, 1440}, {7680, 4320}}) {
+		record, problem := viewer_check(.Screen_Size_Ask, size)
+		testing.expect(t, problem == .None && record.kind == .Screen_Size_Ask && record.screen_size_ask == size)
+	}
+}
+
+// A Screen_Size_Refused: a cause of None and one past the last member, a
+// reserved word, a size past the limit of a screen, the other direction;
+// then each cause, which the border takes.
+@(test)
+a_screen_size_refused_at_its_edges :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		body:    Screen_Size_Refused_Body,
+		problem: Record_Problem,
+	} {
+		{{2560, 1440, 0, 0}, .Bad_Field},
+		{{2560, 1440, u32(max(memory_screen.Resize_Refusal)) + 1, 0}, .Bad_Field},
+		{{2560, 1440, max(u32), 0}, .Bad_Field},
+		{{2560, 1440, 1, 1}, .Bad_Field},
+		{{0, 1440, 1, 0}, .Outside_Screen},
+		{{SCREEN_WIDTH_LIMIT + 1, 1440, 1, 0}, .Outside_Screen},
+	}
+	for item in cases {
+		record, problem := service_check(.Screen_Size_Refused, item.body)
+		testing.expectf(t, problem == item.problem && record.kind == .None, "%v gave %v", item.body, problem)
+	}
+	_, wrong_way := viewer_check(.Screen_Size_Refused, Screen_Size_Refused_Body{2560, 1440, 1, 0})
+	testing.expect_value(t, wrong_way, Record_Problem.Wrong_Direction)
+	for cause in memory_screen.Resize_Refusal {
+		if cause == .None {
+			continue
+		}
+		record, problem := service_check(.Screen_Size_Refused, Screen_Size_Refused_Body{2560, 1440, u32(cause), 0})
+		testing.expect(t, problem == .None && record.refusal == cause && record.screen_size_refused.width == 2560)
+	}
+}
+
+// Two changes in a row before the viewer took a frame of the size in
+// force: 2560 x 1440, then 1280 x 720, then 1920 x 1080. The border keeps
+// the largest side of each screen; a frame taken before the change keeps
+// the lag; the frame of the size in force ends it.
+@(test)
+a_viewer_that_lags_two_changes_keeps_the_largest_screen :: proc(t: ^testing.T) {
+	lag: Screen_Lag
+	testing.expect_value(t, screen_lag_border(&lag, {1920, 1080}), Screen{1920, 1080})
+	screen_lag_change(&lag, {2560, 1440}, 5)
+	screen_lag_change(&lag, {1280, 720}, 5)
+	testing.expect_value(t, screen_lag_border(&lag, {1920, 1080}), Screen{2560, 1440})
+	screen_lag_taken(&lag, 4)
+	testing.expect(t, lag.lagging, "a viewer frame before the change ended the lag")
+	testing.expect_value(t, screen_lag_border(&lag, {1920, 1080}), Screen{2560, 1440})
+	screen_lag_change(&lag, {1920, 1080}, 6)
+	testing.expect_value(t, screen_lag_border(&lag, {800, 4000}), Screen{2560, 4000})
+	screen_lag_taken(&lag, 5)
+	testing.expect(t, lag.lagging, "a viewer frame of a screen before the last change ended the lag")
+	screen_lag_taken(&lag, 6)
+	testing.expect(t, !lag.lagging)
+	testing.expect_value(t, screen_lag_border(&lag, {800, 600}), Screen{800, 600})
+}
+
+// A change whose copies are refused goes back to the size before before
+// any viewer ends; a refusal of the size before, or of the first face,
+// ends the viewers; copies that hold open the face.
+@(test)
+a_refused_change_goes_back_before_the_viewers_end :: proc(t: ^testing.T) {
+	testing.expect_value(t, screen_change_step(false, false, true), Screen_Change_Step.Go_Back)
+	testing.expect_value(t, screen_change_step(false, true, true), Screen_Change_Step.End_Viewers)
+	testing.expect_value(t, screen_change_step(false, false, false), Screen_Change_Step.End_Viewers)
+	for going_back in ([?]bool{false, true}) {
+		testing.expect_value(t, screen_change_step(true, going_back, true), Screen_Change_Step.Open)
+	}
 }

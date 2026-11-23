@@ -880,6 +880,68 @@ Gpu_Present_Refused :: struct {
 @(log_fact = "compositor: no framebuffer")
 No_Framebuffer :: struct {}
 
+// The context gives no framebuffer and the size of a screen of memory: the
+// frame is the screen (src/md/features/screen_of_memory.md).
+@(log_fact = "compositor: no screen: a screen of memory of {width} x {height}")
+Screen_Of_Memory_Started :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// The capture face ended with the screen of memory past its start size: no
+// viewer looks, and the screen went back to its start size.
+@(log_fact = "compositor: no viewer looks: the screen of memory is back to {width} x {height}, and {windows} windows fit it again")
+Screen_Of_Memory_Back_To_Start :: struct {
+	width:   u64,
+	height:  u64,
+	windows: u64,
+}
+
+// The screen of memory did not go back to its start size when no viewer
+// looked: the kernel had fewer pages than the budget of the compositor says.
+@(log_fact = "compositor: no viewer looks, and the screen of memory did not go back to {width} x {height}: the kernel made no frame and no background of that size")
+Screen_Of_Memory_Not_Back_To_Start :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// A viewer asked a size of the screen of memory, and the compositor took it.
+@(log_fact = "compositor: the screen of memory is now {width} x {height}, which a viewer asked: {windows} windows fit it again")
+Screen_Of_Memory_Resized :: struct {
+	width:   u64,
+	height:  u64,
+	windows: u64,
+}
+
+// The root service gave an extra budget for a larger screen of memory.
+@(log_fact = "compositor: an extra budget of {pages} for a screen of memory of {width} x {height}")
+Screen_Budget_Taken :: struct {
+	width:  u64,
+	height: u64,
+	pages:  value_kinds.Size_In_Pages,
+}
+
+// The root service gave a handle that is no budget, an extra budget with no
+// number, or a third one: it is closed with no use.
+@(log_fact = "compositor: closed an extra budget for {width} x {height} with no use: it is no budget, has no number, or two are held already")
+Screen_Budget_Not_Taken :: struct {
+	width:  u64,
+	height: u64,
+}
+
+// The control ring had no room for the release of the extra budget: the
+// root service ends it at the stop of the compositor.
+@(log_fact = "compositor: the control ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of the compositor")
+Screen_Budget_Release_Not_Sent :: struct {}
+
+// A viewer asked a size of the screen, and the compositor refused it.
+@(log_fact = "compositor: refused a screen of {width} x {height} that a viewer asked: {resize_refusal}")
+Screen_Of_Memory_Refused :: struct {
+	width:          u64,
+	height:         u64,
+	resize_refusal: [88]u8,
+}
+
 // The context gives no input ring or no control ring.
 @(log_fact = "compositor: no input ring or no control ring")
 No_Input_Or_Control_Ring :: struct {}
