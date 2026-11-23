@@ -146,3 +146,21 @@ the_output_of_an_evaluation_is_registered_under_its_hash :: proc(t: ^testing.T) 
 	record := recipe_refusal_record(built.refusal, 1)
 	testing.expect_value(t, record.kind, i64(errors.Kind.Unsupported))
 }
+
+// Each error record of a refusal of a recipe carries the refusal as its
+// value found, which a caller reads back with recipe_refusal_of_word: the
+// one rule of the records of the service. A kind whose value found means
+// another thing (No_Answer) would break it.
+@(test)
+each_refusal_record_carries_its_refusal :: proc(t: ^testing.T) {
+	for member in pr.Recipe_Refusal {
+		if member == .None {
+			continue
+		}
+		record := recipe_refusal_record(member, 1)
+		read, ok := pr.recipe_refusal_of_word(u64(record.found))
+		testing.expectf(t, ok && read == member, "%v: the value found %d", member, record.found)
+		testing.expect_value(t, record.argument, i64(1))
+	}
+}
+

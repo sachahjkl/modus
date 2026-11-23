@@ -77,6 +77,22 @@ Recipe_Refusal :: enum u8 {
 	Not_A_Recipe          = 29, // The value is not a recipe, or its arguments are not a record.
 	Damaged_Recipe        = 30, // The recipe does not decode, or its written hash is not the hash of its record.
 	Unsupported_Argument  = 31, // An argument of a kind that a recipe does not take: a recipe, a follow, a store, a plan, a project, or a negative source_date.
+	Builder_Absent        = 32, // No module of the boot image has the hash of the builder.
+	Input_Absent          = 33, // An object of an input is not in the place of the objects of the service: no build gave it.
+	Builder_Timed_Out     = 34, // The builder gave no answer within builder.BUILD_TIME_BOUND_MILLISECONDS: the service ended it.
+	Input_Too_Large       = 35, // The inputs of one build hold more objects than builder.MAX_INPUT_OBJECTS, or a tree nested deeper than the bound.
+}
+
+// recipe_refusal_of_word is the one border of a refusal word that crosses
+// a call: the value found of an error record of the service recipes. A
+// word that names no refusal is refused, and so is None, which is no
+// refusal.
+recipe_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: Recipe_Refusal, ok: bool) {
+	member := enum_word.member_of_word(Recipe_Refusal, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
 }
 
 // The words of each refusal of a recipe, for the failure of an evaluation
@@ -115,6 +131,10 @@ recipe_refusal_words := [Recipe_Refusal]string {
 	.Not_A_Recipe          = "the value is not a recipe",
 	.Damaged_Recipe        = "the recipe does not decode",
 	.Unsupported_Argument  = "an argument of a kind that a recipe does not take",
+	.Builder_Absent        = "no module of the boot image is the builder",
+	.Input_Absent          = "an input is not an output of a build of this machine",
+	.Builder_Timed_Out     = "the builder gave no answer within the bound of a build",
+	.Input_Too_Large       = "the inputs hold more objects than one build takes",
 }
 
 // Closed set of commands accepted on the recipes service ring.

@@ -24,6 +24,23 @@ Recipe_Build_Completed :: struct {
 	refusal_code: u64,
 }
 
+// The call host of a builder did not start: the status word of the start,
+// and the stage of its load (module.Load_Stage), 0 when the load did not run.
+@(log_fact = "recipes: the call host of a builder did not start: the status {status}, the load stage {stage}")
+Builder_Not_Started :: struct {
+	status: u64,
+	stage:  u64,
+}
+
+// The call of build did not give 1: the call status (call_status.Call_Status),
+// the result, and the kind of the error record.
+@(log_fact = "recipes: the call of build gave the call status {call_status}, the result {result}, the error kind {kind}")
+Builder_Call_Ended :: struct {
+	call_status: u64,
+	result:      i64,
+	kind:        i64,
+}
+
 @(log_fact = "recipes: realisation disagreement detected for recipe ({disagreements} total)")
 Realisation_Disagreement :: struct {
 	disagreements: u64,

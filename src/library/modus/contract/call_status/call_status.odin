@@ -23,6 +23,9 @@ Call_Status :: enum u32 {
 	// count from before the call. The reason of the failure stays in the
 	// record; the status says that the details are missing.
 	Failed_With_Wrong_Details = 9,
+	// No answer came before the limit that the caller gave: the export can
+	// still run, so the caller ends the other process or waits again.
+	Timed_Out    = 10,
 }
 
 // The name of each member, as Call_Status names it.
@@ -38,6 +41,7 @@ CALL_STATUS_NAMES := [Call_Status]string {
 	.Failed                    = "Failed",
 	.Not_Done                  = "Not_Done",
 	.Failed_With_Wrong_Details = "Failed_With_Wrong_Details",
+	.Timed_Out                 = "Timed_Out",
 }
 
 // The word of a Call_Status in 8 bytes, for a record that holds it beside

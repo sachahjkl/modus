@@ -135,7 +135,11 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // `rows`: the memory of the caller for the records of a Table result. The
 // result is then the count of the records that were copied there: the
 // records that the export gave, at most those that `rows` holds.
-call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil) -> (result: i64, status: call_status.Call_Status) {
+//
+// `limit`: a time of the system (`time()`) after which the caller stops
+// waiting, with Timed_Out; 0 waits until the answer or the stop of the
+// other process. A caller that calls code it does not trust gives one.
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil, limit: u64 = 0) -> (result: i64, status: call_status.Call_Status) {
 	function, described := module.function(file, export)
 	if !described {
 		return 0, .Refused
@@ -233,16 +237,40 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 		if state, _, _ := process_state(connection.process); state == .Stopped || state == .None {
 			return 0, .Stopped
 		}
+		if limit != 0 && time() >= limit {
+			return 0, .Timed_Out
+		}
 		wait_records(&wait, &connection.calls.completions)
 		if wait_spin(&wait) {
 			continue
 		}
-		wait_end(&wait)
+		if limit != 0 {
+			wait_end(&wait, limit)
+		} else {
+			wait_end(&wait)
+		}
 	}
 }
 
 // The log records of each second that a call host gets by default.
 CALL_HOST_LOG_RECORDS :: 100
+
+// The pages of a call host when its starter names none.
+CALL_HOST_PAGES :: 512
+
+// The mappings that a starter adds to a call host, past the files.
+CALL_HOST_ADDED_MAPPING_CAPACITY :: 4
+
+// What a starter adds to the context of a call host, past its call ring and
+// its call region: the stores of a builder (modus:contract/builder). A
+// slot with no handle adds nothing. call_host_start refuses a handle in the
+// slot of the call ring or of the call region, and more mappings than
+// CALL_HOST_ADDED_MAPPING_CAPACITY.
+Call_Host_Context :: struct {
+	grants:   [op.CONTEXT_HANDLES]Grant,
+	mappings: []Mapping,
+	pages:    u64, // The pages of the budget of the call host. 0: CALL_HOST_PAGES.
+}
 
 // call_host_start starts a call host (the module "host" of the boot
 // image) for one module, and maps the file of the module and of its
@@ -255,7 +283,13 @@ CALL_HOST_LOG_RECORDS :: 100
 // log records of each second that the call host takes from the budget of
 // the caller: 100 by default, so a caller with 1000 records starts nine
 // hosts and keeps 100; a caller that starts more gives each fewer.
-call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS) -> (connection: Call_Connection, status: Status) {
+//
+// `added`: the handles, the mappings and the pages that the starter adds
+// (Call_Host_Context); nil adds none.
+call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS, added: ^Call_Host_Context = nil) -> (connection: Call_Connection, status: Status) {
+	if added != nil && (added.grants[isolated.GRANT_RING].handle != 0 || added.grants[isolated.GRANT_REGION].handle != 0 || len(added.mappings) > CALL_HOST_ADDED_MAPPING_CAPACITY) {
+		return {}, .Bad_Operation
+	}
 	files: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry
 	source := Load_Source {
 		image = image,
@@ -273,7 +307,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	page := ([^]u8)(page_address)[:PAGE_SIZE]
 	(^info.Image_Header)(page_address)^ = {magic = info.IMAGE_MAGIC, count = u32(count)}
 	entries := ([^]info.Image_Entry)(raw_data(page[size_of(info.Image_Header):]))[:count]
-	mappings: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY + 1]Mapping
+	mappings: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY + 1 + CALL_HOST_ADDED_MAPPING_CAPACITY]Mapping
 	mappings[0] = {memory = connection.files_memory, address = isolated.FILE_ADDRESS}
 	offset := u64(PAGE_SIZE)
 	for item, index in files[:count] {
@@ -293,12 +327,24 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	region_address := memory_map(connection.region_memory) or_return
 	connection.region = ([^]u8)(region_address)[:isolated.REGION_PAGES * PAGE_SIZE]
 	grants: [op.CONTEXT_HANDLES]Grant
+	mapping_count := count + 1
+	pages := u64(CALL_HOST_PAGES)
+	if added != nil {
+		grants = added.grants
+		for item in added.mappings {
+			mappings[mapping_count] = item
+			mapping_count += 1
+		}
+		if added.pages != 0 {
+			pages = added.pages
+		}
+	}
 	values := values_with_seed
 	grants[isolated.GRANT_RING] = {connection.ring_memory, {.Read, .Write}}
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = offset
-	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = 512, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:count + 1]) or_return
+	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
 	// The first completion says if the call host loaded the module.
 	limit := time() + 5000
 	for {

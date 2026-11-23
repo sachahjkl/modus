@@ -4,6 +4,12 @@ import op "modus:contract/operation"
 import "modustool:build"
 import "modustool:checks"
 
+// The step that waits for the refusal of a builder that never answers: the
+// service recipes waits the bound of one build, a rule of the system
+// (builder.BUILD_TIME_BOUND_MILLISECONDS), before it ends the builder, so the
+// step outlasts that bound (a host test of the tool checks it).
+BUILDER_HANG_STEP_SECONDS :: 300
+
 main_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT, exit_status = build.MACHINE_STOP_OK})
 }
@@ -3427,6 +3433,32 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "> length(\"first search line\")"},
 	{kind = .Wait, text = "[console] 17"},
+	// The builders (src/md/features/recipes.md, "The builder"), after the
+	// calls of the storage service from the host: each build opens and closes
+	// places, and those calls name the first place of a fresh table. build_check
+	// registers recipes of the test builder builder_probe with recipes,
+	// which starts the builder as a call host in its sandbox. Its output
+	// becomes a realisation, a second build takes the realisation, and the
+	// output is the input of the next build. Then each thing that a builder
+	// cannot do is refused, and the line of the probe says what the sandbox
+	// refused. The probe writes from the call host, so its lines and those of
+	// build_check come in no fixed order.
+	{kind = .Type, text = "start(\"build_check\")"},
+	{kind = .Wait, text = "build_check: a builder made an output: the outcome 2", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "build_check: the second build took the realisation: the outcome 1", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "builder_probe: read the input made from the input store: 29 bytes", any_order = true},
+	{kind = .Wait, text = "build_check: the output of a build was the input of the next: the outcome 2", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "builder_probe: the input store refused a write: the error kind 20", any_order = true, fails_on = "builder_probe: WRONG"},
+	{kind = .Wait, text = "builder_probe: the store out refused a name above its root: the error kind ", any_order = true},
+	{kind = .Wait, text = "build_check: the build of write_input was refused as asked: the refusal 17", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "builder_probe: no handle past the context of a builder: the slots 7 to 13 are empty", any_order = true, fails_on = "builder_probe: WRONG"},
+	{kind = .Wait, text = "build_check: the build of network was refused as asked: the refusal 17", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "build_check: the build of fail was refused as asked: the refusal 17", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "build_check: the build of stop was refused as asked: the refusal 17", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "build_check: the build of a builder that no module is was refused as asked: the refusal 32", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "build_check: the build of an input that no build gave was refused as asked: the refusal 33", fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "build_check: the build of hang was refused as asked: the refusal 34", seconds = BUILDER_HANG_STEP_SECONDS, fails_on = "build_check: WRONG"},
+	{kind = .Wait, text = "build_check: each check of the builders passed"},
 	// The time of one key with the list open, for the names of this console
 	// and for the worst case of 512 names of 128 bytes.
 	{kind = .Type, text = "measure_completion()"},

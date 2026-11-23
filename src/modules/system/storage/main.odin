@@ -674,10 +674,13 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 		system.close(region_memory)
 		return errors.fail(error, failure(.Disk), .Refused)
 	}
-	given_ring, give_status := system.give(caller.connection.ring_memory, ring_memory, {.Read, .Write})
+	// The caller makes a share to give it to another process (docs/STORAGE.md,
+	// "4.3 Read only, and revocation"): the two handles carry Give. The
+	// revocation of unshare ends each copy, in each process that has one.
+	given_ring, give_status := system.give(caller.connection.ring_memory, ring_memory, {.Give, .Read, .Write})
 	given_region: system.Handle
 	if give_status == .Ok {
-		given_region, give_status = system.give(caller.connection.ring_memory, region_memory, {.Read, .Write})
+		given_region, give_status = system.give(caller.connection.ring_memory, region_memory, {.Give, .Read, .Write})
 	}
 	if give_status != .Ok {
 		system.handle_revoke(ring_memory)

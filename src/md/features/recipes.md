@@ -1,6 +1,6 @@
 # Recipes, builders and the cache
 
-A recipe names how an output is made: a builder, its inputs and its arguments, each by hash or as a typed record. The root service realises a recipe in a sandbox, or a machine takes its realisation from a cache: a signed record that says which output the recipe gave. One rule, the substitution policy, chooses between the two, with no hidden configuration. The service `recipes` gives the commands, `recipes.build` and `recipes.provenance` ([declarations.md](declarations.md), "The services of the declarations").
+A recipe names how an output is made: a builder, its inputs and its arguments, each by hash or as a typed record. The service `recipes` realises a recipe in a sandbox, or a machine takes its realisation from a cache: a signed record that says which output the recipe gave. One rule, the substitution policy, chooses between the two, with no hidden configuration. The service `recipes` gives the commands, `recipes.build` and `recipes.provenance` ([declarations.md](declarations.md), "The services of the declarations").
 
 The terms Recipe, Realisation, Builder, Guest builder, Fetcher, Substitution policy and Object cache are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Tree hash is in [`docs/glossary/storage.md`](../../../docs/glossary/storage.md). The declarations that name the recipes are in [declarations.md](declarations.md).
 
@@ -43,23 +43,40 @@ The output hash of a recipe is the tree hash of its output. `recipe(...).server`
 A builder is a plain module that exports one function with a fixed contract:
 
 ```
-build(inputs: Table(Build_Input, Read), arguments: Build_Arguments) -> Build_Status
+build(inputs: Table(Recipe_Input_Row, Read), arguments: Bytes) -> Integer
 ```
 
-- `Build_Input` is a record: the name of an input and its place in the input store.
-- `Build_Arguments` is a record that the builder declares under that name, so its module file describes it. The console checks the argument record of `recipe(builder, {…})` against that description before any build.
-- `Build_Status` is an enum, with an error record when it is not `Done` ([api/export_error_records.md](../api/export_error_records.md)).
+- **inputs**: one row for each input of the recipe, in the order of their names: the name, the kind (a tree or an object) and the hash. The objects of each input are in the input store under their hexadecimal hash, so the hash of a row is its place in the input store.
+- **arguments**: the argument record of the recipe, in the canonical form of the output of an evaluation (`declaration_eval`), which the builder reads with `Output_Reader`. The evaluator writes this form and the recipe hash covers it, so a second encoding of the arguments would be a second identity of one recipe.
+- **The result** is 1 when the store "out" holds the output, or a negative number with an error record ([api/export_error_records.md](../api/export_error_records.md)).
 - The output is not a parameter. It is the store "out" of the context of the builder.
 
-The root service starts a builder in a sandbox:
+**The service `recipes` starts a builder** as a call host: the module `host` of the boot image, with the file of the builder mapped read-only, as the console starts a module with `isolate`. The kernel gives a process only the handles that its starter gives it, so a call host of `recipes` has the same sandbox as a process of the root service. The context of a builder (`modus:contract/builder`) holds:
 
-- an input store: a clone of each input tree under its name, with the right Read only (a clone shares its blocks, so no byte is copied);
-- an empty store "out", with Write and a limit of blocks that the recipe states;
-- no network, no root ring, no other grant;
-- a random seed equal to the recipe hash;
-- a frozen date page: the root service gives the builder a date page with the date of its recipe, never the clock. The date of a recipe is the field `source_date` of its argument record when the builder declares one, and 0 when it does not. The frozen date page is new: today the date page of every process is the one page that the process `date` writes.
+- the call ring and the call region, as each call host;
+- an input store: a share of the place `build/in` of the private store of `recipes`, with `read_only`: a copy, by clone, of the objects of each input and of nothing else;
+- the store "out": a share of the place `build/out`, empty, that can be changed; a share never reaches above its root;
+- the storage service with Read, and the file of the storage service, which describes its exports. The handles of a share carry Give, and the term `store_gives` of the start grant set of `recipes` gives it the storage service with Give, so the service can pass both on;
+- the log;
+- a seed equal to the recipe hash, with the strength `None`: the seed is public, so the random generator refuses to make a key from it;
+- no date page: a read of the date gives no date. The date of a recipe is the field `source_date` of its arguments.
 
-The sandbox of modus removes the ambient causes of a different output already: no global file system, no `PATH`, no environment variables, no network without a grant. When the builder returns `Done`, the root service commits the store "out", computes its tree hash, and writes the realisation.
+No network, no root ring, no boot image, no window, no other grant: none has a slot in the context.
+
+**One build.** The service prepares the place `build` (`in` with the objects of the inputs, `out` empty), makes the two shares, starts the call host and calls `build`, with a bound of `BUILD_TIME_BOUND_MILLISECONDS`. Then, whatever the outcome, it ends the call host and the two shares. Only then, after a result of 1, it freezes `build/out` into the place `objects` (`storage.freeze_tree`): the output hash is the tree hash that the storage service computes over the store, never a claim of the builder. The canonical bytes of the root tree of the output are the output of the pipeline, and the place `objects` keeps each object of the tree, so a later recipe takes the output as an input.
+
+**What a builder cannot do**, each with its refusal:
+
+- **change its inputs**: the input store reads only, and the storage service refuses each change with `No_Grant`;
+- **write outside its store "out"**: the share of `build/out` has no name above its root;
+- **reach the network or the root service**: it holds no handle of either;
+- **run past the bound**: the service ends the call host, refuses the build with `Builder_Timed_Out`, and keeps nothing;
+- **fail, or stop**: a negative result, a refusal of the call, or a process that stops is `Builder_Failed`, and nothing is kept;
+- **give an output whose hash differs**: a builder gives no hash; the service freezes the store after the call host and the shares ended, so the hash is the hash of what stays. A build of `Verify` whose output differs from the realisation of a cache is `Verify_Disagreement`, and nothing is kept.
+
+The refusals before a start: a builder that no module of the boot image is (`Builder_Absent`), an input whose objects are not in the place `objects` (`Input_Absent`), and a step of the stores that fails (`Store_Failed`).
+
+The sandbox of modus removes the ambient causes of a different output already: no global file system, no `PATH`, no environment variables, no network without a grant.
 
 ### The realisation
 
@@ -83,9 +100,9 @@ A machine signs the realisations of its own builds with the key of the principal
 One recipe runs no module: a recipe whose builder hash is `inputs_tree_builder_hash()` (the BLAKE3 key of the context `"modus builder inputs tree v1"`) gives one tree whose entries are its inputs, each under its name, a Blob as an object and a Tree as a tree. It takes no argument and gives a Tree only.
 
 - **The recipes service builds it itself.** Its output is a function of the input table only, so no code of a caller runs and nothing needs a sandbox. A cache miss of such a recipe is a bounded step in the service: at most 32 entries, no network, no clock.
-- **Why it exists.** It joins the outputs of several recipes into one tree, the output of a project with several parts, and it is the first recipe that `recipes.build` realises end to end before the root service starts builders in a sandbox.
+- **Why it exists.** It joins the outputs of several recipes into one tree, the output of a project with several parts, and it was the first recipe that `recipes.build` realised end to end, before builders ran in a sandbox.
 - **Refused: a builder module for it.** A module that only joins hashes would need a start, a sandbox and a store "out" for 32 hashes, and its realisation would depend on the trust of its module hash. The service computes the same bytes with `tree_hash`, which each machine checks.
-- **Refused: run any builder in the service.** Any other builder hash is refused with `Builder_Needs_Sandbox`: a builder runs foreign code, and only the root service starts it with the sandbox of "The builder".
+- **Refused: run any builder in the process of the service.** Each other builder runs foreign code, so it runs in its own process, with the sandbox of "The builder".
 - **The recipe of the inputs of a project.** `projects.build_recipe(project)` gives a recipe of this builder with one input for each pin of the project, a tree by the tree hash of the pin. `recipes.register` then `recipes.build` realise it, so the inputs of a project are one tree hash, and a moved pin gives another recipe.
 
 ### The recipe of a declaration
@@ -105,7 +122,7 @@ The step 1 of the substitution policy reads the local store. The recipes service
 
 ### The fetcher
 
-The fetcher is the one builder with the network. Its argument record holds an address and the hash of the output, given in advance. Its network grant names the host of the address and nothing else. It refuses an output whose tree hash is not the hash given in advance: the root service discards the store "out" and writes no realisation.
+The fetcher is the one builder with the network. Its argument record holds an address and the hash of the output, given in advance. Its network grant names the host of the address and nothing else. It refuses an output whose tree hash is not the hash given in advance: the service `recipes` discards the store "out" and writes no realisation.
 
 Its realisation needs no signature: the recipe holds the output hash, so each machine checks it.
 
@@ -237,6 +254,11 @@ The ideas taken from Nix are the closure, the content address and the substituti
 - **The output as one file.** A build that gives a module and its debug object, or several modules, then needs several recipes.
 - **A key that one principal trusts, valid for the machine.** A principal then grants its trust to the others.
 - **The clock in a builder.** The date in the output then changes at each build.
+- **The root service as the starter of a builder.** A command of the root ring would carry four handles of stores and a page of the request, and the root service would start a process that waits up to 5 s for its load without blocking its loop: more authority and one more border in the root service. The kernel gives a call host of `recipes` the same sandbox.
+- **A date page with the source date and the clock.** The date of a date page is the date at the time 0 of the system and the clock, so it moves during a build, and a builder that writes the date writes another output at each build. A builder has no date page; the date of its recipe is in its arguments.
+- **The whole place `objects` as the input store.** A builder could list it and read outputs that are no input of its recipe: an input that the recipe does not name.
+- **An output hash that the builder gives.** The service would trust a claim; it computes the hash over the store that the builder left.
+- **An argument record that the module of the builder describes, checked by the console.** The evaluator writes the canonical form of the output, and the recipe hash covers those bytes: a second encoding would be a second identity of one recipe.
 - **Git inside the system as the identity of a source.** Two identities for one source.
 - **Text in the cache protocol.** Each side then parses the text of the other (property 19).
 
@@ -263,10 +285,12 @@ Built: the binary wire protocol, signed realisations, substitution policy, host 
 
 Built with the exports of the services: `src/library/modus/contract/plans_recipes/service_records.odin` holds the rows that the exports take and give (`Recipe_Head`, `Recipe_Input_Row`, `Recipe_Reference`, `Recipe_Build_Row`, `Realisation_Row`) with the border `recipe_spec_of_parts`, and the inputs tree builder (`inputs_tree_builder_hash`, `inputs_tree_build`). `src/library/internal/recipes/recipes_core/registry.odin` keeps the registered recipes by hash (16 at most) and the newest 32 builds. The service `recipes` exports `register`, `register_evaluation`, `build`, `cache_lookup`, `builds` and `realisations`: a build in a mode that takes the cache gives a realisation of the local store with no build, and a miss of an inputs tree recipe builds, keeps its output and its realisation, so the next build of it is a hit. The guest builder exports `status` and `disks_check`, which checks a spec, its read-only input disk and the bound of its blank output disk with no guest. Each has host tests of its refusals.
 
+Built with a builder in its sandbox: the service `recipes` starts the module of each builder but the inputs tree builder as a call host, with the context of `modus:contract/builder` (`context_check` refuses a slot more or less, a seed that is not the recipe hash, a strength that is not `None`, and a value more), its inputs cloned into `build/in` by a walk of their objects (`recipes_core.input_closure_take`, which refuses an absent object, a damaged tree, more than 256 objects and a tree deeper than 32), two shares of the storage service, and a bound of 60 s on the call (`call_isolated` with a limit, the call status `Timed_Out`). The store "out" is frozen into `objects` after the call host and the shares ended. The machine test `main` runs it with the test builder `builder_probe` and the module `build_check`: an output becomes a realisation, a second build takes it with no start, that output is the input of the next build, and a write in the input store (`No_Grant`), a name above the store "out", a look for a handle past the context, an error record, a stop, a builder that no module is, an input that no build gave and a builder that never answers are each refused, with nothing kept.
+
 Built with the private store: each realisation is an object of the private store of `recipes` ("The local store of the realisations"), read back and checked after a start, so a build of a recipe that the service realised before builds nothing; `projects.build_recipe` gives the recipe of the inputs tree of a project. Host tests check the hit after a start, the determinism of the recipe hash, each damage of a stored object, a store that refuses the write, and the refusals of a corrupt recipe.
 
 The guest builder boots a Linux kernel of 64 bits (a bzImage or a vmlinux whose BLAKE3 hash is `kernel_hash`) in its guest by the boot protocol of Linux, with the machine of [foreign_systems.md](foreign_systems.md), "The machine of a Linux guest": a serial port and a virtio console, the inputs as a read-only virtio disk, and the output as a blank writable virtio disk. The command of the spec goes to init after `--` on the command line; the guest ends a build with its exit status on the port `Build_Exit_Status`. The report gives the BLAKE3 hash of the whole output disk beside the tree hash of its MODTREE1 extraction. Checked by host tests only. One of them runs a whole build through the loop of the builder: a program of 64 bits that boots by the boot protocol, on the software processor of `modus:contract/software_machine`, reads its input disk, writes its output disk and exits with 0, and the builder gives the tree hash of the disk that the host packed; a write of the program to its input disk refuses the build ([foreign_systems.md](foreign_systems.md), "State"). The spec can name an initial archive by its BLAKE3 hash and its size; the builder checks the hash on its copy in the memory of the guest before the boot, so a kernel of Nixpkgs runs the `init` of the recipe ([foreign_systems.md](foreign_systems.md), "The chosen form").
 
 Built in `recipes_core`: the distributed builder of "Builds across paired machines", with a host test of four machines in memory (a laptop, two builders, a cache) that realises a graph of six recipes, takes one from the cache with no build, gives two leaves of one round to two builders, refuses a changed bit, an untrusted signer and a bad signature, passes over a cache that withholds its output or gives a bad realisation to the next cache, a builder or this machine, moves a recipe to the second builder when the link of the first breaks during its build, falls back to this machine, and refuses a builder that is not deterministic with `Determinism_Mismatch`.
 
-Left: the connection of the service `recipes` to the outbound links of `remote`, which the root service gives, so that `recipes.build` runs a distributed build on a machine; the grant Store of the service `recipes` at its start ([declarations.md](declarations.md), "State": until then a realisation is refused with `Store_Failed`), live sandboxed builder and fetcher process invocation from `recipes` (the root service starts a builder module in a sandbox; until then any builder but the inputs tree builder is refused with `Builder_Needs_Sandbox`), the signature of a local realisation with the key of the principal, a machine test that boots Linux inside the guest builder, the QUIC cache client inside modus, console wiring for `recipes.build`/`recipes.provenance`, and the `--authorized-key` of the cache signing key of the publisher at `cache.modus.systems` ([../infrastructure/cache_publication.md](../infrastructure/cache_publication.md), "State").
+Left: the connection of the service `recipes` to the outbound links of `remote`, which the root service gives, so that `recipes.build` runs a distributed build on a machine; the grant Store of the service `recipes` at its start ([declarations.md](declarations.md), "State": until then a realisation is refused with `Store_Failed`), the fetcher, the import of a tree from outside (a source of a project) into the place `objects`, the C builder, a builder that is a module file of a disk, the bound of blocks of the store "out" (the share has the limit of the store of `recipes`), builds of other callers while one build runs (the service serves one call at a time), the signature of a local realisation with the key of the principal (the key is in the service `principals`, to which `recipes` has no connection), a machine test that boots Linux inside the guest builder, the QUIC cache client inside modus, console wiring for `recipes.build`/`recipes.provenance`, and the `--authorized-key` of the cache signing key of the publisher at `cache.modus.systems` ([../infrastructure/cache_publication.md](../infrastructure/cache_publication.md), "State").
