@@ -84,12 +84,14 @@ pass_of_word :: proc "contextless" (word: u64) -> (pass: Pass, ok: bool) {
 }
 
 // The answer of the root service to an ask that starts `settings`. The
-// process `settings` is the one writer of the page; a pass writes it and
-// stops, with no window to raise.
+// process `settings` is the one writer of the page, so two never run: an
+// ask while one runs raises its window, waits for its pass, or is refused.
 Start_Answer :: enum u8 {
-	Start            = 0, // No process `settings` runs, or a window runs and the ask is a window: start.
-	Raise_Window     = 1, // A window runs and the ask is the next appearance: the compositor raises it at the appearance.
-	Refuse_Pass_Runs = 2, // A pass runs: refused; the pass writes the page and stops.
+	Start                      = 0, // No process `settings` runs: start.
+	Raise_Window               = 1, // A window runs and the ask is a window: the compositor raises it, the focus where it was.
+	Raise_Window_At_Appearance = 2, // A window runs and the ask is the next appearance: the compositor raises it at the appearance.
+	Wait_For_Pass              = 3, // A pass runs and the ask is a window: the start waits until the pass stops.
+	Refuse                     = 4, // Another process `settings` runs and the ask is a pass: refused; the one that runs writes the page.
 }
 
 // start_answer decides an ask of the pass `asked` for `settings`, with
@@ -100,16 +102,23 @@ start_answer :: proc "contextless" (asked: Pass, running: bool, running_pass: Pa
 	}
 	switch running_pass {
 	case .Boot, .Appearance_Next:
-		return .Refuse_Pass_Runs
+		switch asked {
+		case .Window:
+			return .Wait_For_Pass
+		case .Boot, .Appearance_Next:
+			return .Refuse
+		}
 	case .Window:
 		switch asked {
-		case .Appearance_Next:
+		case .Window:
 			return .Raise_Window
-		case .Window, .Boot:
-			return .Start
+		case .Appearance_Next:
+			return .Raise_Window_At_Appearance
+		case .Boot:
+			return .Refuse
 		}
 	}
-	return .Refuse_Pass_Runs
+	return .Refuse
 }
 
 // appearance_next gives the appearance after one press on the tile of the

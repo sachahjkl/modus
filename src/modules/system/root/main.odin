@@ -1155,6 +1155,8 @@ root_loop_pass :: proc "contextless" () {
 	// its answers in the ring.
 	entropy_answers(&wait)
 	reap()
+	// After reap: a pass of settings that stopped lets a window of it start.
+	settings_start_due_step() // text_settings.odin
 	// After reap: the processes of a failed start policy are gone, and the
 	// rescue can start (start_policy.odin).
 	start_policy_step()
@@ -1203,9 +1205,6 @@ control_ring_serve :: proc "contextless" () {
 		case .Start:
 			// The desktop starts a process in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
-			if system.name_of(name[:]) == "settings" && !settings_window_start_allowed() {
-				continue
-			}
 			start(system.name_of(name[:]), desktop_principal())
 		case .Stop:
 			for &item in started {

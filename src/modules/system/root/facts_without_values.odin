@@ -11,14 +11,17 @@ Debug_Image_Absent :: struct {}
 @(log_fact = "root: the next appearance of the Control Center asks the compositor to raise the window of settings: it runs, and it is the one writer of the settings page")
 Appearance_Next_Raises_Settings :: struct {}
 
-@(log_fact = "root: the next appearance of the Control Center found the control ring of the compositor full: the press raises nothing")
-Appearance_Next_Raise_Ring_Full :: struct {}
+@(log_fact = "root: the start of settings raises the window of settings that runs: it is the one writer of the settings page")
+Settings_Start_Raises_Window :: struct {}
 
-@(log_fact = "root: the next appearance of the Control Center is refused: a pass of settings runs, and it is the one writer of the settings page")
-Appearance_Next_Refused_Pass_Runs :: struct {}
+@(log_fact = "root: the control ring of the compositor is full: the window of settings is not raised")
+Settings_Raise_Ring_Full :: struct {}
 
-@(log_fact = "root: the start of settings is refused: a pass of settings runs, and it is the one writer of the settings page")
-Settings_Start_Refused_Pass_Runs :: struct {}
+@(log_fact = "root: a pass of settings is refused: another process settings runs, and it is the one writer of the settings page")
+Settings_Pass_Refused_Settings_Runs :: struct {}
+
+@(log_fact = "root: the start of settings waits: a pass of settings runs, and it is the one writer of the settings page; the window starts when the pass stops")
+Settings_Start_Waits_For_Pass :: struct {}
 
 @(log_fact = "root: the standard VGA does not hold the framebuffer of the firmware and its display registers: the compositor writes the screen page that the display shows")
 Standard_Vga_Without_Framebuffer :: struct {}

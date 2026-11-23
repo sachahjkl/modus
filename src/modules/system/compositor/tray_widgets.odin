@@ -494,18 +494,33 @@ appearance_next_ask :: proc "contextless" () {
 }
 
 // settings_raise takes Settings_Raise of the root service: it raises the
-// window of settings that the root service started and puts the focus on
-// the appearance in force, where Enter on another value sets it. A handle
-// that names no window is refused: the window closed since the answer.
-settings_raise :: proc "contextless" (ring_memory: system.Handle) {
-	for position := order_count - 1; position >= 0; position -= 1 {
-		index := order[position]
-		if clients[index].ring_memory == ring_memory {
-			raise(position)
-			send(&clients[index], .Go_To, {0 = u64(display.act_name_hash(APPEARANCE_ACT_NAME))})
-			system.log_fact(.Info, Appearance_Tile_Goes_To_Settings{})
-			return
-		}
+// window of settings that the root service started, in place of a second
+// process settings. For the tile Appearance it puts the focus on the
+// appearance in force, where Enter on another value sets it. A focus word
+// that names no member, or a handle that names no window (the window
+// closed since the answer), is refused.
+settings_raise :: proc "contextless" (word: u64, focus_word: u64) {
+	focus, focus_ok := display.settings_raise_focus_of_word(focus_word)
+	if !focus_ok {
+		system.log_fact(.Info, Settings_Raise_Focus_Refused{word = focus_word})
+		return
 	}
-	system.log_fact(.Info, Settings_Raise_Without_Window{})
+	ring_memories: [CLIENT_CAPACITY]u32
+	for position in 0 ..< order_count {
+		ring_memories[position] = u32(clients[order[position]].ring_memory)
+	}
+	position, found := bar.settings_raise_target(ring_memories[:order_count], word)
+	if !found {
+		system.log_fact(.Info, Settings_Raise_Without_Window{})
+		return
+	}
+	index := order[position]
+	raise(position)
+	switch focus {
+	case .Keep:
+		system.log_fact(.Info, Settings_Window_Raised{})
+	case .Appearance:
+		send(&clients[index], .Go_To, {0 = u64(display.act_name_hash(APPEARANCE_ACT_NAME))})
+		system.log_fact(.Info, Appearance_Tile_Goes_To_Settings{})
+	}
 }

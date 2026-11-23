@@ -202,6 +202,13 @@ Client :: struct {
 	// the scale while that scale is in force and it is released.
 	declined:       bool,
 	declined_scale: scale_factor.Scale,
+	// The fit before a new scale (window_resize.md, "The fit before a new
+	// scale"): scale_due holds the scale in force for this window until its
+	// fit request ends; fit_due says that the fit to the newest work area is
+	// not asked yet; scale_told is the scale of the last Settings_Changed.
+	scale_due:  bool,
+	fit_due:    bool,
+	scale_told: scale_factor.Scale,
 	answer_due:  bar.Answer_Slot, // A Surface_Answer that the full ring of the window did not take (window_events.odin).
 	shown:       int, // The picture that surface is: the one that the last Present named.
 	// The proof that the window shows whole frames: the frames that read a
@@ -750,9 +757,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	gpu_scanout_open(ctx, frame_memory_handle, width, height)
 	background = canvas_create(width, height)
 	// The layout at the default scale until the settings page is read
-	// below: a page that the root service created holds it.
+	// below: a page that the root service created holds it. The first take
+	// sets up the features of the desktop at that logical screen.
 	desktop_scale_take(settings.choice_default(), true)
-	desktop_features_init(i32(desktop_width), i32(desktop_height), i32(BAR_HEIGHT))
 	// The background, the mark of the bar and the measures draw in the dark
 	// appearance: the settings are read below, and a change of the
 	// appearance draws the background and the mark again.
@@ -864,7 +871,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Client_Started:
 				quality_window_started(system.Handle(record.values[0]), record.values[1])
 			case .Settings_Raise:
-				settings_raise(system.Handle(record.values[0])) // tray_widgets.odin
+				settings_raise(record.values[0], record.values[1]) // tray_widgets.odin
 			case .None, .Start, .Stop, .Appearance_Next:
 				// The border refused None above. Start, Stop and
 				// Appearance_Next go from the compositor to the root service,
@@ -1162,10 +1169,17 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
-			send(&client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale), 2 = u64(windows_declined_told)})
 			// The scale and the edge of the bar change the work area.
 			if client.created {
 				work_area_send(&client)
+			}
+			// A new scale: the window is fitted into the new work area
+			// first, and gets the scale when its fit request ends (scale.odin).
+			if rescaled && client.created {
+				client.scale_due, client.fit_due = true, true
+			}
+			if !window_scale_step(&client) {
+				settings_changed_send(&client)
 			}
 			told += 1
 		}
@@ -1345,8 +1359,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// The process read another scale than the scale in force: the
 	// compositor names its own, and the window rescales to it. Until then
 	// its surface is cut to its interior.
+	client.scale_told = surface_scale
 	if surface_scale != scale {
-		send(client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale), 2 = u64(windows_declined_told)})
+		settings_changed_send(client) // scale.odin
 	}
 	// A disk process could title its window as a process of the system: its
 	// window has the nickname that the root service gave.

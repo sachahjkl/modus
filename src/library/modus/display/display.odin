@@ -503,11 +503,26 @@ Control :: enum u32 {
 	// Settings_Raise for the window of `settings` that runs, or refuses
 	// while a pass runs. No values.
 	Appearance_Next         = 8,
-	// root to compositor: the answer to Appearance_Next while a window of
-	// `settings` runs. values: the handle of Client_Add of that window. The
-	// root service names the window by the process that it started, so no
-	// other window can take the press.
+	// root to compositor: the answer to a start of `settings` or to
+	// Appearance_Next while a window of `settings` runs: one process is the
+	// one writer of the settings page. values: the handle of Client_Add of
+	// that window, then a Settings_Raise_Focus. The root service names the
+	// window by the process that it started, so no other window can take it.
 	Settings_Raise          = 9,
+}
+
+// Where the focus goes in the window that Settings_Raise raises. The values
+// cross the ring, so they are stated; settings_raise_focus_of_word is their
+// border.
+Settings_Raise_Focus :: enum u64 {
+	Keep       = 0, // A start of the window: the focus stays where it was.
+	Appearance = 1, // The tile Appearance: the focus on the appearance in force.
+}
+
+// settings_raise_focus_of_word is the border of the second word of
+// Settings_Raise: a word that names no member is refused.
+settings_raise_focus_of_word :: proc "contextless" (word: u64) -> (focus: Settings_Raise_Focus, ok: bool) {
+	return enum_word.member_of_word(Settings_Raise_Focus, word)
 }
 
 // The ring from the input service to the compositor.
@@ -669,6 +684,12 @@ Window :: struct {
 	width, height: int, // The size of the window, in logical pixels: its layout.
 	rescale:     Rescale_Machine, // The scale and the serial of the surface, and the phase of a change of the scale (scale.odin).
 	rescale_due: Rescale_Action, // A record of the rescale that the full command ring did not take yet.
+	// A Surface_Declined that the full command ring did not take yet, with
+	// the serial and the scale of the offer that the budget did not pay. It
+	// goes before the due action: a later offer names the serial after it.
+	decline_due:    bool,
+	decline_serial: u64,
+	decline_scale:  scale_factor.Scale,
 	before_resize: Kept_Surface, // The surface before a resize, kept until the answer of the compositor (scale.odin).
 	presented_serial: u64, // The surface serial of the last Present: 0 before the first one (picture_owed).
 	canvas:      graphics.Canvas, // Where the drawing module draws now, in pixels of the screen. A process that draws by hand draws in a logical picture of its own (interface.Hand_Picture).

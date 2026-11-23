@@ -2805,6 +2805,12 @@ scenario := [?]Step {
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
 	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
+	// The process settings is the one writer of the settings page: a
+	// second start raises the window that runs, and starts no process. A
+	// second surface settings fails the step.
+	{kind = .Launch, text = "settings"},
+	{kind = .Wait, text = "root: the start of settings raises the window of settings that runs", fails_on = "compositor: surface settings"},
+	{kind = .Wait, text = "compositor: the root service raised the window settings in place of a second process settings", fails_on = "compositor: surface settings"},
 	// A click on a value of the window applies it, as the press of a
 	// principal does: the compositor tells each window the new value, and
 	// settings draws with it. A console call proves the export, not the
@@ -3087,6 +3093,25 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(scale = .ten_eighths)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
 	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
+	// The fit before a new scale (src/md/features/window_resize.md, "The
+	// fit before a new scale"): the console maximized at 1.25 is 1536 x
+	// 792 logical pixels, whose surface at 2 its budget does not pay. The
+	// compositor fits it into the work area of 2 before it names the scale,
+	// so the console shows a surface at 2 and declines nothing: a decline
+	// fails the step. Then 1.25 again, and the restore.
+	{kind = .Front, text = "console"},
+	{kind = .Key, text = "ctrl-shift-up"},
+	{kind = .Wait, text = "compositor: window console maximized"},
+	{kind = .Wait, text = "compositor: window console resized from "},
+	{kind = .Call, text = "settings.set(scale = .sixteen_eighths)", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 2; "},
+	{kind = .Wait, text = " windows shows a surface at 16 eighths", fails_on = "declined the scale"},
+	{kind = .Call, text = "settings.set(scale = .ten_eighths)", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
+	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
+	{kind = .Key, text = "ctrl-shift-up"},
+	{kind = .Wait, text = "compositor: window console restored"},
+	{kind = .Wait, text = "compositor: window console resized from "},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
 	// Tables and bytes as parameters: one description, three ways to call

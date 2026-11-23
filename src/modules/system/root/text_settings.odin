@@ -138,38 +138,72 @@ settings_running :: proc "contextless" () -> (item: ^Started, pass: settings.Pas
 	return
 }
 
-// settings_window_start_allowed takes Control.Start of `settings`: a pass
-// that runs is the one writer of the page, and the start waits for its end.
-settings_window_start_allowed :: proc "contextless" () -> bool {
+// A start of the window of `settings` that came while a pass ran: it goes
+// when the pass stops (settings_start_due_step), in the session that asked.
+settings_start_due: bool
+settings_start_due_principal: u64
+
+// settings_start_allowed is the one-writer check of start() for each start
+// of `settings`, whoever asks (settings.start_answer): the pass asked is
+// settings_pass. It gives true when the start goes on. Otherwise it did
+// the answer, so that two processes `settings` never run: it asked the
+// compositor to raise the window that runs, or kept the start of a window
+// due until the pass stops, or refused a pass; each with its fact.
+settings_start_allowed :: proc "contextless" (principal: u64) -> bool {
 	item, pass := settings_running()
-	switch settings.start_answer(.Window, item != nil, pass) {
-	case .Start, .Raise_Window:
+	switch settings.start_answer(settings_pass, item != nil, pass) {
+	case .Start:
 		return true
-	case .Refuse_Pass_Runs:
-		system.log_fact(.Info, Settings_Start_Refused_Pass_Runs{})
+	case .Raise_Window:
+		if settings_raise_ask(item, .Keep) {
+			system.log_fact(.Info, Settings_Start_Raises_Window{})
+		}
+	case .Raise_Window_At_Appearance:
+		if settings_raise_ask(item, .Appearance) {
+			system.log_fact(.Info, Appearance_Next_Raises_Settings{})
+		}
+	case .Wait_For_Pass:
+		settings_start_due, settings_start_due_principal = true, principal
+		system.log_fact(.Info, Settings_Start_Waits_For_Pass{})
+	case .Refuse:
+		system.log_fact(.Info, Settings_Pass_Refused_Settings_Runs{})
 	}
 	return false
 }
 
+// settings_raise_ask asks the compositor to raise the window of the process
+// `settings` that runs, with the focus where the ask needs it. A full ring
+// raises nothing, with its fact: the next ask asks again.
+settings_raise_ask :: proc "contextless" (item: ^Started, focus: display.Settings_Raise_Focus) -> (sent: bool) {
+	if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Settings_Raise), values = {0 = u64(item.client), 1 = u64(focus)}}) {
+		system.log_fact(.Warning, Settings_Raise_Ring_Full{})
+		return false
+	}
+	return true
+}
+
+// settings_start_due_step starts the window of `settings` that waited for
+// a pass, once no process `settings` runs. The loop calls it after reap.
+settings_start_due_step :: proc "contextless" () {
+	if !settings_start_due {
+		return
+	}
+	if item, _ := settings_running(); item != nil {
+		return
+	}
+	settings_start_due = false
+	if status := start("settings", settings_start_due_principal); status != .Ok {
+		system.log_fact(.Warning, Settings_Due_Start_Failed{status = status})
+	}
+}
+
 // settings_appearance_next_start takes the press on the tile Appearance
-// of the Control Center (settings.start_answer): it starts `settings` for
-// the next appearance in the session of the desktop, or asks the
-// compositor to raise the window of `settings` that runs, the one writer
-// of the page, or refuses while a pass runs.
+// of the Control Center: start() decides (settings_start_allowed). It
+// starts `settings` for the next appearance in the session of the
+// desktop, or asks the compositor to raise the window of `settings` that
+// runs, the one writer of the page, or refuses while a pass runs.
 settings_appearance_next_start :: proc "contextless" () {
-	item, pass := settings_running()
-	switch settings.start_answer(.Appearance_Next, item != nil, pass) {
-	case .Refuse_Pass_Runs:
-		system.log_fact(.Info, Appearance_Next_Refused_Pass_Runs{})
-	case .Raise_Window:
-		if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Settings_Raise), values = {0 = u64(item.client)}}) {
-			system.log_fact(.Warning, Appearance_Next_Raise_Ring_Full{})
-			return
-		}
-		system.log_fact(.Info, Appearance_Next_Raises_Settings{})
-	case .Start:
-		if status := settings_pass_start(.Appearance_Next, desktop_principal()); status != .Ok {
-			system.log_fact(.Warning, Appearance_Next_Not_Started{status = status})
-		}
+	if status := settings_pass_start(.Appearance_Next, desktop_principal()); status != .Ok && status != .Bad_State {
+		system.log_fact(.Warning, Appearance_Next_Not_Started{status = status})
 	}
 }

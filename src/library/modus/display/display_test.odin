@@ -8,6 +8,20 @@ import "modus:contract/text_encoding"
 import "modus:key_path"
 import "core:testing"
 
+// The second word of Settings_Raise: one past the last member, a word of
+// 32 bits and the largest word are refused first; then each member.
+@(test)
+the_focus_of_a_settings_raise_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(max(Settings_Raise_Focus)) + 1, u64(max(u32)), max(u64)}) {
+		_, ok := settings_raise_focus_of_word(word)
+		testing.expectf(t, !ok, "the word %d names a focus", word)
+	}
+	for member in Settings_Raise_Focus {
+		read, ok := settings_raise_focus_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+}
+
 // The root service, the input service and each window write the kind of a
 // record that the compositor reads: None, one past the last member and the
 // largest word are refused, and give None. Then each member but None comes

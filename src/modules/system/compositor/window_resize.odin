@@ -70,6 +70,7 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 		client.resize_asked, client.resize_edges = false, {}
 		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Refused), 1 = serial})
 		desktop_restore_size_after_answer(client) // desktop_features.odin
+		_ = window_scale_step(client) // scale.odin: the end of a fit request
 	}
 	// The process wrote the number of the handle: it can name any handle of
 	// the compositor. A number with no proof of this process is neither used
@@ -136,6 +137,8 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 	client.resize_pending_edges = client.resize_edges
 	client.resize_asked, client.resize_edges = false, {}
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Taken), 1 = serial})
+	// The scale after the answer: the window rescales its new surface.
+	_ = window_scale_step(client) // scale.odin
 }
 
 // resize_declined_take takes the record Resize_Declined: the process keeps
@@ -150,6 +153,7 @@ resize_declined_take :: proc "contextless" (client: ^Client) {
 	client.resize_asked, client.resize_edges = false, {}
 	system.log_fact(.Info, Window_Keeps_Size{width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
 	desktop_restore_size_after_answer(client) // desktop_features.odin
+	_ = window_scale_step(client) // scale.odin: the end of a fit request
 }
 
 // size_range_of gives the limits of a window as the pure procedures of the
@@ -237,6 +241,9 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	}
 	if client.resize_pictures != nil {
 		system.memory_unmap(client.resize_pictures)
+		// The compositor took that resize, so the window holds its size: the
+		// surface that the window offers after the release has it.
+		client.width, client.height = client.resize_logical_width, client.resize_logical_height
 	}
 	client.pictures, client.resize_pictures = nil, nil
 	client.surface = {}
@@ -244,6 +251,9 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	client.resize_asked, client.resize_edges = false, {}
 	client.released, client.surface_serial = true, serial
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Released), 1 = serial})
+	// The release ended a request of the size: a scale that waited for it
+	// goes now.
+	_ = window_scale_step(client) // scale.odin
 }
 
 // surface_rescale_take takes the record Surface_Rescale of a window: the

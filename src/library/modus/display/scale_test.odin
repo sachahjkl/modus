@@ -2,8 +2,46 @@
 package display
 
 import "core:testing"
+import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
+
+// A due decline and a due release behind a full command ring: nothing goes
+// while the ring is full and nothing is lost; with room for one record the
+// decline goes first, with its own serial and scale, and the release waits;
+// with room again the release goes.
+@(test)
+a_due_decline_goes_before_the_due_action :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	window: Window
+	opened, opened_ok := ring.open(raw_data(ring_memory), ring.PAGE_COUNT)
+	testing.expect(t, opened_ok)
+	window.ring = opened
+	for ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Present)}) {
+	}
+	window.rescale = {phase = .Releasing, scale = .Twelve_Eighths, wanted = .Twelve_Eighths, serial = 6}
+	window.decline_due, window.decline_serial, window.decline_scale = true, 5, .Sixteen_Eighths
+	window.rescale_due = .Release
+	rescale_due_run(&window)
+	testing.expect(t, window.decline_due && window.rescale_due == .Release)
+	_, _ = ring.pop(&window.ring.commands)
+	rescale_due_run(&window)
+	testing.expect(t, !window.decline_due && window.rescale_due == .Release)
+	for _ in 0 ..< ring.capacity(&window.ring.commands) - 1 {
+		_, _ = ring.pop(&window.ring.commands)
+	}
+	declined, has_declined := ring.pop(&window.ring.commands)
+	testing.expect(t, has_declined)
+	testing.expect_value(t, declined.kind, u32(Command.Surface_Declined))
+	testing.expect(t, declined.values[0] == 5 && declined.values[1] == u64(scale_factor.Scale.Sixteen_Eighths))
+	rescale_due_run(&window)
+	testing.expect_value(t, window.rescale_due, Rescale_Action.None)
+	released, has_released := ring.pop(&window.ring.commands)
+	testing.expect(t, has_released)
+	testing.expect_value(t, released.kind, u32(Command.Surface_Release))
+	testing.expect_value(t, released.values[0], u64(6))
+}
 
 // With no settings page, and with a page that read refuses (the all-zero
 // page, whose scale word 0 names no scale), the scale of a new surface is

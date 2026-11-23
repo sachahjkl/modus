@@ -74,7 +74,6 @@ Rescale_Action :: enum u8 {
 	None,
 	Release, // Send Surface_Release with the serial of the machine.
 	Offer, // Let the old surface go, make a surface of the scale of the machine with its serial, and send Surface_Rescale.
-	Decline, // Send Surface_Declined with the serial and the scale of the machine: the budget did not pay the offer.
 }
 
 // The inputs of the machine.
@@ -346,16 +345,30 @@ rescale_take :: proc "contextless" (window: ^Window, input: Rescale_Input) {
 	if input.kind == .Taken && offered.phase == .Offered && input.serial == offered.serial {
 		system.log_fact(.Info, Surface_Rescaled{width = u64(window.canvas.width), height = u64(window.canvas.height), scale = u64(offered.scale), window = window_fact_title(window)})
 	}
+	// A due Release or Offer waits for no answer that could give a new
+	// action, so a new action never takes the place of one. A due decline
+	// has its own place (decline_due) and goes first.
 	if action != .None {
 		window.rescale_due = action
 	}
 	rescale_due_run(window)
 }
 
-// rescale_due_run sends the record of the due action, when the command
-// ring has room.
+// rescale_due_run sends the due decline, then the record of the due
+// action, when the command ring has room. The decline goes first: the
+// compositor takes the offer after it only with the serial after the
+// declined one.
 @(private)
 rescale_due_run :: proc "contextless" (window: ^Window) {
+	if window.decline_due {
+		if ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands) {
+			return
+		}
+		if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Declined), values = {0 = window.decline_serial, 1 = u64(window.decline_scale)}}) {
+			return
+		}
+		window.decline_due = false
+	}
 	if window.rescale_due == .None || ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands) {
 		return
 	}
@@ -372,14 +385,10 @@ rescale_due_run :: proc "contextless" (window: ^Window) {
 		}
 	case .Offer:
 		if !rescale_offer_send(window) {
-			// The budget did not pay: the decline is the due action, so
-			// the change of the scale settles even if the ring is full now.
-			window.rescale_due = .Decline
+			// The budget did not pay: rescale_decline made the decline due,
+			// so the change of the scale settles even if the ring is full now.
+			window.rescale_due = .None
 			rescale_due_run(window)
-			return
-		}
-	case .Decline:
-		if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Declined), values = {0 = window.rescale.serial, 1 = u64(window.rescale.scale)}}) {
 			return
 		}
 	}
@@ -415,12 +424,14 @@ rescale_offer_send :: proc "contextless" (window: ^Window) -> (sent: bool) {
 // rescale_decline ends an offer that the budget could not pay: the machine
 // goes to Released with the serial of the offer, so the next scale offers
 // the serial after it, and the window holds no picture that a process
-// could draw into. Its caller makes Surface_Declined the due action, which
-// tells the compositor; that counts the window as one that declined the
-// scale in force. A full ring keeps the decline due until it has room.
+// could draw into. The decline is due with the serial and the scale of the
+// offer: Surface_Declined tells the compositor, which counts the window as
+// one that declined the scale in force. A full ring keeps it due until it
+// has room, and a later offer waits behind it.
 @(private)
 rescale_decline :: proc "contextless" (window: ^Window) {
 	rescale_declined_step(&window.rescale)
+	window.decline_due, window.decline_serial, window.decline_scale = true, window.rescale.serial, window.rescale.scale
 	window.pictures = {}
 	window.canvas = {}
 }

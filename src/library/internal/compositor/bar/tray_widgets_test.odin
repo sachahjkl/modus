@@ -5,6 +5,33 @@ import "core:testing"
 import "modus:calendar"
 import "modus:interface"
 
+// Settings_Raise names the window of settings by the handle of its ring:
+// the word 0, a word past 32 bits, the largest word and the handle of no
+// window are refused first; then the handle of a window, at its place in
+// the order, and the one at the front when a handle is there twice.
+@(test)
+settings_raise_names_only_a_window_by_its_handle :: proc(t: ^testing.T) {
+	ring_memories := [?]u32{40, 41, 42, 41}
+	for word in ([?]u64{0, u64(max(u32)) + 1, max(u64), 43}) {
+		position, found := settings_raise_target(ring_memories[:], word)
+		expect_refused(t, position, found, word)
+	}
+	position, found := settings_raise_target(ring_memories[:0], 40)
+	expect_refused(t, position, found, 40)
+	position, found = settings_raise_target(ring_memories[:], 40)
+	testing.expect(t, found && position == 0)
+	position, found = settings_raise_target(ring_memories[:], 41)
+	testing.expect(t, found && position == 3)
+	biggest := [?]u32{max(u32)}
+	position, found = settings_raise_target(biggest[:], u64(max(u32)))
+	testing.expect(t, found && position == 0)
+}
+
+@(private = "file")
+expect_refused :: proc(t: ^testing.T, position: int, found: bool, word: u64) {
+	testing.expectf(t, !found && position == -1, "the word %d names the window at %d", word, position)
+}
+
 @(private = "file")
 SCREEN_WIDTHS_OF_TEST := [?]int{1920, 1280, 1024}
 @(private = "file")

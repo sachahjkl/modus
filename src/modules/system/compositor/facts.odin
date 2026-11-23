@@ -67,6 +67,17 @@ Appearance_Tile_Goes_To_Settings :: struct {}
 @(log_fact = "compositor: the root service asked to raise the window settings, and no window has its ring")
 Settings_Raise_Without_Window :: struct {}
 
+// A start of settings while its window runs: the root service asked to
+// raise that window in place of a second process.
+@(log_fact = "compositor: the root service raised the window settings in place of a second process settings")
+Settings_Window_Raised :: struct {}
+
+// Settings_Raise named a focus that is no member: nothing is raised.
+@(log_fact = "compositor: the root service asked to raise the window settings with the focus word {word}, which names no focus")
+Settings_Raise_Focus_Refused :: struct {
+	word: u64,
+}
+
 // A press on the tile Appearance: the compositor asks the root service,
 // which knows the process settings.
 @(log_fact = "compositor: the tile appearance asks for the next appearance")

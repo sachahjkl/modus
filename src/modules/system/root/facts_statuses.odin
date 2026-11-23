@@ -122,6 +122,13 @@ Settings_Boot_Pass_Failed :: struct {
 	status: op.Status,
 }
 
+// The start of the window of settings that waited for a pass, after the
+// pass stopped.
+@(log_fact = "root: the start of settings that waited for its pass did not start (status {status})")
+Settings_Due_Start_Failed :: struct {
+	status: op.Status,
+}
+
 // The tile of the Control Center asked for the next appearance, and the
 // pass of settings did not start.
 @(log_fact = "root: the next appearance of the Control Center did not start settings (status {status})")

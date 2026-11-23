@@ -603,3 +603,21 @@ calendar_cell_place :: proc "contextless" (layout: Layout, screen_width, row, co
 	grid_x, grid_y, _, _ := calendar_grid(layout, screen_width)
 	return grid_x + CALENDAR_GRID_INSET + column * CALENDAR_CELL_WIDTH, grid_y + CALENDAR_GRID_INSET + row * CALENDAR_CELL_HEIGHT, CALENDAR_CELL_WIDTH, CALENDAR_CELL_HEIGHT, true
 }
+
+// settings_raise_target finds the window that the record Settings_Raise of
+// the root service names: its word is the handle of Client_Add of the
+// window of settings. ring_memories holds the handle of each window in the
+// order of the screen, the front last. A word of 0, a word past the 32
+// bits of a handle, or the handle of no window names none: the window
+// closed since the answer, or the record is damaged.
+settings_raise_target :: proc "contextless" (ring_memories: []u32, word: u64) -> (position: int, found: bool) {
+	if word == 0 || word > u64(max(u32)) {
+		return -1, false
+	}
+	for index := len(ring_memories) - 1; index >= 0; index -= 1 {
+		if u64(ring_memories[index]) == word {
+			return index, true
+		}
+	}
+	return -1, false
+}
