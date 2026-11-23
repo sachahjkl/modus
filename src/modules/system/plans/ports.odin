@@ -139,69 +139,44 @@ display_disconnect :: proc "contextless" () {
 	}
 }
 
-// One side of a difference for the trusted display: its bytes in a memory
-// object of the service, which the call lends to the display. A side has
-// any count of items, and passes no call region.
-@(private = "file")
-Display_Side :: struct {
-	memory:  system.Handle,
-	address: rawptr,
-	bytes:   []u8,
-}
-
-@(private = "file")
-display_side_make :: proc "contextless" (text: string) -> (side: Display_Side, ok: bool) {
-	if len(text) == 0 {
-		return {}, true
+// display_ask calls plan_diff_ask of the trusted display. The two sides
+// go in one memory object of this service, added then removed, which the
+// display keeps past the call: this service gives it a copy of the
+// handle with Read only through the call ring of the connection, and
+// passes the number of that copy. The display reads it on a worker and
+// closes it; a call that the display did not take revokes the copy.
+display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: string, removed: string) -> (serial: u64, ok: bool) {
+	total := len(added) + len(removed)
+	if total == 0 || !display_connect() {
+		return 0, false
 	}
-	pages := (u64(len(text)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	pages := (u64(total) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory, status := system.memory_create(pages)
 	if status != .Ok {
-		return {}, false
+		return 0, false
 	}
+	defer system.close(memory)
 	address, map_status := system.memory_map(memory, {.Write})
 	if map_status != .Ok {
-		system.close(memory)
-		return {}, false
-	}
-	bytes := ([^]u8)(address)[:len(text)]
-	copy(bytes, text)
-	return {memory = memory, address = address, bytes = bytes}, true
-}
-
-@(private = "file")
-display_side_end :: proc "contextless" (side: ^Display_Side) {
-	if side.address != nil {
-		system.memory_unmap(side.address)
-	}
-	if side.memory != 0 {
-		system.close(side.memory)
-	}
-	side^ = {}
-}
-
-// display_ask calls plan_diff_ask of the trusted display, with each side
-// in a memory object that lives for the call.
-display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: string, removed: string) -> (serial: u64, ok: bool) {
-	if !display_connect() {
 		return 0, false
 	}
-	added_side, added_ok := display_side_make(added)
-	defer display_side_end(&added_side)
-	removed_side, removed_ok := display_side_make(removed)
-	defer display_side_end(&removed_side)
-	if !added_ok || !removed_ok {
+	bytes := ([^]u8)(address)[:total]
+	copy(bytes, added)
+	copy(bytes[len(added):], removed)
+	system.memory_unmap(address)
+	connection := &display_connection.connection
+	given, give_status := system.give(connection.ring_memory, memory, {.Read})
+	if give_status != .Ok {
 		return 0, false
 	}
-	arguments := [3]isolated.Argument {
-		{text = transmute([]u8)plan_name},
-		{table = {records = added_side.bytes, count = u64(len(added_side.bytes)), memory_handle = u64(added_side.memory)}},
-		{table = {records = removed_side.bytes, count = u64(len(removed_side.bytes)), memory_handle = u64(removed_side.memory)}},
-	}
+	arguments := [4]isolated.Argument{{text = transmute([]u8)plan_name}, {integer = u64(given)}, {integer = u64(len(added))}, {integer = u64(len(removed))}}
 	error: errors.Error_Record
-	result, status := system.call_isolated(&display_connection.connection, display_connection.file, display_connection.ask_export, arguments[:], &error)
-	if status != .Ok || result <= 0 {
-		if status != .Ok && status != .Failed {
+	result, call_status := system.call_isolated(connection, display_connection.file, display_connection.ask_export, arguments[:], &error)
+	if call_status != .Ok || result <= 0 {
+		// The display closes the copy of a call that it refused; a call
+		// that did not reach it leaves the copy there, which this revokes.
+		system.handle_revoke(memory, connection.process)
+		if call_status != .Ok && call_status != .Failed {
 			display_disconnect()
 		}
 		return 0, false

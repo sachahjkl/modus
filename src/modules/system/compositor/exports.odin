@@ -668,7 +668,7 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 	return 1
 }
 
-// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate, as bytes of any count. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name or an item past 48 bytes); Bad_Value (-1, an empty item in a list); Budget (-1, the budget of the display pays no memory for the items).
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, and a memory object that holds the grants and roles that it adds, then the ones that it removes, each a list of names that commas separate, of any count. The caller gives the object through the call ring of its connection, with Read only; `difference` is that handle as the display names it, and the display keeps it until it read the object. The dialog shows at once, with "Reading the difference"; a worker of the display reads the lines. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes); Bad_Value (-1, argument 2: the object did not come through the ring of the caller, is no memory object, holds another right than Read, or has other pages than its two sides). An empty item or an item past 48 bytes, which the worker finds, ends the dialog with no decision: a poll gives unknown (3).
 //
 // **The act.** The focus starts on Refuse. An act counts 500 ms after the
 // dialog showed: Enter acts on the button that has the focus, Tab, Left and
@@ -683,21 +683,27 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 //
 // ```
 // connect("compositor")
-// compositor.plan_diff_ask("home", "notes: store documents", "paint: network")
+// compositor.plan_diff_ask("home", difference, 22, 14)
 // ```
 @(export, link_name = "plan_diff_ask")
-plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^system.Bytes_To_Read, removed: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
-	if !plan_display_caller() {
+plan_diff_ask_export :: proc "c" (plan_name: ^string, difference: i64, added_bytes: i64, removed_bytes: i64, error: ^errors.Error_Record) -> i64 {
+	memory := difference > 0 && difference <= i64(max(u32)) ? system.Handle(difference) : 0
+	if !plan_display_caller() || plan_name == nil {
+		// The object that a refused caller gave is not kept.
+		if caller := system.service_caller(); caller != nil && memory != 0 {
+			if _, _, through := system.handle_state(memory, caller.ring_memory); through {
+				system.close(memory)
+			}
+		}
+		if plan_name == nil {
+			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Address, .None, 1)
+		}
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	if plan_name == nil || added == nil || removed == nil {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Address, .None, plan_name == nil ? 1 : added == nil ? 2 : 3)
-	}
-	// The call host checked each place against the memory that it mapped.
-	added_bytes := added.bytes[:min(added.count, added.capacity)]
-	removed_bytes := removed.bytes[:min(removed.count, removed.capacity)]
-	serial, refusal, argument := plan_difference_show(plan_name^, added_bytes, removed_bytes)
+	serial, refusal, argument := plan_difference_show(plan_name^, memory, added_bytes, removed_bytes)
 	switch refusal {
+	case .Not_A_Difference:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, i64(argument), difference)
 	case .None:
 		return i64(serial)
 	case .Busy:
@@ -759,7 +765,7 @@ dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
 		// A poll shows nothing: it gives none of the refusals of a show.
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
 	}
@@ -869,7 +875,7 @@ act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
 	}
 	if !closed {

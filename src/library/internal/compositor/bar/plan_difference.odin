@@ -5,6 +5,7 @@
 // A plan is applied whole: the dialog has no tick, only accept and refuse.
 package bar
 
+import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
 
 PLAN_DIFFERENCE_NAME_BYTES :: 48
@@ -77,6 +78,11 @@ Plan_Difference_Refusal :: enum u8 {
 	Not_An_Act, // The act is not two identifiers with a period between them.
 	No_Grant, // The caller may not ask for a dialog of this face: no connection, or a grant that names no asker.
 	Bad_Serial, // A serial under 1: no dialog has it.
+	// The memory object of a difference is not what its caller says: it did
+	// not come through the call ring of that caller, it names no memory
+	// object, it holds another right than Read, or its pages are not the
+	// pages of its two sides.
+	Not_A_Difference,
 }
 
 // The facts of the connection of a call that the compositor reads, for a
@@ -112,6 +118,12 @@ Plan_Difference_Dialog :: struct {
 	// The view showed the last line of the body: only then does an accept
 	// count. A body that fits shows it at once.
 	seen_through:         bool,
+	// The difference is read by the worker: the body says so, no act
+	// accepts, and Escape refuses.
+	reading:              bool,
+	// The dialog ended with no decision of the principal: the worker gave no
+	// line. The serial is then unknown to a poll.
+	unread:               bool,
 }
 
 // plan_difference_open shows the difference of a plan: its name, and the
@@ -165,7 +177,148 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	dialog.decision = .Pending
 	dialog.first_line = 0
 	dialog.seen_through = plan_difference_body_lines(dialog) <= PLAN_DIFFERENCE_VISIBLE_LINES
+	dialog.reading = false
+	dialog.unread = false
 	return dialog.serial, .None, 0
+}
+
+// The memory of a reading: take gives bytes at an alignment, or nil when
+// the budget pays no more. The worker of the compositor binds it to the
+// arena of the difference; a host test to the heap.
+Plan_Difference_Memory :: struct {
+	user: rawptr,
+	take: proc "contextless" (user: rawptr, bytes, alignment: int) -> rawptr,
+}
+
+// What a reading gives: the items of the two sides in the memory of the
+// reading, or the refusal and the argument that it names.
+Plan_Difference_Read :: struct {
+	refusal:       Plan_Difference_Refusal,
+	argument:      int,
+	items:         []Plan_Difference_Item,
+	added_count:   int,
+	removed_count: int,
+}
+
+// plan_difference_object_check is the border of the memory object of a
+// difference that a caller gives: it came through the call ring of that
+// caller, it names a memory object, it holds Read and no other right, the
+// lengths of the sides are not negative and not both 0, and the object
+// has exactly the pages of the two sides.
+plan_difference_object_check :: proc "contextless" (kind: op.Object_Kind, rights: op.Rights, through: bool, object_pages: u64, added_bytes, removed_bytes: i64) -> Plan_Difference_Refusal {
+	if !through || kind != .Memory || rights != {.Read} {
+		return .Not_A_Difference
+	}
+	if added_bytes < 0 || removed_bytes < 0 || added_bytes > max(i64) - removed_bytes {
+		return .Not_A_Difference
+	}
+	bytes := u64(added_bytes + removed_bytes)
+	if bytes == 0 {
+		return .No_Change
+	}
+	if object_pages != (bytes + op.PAGE_SIZE - 1) / op.PAGE_SIZE {
+		return .Not_A_Difference
+	}
+	return .None
+}
+
+// plan_difference_read copies the two sides out of the object once, into
+// the memory of the reading, then counts, checks and splits them into
+// items there. It runs on the worker of the compositor, never on the
+// interface thread: its work is in proportion to the difference. The
+// object is memory of the caller, which can change it while it is read:
+// each check reads the copy only.
+plan_difference_read :: proc "contextless" (source: []u8, added_bytes, removed_bytes: int, memory: Plan_Difference_Memory) -> (read: Plan_Difference_Read) {
+	if added_bytes < 0 || removed_bytes < 0 || added_bytes > len(source) || removed_bytes > len(source) - added_bytes {
+		return {refusal = .Not_A_Difference, argument = 2}
+	}
+	total := added_bytes + removed_bytes
+	if total == 0 {
+		return {refusal = .No_Change, argument = 2}
+	}
+	copied := ([^]u8)(memory.take(memory.user, total, 1))
+	if copied == nil {
+		return {refusal = .Too_Many_Items, argument = 2}
+	}
+	copy(copied[:total], source[:total])
+	added := string(copied[:added_bytes])
+	removed := string(copied[added_bytes:total])
+	added_count, removed_count: int
+	if added_count, read.refusal = plan_difference_items(added, nil); read.refusal != .None {
+		read.argument = 2
+		return
+	}
+	if removed_count, read.refusal = plan_difference_items(removed, nil); read.refusal != .None {
+		read.argument = 3
+		return
+	}
+	if added_count == 0 && removed_count == 0 {
+		return {refusal = .No_Change, argument = 2}
+	}
+	place := memory.take(memory.user, (added_count + removed_count) * size_of(Plan_Difference_Item), align_of(Plan_Difference_Item))
+	if place == nil {
+		return {refusal = .Too_Many_Items, argument = 2}
+	}
+	items := ([^]Plan_Difference_Item)(place)[:added_count + removed_count]
+	plan_difference_items(added, items[:added_count])
+	plan_difference_items(removed, items[added_count:])
+	return {items = items, added_count = added_count, removed_count = removed_count}
+}
+
+// plan_difference_reading_open opens the dialog of a difference that the
+// worker reads: its name now, its lines at plan_difference_adopt. It
+// gives the serial, or 0 with the refusal and its argument; a refusal
+// changes nothing.
+plan_difference_reading_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, plan_name: string, now_milliseconds: u64) -> (serial: u64, refusal: Plan_Difference_Refusal, argument: int) {
+	if dialog.open {
+		return 0, .Busy, 0
+	}
+	if len(plan_name) == 0 {
+		return 0, .Empty_Name, 1
+	}
+	if len(plan_name) > PLAN_DIFFERENCE_NAME_BYTES {
+		return 0, .Name_Too_Long, 1
+	}
+	dialog.serial += 1
+	dialog.open = true
+	dialog.face = .Plan
+	copy(dialog.plan_name[:], plan_name)
+	dialog.plan_name_length = len(plan_name)
+	dialog.added, dialog.added_count = nil, 0
+	dialog.removed, dialog.removed_count = nil, 0
+	dialog.shown_at_milliseconds = now_milliseconds
+	dialog.armed_from_milliseconds = now_milliseconds
+	dialog.focus = .Refuse
+	dialog.decision = .Pending
+	dialog.first_line = 0
+	dialog.seen_through = false
+	dialog.reading = true
+	dialog.unread = false
+	return dialog.serial, .None, 0
+}
+
+// plan_difference_adopt gives the dialog of serial the lines that the
+// worker read, in constant time: the items stay in the memory of the
+// reading. A reading of a dialog that no longer shows, or of another
+// serial, is dropped (adopted false). A refused reading ends the dialog
+// with no decision of the principal: a poll knows no decision of it. The
+// arm time starts again: the lines show from now.
+plan_difference_adopt :: proc "contextless" (dialog: ^Plan_Difference_Dialog, serial: u64, read: ^Plan_Difference_Read, now_milliseconds: u64) -> (adopted: bool) {
+	if !dialog.open || !dialog.reading || dialog.serial != serial {
+		return false
+	}
+	dialog.reading = false
+	if read.refusal != .None {
+		dialog.open = false
+		dialog.unread = true
+		return true
+	}
+	dialog.added, dialog.added_count = read.items[:read.added_count], read.added_count
+	dialog.removed, dialog.removed_count = read.items[read.added_count:][:read.removed_count], read.removed_count
+	dialog.armed_from_milliseconds = now_milliseconds
+	dialog.first_line = 0
+	dialog.seen_through = plan_difference_body_lines(dialog) <= PLAN_DIFFERENCE_VISIBLE_LINES
+	return true
 }
 
 // plan_difference_act_open shows one act of an agent: the asker, the name
@@ -196,6 +349,8 @@ plan_difference_act_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog,
 	dialog.face = .Act
 	copy(dialog.plan_name[:], asker)
 	dialog.plan_name_length = len(asker)
+	dialog.reading = false
+	dialog.unread = false
 	dialog.act_item = {}
 	copy(dialog.act_item[0].text[:], act)
 	dialog.act_item[0].length = len(act)
@@ -341,7 +496,7 @@ plan_difference_decide :: proc "contextless" (dialog: ^Plan_Difference_Dialog, d
 // that is not the last one shown, as the dialog keeps the decision of the
 // last dialog only: a later dialog replaced it, or no dialog had it.
 plan_difference_decision_of_serial :: proc "contextless" (dialog: ^Plan_Difference_Dialog, serial: u64) -> (decision: Plan_Difference_Decision, known: bool) {
-	if serial == 0 || serial != dialog.serial {
+	if serial == 0 || serial != dialog.serial || (!dialog.open && dialog.unread) {
 		return .Pending, false
 	}
 	if dialog.open {
@@ -435,6 +590,10 @@ plan_difference_line :: proc "contextless" (dialog: ^Plan_Difference_Dialog, ind
 // plan_difference_visible_lines gives the lines of the body that the view
 // shows: all of them, up to PLAN_DIFFERENCE_VISIBLE_LINES.
 plan_difference_visible_lines :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> int {
+	// A difference that is read has one line: the words that say so.
+	if dialog.reading {
+		return 1
+	}
 	return min(plan_difference_body_lines(dialog), PLAN_DIFFERENCE_VISIBLE_LINES)
 }
 
@@ -442,7 +601,8 @@ plan_difference_visible_lines :: proc "contextless" (dialog: ^Plan_Difference_Di
 // body. When the view shows the last line, the accept counts from then on.
 // It gives true when the view moved.
 plan_difference_scroll :: proc "contextless" (dialog: ^Plan_Difference_Dialog, lines: int) -> bool {
-	if !dialog.open {
+	// A difference that is read has no line yet: no view showed its end.
+	if !dialog.open || dialog.reading {
 		return false
 	}
 	last_first := max(plan_difference_body_lines(dialog) - PLAN_DIFFERENCE_VISIBLE_LINES, 0)

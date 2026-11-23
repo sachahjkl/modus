@@ -10,6 +10,7 @@ package compositor
 
 import "base:intrinsics"
 import "internal:compositor/bar"
+import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
 import "modus:contract/value_kinds"
@@ -208,78 +209,165 @@ plan_difference_push :: proc "contextless" (bytes, alignment: u64) -> (address: 
 // budget once its dialog closed: a large difference holds its pages only
 // while the principal reads it.
 plan_difference_memory_step :: proc "contextless" () {
-	if !plan_difference_dialog.open && plan_difference_arena.used_bytes > 0 {
+	plan_difference_reading_step()
+	if !plan_difference_dialog.open && plan_reading_stage() == .Idle && plan_difference_arena.used_bytes > 0 {
 		system.arena_trim(&plan_difference_arena, 0)
 	}
 }
 
-// plan_difference_show shows the difference of a plan on the trusted
-// display, and gives its serial, or 0 with the refusal and the argument
-// that it names, from 1. added and removed are memory of the asker: the
-// dialog reads a copy, so a change of the asker after the copy changes
-// nothing that the principal sees. A budget that pays no more for the
-// items is Too_Many_Items.
-plan_difference_show :: proc "contextless" (plan_name: string, added, removed: []u8) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
-	if powerbox_prompt.open || plan_difference_dialog.open {
+// The reading of a difference on the worker of the compositor. stage is
+// the one word that the two threads share: the interface thread writes
+// Requested with each field of the job, the worker reads the object and
+// writes Published with its reading, and the interface thread adopts it
+// and writes Idle. The arena of the difference belongs to the worker
+// while the stage is Requested, and to the interface thread else.
+Plan_Reading_Stage :: enum u32 {
+	Idle      = 0,
+	Requested = 1,
+	Published = 2,
+}
+
+Plan_Reading_Job :: struct {
+	stage:         u32,
+	serial:        u64,
+	memory:        system.Handle, // The object of the two sides, which this process holds with Read until the reading ends.
+	added_bytes:   int,
+	removed_bytes: int,
+	read:          bar.Plan_Difference_Read,
+}
+
+plan_reading: Plan_Reading_Job
+plan_difference_worker_running: bool
+
+// plan_difference_worker_start starts the thread that reads each
+// difference. With none, a difference is refused with Busy.
+plan_difference_worker_start :: proc "contextless" () {
+	if _, status := system.thread_start(plan_difference_worker, nil); status == .Ok {
+		plan_difference_worker_running = true
+	}
+}
+
+@(private = "file")
+plan_reading_stage :: proc "contextless" () -> Plan_Reading_Stage {
+	return Plan_Reading_Stage(intrinsics.atomic_load_explicit(&plan_reading.stage, .Acquire))
+}
+
+@(private = "file")
+plan_reading_stage_set :: proc "contextless" (stage: Plan_Reading_Stage) {
+	intrinsics.atomic_store_explicit(&plan_reading.stage, u32(stage), .Release)
+	system.word_wake(&plan_reading.stage)
+}
+
+@(private = "file")
+plan_reading_take :: proc "contextless" (_: rawptr, bytes, alignment: int) -> rawptr {
+	address, ok := plan_difference_push(u64(bytes), u64(alignment))
+	return ok ? address : nil
+}
+
+// plan_difference_worker is the entry of the thread of the readings: it
+// maps the object read-only, copies and parses it into the arena of the
+// difference (bar.plan_difference_read), and publishes the reading. Its
+// work is in proportion to the difference, so it never runs on the
+// interface thread.
+plan_difference_worker :: proc "c" (_: rawptr) -> ! {
+	for {
+		system.word_wait(&plan_reading.stage, u32(Plan_Reading_Stage.Idle))
+		if plan_reading_stage() != .Requested {
+			// Published waits for the interface thread.
+			system.word_wait(&plan_reading.stage, u32(Plan_Reading_Stage.Published))
+			continue
+		}
+		read := bar.Plan_Difference_Read{refusal = .Too_Many_Items, argument = 2}
+		if plan_difference_arena.base == nil {
+			if amounts, budget_status := system.budget_read(); budget_status == .Ok {
+				if arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages)); arena_status == .Ok {
+					arena.exact_commits = true
+					plan_difference_arena = arena
+				}
+			}
+		}
+		if plan_difference_arena.base != nil {
+			system.arena_reset(&plan_difference_arena)
+			total := plan_reading.added_bytes + plan_reading.removed_bytes
+			if address, map_status := system.memory_map(plan_reading.memory, {}); map_status == .Ok {
+				read = bar.plan_difference_read(([^]u8)(address)[:total], plan_reading.added_bytes, plan_reading.removed_bytes, {take = plan_reading_take})
+				system.memory_unmap(address)
+			} else {
+				read = {refusal = .Not_A_Difference, argument = 2}
+			}
+		}
+		plan_reading.read = read
+		plan_reading_stage_set(.Published)
+	}
+}
+
+// plan_difference_show checks the object of a difference at its border
+// and opens its dialog in its reading state; the worker reads it. It gives
+// the serial, or 0 with the refusal and its argument, from 1: the name,
+// the object. memory is the handle as this process names it, which the
+// caller gave through the call ring of its connection: each refusal
+// closes it, and the end of the reading too.
+plan_difference_show :: proc "contextless" (plan_name: string, memory: system.Handle, added_bytes, removed_bytes: i64) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
+	caller := system.service_caller()
+	kind := op.Object_Kind.None
+	rights: system.Rights
+	through := false
+	if caller != nil && memory != 0 {
+		kind, rights, through = system.handle_state(memory, caller.ring_memory)
+	}
+	// Only a handle that came through the ring of this caller is this
+	// process's to close: a number of another handle is no handle of it.
+	defer if refusal != .None && through {
+		system.close(memory)
+	}
+	pages: u64
+	if through && kind == .Memory {
+		pages, _ = system.memory_size(memory)
+	}
+	if refusal = bar.plan_difference_object_check(kind, rights, through, pages, added_bytes, removed_bytes); refusal != .None {
+		return 0, refusal, 2
+	}
+	if powerbox_prompt.open || !plan_difference_worker_running || plan_reading_stage() != .Idle {
 		return 0, .Busy, 0
 	}
-	if plan_difference_arena.base == nil {
-		amounts, budget_status := system.budget_read()
-		if budget_status != .Ok {
-			return 0, .Too_Many_Items, 2
-		}
-		arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages))
-		if arena_status != .Ok {
-			return 0, .Too_Many_Items, 2
-		}
-		arena.exact_commits = true
-		plan_difference_arena = arena
-	}
-	// No dialog shows, so no item of the arena is in use.
-	system.arena_reset(&plan_difference_arena)
-	added_copy, added_ok := plan_difference_copy(added)
-	if !added_ok {
-		return 0, .Too_Many_Items, 2
-	}
-	removed_copy, removed_ok := plan_difference_copy(removed)
-	if !removed_ok {
-		system.arena_trim(&plan_difference_arena, 0)
-		return 0, .Too_Many_Items, 3
-	}
-	needed := bar.plan_difference_items_needed(added_copy, removed_copy)
-	items: []bar.Plan_Difference_Item
-	if needed > 0 {
-		address, pushed := plan_difference_push(u64(needed) * size_of(bar.Plan_Difference_Item), align_of(bar.Plan_Difference_Item))
-		if !pushed {
-			system.arena_trim(&plan_difference_arena, 0)
-			return 0, .Too_Many_Items, 2
-		}
-		items = ([^]bar.Plan_Difference_Item)(address)[:needed]
-	}
-	serial, refusal, argument = bar.plan_difference_open(&plan_difference_dialog, plan_name, added_copy, removed_copy, system.time(), items)
+	serial, refusal, argument = bar.plan_difference_reading_open(&plan_difference_dialog, plan_name, system.time())
 	if refusal != .None {
 		return
 	}
-	system.log_fact(.Info, Plan_Difference_Shown{added = u64(plan_difference_dialog.added_count), removed = u64(plan_difference_dialog.removed_count), plan = value_kinds.text_field(plan_name, PLAN_NAME_FIELD_BYTES)})
+	// The fields of the job, then the stage: the worker reads them after it.
+	plan_reading.serial, plan_reading.memory = serial, memory
+	plan_reading.added_bytes, plan_reading.removed_bytes = int(added_bytes), int(removed_bytes)
+	plan_reading.read = {}
+	plan_reading_stage_set(.Requested)
 	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
-	dialog_asker_bind(system.service_caller())
+	dialog_asker_bind(caller)
 	damage_whole_screen()
 	return
 }
 
-// plan_difference_copy copies the bytes of a side into the arena, once.
-@(private = "file")
-plan_difference_copy :: proc "contextless" (bytes: []u8) -> (text: string, ok: bool) {
-	if len(bytes) == 0 {
-		return "", true
+// plan_difference_reading_step adopts a reading that the worker published,
+// in constant time, for the dialog that still shows it, and closes its
+// object: a dialog that ended while the worker read takes no line.
+plan_difference_reading_step :: proc "contextless" () {
+	if plan_reading_stage() != .Published {
+		return
 	}
-	address, pushed := plan_difference_push(u64(len(bytes)), 1)
-	if !pushed {
-		return "", false
+	adopted := bar.plan_difference_adopt(&plan_difference_dialog, plan_reading.serial, &plan_reading.read, system.time())
+	system.close(plan_reading.memory)
+	plan_reading.serial, plan_reading.memory, plan_reading.read = 0, 0, {}
+	plan_reading_stage_set(.Idle)
+	if adopted && plan_difference_dialog.open {
+		system.log_fact(.Info, Plan_Difference_Shown{added = u64(plan_difference_dialog.added_count), removed = u64(plan_difference_dialog.removed_count), plan = value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)})
 	}
-	copied := ([^]u8)(address)[:len(bytes)]
-	intrinsics.mem_copy_non_overlapping(raw_data(copied), raw_data(bytes), len(bytes))
-	return string(copied), true
+	damage_whole_screen()
+}
+
+// plan_difference_reading_wait adds the stage of the reading to the wait of
+// the interface thread, so a publication wakes it.
+plan_difference_reading_wait :: proc "contextless" (wait: ^system.Wait) {
+	if plan_reading_stage() == .Requested {
+		system.wait_word(wait, &plan_reading.stage, u32(Plan_Reading_Stage.Requested))
+	}
 }
 
 // act_dialog_show shows one act of an agent on the trusted display: the
@@ -635,6 +723,9 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	// The lines of the view only: the body scrolls over each change of the
 	// difference.
 	visible := bar.plan_difference_visible_lines(dialog)
+	if dialog.reading {
+		interface.draw_text(table, text_x, line_y + text_offset, "Reading the difference", graphics.colors.dim, interface.FONT_INTERFACE)
+	}
 	for index in dialog.first_line ..< dialog.first_line + visible {
 		line, ok := bar.plan_difference_line(dialog, index)
 		if !ok {

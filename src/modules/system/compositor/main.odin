@@ -146,8 +146,10 @@ import "base:intrinsics"
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
 // 4050 + 10 + 9 + 3 + 2 + 1647 + 2144 + 2144 + 708 = 10717. A screen whose
 // frame and background the budget cannot pay is named on one line, and the
-// compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10717, processes = 1, threads = 2}
+// compositor stops (entry). Three threads: the interface, the ranking of
+// the palette, and the reading of a plan difference (powerbox_dialog.odin),
+// whose work is in proportion to the difference.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10717, processes = 1, threads = 3}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -790,6 +792,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// script, once at each boot: the log names what no font has.
 	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
+	plan_difference_worker_start() // powerbox_dialog.odin
 	bar_layout_update()
 	settings_seen: u32
 	// settings_seen starts at 0: when the boot pass of settings wrote the page
@@ -831,6 +834,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		powerbox_picker_step() // powerbox_picker.odin
 		plan_difference_memory_step() // powerbox_dialog.odin
 		powerbox_picker_wait(&wait)
+		plan_difference_reading_wait(&wait) // powerbox_dialog.odin
 		window_events_wait(&wait) // window_events.odin
 		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())
 		if wake := pointer_wake(); wake != 0 {
