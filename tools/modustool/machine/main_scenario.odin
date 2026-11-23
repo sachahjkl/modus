@@ -2943,6 +2943,28 @@ scenario := [?]Step {
 	// system fixes no order between them.
 	{kind = .Wait, text = "root: the start of settings raises the window of settings that runs", any_order = true, fails_on = "compositor: surface settings"},
 	{kind = .Wait, text = "compositor: the root service raised the window settings in place of a second process settings", fails_on = "compositor: surface settings"},
+	// A restart at once: the console stops settings, and the palette starts
+	// it again at once, in the session of the desktop. The new process gets
+	// its private store: a change by a call of the host, then one that the
+	// console types, is kept, then the page changes. A process with no store
+	// writes "settings: no private store".
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"settings\")"},
+	{kind = .Wait, text = "root: settings stopped"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "settings"},
+	{kind = .Wait, text = " for \"settings\": settings (module)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette starts settings"},
+	{kind = .Wait, text = "settings: ok, font vector", fails_on = "settings: no private store"},
+	{kind = .Front, text = "console"},
+	{kind = .Call, text = "settings.set(appearance = .light)", expected = "1"},
+	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light, scale 1.25; kept in the store"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light, "},
+	{kind = .Type, text = "settings.set(appearance = .auto)"},
+	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; kept in the store"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, "},
 	// A click on a value of the window applies it, as the press of a
 	// principal does: the compositor tells each window the new value, and
 	// settings draws with it. A console call proves the export, not the

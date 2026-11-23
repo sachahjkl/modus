@@ -2,6 +2,7 @@
 package settings_process
 
 import "base:intrinsics"
+import "core:sync"
 import "core:testing"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
@@ -33,8 +34,27 @@ card_content :: proc(card: interface.Area) -> interface.Area {
 MARGIN :: 16
 
 // The layout refuses each size that no tree takes, and gives no place.
+// The layout of the window is one tree of the process (layout_tree): the
+// process lays out on one thread. The test runner runs the tests on several
+// threads, so each test that lays out holds this lock; two tests that built
+// the tree at once saw a layout of the other and failed one run in a few.
+@(private = "file")
+layout_tree_lock: sync.Mutex
+
+@(private = "file")
+@(deferred_none = layout_tree_end)
+layout_tree_begin :: proc() {
+	sync.mutex_lock(&layout_tree_lock)
+}
+
+@(private = "file")
+layout_tree_end :: proc() {
+	sync.mutex_unlock(&layout_tree_lock)
+}
+
 @(test)
 settings_layout_refuses_each_size_out_of_range :: proc(t: ^testing.T) {
+	layout_tree_begin()
 	tokens, _ := layout.tokens_for(.Dark, .Standard)
 	table: interface.Draw_Table
 	texts: Frame_Texts
@@ -54,6 +74,7 @@ settings_layout_refuses_each_size_out_of_range :: proc(t: ^testing.T) {
 // the most languages makes the section Region and language its tallest.
 @(test)
 settings_layout_fits_each_size :: proc(t: ^testing.T) {
+	layout_tree_begin()
 	tokens, _ := layout.tokens_for(.Dark, .Standard)
 	table: interface.Draw_Table
 	testing.expect_value(t, int(tokens.margin), MARGIN)
@@ -124,11 +145,11 @@ settings_layout_fits_each_size :: proc(t: ^testing.T) {
 				}
 				track := area_of(tree, boxes.scale_track)
 				testing.expectf(t, scale_stop_width(track.width) >= 8, "at %dx%d the stops of the scale are thinner than 8 pixels", width, height)
-				// Each stop holds its percentage whole, or the scale in force
+				// Each stop holds its short label whole, or the scale in force
 				// has its own box beside the track.
 				if boxes.scale_value == layout.NO_BOX {
-					for label in setting_texts[.Scale].value_labels[:len(scale_factor.Scale)] {
-						testing.expectf(t, scale_stop_width(track.width) >= button_width(&table, label), "at %dx%d the label %s is cut in its stop", width, height, label)
+					for label in SCALE_STOP_LABELS {
+						testing.expectf(t, scale_stop_width(track.width) >= interface.text_measured_width(&table, interface.FONT_INTERFACE, label) + 2 * SCALE_STOP_LABEL_PADDING, "at %dx%d the label %s is cut in its stop", width, height, label)
 					}
 				}
 				for first in 0 ..< button_count {
@@ -148,6 +169,7 @@ settings_layout_fits_each_size :: proc(t: ^testing.T) {
 // scroll before the top is refused by the tree builder: it clamps to 0.
 @(test)
 settings_layout_scrolls_inside_the_content :: proc(t: ^testing.T) {
+	layout_tree_begin()
 	tokens, _ := layout.tokens_for(.Dark, .Standard)
 	table: interface.Draw_Table
 	texts: Frame_Texts
@@ -228,8 +250,35 @@ settings_zone_list :: proc(t: ^testing.T) {
 // count under 0; one window and many; the largest count is written whole,
 // with the end of its sentence. In the layout it lies inside the card
 // Display, under the track, at the least and at the largest width.
+// A change is kept in the store first: a refused keep leaves the page as
+// it was and fails; a kept one goes to the page; a change of nothing
+// writes nothing and holds, kept or not.
+// The short labels of the stops: one for each member of the scale, each
+// the percent of its member rounded half up, and no two alike.
+@(test)
+settings_stop_labels_are_the_percents :: proc(t: ^testing.T) {
+	for member, place in scale_factor.Scale {
+		// Tenths of a percent: 8 eighths are 1000.
+		percent := (int(member) * 1000 / scale_factor.EIGHTHS_OF_ONE + 5) / 10
+		digits: [3]u8 = {u8('0' + percent / 100), u8('0' + percent / 10 % 10), u8('0' + percent % 10)}
+		testing.expectf(t, SCALE_STOP_LABELS[place] == string(digits[:]), "the stop %v says %s, not %d", member, SCALE_STOP_LABELS[place], percent)
+		for other in SCALE_STOP_LABELS[place + 1:] {
+			testing.expect(t, other != SCALE_STOP_LABELS[place])
+		}
+	}
+}
+
+@(test)
+settings_change_goes_to_the_page_only_when_kept :: proc(t: ^testing.T) {
+	testing.expect_value(t, change_decision(false, false), Change_Decision{write_page = false, kept = false})
+	testing.expect_value(t, change_decision(false, true), Change_Decision{write_page = true, kept = true})
+	testing.expect_value(t, change_decision(true, false), Change_Decision{write_page = false, kept = true})
+	testing.expect_value(t, change_decision(true, true), Change_Decision{write_page = false, kept = true})
+}
+
 @(test)
 settings_declined_notice :: proc(t: ^testing.T) {
+	layout_tree_begin()
 	buffer: [DECLINED_NOTICE_BYTES]u8
 	testing.expect_value(t, declined_notice_write(buffer[:], 0), "")
 	testing.expect_value(t, declined_notice_write(buffer[:], -1), "")

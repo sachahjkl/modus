@@ -16,7 +16,8 @@ import "modustool:foundation"
 // service writes its line, refuses the write and a later read at once, and
 // the console still runs a command that needs no store. A marker places the
 // silence, not a count of requests: QEMU joins and splits requests, and the
-// count of the start changes with each release.
+// count of the start changes with each release. Then a change of settings
+// is refused by its store, and the settings page keeps its values.
 
 SILENT_DISK_MARKER :: "the version that the disk does not answer"
 SILENT_DISK_OBJECT :: "silent"
@@ -50,6 +51,22 @@ scenario_silent_disk := [?]Step {
 	// A command that needs no store still runs.
 	{kind = .Type, text = "1 + 2 * 3"},
 	{kind = .Wait, text = "[console] 7"},
+	// A change that the store refuses (src/md/features/settings_window.md,
+	// "One writer, the store first"): the call starts settings, whose write
+	// to its store needs the disk and is refused; the page keeps its
+	// appearance, so the compositor tells no change, and the call fails.
+	// The palette starts the window of settings, whose store opens: the
+	// storage service runs, and refuses only the calls that need the disk.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "settings"},
+	{kind = .Wait, text = " for \"settings\": settings (module)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "settings: ok, ", fails_on = "settings: no private store"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "settings.set(appearance = .light)"},
+	{kind = .Wait, text = "settings: a change that the store did not keep: the page keeps the values before", fails_on = "appearance light"},
+	{kind = .Wait, text = "[console] error: settings.set: ", fails_on = "appearance light"},
 	// QEMU drains the requests of its disks before it ends: the closed
 	// connection fails the request that waits.
 	{kind = .Disk_Disconnect},
