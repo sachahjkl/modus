@@ -44,7 +44,7 @@ Block_Cache_Counts :: struct {
 	records:  u64, // A block recorded.
 	changed:  u64, // A block found whose bytes no longer equal the memory: it is recorded again.
 	replaced: u64, // A recorded block that took the slot of another block.
-	written:  u64, // A block that ended after a write of its own frame.
+	written:  u64, // A block that ended after a write of its own frame, or after a port access.
 }
 
 // The cache of the decoded blocks of one processor. Its zero value is an
@@ -60,13 +60,18 @@ block_slot :: #force_inline proc "contextless" (start_physical: u64) -> int {
 }
 
 // block_cache_find gives the valid block that starts at a physical address,
-// or nil. It does not compare the bytes.
+// or nil. It does not compare the bytes. A block whose counts pass the
+// arrays of a block is refused: the compare and the run index those arrays
+// with them.
 block_cache_find :: proc "contextless" (cache: ^Block_Cache, start_physical: u64) -> ^Decoded_Block {
 	block := &cache.blocks[block_slot(start_physical)]
-	if block.valid && block.start_physical == start_physical {
-		return block
+	if !block.valid || block.start_physical != start_physical {
+		return nil
 	}
-	return nil
+	if int(block.byte_count) > BLOCK_BYTE_CAPACITY || int(block.instruction_count) > BLOCK_INSTRUCTION_CAPACITY {
+		return nil
+	}
+	return block
 }
 
 // block_bytes_equal says whether the memory still holds the bytes of a
@@ -96,9 +101,11 @@ block_bytes_equal :: proc "contextless" (block: ^Decoded_Block, physical_memory:
 block_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, step_allowance: u64) -> Step_Outcome {
 	translated := mmu_fetch_translate(&cpu.tlb, physical_memory, cpu.cr3, cpu.rip, .User)
 	if translated.status != .Ok {
-		// The step of one instruction translates the place again and gives
-		// the fault of the fetch of its first byte.
-		return processor_step_within(cpu, physical_memory, step_allowance)
+		// The fault of the fetch of the first byte, as the step of one
+		// instruction gives it, with no second walk: the counts of the
+		// translation cache stay the ones of the steps one by one.
+		cpu.rflags |= RFLAGS_RESERVED_ONE
+		return record_translation_fault(cpu, cpu.rip, translated)
 	}
 	cache := cpu.blocks
 	if block := block_cache_find(cache, translated.physical_address); block != nil {

@@ -6,6 +6,7 @@ package build
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
@@ -16,6 +17,7 @@ import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
+import "modus:contract/value_kinds"
 import "modustool:foundation"
 
 BROWSER_MACHINE_FOLDER :: foundation.BUILD_FOLDER + "/browser_machine"
@@ -1001,8 +1003,13 @@ browser_machine_damaged_module_boot :: proc(boot_image: string, trust_hash_hex: 
 		fmt.eprintfln("modustool: %s is not a boot image", boot_image)
 		return false
 	}
-	changed := false
+	changed, root_found := false, false
+	root_tag: [FACT_LINE_MODULE_TAG_BYTES]u8
 	for &entry in modules {
+		if system_description.name_of(&entry.name) == "root" {
+			root_tag = module_tag_of(entry.hash)
+			root_found = true
+		}
 		if system_description.name_of(&entry.name) != BROWSER_MACHINE_DAMAGED_MODULE {
 			continue
 		}
@@ -1014,28 +1021,39 @@ browser_machine_damaged_module_boot :: proc(boot_image: string, trust_hash_hex: 
 		bytes[len(bytes) / 2] ~= 0xFF
 		changed = true
 	}
-	if !changed {
-		fmt.eprintfln("modustool: %s holds no module %s to change", boot_image, BROWSER_MACHINE_DAMAGED_MODULE)
+	if !changed || !root_found {
+		fmt.eprintfln("modustool: %s holds no module %s to change, or no module root", boot_image, BROWSER_MACHINE_DAMAGED_MODULE)
 		return false
 	}
 	if error := os.write_entire_file(BROWSER_MACHINE_DAMAGED_IMAGE_PATH, image); error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", BROWSER_MACHINE_DAMAGED_IMAGE_PATH, error)
 		return false
 	}
-	// A fact writes "[<module>] #<hash>:<key tag> ..." on the serial port.
-	refusal_tag := fmt.tprintf(":%06x", op.log_fact_key_tag(fact_key("root", "Image_File_Hash_Wrong")))
+	// A fact writes "[<module>] #<module tag>:<key tag> <values>" on the
+	// serial port. The Node program ends at the first line of the root
+	// service with the key tag; the check below reads that line whole.
+	refusal_key_tag := op.log_fact_key_tag(fact_key("root", "Image_File_Hash_Wrong"))
+	refusal_tag := fmt.tprintf(":%06x", refusal_key_tag)
+	refused_file := value_kinds.module_name_field(BROWSER_MACHINE_DAMAGED_MODULE)
 	started := time.tick_now()
 	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_NODE_PROGRAM, BROWSER_MACHINE_HOST_PATH, BROWSER_MACHINE_KERNEL_PATH, BROWSER_MACHINE_DAMAGED_IMAGE_PATH, bound, BROWSER_MACHINE_USABLE_LINE, "", "[root] ", refusal_tag, trust_hash_hex}}, context.temp_allocator)
 	if error != nil || !state.success {
 		fmt.eprintfln("modustool: node failed on the image with a changed module (code %d, %v): %s", state.exit_code, error, string(error_output))
 		return false
 	}
-	refused, machine_line := false, ""
+	refused, damaged_ran, machine_line := false, "", ""
+	damaged_head := "[" + BROWSER_MACHINE_DAMAGED_MODULE + "] "
 	lines := string(output)
 	for line in strings.split_lines_iterator(&lines) {
 		if strings.has_prefix(line, "serial: ") {
 			serial := line[len("serial: "):]
-			refused ||= strings.has_prefix(serial, "[root] ") && strings.contains(serial, refusal_tag)
+			if strings.has_prefix(serial, damaged_head) && damaged_ran == "" {
+				damaged_ran = serial
+			}
+			if strings.has_prefix(serial, "[root] ") {
+				fact, is_fact := fact_line_parse(serial[len("[root] "):])
+				refused ||= is_fact && fact.module_tag == root_tag && fact.key_tag == refusal_key_tag && fact.part_count == 1 && fact.value_count <= len(refused_file) && slice.equal(fact.values[:len(refused_file)], refused_file[:])
+			}
 		} else if strings.has_prefix(line, "machine: ") {
 			machine_line = line
 		}
@@ -1045,8 +1063,12 @@ browser_machine_damaged_module_boot :: proc(boot_image: string, trust_hash_hex: 
 		fmt.eprintln("modustool: the kernel in node ended with a trap of WebAssembly on the image with a changed module")
 		return false
 	}
+	if damaged_ran != "" {
+		fmt.eprintfln("modustool: the module %s with one changed byte ran in node: %q", BROWSER_MACHINE_DAMAGED_MODULE, damaged_ran)
+		return false
+	}
 	if !refused {
-		fmt.eprintfln("modustool: the root service in node wrote no fact root.Image_File_Hash_Wrong (%s) for the module %s with one changed byte", refusal_tag, BROWSER_MACHINE_DAMAGED_MODULE)
+		fmt.eprintfln("modustool: the root service in node wrote no fact root.Image_File_Hash_Wrong (%s) for the file %s with one changed byte", refusal_tag, BROWSER_MACHINE_DAMAGED_MODULE)
 		return false
 	}
 	foundation.test_passed_print("the root service in node refuses the module %s with one changed byte at its first use", BROWSER_MACHINE_DAMAGED_MODULE)

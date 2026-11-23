@@ -115,7 +115,8 @@ Software_Tlb :: struct {
 	// The frame of the decoded block that runs, while code_frame_active:
 	// each write of this processor into it, and each accessed or dirty bit
 	// that a walk sets in it, sets code_frame_written, and the block ends
-	// after the instruction (blocks.odin).
+	// after the instruction (blocks.odin). A port access sets it too: a
+	// device model can write any frame.
 	code_frame:             u64,
 	code_frame_active:      bool,
 	code_frame_written:     bool,

@@ -2386,6 +2386,9 @@ instruction_execute_opcode :: proc "contextless" (cpu: ^Processor_State, physica
 			value := read_register(cpu, u8(General_Register.Rax), port_width, true)
 			cpu.ports.write(port, port_width, u32(value))
 		}
+		// A device model can write the memory at a port access, so the
+		// block ends here: the next entry compares its bytes again.
+		cpu.tlb.code_frame_written = true
 		cpu.rip = cursor.current_rip
 		cpu.steps_executed += 1
 		return .Running
