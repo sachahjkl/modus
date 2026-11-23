@@ -1,5 +1,29 @@
 package machine
 
+// The start of a failed line of the console, as the log of a machine has it.
+CONSOLE_FAILURE_LINE_START :: "[console] error: "
+
+// ends_with_a_bare_number says if a text ends with " (<integer>)": the
+// result of a failed export, shown with no word. The error record holds
+// the facts, and a reader cannot act on the number (docs/WRITING.md).
+ends_with_a_bare_number :: proc(text: string) -> bool {
+	if len(text) < 4 || text[len(text) - 1] != ')' {
+		return false
+	}
+	open := len(text) - 2
+	for open >= 0 && text[open] >= '0' && text[open] <= '9' {
+		open -= 1
+	}
+	digits := len(text) - 2 - open
+	if digits == 0 {
+		return false
+	}
+	if open >= 0 && text[open] == '-' {
+		open -= 1
+	}
+	return open >= 1 && text[open] == '(' && text[open - 1] == ' '
+}
+
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
@@ -758,7 +782,6 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		writer := sentence.Writer{buffer = buffer}
 		sentence.write_part(&writer, "error: ")
 		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error)
-		sentence.write_part(&writer, fmt.tprintf(" (%d)", answer.value))
 		append(&outcome.lines, sentence.written(&writer))
 		if _, has_details := module.error_details_parameter(call.file, call.function); has_details {
 			error_details_lines(&outcome.lines, &call, answer, result)

@@ -710,8 +710,8 @@ failure_lines :: proc(t: ^testing.T) {
 	drawn^ = {}
 	record := errors.error_make(.Too_Long, .Bytes, 2, 40, 36)
 	names := [2]string{"amount", "note"}
-	draw_failure(&sink, {sentence = "add: the argument note has 40 bytes; it can have at most 36 bytes (-1)", record = &record, operation = "add", argument_names = names[:]})
-	expected := "error: add: the argument note has 40 bytes; it can have at most 36 bytes (-1)\n" + "  kind       Too_Long\n" + "  operation  add\n" + "  argument   2 note\n" + "  values     value 40, limit 36, found 0, unit bytes\n"
+	draw_failure(&sink, {sentence = "add: the argument note has 40 bytes; it can have at most 36 bytes", record = &record, operation = "add", argument_names = names[:]})
+	expected := "error: add: the argument note has 40 bytes; it can have at most 36 bytes\n" + "  kind       Too_Long\n" + "  operation  add\n" + "  argument   2 note\n" + "  values     value 40, limit 36, found 0, unit bytes\n"
 	testing.expect_value(t, drawn_text(drawn), expected)
 	testing.expect_value(t, drawn.parts[Part.Status], len("Too_Long"))
 

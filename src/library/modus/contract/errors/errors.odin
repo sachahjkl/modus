@@ -136,8 +136,9 @@ Kind :: enum i64 {
 	Unknown_Operation = 24, // value: the number of the operation.
 	// The kernel gives it for a command record whose kind is 0 or above the last `op.Operation`; limit is the
 	// last operation.
-	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel).
-	// The last resort of a callee that has no better kind: a reader shows the status. `src/library/modus/system`
+	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel, and with the unit Kernel_Status).
+	// The last resort of a callee that has no better kind: a reader names the status in words with the unit
+	// Kernel_Status, and keeps any other status on the detail lines. `src/library/modus/system`
 	// gives it for a kernel call whose answer has another tag than its command, or is absent.
 	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: the word of an Unanswered, what did not answer.
 	// The network service gives it, with the unit `Milliseconds`. The block service gives it with `Device` for each
@@ -302,6 +303,7 @@ Unit :: enum i64 {
 	Input_Histories = 59, // The input history of the process that the debugger service debugs (src/md/features/record_and_replay.md). Absent: the debugger started no record of it, or no record runs. Full: a record or a replay of it runs already. Out_Of_Range: value the input points of a step back, or the point before which a watch back looks, limit the input points of the history. Bad_Value: the module of the boot image is not the module of the history. Damaged: the header of the history is not a valid header.
 	Checkpoints = 60, // The checkpoints that the debugger service keeps of a recorded process (src/md/features/record_and_replay.md). Absent: no checkpoint is at or before the input point that a step back names. Exists: a checkpoint is at this input point, or at a later one, already.
 	Recorded_Writes = 61, // Absent: no input of the history before the point wrote a byte of the range of a watch back (src/md/features/record_and_replay.md). value: the address; limit: the count of bytes; found: the point, 0 for the whole history.
+	Kernel_Status = 62, // Refused: a kernel operation inside the call refused, and found is its op.Status, which a sentence names in words.
 }
 
 // The name of each error kind, as the contract names it: a column of a
@@ -417,6 +419,7 @@ UNIT_MEMBER_NAMES := [Unit]string {
 	.Input_Histories    = "Input_Histories",
 	.Checkpoints        = "Checkpoints",
 	.Recorded_Writes    = "Recorded_Writes",
+	.Kernel_Status      = "Kernel_Status",
 }
 
 // The word of a Kind as the record of another party holds it: a field of a
@@ -578,6 +581,7 @@ UNIT_NAMES := [Unit]string {
 	.Input_Histories = "input history of the debugged process",
 	.Checkpoints = "checkpoints of the recorded process",
 	.Recorded_Writes = "writes of the input history",
+	.Kernel_Status = "status of the kernel",
 }
 
 // A ring completion (src/library/modus/contract/ring) has the status of the contract of its

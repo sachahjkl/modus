@@ -20,9 +20,16 @@ a_commit_refused_by_its_read_back :: proc(t: ^testing.T) {
 	error_text(&writer, &record, "storage.write", "")
 	testing.expect_value(t, written(&writer), "storage.write: the disk did not keep 3 blocks of the commit: the commit is refused, and the store keeps its state before it")
 
-	// With no unit, the sentence of a device that reported an error stays.
+	// With no unit, the sentence says that the device did not do the
+	// operation. The status of the device is a code: it stays on the detail
+	// lines, with or without a status in the record.
 	writer = Writer{buffer = buffer[:]}
 	record = errors.error_make(.Device)
 	error_text(&writer, &record, "storage.write", "")
-	testing.expect_value(t, written(&writer), "storage.write: the device reported an error")
+	testing.expect_value(t, written(&writer), "storage.write: the device did not do the operation")
+
+	writer = Writer{buffer = buffer[:]}
+	record = errors.error_make(.Device, .None, 0, 0, 0, 2)
+	error_text(&writer, &record, "storage.write", "")
+	testing.expect_value(t, written(&writer), "storage.write: the device did not do the operation")
 }

@@ -184,7 +184,7 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 	// the slot and the serial name that process, also after it stopped.
 	slot, serial, status := system.process_place(process)
 	if status != .Ok {
-		errors.fail(error, ERROR, .Refused, .None, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
+		errors.fail(error, ERROR, .Refused, .Kernel_Status, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
 		return {}, false
 	}
 	return log_scope.lent_process_scope(slot, serial), true

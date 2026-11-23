@@ -64,6 +64,26 @@ The design: `src/md/README.md`, "The rules of this folder".
 
 Do not use: design document, specification, RFC, architecture decision record.
 
+### Screen text
+
+A screen text is a text of the system that a person reads on the screen: an error sentence, a notification, the text of a dialog, a label, a button, the description of a setting or of an export, a status line.
+
+Each screen text follows the guide `docs/WRITING.md`: what it says, in which order, which words it does not use, and its case. A log fact, a comment in a source and a guide are not screen texts: the rules of the project hold them. Example: the button "Delete note" of a confirmation dialog is a screen text.
+
+The design: `docs/WRITING.md`.
+
+Do not use: user-facing string, UI copy, microcopy.
+
+### Error sentence
+
+An error sentence is the screen text that says why a call or an action did not succeed: the problem, then the cause, then what the reader can do.
+
+The sentence of an error record, which `modus:sentence` writes, is an error sentence; so is the line of a window that says why a save did not happen. It says only the parts that the system knows, and it never shows the negative result of a call. Example: "storage.write: the argument name has 70 bytes; it can have at most 64 bytes".
+
+The design: `docs/WRITING.md`, "1. An error sentence".
+
+Do not use: error string, error popup.
+
 ### Similarity finder
 
 The similarity finder is the command `modustool similarity`: it measures how similar the code pieces of the Odin sources of the repository are, groups them in similarity families, and proposes where to factor each family.

@@ -468,7 +468,7 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A field that the records do not have | `error: where: the records ... have no field x; their fields are ...` |
 | A field that the records do not have, with fields near it by their letters or by their unit | `error: where: the records Process have no field pages; did you mean resident or mapped? Their fields are ...` |
 | A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
-| An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
+| An export that fails | `error: manual.exports: the argument name names none of the modules`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
 | The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
 | A call in an isolated process that faults | `error: the process agenda stopped: a fault, invalid instruction`, then the instruction and the frames of its stop report, each after `error: ` |
 | A field that the record of a literal does not have | `error: Rectangle has no field widht; its fields are x, y, width, height` |
@@ -573,7 +573,7 @@ The first line is `error: ` and the sentence. When a call gave an error record (
 
 ```
 > add(1, "a note of forty bytes, four more than 36")
-error: add: the argument note has 40 bytes; it can have at most 36 bytes (-1)
+error: add: the argument note has 40 bytes; it can have at most 36 bytes
   kind       Too_Long
   operation  add
   argument   2 note

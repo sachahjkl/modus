@@ -1686,6 +1686,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v; %s", index + 1, step.text, limit, wait_share_sentence(machine))
 				return false
 			}
+			// A failed line of the console ends with the sentence of its
+			// error record: a bare result after it tells a reader nothing
+			// (docs/WRITING.md).
+			if strings.has_prefix(step.text, CONSOLE_FAILURE_LINE_START) && !step.any_order {
+				rest := log_read(machine)[machine.seen:]
+				if end := strings.index_byte(rest, '\n'); end >= 0 {
+					rest = rest[:end]
+				}
+				if ends_with_a_bare_number(rest) {
+					fmt.eprintfln("modustool: test failed: step %d: the failed line \"%s\" ends with the bare number \"%s\"", index + 1, step.text, rest)
+					return false
+				}
+			}
 			if was_first_wait {
 				foundation.test_passed_print("the machine printed \"%s\", %.1f s after the start of QEMU", step.text, time.duration_seconds(time.tick_since(machine.started_at)))
 			} else {
@@ -2242,6 +2255,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			if result.outcome != step.outcome || !strings.contains(printed, step.expected) {
 				fmt.eprintfln("modustool: test failed: step %d: the call %s gave %v, not %v with \"%s\"", index + 1, step.text, result.outcome, step.outcome, step.expected)
+				return false
+			}
+			if result.outcome == .Failed && len(result.lines) > 0 && ends_with_a_bare_number(result.lines[0]) {
+				fmt.eprintfln("modustool: test failed: step %d: the failed line of %s ends with a bare number: %s", index + 1, step.text, result.lines[0])
 				return false
 			}
 			if result.answer_bytes < step.least_answer_bytes {

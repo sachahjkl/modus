@@ -636,7 +636,7 @@ list_page_ready :: proc "contextless" () -> bool {
 	address, map_status := system.memory_map(page)
 	pages, _ := system.memory_size(page)
 	if map_status != .Ok || pages * system.PAGE_SIZE < output.WIRING_LIST_BYTES_MOST {
-		fail("the list page of the root service does not map: ", map_status)
+		fail("the console cannot map the list page of the root service: ", map_status == .Ok ? "the page is smaller than the wiring list" : system.kernel_status_text(map_status))
 		return false
 	}
 	if completion.values[1] != 0 {
@@ -733,7 +733,7 @@ stream_wire :: proc "contextless" (stream: ^Line_Stream) -> bool {
 		// "How the root service names a lent handle").
 		lent, give_status := system.give(requests_memory, stream.process, {.Read})
 		if give_status != .Ok {
-			fail("the console cannot lend the handle of ", stream.owner, " to the root service: ", give_status)
+			fail("the console cannot lend the handle of ", stream.owner, " to the root service: ", system.kernel_status_text(give_status))
 			return false
 		}
 		handles[0] = u32(lent)
@@ -1558,7 +1558,7 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 					// The handles lent before this one go back to the root
 					// service, which would keep them for its whole life.
 					lent_handles_return(handles[:lent_count])
-					return fail("start: the console cannot lend the handle of ", owner.name, " to the root service: ", give_status)
+					return fail("start: the console cannot lend the handle of ", owner.name, " to the root service: ", system.kernel_status_text(give_status))
 				}
 				handles[lent_count] = u32(lent)
 				lent_count += 1

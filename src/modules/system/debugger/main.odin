@@ -255,7 +255,7 @@ text_copy :: proc "contextless" (buffer: []u8, text: ^string) -> (copied: string
 
 // refused gives the result of an export that the kernel refused.
 refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> i64 {
-	return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
+	return errors.fail(error, ERROR_REFUSED, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 }
 
 // root_request_send sends one command Debug to the root service and keeps

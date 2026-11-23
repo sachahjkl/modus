@@ -6,6 +6,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **The words of the windows and the notifications.** Each window, notification, dialog and status line says the problem, the cause and what to do, in the words of `docs/WRITING.md`: no "invalid", no "failed" alone, buttons that name their action, and "you" where a window says "principal".
+- **A check of the display texts of the modules.** `modustool check` refuses a display text, a description of a setting and a label of a module file that uses a word that `docs/WRITING.md` refuses, that is not in sentence case, or that has a wrong end period, so a new text keeps the guide with no review.
 - **A machine test of the exact release boot image.** The machine of Secure Boot with the test keys boots the release boot image, with no test module, so the image that a release ships is the image that a machine test ran. [Design](src/md/infrastructure/release_image.md)
 - **The first application.** `notes` moves from the demonstrations to the group `applications` when it is a real program, and the start menu shows it at the top. [Design](src/md/infrastructure/repository_layout.md)
 - **A window that scrolls when it does not fit the work area.** At a large scale, a window whose least size passes the work area takes the size of the work area and scrolls its whole content in the window layer of the interface package, so each window is whole at 2 with no move. [Design](src/md/features/desktop_to_browser.md)

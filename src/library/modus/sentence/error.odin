@@ -69,16 +69,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	}
 	kind, kind_ok := errors.kind_of_word(record.kind)
 	if !kind_ok {
-		write_part(writer, "an error of the kind ")
-		write_part(writer, record.kind)
-		write_part(writer, ", which this process does not know")
+		// The number of the kind is on the detail lines: in the sentence it
+		// is a code that the reader cannot act on (docs/WRITING.md).
+		write_part(writer, "the call failed with an error kind that this process does not know, so the cause is not known")
 		return
 	}
 	switch kind {
 	case .None:
 		// The sentence is read after a call that failed: a record of zeros
 		// says that the callee wrote none, never that no error occurred.
-		write_part(writer, "the call failed, and it wrote no error record")
+		write_part(writer, "the call failed and gave no error record, so the cause is not known")
 	case .Empty:
 		subject(writer, record, argument)
 		write_part(writer, " is empty; it must have 1 to ")
@@ -201,9 +201,9 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			return
 		}
 		if record.unit == 0 {
-			write_part(writer, "no free place for the call")
+			write_part(writer, "the receiver has no free place for the call")
 		} else {
-			write_part(writer, "no free place: the table has its ")
+			write_part(writer, "the receiver has no free place: the table has its ")
 			amount(writer, record.limit, unit)
 		}
 	case .State:
@@ -286,11 +286,9 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, ": the commit is refused, and the store keeps its state before it")
 			return
 		}
-		write_part(writer, "the device reported an error")
-		if record.found != 0 {
-			write_part(writer, ": the status ")
-			write_part(writer, record.found)
-		}
+		// The status of the device is a code of that device: it stays on
+		// the detail lines (docs/WRITING.md).
+		write_part(writer, "the device did not do the operation")
 	case .No_Grant:
 		if record.unit == i64(errors.Unit.Endpoint) && record.found != 0 {
 			write_part(writer, "the local port ")
@@ -313,6 +311,14 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		}
 		write_part(writer, "the caller has no grant for this: ")
 		write_part(writer, unit)
+		// The fix of a missing grant is a grant from the starter of the
+		// process, never a second call: the sentence says so. The debug
+		// access is not a start grant: a process that asks for itself, or a
+		// grant of the target that refuses it, is no grant that the starter
+		// can give, so the sentence names no fix there.
+		if record.unit != i64(errors.Unit.Debug_Access) {
+			write_part(writer, "; only the starter of the process can give this grant")
+		}
 		if record.unit == i64(errors.Unit.Debug_Access) && record.found != 0 {
 			// The words of the log of the root service for the same refusal.
 			// A number that names no start grant comes from a root service of
@@ -322,18 +328,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 				write_part(writer, name)
 				write_part(writer, " of the process refuses it")
 			} else {
-				write_part(writer, ": a grant of the process refuses it, the start grant number ")
-				write_part(writer, record.found - 1)
-				write_part(writer, ", which this process does not know")
+				write_part(writer, ": a start grant of the process that this process does not know refuses it")
 			}
 		}
 	case .Malformed:
 		write_part(writer, "the module of ")
 		subject(writer, record, argument)
-		write_part(writer, " breaks a rule of the module format: problem ")
-		write_part(writer, record.value)
-		write_part(writer, " at byte ")
+		write_part(writer, " breaks a rule of the module format at byte ")
 		write_part(writer, record.found)
+		// The kind of the problem is a word of an enumeration of the sender,
+		// which the record does not name: it stays on the detail lines.
 	case .No_Target:
 		handle(writer, record, argument)
 		write_part(writer, " names memory that no one other process maps or holds: the handle has no process to go to")
@@ -357,10 +361,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, "the kernel has no operation ")
 		write_part(writer, record.value)
 	case .No_Answer:
-		write_part(writer, "no answer")
 		if record.value != 0 {
-			write_part(writer, " from ")
 			address_text(writer, u32(record.value))
+			write_part(writer, " did not answer")
+		} else {
+			write_part(writer, "no answer came")
 		}
 		write_part(writer, " in ")
 		write_part(writer, record.limit)
@@ -369,9 +374,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		// no fact that the record does not hold.
 		unanswered, unanswered_ok := errors.unanswered_of_word(record.found)
 		if !unanswered_ok {
-			write_part(writer, ": what did not answer is ")
-			write_part(writer, record.found)
-			write_part(writer, ", which names nothing")
+			write_part(writer, ": the record says what did not answer with a word which names nothing")
 		} else {
 			switch unanswered {
 			case .Not_Said:
@@ -469,9 +472,15 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		amount(writer, record.found, "bytes")
 		write_part(writer, ", which the starter of the process recorded: only a holder of the process handle changes it")
 	case .Refused:
-		write_part(writer, "refused with the status ")
-		write_part(writer, record.found)
-		write_part(writer, ", and no more detail")
+		// A status is named in words only when the record says whose status
+		// it is; any other status is a code, which stays on the detail lines
+		// (docs/WRITING.md).
+		if status, known := enum_word.member_of_word(op.Status, u64(record.found)); known && record.unit == i64(errors.Unit.Kernel_Status) && record.found >= 0 {
+			write_part(writer, "the kernel refused an operation of the call: ")
+			write_part(writer, kernel_status_text(status))
+			return
+		}
+		write_part(writer, "the receiver refused the call and gave no cause")
 	}
 }
 
@@ -538,12 +547,37 @@ kernel_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_
 	}
 	if status, status_known := enum_word.member_of_word(op.Status, u64(record.found)); record.kind == i64(errors.Kind.Refused) && status_known {
 		write_part(writer, name)
-		write_part(writer, ": refused with the status ")
-		write_part(writer, op.STATUS_NAMES[status])
-		write_part(writer, ", and no more detail")
+		write_part(writer, ": the kernel refused the call: ")
+		write_part(writer, kernel_status_text(status))
 		return
 	}
 	error_text(writer, record, name, argument)
+}
+
+// kernel_status_text gives the words of a status of the kernel, for a
+// sentence: what the status says, never its name or its number.
+kernel_status_text :: proc "contextless" (status: op.Status) -> string {
+	switch status {
+	case .Ok:
+		return "the operation ran"
+	case .Bad_Operation:
+		return "an argument has a value that the operation never takes"
+	case .Bad_Handle:
+		return "a handle names no object of the kind that the operation needs"
+	case .Bad_Address:
+		return "an address names memory that the operation cannot use"
+	case .No_Memory:
+		return "no page frame is free"
+	case .No_Slot:
+		return "a table of fixed capacity is full"
+	case .Bad_State:
+		return "the object is not in a state where the operation applies"
+	case .No_Right:
+		return "a handle does not have the right that the operation needs"
+	case .No_Budget:
+		return "the budget cannot pay for the operation"
+	}
+	return "the operation ran"
 }
 
 // The table of error details (docs/MODULE_CONTRACT.md, section 8, "The table

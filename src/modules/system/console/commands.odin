@@ -2056,7 +2056,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	system.export_call(item.address, &integers, &floats, &results)
 	if item.function.error_record != 0 && i64(results[0]) < 0 {
 		error.operation = i64(item.export)
-		result := export_failure(item, &error, i64(results[0]))
+		result := export_failure(item, &error)
 		failure_details_set(details[:], details_place.count)
 		return result
 	}
@@ -2347,8 +2347,10 @@ sandbox_end :: proc "contextless" (sandbox: ^Sandbox) {
 
 // export_failure makes the line fail with the error record of an export
 // that failed: the sentence of the record, and the record itself with the
-// names of the export and of its parameters, from the description.
-export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record, answer: i64) -> Value {
+// names of the export and of its parameters, from the description. The
+// result of the export is not shown: the record holds the facts, and a
+// bare number tells a reader nothing (docs/WRITING.md).
+export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record) -> Value {
 	already := failed
 	argument := ""
 	if error.argument >= 1 && error.argument <= i64(item.parameter_count) {
@@ -2357,7 +2359,7 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	buffer: [240]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.error_text(&writer, error, item.name, argument)
-	result := fail(system.written(&writer), " (", answer, ")")
+	result := fail(system.written(&writer))
 	if !already {
 		failure_record_set(error^, item.name, item.parameter_names[:item.parameter_count])
 	}
@@ -2378,8 +2380,8 @@ stop_reason_write :: proc "contextless" (writer: ^system.Writer, cause: op.Stop_
 		if kind, known := op.fault_kind_of_word(u64(vector)); known {
 			system.write_part(writer, fault_kind_text(kind))
 		} else {
-			system.write_part(writer, "vector ")
-			system.write_part(writer, u64(vector))
+			// The number of the vector is on the stop report lines.
+			system.write_part(writer, "a fault of a kind that the console does not know")
 		}
 	case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
 		system.write_part(writer, op.STOP_CAUSE_TEXTS[cause])
@@ -2476,7 +2478,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	case .No_Slot:
 		return fail(item.name, ": the process ", sandbox.name, " has no room for one more handle")
 	case .Bad_Operation, .Bad_Address, .No_Memory, .Bad_State, .No_Budget:
-		return fail(item.name, ": the lend of its handles to the process ", sandbox.name, " failed with ", lend_status)
+		return fail(item.name, ": the console cannot lend its handles to the process ", sandbox.name, ": ", system.kernel_status_text(lend_status))
 	}
 	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
 	if !ok {
@@ -2515,7 +2517,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			// refused, never read as a status.
 			call_status, call_status_ok := enum_word.member_of_word(isolated.Status, u64(completion.kind))
 			if !call_status_ok {
-				return fail("the process ", sandbox.name, " gave the status word ", u64(completion.kind), ", which names no status")
+				return fail("the process ", sandbox.name, " gave a status word that names no status")
 			}
 			switch call_status {
 			case .Ok:
@@ -2527,7 +2529,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				// section 8, "The table of error details").
 				if error_place.count != 0 && i64(completion.values[0]) < 0 {
 					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
-					result := export_failure(item, &error, i64(completion.values[0]))
+					result := export_failure(item, &error)
 					if item.details_parameter != 0 {
 						if problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
 							fail_note("the process ", sandbox.name, " gave a wrong count for the table of error details: the details are missing")
@@ -2566,7 +2568,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					// read no more than the buffer, and copy the records
 					// out of the call region.
 					if i64(completion.values[0]) < 0 {
-						return table_error(item, i64(completion.values[0]))
+						return table_error(item)
 					}
 					described, _ := module.record_type(item.file, item.function.result_detail)
 					rows, complete := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
@@ -2594,7 +2596,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				refusal := transmute(errors.Error_Record)completion.values
 				if refusal.kind != 0 {
 					refusal.operation = i64(item.export)
-					return export_failure(item, &refusal, i64(completion.kind))
+					return export_failure(item, &refusal)
 				}
 				return fail("the process ", sandbox.name, " refused the arguments of ", item.name)
 			case .Load_Failed:
@@ -2854,7 +2856,7 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	// is read at its border, and a word that names no member is said.
 	status, status_ok := enum_word.member_of_word(system.Status, u64(completion.kind))
 	if !status_ok {
-		return fail("the root service gave the status ", u64(completion.kind), " to the replacement, which names no status")
+		return fail("the root service gave the replacement a status word that names no status")
 	}
 	switch status {
 	case .Ok:
@@ -2866,7 +2868,7 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 		kind_word := errors.completion_record(completion.values).kind
 		kind, kind_ok := enum_word.member_of_word(errors.Kind, u64(kind_word))
 		if !kind_ok {
-			return fail("the root service refused the replacement of ", name, " by ", by, " with the kind ", kind_word, ", which names no kind")
+			return fail("the root service refused the replacement of ", name, " by ", by, " with an error kind that names no kind")
 		}
 		switch kind {
 		case .Absent:

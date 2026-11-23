@@ -210,6 +210,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 | `docs/SITE.md` | The site of the system: what `modustool site` writes, and where each part of the page comes from |
 | `docs/glossary/` | The terms of the project, one file for each group. One term per concept: its short definition, then what it is for, how it works, and what it is not |
 | `docs/DESIGN.md` | The design rules: how a process of the system looks. The boot display is the model |
+| `docs/WRITING.md` | The words of the system: what an error sentence, a notification, a dialog and a setting say, and in which form |
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/TRUSTED_BOOT.md` | The trusted boot: what verifies what at the start, with which key; the signing key; the measure; what each layer does not protect |
 | `docs/INSTALL.md` | The disk image of a release: its files, their verification with the tool or with OpenSSL, the write to a USB key, and the start with Secure Boot on or off |
