@@ -26,7 +26,7 @@ Each entry has a label and words:
 | `you, request N` | The request that you typed |
 | `assistant` | The reply of the model |
 | `act N, proposed` | A line of Lex that the model proposes; the bridge has not answered yet |
-| `act N, done` | The line, and its result. A table shows as the console shows it: a line of heads, aligned columns, the rows that fit the window (8 at most), then how many rows are not shown and how many rows the table has. A record shows one line for each field, its name and its value. A row holds 256 bytes: past them the widest cells end with "... and N bytes more", or the last columns are not shown, and a line says how many |
+| `act N, done` | The line, and its result. A table shows as the console shows it: a line of heads, aligned columns with each number at the right and the unit of a size or a time in its head, the rows that fit the window (8 at most), then how many rows are not shown and how many rows the table has. A row is one line: the columns that the width holds show in their order, and one line names the others, "8 columns more: handles_peak, mappings, ...". A record shows one line for each field, its name and its value. A row holds 256 bytes: past them the widest cells end with "... and N bytes more", or the last columns are not shown, and a line says how many |
 | `act N, refused by the bridge` | The line, and why the bridge refused it |
 | `act N, waiting for the principal` | The line; the act dialog of the trusted display asks you |
 | `act N, refused by the principal` | You refused it: nothing ran |

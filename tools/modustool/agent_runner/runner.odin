@@ -174,7 +174,10 @@ Act_Result_Table :: struct {
 	shape:      assistant_contract.Act_Table_Shape,
 	name:       string,
 	columns:    []string,
-	cells:      []string, // Row after row: len(columns) cells in each row.
+	kinds:      []bridge_contract.Lex_Column_Kind, // How each column is written and aligned.
+	units:      []i64, // The unit word of each column.
+	cells:      []string, // Row after row: len(columns) cells in each row; empty in a number column.
+	integers:   []i64, // Row after row: the value of each cell of a number column; 0 in a text column.
 	row_count:  int,
 	total_rows: i64,
 }
@@ -268,13 +271,16 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 act_table_show :: proc(runner: ^Runner, number: i64, table: Act_Result_Table) -> (problem: string) {
 	column_rows := make([][]machine.Call_Argument, len(table.columns), context.temp_allocator)
 	for column, index in table.columns {
-		column_rows[index] = make([]machine.Call_Argument, 1, context.temp_allocator)
+		column_rows[index] = make([]machine.Call_Argument, 3, context.temp_allocator)
 		column_rows[index][0] = {is_text = true, text = column}
+		column_rows[index][1] = {integer = i64(table.kinds[index])}
+		column_rows[index][2] = {integer = table.units[index]}
 	}
 	cell_rows := make([][]machine.Call_Argument, len(table.cells), context.temp_allocator)
 	for cell, index in table.cells {
-		cell_rows[index] = make([]machine.Call_Argument, 1, context.temp_allocator)
+		cell_rows[index] = make([]machine.Call_Argument, 2, context.temp_allocator)
 		cell_rows[index][0] = {is_text = true, text = cell}
+		cell_rows[index][1] = {integer = table.integers[index]}
 	}
 	arguments := [6]machine.Call_Argument{{integer = number}, {integer = i64(table.shape)}, {is_text = true, text = table.name}, {integer = table.total_rows}, {is_table = true, rows = column_rows}, {is_table = true, rows = cell_rows}}
 	_, problem = window_call(runner, "act_table", arguments[:])
@@ -362,9 +368,15 @@ result_table_read :: proc(result: json.Object) -> (table: Act_Result_Table) {
 	}
 	name, name_ok := result["record_name"].(json.String)
 	columns, columns_ok := result["columns"].(json.Array)
+	kinds, kinds_ok := result["column_kinds"].(json.Array)
+	units, units_ok := result["column_units"].(json.Array)
 	rows, rows_ok := result["rows"].(json.Array)
+	row_integers, integers_ok := result["row_integers"].(json.Array)
 	total, total_ok := result["total_rows"].(json.Integer)
-	if !name_ok || len(name) == 0 || !columns_ok || !rows_ok || !total_ok {
+	if !name_ok || len(name) == 0 || !columns_ok || !rows_ok || !total_ok || !kinds_ok || !units_ok || !integers_ok {
+		return {}
+	}
+	if len(kinds) != len(columns) || len(units) != len(columns) || len(row_integers) != len(rows) {
 		return {}
 	}
 	if len(columns) == 0 || len(columns) > assistant_contract.ACT_TABLE_COLUMN_CAPACITY || i64(total) < i64(len(rows)) {
@@ -375,27 +387,49 @@ result_table_read :: proc(result: json.Object) -> (table: Act_Result_Table) {
 	}
 	table.name = field_text_cut(string(name), assistant_contract.ACT_TABLE_NAME_BYTES)
 	table.columns = make([]string, len(columns), context.temp_allocator)
+	table.kinds = make([]bridge_contract.Lex_Column_Kind, len(columns), context.temp_allocator)
+	table.units = make([]i64, len(columns), context.temp_allocator)
 	for column, index in columns {
 		column_name, column_ok := column.(json.String)
-		if !column_ok || len(column_name) == 0 {
+		kind_name, kind_name_ok := kinds[index].(json.String)
+		unit, unit_ok := units[index].(json.Integer)
+		if !column_ok || len(column_name) == 0 || !kind_name_ok || !unit_ok {
+			return {}
+		}
+		// The kind and the unit cross at this border: an unknown kind, or a
+		// unit that does not fit its kind, gives no table.
+		kind, kind_ok := bridge_contract.lex_column_kind_of_name(string(kind_name))
+		if !kind_ok || !bridge_contract.lex_column_unit_valid(kind, i64(unit)) {
 			return {}
 		}
 		table.columns[index] = field_text_cut(string(column_name), assistant_contract.ACT_TABLE_NAME_BYTES)
+		table.kinds[index], table.units[index] = kind, i64(unit)
 	}
 	table.row_count = min(len(rows), assistant_contract.ACT_TABLE_ROW_CAPACITY)
 	table.cells = make([]string, table.row_count * len(columns), context.temp_allocator)
+	table.integers = make([]i64, table.row_count * len(columns), context.temp_allocator)
 	for row, row_index in rows {
 		cells, cells_ok := row.(json.Array)
-		if !cells_ok || len(cells) != len(columns) {
+		values, values_ok := row_integers[row_index].(json.Array)
+		if !cells_ok || len(cells) != len(columns) || !values_ok || len(values) != len(columns) {
 			return {}
 		}
 		for cell, column_index in cells {
 			text, text_ok := cell.(json.String)
-			if !text_ok {
+			value, value_ok := values[column_index].(json.Integer)
+			if !text_ok || !value_ok {
 				return {}
 			}
-			if row_index < table.row_count {
-				table.cells[row_index * len(columns) + column_index] = field_text_cut(string(text), assistant_contract.ACT_TABLE_CELL_BYTES)
+			if row_index >= table.row_count {
+				continue
+			}
+			// A number column carries its value, a text column its text:
+			// each fact of a cell in one place.
+			place := row_index * len(columns) + column_index
+			if table.kinds[column_index] == .Text {
+				table.cells[place] = field_text_cut(string(text), assistant_contract.ACT_TABLE_CELL_BYTES)
+			} else {
+				table.integers[place] = i64(value)
 			}
 		}
 	}

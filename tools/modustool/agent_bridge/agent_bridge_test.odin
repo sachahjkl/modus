@@ -12,7 +12,9 @@ import contract "modus:contract/agent_bridge"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/remote"
+import module "modus:contract/module"
 import "modus:contract/remote_display"
+import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
 
 @(private = "file")
@@ -288,6 +290,27 @@ test_eval_lex_structured_values_and_tables :: proc(t: ^testing.T) {
 	json_rows := res["rows"].(json.Array)
 	testing.expect_value(t, len(json_rows), 2)
 	testing.expect_value(t, json_rows[1].(json.Array)[1].(json.String), "compositor")
+	// A result with no kinds: each column is a text, each value 0.
+	testing.expect_value(t, res["column_kinds"].(json.Array)[1].(json.String), "text")
+	testing.expect_value(t, res["column_units"].(json.Array)[0].(json.Integer), i64(0))
+	testing.expect_value(t, res["row_integers"].(json.Array)[1].(json.Array)[0].(json.Integer), i64(0))
+
+	// The kind, the unit and the value of each column of numbers.
+	state.next_lex_result = Lex_Eval_Result {
+		value_kind   = .Table,
+		record_name  = "Process",
+		columns      = []string{"slot", "resident"},
+		column_kinds = []contract.Lex_Column_Kind{.Integer, .Size},
+		column_units = []i64{0, i64(value_kinds.Size_Unit.Pages)},
+		rows         = [][]string{{"1", "9052"}},
+		row_integers = [][]i64{{1, 9052}},
+		total_rows   = 1,
+	}
+	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":7,"method":"eval_lex","params":{"line":"monitor.processes()"}}`)
+	res = expect_json_result(t, resp)
+	testing.expect_value(t, res["column_kinds"].(json.Array)[1].(json.String), "size")
+	testing.expect_value(t, res["column_units"].(json.Array)[1].(json.Integer), i64(value_kinds.Size_Unit.Pages))
+	testing.expect_value(t, res["row_integers"].(json.Array)[0].(json.Array)[1].(json.Integer), i64(9052))
 
 	// Transport failure propagates as Transport_Error (-32003)
 	state.fail_eval_lex = true
@@ -1062,4 +1085,36 @@ test_remote_transport_lifecycle_and_fail_closed :: proc(t: ^testing.T) {
 	remote_transport_close(&transport)
 	_, closed_err, closed_ok := iface.eval_lex(iface.user_data, "monitor.processes()", context.temp_allocator)
 	testing.expect(t, !closed_ok && len(closed_err) > 0)
+}
+
+// The kind of a column comes from its field: a plain number, a size and a
+// time with their unit, a hexadecimal number with its bytes; a text, a
+// status, a fixed point, a byte of a type or a kind that names none, and a
+// unit that is not one of the contract are no number form.
+@(test)
+the_kind_of_a_column_comes_from_its_field :: proc(t: ^testing.T) {
+	integer :: proc(kind: value_kinds.Field_Kind, unit: value_kinds.Integer_Unit = {}, size: u32 = 8) -> module.Field {
+		return {type = u8(module.Type.Integer), detail = size, kind = u8(kind), integer_unit = unit}
+	}
+	cases := [?]struct {
+		item: module.Field,
+		kind: contract.Lex_Column_Kind,
+		unit: i64,
+	} {
+		{integer(.Plain), .Integer, 0},
+		{integer(.Plain, value_kinds.size_in(.Pages)), .Size, i64(value_kinds.Size_Unit.Pages)},
+		{integer(.Plain, value_kinds.time_in(.Milliseconds)), .Time, i64(value_kinds.Duration_Unit.Milliseconds)},
+		{integer(.Hexadecimal, {}, 4), .Hexadecimal, 4},
+		{integer(.Status), .Text, 0},
+		{integer(.Hundredths), .Text, 0},
+		{integer(.Plain, {kind = .Size, unit = 200}), .Integer, 0},
+		{{type = u8(module.Type.Text), detail = 16}, .Text, 0},
+		{{type = 250, detail = 8}, .Text, 0},
+		{{type = u8(module.Type.Integer), detail = 8, kind = 250}, .Text, 0},
+	}
+	for test_case in cases {
+		kind, unit := column_kind_of_field(test_case.item)
+		testing.expectf(t, kind == test_case.kind && unit == test_case.unit, "%v gave %v %d", test_case.item, kind, unit)
+		testing.expect(t, contract.lex_column_unit_valid(kind, unit))
+	}
 }

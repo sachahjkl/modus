@@ -18,6 +18,7 @@ import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
+import "modus:contract/value_kinds"
 import "modus:sentence"
 import "modustool:build"
 import "modustool:machine"
@@ -170,21 +171,31 @@ decode_remote_call_result :: proc(
 		}
 		field_count := int(described.field_count)
 		columns := make([]string, field_count, allocator)
+		kinds := make([]contract.Lex_Column_Kind, field_count, allocator)
+		units := make([]i64, field_count, allocator)
 		row := make([]string, field_count, allocator)
+		integers := make([]i64, field_count, allocator)
 		for index in 0 ..< field_count {
 			item, _ := module.field(call.file, described, u32(index))
 			columns[index] = strings.clone(module.string_at(call.file, item.name_offset, item.name_count), allocator)
+			kinds[index], units[index] = column_kind_of_field(item)
 			row[index] = strings.clone(build.field_value(result_bytes, item), allocator)
+			integers[index] = column_integer(result_bytes, item, kinds[index])
 		}
 		rows := make([][]string, 1, allocator)
 		rows[0] = row
+		row_integers := make([][]i64, 1, allocator)
+		row_integers[0] = integers
 		record_name := strings.clone(module.string_at(call.file, described.name_offset, described.name_count), allocator)
 		return Lex_Eval_Result {
-			value_kind  = .Record,
-			record_name = record_name,
-			columns     = columns,
-			rows        = rows,
-			total_rows  = 1,
+			value_kind   = .Record,
+			record_name  = record_name,
+			columns      = columns,
+			column_kinds = kinds,
+			column_units = units,
+			rows         = rows,
+			row_integers = row_integers,
+			total_rows   = 1,
 		}, "", true
 
 	case .Table:
@@ -196,27 +207,37 @@ decode_remote_call_result :: proc(
 		row_count := len(result_bytes) / row_size
 		field_count := int(described.field_count)
 		columns := make([]string, field_count, allocator)
+		kinds := make([]contract.Lex_Column_Kind, field_count, allocator)
+		units := make([]i64, field_count, allocator)
 		for index in 0 ..< field_count {
 			item, _ := module.field(call.file, described, u32(index))
 			columns[index] = strings.clone(module.string_at(call.file, item.name_offset, item.name_count), allocator)
+			kinds[index], units[index] = column_kind_of_field(item)
 		}
 		rows := make([][]string, row_count, allocator)
+		row_integers := make([][]i64, row_count, allocator)
 		for row_index in 0 ..< row_count {
 			row_bytes := result_bytes[row_index * row_size:][:row_size]
 			cells := make([]string, field_count, allocator)
+			integers := make([]i64, field_count, allocator)
 			for col_index in 0 ..< field_count {
 				item, _ := module.field(call.file, described, u32(col_index))
 				cells[col_index] = strings.clone(build.field_value(row_bytes, item), allocator)
+				integers[col_index] = column_integer(row_bytes, item, kinds[col_index])
 			}
 			rows[row_index] = cells
+			row_integers[row_index] = integers
 		}
 		record_name := strings.clone(module.string_at(call.file, described.name_offset, described.name_count), allocator)
 		return Lex_Eval_Result {
-			value_kind  = .Table,
-			record_name = record_name,
-			columns     = columns,
-			rows        = rows,
-			total_rows  = answer.value,
+			value_kind   = .Table,
+			record_name  = record_name,
+			columns      = columns,
+			column_kinds = kinds,
+			column_units = units,
+			rows         = rows,
+			row_integers = row_integers,
+			total_rows   = answer.value,
 		}, "", true
 
 	case .Handle, .Bytes:
@@ -387,4 +408,48 @@ remote_transport_send_pointer :: proc(
 		return "remote transport is not open", false
 	}
 	return "live remote_display input streaming is not connected on the QUIC call transport", false
+}
+
+// column_kind_of_field gives the kind of a column of a result and its unit
+// word, from the field that describes it: the form in which the drawers of
+// the console write and align it (modus:console_results, cell_of). A
+// number with no other form is an Integer, with its unit a Size or a Time;
+// a hexadecimal number keeps its bytes; each other form (a text, a status
+// name, a hash, a handle, a fixed point) is a Text, its cell the text that
+// the bridge writes.
+column_kind_of_field :: proc(item: module.Field) -> (kind: contract.Lex_Column_Kind, unit: i64) {
+	type, type_ok := module.field_type(item)
+	field_kind, kind_ok := module.field_kind(item)
+	if !type_ok || !kind_ok || type != .Integer {
+		return .Text, 0
+	}
+	// Two kinds of a field name a number form; each other kind is written
+	// as a text, as module.field_kind_text writes it.
+	if field_kind == .Hexadecimal {
+		return .Hexadecimal, i64(module.field_size(item))
+	}
+	if field_kind != .Plain {
+		return .Text, 0
+	}
+	integer_unit := item.integer_unit
+	if value_kinds.integer_unit_valid(integer_unit) && integer_unit.kind == .Size {
+		return .Size, i64(integer_unit.unit)
+	}
+	if value_kinds.integer_unit_valid(integer_unit) && integer_unit.kind == .Time {
+		return .Time, i64(integer_unit.unit)
+	}
+	return .Integer, 0
+}
+
+// column_integer gives the value of a cell of a number column, 0 in a text
+// column.
+column_integer :: proc(row: []u8, item: module.Field, kind: contract.Lex_Column_Kind) -> i64 {
+	switch kind {
+	case .Integer, .Size, .Time, .Hexadecimal:
+		if u64(item.offset) + u64(module.field_size(item)) <= u64(len(row)) {
+			return module.field_integer(row, item)
+		}
+	case .None, .Text:
+	}
+	return 0
 }

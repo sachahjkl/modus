@@ -3,8 +3,10 @@ package conversation
 
 import "core:strings"
 import "core:testing"
+import bridge_contract "modus:contract/agent_bridge"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
+import "modus:contract/value_kinds"
 
 @(private = "file")
 expect_refusal :: proc(t: ^testing.T, result: i64, error: errors.Error_Record, kind: errors.Kind, argument: i64 = -1, location := #caller_location) {
@@ -340,14 +342,16 @@ the_acts_that_wait_follow_the_trusted_display :: proc(t: ^testing.T) {
 }
 
 @(private = "file")
-column_of :: proc(name: string) -> (column: assistant_contract.Act_Table_Column) {
+column_of :: proc(name: string, kind := bridge_contract.Lex_Column_Kind.Text, unit: i64 = 0) -> (column: assistant_contract.Act_Table_Column) {
 	copy(column.name[:], name)
+	column.kind, column.unit = i64(kind), unit
 	return
 }
 
 @(private = "file")
-cell_of :: proc(text: string) -> (cell: assistant_contract.Act_Table_Cell) {
+cell_of :: proc(text: string, integer: i64 = 0) -> (cell: assistant_contract.Act_Table_Cell) {
 	copy(cell.text[:], text)
+	cell.integer = integer
 	return
 }
 
@@ -447,4 +451,43 @@ act_table_refuses_each_form_that_is_not_a_whole_table :: proc(t: ^testing.T) {
 	one := [2]assistant_contract.Act_Table_Cell{cell_of("3"), {}}
 	result, kept = act_table(talk, true, 1, record, "Process", 1, columns[:], one[:], &error)
 	testing.expect(t, result == 1 && kept.table.shape == .Record && act_table_cell_text(&kept.table, 0, 1) == "")
+}
+
+// A column kind that names no member, a unit that does not fit its kind, a
+// text in a number cell and a value in a text cell are refused; a number
+// column of sizes with its values passes, and gives back its kind.
+@(test)
+act_table_refuses_a_column_kind_or_a_cell_of_the_other_form :: proc(t: ^testing.T) {
+	talk := done_conversation(t)
+	error: errors.Error_Record
+	table := i64(assistant_contract.Act_Table_Shape.Table)
+	pages := i64(value_kinds.Size_Unit.Pages)
+	cells := [2]assistant_contract.Act_Table_Cell{cell_of("root"), cell_of("", 9052)}
+	bad_columns := [?][2]assistant_contract.Act_Table_Column {
+		{column_of("name"), column_of("resident", .None)},
+		{column_of("name"), {kind = 6}},
+		{column_of("name"), {kind = -1}},
+		{column_of("name"), column_of("resident", .Size, 99)},
+		{column_of("name"), column_of("resident", .Hexadecimal, 0)},
+		{column_of("name", .Text, 1), column_of("resident", .Size, pages)},
+	}
+	for columns in bad_columns {
+		columns := columns
+		columns[1].name = column_of("resident").name
+		result, _ := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
+		expect_refusal(t, result, error, .Bad_Value, 5)
+	}
+	columns := [2]assistant_contract.Act_Table_Column{column_of("name"), column_of("resident", .Size, pages)}
+	bad_cells := [?][2]assistant_contract.Act_Table_Cell{{cell_of("root"), cell_of("9052", 9052)}, {cell_of("root", 1), cell_of("", 9052)}}
+	for wrong in bad_cells {
+		wrong := wrong
+		result, _ := act_table(talk, true, 1, table, "Process", 1, columns[:], wrong[:], &error)
+		expect_refusal(t, result, error, .Bad_Value, 6)
+	}
+	testing.expect(t, !act_of(talk, 1).table.present)
+	result, kept := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
+	testing.expect(t, result == 1 && kept != nil)
+	kind, unit := act_table_column_kind(&kept.table, 1)
+	testing.expect(t, kind == .Size && unit == pages)
+	testing.expect_value(t, act_table_cell_integer(&kept.table, 0, 1), 9052)
 }

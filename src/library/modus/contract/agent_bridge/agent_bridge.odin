@@ -25,6 +25,7 @@ import "modus:contract/enum_word"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
 
 // Wire magic and version identifying version 1 of the Agent Bridge binary
@@ -126,6 +127,79 @@ Screen_Picture_Format :: enum u8 {
 }
 
 // Closed set of typed value kinds returned by Eval_Lex.
+// How a column of a table or a record result is written and aligned, as
+// the drawers of the console write it (modus:console_results): a text at
+// the left, a number at the right, a size or a time at the right with its
+// unit in the head, a hexadecimal number at the right in two digits for
+// each byte. The values cross the border of the JSON of the bridge: None
+// names no kind.
+Lex_Column_Kind :: enum u8 {
+	None        = 0,
+	Text        = 1, // A text, a status name, a hash or any other form: the cell is its text.
+	Integer     = 2, // A signed number with no unit.
+	Size        = 3, // A size: the unit word is a value_kinds.Size_Unit.
+	Time        = 4, // A time: the unit word is a value_kinds.Duration_Unit.
+	Hexadecimal = 5, // A number in hexadecimal: the unit word is its bytes, 1 to 8.
+}
+
+@(rodata)
+LEX_COLUMN_KIND_NAMES := [Lex_Column_Kind]string {
+	.None        = "none",
+	.Text        = "text",
+	.Integer     = "integer",
+	.Size        = "size",
+	.Time        = "time",
+	.Hexadecimal = "hexadecimal",
+}
+
+// lex_column_kind_name gives the name of a kind in the JSON of the bridge.
+lex_column_kind_name :: proc "contextless" (kind: Lex_Column_Kind) -> string {
+	return LEX_COLUMN_KIND_NAMES[kind]
+}
+
+// lex_column_kind_of_name is the border of a kind of the JSON: false for a
+// name of no kind, None too.
+lex_column_kind_of_name :: proc "contextless" (name: string) -> (kind: Lex_Column_Kind, ok: bool) {
+	for candidate in Lex_Column_Kind {
+		if candidate != .None && LEX_COLUMN_KIND_NAMES[candidate] == name {
+			return candidate, true
+		}
+	}
+	return .None, false
+}
+
+// lex_column_kind_of_word is the border of the word of a kind: false for a
+// word that names no kind, None too.
+lex_column_kind_of_word :: proc "contextless" (word: i64) -> (kind: Lex_Column_Kind, ok: bool) {
+	if word < 0 {
+		return .None, false
+	}
+	member := enum_word.member_of_word(Lex_Column_Kind, u64(word)) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// lex_column_unit_valid says if a unit word fits a kind: 0 for a text and
+// a plain number, a member of value_kinds.Size_Unit for a size and of
+// value_kinds.Duration_Unit for a time, 1 to 8 bytes for a hexadecimal
+// number.
+lex_column_unit_valid :: proc "contextless" (kind: Lex_Column_Kind, unit: i64) -> bool {
+	switch kind {
+	case .Text, .Integer:
+		return unit == 0
+	case .Size:
+		return unit >= 0 && unit <= i64(max(value_kinds.Size_Unit))
+	case .Time:
+		return unit >= 0 && unit <= i64(max(value_kinds.Duration_Unit))
+	case .Hexadecimal:
+		return unit >= 1 && unit <= 8
+	case .None:
+	}
+	return false
+}
+
 Lex_Value_Kind :: enum u8 {
 	None        = 0,
 	Integer     = 1,

@@ -33,13 +33,14 @@ import "modus:system"
 // cells, and 24 lines.
 WIDTH :: 760
 HEIGHT :: 560
-// The window, the entries of the conversation (about 930 KiB: each act
-// keeps the cells of its typed result, 13 KiB), the lines of one drawn
-// result (about 55 KiB), the two draw tables (about 40 KiB), the stack,
+// The window, the entries of the conversation (about 940 KiB: each act
+// keeps the cells of its typed result, 14 KiB), the kept lines of three
+// results (about 100 KiB), the two draw tables of the worst frame (about
+// 130 KiB: result_table.odin), the stack,
 // and the glyph memory of a window of paint, which this process draws as:
 // the tool counts the window at the window bound (docs/MODULE_CONTRACT.md,
 // "The budget that a module asks for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2060, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2110, window_width = WIDTH, window_height = HEIGHT}
 
 MARGIN :: 12
 INPUT_HEIGHT :: 28
@@ -47,9 +48,10 @@ INPUT_HEIGHT :: 28
 // act waits for it: shorter than a person reads a dialog.
 DECISION_POLL_MILLISECONDS :: 100
 
-// The records and the text of one frame: a conversation that fills the
-// window holds about 40 lines, each a record, of the text of its entries.
-window_memory: interface.Window_Memory(256, 8192)
+// The records and the text of one frame, sized for the worst frame: a
+// window of results, each line a record for each run of one color
+// (result_table.odin).
+window_memory: interface.Window_Memory(WINDOW_RECORDS, WINDOW_TEXT_BYTES)
 
 // The text that the principal types: one request.
 typed: [assistant_contract.REQUEST_TEXT_BYTES]u8
@@ -149,8 +151,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		result: ^result_lines.Lines
 		if entry.kind == .Act && entry.state == .Done && entry.table.present {
 			line_room := (bottom - MARGIN - line - code_lines * code_line - MARGIN / 2) / code_line
-			if result_lines.fit(&result_memory, &entry.table, room / cell_width, line_room) {
-				result, words = &result_memory, ""
+			if lines := result_lines_of(entry, room / cell_width, line_room); lines != nil {
+				result, words = lines, ""
 			}
 		}
 		words_font := words_are_value ? FONT_CODE : interface.FONT_INTERFACE

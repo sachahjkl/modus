@@ -1,81 +1,81 @@
 // The lines of the typed result of an act, as the console draws a result
 // (src/md/features/assistant.md, "The result of an act"). The package
 // writes the description of the record and its rows, lets the drawers of
-// modus:console_results write the lines at a width in cells, and fits
-// them to the room of the window. It has no state of its own, calls no
-// allocator and makes no call of the system: a host test reads each line.
-// The window paints the lines in the font of the cells.
+// modus:console_results write the lines, and fits them to the room of the
+// window: the columns that fit its width, in their order, and the rows that
+// fit its height. A row never wraps, so the eye follows each column. The
+// package has no state of its own, calls no allocator and makes no call of
+// the system: a host test reads each line. The window paints the lines in
+// the font of the cells.
 package result_lines
 
 import "internal:assistant/conversation"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/cut_mark"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:console_results"
 import "modus:sentence"
 
-// The lines of one result: a head, 8 rows that each take some lines of a
-// column of words, and the notes. Past a capacity the lines stop, and the
-// last line says that the result is cut: no line is dropped in silence.
-LINE_CAPACITY :: 64
+// The lines of one result. A row is one line, so a table takes a head,
+// 8 rows and the two notes of the drawer, and a record a name and one line
+// for each field; the notes of this package take two more. Past a
+// capacity the lines stop, and the last line says that the result is cut:
+// no line is dropped in silence.
+LINE_CAPACITY :: assistant_contract.ACT_TABLE_COLUMN_CAPACITY + 8
+#assert(LINE_CAPACITY >= 1 + assistant_contract.ACT_TABLE_ROW_CAPACITY + 2 + NOTE_LINES)
+#assert(LINE_CAPACITY >= 1 + assistant_contract.ACT_TABLE_COLUMN_CAPACITY + NOTE_LINES)
 TEXT_BYTES :: 16 * 1024
-PART_CAPACITY :: 1024
+PART_CAPACITY :: 2048
+#assert(TEXT_BYTES <= int(max(u16)))
 
-// The least bytes of a column when the row must be narrowed to the bound
-// of a record: one character and the cut mark of the most bytes that a
-// cell of 64 bytes can miss, so a cut cell still says what it misses.
+// The notes of this package: the columns that are not shown, and the cut.
+NOTE_LINES :: 2
+
+// The least bytes of a text column when the row must be narrowed to the
+// bound of a record: one character and the cut mark of the most bytes that
+// a cell of 64 bytes can miss, so a cut cell still says what it misses.
 CELL_LEAST :: 1 + len(cut_mark.MARK_START) + 2 + len(cut_mark.MARK_END)
 #assert(assistant_contract.ACT_TABLE_CELL_BYTES < 100) // The 2 digits of CELL_LEAST.
 #assert(CELL_LEAST <= assistant_contract.ACT_TABLE_CELL_BYTES)
 
 Part :: struct {
-	line:  int,
-	start: int,
-	count: int,
+	line:  u16,
+	start: u16,
+	count: u16,
 	part:  console_results.Part,
 }
 
-// What the drawers wrote, line by line. A line that passes the width goes
-// on in a new line under the continuation that the drawer set.
+// What the drawers wrote, line by line.
 Lines :: struct {
-	text:        [TEXT_BYTES]u8,
-	text_count:  int,
-	parts:       [PART_CAPACITY]Part,
-	part_count:  int,
-	line_count:  int,
-	column:      int, // The column of the line that is written.
-	full:        bool, // A capacity stopped the lines: the last line says so.
-	sink:        console_results.Sink,
+	text:       [TEXT_BYTES]u8,
+	text_count: int,
+	parts:      [PART_CAPACITY]Part,
+	part_count: int,
+	line_count: int,
+	column:     int, // The column of the line that is written: 0 at its start.
+	full:       bool, // A capacity stopped the lines: the last line says so.
+	sink:       console_results.Sink,
+}
+
+// The memory of one draw: the description of the record and its rows. The
+// caller keeps one, for each draw in turn.
+Scratch :: struct {
 	description: [4096]u8,
 	rows:        [assistant_contract.ACT_TABLE_ROW_CAPACITY * module.RECORD_SIZE_LIMIT]u8,
 }
 
-// The lines that the last line of a full result keeps for its note.
-// Two notes at most: the dropped columns, and the cut.
-@(private = "file")
-NOTE_LINES :: 2
-
-@(private = "file")
-is_blank :: proc "contextless" (text: string) -> bool {
-	for character in transmute([]u8)text {
-		if character != ' ' {
-			return false
-		}
-	}
-	return true
-}
-
-@(private = "file")
-part_add :: proc "contextless" (lines: ^Lines, text: string, part: console_results.Part) {
-	if lines.line_count >= LINE_CAPACITY - NOTE_LINES || lines.part_count >= PART_CAPACITY - 2 || lines.text_count + len(text) > TEXT_BYTES - 64 {
-		lines.full = true
-		return
+@(private)
+part_add :: proc "contextless" (lines: ^Lines, text: string, part: console_results.Part, room_kept: int) -> bool {
+	if lines.line_count >= LINE_CAPACITY - room_kept || lines.part_count >= PART_CAPACITY - room_kept || lines.text_count + len(text) > TEXT_BYTES - 96 * room_kept {
+		return false
 	}
 	copy(lines.text[lines.text_count:], text)
-	lines.parts[lines.part_count] = {line = lines.line_count, start = lines.text_count, count = len(text), part = part}
+	lines.parts[lines.part_count] = {line = u16(lines.line_count), start = u16(lines.text_count), count = u16(len(text)), part = part}
 	lines.part_count += 1
 	lines.text_count += len(text)
 	lines.column += console_results.text_columns(text)
+	return true
 }
 
 @(private = "file")
@@ -84,19 +84,9 @@ line_write :: proc "contextless" (sink: ^console_results.Sink, text: string, par
 	if text == "" || lines.full {
 		return
 	}
-	columns := console_results.text_columns(text)
-	if sink.width > 0 && lines.column > 0 && lines.column + columns > sink.width {
-		// Blanks at the end of a line are dropped.
-		if part == .Plain && is_blank(text) {
-			return
-		}
-		line_end(sink)
-		if sink.continuation > 0 && sink.continuation < sink.width {
-			blank := console_results.BLANKS
-			part_add(lines, blank[:min(sink.continuation, len(blank))], .Plain)
-		}
+	if !part_add(lines, text, part, NOTE_LINES) {
+		lines.full = true
 	}
-	part_add(lines, text, part)
 }
 
 @(private = "file")
@@ -113,41 +103,80 @@ line_end :: proc "contextless" (sink: ^console_results.Sink) {
 	lines.column = 0
 }
 
-// note_write writes one line of a note at the end of the lines; it takes
-// the place that part_add keeps free.
-@(private = "file")
-note_write :: proc "contextless" (lines: ^Lines, parts: ..sentence.Part) {
-	buffer: [96]u8
-	text := sentence.format(buffer[:], ..parts)
-	if lines.part_count >= PART_CAPACITY || lines.text_count + len(text) > TEXT_BYTES || lines.line_count >= LINE_CAPACITY {
-		return
+// note_write writes one line of a note after the lines, in the room that
+// the drawers leave free. A line that a capacity stopped half way ends
+// first: the note is a line of its own.
+@(private)
+note_write :: proc "contextless" (lines: ^Lines, text: string) {
+	if lines.column > 0 && lines.line_count < LINE_CAPACITY {
+		lines.line_count += 1
+		lines.column = 0
 	}
-	copy(lines.text[lines.text_count:], text)
-	lines.parts[lines.part_count] = {line = lines.line_count, start = lines.text_count, count = len(text), part = .Note}
-	lines.part_count += 1
-	lines.text_count += len(text)
-	lines.line_count += 1
-	lines.column = 0
+	if part_add(lines, text, .Note, 0) {
+		lines.line_count += 1
+		lines.column = 0
+	}
 }
 
-// column_widths gives the bytes of each Text column, its longest cell, at
-// least 1, and the count of columns that the row keeps. A record of the
-// contract holds RECORD_SIZE_LIMIT bytes: when a row passes it, the widest
-// columns take a common bound, and a cell past its column ends with the
-// cut mark. A bound under CELL_LEAST would leave no room for the mark: the
-// last columns are then dropped, and a note says how many.
+// The form of each column of a draw.
+@(private = "file")
+Draw_Columns :: struct {
+	columns: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]console_results.Column,
+	count:   int,
+}
+
+// column_of gives the column of the description for a column of a result:
+// a text at the left, as wide as bytes; a number at the right, with its
+// unit in the head, as the console writes it.
+@(private = "file")
+column_of :: proc "contextless" (table: ^conversation.Act_Table, column: int, bytes: u32) -> console_results.Column {
+	name := conversation.act_table_column_name(table, column)
+	kind, unit := conversation.act_table_column_kind(table, column)
+	switch kind {
+	case .Integer:
+		return console_results.integer_column(name)
+	case .Size:
+		return console_results.size_column(name, value_kinds.Size_Unit(unit))
+	case .Time:
+		return console_results.time_column(name, value_kinds.Duration_Unit(unit))
+	case .Hexadecimal:
+		return {name = name, type = .Integer, detail = u32(unit), unsigned = true, kind = .Hexadecimal}
+	case .Text, .None:
+	}
+	return console_results.text_column(name, bytes)
+}
+
+// column_widths gives the bytes of each column, and the count of columns
+// that a row of RECORD_SIZE_LIMIT bytes keeps. A number column has the
+// bytes of its number. A text column is as wide as its longest cell; when
+// a row passes the bound, the widest text columns take a common bound, and
+// a cell past its column ends with the cut mark. A bound under CELL_LEAST
+// would leave no room for the mark: the last columns are then dropped.
 column_widths :: proc "contextless" (table: ^conversation.Act_Table, widths: []u32) -> (kept: int) {
+	is_text: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]bool
 	for column in 0 ..< table.column_count {
-		widths[column] = 1
-		for row in 0 ..< table.row_count {
-			widths[column] = max(widths[column], u32(len(conversation.act_table_cell_text(table, row, column))))
+		kind, unit := conversation.act_table_column_kind(table, column)
+		switch kind {
+		case .Integer, .Size, .Time:
+			widths[column] = 8
+		case .Hexadecimal:
+			widths[column] = u32(unit)
+		case .Text, .None:
+			is_text[column] = true
+			widths[column] = 1
+			for row in 0 ..< table.row_count {
+				widths[column] = max(widths[column], u32(len(conversation.act_table_cell_text(table, row, column))))
+			}
 		}
+	}
+	least :: proc "contextless" (width: u32, text: bool) -> u32 {
+		return text ? min(width, CELL_LEAST) : width
 	}
 	kept = table.column_count
 	for kept > 0 {
 		least_sum: u32
 		for column in 0 ..< kept {
-			least_sum += min(widths[column], CELL_LEAST)
+			least_sum += least(widths[column], is_text[column])
 		}
 		if least_sum <= module.RECORD_SIZE_LIMIT {
 			break
@@ -158,7 +187,7 @@ column_widths :: proc "contextless" (table: ^conversation.Act_Table, widths: []u
 	for bound > CELL_LEAST {
 		sum: u32
 		for column in 0 ..< kept {
-			sum += min(widths[column], bound)
+			sum += is_text[column] ? min(widths[column], bound) : widths[column]
 		}
 		if sum <= module.RECORD_SIZE_LIMIT {
 			break
@@ -166,46 +195,138 @@ column_widths :: proc "contextless" (table: ^conversation.Act_Table, widths: []u
 		bound -= 1
 	}
 	for column in 0 ..< kept {
-		widths[column] = min(widths[column], bound)
+		if is_text[column] {
+			widths[column] = min(widths[column], bound)
+		}
 	}
 	return kept
 }
 
+// description_and_rows writes the description of the first count columns
+// and the rows of the result in scratch.
 @(private = "file")
-lines_reset :: proc "contextless" (lines: ^Lines, width_cells: int) {
+description_and_rows :: proc "contextless" (scratch: ^Scratch, table: ^conversation.Act_Table, widths: []u32, count: int) -> (file: []u8, size: u32, rows: []u8, ok: bool) {
+	columns: Draw_Columns
+	for column in 0 ..< count {
+		columns.columns[column] = column_of(table, column, widths[column])
+	}
+	scratch.description = {}
+	written: bool
+	file, size, written = console_results.description_write(scratch.description[:], conversation.act_table_name(table), columns.columns[:count])
+	if !written || size == 0 {
+		return nil, 0, nil, false
+	}
+	// description_write wrote the offset of each column in columns.
+	rows = scratch.rows[:int(size) * table.row_count]
+	for &value in rows {
+		value = 0
+	}
+	for row in 0 ..< table.row_count {
+		place := rows[row * int(size):][:size]
+		for column in 0 ..< count {
+			kind, _ := conversation.act_table_column_kind(table, column)
+			switch kind {
+			case .Integer, .Size, .Time, .Hexadecimal:
+				console_results.row_integer_set(place, columns.columns[column], conversation.act_table_cell_integer(table, row, column))
+			case .Text, .None:
+				console_results.row_text_set(place, columns.columns[column], conversation.act_table_cell_text(table, row, column))
+			}
+		}
+	}
+	return file, size, rows, true
+}
+
+// columns_in_width gives how many columns, from the first, a line of a
+// width in cells shows: each column as wide as its head and the widest of
+// the cells that the drawer writes, with the gap of the console between
+// two. One column at least. A record shows one field on each line: each
+// column.
+@(private = "file")
+columns_in_width :: proc "contextless" (table: ^conversation.Act_Table, file: []u8, rows: []u8, size: u32, kept: int, width_cells: int) -> int {
+	if table.shape == .Record || width_cells <= 0 {
+		return kept
+	}
+	described, ok := module.record_type(file, 1)
+	if !ok {
+		return kept
+	}
+	used := 0
+	for column in 0 ..< kept {
+		item, found := module.field(file, described, u32(column))
+		if !found {
+			return max(column, 1)
+		}
+		_, unit := console_results.integer_part(item)
+		width := console_results.head_length(int(item.name_count), unit)
+		for row in 0 ..< table.row_count {
+			buffer: [console_results.CELL_TEXT_CAPACITY]u8
+			cell := console_results.cell_of(rows[row * int(size):][:size], item, buffer[:])
+			width = max(width, console_results.text_columns(cell.text))
+		}
+		next := used + (column > 0 ? console_results.COLUMN_GAP : 0) + width
+		if next > width_cells {
+			return max(column, 1)
+		}
+		used = next
+	}
+	return kept
+}
+
+// columns_note writes the note of the columns that are not shown: their
+// count, then their names in their order, as many as the width holds, and
+// "..." when some names do not fit.
+@(private = "file")
+columns_note :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Table, shown: int, width_cells: int) {
+	hidden := table.column_count - shown
+	if hidden <= 0 {
+		return
+	}
+	buffer: [256]u8
+	writer := sentence.Writer {
+		buffer = buffer[:],
+	}
+	sentence.write_part(&writer, u64(hidden))
+	sentence.write_part(&writer, hidden == 1 ? " column more: " : " columns more: ")
+	room := width_cells > 0 ? min(width_cells, len(buffer)) : len(buffer)
+	for column in shown ..< table.column_count {
+		name := conversation.act_table_column_name(table, column)
+		separator := column > shown ? ", " : ""
+		last := column == table.column_count - 1
+		// The room keeps place for ", ..." after a name that is not the last.
+		after := last ? 0 : len(", ...")
+		if writer.count + len(separator) + len(name) + after > room {
+			sentence.write_part(&writer, column > shown ? ", ..." : "...")
+			break
+		}
+		sentence.write_part(&writer, separator)
+		sentence.write_part(&writer, name)
+	}
+	note_write(lines, sentence.written(&writer))
+}
+
+@(private)
+lines_reset :: proc "contextless" (lines: ^Lines) {
 	lines.text_count, lines.part_count, lines.line_count, lines.column = 0, 0, 0, 0
 	lines.full = false
-	lines.sink = {data = lines, write = line_write, end_line = line_end, width = max(width_cells, 0)}
+	// No width: the drawer never narrows a column and never breaks a row;
+	// the columns that the width cannot hold are not described at all.
+	lines.sink = {data = lines, write = line_write, end_line = line_end, width = 0}
 }
 
 // draw writes the lines of a result at a width in cells, with at most
 // row_limit rows; the drawer counts the rest against total_rows. ok is
 // false when the description cannot be written.
-draw :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Table, width_cells: int, row_limit: int) -> (ok: bool) {
-	lines_reset(lines, width_cells)
+draw :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversation.Act_Table, width_cells: int, row_limit: int) -> (ok: bool) {
+	lines_reset(lines)
 	widths: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]u32
 	kept := column_widths(table, widths[:])
 	if kept == 0 {
 		return false
 	}
-	columns: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]console_results.Column
-	for column in 0 ..< kept {
-		columns[column] = console_results.text_column(conversation.act_table_column_name(table, column), widths[column])
-	}
-	lines.description = {}
-	file, size, written := console_results.description_write(lines.description[:], conversation.act_table_name(table), columns[:kept])
-	if !written || size == 0 {
-		return false
-	}
-	// description_write wrote the offset of each column in columns.
-	rows := lines.rows[:int(size) * table.row_count]
-	for &value in rows {
-		value = 0
-	}
-	for row in 0 ..< table.row_count {
-		for column in 0 ..< kept {
-			console_results.row_text_set(rows[row * int(size):][:size], columns[column], conversation.act_table_cell_text(table, row, column))
-		}
+	file, size, rows := description_and_rows(scratch, table, widths[:], kept) or_return
+	shown := columns_in_width(table, file, rows, size, kept, width_cells)
+	if shown < kept {
+		file, size, rows = description_and_rows(scratch, table, widths[:], shown) or_return
 	}
 	switch table.shape {
 	case .Table:
@@ -213,10 +334,7 @@ draw :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Table, width
 	case .Record:
 		console_results.draw_record(&lines.sink, file, 1, rows[:size])
 	}
-	if kept < table.column_count {
-		dropped := u64(table.column_count - kept)
-		note_write(lines, dropped, dropped == 1 ? " column more is not shown: a row holds 256 bytes" : " columns more are not shown: a row holds 256 bytes")
-	}
+	columns_note(lines, table, shown, width_cells)
 	if lines.full {
 		note_write(lines, "the result is cut: it passes the lines that the window keeps")
 	}
@@ -228,12 +346,12 @@ draw :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Table, width
 // row fits, the first lines and one line that counts the lines not shown.
 // ok is false when the description cannot be written, or line_room is
 // under 1.
-fit :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Table, width_cells: int, line_room: int) -> (ok: bool) {
+fit :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversation.Act_Table, width_cells: int, line_room: int) -> (ok: bool) {
 	if line_room < 1 {
 		return false
 	}
 	for row_limit := table.row_count; row_limit >= 0; row_limit -= 1 {
-		draw(lines, table, width_cells, row_limit) or_return
+		draw(lines, scratch, table, width_cells, row_limit) or_return
 		if lines.line_count <= line_room || table.shape == .Record {
 			break
 		}
@@ -245,7 +363,8 @@ fit :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Table, width_
 	// others.
 	hidden := u64(lines.line_count - (line_room - 1))
 	lines_clip(lines, line_room - 1)
-	note_write(lines, hidden, hidden == 1 ? " line more is not shown: the window is too small" : " lines more are not shown: the window is too small")
+	buffer: [96]u8
+	note_write(lines, sentence.format(buffer[:], hidden, hidden == 1 ? " line more is not shown: the window is too small" : " lines more are not shown: the window is too small"))
 	return true
 }
 
@@ -253,11 +372,11 @@ fit :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Table, width_
 @(private = "file")
 lines_clip :: proc "contextless" (lines: ^Lines, count: int) {
 	parts := 0
-	for parts < lines.part_count && lines.parts[parts].line < count {
+	for parts < lines.part_count && int(lines.parts[parts].line) < count {
 		parts += 1
 	}
 	lines.part_count = parts
-	lines.text_count = parts > 0 ? lines.parts[parts - 1].start + lines.parts[parts - 1].count : 0
+	lines.text_count = parts > 0 ? int(lines.parts[parts - 1].start) + int(lines.parts[parts - 1].count) : 0
 	lines.line_count = count
 	lines.column = 0
 }
@@ -267,9 +386,10 @@ line_text :: proc "contextless" (lines: ^Lines, line: int, buffer: []u8) -> stri
 	count := 0
 	for index in 0 ..< lines.part_count {
 		part := lines.parts[index]
-		if part.line == line {
+		if int(part.line) == line {
 			count += copy(buffer[count:], lines.text[part.start:][:part.count])
 		}
 	}
 	return string(buffer[:count])
 }
+

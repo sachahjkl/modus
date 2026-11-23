@@ -182,14 +182,22 @@ Act_Table_Shape :: enum u8 {
 	Record = 2, // One record: one row.
 }
 
-// One column of act_table: its name.
+// One column of act_table: its name, and how its cells are written and
+// aligned, as the bridge gives it: a word of
+// agent_bridge.Lex_Column_Kind and its unit word
+// (agent_bridge.lex_column_unit_valid).
 Act_Table_Column :: struct {
 	name: [ACT_TABLE_NAME_BYTES]u8,
+	kind: i64,
+	unit: i64,
 }
 
-// One cell of act_table, row after row: the text of a field.
+// One cell of act_table, row after row: the text of a cell of a text
+// column, or the value of a cell of a number column; the other field is
+// zero.
 Act_Table_Cell :: struct {
-	text: [ACT_TABLE_CELL_BYTES]u8,
+	text:    [ACT_TABLE_CELL_BYTES]u8,
+	integer: i64,
 }
 
 // act_table_shape_of_word is the border of the word of a shape: false for

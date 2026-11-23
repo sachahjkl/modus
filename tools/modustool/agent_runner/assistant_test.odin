@@ -368,42 +368,53 @@ the_names_of_an_act_come_from_the_parser_of_the_bridge :: proc(t: ^testing.T) {
 	}
 }
 
-// The typed result of a bridge answer: a table keeps its columns, its
-// first rows within the bound and its total; a long cell ends with the cut
-// mark and keeps the bound, a control byte becomes a space, an empty cell
-// stays empty; a record is one row.
+// The typed result of a bridge answer: a table keeps its columns with
+// their kind and unit, its first rows within the bound and its total; a
+// number column carries its value and no text, a text column its text and
+// no value; a long cell ends with the cut mark and keeps the bound; a
+// control character, U+0085 too, becomes a space; an empty cell stays
+// empty; a record is one row.
 @(test)
 a_table_of_the_bridge_crosses_typed_within_the_bounds :: proc(t: ^testing.T) {
 	rows := strings.builder_make(context.temp_allocator)
+	integers := strings.builder_make(context.temp_allocator)
 	for index in 0 ..< 20 {
-		if index > 0 {
-			strings.write_byte(&rows, ',')
-		}
-		fmt.sbprintf(&rows, `["%d","name\u0001%d",""]`, index, index)
+		strings.write_byte(&rows, ',')
+		strings.write_byte(&integers, ',')
+		fmt.sbprintf(&rows, `["%d","name\u0001%d","","%d"]`, index, index, 100 * index)
+		fmt.sbprintf(&integers, `[%d,0,0,%d]`, index, 100 * index)
 	}
 	long := strings.repeat("ab", assistant_contract.ACT_TABLE_CELL_BYTES, context.temp_allocator)
 	// The braces of JSON are no format of fmt: the answer is joined.
-	answer := strings.concatenate({`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"table","record_name":"Process","columns":["slot","name","hash"],"rows":[["99","x\u0085y","`, long, `"],`, strings.to_string(rows), `],"total_rows":21}}`}, context.temp_allocator)
+	answer := strings.concatenate({`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"table","record_name":"Process","columns":["slot","name","hash","resident"],"column_kinds":["integer","text","text","size"],"column_units":[0,0,0,3],"rows":[["99","x\u0085y","`, long, `","7"]`, strings.to_string(rows), `],"row_integers":[[99,0,0,7]`, strings.to_string(integers), `],"total_rows":21}}`}, context.temp_allocator)
 	report := bridge_answer_read(answer)
 	testing.expect_value(t, report.state, assistant_contract.Act_State.Done)
 	table := report.table
 	testing.expect(t, table.present && table.shape == .Table && table.name == "Process")
-	testing.expect_value(t, len(table.columns), 3)
+	testing.expect_value(t, len(table.columns), 4)
+	testing.expect(t, table.kinds[0] == .Integer && table.kinds[1] == .Text && table.kinds[3] == .Size && table.units[3] == 3)
 	testing.expect_value(t, table.row_count, assistant_contract.ACT_TABLE_ROW_CAPACITY)
-	testing.expect_value(t, len(table.cells), 3 * assistant_contract.ACT_TABLE_ROW_CAPACITY)
+	testing.expect_value(t, len(table.cells), 4 * assistant_contract.ACT_TABLE_ROW_CAPACITY)
 	testing.expect_value(t, table.total_rows, 21)
+	// A number column: its value, and no text.
+	testing.expect(t, table.cells[0] == "" && table.integers[0] == 99)
+	testing.expect(t, table.cells[7] == "" && table.integers[7] == 0)
+	testing.expect_value(t, table.integers[4 + 3], 0)
+	testing.expect_value(t, table.integers[2 * 4 + 3], 100)
+	// A text column: its text, and no value.
 	testing.expect(t, len(table.cells[2]) <= assistant_contract.ACT_TABLE_CELL_BYTES && strings.contains(table.cells[2], cut_mark.MARK_START))
+	testing.expect(t, table.integers[1] == 0 && table.integers[2] == 0)
 	// U+0085 is a control character of the window too: it becomes a
 	// space, so the window takes the cell.
 	testing.expect_value(t, table.cells[1], "x y")
 	testing.expect_value(t, text_cut("a\u0085b\u009fc"), "a b c")
-	testing.expect_value(t, table.cells[4], "name 0")
-	testing.expect_value(t, table.cells[5], "")
+	testing.expect_value(t, table.cells[4 + 1], "name 0")
+	testing.expect_value(t, table.cells[4 + 2], "")
 	for cell in table.cells {
 		testing.expect_value(t, assistant_contract.text_check(cell == "" ? "x" : cell, assistant_contract.ACT_TABLE_CELL_BYTES), assistant_contract.Text_Refusal.None)
 	}
-	record := bridge_answer_read(`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"record","record_name":"Counts","columns":["processes","threads"],"rows":[["12","40"]],"total_rows":1}}`)
-	testing.expect(t, record.table.present && record.table.shape == .Record && record.table.row_count == 1)
+	record := bridge_answer_read(`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"record","record_name":"Counts","columns":["processes","threads"],"column_kinds":["integer","integer"],"column_units":[0,0],"rows":[["12","40"]],"row_integers":[[12,40]],"total_rows":1}}`)
+	testing.expect(t, record.table.present && record.table.shape == .Record && record.table.row_count == 1 && record.table.integers[1] == 40)
 }
 
 // Each answer that is not a whole table within the bounds has no table:
@@ -411,31 +422,52 @@ a_table_of_the_bridge_crosses_typed_within_the_bounds :: proc(t: ^testing.T) {
 @(test)
 a_table_that_is_not_whole_crosses_as_words_only :: proc(t: ^testing.T) {
 	many := strings.builder_make(context.temp_allocator)
+	many_kinds := strings.builder_make(context.temp_allocator)
+	many_units := strings.builder_make(context.temp_allocator)
 	many_row := strings.builder_make(context.temp_allocator)
+	many_values := strings.builder_make(context.temp_allocator)
 	for index in 0 ..< assistant_contract.ACT_TABLE_COLUMN_CAPACITY + 1 {
 		if index > 0 {
-			strings.write_byte(&many, ',')
-			strings.write_byte(&many_row, ',')
+			for builder in ([]^strings.Builder{&many, &many_kinds, &many_units, &many_row, &many_values}) {
+				strings.write_byte(builder, ',')
+			}
 		}
 		fmt.sbprintf(&many, `"c%d"`, index)
+		strings.write_string(&many_kinds, `"text"`)
+		strings.write_string(&many_units, "0")
 		strings.write_string(&many_row, `"1"`)
+		strings.write_string(&many_values, "0")
 	}
 	head :: `{"jsonrpc":"2.0","id":1,"result":{"status":"Ok",`
+	whole :: `"column_kinds":["text"],"column_units":[0],"row_integers":[[0]],`
 	results := []string {
-		`"value_kind":"table","record_name":"P","columns":["a","b"],"rows":[["1"]],"total_rows":1}}`,
-		`"value_kind":"table","record_name":"P","columns":["a"],"rows":[[1]],"total_rows":1}}`,
-		`"value_kind":"table","record_name":"P","columns":[],"rows":[],"total_rows":0}}`,
-		`"value_kind":"table","record_name":"P","columns":[""],"rows":[],"total_rows":0}}`,
-		`"value_kind":"table","record_name":"","columns":["a"],"rows":[],"total_rows":0}}`,
-		`"value_kind":"table","record_name":"P","columns":["a"],"rows":[["1"],["2"]],"total_rows":1}}`,
-		`"value_kind":"table","record_name":"P","columns":["a"],"rows":[["1"]]}}`,
-		`"value_kind":"table","record_name":"P","columns":"a","rows":[["1"]],"total_rows":1}}`,
-		`"value_kind":"record","record_name":"P","columns":["a"],"rows":[["1"],["2"]],"total_rows":2}}`,
+		`"value_kind":"table","record_name":"P","columns":["a","b"],"column_kinds":["text","text"],"column_units":[0,0],"rows":[["1"]],"row_integers":[[0]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],` + whole + `"rows":[[1]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":[],"column_kinds":[],"column_units":[],"rows":[],"row_integers":[],"total_rows":0}}`,
+		`"value_kind":"table","record_name":"P","columns":[""],` + whole + `"rows":[["1"]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"","columns":["a"],` + whole + `"rows":[["1"]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],` + whole + `"rows":[["1"]],"total_rows":0}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"rows":[["1"]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":"a",` + whole + `"rows":[["1"]],"total_rows":1}}`,
+		`"value_kind":"record","record_name":"P","columns":["a"],"column_kinds":["text"],"column_units":[0],"rows":[["1"],["2"]],"row_integers":[[0],[0]],"total_rows":2}}`,
+		// The kind and the unit at their border: a kind of no name, none,
+		// a unit that does not fit, a kind that is no text, a missing value.
+		`"value_kind":"table","record_name":"P","columns":["a"],"column_kinds":["number"],"column_units":[0],"rows":[["1"]],"row_integers":[[1]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"column_kinds":["none"],"column_units":[0],"rows":[["1"]],"row_integers":[[1]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"column_kinds":["size"],"column_units":[99],"rows":[["1"]],"row_integers":[[1]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"column_kinds":["hexadecimal"],"column_units":[0],"rows":[["1"]],"row_integers":[[1]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"column_kinds":[2],"column_units":[0],"rows":[["1"]],"row_integers":[[1]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"column_kinds":["integer"],"column_units":[0],"rows":[["1"]],"row_integers":[["1"]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"column_kinds":["integer"],"column_units":[0],"rows":[["1"]],"row_integers":[],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a","b"],"column_kinds":["integer"],"column_units":[0,0],"rows":[["1","2"]],"row_integers":[[1,2]],"total_rows":1}}`,
 		`"value_kind":"integer","value":12}}`,
-		strings.concatenate({`"value_kind":"table","record_name":"P","columns":[`, strings.to_string(many), `],"rows":[[`, strings.to_string(many_row), `]],"total_rows":1}}`}, context.temp_allocator),
+		strings.concatenate({`"value_kind":"table","record_name":"P","columns":[`, strings.to_string(many), `],"column_kinds":[`, strings.to_string(many_kinds), `],"column_units":[`, strings.to_string(many_units), `],"rows":[[`, strings.to_string(many_row), `]],"row_integers":[[`, strings.to_string(many_values), `]],"total_rows":1}}`}, context.temp_allocator),
 	}
 	for result in results {
 		report := bridge_answer_read(strings.concatenate({head, result}, context.temp_allocator))
 		testing.expectf(t, report.state == .Done && !report.table.present, "%q gave a table", result)
 	}
+	// The whole form, last: a table.
+	report := bridge_answer_read(strings.concatenate({head, `"value_kind":"table","record_name":"P","columns":["a"],`, whole, `"rows":[["1"]],"total_rows":1}}`}, context.temp_allocator))
+	testing.expect(t, report.table.present)
 }

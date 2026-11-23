@@ -7,6 +7,7 @@
 package conversation
 
 import "base:intrinsics"
+import bridge_contract "modus:contract/agent_bridge"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
 
@@ -71,6 +72,18 @@ act_table_name :: proc "contextless" (table: ^Act_Table) -> string {
 act_table_column_name :: proc "contextless" (table: ^Act_Table, column: int) -> string {
 	name, _ := assistant_contract.fixed_text(table.columns[column].name[:])
 	return name
+}
+
+// act_table_column_kind gives the kind of a column and its unit word,
+// which act_table checked.
+act_table_column_kind :: proc "contextless" (table: ^Act_Table, column: int) -> (kind: bridge_contract.Lex_Column_Kind, unit: i64) {
+	kind, _ = bridge_contract.lex_column_kind_of_word(table.columns[column].kind)
+	return kind, table.columns[column].unit
+}
+
+// act_table_cell_integer gives the value of a cell of a number column.
+act_table_cell_integer :: proc "contextless" (table: ^Act_Table, row, column: int) -> i64 {
+	return table.cells[row * table.column_count + column].integer
 }
 
 // act_table_cell_text gives the text of a cell.
@@ -532,13 +545,24 @@ act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal
 		staging.cells[index] = intrinsics.volatile_load(&cells[index])
 	}
 	for index in 0 ..< column_count {
-		column_name, column_ok := assistant_contract.fixed_text(staging.columns[index].name[:])
+		column := &staging.columns[index]
+		column_name, column_ok := assistant_contract.fixed_text(column.name[:])
 		if !column_ok || column_name == "" {
 			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 5, 0, assistant_contract.ACT_TABLE_NAME_BYTES, i64(index + 1)), nil
 		}
+		kind, kind_ok := bridge_contract.lex_column_kind_of_word(column.kind)
+		if !kind_ok || !bridge_contract.lex_column_unit_valid(kind, column.unit) {
+			return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 5, column.kind, column.unit, i64(index + 1)), nil
+		}
 	}
 	for index in 0 ..< len(cells) {
-		if _, cell_ok := assistant_contract.fixed_text(staging.cells[index].text[:]); !cell_ok {
+		cell := &staging.cells[index]
+		text, cell_ok := assistant_contract.fixed_text(cell.text[:])
+		// A text column holds a text and no value; a number column a
+		// value and no text: each fact of a cell is in one place.
+		kind, _ := bridge_contract.lex_column_kind_of_word(staging.columns[index % column_count].kind)
+		number := kind != .Text
+		if !cell_ok || (number && text != "") || (!number && cell.integer != 0) {
 			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 6, 0, assistant_contract.ACT_TABLE_CELL_BYTES, i64(index / column_count + 1)), nil
 		}
 	}

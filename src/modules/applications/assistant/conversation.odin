@@ -149,11 +149,14 @@ act_result_export :: proc "c" (act, state: i64, text: ^string, error: ^errors.Er
 // its sizes as numbers; they are the ones of the contract.
 Act_Table_Column :: struct {
 	name: [32]u8,
+	kind: i64,
+	unit: i64,
 }
 
 // One cell of act_table, row after row: the text of a field.
 Act_Table_Cell :: struct {
-	text: [64]u8,
+	text:    [64]u8,
+	integer: i64,
 }
 
 #assert(size_of(Act_Table_Column) == size_of(assistant_contract.Act_Table_Column) && len(Act_Table_Column{}.name) == assistant_contract.ACT_TABLE_NAME_BYTES)
@@ -165,11 +168,11 @@ Act_Table_Cell :: struct {
 // - **shape**: a word of assistant.Act_Table_Shape: 1 a table, 2 a record of one row.
 // - **name**: the name of the record, at most 32 bytes.
 // - **total_rows**: the rows of the whole result; the cells hold the first ones.
-// - **columns**: a table of `Act_Table_Column` rows, 1 to 24, each the name of a column.
-// - **cells**: a table of `Act_Table_Cell` rows, row after row, a cell for each column: at most 8 rows of the result.
+// - **columns**: a table of `Act_Table_Column` rows, 1 to 24: the name of a column, its kind (a word of agent_bridge.Lex_Column_Kind: 1 text, 2 integer, 3 size, 4 time, 5 hexadecimal) and its unit word.
+// - **cells**: a table of `Act_Table_Cell` rows, row after row, a cell for each column: the text of a text column, the value of a number column; at most 8 rows of the result.
 //
 // The result is 1, or a negative number with an error record: `No_Grant` (-1); `Absent` (-1, no act has the
-// number); `State` (-1, the act is not done, or has its table); `Bad_Value` (-1, a shape that names no member, a
+// number); `State` (-1, the act is not done, or has its table); `Bad_Value` (-1, a shape or a column kind that names no member, a unit that does not fit its kind, a text in a number cell or a value in a text cell, a
 // record of another count of rows than 1, a total under the rows, a count of cells that is no whole count of rows, an
 // empty column name, or a name or a cell that is not UTF-8 with no control byte or that has a byte after its zero);
 // `Empty` or `Too_Long` (-1, the name, no column or more than 24, more than 8 rows).
