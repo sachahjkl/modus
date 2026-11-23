@@ -233,11 +233,12 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "disk.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The block service: a virtio disk in a process, a ring, and the data in the memory of the client."},
 	{file = "storage.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The storage service: the private store of the console, its limit of blocks, the stores that the principal sees, and a grant that the principal revokes."},
 	{file = "storage_versions.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The versions of an object: each commit keeps the state before it."},
-	{file = "notes.png", group = .Storage, guide = "docs/STORAGE.md", caption = "A persistent process after a restart of the machine: notes finds its note and its count of 1000 commits in its private store."},
-	{file = "notes_versions.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The versions of a note: notes shows an older version with its generation and its time, and Enter restores it."},
-	{file = "notes_damaged.png", group = .Storage, guide = "docs/STORAGE.md", caption = "A block of the note changed on the disk outside the storage service: the service serves the count, and notes says that the note is damaged."},
-	{file = "notes_crash.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The process notes after a stop in the middle of 1000 commits: the note and the count are restored, and the three blocks of the count agree."},
-	{file = "power_loss.png", group = .Storage, guide = "docs/STORAGE.md", caption = "After a loss of power during the write of a root: the storage service takes the root before it, and notes finds its note and its count."},
+	{file = "notes.png", group = .Storage, guide = "docs/DESIGN.md", caption = "The notes of a principal: the list of the notes by their first lines, and the text wrapped at the width of the window, kept with no save action."},
+	{file = "notes_versions.png", group = .Storage, guide = "docs/DESIGN.md", caption = "The versions of a note: the pane lists them by the date of their commits, the text shows the one chosen, and Enter restores it in a new commit."},
+	{file = "persistence_check.png", group = .Storage, guide = "docs/STORAGE.md", caption = "A persistent process after a restart of the machine: the test process persistence_check finds its note and its count of 1000 commits in its private store."},
+	{file = "persistence_check_damaged.png", group = .Storage, guide = "docs/STORAGE.md", caption = "A block of the note changed on the disk outside the storage service: the service serves the count, and persistence_check says that the note is damaged."},
+	{file = "persistence_check_crash.png", group = .Storage, guide = "docs/STORAGE.md", caption = "The test process persistence_check after a stop in the middle of 1000 commits: the note and the count are restored, and the three blocks of the count agree."},
+	{file = "power_loss.png", group = .Storage, guide = "docs/STORAGE.md", caption = "After a loss of power during the write of a root: the storage service takes the root before it, and persistence_check finds its note and its count."},
 
 	// The boot and the trusted boot.
 	{file = "boot.png", group = .Boot, home = true, guide = "docs/DESIGN.md", caption = "The boot display: the stages of the start on a line of time, the memory, the machine, the boot image, the processes."},

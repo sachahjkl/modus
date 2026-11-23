@@ -23,7 +23,7 @@ power_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 // The loss of power: a stop of the machine never shows a part of a commit.
 // The tool serves the data disk itself (network_block_device.odin), so it
 // knows each write that a flush made durable, and each write after the
-// last flush. A machine runs `notes`, which makes one commit for each step
+// last flush. A machine runs `persistence_check`, which makes one commit for each step
 // of its count; the disk loses its power at a write of a root that it
 // counts itself, from a step before the count and a seed, and the tool
 // then ends QEMU with no warning.
@@ -44,7 +44,7 @@ power_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 //     every write (the commit in flight at the loss, if its root was among
 //     the writes): each object byte for byte, never a mix of the two.
 // Then one machine starts on a hard image (the writes after the last flush
-// lost, and the write of the root torn) and `notes` finds its note.
+// lost, and the write of the root torn) and `persistence_check` finds its note.
 
 POWER_LOSS_RANDOM_SUBSETS :: 300
 SECTOR_SIZE :: 512
@@ -358,33 +358,33 @@ hard_image :: proc(durable: []u8, pending: []Pending_Write) -> (image: []u8, tor
 // at its limit, and each commit thins the oldest versions of the store.
 scenario_power_loss_early := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true}, // The storage service can start first, for the boot pass of settings.
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
-	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "persistence_check: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "kept through a loss of power"},
 	// The line of Enter comes after the commit of each character.
-	{kind = .Wait, text = "notes: the note is \"kept through a loss of power\", generation "},
+	{kind = .Wait, text = "persistence_check: the note is \"kept through a loss of power\", generation "},
 	{kind = .Power_Loss_Arm, commits = 300},
 	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "notes: count 300"},
+	{kind = .Wait, text = "persistence_check: count 300"},
 	{kind = .Power_Loss},
 }
 
 scenario_power_loss_thinning := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true}, // The storage service can start first, for the boot pass of settings.
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
-	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "persistence_check: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "kept through a loss of power"},
-	{kind = .Wait, text = "notes: the note is \"kept through a loss of power\", generation "},
+	{kind = .Wait, text = "persistence_check: the note is \"kept through a loss of power\", generation "},
 	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	{kind = .Wait, text = "persistence_check: count 1000, stopped: 1000 commits in "},
 	{kind = .Power_Loss_Arm, commits = 200},
 	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "storage: the store notes is at its limit of 4500 blocks: the commit of generation ", any_order = true},
-	{kind = .Wait, text = "notes: count 1200"},
+	{kind = .Wait, text = "storage: the store persistence_check is at its limit of 4500 blocks: the commit of generation ", any_order = true},
+	{kind = .Wait, text = "persistence_check: count 1200"},
 	{kind = .Power_Loss},
 }
 
@@ -454,13 +454,15 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 	second := make([dynamic]Step)
 	defer delete(second)
 	append(&second, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
-	append(&second, Step{kind = .Launch, text = "notes"})
+	append(&second, Step{kind = .Type, text = "start(\"persistence_check\")"})
 	if torn_root {
 		append(&second, Step{kind = .Wait, text = "has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true})
 	}
-	append(&second, Step{kind = .Wait, text = fmt.aprintf("storage: ok, generation %d: 1 stores, 2 objects, 0 trees, %d versions, ", durable_contents.mount.generation, version_count(&durable_contents)), any_order = true})
-	append(&second, Step{kind = .Wait, text = "notes: restored the note \"kept through a loss of power\" and the count ", any_order = true})
-	append(&second, Step{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true})
+	// The stores of persistence_check and of the line history of the
+	// console: the start of persistence_check was a line of the console.
+	append(&second, Step{kind = .Wait, text = fmt.aprintf("storage: ok, generation %d: 2 stores, 3 objects, 0 trees, %d versions, ", durable_contents.mount.generation, version_count(&durable_contents)), any_order = true})
+	append(&second, Step{kind = .Wait, text = "persistence_check: restored the note \"kept through a loss of power\" and the count ", any_order = true})
+	append(&second, Step{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true})
 	if thinning {
 		append(&second, Step{kind = .Shot, text = "power_loss"})
 	}

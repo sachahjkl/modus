@@ -39,9 +39,13 @@ DEMONSTRATION_VERDICTS := [2]string{"as it must", "WRONG"}
 DEMONSTRATION_PEERS := [2]string{"255.255.255.255 port 65535", "10.0.2.2 port 7100"}
 
 // facts_file_of_demonstration gives the module file of the fact types of one
-// demonstration.
+// demonstration, or of a test module that was a demonstration before: the
+// sentences of its facts stay the lines of before.
 @(private = "file")
 facts_file_of_demonstration :: proc(t: ^testing.T, folder: string) -> (file: []u8, ok: bool) {
+	if folder == "persistence_check" {
+		return facts_file_of_folder(t, strings.concatenate({foundation.TEST_MODULE_SOURCES, folder}, context.temp_allocator))
+	}
 	return facts_file_of_folder(t, strings.concatenate({foundation.DEMONSTRATION_MODULE_SOURCES, folder}, context.temp_allocator))
 }
 
@@ -77,7 +81,7 @@ the_texts_of_the_facts_from_imports_to_workers_come_last_and_whole :: proc(t: ^t
 		{"locker", {}},
 		{"locks", {{"lock", 7}}},
 		{"net", {{"problem", 128}, {"address", len("255.255.255.255")}, {"link", len("down")}, {"hardware", len("ff:ff:ff:ff:ff:ff")}, {"remote", len("255.255.255.255")}, {"wrong_mark", len(" (WRONG)")}}},
-		{"notes", {{"date", len("2026-11-20 10:20:30")}, {"note_text", 60}}},
+		{"persistence_check", {{"date", len("2026-11-20 10:20:30")}, {"note_text", 60}}},
 		{"origin", {{"case_text", len("revoke a handle that the process does not have")}}},
 		{"pointers", {{"theme", 31}, {"theme_name", 32}, {"license", 32}, {"shape", len("resize_left_right")}, {"part", 17}, {"field", 27}, {"rule", 60}}},
 		{"processor_frame", {{"pixels_right", len("yes, yes, yes, yes")}, {"tables_whole", len("yes")}}},
@@ -345,16 +349,16 @@ the_facts_of_net_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 }
 
-// Each fact type of notes writes the line of before: the longest note and
+// Each fact type of persistence_check writes the line of before: the longest note and
 // an empty one, a generation below 0, with a date and with none.
 @(test)
-the_facts_of_notes_write_the_lines_of_before :: proc(t: ^testing.T) {
-	file, ok := facts_file_of_demonstration(t, "notes")
+the_facts_of_persistence_check_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := facts_file_of_demonstration(t, "persistence_check")
 	if !ok {
 		return
 	}
 	render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
-		return fact_test_render(t, file, "notes", type_name, values)
+		return fact_test_render(t, file, "persistence_check", type_name, values)
 	}
 	note_texts := [3]string{strings.repeat("n", 60, context.temp_allocator), "kept across a restart", ""}
 	generations := [4]i64{0, 1, -1, max(i64)}
@@ -363,25 +367,25 @@ the_facts_of_notes_write_the_lines_of_before :: proc(t: ^testing.T) {
 		for note_text in note_texts {
 			for generation in generations {
 				bits := signed_bits(generation)
-				facts_expect_line(t, render(t, file, "Version_Shown", {{"version", count}, {"versions", other}, {"generation", bits}, {"date", "2026-11-20 10:20:30"}, {"note_text", note_text}}), line_of_before("notes: the version ", count, " of ", other, ", generation ", generation, ", ", "2026-11-20 10:20:30", ": \"", note_text, "\""))
-				facts_expect_line(t, render(t, file, "Version_Shown_Without_Date", {{"version", count}, {"versions", other}, {"generation", bits}, {"note_text", note_text}}), line_of_before("notes: the version ", count, " of ", other, ", generation ", generation, "", "", ": \"", note_text, "\""))
+				facts_expect_line(t, render(t, file, "Version_Shown", {{"version", count}, {"versions", other}, {"generation", bits}, {"date", "2026-11-20 10:20:30"}, {"note_text", note_text}}), line_of_before("persistence_check: the version ", count, " of ", other, ", generation ", generation, ", ", "2026-11-20 10:20:30", ": \"", note_text, "\""))
+				facts_expect_line(t, render(t, file, "Version_Shown_Without_Date", {{"version", count}, {"versions", other}, {"generation", bits}, {"note_text", note_text}}), line_of_before("persistence_check: the version ", count, " of ", other, ", generation ", generation, "", "", ": \"", note_text, "\""))
 				for time in DEMONSTRATION_EDGE_TIMES {
-					facts_expect_line(t, render(t, file, "Version_Restored", {{"generation", bits}, {"commit", signed_bits(-generation)}, {"restore", time}, {"note_text", note_text}}), line_of_before("notes: restored the version of generation ", generation, ": \"", note_text, "\", in the commit of generation ", -generation, " in ", time, " us; the note before it is a version"))
-					facts_expect_line(t, render(t, file, "Note_Shown", {{"generation", bits}, {"versions", count}, {"commit_mean", time}, {"commits", other}, {"note_text", note_text}}), line_of_before("notes: the note is \"", note_text, "\", generation ", generation, ", ", count, " versions; one commit of the note: ", time, " us in the mean of ", other))
+					facts_expect_line(t, render(t, file, "Version_Restored", {{"generation", bits}, {"commit", signed_bits(-generation)}, {"restore", time}, {"note_text", note_text}}), line_of_before("persistence_check: restored the version of generation ", generation, ": \"", note_text, "\", in the commit of generation ", -generation, " in ", time, " us; the note before it is a version"))
+					facts_expect_line(t, render(t, file, "Note_Shown", {{"generation", bits}, {"versions", count}, {"commit_mean", time}, {"commits", other}, {"note_text", note_text}}), line_of_before("persistence_check: the note is \"", note_text, "\", generation ", generation, ", ", count, " versions; one commit of the note: ", time, " us in the mean of ", other))
 				}
 			}
-			facts_expect_line(t, render(t, file, "Note_Restored", {{"count", count}, {"note_text", note_text}}), line_of_before("notes: restored the note \"", note_text, "\" and the count ", count, ", its 3 blocks agree", ""))
-			facts_expect_line(t, render(t, file, "Note_Restored_After_Stopped_Run", {{"count", count}, {"note_text", note_text}}), line_of_before("notes: restored the note \"", note_text, "\" and the count ", count, ", its 3 blocks agree", ", the last run stopped before its end"))
+			facts_expect_line(t, render(t, file, "Note_Restored", {{"count", count}, {"note_text", note_text}}), line_of_before("persistence_check: restored the note \"", note_text, "\" and the count ", count, ", its 3 blocks agree", ""))
+			facts_expect_line(t, render(t, file, "Note_Restored_After_Stopped_Run", {{"count", count}, {"note_text", note_text}}), line_of_before("persistence_check: restored the note \"", note_text, "\" and the count ", count, ", its 3 blocks agree", ", the last run stopped before its end"))
 		}
-		facts_expect_line(t, render(t, file, "Note_Damaged", {{"count", count}}), line_of_before("notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", count, ", its 3 blocks agree"))
-		facts_expect_line(t, render(t, file, "Count_Stepped", {{"count", count}}), line_of_before("notes: count ", count))
+		facts_expect_line(t, render(t, file, "Note_Damaged", {{"count", count}}), line_of_before("persistence_check: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", count, ", its 3 blocks agree"))
+		facts_expect_line(t, render(t, file, "Count_Stepped", {{"count", count}}), line_of_before("persistence_check: count ", count))
 		for time in DEMONSTRATION_EDGE_TIMES {
-			facts_expect_line(t, render(t, file, "Count_Run_Stopped", {{"count", count}, {"commits", other}, {"elapsed", time}}), line_of_before("notes: count ", count, ", stopped: ", other, " commits in ", time, " ms"))
+			facts_expect_line(t, render(t, file, "Count_Run_Stopped", {{"count", count}, {"commits", other}, {"elapsed", time}}), line_of_before("persistence_check: count ", count, ", stopped: ", other, " commits in ", time, " ms"))
 		}
 	}
 	for rows in generations {
 		for time in DEMONSTRATION_EDGE_TIMES {
-			facts_expect_line(t, render(t, file, "Count_Versions_Listed", {{"rows", signed_bits(rows)}, {"elapsed", time}}), line_of_before("notes: the versions of the count: ", rows, " rows in ", time, " us"))
+			facts_expect_line(t, render(t, file, "Count_Versions_Listed", {{"rows", signed_bits(rows)}, {"elapsed", time}}), line_of_before("persistence_check: the versions of the count: ", rows, " rows in ", time, " us"))
 		}
 	}
 }
@@ -702,11 +706,11 @@ the_facts_with_no_value_of_the_demonstrations_write_the_lines_of_before :: proc(
 		{"net", "No_Endpoint", "net: no endpoint: the process has no grant of the network"},
 		{"net", "No_Datagram_Region", "net: no datagram region"},
 		{"net", "Measures_Done", "net: the measures are done"},
-		{"notes", "No_Store", "notes: no store"},
-		{"notes", "New_Store", "notes: a new store: no note, the count 0"},
-		{"notes", "Count_Damaged", "notes: WRONG: the storage service cannot give the count: the object is damaged"},
-		{"notes", "Count_Blocks_Differ", "notes: WRONG: the 3 blocks of the count do not agree"},
-		{"notes", "First_Picture_Presented", "notes: ok, the first picture is presented"},
+		{"persistence_check", "No_Store", "persistence_check: no store"},
+		{"persistence_check", "New_Store", "persistence_check: a new store: no note, the count 0"},
+		{"persistence_check", "Count_Damaged", "persistence_check: WRONG: the storage service cannot give the count: the object is damaged"},
+		{"persistence_check", "Count_Blocks_Differ", "persistence_check: WRONG: the 3 blocks of the count do not agree"},
+		{"persistence_check", "First_Picture_Presented", "persistence_check: ok, the first picture is presented"},
 		{"paint", "Running", "paint: ok"},
 		{"plasma", "Running", "plasma: ok"},
 		{"pointers", "No_Boot_Image", "pointers: no boot image"},
@@ -778,8 +782,8 @@ the_facts_of_error_records_of_the_demonstrations_write_each_field :: proc(t: ^te
 		{"net", "Large_Datagram_Refused_Wrong", "net: UDP of 2000 bytes: WRONG: "},
 		{"net", "Key_Datagram_Refused", "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: "},
 		{"net", "Key_Datagram_Refused_Otherwise", "net: a datagram to 10.0.2.2 port 7 after a key: refused: "},
-		{"notes", "Note_Write_Refused", "notes: the storage service refused the object note: "},
-		{"notes", "Count_Write_Refused", "notes: the storage service refused the object count: "},
+		{"persistence_check", "Note_Write_Refused", "persistence_check: the storage service refused the object note: "},
+		{"persistence_check", "Count_Write_Refused", "persistence_check: the storage service refused the object count: "},
 		{"tables", "Memory_Object_To_Service_Refused", "tables: a memory object to the service: "},
 		{"tables", "Memory_Object_To_Service_Wrong", "tables: wrong answer: a memory object to the service: "},
 		{"tables", "Budget_As_Table_Memory_Refused", "tables: a budget as the memory of a table: "},

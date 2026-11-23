@@ -1,0 +1,3 @@
+type: Changed
+
+**`notes` is a notes application.** It keeps a list of notes, each named by its first line, with Ctrl+N for a new note, Ctrl+D to delete one after a question, and a press or Ctrl+Page Up and Ctrl+Page Down to show another. The text has the keys of the editor, with Enter, the selection, the clipboard and a wrap by word at the width of the resizable window. A change is one commit when the keys pause for one second or another note is shown, so a sentence is one version and not one for each key; Ctrl+H lists the versions of a note by date, and Enter restores one. The proof of one commit for each key, with its count of 1000 commits, is the test module `persistence_check`, which only the machine tests start.

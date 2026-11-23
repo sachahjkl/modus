@@ -1,24 +1,41 @@
 package text_model
 
-// The layout of a text in the window: its display rows. The editor
-// computes it once after each change of the text, never in a frame; a
-// frame reads only the rows that it shows. A line longer than the window
-// goes on more rows, so no text is cut at the edge (docs/DESIGN.md, "5.
-// Text").
+// The layout of a text in the window: its display rows. A program
+// computes it once after each change of the text or of the width of its
+// rows, never in a frame; a frame reads only the rows that it shows. A
+// line longer than a row goes on more rows, so no text is cut at the edge
+// (docs/DESIGN.md, "5. Text").
 //
 // The font of the cells gives each character one cell, and a tab the
 // cells to the next stop. The text is valid UTF-8, so the lead byte of a
 // character says that a character starts: the layout decodes nothing.
 
-COLUMNS :: 80 // The cells of one display row.
 TAB_WIDTH :: 4 // A tab goes to the next column that is a multiple of it.
-#assert(COLUMNS % TAB_WIDTH == 0) // A tab then never passes the end of a row: only a full row wraps.
+// The cells of one display row: the program chooses them in this range.
+// A row of at least TAB_WIDTH cells holds any one character, a tab too, so
+// each row holds at least one byte.
+COLUMNS_LEAST :: TAB_WIDTH
+COLUMNS_LIMIT :: 1024
 
-// Each row but the last of a line holds COLUMNS cells, and a byte takes at
-// most TAB_WIDTH cells: such a row holds at least COLUMNS / TAB_WIDTH
-// bytes. Each other row starts after a line end, which is a byte too. So a
-// text of TEXT_CAPACITY bytes has at most TEXT_CAPACITY + 1 rows.
+// Each row starts at a place after the start of the row before it: a
+// character that does not fit starts a new row only when its row holds a
+// byte already, and a word moves to the next row only from after a space
+// of its row. Each other row starts after a line end. So a text of
+// TEXT_CAPACITY bytes has at most TEXT_CAPACITY + 1 rows.
 ROW_CAPACITY :: TEXT_CAPACITY + 1
+
+// Where a line that is longer than a row goes on the next row.
+Wrap :: enum u8 {
+	Character = 0, // At the first character that does not fit: each full row holds its cells.
+	Word      = 1, // After the last space or tab of the row, when the row has one: a word stays whole.
+}
+
+// Why a layout is refused. A refused layout keeps the rows that it had.
+Layout_Problem :: enum u8 {
+	None                 = 0,
+	Columns_Out_Of_Range = 1, // The cells of a row are not in COLUMNS_LEAST ..= COLUMNS_LIMIT.
+	Wrap_Unknown         = 2, // The wrap names no member of Wrap.
+}
 
 // One display row: where it starts in the text, and the line that it
 // shows a part of. The first row of a line has the line number in the
@@ -32,6 +49,8 @@ Layout :: struct {
 	rows:       [ROW_CAPACITY]Row,
 	row_count:  int, // At least 1: an empty text has one empty row.
 	line_count: int,
+	columns:    int, // The cells of a row, of the last layout that was not refused.
+	wrap:       Wrap,
 }
 
 // cell_width gives the cells of a character whose lead byte is value, at
@@ -47,11 +66,23 @@ cell_width :: proc "contextless" (value: u8, column: int) -> int {
 	return 1
 }
 
-// layout_compute makes the rows of the whole text.
-layout_compute :: proc "contextless" (layout: ^Layout, text: ^Text) {
+// layout_compute makes the rows of the whole text, columns cells wide. A
+// width or a wrap out of its range is refused, and the rows stay.
+layout_compute :: proc "contextless" (layout: ^Layout, text: ^Text, columns: int, wrap: Wrap) -> Layout_Problem {
+	if columns < COLUMNS_LEAST || columns > COLUMNS_LIMIT {
+		return .Columns_Out_Of_Range
+	}
+	if wrap != .Character && wrap != .Word {
+		return .Wrap_Unknown
+	}
+	layout.columns, layout.wrap = columns, wrap
 	layout.rows[0] = {start = 0, line = 0}
 	layout.row_count = 1
 	column, line := 0, 0
+	row_start := 0
+	// The place after the last space or tab of the row: a row that wraps
+	// by word goes on from there. -1: the row has none.
+	word_start := -1
 	length := text_length(text)
 	for place in 0 ..< length {
 		value := byte_at(text, place)
@@ -64,19 +95,37 @@ layout_compute :: proc "contextless" (layout: ^Layout, text: ^Text) {
 			line += 1
 			layout.rows[layout.row_count] = {start = i32(place + 1), line = i32(line)}
 			layout.row_count += 1
-			column = 0
+			column, row_start, word_start = 0, place + 1, -1
 			continue
 		}
 		width := cell_width(value, column)
-		if width > 0 && column + width > COLUMNS {
-			layout.rows[layout.row_count] = {start = i32(place), line = i32(line)}
+		if width > 0 && column + width > columns {
+			// A space or a tab that does not fit starts the next row
+			// itself: the row before it keeps its last word.
+			start := place
+			if wrap == .Word && value != ' ' && value != TAB && word_start > row_start && word_start < place {
+				start = word_start
+			}
+			layout.rows[layout.row_count] = {start = i32(start), line = i32(line)}
 			layout.row_count += 1
+			row_start, word_start = start, -1
+			// The word that moved takes its cells on the new row again. It
+			// took at most columns - 1 cells after the space before it, and
+			// this character is not a space or a tab, so it takes one cell
+			// and fits after the word.
 			column = 0
-			width = cell_width(value, 0)
+			for at in start ..< place {
+				column += cell_width(byte_at(text, at), column)
+			}
+			width = cell_width(value, column)
 		}
 		column += width
+		if value == ' ' || value == TAB {
+			word_start = place + 1
+		}
 	}
 	layout.line_count = line + 1
+	return .None
 }
 
 // row_of gives the row that shows a place of the text. A place at the

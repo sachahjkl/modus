@@ -13,9 +13,9 @@ import "modus:system"
 // this file holds their state and their effects.
 //
 // The keys of the compositor are Control and Shift with a function key,
-// beside its other keys with Control and Shift (desktop_features.odin): the
-// input service gives no Alt and no Super as a modifier, and the key super
-// alone opens the palette.
+// beside its other keys with Control and Shift (desktop_features.odin) and
+// Alt+Tab (window_switcher.odin): the input service gives no Super as a
+// modifier, and the key super alone opens the palette.
 //   - Control+Shift+F7: the window in front moves by keys.
 //   - Control+Shift+F8: the window in front resizes by keys.
 //   - Control+Shift+F10: the bar takes the focus of the keys.
@@ -101,6 +101,7 @@ keyboard_desktop_key :: proc "contextless" (code: u32, character: rune, pressed:
 // pointer: the pointer takes the desktop again. A move or a resize by keys
 // keeps what the keys did, as Enter does.
 keyboard_pointer_pressed :: proc "contextless" () {
+	window_switcher_cancel() // window_switcher.odin
 	if keyboard_window_mode != .None {
 		keyboard_window_end(true)
 	}

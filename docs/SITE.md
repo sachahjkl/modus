@@ -706,7 +706,7 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | The time of a key to the screen, through the console (the last line) | `test_output_measure.txt` | `compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it` | yes |
 | The start of the window of `locks` | `test_output_measure.txt` | `compositor: measure: the start of the window locks, from Process_Start to its first frame: ` | yes |
 | Blocks read in one second, 32 in flight | `test_output_measure_disk.txt` | `disk: read, 1 block in each request, 32 in flight` | yes |
-| 1000 commits to a private store | `test_output_persist_1.txt` | `notes: count 1000, stopped` | yes |
+| 1000 commits to a private store | `test_output_persist_1.txt` | `persistence_check: count 1000, stopped` | yes |
 | The header and the checksum of a UDP datagram, in the process that sends it | `test_output_network.txt` | `net: the header and the checksum of a datagram` | yes |
 | The round trip of a UDP datagram | `test_output_network.txt` | `net: the round trip of one datagram` | yes |
 | UDP datagrams in one second, 64 in flight | `test_output_network.txt` | `net: a burst with 64 datagrams in flight` | yes |

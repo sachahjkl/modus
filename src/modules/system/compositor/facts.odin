@@ -362,6 +362,37 @@ Left_Button_Pressed :: struct {
 	y: u64,
 }
 
+// Alt+Tab opened the window switcher over the windows.
+@(log_fact = "compositor: the window switcher lists {windows} windows")
+Window_Switcher_Opened :: struct {
+	windows: u64,
+}
+
+// The release of Alt brought the window that the switcher chose to the
+// front.
+@(log_fact = "compositor: the window switcher brought {window} to the front")
+Window_Switched :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// A press on the plate of the window in front minimized it.
+@(log_fact = "compositor: the plate of {window} minimized it")
+Plate_Minimized :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// A press on a plate brought its window to the front.
+@(log_fact = "compositor: the plate of {window} brought it to the front")
+Plate_Raised :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// A press on the plate of a minimized window restored it.
+@(log_fact = "compositor: the plate of {window} restored it")
+Plate_Restored :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
 // A window moved: its new place.
 @(log_fact = "compositor: window {window} moved to {x},{y}")
 Window_Moved :: struct {

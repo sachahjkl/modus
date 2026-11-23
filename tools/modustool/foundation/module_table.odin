@@ -276,6 +276,7 @@ module_builds := [?]Module_Build {
 	{name = "disk", source = DEMONSTRATION_MODULE_SOURCES + "disk", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "storage", source = SYSTEM_MODULE_SOURCES + "storage", category = .Service, entry = true, image = true},
 	{name = "notes", source = DEMONSTRATION_MODULE_SOURCES + "notes", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "persistence_check", source = TEST_MODULE_SOURCES + "persistence_check", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "browser", source = DEMONSTRATION_MODULE_SOURCES + "browser", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "edit", source = SYSTEM_MODULE_SOURCES + "edit", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "hierarchy", source = TEST_MODULE_SOURCES + "hierarchy", entry = true, image = true},

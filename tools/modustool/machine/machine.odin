@@ -653,6 +653,7 @@ key_name :: proc(character: u8) -> string {
 // name in the font that draws it.
 BAR_START_BUTTON :: "the button start of the bar"
 BAR_WINDOWS_BUTTON :: "the button windows of the bar"
+BAR_FIRST_PLATE :: "the first window plate of the bar" // The plate of the windows that opened first: the console.
 
 WINDOW_GRAB_X :: 100 // A point of the title bar of each window.
 WINDOW_GRAB_Y :: 12
@@ -1969,7 +1970,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// layout that the compositor wrote in its log, measured here
 			// from the same cache of the build.
 			layout: bar.Layout
-			if step.kind == .Launch || step.kind == .Click && (step.text == BAR_START_BUTTON || step.text == BAR_WINDOWS_BUTTON) {
+			if step.kind == .Launch || step.kind == .Click && (step.text == BAR_START_BUTTON || step.text == BAR_WINDOWS_BUTTON || step.text == BAR_FIRST_PLATE) {
 				known: bool
 				if layout, known = machine_bar_layout(machine); !known {
 					return false
@@ -1980,6 +1981,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			if step.kind == .Click && step.text == BAR_WINDOWS_BUTTON {
 				step.x, step.y = bar.windows_button_center(layout)
+			}
+			if step.kind == .Click && step.text == BAR_FIRST_PLATE {
+				plate_x, plate_y, plate_width, plate_height := bar.plate(layout, 0)
+				step.x, step.y = plate_x + plate_width / 2, plate_y + plate_height / 2
 			}
 			// A demonstration is in the right pane, which the menu shows only
 			// after its quick action: its place is in the open layout.

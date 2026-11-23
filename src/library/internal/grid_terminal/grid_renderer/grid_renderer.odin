@@ -56,7 +56,7 @@ Grid_Output :: struct {
 KEY_CODE_MOST :: display.KEY_EXTENDED | 0xFF
 
 // The modifier bits that a key record can hold.
-KEY_MODIFIERS_KNOWN :: u64(display.MODIFIER_SHIFT | display.MODIFIER_CONTROL)
+KEY_MODIFIERS_KNOWN :: u64(display.MODIFIER_SHIFT | display.MODIFIER_CONTROL | display.MODIFIER_ALT)
 
 // key_of_input_record is the border of a record of the input ring, which
 // the input service writes and grid_terminal reads in place of the

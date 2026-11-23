@@ -66,7 +66,7 @@ import "modus:contract/storage_status"
 import store_contract "modus:contract/store"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "internal:edit/text_model"
+import "modus:text_model"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -85,9 +85,12 @@ EDITOR_PADDING :: 8
 // TEXT_CAPACITY + 1 lines: 5 digits.
 GUTTER_COLUMNS :: 6
 GUTTER_WIDTH :: GUTTER_COLUMNS * graphics.CELL_WIDTH
+// The cells of a display row: the rows keep this width whatever the width
+// of the window (src/md/features/editor.md, "The refused forms").
+ROW_COLUMNS :: 80
 // One cell more than a row: the caret after a full row stays inside the
 // pane.
-TEXT_WIDTH :: (text_model.COLUMNS + 1) * graphics.CELL_WIDTH
+TEXT_WIDTH :: (ROW_COLUMNS + 1) * graphics.CELL_WIDTH
 // The pane of the text with no cut row: its padding, the gutter, a row of
 // 80 cells and the scroll bar. The split pane keeps it this wide while the
 // window has room for the pane of the versions too.
@@ -128,7 +131,7 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1313, window_width 
 CARET_WIDTH :: 2
 // The bytes of one display row as the frame draws it: each cell is one
 // character of at most 4 bytes, or a space of a tab.
-ROW_BUFFER_SIZE :: 4 * text_model.COLUMNS
+ROW_BUFFER_SIZE :: 4 * ROW_COLUMNS
 // The versions that one undo lists. An object with more is refused by the
 // undo, with one line of the log: the list of the store gives the oldest
 // first.
@@ -327,7 +330,7 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 		text_model.text_replace_whole(&text, clean_buffer[:count])
 		text_model.selection_set(&text, 0, 0)
 		keeping = true
-		text_model.layout_compute(&layout, &text)
+		text_model.layout_compute(&layout, &text, ROW_COLUMNS, .Character)
 		if replaced > 0 {
 			system.log_fact(.Info, Text_Restored_With_Replacements{length = value_kinds.Size_In_Bytes(count), lines = u64(layout.line_count), replaced = u64(replaced)})
 		} else {
@@ -410,7 +413,7 @@ scroll_to_caret :: proc "contextless" () {
 
 // layout_refresh computes the rows of the text after it changed.
 layout_refresh :: proc "contextless" () {
-	text_model.layout_compute(&layout, &text)
+	text_model.layout_compute(&layout, &text, ROW_COLUMNS, .Character)
 	scroll_to_caret()
 }
 
@@ -1196,7 +1199,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	problem := window_problem_texts[problem_shown]
 	state_label_words, state_label_color := state_words()
 	caret_row := text_model.row_of(&layout, text.caret)
-	column := text_model.column_of(&layout, &text, caret_row, text.caret) + (caret_row - line_start_row(caret_row)) * text_model.COLUMNS
+	column := text_model.column_of(&layout, &text, caret_row, text.caret) + (caret_row - line_start_row(caret_row)) * ROW_COLUMNS
 	position_buffer: [80]u8
 	position := system.format(position_buffer[:], "line ", u64(layout.rows[caret_row].line) + 1, ", column ", u64(column) + 1, ", ", u64(text_model.text_length(&text)), " bytes")
 	boxes := layout_build(window, table, split_ratio, state_label_words, position, problem)
