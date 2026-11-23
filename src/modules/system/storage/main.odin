@@ -629,7 +629,7 @@ Shared :: struct {
 //
 // **Error kinds**
 //
-// - `No_Grant` (-1);
+// - `No_Grant` (-1; unit Connections: the caller is itself a share);
 // - `Absent` (-12, -7: the place);
 // - `Full` (-5, unit Connections: no free share);
 // - `Refused` (-6: the kernel refused a memory object or a give).
@@ -641,6 +641,12 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	caller := caller_of()
 	if caller.connection == nil || caller.store.limit == 0 {
 		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
+	}
+	// A share makes no share: its holder is a process that its maker chose,
+	// and it could hold each share of the service (docs/STORAGE.md, "4.3
+	// Read only, and revocation").
+	if share_of(caller.connection) != nil {
+		return errors.fail(error, failure(.No_Store), .No_Grant, .Connections)
 	}
 	path, ok := place_path(&caller, place, error, 1)
 	if !ok {
@@ -674,10 +680,14 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 		system.close(region_memory)
 		return errors.fail(error, failure(.Disk), .Refused)
 	}
-	given_ring, give_status := system.give(caller.connection.ring_memory, ring_memory, {.Read, .Write})
+	// The caller makes a share to give it to another process (docs/STORAGE.md,
+	// "4.3 Read only, and revocation", which states the rule): the two
+	// handles carry Give. The revocation of unshare ends each copy, in each
+	// process that has one.
+	given_ring, give_status := system.give(caller.connection.ring_memory, ring_memory, {.Give, .Read, .Write})
 	given_region: system.Handle
 	if give_status == .Ok {
-		given_region, give_status = system.give(caller.connection.ring_memory, region_memory, {.Read, .Write})
+		given_region, give_status = system.give(caller.connection.ring_memory, region_memory, {.Give, .Read, .Write})
 	}
 	if give_status != .Ok {
 		system.handle_revoke(ring_memory)
@@ -713,6 +723,14 @@ share_end :: proc "contextless" (item: ^Share) {
 	pending_drop_of(holder)
 	system.connection_end(&item.connection)
 	item^ = {}
+	// Each share that this share made ends with it: a holder that stopped
+	// never calls again, so no later call would end them. share refuses a
+	// share of a share, so this finds one only after a change of that rule.
+	for &child in shares {
+		if child.connection.calls.head != nil && child.maker == holder {
+			share_end(&child)
+		}
+	}
 }
 
 // unshare ends a share that this connection made: the kernel ends its handles in each process that has them, and its places end. The result is 0, or a negative number with an error record.

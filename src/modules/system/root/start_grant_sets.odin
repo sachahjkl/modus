@@ -33,6 +33,7 @@ Start_Grant_Set_Terms :: struct {
 	callable:         [CALLABLE_LIMIT]string, // With the grant Connect: the services that it can connect to.
 	store_blocks:     u64, // With the grant Store: the blocks of its private store. 0: STORE_BLOCKS_DEFAULT.
 	log_gives:        bool, // The log with the right Give: it gives the log to the processes that it starts.
+	store_gives:      bool, // With the grant Store: the storage service with the right Give: it gives it to the processes that it starts with a share of its store.
 	terminal_columns: u64, // With the grant Terminal: the columns of its terminal. 0: TERMINAL_COLUMNS_DEFAULT.
 	terminal_rows:    u64, // 0: TERMINAL_ROWS_DEFAULT.
 	terminal_measure: bool, // Its terminal shows the rates of the process.
@@ -250,8 +251,14 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// rollback"). Its callers act for their principal; it acts for nobody.
 	{name = "plans", grants = {.Serve, .Store, .Image, .Connect, .Plans}, terms = {callable = {0 = "display"}, on_demand = true}},
 	// The holder of the role Recipes: the cache of the realisations and the
-	// recipes in its private store (src/md/features/recipes.md).
-	{name = "recipes", grants = {.Serve, .Store}, terms = {on_demand = true}},
+	// recipes in its private store (src/md/features/recipes.md). It starts
+	// each builder as a call host: the boot image gives the module of the
+	// builder and the file of the storage service that the call host maps,
+	// and the call host writes on the log that this service gives it, and
+	// reads its two stores, shares of the store of this service, with the
+	// storage service that this service gives it
+	// (src/md/features/recipes.md, "The builder").
+	{name = "recipes", grants = {.Serve, .Store, .Image}, terms = {on_demand = true, log_gives = true, store_gives = true}},
 	// The holder of the role Projects: the pins of each project in its
 	// private store (src/md/features/declarations.md).
 	{name = "projects", grants = {.Serve, .Store}, terms = {on_demand = true}},
@@ -507,6 +514,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// plan names, and the grant to act for the principal, which plans.apply
 	// asks.
 	{name = "plan_applier", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	// The driver of the machine test of the builders: it registers and
+	// builds recipes with the service recipes, which takes a caller that
+	// acts for its principal; the boot image gives the hash of the test
+	// builder and the descriptions of the exports of recipes.
+	{name = "build_check", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "recipes"}}},
 	// The holder of Settings that the plan of that test names: it writes
 	// its line and stops, and needs no grant.
 	{name = "settings_stand_in"},

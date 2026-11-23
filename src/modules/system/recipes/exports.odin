@@ -189,7 +189,7 @@ build :: proc "c" (recipe: ^pr.Recipe_Reference, mode: i64, result: ^[]pr.Recipe
 		return recipe_refusal_fail(error, ERROR_BUILD, .Bad_Build_Mode, 2)
 	}
 	copied_reference = intrinsics.volatile_load(recipe)
-	export_result = recipes_core.build_registered(&service_state, &service_registry, blake3.Hash(copied_reference.recipe_hash), checked_mode)
+	export_result = recipes_core.build_registered(&service_state, &service_registry, blake3.Hash(copied_reference.recipe_hash), checked_mode, &builder_start)
 	system.log_fact(.Info, Recipe_Build_Completed{outcome = u64(export_result.outcome), refusal_code = u64(export_result.refusal)})
 	if export_result.refusal != .None {
 		return recipe_refusal_fail(error, ERROR_BUILD, export_result.refusal, 1)

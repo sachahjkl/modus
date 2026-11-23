@@ -1,6 +1,7 @@
 package recipes_core
 
 import "modus:contract/blake3"
+import "modus:contract/builder"
 import "modus:contract/declaration_eval"
 import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
@@ -59,8 +60,14 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 		return errors.error_make(.Over_Limit, .Records, argument, 0, pr.MAX_RECIPE_INPUTS, found)
 	case .Arguments_Too_Large:
 		return errors.error_make(.Too_Long, .Bytes, argument, 0, pr.MAX_RECIPE_ARG_BYTES, found)
-	case .Cache_Miss, .Unknown_Recipe:
+	case .Cache_Miss, .Unknown_Recipe, .Builder_Absent, .Input_Absent:
 		return errors.error_make(.Absent, .Objects, argument, 0, 0, found)
+	case .Builder_Timed_Out:
+		// Not No_Answer: its value found names what did not answer, and the
+		// value found of each record of this mapping is the refusal.
+		return errors.error_make(.Refused, .None, argument, 0, builder.BUILD_TIME_BOUND_MILLISECONDS, found)
+	case .Input_Too_Large:
+		return errors.error_make(.Over_Limit, .Objects, argument, 0, builder.MAX_INPUT_OBJECTS, found)
 	case .Store_Full, .Recipe_Limit_Reached, .Buffer_Too_Small:
 		return errors.error_make(.Full, .Objects, argument, 0, 0, found)
 	case .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement:

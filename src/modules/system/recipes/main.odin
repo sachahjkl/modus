@@ -18,7 +18,11 @@ import "modus:system"
 
 // Working memory budget for the freestanding recipes service process, including
 // local object staging and realisation tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, processes = 1, threads = 1}
+// One builder runs at a time, as a call host of its own budget: 1024
+// pages of the service and system.CALL_HOST_PAGES (512) of the builder, a
+// second process, and its thread, which pays for its processor time too.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1536, processes = 2, threads = 2}
+#assert(1536 == 1024 + system.CALL_HOST_PAGES)
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -257,6 +261,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	store_port, store_open := storage_port.bind(ctx)
 	recipes_core.state_init(&service_state, store_port)
+	builder_start_init(ctx)
 	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0})
 
 	for {

@@ -406,7 +406,11 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	start_grant_put(work, .Storage_Ring, {work.store_ring, {.Read, .Write}})
 	start_grant_put(work, .Storage_Region, {work.store_region, {.Read, .Write}})
-	start_grant_put(work, .Storage_Service, {storage_service.process, {.Read}})
+	service_rights := system.Rights{.Read}
+	if work.start_grant_set.store_gives {
+		service_rights += {.Give}
+	}
+	start_grant_put(work, .Storage_Service, {storage_service.process, service_rights})
 	for &item in system.image_entries(image) {
 		if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
