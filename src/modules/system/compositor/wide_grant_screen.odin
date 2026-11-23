@@ -383,11 +383,12 @@ act_write :: proc "contextless" (user: rawptr, record: wide_grants.Act_Stream_Re
 	return .Bad_Record
 }
 
-// wide_grant_record writes one act record while a grant holds, and says if
-// the act may run: with no grant, yes, with no record.
+// wide_grant_record writes one act record while a grant holds, the counts
+// of the input that wait first (wide_grants.display_emit), and says if the
+// act may run: with no grant, yes, with no record.
 @(private = "file")
 wide_grant_record :: proc "contextless" (record: wide_grants.Act_Stream_Record) -> bool {
-	outcome, _ := wide_grants.act_emit(act_write, nil, record)
+	outcome, _ := wide_grants.display_emit(act_write, nil, &wide_grant_display.target, record)
 	switch outcome {
 	case .No_Grant:
 		return true

@@ -160,6 +160,67 @@ an_act_whose_record_did_not_leave_does_not_run :: proc(t: ^testing.T) {
 	testing.expect_value(t, fake.writes, 0)
 }
 
+// The display writes its counts before each other record: a key at 100,
+// then a view that opens at 200, gives the counts at 100 then the view at
+// 200, so the times of the ring never go back, and the end has no counts
+// left. A record of counts that does not leave refuses the record after it
+// and keeps the counts; a change of window carries the counts itself.
+@(test)
+the_counts_leave_before_each_other_record_of_the_display :: proc(t: ^testing.T) {
+	Fake :: struct {
+		status:  Act_Write_Status,
+		records: [8]Act_Stream_Record,
+		count:   int,
+	}
+	write :: proc "contextless" (user: rawptr, record: Act_Stream_Record) -> Act_Write_Status {
+		fake := (^Fake)(user)
+		if fake.status == .Ok {
+			fake.records[fake.count] = record
+			fake.count += 1
+		}
+		return fake.status
+	}
+	frame_read :: proc(time_ms: u64) -> Act_Stream_Record {
+		return {grant_serial = 2, principal_id = 1, timestamp_ms = time_ms, producer_word = u64(Act_Producer.Trusted_Display), act_kind_word = u64(Act_Kind.Frame_Read), detail_word_0 = 1}
+	}
+	target := Input_Target{window = 5}
+	input_target_count(&target, .Key, 100)
+	// The ring is full: the counts do not leave, so the view does not open,
+	// and the counts wait.
+	fake := Fake{status = .Full}
+	outcome, status := display_emit(write, &fake, &target, frame_read(200))
+	testing.expect_value(t, outcome, Act_Emit_Outcome.Refused)
+	testing.expect_value(t, status, Act_Write_Status.Full)
+	testing.expect_value(t, target.keys, u64(1))
+	fake.status = .Ok
+	outcome, _ = display_emit(write, &fake, &target, frame_read(200))
+	testing.expect_value(t, outcome, Act_Emit_Outcome.Recorded)
+	testing.expect_value(t, fake.count, 2)
+	testing.expect_value(t, Act_Kind(fake.records[0].act_kind_word), Act_Kind.Input_Counted)
+	testing.expect_value(t, fake.records[0].timestamp_ms, u64(100))
+	testing.expect_value(t, fake.records[0].detail_word_0, u64(1))
+	testing.expect_value(t, Act_Kind(fake.records[1].act_kind_word), Act_Kind.Frame_Read)
+	testing.expect_value(t, fake.records[1].timestamp_ms, u64(200))
+	for index in 1 ..< fake.count {
+		testing.expect(t, fake.records[index].timestamp_ms >= fake.records[index - 1].timestamp_ms, "a time of the ring went back")
+	}
+	_, needed := input_target_counts_record(&target, 2, 1)
+	testing.expect(t, !needed)
+	// A change of window carries the counts: no record of counts before it.
+	input_target_count(&target, .Press, 300)
+	change, _ := input_target_record(&target, 2, 1, 9, 310)
+	_, _ = display_emit(write, &fake, &target, change)
+	testing.expect_value(t, fake.count, 3)
+	testing.expect_value(t, Act_Kind(fake.records[2].act_kind_word), Act_Kind.Target_Window_Changed)
+	testing.expect_value(t, fake.records[2].detail_word_1, u64(1))
+	// No grant: nothing is written.
+	no_grant := frame_read(400)
+	no_grant.grant_serial = 0
+	outcome, _ = display_emit(write, &fake, &target, no_grant)
+	testing.expect_value(t, outcome, Act_Emit_Outcome.No_Grant)
+	testing.expect_value(t, fake.count, 3)
+}
+
 // The record of a call of `remote`: the head of the hash, little-endian,
 // and the bytes of the request, from the writer `remote`; it passes the
 // border of a ring of act records, with no window.

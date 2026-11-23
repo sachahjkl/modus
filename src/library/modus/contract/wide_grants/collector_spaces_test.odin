@@ -7,9 +7,9 @@ import pr "modus:contract/plans_recipes"
 // memory_store_bind empties store for principal over a new private store in
 // memory, which the caller frees.
 @(private = "file")
-memory_store_bind :: proc(store: ^Space_Store, principal: u64) -> ^pr.Memory_Private_Store {
+memory_store_bind :: proc(store: ^Space_Store, principal: u64, windows_paid: u32 = SPACE_WINDOWS_STATED) -> ^pr.Memory_Private_Store {
 	memory := new(pr.Memory_Private_Store)
-	space_store_init(store, principal, pr.memory_private_store_port(memory))
+	space_store_init(store, principal, pr.memory_private_store_port(memory), space_window_heap_port(), windows_paid)
 	return memory
 }
 
@@ -102,42 +102,157 @@ space_open_keeps_one_space_for_one_pair_and_bounds_the_room :: proc(t: ^testing.
 	resized, _ := space_open(store, text("server"), text("orders"), audit_terms(4, 16))
 	testing.expect(t, resized != first, "a new record size gets a new space")
 	testing.expect_value(t, source_count(store), 1)
-
-	// The three act spaces of a wide grant, at the largest bound, and two
-	// audits of servers fit beside the two spaces above; one more fits.
-	for name in ([?]string{"root", "remote", "compositor"}) {
-		_, refusal = space_open(store, text(name), text("acts"), audit_terms(SPACE_AUDIT_BOUND_MOST, 64))
-		testing.expect_value(t, refusal, Space_Refusal.None)
-	}
-	for name in ([?]string{"shop", "mail"}) {
-		_, refusal = space_open(store, text(name), text("orders"), audit_terms(SPACE_RECORDS_MOST))
-		testing.expect_value(t, refusal, Space_Refusal.None)
-	}
-	_, refusal = space_open(store, text("d"), text("o"), audit_terms(SPACE_RECORDS_MOST))
-	testing.expect_value(t, refusal, Space_Refusal.None)
-	testing.expect_value(t, space_count(store), SPACE_CAPACITY)
-
-	// Each place taken: the next pair is refused with no change.
-	_, refusal = space_open(store, text("e"), text("o"), audit_terms(1))
-	testing.expect_value(t, refusal, Space_Refusal.Space_Limit_Reached)
-	testing.expect_value(t, space_count(store), SPACE_CAPACITY)
+	testing.expect(t, space_of(store, first).closed, "the space of the old record size closes")
 }
 
+// The windows of the budget: a wide grant beside five other spaces when the
+// budget pays eight windows, and beside six when it pays nine; one more
+// other space is refused, before or after the grant, since the act spaces
+// that are not open keep their windows. An act space takes a window that
+// the others leave, and the refusals change nothing.
+@(test)
+a_wide_grant_keeps_its_windows_beside_other_spaces :: proc(t: ^testing.T) {
+	for others in ([?]int{5, 6}) {
+		store := new(Space_Store)
+		defer free(store)
+		memory := memory_store_bind(store, 0, u32(others) + ACT_SPACES_RESERVED)
+		defer free(memory)
+		name: [2]u8 = {'s', 'a'}
+		for index in 0 ..< others {
+			name[1] = 'a' + u8(index)
+			_, refusal := space_open(store, name[:], text("orders"), audit_terms(SPACE_RECORDS_MOST))
+			testing.expectf(t, refusal == .None, "%d others: space %d: %v", others, index, refusal)
+		}
+		// The next other space would take a window of the grant.
+		_, refusal := space_open(store, text("late"), text("orders"), keep_terms(1))
+		testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
+		testing.expect_value(t, space_count(store), others)
+		// A space of a source named like a writer, with another output, is no
+		// act space.
+		_, refusal = space_open(store, text("remote"), text("calls"), keep_terms(1))
+		testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
+		for source in ([?]string{"root", "remote"}) {
+			_, refusal = space_open(store, text(source), text(ACT_OUTPUT_NAME), audit_terms(SPACE_AUDIT_BOUND_MOST, 64))
+			testing.expect_value(t, refusal, Space_Refusal.None)
+		}
+		// Two act spaces open: the third keeps its window still.
+		_, refusal = space_open(store, text("late"), text("orders"), keep_terms(1))
+		testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
+		_, refusal = space_open(store, text("compositor"), text(ACT_OUTPUT_NAME), audit_terms(SPACE_AUDIT_BOUND_MOST, 64))
+		testing.expect_value(t, refusal, Space_Refusal.None)
+		open, acts := space_windows_open(store)
+		testing.expect_value(t, open, u32(others) + ACT_SPACES_RESERVED)
+		testing.expect_value(t, acts, ACT_SPACES_RESERVED)
+		// Each window paid: nothing more opens, not even an act space again.
+		_, refusal = space_open(store, text("late"), text("orders"), keep_terms(1))
+		testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
+		_, refusal = space_open(store, text("console"), text(ACT_OUTPUT_NAME), audit_terms(SPACE_AUDIT_BOUND_MOST, 64))
+		testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
+	}
+	testing.expect_value(t, int(ACT_SPACES_RESERVED), card(ACT_PRODUCERS_WIRED))
+}
+
+// A window that the kernel does not commit refuses the space, with no
+// change.
+@(test)
+a_window_that_is_not_committed_refuses_the_space :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
+	refusing := store.windows
+	refusing.take = proc "contextless" (user: rawptr, place: u32) -> ^Space_Window {
+		return nil
+	}
+	store.windows = refusing
+	_, refusal := space_open(store, text("server"), text("orders"), audit_terms(4))
+	testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
+	testing.expect_value(t, space_count(store), 0)
+}
+
+// The places of the table: a closed audit space keeps its place, so 32
+// record sizes of one pair fill the table, and the next size is refused; a
+// space Keep frees its place when its size changes.
 @(test)
 space_open_refuses_past_its_places :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
 	memory := memory_store_bind(store, 0)
 	defer free(memory)
-	name: [2]u8 = {'s', 'a'}
-	for index in 0 ..< SPACE_CAPACITY {
-		name[1] = 'a' + u8(index)
-		_, refusal := space_open(store, name[:], text("o"), keep_terms(1))
+	for size in 1 ..= SPACE_CAPACITY {
+		_, refusal := space_open(store, text("server"), text("orders"), audit_terms(4, i64(size)))
 		testing.expect_value(t, refusal, Space_Refusal.None)
 	}
-	_, refusal := space_open(store, text("late"), text("o"), keep_terms(1))
+	testing.expect_value(t, space_count(store), SPACE_CAPACITY)
+	open, _ := space_windows_open(store)
+	testing.expect_value(t, open, u32(1))
+	_, refusal := space_open(store, text("server"), text("orders"), audit_terms(4, SPACE_CAPACITY + 1))
 	testing.expect_value(t, refusal, Space_Refusal.Space_Limit_Reached)
-	testing.expect_value(t, source_count(store), SPACE_CAPACITY)
+	_, refusal = space_open(store, text("late"), text("o"), keep_terms(1))
+	testing.expect_value(t, refusal, Space_Refusal.Space_Limit_Reached)
+
+	kept := new(Space_Store)
+	defer free(kept)
+	kept_memory := memory_store_bind(kept, 0)
+	defer free(kept_memory)
+	old, _ := space_open(kept, text("server"), text("log"), keep_terms(4, 8))
+	resized, resized_refusal := space_open(kept, text("server"), text("log"), keep_terms(4, 16))
+	testing.expect_value(t, resized_refusal, Space_Refusal.None)
+	testing.expect(t, space_of(kept, old) == nil || old == resized, "the old space Keep frees its place")
+	testing.expect_value(t, space_count(kept), 1)
+	open, _ = space_windows_open(kept)
+	testing.expect_value(t, open, u32(1))
+	testing.expect_value(t, space_of(kept, resized).record_size, u32(16))
+}
+
+// A record size that changes closes the old audit space: it takes no
+// record, its records stay readable whole from the store and its chain
+// verifies, before and after a restart, with no window; the new space takes
+// records.
+@(test)
+a_closed_audit_space_keeps_its_records :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
+	old, _ := space_open(store, text("server"), text("orders"), audit_terms(SPACE_AUDIT_BOUND_MOST))
+	for value in 0 ..< 100 {
+		record := record_of(u8(value))
+		_, refusal := record_append(store, old, record[:], u64(value))
+		testing.expect_value(t, refusal, Space_Refusal.None)
+	}
+	resized, _ := space_open(store, text("server"), text("orders"), audit_terms(SPACE_AUDIT_BOUND_MOST, 16))
+	reader: Space_Reader = {principal = 0, acts_for_principal = true}
+	copy(reader.name[:], "console")
+	check :: proc(t: ^testing.T, store: ^Space_Store, old: u32, reader: ^Space_Reader) {
+		closed := space_of(store, old)
+		testing.expect(t, closed != nil && closed.closed && closed.ring == nil, "the old space is closed, with no window")
+		record := record_of(1)
+		_, refusal := record_append(store, old, record[:], 1000)
+		testing.expect_value(t, refusal, Space_Refusal.Space_Closed)
+		heads: [SPACE_RECORDS_MOST]Kept_Record_Head
+		bytes: [SPACE_RECORDS_MOST * 8]u8
+		count, read := records_read(store, old, 95, SPACE_RECORDS_MOST, reader, heads[:], bytes[:])
+		testing.expect_value(t, read, Space_Refusal.None)
+		testing.expect_value(t, count, 4)
+		testing.expect_value(t, heads[3].serial, i64(99))
+		count, read = records_read(store, old, -1, 1, reader, heads[:], bytes[:])
+		testing.expect_value(t, read, Space_Refusal.None)
+		testing.expect_value(t, count, 1)
+		testing.expect_value(t, heads[0].serial, i64(0))
+		verified, _ := space_verify(store, old)
+		testing.expect_value(t, verified, Space_Refusal.None)
+	}
+	check(t, store, old, &reader)
+	record := [16]u8{1 = 7}
+	_, refusal := record_append(store, resized, record[:], 200)
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	// A restart: the closed space comes back from its row, with no window.
+	space_store_init(store, 0, pr.memory_private_store_port(memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
+	testing.expect_value(t, space_store_ready(store), Space_Refusal.None)
+	check(t, store, old, &reader)
+	open, _ := space_windows_open(store)
+	testing.expect_value(t, open, u32(1))
 }
 
 @(test)
@@ -177,13 +292,14 @@ a_full_audit_space_refuses_and_changes_nothing :: proc(t: ^testing.T) {
 	}
 	held := space_of(store, space)
 	before := held^
+	before_ring := held.ring^
 	record := record_of(9)
 	_, refusal := record_append(store, space, record[:], 9)
 	testing.expect_value(t, refusal, Space_Refusal.Space_Full)
 	testing.expect_value(t, held.count, before.count)
 	testing.expect_value(t, held.next_serial, before.next_serial)
 	testing.expect(t, held.last_hash == before.last_hash, "a refused record changes no link")
-	testing.expect(t, held.bytes == before.bytes, "a refused record changes no byte")
+	testing.expect(t, held.ring.bytes == before_ring.bytes, "a refused record changes no byte")
 	testing.expect_value(t, held.removed, u64(0))
 	testing.expect_value(t, held.refused_full, u64(1))
 	refusal, _ = space_verify(store, space)
@@ -354,17 +470,17 @@ space_verify_finds_a_changed_record_and_a_changed_last_link :: proc(t: ^testing.
 	testing.expect_value(t, refusal, Space_Refusal.None)
 
 	held := space_of(store, space)
-	held.bytes[2 * SPACE_RECORD_BYTES_MOST] ~= 1
+	held.ring.bytes[2 * SPACE_RECORD_BYTES_MOST] ~= 1
 	refusal, failing = space_verify(store, space)
 	testing.expect_value(t, refusal, Space_Refusal.Chain_Broken)
 	testing.expect_value(t, failing, u64(2))
-	held.bytes[2 * SPACE_RECORD_BYTES_MOST] ~= 1
+	held.ring.bytes[2 * SPACE_RECORD_BYTES_MOST] ~= 1
 
-	held.times[1] += 1
+	held.ring.times[1] += 1
 	refusal, failing = space_verify(store, space)
 	testing.expect_value(t, refusal, Space_Refusal.Chain_Broken)
 	testing.expect_value(t, failing, u64(1))
-	held.times[1] -= 1
+	held.ring.times[1] -= 1
 
 	held.last_hash[0] ~= 1
 	refusal, failing = space_verify(store, space)

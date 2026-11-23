@@ -102,7 +102,7 @@ Link_Fixture :: struct {
 
 @(private = "file")
 link_fixture_start :: proc(fixture: ^Link_Fixture) {
-	space_store_init(&fixture.store, LINK_PRINCIPAL, pr.memory_private_store_port(&fixture.memory))
+	space_store_init(&fixture.store, LINK_PRINCIPAL, pr.memory_private_store_port(&fixture.memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
 	fixture.links = {}
 }
 
@@ -139,13 +139,16 @@ a_source_that_breaks_a_rule_opens_no_link :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Space_Refusal.Space_Held)
 	_, refusal = link_open(&fixture.links, &fixture.store, 2, bytes_of("shop"), bytes_of("orders"), terms, LINK_RECORD_SIZE)
 	testing.expect_value(t, refusal, Space_Refusal.Space_Held)
-	names := [?]string{"a", "b", "c", "d", "e", "f", "g"}
+	// The windows of the budget, less the three of the act spaces, hold
+	// the space above and twelve more; the next one is refused.
+	names := [?]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"}
+	#assert(len(names) + 1 + ACT_SPACES_RESERVED == SPACE_WINDOWS_STATED)
 	for name, index in names {
 		_, each := link_open(&fixture.links, &fixture.store, u32(10 + index), bytes_of(name), bytes_of("log"), link_terms(.Keep, 4, .Keeps), LINK_RECORD_SIZE)
 		testing.expect_value(t, each, Space_Refusal.None)
 	}
-	_, refusal = link_open(&fixture.links, &fixture.store, 30, bytes_of("h"), bytes_of("log"), link_terms(.Keep, 4, .Keeps), LINK_RECORD_SIZE)
-	testing.expect_value(t, refusal, Space_Refusal.Space_Limit_Reached)
+	_, refusal = link_open(&fixture.links, &fixture.store, 30, bytes_of("m"), bytes_of("log"), link_terms(.Keep, 4, .Keeps), LINK_RECORD_SIZE)
+	testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
 }
 
 // A record of another size is refused and kept nowhere; a full audit space
@@ -175,7 +178,7 @@ a_record_that_the_space_cannot_keep_stays_pending :: proc(t: ^testing.T) {
 	testing.expect_value(t, link.pending_bytes[0], first[0])
 	fixture.memory.writes_allowed = -1
 	{step, refusal := link_retry(&fixture.store, link); expect_step(t, step, refusal, .Kept)}
-	testing.expect_value(t, fixture.store.spaces[link.space - 1].times[0], u64(100))
+	testing.expect_value(t, fixture.store.spaces[link.space - 1].ring.times[0], u64(100))
 
 	{step, refusal := link_keep(&fixture.store, link, second[:], 102); expect_step(t, step, refusal, .Kept)}
 	third := link_record_of(2)

@@ -14,6 +14,14 @@ Service_Ready :: struct {
 
 // The audit spaces that a start read back from the private store, each
 // segment checked.
+// The windows of the spaces that the budget of the collector pays at its
+// start: the bound of its open spaces.
+@(log_fact = "collector: its budget pays {windows} windows of spaces, of {stated} stated")
+Space_Windows_Paid :: struct {
+	windows: u64,
+	stated:  u64,
+}
+
 @(log_fact = "collector: read {spaces} audit spaces with {records} records from its store, in {objects} objects")
 Spaces_Loaded :: struct {
 	spaces:  u64,

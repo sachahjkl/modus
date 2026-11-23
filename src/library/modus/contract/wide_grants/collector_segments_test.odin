@@ -4,6 +4,7 @@ package wide_grants
 import "core:fmt"
 import "core:testing"
 import "modus:contract/blake3"
+import "modus:contract/byte_order"
 import pr "modus:contract/plans_recipes"
 
 @(private = "file")
@@ -82,7 +83,7 @@ Fixture :: struct {
 
 @(private = "file")
 restart :: proc(fixture: ^Fixture, principal := PRINCIPAL) {
-	space_store_init(&fixture.store, principal, failing_store_port(&fixture.failing))
+	space_store_init(&fixture.store, principal, failing_store_port(&fixture.failing), space_window_heap_port(), SPACE_WINDOWS_STATED)
 }
 
 @(private = "file")
@@ -186,16 +187,16 @@ the_first_record_reads_back_after_four_thousand :: proc(t: ^testing.T) {
 
 	restart(fixture)
 	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.None)
-	// The index, the map of each space, the segment before the ring and the
-	// segments of the ring.
-	testing.expectf(t, fixture.store.load_reads <= 1 + SPACE_CAPACITY + LOAD_SEGMENTS_MOST + 1, "a start read %d objects", fixture.store.load_reads)
+	// The index, the map of each space, the slot after the last segment, the
+	// segment before the ring and the segments of the ring.
+	testing.expectf(t, fixture.store.load_reads <= 1 + 2 * SPACE_CAPACITY + LOAD_SEGMENTS_MOST + 1, "a start read %d objects", fixture.store.load_reads)
 	fmt.printfln("modustool: a measure: a start of a space of 4000 records read %d objects", fixture.store.load_reads)
 	check(t, &fixture.store, space_number, &reader, -1, 1, links, heads[:], bytes[:])
 	verified, _ := space_verify(&fixture.store, space_number)
 	testing.expect_value(t, verified, Space_Refusal.None)
 
 	// A map that names a segment past a gap.
-	fixture.store.slot_maps[space_number - 1][100] = 0
+	fixture.store.spaces[space_number - 1].ring.slot_map[100] = 0
 	map_name: [SEGMENT_OBJECT_NAME_BYTES]u8
 	before := pr.memory_private_store_find(&fixture.failing.memory, slot_map_object_name(&map_name, space_number))^
 	testing.expect_value(t, slot_map_persist(&fixture.store, space_number), Space_Refusal.None)
@@ -204,11 +205,156 @@ the_first_record_reads_back_after_four_thousand :: proc(t: ^testing.T) {
 	pr.memory_private_store_find(&fixture.failing.memory, slot_map_object_name(&map_name, space_number))^ = before
 }
 
+// A slot map that is lost, or older than the segments, would read as a
+// space with fewer records: the start reads the slot of the next segment,
+// and a whole segment there refuses the start. A map that names a segment
+// that its slot does not hold yet is a stop between the two writes: the
+// start takes it.
+@(test)
+a_lost_or_older_slot_map_refuses_the_start :: proc(t: ^testing.T) {
+	fixture := new(Fixture)
+	defer free(fixture)
+	restart(fixture)
+	space_number, _ := space_open(&fixture.store, name_bytes("server"), name_bytes("orders"), terms_audit(SPACE_AUDIT_BOUND_MOST))
+	append_records(t, &fixture.store, space_number, 0, SPACE_SEGMENT_RECORDS + 3)
+	map_name: [SEGMENT_OBJECT_NAME_BYTES]u8
+	map_object := pr.memory_private_store_find(&fixture.failing.memory, slot_map_object_name(&map_name, space_number))
+	older := map_object^
+	append_records(t, &fixture.store, space_number, SPACE_SEGMENT_RECORDS + 3, SPACE_SEGMENT_RECORDS)
+	newer := map_object^
+
+	// The map removed: the slot of the first kept segment holds it.
+	map_object.used = false
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.Store_Damaged)
+	map_object^ = newer
+
+	// An older map, which names two segments of three: the slot after them
+	// holds the third.
+	map_object^ = older
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.Store_Damaged)
+	map_object^ = newer
+
+	// The newer map: the start reads each record.
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.None)
+	testing.expect_value(t, fixture.store.spaces[space_number - 1].next_serial, u64(2 * SPACE_SEGMENT_RECORDS + 3))
+
+	// A stop between the write of the map and of the segment: the third
+	// segment is full, and the map names a fourth one that no slot holds
+	// yet; the start takes it, with the records of three segments.
+	append_records(t, &fixture.store, space_number, 2 * SPACE_SEGMENT_RECORDS + 3, SPACE_SEGMENT_RECORDS - 3)
+	fixture.store.spaces[space_number - 1].ring.slot_map[3] = 4
+	testing.expect_value(t, slot_map_persist(&fixture.store, space_number), Space_Refusal.None)
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.None)
+	testing.expect_value(t, fixture.store.spaces[space_number - 1].next_serial, u64(3 * SPACE_SEGMENT_RECORDS))
+}
+
+// The state of a row of the index is a border: a word that names no state,
+// an open row with the next serial or the last link of a closed one, and a
+// closed row past its bound each refuse the start, even with a hash that
+// matches.
+@(test)
+a_row_of_the_index_with_a_bad_state_refuses_the_start :: proc(t: ^testing.T) {
+	fixture := new(Fixture)
+	defer free(fixture)
+	restart(fixture)
+	space_number, _ := space_open(&fixture.store, name_bytes("server"), name_bytes("orders"), terms_audit(64))
+	append_records(t, &fixture.store, space_number, 0, 3)
+	index := pr.memory_private_store_find(&fixture.failing.memory, SPACE_INDEX_OBJECT_NAME)
+	saved := index^
+	rewrite :: proc(index: ^pr.Memory_Private_Object, at: int, word: u64) {
+		row := index.bytes[SPACE_INDEX_HEAD_BYTES:][:SPACE_INDEX_ROW_BYTES]
+		byte_order.write_u64_little_endian(row, at, word)
+		hash_at := index.length - blake3.HASH_SIZE
+		index_hash := blake3.derive_key(SPACE_INDEX_HASH_DOMAIN, index.bytes[:hash_at])
+		copy(index.bytes[hash_at:][:blake3.HASH_SIZE], index_hash[:])
+	}
+	cases := [?]struct {
+		at:   int,
+		word: u64,
+	} {
+		{SPACE_INDEX_ROW_STATE_AT, 0},
+		{SPACE_INDEX_ROW_STATE_AT, 3},
+		{SPACE_INDEX_ROW_STATE_AT, max(u64)},
+		{SPACE_INDEX_ROW_NEXT_SERIAL_AT, 1},
+		{SPACE_INDEX_ROW_LAST_LINK_AT, 1},
+	}
+	for item in cases {
+		index^ = saved
+		rewrite(index, item.at, item.word)
+		restart(fixture)
+		testing.expectf(t, space_store_ready(&fixture.store) == .Store_Damaged, "the word %d at %d is taken", item.word, item.at)
+	}
+	// A closed row whose next serial passes its bound.
+	index^ = saved
+	rewrite(index, SPACE_INDEX_ROW_STATE_AT, u64(Space_Index_State.Closed))
+	rewrite(index, SPACE_INDEX_ROW_NEXT_SERIAL_AT, 65)
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.Store_Damaged)
+	// At the bound: taken, closed.
+	rewrite(index, SPACE_INDEX_ROW_NEXT_SERIAL_AT, 64)
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.None)
+	testing.expect(t, fixture.store.spaces[space_number - 1].closed, "the row says closed")
+	index^ = saved
+}
+
+// Old segments rewritten whole from another chain: each segment has its own
+// hash and a last link that matches its records, so a read of them alone
+// finds nothing; the read that crosses into the ring compares the last
+// link with the link where the ring starts, and refuses.
+@(test)
+a_changed_old_segment_read_across_the_join_is_refused :: proc(t: ^testing.T) {
+	fixture := new(Fixture)
+	defer free(fixture)
+	other := new(Fixture)
+	defer free(other)
+	restart(fixture)
+	restart(other)
+	space_number, _ := space_open(&fixture.store, name_bytes("server"), name_bytes("orders"), terms_audit(SPACE_AUDIT_BOUND_MOST))
+	other_number, _ := space_open(&other.store, name_bytes("server"), name_bytes("orders"), terms_audit(SPACE_AUDIT_BOUND_MOST))
+	testing.expect_value(t, other_number, space_number)
+	append_records(t, &fixture.store, space_number, 0, 4000)
+	// The other chain differs at its first record only.
+	changed := [8]u8{0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE}
+	_, refusal := record_append(&other.store, other_number, changed[:], 1000)
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	append_records(t, &other.store, other_number, 1, 3999)
+	ring_first := space_ring_first(&fixture.store.spaces[space_number - 1])
+	testing.expect_value(t, ring_first, u64(4000 - SPACE_RECORDS_MOST))
+	reader := reader_of(PRINCIPAL, "console")
+	heads: [SPACE_RECORDS_MOST]Kept_Record_Head
+	bytes: [SPACE_RECORDS_MOST * 8]u8
+	// Before the change, a read across the join gives its records.
+	count, read_refusal := records_read(&fixture.store, space_number, i64(ring_first) - 3, 4, &reader, heads[:], bytes[:])
+	testing.expect_value(t, read_refusal, Space_Refusal.None)
+	testing.expect_value(t, count, 4)
+	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+	for segment in u64(0) ..< ring_first / SPACE_SEGMENT_RECORDS {
+		name := segment_object_name(&name_place, space_number, segment)
+		pr.memory_private_store_find(&fixture.failing.memory, name)^ = pr.memory_private_store_find(&other.failing.memory, name)^
+	}
+	// A read that ends in a segment before the one of the join reads the
+	// rewritten chain: nothing in it alone is wrong. A read checks each
+	// segment that it opens to its end, so a read in the segment of the
+	// join reaches the join.
+	_, read_refusal = records_read(&fixture.store, space_number, i64(ring_first) - 40, 4, &reader, heads[:], bytes[:])
+	testing.expect_value(t, read_refusal, Space_Refusal.None)
+	// Across the join, and up to it: refused.
+	_, read_refusal = records_read(&fixture.store, space_number, i64(ring_first) - 3, 4, &reader, heads[:], bytes[:])
+	testing.expect_value(t, read_refusal, Space_Refusal.Chain_Broken)
+	_, read_refusal = records_read(&fixture.store, space_number, i64(ring_first) - 2, 1, &reader, heads[:], bytes[:])
+	testing.expect_value(t, read_refusal, Space_Refusal.Chain_Broken)
+}
+
 @(test)
 segment_object_names_are_exact :: proc(t: ^testing.T) {
 	place: [SEGMENT_OBJECT_NAME_BYTES]u8
 	testing.expect_value(t, segment_object_name(&place, 1, 0), "collector_space_1_segment_0")
-	testing.expect_value(t, segment_object_name(&place, SPACE_CAPACITY, TEST_SEGMENTS), "collector_space_8_segment_4")
+	testing.expect_value(t, segment_object_name(&place, SPACE_CAPACITY, TEST_SEGMENTS), "collector_space_32_segment_4")
 	testing.expect_value(t, segment_object_name(&place, 10, 0), "collector_space_10_segment_0")
 	// A segment takes the name of its slot.
 	testing.expect_value(t, segment_object_name(&place, max(u32), SPACE_SEGMENT_SLOTS - 1), "collector_space_4294967295_segment_255")
@@ -609,7 +755,7 @@ a_failed_read_refuses_until_the_store_answers :: proc(t: ^testing.T) {
 	// A store with no port keeps no audit space.
 	no_port := new(Space_Store)
 	defer free(no_port)
-	space_store_init(no_port, PRINCIPAL, {})
+	space_store_init(no_port, PRINCIPAL, {}, space_window_heap_port(), SPACE_WINDOWS_STATED)
 	_, refused := space_open(no_port, name_bytes("server"), name_bytes("orders"), terms_audit(4))
 	testing.expect_value(t, refused, Space_Refusal.Store_Failed)
 }

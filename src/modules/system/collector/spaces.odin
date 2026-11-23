@@ -91,6 +91,15 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 		return errors.fail(error, ERROR_STORE, .Damaged, .Store, argument, 0, 0, found)
 	case .Space_Held:
 		return errors.fail(error, ERROR_SPACE, .Exists, .Records, argument, 0, 0, found)
+	case .Memory_Refused:
+		// The window of the space: the budget pays no more, or keeps the
+		// windows of the act spaces of a wide grant (src/md/features/wide_grants.md,
+		// "The memory of the spaces").
+		return errors.fail(error, ERROR_SPACE, .Budget, .Pages, argument, 0, wide_grants.SPACE_WINDOW_PAGES, found)
+	case .Space_Closed:
+		// The record size of the source changed: the space keeps its records
+		// and takes no more.
+		return errors.fail(error, ERROR_SPACE, .State, .Records, argument, 0, 0, found)
 	case .Bad_Bound:
 		// The largest bound: SPACE_RECORDS_MOST for a space Keep, which holds
 		// its records in memory, SPACE_AUDIT_BOUND_MOST for a space Audit.

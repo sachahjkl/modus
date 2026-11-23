@@ -28,6 +28,7 @@ package wide_grants
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/enum_word"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/value_kinds"
 
@@ -47,7 +48,7 @@ SPACE_AUDIT_BOUND_MOST :: SPACE_SEGMENT_SLOTS * SPACE_SEGMENT_RECORDS
 SEGMENT_MAGIC :: "mcolsegm"
 SPACE_INDEX_MAGIC :: "mcolspcs"
 SEGMENT_VERSION :: 1
-SPACE_INDEX_VERSION :: 2
+SPACE_INDEX_VERSION :: 3
 
 // The context strings of the hash of a segment and of the index.
 SEGMENT_HASH_DOMAIN :: "modus collector segment v1"
@@ -102,10 +103,23 @@ SPACE_INDEX_ROW_OUTPUT_AT :: SPACE_INDEX_ROW_SOURCE_AT + SPACE_NAME_BYTES
 SPACE_INDEX_ROW_KEPT_FIRST_AT :: SPACE_INDEX_ROW_OUTPUT_AT + SPACE_NAME_BYTES
 SPACE_INDEX_ROW_ANCHOR_SEGMENT_AT :: SPACE_INDEX_ROW_KEPT_FIRST_AT + 8
 SPACE_INDEX_ROW_ANCHOR_LINK_AT :: SPACE_INDEX_ROW_ANCHOR_SEGMENT_AT + blake3.HASH_SIZE
-SPACE_INDEX_ROW_BYTES :: SPACE_INDEX_ROW_ANCHOR_LINK_AT + blake3.HASH_SIZE
+// The state of the space, then for a closed space its next serial and its
+// last link: a closed space has no window, and reads its records whole
+// from the store up to that link.
+SPACE_INDEX_ROW_STATE_AT :: SPACE_INDEX_ROW_ANCHOR_LINK_AT + blake3.HASH_SIZE
+SPACE_INDEX_ROW_NEXT_SERIAL_AT :: SPACE_INDEX_ROW_STATE_AT + 8
+SPACE_INDEX_ROW_LAST_LINK_AT :: SPACE_INDEX_ROW_NEXT_SERIAL_AT + 8
+SPACE_INDEX_ROW_BYTES :: SPACE_INDEX_ROW_LAST_LINK_AT + blake3.HASH_SIZE
+
+// The state of a space in a row of the index.
+Space_Index_State :: enum u32 {
+	Open   = 1,
+	Closed = 2,
+}
 SPACE_INDEX_BYTES_MOST :: SPACE_INDEX_HEAD_BYTES + SPACE_CAPACITY * SPACE_INDEX_ROW_BYTES + blake3.HASH_SIZE
 
-#assert(SPACE_INDEX_ROW_BYTES == 156)
+#assert(SPACE_INDEX_ROW_BYTES == 204)
+#assert(SPACE_INDEX_BYTES_MOST <= pr.MEMORY_PRIVATE_STORE_OBJECT_BYTES)
 
 // The bytes of the name of a segment object: "collector_space_<n>_segment_<k>".
 SEGMENT_OBJECT_NAME_BYTES :: 48
@@ -199,7 +213,11 @@ slot_map_persist :: proc "contextless" (store: ^Space_Store, space_number: u32) 
 	copy(bytes[:8], SLOT_MAP_MAGIC)
 	byte_order.write_u32_little_endian(bytes[:], 8, SLOT_MAP_VERSION)
 	byte_order.write_u32_little_endian(bytes[:], 12, space_number)
-	for entry, slot in store.slot_maps[space_number - 1] {
+	ring := store.spaces[space_number - 1].ring
+	if ring == nil {
+		return .Store_Damaged
+	}
+	for entry, slot in ring.slot_map {
 		byte_order.write_u64_little_endian(bytes[:], SLOT_MAP_HEAD_BYTES + slot * 8, entry)
 	}
 	at := SLOT_MAP_HEAD_BYTES + SPACE_SEGMENT_SLOTS * 8
@@ -216,8 +234,10 @@ slot_map_persist :: proc "contextless" (store: ^Space_Store, space_number: u32) 
 // a map of no slot; a map of another space, another size or a broken hash
 // is damage.
 @(private = "file")
-slot_map_load :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (present: bool, refusal: Space_Refusal) {
-	store.slot_maps[space_number - 1] = {}
+slot_map_load :: proc "contextless" (store: ^Space_Store, space_number: u32, ring: ^Space_Window) -> (present: bool, refusal: Space_Refusal) {
+	if ring != nil {
+		ring.slot_map = {}
+	}
 	buffer: [SLOT_MAP_BYTES]u8
 	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
 	bytes, status := pr.private_store_read(&store.store_port, slot_map_object_name(&name_place, space_number), buffer[:])
@@ -240,7 +260,9 @@ slot_map_load :: proc "contextless" (store: ^Space_Store, space_number: u32) -> 
 		return false, .Store_Damaged
 	}
 	for slot in 0 ..< SPACE_SEGMENT_SLOTS {
-		store.slot_maps[space_number - 1][slot] = byte_order.read_u64_little_endian(bytes, SLOT_MAP_HEAD_BYTES + slot * 8)
+		if ring != nil {
+			ring.slot_map[slot] = byte_order.read_u64_little_endian(bytes, SLOT_MAP_HEAD_BYTES + slot * 8)
+		}
 	}
 	return true, .None
 }
@@ -340,7 +362,7 @@ segment_persist :: proc "contextless" (
 	// writes leaves a map that names a segment that its slot does not hold
 	// yet, which a start reads as the end of the records.
 	slot := segment % SPACE_SEGMENT_SLOTS
-	map_entry := &store.slot_maps[space_number - 1][slot]
+	map_entry := &space.ring.slot_map[slot]
 	if map_entry^ != segment + 1 {
 		before := map_entry^
 		map_entry^ = segment + 1
@@ -355,10 +377,10 @@ segment_persist :: proc "contextless" (
 	at := SEGMENT_HEAD_BYTES
 	for index in first_index ..< serial {
 		place := space_place_of(space, index)
-		byte_order.write_u64_little_endian(bytes, at, space.serials[place])
-		byte_order.write_u64_little_endian(bytes, at + 8, space.times[place])
+		byte_order.write_u64_little_endian(bytes, at, space.ring.serials[place])
+		byte_order.write_u64_little_endian(bytes, at + 8, space.ring.times[place])
 		offset := int(place) * SPACE_RECORD_BYTES_MOST
-		copy(bytes[at + SEGMENT_RECORD_HEAD_BYTES:][:space.record_size], space.bytes[offset:][:space.record_size])
+		copy(bytes[at + SEGMENT_RECORD_HEAD_BYTES:][:space.record_size], space.ring.bytes[offset:][:space.record_size])
 		at += SEGMENT_RECORD_HEAD_BYTES + int(space.record_size)
 	}
 	byte_order.write_u64_little_endian(bytes, at, serial)
@@ -448,20 +470,20 @@ segment_check :: proc "contextless" (
 			if space.count == 0 {
 				space.first_serial = serial
 			}
-			space.serials[place] = serial
-			space.times[place] = time_ms
-			space.hashes[place] = link^
-			copy(space.bytes[int(place) * SPACE_RECORD_BYTES_MOST:][:space.record_size], record)
+			space.ring.serials[place] = serial
+			space.ring.times[place] = time_ms
+			space.ring.hashes[place] = link^
+			copy(space.ring.bytes[int(place) * SPACE_RECORD_BYTES_MOST:][:space.record_size], record)
 			space.count += 1
 			space.next_serial = serial + 1
 		case .Compare:
 			if space.count > 0 && serial >= space.first_serial {
 				place := space_place_of(space, serial)
 				offset := int(place) * SPACE_RECORD_BYTES_MOST
-				if space.serials[place] != serial || space.times[place] != time_ms || space.hashes[place] != link^ {
+				if space.ring.serials[place] != serial || space.ring.times[place] != time_ms || space.ring.hashes[place] != link^ {
 					return {}, 0, false
 				}
-				if string(space.bytes[offset:][:space.record_size]) != string(record) {
+				if string(space.ring.bytes[offset:][:space.record_size]) != string(record) {
 					return {}, 0, false
 				}
 			}
@@ -526,6 +548,17 @@ space_index_persist :: proc "contextless" (store: ^Space_Store) -> Space_Refusal
 		byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_KEPT_FIRST_AT, space.kept_first_serial)
 		copy(row[SPACE_INDEX_ROW_ANCHOR_SEGMENT_AT:][:blake3.HASH_SIZE], space.anchor_segment_hash[:])
 		copy(row[SPACE_INDEX_ROW_ANCHOR_LINK_AT:][:blake3.HASH_SIZE], space.anchor_link[:])
+		closed_next_serial: u64
+		closed_last_link: blake3.Hash
+		state := Space_Index_State.Open
+		if space.closed {
+			state = .Closed
+			closed_next_serial = space.next_serial
+			closed_last_link = space.last_hash
+		}
+		byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_STATE_AT, u64(state))
+		byte_order.write_u64_little_endian(row, SPACE_INDEX_ROW_NEXT_SERIAL_AT, closed_next_serial)
+		copy(row[SPACE_INDEX_ROW_LAST_LINK_AT:][:blake3.HASH_SIZE], closed_last_link[:])
 		count += 1
 		at += SPACE_INDEX_ROW_BYTES
 	}
@@ -622,8 +655,52 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		copy(space.anchor_link[:], row[SPACE_INDEX_ROW_ANCHOR_LINK_AT:][:blake3.HASH_SIZE])
 		space.window_link = space.anchor_link
 		space.last_hash = space.anchor_link
+		state, state_ok := enum_word.member_of_word(Space_Index_State, byte_order.read_u64_little_endian(row, SPACE_INDEX_ROW_STATE_AT))
+		if !state_ok {
+			return .Store_Damaged
+		}
+		closed_next_serial := byte_order.read_u64_little_endian(row, SPACE_INDEX_ROW_NEXT_SERIAL_AT)
+		closed_last_link: blake3.Hash
+		copy(closed_last_link[:], row[SPACE_INDEX_ROW_LAST_LINK_AT:][:blake3.HASH_SIZE])
+		switch state {
+		case .Open:
+			// An open space finds its next serial and its last link in its
+			// segments: the row holds none.
+			if closed_next_serial != 0 || closed_last_link != {} {
+				return .Store_Damaged
+			}
+		case .Closed:
+			if closed_next_serial < kept_first || closed_next_serial - kept_first > u64(bound) {
+				return .Store_Damaged
+			}
+			space.closed = true
+			space.next_serial = closed_next_serial
+			space.first_serial = closed_next_serial
+			space.last_hash = closed_last_link
+			space.window_link = closed_last_link
+		}
 	}
 	return .None
+}
+
+// slot_holds_segment says if the slot of segment holds that segment, whole.
+// An absent object or an older segment of the slot is no such segment.
+@(private = "file")
+slot_holds_segment :: proc "contextless" (store: ^Space_Store, space_number: u32, segment: u64) -> (held: bool, refusal: Space_Refusal) {
+	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+	bytes, status := pr.private_store_read(&store.store_port, segment_object_name(&name_place, space_number, segment), store.segment_bytes[:])
+	store.load_reads += 1
+	switch status {
+	case .Ok:
+	case .Absent:
+		return false, .None
+	case .Too_Large:
+		return false, .Store_Damaged
+	case .Failed:
+		return false, .Store_Failed
+	}
+	stored_segment, head_ok := segment_index_of(bytes)
+	return head_ok && stored_segment == segment && segment_whole(bytes), .None
 }
 
 // space_segments_load reads one space at a start: its slot map, then the
@@ -639,14 +716,22 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 @(private = "file")
 space_segments_load :: proc "contextless" (store: ^Space_Store, space_number: u32) -> Space_Refusal {
 	space := &store.spaces[space_number - 1]
-	present, map_refusal := slot_map_load(store, space_number)
+	if space.active && space.closed {
+		// A closed space has no window: its row holds its last link, and a
+		// reader or space_verify reads its segments.
+		return .None
+	}
+	if space.active && !space_window_take(store, space_number) {
+		return .Memory_Refused
+	}
+	present, map_refusal := slot_map_load(store, space_number, space.ring)
 	if map_refusal != .None {
 		return map_refusal
 	}
 	if !space.active {
 		return present ? .Store_Damaged : .None
 	}
-	slots := &store.slot_maps[space_number - 1]
+	slots := &space.ring.slot_map
 	first_segment := space.kept_first_serial / SPACE_SEGMENT_RECORDS
 	last: u64
 	named := false
@@ -664,6 +749,16 @@ space_segments_load :: proc "contextless" (store: ^Space_Store, space_number: u3
 		if segment % SPACE_SEGMENT_SLOTS != u64(slot) || (segment >= first_segment && (!named || segment > last)) {
 			return .Store_Damaged
 		}
+	}
+	// A map that names no segment, or no segment after last, is a map lost
+	// or an older map, if the slot of the next segment holds that segment
+	// whole: the map takes the slot before the segment is written, so a
+	// segment that no map names was written after a newer map.
+	next := named ? last + 1 : first_segment
+	if held, refusal := slot_holds_segment(store, space_number, next); refusal != .None {
+		return refusal
+	} else if held {
+		return .Store_Damaged
 	}
 	if !named {
 		return .None
@@ -752,6 +847,12 @@ records_out_put :: proc "contextless" (out: ^Records_Out, serial, time_ms: u64, 
 	out.count += 1
 }
 
+// space_ring_first gives the serial of the first record of the ring in
+// memory, or the next serial when the ring is empty.
+space_ring_first :: proc "contextless" (space: ^Collector_Space) -> u64 {
+	return space.count > 0 ? space.first_serial : space.next_serial
+}
+
 // space_segments_read reads the kept records from serial start up to
 // before end from the segments of a space, for a reader of the whole
 // audit: the records before the ring. It reads the segment before the
@@ -807,6 +908,13 @@ space_segments_read :: proc "contextless" (store: ^Space_Store, space_number: u3
 				return .Chain_Broken
 			}
 			link = space_record_hash(link, serial, time_ms, record)
+			// The join: the link of the last record before the ring is the
+			// link where the chain of the ring starts. Segments rewritten
+			// whole, each with its own hash and last link, hold together
+			// alone, and only this compare ties them to the ring.
+			if serial + 1 == end && end == space_ring_first(space) && link != space.window_link {
+				return .Chain_Broken
+			}
 			if serial >= start && serial < end && out.count < out.limit {
 				records_out_put(out, serial, time_ms, link, record)
 			}
@@ -890,11 +998,21 @@ space_store_ready :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		store.load_state = .Loaded
 		return .None
 	}
-	// A read that stopped in the middle leaves no part of a space.
+	// A read that stopped in the middle leaves no part of a space, and no
+	// window.
+	for space_number in u32(1) ..= SPACE_CAPACITY {
+		space_window_give(store, space_number)
+	}
 	store.spaces = {}
-	if refusal == .Store_Damaged {
+	switch refusal {
+	case .Store_Damaged:
 		store.load_state = .Damaged
 		return .Store_Damaged
+	case .Memory_Refused:
+		// The budget pays fewer windows than the open spaces of the index:
+		// the next step reads again.
+		return .Memory_Refused
+	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Space_Full, .Forward_Full, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Store_Failed, .Space_Held, .Space_Closed:
 	}
 	return .Store_Failed
 }
@@ -937,7 +1055,7 @@ space_segments_verify :: proc "contextless" (store: ^Space_Store, space_number: 
 	case .None:
 	case .Store_Failed:
 		return .Store_Failed, 0
-	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held:
+	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed:
 		return .Chain_Broken, after * SPACE_SEGMENT_RECORDS
 	}
 	return .None, 0

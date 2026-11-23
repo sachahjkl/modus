@@ -202,6 +202,21 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, audited_list.wirings[0].terms, audited_records[0].terms)
 	}
 
+	// The audits that the stated windows of the collector pay beside the
+	// act spaces: at the room, taken; one past it, refused.
+	room := int(wide_grants.SPACE_WINDOWS_STATED - wide_grants.ACT_SPACES_RESERVED)
+	audits := make([]Start_List_Wiring, room + 1, context.temp_allocator)
+	for &audit in audits {
+		audit = {audit_bound = 1}
+	}
+	testing.expect_value(t, start_list_audits_problem(audits[:room]), "")
+	testing.expect_value(t, start_list_audits_problem(audits[:0]), "")
+	past := start_list_audits_problem(audits)
+	testing.expectf(t, strings.contains(past, "declares 14 audits of servers"), "the list past the room: %q", past)
+	// Rows with no audit count for nothing.
+	plain := make([]Start_List_Wiring, room + 1, context.temp_allocator)
+	testing.expect_value(t, start_list_audits_problem(plain), "")
+
 	// The default start list, with module files that declare its pair as
 	// the two modules of the pair declare it.
 	pair := make(Module_Files, context.temp_allocator)

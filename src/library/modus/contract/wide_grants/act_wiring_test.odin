@@ -35,7 +35,7 @@ ACT_TEST_PLAN :: Act_Space_Plan{bound_records = 48, retained_grants = 1, records
 @(private = "file")
 act_test_store_bind :: proc(store: ^Space_Store, principal: u64) -> ^pr.Memory_Private_Store {
 	memory := new(pr.Memory_Private_Store)
-	space_store_init(store, principal, pr.memory_private_store_port(memory))
+	space_store_init(store, principal, pr.memory_private_store_port(memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
 	return memory
 }
 
@@ -492,7 +492,7 @@ test_the_lock_leaves_its_end_record :: proc(t: ^testing.T) {
 	testing.expect(t, router.revocation_recorded)
 	again := new(Space_Store)
 	defer free(again)
-	space_store_init(again, 0, pr.memory_private_store_port(memory))
+	space_store_init(again, 0, pr.memory_private_store_port(memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
 	reader := Space_Reader{principal = 0, acts_for_principal = true}
 	copy(reader.name[:], "console")
 	heads: [4]Kept_Record_Head
@@ -537,7 +537,7 @@ test_a_grant_keeps_more_records_than_memory :: proc(t: ^testing.T) {
 
 	again := new(Space_Store)
 	defer free(again)
-	space_store_init(again, 0, pr.memory_private_store_port(memory))
+	space_store_init(again, 0, pr.memory_private_store_port(memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
 	testing.expect_value(t, space_store_ready(again), Space_Refusal.None)
 	loaded := space_of(again, space_number)
 	testing.expect_value(t, loaded.next_serial, u64(100))
@@ -573,7 +573,7 @@ test_the_seventeenth_grant_rotates_the_oldest_out :: proc(t: ^testing.T) {
 	// A collector that starts again reads the same ring.
 	again := new(Space_Store)
 	defer free(again)
-	space_store_init(again, 0, pr.memory_private_store_port(memory))
+	space_store_init(again, 0, pr.memory_private_store_port(memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
 	restarted: Grant_Act_Router
 	testing.expect_value(t, act_wiring_attach(&restarted, again, 18, 0, {.View_Screen}, 60_000, now), Act_Wiring_Refusal.None)
 	testing.expect_value(t, restarted.retained.count, ACT_SPACE_PLAN.retained_grants)
@@ -609,7 +609,7 @@ test_the_seventeenth_grant_rotates_the_oldest_out :: proc(t: ^testing.T) {
 	testing.expect_value(t, verified, Space_Refusal.None)
 	restart := new(Space_Store)
 	defer free(restart)
-	space_store_init(restart, 0, pr.memory_private_store_port(rotating_memory))
+	space_store_init(restart, 0, pr.memory_private_store_port(rotating_memory), space_window_heap_port(), SPACE_WINDOWS_STATED)
 	testing.expect_value(t, space_store_ready(restart), Space_Refusal.None)
 	reloaded := space_of(restart, small_router.space_numbers[.Remote_Service])
 	testing.expect_value(t, reloaded.kept_first_serial, u64(16))

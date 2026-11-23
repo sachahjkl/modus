@@ -15,8 +15,13 @@ import "modus:contract/wide_grants"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding collector and wide-grant audit service.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256, processes = 1, threads = 1}
+// The pages of the tables of the collector, its code and its fixed state.
+COLLECTOR_TABLE_PAGES :: 160
+
+// The working memory of the collector: its tables, and the stated windows
+// of its spaces, which it commits as each space opens (space_window_memory.odin).
+// modustool checks the audits of the start lists against the stated windows.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = COLLECTOR_TABLE_PAGES + wide_grants.SPACE_WINDOWS_STATED * wide_grants.SPACE_WINDOW_PAGES, processes = 1, threads = 1}
 
 // Maximum act records returned in one shared-region query response.
 QUERY_STAGING_CAPACITY :: 64
@@ -628,7 +633,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// A process with no grant Store gets a port with no procedure: each step
 	// of the spaces is then refused, so no audit space lives in memory alone.
 	store_port, store_open := storage_port.bind(ctx)
-	wide_grants.space_store_init(&space_service.store, principal_id, store_port)
+	windows_port, windows_paid := space_windows_reserve() // space_window_memory.odin
+	wide_grants.space_store_init(&space_service.store, principal_id, store_port, windows_port, windows_paid)
+	system.log_fact(.Info, Space_Windows_Paid{windows = u64(windows_paid), stated = wide_grants.SPACE_WINDOWS_STATED})
 
 	system.log_fact(.Info, Service_Ready{principal_id = principal_id, act_capacity = u64(manager_state.collector.capacity), store = store_open ? 1 : 0})
 	if store_open {

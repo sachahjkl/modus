@@ -147,3 +147,26 @@ input_target_counts_record :: proc "contextless" (target: ^Input_Target, grant_s
 input_target_counts_taken :: proc "contextless" (target: ^Input_Target) {
 	target.keys, target.presses = 0, 0
 }
+
+// display_emit is act_emit for the trusted display, the one writer of the
+// counts of its input. The record of the counts carries the time of the
+// last act that it counts, which is before any later record: so the counts
+// that wait leave before each other record of the display, else a later
+// record would come first and the collector would close the ring for a time
+// that goes back. A record of a change of window carries the counts itself.
+// A record of counts that does not leave refuses the record after it, and
+// the counts wait.
+display_emit :: proc "contextless" (write: Act_Write, user: rawptr, target: ^Input_Target, record: Act_Stream_Record) -> (outcome: Act_Emit_Outcome, status: Act_Write_Status) {
+	if record.grant_serial == 0 {
+		return .No_Grant, .Ok
+	}
+	if record.act_kind_word != u64(Act_Kind.Input_Counted) && record.act_kind_word != u64(Act_Kind.Target_Window_Changed) {
+		if counts, needed := input_target_counts_record(target, record.grant_serial, record.principal_id); needed {
+			if outcome, status = act_emit(write, user, counts); outcome != .Recorded {
+				return .Refused, status
+			}
+			input_target_counts_taken(target)
+		}
+	}
+	return act_emit(write, user, record)
+}

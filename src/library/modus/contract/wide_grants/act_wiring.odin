@@ -409,7 +409,7 @@ act_space_refusal_map :: proc "contextless" (refusal: Space_Refusal) -> Act_Wiri
 		return .Store_Refused
 	case .Bad_Bound, .Space_Limit_Reached:
 		return .Bad_Bound
-	case .Bad_Kind, .Bad_Forwarding, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held:
+	case .Bad_Kind, .Bad_Forwarding, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed:
 		return .Store_Refused
 	}
 	return .Store_Refused
