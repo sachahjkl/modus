@@ -19,3 +19,7 @@ kernel_entry_on_the_host :: proc "c" (wait: u64) -> u64 {
 thread_record_on_the_host :: proc "c" () -> ^operation.Thread_Record {
 	intrinsics.trap()
 }
+
+// The context of a host test: empty, as context_record gives it. No
+// handle is given, so each procedure that reads one sees 0.
+host_context: Context

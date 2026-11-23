@@ -118,6 +118,7 @@
 // that is the work of the grants of the root service.
 package console
 
+import module "modus:contract/module"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:lex_evaluator"
@@ -141,6 +142,20 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9775, processes = 5
 // evaluator may take, and 128 KiB for the host and the command that a call
 // runs at the deepest place of a line.
 LINE_THREAD_STACK_PAGES :: 160
+
+// The request of the console under the largest budget that the root
+// service gives a process of the boot image: the floor of that budget,
+// module.LARGEST_BUDGET_PAGES, which a larger machine only raises. The
+// sum is the stated working memory, the module (its code and its small
+// tables, 729 pages as measured on the module before a line grew to
+// LINE_CAPACITY bytes, and the tables of one line, counted here from
+// their types), and the threads as the tool counts them (the first thread
+// 72 pages, each other 19). The sum is 11871 pages, 4513 under the floor.
+CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES :: 729
+CONSOLE_LINE_TABLE_BYTES :: size_of(line_tree) + size_of(line_evaluation) + size_of(list_keeping) + size_of(history) + size_of(history_copy) + TABLE_ARENA + size_of(scratch) + size_of(nested_line) + size_of(work) + size_of(shown)
+CONSOLE_THREAD_PAGES :: 72 + (MODULE_BUDGET.threads - 1) * 19
+CONSOLE_REQUEST_PAGES :: MODULE_BUDGET.working_memory_pages + CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES + (CONSOLE_LINE_TABLE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE + CONSOLE_THREAD_PAGES
+#assert(CONSOLE_REQUEST_PAGES <= module.LARGEST_BUDGET_PAGES, "the console asks for more pages than the largest budget of a process of the boot image")
 
 #assert(LINE_THREAD_STACK_PAGES * system.PAGE_SIZE == lex_evaluator.EVALUATION_STACK_BYTES + 128 * 1024)
 #assert(LINE_THREAD_STACK_PAGES - system.THREAD_STACK_PAGES == 144)
@@ -522,7 +537,7 @@ history_walk :: proc "contextless" (step: int) {
 // line: the edit line with a cursor; or, while a line runs, its
 // time and the keys that wait. The terminal gets a record only when the
 // text changes.
-shown: [terminal.RUN_LIMIT]u8
+shown: [terminal.EDIT_TEXT_LIMIT]u8
 shown_count := -1
 shown_cursor: u64
 // The characters of a paste that the line took since edit_show last gave
@@ -539,7 +554,7 @@ paste_shown: bool
 key_serial_in_line: u64
 
 edit_show :: proc "contextless" () {
-	buffer: [terminal.RUN_LIMIT]u8
+	buffer: [terminal.EDIT_TEXT_LIMIT]u8
 	writer := system.Writer {
 		buffer = buffer[:],
 	}
@@ -570,13 +585,11 @@ edit_show :: proc "contextless" () {
 		}
 		style.tone = u8(terminal.Tone.Warning)
 	} else {
-		// A line longer than one record of the terminal shows the part
-		// around the caret, cut at whole characters.
-		whole := line_editor.line_text(&line)
-		start, end := line_editor.line_view(whole, line.caret, terminal.RUN_LIMIT - len(PROMPT))
+		// The whole line: the terminal takes it in parts of one record
+		// each, and flows it over its rows (terminal.edit).
 		system.write_part(&writer, PROMPT)
-		system.write_part(&writer, whole[start:end])
-		cursor = u64(len(PROMPT) + line.caret - start)
+		system.write_part(&writer, line_editor.line_text(&line))
+		cursor = u64(len(PROMPT) + line.caret)
 	}
 	text := system.written(&writer)
 	system.lock(&output_lock)
@@ -586,7 +599,9 @@ edit_show :: proc "contextless" () {
 		shown_cursor = cursor
 		// The edit line is code: its runs go first, and the Edit
 		// that follows takes them. The time of a line that runs has none.
-		if !running {
+		// A run starts at a byte of one record (terminal.Code_Run), so a
+		// line longer than one record is plain.
+		if !running && len(text) <= terminal.RUN_LIMIT {
 			runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
 			run_count := edit_runs(text, int(cursor), runs[:])
 			terminal.code_runs_send(&output, .Edit, 0, runs[:run_count])

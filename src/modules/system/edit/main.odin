@@ -229,10 +229,6 @@ ROWS_RESERVE_PAGES :: 4096 // The display rows: 2 Mi rows of 8 bytes.
 MATCHES_RESERVE_PAGES :: 2048 // The places of the matches of a search: 2 Mi.
 // A text from the store, its clean copy, a selection to copy and a paste.
 TRANSFER_RESERVE_PAGES :: 8192
-// The bytes of one call of read_range or write_range: the call region of
-// 64 KiB holds them, the name and the record of the call. A text of at
-// most this size goes in one write.
-RANGE_BYTES :: 32 * 1024
 
 text_arena: system.Arena
 rows_arena: system.Arena
@@ -288,75 +284,23 @@ transfer_bytes :: proc "contextless" (after, count: int) -> []u8 {
 	return whole[after:][:count]
 }
 
-// Why a whole read of the object gave no bytes.
-Read_Outcome :: enum u8 {
-	Read     = 0, // The bytes came.
-	Absent   = 1, // The store has no such object.
-	Too_Long = 2, // The budget cannot hold the bytes.
-	Refused  = 3, // A call refused: the status says how.
-}
-
-// object_read reads the whole object in the transfer arena, by ranges
-// after its size: a call region holds 64 KiB, a text more
-// (docs/STORAGE.md, "Ranges").
-object_read :: proc "contextless" (error: ^errors.Error_Record) -> (bytes: []u8, outcome: Read_Outcome, status: storage_status.Status) {
-	name := target_object_name()
-	size, size_status := storage.size(&client, target_place, name, error)
-	if storage.export_failed_with(size_status, size, .Absent) {
-		return nil, .Absent, .Ok
-	}
-	if storage.export_failed_with(size_status, size, .Damaged) {
-		return nil, .Refused, .Damaged
-	}
-	if size_status != .Ok {
-		return nil, .Refused, size_status
-	}
-	if size < 0 {
-		return nil, .Refused, .Refused
-	}
+// transfer_room is the room of a whole read: the transfer arena from its
+// start.
+transfer_room :: proc "contextless" (data: rawptr, minimum: int) -> (room: []u8, ok: bool) {
 	system.arena_reset(&transfer_arena)
-	if size == 0 {
-		return nil, .Read, .Ok
-	}
-	whole := transfer_bytes(0, int(size))
-	if whole == nil {
-		return nil, .Too_Long, .Ok
-	}
-	offset := 0
-	for offset < len(whole) {
-		part, part_status := storage.read_range(&client, target_place, name, u64(offset), whole[offset:], error)
-		if part_status != .Ok {
-			return nil, .Refused, part_status
-		}
-		// No byte before the end: the object changed under the read.
-		if len(part) == 0 {
-			return nil, .Refused, .Damaged
-		}
-		offset += len(part)
-	}
-	return whole, .Read, .Ok
+	room = transfer_bytes(0, minimum)
+	return room, room != nil || minimum == 0
 }
 
-// object_write writes the whole text in one commit: in one call when it
-// fits the call region, else as ranges of this connection and their
-// commit.
+// object_read reads the whole object in the transfer arena, in pieces
+// (storage.read_whole): a call region holds 64 KiB, a text more.
+object_read :: proc "contextless" (error: ^errors.Error_Record) -> (bytes: []u8, outcome: storage.Whole_Read, status: storage_status.Status) {
+	return storage.read_whole(&client, target_place, target_object_name(), transfer_room, nil, error)
+}
+
+// object_write writes the whole text in one commit (storage.write_whole).
 object_write :: proc "contextless" (bytes: []u8, error: ^errors.Error_Record) -> (generation: i64, status: storage_status.Status) {
-	name := target_object_name()
-	if len(bytes) <= RANGE_BYTES {
-		return storage.write(&client, target_place, name, bytes, error)
-	}
-	if status = storage.set_size(&client, target_place, name, u64(len(bytes)), error); status != .Ok {
-		return -1, status
-	}
-	for offset := 0; offset < len(bytes); offset += RANGE_BYTES {
-		size, range_status := storage.write_range(&client, target_place, name, u64(offset), bytes[offset:min(offset + RANGE_BYTES, len(bytes))], error)
-		if range_status != .Ok || size < 0 {
-			return -1, range_status
-		}
-	}
-	measure: storage.Commit_Measure
-	measure, status = storage.commit(&client, target_place, name, error)
-	return measure.generation, status
+	return storage.write_whole(&client, target_place, target_object_name(), bytes, error)
 }
 
 // text_take_clean makes the text the bytes read, cleaned: each invalid

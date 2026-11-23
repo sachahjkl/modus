@@ -383,7 +383,14 @@ stop_by_fault :: proc "contextless" () -> ! {
 
 // context_record gives the context of this process: it is at a fixed address.
 context_record :: #force_inline proc "contextless" () -> ^Context {
-	return (^Context)(uintptr(op.CONTEXT_ADDRESS))
+	when ODIN_OS == .Freestanding {
+		return (^Context)(uintptr(op.CONTEXT_ADDRESS))
+	} else {
+		// A host test has no process: its context is empty, so a log
+		// names no handle and writes nothing, and a pure procedure that
+		// logs runs in a host test as on a machine.
+		return &host_context
+	}
 }
 
 // own_budget gives the budget that this process received when it started.

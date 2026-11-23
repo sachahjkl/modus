@@ -20,9 +20,9 @@ package line_editor
 import "modus:contract/text_encoding"
 
 // The bytes of one line: a pipeline of several stages, a pasted hash with
-// a long call, a record literal of many fields. A text process shows a
-// part of a longer line around the caret (line_view), so the line does not
-// need to fit one terminal record.
+// a long call, a record literal of many fields. A text process shows the
+// whole line: the terminal takes a long one in several records
+// (terminal.edit).
 LINE_CAPACITY :: 4096
 
 // One line that the input edits, in the memory of the caller.
@@ -391,32 +391,6 @@ line_set :: proc "contextless" (line: ^Line, text: string) {
 	line.caret = line.count
 	line.selection_anchor = line.caret
 	line.has_selection = false
-}
-
-// line_view gives the part of a text that a place of room bytes shows, with
-// the caret in it: the whole text when it fits; else a part that ends at a
-// whole character and starts at one, with the caret three quarters of the
-// way along, so the reader sees what it typed and some of what follows.
-// The caller shows text[start:end] and the caret at caret - start.
-line_view :: proc "contextless" (text: string, caret_given: int, room: int) -> (start, end: int) {
-	if room <= 0 {
-		return 0, 0
-	}
-	if len(text) <= room {
-		return 0, len(text)
-	}
-	bytes := transmute([]u8)text
-	caret := clamp(caret_given, 0, len(text))
-	start = character_start_before(bytes, max(caret - room * 3 / 4, 0))
-	// A text that ends before the room is full shows its end whole.
-	if len(text) - start < room {
-		start = len(text) - room
-		for start < len(text) && bytes[start] & 0xC0 == 0x80 {
-			start += 1
-		}
-	}
-	end = start + text_encoding.complete_characters(bytes[start:min(start + room, len(text))])
-	return start, end
 }
 
 // line_clear empties the line.

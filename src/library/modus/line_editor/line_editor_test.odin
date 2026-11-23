@@ -894,29 +894,4 @@ one_read_of_the_line_never_drops_a_key_that_could_stay :: proc(t: ^testing.T) {
 	}
 }
 
-// The view of a long line: a room of none, a text that fits, then a text
-// past the room with the caret at the start, in the middle and at the end;
-// a view never cuts a character and always holds the caret.
-@(test)
-line_view_holds_the_caret_and_whole_characters :: proc(t: ^testing.T) {
-	start, end := line_view("abc", 1, 0)
-	testing.expect_value(t, start, 0)
-	testing.expect_value(t, end, 0)
-	start, end = line_view("abc", 3, 3)
-	testing.expect_value(t, end, 3)
-	long: [LINE_CAPACITY]u8
-	for &b, index in long {
-		b = index % 3 == 0 ? 0xC3 : (index % 3 == 1 ? 0xA9 : 'x') // "éx" again and again.
-	}
-	text := string(long[:LINE_CAPACITY - LINE_CAPACITY % 3])
-	ROOM :: 250
-	for caret in ([?]int{0, 1, 300, 2000, len(text) - 1, len(text), len(text) + 5, -1}) {
-		start, end = line_view(text, caret, ROOM)
-		testing.expectf(t, end - start <= ROOM, "caret %d: the view has %d bytes", caret, end - start)
-		testing.expectf(t, start <= clamp(caret, 0, len(text)) && clamp(caret, 0, len(text)) <= end, "caret %d: the view %d..%d holds it", caret, start, end)
-		testing.expectf(t, start == len(text) || text[start] & 0xC0 != 0x80, "caret %d: the view starts at a character", caret)
-		testing.expectf(t, end == len(text) || text[end] & 0xC0 != 0x80, "caret %d: the view ends at a character", caret)
-	}
-	start, end = line_view(text, len(text), ROOM)
-	testing.expect_value(t, end, len(text))
-}
+

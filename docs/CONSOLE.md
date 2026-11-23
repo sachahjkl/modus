@@ -223,7 +223,7 @@ A record is a group of named fields, as a module describes it. The command with 
 
 A list variable takes 4096 items at most, the items of its nested lists included, and 1 MiB of the texts and records of its items. Its items are integers, booleans, texts, members, handles, records and such lists. A line that reads list variables copies their items among the 4096 items of the line, once for each variable.
 
-**The bounds of a line**: 4096 bytes of text, 256 levels of nesting, 4096 calls of functions, 8192 values of their bodies, 4096 items in all its lists, the items of the list variables that it reads included. The edit line shows the part of a long line around the caret.
+**The bounds of a line**: 4096 bytes of text, 256 levels of nesting, 4096 calls of functions, 8192 values of their bodies, 4096 items in all its lists, the items of the list variables that it reads included. The terminal flows a long edit line over its rows; a line taller than the view shows its rows down to the cursor.
 
 ### Tables as values
 
@@ -963,10 +963,11 @@ A part with no class has the color of the text around it: the tone of the line, 
 - `Style.code`: the kind of a Text record. The echoed line is runs of text with a kind each: the lines that the terminal keeps have a style for each run, and each cell of its grid has its own color, so the echo needs no new form of the grid.
 - `Style.value_kind`: the value kind of a run of a result or of a log record of a line (`modus:contract/value_kinds`), in the byte after `Style.code`. The terminal gives it the color of its kind in the appearance in force when it draws (`src/md/features/appearance.md`): a line written in the dark appearance takes the light colors after a change.
 - A row has at most 256 bytes, so a byte holds the start of a run. A part of one kind longer than 255 bytes is two runs.
+- `Edit_Part` (kind 9): a part of the next edit line, of one record at most. An edit line longer than one record goes in `Edit_Part` records and one `Edit` record that ends it; the terminal shows the line only at that `Edit` record, up to `EDIT_TEXT_LIMIT` (8192) bytes, and flows it over its rows. The start of a run is one byte, so an edit line longer than one record has no `Code_Runs` and shows plain.
 
 **The bound, and a hostile list.** A row has at most 64 runs: a line with more parts keeps its first 64 runs, and the text after them is whole, in the plain color. The text is never cut by the runs: only the color stops. The terminal checks the runs against the row that takes them: each run inside the row, after the run before it, with at least one byte and a kind that exists. One run that fails, or bytes that are not a whole count of runs, or a target that takes no runs: the row is plain, its text whole, and the terminal counts it and writes once on the log "terminal: console sent runs of code that do not fit their row: the row is drawn plain, its text whole".
 
-**The cost.** The runs of the edit line are made only when its text or its caret changes, on the part of the line that the edit line shows, at most 256 bytes, with one look in the tables of names (256 commands, 64 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
+**The cost.** The runs of the edit line are made only when its text or its caret changes, on the whole line, at most 4096 bytes, with one look in the tables of names (256 commands, 64 variables, 12 services, the loaded modules) for each name. `measure_completion()` gives the time of the runs of one key in its fourth part (section 4). When Tab opens the list, the log line says the count of the runs of the first row ("...; its first row has 13 runs of code"), so that a test checks the colors with no pixel.
 
 ## 8. The palette provider
 

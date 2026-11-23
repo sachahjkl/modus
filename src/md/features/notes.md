@@ -12,7 +12,7 @@ Before, the module `notes` was a proof of persistence with one line of text, a c
 
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Persistence: no save action, and versions for all processes": the store holds each note, and the window has no save action.
 - No work in a frame in proportion to the text: the rows of a note are computed after a change and after a resize, never in a frame.
-- The text of a note is the text of the editor ([editor.md](editor.md)): UTF-8 with no control character but the line end and the tab, at most 32768 bytes, one call region of the storage service for a whole write.
+- The text of a note is the text of the editor ([editor.md](editor.md)): UTF-8 with no control character but the line end and the tab, of the size that the budget of `notes` pays. A call region of the storage service holds 64 KiB, so a note larger than one call goes in ranges and one commit.
 - [`docs/DESIGN.md`](../../../docs/DESIGN.md), "5. Text": no cut text and no text over another text.
 
 ## The chosen form
@@ -40,6 +40,8 @@ The window thread makes no call of the storage service: no read, no write, no li
 - **Only a connection that ended stops the keeping.** A refusal, a damaged object or a buffer that is too small is the answer of one call: the status band says "not kept" until a write is done again, and the next change writes again. A version that cannot be read says so, and is not restored.
 - **A cut is a change.** It waits with the typed keys; a copy changes nothing and needs no gate.
 - **The rules are pure** in `internal:notes/note_session`: the gates of the keys, the room of each act, and which result the window takes; a host test gives each order of the acts and the results.
+- **The bytes of a note are never in a record.** A request and a result name bytes in one of two arenas (`store_work`): the write memory, which the window fills with the text of a Write, and the read memory, which the store thread fills with a note, a version or the rows of the versions. One Write is in flight at a time: the window writes the write memory again only after the result of that Write, and a change while it runs waits for one more pause. A result that names the read memory holds it until the window took or dropped that result and released it; the store thread waits for that release, never the window. So a note costs its bytes in each arena, not a copy in each place of the two queues.
+- **The store thread reads and writes a note in pieces.** It reads the size, then `read_range` in pieces of 32 KiB, into the read memory grown to that size; it writes a note larger than one call with `set_size`, `write_range` in pieces and one `commit`, so a note is one version whatever its size (`storage.read_whole`, `storage.write_whole`, which `edit` uses too). A version is read into the read memory sized by the bytes of its row.
 - **The window thread still enters the kernel for the queues**: the wake of the store thread, and a lock that it takes only for the copy of one record. These are the hand over of the work, not a call of a service.
 
 ## The refused forms
@@ -47,7 +49,7 @@ The window thread makes no call of the storage service: no read, no write, no li
 - **A commit for each key.** It made a version of each key, 35 for one sentence, and a store that grew at each key. It stays the form of `persistence_check`, whose test needs it.
 - **The end of a group of changes as in `edit`** (a space, a line end, a move to another line). In a note that is a version for each word. The editor keeps it, as it walks back version by version with Ctrl+Z; `notes` lists its versions by date.
 - **A pause in a machine test as a known count of versions.** A test that types waits for the fact of the commit that has its text; it never counts the versions that a pause made, as a slow host can split a word.
-- **Rows of 80 cells, as in `edit`.** A note is prose: its lines follow the window. The cost of the layout at each step of a resize is one pass over at most 32768 bytes, at the resize, never in a frame.
+- **Rows of 80 cells, as in `edit`.** A note is prose: its lines follow the window. The cost of the layout at each step of a resize is one pass over the note, at the resize, never in a frame.
 - **An index object with the order and the titles of the notes.** A second source of the titles, which a stop between two commits would make wrong; the names give the order, and the first bytes give the titles.
 - **A pane of the versions beside the list.** At the least width the text then had no room for a row.
 - **The calls of the store on the window thread.** A slow disk or a busy storage service stopped the frames and the keys; the window thread hands each call to the store thread.
@@ -56,10 +58,11 @@ The window thread makes no call of the storage service: no read, no write, no li
 ## Subtle points and hazards
 
 - **A stop loses at most 5 seconds.** A change waits for its commit up to one second after the last key, and never more than 5 seconds after the first change that waits; a stop of the process in that wait loses it. A full queue starts the wait again from the time of the refusal. The status band says "a change waits" while it waits.
-- **A note that cannot be read is never written.** A note longer than a text, or that the store cannot give, is not shown and keeps its bytes; a damaged note shows empty, and its next change writes a new text with the damaged one kept as a version.
+- **A note that cannot be read is never written.** A note larger than the budget of `notes` holds, or that the store cannot give, is not shown and keeps its bytes; a damaged note shows empty, and its next change writes a new text with the damaged one kept as a version.
 - **The serials end.** After `note_999999`, no new name exists: the window says that the store refused the note. A deletion does not give a serial back.
+- **The interface of the storage service that a large note needs.** A commit of ranges holds its pending changes for the connection, sized to the commit; a version is read in pieces, and a room smaller than the version says `Too_Small`. A note larger than what the storage service holds pending is refused by that service as a write, and the status band says "not kept".
 - **The list holds 256 notes**, and the pane of the versions the newest 512 versions of a note; past them a fact says what is not shown.
 
 ## State
 
-Built: the store thread with its two queues, the list of the notes with their titles, a new note, the deletion with its question, the text with its keys, the selection by keys and by the pointer, the clipboard, the wrap by word at the width of the window, the scroll bar, the commit after a pause or a change of note, the pane of the versions with the restore, and the machine steps of the main test. Left: a search in the notes, an undo by key, and notes larger than one call region: the text model takes a buffer that grows in an arena ([editor.md](editor.md), "The text model"), but the records of the store thread carry the bytes of a note inline, so a note keeps the inline buffer of 32 KiB until those records name bytes in an arena of each thread.
+Built: the store thread with its two queues and its two arenas, the list of the notes with their titles, a new note, the deletion with its question, the text with its keys, the selection by keys and by the pointer, the clipboard, the wrap by word at the width of the window, the scroll bar, the commit after a pause or a change of note, the pane of the versions with the restore, and the machine steps of the main test., notes of any size in arenas of the two threads. Left: a search in the notes, and an undo by key.

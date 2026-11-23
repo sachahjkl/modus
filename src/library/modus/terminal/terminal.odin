@@ -192,6 +192,12 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           values[1]: for List_Row, the number of the row. The next record
 //           of the target takes the runs; a record of the target with no
 //           Code_Runs before it is plain.
+//   Edit_Part A part of the next edit line, which is longer than one
+//           record: tag: the count of its bytes. The terminal keeps the
+//           parts, in order, up to EDIT_TEXT_LIMIT bytes, and shows nothing
+//           of them until the Edit record that ends the line: its text
+//           follows the parts, and its cursor counts the bytes from the
+//           first part. So the terminal never shows a part of a line.
 // The text of each record is UTF-8 (src/library/modus/contract/text_encoding),
 // and each count is a count of bytes. The library cuts a text after a whole
 // character only. The terminal shows one cell for each character, and the
@@ -207,6 +213,47 @@ Kind :: enum u32 {
 	List_Row  = 6, // One row of the next completion list.
 	List      = 7, // Show the completion list.
 	Code_Runs = 8, // The runs of code of the next record of a target.
+	Edit_Part = 9, // A part of the next edit line, which the Edit record ends.
+}
+
+// The bytes of an edit line at most: a line of the console of 4096 bytes of
+// UTF-8 after its prompt, with room for a prompt of each process. An edit
+// line passes in Edit_Part records of RUN_LIMIT bytes and one Edit record,
+// so the text region keeps its bound of RUN_LIMIT bytes for each record.
+EDIT_TEXT_LIMIT :: 8192
+
+// The parts of an edit line that wait for the Edit record that ends it, in
+// the memory of the reader.
+Edit_Staging :: struct {
+	text:   [EDIT_TEXT_LIMIT]u8,
+	length: int,
+	cut:    bool, // A part passed EDIT_TEXT_LIMIT: the line keeps its whole characters before it.
+}
+
+// edit_part_keep adds a part of an edit line to the staging: its bytes up
+// to EDIT_TEXT_LIMIT. The bytes come from another process: a part past the
+// limit is cut, and the line keeps its whole characters.
+edit_part_keep :: proc "contextless" (staging: ^Edit_Staging, first, second: []u8) {
+	staging.length = clamp(staging.length, 0, EDIT_TEXT_LIMIT)
+	before := staging.length
+	staging.length += copy(staging.text[staging.length:], first)
+	staging.length += copy(staging.text[staging.length:], second)
+	if staging.length - before < len(first) + len(second) {
+		staging.cut = true
+	}
+}
+
+// edit_staging_end gives the whole edit line: the parts, then the text of
+// the Edit record, into text; the staging is empty after it. A line cut at
+// EDIT_TEXT_LIMIT ends after a whole character.
+edit_staging_end :: proc "contextless" (staging: ^Edit_Staging, first, second: []u8, text: ^[EDIT_TEXT_LIMIT]u8) -> (length: int) {
+	edit_part_keep(staging, first, second)
+	length = copy(text[:], staging.text[:staging.length])
+	if staging.cut {
+		length = text_encoding.complete_characters(text[:length])
+	}
+	staging^ = {}
+	return length
 }
 
 NO_CURSOR :: max(u64) // An Edit record with no cursor.
@@ -424,11 +471,21 @@ status :: proc "contextless" (terminal: ^Terminal, text: string, value, total: u
 // (Key.serial) whose character the line shows, or 0; the terminal names it
 // with the picture that shows the line, for the measure of a key to the
 // screen.
-edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_CURSOR, style: Style = {}, key_serial: u64 = 0) {
-	marked: [RUN_LIMIT]u8
-	part := record_text(text, &marked)
-	append(terminal, part)
-	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = cursor, 2 = key_serial}})
+//
+// A line longer than one record goes in Edit_Part records of RUN_LIMIT
+// bytes, each cut after a whole character, then the Edit record with its
+// last part; a line past EDIT_TEXT_LIMIT is cut after a whole character.
+edit :: proc "contextless" (terminal: ^Terminal, text_given: string, cursor: u64 = NO_CURSOR, style: Style = {}, key_serial: u64 = 0) {
+	text := text_given[:record_part(text_given, EDIT_TEXT_LIMIT)]
+	rest := text
+	for len(rest) > RUN_LIMIT {
+		part := rest[:record_part(rest, RUN_LIMIT)]
+		append(terminal, part)
+		push(terminal, ring.Record{kind = u32(Kind.Edit_Part), tag = u32(len(part))})
+		rest = rest[len(part):]
+	}
+	append(terminal, rest)
+	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(rest)), values = {0 = transmute(u64)style, 1 = cursor, 2 = key_serial}})
 	system.wake_reader(&terminal.ring.commands)
 }
 

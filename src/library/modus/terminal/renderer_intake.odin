@@ -33,7 +33,7 @@ Renderer_Event :: struct {
 
 // The edit line as a renderer shows it.
 Renderer_Edit :: struct {
-	text:       [RUN_LIMIT]u8,
+	text:       [EDIT_TEXT_LIMIT]u8,
 	length:     int,
 	has_cursor: bool,
 	cursor:     int, // Bytes from the start of the text, at most length.
@@ -72,6 +72,7 @@ Renderer_Intake :: struct {
 	text:              [RUN_LIMIT]u8, // The text of the last Text record.
 	text_length:       int,
 	edit:              Renderer_Edit,
+	edit_staging:      Edit_Staging, // The parts of the next edit line.
 	status:            Renderer_Status,
 	hint:              Renderer_Hint,
 	edit_runs_pending: Code_Runs,
@@ -160,8 +161,7 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 		first, second := renderer_take(intake, record.tag)
 		edit := &intake.edit
 		edit^ = {}
-		edit.length = copy(edit.text[:], first)
-		edit.length += copy(edit.text[edit.length:], second)
+		edit.length = edit_staging_end(&intake.edit_staging, first, second, &edit.text)
 		if record.values[1] != NO_CURSOR {
 			edit.has_cursor = true
 			edit.cursor = int(min(record.values[1], u64(edit.length)))
@@ -179,6 +179,10 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 	case .List:
 		list_keep_show(&intake.list, record.values)
 		return {step = .List}
+	case .Edit_Part:
+		first, second := renderer_take(intake, record.tag)
+		edit_part_keep(&intake.edit_staging, first, second)
+		return {}
 	case .Code_Runs:
 		first, second := renderer_take(intake, record.tag)
 		target, target_ok := enum_word.member_of_word(Kind, record.values[0])
@@ -195,7 +199,7 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 			intake.edit_runs_pending = read
 		case .List_Row:
 			list_keep_code_runs(&intake.list, record.values, first, second)
-		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs:
+		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs, .Edit_Part:
 			intake.runs_refused += 1
 		}
 		return {}

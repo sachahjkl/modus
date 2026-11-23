@@ -281,7 +281,7 @@ status_line: Status_Line
 
 // The line that the process changes (terminal.Kind.Edit).
 Edit_Line :: struct {
-	text:       [terminal.RUN_LIMIT]u8,
+	text:       [terminal.EDIT_TEXT_LIMIT]u8,
 	length:     int,
 	cursor:     int,
 	has_cursor: bool,
@@ -289,6 +289,14 @@ Edit_Line :: struct {
 	code:       terminal.Code_Runs, // Checked against the text. None: the line is plain.
 }
 edit_line: Edit_Line
+// The parts of the next edit line, which wait for its Edit record.
+edit_staging: terminal.Edit_Staging
+// The characters of the edit line as the view lays them out: in the memory
+// of the reader, as an edit line has up to EDIT_TEXT_LIMIT bytes.
+edit_characters: [terminal.EDIT_TEXT_LIMIT]rune
+edit_starts: [terminal.EDIT_TEXT_LIMIT]u16 // The byte where each character starts.
+edit_places: [terminal.EDIT_TEXT_LIMIT][2]u16 // The row and the column of each character in the flow.
+#assert(terminal.EDIT_TEXT_LIMIT <= int(max(u16)))
 // The serial of the newest key that an Edit record named (terminal.edit):
 // the reader keeps it, the view gives it to the drawer.
 edit_key_serial: u64
@@ -517,8 +525,7 @@ apply :: proc "contextless" (record: ring.Record) {
 			}
 		}
 		edit_line = {style = transmute(terminal.Style)record.values[0]}
-		edit_line.length = copy(edit_line.text[:], first)
-		edit_line.length += copy(edit_line.text[edit_line.length:], second)
+		edit_line.length = terminal.edit_staging_end(&edit_staging, first, second, &edit_line.text)
 		if record.values[1] != terminal.NO_CURSOR {
 			edit_line.has_cursor = true
 			edit_line.cursor = int(min(record.values[1], u64(edit_line.length)))
@@ -544,6 +551,9 @@ apply :: proc "contextless" (record: ring.Record) {
 		terminal.list_keep_row(&list_keeping, record.values, first, second)
 	case .List:
 		terminal.list_keep_show(&list_keeping, record.values)
+	case .Edit_Part:
+		first, second := take(record.tag)
+		terminal.edit_part_keep(&edit_staging, first, second)
 	case .Code_Runs:
 		first, second := take(record.tag)
 		target, target_ok := enum_word.member_of_word(terminal.Kind, record.values[0])
@@ -560,7 +570,7 @@ apply :: proc "contextless" (record: ring.Record) {
 			edit_runs_pending = read
 		case .List_Row:
 			terminal.list_keep_code_runs(&list_keeping, record.values, first, second)
-		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs:
+		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs, .Edit_Part:
 			edit_runs_refused += 1 // No other record takes runs.
 		}
 	}
@@ -850,9 +860,6 @@ view_make :: proc "contextless" () {
 	// characters, decoded once here, flow over the rows, two cells for a
 	// wide character, which starts the next row when one column is left;
 	// and one cell for the cursor.
-	edit_characters: [terminal.RUN_LIMIT]rune
-	edit_starts: [terminal.RUN_LIMIT]u16 // The byte where each character starts.
-	edit_places: [terminal.RUN_LIMIT][2]u16 // The row and the column of each character in the flow.
 	edit_count := 0
 	edit_flow := wide_cells.Flow{columns = columns}
 	edit_cursor_row, edit_cursor_column := -1, 0
@@ -882,7 +889,13 @@ view_make :: proc "contextless" () {
 	if edit_line.has_cursor {
 		edit_used_rows = max(edit_used_rows, edit_cursor_row + 1)
 	}
-	edit_rows := u64(min(edit_used_rows, rows))
+	// A line of more rows than the view leaves the free row under it shows
+	// its rows around the cursor: the cursor row is the last one shown.
+	edit_rows := u64(min(edit_used_rows, max(rows - 1, 1)))
+	edit_first_row := 0
+	if edit_used_rows > int(edit_rows) && edit_line.has_cursor {
+		edit_first_row = clamp(edit_cursor_row - int(edit_rows) + 1, 0, edit_used_rows - int(edit_rows))
+	}
 	// One row under the edit line stays free at all times, with or without
 	// a hint line: the hint is drawn over it, as the list is drawn over the
 	// text, so the text does not move when a hint comes or goes.
@@ -914,7 +927,7 @@ view_make :: proc "contextless" () {
 		row = {}
 		number := top + u64(index)
 		if number >= count && number - count < edit_rows {
-			edit_row := int(number - count)
+			edit_row := int(number - count) + edit_first_row
 			code_cursor := 0 // The run of code of the bytes of this row, in order.
 			for character_index in 0 ..< edit_count {
 				if int(edit_places[character_index][0]) != edit_row {
