@@ -204,6 +204,12 @@ Waiting_Word :: struct {
 // now. The caller holds the process lock of the process.
 @(private = "file")
 waiting_words_collect :: proc "contextless" (process: ^Process, words: ^[WAITING_WORD_CAPACITY]Waiting_Word) -> (count: int) {
+	// No thread of the process waits: no pass over the thread table. Each
+	// unmap of a process that waits on nothing, and each of the unmaps of
+	// the end of a process, costs one read here.
+	if intrinsics.atomic_load(&process.waited_words) == 0 {
+		return 0
+	}
 	index := index_of_process(process)
 	for &thread, slot in threads[1:] {
 		if thread.process != index || thread.word_count == 0 {
@@ -283,27 +289,54 @@ waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region
 // frame would take its wakes and give it theirs. The caller holds the
 // process lock of the process. With no word waited in the process it reads
 // no entry.
-waiters_on_pages_wake :: proc "contextless" (process: ^Process, address: u64, page_count: u64) {
+//
+// The cost: one walk of the upper levels for each 2 MiB of the range, as
+// unmap does; a 2 MiB with no table is passed whole, a large page is one
+// entry, and the walk ends when it has seen `present` present pages (the
+// present_page_count of the mapping) or matched each word.
+waiters_on_pages_wake :: proc "contextless" (process: ^Process, address: u64, page_count: u64, present: u64) {
 	words: [WAITING_WORD_CAPACITY]Waiting_Word
 	count := waiting_words_collect(process, &words)
-	if count == 0 {
+	if count == 0 || present == 0 {
 		return
 	}
 	remaining := count
-	for page in u64(0) ..< page_count {
+	seen: u64
+	for page := u64(0); page < page_count; {
 		virtual := address + page * PAGE_SIZE
+		run := min(512 - (virtual >> 12 & 511), page_count - page)
 		entry := page_entry(process.table, virtual)
 		if entry == nil {
+			page += run // No table under this 2 MiB: no page of it is present.
 			continue
 		}
-		frame, ok := word_table.word_physical(entry^, virtual)
-		if !ok {
-			continue
+		if entry^ & PAGE_LARGE != 0 {
+			// One large page: its 4 KiB frames in order, from the frame of
+			// this address.
+			if base, ok := word_table.word_physical(entry^, virtual); ok {
+				for at in 0 ..< run {
+					remaining -= waiting_words_wake_frame(words[:count], base + at * PAGE_SIZE)
+				}
+				seen += run
+			}
+		} else {
+			entries := ([^]u64)(entry)
+			for at in 0 ..< run {
+				frame, ok := word_table.word_physical(entries[at], virtual + at * PAGE_SIZE)
+				if !ok {
+					continue
+				}
+				seen += 1
+				remaining -= waiting_words_wake_frame(words[:count], frame)
+				if remaining == 0 || seen >= present {
+					return
+				}
+			}
 		}
-		remaining -= waiting_words_wake_frame(words[:count], frame)
-		if remaining == 0 {
+		if remaining == 0 || seen >= present {
 			return
 		}
+		page += run
 	}
 }
 

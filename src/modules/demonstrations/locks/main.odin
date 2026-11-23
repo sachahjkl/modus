@@ -61,9 +61,10 @@ import "modus:system"
 // (display.TEXT_MEMORY_PAGES). 7745 + 354 = 8099.
 // With the pages of the case of the wait room: a room of the most words
 // (op.wait_room_pages, 512 pages), its list and its words (160 pages);
-// and the two processes of the case of the untouched page, with 2 threads
-// and 1024 pages each (untouched_page.odin).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8099 + 672 + 2048, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+// the two processes of the case of the untouched page, with 2 threads and
+// 1024 pages each (untouched_page.odin); and the mapping of the measure of
+// an unmap, 4096 pages and its frame list (wait_room.odin).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8099 + 672 + 2048 + 4097, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

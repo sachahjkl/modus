@@ -183,6 +183,59 @@ full_frame_wake :: proc "contextless" () -> (woken: u64, microseconds: u64) {
 	return woken, (system.nanoseconds() - start) / 1000
 }
 
+// The pages of the mapping of the measure of an unmap.
+UNMAP_MEASURE_PAGES :: 4096
+
+unmap_measure_word: ^u32
+
+unmap_measure_waiter :: proc "c" (parameter: rawptr) -> ! {
+	system.word_wait(unmap_measure_word, 0, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+	system.thread_stop()
+}
+
+// unmap_measure gives the time of one unmap of a mapping of
+// UNMAP_MEASURE_PAGES pages that each have a frame, with a thread that
+// waits on its last word or with none: the unmap reads the words of the
+// process only when one is waited. A measure, with no condition.
+unmap_measure :: proc "contextless" (with_waiter: bool) -> (microseconds: u64) {
+	memory, memory_status := system.memory_create(UNMAP_MEASURE_PAGES)
+	if memory_status != .Ok {
+		return 0
+	}
+	defer system.close(memory)
+	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		return 0
+	}
+	pages := ([^][system.PAGE_SIZE]u8)(address)[:UNMAP_MEASURE_PAGES]
+	for &page in pages {
+		intrinsics.volatile_store(&page[0], 0)
+	}
+	waiter: system.Thread
+	if with_waiter {
+		unmap_measure_word = (^u32)(&pages[UNMAP_MEASURE_PAGES - 1][system.PAGE_SIZE - 4])
+		started: system.Status
+		if waiter, started = system.thread_start(unmap_measure_waiter, nil); started != .Ok {
+			system.memory_unmap(address)
+			return 0
+		}
+		for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+			states, _ := system.call(.Thread_State, u64(waiter.handle))
+			if op.Process_State(states[0]) == .Waiting {
+				break
+			}
+			system.sleep(system.time() + 1)
+		}
+	}
+	start := system.nanoseconds()
+	system.memory_unmap(address)
+	microseconds = (system.nanoseconds() - start) / 1000
+	if with_waiter {
+		system.thread_wait(waiter)
+	}
+	return microseconds
+}
+
 wait_room_case :: proc "contextless" (image: []u8) {
 	words: [ROOM_WORDS_HELD + 1]op.Word
 	for &word, index in words {
@@ -259,6 +312,7 @@ wait_room_case :: proc "contextless" (image: []u8) {
 	})
 	long_status, long_time := room_long_wait()
 	system.log_fact(.Info, Wait_Room_Long{words = op.WORD_WAIT_MOST, status = op.Status_Word(long_status), time = value_kinds.Time_In_Microseconds(long_time)})
+	system.log_fact(.Info, Unmap_Time{pages = UNMAP_MEASURE_PAGES, alone = value_kinds.Time_In_Microseconds(unmap_measure(false)), waited = value_kinds.Time_In_Microseconds(unmap_measure(true))})
 	full_woken, full_time := full_frame_wake()
 	system.log_fact(.Info, Full_Frame_Wake{words = WORDS_OF_A_FRAME, woken = full_woken, time = value_kinds.Time_In_Microseconds(full_time)})
 }

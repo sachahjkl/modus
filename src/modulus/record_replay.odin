@@ -506,7 +506,7 @@ point_copies_teardown :: proc "contextless" (target_index: u32, rec: ^Process_Re
 	if target.table != 0 {
 		for index in u32(0) ..< rec.point_copy_count {
 			if pc := &rec.point_copies[index]; pc.active {
-				waiters_on_pages_wake(target, pc.virtual_address, 1)
+				waiters_on_pages_wake(target, pc.virtual_address, 1, 1)
 			}
 		}
 	}

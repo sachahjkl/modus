@@ -460,6 +460,13 @@ Process :: struct {
 	// reads its table and finds none. Written with atomic or by the
 	// processors that insert a handle.
 	holders:       Process_Set,
+	// The words that the threads of the process hold in the table of the
+	// word wait (wait_register, wait_unregister), atomic. It grows only in
+	// a kernel entry of a thread of the process, under the process lock, so
+	// a holder of that lock that reads 0 knows that no thread of the
+	// process waits: an unmap then reads no thread (waiting_words_collect).
+	// It falls with no lock, at the start of the next entry of a thread.
+	waited_words:  u32,
 	// The handles of kind Ports of this process: a switch to it opens their
 	// ports with no read of the other handles. Process lock to write; a
 	// switch reads it with atomic loads.
@@ -1555,7 +1562,7 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 	// with the object after this unmap, and a wait that names a frame that
 	// serves another process would take the wakes of that process and get
 	// them. The process lock keeps its threads from a new wait meanwhile.
-	waiters_on_pages_wake(process, mapping.address, mapping.page_count)
+	waiters_on_pages_wake(process, mapping.address, mapping.page_count, mapping.present_page_count)
 	origin_detach(holding_of_mapping(process, mapping))
 	self := processor_self()
 	walked_present_pages: u64

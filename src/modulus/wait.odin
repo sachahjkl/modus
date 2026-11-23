@@ -77,6 +77,7 @@ wait_register :: proc "contextless" (thread: ^Thread, word: u64, value: u32) -> 
 		return .Duplicate
 	}
 	thread.word_count += 1
+	intrinsics.atomic_add(&processes[thread.process].waited_words, 1)
 	return held ? .Held : .Changed
 }
 
@@ -89,6 +90,9 @@ wait_unregister :: proc "contextless" (thread: ^Thread) {
 		lock_take(lock, .Wait)
 		word_table.remove(&wait_words, entry)
 		lock_free(lock, .Wait)
+	}
+	if thread.word_count != 0 {
+		intrinsics.atomic_sub(&processes[thread.process].waited_words, thread.word_count)
 	}
 	thread.word_count = 0
 }

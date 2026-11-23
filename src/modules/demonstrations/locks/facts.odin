@@ -211,6 +211,15 @@ Read_Only_Wake_Refused :: struct {
 	verdict:     [16]u8,
 }
 
+// The time of one unmap of a mapping whose pages each have a frame, with no
+// waited word in the process, and with one: a measure.
+@(log_fact = "locks: an unmap of {pages} pages took {alone} with no thread waiting on a word of it, {waited} with a thread waiting on its last word (a measure)")
+Unmap_Time :: struct {
+	pages:  u64,
+	alone:  value_kinds.Time_In_Microseconds,
+	waited: value_kinds.Time_In_Microseconds,
+}
+
 // One wake of the last word of a bucket that holds the words of a frame.
 @(log_fact = "locks: a wake of a word of a frame whose {words} words a thread waits on woke {woken} thread in {time} (a measure)")
 Full_Frame_Wake :: struct {
