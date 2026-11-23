@@ -127,7 +127,7 @@ Kind :: enum u8 {
 	Enum           = 10, // A member of an enum: integer is its value; file and detail name the enum (module.enum_type). A parameter: an Enum of an export.
 	Member         = 11, // A member not typed yet, `.french`: integer is its node. The Enum parameter that receives it types it; nothing else keeps one.
 	Function       = 12, // A function: integer is its node, call the call in which it was written, tree its tree index. No export takes one, and no variable keeps one.
-	List           = 13, // A list: its items are active_list_items[integer:][:detail] of the evaluation. No export takes one, and no variable keeps one.
+	List           = 13, // A list: its items are active_list_items[integer:][:detail] of the evaluation. No export takes one; a variable of the console keeps a copy, which list_items_add gives back to a line.
 	Hash           = 14, // A BLAKE3 hash literal or computed tree hash: `detail` indexes `active_hashes`.
 	Boolean        = 15, // A boolean: `integer != 0` is true, `0` is false.
 	Record_With    = 16, // Mode `declaration`: lazy `left with right` record composition (`integer` indexes `with_pairs`).
@@ -500,6 +500,11 @@ line_force :: proc "contextless" (evaluation: ^Evaluation) -> (value: Value, ok:
 	switch tree.refusal.refusal {
 	case .Text_Too_Long, .Nodes_Full, .Nesting_Too_Deep:
 		return refuse(evaluation, {refusal = .Text, text_refusal = tree.refusal.refusal, place = tree.refusal.place, node = tree.root})
+	case .Thin_Arrow:
+		// The names before a "->" are the parameters of a function that the
+		// line meant, never values: no part of the line runs, so the
+		// refusal names the form of a function, not a missing variable.
+		return refuse(evaluation, {refusal = .Text, text_refusal = .Thin_Arrow, place = tree.refusal.place, node = tree.root})
 	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing:
 	}
 	value = force(evaluation, tree.root) or_return
@@ -537,6 +542,22 @@ untyped_find :: proc "contextless" (evaluation: ^Evaluation, value: Value, depth
 		}
 	}
 	return {}
+}
+
+// list_items_add copies items that a host kept into the items of the
+// evaluation, after the items of its lists, and gives the place of the
+// first one: a variable of the console keeps a list across lines, and each
+// line reads it as a list of its own. The host moves a nested List of the
+// items to its new place. ok is false when the items do not fit, and the
+// evaluation then holds nothing more.
+list_items_add :: proc "contextless" (evaluation: ^Evaluation, items: []Value) -> (first: int, ok: bool) {
+	if len(items) > len(evaluation.active_list_items) - evaluation.list_item_count {
+		return 0, false
+	}
+	first = evaluation.list_item_count
+	copy(evaluation.active_list_items[first:], items)
+	evaluation.list_item_count += len(items)
+	return first, true
 }
 
 // list_items_of gives the items of a List or Store_Ref value.

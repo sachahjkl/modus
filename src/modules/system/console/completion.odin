@@ -1072,6 +1072,8 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "variable: ")
 			if value.kind == .None {
 				system.write_part(writer, "None")
+			} else if value.kind == .List {
+				system.write_part(writer, kind_names[.List])
 			} else {
 				system.write_type(writer, value.file, type_of_kind(value.kind), value.detail)
 			}

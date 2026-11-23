@@ -607,6 +607,34 @@ scenario := [?]Step {
 	{kind = .Type, text = "where(processes(), name = \"paint\")"},
 	{kind = .Wait, text = "[console] slot  name"},
 	{kind = .Wait, text = "paint  "},
+	// A name with a fault of typing gets the names near it: a command, and a
+	// field by its unit ("pages" names the fields counted in pages).
+	{kind = .Type, text = "proceses()"},
+	{kind = .Wait, text = "[console] error: no command has the name proceses; did you mean processes"},
+	{kind = .Type, text = "where(processes(), pages > 1000)"},
+	{kind = .Wait, text = "[console] error: where: the records Process have no field pages; did you mean resident or mapped? Their fields are slot, name"},
+	// A call of `module.export` connects only when the module of the image
+	// has the export. A fault in the export of a connected service gets the
+	// near name and no second connection; a name that no module has asks
+	// for no connection; an export of a module that is no service gets the
+	// refusal of connect, adds no command, and frees the slot of the
+	// connection, so the same call is refused the same way again.
+	{kind = .Type, text = "monitor.procesess()"},
+	{kind = .Wait, text = "[console] error: no command has the name monitor.procesess; did you mean monitor.processes", fails_on = "connected console to the service monitor"},
+	{kind = .Type, text = "nothing.x()"},
+	{kind = .Wait, text = "[console] error: no command has the name nothing.x; try help()", fails_on = "cannot connect"},
+	{kind = .Type, text = "math.x()"},
+	{kind = .Wait, text = "[console] error: no command has the name math.x", fails_on = "cannot connect"},
+	{kind = .Type, text = "math.gcd(84, 36)"},
+	{kind = .Wait, text = "[console] error: cannot connect to math: root.Connect: the argument name names none of the services that run"},
+	{kind = .Type, text = "math.gcd(84, 36)"},
+	{kind = .Wait, text = "[console] error: cannot connect to math: root.Connect: the argument name names none of the services that run", fails_on = "no room for the service"},
+	{kind = .Type, text = "describe(\"math.gcd\")"},
+	{kind = .Wait, text = "[console] error: describe: no command and no word of Lex has the name math.gcd"},
+	// The arguments are forced before the call connects: a refused argument
+	// connects nothing.
+	{kind = .Type, text = "math.gcd(1 / 0, 2)"},
+	{kind = .Wait, text = "[console] error: division by zero", fails_on = "cannot connect"},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = "[console]   interrupts"},
 	{kind = .Type, text = "stop(\"paint\")"},
@@ -753,7 +781,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)"},
 	{kind = .Wait, text = "[console] 84"},
 	{kind = .Type, text = "area({x = 1, y = 2, widht = 3, height = 4})"},
-	{kind = .Wait, text = "[console] error: Rectangle has no field widht; its fields are x, y, width, height"},
+	{kind = .Wait, text = "[console] error: Rectangle has no field widht; did you mean width? Its fields are x, y, width, height"},
 	{kind = .Type, text = "area({x = 1, y = 2, width = 3})"},
 	{kind = .Wait, text = "[console] error: Rectangle needs the field height, which has no default"},
 	// The functions of Lex (docs/CONSOLE.md, "Functions and lists"): map on
@@ -779,6 +807,41 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one"},
 	{kind = .Type, text = "f = (x) => x"},
 	{kind = .Wait, text = "[console] error: a variable keeps no function"},
+	// A variable keeps a list, and a later line reads it as its own list
+	// (docs/CONSOLE.md, "Functions and lists"): map on it, an assignment
+	// that reads its old items, `let` with no `in` as an assignment, and a
+	// nested list. Then the bound: one item past it is refused and the
+	// variable keeps its old value; the bound itself is kept; a function in
+	// a list is refused.
+	{kind = .Type, text = "numbers = [1, 2, 3]"},
+	{kind = .Type, text = "map(numbers, (n) => n * n)"},
+	{kind = .Wait, text = "[console] [1, 4, 9]"},
+	{kind = .Type, text = "numbers = map(numbers, (n) => n + 1)"},
+	{kind = .Type, text = "numbers"},
+	{kind = .Wait, text = "[console] [2, 3, 4]"},
+	{kind = .Type, text = "let numbers = [[1, 2], [\"a\"], numbers]"},
+	{kind = .Type, text = "numbers"},
+	{kind = .Wait, text = "[console] [[1, 2], [\"a\"], [2, 3, 4]]", fails_on = "[console] error:"},
+	{kind = .Type, text = "numbers = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]"},
+	{kind = .Wait, text = "[console] error: a variable keeps a list of 64 items at most, the items of its nested lists included; this one has 65 or more"},
+	{kind = .Type, text = "numbers"},
+	{kind = .Wait, text = "[console] [[1, 2], [\"a\"], [2, 3, 4]]"},
+	{kind = .Type, text = "numbers = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]"},
+	{kind = .Type, text = "where(variables(), name = \"numbers\")"},
+	{kind = .Wait, text = "64 items", fails_on = "[console] error:"},
+	{kind = .Type, text = "numbers = [(n) => n]"},
+	{kind = .Wait, text = "[console] error: a variable keeps no function"},
+	// Help on one name: a word of Lex gives its guide, a fault of typing the
+	// names near it.
+	{kind = .Type, text = "describe(\"let\")"},
+	{kind = .Wait, text = "[console] let binds names for one expression"},
+	{kind = .Type, text = "describe(\"lte\")"},
+	{kind = .Wait, text = "[console] error: describe: no command and no word of Lex has the name lte; did you mean let"},
+	{kind = .Type, text = "help(\"let\")"},
+	{kind = .Wait, text = "[console] error: help takes no argument: use describe(\"let\") for the help on one name"},
+	// The hint of a function written with "->".
+	{kind = .Type, text = "map(numbers, n -> n * n)"},
+	{kind = .Wait, text = "[console] error: \"->\" is no operator: a function is written (n) => n * n"},
 	// The deepest line of calls of a command: 31 calls of hash inside each
 	// other and length in 197 bytes, a call of the host at the deepest
 	// place. It is the deepest line of the run so far, so its measure of
@@ -1487,6 +1550,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: the Markdown of its page: bold, italics, code, list items and links that open a page; no mark is left and no row passes the window: as it must", fails_on = "manual: the Markdown of its page: FAILED"},
 	{kind = .Move, text = "manual", to_x = 208, to_y = WINDOW_TITLE_ONLY_Y},
 	{kind = .Front, text = "console"},
+	// A call that nothing forces connects nothing: the body of a function
+	// with no call, and a "|>" in it, which the check before the parse
+	// reads.
+	{kind = .Type, text = "let f = () => manual.about(\"math\") in 1"},
+	{kind = .Wait, text = "[console] 1", fails_on = "connected console to the service manual"},
+	{kind = .Type, text = "let f = () => \"math\" |> manual.about() in 2"},
+	{kind = .Type, text = "6 * 7"},
+	{kind = .Wait, text = "[console] 42", fails_on = "connected console to the service manual"},
+	// A call of an export connects its service at its first use, as connect
+	// does; connect then gives the record of the connection that exists.
+	{kind = .Type, text = "manual.about(\"math\")"},
+	{kind = .Wait, text = "root: connected console to the service manual"},
+	{kind = .Wait, text = "[console] A module of commands: each command is a function"},
 	{kind = .Type, text = "connect(\"manual\")"},
 	{kind = .Wait, text = "[console]   module     manual"},
 	{kind = .Wait, text = "[console]   commands   17"},
@@ -2031,7 +2107,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "kept = output_counter.counts"},
 	{kind = .Wait, text = "[console] error: a variable keeps no Stream: a Stream is a wiring, and a variable outlives its line; first(s, n) or table(s) makes a Table"},
 	{kind = .Type, text = "output_counter.counts |> where(statut = 404)"},
-	{kind = .Wait, text = "[console] error: where: the records Counted have no field statut; their fields are serial, status"},
+	{kind = .Wait, text = "[console] error: where: the records Counted have no field statut; did you mean status? Their fields are serial, status"},
 	{kind = .Type, text = "output_counter.counts |> where(status = 404) |> first(3)"},
 	{kind = .Wait, text = "     8     404"},
 	{kind = .Wait, text = "[console] 3 rows of Counted"},
@@ -2058,7 +2134,7 @@ scenario := [?]Step {
 	// columns with the names of the fields: a name that the record lacks
 	// fails the line before any wiring; then the field that it keeps.
 	{kind = .Type, text = "output_counter.counts |> columns(statut)"},
-	{kind = .Wait, text = "[console] error: columns: the records Counted have no field statut; their fields are serial, status"},
+	{kind = .Wait, text = "[console] error: columns: the records Counted have no field statut; did you mean status? Their fields are serial, status"},
 	{kind = .Type, text = "output_counter.counts |> columns(status) |> first(2)"},
 	{kind = .Wait, text = "[console] 2 rows of Counted"},
 	// A record input of a module that does not run, by its typed name: no

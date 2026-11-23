@@ -38,7 +38,7 @@ sample_make :: proc(t: ^testing.T) -> (sample: Sample) {
 	records[1].size, records[1].first_field, records[1].field_count = 56, 1, 9
 	fields: [10]module.Field
 	fields[1] = named(&strings_table, "number", {offset = 0, type = u8(module.Type.Integer)})
-	fields[2] = named(&strings_table, "key", {offset = 8, type = u8(module.Type.Integer), unsigned = true})
+	fields[2] = named(&strings_table, "key", {offset = 8, type = u8(module.Type.Integer), unsigned = true, integer_unit = value_kinds.size_in(.Pages)})
 	fields[3] = named(&strings_table, "check", {offset = 16, type = u8(module.Type.Integer), detail = 4, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal)})
 	fields[4] = named(&strings_table, "handle", {offset = 20, type = u8(module.Type.Handle)})
 	fields[5] = named(&strings_table, "level", {offset = 24, type = u8(module.Type.Integer), detail = 1, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Log_Level)})
@@ -133,7 +133,16 @@ a_field_that_takes_no_operator_is_refused :: proc(t: ^testing.T) {
 	sample := sample_make(t)
 	_, found := field_find(sample.file, sample.record, "levle")
 	testing.expect(t, !found)
-	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "levle"}), "where: the records Sample have no field levle; their fields are " + SAMPLE_FIELDS)
+	// A field near by its letters, by its unit, or none; an empty name and a
+	// name far from each field get no suggestion.
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "levle"}), "where: the records Sample have no field levle; did you mean level? Their fields are " + SAMPLE_FIELDS)
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "pages"}), "where: the records Sample have no field pages; did you mean key? Their fields are " + SAMPLE_FIELDS)
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "nme"}), "where: the records Sample have no field nme; did you mean name? Their fields are " + SAMPLE_FIELDS)
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "smal"}), "where: the records Sample have no field smal; did you mean small? Their fields are " + SAMPLE_FIELDS)
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "chek"}), "where: the records Sample have no field chek; did you mean check? Their fields are " + SAMPLE_FIELDS)
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "zzzzzzzz"}), "where: the records Sample have no field zzzzzzzz; their fields are " + SAMPLE_FIELDS)
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = ""}), "where: the records Sample have no field ; their fields are " + SAMPLE_FIELDS)
+	testing.expect_value(t, refusal_text(.Unknown_Field, {command = "where", file = sample.file, record = sample.record, field = "e"}), "where: the records Sample have no field e; their fields are " + SAMPLE_FIELDS)
 	Case :: struct {
 		field:      string,
 		comparison: Comparison,

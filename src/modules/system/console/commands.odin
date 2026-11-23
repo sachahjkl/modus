@@ -254,6 +254,9 @@ commands_start :: proc "contextless" () {
 	// nothing. A help longer than its field ends with the cut mark:
 	// `describe(name)` gives it whole.
 	//
+	// `help` takes no argument: `describe(name)` gives the help on one
+	// name, and `help("let")` says so.
+	//
 	// ```
 	// > where(help(), name = "repeat")
 	// name    signature                      about
@@ -261,19 +264,31 @@ commands_start :: proc "contextless" () {
 	// 1 row of Command
 	// ```
 	command("help", {}, .Table, "the commands, one row each", help)
-	// Gives the signature and the whole help of one command, as a `Text`.
+	// Gives the help on one name, as a `Text`: a command gives its
+	// signature and its whole help; a word of Lex (`let`, `in`, `with`,
+	// `|>`, `_`, `=>`, `function`, `[`, `list`, `if`) or a name of the
+	// evaluation (`map`, `filter`) gives a short guide with an example;
+	// `where` and `connect` give both.
 	//
-	// - `name`: the name of a command, as `help()` gives it.
+	// - `name`: the name of a command, as `help()` gives it, or a word
+	//   of Lex.
 	//
-	// Error: "no command has the name ...".
-	command("describe", {.Text}, .Text, "the signature and the help of one command", describe)
+	// ```
+	// > describe("let")
+	// > describe("where")
+	// ```
+	//
+	// Error: "no command and no word of Lex has the name ...", with the
+	// names near it.
+	command("describe", {.Text}, .Text, "the help on one name: a command or a word of Lex", describe)
 	// Gives one row for each process that runs: the export `processes` of
 	// the service `monitor`, under a short name.
 	//
 	// The list of the processes is a fact of a service, not of the console:
 	// the command connects to `monitor` when the console has no connection
 	// to it yet, and calls `monitor.processes()`. The rows are those of that
-	// export: the slot, the name, the state, the pages, the handles, the
+	// export: the slot, the name, the state, the resident and the mapped
+	// pages, the handles, the
 	// threads, the processor time and the kernel entries of each process,
 	// and the hash of the file of a disk process, whose name is its
 	// nickname.
@@ -1053,24 +1068,7 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 // describe gives the signature and the whole help of one command. When two
 // commands have the name, it is the one that a call runs: the last one.
 describe :: proc "contextless" (arguments: []Value) -> Value {
-	found: ^Command
-	for &item in commands[:command_count] {
-		if item.name == arguments[0].text {
-			found = &item
-		}
-	}
-	if found == nil {
-		return fail("no command has the name ", arguments[0].text, "; help() gives the commands")
-	}
-	writer := system.Writer {
-		buffer = scratch[scratch_count:],
-	}
-	_, _ = signature_write(&writer, found, -1, true)
-	system.write_part(&writer, "\n")
-	system.write_part(&writer, found.about)
-	described := system.written(&writer)
-	scratch_count += len(described)
-	return {kind = .Text, text = described}
+	return help_topic(arguments[0].text)
 }
 
 // command_of_service gives the command of an export of a service that the
@@ -1658,26 +1656,13 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		command_count += 1
 	}
 	for index in 1 ..< module.count(file, .Exports) {
-		function, ok := module.function(file, index)
 		address, has_address := module.export_address(file, uintptr(base), index)
-		if !ok || !has_address || index == head.entry_export || !callable_by_console(file, function) {
-			continue
-		}
-		// callable_by_console refused each byte of no type; the border reads
-		// them again, and an export with such a byte is no command.
-		result_kind, result_ok := kind_of_type_word(function.result)
-		if !result_ok {
+		if !has_address || index == head.entry_export {
 			continue
 		}
 		item := &commands[command_count]
-		item^ = {
-			name            = module.string_at(file, function.name_offset, function.name_count),
-			about           = module.string_at(file, function.about_offset, function.about_count),
-			parameter_count = int(function.parameter_count),
-			result          = result_kind,
-			export          = index,
-			function        = function,
-			file            = file,
+		if !export_command_make(item, file, index) {
+			continue
 		}
 		if prefix != "" {
 			item.name = system.format(names[names_count:], prefix, ".", item.name)
@@ -1688,34 +1673,56 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		} else {
 			item.address = address
 		}
-		parameters_known := true
-		for word, parameter in function.parameters[:function.parameter_count] {
-			kind, kind_ok := kind_of_type_word(word)
-			if !kind_ok {
-				parameters_known = false
-				break
-			}
-			item.parameters[parameter] = kind
-			item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
-			// The description of the export states what its number counts,
-			// as a built-in command states it in `command`. A detail out of
-			// the contract comes from another party: the field is then a
-			// plain number.
-			if kind == .Integer {
-				item.parameter_units[parameter], _ = value_kinds.integer_unit_of_detail(function.parameter_details[parameter])
-			}
-		}
-		if !parameters_known {
-			continue
-		}
-		// The table of error details is the last parameter: the console
-		// gives it, and the command shows the parameters before it.
-		if details_index, has_details := module.error_details_parameter(file, function); has_details {
-			item.details_parameter = details_index + 1
-			item.parameter_count = details_index
-		}
 		command_count += 1
 	}
+}
+
+// export_command_make writes the command of the export index of a module
+// file, with the name of the export and no way to call it yet: the caller
+// gives its sandbox or its address. false: the console cannot call the
+// export (callable_by_console), or a byte of its description names no type.
+export_command_make :: proc "contextless" (item: ^Command, file: []u8, index: u32) -> bool {
+	function, ok := module.function(file, index)
+	if !ok || !callable_by_console(file, function) {
+		return false
+	}
+	// callable_by_console refused each byte of no type; the border reads
+	// them again, and an export with such a byte is no command.
+	result_kind, result_ok := kind_of_type_word(function.result)
+	if !result_ok {
+		return false
+	}
+	item^ = {
+		name            = module.string_at(file, function.name_offset, function.name_count),
+		about           = module.string_at(file, function.about_offset, function.about_count),
+		parameter_count = int(function.parameter_count),
+		result          = result_kind,
+		export          = index,
+		function        = function,
+		file            = file,
+	}
+	for word, parameter in function.parameters[:function.parameter_count] {
+		kind, kind_ok := kind_of_type_word(word)
+		if !kind_ok {
+			return false
+		}
+		item.parameters[parameter] = kind
+		item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
+		// The description of the export states what its number counts,
+		// as a built-in command states it in `command`. A detail out of
+		// the contract comes from another party: the field is then a
+		// plain number.
+		if kind == .Integer {
+			item.parameter_units[parameter], _ = value_kinds.integer_unit_of_detail(function.parameter_details[parameter])
+		}
+	}
+	// The table of error details is the last parameter: the console
+	// gives it, and the command shows the parameters before it.
+	if details_index, has_details := module.error_details_parameter(file, function); has_details {
+		item.details_parameter = details_index + 1
+		item.parameter_count = details_index
+	}
+	return true
 }
 
 // connect_service makes a connection to a service that runs, and makes each
@@ -3679,13 +3686,21 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 		type_writer := system.Writer {
 			buffer = type_buffer[:],
 		}
-		system.write_type(&type_writer, value.file, type_of_kind(value.kind), value.detail)
+		// A list has no type of the module contract: its kind names it.
+		if value.kind == .List {
+			system.write_part(&type_writer, kind_names[.List])
+		} else {
+			system.write_type(&type_writer, value.file, type_of_kind(value.kind), value.detail)
+		}
 		value_buffer: [128]u8
 		value_writer := system.Writer {
 			buffer = value_buffer[:],
 		}
 		switch value.kind {
-		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .List:
+			system.write_part(&value_writer, i64(value.detail))
+			system.write_part(&value_writer, value.detail == 1 ? " item" : " items")
+		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// No value, and bytes with no description: the cell stays empty.
 			// No variable keeps a Stream or a member not typed.
 		case .Integer:

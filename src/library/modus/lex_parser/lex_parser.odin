@@ -227,6 +227,7 @@ Refusal :: enum u8 {
 	If_Then_Missing           = 29, // `if <condition>` with no `then` after it.
 	If_Else_Missing           = 30, // `if <condition> then <value>` with no `else` after it.
 	Nesting_Too_Deep          = 31, // An expression nested deeper than the parser bound.
+	Thin_Arrow                = 32, // "->" where the line goes on: a function is written "(n) => n * n"; the place is the "->".
 }
 
 // Where a node is in its text: its first byte.
@@ -336,6 +337,9 @@ parse_with_limits :: proc "contextless" (text: string, lookup: Form_Lookup, tree
 	if allow_assignment {
 		name := read_name(&parser)
 		name_start := parser.position - len(name)
+		if name == "let" && let_assignment_read(&parser) {
+			return
+		}
 		if len(name) > 0 && equal_accept(&parser) {
 			if word_of_lex(name) {
 				tree.root = refuse(&parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE)
@@ -356,6 +360,40 @@ parse_with_limits :: proc "contextless" (text: string, lookup: Form_Lookup, tree
 		return
 	}
 	tree.root = expression
+}
+
+// let_assignment_read reads `let x = value` with no `in`, the parser just
+// past the word `let`: a principal at the console writes it to keep a
+// value, so it is the assignment `x = value`. It is that assignment only
+// when the line ends after the value with no refusal. Otherwise it gives
+// false with the tree and the parser as they were at the start of the
+// line, and the line is read again as an expression, whose `let` gives
+// its own refusals in their places; the parser stays past `let`, where
+// the reading of an assignment expects it.
+@(private)
+let_assignment_read :: proc "contextless" (parser: ^Parser) -> bool {
+	tree := parser.tree
+	let_end := parser.position
+	name := read_name(parser)
+	if len(name) > 0 && !word_of_lex(name) && equal_accept(parser) {
+		value := expression_read(parser)
+		if !refused(parser) && peek(parser) == 0 {
+			tree.root, tree.assigned_name = value, name
+			return true
+		}
+	}
+	tree.node_count, tree.refusal, tree.assigned_name = 0, {}, ""
+	parser^ = {
+		tree            = tree,
+		lookup          = parser.lookup,
+		line            = 1,
+		function        = NO_NODE,
+		multiline       = parser.multiline,
+		trailing_commas = parser.trailing_commas,
+		depth_limit     = parser.depth_limit,
+		position        = let_end,
+	}
+	return false
 }
 
 // node_at gives a node of a tree, or nil for NO_NODE and for an index past
@@ -483,7 +521,8 @@ child_append :: proc "contextless" (tree: ^Syntax_Tree, parent, child: Node_Inde
 // refuse adds the Refused node of the fault where the parse stops, with the
 // part that was read before it as its child, and keeps the refusal.
 @(private)
-refuse :: proc "contextless" (parser: ^Parser, refusal: Refusal, start, end: int, before: Node_Index, value: u64 = 0) -> Node_Index {
+refuse :: proc "contextless" (parser: ^Parser, expected_refusal: Refusal, expected_start, end: int, before: Node_Index, value: u64 = 0) -> Node_Index {
+	refusal, start := thin_arrow_instead(parser, expected_refusal, expected_start)
 	refusal_keep(parser, refusal, start, value)
 	node := node_add(parser, .Refused, start, end)
 	if node_kept := node_at(parser.tree, node); node_kept != nil {
@@ -491,6 +530,25 @@ refuse :: proc "contextless" (parser: ^Parser, refusal: Refusal, start, end: int
 		node_kept.first_child = before
 	}
 	return node
+}
+
+// thin_arrow_instead gives the refusal Thin_Arrow, at the "->", in place of
+// a refusal of a token that the line does not expect there, when that token
+// is "->": a principal who knows another language writes `n -> n * n` for a
+// function, and Lex has one form of a function, `(n) => n * n`, so the
+// error names that form rather than a missing ",".
+@(private)
+thin_arrow_instead :: proc "contextless" (parser: ^Parser, refusal: Refusal, start: int) -> (Refusal, int) {
+	// The refusals of a token where another one was expected.
+	expected_other := refusal == .Unexpected || refusal == .Close_Parenthesis_Missing || refusal == .Comma_Or_Close_Missing || refusal == .List_Close_Missing || refusal == .Literal_Close_Missing || refusal == .Let_In_Missing || refusal == .If_Then_Missing || refusal == .If_Else_Missing
+	if !expected_other {
+		return refusal, start
+	}
+	token := console_language.token_next(parser.tree.text, start, parser.multiline)
+	if token.kind == .Arrow {
+		return .Thin_Arrow, token.start
+	}
+	return refusal, start
 }
 
 // ---- The tokens. The parser reads them with the scanner of
@@ -654,6 +712,11 @@ sum_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		case '+':
 			operator = .Add
 		case '-':
+			// "->" is no subtraction: the sum ends, and the refusal of the
+			// token after it names the form of a function (Thin_Arrow).
+			if console_language.token_next(parser.tree.text, parser.position, parser.multiline).kind == .Arrow {
+				return left
+			}
 			operator = .Subtract
 		case:
 			return left

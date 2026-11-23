@@ -91,8 +91,12 @@ CARD_BEVEL_ALPHA :: 28
 // The column of the name holds a nickname of a disk process on one line; a
 // longer name of a process goes on more lines inside it.
 NAME_ROOM :: process_page.NICKNAME_LIMIT * graphics.CELL_WIDTH
-// The column of the pages: a count of pages of six digits and its gap.
-PAGES_COLUMN :: 68
+// The column of the resident pages: a count of pages of six digits and its
+// gap, or its title and its gap when the title is wider. The title is the
+// name of the field of the record Process that the column shows, so the
+// window and monitor.processes() name one value with one word.
+RESIDENT_NUMBER_ROOM :: 68
+RESIDENT_TITLE :: "resident"
 // The least bar of the share of a process: a bar shorter than it shows no
 // step of a share that a reader can tell apart.
 BAR_LEAST :: 100
@@ -178,7 +182,7 @@ TABLE_CARD_PADDING :: 4
 // The columns of the table of the processes, from the left.
 Process_Column :: enum u8 {
 	Name          = 0, // The name, or the nickname of a disk process with its hash prefix under it.
-	Pages         = 1, // The pages of the process.
+	Resident      = 1, // The resident pages of the process: its mapped pages that have a page frame.
 	Processor_Bar = 2, // The bar of its share of the processor: the column that takes the room left.
 	Share         = 3, // The share, in percent.
 }
@@ -302,7 +306,7 @@ monitor_layout :: proc "contextless" (width, height: int, tokens: layout.Element
 	// one; the share ends at the edge of the content.
 	columns := [Process_Column]layout.Table_Column {
 		.Name          = {width = NAME_ROOM + tokens.gap},
-		.Pages         = {width = PAGES_COLUMN},
+		.Resident      = {width = max(RESIDENT_NUMBER_ROOM, i32(interface.text_width(interface.FONT_CAPTION, RESIDENT_TITLE)) + tokens.gap)},
 		.Processor_Bar = {weight = 1, least = BAR_LEAST + tokens.gap},
 		.Share         = {width = SHARE_COLUMN},
 	}
@@ -561,7 +565,7 @@ table_chrome_draw :: proc "contextless" (table: ^interface.Draw_Table, tokens: l
 	y := header.y + (LINE - graphics.TEXT_CAPTION) / 2
 	gap := int(tokens.gap)
 	interface.draw_text(table, int(columns[.Name].x), y, "process", tokens.text_dim, interface.FONT_CAPTION)
-	interface.draw_text_right(table, int(columns[.Pages].x + columns[.Pages].width) - gap, y, "pages", tokens.text_dim, interface.FONT_CAPTION)
+	interface.draw_text_right(table, int(columns[.Resident].x + columns[.Resident].width) - gap, y, RESIDENT_TITLE, tokens.text_dim, interface.FONT_CAPTION)
 	interface.draw_text(table, int(columns[.Processor_Bar].x), y, "processor", tokens.text_dim, interface.FONT_CAPTION)
 	interface.draw_text_right(table, int(columns[.Share].x + columns[.Share].width), y, "share", tokens.text_dim, interface.FONT_CAPTION)
 }
@@ -735,7 +739,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					interface.draw_text(table, name_x, text_y + name_lines * text_line, string(prefix[:]), tokens.text_dim, interface.FONT_CAPTION_CELLS)
 				}
 				pages: interface.Text_Builder
-				interface.draw_text_right(table, int(columns[.Pages].x + columns[.Pages].width) - int(tokens.gap), text_y, interface.number_text(&pages, process.present_pages), tokens.text)
+				interface.draw_text_right(table, int(columns[.Resident].x + columns[.Resident].width) - int(tokens.gap), text_y, interface.number_text(&pages, process.present_pages), tokens.text)
 				// The share of the processor that a process took: a measure
 				// of a process, in the color of its intensity step.
 				gauge_draw(table, {int(columns[.Processor_Bar].x), y + (LINE - ROW_BAR_HEIGHT) / 2, bar_width, ROW_BAR_HEIGHT}, share, 100, graphics.colors.process, tokens, false)

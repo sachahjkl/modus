@@ -96,7 +96,7 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 | `Function` | A function of Lex, `(x) => x * 2`, with the bindings that its body reads | Its text: `(x) => x * 2` |
 | `List` | Values in order, `[1, 2, 3]` | `[2, 4, 6]` on one line when its items are integers, texts, members, functions or such lists; else each item in turn |
 
-`Stream`, `Function` and `List` are kinds of the console only: no export takes or gives one, and no variable keeps one ("Functions and lists").
+`Stream`, `Function` and `List` are kinds of the console only: no export takes or gives one. No variable keeps a `Stream` or a `Function`; a variable keeps a `List` ("Functions and lists").
 
 **A member** of an enum is a name after a dot: `.french`. It has no enum of its own: the parameter that receives it, an Enum parameter of an export, gives it one, as a Record parameter types a record literal ("Records"). A line names a member, never its number: the console writes the value that the module file gives to that member. A name that the enum does not have, and a member where the parameter is no Enum, are refused at the place of the member, before any argument of the call runs. A member that nothing receives, as the value of a line or of a variable, is refused. An export that gives an Enum, a getter as `settings.font()`, gives a value of the kind `Enum`, which a variable keeps and an Enum parameter of the same enum takes:
 
@@ -138,7 +138,7 @@ Here `columns` made a table of another record, with fewer fields, so the export 
 
 ### Variables
 
-`name = expression` keeps a value under a name for the lines after it. A name alone gives the value back; `name.field` gives one field of a record variable.
+`name = expression` keeps a value under a name for the lines after it. `let name = expression`, with no `in` after the value, is the same line. A name alone gives the value back; `name.field` gives one field of a record variable.
 
 ```
 > t = readings(4)
@@ -155,7 +155,8 @@ The bounds:
 - A table of 32 KiB of rows at most (`TABLE_KEPT`).
 - No `Bytes` value: "error: a variable keeps no Bytes value".
 - No `Stream`: a Stream is a wiring, and a variable outlives its line ("Streams").
-- No `Function` and no `List`: they read the values of their line, which end with the line ("Functions and lists").
+- No `Function`: a function reads the values of its line, which end with the line ("Functions and lists").
+- A `List` of 64 items at most, the items of its nested lists included, and 32 KiB of their texts and records. A list past a bound is refused with an error record `Over_Limit`, and the variable keeps its old value. A list in a variable holds no function, no table and no hash ("Functions and lists").
 - An expression with no value (a call of a command with no result) cannot be kept: "error: the expression has no value".
 
 `variables()` gives them as a table: the name, the type and the value as a text. A variable lives in the memory of the console: it does not survive a stop of the console.
@@ -207,9 +208,22 @@ A record is a group of named fields, as a module describes it. The command with 
 [5, 10]
 ```
 
-**The border.** No export and no command of the console takes a function or a list: such an argument is refused before the call runs. No variable keeps one. A function is code of Lex, and its body reads the values of its line, which end with the line.
+**The border.** No export and no command of the console takes a function or a list: such an argument is refused before the call runs. A function is code of Lex, and its body reads the values of its line, which end with the line: no variable keeps one.
 
-**The bounds of a line**: 256 calls of functions, 512 values of their bodies, 256 items in all its lists.
+**A variable keeps a list.** The line copies the items into the memory of the variable, and a later line reads them as a list of its own:
+
+```
+> x = [1, 2, 3]
+> map(x, (n) => n * n)
+[1, 4, 9]
+> x = map(x, (n) => n + 1)
+> x
+[2, 3, 4]
+```
+
+A list variable takes 64 items at most, the items of its nested lists included, and 32 KiB of the texts and records of its items. Its items are integers, booleans, texts, members, handles, records and such lists. A line that reads list variables copies their items among the 256 items of the line, once for each variable.
+
+**The bounds of a line**: 256 calls of functions, 512 values of their bodies, 256 items in all its lists, the items of the list variables that it reads included.
 
 ### Tables as values
 
@@ -434,9 +448,10 @@ A line that fails has one result: its error. The first error ends the line: the 
 | When | The sentence |
 |---|---|
 | No command has the name | `error: no command has the name x; try help()` |
+| No command has the name, and commands have names near it | `error: no command has the name proceses; did you mean processes?` |
 | A command named with no parentheses | `error: help is a command: write help(...)` |
-| No variable has the name | `error: no variable has the name x` |
-| A record variable has no such field | `error: Reading has no field x` |
+| No variable has the name | `error: no variable has the name x`, with `; did you mean ...?` when a variable has a name near it |
+| A record variable has no such field | `error: Reading has no field x; its fields are ...` |
 | The count of the arguments is wrong | `error: length takes 1 arguments, not 2` |
 | An argument has the wrong kind | `error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)` |
 | An operator on the wrong kinds | `error: "-" does not take Text and Text` |
@@ -451,6 +466,7 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A command after `\|>` with 12 arguments in its parentheses | `error: f has 12 arguments already, and \|> gives it one more: a call takes at most 12` |
 | A `\|` alone | `error: "\|" is no operator: the pipe operator is "\|>"` |
 | A field that the records do not have | `error: where: the records ... have no field x; their fields are ...` |
+| A field that the records do not have, with fields near it by their letters or by their unit | `error: where: the records Process have no field pages; did you mean resident or mapped? Their fields are ...` |
 | A value of the wrong kind for a field | `error: where: the field code is Integer, the value is Text` |
 | An export that fails | `error: manual.exports: the argument name names none of the modules (-1)`: the sentence of its error record (`MODULE_CONTRACT.md`, section 8), then the values of the record |
 | The root service refuses | `error: root.Stop: the argument name names a process of the system: ...`: the sentence of the error record of the root ring, then its values |
@@ -468,13 +484,16 @@ A line that fails has one result: its error. The first error ends the line: the 
 | `with` on another value than a record | `error: "with" composes a record with a record literal or a record, not Integer with a record literal` |
 | A binding of a `let` that needs its own value | `error: the binding a needs its own value: a let cannot read a binding in its own value` |
 | A word of Lex as a name | `error: with is a word of Lex, not a name` |
+| `->` where a function is expected: Lex has one form of a function, and no alias | `error: "->" is no operator: a function is written (n) => n * n`, with the parameters and the body of the line |
 | A parameter of a function named twice | `error: the parameter x is named twice in one function` |
 | A call of a function with another count of arguments | `error: f: the call gives 2 arguments, and the function takes 1 argument` |
 | `map` with another count of arguments | `error: map takes 2 arguments, a list and a function; the call gives 1 argument` |
 | An item of a list with no value, or a Stream | `error: a list holds no Stream: a Stream lives in the wiring of its line` |
 | A call of a name whose value is no function | `error: f is Integer, not a function: a call of a binding needs a function` |
 | A function or a list given to a command | `error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one` |
-| A function or a list kept by a variable | `error: a variable keeps no function: a function reads the values of its line, which end with the line` |
+| A function kept by a variable | `error: a variable keeps no function: a function reads the values of its line, which end with the line` |
+| The lists of a line past 256 items, list variables included | `error: the lists of the line hold more than 256 items in all`, with an error record `Over_Limit` |
+| A list past the bound of a variable | `error: a variable keeps a list of 64 items at most, the items of its nested lists included; this one has 65 or more`, with an error record `Over_Limit` |
 | `map` on another value than a list | `error: map: argument 1 is Integer, not a list` |
 | A recursion, or a line nested deeper than the stack of the evaluator | `error: the line nests deeper than the stack of the evaluator holds: 524288 bytes; it stopped at column 16` |
 | A `_` that is no whole argument of the call on the right of `\|>` | `error: \|>: _ is a whole argument of f, not a part of an expression` |
@@ -573,7 +592,7 @@ When the export has a table of error details and wrote more than one detail, one
 | Command | Result | What it gives |
 |---|---|---|
 | `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
-| `describe(name)` | Text | The signature and the whole help of one command |
+| `describe(name)` | Text | The help on one name: the signature and the whole help of a command, or a short guide with an example to a word of Lex ("Help on one name") |
 | `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), name = "visitor"), name, hash)` |
 | `debug(process)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
 | `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged process: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
@@ -685,6 +704,24 @@ A fact that a service holds is an export of that service, and the console calls 
 | `process_modules()`, `memory()`, `locks()`, `work(process)` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the processes, and `monitor.counts()` the counts, when those processes run |
 | `load`, `isolate`, `isolate_memory`, `unload`, `loaded`, `buffer`, `byte`, `bytes`, `release` | The console itself: its command table, its modules, its handles |
 | `help`, `describe`, `variables`, `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`, `row`, `time`, `hash`, `length`, `text`, `repeat`, `language`, `clear`, `history_clear`, `measure_completion`, `shutdown` | The language and the console itself |
+
+**A call of an export connects its service.** `monitor.processes()` before `connect("monitor")` connects the service first, as `connect("monitor")` does, then calls the export. The console asks for the connection only when a module of the boot image has the name before the period and its module file has the export after it: the signature comes from that file, the arguments are forced first, and the call then connects. A call that the line does not force, and the check of a `|>` before the line runs, connect nothing. The root service checks the connection as it checks `connect`, starts a service that starts at its first connection, and logs it. A module that is no service, or that the principal may not connect, fails the line with the refusal of `connect`, adds no command, and frees the slot of the connection. A name of an export that the file does not have gets the near names, `monitor.procesess()` gives `did you mean monitor.processes?`, and asks for no connection.
+
+### Help on one name
+
+`help()` is the table of the commands, and takes no argument: `help("let")` fails with `error: help takes no argument: use describe("let") for the help on one name, a command or a word of Lex`. `describe(name)` gives a text about one name:
+
+- A command: its signature and its whole help.
+- A word of Lex or a name of the evaluation: `let`, `in`, `with`, `|>`, `_`, `=>`, `function`, `[`, `list`, `if`, `map`, `filter`: a short guide with an example.
+- `where` and `connect`: both.
+- Any other name fails with the names near it: `error: describe: no command and no word of Lex has the name lte; did you mean let?`.
+
+```
+> describe("let")
+let binds names for one expression: let a = 2, b = a * 3 in a + b gives 8. ...
+```
+
+**The names near a name.** A name that no command, variable, field or topic has gets the names that are one to three edits away: an insertion, a deletion, a change of one character, or two neighbour characters in the other order. A name of 0 to 2 characters gets no suggestion, because one edit of it is any short name. A name of 3 or 4 characters takes 1 edit, a name of up to 8 characters 2 edits, and a longer name 3. An error names 3 names at most, the nearest first. A field whose unit is the name comes first: `pages` gives `resident` and `mapped`, which count pages. The search runs only when a line fails, never at a key.
 
 `modules`, `replacements`, `process_modules`, `memory` and `locks` stay in the console because the processes that serve the same facts (`manual`, `monitor`) do not run at each boot, and these commands must work with no other process. The stores are a fact of the storage service: the console has no built-in command for them, and calls `storage.stores()` and `storage.usage()`.
 

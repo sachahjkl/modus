@@ -470,6 +470,90 @@ parse_assignments :: proc(t: ^testing.T) {
 	testing.expect_value(t, tree.assigned_name, "a.b")
 }
 
+// "->" where the line goes on is the refusal Thin_Arrow at the "->", in
+// place of the refusal of the token that the parser expected: in a call, a
+// list, a literal, a let and at the end of a line. A "->" with no value
+// before it keeps its own refusal, and "=>" makes a function.
+@(test)
+parse_thin_arrow :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:    string,
+		refusal: Refusal,
+		column:  u32,
+	}
+	cases := []Case {
+		// A "->" with no value before it is a "-" before ">".
+		{"->", .Unexpected, 2},
+		{"f(->)", .Unexpected, 4},
+		{"n -> n * n", .Thin_Arrow, 3},
+		{"map(x, n -> n * n)", .Thin_Arrow, 10},
+		{"map(x, n->n*n)", .Thin_Arrow, 9},
+		{"map(x, (n) -> n * n)", .Thin_Arrow, 12},
+		{"[1, n -> n]", .Thin_Arrow, 7},
+		{"{a = n -> n}", .Thin_Arrow, 8},
+		{"let f = n -> n in f(1)", .Thin_Arrow, 11},
+		{"x = n -> n", .Thin_Arrow, 7},
+		{"g() + (n -> n)", .Thin_Arrow, 10},
+		{"let x = n -> n", .Thin_Arrow, 11},
+		{"map(x, n => n)", .Comma_Or_Close_Missing, 10},
+		{"map(x, (n) => n * n)", .None, 0},
+	}
+	for item in cases {
+		tree := parse_of(item.text)
+		testing.expectf(t, tree.refusal.refusal == item.refusal && (item.refusal == .None || tree.refusal.place.column == item.column), "%q: %v at column %d, not %v at column %d; %q", item.text, tree.refusal.refusal, tree.refusal.place.column, item.refusal, item.column, tree_form(tree, tree.root))
+	}
+}
+
+// `let x = value` with nothing after the value is the assignment
+// `x = value`; each other form of `let` is the expression, with its own
+// refusals in their places, as if the first reading had not happened.
+@(test)
+parse_let_assignments :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:     string,
+		assigned: string,
+		refusal:  Refusal,
+		column:   u32,
+		form:     string,
+	}
+	cases := []Case {
+		// The refusals first: no name, a word of Lex, "==", no value, an
+		// open list, a second binding, a value then more text.
+		{"let", "", .Let_Name_Missing, 4, "let(!Let_Name_Missing)"},
+		{"let = 1", "", .Word_As_Name, 1, "!Word_As_Name"},
+		{"let in = 1", "", .Word_As_Name, 5, "let(!Word_As_Name)"},
+		{"let _ = 1", "", .Word_As_Name, 5, "let(!Word_As_Name)"},
+		{"let x == 1", "", .Let_Equal_Missing, 7, "let(!Let_Equal_Missing)"},
+		{"let x =", "", .Line_Ends_Too_Soon, 8, "let(x = !Line_Ends_Too_Soon)"},
+		{"let x = [1, 2", "", .List_Close_Missing, 14, ""},
+		{"let a = 1, b = 2", "", .Let_In_Missing, 17, "let(a = 1; b = 2; !Let_In_Missing)"},
+		{"let a = 1 a", "", .Let_In_Missing, 11, "let(a = 1; !Let_In_Missing)"},
+		// The expression let, which keeps its meaning.
+		{"let a = 1 in a", "", .None, 0, "let(a = 1; @a)"},
+		// A name that starts with let is a name.
+		{"letter = 1", "letter", .None, 0, "1"},
+		// The assignments.
+		{"let a = 1", "a", .None, 0, "1"},
+		{"let  x   =  2 * 3 ", "x", .None, 0, "(2 * 3)"},
+		{"let x = [1, 2, 3]", "x", .None, 0, ""},
+	}
+	for item in cases {
+		tree := parse_of(item.text)
+		form := tree_form(tree, tree.root)
+		testing.expectf(t, tree.refusal.refusal == item.refusal && tree.assigned_name == item.assigned, "%q: %v, assigned %q; not %v, %q", item.text, tree.refusal.refusal, tree.assigned_name, item.refusal, item.assigned)
+		if item.refusal != .None {
+			testing.expectf(t, tree.refusal.place.column == item.column, "%q: column %d, not %d", item.text, tree.refusal.place.column, item.column)
+		}
+		if item.form != "" {
+			testing.expectf(t, form == item.form, "%q: %q, not %q", item.text, form, item.form)
+		}
+	}
+	// The assigned value keeps its places in the line.
+	tree := parse_of("let x = [1, 2, 3]")
+	testing.expect_value(t, node_at(tree, tree.root).kind, Node_Kind.List_Literal)
+	testing.expect_value(t, node_at(tree, tree.root).place, Place{line = 1, column = 9, offset = 8})
+}
+
 // The place of each node, and what a condition keeps for the member of a
 // status: its value, and whether the first token is the whole value.
 @(test)
@@ -594,7 +678,7 @@ parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 		{"let", .Let_Name_Missing, 4, "let(!Let_Name_Missing)"},
 		{"let 1 = 2 in 3", .Let_Name_Missing, 5, "let(!Let_Name_Missing)"},
 		{"let a", .Let_Equal_Missing, 6, "let(!Let_Equal_Missing)"},
-		{"let a = 1", .Let_In_Missing, 10, "let(a = 1; !Let_In_Missing)"},
+		{"let a = 1, b = 2", .Let_In_Missing, 17, "let(a = 1; b = 2; !Let_In_Missing)"},
 		{"let a = 1 a", .Let_In_Missing, 11, "let(a = 1; !Let_In_Missing)"},
 		{"let a = 1, a = 2 in a", .Let_Name_Twice, 12, "let(a = 1; !Let_Name_Twice)"},
 		{"let in = 1 in 2", .Word_As_Name, 5, "let(!Word_As_Name)"},

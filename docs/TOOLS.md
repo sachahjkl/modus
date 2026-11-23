@@ -58,7 +58,7 @@ The monitor takes one sample each 500 ms and draws its window after each sample.
    - **Processor**: the processor time of all the processes in the last sample, the processes, and the processors.
    - **Kernel**: the kernel entries and the interrupts since the start of the machine, and the waits of the locks of the kernel of all their takes, with the kind that waited most when it fits. The gauge is the share of the takes that waited.
 2. Three graph cards of the last minute: the last 120 samples, the newest at the right edge. The header of each card gives its scale, its value now and its peak of the minute.
-3. The table of the processes: one row for each process, with its name, its pages, and its share of the processor in the last 500 ms, as a bar and in percent. The rows that do not fit are counted on the last line; `monitor.processes()` gives them all.
+3. The table of the processes: one row for each process, with its name, its resident pages, and its share of the processor in the last 500 ms, as a bar and in percent. The rows that do not fit are counted on the last line; `monitor.processes()` gives them all.
 
 | Graph | What one sample shows | Color | Scale |
 |---|---|---|---|

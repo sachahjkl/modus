@@ -446,6 +446,50 @@ field_names_write :: proc "contextless" (writer: ^sentence.Writer, file: []u8, r
 	}
 }
 
+// nearest_fields gives the fields of a record near a name that none of them
+// has: first each Integer field that counts in the unit that the name says
+// ("pages" for a field counted in pages), then each field whose name is a
+// few edits away (console_language.nearest_names_start).
+nearest_fields :: proc "contextless" (file: []u8, record: module.Record, wanted: string) -> console_language.Nearest_Names {
+	nearest := console_language.nearest_names_start(wanted)
+	for number in 0 ..< record.field_count {
+		item := module.field(file, record, number) or_continue
+		if item.type != u8(module.Type.Integer) {
+			continue
+		}
+		unit := value_kinds.integer_unit_text(item.integer_unit)
+		// The text of a unit starts with its space: " pages".
+		if len(unit) > 1 && unit[1:] == wanted {
+			console_language.nearest_name_keep(&nearest, module.string_at(file, item.name_offset, item.name_count), 0)
+		}
+	}
+	for number in 0 ..< record.field_count {
+		item := module.field(file, record, number) or_continue
+		console_language.nearest_name_offer(&nearest, module.string_at(file, item.name_offset, item.name_count))
+	}
+	return nearest
+}
+
+// nearest_names_write writes "; did you mean a, b or c?" for the names of a
+// search, and nothing when it kept none.
+nearest_names_write :: proc "contextless" (writer: ^sentence.Writer, nearest: ^console_language.Nearest_Names) {
+	found := console_language.nearest_names_found(nearest)
+	for name, index in found {
+		switch {
+		case index == 0:
+			sentence.write_part(writer, "; did you mean ")
+		case index == len(found) - 1:
+			sentence.write_part(writer, " or ")
+		case:
+			sentence.write_part(writer, ", ")
+		}
+		sentence.write_part(writer, name)
+	}
+	if len(found) > 0 {
+		sentence.write_part(writer, "?")
+	}
+}
+
 // members_write writes the names of the members of a contract enum,
 // separated by ", ".
 members_write :: proc "contextless" (writer: ^sentence.Writer, which: value_kinds.Contract_Enum) {
@@ -504,7 +548,9 @@ refusal_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal,
 		part(writer, record_name)
 		part(writer, " have no field ")
 		part(writer, details.field)
-		part(writer, "; their fields are ")
+		nearest := nearest_fields(details.file, details.record, details.field)
+		nearest_names_write(writer, &nearest)
+		part(writer, nearest.count > 0 ? " Their fields are " : "; their fields are ")
 		field_names_write(writer, details.file, details.record)
 	case .Not_Comparable:
 		part(writer, command)
