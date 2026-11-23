@@ -14,7 +14,7 @@ Do not use: real address, bus address.
 
 Device memory is a memory object over the registers of a device, at physical addresses that are not memory of the kernel, and mapped with no cache.
 
-Device memory gives a device service the registers of its device as an ordinary memory object, with a handle and its rights. The root service makes one with `Device_Create`, the kind `Memory`, for each base address register of the device. The kernel refuses a range that meets free or loaded memory. A mapping uses no cache, because a read of a register has an effect. A mapping with `Write_Combining` is write-combining in place: for a shared region of the device, not for its registers. Device memory is not the memory where a device moves data, such as the data region. It pays nothing from a budget.
+Device memory gives a device service the registers of its device as a memory object with a handle. The root service makes one with `Device_Create`, the kind `Memory`, for each base address register of the device. The kernel refuses a range that meets free or loaded memory. A mapping uses no cache, because a read of a register has an effect; the flag `Write_Combining` asks for write-combining, for a shared region of the device. Device memory is not the memory where a device moves data. It pays nothing from a budget.
 
 The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
@@ -24,7 +24,7 @@ Do not use: MMIO region, BAR mapping.
 
 Write-combining is a cache type of a mapping in which the processor gathers the writes in a buffer and sends them to the device in bursts, and caches no read.
 
-It serves device memory that the processor fills and the device reads, such as the shared region of a virtual GPU: a mapping with no cache makes each write of 8 bytes one bus transaction. A device service asks for it with the flag `Write_Combining` of `Memory_Map`, on device memory only; the kernel gives it with an entry of the page attribute table that it writes on each processor at its start. It is not a cache: a read reaches the device each time, and a write reaches it at the latest at the next fence.
+It serves device memory that the processor fills and the device reads, such as the shared region of a virtual GPU, where a mapping with no cache makes each write one bus transaction. A device service asks for it with the flag `Write_Combining` of `Memory_Map`, on device memory only. It is not a cache: a read reaches the device each time, and a write reaches it at the latest at the next fence.
 
 The design: `src/md/features/gpu_access.md`, "Write-combining device memory".
 
