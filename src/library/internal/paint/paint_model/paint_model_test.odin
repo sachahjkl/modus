@@ -755,7 +755,34 @@ Read_Outcome :: enum {
 	Absent, // No object of the picture.
 	Old,
 	New,
-	Neither, // A mix, a damage: what a document never is (docs/PROPERTIES.md, "Persistence: no save action, and versions for all processes").
+	Other, // A whole valid picture that is neither: a stroke came during the keep.
+	Damaged, // What a document never is (docs/PROPERTIES.md, "Persistence: no save action, and versions for all processes").
+}
+
+@(private = "file")
+memory_remove :: proc(store: ^Memory_Store, name: string) {
+	if object, found := store.objects[name]; found {
+		delete(object.committed)
+		delete(object.pending)
+		free(object)
+		delete_key(&store.objects, name)
+	}
+}
+
+// memory_open does what the open of the store does to its objects: it
+// removes each temporary object of a keep.
+@(private = "file")
+memory_open :: proc(store: ^Memory_Store) {
+	partials: [dynamic]string
+	defer delete(partials)
+	for name in store.objects {
+		if _, is_partial := partial_name_of_object(name); is_partial {
+			append(&partials, name)
+		}
+	}
+	for name in partials {
+		memory_remove(store, name)
+	}
 }
 
 @(private = "file")
@@ -765,7 +792,7 @@ memory_read :: proc(store: ^Memory_Store, old, new: ^Picture, scratch: ^Picture)
 		return .Absent
 	}
 	if picture_decode(object.committed[:], scratch) != .None {
-		return .Neither
+		return .Damaged
 	}
 	same :: proc(first, second: ^Picture) -> bool {
 		if first.width != second.width || first.height != second.height {
@@ -785,18 +812,21 @@ memory_read :: proc(store: ^Memory_Store, old, new: ^Picture, scratch: ^Picture)
 	if old != nil && same(scratch, old) {
 		return .Old
 	}
-	return .Neither
+	return .Other
 }
 
 // memory_keep runs a whole keep of a picture on a store in memory, piece by
 // piece as the job does, and reads the picture after each commit. It gives
-// the outcomes, in their order, and the count of commits.
+// the outcomes, in their order. stroke_after_piece: after that piece, a
+// stroke changes the picture, as a principal who draws while a keep runs.
+// stop_after_commit: the process stops after that commit, with the keep
+// unfinished.
 @(private = "file")
-memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, picture, old: ^Picture, scratch: ^Picture) -> (outcomes: [dynamic]Read_Outcome) {
+memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, picture, old: ^Picture, scratch: ^Picture, stroke_after_piece := -1, stop_after_commit := -1) -> (outcomes: [dynamic]Read_Outcome) {
 	buffer := make([]u8, FILE_HEADER_BYTES + KEEP_PIECE_BYTES, context.temp_allocator)
 	pixels := ([^]u8)(raw_data(picture.pixels))[:PICTURE_BYTES]
 	keep_begin(state, picture.width, picture.height)
-	for state.keeping {
+	for piece_index := 0; state.keeping; piece_index += 1 {
 		piece := keep_piece(state)
 		name := piece.object == .Partial ? "sky.partial" : "sky.picture"
 		if piece.bytes > 0 {
@@ -812,12 +842,21 @@ memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, pic
 		if piece.commit {
 			memory_commit(store, name)
 			append(&outcomes, memory_read(store, old, picture, scratch))
+			if len(outcomes) - 1 == stop_after_commit {
+				return outcomes
+			}
 		}
 		if piece.rename {
 			testing.expect(t, memory_rename(store, "sky.partial", "sky.picture"))
 			append(&outcomes, memory_read(store, old, picture, scratch))
 		}
 		keep_piece_written(state, piece)
+		if piece_index == stroke_after_piece {
+			// A stroke down the whole height: its top rows are written
+			// already, its bottom rows not yet.
+			segment_draw(picture, 7, 0, 7, picture.height - 1, 3, 0xFF0000)
+			changed_rows_add(&state.rows, {5, 0, 10, picture.height}, 1000)
+		}
 	}
 	return outcomes
 }
@@ -891,6 +930,102 @@ each_commit_of_a_keep_holds_one_whole_picture :: proc(t: ^testing.T) {
 		testing.expectf(t, outcome == wanted, "back to the slot 0, after the commit %d: %v", index, outcome)
 	}
 	testing.expect(t, state.slot == 0)
+	delete(outcomes)
+}
+
+// A stroke between two pieces of a large keep is committed in part: each
+// commit still holds a whole valid picture, and the next keep makes the
+// store equal to the window.
+@(test)
+a_stroke_during_a_large_keep_is_completed_by_the_next_keep :: proc(t: ^testing.T) {
+	store: Memory_Store
+	defer memory_store_free(&store)
+	first := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	defer delete(first.pixels)
+	second := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	defer delete(second.pixels)
+	scratch := picture_make(1, 1)
+	defer delete(scratch.pixels)
+	state := Keep_State{store_open = true, started = true, named = true}
+	outcomes := memory_keep(t, &store, &state, &first, nil, &scratch)
+	delete(outcomes)
+	copy(second.pixels, first.pixels)
+	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
+		segment_draw(&second, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(0x020000 + row))
+	}
+	changed_rows_add(&state.rows, {0, 0, PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT}, 100)
+	// Past the first commit: the stroke reaches the later pieces only.
+	pieces_of_a_commit := KEEP_COMMIT_BYTES / KEEP_PIECE_BYTES
+	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch, stroke_after_piece = pieces_of_a_commit + 2)
+	testing.expect_value(t, state.form, Keep_Form.Other_Slot)
+	for outcome, index in outcomes[:len(outcomes) - 1] {
+		testing.expectf(t, outcome == .Old, "before the header, after the commit %d: %v", index, outcome)
+	}
+	testing.expect_value(t, outcomes[len(outcomes) - 1], Read_Outcome.Other)
+	testing.expect(t, state.rows.changed, "the rows of the stroke wait for the next keep")
+	delete(outcomes)
+	// The next keep, due at most 5 s after the stroke.
+	testing.expect_value(t, keep_due_time(&state.rows), u64(1000 + KEEP_PAUSE_MILLISECONDS))
+	outcomes = memory_keep(t, &store, &state, &second, nil, &scratch)
+	for outcome in outcomes {
+		testing.expect(t, outcome != .Damaged)
+	}
+	testing.expect_value(t, outcomes[len(outcomes) - 1], Read_Outcome.New)
+	delete(outcomes)
+}
+
+// A stop before the rename of a large first keep leaves a temporary object
+// and no picture; the open removes it, and only it; the next first keep of
+// the same name makes the picture.
+@(test)
+the_open_removes_the_temporary_object_of_a_stopped_keep :: proc(t: ^testing.T) {
+	// The names: only a name of a picture with the suffix.
+	for refused in ([]string{"", ".partial", "sky.picture", "sky.partialx", "Sky.partial", "a b.partial", "sky.partial.partial"}) {
+		_, ok := partial_name_of_object(refused)
+		testing.expectf(t, !ok, "%q is no temporary object", refused)
+	}
+	room: Object_Name
+	_, room_ok := partial_object_name(&room, "")
+	testing.expect(t, !room_ok)
+	object, ok := partial_object_name(&room, "sky")
+	testing.expect(t, ok && object == "sky.partial")
+	name, _ := partial_name_of_object(object)
+	testing.expect_value(t, name, "sky")
+	_, is_picture := picture_name_of_object(object)
+	testing.expect(t, !is_picture, "the list shows no picture of a temporary object")
+
+	store: Memory_Store
+	defer memory_store_free(&store)
+	picture := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	defer delete(picture.pixels)
+	scratch := picture_make(1, 1)
+	defer delete(scratch.pixels)
+	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
+		segment_draw(&picture, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(row))
+	}
+	memory_write(&store, "other.picture", 0, {1})
+	memory_commit(&store, "other.picture")
+	memory_write(&store, "a b.partial", 0, {1})
+	memory_commit(&store, "a b.partial")
+	state := Keep_State{store_open = true, started = true, named = true}
+	outcomes := memory_keep(t, &store, &state, &picture, nil, &scratch, stop_after_commit = 1)
+	testing.expect_value(t, len(outcomes), 2)
+	testing.expect_value(t, outcomes[1], Read_Outcome.Absent)
+	delete(outcomes)
+	_, has_partial := store.objects["sky.partial"]
+	testing.expect(t, has_partial, "the stop left the temporary object")
+
+	memory_open(&store)
+	_, has_partial = store.objects["sky.partial"]
+	testing.expect(t, !has_partial, "the open removed it")
+	_, has_other := store.objects["other.picture"]
+	_, has_foreign := store.objects["a b.partial"]
+	testing.expect(t, has_other && has_foreign, "the open removes nothing else")
+
+	fresh := Keep_State{store_open = true, started = true, named = true}
+	outcomes = memory_keep(t, &store, &fresh, &picture, nil, &scratch)
+	testing.expect_value(t, fresh.form, Keep_Form.New_Object)
+	testing.expect_value(t, outcomes[len(outcomes) - 1], Read_Outcome.New)
 	delete(outcomes)
 }
 

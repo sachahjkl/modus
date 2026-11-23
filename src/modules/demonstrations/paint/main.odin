@@ -39,6 +39,8 @@ import "modus:contract/accessibility"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:contract/module"
+import "modus:contract/reference_screen"
+import "modus:contract/scale_factor"
 import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
@@ -72,25 +74,35 @@ LARGEST_HEIGHT :: 864
 //   fill_memory         73  the bitmap and the stack of a fill
 //   piece_bytes          9  one piece of a keep, and the header of a read
 //
-// The window: 1536 x 864 logical pixels are 2112 x 1188 pixels at the
-// largest scale, 4 bytes each, two pictures: 4901 pages. A resize holds the
-// old surface and the new one together until the compositor shows the new
-// one, so the working memory holds a second surface: 4901 pages. It also
-// holds the least budget of 2048 pages less a window of 480 x 320 (300
-// pages): 1748 pages for the stack, the tables and the glyph memory; the
-// glyph memory of the copy of the text rendering of the drawing module, 354
+// The window: 1536 x 864 logical pixels at the largest scale, cut on each
+// axis to the reference screen as the tool counts it
+// (src/md/features/desktop_to_browser.md, "The budgets"): 1920 x 1080
+// pixels, 4 bytes each, two pictures: 4050 pages. A resize holds the old
+// surface and the new one together until the compositor shows the new one,
+// so the working memory holds a second surface: 4050 pages. It also holds
+// the least budget of 2048 pages less a window of 480 x 320 (300 pages):
+// 1748 pages for the stack, the tables and the glyph memory; the glyph
+// memory of the copy of the text rendering of the drawing module, 354
 // pages (display.TEXT_MEMORY_PAGES); and 48 pages, the stack of the worker
 // thread past the 16 pages that the tool counts for a thread.
-// 4901 + 1748 + 354 + 48 = 7051.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7051, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// 4050 + 1748 + 354 + 48 = 6200. The tool reads the literal; a check below
+// ties it to these parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6200, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
 // The check of the sum against the cap, at compile time: an array that
 // grows past the cap stops the build here.
 PAGE_BYTES :: 4096
 PAGES_MARGIN :: 512
-WINDOW_PAGES :: (2 * 2112 * 1188 * 4 + PAGE_BYTES - 1) / PAGE_BYTES
-#assert(WINDOW_PAGES == 4901)
-#assert(2112 == (LARGEST_WIDTH * 11 + 7) / 8 && 1188 == (LARGEST_HEIGHT * 11 + 7) / 8)
+// The rule of the tool (scale_factor.window_surface_largest), from the same
+// constants: a constant cannot call the procedure. The cut holds because
+// the window is resizable with a least size within the logical screen at
+// the largest scale: the budget states that least size, and the tool checks
+// it against the call of resizable_set.
+#assert(LEAST_WIDTH > 0 && LEAST_HEIGHT > 0 && LEAST_WIDTH <= scale_factor.LARGEST_LOGICAL_WIDTH && LEAST_HEIGHT <= scale_factor.LARGEST_LOGICAL_HEIGHT)
+WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
+WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
+WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
+#assert(MODULE_BUDGET.working_memory_pages == WINDOW_PAGES + 1748 + display.TEXT_MEMORY_PAGES + 48)
 // The code, the data past the arrays, and the stacks of the two threads
 // that the tool counts (72 and 19 pages): a bound over the measured module.
 MODULE_PAGES_BOUND :: 512
@@ -178,10 +190,6 @@ job_name_counts: [PICTURE_LIST_CAPACITY]int
 // of the model: keep.rows holds the changed rows.
 current_name: [paint_model.NAME_LIMIT]u8
 current_name_count: int
-// The suffix of the temporary object of a large first keep, which the list
-// ignores.
-PARTIAL_SUFFIX :: ".partial"
-#assert(len(PARTIAL_SUFFIX) <= len(paint_model.OBJECT_SUFFIX))
 keep: paint_model.Keep_State
 
 Store_Act :: enum u8 {
@@ -412,7 +420,7 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			return
 		}
 		request.opened = true
-		store_list(request)
+		store_list(request, remove_partials = true)
 	case .Keep:
 		if !valid {
 			request.act_failed = true
@@ -426,9 +434,7 @@ store_job :: proc "contextless" (parameter: rawptr) {
 		target := object
 		partial_room: paint_model.Object_Name
 		if piece.object == .Partial {
-			partial_room.count = copy(partial_room.bytes[:], string(request.name[:request.name_count]))
-			partial_room.count += copy(partial_room.bytes[partial_room.count:], PARTIAL_SUFFIX)
-			target = string(partial_room.bytes[:partial_room.count])
+			target, _ = paint_model.partial_object_name(&partial_room, string(request.name[:request.name_count]))
 		}
 		error: errors.Error_Record
 		if piece.bytes > 0 {
@@ -539,8 +545,12 @@ store_job :: proc "contextless" (parameter: rawptr) {
 
 // store_list lists each page of the store into the names of the job. A
 // failed list leaves the names of the window as they were; the act before
-// it stands.
-store_list :: proc "contextless" (request: ^Store_Request) {
+// it stands. remove_partials: the open of the store removes each temporary
+// object that a stop before its rename left; no keep runs before the open,
+// so none is in use (src/md/features/paint_application.md, "Each committed
+// state is one whole picture"). A remove that fails leaves the object,
+// which the next open tries again.
+store_list :: proc "contextless" (request: ^Store_Request, remove_partials := false) {
 	request.listed_count, request.newest, request.list_whole = 0, -1, false
 	newest_generation := i64(min(i64))
 	after := ""
@@ -562,6 +572,13 @@ store_list :: proc "contextless" (request: ^Store_Request) {
 			}
 			object := string(listed_name_bytes[row.name_offset:][:row.name_count])
 			last = object
+			if _, is_partial := paint_model.partial_name_of_object(object); is_partial && remove_partials {
+				error: errors.Error_Record
+				if _, remove_status := storage.remove(&client, storage.ROOT, object, &error); remove_status != .Ok {
+					system.log_fact(.Warning, Store_Call_Failed{status = u64(remove_status), act = value_kinds.text_field("remove", 16)})
+				}
+				continue
+			}
 			name, is_picture := paint_model.picture_name_of_object(object)
 			if !is_picture {
 				continue
@@ -1368,6 +1385,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if interface.background_work_start(&work) == .Ok {
 		store_ask(.Open, "")
 	} else {
+		// No worker, so no open will be taken: the picture may change from
+		// now, and nothing is kept.
+		keep.started = true
+		message = "no worker thread: nothing is kept"
 		system.log_fact(.Info, No_Store{})
 	}
 	system.log_fact(.Info, Running{})

@@ -72,7 +72,9 @@ import "modustool:foundation"
 //     MODULE_BUDGET : system.Stated_Budget : {...}; each part an integer
 //     literal from 1, decimal or with a prefix 0x, 0o or 0b; a window part
 //     also the name of a constant of the package whose value is one integer
-//     literal; a part left out 0; a comment before it that gives the
+//     literal; the parts window_least_width and window_least_height only
+//     such names, the same that each call of resizable_set in the package
+//     passes as its least size (budget_resizable_check); a part left out 0; a comment before it that gives the
 //     reasons; at the top level of a file, alone in its declaration
 //     (budget_request_read). The conversion adds the counted parts
 //     (budget_count.odin).
@@ -95,6 +97,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 	// The constants of integer literals of all the files: a window part of
 	// the stated budget can name a constant of another file.
 	integer_constants := make(map[string]u64, context.temp_allocator)
+	resizable_calls := make([dynamic]Resizable_Call, context.temp_allocator)
 	// The structs of all the files first: an export of one file can use a
 	// struct of another file.
 	for path in foundation.files_with_suffix(folder, ".odin") or_return {
@@ -105,6 +108,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		file := parse_source(path, string(source), &state) or_return
 		budget_request_read(file, &description.budget) or_return
 		integer_constants_read(file, &integer_constants)
+		resizable_calls_read(file, &resizable_calls)
 		append(&files, file)
 		if markdown := markdown_of(file.docs); description.markdown == "" {
 			description.markdown = markdown
@@ -112,6 +116,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		}
 	}
 	budget_window_resolve(&description.budget, integer_constants) or_return
+	budget_resizable_check(&description.budget, resizable_calls[:]) or_return
 	for file in files {
 		describe_file(file, &list, &state) or_return
 	}
@@ -1399,7 +1404,7 @@ BUDGET_WINDOW_PART_LIMIT :: 2048
 budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> bool {
 	path := file.fullpath
 	// An argument of the format, not a part of it: its braces are text.
-	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Stated_Budget{working_memory_pages = N, processes = N, threads = N, window_width = WIDTH, window_height = HEIGHT}"
+	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Stated_Budget{working_memory_pages = N, processes = N, threads = N, window_width = WIDTH, window_height = HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}"
 	for statement in file.decls {
 		// A declaration inside a `when`: the tool reads the source with no
 		// setting of the build, so it cannot know the branch that the
@@ -1454,7 +1459,7 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 			return describe_fail(path, declaration, "%s has no type: give it the type system.Stated_Budget, so that the compiler checks the names of its parts; %s", BUDGET_REQUEST_NAME, FORM)
 		}
 		stated: Stated_Budget
-		window_names: [2]string
+		window_names: [4]string
 		for element in literal.elems {
 			field_value, is_field := element.derived.(^ast.Field_Value)
 			field: ^ast.Ident
@@ -1479,8 +1484,12 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 				place, window_index = &stated.window_width, 0
 			case "window_height":
 				place, window_index = &stated.window_height, 1
+			case "window_least_width":
+				place, window_index = &stated.window_least_width, 2
+			case "window_least_height":
+				place, window_index = &stated.window_least_height, 3
 			case:
-				return describe_fail(path, element, "%s has no part %s: its parts are working_memory_pages, processes, threads, window_width and window_height; the tool counts the other pages, and processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
+				return describe_fail(path, element, "%s has no part %s: its parts are working_memory_pages, processes, threads, window_width, window_height, window_least_width and window_least_height; the tool counts the other pages, and processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
 			}
 			if place^ != 0 || (window_index >= 0 && window_names[window_index] != "") {
 				return describe_fail(path, element, "%s states the part %s two times", BUDGET_REQUEST_NAME, field.name)
@@ -1491,6 +1500,11 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 				}
 				window_names[window_index] = constant.name
 				continue
+			}
+			// A least part is the name that the call of resizable_set passes:
+			// a number would be a second copy that the tool cannot compare.
+			if window_index >= 2 {
+				return describe_fail(path, element, "%s: the part %s is not a name: write the name of the constant that the source passes to display.resizable_set as %s, so that the tool checks the two against each other", BUDGET_REQUEST_NAME, field.name, field.name[len("window_"):])
 			}
 			number, is_number := field_value.value.derived.(^ast.Basic_Lit)
 			if !is_number {
@@ -1509,6 +1523,13 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 		has_height := stated.window_height != 0 || window_names[1] != ""
 		if has_width != has_height {
 			return describe_fail(path, declaration, "%s states one part of the size of its window: state window_width and window_height, or neither", BUDGET_REQUEST_NAME)
+		}
+		has_least := window_names[2] != "" || window_names[3] != ""
+		if has_least && (window_names[2] == "" || window_names[3] == "") {
+			return describe_fail(path, declaration, "%s states one part of the least size of its window: state window_least_width and window_least_height, or neither", BUDGET_REQUEST_NAME)
+		}
+		if has_least && !has_width {
+			return describe_fail(path, declaration, "%s states a least size and no window: state window_width and window_height, the largest size, with it", BUDGET_REQUEST_NAME)
 		}
 		comment := markdown_of(declaration.docs)
 		if comment == "" {
@@ -1560,8 +1581,8 @@ budget_window_resolve :: proc(budget: ^Budget_Description, constants: map[string
 	if !budget.stated {
 		return true
 	}
-	places := [2]^u64{&budget.parts.window_width, &budget.parts.window_height}
-	part_names := [2]string{"window_width", "window_height"}
+	places := [4]^u64{&budget.parts.window_width, &budget.parts.window_height, &budget.parts.window_least_width, &budget.parts.window_least_height}
+	part_names := [4]string{"window_width", "window_height", "window_least_width", "window_least_height"}
 	for name, index in budget.window_names {
 		if name == "" {
 			continue
@@ -1583,7 +1604,110 @@ budget_window_resolve :: proc(budget: ^Budget_Description, constants: map[string
 			return false
 		}
 	}
+	if budget.parts.window_least_width > budget.parts.window_width || budget.parts.window_least_height > budget.parts.window_height {
+		fmt.eprintfln("modustool: describe %s(%d): %s: the least size %d x %d is larger than the window, %d x %d", budget.file, budget.line, BUDGET_REQUEST_NAME, budget.parts.window_least_width, budget.parts.window_least_height, budget.parts.window_width, budget.parts.window_height)
+		return false
+	}
 	return true
+}
+
+// A call of display.resizable_set in a package, as the tool reads it: the
+// names that it passes as its least size.
+Resizable_Call :: struct {
+	least_names: [2]string, // The names of least_width and least_height, or "" for a part that is not a name.
+	readable:    bool, // The record of the call is a literal: the tool read its parts.
+	line:        int,
+	file:        string,
+}
+
+// resizable_calls_read adds each call of resizable_set in one parsed file:
+// a call written display.resizable_set or resizable_set. A call through
+// another name is not seen: the limit of the check
+// (src/md/features/desktop_to_browser.md, "The budgets").
+resizable_calls_read :: proc(file: ^ast.File, calls: ^[dynamic]Resizable_Call) {
+	visit :: proc(visitor: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
+		if node == nil {
+			return nil
+		}
+		call, is_call := node.derived.(^ast.Call_Expr)
+		if !is_call {
+			return visitor
+		}
+		name := ""
+		#partial switch callee in call.expr.derived {
+		case ^ast.Selector_Expr:
+			name = callee.field.name
+		case ^ast.Ident:
+			name = callee.name
+		}
+		if name != "resizable_set" {
+			return visitor
+		}
+		calls := (^[dynamic]Resizable_Call)(visitor.data)
+		found := Resizable_Call{line = call.pos.line, file = call.pos.file}
+		if len(call.args) == 2 {
+			if literal, is_literal := call.args[1].derived.(^ast.Comp_Lit); is_literal {
+				found.readable = true
+				for element in literal.elems {
+					field_value, is_field := element.derived.(^ast.Field_Value)
+					if !is_field {
+						continue
+					}
+					field, _ := field_value.field.derived.(^ast.Ident)
+					value, _ := field_value.value.derived.(^ast.Ident)
+					if field == nil {
+						continue
+					}
+					index := -1
+					switch field.name {
+					case "least_width":
+						index = 0
+					case "least_height":
+						index = 1
+					}
+					if index >= 0 && value != nil {
+						found.least_names[index] = value.name
+					}
+				}
+			}
+		}
+		append(calls, found)
+		return visitor
+	}
+	visitor := ast.Visitor{visit = visit, data = calls}
+	for declaration in file.decls {
+		ast.walk(&visitor, declaration)
+	}
+}
+
+// budget_resizable_check compares the least parts of a stated budget with
+// each call of resizable_set in its package: the same constants, so that
+// the cut of the window pages follows the least size that the window sets.
+// A budget with no least parts is counted with no cut and needs no check.
+budget_resizable_check :: proc(budget: ^Budget_Description, calls: []Resizable_Call) -> bool {
+	if !budget.stated || budget.window_names[2] == "" {
+		return true
+	}
+	if len(calls) == 0 {
+		fmt.eprintfln("modustool: describe %s(%d): %s states the least size %s x %s, and the package has no call of display.resizable_set: a window that is not resizable keeps its size at each scale, so its window pages are not cut; remove the least parts", budget.file, budget.line, BUDGET_REQUEST_NAME, budget.window_names[2], budget.window_names[3])
+		return false
+	}
+	for call in calls {
+		if !call.readable {
+			fmt.eprintfln("modustool: describe %s(%d): the call of resizable_set passes a record that is not a literal, so the tool cannot compare its least size with the least parts of %s: pass display.Size_Limits{least_width = %s, least_height = %s, ...}", call.file, call.line, BUDGET_REQUEST_NAME, budget.window_names[2], budget.window_names[3])
+			return false
+		}
+		if call.least_names[0] != budget.window_names[2] || call.least_names[1] != budget.window_names[3] {
+			fmt.eprintfln("modustool: describe %s(%d): the call of resizable_set passes the least size %s x %s, and %s states %s x %s: name the same constants, so that the count of the window pages follows the least size that the window sets", call.file, call.line, or_else_text(call.least_names[0]), or_else_text(call.least_names[1]), BUDGET_REQUEST_NAME, budget.window_names[2], budget.window_names[3])
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+or_else_text :: proc(name: string) -> string {
+	return name == "" ? "(not a name)" : name
 }
 
 // declaration_names says if one of the names of a declaration is name.

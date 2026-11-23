@@ -33,7 +33,9 @@ import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
+import "modus:contract/reference_screen"
 import "modus:contract/ring"
+import "modus:contract/scale_factor"
 import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
@@ -52,16 +54,29 @@ LARGEST_HEIGHT :: 864
 // The tool counts the two pictures of the window at its largest size. A
 // resize holds the old surface and the new one together until the
 // compositor shows the new one, so the working memory holds a second
-// surface at the largest size: 1536 x 864 logical pixels are 2112 x 1188
-// pixels at the largest scale, 4 bytes each, two pictures: 4901 pages. It
-// also holds the least budget of 2048 pages less a window of 480 x 320
-// (300 pages): 1748 pages for its stack, its tables and the glyphs that it
-// draws itself. And the glyph memory of the copy of the text rendering of
-// the drawing module: 354 pages (display.TEXT_MEMORY_PAGES).
-// 4901 + 1748 + 354 = 7003.
+// surface at the largest size: 1536 x 864 logical pixels at the largest
+// scale, cut on each axis to the reference screen as the tool counts it
+// (src/md/features/desktop_to_browser.md, "The budgets"), are 1920 x 1080
+// pixels, 4 bytes each, two pictures: 4050 pages. It also holds the least
+// budget of 2048 pages less a window of 480 x 320 (300 pages): 1748 pages
+// for its stack, its tables and the glyphs that it draws itself. And the
+// glyph memory of the copy of the text rendering of the drawing module:
+// 354 pages (display.TEXT_MEMORY_PAGES). 4050 + 1748 + 354 = 6152.
 // The worker thread of the notification has a stack of 64 pages, 48 more
-// than the tool counts for a thread. 7003 + 48 = 7051.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7051, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// than the tool counts for a thread. 6152 + 48 = 6200. The tool reads the
+// literal; the check below ties it to these parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6200, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
+
+// The rule of the tool (scale_factor.window_surface_largest), from the same
+// constants: a constant cannot call the procedure. The cut holds because
+// the window is resizable with a least size within the logical screen at
+// the largest scale: the budget states that least size, and the tool checks
+// it against the call of resizable_set.
+#assert(LEAST_WIDTH > 0 && LEAST_HEIGHT > 0 && LEAST_WIDTH <= scale_factor.LARGEST_LOGICAL_WIDTH && LEAST_HEIGHT <= scale_factor.LARGEST_LOGICAL_HEIGHT)
+WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
+WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
+SECOND_SURFACE_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+#assert(MODULE_BUDGET.working_memory_pages == SECOND_SURFACE_PAGES + 1748 + display.TEXT_MEMORY_PAGES + 48)
 
 MARGIN :: graphics.MARGIN
 GAP :: graphics.GAP

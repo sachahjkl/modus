@@ -29,6 +29,13 @@ Stated_Budget :: struct {
 	threads:              u64, // Each thread at one time, the first one and the threads of the children. Left out: the least.
 	window_width:         u64, // The size of its window, in pixels, as it passes it to display.open. Left out: no window.
 	window_height:        u64,
+	// The least size of a resizable window, the names of the constants that
+	// it passes to display.resizable_set. Stated and within the logical
+	// screen at the largest scale: the tool cuts the window pages to the
+	// screen (src/md/features/desktop_to_browser.md, "The budgets"). Left
+	// out: no cut.
+	window_least_width:   u64,
+	window_least_height:  u64,
 }
 
 // One part of a budget request.

@@ -79,6 +79,8 @@ Stated_Budget :: struct {
 	threads:              u64,
 	window_width:         u64, // Pixels; 0: no window.
 	window_height:        u64,
+	window_least_width:   u64, // The least size of a resizable window; 0: no cut of the window pages.
+	window_least_height:  u64,
 }
 
 // The budget that a module asks for, as its source states it in the
@@ -87,7 +89,7 @@ Stated_Budget :: struct {
 Budget_Description :: struct {
 	stated:       bool, // The source has the constant: the module has the table Budget.
 	parts:        Stated_Budget, // A window part that named a constant holds its value.
-	window_names: [2]string, // The constant that each window part names, or "".
+	window_names: [4]string, // The constant that each window part names, or "": the width, the height, the least width, the least height.
 	comment:      string, // The comment before the constant, in its Markdown: the reasons of the amounts.
 	// Where the source declares it: the site links the budget to its line.
 	file:         string,

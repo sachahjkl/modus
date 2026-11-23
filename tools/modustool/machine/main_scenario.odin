@@ -2934,7 +2934,9 @@ scenario := [?]Step {
 	// second start raises the window that runs, and starts no process. A
 	// second surface settings fails the step.
 	{kind = .Launch, text = "settings"},
-	{kind = .Wait, text = "root: the start of settings raises the window of settings that runs", fails_on = "compositor: surface settings"},
+	// The root line and the compositor line come from two processes: the
+	// system fixes no order between them.
+	{kind = .Wait, text = "root: the start of settings raises the window of settings that runs", any_order = true, fails_on = "compositor: surface settings"},
 	{kind = .Wait, text = "compositor: the root service raised the window settings in place of a second process settings", fails_on = "compositor: surface settings"},
 	// A click on a value of the window applies it, as the press of a
 	// principal does: the compositor tells each window the new value, and

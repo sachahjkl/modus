@@ -50,6 +50,32 @@ LARGEST :: Scale.Sixteen_Eighths
 // logical_screen rounds them: 540.
 LARGEST_LOGICAL_HEIGHT :: i64(reference_screen.HEIGHT * EIGHTHS_OF_ONE) / i64(LARGEST)
 
+// The columns of the logical screen at LARGEST, rounded down as
+// logical_screen rounds them: 960.
+LARGEST_LOGICAL_WIDTH :: i64(reference_screen.WIDTH * EIGHTHS_OF_ONE) / i64(LARGEST)
+
+// window_surface_largest gives the largest surface of a window of a logical
+// size, in pixels of the screen: the size at LARGEST. A resizable window
+// whose least size fits the logical screen at LARGEST has each axis cut to
+// the reference screen: the compositor fits it into the work area before a
+// scale applies, within its limits, so its surface is not larger, and the
+// screen is never larger than the reference screen
+// (src/md/features/desktop_to_browser.md, "The budgets"). A window that is
+// not resizable (a least size of 0) keeps its logical size at each scale,
+// so it is not cut. The tool counts the pictures of a window at this size;
+// a module that checks its budget at compile time writes the same rule from
+// these constants, as a constant cannot call a procedure. A negative size
+// gives 0.
+window_surface_largest :: proc "contextless" (logical_width, logical_height, least_width, least_height: i32) -> (width, height: i64) {
+	width = max(screen_pixel_of_logical_pixel(logical_width, LARGEST), 0)
+	height = max(screen_pixel_of_logical_pixel(logical_height, LARGEST), 0)
+	fitted := least_width > 0 && least_height > 0 && i64(least_width) <= LARGEST_LOGICAL_WIDTH && i64(least_height) <= LARGEST_LOGICAL_HEIGHT
+	if fitted {
+		width, height = min(width, i64(reference_screen.WIDTH)), min(height, i64(reference_screen.HEIGHT))
+	}
+	return
+}
+
 // The least height of the work area, in logical pixels, that a holder of
 // the display leaves its windows at each scale: the least height of the
 // window of settings, 320 lines, with a title of at most 40 lines that the

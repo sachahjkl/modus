@@ -1162,6 +1162,10 @@ picture_replace_allowed :: proc "contextless" (drag: ^Drag) -> bool {
 
 NAME_LIMIT :: 32 // The bytes of the longest name.
 OBJECT_SUFFIX :: ".picture" // The object of a picture in the private store is its name and this.
+// The temporary object of a large first keep is the name and this; the list
+// shows no picture of it, and the open of the store removes it.
+PARTIAL_SUFFIX :: ".partial"
+#assert(len(PARTIAL_SUFFIX) <= len(OBJECT_SUFFIX))
 
 Name_Problem :: enum u8 {
 	None          = 0,
@@ -1206,17 +1210,41 @@ object_name :: proc "contextless" (room: ^Object_Name, name: string) -> (object:
 	return string(room.bytes[:room.count]), true
 }
 
-// picture_name_of_object gives the name of a picture from the name of an
-// object of the store, or false for an object that is not a picture.
-picture_name_of_object :: proc "contextless" (object: string) -> (name: string, ok: bool) {
-	if len(object) <= len(OBJECT_SUFFIX) || object[len(object) - len(OBJECT_SUFFIX):] != OBJECT_SUFFIX {
+// partial_object_name gives the temporary object of a picture name, or
+// false for a text that is not a name.
+partial_object_name :: proc "contextless" (room: ^Object_Name, name: string) -> (object: string, ok: bool) {
+	if name_check(name) != .None {
 		return "", false
 	}
-	name = object[:len(object) - len(OBJECT_SUFFIX)]
+	copy(room.bytes[:], name)
+	copy(room.bytes[len(name):], PARTIAL_SUFFIX)
+	room.count = len(name) + len(PARTIAL_SUFFIX)
+	return string(room.bytes[:room.count]), true
+}
+
+@(private)
+name_of_object_with_suffix :: proc "contextless" (object, suffix: string) -> (name: string, ok: bool) {
+	if len(object) <= len(suffix) || object[len(object) - len(suffix):] != suffix {
+		return "", false
+	}
+	name = object[:len(object) - len(suffix)]
 	if name_check(name) != .None {
 		return "", false
 	}
 	return name, true
+}
+
+// picture_name_of_object gives the name of a picture from the name of an
+// object of the store, or false for an object that is not a picture.
+picture_name_of_object :: proc "contextless" (object: string) -> (name: string, ok: bool) {
+	return name_of_object_with_suffix(object, OBJECT_SUFFIX)
+}
+
+// partial_name_of_object gives the name of a picture from the name of its
+// temporary object, or false for an object that is not one: the open of the
+// store removes only these.
+partial_name_of_object :: proc "contextless" (object: string) -> (name: string, ok: bool) {
+	return name_of_object_with_suffix(object, PARTIAL_SUFFIX)
 }
 
 // first_free_name gives the first name picture-1, picture-2, ... that a
