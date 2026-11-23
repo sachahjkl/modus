@@ -452,7 +452,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			changed := false
 			for event in interface.window_next_event(&window_memory.drawing, &window) {
 				// The keys and the pointer of the window are the process's own:
-				// the interface package draws, and takes no input here.
+				// its frames take no pointer, so the window layer gives the
+				// pointer to their input only while the layout scrolls, for
+				// the bars of the window.
 				if event.kind == .Key && event.pressed {
 					key(event)
 					changed = true

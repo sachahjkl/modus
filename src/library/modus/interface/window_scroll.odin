@@ -122,7 +122,7 @@ window_layout_point :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 // and show_due when the scroll needs a frame: a wheel, a press, a release,
 // a pointer over a bar or a lit or held bar, or a page key. A caller skips
 // an event with in_layout false: no drag of its own is active then.
-window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, event: display.Event) -> (layout_event: display.Event, in_layout: bool, show_due: bool) {
+window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, event: display.Event, pointer_input := Pointer_Input.Scroll_Only) -> (layout_event: display.Event, in_layout: bool, show_due: bool) {
 	layout_event, in_layout = event, true
 	view_width, view_height := display.view_size(window)
 	view := window_scroll_view_of(window.width, window.height, view_width, view_height)
@@ -132,7 +132,16 @@ window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 		scroll_x := window_scroll_clamp(drawing.scroll_x, view.most_x)
 		scroll_y := window_scroll_clamp(drawing.scroll_y, view.most_y)
 		held_before := drawing.input.button_held
-		_ = input_add(&drawing.input, event)
+		// A window whose frames take no pointer gets none while it fits: no
+		// hover and no press that it never took.
+		switch pointer_input {
+		case .Every_Event:
+			_ = input_add(&drawing.input, event)
+		case .Scroll_Only:
+			if scrolls {
+				_ = input_add(&drawing.input, event)
+			}
+		}
 		held := event.buttons & display.BUTTON_LEFT != 0
 		layout_event.x, layout_event.y, in_layout = layout_point_of_view(view, scroll_x, scroll_y, view_width, view_height, event.x, event.y)
 		// The drag of any button: a press from no button starts it where it
@@ -164,8 +173,15 @@ window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 	return
 }
 
+// Which pointer events a process gives to the input of its frames.
+Pointer_Input :: enum u8 {
+	Scroll_Only, // The elements of the frames take no pointer: the pointer goes to the input only while the layout scrolls, for the bars.
+	Every_Event, // The frames take the pointer: each pointer event goes to the input, in place of the input_add of the process.
+}
+
 // window_next_event reads the next event of a window, for a process that
-// reads its events itself, in place of display.next_event: each event goes
+// reads its events itself, in place of display.next_event; pointer_input
+// says if its frames take the pointer: each event goes
 // to the scroll of the window first (window_scroll_event), so the bars, the
 // wheel and the page keys of a window that does not fit the work area work
 // in each such loop. A pointer event comes in the coordinates of the
@@ -173,9 +189,9 @@ window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 // WINDOW_POINTER_AWAY, which no element reaches. A process that draws only
 // when its own state changes also draws when window_scroll_frame_take says
 // so.
-window_next_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> (event: display.Event, ok: bool) {
+window_next_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, pointer_input := Pointer_Input.Scroll_Only) -> (event: display.Event, ok: bool) {
 	read := display.next_event(window) or_return
-	event, _, _ = window_scroll_event(drawing, window, read)
+	event, _, _ = window_scroll_event(drawing, window, read, pointer_input)
 	return event, true
 }
 

@@ -1572,7 +1572,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The window layer takes each event first: the bars, the wheel and
 		// the page keys of a window that does not fit the work area, and
 		// the pointer in the coordinates of the layout.
-		for event in interface.window_next_event(&drawing, &window) {
+		for event in interface.window_next_event(&drawing, &window, .Every_Event) {
 			// A new font: each record of the frame is the same, each pixel
 			// of text is not. The next frame of each picture is whole.
 			if event.kind == .Settings_Changed {

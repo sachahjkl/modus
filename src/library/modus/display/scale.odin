@@ -72,7 +72,7 @@ Rescale_Machine :: struct {
 // What the window does after a step.
 Rescale_Action :: enum u8 {
 	None,
-	Release, // Send Surface_Release with the serial of the machine.
+	Release, // Send Surface_Release with the serial of the machine and the view of the window.
 	Offer, // Let the old surface go, make a surface of the scale of the machine with its serial, and send Surface_Rescale.
 }
 
@@ -419,7 +419,10 @@ rescale_due_run :: proc "contextless" (window: ^Window) {
 		if window.resize_asked && !resize_decline(window) {
 			return
 		}
-		if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Release), values = {0 = window.rescale.serial}}) {
+		// The view names the surface that the window offers next: the
+		// compositor takes a clamp only when it is the asked size
+		// (window_resize.md, "The clamp of a fixed window").
+		if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Release), values = {0 = window.rescale.serial, 1 = u64(max(window.view_width, 0)), 2 = u64(max(window.view_height, 0))}}) {
 			return
 		}
 	case .Offer:

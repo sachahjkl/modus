@@ -134,9 +134,15 @@ window_scale_step :: proc "contextless" (client: ^Client) -> (sent: bool) {
 		x, y, width, height, wanted_width, wanted_height := window_fit_target(client)
 		switch bar.fit_order(client.width, client.height, width, height) {
 		case .Fit_First:
-			window_place_and_size_take(client, x, y, wanted_width, wanted_height) // window_resize.odin
-			if client.resize_asked {
-				return false
+			// A window between two surfaces takes no request: its fit waits
+			// for its surface of the scale in force, or it would be lost.
+			if bar.fit_first_waits(client.released, client.resize_pictures != nil) {
+				client.fit_after_scale = true
+			} else {
+				window_place_and_size_take(client, x, y, wanted_width, wanted_height) // window_resize.odin
+				if client.resize_asked {
+					return false
+				}
 			}
 		case .Scale_First:
 			client.fit_after_scale = true

@@ -990,7 +990,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_end(&wait, deadline)
 		changed |= step_due && system.time() >= step_time
 		changed |= system.service_run(&service) > 0
-		for event in interface.window_next_event(&window_memory.drawing, &window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window, .Every_Event) {
 			switch event.kind {
 			case .Settings_Changed:
 				// A new font: each record is the same, each pixel of text is

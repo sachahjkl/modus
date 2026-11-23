@@ -214,7 +214,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	buttons: u32
 	for {
-		for event in interface.window_next_event(&window_memory.drawing, &window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window, .Every_Event) {
 			switch event.kind {
 			case .Key:
 				if !event.pressed {

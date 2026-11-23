@@ -1332,7 +1332,7 @@ events_take :: proc "contextless" (window: ^display.Window) {
 			// window scrolls when it does not fit the work area; over a
 			// scroll bar of the window the place is on no canvas.
 			// An event over a bar with no drag of paint is the bar's.
-			place, in_layout, _ := interface.window_scroll_event(drawing, window, event)
+			place, in_layout, _ := interface.window_scroll_event(drawing, window, event, .Every_Event)
 			if in_layout {
 				pointer_paint(place)
 			} else {

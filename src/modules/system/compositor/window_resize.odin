@@ -265,13 +265,19 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	// The release of a fixed window can answer its clamp: it then offers
 	// the surface of the clamped size, and holds one surface at a time
 	// (src/md/features/window_resize.md, "The clamp of a fixed window").
-	answers_clamp := bar.release_answers_clamp(client.resize_asked, client.resize_asked_clamp, client.resizable, client.resize_pictures != nil)
+	release_end := bar.release_end_of(client.resize_asked, client.resize_asked_clamp, client.resizable, client.resize_pictures != nil, record.values[1], record.values[2], client.resize_asked_width, client.resize_asked_height)
 	damage_window(client)
 	surface_screen_damage(client)
 	if client.pictures != nil {
 		system.memory_unmap(client.pictures)
 	}
-	if answers_clamp {
+	switch release_end {
+	case .No_Request, .Request_Ended:
+	case .Clamp_Ended:
+		// The window offers the size that it holds; the fit is asked again
+		// once it shows its surface of the scale in force.
+		client.fit_after_scale = true
+	case .Clamp_Answered:
 		// The offer after the release must have the clamped size
 		// (bar.surface_rescale_refusal reads the logical size); the frame
 		// of that size shows the background until it comes.

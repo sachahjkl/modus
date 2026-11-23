@@ -86,17 +86,44 @@ Surface_Rescale_Facts :: struct {
 	window_width, window_height: int, // The logical size of the window.
 }
 
-// release_answers_clamp says if a Surface_Release of a window answers the
-// request that waits: the clamp of a fixed window to the work area, which
-// the window takes by a release and an offer of the clamped size, so it
-// holds one surface at a time (src/md/features/window_resize.md, "The
-// clamp of a fixed window"). The compositor then takes the clamped size as
-// the logical size of the window, which the offer must have
-// (surface_rescale_refusal). A release with no request, a request of a
-// resizable window, a request that is no clamp, and a window with a
-// pending surface end the request with no new size.
-release_answers_clamp :: proc "contextless" (asked, clamp, resizable, pending: bool) -> bool {
-	return asked && clamp && !resizable && !pending
+// What a Surface_Release does to the request of the size that waits
+// (src/md/features/window_resize.md, "The clamp of a fixed window").
+Release_End :: enum u8 {
+	No_Request, // No request waited.
+	Request_Ended, // A request that is no clamp (a size of the principal): it ends with no new size.
+	Clamp_Answered, // A fixed window holds the asked size as its view: the release answers its clamp, and the window offers that size next.
+	Clamp_Ended, // A clamp that the release does not answer: it ends with no new size, and the fit waits for the surface of the scale in force.
+}
+
+// release_end_of decides what a Surface_Release does to the request that
+// waits, from the record (the view that the window holds, words of the
+// ring) and the request. A fixed window answers its clamp by a release
+// that names the asked size as its view, so it holds one surface at a time.
+// A release that names another view was sent for a rescale before the
+// window read the clamp, which it then declines: taken as the answer, the
+// compositor would wait for a size that the window never offers. A clamp of
+// a resizable window, a window with a pending surface, and a size of 0 are
+// never answered by a release.
+release_end_of :: proc "contextless" (asked, clamp, resizable, pending: bool, held_width, held_height: u64, asked_width, asked_height: int) -> Release_End {
+	switch {
+	case !asked:
+		return .No_Request
+	case !clamp:
+		return .Request_Ended
+	case resizable || pending || asked_width < 1 || asked_height < 1:
+		return .Clamp_Ended
+	case held_width != u64(asked_width) || held_height != u64(asked_height):
+		return .Clamp_Ended
+	}
+	return .Clamp_Answered
+}
+
+// fit_first_waits says if a fit that comes before the scale waits for the
+// surface of the scale in force: a window that is released, or that has a
+// surface pending, takes no request, so the fit asked now would ask
+// nothing and be lost.
+fit_first_waits :: proc "contextless" (released, pending: bool) -> bool {
+	return released || pending
 }
 
 // serial_after_refused_offer gives the serial that the compositor holds as

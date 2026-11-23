@@ -4,6 +4,7 @@ package bar
 import "core:testing"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
+import "modus:display"
 
 // A page that the read refuses keeps the scale in force: the all-zero page,
 // a page whose writer is in its change (an odd count), and a page whose
@@ -351,18 +352,171 @@ a_second_decline_at_the_same_scale_is_no_news :: proc(t: ^testing.T) {
 	}
 }
 
-// The release of a fixed window answers its clamp only: a release with no
-// request, the request of a resizable window, a request that is no clamp,
-// and a window with a pending surface end the request with no new size.
-// Each refusal of one fact comes first; the case that holds comes last.
+// What a release does to the request: no request; a request that is no
+// clamp ends; a clamp of a resizable window, of a window with a pending
+// surface, of a size of 0, and a release that names another view (one
+// unit off on each axis, the largest word) end the clamp with no new size;
+// the release of a fixed window that names the asked view answers it.
 @(test)
-a_release_answers_the_clamp_of_a_fixed_window_only :: proc(t: ^testing.T) {
-	testing.expect(t, !release_answers_clamp(false, true, false, false))
-	testing.expect(t, !release_answers_clamp(true, true, true, false))
-	testing.expect(t, !release_answers_clamp(true, false, false, false))
-	testing.expect(t, !release_answers_clamp(true, true, false, true))
-	testing.expect(t, !release_answers_clamp(false, false, true, true))
-	testing.expect(t, release_answers_clamp(true, true, false, false))
+a_release_answers_a_clamp_only_with_the_asked_view :: proc(t: ^testing.T) {
+	testing.expect_value(t, release_end_of(false, true, false, false, 816, 482, 816, 482), Release_End.No_Request)
+	testing.expect_value(t, release_end_of(true, false, false, false, 816, 482, 816, 482), Release_End.Request_Ended)
+	testing.expect_value(t, release_end_of(true, true, true, false, 816, 482, 816, 482), Release_End.Clamp_Ended)
+	testing.expect_value(t, release_end_of(true, true, false, true, 816, 482, 816, 482), Release_End.Clamp_Ended)
+	testing.expect_value(t, release_end_of(true, true, false, false, 0, 0, 0, 0), Release_End.Clamp_Ended)
+	for held in ([?][2]u64{{816, 560}, {817, 482}, {815, 482}, {816, 483}, {816, 481}, {max(u64), 482}, {0, 482}}) {
+		testing.expectf(t, release_end_of(true, true, false, false, held[0], held[1], 816, 482) == .Clamp_Ended, "the view %v answers the clamp", held)
+	}
+	testing.expect_value(t, release_end_of(true, true, false, false, 816, 482, 816, 482), Release_End.Clamp_Answered)
+}
+
+// A fit that comes first waits for the surface of a window that is
+// released or has a surface pending; a window that shows its surface takes
+// it at once.
+@(test)
+a_fit_first_waits_for_a_window_between_two_surfaces :: proc(t: ^testing.T) {
+	testing.expect(t, fit_first_waits(true, false))
+	testing.expect(t, fit_first_waits(false, true))
+	testing.expect(t, fit_first_waits(true, true))
+	testing.expect(t, !fit_first_waits(false, false))
+}
+
+// The two sides of a clamp, driven in order with their pure steps: the
+// machine of the window (display.rescale_step, display.clamp_refused) and
+// the decisions of the compositor (release_end_of, surface_rescale_refusal,
+// surface_declined_refusal). Each case keeps the state of the compositor
+// in a few variables, as surface_release_take and surface_rescale_take do.
+@(private = "file")
+Compositor_Side :: struct {
+	width, height:   int,
+	released:        bool,
+	released_serial: u64,
+	asked:           bool,
+	asked_width:     int,
+	asked_height:    int,
+	fit_after_scale: bool,
+}
+
+// release_of_test is surface_release_take on the state of the test.
+@(private = "file")
+release_of_test :: proc(side: ^Compositor_Side, serial: u64, held_width, held_height: int) -> Release_End {
+	end := release_end_of(side.asked, true, false, false, u64(held_width), u64(held_height), side.asked_width, side.asked_height)
+	switch end {
+	case .No_Request, .Request_Ended:
+	case .Clamp_Ended:
+		side.fit_after_scale = true
+	case .Clamp_Answered:
+		side.width, side.height = side.asked_width, side.asked_height
+	}
+	side.asked = false
+	side.released, side.released_serial = true, serial
+	return end
+}
+
+// offer_of_test is the facts of Surface_Rescale of a view at a scale.
+@(private = "file")
+offer_of_test :: proc(side: Compositor_Side, view_width, view_height: int, scale: scale_factor.Scale, serial: u64) -> Surface_Rescale_Facts {
+	width := u64(scale_factor.screen_pixel_of_logical_pixel(i32(view_width), scale))
+	height := u64(scale_factor.screen_pixel_of_logical_pixel(i32(view_height), scale))
+	return {gift = true, is_memory = true, readable = true, memory_bytes = width * height * SURFACE_BYTES_FOR_EACH_PIXEL, width = width, height = height, scale_word = u64(scale), serial = serial, created = true, released = side.released, released_serial = side.released_serial, scale = scale, window_width = side.width, window_height = side.height}
+}
+
+// The clamp answered, with a scale that waited for it: the window takes
+// the clamp in Steady and releases with the asked view; the release answers
+// the clamp; the compositor names the scale before Released, so the window
+// offers the clamped size at the new scale, which the compositor takes.
+@(test)
+a_clamp_at_a_new_scale_makes_one_surface :: proc(t: ^testing.T) {
+	window := display.Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 1}
+	side := Compositor_Side{width = 816, height = 560, released_serial = 0, asked = true, asked_width = 816, asked_height = 482}
+	testing.expect(t, !display.clamp_refused(window, 816, 482, 816, 560))
+	action, _ := display.rescale_step(&window, {kind = .Clamp_Asked})
+	testing.expect_value(t, action, display.Rescale_Action.Release)
+	testing.expect_value(t, release_of_test(&side, 1, 816, 482), Release_End.Clamp_Answered)
+	testing.expect(t, side.width == 816 && side.height == 482 && !side.fit_after_scale)
+	// The scale before Released.
+	_, _ = display.rescale_step(&window, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	action, _ = display.rescale_step(&window, {kind = .Released, serial = 1})
+	testing.expect(t, action == .Offer && window.scale == .Sixteen_Eighths && window.serial == 2)
+	testing.expect_value(t, surface_rescale_refusal(offer_of_test(side, 816, 482, window.scale, window.serial)), Surface_Rescale_Refusal.None)
+	// The other order, Released before the scale: the offer at the old
+	// scale is refused; the refused offer moves the serial released, and
+	// the offer at the new scale after it is taken.
+	window = {phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 1}
+	side = {width = 816, height = 560, asked = true, asked_width = 816, asked_height = 482}
+	_, _ = display.rescale_step(&window, {kind = .Clamp_Asked})
+	_ = release_of_test(&side, 1, 816, 482)
+	_, _ = display.rescale_step(&window, {kind = .Released, serial = 1})
+	old := offer_of_test(side, 816, 482, window.scale, window.serial)
+	old.scale = .Sixteen_Eighths
+	testing.expect_value(t, surface_rescale_refusal(old), Surface_Rescale_Refusal.Other_Scale)
+	side.released_serial = serial_after_refused_offer(true, false, side.released_serial, window.serial)
+	_, _ = display.rescale_step(&window, {kind = .Refused, serial = window.serial})
+	action, _ = display.rescale_step(&window, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect(t, action == .Offer && window.serial == 3)
+	testing.expect_value(t, surface_rescale_refusal(offer_of_test(side, 816, 482, window.scale, window.serial)), Surface_Rescale_Refusal.None)
+}
+
+// A decline after the clamp: the budget does not pay the clamped surface.
+// The window is Released and declined at the serial of the offer; the
+// compositor takes the decline at that serial, both sides hold the clamped
+// size, and the next scale that differs offers it again, which is taken.
+@(test)
+a_decline_after_a_clamp_keeps_both_sides_at_the_clamped_size :: proc(t: ^testing.T) {
+	window := display.Rescale_Machine{phase = .Steady, scale = .Sixteen_Eighths, wanted = .Sixteen_Eighths, serial = 1}
+	side := Compositor_Side{width = 816, height = 560, asked = true, asked_width = 816, asked_height = 482}
+	_, _ = display.rescale_step(&window, {kind = .Clamp_Asked})
+	_ = release_of_test(&side, 1, 816, 482)
+	_, _ = display.rescale_step(&window, {kind = .Released, serial = 1})
+	display.rescale_declined_step(&window)
+	testing.expect(t, window.phase == .Released && window.declined && window.serial == 2)
+	declined := Surface_Declined_Facts{scale_word = u64(window.scale), serial = window.serial, created = true, released = true, released_serial = side.released_serial, scale = .Sixteen_Eighths}
+	testing.expect_value(t, surface_declined_refusal(declined), Surface_Declined_Refusal.None)
+	side.released_serial = window.serial
+	testing.expect(t, side.width == 816 && side.height == 482)
+	action, _ := display.rescale_step(&window, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect_value(t, action, display.Rescale_Action.None)
+	action, _ = display.rescale_step(&window, {kind = .Scale_Named, scale = .Twelve_Eighths})
+	testing.expect(t, action == .Offer && window.serial == 3)
+	testing.expect_value(t, surface_rescale_refusal(offer_of_test(side, 816, 482, window.scale, window.serial)), Surface_Rescale_Refusal.None)
+}
+
+// The race: a fixed window of 816 x 560 at A; the scale goes to B, then to
+// C before the compositor reads the release of B. The fit of C asks the
+// clamp of a window that the compositor still shows; the window, in
+// Releasing, declines it and keeps its view; its release names that view,
+// so it ends the clamp with no new size, and the fit waits. The window
+// offers its own size at C, which the compositor takes; then the fit asks
+// the clamp again of a window in Steady, which takes it. Taken as the
+// answer, the release gave the compositor a size that the offer did not
+// have: refused, and the window waited in Released for good.
+@(test)
+a_release_for_a_rescale_never_answers_a_clamp :: proc(t: ^testing.T) {
+	window := display.Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 1}
+	side := Compositor_Side{width = 816, height = 560}
+	view_width, view_height := 816, 560
+	// B: the window releases at once.
+	action, _ := display.rescale_step(&window, {kind = .Scale_Named, scale = .Twelve_Eighths})
+	testing.expect_value(t, action, display.Rescale_Action.Release)
+	// C: the compositor, which has not read the release, asks the clamp.
+	side.asked, side.asked_width, side.asked_height = true, 816, 482
+	_, _ = display.rescale_step(&window, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect(t, display.clamp_refused(window, 816, 482, 816, 560))
+	// The release, naming the view that the window kept.
+	testing.expect_value(t, release_of_test(&side, 1, view_width, view_height), Release_End.Clamp_Ended)
+	testing.expect(t, side.width == 816 && side.height == 560 && side.fit_after_scale)
+	action, _ = display.rescale_step(&window, {kind = .Released, serial = 1})
+	testing.expect(t, action == .Offer && window.scale == .Sixteen_Eighths)
+	testing.expect_value(t, surface_rescale_refusal(offer_of_test(side, view_width, view_height, window.scale, window.serial)), Surface_Rescale_Refusal.None)
+	_, _ = display.rescale_step(&window, {kind = .Taken, serial = window.serial})
+	testing.expect_value(t, window.phase, display.Rescale_Phase.Steady)
+	// The fit after the scale: the clamp again, now taken.
+	testing.expect(t, !display.clamp_refused(window, 816, 482, 816, 560))
+	// The same race with the release taken as the answer, as the first form
+	// did: the offer of the view that the window kept is refused.
+	wrong := side
+	wrong.width, wrong.height = 816, 482
+	testing.expect_value(t, surface_rescale_refusal(offer_of_test(wrong, view_width, view_height, .Sixteen_Eighths, 2)), Surface_Rescale_Refusal.Other_Size)
 }
 
 // The offer after a clamp: interface_elements, 816 x 560, opened at 2 and

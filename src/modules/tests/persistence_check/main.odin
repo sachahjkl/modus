@@ -480,7 +480,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_end(&wait)
-		for event in interface.window_next_event(&window_memory.drawing, &window) {
+		for event in interface.window_next_event(&window_memory.drawing, &window, .Every_Event) {
 			switch event.kind {
 			case .Pointer:
 				// The pointer reaches the action bar only: the window layer

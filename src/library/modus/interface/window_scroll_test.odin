@@ -451,3 +451,27 @@ a_drag_from_the_layout_ends_in_the_layout_over_a_bar :: proc(t: ^testing.T) {
 	_, _, due := window_scroll_event(drawing, &test.window, {kind = .Pointer, x = 20, y = 30, wheel = 1})
 	testing.expect(t, due && window_scroll_frame_take(drawing) && !window_scroll_frame_take(drawing))
 }
+
+// A window that fits gives no pointer to a process whose frames take none
+// (Scroll_Only): no hover, no press, no wheel; Every_Event gives each one.
+// A window that scrolls gives the pointer in both, for its bars.
+@(test)
+the_pointer_reaches_the_input_by_the_choice_of_the_process :: proc(t: ^testing.T) {
+	process_drawing_begin()
+	pixels := make([]graphics.Color, SURFACE_LIMIT * SURFACE_LIMIT)
+	defer delete(pixels)
+	test := new(Scroll_Test_Window)
+	defer free(test)
+	drawing, _ := scroll_test_window(test, pixels, .Ten_Eighths)
+	test.window.width, test.window.height = VIEW_WIDTH, VIEW_HEIGHT
+	press := display.Event{kind = .Pointer, x = 20, y = 30, buttons = display.BUTTON_LEFT, wheel = 1}
+	_, _, _ = window_scroll_event(drawing, &test.window, press)
+	testing.expect(t, !drawing.input.pointer_known && !drawing.input.pressed && drawing.input.wheel == 0)
+	_, _, _ = window_scroll_event(drawing, &test.window, press, .Every_Event)
+	testing.expect(t, drawing.input.pointer_known && drawing.input.pressed && drawing.input.wheel == 1)
+	input_clear(&drawing.input)
+	drawing.input = {}
+	test.window.width, test.window.height = LAYOUT_WIDTH, LAYOUT_HEIGHT
+	_, _, _ = window_scroll_event(drawing, &test.window, press)
+	testing.expect(t, drawing.input.pointer_known && drawing.input.pressed && drawing.input.wheel == 1)
+}
