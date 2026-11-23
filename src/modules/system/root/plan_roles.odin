@@ -54,10 +54,10 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 		}
 	}
 	switch step {
-	case .None:
-		// plan_roles_step_of_word refuses None; the answer still carries its
-		// error record.
-		answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1, 0, i64(max(rd.Plan_Roles_Step)))
+	case .None, .Committed:
+		// plan_roles_step_of_word refuses None; Committed is a step of
+		// Plan_Values only: a set of roles is in force from its answer.
+		answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1, i64(step), i64(rd.Plan_Roles_Step.Loaded))
 		return .Bad_Operation
 	case .Page:
 		status := plan_roles_page_give(item, answer)

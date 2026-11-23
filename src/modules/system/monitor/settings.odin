@@ -29,6 +29,8 @@ SAMPLE_INTERVAL_DEFAULT :: 500
 
 monitor_kept: kept_choices.Kept
 monitor_plan: plan_values.Owner_Values
+// The copy of the plan values page that monitor_plan points into.
+monitor_plan_copy: system.Plan_Values_Copy
 sample_interval_in_force: u64 = SAMPLE_INTERVAL_DEFAULT
 sample_interval_layer: chosen_values.Layer = .Contract_Default
 
@@ -74,7 +76,7 @@ sample_interval_of_arguments :: proc "contextless" (presence: module.Presence, v
 // settings_open reads the plan values and opens the store, with no call to
 // the storage service.
 settings_open :: proc "contextless" (ctx: ^system.Context) {
-	monitor_plan, _ = system.plan_values_of_process(&ctx.values)
+	monitor_plan, _ = system.plan_values_of_process(&ctx.values, &monitor_plan_copy)
 	store, store_open := storage.open(ctx)
 	if !kept_choices.kept_open(&monitor_kept, store, store_open, KEPT_OBJECT_NAME) {
 		system.log_fact(.Info, Settings_Not_Kept{})

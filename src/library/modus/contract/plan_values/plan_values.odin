@@ -378,11 +378,6 @@ text_locked :: proc "contextless" (plan: Owner_Values, name: string, border: pro
 	return found && border(text)
 }
 
-// The most times that owner_page_copy reads a page that the core writes
-// meanwhile: the core writes it at an apply of a plan, so two reads that
-// meet a write are rare, and the next wake reads it again.
-OWNER_PAGE_COPY_ATTEMPTS :: 16
-
 // owner_page_sequence gives the sequence word of a page.
 owner_page_sequence :: proc "contextless" (page: []u8) -> ^u32 {
 	return (^u32)(&page[OWNER_PAGE_SEQUENCE_OFFSET])
@@ -411,25 +406,31 @@ owner_page_publish :: proc "contextless" (page: []u8, values: Owner_Values) -> (
 	return ok
 }
 
-// owner_page_copy copies a page that the core may write meanwhile into
-// out, the memory of the owner. sequence is the even sequence of the copy;
-// ok is false when no read met a whole page in OWNER_PAGE_COPY_ATTEMPTS
-// reads.
-owner_page_copy :: proc "contextless" (page: []u8, out: []u8) -> (sequence: u32, ok: bool) {
-	if len(page) < OWNER_PAGE_SIZE || len(out) < OWNER_PAGE_SIZE {
-		return 0, false
+// owner_page_copy makes one copy of a page that the core may write
+// meanwhile into out, the memory of the owner. sequence is the even
+// sequence of a whole copy. A copy that met a write gives ok false and met,
+// the word that it read: an odd met is a write in progress, which the
+// caller waits out on the word (system.plan_values_of_process); an even one
+// is a write that ended during the copy, and the caller copies again. Both
+// pages must hold OWNER_PAGE_SIZE bytes (owner_page_sizes_valid).
+owner_page_copy :: proc "contextless" (page: []u8, out: []u8) -> (sequence: u32, ok: bool, met: u32) {
+	if !owner_page_sizes_valid(page, out) {
+		return 0, false, 0
 	}
 	word := owner_page_sequence(page)
-	for _ in 0 ..< OWNER_PAGE_COPY_ATTEMPTS {
-		first := intrinsics.atomic_load_explicit(word, .Acquire)
-		if first & 1 != 0 {
-			continue
-		}
-		intrinsics.mem_copy_non_overlapping(raw_data(out), raw_data(page), OWNER_PAGE_SIZE)
-		intrinsics.atomic_thread_fence(.Acquire)
-		if intrinsics.atomic_load_explicit(word, .Relaxed) == first {
-			return first, true
-		}
+	first := intrinsics.atomic_load_explicit(word, .Acquire)
+	if first & 1 != 0 {
+		return 0, false, first
 	}
-	return 0, false
+	intrinsics.mem_copy_non_overlapping(raw_data(out), raw_data(page), OWNER_PAGE_SIZE)
+	intrinsics.atomic_thread_fence(.Acquire)
+	if after := intrinsics.atomic_load_explicit(word, .Relaxed); after != first {
+		return 0, false, after
+	}
+	return first, true, first
+}
+
+// owner_page_sizes_valid says if a page and a copy each hold a whole page.
+owner_page_sizes_valid :: proc "contextless" (page: []u8, out: []u8) -> bool {
+	return len(page) >= OWNER_PAGE_SIZE && len(out) >= OWNER_PAGE_SIZE
 }

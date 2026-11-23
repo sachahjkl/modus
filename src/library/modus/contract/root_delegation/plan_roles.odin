@@ -39,6 +39,11 @@ Plan_Roles_Step :: enum u64 {
 	// the start of the machine, the core waits for it before the start
 	// policy.
 	Loaded   = 4,
+	// Plan_Values only: the store of the holder of Plans committed the
+	// generation of values[1], whose set the core took with Apply or
+	// Rollback. The core puts the set in force now, and not before, so no
+	// owner holds a value of a generation that the store refused.
+	Committed = 5,
 }
 
 // values[1] of a Plan_Roles with the step Loaded: what the holder of Plans

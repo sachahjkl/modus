@@ -70,38 +70,84 @@ values_with_no_port_or_a_refusal_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, values_give(&state, MACHINE_PRINCIPAL, &plan, 1, .Apply), pr.Plan_Refusal.Values_Refused)
 }
 
-// A send again of the values that the core refuses, or does not answer,
-// marks the state with its generation; one that the core takes, and one of
-// another principal, mark nothing.
+// A send again of the values: one that the core takes marks nothing; one
+// that the core refuses for its content is sent once and marks the state
+// with its generation and the problem; one with no answer is sent
+// VALUES_SEND_TRIES times, with a pause between, and marks No_Answer; a
+// plan of another principal sends nothing.
 @(test)
 a_refused_send_again_of_the_values_marks_the_state :: proc(t: ^testing.T) {
-	state: Plans_State
+	@(static) sends: int
+	@(static) pauses: int
+	state := new(Plans_State, context.temp_allocator)
 	plan: pr.Plan_Spec
 	entry, _ := pr.plan_entry_make_value("display", "bar_edge", 2, .Plan_Default)
 	plan.entries[0], plan.entry_count = entry, 1
 	take :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
+		sends += 1
 		return .None, true
 	}
 	refuse_rollback :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
+		sends += 1
 		return step == .Rollback ? .Bad_Record : .None, true
 	}
 	silent :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
+		sends += 1
 		return .None, false
 	}
+	pause :: proc "contextless" (user: rawptr) {pauses += 1}
+	state.roles.pause = pause
 	state.values = {replace = take}
-	values_resend(&state, MACHINE_PRINCIPAL, &plan, 3)
-	testing.expect(t, !state.values_resend_failed)
+	sends = 0
+	testing.expect(t, values_resend(state, MACHINE_PRINCIPAL, &plan, 3))
+	testing.expect(t, !state.values_unreconciled && sends == 1)
 	state.values = {replace = refuse_rollback}
-	values_resend(&state, 7, &plan, 3)
-	testing.expect(t, !state.values_resend_failed)
-	values_resend(&state, MACHINE_PRINCIPAL, &plan, max(u64))
-	testing.expect(t, state.values_resend_failed && state.values_resend_generation == max(u64))
+	sends = 0
+	testing.expect(t, values_resend(state, 7, &plan, 3))
+	testing.expect(t, !state.values_unreconciled && sends == 0)
+	testing.expect(t, !values_resend(state, MACHINE_PRINCIPAL, &plan, max(u64)))
+	testing.expect(t, state.values_unreconciled && state.values_unreconciled_generation == max(u64) && sends == 1)
+	testing.expect_value(t, state.values_cause, Values_Cause.Refused)
 	testing.expect_value(t, state.values_problem, plan_values.Set_Problem.Bad_Record)
-	state.values_resend_failed = false
+	state.values_unreconciled = false
 	state.values = {replace = silent}
-	values_resend(&state, MACHINE_PRINCIPAL, &plan, 0)
-	testing.expect(t, state.values_resend_failed && state.values_resend_generation == 0)
+	sends, pauses = 0, 0
+	testing.expect(t, !values_resend(state, MACHINE_PRINCIPAL, &plan, 0))
+	testing.expect(t, state.values_unreconciled && state.values_unreconciled_generation == 0)
+	testing.expect_value(t, state.values_cause, Values_Cause.No_Answer)
+	testing.expect_value(t, sends, VALUES_SEND_TRIES)
+	testing.expect_value(t, pauses, VALUES_SEND_TRIES - 1)
 }
+
+// The commit of a generation: one that the core takes at the second send
+// marks nothing; one that it never takes is sent VALUES_SEND_TRIES times
+// and marks Not_Committed; a plan of another principal and a port with no
+// commit send nothing.
+@(test)
+a_commit_that_the_core_does_not_take_marks_the_state :: proc(t: ^testing.T) {
+	@(static) commits: int
+	@(static) take_at: int
+	state := new(Plans_State, context.temp_allocator)
+	commit :: proc "contextless" (user: rawptr, generation: u64) -> (taken: bool, answered: bool) {
+		commits += 1
+		return commits == take_at, true
+	}
+	values_commit(state, MACHINE_PRINCIPAL, 4)
+	testing.expect(t, !state.values_unreconciled)
+	state.values.commit = commit
+	commits, take_at = 0, 2
+	values_commit(state, 7, 4)
+	testing.expect(t, commits == 0 && !state.values_unreconciled)
+	values_commit(state, MACHINE_PRINCIPAL, 4)
+	testing.expect(t, commits == 2 && !state.values_unreconciled)
+	commits, take_at = 0, -1
+	values_commit(state, MACHINE_PRINCIPAL, 5)
+	testing.expect(t, commits == VALUES_SEND_TRIES && state.values_unreconciled && state.values_unreconciled_generation == 5)
+	testing.expect_value(t, state.values_cause, Values_Cause.Not_Committed)
+}
+
+@(private = "file")
+any_word :: proc "contextless" (word: u64) -> bool {return true}
 
 // A text of the plan reaches its owner: the set keeps it as a text entry,
 // the page of the owner gives it back, and text_in_force reads it by the
@@ -158,5 +204,3 @@ a_text_of_the_plan_reaches_its_owner :: proc(t: ^testing.T) {
 	testing.expect(t, plan_values.owner_fits_page(fitting_values))
 }
 
-@(private = "file")
-any_word :: proc "contextless" (word: u64) -> bool {return true}

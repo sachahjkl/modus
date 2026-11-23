@@ -956,6 +956,25 @@ time_zone_locked :: proc "contextless" (plan: plan_values.Owner_Values) -> bool 
 	return plan_values.locked(plan, TIME_ZONE_NAME, zone_offset_minutes_allowed)
 }
 
+// change_locked says if a change of the settings meets a lock of the plan:
+// a setting whose value changes or that the act names, or the zone, that a
+// lock holds. setting is the first such setting; zone is true when the lock
+// is the one of the zone. The one test of every door of a change: a call, a
+// press in the window, the next appearance (src/md/features/module_settings.md,
+// "The lock").
+change_locked :: proc "contextless" (plan: plan_values.Owner_Values, before: Choice, before_zone: i32, after: Choice, after_zone: i32, given: Given) -> (setting: Setting, zone: bool, locked: bool) {
+	before_values, after_values := values_of(before), values_of(after)
+	for member in Setting {
+		if (before_values[member] != after_values[member] || given.values[member]) && setting_locked(plan, member) {
+			return member, false, true
+		}
+	}
+	if (before_zone != after_zone || given.time_zone) && time_zone_locked(plan) {
+		return {}, true, true
+	}
+	return {}, false, false
+}
+
 // first_locked gives the first setting that a call of set gives and that a
 // lock of the plan holds: the setter refuses the whole call with No_Grant,
 // unit Plan_Lock (src/md/features/module_settings.md, "The lock"). A

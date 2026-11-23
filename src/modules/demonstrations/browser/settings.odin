@@ -35,6 +35,8 @@ ERROR_ACTS_FOR_PRINCIPAL :: -1
 
 browser_kept: kept_choices.Kept
 browser_plan: plan_values.Owner_Values
+// The copy of the plan values page that browser_plan points into.
+browser_plan_copy: system.Plan_Values_Copy
 // The home in force, in the canonical form of its address, and its layer.
 home_bytes: [HOME_BYTES_MOST]u8
 home_length: int
@@ -113,7 +115,7 @@ home_take :: proc "contextless" (record: chosen_values.Record) {
 // settings_open reads the plan values and opens the store. It makes no call
 // to the storage service: the read waits for the first frame.
 settings_open :: proc "contextless" (ctx: ^system.Context) {
-	browser_plan, _ = system.plan_values_of_process(&ctx.values)
+	browser_plan, _ = system.plan_values_of_process(&ctx.values, &browser_plan_copy)
 	store, store_open := storage.open(ctx)
 	if !kept_choices.kept_open(&browser_kept, store, store_open, KEPT_OBJECT_NAME) {
 		system.log_fact(.Info, Settings_Not_Kept{})

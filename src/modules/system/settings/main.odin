@@ -224,6 +224,8 @@ kept_layers: settings.Kept_Layers
 // The plan values of this owner: its defaults and its locks, from the page
 // of its start (src/md/features/module_settings.md, "Plan records").
 kept_plan: plan_values.Owner_Values
+// The copy of the plan values page that kept_plan points into.
+kept_plan_copy: system.Plan_Values_Copy
 
 // What the read of the kept record found.
 Kept_Load :: enum u8 {
@@ -429,7 +431,8 @@ change_decision :: proc "contextless" (changes_nothing, kept: bool) -> Change_De
 // change keeps the values, the zone and the language list in the private
 // store, then writes them on the page and wakes the compositor and the
 // process `date`. A change that the store refuses changes nothing on the
-// page: it writes its fact, and gives false (change_decision).
+// page: it writes its fact, and gives false (change_decision). A change that
+// a lock of the plan holds changes nothing, and gives false too.
 change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given = {}) -> bool {
 	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
@@ -439,6 +442,13 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32,
 	changes_nothing := values_same && languages_same && current.zone_offset_minutes == zone && !settings.given_not_chosen(given, kept_layers)
 	if changes_nothing {
 		return change_decision(true, true).kept
+	}
+	// A lock of the plan holds over every door: a call, a press in the
+	// window, the next appearance. A change that meets one changes nothing.
+	if locked_setting, zone_locked, locked := settings.change_locked(kept_plan, current, current.zone_offset_minutes, choice, zone, given); locked {
+		name := zone_locked ? settings.TIME_ZONE_NAME : settings.descriptions[locked_setting].name
+		system.log_fact(.Warning, Change_Locked{setting = value_kinds.text_field(name, LOCKED_NAME_FIELD_BYTES)})
+		return false
 	}
 	kept := keep(choice, zone, given)
 	decision := change_decision(false, kept)
@@ -816,6 +826,12 @@ languages_get :: proc "c" (result: ^[]Language_Row) -> i64 {
 // the defaults give on the page: the store first, then the page.
 reset_and_write :: proc "contextless" (changes: []chosen_values.Change, languages: bool) -> bool {
 	if !has_store {
+		return false
+	}
+	// As keep: a record that the store did not give is read again, and no
+	// reset is written over choices that this process does not know.
+	if kept_record_unread && kept_load() == .Read_Refused {
+		system.log_fact(.Warning, Kept_Record_Unread{})
 		return false
 	}
 	if len(changes) > 0 && !kept_write(changes, false, {}) {
@@ -1469,6 +1485,8 @@ setting_header_add :: proc "contextless" (builder: ^Layout_Builder, table: ^inte
 }
 
 ZONE_TITLE :: "Time zone"
+// After the name of a setting that a lock of the plan of principal 0 holds.
+LOCKED_MARK :: "locked by the plan"
 ZONE_EXPLANATION :: "A fixed offset from UTC: it does not follow summer time."
 LANGUAGES_TITLE :: "Languages"
 LANGUAGES_EXPLANATION :: "The languages that you read, the first first. Each text is in the first one that has it, else in English."
@@ -1694,8 +1712,14 @@ scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface
 
 // setting_header_draw draws the name of a setting and the line of what it
 // does.
-setting_header_draw :: proc "contextless" (frame: ^interface.Frame, title, explanation: interface.Area, title_text, explanation_text: string, tokens: layout.Element_Tokens) {
+setting_header_draw :: proc "contextless" (frame: ^interface.Frame, title, explanation: interface.Area, title_text, explanation_text: string, tokens: layout.Element_Tokens, locked := false) {
 	interface.draw_text(frame.table, title.x, title.y, title_text, tokens.text, interface.FONT_INTERFACE_BOLD)
+	// A setting that a lock of the plan holds says so after its name: its
+	// buttons take no press.
+	if locked {
+		after := title.x + interface.text_measured_width(frame.table, interface.FONT_INTERFACE_BOLD, title_text) + int(tokens.gap)
+		interface.draw_text(frame.table, after, title.y, LOCKED_MARK, tokens.text_dim, interface.FONT_INTERFACE)
+	}
 	interface.draw_caption(frame, explanation.x, explanation.y, explanation.width, explanation_text)
 }
 
@@ -1709,7 +1733,7 @@ text_on_button_line :: proc "contextless" (frame: ^interface.Frame, area: interf
 // languages to add.
 region_draw :: proc "contextless" (frame: ^interface.Frame, boxes: ^Settings_Boxes, choice: settings.Choice, texts: ^Frame_Texts, tokens: layout.Element_Tokens, focus_area: ^interface.Area) {
 	tree := &layout_tree
-	setting_header_draw(frame, area_of(tree, boxes.zone_title), area_of(tree, boxes.zone_explanation), ZONE_TITLE, ZONE_EXPLANATION, tokens)
+	setting_header_draw(frame, area_of(tree, boxes.zone_title), area_of(tree, boxes.zone_explanation), ZONE_TITLE, ZONE_EXPLANATION, tokens, settings.time_zone_locked(kept_plan))
 	zone_area := area_of(tree, boxes.zone_list)
 	chosen := max(texts.zone_chosen, 0)
 	zone_result := interface.list_with_choice(frame, zone_area, interface.identity("time zone list"), texts.zone_lines[:texts.zone_line_count], &chosen, {name = "time zone"})
@@ -1811,7 +1835,7 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			interface.card(&frame, area_of(tree, boxes.cards[section]), section_titles[section], "", graphics.colors.kernel)
 			for setting in settings_of_section(section) {
 				setting_boxes := &boxes.setting_boxes[setting]
-				setting_header_draw(&frame, area_of(tree, setting_boxes.title), area_of(tree, setting_boxes.explanation), setting_texts[setting].title, setting_texts[setting].explanation, tokens)
+				setting_header_draw(&frame, area_of(tree, setting_boxes.title), area_of(tree, setting_boxes.explanation), setting_texts[setting].title, setting_texts[setting].explanation, tokens, settings.setting_locked(kept_plan, setting))
 				if setting == .Scale {
 					if boxes.scale_value != layout.NO_BOX {
 						in_force := int(choice.scale) - int(min(scale_factor.Scale))
@@ -1941,7 +1965,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !has_store {
 		system.log_fact(.Warning, No_Store{})
 	}
-	kept_plan, _ = system.plan_values_of_process(&ctx.values)
+	kept_plan, _ = system.plan_values_of_process(&ctx.values, &kept_plan_copy)
 	pass, pass_ok := settings.pass_of_word(ctx.values[settings.VALUE_PASS])
 	if !pass_ok {
 		system.log_fact(.Warning, Pass_Refused{word = ctx.values[settings.VALUE_PASS]})

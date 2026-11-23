@@ -106,17 +106,7 @@ make_grant_answer :: proc(
 	decision: powerbox.Item_Decision = .Granted,
 	duration: powerbox.Grant_Duration = .This_Run,
 ) -> powerbox.Grant_Answer {
-	ans := powerbox.Grant_Answer {
-		dialog_serial            = dialog.dialog_serial,
-		request_serial           = dialog.request_serial,
-		dialog_record_hash       = dialog.record_hash,
-		display_holder_slot      = TRUSTED_DISPLAY_SLOT,
-		input_origin_word        = u64(powerbox.Input_Origin.Local_Machine),
-		shown_timestamp_ms       = shown_ms,
-		input_press_timestamp_ms = press_ms,
-		answer_timestamp_ms      = answer_ms,
-		item_count               = dialog.item_count,
-	}
+	ans := powerbox.grant_answer_make(dialog, TRUSTED_DISPLAY_SLOT, .Local_Machine, shown_ms, press_ms, answer_ms, 0)
 	for i in u32(0) ..< dialog.item_count {
 		ans.items[i] = {
 			decision_word = u64(decision),

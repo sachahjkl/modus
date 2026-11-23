@@ -22,12 +22,12 @@ values_pages: [^]u8
 // the answer bound. answered is false when the ring took no record or no
 // completion came.
 @(private = "file")
-values_command :: proc "contextless" (step: rd.Plan_Roles_Step) -> (completion: ring.Record, answered: bool) {
+values_command :: proc "contextless" (step: rd.Plan_Roles_Step, generation: u64 = 0) -> (completion: ring.Record, answered: bool) {
 	if !root_requests_open() {
 		return {}, false
 	}
 	tag := root_requests_tag_next()
-	if !system.send(&root_requests.ring.commands, ring.Record{kind = u32(root_ring.Root_Command.Plan_Values), tag = tag, values = {0 = u64(step)}}) {
+	if !system.send(&root_requests.ring.commands, ring.Record{kind = u32(root_ring.Root_Command.Plan_Values), tag = tag, values = {0 = u64(step), 1 = generation}}) {
 		return {}, false
 	}
 	limit := system.time() + ROLES_ANSWER_BOUND_MILLISECONDS
@@ -67,7 +67,8 @@ values_pages_map :: proc "contextless" () -> bool {
 
 // values_replace is the replace of the port: the set on the pages, then
 // Apply or Rollback. The refusal of the core is the value found of its
-// error record.
+// error record; a refusal that names no problem of the set (no pages, a
+// state) is no answer, and the send is tried again.
 @(private = "file")
 values_replace :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
 	if !values_pages_map() || len(set) > plan_values.SET_SIZE {
@@ -86,9 +87,20 @@ values_replace :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Rol
 	// pages, a state) is no refusal of the content.
 	found, known := enum_word.member_of_word(plan_values.Set_Problem, u64(errors.completion_record(completion.values).found))
 	if !known || found == .None {
-		return .Too_Short, true
+		return .None, false
 	}
 	return found, true
+}
+
+// values_commit_send is the commit of the port: the step Committed of a
+// generation that the store committed.
+@(private = "file")
+values_commit_send :: proc "contextless" (user: rawptr, generation: u64) -> (taken: bool, answered: bool) {
+	completion, completion_answered := values_command(.Committed, generation)
+	if !completion_answered {
+		return false, false
+	}
+	return completion.kind == u32(system.Status.Ok), true
 }
 
 // values_port_bind gives the state the port. With no pages, the port has
@@ -98,5 +110,5 @@ values_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) {
 	if !values_pages_map() {
 		return
 	}
-	state.values = {replace = values_replace}
+	state.values = {replace = values_replace, commit = values_commit_send}
 }

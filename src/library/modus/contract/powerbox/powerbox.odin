@@ -317,6 +317,27 @@ Grant_Answer :: struct {
 	items:                    [MAX_REQUEST_ITEMS]Item_Answer,
 }
 
+// grant_answer_make gives the answer of a display to a dialog: its
+// serials and hash, the slot of the display, where the input came from,
+// the times, and the arm time that the display applied, the one of the
+// principal (consent_arm_milliseconds of it). The display writes each
+// answer with it, so no answer leaves the arm time out; the items and their
+// decisions are the caller's.
+grant_answer_make :: proc "contextless" (dialog: ^Dialog_Record, display_slot: u32, origin: Input_Origin, shown_ms, press_ms, answer_ms, arm_of_the_principal: u64) -> Grant_Answer {
+	return {
+		dialog_serial            = dialog.dialog_serial,
+		request_serial           = dialog.request_serial,
+		dialog_record_hash       = dialog.record_hash,
+		display_holder_slot      = display_slot,
+		input_origin_word        = u64(origin),
+		shown_timestamp_ms       = shown_ms,
+		input_press_timestamp_ms = press_ms,
+		answer_timestamp_ms      = answer_ms,
+		arm_milliseconds         = consent_arm_milliseconds(arm_of_the_principal),
+		item_count               = dialog.item_count,
+	}
+}
+
 // Border parsers: each converts a raw transport word into its closed enum,
 // refusing unknown words and zero where zero means unset.
 

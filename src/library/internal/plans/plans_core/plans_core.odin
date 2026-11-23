@@ -162,13 +162,15 @@ Plans_State :: struct {
 	store:                pr.Private_Store_Port,
 	roles:                Roles_Port,
 	values:               Values_Port,
-	// The refusal of the core for the last set of values that it refused.
+	// The refusal of the core for the last set of values that it refused,
+	// and the cause of the last send that it did not take.
 	values_problem:       plan_values.Set_Problem,
-	// A send again of the values of the generation in force failed since the
-	// service last read this: the core may hold the values of another
-	// generation. The log names it, with that generation.
-	values_resend_failed:     bool,
-	values_resend_generation: u64,
+	values_cause:         Values_Cause,
+	// A send again of the values of the generation in force, or a commit,
+	// failed since the service last read this: the core may hold the values
+	// of another generation. The log names it, with that generation.
+	values_unreconciled:            bool,
+	values_unreconciled_generation: u64,
 	// The set that the values port sends: too large for the stack.
 	values_set:           [plan_values.SET_SIZE]u8,
 	// The refusal of the core for the last set that it refused: the log
@@ -299,7 +301,10 @@ roles_start :: proc "contextless" (state: ^Plans_State) -> rd.Plan_Roles_Load_Ou
 		// The core gets the values of the generation in force at each start
 		// of this service: it keeps none across a start of the machine.
 		if current, record, found := current_plan(state, MACHINE_PRINCIPAL); found {
-			values_resend(state, MACHINE_PRINCIPAL, current, record.generation)
+			// The store holds the generation: the set holds at once.
+			if values_resend(state, MACHINE_PRINCIPAL, current, record.generation) {
+				values_commit(state, MACHINE_PRINCIPAL, record.generation)
+			}
 		}
 		if state.roles_stored_refusal != .None {
 			return .Plan_Refused
@@ -364,7 +369,7 @@ roles_compensate :: proc "contextless" (state: ^Plans_State, principal: u64, ent
 		return
 	}
 	previous_plan, previous_record, _ := entry_current_plan(entry)
-	values_resend(state, principal, previous_plan, previous_record.generation)
+	_ = values_resend(state, principal, previous_plan, previous_record.generation)
 	if roles_give(state, principal, previous_plan, previous_record.generation, .Rollback) != .None {
 		state.roles.synchronized = false
 		state.roles_compensation_failed = true
@@ -633,6 +638,8 @@ commit_generation :: proc "contextless" (state: ^Plans_State, entry: ^Principal_
 		roles_compensate(state, plan.principal, entry)
 		return {}, .Store_Failed
 	}
+	// The store committed: the values of the generation hold now.
+	values_commit(state, plan.principal, next_generation)
 	slot_index := entry.history_count
 	entry.plans[slot_index] = plan^
 	entry.history[slot_index] = record
@@ -1211,6 +1218,7 @@ rollback_commit :: proc "contextless" (
 		roles_compensate(state, principal, entry)
 		return {}, .Store_Failed
 	}
+	values_commit(state, principal, selected.generation)
 	entry.current_generation = selected.generation
 	state.counters.total_rollbacks += 1
 	return selected, .None

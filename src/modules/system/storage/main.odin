@@ -1310,10 +1310,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					system.wait_records(&wait, &item.connection.calls.commands)
 				}
 			}
-			system.plan_values_wait(&wait, &ctx.values)
+			system.plan_values_wait(&wait, &ctx.values, &retention_plan_copy)
 			system.wait_end(&wait)
 		}
-		if system.plan_values_changed(&ctx.values) {
+		if system.plan_values_changed(&ctx.values, &retention_plan_copy) {
 			retention_rule_read(ctx)
 		}
 		calls := system.service_run(&service)
@@ -1324,6 +1324,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
+// The copy of the plan values page that the retention rule is read from.
+retention_plan_copy: system.Plan_Values_Copy
+
 // retention_rule_read reads the retention rule of the plan of principal 0
 // from the plan values page: at the start, and at each change of the plan.
 // Storage starts before the holder of Plans, which needs it, so the rule of
@@ -1331,7 +1334,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // (src/md/features/module_settings.md, "How the values reach their
 // owner"). The next pass of the retention runs with the new rule.
 retention_rule_read :: proc "contextless" (ctx: ^system.Context) {
-	plan, planned := system.plan_values_of_process(&ctx.values)
+	plan, planned := system.plan_values_of_process(&ctx.values, &retention_plan_copy)
 	if !planned {
 		return
 	}

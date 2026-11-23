@@ -25,12 +25,14 @@ dhcp: dhcp_client.Client
 dhcp_in_use: bool
 dhcp_generator: random.Generator // The transaction words: never a counter that another machine guesses.
 dhcp_message: [dhcp_client.MESSAGE_CAPACITY]u8
+// The copy of the plan values page that the static address is read from.
+network_plan_copy: system.Plan_Values_Copy
 
 // address_start takes the static address of the plan, or starts the
 // client. A static address of the plan that its border refuses starts the
 // client, and the log says it.
 address_start :: proc "contextless" (ctx: ^system.Context, now: u64) {
-	plan, _ := system.plan_values_of_process(&ctx.values)
+	plan, _ := system.plan_values_of_process(&ctx.values, &network_plan_copy)
 	static, found, problem := dhcp_client.static_of(plan)
 	if found && problem == .None {
 		address_take(static.address, static.mask, static.prefix, static.gateway)

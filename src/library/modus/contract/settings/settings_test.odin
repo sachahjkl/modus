@@ -779,3 +779,40 @@ a_call_that_gives_a_locked_setting_is_named :: proc(t: ^testing.T) {
 	_, found = first_locked({}, presences)
 	testing.expect(t, !found)
 }
+
+// The one lock test of every door: a change of a locked setting, a locked
+// setting named at its value, and a change of a locked zone are refused;
+// a change of another setting, a lock whose word the border refuses, and
+// a change with no lock pass.
+@(test)
+a_change_that_meets_a_lock_is_refused_at_every_door :: proc(t: ^testing.T) {
+	before := choice_default()
+	bytes: [chosen_values.HEADER_SIZE + 4 * chosen_values.ENTRY_SIZE]u8
+	font_word := u64(values_of(before)[.Font])
+	locks := [3]chosen_values.Change{{name = descriptions[.Font].name, kind = .Choose, value = font_word}, {name = TIME_ZONE_NAME, kind = .Choose, value = 60}, {name = descriptions[.Grid_Fit].name, kind = .Choose, value = 99}}
+	written, _ := chosen_values.write_record({}, locks[:], bytes[:])
+	record, _ := chosen_values.read_record(bytes[:written])
+	plan := plan_values.Owner_Values{locks = record}
+	after := before
+	after.font = .Spleen
+	setting, zone, locked := change_locked(plan, before, 0, after, 0, {})
+	testing.expect(t, locked && !zone && setting == .Font)
+	named: Given
+	named.values[.Font] = true
+	_, _, named_locked := change_locked(plan, before, 0, before, 0, named)
+	testing.expect(t, named_locked)
+	_, zone_locked, moved := change_locked(plan, before, 0, before, -210, {})
+	testing.expect(t, moved && zone_locked)
+	_, _, zone_named := change_locked(plan, before, 0, before, 0, {time_zone = true})
+	testing.expect(t, zone_named)
+	other := before
+	other.scale = .Eleven_Eighths
+	_, _, other_locked := change_locked(plan, before, 0, other, 0, {})
+	testing.expect(t, !other_locked)
+	grid := before
+	grid.grid_fit = grid.grid_fit == .On ? .Off : .On
+	_, _, grid_locked := change_locked(plan, before, 0, grid, 0, {})
+	testing.expect(t, !grid_locked)
+	_, _, none_locked := change_locked({}, before, 0, after, -210, {time_zone = true})
+	testing.expect(t, !none_locked)
+}

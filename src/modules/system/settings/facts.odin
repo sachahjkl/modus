@@ -260,6 +260,14 @@ No_Store :: struct {}
 @(log_fact = "settings: a change that the store did not keep: the page keeps the values before")
 Change_Not_Kept :: struct {}
 
+// A change met a lock of the plan of principal 0: nothing changed.
+@(log_fact = "settings: {setting} is locked by the plan of principal 0: the change is refused, and nothing changed")
+Change_Locked :: struct {
+	setting: [32]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
+LOCKED_NAME_FIELD_BYTES :: size_of(Change_Locked{}.setting)
+
 // The store did not give the kept record at the last read: a change is not
 // written over choices that this process does not know, until a read gives
 // the record.

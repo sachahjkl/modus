@@ -142,9 +142,9 @@ scenario_plan_and_audit_first := [?]Step {
 
 scenario_plan_and_audit_second := [?]Step {
 	// The roles of the stored plan hold before the start policy starts.
-	// The values of the stored plan reach storage, which started first:
-	// plans gives them before the roles, so the wait does not move the
-	// place of the log.
+	// The values of the stored plan reach storage, which started first, at
+	// the commit that plans sends at its start: the wait does not move the
+	// place of the log, so the order of this line and of the roles is free.
 	{kind = .Wait, text = RETENTION_OF_THE_PLAN_LINE, any_order = true},
 	{kind = .Wait, text = "root: the roles of generation 1 of the plan of principal 0 hold from the start: 1 overrides, serial ", fails_on = PLAN_AT_START_LATE_LINE},
 	{kind = .Wait, text = "root: started start_policy", fails_on = PLAN_AT_START_STOPPED_LINE},

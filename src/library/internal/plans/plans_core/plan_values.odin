@@ -3,8 +3,10 @@ package plans_core
 // The plan values of principal 0 (src/md/features/module_settings.md,
 // "Plan records"): the Value entries of a plan, which the holder of Plans
 // gives the core with the command Plan_Values beside the roles. The core
-// checks the set whole and keeps it; each owner reads its values at its
-// next start.
+// checks the set whole and takes it; the set holds from the step
+// Committed, which this service sends once its store committed the
+// generation (values_commit), so no owner holds a value of a generation
+// that the store refused.
 //
 // The values go first, then the roles: a set of values that the core
 // refuses changes nothing, and a refusal of the roles gives the core the
@@ -17,13 +19,43 @@ import pr "modus:contract/plans_recipes"
 import rd "modus:contract/root_delegation"
 
 // The port of the values of the machine: the command Plan_Values of the
-// root ring. answered is false with no answer; problem is the refusal of
-// the core. A port with no procedure gives no value: an apply of a plan of
+// root ring. answered is false with no answer, or with a refusal that
+// names no content (no pages, a full ring); problem is the refusal of the
+// content. A port with no procedure gives no value: an apply of a plan of
 // principal 0 with a Value entry is then refused with Values_Refused.
+// commit sends the step Committed of a generation; taken is false when the
+// core did not put it in force (a full service ring, no set of that
+// generation). nil: nothing to commit, as in a host test of the roles.
 Values_Port :: struct {
 	user:    rawptr,
 	replace: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool),
+	commit:  proc "contextless" (user: rawptr, generation: u64) -> (taken: bool, answered: bool),
 }
+
+// Why the core holds other values than the store: the cause of the last
+// send of values that it did not take.
+Values_Cause :: enum u8 {
+	None           = 0,
+	Set_Too_Large  = 1, // The set of the plan does not fit the pages: a fault of this code, which the border of the plan checks.
+	No_Answer      = 2, // The core gave no answer, or refused with no cause of content.
+	Refused        = 3, // The core refused the content of the set: values_problem names it.
+	Not_Committed  = 4, // The core did not put the set of a committed generation in force.
+}
+
+// The names of the causes, for the line of the log.
+@(rodata)
+VALUES_CAUSE_NAMES := [Values_Cause]string {
+	.None          = "none",
+	.Set_Too_Large = "set too large",
+	.No_Answer     = "no answer",
+	.Refused       = "set refused",
+	.Not_Committed = "commit not taken",
+}
+
+// The sends of one set of values, or of one step Committed, at most: the
+// core refuses for a full service ring, and the pause of the roles port
+// lets the services read their rings between two sends.
+VALUES_SEND_TRIES :: 3
 
 // plan_values_set_of writes the set of the Value entries of a plan, owner
 // by owner, in the order of their first entry: the defaults and the locks
@@ -132,26 +164,67 @@ values_give :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^p
 	}
 	written, ok := plan_values_set_of(plan, generation, state.values_set[:])
 	if !ok {
-		state.values_problem = .Too_Short
+		state.values_cause, state.values_problem = .Set_Too_Large, .None
 		return .Values_Refused
 	}
 	problem, answered := state.values.replace(state.values.user, state.values_set[:written], step)
 	state.values_problem = problem
-	if !answered || problem != .None {
+	switch {
+	case !answered:
+		state.values_cause = .No_Answer
+		return .Values_Refused
+	case problem != .None:
+		state.values_cause = .Refused
 		return .Values_Refused
 	}
+	state.values_cause = .None
 	return .None
+}
+
+// values_commit sends the step Committed of a generation that the store
+// committed, at most VALUES_SEND_TRIES times with a pause between. A
+// commit that the core never takes leaves it with the values before: the
+// state records it, and the service logs it once (values_unreconciled).
+values_commit :: proc "contextless" (state: ^Plans_State, principal: u64, generation: u64) {
+	if principal != MACHINE_PRINCIPAL || state.values.commit == nil {
+		return
+	}
+	for try in 0 ..< VALUES_SEND_TRIES {
+		if try > 0 && state.roles.pause != nil {
+			state.roles.pause(state.roles.user)
+		}
+		if taken, _ := state.values.commit(state.values.user, generation); taken {
+			return
+		}
+	}
+	state.values_cause = .Not_Committed
+	state.values_unreconciled = true
+	state.values_unreconciled_generation = generation
 }
 
 // values_resend gives the core the values of the generation in force again:
 // after a refusal of the roles, at a compensation, and at the start of the
-// service. A refusal leaves the core with other values than the store: the
-// state records it, and the service logs it once (values_resend_failed).
-values_resend :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr.Plan_Spec, generation: u64) {
-	if values_give(state, principal, plan, generation, .Rollback) != .None {
-		state.values_resend_failed = true
-		state.values_resend_generation = generation
+// service. A send that the core does not take is sent again, at most
+// VALUES_SEND_TRIES times with a pause between; a set that it refuses for
+// its content is refused again, so it is not sent twice. A send that never
+// takes leaves the core with other values than the store: the state
+// records it, and the service logs it once (values_unreconciled). taken is
+// true when the core took the set.
+values_resend :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr.Plan_Spec, generation: u64) -> (taken: bool) {
+	for try in 0 ..< VALUES_SEND_TRIES {
+		if try > 0 && state.roles.pause != nil {
+			state.roles.pause(state.roles.user)
+		}
+		if values_give(state, principal, plan, generation, .Rollback) == .None {
+			return true
+		}
+		if state.values_cause != .No_Answer {
+			break
+		}
 	}
+	state.values_unreconciled = true
+	state.values_unreconciled_generation = generation
+	return false
 }
 
 // plan_give sends the core the values, then the roles, of a generation. A
@@ -162,7 +235,7 @@ plan_give :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr.
 		return refusal
 	}
 	if refusal := roles_give(state, principal, plan, generation, step); refusal != .None {
-		values_resend(state, principal, previous, previous_generation)
+		_ = values_resend(state, principal, previous, previous_generation)
 		return refusal
 	}
 	return .None

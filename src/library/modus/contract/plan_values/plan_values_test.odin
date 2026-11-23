@@ -178,25 +178,26 @@ a_page_written_again_is_copied_whole_or_not_at_all :: proc(t: ^testing.T) {
 	page, out: [OWNER_PAGE_SIZE]u8
 	testing.expect(t, owner_page_publish(page[:], values))
 	testing.expect_value(t, owner_page_sequence_load(page[:]), 2)
-	sequence, copied := owner_page_copy(page[:], out[:])
+	sequence, copied, _ := owner_page_copy(page[:], out[:])
 	testing.expect(t, copied && sequence == 2)
 	read, read_ok := owner_page_read(out[:])
 	testing.expect(t, read_ok && locked(read, "consent_arm_milliseconds", any_word))
 	// A second publish: the sequence moves by two, and the values hold.
 	testing.expect(t, owner_page_publish(page[:], {}))
 	testing.expect_value(t, owner_page_sequence_load(page[:]), 4)
-	sequence, copied = owner_page_copy(page[:], out[:])
+	sequence, copied, _ = owner_page_copy(page[:], out[:])
 	empty, empty_ok := owner_page_read(out[:])
 	testing.expect(t, copied && sequence == 4 && empty_ok && empty.locks.count == 0)
 	// A write in progress: the copy gives nothing.
 	owner_page_sequence(page[:])^ = 5
-	_, odd_copied := owner_page_copy(page[:], out[:])
-	testing.expect(t, !odd_copied)
+	_, odd_copied, odd_met := owner_page_copy(page[:], out[:])
+	testing.expect(t, !odd_copied && odd_met == 5)
 	owner_page_sequence(page[:])^ = 4
 	// A page or a copy one byte short.
-	_, short_page := owner_page_copy(page[:OWNER_PAGE_SIZE - 1], out[:])
-	_, short_out := owner_page_copy(page[:], out[:OWNER_PAGE_SIZE - 1])
+	_, short_page, _ := owner_page_copy(page[:OWNER_PAGE_SIZE - 1], out[:])
+	_, short_out, _ := owner_page_copy(page[:], out[:OWNER_PAGE_SIZE - 1])
 	testing.expect(t, !short_page && !short_out)
+	testing.expect(t, !owner_page_sizes_valid(page[:OWNER_PAGE_SIZE - 1], out[:]) && owner_page_sizes_valid(page[:], out[:]))
 	// The largest sequence wraps to an even word.
 	owner_page_sequence(page[:])^ = max(u32) - 1
 	testing.expect(t, owner_page_publish(page[:], values))
@@ -208,7 +209,7 @@ a_page_written_again_is_copied_whole_or_not_at_all :: proc(t: ^testing.T) {
 	wide.defaults.texts = texts[:]
 	testing.expect(t, !owner_page_publish(page[:], wide))
 	testing.expect_value(t, owner_page_sequence_load(page[:]) & 1, 0)
-	sequence, copied = owner_page_copy(page[:], out[:])
+	sequence, copied, _ = owner_page_copy(page[:], out[:])
 	none, none_ok := owner_page_read(out[:])
 	testing.expect(t, copied && none_ok && none.defaults.count == 0 && none.locks.count == 0)
 }

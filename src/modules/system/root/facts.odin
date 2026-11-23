@@ -559,10 +559,19 @@ Role_Store_Refused :: struct {
 @(log_fact = "root: the plan values of an owner do not fit its page: it holds the defaults of its contract")
 Plan_Values_Page_Too_Small :: struct {}
 
-// The core refused a set of plan values because a service ring has no room
-// for the grants of the quotas that the set changes: no value changed, and
-// the holder of Plans sends the set again.
-@(log_fact = "root: refused the plan values of generation {generation}: a service ring has no room for the changed quotas of the stores; the values before stay in force")
+// The core took the set of plan values of a generation: it holds from the
+// commit of the store of the holder of Plans (the step Committed).
+@(log_fact = "root: took the plan values of generation {generation} for {owners} owners: they hold once the store commits it")
+Plan_Values_Taken :: struct {
+	generation: u64,
+	owners:     u64,
+}
+
+// The core refused the commit of a set of plan values because a service
+// ring has no room for the grants of the quotas that the set changes: no
+// value changed, the set stays taken, and the holder of Plans sends the
+// step Committed again.
+@(log_fact = "root: the plan values of generation {generation} wait: a service ring has no room for the changed quotas of the stores; the values before stay in force")
 Plan_Values_Grants_Busy :: struct {
 	generation: u64,
 }

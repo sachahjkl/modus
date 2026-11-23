@@ -8,8 +8,10 @@ package root
 // The core makes the values pages once and lends them to the holder of
 // Plans. The holder writes there the whole set of the generation that the
 // principal accepted. The core copies the set once, checks it whole
-// (plan_values.set_check), and replaces its values in one step: the core
-// never runs with a part of a plan. At the start of each process, the core
+// (plan_values.set_check), and takes it whole; it replaces its values in
+// one step at the step Committed, once the store of the holder of Plans
+// committed that generation: the core never runs with a part of a plan,
+// nor with a plan that the store refused. At the start of each process, the core
 // writes the values of its owner on the page of its place and maps it
 // read-only; at each change of the set, it writes the page of each process
 // that runs again and wakes its sequence word. An owner that reads its
@@ -44,6 +46,13 @@ plan_values_in_force: [plan_values.SET_SIZE]u8
 plan_values_generation: u64
 plan_values_given: bool
 
+// The set that the core took with Apply or Rollback, and its generation:
+// it holds from the step Committed, which the holder of Plans sends once
+// its store committed that generation. Until then the set in force stays.
+plan_values_pending: [plan_values.SET_SIZE]u8
+plan_values_pending_generation: u64
+plan_values_pending_held: bool
+
 // The set in force before a change: a change that the service rings have
 // no room for is undone whole.
 plan_values_saved: [plan_values.SET_SIZE]u8
@@ -70,7 +79,9 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 		answer^ = errors.ring_fail(kind, .Bad_Value, .None, 1, i64(min(values[0], u64(max(i64)))), i64(rd.Plan_Roles_Step.Rollback))
 		return .Bad_Operation
 	}
-	for index in 1 ..< len(values) {
+	// values[1] of Committed is its generation; each other word is 0.
+	first_zero := step == .Committed ? 2 : 1
+	for index in first_zero ..< len(values) {
 		if values[index] != 0 {
 			answer^ = errors.ring_fail(kind, .Bad_Value, .None, i64(index + 1), i64(min(values[index], u64(max(i64)))), 0)
 			return .Bad_Operation
@@ -87,6 +98,8 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 			answer^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
 		}
 		return status
+	case .Committed:
+		return plan_values_commit(values[1], answer)
 	case .Apply, .Rollback:
 	}
 	if plan_values_pages == nil {
@@ -100,25 +113,48 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 		answer^ = errors.ring_fail(kind, .Refused, .Records, 0, 0, 0, i64(problem))
 		return .Bad_State
 	}
+	// The set waits for the commit of the store (the step Committed): an
+	// owner never holds a value of a generation that the store refused.
+	plan_values_pending = plan_values_copy
+	plan_values_pending_generation = head.generation
+	plan_values_pending_held = true
+	system.log_fact(.Info, Plan_Values_Taken{generation = head.generation, owners = u64(head.owner_count)})
+	answer^ = {0 = head.generation}
+	return .Ok
+}
+
+// plan_values_commit puts the set taken for generation in force: the
+// store committed it. A step for another generation, or with no set taken,
+// is refused.
+@(private = "file")
+plan_values_commit :: proc "contextless" (generation: u64, answer: ^[7]u64) -> system.Status {
+	kind := u32(root_ring.Root_Command.Plan_Values)
+	if !plan_values_pending_held || generation != plan_values_pending_generation {
+		answer^ = errors.ring_fail(kind, .State, .Versions, 2, i64(min(generation, u64(max(i64)))), 0, i64(plan_values_pending_generation))
+		return .Bad_State
+	}
 	// The quota of a store is a plan value: a change of it writes the grant
 	// of each open connection to the holder of Storage again, as a change
 	// of the roles does, and only when each service ring has room for its
-	// grants; else the change is undone whole.
+	// grants; else nothing changes, the set stays taken, and the holder of
+	// Plans sends the step again.
+	head, _ := plan_values.set_check(plan_values_pending[:])
 	grants_change_begin()
 	plan_values_saved = plan_values_in_force
 	plan_values_saved_generation = plan_values_generation
 	plan_values_saved_given = plan_values_given
-	plan_values_in_force = plan_values_copy
-	plan_values_generation = head.generation
+	plan_values_in_force = plan_values_pending
+	plan_values_generation = generation
 	plan_values_given = true
 	if !grants_change_room() {
 		plan_values_in_force = plan_values_saved
 		plan_values_generation = plan_values_saved_generation
 		plan_values_given = plan_values_saved_given
-		system.log_fact(.Warning, Plan_Values_Grants_Busy{generation = head.generation})
+		system.log_fact(.Warning, Plan_Values_Grants_Busy{generation = generation})
 		answer^ = errors.ring_fail(kind, .Busy, .Requests)
 		return .Bad_State
 	}
+	plan_values_pending_held = false
 	grants_change_send()
 	pages := plan_values_pages_publish()
 	root_plan_read()

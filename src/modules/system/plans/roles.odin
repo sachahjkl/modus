@@ -8,6 +8,8 @@ package plans_service
 import "base:intrinsics"
 import "internal:plans/plans_core"
 import "modus:contract/enum_word"
+import "modus:contract/plan_values"
+import "modus:contract/value_kinds"
 import rd "modus:contract/root_delegation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -169,14 +171,18 @@ roles_compensation_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
 	system.log_fact(.Warning, Plan_Roles_Unreconciled{generation = state.roles.generation, refusal_code = u64(state.roles_refusal)})
 }
 
-// values_resend_tell writes the line of a send again of the values that the
-// core refused, once.
+// values_resend_tell writes the line of values that the core did not take,
+// sent again or committed, once.
 values_resend_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
-	if !state.values_resend_failed {
+	if !state.values_unreconciled {
 		return
 	}
-	state.values_resend_failed = false
-	system.log_fact(.Warning, Plan_Values_Unreconciled{generation = state.values_resend_generation, set_problem = u64(state.values_problem)})
+	state.values_unreconciled = false
+	cause := plans_core.VALUES_CAUSE_NAMES[state.values_cause]
+	if state.values_cause == .Refused {
+		cause = plan_values.SET_PROBLEM_NAMES[state.values_problem]
+	}
+	system.log_fact(.Warning, Plan_Values_Unreconciled{generation = state.values_unreconciled_generation, cause = value_kinds.text_field(cause, VALUES_CAUSE_FIELD_BYTES)})
 }
 
 // roles_replace writes a set in the roles page and asks the core to take it.
