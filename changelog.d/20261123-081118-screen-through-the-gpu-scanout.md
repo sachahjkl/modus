@@ -1,0 +1,3 @@
+type: Added
+
+**The screen through the scanout of the virtual GPU.** The machine of `modustool run` has a VirtIO-GPU with its VGA part, and the compositor shows each frame through the scanout of the GPU: one batch of the damage rectangles of the frame, so the display of the host redraws only what changed, and each frame stays whole. While the pointer moved at 125 moves each second (KVM, 1920 x 1080, the GTK display in Xvfb), QEMU redrew about 1.07 million pixels each second, against 67 to 89 million with the page flip of the standard VGA, at the same 62 frames each second. At rest it redraws the clock only: 3800 pixels each second. The new machine test part `gpu_scanout` checks that a picture of QEMU is the frame of the compositor.

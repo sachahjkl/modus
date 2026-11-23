@@ -67,12 +67,13 @@ Window :: struct {
 // VirtIO-GPU 1.2 scanout and Venus capability status: gpu_info().
 Gpu_Info :: struct {
 	present:           i64, // 1: VirtIO-GPU PCI device discovered and gpu_device running.
-	attached:          i64, // 1: compositor framebuffer attached to VirtIO-GPU scanout.
+	attached:          i64, // 1: the screen is the scanout of the VirtIO-GPU: each frame goes through it.
 	width:             i64, // Reported VirtIO-GPU scanout width in pixels.
 	height:            i64, // Reported VirtIO-GPU scanout height in pixels.
 	venus:             i64, // 1: host VirtIO-GPU exposes a Venus Vulkan capability set.
 	venus_max_version: i64, // Highest Venus capset version reported by the host.
-	presents:          i64, // Number of Present_Rect flushes completed on VirtIO-GPU.
+	presents:          i64, // The frames that the scanout showed: gpu_device answered each Present_Frame.
+	frames_merged:     i64, // The frames whose damage waited for the answer of a present, and went with a later present.
 }
 
 // What the screen shows against what the compositor received: screen().
@@ -584,7 +585,12 @@ tray_widget_open_export :: proc "c" (widget_word: i64, error: ^errors.Error_Reco
 
 // gpu_info returns one row describing the VirtIO-GPU 1.2 scanout and Venus
 // capability state discovered by the compositor, or a negative number with an
-// error record.
+// error record. With the scanout, `presents` counts the frames that the
+// scanout showed, and `frames_merged` the frames whose damage waited for
+// the answer of a present and went with the next one: a host that is slow
+// to answer merges frames, and never holds the compositor
+// (src/md/infrastructure/whole_frame.md, "The screen through the scanout of
+// the virtual GPU").
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "gpu_info")
@@ -601,6 +607,7 @@ gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -
 			venus             = gpu_venus_available ? 1 : 0,
 			venus_max_version = i64(gpu_venus_max_version),
 			presents          = i64(gpu_presents),
+			frames_merged     = i64(gpu_frames_merged),
 		}
 	}
 	return 1

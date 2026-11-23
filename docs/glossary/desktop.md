@@ -60,6 +60,16 @@ The design: `src/md/infrastructure/whole_frame.md`, "The screen: two screen page
 
 Do not use: buffer swap, vsync.
 
+### Scanout
+
+A scanout is the output of a VirtIO-GPU that shows one resource of the device on the display of the host.
+
+On the machine of `modustool run`, `gpu_device` sets one resource on the scanout, whose backing is the screen memory of the compositor. The compositor puts each frame on the screen with one `Present_Frame`: the service gives the device the transfer and the flush of each damage rectangle in one batch, so the host redraws only what changed and shows each frame whole. A scanout is not a screen page: the host keeps its own copy of the resource, and no flip changes the resource that it shows.
+
+The design: `src/md/infrastructure/whole_frame.md`, "The screen through the scanout of the virtual GPU".
+
+Do not use: front buffer, CRTC, display plane (for this).
+
 ### Compositor
 
 The compositor is the service that owns the display: it combines the surfaces of the processes into the framebuffer and routes the input to the process that has the focus.

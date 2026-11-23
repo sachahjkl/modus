@@ -390,3 +390,75 @@ venus_context_blob_and_submit_3d_framing :: proc(t: ^testing.T) {
 	_, trunc_sub := submit_3d_decode(wire[:w_sub - 1])
 	testing.expect_value(t, trunc_sub, Validation_Problem.Buffer_Too_Short)
 }
+
+// The present list sits in the page after the pixels, and the memory of a
+// framebuffer holds that page too.
+@(test)
+the_present_list_is_the_page_after_the_pixels :: proc(t: ^testing.T) {
+	testing.expect_value(t, present_list_offset(1920, 1080), u64(1920 * 1080 * 4))
+	testing.expect_value(t, present_list_offset(1, 1), u64(PRESENT_LIST_PAGE_BYTES))
+	testing.expect_value(t, present_list_offset(1024, 1), u64(PRESENT_LIST_PAGE_BYTES))
+	testing.expect_value(t, present_list_offset(1025, 1), u64(2 * PRESENT_LIST_PAGE_BYTES))
+	testing.expect_value(t, framebuffer_bytes_with_list(1920, 1080), u64(1920 * 1080 * 4 + PRESENT_LIST_PAGE_BYTES))
+	testing.expect_value(t, present_list_offset(MAX_RESOURCE_DIMENSION, MAX_RESOURCE_DIMENSION), u64(MAX_RESOURCE_DIMENSION) * MAX_RESOURCE_DIMENSION * 4)
+}
+
+// Each refusal of a present list: a count of 0, one past the capacity and
+// the largest word; a list too short for its count; an empty rectangle; a
+// rectangle past the right edge or the bottom edge by one pixel; a
+// rectangle whose end wraps past 32 bits. A refused encode writes no byte.
+@(test)
+a_present_list_refuses_what_is_outside_the_framebuffer :: proc(t: ^testing.T) {
+	list: [PRESENT_LIST_PAGE_BYTES]u8
+	for count in ([]u64{0, PRESENT_RECTANGLE_CAPACITY + 1, max(u64)}) {
+		_, problem := present_list_decode(list[:], count, 1920, 1080)
+		testing.expect_value(t, problem, Validation_Problem.Present_Count_Out_Of_Range)
+	}
+	_, short := present_list_decode(list[:2 * PRESENT_RECTANGLE_BYTES - 1], 2, 1920, 1080)
+	testing.expect_value(t, short, Validation_Problem.Buffer_Too_Short)
+	refused := []Rect {
+		{x = 0, y = 0, width = 0, height = 10},
+		{x = 0, y = 0, width = 10, height = 0},
+		{x = 1911, y = 0, width = 10, height = 10},
+		{x = 0, y = 1071, width = 10, height = 10},
+		{x = max(u32), y = 0, width = 2, height = 1},
+		{x = 0, y = max(u32) - 1, width = 1, height = 3},
+	}
+	for rectangle in refused {
+		encoded := [1]Rect{rectangle}
+		before := list
+		testing.expectf(t, present_list_encode(list[:], encoded[:], 1920, 1080) != .None, "the rectangle %v is taken", rectangle)
+		testing.expect(t, list == before, "a refused encode wrote bytes")
+		place := 0
+		byte_order.write_u32_little_endian(list[:], place, rectangle.x)
+		byte_order.write_u32_little_endian(list[:], place + 4, rectangle.y)
+		byte_order.write_u32_little_endian(list[:], place + 8, rectangle.width)
+		byte_order.write_u32_little_endian(list[:], place + 12, rectangle.height)
+		_, problem := present_list_decode(list[:], 1, 1920, 1080)
+		testing.expectf(t, problem != .None, "the rectangle %v is read", rectangle)
+	}
+	too_many: [PRESENT_RECTANGLE_CAPACITY + 1]Rect
+	testing.expect_value(t, present_list_encode(list[:], too_many[:], 1920, 1080), Validation_Problem.Present_Count_Out_Of_Range)
+	testing.expect_value(t, present_list_encode(list[:], {}, 1920, 1080), Validation_Problem.Present_Count_Out_Of_Range)
+	one := [1]Rect{{x = 0, y = 0, width = 1, height = 1}}
+	testing.expect_value(t, present_list_encode(list[:PRESENT_RECTANGLE_BYTES - 1], one[:], 1920, 1080), Validation_Problem.Buffer_Too_Short)
+}
+
+// The rectangles that fit, the edges included, come back as they went.
+@(test)
+a_present_list_gives_back_its_rectangles :: proc(t: ^testing.T) {
+	list: [PRESENT_LIST_PAGE_BYTES]u8
+	rectangles: [PRESENT_RECTANGLE_CAPACITY]Rect
+	for &rectangle, index in rectangles {
+		rectangle = {x = u32(index) * 100, y = u32(index) * 50, width = 1920 - u32(index) * 100, height = 1080 - u32(index) * 50}
+	}
+	testing.expect_value(t, present_list_encode(list[:], rectangles[:], 1920, 1080), Validation_Problem.None)
+	decoded, problem := present_list_decode(list[:], PRESENT_RECTANGLE_CAPACITY, 1920, 1080)
+	testing.expect_value(t, problem, Validation_Problem.None)
+	testing.expect_value(t, decoded, rectangles)
+	corner := [1]Rect{{x = 1919, y = 1079, width = 1, height = 1}}
+	testing.expect_value(t, present_list_encode(list[:], corner[:], 1920, 1080), Validation_Problem.None)
+	one, one_problem := present_list_decode(list[:], 1, 1920, 1080)
+	testing.expect_value(t, one_problem, Validation_Problem.None)
+	testing.expect_value(t, one[0], corner[0])
+}
