@@ -174,7 +174,8 @@ client_table_version_seen: u32
 Capture_State :: enum u8 {
 	Closed, // No viewer: no face.
 	Asking, // Capture_Size_Ask went; the size did not come.
-	Open, // The memory went with Capture_Open.
+	Opening, // The budget of the memory went with Capture_Open; Capture_Opened did not come.
+	Open, // The compositor made the memory, and this process maps it.
 }
 capture_state: Capture_State
 screen: protocol.Screen
@@ -926,6 +927,8 @@ capture_events :: proc "contextless" () {
 			held_picture = int(record.values[0])
 		case .Capture_Disconnect:
 			viewer_disconnect_by_key_head(record.values[0])
+		case .Capture_Opened:
+			capture_opened_take(system.Handle(record.values[0] & 0xFFFF_FFFF), record.values[0] > u64(max(u32)))
 		}
 	}
 	system.wake_writer(&window.completions)
@@ -943,27 +946,21 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 		return
 	}
 	screen = {u32(width), u32(height)}
-	pages := display.capture_pages(int(width), int(height))
-	status: system.Status
-	if capture_memory, status = system.memory_create(pages); status != .Ok {
+	// The compositor makes the memory with a budget of it alone, and writes
+	// into memory that it made only (display.Command.Capture_Open).
+	pages := display.capture_budget_pages(int(width), int(height))
+	budget, status := system.budget_create({pages = pages})
+	if status != .Ok {
 		system.log_fact(.Info, Capture_Memory_Refused{pages = value_kinds.Size_In_Pages(pages)})
 		capture_state = .Closed
 		return
 	}
-	address, map_status := system.memory_map(capture_memory, {})
-	given, give_status := system.give(window_memory, capture_memory, {.Read, .Write})
-	if map_status != .Ok || give_status != .Ok {
+	given, give_status := system.give(window_memory, budget, {.Spend, .Read})
+	system.close(budget)
+	if give_status != .Ok {
 		system.log_fact(.Info, Capture_Memory_Not_Given{})
-		system.close(capture_memory)
-		capture_memory = 0
 		capture_state = .Closed
 		return
-	}
-	capture_mapped = address
-	capture_header = (^display.Capture_Header)(address)
-	pixels := ([^]u32)(rawptr(uintptr(address) + display.CAPTURE_HEADER_PAGES * system.PAGE_SIZE))
-	for &picture, place in capture_pictures {
-		picture = pixels[place * int(width) * int(height):]
 	}
 	if mirror == nil {
 		mirror_pages := (u64(protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
@@ -981,8 +978,48 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	mirror_pixels = int(width) * int(height)
 	mirror_valid = false
 	compositor_send({kind = u32(display.Command.Capture_Open), values = {0 = u64(given), 1 = width, 2 = height}})
+	capture_state = .Opening
+}
+
+// capture_opened_take maps the memory that the compositor made for the
+// capture face, which Capture_Opened names: a gift through the ring of this
+// process, memory with Read of the header and the two pictures. A refusal
+// of the compositor (0), a word past a handle, or a handle that fails
+// closes the face; the next bound viewer asks again.
+capture_opened_take :: proc "contextless" (memory: system.Handle, past_handle: bool) {
+	if capture_state != .Opening {
+		return
+	}
+	capture_state = .Closed
+	if memory == 0 || past_handle {
+		system.log_fact(.Info, Capture_Memory_Not_Given{})
+		return
+	}
+	kind, rights, through := system.handle_state(memory, window_memory)
+	if !through {
+		system.log_fact(.Info, Capture_Memory_Not_Given{})
+		return
+	}
+	width, height := int(screen.width), int(screen.height)
+	pages, size_status := system.memory_size(memory)
+	address: rawptr
+	map_status := system.Status.Bad_Handle
+	if kind == .Memory && .Read in rights && size_status == .Ok && pages >= display.capture_pages(width, height) {
+		address, map_status = system.memory_map(memory, {})
+	}
+	if map_status != .Ok {
+		system.close(memory)
+		system.log_fact(.Info, Capture_Memory_Not_Given{})
+		return
+	}
+	capture_memory, capture_mapped = memory, address
+	capture_header = (^display.Capture_Header)(address)
+	pixels := ([^]u32)(rawptr(uintptr(address) + display.CAPTURE_HEADER_PAGES * system.PAGE_SIZE))
+	for &picture, place in capture_pictures {
+		picture = pixels[place * width * height:]
+	}
 	capture_state = .Open
-	system.log_fact(.Info, Capture_Face_Opened{width = width, height = height})
+	system.log_fact(.Info, Capture_Face_Opened{width = u64(width), height = u64(height)})
 	viewers_tell()
 }
 
@@ -1068,7 +1105,9 @@ capture_follow :: proc "contextless" () {
 			capture_state = .Asking
 			compositor_send({kind = u32(display.Command.Capture_Size_Ask)})
 		}
-	case .Asking:
+	// The answer of the compositor comes first: one request of the face at a
+	// time.
+	case .Asking, .Opening:
 	case .Open:
 		if bound == 0 {
 			compositor_send({kind = u32(display.Command.Capture_Close)})

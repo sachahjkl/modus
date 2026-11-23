@@ -1364,10 +1364,11 @@ Operation :: enum u32 {
 	// status where a mapping would fault. A process that reads an object that another process gives (the
 	// trusted display reads the difference of a plan, a palette table) cannot trust its pages: their
 	// maker can make the object Uncommitted and leave pages with no frame, or revoke the handle while
-	// the reader reads, and a read through a mapping then faults and stops the reader. The kernel reads
-	// each page under the lock of the object and under the process lock of the caller: a revocation
+	// the reader reads, and a read through a mapping then faults and stops the reader. The kernel copies
+	// the range under the lock of the object and under the process lock of the caller: a revocation
 	// takes that process lock, so it comes before the call or after it, and a page that is not
-	// committed is a status.
+	// committed is a status. Each page of the range is checked under the lock of the object before the
+	// first byte is copied, so the copy is whole or nothing.
 	//
 	// **Arguments**
 	//
@@ -1383,11 +1384,12 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Handle`, `No_Right`: `memory` is not a memory handle with **Read**.
 	// - `Bad_Operation`: `length` is above `MEMORY_READ_LIMIT`, or the object is device memory.
-	// - `Bad_Address`: the range passes the end of the object, or the process cannot write the `length`
-	//   bytes at `address`.
-	// - `Bad_State`: a page of the range is not committed: an Uncommitted object that the copy reaches
-	//   past its committed pages, or a page that its holder decommitted. The bytes before that page may be
-	//   in the memory of the process; the caller takes none of them.
+	// - `Bad_Address`: the range passes the end of the object, the process cannot write the `length`
+	//   bytes at `address`, or those bytes meet a mapping of the same object in this process.
+	// - `Bad_State`: a page of the range is not committed (an Uncommitted object that the copy reaches
+	//   past its committed pages), or is marked No_Access (`Memory_Protect` of a part of a mapping), as a
+	//   mapping refuses it. The kernel checks each page of the range before it copies the first byte: a
+	//   refusal writes nothing at `address`.
 	//
 	// ```odin
 	// copied, status := system.memory_read(memory, 0, buffer[:])
@@ -1396,6 +1398,35 @@ Operation :: enum u32 {
 
 // The bytes of one Memory_Read: a read of a larger range is several calls.
 MEMORY_READ_LIMIT :: 1 << 20
+
+// memory_read_arguments_status is the check of the arguments of a
+// Memory_Read that needs no page: Bad_Operation for a length past
+// MEMORY_READ_LIMIT or device memory, Bad_Address for a range that passes
+// the end of the object of object_pages pages. A length of 0 at any offset
+// up to the end copies nothing and is Ok.
+memory_read_arguments_status :: proc "contextless" (offset, length, object_pages: u64, device: bool) -> Status {
+	if length > MEMORY_READ_LIMIT || device {
+		return .Bad_Operation
+	}
+	if object_pages > max(u64) / PAGE_SIZE {
+		return .Bad_Address
+	}
+	object_bytes := object_pages * PAGE_SIZE
+	if offset > object_bytes || length > object_bytes - offset {
+		return .Bad_Address
+	}
+	return .Ok
+}
+
+// memory_read_destination_meets says if the bytes that a Memory_Read writes
+// meet a mapping of the object that it reads: the copy would write the
+// pages that it reads. An empty range meets nothing.
+memory_read_destination_meets :: proc "contextless" (address, length, mapping_address, mapping_bytes: u64) -> bool {
+	if length == 0 || mapping_bytes == 0 {
+		return false
+	}
+	return address < mapping_address + mapping_bytes && mapping_address < address + length
+}
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
 // orders the ready threads of each run queue. 0 is no strategy: a report of

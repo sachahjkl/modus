@@ -252,6 +252,9 @@ Record_Client :: struct {
 	// the machine of an open pairing (machine_wire.peer_admits). Its streams
 	// carry mesh frames only, and no call acts for a principal.
 	mesh_only:  bool,
+	// The connection closed, and the offers of its machine that stalled
+	// between two pages gave their pages back (mesh_partner_connection_end).
+	exchanges_ended: bool,
 }
 record_clients: [CAPACITY]Record_Client
 
@@ -677,6 +680,10 @@ calls_work :: proc "contextless" () {
 				call^ = {phase = .Reading, identifier = stream.identifier, generation = record.generation, phase_started_at = now}
 			}
 			call_work(connection, record.remote, call, call_buffers[place * STREAMS_PER_CONNECTION + slot][:], now)
+		}
+		if connection.state == .Closed && !client.exchanges_ended {
+			client.exchanges_ended = true
+			mesh_partner_connection_end(client.key) // mesh.odin
 		}
 		if connection.state == .Closed && !record_log.end_logged {
 			record_log.end_logged = true

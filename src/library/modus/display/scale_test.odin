@@ -120,7 +120,9 @@ one_change_of_the_scale :: proc(t: ^testing.T) {
 	action, _ = rescale_step(&machine, {kind = .Released, serial = 4})
 	testing.expect_value(t, action, Rescale_Action.Offer)
 	testing.expect_value(t, machine, Rescale_Machine{phase = .Offered, scale = .Eleven_Eighths, wanted = .Eleven_Eighths, serial = 5})
-	testing.expect(t, rescale_draws(&machine))
+	// The window has no surface until the answer names the one that the
+	// compositor made: it draws nothing.
+	testing.expect(t, !rescale_draws(&machine))
 	// A Released again, of the old serial, changes nothing now.
 	before := machine
 	_, _ = rescale_step(&machine, {kind = .Released, serial = 4})
@@ -204,18 +206,20 @@ the_window_and_the_compositor_at_two_scales :: proc(t: ^testing.T) {
 
 // The picture that a window owes. No picture is owed in the phases with no
 // surface to draw, whatever serial was presented, nor after a Present of
-// the serial of the machine. A picture is owed for the first surface before
-// its first Present, for a taken rescale before the Present of its serial
-// (the window that froze), for an offered surface and a resize, and after
-// a refused resize, whose surface before it must be drawn again.
+// the serial of the machine: Releasing, Released, and Offered and Resizing,
+// in which the window waits for the surface that the compositor makes. A
+// picture is owed for the first surface before its first Present, for a
+// taken rescale before the Present of its serial (the window that froze),
+// and for a taken resize; a refused resize owes none, since the window
+// still shows the picture of the surface before it.
 @(test)
 the_picture_that_a_window_owes :: proc(t: ^testing.T) {
-	for phase in ([?]Rescale_Phase{.Releasing, .Released}) {
+	for phase in ([?]Rescale_Phase{.Releasing, .Released, .Offered, .Resizing}) {
 		for presented in ([?]u64{0, 4, 5, max(u64)}) {
 			testing.expectf(t, !picture_owed_of({phase = phase, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 5}, presented), "a picture is owed in %v", phase)
 		}
 	}
-	for phase in ([?]Rescale_Phase{.Steady, .Offered, .Resizing}) {
+	for phase in Rescale_Phase {
 		testing.expect(t, !picture_owed_of({phase = phase, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 5}, 5))
 	}
 	testing.expect(t, picture_owed_of({phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 1}, 0))
@@ -226,18 +230,22 @@ the_picture_that_a_window_owes :: proc(t: ^testing.T) {
 	_, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Eleven_Eighths})
 	testing.expect(t, !picture_owed_of(machine, presented))
 	_, _ = rescale_step(&machine, {kind = .Released, serial = 1})
-	testing.expect(t, picture_owed_of(machine, presented))
+	// Offered: no surface until the answer, so no picture is owed yet.
+	testing.expect(t, !picture_owed_of(machine, presented))
 	_, _ = rescale_step(&machine, {kind = .Taken, serial = 2})
 	testing.expect_value(t, machine.phase, Rescale_Phase.Steady)
 	testing.expect(t, picture_owed_of(machine, presented))
 	presented = machine.serial
 	testing.expect(t, !picture_owed_of(machine, presented))
-	// A refused resize: the window drew the new surface, and owes a
-	// picture of the surface before it.
+	// A refused resize: the window drew nothing while it waited, and the
+	// compositor shows the surface before it, whose picture it presented.
 	_, _ = rescale_step(&machine, {kind = .Resize_Offered})
-	testing.expect(t, picture_owed_of(machine, presented))
-	presented = machine.serial
+	testing.expect(t, !picture_owed_of(machine, presented))
 	_, _ = rescale_step(&machine, {kind = .Resize_Refused, serial = 3})
+	testing.expect(t, !picture_owed_of(machine, presented))
+	// A taken resize owes the picture of the new serial.
+	_, _ = rescale_step(&machine, {kind = .Resize_Offered})
+	_, _ = rescale_step(&machine, {kind = .Resize_Taken, serial = 3})
 	testing.expect(t, picture_owed_of(machine, presented))
 }
 
@@ -268,7 +276,8 @@ the_answers_of_a_resize :: proc(t: ^testing.T) {
 	machine := Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 3}
 	_, _ = rescale_step(&machine, {kind = .Resize_Offered})
 	testing.expect_value(t, machine, Rescale_Machine{phase = .Resizing, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 4})
-	testing.expect(t, rescale_draws(&machine))
+	// The new surface comes with the answer: the window draws nothing until then.
+	testing.expect(t, !rescale_draws(&machine))
 	for serial in ([?]u64{0, 3, 5, max(u64)}) {
 		before := machine
 		input := Rescale_Input{kind = .Resize_Refused, serial = serial}

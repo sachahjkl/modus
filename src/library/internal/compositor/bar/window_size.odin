@@ -1,5 +1,7 @@
 package bar
 
+import "modus:display"
+
 // The edges of a window and the size that a drag of them gives
 // (src/md/features/window_resize.md). The compositor resizes the windows;
 // these procedures hold no state, so a host test checks each edge.
@@ -131,17 +133,14 @@ resize_target :: proc "contextless" (windows: []Window_Hit, border, pointer_x, p
 	return -1, {}
 }
 
-// The bytes of a surface for each pixel: two pictures of 4 bytes. The
-// compositor asserts that this is the rule of the display package.
-SURFACE_BYTES_FOR_EACH_PIXEL :: 8
 
 // What the compositor knows when a window gives a surface of a new size
 // (the record Surface_Resize): the facts of the handle, the words of the
 // record, and the state of the window.
 Surface_Resize_Facts :: struct {
-	is_memory:    bool, // The handle names a memory object.
-	readable:     bool, // The handle has the right Read.
-	memory_bytes: u64, // The size of the memory object. 0 when the kernel refused to give it.
+	is_budget:    bool, // The handle names a budget: the compositor makes the surface with it.
+	can_spend:    bool, // The handle has Spend and Read.
+	budget_pages: u64, // The pages that the budget can pay. 0 when the kernel refused to read them.
 	width, height: u64, // The words of the record.
 	resizable:    bool, // The window is resizable.
 	limits:       Size_Range, // Its limits.
@@ -156,13 +155,13 @@ Surface_Resize_Facts :: struct {
 // The rule that a Surface_Resize breaks. None: the compositor takes it.
 Surface_Resize_Refusal :: enum {
 	None,
-	Not_Memory, // The handle names no memory object.
-	No_Read, // The handle has no right Read.
+	Not_Budget, // The handle names no budget.
+	No_Spend, // The budget handle has not Spend and Read.
 	Not_Resizable, // The window is fixed.
 	Not_Asked, // No Resized waits for an answer: the principal did not ask for a size, or the answer came.
 	Other_Size, // The size is not the asked one.
 	Outside_Limits, // The size is outside the limits of the window: a Resizable narrowed them after the request.
-	Too_Small, // The memory does not hold two pictures of the size.
+	Too_Small, // The budget does not pay two pictures of the size and their frame list (display.surface_budget_pages).
 }
 
 // surface_resize_refusal decides a Surface_Resize from its facts. It reads
@@ -171,10 +170,10 @@ Surface_Resize_Refusal :: enum {
 // refused case.
 surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Surface_Resize_Refusal {
 	switch {
-	case !facts.is_memory:
-		return .Not_Memory
-	case !facts.readable:
-		return .No_Read
+	case !facts.is_budget:
+		return .Not_Budget
+	case !facts.can_spend:
+		return .No_Spend
 	case !facts.resizable:
 		// A fixed window answers its clamp by a release and an offer
 		// (release_answers_clamp), never by a resize.
@@ -192,7 +191,7 @@ surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Su
 	}
 	// The size is now inside the limits, which a surface bounds: the
 	// product cannot overflow.
-	if facts.memory_bytes < facts.width * facts.height * SURFACE_BYTES_FOR_EACH_PIXEL {
+	if facts.budget_pages < display.surface_budget_pages(facts.width, facts.height) {
 		return .Too_Small
 	}
 	return .None

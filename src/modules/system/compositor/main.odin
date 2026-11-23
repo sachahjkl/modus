@@ -188,6 +188,11 @@ Client :: struct {
 	created:     bool,
 	surface:     graphics.Canvas, // pixels is nil before Surface_Create, and while the surface is released.
 	pictures:    [^]graphics.Color, // The memory of the surface: two pictures. surface is one of them. nil with surface.pixels.
+	// The handle of the memory object of the surface, which this process made
+	// with the budget that the window gave: it is the origin of the copy of
+	// the window, so the compositor can revoke that copy and the window
+	// cannot revoke this mapping. 0 with pictures nil.
+	pictures_memory: system.Handle,
 	surface_serial: u64, // The surface serial of the surface shown, or of the one released.
 	surface_scale: scale_factor.Scale, // The scale at which the process made the surface shown.
 	released:    bool, // The process let its surface go: the compositor draws the frame with the background.
@@ -248,6 +253,7 @@ Client :: struct {
 	// the surface of the window. It keeps the logical size and the scale
 	// that the compositor checked, so that Present computes nothing again.
 	resize_pictures: [^]graphics.Color,
+	resize_memory: system.Handle, // The handle of the object of resize_pictures, as pictures_memory.
 	resize_width, resize_height: int, // Pixels of the screen.
 	resize_logical_width, resize_logical_height: int,
 	resize_scale: scale_factor.Scale,
@@ -1296,12 +1302,8 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		keyboard_window_gone(index) // keyboard_desktop.odin
 		damage_window(&client)
 		damage_focus()
-		if client.pictures != nil {
-			system.memory_unmap(client.pictures)
-		}
-		if client.resize_pictures != nil {
-			system.memory_unmap(client.resize_pictures)
-		}
+		surface_memory_end(&client.pictures, &client.pictures_memory) // window_resize.odin
+		surface_memory_end(&client.resize_pictures, &client.resize_memory)
 		if client.commands_refused != 0 {
 			system.log_fact(.Info, Window_Closed_After_Refused_Commands{window = window_field(client.title[:]), refused = client.commands_refused})
 		}
@@ -1335,45 +1337,54 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// gift of this process: the compositor neither uses it nor closes it.
 	// The handle is in the low 32 bits of the first word; the word of the
 	// scale of the surface is above them (display.SURFACE_CREATE_SCALE_SHIFT).
-	memory := system.Handle(record.values[0] & 0xFFFF_FFFF)
-	kind, rights, through := system.handle_state(memory, client.ring_memory)
-	// No log line: a process could send this command without end.
-	if !through {
-		return
-	}
-	// The handle is a gift of this process: each return below closes it.
-	defer system.close(memory)
+	// The handle names a budget that pays the surface alone: the compositor
+	// makes the surface with it (src/md/features/window_resize.md, "The
+	// compositor makes each surface").
+	budget := system.Handle(record.values[0] & 0xFFFF_FFFF)
+	kind, rights, through := system.handle_state(budget, client.ring_memory)
 	if client.created {
+		// The window has its first surface: a second one answers nothing.
+		if through {
+			system.close(budget)
+		}
 		return
 	}
-	// The process chose these numbers: check them against the memory
+	// No log line: a process could send this command without end. Each
+	// refusal is answered, since display.open waits for the answer.
+	refused :: proc "contextless" (client: ^Client) {
+		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Create_Refused), 1 = 1})
+	}
+	if !through {
+		refused(client)
+		return
+	}
+	// The budget is a gift of this process: each return below closes it.
+	defer system.close(budget)
+	// The process chose these numbers: check them against the budget
 	// itself. The record names the logical size and the scale: the pixels of
 	// the screen follow from the rule of each edge, so a logical size past
 	// the limit, a word that names no scale, and a surface of pixels that
 	// no logical size gives, are each refused (bar.surface_create_refusal).
 	facts := bar.Surface_Create_Facts {
-		is_memory  = kind == .Memory,
-		readable   = .Read in rights,
 		scale_word = record.values[0] >> display.SURFACE_CREATE_SCALE_SHIFT,
 		width      = record.values[1],
 		height     = record.values[2],
 	}
-	if facts.is_memory {
-		if pages, size_status := system.memory_size(memory); size_status == .Ok {
-			facts.memory_bytes = pages * system.PAGE_SIZE
-		}
-	}
+	facts.is_budget, facts.can_spend, facts.budget_pages = surface_budget_facts(budget, kind, rights) // window_resize.odin
 	refusal, surface_scale, screen_width, screen_height := bar.surface_create_refusal(facts)
 	if refusal != .None {
+		refused(client)
 		return
 	}
-	address, status := system.memory_map(memory, {}) // Read only.
-	if status != .Ok {
+	pictures, memory, given, made := surface_make(client, budget, screen_width, screen_height) // window_resize.odin
+	if !made {
+		refused(client)
 		return
 	}
+	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Create_Taken), 1 = 1, 2 = u64(given)})
 	client.created = true
 	desktop_window_opened(index) // desktop_features.odin
-	client.pictures = ([^]graphics.Color)(address)
+	client.pictures, client.pictures_memory = pictures, memory
 	client.surface = {pixels = client.pictures, width = int(screen_width), height = int(screen_height), stride = int(screen_width)}
 	client.surface_serial, client.surface_scale = 1, surface_scale
 	client.width, client.height = int(facts.width), int(facts.height)

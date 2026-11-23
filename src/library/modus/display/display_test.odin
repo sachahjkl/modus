@@ -7,6 +7,7 @@ import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "modus:contract/text_encoding"
 import "modus:key_path"
+import "modus:system"
 import "core:testing"
 
 // The second word of Settings_Raise: one past the last member, a word of
@@ -652,10 +653,20 @@ event_of_record_reads_each_event :: proc(t: ^testing.T) {
 		_, answer_ok := event_of_record(answer)
 		testing.expectf(t, !answer_ok, "the answer %v is taken", words)
 	}
-	answer.values[0], answer.values[1] = u64(Surface_Answer_Kind.Rescale_Taken), 3
+	// The copy of a surface: in the answers that give one only, a handle of
+	// 32 bits that is not 0.
+	for words in ([?][3]u64{{u64(Surface_Answer_Kind.Rescale_Taken), 3, 0}, {u64(Surface_Answer_Kind.Resize_Taken), 3, 0}, {u64(Surface_Answer_Kind.Create_Taken), 1, 0}, {u64(Surface_Answer_Kind.Create_Taken), 1, u64(max(u32)) + 1}, {u64(Surface_Answer_Kind.Rescale_Taken), 3, max(u64)}, {u64(Surface_Answer_Kind.Released), 3, 7}, {u64(Surface_Answer_Kind.Create_Refused), 1, 7}, {u64(Surface_Answer_Kind.Resize_Refused), 3, 1}}) {
+		answer.values[0], answer.values[1], answer.values[2] = words[0], words[1], words[2]
+		_, answer_ok := event_of_record(answer)
+		testing.expectf(t, !answer_ok, "the answer %v is taken", words)
+	}
+	answer.values[0], answer.values[1], answer.values[2] = u64(Surface_Answer_Kind.Create_Refused), 1, 0
+	event, ok = event_of_record(answer)
+	testing.expect_value(t, event, Event{kind = .Surface_Answer, surface_answer = .Create_Refused, surface_serial = 1})
+	answer.values[0], answer.values[1], answer.values[2] = u64(Surface_Answer_Kind.Rescale_Taken), 3, u64(max(u32))
 	event, ok = event_of_record(answer)
 	testing.expect(t, ok)
-	testing.expect_value(t, event, Event{kind = .Surface_Answer, surface_answer = .Rescale_Taken, surface_serial = 3})
+	testing.expect_value(t, event, Event{kind = .Surface_Answer, surface_answer = .Rescale_Taken, surface_serial = 3, surface_memory = system.Handle(max(u32))})
 
 	// A hash is 32 bits: the first word past them and the largest word
 	// name no act name.

@@ -423,6 +423,24 @@ store_exchange_remove :: proc "contextless" (stores: ^Store_Table, store_identif
 	return .Ok
 }
 
+// store_exchange_partner_end ends the offers of a partner that stalled
+// between two pages, when its connection ends: the pages that they took go
+// back to their owner, and the next offer starts from its first page. It
+// gives the count of the offers that it ended.
+store_exchange_partner_end :: proc "contextless" (stores: ^Store_Table, partner_identity: [machine_mesh.PUBLIC_KEY_SIZE]u8) -> (ended: int) {
+	if stores == nil {
+		return 0
+	}
+	for &store in stores.rows {
+		if store.in_use && store.incoming_assembly.active && store.partner_identity == partner_identity {
+			store.incoming_assembly = {}
+			version_trim(&store.incoming)
+			ended += 1
+		}
+	}
+	return
+}
+
 store_exchange_find :: proc "contextless" (stores: ^Store_Table, store_identifier: blake3.Hash) -> ^Exchanged_Store {
 	if stores == nil || hash_is_zero(store_identifier) {
 		return nil
@@ -943,11 +961,19 @@ store_offer_answer :: proc "contextless" (store: ^Exchanged_Store, body: []u8, o
 			frame, _ = store_page_write(output, .Store_Offer_Reply, .Reply_Page, store.store_identifier, page.common_hash, store_version_hash(&store.last_reply), &store.last_reply, {})
 			return frame, frame == nil ? .Refused_Full : .Ok
 		}
+		// The next offer page of any kind ends an offer that stalled: its
+		// pages go back.
+		if store.incoming_assembly.active {
+			store.incoming_assembly = {}
+			version_trim(&store.incoming)
+		}
 		return nil, .Refused_Base_Differs
 	}
 	whole, take_status := assembly_take_page(&store.incoming_assembly, &store.incoming, &page)
 	if take_status != .Ok {
-		// A refused version is no version: its pages go back.
+		// A refused version is no version: its pages go back, and the offer
+		// starts again from its first page.
+		store.incoming_assembly = {}
 		version_trim(&store.incoming)
 		return nil, take_status
 	}

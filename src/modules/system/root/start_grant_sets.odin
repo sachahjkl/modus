@@ -526,6 +526,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// grant to act for the principal, so the display reads the objects that
 	// it gives, and a connection to the holder of Display only.
 	{name = "difference_hostile", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "display"}}},
+	// The machine case of the border of Memory_Read: the boot image, which
+	// the kernel names as device memory, for the refusal of device memory.
+	{name = "memory_read_border", grants = {.Image}},
+	// The machine case of the budget of a surface: the ring of its window
+	// only, which each start gives.
+	{name = "surface_budget_edges", grants = {}},
 	// The driver of the machine test of the builders: it registers and
 	// builds recipes with the service recipes, which takes a caller that
 	// acts for its principal; the boot image gives the hash of the test

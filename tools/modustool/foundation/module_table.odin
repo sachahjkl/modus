@@ -235,6 +235,8 @@ module_builds := [?]Module_Build {
 	{name = "store_asker", source = TEST_MODULE_SOURCES + "store_asker", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "store_stranger", source = TEST_MODULE_SOURCES + "store_stranger", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "difference_hostile", source = TEST_MODULE_SOURCES + "difference_hostile", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "memory_read_border", source = TEST_MODULE_SOURCES + "memory_read_border", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "surface_budget_edges", source = TEST_MODULE_SOURCES + "surface_budget_edges", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
 	{name = "notify_border_of_the_compositor", source = TEST_MODULE_SOURCES + "notify_border_of_the_compositor", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},

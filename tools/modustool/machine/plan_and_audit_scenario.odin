@@ -31,7 +31,11 @@ import "modustool:foundation"
 //      of store_asker; `store_stranger` gets No_Grant for the grants and
 //      for a picker of its own. Last, `difference_hostile` gives the
 //      trusted display an Uncommitted object and an object that it revokes
-//      during the reading, and the display serves after each.
+//      during the reading, and the display serves after each;
+//      `memory_read_border` gives Memory_Read each argument that it refuses,
+//      and prints the time of one read of 1 MiB; `surface_budget_edges`
+//      gives the compositor the budgets of a surface that it must refuse,
+//      then one that it makes the surface with.
 //   2. The same disk: the plans service gives the roles of the stored plan
 //      before the start policy, so the row "settings" of the start list
 //      starts settings_stand_in, with the boot pass, and never
@@ -61,6 +65,12 @@ STORE_PICKER_NO_LIST_LINE :: "compositor: the store picker received no list of s
 
 // A fault that the hostile caller of the trusted display found.
 DIFFERENCE_HOSTILE_WRONG :: "difference_hostile: WRONG"
+
+// A refusal of Memory_Read that did not hold.
+MEMORY_READ_BORDER_WRONG :: "memory_read_border: WRONG"
+
+// A budget of a surface that the compositor took or refused against its rule.
+SURFACE_BUDGET_EDGES_WRONG :: "surface_budget_edges: WRONG"
 
 scenario_plan_and_audit_first := [?]Step {
 	// The plans service reads the store before the start policy, and finds
@@ -180,6 +190,21 @@ scenario_plan_and_audit_first := [?]Step {
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "difference_hostile: the dialog of the revoked difference ended with the decision ", fails_on = DIFFERENCE_HOSTILE_WRONG},
 	{kind = .Wait, text = "root: difference_hostile stopped: itself, done", fails_on = DIFFERENCE_HOSTILE_WRONG},
+	// The border of Memory_Read: each refusal, none that writes a byte, and
+	// the time of one read of 1 MiB, printed as a measure.
+	{kind = .Type, text = "start(\"memory_read_border\")"},
+	{kind = .Wait, text = "memory_read_border: each refusal of Memory_Read holds, and none wrote a byte: as it must", fails_on = MEMORY_READ_BORDER_WRONG},
+	{kind = .Wait, text = "memory_read_border: one Memory_Read of 1 MiB took ", fails_on = MEMORY_READ_BORDER_WRONG},
+	{kind = .Wait, text = "root: memory_read_border stopped: itself, done", fails_on = MEMORY_READ_BORDER_WRONG},
+	// The budget of a surface: the compositor refuses a budget one page
+	// short, a revoked copy and a budget with no Spend, and makes the
+	// surface of a budget whose handle the window closed; it shows it.
+	{kind = .Type, text = "start(\"surface_budget_edges\")"},
+	{kind = .Wait, text = "surface_budget_edges: the compositor refused a budget one page short, a revoked copy and a budget with no Spend: as it must", fails_on = SURFACE_BUDGET_EDGES_WRONG},
+	{kind = .Wait, text = "surface_budget_edges: the compositor made the surface of ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
+	{kind = .Wait, text = "compositor: surface surface_budget_edges ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
+	{kind = .Type, text = "stop(\"surface_budget_edges\")"},
+	{kind = .Wait, text = "root: surface_budget_edges stopped: ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

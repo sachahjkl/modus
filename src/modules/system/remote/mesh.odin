@@ -534,6 +534,14 @@ mesh_grant_check :: proc "contextless" (wire: []u8, grantee_root_public_key: [32
 	return 0
 }
 
+// mesh_partner_connection_end ends the exchanges of a paired machine whose
+// connection closed: an offer that it left between two pages gives its
+// pages back to the budget of remote, and the partner holds them no more.
+// A key of no paired machine names no store, and ends nothing.
+mesh_partner_connection_end :: proc "contextless" (partner: [32]u8) {
+	machine_wire.store_exchange_partner_end(&mesh.stores, partner)
+}
+
 // mesh_object_accept keeps an object that a paired machine sent for a
 // requested hash, only when its bytes hash to it. 0, or -1 with an error
 // record.
@@ -554,6 +562,10 @@ mesh_object_accept :: proc "contextless" (
 	if !kind_ok {
 		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(kind_word))
 	}
+	// The bytes that the store takes for this object count in the share of
+	// the partner that sent it (mesh_object_grow), as for an object that
+	// comes in pieces.
+	mesh_assembly_partner = peer_identity
 	status := machine_sync.object_store_accept(&mesh.objects, kind, requested_hash, payload)
 	switch status {
 	case .Stored, .Already_Stored:

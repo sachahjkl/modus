@@ -206,32 +206,57 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 	}
 }
 
-// capture_open takes the memory of the copy of the screen that a client
-// gave through its ring: a header page, then two pictures of the size of
-// the screen.
+// capture_open makes the memory of the copy of the screen with the budget
+// that a client gave through its ring, for that memory alone: a header
+// page, then two pictures of the size of the screen. The compositor
+// writes into it at each frame, so it writes only into memory that it
+// made: a client cannot revoke its mapping, nor leave a page with no
+// frame. It gives the client a copy with Read, and answers each record
+// with Capture_Opened: the copy, or 0 when it refused.
 @(private = "file")
 capture_open :: proc "contextless" (index: int, record: ring.Record) {
 	client := &clients[index]
-	memory := system.Handle(record.values[0])
-	kind, rights, through := system.handle_state(memory, client.ring_memory)
+	budget := system.Handle(record.values[0])
+	kind, rights, through := system.handle_state(budget, client.ring_memory)
 	if !through {
 		capture_refuse(client, "a handle that the process did not give")
+		send(client, .Capture_Opened, {})
 		return
 	}
+	defer system.close(budget)
 	width, height := record.values[1], record.values[2]
-	pages, size_status := system.memory_size(memory)
+	budget_pages: u64
+	if kind == .Budget && rights & {.Spend, .Read} == {.Spend, .Read} {
+		if amounts, status := system.budget_read(budget); status == .Ok {
+			budget_pages = amounts.pages
+		}
+	}
 	switch {
 	case capture.client >= 0:
 		capture_refuse(client, "a second capture face")
-	case kind != .Memory || .Read not_in rights || .Write not_in rights:
-		capture_refuse(client, "the memory is not memory with Read and Write")
+	case kind != .Budget || rights & {.Spend, .Read} != {.Spend, .Read}:
+		capture_refuse(client, "the handle is not a budget with Spend and Read")
 	case width != u64(screen.width) || height != u64(screen.height):
 		capture_refuse(client, "the size is not the size of the screen")
-	case size_status != .Ok || pages < display.capture_pages(screen.width, screen.height):
-		capture_refuse(client, "the memory does not hold the header and two pictures")
+	case budget_pages < display.capture_budget_pages(screen.width, screen.height):
+		capture_refuse(client, "the budget does not pay the header and two pictures")
 	case:
+		memory, create_status := system.memory_create(display.capture_pages(screen.width, screen.height), budget)
+		if create_status != .Ok {
+			capture_refuse(client, "the budget pays no memory")
+			break
+		}
 		address, map_status := system.memory_map(memory, {.Write})
-		if map_status != .Ok {
+		given: system.Handle
+		give_status := map_status
+		if map_status == .Ok {
+			given, give_status = system.give(client.ring_memory, memory, {.Read})
+		}
+		if give_status != .Ok {
+			if map_status == .Ok {
+				system.memory_unmap(address)
+			}
+			system.close(memory)
 			capture_refuse(client, "the memory does not map")
 			break
 		}
@@ -248,6 +273,7 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 			interface.damage_add(&debt, whole)
 		}
 		interface.damage_add(&capture.changed, whole)
+		send(client, .Capture_Opened, {0 = u64(given)})
 		// The mark of the bar, and a frame that writes the first picture.
 		damage_bar()
 		// The client of a capture face has no window, so it has no title:
@@ -255,7 +281,7 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		system.log_fact(.Info, Capture_Face_Opened{width = u64(screen.width), height = u64(screen.height)})
 		return
 	}
-	system.close(memory)
+	send(client, .Capture_Opened, {})
 }
 
 // capture_end closes the capture face: the memory is unmapped and closed,

@@ -831,7 +831,7 @@ act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> i64 {
 	case .Not_A_Name, .Not_An_Act:
 		// The argument of the export is the act; the asker is no argument.
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
-	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Bad_Serial:
+	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Bad_Serial, .Not_A_Difference:
 		// The act face gives none of the refusals of a plan or of a poll.
 	}
 	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)

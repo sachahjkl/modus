@@ -102,18 +102,20 @@ clipboard_store_local :: proc "contextless" (text: []u8, source: string) -> bool
 
 // clipboard_read_local copies the current clipboard text into out for a
 // compositor-owned paste target (the palette). Returns (0, false) when the
-// clipboard is empty, not text, larger than out, or cannot be mapped.
+// clipboard is empty, not text, larger than out, or its object gives no
+// bytes. The object is memory of the window that copied, which can revoke
+// it or leave a page with no frame: the copy by the kernel
+// (system.memory_read) gives a status there, where a read through a
+// mapping would fault and stop the trusted display. One call of at most
+// CLIPBOARD_TEXT_LIMIT bytes.
 clipboard_read_local :: proc "contextless" (out: []u8) -> (count: int, ok: bool) {
 	clipboard_lend_end()
 	if clipboard_content.memory == 0 || clipboard_content.kind != .Text || clipboard_content.count <= 0 || clipboard_content.count > len(out) || clipboard_content.count > display.CLIPBOARD_TEXT_LIMIT {
 		return 0, false
 	}
-	address, map_status := system.memory_map(clipboard_content.memory, {})
-	if map_status != .Ok {
+	if _, status := system.memory_read(clipboard_content.memory, 0, out[:clipboard_content.count]); status != .Ok {
 		return 0, false
 	}
-	intrinsics.mem_copy_non_overlapping(raw_data(out), address, clipboard_content.count)
-	system.memory_unmap(address)
 	return clipboard_content.count, true
 }
 

@@ -1,5 +1,6 @@
 package compositor
 
+import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
@@ -21,8 +22,6 @@ import "modus:system"
 // size that the process did not draw. A process cannot change the size of
 // its window when the principal did not ask for it.
 
-// The rule of the display package that the pure check of a surface reads.
-#assert(bar.SURFACE_BYTES_FOR_EACH_PIXEL == display.PICTURE_COUNT * size_of(graphics.Color))
 
 // resizable_take takes the record Resizable of a window: its size limits,
 // checked at the border against the size that the window wants, which its
@@ -74,13 +73,13 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 	// The process wrote the number of the handle: it can name any handle of
 	// the compositor. A number with no proof of this process is neither used
 	// nor closed (surface_create).
-	memory := system.Handle(record.values[0])
-	kind, rights, through := system.handle_state(memory, client.ring_memory)
+	budget := system.Handle(record.values[0])
+	kind, rights, through := system.handle_state(budget, client.ring_memory)
 	if !through {
 		refused(client, serial)
 		return
 	}
-	defer system.close(memory)
+	defer system.close(budget)
 	// The surface of a resize has the next serial, and the scale of the
 	// surface shown: the process made it at its own scale, which a change
 	// of the scale that it did not read yet leaves behind the compositor.
@@ -99,8 +98,6 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 	}
 	limits := size_range_of(client)
 	facts := bar.Surface_Resize_Facts {
-		is_memory    = kind == .Memory,
-		readable     = .Read in rights,
 		width        = record.values[1],
 		height       = record.values[2],
 		resizable    = client.resizable && client.created,
@@ -110,27 +107,20 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 		asked_height = at_scale(client.resize_asked_height, surface_scale),
 		clamp        = client.resize_asked_clamp,
 	}
-	if facts.is_memory {
-		// A refused size reads as 0 bytes: the check refuses it.
-		if pages, size_status := system.memory_size(memory); size_status == .Ok {
-			facts.memory_bytes = pages * system.PAGE_SIZE
-		}
-	}
+	facts.is_budget, facts.can_spend, facts.budget_pages = surface_budget_facts(budget, kind, rights)
 	if refusal := bar.surface_resize_refusal(facts); refusal != .None {
 		refused(client, serial)
 		return
 	}
-	address, status := system.memory_map(memory, {}) // Read only.
-	if status != .Ok {
-		// The budget of the compositor counts this mapping, so only a fault
-		// of the system refuses it.
+	pictures, memory, given, made := surface_make(client, budget, facts.width, facts.height)
+	if !made {
 		system.log_fact(.Warning, Surface_Not_Mapped{width = facts.width, height = facts.height, window = window_field(client.title[:])})
 		refused(client, serial)
 		return
 	}
 	// The answer ends the request. No surface is pending: the check above
 	// refused the record then.
-	client.resize_pictures = ([^]graphics.Color)(address)
+	client.resize_pictures, client.resize_memory = pictures, memory
 	client.resize_width, client.resize_height = int(facts.width), int(facts.height)
 	client.resize_logical_width, client.resize_logical_height = client.resize_asked_width, client.resize_asked_height
 	client.resize_scale, client.resize_serial = surface_scale, serial
@@ -140,10 +130,73 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 	client.wanted_width, client.wanted_height = client.resize_asked_wanted_width, client.resize_asked_wanted_height
 	client.clamp_asks = 0
 	client.resize_asked, client.resize_edges = false, {}
-	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Taken), 1 = serial})
+	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Taken), 1 = serial, 2 = u64(given)})
 	// The scale after the answer: the window rescales its new surface.
 	_ = window_scale_step(client) // scale.odin
 }
+
+// surface_budget_facts gives the facts of the budget of a surface that the
+// bar checks: a budget, with Spend and Read, and the pages that it can
+// still pay (0 when the kernel refused to read them, which the check
+// refuses). The window gave it through its ring for that surface alone.
+surface_budget_facts :: proc "contextless" (budget: system.Handle, kind: op.Object_Kind, rights: system.Rights) -> (is_budget, can_spend: bool, budget_pages: u64) {
+	is_budget = kind == .Budget
+	can_spend = rights & {.Spend, .Read} == {.Spend, .Read}
+	if is_budget && can_spend {
+		if amounts, status := system.budget_read(budget); status == .Ok {
+			budget_pages = amounts.pages
+		}
+	}
+	return
+}
+
+// surface_make makes the surface of a window with the budget that it gave:
+// a memory object of two pictures of a size in pixels of the screen, which
+// the budget pays. The compositor maps it read-only and gives the window a
+// copy with Read and Write through its ring. It never maps a memory object
+// that a window made, so no window can stop it with a revocation, an
+// Uncommitted object or a decommit: this process is the origin of the copy
+// of the window, and the object is in two processes, so no decommit of the
+// window reaches it. It gives the pictures, the handle of the object, which
+// the compositor keeps until it unmaps them (surface_memory_end), and the
+// number of the copy of the window. A budget that does not pay, or a copy
+// that the window revoked, gives made false and holds nothing.
+surface_make :: proc "contextless" (client: ^Client, budget: system.Handle, screen_width, screen_height: u64) -> (pictures: [^]graphics.Color, memory, given: system.Handle, made: bool) {
+	pages := (screen_width * screen_height * u64(size_of(graphics.Color) * display.PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	status: system.Status
+	memory, status = system.memory_create(pages, budget)
+	if status != .Ok {
+		return nil, 0, 0, false
+	}
+	address, map_status := system.memory_map(memory, {}) // Read only.
+	if map_status != .Ok {
+		system.close(memory)
+		return nil, 0, 0, false
+	}
+	give_status: system.Status
+	given, give_status = system.give(client.ring_memory, memory, {.Read, .Write})
+	if give_status != .Ok {
+		system.memory_unmap(address)
+		system.close(memory)
+		return nil, 0, 0, false
+	}
+	return ([^]graphics.Color)(address), memory, given, true
+}
+
+// surface_memory_end unmaps the pictures of a surface and closes the handle
+// of its object: the copy of the window keeps the object until the window
+// closes it.
+surface_memory_end :: proc "contextless" (pictures: ^[^]graphics.Color, memory: ^system.Handle) {
+	if pictures^ != nil {
+		system.memory_unmap(pictures^)
+	}
+	if memory^ != 0 {
+		system.close(memory^)
+	}
+	pictures^, memory^ = nil, 0
+}
+
+
 
 // resize_declined_take takes the record Resize_Declined: the process keeps
 // its size, after a refused budget or because it does not take Resized. The
@@ -192,19 +245,18 @@ size_range_of :: proc "contextless" (client: ^Client) -> bar.Size_Range {
 // window, at the first Present after Surface_Resize. The edges opposite to
 // the ones that the drag held stay in place; then the rule of the places
 // keeps the title on the screen, under the bar, so that the principal can
-// always take it and its close button. The old surface is unmapped: the
-// process closed its own handle before, so the old memory ends here.
+// always take it and its close button. The old surface is unmapped and its
+// handle closed: the window let its copy go at Resize_Taken, so the old
+// memory ends here.
 resize_surface_take :: proc "contextless" (client: ^Client) {
 	damage_window(client)
 	// The old surface, at the place where the last frame drew it: the
 	// frame and the background take its pixels when the new one is smaller.
 	surface_screen_damage(client)
 	old_width, old_height := client.width, client.height
-	if client.pictures != nil {
-		system.memory_unmap(client.pictures)
-	}
-	client.pictures = client.resize_pictures
-	client.resize_pictures = nil
+	surface_memory_end(&client.pictures, &client.pictures_memory)
+	client.pictures, client.pictures_memory = client.resize_pictures, client.resize_memory
+	client.resize_pictures, client.resize_memory = nil, 0
 	// The logical size and the scale that the compositor checked when it
 	// took the surface: nothing is computed again from its pixels.
 	width, height := client.resize_logical_width, client.resize_logical_height
@@ -268,9 +320,7 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	release_end := bar.release_end_of(client.resize_asked, client.resize_asked_clamp, client.resizable, client.resize_pictures != nil, record.values[1], record.values[2], client.resize_asked_width, client.resize_asked_height)
 	damage_window(client)
 	surface_screen_damage(client)
-	if client.pictures != nil {
-		system.memory_unmap(client.pictures)
-	}
+	surface_memory_end(&client.pictures, &client.pictures_memory)
 	switch release_end {
 	case .No_Request, .Request_Ended:
 	case .Clamp_Ended:
@@ -292,12 +342,11 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 		}
 	}
 	if client.resize_pictures != nil {
-		system.memory_unmap(client.resize_pictures)
+		surface_memory_end(&client.resize_pictures, &client.resize_memory)
 		// The compositor took that resize, so the window holds its size: the
 		// surface that the window offers after the release has it.
 		client.width, client.height = client.resize_logical_width, client.resize_logical_height
 	}
-	client.pictures, client.resize_pictures = nil, nil
 	client.surface = {}
 	client.resize_pending_edges = {}
 	client.resize_asked, client.resize_edges = false, {}
@@ -327,12 +376,10 @@ surface_rescale_take :: proc "contextless" (client: ^Client, record: ring.Record
 		client.surface_serial = bar.serial_after_refused_offer(client.released, client.resize_pictures != nil, client.surface_serial, serial)
 		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Rescale_Refused), 1 = serial})
 	}
-	memory := system.Handle(record.values[0])
-	kind, rights, through := system.handle_state(memory, client.ring_memory)
+	budget := system.Handle(record.values[0])
+	kind, rights, through := system.handle_state(budget, client.ring_memory)
 	facts := bar.Surface_Rescale_Facts {
 		gift            = through,
-		is_memory       = kind == .Memory,
-		readable        = .Read in rights,
 		width           = record.values[1],
 		height          = record.values[2],
 		scale_word      = record.values[3],
@@ -351,28 +398,24 @@ surface_rescale_take :: proc "contextless" (client: ^Client, record: ring.Record
 		refused(client, serial)
 		return
 	}
-	defer system.close(memory)
-	if facts.is_memory {
-		if pages, size_status := system.memory_size(memory); size_status == .Ok {
-			facts.memory_bytes = pages * system.PAGE_SIZE
-		}
-	}
+	defer system.close(budget)
+	facts.is_budget, facts.can_spend, facts.budget_pages = surface_budget_facts(budget, kind, rights)
 	if bar.surface_rescale_refusal(facts) != .None {
 		refused(client, serial)
 		return
 	}
-	address, status := system.memory_map(memory, {}) // Read only.
-	if status != .Ok {
+	pictures, memory, given, made := surface_make(client, budget, facts.width, facts.height)
+	if !made {
 		system.log_fact(.Warning, Surface_Not_Mapped{width = facts.width, height = facts.height, window = window_field(client.title[:])})
 		refused(client, serial)
 		return
 	}
-	client.resize_pictures = ([^]graphics.Color)(address)
+	client.resize_pictures, client.resize_memory = pictures, memory
 	client.resize_width, client.resize_height = int(facts.width), int(facts.height)
 	client.resize_logical_width, client.resize_logical_height = client.width, client.height
 	client.resize_scale, client.resize_serial = scale, serial
 	client.resize_pending_edges = {}
-	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Rescale_Taken), 1 = serial})
+	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Rescale_Taken), 1 = serial, 2 = u64(given)})
 	if client.declined {
 		client.declined = false
 		windows_declined_tell() // scale.odin

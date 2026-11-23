@@ -20,6 +20,7 @@ The compositor. It sees the keys of the principal before any process, and it alr
 
 - **Control+C** copies, **Control+X** cuts, **Control+V** pastes. The compositor reads them from the input service by the character of the key (the layout gives it) with the bit Control, takes the press and the release, and gives them to no process as keys. A process never sees them, and no process can send them: a process writes no record of the input ring. Control+C and Control+X both send `Copy_Asked`, with `values[1]` carrying `display.Copy_Action` (`.Copy` or `.Cut`).
 - While the palette is open, it takes the keys first, as for each key.
+- A paste into the palette is the one read of the slot by the compositor itself (`clipboard_read_local`). It copies the object of the window that copied by the kernel (`system.memory_read`, at most 4096 bytes) and never maps it: that window can revoke its object or leave a page with no frame, and a read through a mapping would stop the trusted display.
 - A paste from a menu comes later: it is the same action with another source of the principal.
 
 ### A copy

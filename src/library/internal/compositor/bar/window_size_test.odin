@@ -331,9 +331,9 @@ resize_target_refuses_a_place_that_another_window_holds :: proc(t: ^testing.T) {
 @(private = "file")
 answer_of_test :: proc() -> Surface_Resize_Facts {
 	return {
-		is_memory = true,
-		readable = true,
-		memory_bytes = 880 * 384 * SURFACE_BYTES_FOR_EACH_PIXEL,
+		is_budget = true,
+		can_spend = true,
+		budget_pages = pages_of_test(880, 384),
 		width = 880,
 		height = 384,
 		resizable = true,
@@ -370,7 +370,7 @@ a_clamp_answer_passes_the_least_size_and_never_resizes_a_fixed_window :: proc(t:
 	other.width += 1
 	testing.expect_value(t, surface_resize_refusal(other), Surface_Resize_Refusal.Other_Size)
 	small := fixed
-	small.memory_bytes -= 1
+	small.budget_pages -= 1
 	testing.expect_value(t, surface_resize_refusal(small), Surface_Resize_Refusal.Too_Small)
 	huge := fixed
 	huge.width, huge.asked_width = u64(max(i32)) + 1, int(max(i32)) + 1
@@ -392,8 +392,8 @@ surface_resize_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	for &each in cases {
 		each.facts = answer_of_test()
 	}
-	cases[0].facts.is_memory, cases[0].refusal = false, .Not_Memory
-	cases[1].facts.readable, cases[1].refusal = false, .No_Read
+	cases[0].facts.is_budget, cases[0].refusal = false, .Not_Budget
+	cases[1].facts.can_spend, cases[1].refusal = false, .No_Spend
 	cases[2].facts.resizable, cases[2].refusal = false, .Not_Resizable
 	cases[3].facts.asked, cases[3].refusal = false, .Not_Asked
 	cases[4].facts.width, cases[4].refusal = 881, .Other_Size
@@ -402,8 +402,8 @@ surface_resize_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	cases[7].facts.width, cases[7].refusal = 0, .Other_Size
 	cases[8].facts.limits.largest_width, cases[8].refusal = 872, .Outside_Limits
 	cases[9].facts.limits.least_height, cases[9].refusal = 392, .Outside_Limits
-	cases[10].facts.memory_bytes, cases[10].refusal = 880 * 384 * SURFACE_BYTES_FOR_EACH_PIXEL - 1, .Too_Small
-	cases[11].facts.memory_bytes, cases[11].refusal = 0, .Too_Small
+	cases[10].facts.budget_pages, cases[10].refusal = pages_of_test(880, 384) - 1, .Too_Small
+	cases[11].facts.budget_pages, cases[11].refusal = 0, .Too_Small
 	for each, index in cases {
 		refusal := surface_resize_refusal(each.facts)
 		testing.expectf(t, refusal == each.refusal, "case %d gives %v, not %v", index, refusal, each.refusal)
@@ -419,9 +419,9 @@ surface_resize_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	facts = answer_of_test()
 	facts.width, facts.asked_width = 1216, 1216
 	facts.height, facts.asked_height = 336, 336
-	facts.memory_bytes = 1216 * 336 * SURFACE_BYTES_FOR_EACH_PIXEL
+	facts.budget_pages = pages_of_test(1216, 336)
 	testing.expect_value(t, surface_resize_refusal(facts), Surface_Resize_Refusal.None)
-	facts.memory_bytes += 4096
+	facts.budget_pages += 1
 	testing.expect_value(t, surface_resize_refusal(facts), Surface_Resize_Refusal.None)
 }
 

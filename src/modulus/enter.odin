@@ -508,43 +508,60 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		slot := handle_find(process, v[0], .Memory, {.Read}) or_return
 		region := &regions[slot.object]
 		offset, address, length := v[1], v[2], v[3]
-		if length > op.MEMORY_READ_LIMIT || region.device {
-			return .Bad_Operation
+		if status := op.memory_read_arguments_status(offset, length, region.page_count, region.device); status != .Ok {
+			return Operation_Outcome(u32(status))
 		}
-		object_bytes := region.page_count * PAGE_SIZE
-		if offset > object_bytes || length > object_bytes - offset || !user_range(process, address, length, true) {
+		// The pages of the caller are present (user_range), and its process
+		// lock keeps them so: the copy into them does not fault.
+		if !user_range(process, address, length, true) {
 			return .Bad_Address
 		}
-		// Page by page under the lock of the object: a decommit takes that
-		// lock, so it waits for the copy of the page or comes before it. The
-		// pages of the caller are present (user_range), and its process lock
-		// keeps them so: the copy into them does not fault.
+		// A copy into a mapping of the same object would write the pages
+		// that it reads.
+		for &mapping in process.mappings {
+			if mapping.page_count != 0 && mapping.region == slot.object && op.memory_read_destination_meets(address, length, mapping.address, mapping.page_count * PAGE_SIZE) {
+				return .Bad_Address
+			}
+		}
+		if length == 0 {
+			return .Ok
+		}
+		first_page, end_page := offset / PAGE_SIZE, (offset + length - 1) / PAGE_SIZE + 1
+		if region.contiguous {
+			user_copy_to_process(address, direct(region.physical + offset, u8), length)
+			results[0] = length
+			return .Ok
+		}
+		// A committed page with no frame yet gets its zero frame, as a read
+		// through a mapping would. A page keeps a frame that it has: a
+		// decommit needs the object alone in its process, and this handle
+		// names it.
+		for page in first_page ..< end_page {
+			if region_frame(region, page, true) == 0 {
+				return .Bad_State
+			}
+		}
+		// The marks and the commits of the pages change under the lock of the
+		// object: each page is checked under it before the first byte, so a
+		// refusal writes nothing, and the copy reads the pages that it checked.
+		lock_take(&region_locks[slot.object], .Region)
+		for page in first_page ..< end_page {
+			value := intrinsics.atomic_load(region_slot(region, page))
+			if value & PAGE_ADDRESS == 0 || !page_committed(region, value) || value & SLOT_NO_ACCESS != 0 {
+				lock_free(&region_locks[slot.object], .Region)
+				return .Bad_State
+			}
+		}
 		copied: u64
 		for copied < length {
 			place := offset + copied
 			page, within := place / PAGE_SIZE, place % PAGE_SIZE
 			part := min(PAGE_SIZE - within, length - copied)
-			if region.contiguous {
-				user_copy_to_process(address + copied, direct(region.physical + page * PAGE_SIZE + within, u8), part)
-				copied += part
-				continue
-			}
-			// A committed page with no frame yet gets its zero frame, as a read
-			// through a mapping would; a page that is not committed gets none.
-			if region_frame(region, page, true) == 0 {
-				return .Bad_State
-			}
-			lock_take(&region_locks[slot.object], .Region)
-			value := intrinsics.atomic_load(region_slot(region, page))
-			frame := value & PAGE_ADDRESS
-			if frame == 0 || !page_committed(region, value) {
-				lock_free(&region_locks[slot.object], .Region)
-				return .Bad_State
-			}
+			frame := intrinsics.atomic_load(region_slot(region, page)) & PAGE_ADDRESS
 			user_copy_to_process(address + copied, direct(frame + within, u8), part)
-			lock_free(&region_locks[slot.object], .Region)
 			copied += part
 		}
+		lock_free(&region_locks[slot.object], .Region)
 		results[0] = copied
 		return .Ok
 

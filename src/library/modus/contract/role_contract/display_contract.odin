@@ -8,11 +8,14 @@ import op "modus:contract/operation"
 import "modus:contract/palette_table"
 
 // Contract version number for readers; the BLAKE3 hash decides every check.
-DISPLAY_CONTRACT_VERSION :: u32(2)
+// 3: Surface_Create, Surface_Resize, Surface_Rescale and Capture_Open give
+// a budget, the holder makes the memory with it and names it in its answer
+// (the event Capture_Opened for the capture face).
+DISPLAY_CONTRACT_VERSION :: u32(3)
 
 // Closed counts of the Display ring protocols, matching the compositor faces.
 DISPLAY_WINDOW_COMMAND_COUNT :: u32(20)
-DISPLAY_WINDOW_EVENT_COUNT :: u32(12)
+DISPLAY_WINDOW_EVENT_COUNT :: u32(13)
 DISPLAY_CONTROL_COMMAND_COUNT :: u32(7)
 DISPLAY_CONTROL_EVENT_COUNT :: u32(2)
 DISPLAY_INPUT_COMMAND_COUNT :: u32(2)

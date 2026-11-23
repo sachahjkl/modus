@@ -1873,3 +1873,35 @@ a_stalled_offer_gives_its_pages_back_at_a_restart :: proc(t: ^testing.T) {
 	testing.expect(t, !whole && status == .Ok && version.count == 1)
 	testing.expect_value(t, budget.trims, trims + 1)
 }
+
+// The connection of a partner ends while its offer waits for its next
+// page: the pages of that offer go back, and only those of that partner.
+@(test)
+a_stalled_offer_gives_its_pages_back_when_its_partner_leaves :: proc(t: ^testing.T) {
+	budget := Test_Budget{bytes_left = 1 << 20}
+	table := Store_Table{rows = make([]Exchanged_Store, 2, context.temp_allocator), version_grow = test_version_grow, version_grow_user = &budget, version_trim = test_version_trim}
+	leaving, staying: [machine_mesh.PUBLIC_KEY_SIZE]u8
+	leaving[0], staying[0] = 1, 2
+	first_identifier, second_identifier: blake3.Hash
+	first_identifier[0], second_identifier[0] = 3, 4
+	left, _ := store_exchange_add(&table, first_identifier, leaving)
+	kept, _ := store_exchange_add(&table, second_identifier, staying)
+	items: [STORE_ENTRY_WIRE_SIZE]u8
+	items[0], items[blake3.HASH_SIZE] = 1, 9
+	page := Store_Page{entry_total = 2, entry_count = 1, items = items[:]}
+	for store in ([2]^Exchanged_Store{left, kept}) {
+		whole, status := assembly_take_page(&store.incoming_assembly, &store.incoming, &page)
+		testing.expect(t, !whole && status == .Ok && store.incoming_assembly.active)
+	}
+	// A key that names no partner of a store, and the zero key: nothing ends.
+	nobody: [machine_mesh.PUBLIC_KEY_SIZE]u8
+	testing.expect_value(t, store_exchange_partner_end(&table, nobody), 0)
+	testing.expect_value(t, store_exchange_partner_end(nil, leaving), 0)
+	trims := budget.trims
+	testing.expect_value(t, store_exchange_partner_end(&table, leaving), 1)
+	testing.expect(t, !left.incoming_assembly.active && left.incoming.count == 0 && left.incoming.entries == nil)
+	testing.expect_value(t, budget.trims, trims + 1)
+	// The other partner keeps its offer, and a second end ends nothing more.
+	testing.expect(t, kept.incoming_assembly.active && kept.incoming.count == 1)
+	testing.expect_value(t, store_exchange_partner_end(&table, leaving), 0)
+}
