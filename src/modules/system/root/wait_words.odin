@@ -22,6 +22,6 @@ root_wait_full_told: bool
 root_wait_full_tell :: proc "contextless" (wait: ^system.Wait) {
 	if wait.refused && !root_wait_full_told {
 		root_wait_full_told = true
-		system.log_fact(.Error, Root_Wait_Full{word_capacity = u64(root_wait_set.room)})
+		system.log_fact(.Error, Root_Wait_Full{word_capacity = u64(wait.room)})
 	}
 }

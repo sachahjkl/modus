@@ -27,6 +27,7 @@ PAGE_ADDRESS :: u64(0x000F_FFFF_FFFF_F000)
 frame_lock: Lock
 frame_bits: []u64
 frame_count: u64 // Read-only after boot.
+usable_pages: u64 // The pages of the free ranges of the memory map: the memory that the sizes of the tables follow. Read-only after boot.
 frame_hint: u64
 free_frames: u64
 kernel_table: u64 // The top level page table that all address spaces share the upper half of.
@@ -57,6 +58,14 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		}
 	}
 	frame_count = top / PAGE_SIZE
+	// The usable memory of the map, whole: the rule of the sizes of the
+	// tables is written in it (table_sizes.sizes_of_memory), not in the
+	// free frames that are left after the kernel and the table of frames.
+	for range in ranges {
+		if kind, ok := info.memory_kind_of_word(range.kind); ok && kind == .Free {
+			usable_pages += range.page_count
+		}
+	}
 	words := (frame_count + 63) / 64
 	bitmap_pages := (words * 8 + PAGE_SIZE - 1) / PAGE_SIZE
 	bitmap_address: u64

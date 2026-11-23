@@ -13,6 +13,8 @@ GRANT_PEER :: 1 // ROLE_CHURN: a process, with the right Control, that this one 
 VALUE_INDEX :: 0 // The place of the locker on the board.
 VALUE_ROLE :: 1 // ROLE_MEASURE or ROLE_CHURN.
 VALUE_STOP_AFTER :: 2 // ROLE_CHURN: the milliseconds after which the process stops its peer, or itself with no peer. 0: never.
+VALUE_ROOM_WORDS :: 3 // ROLE_WAIT_ROOM: the words of the wait room that the process asks for.
+VALUE_BUDGET_END :: 4 // ROLE_WAIT_ROOM: 1: the process closes the one handle of its budget, which ends, before it waits.
 
 // A locker of the measures: it works on the board.
 ROLE_MEASURE :: 0
@@ -23,6 +25,13 @@ ROLE_MEASURE :: 0
 // the process can stop itself or its peer at the same time.
 ROLE_CHURN :: 1
 CHURN_THREADS :: 4 // The threads that a churn locker can have at one time.
+// A locker of the case of the wait room: it asks for a room of
+// VALUE_ROOM_WORDS words, ends its budget when VALUE_BUDGET_END says so,
+// adds 1 to `done` of the slot 0 of the board, then waits on ROOM_WAITED
+// words of its own with no end, until `locks` stops it. The pages of the
+// room return to the budget that pays the process then, whichever it is.
+ROLE_WAIT_ROOM :: 2
+ROOM_WAITED :: 100
 
 LOCKER_CAPACITY :: 4 // The lockers that `locks` starts.
 FAULT_PAGES :: 256 // The pages of one memory object in the measure of the pages on first use.

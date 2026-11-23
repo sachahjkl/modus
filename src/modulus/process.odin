@@ -259,12 +259,11 @@ Thread :: struct #align (64) {
 	// its entries are in wait_entries, then in the wait room (wait.odin).
 	word_count:   u32, // The words registered in the wait table (wait.odin).
 	// The wait room of the thread: the page that names the pages of its
-	// entries past op.WORD_WAIT_INLINE, 0 for none; its pages with that one;
-	// the budget that paid them. Only the thread changes them, in its own
-	// entry with no word registered, or its end (wait_room_set).
+	// entries past op.WORD_WAIT_INLINE, 0 for none; its pages with that one.
+	// The budget of the process pays them. Only the thread changes them, in
+	// its own entry with no word registered, or its end (wait_room_set).
 	wait_room:        u64,
 	wait_room_pages:  u32,
-	wait_room_budget: u32,
 	word_changed: bool, // A word did not hold the value: this entry does not wait.
 	wait_serial:  u32, // Changes when a wait ends: wait.odin. Run lock of home.
 	woken:        bool, // A waker came while the thread registered its words. Run lock of home.
@@ -1232,6 +1231,26 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	if intrinsics.atomic_load(&region.marked_pages) != 0 {
 		return 0, .Bad_State
 	}
+	// The counts of the mappings of the object come before the check of the
+	// record, and each refusal below takes them back. A process that maps
+	// the object with Write holds only its own process lock: counted first,
+	// it is seen by the scan of a recorded process that maps the object at
+	// the same time (region_others_none), and it reads the recorded
+	// mappings of the object after its count. Of two that map at once, one
+	// sees the other. The count of Write follows the flags; the bits of the
+	// mapping can have no Write (No_Access), and the success corrects it.
+	write_counted := .Write in flags
+	intrinsics.atomic_add(&region.mapping_count, 1)
+	if write_counted {
+		intrinsics.atomic_add(&region.writable_mapping_count, 1)
+	}
+	counts_kept := false
+	defer if !counts_kept {
+		intrinsics.atomic_sub(&region.mapping_count, 1)
+		if write_counted {
+			intrinsics.atomic_sub(&region.writable_mapping_count, 1)
+		}
+	}
 	// A recorded process can map memory that another process holds: the
 	// record takes the mapping after it is made (record_received_mapping_locked).
 	received_by_record, record_status := record_replay_map_check(index_of_process(process), region_index, flags, first, count, by_the_process)
@@ -1431,9 +1450,15 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large, receive_handles = .Receive_Handles in flags}
 	// A free mapping slot exists, so the order has room for its place.
 	mapping_order.insert(process.mapping_order[:], &process.mapping_order_count, process.mappings[:], u16(intrinsics.ptr_sub(mapping, &process.mappings[0])))
-	intrinsics.atomic_add(&region.mapping_count, 1)
-	if bits & PAGE_WRITE != 0 {
-		intrinsics.atomic_add(&region.writable_mapping_count, 1)
+	// The counts were taken before the checks: the mapping keeps them, with
+	// the count of Write of its bits.
+	counts_kept = true
+	if writes := bits & PAGE_WRITE != 0; writes != write_counted {
+		if writes {
+			intrinsics.atomic_add(&region.writable_mapping_count, 1)
+		} else {
+			intrinsics.atomic_sub(&region.writable_mapping_count, 1)
+		}
 	}
 	// The mapping owns its count of the cache type now: its unmap gives it
 	// back, and the deferred release must not give it a second time.
@@ -2030,9 +2055,11 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	thread.finished = true
 	extended_switch.thread_mark_modified(&thread.extended_switch)
 	wait_unregister(thread)
-	wait_room_end(thread)
 	process_index := thread.process
 	process := &processes[process_index]
+	// Before the thread leaves its process below: the pages return to the
+	// budget of the process now, the parent of a budget that ended.
+	wait_room_end(thread, process)
 	// The debug handler of another process ends with its thread: that
 	// process gets its threads back before the thread record, which holds
 	// the ring, is unmapped below.

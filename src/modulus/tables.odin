@@ -2,11 +2,13 @@ package kernel
 
 import op "modus:contract/operation"
 import "modulus:table_sizes"
+import "modulus:word_table"
 
 // The tables of the kernel whose size follows the memory of the machine
 // (src/md/data/table_sizes.md). The kernel chooses the sizes once, at its
-// start, from the free frames that memory_start counted, and takes each
-// table from them in one contiguous run, with zeros. No table grows while
+// start, from the usable pages of the memory map that memory_start counted,
+// and takes each table from the free frames in one contiguous run, with
+// zeros. No table grows while
 // the machine runs. The root budget is made after them: it holds the free
 // frames that are left.
 
@@ -19,7 +21,7 @@ region_capacity: u32
 // tables_start takes the tables. A machine that has no contiguous run for a
 // table stops with one line: it could start no process.
 tables_start :: proc "contextless" () {
-	sizes := table_sizes.sizes_of_memory(free_frames)
+	sizes := table_sizes.sizes_of_memory(usable_pages)
 	process_capacity = sizes.process_slots
 	thread_table_capacity = sizes.threads
 	region_capacity = sizes.regions
@@ -29,6 +31,9 @@ tables_start :: proc "contextless" () {
 	process_records = table_take(Process_Record_State, process_capacity, "the records of the processes")
 	threads = table_take(Thread, thread_table_capacity, "the threads")
 	wait_entries = table_take(Wait_Entry, thread_table_capacity * op.WORD_WAIT_INLINE, "the word wait")
+	// One bucket of the word wait for each frame of the machine: a wake
+	// reads the words of one frame (modulus:word_table).
+	wait_words = {heads = table_take(^Wait_Entry, u32(word_table.buckets_of_frames(frame_count)), "the buckets of the word wait"), frames = frame_count}
 	regions = table_take(Region, region_capacity, "the memory objects")
 	region_locks = table_take(Lock, region_capacity, "the locks of the memory objects")
 	log("kernel: tables: ", u64(process_capacity), " process slots, ", u64(thread_table_capacity), " threads, ", u64(region_capacity), " memory objects: ", Size{(before - free_frames) * PAGE_SIZE >> 20, .Mebibytes})

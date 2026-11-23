@@ -1,0 +1,142 @@
+// The lists of the word wait, keyed by the word (docs/ARCHITECTURE.md,
+// "Locks of the kernel", "The word wait"; src/md/data/table_sizes.md).
+//
+// A waited word is a word of 32 bits in a page frame. The table has one
+// bucket for each frame of the machine, and a few for the frames of
+// devices, so a bucket holds only the words of one frame: at most
+// WORDS_OF_A_FRAME distinct words, whatever a process does. In a bucket each
+// distinct word has one first entry, in the list of the bucket; the other
+// entries of the same word hang from it. So a wake walks the distinct words
+// of its frame to find its word, then only the entries of its word. A
+// thread holds a word at most once in one wait: a second entry of the same
+// word and the same thread is refused.
+//
+// The caller holds the lock of the bucket (lock_of). This package allocates
+// no memory and calls no kernel operation; host tests count its steps.
+package word_table
+
+PAGE_SIZE :: 4096
+// The distinct words of 32 bits in one frame: the most first entries in
+// one bucket.
+WORDS_OF_A_FRAME :: PAGE_SIZE / 4
+// The buckets past the frames of the machine: a word in the memory of a
+// device has a frame past them, and shares these by its frame.
+DEVICE_BUCKETS :: 64
+
+// One word of the wait of one thread. 64 bytes on each target, also where
+// a pointer has 4 bytes: a page of a wait room holds a fixed count of them.
+Entry :: struct #align (64) {
+	// The first entries of the distinct words of a bucket. Only a first
+	// entry is in this list.
+	bucket_next, bucket_previous: ^Entry,
+	// The entries of one word: the first entry has no previous.
+	word_next, word_previous:     ^Entry,
+	word:                         u64, // The physical address of the word.
+	thread:                       u32, // The place of the thread in its table.
+	serial:                       u32, // The wait serial of the thread at the registration.
+}
+#assert(size_of(Entry) == 64)
+
+// The buckets: frames buckets, one for each frame, then DEVICE_BUCKETS.
+Table :: struct {
+	heads:  []^Entry,
+	frames: u64,
+}
+
+// buckets_of_frames gives the buckets of a table for a machine of frames
+// page frames.
+buckets_of_frames :: proc "contextless" (frames: u64) -> u64 {
+	return frames + DEVICE_BUCKETS
+}
+
+// bucket_of gives the bucket of a word: its frame, or a device bucket.
+bucket_of :: #force_inline proc "contextless" (table: ^Table, word: u64) -> u64 {
+	frame := word / PAGE_SIZE
+	if frame < table.frames {
+		return frame
+	}
+	return table.frames + frame % DEVICE_BUCKETS
+}
+
+// first_of_word gives the first entry of a word, or nil, and the first
+// entries that it read: at most WORDS_OF_A_FRAME for a word of memory.
+first_of_word :: proc "contextless" (table: ^Table, word: u64) -> (first: ^Entry, steps: int) {
+	for entry := table.heads[bucket_of(table, word)]; entry != nil; entry = entry.bucket_next {
+		steps += 1
+		if entry.word == word {
+			return entry, steps
+		}
+	}
+	return nil, steps
+}
+
+// insert adds the entry of a thread for a word. false: the thread holds the
+// word already, and nothing changed. steps counts the entries read: the
+// first entries of the bucket up to the word, and the entries of the word.
+insert :: proc "contextless" (table: ^Table, entry: ^Entry, word: u64, thread: u32, serial: u32) -> (inserted: bool, steps: int) {
+	first, first_steps := first_of_word(table, word)
+	steps = first_steps
+	entry^ = {word = word, thread = thread, serial = serial}
+	if first == nil {
+		bucket := &table.heads[bucket_of(table, word)]
+		entry.bucket_next = bucket^
+		if bucket^ != nil {
+			bucket^.bucket_previous = entry
+		}
+		bucket^ = entry
+		return true, steps
+	}
+	for other := first; other != nil; other = other.word_next {
+		steps += 1
+		if other.thread == thread {
+			entry^ = {}
+			return false, steps
+		}
+	}
+	// After the first entry: the first entry keeps its place in the bucket.
+	entry.word_previous = first
+	entry.word_next = first.word_next
+	if first.word_next != nil {
+		first.word_next.word_previous = entry
+	}
+	first.word_next = entry
+	return true, steps
+}
+
+// remove takes an entry out of the table. The next entry of its word, if
+// any, takes the place of a first entry in the bucket.
+remove :: proc "contextless" (table: ^Table, entry: ^Entry) {
+	if entry.word_previous != nil {
+		entry.word_previous.word_next = entry.word_next
+		if entry.word_next != nil {
+			entry.word_next.word_previous = entry.word_previous
+		}
+		entry^ = {}
+		return
+	}
+	bucket := &table.heads[bucket_of(table, entry.word)]
+	next := entry.word_next
+	if next != nil {
+		next.word_previous = nil
+		next.bucket_next = entry.bucket_next
+		next.bucket_previous = entry.bucket_previous
+		if entry.bucket_next != nil {
+			entry.bucket_next.bucket_previous = next
+		}
+		if entry.bucket_previous != nil {
+			entry.bucket_previous.bucket_next = next
+		} else {
+			bucket^ = next
+		}
+	} else {
+		if entry.bucket_next != nil {
+			entry.bucket_next.bucket_previous = entry.bucket_previous
+		}
+		if entry.bucket_previous != nil {
+			entry.bucket_previous.bucket_next = entry.bucket_next
+		} else {
+			bucket^ = entry.bucket_next
+		}
+	}
+	entry^ = {}
+}

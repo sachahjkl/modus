@@ -309,7 +309,7 @@ expected_fields :: proc() -> []Expected_Field {
 		{"operation.Thread_Record", "fault_written", offset_of(op.Thread_Record, fault_written), size_of(thread_record.fault_written)},
 		{"operation.Thread_Record", "fault_read", offset_of(op.Thread_Record, fault_read), size_of(thread_record.fault_read)},
 		{"operation.Thread_Record", "fault_full", offset_of(op.Thread_Record, fault_full), size_of(thread_record.fault_full)},
-		{"operation.Thread_Record", "fault_reserved", offset_of(op.Thread_Record, fault_reserved), size_of(thread_record.fault_reserved)},
+		{"operation.Thread_Record", "wait_room_words", offset_of(op.Thread_Record, wait_room_words), size_of(thread_record.wait_room_words)},
 		{"operation.Thread_Record", "fault_records", offset_of(op.Thread_Record, fault_records), size_of(thread_record.fault_records)},
 		{"operation.Fault_Record", "thread", offset_of(op.Fault_Record, thread), size_of(fault_record.thread)},
 		{"operation.Fault_Record", "serial", offset_of(op.Fault_Record, serial), size_of(fault_record.serial)},

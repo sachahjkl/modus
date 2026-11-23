@@ -32,6 +32,8 @@ package locker
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:lockers"
+import op "modus:contract/operation"
+import "modus:contract/ring"
 import "modus:system"
 
 // entries enters the kernel with one cheap operation on an own object,
@@ -118,10 +120,43 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 // tables of its range, tells `locks` that it is ready, then waits for each
 // command and runs its mode until the next one. With no board or a slot
 // number past the board, it stops with `Failed`.
+// wait_room_role is the role of a locker in the case of the wait room
+// (lockers.ROLE_WAIT_ROOM). The status of the room is the count of the
+// slot, for `locks` to check.
+wait_room_role :: proc "contextless" (ctx: ^system.Context) -> ! {
+	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
+	if status != .Ok {
+		system.stop(.Failed)
+	}
+	slot := &(^lockers.Board)(address).slots[0]
+	_, room_status := system.call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, ctx.values[lockers.VALUE_ROOM_WORDS])
+	if ctx.values[lockers.VALUE_BUDGET_END] != 0 {
+		system.close(system.own_budget())
+	}
+	slot.count = u64(room_status)
+	intrinsics.atomic_add(&slot.done, 1)
+	system.word_wake(&slot.done, system.WAKE_ALL)
+	// Each word holds 0 and the wait names 0: the wait has no end but the
+	// stop of the process.
+	waited: [lockers.ROOM_WAITED]u32
+	words: [lockers.ROOM_WAITED]op.Word
+	for &word, index in words {
+		word = {address = u64(uintptr(&waited[index])), value = 0}
+	}
+	for {
+		commands := [1]ring.Record{{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&words[0])), 1 = len(words)}}}
+		completions: [1]ring.Record
+		system.commands_call(commands[:], completions[:], system.WAIT_FOREVER)
+	}
+}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_CHURN {
 		churn(ctx.values[lockers.VALUE_STOP_AFTER], ctx.handles[lockers.GRANT_PEER])
+	}
+	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_WAIT_ROOM {
+		wait_room_role(ctx)
 	}
 	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
 	index := ctx.values[lockers.VALUE_INDEX]

@@ -696,7 +696,7 @@ A table that holds no part to close and is still short lets the work run: its re
 - **Each queue:** 2 words, its counter and the word that says that the root service waits.
 - **Each place:** 2 queues, the root ring of its process and the control ring of its network device. Beside the places, 2 queues: the rings of the delegated wiring service and of the devices service.
 
-A machine of 1 GiB has 255 places: 12 + 2 × (2 × 255 + 2) = 1036 words, 9 pages of the wait room. The largest machine has 1023 places: 4108 words, under `op.WORD_WAIT_MOST`. So no start is refused for the wait, and no queue is waited on late.
+A machine of 1 GiB has 255 places: 12 + 2 × (2 × 255 + 2) = 1036 words, 17 pages of the wait room. The largest machine has 1023 places: 4108 words, under `op.WORD_WAIT_MOST`. So no start is refused for the wait, and no queue is waited on late.
 
 **Refused: a bound of the queues, with a refusal past it.** A wait of the kernel held 256 words, so the root service held 122 queues and refused a start that brought one more, while it could start 1023 processes: a machine refused a process for a limit of the wait and not of a budget.
 

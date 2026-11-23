@@ -171,6 +171,11 @@ Operation_In_Progress :: struct {
 	// read, which a write of the holder of the machine can change between
 	// the operation and the record.
 	thread_create_weight_limit: u32,
+	// A Word_Wait that named a word twice: the place of that word in the
+	// whole command, for its error record. word_wait_in_chunks sets the
+	// place of the first word of each chunk; the refusal adds its own.
+	word_wait_duplicate:     bool,
+	word_wait_refused_place: u64,
 	// The state refusal that Thread_Control hit and its fields: the error
 	// record takes them from here, so diagnose needs no second walk of
 	// locks and does not race with another thread.
@@ -198,6 +203,14 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 		stop_wait(cpu)
 		return status_of_outcome(guest_outcome)
 	}
+	// A long word wait runs in chunks, with the process lock free between
+	// two: one entry does not hold it for the whole list.
+	if command.kind == u32(op.Operation.Word_Wait) && command.values[1] > WORD_WAIT_CHUNK {
+		outcome := word_wait_in_chunks(index, command, results)
+		cpu.operation.running = false
+		stop_wait(cpu)
+		return status_of_outcome(outcome)
+	}
 	outcome := execute_locked(index, command, results)
 	if outcome == .Needs_Control {
 		// The first run changed no state that the second run does twice:
@@ -213,6 +226,46 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 	cpu.operation.running = false
 	stop_wait(cpu)
 	return status_of_outcome(outcome)
+}
+
+// The words of a Word_Wait that one section of the process lock registers.
+// A word costs a copy, a walk of the page table and a section of a wait
+// lock: by estimate under a microsecond, so a chunk holds the lock well
+// under a millisecond, and a wait of op.WORD_WAIT_MOST words releases it 32
+// times. Not measured (src/md/data/table_sizes.md).
+WORD_WAIT_CHUNK :: 1024
+
+// word_wait_in_chunks runs a Word_Wait of more than WORD_WAIT_CHUNK words
+// as chunks of the list, each one with the process lock. The checks of the
+// whole list come first, so a list that the room cannot hold, or whose
+// addresses wrap, registers nothing. A chunk that fails ends the command
+// with its status; the words of the chunks before stay registered, as a
+// list that fails at a word does in one chunk, and the entry does not wait.
+// Between two chunks a decommit of a frame of a word finds the words
+// registered so far, and wakes the thread, which then does not wait: the
+// same as a decommit before the entry.
+word_wait_in_chunks :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> Operation_Outcome {
+	thread := &threads[index]
+	address, count := command.values[0], command.values[1]
+	if count > u64(wait_capacity(thread) - thread.word_count) {
+		return .No_Slot
+	}
+	if address > max(u64) - count * size_of(op.Word) {
+		thread.word_changed = true
+		return .Bad_Address
+	}
+	operation := &processor_self().operation
+	for first := u64(0); first < count; first += WORD_WAIT_CHUNK {
+		chunk := command
+		chunk.values[0] = address + first * size_of(op.Word)
+		chunk.values[1] = min(WORD_WAIT_CHUNK, count - first)
+		operation.word_wait_refused_place = first
+		outcome := execute_locked(index, chunk, results)
+		if outcome != .Ok {
+			return outcome
+		}
+	}
+	return .Ok
 }
 
 // stop_wait waits, with no lock held, until each thread that this
@@ -845,8 +898,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				thread.word_changed = true // The wait cannot end by this word: do not wait.
 				return .Bad_Address
 			}
-			if !wait_register(thread, physical, u32(word.value)) {
+			switch wait_register(thread, physical, u32(word.value)) {
+			case .Held:
+			case .Changed:
 				thread.word_changed = true
+			case .Duplicate:
+				// The error record names the place of the word in the whole
+				// command, past the chunks before (word_wait_in_chunks).
+				thread.word_changed = true
+				operation := &processor_self().operation
+				operation.word_wait_duplicate = true
+				operation.word_wait_refused_place += index
+				return .Bad_Operation
 			}
 		}
 		return .Ok

@@ -11,7 +11,7 @@ The kernel keeps its state in flat tables ([`docs/PROPERTIES.md`](../../../docs/
 
 ## The sizes are chosen once, at the start, from the memory of the machine
 
-The kernel counts the usable pages of the memory map of the firmware, and `modulus:table_sizes` gives the sizes from that count, before the first processor and the first process:
+The kernel counts the usable pages of the memory map of the firmware (the pages of its free ranges, `usable_pages`, before the kernel takes any), and `modulus:table_sizes` gives the sizes from that count, before the first processor and the first process:
 
 - **Process slots**: one for each 4 MiB of usable memory, rounded up to a multiple of 64, at least `op.PROCESS_SLOTS_LEAST` (64) and at most `op.PROCESS_SLOTS_MOST` (1024). A machine of 1 GiB has 256; a machine of 4 GiB or more has 1024.
 - **Threads of the machine**: 4 for each process slot.
@@ -26,11 +26,13 @@ The tables of these three, and the tables that have one entry for each process s
 | Process record, with its handle table, its mappings and their order | 95 104 | 1 | 95 104 |
 | Links of the origin tree | 32 768 | 1 | 32 768 |
 | State of a recorded process | 24 736 | 1 | 24 736 |
-| Thread, with the entries of its first 64 waited words (2 048 bytes) | 5 376 | 4 | 21 504 |
+| Thread, with the entries of its first 64 waited words (4 096 bytes) | 7 424 | 4 | 29 696 |
 | Memory object, with its lock | 152 | 64 | 9 728 |
-| Sum | | | 183 840 (179.5 KiB) |
+| Sum | | | 192 032 (187.5 KiB) |
 
-So the tables take 179.5 KiB for each 4 MiB of usable memory: 4.4 % of the memory of the machine, whatever its size, between the floor and the ceiling. A machine of 1 GiB has 256 slots and 44.9 MiB of tables; the floor of 64 slots is 11.2 MiB; the ceiling of 1024 slots is 179.5 MiB. The fixed tables add 0.7 MiB: the budgets (384 KiB) and the guests (312 KiB). The words of a wait past 64 are in the wait room of their thread, which its budget pays (below).
+The buckets of the word wait add 8 bytes for each page frame of the machine: 2 MiB on a machine of 1 GiB, 0.2 % of the memory.
+
+So the tables take 187.5 KiB for each 4 MiB of usable memory and 8 bytes for each frame: 4.8 % of the memory of the machine, whatever its size, between the floor and the ceiling. A machine of 1 GiB has 256 slots and 48.9 MiB of tables; the floor of 64 slots is 11.7 MiB and the buckets of its frames; the ceiling of 1024 slots is 187.5 MiB and the buckets of its frames. The fixed tables add 0.7 MiB: the budgets (384 KiB) and the guests (312 KiB). The words of a wait past 64 are in the wait room of their thread, which its budget pays (below).
 
 **Why a ratio and not a constant.** A constant large enough for a server took a fixed share of a small machine (the browser machine runs in 256 MiB), and a constant small enough for it refused the processes of a large machine. A ratio is one rule for both.
 
@@ -60,9 +62,25 @@ The kernel keeps, beside the 1024 mappings of a process, the places of the mappi
 
 ## A wait holds 64 words on the stack, and more in a wait set of its caller
 
-The kernel holds 64 words of a wait for each thread (`op.WORD_WAIT_INLINE`), in its thread table. A `system.Wait` holds as many in itself, about 3.5 KiB of the stack: a stream end, a call and a window wait on fewer. A thread that waits on more (the loop of the root service, the compositor, `wiring`, the follow of `log`, `collector`) sizes a `system.Wait_Set` to its own tables, in its memory, and gives it to `wait_begin`. The first wait with the set asks the kernel for a wait room of its words (`op.Thread_Control_Command.Wait_Room`): pages that the budget of the process pays, an entry of 32 bytes for each word past the 64 and one page that names the others, up to `op.WORD_WAIT_MOST` (65536) words. One set serves one thread: the room is of the thread that asked, and a set that two threads fill at once mixes their lists.
+The kernel holds 64 words of a wait for each thread (`op.WORD_WAIT_INLINE`), in its thread table. A `system.Wait` holds as many in itself, about 3.5 KiB of the stack: a stream end, a call and a window wait on fewer. A thread that waits on more (the loop of the root service, the compositor, `wiring`, the follow of `log`, `collector`) sizes a `system.Wait_Set` to its own tables, in its memory, and gives it to `wait_begin`. The first wait with the set asks the kernel for a wait room of its words (`op.Thread_Control_Command.Wait_Room`): pages that the budget of the process pays, an entry of 64 bytes for each word past the 64 and one page that names the others, up to `op.WORD_WAIT_MOST` (32768) words. One set serves one thread at a time: a set that two threads fill at once mixes their lists.
 
-Each service sizes its set so that each of its rings fits: the root service 12 + 2 × (2 × places + 2) words (1036 on a machine of 1 GiB, 9 pages), the compositor 27 fixed words and 4 for each of its 128 clients (539, 5 pages). So no service refuses a client, a start or a ring for its wait. A list that does not fit anyway (the kernel refused the room for the budget) is refused past the 64 words, ends only at its deadline, and writes one line: no loop turns with no wait.
+**The room is of the thread.** The kernel writes the words of the room in the thread record (`Thread_Record.wait_room_words`), and the library reads them there: a set grows the room of the thread to its words when the room is smaller, and never makes it smaller, so a thread that uses two sets has the room of the larger, and no set shrinks the room under another. A set whose room the kernel refused for the budget asks no more.
+
+**The room returns to the budget of its process.** The end of a thread gives the pages of its room to the budget that the field of its process names under the frame lock, as a page table does: the end of a budget moves that field to the parent (`budget_release`), so the pages never return to a budget that ended. A room keeps no budget of its own.
+
+Each service sizes its set so that each of its rings fits: the root service 12 + 2 × (2 × places + 2) words (1036 on a machine of 1 GiB, 17 pages), the compositor 27 fixed words and 4 for each of its 128 clients (539, 9 pages).
+
+## The lists of the word wait are keyed by the word
+
+A room of 32768 words for each thread would make a few buckets hold a million entries: one process would make each wake of the machine walk them. The table of the word wait (`modulus:word_table`) has one bucket for each page frame of the machine, sized at the start from the frames, and a few more for the frames of devices. In a bucket each distinct word has one first entry; the other entries of the same word hang from it. A wake reads the distinct words of its frame, at most 1024, then the entries of its own word. A thread holds a word once in a wait: the kernel refuses a second entry of the same word (`Bad_Operation`, with the place of the word in its record), so the entries of a word are at most the threads of the machine. The host tests count the steps of a wake against that bound.
+
+The library keeps a list that names a word twice from a fault of its caller: on that refusal it keeps the first place of each word, waits again, and writes one line. The search costs the square of the words, on that refusal only.
+
+A `Word_Wait` of more than 1024 words registers its words in chunks of 1024, each one a section of the process lock: a wait of 32768 words releases the lock 32 times. By estimate a word costs under a microsecond; the case `locks` prints the time of one wait of 32768 words, which is not measured yet.
+
+**Refused: 64 buckets for the machine.** A bucket held the words of every thread whose words had its hash, so one process with a large room made each wake of the machine walk its entries.
+
+**Refused: a hash table with a key.** The kernel has no secret to key it with at its start, and a process that knows the hash puts its words in the bucket of another word. A bucket for each frame needs no key: a process can put only the 1024 words of one frame in one bucket. So no service refuses a client, a start or a ring for its wait. A list that does not fit anyway (the kernel refused the room for the budget) is refused past the 64 words, ends only at its deadline, and writes one line: no loop turns with no wait.
 
 **Refused: a cap of the kernel for every thread.** 256 words for each thread took 5 KiB of each entry of the thread table, the root service then held 122 queues for its 1023 places, and the compositor 96 windows. A room that the caller sizes and its budget pays has no cap but the budget.
 
@@ -77,8 +95,9 @@ Each service sizes its set so that each of its rings fits: the root service 12 +
 - The sizes of the tables are in `System_Report.process_slots`: a process that reads each slot reads that count, never `op.PROCESS_SLOTS_MOST`, so a small machine costs it no call for a slot that does not exist.
 - The root budget holds `process_slots - 1` processes, `4 × process_slots - 1` threads and 1000 log records of each second for each process slot.
 - A wait room is taken before the room that it replaces is given back, so a refusal for the budget changes nothing; the thread asks it in its own entry with no word registered, so no entry of the old room is in a list of the kernel when its pages leave.
+- The counts of the mappings of a memory object (`mapping_count`, `writable_mapping_count`) are taken before the check of the record, and each refusal gives them back: a writer that holds only its own process lock is then seen by the scan of a recorded process that maps the object at the same time (`record_replay.odin`, `region_others_none`), or it sees that process. A protect that gives Write counts it the same way before its check.
 - The largest budget of a process is a share of the machine: a quarter by default (`module.LARGEST_BUDGET_SHARE_DEFAULT`). It is a value of the plan of principal 0, because it spends a resource of the machine; the root service takes it through one border (`module.budget_share_of_word`) when the plan gives it ([../features/module_budget_request.md](../features/module_budget_request.md)).
 
 ## State
 
-Built: the sizes at the start, the log record with two bytes of process slot, 256 threads in a process with the finer unit of a weight, the order of the mappings, the wait set with the wait room of the kernel, the tables of the services from the slots of the machine, and the border of the share of a plan. Left: the plan of principal 0 gives no share yet, so the share is the default. The machine case of the wait room (`locks`) has not run on a machine yet.
+Built: the sizes at the start from the usable pages of the memory map, the log record with two bytes of process slot, 256 threads in a process with the finer unit of a weight, the order of the mappings, the wait set with the wait room of the thread, the lists of the word wait keyed by the word, the chunks of a long wait, the tables of the services from the slots of the machine, and the border of the share of a plan. Left: the plan of principal 0 gives no share yet, so the share is the default. The machine cases of the wait room (`locks`: its edges, its pages at each end, the time of a wait of 32768 words) have not run on a machine yet.

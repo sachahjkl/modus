@@ -47,12 +47,11 @@ Wait_Part :: struct {
 // pays. One set serves one thread: the room is of the thread that asked,
 // and two threads that fill one set at once mix their lists.
 Wait_Set :: struct {
-	words: []op.Word,
-	parts: []Wait_Part,
-	// The words that the kernel holds for the thread of the set: 0 until the
-	// first wait_begin asks; WAIT_INLINE_WORDS when the kernel refused the
-	// room, so a list past them is refused (Wait.refused) and not sent.
-	room:  int,
+	words:   []op.Word,
+	parts:   []Wait_Part,
+	// The kernel refused the room for this set once (the budget cannot pay
+	// it): the set asks no more, and holds the room that the thread has.
+	refused: bool,
 }
 
 // wait_set_of gives a set of the places of the caller: words and parts of
@@ -63,26 +62,31 @@ wait_set_of :: proc "contextless" (words: []op.Word, parts: []Wait_Part) -> Wait
 	return {words = words[:count], parts = parts[:count]}
 }
 
-// wait_set_room asks the kernel once for the wait room of a set, for the
-// calling thread. A refusal (the budget cannot pay its pages) leaves the
-// set at the words of the kernel with no room, and writes one line.
+// thread_wait_room gives the words that each wait of the calling thread
+// holds: its wait room, which the kernel writes in its thread record, and
+// WAIT_INLINE_WORDS with no room. The room is of the thread: every set that
+// the thread uses shares it.
+thread_wait_room :: proc "contextless" () -> int {
+	return max(int(intrinsics.atomic_load(&thread_record().wait_room_words)), WAIT_INLINE_WORDS)
+}
+
+// wait_set_room grows the wait room of the calling thread to the words of a
+// set, when the room is smaller: never smaller, so a room never shrinks
+// under another set of the same thread. A refusal (the budget cannot pay
+// the pages) writes one line, and the set asks no more: its lists hold the
+// room that the thread has.
 @(private = "file")
 wait_set_room :: proc "contextless" (set: ^Wait_Set) {
-	if set.room != 0 {
+	if set.refused || len(set.words) <= thread_wait_room() {
 		return
 	}
-	set.room = WAIT_INLINE_WORDS
-	if len(set.words) <= WAIT_INLINE_WORDS {
-		set.room = len(set.words)
-		return
+	if _, status := call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, u64(len(set.words))); status != .Ok {
+		set.refused = true
+		log(.Error, "system: the kernel gave no wait room of ", u64(len(set.words)), " words to this thread: its waits hold ", u64(thread_wait_room()), " words, and a wait on more waits until its deadline")
 	}
-	held, status := call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, u64(len(set.words)))
-	if status != .Ok {
-		log(.Error, "system: the kernel gave no wait room of ", u64(len(set.words)), " words to this thread: its waits hold ", u64(WAIT_INLINE_WORDS), " words, and a wait on more waits until its deadline")
-		return
-	}
-	set.room = min(int(held[0]), len(set.words))
 }
+
+
 
 // The list of the words of one wait, built by `wait_begin` and the
 // `wait_` procedures, ended by `wait_end`. It lives on the stack of the
@@ -93,6 +97,7 @@ Wait :: struct {
 	inline_words: [WAIT_INLINE_WORDS]op.Word, // The words, and the value that each one holds while the thread waits.
 	inline_parts: [WAIT_INLINE_WORDS]Wait_Part,
 	set:          ^Wait_Set, // The places of the caller; nil: the places above.
+	room:         int, // With a set: the words of the room of the thread when the list began (thread_wait_room).
 	count:        int, // The words in the list.
 	flag_count:   int, // The words that have a flag: wait_end adds one word for each.
 	full:         bool, // A word changed, or a queue has room now: the wait ends at once.
@@ -106,13 +111,13 @@ Wait :: struct {
 // wait_words gives the places of the words of a list.
 @(private = "file")
 wait_words :: #force_inline proc "contextless" (wait: ^Wait) -> []op.Word {
-	return wait.set != nil ? wait.set.words[:wait.set.room] : wait.inline_words[:]
+	return wait.set != nil ? wait.set.words[:min(len(wait.set.words), wait.room)] : wait.inline_words[:]
 }
 
 // wait_parts gives the places of the parts of a list.
 @(private = "file")
 wait_parts :: #force_inline proc "contextless" (wait: ^Wait) -> []Wait_Part {
-	return wait.set != nil ? wait.set.parts[:wait.set.room] : wait.inline_parts[:]
+	return wait.set != nil ? wait.set.parts[:min(len(wait.set.parts), wait.room)] : wait.inline_parts[:]
 }
 
 // wait_room_left gives the words that a list still takes, with the flags
@@ -141,6 +146,7 @@ events :: proc "contextless" () -> ^u32 {
 wait_begin :: proc "contextless" (set: ^Wait_Set = nil) -> (wait: Wait) {
 	if set != nil {
 		wait_set_room(set)
+		wait.room = thread_wait_room()
 	}
 	wait.set = set
 	word := events()
@@ -153,6 +159,7 @@ wait_begin :: proc "contextless" (set: ^Wait_Set = nil) -> (wait: Wait) {
 wait_of_set :: proc "contextless" (set: ^Wait_Set) -> (wait: Wait) {
 	wait_set_room(set)
 	wait.set = set
+	wait.room = thread_wait_room()
 	return wait
 }
 
@@ -305,6 +312,21 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 	commands := [1]ring.Record{wait_command(words[:total])}
 	completions: [1]ring.Record
 	now, _ := commands_call(commands[:], completions[:], max(deadline, 1))
+	// The kernel refuses a list that names one word twice, and the entry
+	// does not wait. Such a list is a fault of its caller: the list loses its
+	// second places and waits again, so no loop turns with no wait, and the
+	// log says it once. The search runs on this refusal only.
+	if completions[0].kind == u32(Status.Bad_Operation) {
+		if !wait_twice_told {
+			wait_twice_told = true
+			log(.Error, "system: a wait named a word twice, which the kernel refuses: the list waits on each word once; its process adds each word once")
+		}
+		kept, ends_at_once := words_once(words[:total])
+		if !ends_at_once {
+			commands = {wait_command(words[:kept])}
+			now, _ = commands_call(commands[:], completions[:], max(deadline, 1))
+		}
+	}
 	// The thread does not wait now: the other side does not need to wake it.
 	for index in 0 ..< wait.count {
 		// A flag that several threads set stays: another thread can still
@@ -318,6 +340,32 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 		}
 	}
 	return now
+}
+
+// wait_twice_told: the line of a list that named a word twice is on the log.
+@(private = "file")
+wait_twice_told: bool
+
+// words_once keeps the first place of each word of a list, in its order,
+// and gives the count kept. ends_at_once: one word named with two values,
+// which it cannot both hold, so the wait ends at once. A pure part of
+// wait_end, so the host tests it.
+@(private = "package")
+words_once :: proc "contextless" (words: []op.Word) -> (kept: int, ends_at_once: bool) {
+	for word in words {
+		seen := false
+		for earlier in words[:kept] {
+			if earlier.address == word.address {
+				seen = true
+				ends_at_once ||= u32(earlier.value) != u32(word.value)
+			}
+		}
+		if !seen {
+			words[kept] = word
+			kept += 1
+		}
+	}
+	return kept, ends_at_once
 }
 
 // wait_command gives the command Word_Wait of the words of a list. A pure

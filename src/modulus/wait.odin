@@ -2,43 +2,40 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:word_table"
 
 // The word wait (docs/ARCHITECTURE.md, "Locks of the kernel", "The word
-// wait"). A thread that waits on a word has an entry in the bucket of the
-// word: the physical address of the word chooses the bucket. The wait lock
-// of a bucket protects its list of entries. Entry n of a thread is one of
-// its op.WORD_WAIT_INLINE entries in wait_entries, or, past them, an entry
-// of its wait room: pages that the budget of its process paid
-// (Thread_Control_Command.Wait_Room), which only the kernel maps.
+// wait"). A thread that waits on a word has an entry in the table of the
+// words (modulus:word_table): a bucket for each page frame, and in it one
+// list for each distinct word, so a wake reads the distinct words of its
+// frame and the entries of its word only. The wait lock of a bucket
+// protects it: WAIT_LOCKS locks, a bucket takes the lock of its number.
+// Entry n of a thread is one of its op.WORD_WAIT_INLINE entries in
+// wait_entries, or, past them, an entry of its wait room: pages that the
+// budget of its process paid (Thread_Control_Command.Wait_Room), which only
+// the kernel maps.
 //
 // An entry has the wait serial of its thread at the time of the
 // registration. The serial changes when the wait ends: an entry with an
 // old serial is a leftover, and a waker does not count it.
 
-WAIT_BUCKETS :: 64
+WAIT_LOCKS :: 64
 
-Wait_Bucket :: struct #align (64) {
+Wait_Lock :: struct #align (64) {
 	lock: Lock,
-	head: ^Wait_Entry,
 }
 
-// One word of the wait of one thread, in the list of its bucket. 32 bytes
-// on each target, also where a pointer has 4 bytes: a page of a wait room
-// holds op.WAIT_ROOM_WORDS_OF_A_PAGE entries, which the budget pays.
-Wait_Entry :: struct #align (32) {
-	next, previous: ^Wait_Entry,
-	word:           u64, // The physical address of the word.
-	thread:         u32, // The place of the thread in its table.
-	serial:         u32, // The wait serial of the thread at the registration.
-}
+Wait_Entry :: word_table.Entry
 #assert(size_of(Wait_Entry) * op.WAIT_ROOM_WORDS_OF_A_PAGE == PAGE_SIZE)
 #assert(op.WAIT_ROOM_PAGES_MOST * size_of(u64) == PAGE_SIZE)
+#assert(word_table.PAGE_SIZE == PAGE_SIZE)
 
-wait_buckets: [WAIT_BUCKETS]Wait_Bucket
+wait_locks: [WAIT_LOCKS]Wait_Lock
+wait_words: word_table.Table // Its buckets: tables_start, from the frames of the machine.
 wait_entries: []Wait_Entry // op.WORD_WAIT_INLINE for each thread: tables_start.
 
-wait_bucket :: #force_inline proc "contextless" (word: u64) -> ^Wait_Bucket {
-	return &wait_buckets[((word >> 2) * 0x9E37_79B9_7F4A_7C15) >> 58]
+wait_lock :: #force_inline proc "contextless" (word: u64) -> ^Lock {
+	return &wait_locks[word_table.bucket_of(&wait_words, word) % WAIT_LOCKS].lock
 }
 
 // wait_capacity gives the words that one entry of a thread can register:
@@ -57,25 +54,30 @@ wait_entry :: #force_inline proc "contextless" (thread: ^Thread, n: u32) -> ^Wai
 	return &direct(pages[place / op.WAIT_ROOM_WORDS_OF_A_PAGE], [op.WAIT_ROOM_WORDS_OF_A_PAGE]Wait_Entry)[place % op.WAIT_ROOM_WORDS_OF_A_PAGE]
 }
 
-// wait_register adds the next word of the wait of a thread, if it holds
-// the value: the comparison and the entry are one section of the wait lock.
-// false: the word does not hold the value, and the thread does not wait.
-// The caller makes sure that the page of the word stays: it holds the
-// process lock of the process that maps the word, and that the thread has
-// room for one more word (wait_capacity).
-wait_register :: proc "contextless" (thread: ^Thread, word: u64, value: u32) -> bool {
+// Wait_Register_Outcome: what wait_register did with one word.
+Wait_Register_Outcome :: enum u8 {
+	Held,      // The word holds the value: the thread can wait on it.
+	Changed,   // The word does not hold the value: the thread does not wait.
+	Duplicate, // The thread holds the word already in this entry: refused, and nothing changed.
+}
+
+// wait_register adds the next word of the wait of a thread: the comparison
+// and the entry are one section of the wait lock. The caller makes sure
+// that the page of the word stays: it holds the process lock of the
+// process that maps the word, and that the thread has room for one more
+// word (wait_capacity).
+wait_register :: proc "contextless" (thread: ^Thread, word: u64, value: u32) -> Wait_Register_Outcome {
 	entry := wait_entry(thread, thread.word_count)
-	thread.word_count += 1
-	bucket := wait_bucket(word)
-	lock_take(&bucket.lock, .Wait)
+	lock := wait_lock(word)
+	lock_take(lock, .Wait)
+	inserted, _ := word_table.insert(&wait_words, entry, word, thread_index(thread), intrinsics.atomic_load(&thread.wait_serial))
 	held := intrinsics.atomic_load(direct(word, u32)) == value
-	entry^ = {next = bucket.head, word = word, thread = thread_index(thread), serial = intrinsics.atomic_load(&thread.wait_serial)}
-	if bucket.head != nil {
-		bucket.head.previous = entry
+	lock_free(lock, .Wait)
+	if !inserted {
+		return .Duplicate
 	}
-	bucket.head = entry
-	lock_free(&bucket.lock, .Wait)
-	return held
+	thread.word_count += 1
+	return held ? .Held : .Changed
 }
 
 // wait_unregister removes all the entries of a thread. The thread does not
@@ -83,34 +85,28 @@ wait_register :: proc "contextless" (thread: ^Thread, word: u64, value: u32) -> 
 wait_unregister :: proc "contextless" (thread: ^Thread) {
 	for n in 0 ..< thread.word_count {
 		entry := wait_entry(thread, n)
-		bucket := wait_bucket(entry.word)
-		lock_take(&bucket.lock, .Wait)
-		if entry.previous != nil {
-			entry.previous.next = entry.next
-		} else {
-			bucket.head = entry.next
-		}
-		if entry.next != nil {
-			entry.next.previous = entry.previous
-		}
-		entry^ = {}
-		lock_free(&bucket.lock, .Wait)
+		lock := wait_lock(entry.word)
+		lock_take(lock, .Wait)
+		word_table.remove(&wait_words, entry)
+		lock_free(lock, .Wait)
 	}
 	thread.word_count = 0
 }
 
 // word_wake ends the wait of at most count threads that wait on a word. A
 // thread that still registers its words in its own entry counts too: it
-// does not wait, and reads its words again.
+// does not wait, and reads its words again. It reads the distinct words of
+// the frame of the word, then the entries of the word only.
 word_wake :: proc "contextless" (word: u64, count: u64) -> (woken: u64) {
-	bucket := wait_bucket(word)
-	lock_take(&bucket.lock, .Wait)
-	for entry := bucket.head; entry != nil && woken < count; entry = entry.next {
-		if entry.word == word && wait_entry_wake(&threads[entry.thread], entry.serial) {
+	lock := wait_lock(word)
+	lock_take(lock, .Wait)
+	first, _ := word_table.first_of_word(&wait_words, word)
+	for entry := first; entry != nil && woken < count; entry = entry.word_next {
+		if wait_entry_wake(&threads[entry.thread], entry.serial) {
 			woken += 1
 		}
 	}
-	lock_free(&bucket.lock, .Wait)
+	lock_free(lock, .Wait)
 	return woken
 }
 
@@ -141,38 +137,47 @@ wait_room_set :: proc "contextless" (thread: ^Thread, process: ^Process, words: 
 		for page in 0 ..< pages - 1 {
 			names[page] = frame_paid(&process.budget)
 			if names[page] == 0 {
-				wait_room_give_back(room, u32(pages), process.budget)
+				wait_room_give_back(room, u32(pages), &process.budget)
 				return 0, .No_Budget
 			}
 		}
 	}
-	wait_room_end(thread)
+	wait_room_end(thread, process)
 	thread.wait_room = room
 	thread.wait_room_pages = u32(pages)
-	thread.wait_room_budget = process.budget
+	// The library of the thread reads the room in its thread record. The
+	// record is memory of the process: a false value there harms only the
+	// waits of this thread, which the kernel still checks against its room.
+	if record := thread.record_in_kernel; record != nil {
+		intrinsics.atomic_store(&record.wait_room_words, u32(op.wait_room_words(pages)))
+	}
 	return op.wait_room_words(pages), .Ok
 }
 
 // wait_room_end gives the pages of the wait room of a thread back to the
-// budget that paid them. The thread has no word registered: wait_unregister
-// ran, so no waker reaches an entry of the room.
-wait_room_end :: proc "contextless" (thread: ^Thread) {
+// budget of its process, as a page table returns: the field of the budget
+// is read under the frame lock, where the end of a budget moves it to the
+// parent (budget_release). So the pages never return to a budget that
+// ended. The thread has no word registered: wait_unregister ran, so no
+// waker reaches an entry of the room.
+wait_room_end :: proc "contextless" (thread: ^Thread, process: ^Process) {
 	if thread.wait_room == 0 {
 		return
 	}
-	wait_room_give_back(thread.wait_room, thread.wait_room_pages, thread.wait_room_budget)
+	wait_room_give_back(thread.wait_room, thread.wait_room_pages, &process.budget)
 	thread.wait_room = 0
 	thread.wait_room_pages = 0
-	thread.wait_room_budget = 0
 }
 
 // wait_room_give_back frees the frames of a room of `pages` pages, the
-// page that names the others first among them, and the budget gets a page
-// back for each frame. A name of 0 was never taken.
+// page that names the others first among them, and the budget that the
+// field names under the frame lock gets a page back for each frame. A name
+// of 0 was never taken.
 @(private = "file")
-wait_room_give_back :: proc "contextless" (room: u64, pages: u32, budget: u32) {
+wait_room_give_back :: proc "contextless" (room: u64, pages: u32, budget_field: ^u32) {
 	names := direct(room, [op.WAIT_ROOM_PAGES_MOST]u64)
 	lock_take(&frame_lock, .Frame)
+	budget := budget_field^
 	for page in 0 ..< pages - 1 {
 		if names[page] != 0 {
 			frames_free_held(names[page], 1)

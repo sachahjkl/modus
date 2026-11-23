@@ -182,16 +182,22 @@ window_events_wait :: proc "contextless" (wait: ^system.Wait) {
 			continue
 		}
 		target := &client.ring.completions
-		// An answer due wakes the loop when the window read its ring.
+		// An answer due wakes the loop when the window read its ring. The
+		// room of a ring is added once: the kernel refuses a word twice,
+		// and the words of the wait count 2 for the room of each client.
+		room_waited := false
 		if client.answer_due.due && key_path.queue_is_exactly_full(target) {
 			system.wait_room(wait, target)
+			room_waited = true
 		}
 		for _ in 0 ..< TRIES {
 			if !key_path.window_queue_waits(&queue) {
 				break
 			}
 			if key_path.queue_is_exactly_full(target) {
-				system.wait_room(wait, target)
+				if !room_waited {
+					system.wait_room(wait, target)
+				}
 				break
 			}
 			if key_path.window_queue_send_waiting(&queue, target) {

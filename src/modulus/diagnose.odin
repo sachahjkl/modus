@@ -1371,6 +1371,13 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 	// An open choice by design: of the many operations, this diagnosis names
 	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
+	case .Word_Wait:
+		// A word that the entry holds already: the value is its place in
+		// the whole command.
+		if facts := &processor_self().operation; facts.word_wait_duplicate {
+			record_set(record, .Bad_Value, .Words, 1, facts.word_wait_refused_place, 0, 0)
+			return true
+		}
 	case .Log:
 		// A fact has no value runs: its values are not text. Its bound is 0,
 		// whatever the count, so this check comes first.

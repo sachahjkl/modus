@@ -147,16 +147,16 @@ import "base:intrinsics"
 //   each draws every glyph of its text into its own private glyph cache,
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages;
-// - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 5 pages, which the
+// - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 9 pages, which the
 //   kernel takes at the first wait.
-// 4050 + 10 + 9 + 3 + 2 + 1647 + 8576 + 8576 + 708 + 5 = 23586: the bound
+// 4050 + 10 + 9 + 3 + 2 + 1647 + 8576 + 8576 + 708 + 9 = 23590: the bound
 // of 128 windows at the largest surface, more than the least largest budget
 // of a process, and less than the share of a machine of 1 GiB. Page tables
 // are paid as the windows map, so a machine with a smaller share still runs
 // the desktop, with fewer such windows. A screen whose frame and background
 // the budget cannot pay is named on one line, and the compositor stops
 // (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 23586, processes = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 23590, processes = 1, threads = 2}
 #assert(MODULE_BUDGET.working_memory_pages == 4050 + 10 + 9 + 3 + 2 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES)
 
 // The context of this service.
@@ -198,7 +198,7 @@ COMPOSITOR_WAIT_WORDS :: COMPOSITOR_WAIT_FIXED_WORDS + 4 * CLIENT_CAPACITY
 // words that the kernel holds with no room.
 #assert(COMPOSITOR_WAIT_WORDS > op.WORD_WAIT_INLINE)
 COMPOSITOR_WAIT_ROOM_PAGES :: 1 + (COMPOSITOR_WAIT_WORDS - op.WORD_WAIT_INLINE + op.WAIT_ROOM_WORDS_OF_A_PAGE - 1) / op.WAIT_ROOM_WORDS_OF_A_PAGE
-#assert(COMPOSITOR_WAIT_ROOM_PAGES == 5)
+#assert(COMPOSITOR_WAIT_ROOM_PAGES == 9)
 // The places of the wait of the loop: more than a wait on the stack holds.
 compositor_wait_words: [COMPOSITOR_WAIT_WORDS]op.Word
 compositor_wait_parts: [COMPOSITOR_WAIT_WORDS]system.Wait_Part

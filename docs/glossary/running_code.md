@@ -76,7 +76,7 @@ Do not use: futex.
 
 A wait room is the room of one thread for the words of its waits past the 64 that the kernel holds for each thread, in pages that the budget of its process pays.
 
-A thread that waits on the rings of many clients asks the kernel for it once, with `Thread_Control_Command.Wait_Room` and the count of its words; the library asks at the first wait with a wait set (`system.Wait_Set`). The kernel keeps an entry of 32 bytes for each word, 128 in a page, and one page that names the others: a room of 1036 words, the wait of the root service on a machine of 1 GiB, takes 9 pages. A wait holds at most 65536 words (`op.WORD_WAIT_MOST`). The room ends with its thread, and its pages return to the budget. Example: the compositor asks for 539 words, 2 for the ring of each of its 128 clients, 2 more while a client waits for room, and its fixed words. The design: `src/md/data/table_sizes.md`, "A wait holds 64 words on the stack, and more in a wait set of its caller".
+A thread that waits on the rings of many clients asks the kernel for it once, with `Thread_Control_Command.Wait_Room` and the count of its words; the library asks at the first wait with a wait set (`system.Wait_Set`). The kernel keeps an entry of 64 bytes for each word, 64 in a page, and one page that names the others: a room of 1036 words, the wait of the root service on a machine of 1 GiB, takes 17 pages. A wait holds at most 32768 words (`op.WORD_WAIT_MOST`). The room is of the thread, and every wait set of the thread shares it: the kernel writes its words in the thread record (`Thread_Record.wait_room_words`). The room ends with its thread, and its pages return to the budget of its process. Example: the compositor asks for 539 words, 2 for the ring of each of its 128 clients, 2 more while a client waits for room, and its fixed words. The design: `src/md/data/table_sizes.md`, "A wait holds 64 words on the stack, and more in a wait set of its caller".
 
 Do not use: wait buffer, wait capacity.
 
@@ -922,9 +922,9 @@ Do not use: generation (for handles only), epoch, version.
 
 ### Wait table
 
-The wait table is the threads that wait on words, in buckets chosen by the physical address of the word, each bucket with its wait lock.
+The wait table is the threads that wait on words: a bucket for each page frame of the machine, and in it a list for each word, so a wake reads the words of one frame and the waiters of its own word.
 
-A thread registers each word of its wait in the bucket of the word, after it compared the value. A waker changes the word before it enters the kernel, so either the waker finds the entry, or the thread finds the new value.
+A thread registers each word of its wait in the bucket of the word, after it compared the value, and holds each word once in one wait. A waker changes the word before it enters the kernel, so either the waker finds the entry, or the thread finds the new value.
 
 The design: `docs/ARCHITECTURE.md`, "Rules that keep each path correct".
 

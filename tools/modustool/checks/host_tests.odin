@@ -293,6 +293,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_KERNEL + "/table_sizes",
 	foundation.SOURCE_FOLDER_KERNEL + "/mapping_order",
 	foundation.SOURCE_FOLDER_KERNEL + "/weighted_average",
+	foundation.SOURCE_FOLDER_KERNEL + "/word_table",
 	foundation.SOURCE_FOLDER_KERNEL + "/replay_filter",
 	foundation.SOURCE_FOLDER_KERNEL + "/software_exit",
 	foundation.SOURCE_FOLDER_KERNEL + "/process_memory",

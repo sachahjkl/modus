@@ -463,7 +463,7 @@ c_render_modus_operation_h :: proc(allocator := context.temp_allocator) -> strin
 	fmt.sbprintln(&out, "\tuint32_t fault_written;")
 	fmt.sbprintln(&out, "\tuint32_t fault_read;")
 	fmt.sbprintln(&out, "\tuint32_t fault_full;")
-	fmt.sbprintln(&out, "\tuint32_t fault_reserved;")
+	fmt.sbprintln(&out, "\tuint32_t wait_room_words;")
 	fmt.sbprintfln(&out, "\tModus_Fault_Record fault_records[%d];", op.FAULT_RECORD_CAPACITY)
 	fmt.sbprintln(&out, "} Modus_Thread_Record;")
 	c_emit_size_assert(&out, "Modus_Thread_Record", size_of(op.Thread_Record))
@@ -475,7 +475,7 @@ c_render_modus_operation_h :: proc(allocator := context.temp_allocator) -> strin
 	c_emit_offset_assert(&out, "Modus_Thread_Record", "fault_written", offset_of(op.Thread_Record, fault_written))
 	c_emit_offset_assert(&out, "Modus_Thread_Record", "fault_read", offset_of(op.Thread_Record, fault_read))
 	c_emit_offset_assert(&out, "Modus_Thread_Record", "fault_full", offset_of(op.Thread_Record, fault_full))
-	c_emit_offset_assert(&out, "Modus_Thread_Record", "fault_reserved", offset_of(op.Thread_Record, fault_reserved))
+	c_emit_offset_assert(&out, "Modus_Thread_Record", "wait_room_words", offset_of(op.Thread_Record, wait_room_words))
 	c_emit_offset_assert(&out, "Modus_Thread_Record", "fault_records", offset_of(op.Thread_Record, fault_records))
 	fmt.sbprintln(&out)
 

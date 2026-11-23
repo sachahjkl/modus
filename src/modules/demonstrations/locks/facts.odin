@@ -168,10 +168,11 @@ Word_Wait_Counted :: struct {
 }
 
 // The wait room of the kernel at its edges (wait_room.odin).
-@(log_fact = "locks: the wait room: with no room a wait of {inline_words} words and one more {no_room_status}; a room past {most_words} words {too_many_status}, for another thread {other_status}; a room of {asked} words held {held} words for {pages} pages of the budget; a wait of the {held} words {held_status}, of one more {past_status}; the room given back returned its pages: {returned}: {verdict}")
+@(log_fact = "locks: the wait room: with no room a wait of {inline_words} words and one more {no_room_status}; a word twice in a wait {twice_status}; a room past {most_words} words {too_many_status}, for another thread {other_status}; a room of {asked} words held {held} words for {pages} pages of the budget; a wait of the {held} words {held_status}, of one more {past_status}; the room given back returned its pages: {returned}: {verdict}")
 Wait_Room_Checked :: struct {
 	inline_words:    u64,
 	no_room_status:  op.Status_Word,
+	twice_status:    op.Status_Word,
 	most_words:      u64,
 	too_many_status: op.Status_Word,
 	other_status:    op.Status_Word,
@@ -182,6 +183,23 @@ Wait_Room_Checked :: struct {
 	past_status:     op.Status_Word,
 	returned:        u64,
 	verdict:         [16]u8,
+}
+
+// The pages of a room returned to the budget at each end of the room.
+@(log_fact = "locks: the pages of a wait room returned at the end of its thread: {thread_end}; at the stop of its process during a wait: {stopped_back}; at the stop of its process after its budget ended: {ended_back}: {verdict}")
+Wait_Room_Ends :: struct {
+	thread_end:   u64,
+	stopped_back: u64,
+	ended_back:   u64,
+	verdict:      [16]u8,
+}
+
+// One wait of the most words, in one kernel entry: a measure.
+@(log_fact = "locks: a wait of {words} words: {status} in {time} (a measure)")
+Wait_Room_Long :: struct {
+	words:  u64,
+	status: op.Status_Word,
+	time:   value_kinds.Time_In_Microseconds,
 }
 
 // verdict_field gives the Text field of the verdict of a case in the words

@@ -13,7 +13,7 @@ the_pages_of_a_wait_room :: proc(t: ^testing.T) {
 	testing.expect_value(t, wait_room_pages(WORD_WAIT_INLINE + 1), u64(2))
 	testing.expect_value(t, wait_room_pages(WORD_WAIT_INLINE + WAIT_ROOM_WORDS_OF_A_PAGE), u64(2))
 	testing.expect_value(t, wait_room_pages(WORD_WAIT_INLINE + WAIT_ROOM_WORDS_OF_A_PAGE + 1), u64(3))
-	testing.expect_value(t, wait_room_pages(2048), u64(17))
+	testing.expect_value(t, wait_room_pages(2048), u64(32))
 	most := wait_room_pages(WORD_WAIT_MOST)
 	testing.expect(t, most - 1 <= WAIT_ROOM_PAGES_MOST)
 	testing.expect(t, wait_room_words(most) >= WORD_WAIT_MOST)

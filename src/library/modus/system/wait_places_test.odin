@@ -40,10 +40,10 @@ a_wait_set_holds_the_words_of_its_room :: proc(t: ^testing.T) {
 	defer delete(words)
 	defer delete(parts)
 	set := wait_set_of(words, parts)
-	set.room = WORDS // What the kernel gave: a host test has no kernel.
 	word, flag: u32
 	wait: Wait
 	wait.set = &set
+	wait.room = WORDS // The room of the thread: a host test has no kernel.
 	testing.expect_value(t, wait_room_left(&wait), WORDS)
 	for index in 0 ..< WORDS / 2 {
 		testing.expect(t, wait_word(&wait, &word, u32(index), &flag))
@@ -67,15 +67,31 @@ a_wait_set_with_no_room_refuses_past_the_inline_words :: proc(t: ^testing.T) {
 	words: [200]op.Word
 	parts: [200]Wait_Part
 	set := wait_set_of(words[:], parts[:])
-	set.room = WAIT_INLINE_WORDS
 	word: u32
-	wait := Wait{set = &set}
+	// The room of the thread is the inline words: the kernel refused more.
+	wait := Wait{set = &set, room = WAIT_INLINE_WORDS}
 	for _ in 0 ..< WAIT_INLINE_WORDS {
 		testing.expect(t, wait_word(&wait, &word, 0))
 	}
 	testing.expect(t, !wait_word(&wait, &word, 0))
 	testing.expect(t, wait.refused)
 	testing.expect_value(t, wait.count, WAIT_INLINE_WORDS)
+}
+
+// A list holds the smaller of its set and of the room of its thread: a
+// room larger than the set gives the set, a room of 0 gives no place.
+@(test)
+a_wait_set_holds_the_room_of_its_thread :: proc(t: ^testing.T) {
+	words: [100]op.Word
+	parts: [100]Wait_Part
+	set := wait_set_of(words[:], parts[:])
+	large := Wait{set = &set, room = 4096}
+	testing.expect_value(t, wait_room_left(&large), 100)
+	empty := Wait{set = &set, room = 0}
+	testing.expect_value(t, wait_room_left(&empty), 0)
+	word: u32
+	testing.expect(t, !wait_word(&empty, &word, 0))
+	testing.expect(t, empty.refused)
 }
 
 // A set takes the shorter of its two tables, and at most the words of a

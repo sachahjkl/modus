@@ -794,6 +794,9 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `No_Slot`: the entry would hold more words than the thread has room for.
+	// - `Bad_Operation`: a word that the entry holds already, at the same address: the entry then
+	//   does not wait, and its error record names the place of that word in the command. A thread holds
+	//   each word once, so the list of a word never grows with one thread.
 	// - `Bad_Address`: the process cannot read the table or a word, or a word is not a multiple of 4. The
 	//   entry then does not wait.
 	//
@@ -1893,10 +1896,12 @@ WORD_WAIT_INLINE :: 64
 // many clients holds 3 words for each ring; the root service waits on two
 // queues of each process that it started. The pages of the room come from
 // the budget of the process, so the budget bounds a room before this does.
-WORD_WAIT_MOST :: 65536
+// The pages of a room hang from one page that names them: 511 pages of 64
+// words, past the 64 inline words.
+WORD_WAIT_MOST :: 32768
 // The words that one page of a wait room holds: the kernel keeps an entry
-// of 32 bytes for each word.
-WAIT_ROOM_WORDS_OF_A_PAGE :: 128
+// of 64 bytes for each word, in the lists of its word.
+WAIT_ROOM_WORDS_OF_A_PAGE :: 64
 // The pages of a wait room hang from one page of the kernel that names them.
 WAIT_ROOM_PAGES_MOST :: 512
 #assert((WORD_WAIT_MOST - WORD_WAIT_INLINE + WAIT_ROOM_WORDS_OF_A_PAGE - 1) / WAIT_ROOM_WORDS_OF_A_PAGE <= WAIT_ROOM_PAGES_MOST)
@@ -1907,7 +1912,7 @@ WAIT_ROOM_PAGES_MOST :: 512
 // WAIT_ROOM_WORDS_OF_A_PAGE words past WORD_WAIT_INLINE. The caller checks
 // `words <= WORD_WAIT_MOST`.
 //
-// Example: 2048 words take 1 + 16 = 17 pages; 64 take none.
+// Example: 2048 words take 1 + 31 = 32 pages; 64 take none.
 wait_room_pages :: proc "contextless" (words: u64) -> u64 {
 	if words <= WORD_WAIT_INLINE {
 		return 0
@@ -1963,7 +1968,11 @@ Thread_Record :: struct {
 	fault_written: u32, // The kernel writes it: the count of fault records written since the handler was set.
 	fault_read:    u32, // The handler writes it: the count of fault records that it read.
 	fault_full:    u32, // The kernel writes it: the faults that found the ring full and stopped the process, since the process started.
-	fault_reserved: u32, // Not read.
+	// The kernel writes it: the words that each wait of this thread holds,
+	// with its wait room (Thread_Control_Command.Wait_Room); 0 until the
+	// first room, which is WORD_WAIT_INLINE. The library reads it, so the
+	// room is of the thread and not of one list (system.Wait_Set).
+	wait_room_words: u32,
 	fault_records: [FAULT_RECORD_CAPACITY]Fault_Record,
 }
 #assert(size_of(Thread_Record) <= PAGE_SIZE)

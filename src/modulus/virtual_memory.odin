@@ -405,6 +405,40 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 	if walked > op.RANGE_TABLE_PAGE_LIMIT {
 		return 0, .Bad_Operation
 	}
+	// A whole mapping that gains Write counts as a writer of its object
+	// before the check of the recorded mappings, as a new mapping does
+	// (map_region): of a writer and a recorded process that maps the object
+	// at the same time, one sees the other. The check in protect_check
+	// refuses early; this one decides. A refusal takes the counts back.
+	gains: [op.RANGE_TABLE_CAPACITY]bool
+	gain_count := 0
+	for range, index in ranges {
+		mapping := &process.mappings[places[index]]
+		whole := range.address == mapping.address && range.page_count == mapping.page_count
+		if !whole || mapping.bits & PAGE_WRITE != 0 || protection_bits(mapping, flags) & PAGE_WRITE == 0 {
+			continue
+		}
+		// Two ranges of one mapping count it once.
+		counted := false
+		for earlier in 0 ..< index {
+			counted ||= gains[earlier] && places[earlier] == places[index]
+		}
+		if !counted {
+			gains[index] = true
+			gain_count += 1
+			intrinsics.atomic_add(&regions[mapping.region].writable_mapping_count, 1)
+		}
+	}
+	for gained, index in gains[:len(ranges)] {
+		if gained && record_replay_write_conflict(index_of_process(process), process.mappings[places[index]].region) {
+			for taken, back in gains[:len(ranges)] {
+				if taken {
+					intrinsics.atomic_sub(&regions[process.mappings[places[back]].region].writable_mapping_count, 1)
+				}
+			}
+			return 0, .Bad_State
+		}
+	}
 	self := processor_self()
 	for range, index in ranges {
 		mapping := &process.mappings[places[index]]
@@ -417,8 +451,15 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 			wrote := mapping.bits & PAGE_WRITE != 0
 			mapping.bits = protection_bits(mapping, flags)
 			writes := mapping.bits & PAGE_WRITE != 0
-			if writes && !wrote {
-				intrinsics.atomic_add(&region.writable_mapping_count, 1)
+			// A gain of Write was counted above, once for the mapping.
+			if writes && !wrote && !gains[index] {
+				counted := false
+				for earlier in 0 ..< index {
+					counted ||= gains[earlier] && places[earlier] == places[index]
+				}
+				if !counted {
+					intrinsics.atomic_add(&region.writable_mapping_count, 1)
+				}
 			} else if wrote && !writes {
 				intrinsics.atomic_sub(&region.writable_mapping_count, 1)
 			}

@@ -715,8 +715,12 @@ record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping
 		return .No_Slot
 	}
 	// The scan comes after map_region counted this mapping in
-	// recorded_mappings: a process that maps the object with Write later is
-	// refused, and one that did it before is seen here.
+	// recorded_mappings, and a writer counts its mapping, or the Write that
+	// a protect gives, in writable_mapping_count before it reads
+	// recorded_mappings (map_region, memory_protect). So of a writer and
+	// this mapping made at the same time, one sees the other: the writer is
+	// refused, or its count makes the scan below read its process, whose
+	// lock holds it until its mapping is whole.
 	switch access {
 	case .None:
 		return .Bad_State
