@@ -387,15 +387,18 @@ Thread :: struct #align (64) {
 #assert(offset_of(Thread, frame) == 64)
 
 // word_address gives the physical address of a 32-bit word of a process,
-// or 0 if the process cannot read it. user_range makes the page present
-// first, as a read of the word by the process would: a page on first use
+// or 0 if the process cannot read it, or with write, cannot write it. A
+// wait reads its word; a wake is a signal to the waiters of the word, so it
+// needs Write: a process that maps a page read-only (the date page, the
+// settings page) cannot signal the processes that wait on it. user_range
+// makes the page present first, as the access by the process would: a page on first use
 // gets its frame of the object now, paid as that read pays it. Then only an
 // entry that names a frame of the process gives an address
 // (word_table.word_physical): an entry with no frame would give the offset
 // alone, which a page of another process gives too. The caller holds the
 // process lock, so the entry stays between the two.
-word_address :: proc "contextless" (process: ^Process, address: u64) -> u64 {
-	if address & 3 != 0 || !user_range(process, address, 4, false) {
+word_address :: proc "contextless" (process: ^Process, address: u64, write := false) -> u64 {
+	if address & 3 != 0 || !user_range(process, address, 4, write) {
 		return 0
 	}
 	entry := page_entry(process.table, address)

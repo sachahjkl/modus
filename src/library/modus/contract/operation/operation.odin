@@ -805,18 +805,21 @@ Operation :: enum u32 {
 	// ```
 	Word_Wake      = 20, // (word, count) -> threads woken.
 	// Ends the wait of at most `count` threads that wait on a word. A thread that put the word in the wait
-	// of its entry and does not wait yet counts too: it does not wait, and reads its words again.
+	// of its entry and does not wait yet counts too: it does not wait, and reads its words again. A wake is
+	// a signal to the waiters, so it needs Write on the word: a process that maps the page of the word
+	// read-only (the date page, the settings page) signals no waiter of it.
 	//
 	// **Arguments**
 	//
-	// - `word`: the address of a word of 32 bits, a multiple of 4 that the process can read.
+	// - `word`: the address of a word of 32 bits, a multiple of 4 that the process can write.
 	// - `count`: the most threads to wake.
 	//
 	// **Results**: the count of threads woken.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Address`: the process cannot read the word, or its address is not a multiple of 4.
+	// - `Bad_Address`: the process cannot write the word, or its address is not a multiple of 4. The
+	//   error record names the word; its `found` is 1 when the process can read the word and not write it.
 	//
 	// ```odin
 	// system.word_wake(&ready)

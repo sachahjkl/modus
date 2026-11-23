@@ -1311,6 +1311,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "locks: the pages of a wait room returned at the end of its thread: 1; at the stop of its process during a wait: 1; at the stop of its process after its budget ended: 1: as it must"},
 	{kind = .Wait, text = "locks: a wait of 32768 words: Ok in "},
 	{kind = .Wait, text = "locks: two processes wait each on a word of a page that they never touched: the wake of one counted 1 thread, and the other still waits: 1: as it must"},
+	{kind = .Wait, text = "locks: a wake of a word through a read-only mapping Bad_Address, and the thread that waits on it still waits: 1; a wake through the mapping with Write woke 1 thread: as it must"},
 	{kind = .Wait, text = "locks: frames: "},
 	{kind = .Wait, text = "locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor 0: "},
 	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads"},

@@ -216,12 +216,13 @@ read_machine_full :: proc "contextless" () -> (full: Machine_Full) {
 	return full
 }
 
-// read_word says if a process can wait on a word. Lock: the process lock.
+// read_word says if a process can wait on a word, or with write, wake it.
+// Lock: the process lock.
 @(private = "file")
-read_word :: proc "contextless" (process: ^Process, address: u64) -> bool {
+read_word :: proc "contextless" (process: ^Process, address: u64, write := false) -> bool {
 	at, taken := caller_lock(process)
 	defer process_unlock(at, taken)
-	return word_address(process, address) != 0
+	return word_address(process, address, write) != 0
 }
 
 // read_threads gives the threads of a process. Lock: the process lock.
@@ -1020,10 +1021,12 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		}
 		return false
 	case .Word_Wake:
-		if read_word(process, v[0]) {
+		// A wake needs Write on its word: found is 1 for a word that the
+		// process can read and not write.
+		if read_word(process, v[0], write = true) {
 			return false
 		}
-		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, 0)
+		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, u64(read_word(process, v[0])))
 	case .Inspect:
 		size: u64
 		if kind, kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1]); kind_known {

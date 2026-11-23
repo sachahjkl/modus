@@ -66,7 +66,7 @@ Do not use: thread-local storage, TLS, TEB.
 
 The word wait is the one way for a thread to wait for something else than a time: the thread waits while each 32-bit word of a list holds a given value.
 
-`Word_Wait` takes a list of words, each with the value that it holds while the thread waits, and a deadline. Another thread changes a word, then calls `Word_Wake` on it. If a word does not hold its value when the thread enters the wait, the wait ends at once, so no wake is lost. Two processes that map one memory object wait on one word. Every wait of the system uses it: a ring waits on its counters, a lock on its word, a thread on its event word.
+`Word_Wait` takes a list of words, each with the value that it holds while the thread waits, and a deadline. Another thread changes a word, then calls `Word_Wake` on it, which needs Write on the word: a wake is a signal, and a process that only reads a page gives none. If a word does not hold its value when the thread enters the wait, the wait ends at once, so no wake is lost. Two processes that map one memory object wait on one word. Every wait of the system uses it: a ring waits on its counters, a lock on its word, a thread on its event word.
 
 The design: `docs/ARCHITECTURE.md`, "K4. Rings and wait".
 

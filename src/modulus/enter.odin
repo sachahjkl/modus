@@ -915,7 +915,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Word_Wake:
-		word := word_address(process, v[0])
+		// A wake is a signal: it needs Write on the word (word_address).
+		word := word_address(process, v[0], write = true)
 		if word == 0 {
 			return .Bad_Address
 		}

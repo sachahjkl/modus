@@ -202,6 +202,15 @@ Wait_Room_Long :: struct {
 	time:   value_kinds.Time_In_Microseconds,
 }
 
+// A wake through a read-only mapping of the word.
+@(log_fact = "locks: a wake of a word through a read-only mapping {status}, and the thread that waits on it still waits: {still_waits}; a wake through the mapping with Write woke {woken} thread: {verdict}")
+Read_Only_Wake_Refused :: struct {
+	status:      op.Status_Word,
+	still_waits: u64,
+	woken:       u64,
+	verdict:     [16]u8,
+}
+
 // Two processes wait each on a word of a page that they never touched.
 @(log_fact = "locks: two processes wait each on a word of a page that they never touched: the wake of one counted {woken} thread, and the other still waits: {other_waits}: {verdict}")
 Untouched_Page_Waits :: struct {
