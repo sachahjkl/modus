@@ -876,6 +876,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				key_records += 1
 				character := display.key_character_of(record.values[1])
 				switch {
+				case window_switcher_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
+					// Alt+Tab, and each key while its card is open: the card
+					// holds the keys until the release of Alt, and does not
+					// open over a dialog or a menu (window_switcher.odin).
 				case powerbox_and_wide_grant_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
 					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation took the key.
 				case desktop_context_menu_key(u32(record.values[0]), character, record.values[2] != 0):
@@ -884,8 +888,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// Local Escape closed the bar viewer list popover.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && tray_widget_escape():
 					// Escape closed the card of a tray widget (tray_widgets.odin).
-				case window_switcher_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
-					// Alt+Tab and the keys while its card is open (window_switcher.odin).
 				case keyboard_desktop_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// A move or a resize of the window in front by keys, or the bar with the keys (keyboard_desktop.odin).
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
@@ -894,7 +896,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// A key of the clipboard goes to no process (clipboard.odin).
 				case desktop_shortcut_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// Workspace switch, window snap, or magnifier toggle (desktop_features.odin).
-				case order_count > 0:
+				case order_count > 0 && !clients[order[order_count - 1]].minimized:
+					// A minimized window gets no key: with every window
+					// minimized, a key goes to none.
 					in_front := order[order_count - 1]
 					send(&clients[in_front], .Key, quality_key_values(in_front, record.values))
 				}
@@ -1357,16 +1361,20 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 // lower moves a window to the back: a minimized window gives the focus to
 // the window behind it.
 lower :: proc "contextless" (position: int) {
-	if position <= 0 || position >= order_count {
+	if position < 0 || position >= order_count {
 		return
 	}
 	index := order[position]
 	if position == order_count - 1 {
+		// The window in front leaves it, also when it is the only one: a
+		// minimized window then gets no pointer event and no key.
 		pointer_leaves_front()
 		damage_focus()
 	}
-	copy(order[1:position + 1], order[0:position])
-	order[0] = index
+	if position > 0 {
+		copy(order[1:position + 1], order[0:position])
+		order[0] = index
+	}
 	damage_focus()
 	palette_entries_refresh() // Another window can be in front.
 }
@@ -1583,8 +1591,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 	}
 	// The process with focus receives the pointer when it is over its surface,
-	// and while a button is down.
-	if order_count > 0 {
+	// and while a button is down. A minimized window has no surface on the
+	// screen: it receives none.
+	if order_count > 0 && !clients[order[order_count - 1]].minimized {
 		client := &clients[order[order_count - 1]]
 		x := pointer_x - client.x - BORDER
 		y := pointer_y - client.y - TITLE_HEIGHT

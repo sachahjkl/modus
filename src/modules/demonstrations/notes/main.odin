@@ -49,6 +49,7 @@ package notes
 import "modus:calendar"
 import "modus:contract/value_kinds"
 import "internal:notes/note_list"
+import "internal:notes/note_session"
 import "internal:notes/store_work"
 import "modus:display"
 import "modus:graphics"
@@ -105,13 +106,6 @@ STORE_THREAD_STACK_PAGES :: 16
 // character more.
 TITLE_READ_BYTES :: TITLE_BYTES + 4
 
-// What the left pane shows, and what the keys do.
-Mode :: enum u8 {
-	Notes    = 0, // The list of the notes; the keys edit the text.
-	Versions = 1, // The versions of the note; the text pane shows the version chosen.
-	Delete   = 2, // The question before a deletion: Enter deletes, Escape keeps.
-}
-
 // The problem that the status band shows.
 Window_Problem :: enum u8 {
 	None      = 0,
@@ -121,6 +115,8 @@ Window_Problem :: enum u8 {
 	Too_Long  = 4, // A note of the store is longer than a text: it is not shown.
 	List_Full = 5, // The list holds NOTE_CAPACITY notes: no new note.
 	Selection = 6, // The selection is longer than the limit of the clipboard.
+	Busy      = 7, // The queue of the store thread is full: the act did not start.
+	Unreadable = 8, // The note shown could not be read whole: it is shown empty, and never written.
 }
 
 @(rodata)
@@ -132,13 +128,15 @@ window_problem_texts := [Window_Problem]string {
 	.Too_Long  = "the note in the store is too long to show: it is not written over",
 	.List_Full = "the list is full: delete a note to make a new one",
 	.Selection = "the selection is longer than the clipboard limit of 4096 bytes",
+	.Busy      = "the store is busy: the act did not start, try it again",
+	.Unreadable = "the note could not be read: it is not shown and not written over",
 }
 
 // The keys of each mode, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). The procedure makes them at each frame: an item is made by
 // a call, and a freestanding process runs no call before its entry.
 bar_items :: proc "contextless" (items: ^[5]interface.Action_Bar_Item) -> int {
-	switch mode {
+	switch session.mode {
 	case .Notes:
 		items^ = {
 			interface.action_bar_item("new note", 4, "Ctrl", "N"),
@@ -163,7 +161,9 @@ bar_items :: proc "contextless" (items: ^[5]interface.Action_Bar_Item) -> int {
 }
 bar: interface.Action_Bar_State
 
-mode: Mode
+// The state of the window over the store thread: the gates of the keys,
+// and the requests whose results it waits for (internal:notes/note_session).
+session: note_session.Session
 notes: note_list.Note_List
 shown: int = -1 // The note of the text pane: an index of notes.
 
@@ -178,15 +178,8 @@ visible_rows := 1
 waiting: bool // A change of the text waits for its commit.
 last_change: u64 // The time of the last change, in milliseconds of the clock of the system.
 
-keeping: bool // The store takes the changes: the list of the notes came, and no call failed with no answer.
 problem_shown: Window_Problem
-listed: bool // The result of the request List came.
-// The text pane waits for the list of the notes, the bytes of the note
-// shown, or of the version chosen: the keys do not change it meanwhile.
-loading := true
 request_serial: u64 // The serial of the last request.
-load_serial: u64 // The request Load whose result the text pane waits for; an older one is dropped.
-version_serial: u64 // The same for the request Version of the preview.
 restore_generation: i64 // The version that the last request Restore makes current.
 
 // The versions of the note shown, the oldest first, as the store gives
@@ -257,7 +250,7 @@ note_of_name :: proc "contextless" (name: string) -> int {
 // shown_text gives the text that the text pane shows: the version chosen
 // in the pane of the versions, or the note.
 shown_text :: proc "contextless" () -> ^text_model.Text {
-	return mode == .Versions ? &preview : &text
+	return session.mode == .Versions ? &preview : &text
 }
 
 // columns_of_width gives the cells of a row of the text in a window of a
@@ -301,19 +294,20 @@ title_refresh :: proc "contextless" () {
 }
 
 // commit puts the note shown in the queue of the store thread, when a
-// change waits. The first commit of a new note gives it its object. A full
-// queue keeps the change waiting for one more pause.
+// change waits. A note that is not loaded or that could not be read is
+// never written. The first commit of a new note gives it its object. A
+// full queue keeps the change waiting for one more pause.
 commit :: proc "contextless" () {
 	if !waiting {
 		return
 	}
-	if !keeping || shown < 0 {
+	if !note_session.commit_allowed(&session) || shown < 0 {
 		waiting = false
 		return
 	}
 	note := &notes.notes[shown]
 	if note_list.note_name_take(&notes, shown) != .None {
-		keeping, problem_shown, waiting = false, .Not_Kept, false
+		problem_shown, waiting = .Not_Kept, false
 		return
 	}
 	if _, put := request_of_note(.Write, note, 0, text_model.text_bytes(&text)); !put {
@@ -327,7 +321,7 @@ commit :: proc "contextless" () {
 change_end :: proc "contextless" () {
 	waiting = true
 	last_change = system.time()
-	if problem_shown == .Full || problem_shown == .Selection {
+	if problem_shown == .Full || problem_shown == .Selection || problem_shown == .Busy {
 		problem_shown = .None
 	}
 	title_refresh()
@@ -349,16 +343,45 @@ text_take :: proc "contextless" (into: ^text_model.Text, bytes: []u8) -> (replac
 	return replaced_count, true
 }
 
+// room_for says if the queue takes the requests of an act; else the status
+// band says that the store is busy, and the act does not start.
+room_for :: proc "contextless" (needed: int) -> bool {
+	if requests_room() < needed {
+		problem_shown = .Busy
+		return false
+	}
+	return true
+}
+
+// note_load_ask asks for the bytes of the note shown. The room was counted
+// before the act started.
+note_load_ask :: proc "contextless" () {
+	text_model.text_replace_whole(&text, nil)
+	text_model.selection_set(&text, 0, 0)
+	note := &notes.notes[shown]
+	if note.name_count == 0 || !session.keeping {
+		note_session.note_shown_new(&session)
+		return
+	}
+	serial, put := request_of_note(.Load, note)
+	note_session.load_asked(&session, serial)
+	if !put {
+		// The note is not loaded: it stays locked, never written.
+		note_session.load_done(&session, .Refused)
+		problem_shown = .Busy
+	}
+}
+
 // note_show shows a note: the change of the note before it goes to the
 // store first, and an empty new note that the store does not hold leaves
 // the list. The text pane waits for the bytes of a note that the store
-// holds; the window draws meanwhile.
+// holds; the window draws meanwhile. With no room in the queue for the
+// commit and the load, the note shown stays.
 note_show :: proc "contextless" (index: int) {
 	if index < 0 || index >= notes.count || index == shown {
 		return
 	}
-	// A commit and a load: with no room for both, the note shown stays.
-	if requests_room() < 2 {
+	if !room_for(note_session.show_room(&session, waiting, notes.notes[index].name_count > 0)) {
 		return
 	}
 	commit()
@@ -370,23 +393,19 @@ note_show :: proc "contextless" (index: int) {
 		}
 	}
 	shown = wanted
-	text_model.text_replace_whole(&text, nil)
-	text_model.selection_set(&text, 0, 0)
 	top_row = 0
-	loading = false
-	if note := &notes.notes[shown]; note.name_count > 0 && keeping {
-		if serial, put := request_of_note(.Load, note); put {
-			load_serial, loading = serial, true
-		}
-	}
+	note_load_ask()
 	layout_refresh()
 	system.log_fact(.Info, Note_Shown{title = title_field(shown_title())})
 }
 
 // note_new makes an empty note at the end of the list and shows it.
 note_new :: proc "contextless" () {
+	if !room_for(note_session.show_room(&session, waiting, false)) {
+		return
+	}
 	commit()
-	if shown >= 0 && notes.notes[shown].name_count == 0 && text_model.text_length(&text) == 0 && !loading {
+	if shown >= 0 && notes.notes[shown].name_count == 0 && text_model.text_length(&text) == 0 && !session.loading && !session.locked {
 		// The note shown is new and empty already.
 		return
 	}
@@ -396,7 +415,7 @@ note_new :: proc "contextless" () {
 		return
 	}
 	shown = index
-	loading = false
+	note_session.note_shown_new(&session)
 	text_model.text_replace_whole(&text, nil)
 	text_model.selection_set(&text, 0, 0)
 	top_row = 0
@@ -405,56 +424,74 @@ note_new :: proc "contextless" () {
 }
 
 // note_delete removes the note shown from the list, and asks the store
-// thread to remove its object and its versions.
+// thread to remove its object and its versions. It starts only when the
+// queue takes the removal and the load of the note shown after it.
 note_delete :: proc "contextless" () {
-	mode = .Notes
+	note_session.delete_closed(&session)
 	bar = {}
 	if shown < 0 {
 		return
 	}
 	note := &notes.notes[shown]
-	if note.name_count > 0 && keeping {
+	next := shown + 1 < notes.count ? shown + 1 : shown - 1
+	next_stored := next >= 0 && notes.notes[next].name_count > 0
+	deleted_stored := note.name_count > 0
+	if !room_for(note_session.delete_room(&session, deleted_stored, next_stored)) {
+		return
+	}
+	if deleted_stored && session.keeping {
 		if _, put := request_of_note(.Remove, note); !put {
+			problem_shown = .Busy
 			return
 		}
 	}
 	title_buffer: [TITLE_BYTES]u8
 	title := string(title_buffer[:copy(title_buffer[:], note_list.note_title(note))])
-	waiting, loading = false, false
-	next, _ := note_list.list_remove(&notes, shown)
+	waiting = false
+	after, _ := note_list.list_remove(&notes, shown)
 	shown = -1
 	system.log_fact(.Info, Note_Deleted{notes = u64(notes.count), title = title_field(title)})
-	if next < 0 {
+	if after < 0 {
 		note_new()
 		return
 	}
-	note_show(next)
+	note_show(after)
 }
 
 // versions_open asks for the versions of the note shown. A change that
-// waits goes first, so it is a version too; the pane opens with the result.
+// waits goes first, so it is a version too; the pane opens with the result,
+// and the keys wait for it.
 versions_open :: proc "contextless" () {
-	if !keeping || shown < 0 || loading || requests_room() < 2 {
+	if shown < 0 || session.loading || session.locked || !session.keeping {
+		return
+	}
+	commit_room := waiting && note_session.commit_allowed(&session) ? 1 : 0
+	if !room_for(commit_room + 1) {
 		return
 	}
 	commit()
-	if notes.notes[shown].name_count == 0 {
+	note := &notes.notes[shown]
+	if note.name_count == 0 {
 		return
 	}
-	request_of_note(.Versions, &notes.notes[shown])
+	if serial, put := request_of_note(.Versions, note); put {
+		note_session.versions_asked_now(&session, serial)
+	}
 }
 
 // version_choose asks for the bytes of a version; the text pane shows it
-// when they come.
+// when they come, and Enter restores it only then.
 version_choose :: proc "contextless" (index: int) {
-	if index < 0 || index >= version_count || shown < 0 {
+	if index < 0 || index >= version_count || shown < 0 || !note_session.versions_keys_act(&session) {
 		return
 	}
 	serial, put := request_of_note(.Version, &notes.notes[shown], version_rows[index].generation)
 	if !put {
+		problem_shown = .Busy
 		return
 	}
-	version_chosen, version_serial, loading = index, serial, true
+	version_chosen = index
+	note_session.version_asked(&session, serial)
 	text_model.text_replace_whole(&preview, nil)
 	text_model.selection_set(&preview, 0, 0)
 	top_row = 0
@@ -463,51 +500,69 @@ version_choose :: proc "contextless" (index: int) {
 
 // versions_close goes back to the note.
 versions_close :: proc "contextless" () {
-	mode = .Notes
-	bar = {}
-	loading = false
-	top_row = 0
-	layout_refresh()
+	note_session.versions_closed(&session)
+	if session.mode == .Notes {
+		bar = {}
+		top_row = 0
+		layout_refresh()
+	}
 }
 
 // version_restore asks the store thread to make the version chosen the
-// current note, in one commit: the note before it stays a version.
+// current note, in one commit: the note before it stays a version. Only a
+// version whose bytes came is restored, and the keys wait for the result;
+// then the window loads the note from the store.
 version_restore :: proc "contextless" () {
-	if version_chosen < 0 || version_chosen >= version_count || shown < 0 || loading {
+	if version_chosen < 0 || version_chosen >= version_count || shown < 0 {
 		return
 	}
 	row := &version_rows[version_chosen]
-	if row.current == 1 {
+	if row.current == 1 && note_session.versions_keys_act(&session) {
 		versions_close()
 		return
 	}
-	if _, put := request_of_note(.Restore, &notes.notes[shown], row.generation); put {
-		restore_generation = row.generation
+	if !note_session.restore_allowed(&session, row.current == 1) || !room_for(2) {
+		return
 	}
+	serial, put := request_of_note(.Restore, &notes.notes[shown], row.generation)
+	if !put {
+		problem_shown = .Busy
+		return
+	}
+	note_session.restore_asked_now(&session, serial)
+	restore_generation = row.generation
 }
 
-// result_apply applies one result of the store thread to the window.
+// result_apply applies one result of the store thread to the window: a
+// result that the session does not take is dropped
+// (note_session.result_taken).
 result_apply :: proc "contextless" (result: ^store_work.Result) {
-	if result.status == .Unanswered && keeping {
-		keeping, problem_shown = false, .Not_Kept
+	note_session.unanswered(&session, result.status)
+	if result.status == .Unanswered {
+		problem_shown = .Not_Kept
+	}
+	if !note_session.result_taken(&session, result.kind, result.serial) {
+		return
 	}
 	name := string(result.name[:result.name_count])
 	switch result.kind {
 	case .List:
-		listed, loading = true, false
+		note_session.listed_now(&session, result.status)
 		if result.status == .No_Store {
 			problem_shown = .No_Store
 			system.log_fact(.Info, No_Store{})
 			note_new()
 			return
 		}
-		keeping = result.status == .Done
+		if result.status != .Done {
+			problem_shown = .Not_Kept
+		}
 		// The store thread wrote the list before this result, and writes it
 		// for no other request.
 		notes = store_listed
 		newest := note_list.list_newest(&notes)
 		if newest < 0 {
-			if keeping {
+			if session.keeping {
 				system.log_fact(.Info, New_Store{})
 			}
 			note_new()
@@ -516,91 +571,87 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		note_show(newest)
 		system.log_fact(.Info, Notes_Restored{notes = u64(notes.count), title = title_field(shown_title())})
 	case .Load:
-		if result.serial != load_serial || !loading {
-			return
-		}
-		loading = false
-		switch result.status {
-		case .Done:
+		switch note_session.load_done(&session, result.status) {
+		case .Text:
 			replaced, _ := text_take(&text, result.bytes[:result.byte_count])
+			title_refresh()
 			if replaced > 0 {
 				system.log_fact(.Info, Note_Cleaned{replaced = u64(replaced), title = title_field(shown_title())})
 			}
-		case .Damaged, .Absent:
+		case .Empty:
 		// The versions of a damaged object are in the store still: the next
 		// change writes a new text, and the damaged one stays a version.
-		case .Too_Long, .Refused, .Unanswered, .No_Store:
-			// A note that cannot be read whole is never written: a new
-			// empty note takes its place in the window.
+		case .Unreadable:
+			// A note that cannot be read whole is never written: it stays
+			// locked until another note is shown.
+			problem_shown = .Unreadable
 			if result.status == .Too_Long {
 				problem_shown = .Too_Long
 				system.log_fact(.Info, Note_Too_Long{bytes = i64(result.byte_count), limit = text_model.TEXT_CAPACITY})
 			}
-			note_new()
-			return
 		}
 		layout_refresh()
 	case .Write:
 		if result.status != .Done {
-			keeping, problem_shown = false, .Not_Kept
+			problem_shown = .Not_Kept
 			return
 		}
 		if index := note_of_name(name); index >= 0 {
 			notes.notes[index].generation = result.generation
 		}
 	case .Versions:
-		if result.status != .Done || shown < 0 || note_list.note_name(&notes.notes[shown]) != name {
+		count := result.status == .Done ? min(result.byte_count / size_of(storage.Version), VERSION_ROWS_CAPACITY) : 0
+		if !note_session.versions_done(&session, result.status, count) {
 			return
 		}
-		version_count = min(result.byte_count / size_of(storage.Version), VERSION_ROWS_CAPACITY)
-		copy(([^]u8)(&version_rows)[:version_count * size_of(storage.Version)], result.bytes[:version_count * size_of(storage.Version)])
-		if version_count == 0 {
-			return
-		}
-		mode = .Versions
+		copy(([^]u8)(&version_rows)[:count * size_of(storage.Version)], result.bytes[:count * size_of(storage.Version)])
+		version_count = count
 		bar = {}
 		version_choose(version_count - 1)
 	case .Version:
-		if result.serial != version_serial || mode != .Versions {
+		note_session.version_done(&session, result.status)
+		if result.status != .Done {
+			layout_refresh()
 			return
 		}
-		loading = false
-		if result.status == .Done {
-			text_take(&preview, result.bytes[:result.byte_count])
-		}
+		text_take(&preview, result.bytes[:result.byte_count])
 		layout_refresh()
-		first: [TITLE_READ_BYTES]u8
-		count := min(text_model.text_length(&preview), len(first))
-		for place in 0 ..< count {
-			first[place] = text_model.byte_at(&preview, place)
-		}
-		title, title_count := note_list.title_of(first[:count])
 		row := &version_rows[version_chosen]
 		date_buffer: [DATE_FIELD_BYTES]u8
 		date := row.date != 0 ? calendar.iso_text(date_buffer[:], row.date) : "no date"
-		system.log_fact(.Info, Version_Shown{version = u64(version_count - version_chosen), versions = u64(version_count), generation = row.generation, date = value_kinds.text_field(date, DATE_FIELD_BYTES), title = title_field(string(title[:title_count]))})
+		system.log_fact(.Info, Version_Shown{version = u64(version_count - version_chosen), versions = u64(version_count), generation = row.generation, date = value_kinds.text_field(date, DATE_FIELD_BYTES), title = title_field(text_title(&preview))})
 	case .Restore:
-		if result.status != .Done || shown < 0 || note_list.note_name(&notes.notes[shown]) != name {
+		if !note_session.restore_done(&session, result.status) {
+			problem_shown = .Not_Kept
 			return
 		}
-		// The preview holds the bytes of the version that the store made
-		// current.
-		count := text_model.text_length(&preview)
-		for place in 0 ..< count {
-			clean_buffer[place] = text_model.byte_at(&preview, place)
-		}
-		text_model.text_replace_whole(&text, clean_buffer[:count])
-		text_model.selection_set(&text, 0, 0)
-		waiting = false
 		notes.notes[shown].generation = result.generation
-		title_refresh()
-		system.log_fact(.Info, Version_Restored{generation = restore_generation, commit = result.generation, title = title_field(shown_title())})
-		versions_close()
+		system.log_fact(.Info, Version_Restored{generation = restore_generation, commit = result.generation, title = title_field(text_title(&preview))})
+		bar = {}
+		top_row = 0
+		waiting = false
+		// The note is what the store made current: the window loads it,
+		// and never takes its preview for it.
+		note_load_ask()
+		layout_refresh()
 	case .Remove:
 		if result.status != .Done {
 			problem_shown = .Not_Kept
 		}
 	}
+}
+
+// text_title gives the title of a text: its first line.
+text_title_buffer: [TITLE_BYTES]u8
+text_title :: proc "contextless" (source: ^text_model.Text) -> string {
+	first: [TITLE_READ_BYTES]u8
+	count := min(text_model.text_length(source), len(first))
+	for place in 0 ..< count {
+		first[place] = text_model.byte_at(source, place)
+	}
+	title, title_count := note_list.title_of(first[:count])
+	text_title_buffer = title
+	return string(text_title_buffer[:title_count])
 }
 
 insert_typed :: proc "contextless" (character: rune) {
@@ -620,21 +671,25 @@ move :: proc "contextless" (motion: text_model.Motion, extend: bool) {
 }
 
 // key_run runs one key: a typed key, or the key of an item of the action
-// bar that a press ran.
+// bar that a press ran. The session says which keys act while the store
+// works (internal:notes/note_session).
 key_run :: proc "contextless" (press: interface.Key_Press) {
 	control := press.modifiers & display.MODIFIER_CONTROL != 0
 	shift := press.modifiers & display.MODIFIER_SHIFT != 0
-	switch mode {
+	switch session.mode {
 	case .Delete:
 		switch press.code {
 		case display.KEY_ENTER:
 			note_delete()
 		case display.KEY_ESCAPE:
-			mode = .Notes
+			note_session.delete_closed(&session)
 			bar = {}
 		}
 		return
 	case .Versions:
+		if !note_session.versions_keys_act(&session) {
+			return
+		}
 		switch press.code {
 		case display.KEY_DOWN:
 			version_choose(version_chosen - 1)
@@ -650,42 +705,57 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		return
 	case .Notes:
 	}
+	text_keys := note_session.text_keys_act(&session)
+	list_keys := note_session.list_keys_act(&session)
 	if control {
 		switch press.code {
 		case display.KEY_HOME:
-			move(.Text_Start, shift)
+			if text_keys {
+				move(.Text_Start, shift)
+			}
 			return
 		case display.KEY_END:
-			move(.Text_End, shift)
+			if text_keys {
+				move(.Text_End, shift)
+			}
 			return
 		case display.KEY_PAGE_UP:
-			note_show(shown - 1)
+			if list_keys {
+				note_show(shown - 1)
+			}
 			return
 		case display.KEY_PAGE_DOWN:
-			note_show(shown + 1)
+			if list_keys {
+				note_show(shown + 1)
+			}
 			return
 		}
 		// The character of a letter depends on the layout of the keyboard:
 		// the window compares the character, not the code.
 		switch press.character {
 		case 'a', 'A':
-			text_model.text_select_all(&text)
-			scroll_to_caret()
+			if text_keys {
+				text_model.text_select_all(&text)
+				scroll_to_caret()
+			}
 		case 'n', 'N':
-			note_new()
+			if list_keys {
+				note_new()
+			}
 		case 'd', 'D':
-			if shown >= 0 {
-				mode = .Delete
+			if shown >= 0 && note_session.delete_asked(&session) {
 				bar = {}
 				system.log_fact(.Info, Delete_Asked{title = title_field(shown_title())})
 			}
 		case 'h', 'H':
-			versions_open()
+			if list_keys {
+				versions_open()
+			}
 		}
 		return
 	}
-	// The text that the store has not given yet takes no key.
-	if loading {
+	// The text that the store has not given, or could not give, takes no key.
+	if !text_keys {
 		return
 	}
 	switch press.code {
@@ -730,7 +800,7 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 // cut deletes the selection only after the copy is sent, so a refused copy
 // never loses text.
 copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_Action) {
-	if mode != .Notes || loading {
+	if session.mode != .Notes || session.loading {
 		display.copy_decline(window)
 		return
 	}
@@ -756,7 +826,7 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 // paste_event answers Pasted (Ctrl+V): a text of several lines, with tabs.
 paste_event :: proc "contextless" (window: ^display.Window, event: display.Event) {
 	pasted, paste_problem := display.paste_read(window, event, clipboard_buffer[:], .Multi_Line)
-	if paste_problem != .None || mode != .Notes || loading {
+	if paste_problem != .None || !note_session.text_keys_act(&session) {
 		return
 	}
 	switch text_model.text_insert(&text, clipboard_buffer[:pasted]) {
@@ -791,14 +861,16 @@ pointer_event :: proc "contextless" (event: display.Event) {
 	switch {
 	case pressed && inside(pane_rows_area, event.x, event.y):
 		row := pane_first_row + (event.y - pane_rows_area.y) / PANE_ROW_HEIGHT
-		switch mode {
+		switch session.mode {
 		case .Notes:
-			note_show(row)
+			if note_session.list_keys_act(&session) {
+				note_show(row)
+			}
 		case .Versions:
 			version_choose(version_count - 1 - row)
 		case .Delete:
 		}
-	case pressed && inside(text_view, event.x, event.y) && mode == .Notes && !loading:
+	case pressed && inside(text_view, event.x, event.y) && note_session.text_keys_act(&session):
 		pointer_dragging = true
 		place := place_of_pointer(event.x, event.y)
 		text_model.selection_set(&text, place, place)
@@ -900,12 +972,12 @@ pane_draw :: proc "contextless" (table: ^interface.Draw_Table, area: interface.A
 	defer interface.draw_clip_pop(table)
 	left := area.x + PANE_PADDING
 	room := area.width - 2 * PANE_PADDING
-	heading := mode == .Versions ? "VERSIONS" : "NOTES"
+	heading := session.mode == .Versions ? "VERSIONS" : "NOTES"
 	interface.draw_text(table, left, area.y + (PANE_HEADING_HEIGHT - graphics.CELL_HEIGHT) / 2, heading, tokens.text_dim, interface.FONT_INTERFACE_BOLD)
 	pane_rows_area = {area.x, area.y + PANE_HEADING_HEIGHT, area.width, max(area.height - PANE_HEADING_HEIGHT, 0)}
 	row_room := max(pane_rows_area.height / PANE_ROW_HEIGHT, 1)
-	total := mode == .Versions ? version_count : notes.count
-	chosen := mode == .Versions ? version_count - 1 - version_chosen : shown
+	total := session.mode == .Versions ? version_count : notes.count
+	chosen := session.mode == .Versions ? version_count - 1 - version_chosen : shown
 	// The row chosen stays in view: the first row moves only when it leaves.
 	if chosen < pane_first_row {
 		pane_first_row = max(chosen, 0)
@@ -924,7 +996,7 @@ pane_draw :: proc "contextless" (table: ^interface.Draw_Table, area: interface.A
 		color := is_chosen ? tokens.text_on_chosen : tokens.text
 		label: string
 		label_buffer: [48]u8
-		if mode == .Versions {
+		if session.mode == .Versions {
 			version := &version_rows[version_count - 1 - row]
 			label = version.date != 0 ? calendar.iso_text(label_buffer[:], version.date) : system.format(label_buffer[:], "generation ", version.generation)
 		} else {
@@ -947,17 +1019,23 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	caret_row := text_model.row_of(&layout, source.caret)
 	right_buffer: [96]u8
 	right_words := ""
-	if mode != .Versions {
+	if session.mode != .Versions {
 		state := "kept"
 		switch {
-		case loading:
+		case session.loading:
 			state = "loading"
-		case !keeping:
+		case !session.keeping:
 			state = "not kept"
 		case waiting:
 			state = "a change waits"
 		}
-		right_words = system.format(right_buffer[:], "line ", u64(layout.rows[caret_row].line) + 1, ", ", u64(text_model.text_length(&text)), " bytes, ", state)
+		// A note that could not be read has its problem at the left, which
+		// says that it is not written: no state at the right.
+		if session.locked {
+			right_words = system.format(right_buffer[:], "line ", u64(layout.rows[caret_row].line) + 1, ", ", u64(text_model.text_length(&text)), " bytes")
+		} else {
+			right_words = system.format(right_buffer[:], "line ", u64(layout.rows[caret_row].line) + 1, ", ", u64(text_model.text_length(&text)), " bytes, ", state)
+		}
 	}
 	boxes := layout_build(window, table, right_words)
 
@@ -985,7 +1063,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	for row in top_row ..< end_row {
 		row_draw(table, source, row, text_top + (row - top_row) * graphics.CELL_HEIGHT, first, last)
 	}
-	if mode != .Versions && caret_row >= top_row && caret_row < end_row {
+	if session.mode != .Versions && caret_row >= top_row && caret_row < end_row {
 		caret_column := text_model.column_of(&layout, source, caret_row, source.caret)
 		interface.draw_rectangle(table, text_left + caret_column * graphics.CELL_WIDTH, text_top + (caret_row - top_row) * graphics.CELL_HEIGHT, CARET_WIDTH, graphics.CELL_HEIGHT, tokens.text_strong)
 	}
@@ -998,7 +1076,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	left_words := window_problem_texts[problem_shown]
 	left_color := tokens.failed
 	question_buffer: [TITLE_BYTES + 32]u8
-	if mode == .Delete {
+	if session.mode == .Delete {
 		title := shown_title()
 		if title == "" {
 			title = "empty note"

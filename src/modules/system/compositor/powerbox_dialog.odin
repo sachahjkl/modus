@@ -70,6 +70,8 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 	if len(process_name) == 0 || len(resource_text) == 0 {
 		return 0
 	}
+	// The dialog takes the keys: the card of the switcher closes.
+	window_switcher_cancel() // window_switcher.odin
 	id := powerbox_next_id
 	powerbox_next_id += 1
 	powerbox_prompt = {
@@ -166,6 +168,7 @@ plan_difference_show :: proc "contextless" (plan_name, added, removed: string) -
 		return
 	}
 	system.log_fact(.Info, Plan_Difference_Shown{added = u64(plan_difference_dialog.added_count), removed = u64(plan_difference_dialog.removed_count), plan = value_kinds.text_field(plan_name, PLAN_NAME_FIELD_BYTES)})
+	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
 	damage_whole_screen()
 	return
 }

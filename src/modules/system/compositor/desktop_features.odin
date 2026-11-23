@@ -141,6 +141,9 @@ desktop_features_resize :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 }
 
 desktop_window_opened :: proc "contextless" (index: int) {
+	// The card of the switcher lists the windows of its open: a new window
+	// closes it (window_switcher.odin).
+	window_switcher_cancel()
 	if !desktop_features_ready || index < 0 {
 		return
 	}
@@ -149,6 +152,16 @@ desktop_window_opened :: proc "contextless" (index: int) {
 }
 
 desktop_window_closed :: proc "contextless" (index: int) {
+	window_switcher_cancel()
+	// The menu of a plate names its window by its client index, which a
+	// new window can take: the menu of a window that closed closes with it.
+	if index >= 0 && taskbar_menu_window == index {
+		taskbar_menu_window = -1
+		if desktop_context_menu.open {
+			desktop_context_menu_damage()
+			desktop_context_menu.open = false
+		}
+	}
 	if !desktop_features_ready || index < 0 {
 		return
 	}
@@ -224,6 +237,8 @@ desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Tabl
 
 // desktop_context_menu_open opens the filterable fuzzy right-click menu at (x, y).
 desktop_context_menu_open :: proc "contextless" (x, y: int) {
+	window_switcher_cancel() // window_switcher.odin: a menu takes the keys.
+	taskbar_menu_window = -1
 	if !desktop_features_ready {
 		return
 	}
@@ -526,6 +541,7 @@ desktop_taskbar_menu_open :: proc "contextless" (x, y: int) -> bool {
 	if last_used < 0 {
 		return false
 	}
+	window_switcher_cancel() // window_switcher.odin: a menu takes the keys.
 	taskbar_menu_window = order[last_used]
 	client := &clients[taskbar_menu_window]
 	items := [3]interface.Context_Menu_Item {
@@ -726,23 +742,24 @@ desktop_taskbar_slot_activate :: proc "contextless" (wanted: int) -> bool {
 		return false
 	}
 	name := system.name_of(clients[opened[first]].title[:])
-	shown := taskbar_group_last_used(name, false)
-	in_front := shown >= 0 && shown == order_count - 1
-	switch bar.plate_act(in_front, shown >= 0) {
+	windows: [CLIENT_CAPACITY]bar.Plate_Window
+	for position in 0 ..< order_count {
+		client := &clients[order[position]]
+		windows[position] = {name = system.name_of(client.title[:]), minimized = client.minimized}
+	}
+	act, position, found := bar.plate_press(windows[:order_count], name)
+	if !found {
+		return false
+	}
+	index := order[position]
+	switch act {
 	case .Minimize:
-		index := order[shown]
 		window_minimize(index)
 		system.log_fact(.Info, Plate_Minimized{window = window_field(clients[index].title[:])})
 	case .Raise:
-		index := order[shown]
-		raise(shown)
+		raise(position)
 		system.log_fact(.Info, Plate_Raised{window = window_field(clients[index].title[:])})
 	case .Restore:
-		position := taskbar_group_last_used(name, true)
-		if position < 0 {
-			return false
-		}
-		index := order[position]
 		clients[index].minimized = false
 		raise(position)
 		system.log_fact(.Info, Plate_Restored{window = window_field(clients[index].title[:])})

@@ -124,9 +124,15 @@ Note_Too_Long :: struct {
 	limit: u64,
 }
 
-// The storage service gave no answer: the notes are not kept from now on.
+// The connection to the storage service ended: the notes are not kept
+// from now on.
 @(log_fact = "notes: the storage service did not answer: the notes are not kept")
 Storage_Unanswered :: struct {}
+
+// The storage service refused a call with no error record: the call of
+// one note, not the keeping.
+@(log_fact = "notes: the storage service refused a call")
+Call_Refused :: struct {}
 
 // The storage service refused a write of a note: the fields of its error
 // record.

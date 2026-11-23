@@ -32,8 +32,13 @@ The window thread makes no call of the storage service: no read, no write, no li
 
 - **The order of the requests is the order of the acts.** A write before a load before a remove: one queue, one thread, so the store sees what the principal did, in that order.
 - **A result names its request.** The serial of the last load and of the last version read: a result of an older one is dropped, so a quick change of note shows the right text.
-- **The text waits while it loads.** The status band says "loading", and no key changes a text that the store has not given yet.
-- **A full queue refuses, and the window waits.** A change keeps waiting one more pause; a change of note needs room for a commit and a load, or the note shown stays. The window thread never waits for room.
+- **No key acts before the list.** Until the result of the list comes, no key makes, deletes or changes a note: the list from the store then replaces the list of the window, and a note made before it would be written over a stored one.
+- **The text waits while it loads.** The status band says "loading", and no key changes a text that the store has not given yet. The keys also wait for the result of the versions and of a restore.
+- **An act starts only when the queue takes it whole.** A change of note needs room for the commit and the load; a deletion for the removal and the load of the note shown after it; a restore for the restore and the load after it. Else the status band says that the store is busy, and nothing changed. A change keeps waiting one more pause when the queue is full. The window thread never waits for room.
+- **A restore loads the note from the store.** Enter restores only a version whose bytes came, and the window then loads the note that the store made current, never its preview.
+- **A note that could not be read is locked.** Its text is empty, no key changes it, and no commit writes it, until another note is shown.
+- **Only a connection that ended stops the keeping.** A refusal, a damaged object or a buffer that is too small is the answer of one call: the status band says it, and the next change is kept again.
+- **The rules are pure** in `internal:notes/note_session`: the gates of the keys, the room of each act, and which result the window takes; a host test gives each order of the acts and the results.
 - **The window thread still enters the kernel for the queues**: the wake of the store thread, and a lock that it takes only for the copy of one record. These are the hand over of the work, not a call of a service.
 
 ## The refused forms

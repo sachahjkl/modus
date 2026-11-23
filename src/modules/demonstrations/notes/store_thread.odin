@@ -68,11 +68,27 @@ store_thread_entry :: proc "c" (parameter: rawptr) -> ! {
 }
 
 // store_failed writes the fact of a call of the storage service that
-// failed, and gives the status of the result.
+// failed, and gives the status of the result. Only a connection that ended
+// is no answer, which ends the keeping; a refusal, a damaged object or a
+// buffer that is too small is the answer of one call.
 store_failed :: proc "contextless" (kind: store_work.Request_Kind, status: storage_status.Status, error: ^errors.Error_Record) -> store_work.Result_Status {
-	if status != .Failed {
+	switch status {
+	case .Gone:
 		system.log_fact(.Info, Storage_Unanswered{})
 		return .Unanswered
+	case .Damaged:
+		return .Damaged
+	case .Too_Small:
+		return .Too_Long
+	case .Refused:
+		system.log_fact(.Info, Call_Refused{})
+		return .Refused
+	case .Ok:
+		// An answer Ok with a negative number: no export gives it, and the
+		// window takes it as a refusal.
+		system.log_fact(.Info, Call_Refused{})
+		return .Refused
+	case .Failed:
 	}
 	fields := errors.error_record_fact_fields(error^)
 	switch kind {
