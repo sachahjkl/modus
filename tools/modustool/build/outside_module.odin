@@ -411,7 +411,7 @@ THIRD_PARTY_EXAMPLE_FOLDER :: foundation.BUILD_FOLDER + "/third_party_example"
 // needs the file of its import from the folder of the system while its
 // own file goes to the folder of the copy.
 OUTSIDE_MODULE_EXAMPLES :: [?]Outside_Module_Example {
-	{name = "tally", source = foundation.DEMONSTRATION_MODULE_SOURCES + "tally", build_file = "name: tally\n"},
+	{name = "tally", source = foundation.DEMONSTRATION_MODULE_SOURCES + "tally", build_file = "name: tally\nimports: text_rendering\n"},
 	{name = "agenda", source = foundation.DEMONSTRATION_MODULE_SOURCES + "agenda", build_file = "name: agenda\nimports: calendar\nlibrary: no\n"},
 }
 

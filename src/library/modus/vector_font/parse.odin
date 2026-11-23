@@ -19,6 +19,14 @@ package vector_font
 
 // What is wrong with a font file or with a glyph. Each reader of this
 // package gives one, never a fault.
+// The reader of CFF and CFF2 outlines. The fonts of the boot image are
+// TrueType; the fonts of CFF are fonts of the script font set, which the
+// library module text_rendering reads, so a module of the system compiles
+// no reader of CFF and refuses such a font (src/md/features/text_rendering.md,
+// "Where the written shaping lives"). The one define of the written part
+// chooses both.
+CFF_COMPILED_IN :: #config(WRITTEN_SHAPING_COMPILED_IN, ODIN_OS != .Freestanding)
+
 Font_Problem :: enum u8 {
 	None, // No problem.
 	Too_Short, // A read past the end of the file or of a table.
@@ -275,7 +283,11 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 		font.map_groups = long_map_groups_check(bytes[long_map.offset:][:long_map.length]) or_return
 	}
 	if font.cff.version != 0 {
-		cff_open(&font) or_return
+		when CFF_COMPILED_IN {
+			cff_open(&font) or_return
+		} else {
+			return font, .Unknown_Format
+		}
 	}
 	return font, .None
 }
@@ -479,7 +491,11 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 	}
 	outline.advance = glyph_advance(font, glyph)
 	if font.cff.version != 0 {
-		return cff_glyph_outline(font, glyph, outline)
+		when CFF_COMPILED_IN {
+			return cff_glyph_outline(font, glyph, outline)
+		} else {
+			return .Unknown_Format
+		}
 	}
 	parts := 0
 	return glyph_outline_add(font, glyph, outline, {65536, 0, 0, 65536, 0, 0}, 0, &parts)

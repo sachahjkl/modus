@@ -37,8 +37,16 @@ fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_out
 	// it: with none, each character of those scripts is the replacement
 	// glyph, and no line says so: a machine with no such set is the usual
 	// case (src/md/features/script_fonts.md).
-	if scripts, script_problem := font_outlines.script_fonts_open(&ctx.values, outlines_room[:]); script_problem.kind == .None {
-		missing += text_rendering.script_fonts_open(&scripts)
+	when text_rendering.WRITTEN_SHAPING_COMPILED_IN {
+		if scripts, script_problem := font_outlines.script_fonts_open(&ctx.values, outlines_room[:]); script_problem.kind == .None {
+			missing += text_rendering.script_fonts_open(&scripts)
+		}
+	} else {
+		// The library module opens the fonts of the process for each line
+		// that is not simple, the script font set with them
+		// (src/md/features/text_rendering.md, "Where the written shaping
+		// lives").
+		missing += text_rendering.written_part_open()
 	}
 	return {}, missing
 }

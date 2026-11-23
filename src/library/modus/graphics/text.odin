@@ -402,7 +402,7 @@ text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string,
 	for place < len(bytes) {
 		character, length, valid := text_encoding.character_decode(bytes, place)
 		place += length
-		if valid && text_rendering.is_mark(character) && at > x {
+		if valid && text_rendering.cell_width_of(character) == .Zero && at > x {
 			character_replacement_sized(canvas, at - advance, y, color, size, alpha)
 			continue
 		}

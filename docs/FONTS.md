@@ -370,6 +370,22 @@ A module (property 10: shared code with exports), with batch exports whose param
 - **A character that no font of the chain has** (and a control character, and an invalid sequence of UTF-8) is placed as `REPLACEMENT_GLYPH`, with the advance of `0` and no pair, and the reader draws the replacement glyph there, so a reader sees that the font does not draw it. Each placed glyph has the first byte of its character as its cluster.
 - **The widths in a table of ranges**: the width is a field of each range record, which the export writes (the direction Change), as `sum` in the records of `sample.sum_words`.
 
+**Over the fonts of the process.** Each module that draws text compiles the fast part of the package only: it places a simple text (each character simple, in a font of the boot image before any font of the script font set in its chain) and draws each glyph. It calls these exports of the library module for the rest, over the fonts of its own process, which the module opens once from the fixed ranges of that process and keeps in its data:
+
+| Export | Parameters | Result |
+|---|---|---|
+| `process_fonts_open` | the fonts of the set (Append: one `Held_Font` for each font of the script font set, Open, Missing or Refused, with its measures and its glyph count), the error record | the count of records of the full answer, or -1 |
+| `line_shape` | the face, the text size, the text, the placed glyphs (Append), the error record | the count of placed glyphs of the full answer, or -1 |
+| `line_width` | the face, the text size, the text, the error record | the width in 1/64 of a pixel; a refusal has the error record |
+| `line_fit` | the face, the text size, the text, the room, the error record | the bytes of the longest start that fits, or -1 |
+| `glyph_find` | the face, the character, the error record | the font times 65536 plus the glyph index, 0 for no font, or -1 |
+| `glyph_outline` | the face, the font, the glyph index, the points (Append, `Outline_Word`), the contour ends (Append), the error record | the advance in units of the font, or -1 |
+| `cell_cluster_read` | the face, the text, the byte, the byte of a SARA AM taken, the cluster (Append), its marks (Append), the error record | 1, 0 at the end of the text, or -1 |
+
+- **Before the open**, each export is refused with `Absent`, and the fast part places a line one character at a time. `display.text_settings_load` opens the fonts of the process before its first frame.
+- **The written part** runs in the call: the marks, Arabic, Thai, the scripts of India, the order of a line of mixed direction, with the work budget of one call. The fonts are in the data of the module, not on the stack: the deepest call takes 16 039 bytes of stack in a debug build and 14 735 bytes with `-o:speed`, under `CALL_STACK_BOUND` (16 KiB).
+- **The drawing module and the root service** compile the written part in: a library module has no import slot, and the root service has no loader for imports.
+
 **The design before the code:**
 
 - **Input**: the font (a record: its kind, its scale, its weight) and a table of characters: the bytes of a text of UTF-8, with glyphs for ASCII 32 to 126, the Latin-1 Supplement and the euro sign.

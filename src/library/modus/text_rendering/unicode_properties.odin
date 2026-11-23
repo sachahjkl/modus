@@ -266,6 +266,13 @@ bidi_class_of :: proc "contextless" (character: rune) -> Bidi_Class {
 	return .L
 }
 
+// is_simple says if a character is simple: the fast part places it alone,
+// as the written part would (src/md/features/text_rendering.md, "Where the
+// written shaping lives").
+is_simple :: proc "contextless" (character: rune) -> bool {
+	return range_index(character, simple_ranges[:]) >= 0
+}
+
 // is_mark says if a character is a mark (Mn or Me): it belongs to the
 // character before it.
 is_mark :: proc "contextless" (character: rune) -> bool {

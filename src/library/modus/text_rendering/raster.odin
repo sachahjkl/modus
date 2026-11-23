@@ -230,7 +230,17 @@ raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index,
 // raster_begin_in is raster_begin over a set of fonts.
 raster_begin_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font, glyph_index, size, position: int) -> (job: Raster_Job, problem: Raster_Problem) {
 	job.outline = outline_of(&outline_memory)
-	if vector_font.glyph_outline(&font_at(set, font).file, glyph_index, &job.outline) != .None {
+	opened := font_at(set, font)
+	// A font that the library module holds: the module reads the outline.
+	when !WRITTEN_SHAPING_COMPILED_IN {
+		if opened.held {
+			if set != &state.font_set || !held_glyph_outline(face, font, glyph_index, &job.outline) {
+				return {}, .Refused
+			}
+			return raster_place(set, face, font, size, position, job.outline)
+		}
+	}
+	if vector_font.glyph_outline(&opened.file, glyph_index, &job.outline) != .None {
 		return {}, .Refused
 	}
 	return raster_place(set, face, font, size, position, job.outline)

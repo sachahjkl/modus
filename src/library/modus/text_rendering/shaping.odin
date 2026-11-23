@@ -207,26 +207,41 @@ cell_advance_of :: proc "contextless" (spacing: ^Spacing, character: rune) -> i3
 // with the advance of REPLACEMENT_ADVANCE_CHARACTER.
 @(private)
 resolve :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) -> (resolved: Resolved) {
+	resolved, _ = resolve_in_chain(spacing, character, valid, .Take)
+	return resolved
+}
+
+// resolve_in_chain is resolve, with the rule of the walk of the chain for
+// a font of the script font set. reached is true when the rule Stop met
+// such a font before a font that has the character: the fast part does not
+// place that character.
+@(private)
+resolve_in_chain :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool, rule: Script_Font_Rule) -> (resolved: Resolved, reached: bool) {
 	if spacing.cell_advance > 0 {
 		resolved.glyph = valid ? glyph_of(character) : REPLACEMENT_GLYPH
 		resolved.advance = valid ? cell_advance_of(spacing, character) : clamp(spacing.cell_advance, 0, CELL_ADVANCE_LIMIT)
-		return resolved
+		return resolved, false
 	}
 	set := spacing.fonts != nil ? spacing.fonts : &state.font_set
 	if valid && is_invisible_format(character) {
 		resolved.glyph = INVISIBLE_GLYPH
-		return resolved
+		return resolved, false
 	}
 	font: Outline_Font
 	index: int
 	if valid {
-		font, index = font_glyph_in(set, spacing.face, character)
+		font, index, reached = chain_glyph(set, spacing.face, character, rule)
+		if reached {
+			return {}, true
+		}
 	}
 	if font == .None {
 		resolved.glyph = REPLACEMENT_GLYPH
-		zero_font, zero_index := font_glyph_in(set, spacing.face, REPLACEMENT_ADVANCE_CHARACTER)
+		// The digit zero is in the first font of each face: no font of the
+		// set is asked.
+		zero_font, zero_index, _ := chain_glyph(set, spacing.face, REPLACEMENT_ADVANCE_CHARACTER, .Skip)
 		resolved.advance, _ = glyph_advance_in(set, spacing.face, zero_font, zero_index, spacing.size)
-		return resolved
+		return resolved, false
 	}
 	if character_index, in_cache := font_characters.character_index(character); in_cache {
 		resolved.glyph = u32(character_index)
@@ -235,7 +250,7 @@ resolve :: proc "contextless" (spacing: ^Spacing, character: rune, valid: bool) 
 	}
 	resolved.font, resolved.index = font, i32(index)
 	resolved.advance, _ = glyph_advance_in(set, spacing.face, font, index, spacing.size)
-	return resolved
+	return resolved, false
 }
 
 // resolve_index is resolve for a glyph of a font by its index: a form or a
@@ -276,11 +291,17 @@ Cluster :: struct {
 }
 
 // is_cluster_break says if a character takes no mark: a space, a separator
-// or a control. A mark after it has no base.
+// or a control, the bidirectional classes WS, S and B. A mark after it has
+// no base. The characters are written here, not read from the table of the
+// classes: the fast part reads the cells of a grid with it, and that table
+// is the written part (the_cluster_breaks_are_the_classes_of_unicode).
 @(private)
 is_cluster_break :: proc "contextless" (character: rune) -> bool {
-	class := bidi_class_of(character)
-	return class == .WS || class == .S || class == .B
+	switch character {
+	case 0x0009 ..= 0x000D, 0x001C ..= 0x0020, 0x0085, 0x1680, 0x2000 ..= 0x200A, 0x2028, 0x2029, 0x205F, 0x3000:
+		return true
+	}
+	return false
 }
 
 // SARA AM of Thai (U+0E33) and of Lao (U+0EB3) is two parts: NIKHAHIT, a
@@ -319,6 +340,31 @@ is_sara_am :: #force_inline proc "contextless" (character: rune) -> bool {
 // cluster, so a text that another thread changes gives other glyphs, and
 // never a read or a write past a table.
 cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, place: int, sara_am_taken := -1) -> (cluster: Cluster, ok: bool) {
+	when WRITTEN_SHAPING_COMPILED_IN {
+		return cluster_read_written(set, face, text, place, sara_am_taken)
+	} else {
+		// A simple character before a simple character, or the end, is a
+		// cluster of one character: no mark follows it, and no SARA AM.
+		character, length, valid := text_encoding.character_decode(text, place)
+		if length == 0 {
+			return {}, false
+		}
+		next, next_length, next_valid := text_encoding.character_decode(text, place + length)
+		if (!valid || is_simple(character)) && (next_length == 0 || !next_valid || is_simple(next)) {
+			return cluster_of_one(text, place)
+		}
+		if set == &state.font_set {
+			if read, read_ok, called := held_cluster_read(face, text, place, sara_am_taken); called {
+				return read, read_ok
+			}
+		}
+		return cluster_of_one(text, place)
+	}
+}
+
+// cluster_read_written is cluster_read in the written part.
+@(private)
+cluster_read_written :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, place: int, sara_am_taken := -1) -> (cluster: Cluster, ok: bool) {
 	character, length, valid := text_encoding.character_decode(text, place)
 	if length == 0 {
 		return {}, false
@@ -595,7 +641,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 	if indic_shaped(shaper, shaped) {
 		return true
 	}
-	cluster := cluster_read(shaper.set, shaper.spacing.face, shaper.text, shaper.place, shaper.sara_am_taken) or_return
+	cluster := cluster_read_written(shaper.set, shaper.spacing.face, shaper.text, shaper.place, shaper.sara_am_taken) or_return
 	shaper.sara_am_taken = cluster.sara_am_taken
 	shaped^ = {start = cluster.start, end = cluster.end}
 	spacing := shaper.spacing
@@ -631,7 +677,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 		if cluster.base == LAM && next_length > 0 && next_valid && is_alef(next) {
 			ligature := lam_alef_of(next, before)
 			if ligature != 0 && character_drawn(shaper.set, spacing.face, ligature) {
-				if after_cluster, read := cluster_read(shaper.set, spacing.face, shaper.text, cluster.end, cluster.sara_am_taken); read {
+				if after_cluster, read := cluster_read_written(shaper.set, spacing.face, shaper.text, cluster.end, cluster.sara_am_taken); read {
 					ligature_cluster = after_cluster
 					ligature_made = true
 					shaped.base = resolve(spacing, ligature, true)
@@ -760,6 +806,28 @@ shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Gly
 	if len(text) > TEXT_LIMIT {
 		return 0, 0, false
 	}
+	simple: bool
+	if count, width, simple = shape_simple(spacing, text, placed, false); simple {
+		return count, width, true
+	}
+	when WRITTEN_SHAPING_COMPILED_IN {
+		return shape_written(spacing, text, placed)
+	} else {
+		called: bool
+		if count, width, called = written_line_shape(spacing, text, placed); called {
+			return count, width, true
+		}
+		count, width, _ = shape_simple(spacing, text, placed, true)
+		return count, width, true
+	}
+}
+
+// shape_written is shape in the written part.
+@(private)
+shape_written :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Glyph) -> (count: int, width: i64, ok: bool) {
+	if len(text) > TEXT_LIMIT {
+		return 0, 0, false
+	}
 	shaper := shaper_of(spacing, text)
 	current, next: Shaped
 	has_current := shaper_next(&shaper, &current)
@@ -857,6 +925,28 @@ text_fit :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64) -> (co
 	if len(text) > TEXT_LIMIT {
 		return 0
 	}
+	simple: bool
+	if count, simple = text_fit_simple(spacing, text, room, false); simple {
+		return count
+	}
+	when WRITTEN_SHAPING_COMPILED_IN {
+		return text_fit_written(spacing, text, room)
+	} else {
+		called: bool
+		if count, called = written_line_fit(spacing, text, room); called {
+			return count
+		}
+		count, _ = text_fit_simple(spacing, text, room, true)
+		return count
+	}
+}
+
+// text_fit_written is text_fit in the written part.
+@(private)
+text_fit_written :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64) -> (count: int) {
+	if len(text) > TEXT_LIMIT {
+		return 0
+	}
 	shaper := shaper_of(spacing, text)
 	current, next: Shaped
 	has_current := shaper_next(&shaper, &current)
@@ -883,4 +973,144 @@ text_fit :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64) -> (co
 		has_current = has_next
 	}
 	return len(text)
+}
+// ---- The fast part (src/md/features/text_rendering.md, "Where the written
+// shaping lives").
+
+// How the walk of a chain treats a font of the script font set.
+@(private)
+Script_Font_Rule :: enum u8 {
+	Take, // The font gives its glyph: through the library module when it holds the font.
+	Stop, // The walk stops there: the fast part does not place the character.
+	Skip, // The walk goes past it: the fast part places a text of a set of its caller, one character at a time.
+}
+
+// simple_read reads and resolves one character of a text for the fast
+// part. simple is false for a character that is not simple, and for one
+// whose chain reaches a font of the script font set before a font that has
+// it; every_character takes each character, past the fonts of the set.
+@(private)
+simple_read :: proc "contextless" (spacing: ^Spacing, text: []u8, place: int, every_character: bool) -> (resolved: Resolved, end: int, read, simple: bool) {
+	character, length, valid := text_encoding.character_decode(text, place)
+	if length == 0 {
+		return {}, place, false, true
+	}
+	if valid && !every_character && !is_simple(character) {
+		return {}, place, false, false
+	}
+	reached: bool
+	resolved, reached = resolve_in_chain(spacing, character, valid, every_character ? .Skip : .Stop)
+	if reached {
+		return {}, place, false, false
+	}
+	resolved.cluster = u32(place)
+	return resolved, place + length, true, true
+}
+
+// shape_simple is shape in the fast part: each character is its own
+// cluster, with the pair of the character after it. simple is false, and
+// placed holds no answer, when the text is not simple; every_character
+// places each text so, as a module without the written part places a text
+// that the library module does not.
+@(private)
+shape_simple :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Glyph, every_character: bool) -> (count: int, width: i64, simple: bool) {
+	current, place, has_current, current_simple := simple_read(spacing, text, 0, every_character)
+	if !current_simple {
+		return 0, 0, false
+	}
+	x: i64
+	for has_current {
+		next, next_place, has_next, next_simple := simple_read(spacing, text, place, every_character)
+		if !next_simple {
+			return 0, 0, false
+		}
+		glyph_advance := current.advance
+		if has_next {
+			glyph_advance += pair_of(spacing, current, next)
+		}
+		if count < len(placed) {
+			placed[count] = {glyph = current.glyph, x = i32(x), advance = glyph_advance, cluster = current.cluster}
+		}
+		count += 1
+		x += i64(glyph_advance)
+		current, place, has_current = next, next_place, has_next
+	}
+	return count, x, true
+}
+
+// text_fit_simple is text_fit in the fast part, as shape_simple is shape.
+@(private)
+text_fit_simple :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64, every_character: bool) -> (count: int, simple: bool) {
+	current, place, has_current, current_simple := simple_read(spacing, text, 0, every_character)
+	if !current_simple {
+		return 0, false
+	}
+	x: i64
+	fit := -1
+	for has_current {
+		next, next_place, has_next, next_simple := simple_read(spacing, text, place, every_character)
+		if !next_simple {
+			return 0, false
+		}
+		// The pair with the next character moves the next glyph, not the
+		// end of this one: a start that ends here has no pair after it.
+		if fit < 0 && x + i64(current.advance) > room {
+			fit = int(current.cluster)
+			if every_character {
+				return fit, true
+			}
+		}
+		x += i64(current.advance)
+		if has_next {
+			x += i64(pair_of(spacing, current, next))
+		}
+		current, place, has_current = next, next_place, has_next
+	}
+	if fit >= 0 {
+		return fit, true
+	}
+	return len(text), true
+}
+
+// chain_glyph walks the chain of a face for a character: the first font
+// that has it, and its glyph. rule says what a font of the script font set
+// does; reached is true when the rule Stop met one first.
+@(private)
+chain_glyph :: proc "contextless" (set: ^Font_Set, face: Face, character: rune, rule: Script_Font_Rule) -> (font: Outline_Font, glyph_index: int, reached: bool) {
+	if face == .None || !set.opened || !character_valid(character) || !font_at(set, face_forms[face].primary).opened {
+		return .None, 0, false
+	}
+	for each in chain_of(face, character) {
+		if each == .None {
+			break
+		}
+		opened := font_at(set, each)
+		if !opened.opened {
+			continue
+		}
+		if each in SCRIPT_FONTS {
+			switch rule {
+			case .Stop:
+				return .None, 0, true
+			case .Skip:
+				continue
+			case .Take:
+			}
+			// The library module holds the font, and walks the whole chain
+			// with the same fonts: its answer is the answer of this walk.
+			if opened.held {
+				when !WRITTEN_SHAPING_COMPILED_IN {
+					if set == &state.font_set {
+						font, glyph_index = held_glyph_find(face, character)
+						return font, glyph_index, false
+					}
+				}
+				continue
+			}
+		}
+		if index, problem := vector_font.glyph_of(&opened.file, character); problem == .None {
+			return each, index, false
+		}
+	}
+	return .None, 0, false
 }

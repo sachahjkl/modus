@@ -576,11 +576,41 @@ Do not use: font face (for this), font slot, typeface.
 
 The text rendering module is the support package `text_rendering` and its library module, which shape, measure, break, keep and draw a text at any text size.
 
-Each process compiles the measure in; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_rendering` with the font outlines as bytes, a face and a text size. It is not a service: no process asks another for a glyph.
+Each process compiles the measure in, its fast part; the drawing module compiles the draw and the private glyph cache in. Its rasterizer draws any size with a work row as wide as the glyph, in bands of rows. A caller that compiles nothing calls the library module `text_rendering` with the font outlines as bytes, a face and a text size. It is not a service: no process asks another for a glyph.
 
 The design: `src/md/features/text_rendering.md`.
 
 Do not use: font engine, text service, font server.
+
+### Simple character
+
+A simple character is a character that the fast part of the text rendering module places alone, as the written part would place it.
+
+Its script is Latin, Greek, Cyrillic or Common, its combining class is 0, and it is no mark, no format character, no control and no character of right to left; it joins nothing. `modustool unicode_tables` writes them as one table (`simple_ranges`). A text of simple characters that the fonts of the boot image draw is a simple text. For example, `Settings` and `€ 12,50` are simple texts, and `e` followed by U+0301 is not.
+
+The design: `src/md/features/text_rendering.md`, "Where the written shaping lives".
+
+Do not use: easy character, Latin character, ASCII text.
+
+### Fast part
+
+The fast part is the part of the text rendering module that each module that draws text compiles in: it places a simple text and draws each glyph.
+
+It holds the faces of the boot image, their chains, the character map, the advances, the pairs of `kern`, the line breaks, the rasterizer of `glyf` outlines and the private glyph cache. A line that is not simple goes to the written part, in one call for the line. The fast part never shapes a script of the script font set.
+
+The design: `src/md/features/text_rendering.md`, "Where the written shaping lives".
+
+Do not use: static part, light renderer, basic shaper.
+
+### Written part
+
+The written part is the part of the text rendering module that places every text that is not simple, and reads the script font set.
+
+It holds the clusters and their compositions, the shapers of Arabic, Thai and the scripts of India, the engine of the lookups, the order of a line of mixed direction, the script font set with its caches, and the reader of CFF. The library module `text_rendering`, the drawing module and the root service compile it in; each other module calls the library module for it, over the fonts of its process. The define `WRITTEN_SHAPING_COMPILED_IN` chooses it at compile time.
+
+The design: `src/md/features/text_rendering.md`, "Where the written shaping lives".
+
+Do not use: complex part, slow path, full shaper.
 
 ### Text size token
 

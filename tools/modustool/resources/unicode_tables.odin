@@ -74,6 +74,12 @@ unicode_lines_read :: proc(folder, name: string) -> (lines: [dynamic]Unicode_Lin
 	return lines, version, true
 }
 
+// A run of characters, for a table of ranges with no value.
+@(private = "file")
+Character_Run :: struct {
+	first, last: rune,
+}
+
 // A run of characters with one value, for a table of ranges.
 @(private = "file")
 Value_Range :: struct {
@@ -148,6 +154,82 @@ run_unicode_tables :: proc(args: []string) -> int {
 	fmt.sbprintln(&out, "@(rodata)\nmark_ranges := [?]Character_Range {")
 	for range in merged_marks {
 		fmt.sbprintfln(&out, "\t{{0x%04X, 0x%04X}},", int(range.first), int(range.last))
+	}
+	fmt.sbprintln(&out, "}")
+
+	// The simple characters: those that the fast part of the package places
+	// alone, as the written part would (src/md/features/text_rendering.md,
+	// "Where the written shaping lives"). A character is simple when its
+	// script is Latin, Greek, Cyrillic or Common, its combining class 0, its
+	// general category no mark, no format, no control, no separator of a
+	// line or a paragraph, no surrogate, no private use and no unassigned
+	// character, its bidirectional class one that a line of left to right
+	// never moves, and it joins nothing.
+	script_lines, _, script_ok := unicode_lines_read(folder, "Scripts.txt")
+	if !script_ok {
+		return foundation.EXIT_FAILURE
+	}
+	simple := make([]bool, 0x110000, context.temp_allocator)
+	for line in script_lines {
+		switch line.fields[0] {
+		case "Latin", "Greek", "Cyrillic", "Common":
+			for character in line.first ..= line.last {
+				simple[character] = true
+			}
+		}
+	}
+	// A character that no line of DerivedGeneralCategory.txt names is
+	// unassigned, Cn: that file names each assigned character.
+	assigned := make([]bool, 0x110000, context.temp_allocator)
+	for line in category_lines {
+		for character in line.first ..= line.last {
+			assigned[character] = true
+		}
+		switch line.fields[0] {
+		case "Mn", "Me", "Mc", "Cf", "Cc", "Cs", "Co", "Cn", "Zl", "Zp":
+			for character in line.first ..= line.last {
+				simple[character] = false
+			}
+		}
+	}
+	for line in bidi_lines {
+		switch line.fields[0] {
+		case "L", "EN", "ES", "ET", "CS", "WS", "ON":
+		case:
+			for character in line.first ..= line.last {
+				simple[character] = false
+			}
+		}
+	}
+	for line in class_lines {
+		if line.fields[0] != "0" {
+			for character in line.first ..= line.last {
+				simple[character] = false
+			}
+		}
+	}
+	for line in joining_lines {
+		if line.fields[0] != "U" {
+			for character in line.first ..= line.last {
+				simple[character] = false
+			}
+		}
+	}
+	simple_ranges := make([dynamic]Character_Run, context.temp_allocator)
+	for character in 0 ..< len(simple) {
+		if !simple[character] || !assigned[character] {
+			continue
+		}
+		if count := len(simple_ranges); count > 0 && simple_ranges[count - 1].last + 1 == rune(character) {
+			simple_ranges[count - 1].last = rune(character)
+			continue
+		}
+		append(&simple_ranges, Character_Run{rune(character), rune(character)})
+	}
+	fmt.sbprintfln(&out, "\n// The simple characters, which the fast part places alone (Scripts.txt, DerivedGeneralCategory.txt, DerivedBidiClass.txt, DerivedCombiningClass.txt, DerivedJoiningType.txt): %d ranges.", len(simple_ranges))
+	fmt.sbprintln(&out, "@(rodata)\nsimple_ranges := [?]Character_Range {")
+	for range in simple_ranges {
+		fmt.sbprintfln(&out, "	{{0x%04X, 0x%04X}},", int(range.first), int(range.last))
 	}
 	fmt.sbprintln(&out, "}")
 

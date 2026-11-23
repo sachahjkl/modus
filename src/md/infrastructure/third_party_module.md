@@ -24,10 +24,12 @@ The file has the fields of a row of the module table that a developer chooses, o
 
 ```
 name: my_process
-imports: drawing
+imports: drawing text_rendering
 defines: DRAWING_THROUGH_MODULE=true
 library: no
 ```
+
+A module that draws text imports `text_rendering`: it compiles the fast part of the text in, and calls that library module for each line that is not simple ([../features/text_rendering.md](../features/text_rendering.md), "Where the written shaping lives").
 
 | Key | Value | Absent |
 |---|---|---|

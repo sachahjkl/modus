@@ -166,55 +166,63 @@ module_builds := [?]Module_Build {
 	// only. Its boot volume is BOOT_VOLUME_OPERATION_FUZZING
 	// (src/md/infrastructure/kernel_fuzzing.md, "The test kernel").
 	{name = KERNEL_EDGE_COUNTERS_MODULE, source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {KERNEL_EDGE_COUNTERS_DEFINE}},
-	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", category = .Service, entry = true, image = true},
+	// The root service imports nothing, as the kernel starts it with no
+	// loader: it compiles the written part of the text in.
+	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", category = .Service, entry = true, defines = {WRITTEN_SHAPING_COMPILED_IN}, image = true},
 	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", category = .Service, entry = true, image = true},
 	// The drawing of a window, for each module below that imports it.
-	{name = DRAWING_MODULE, source = LIBRARY_MODULE_SOURCES + "drawing", image = true, library = true},
+	// The written part of the text (src/md/features/text_rendering.md,
+	// "Where the written shaping lives"): one copy, which each module that
+	// draws text imports.
+	{name = TEXT_RENDERING_MODULE, source = LIBRARY_MODULE_SOURCES + "text_rendering", defines = {WRITTEN_SHAPING_COMPILED_IN}, image = true, library = true},
+	// A library module has no import slot, so the drawing module compiles
+	// the written part of the text in.
+	{name = DRAWING_MODULE, source = LIBRARY_MODULE_SOURCES + "drawing", defines = {WRITTEN_SHAPING_COMPILED_IN}, image = true, library = true},
 	// It draws its screen in parts, one call of the drawing module for each
 	// part (src/md/api/picture.md).
-	{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", category = .Service, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "console", source = SYSTEM_MODULE_SOURCES + "console", category = .System_Tool, entry = true, image = true},
-	{name = "monitor", source = SYSTEM_MODULE_SOURCES + "monitor", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "plasma", source = DEMONSTRATION_MODULE_SOURCES + "plasma", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "life", source = DEMONSTRATION_MODULE_SOURCES + "life", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "paint", source = DEMONSTRATION_MODULE_SOURCES + "paint", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", category = .Service, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "console", source = SYSTEM_MODULE_SOURCES + "console", imports = {TEXT_RENDERING_MODULE}, category = .System_Tool, entry = true, image = true},
+	{name = "monitor", source = SYSTEM_MODULE_SOURCES + "monitor", category = .System_Tool, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "plasma", source = DEMONSTRATION_MODULE_SOURCES + "plasma", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "life", source = DEMONSTRATION_MODULE_SOURCES + "life", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "paint", source = DEMONSTRATION_MODULE_SOURCES + "paint", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "fault", source = DEMONSTRATION_MODULE_SOURCES + "fault", entry = true, image = true},
-	{name = "hall_of_fame", source = DEMONSTRATION_MODULE_SOURCES + "hall_of_fame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "heron", source = DEMONSTRATION_MODULE_SOURCES + "heron", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "hall_of_fame", source = DEMONSTRATION_MODULE_SOURCES + "hall_of_fame", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "heron", source = DEMONSTRATION_MODULE_SOURCES + "heron", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	// Partner_Only: rings starts six nodes and gives each its rings.
 	{name = "node", source = DEMONSTRATION_MODULE_SOURCES + "node", entry = true, image = true, menu = .Partner_Only},
-	{name = "rings", source = DEMONSTRATION_MODULE_SOURCES + "rings", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "threads", source = DEMONSTRATION_MODULE_SOURCES + "threads", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "workers", source = DEMONSTRATION_MODULE_SOURCES + "workers", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "rights", source = DEMONSTRATION_MODULE_SOURCES + "rights", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "origin", source = DEMONSTRATION_MODULE_SOURCES + "origin", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "limits", source = DEMONSTRATION_MODULE_SOURCES + "limits", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "budget", source = DEMONSTRATION_MODULE_SOURCES + "budget", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "flow", source = DEMONSTRATION_MODULE_SOURCES + "flow", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "crowd", source = DEMONSTRATION_MODULE_SOURCES + "crowd", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", entry = true, image = true},
-	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "time_page", source = DEMONSTRATION_MODULE_SOURCES + "time_page", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "rings", source = DEMONSTRATION_MODULE_SOURCES + "rings", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "threads", source = DEMONSTRATION_MODULE_SOURCES + "threads", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "workers", source = DEMONSTRATION_MODULE_SOURCES + "workers", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "rights", source = DEMONSTRATION_MODULE_SOURCES + "rights", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "origin", source = DEMONSTRATION_MODULE_SOURCES + "origin", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "limits", source = DEMONSTRATION_MODULE_SOURCES + "limits", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "budget", source = DEMONSTRATION_MODULE_SOURCES + "budget", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "flow", source = DEMONSTRATION_MODULE_SOURCES + "flow", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "crowd", source = DEMONSTRATION_MODULE_SOURCES + "crowd", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", category = .System_Tool, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "time_page", source = DEMONSTRATION_MODULE_SOURCES + "time_page", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	// Log_Only: no window; modustool measure starts it and reads its measures.
-	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true, menu = .Log_Only},
-	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "extended_state", source = DEMONSTRATION_MODULE_SOURCES + "extended_state", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "return_fault", source = DEMONSTRATION_MODULE_SOURCES + "return_fault", entry = true, image = true},
-	{name = "fault_ring", source = DEMONSTRATION_MODULE_SOURCES + "fault_ring", entry = true, image = true},
+	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true, menu = .Log_Only},
+	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "extended_state", source = DEMONSTRATION_MODULE_SOURCES + "extended_state", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "return_fault", source = DEMONSTRATION_MODULE_SOURCES + "return_fault", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "fault_ring", source = DEMONSTRATION_MODULE_SOURCES + "fault_ring", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
 	// Log_Only: no window; it debugs its own children, and the console shows its cases.
 	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true, menu = .Log_Only},
 	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", category = .Service, entry = true, image = true},
 	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", entry = true, image = true},
 	{name = "replay_probe", source = TEST_MODULE_SOURCES + "replay_probe", entry = true, image = true},
-	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", entry = true, image = true},
+	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
 	// Log_Only: no window; the console shows what its guest did.
 	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true, menu = .Log_Only},
 	// Log_Only: no window; the console shows its cases.
 	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true, menu = .Log_Only},
-	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", category = .Service, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", category = .Service, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "serial_terminal", source = SYSTEM_MODULE_SOURCES + "serial_terminal", category = .Service, entry = true, image = true},
-	{name = "grid_terminal", source = SYSTEM_MODULE_SOURCES + "grid_terminal", category = .Service, entry = true, image = true},
+	{name = "grid_terminal", source = SYSTEM_MODULE_SOURCES + "grid_terminal", imports = {TEXT_RENDERING_MODULE}, category = .Service, entry = true, image = true},
 	{name = "dom_terminal", source = SYSTEM_MODULE_SOURCES + "dom_terminal", category = .Service, entry = true, image = true},
 	{name = "flood", source = TEST_MODULE_SOURCES + "flood", entry = true, image = true},
 	{name = "hostile_terminal", source = TEST_MODULE_SOURCES + "hostile_terminal", entry = true, image = true},
@@ -244,13 +252,13 @@ module_builds := [?]Module_Build {
 	{name = "output_measure", source = TEST_MODULE_SOURCES + "output_measure", entry = true, image = true},
 	{name = "output_measure_writer", source = TEST_MODULE_SOURCES + "output_measure_writer", entry = true, image = true},
 	{name = "output_measure_reader", source = TEST_MODULE_SOURCES + "output_measure_reader", entry = true, image = true},
-	{name = "processors", source = DEMONSTRATION_MODULE_SOURCES + "processors", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", category = .Developer_Tool, entry = true, image = true},
-	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", category = .Developer_Tool, entry = true, image = true},
-	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "processors", source = DEMONSTRATION_MODULE_SOURCES + "processors", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", imports = {TEXT_RENDERING_MODULE}, category = .Developer_Tool, entry = true, image = true},
+	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", imports = {TEXT_RENDERING_MODULE}, category = .Developer_Tool, entry = true, image = true},
+	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	// Partner_Only: frames starts its twins to share pages with them.
 	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", entry = true, image = true, menu = .Partner_Only},
-	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	// It takes nearly every page of the machine and stops the machine at its
 	// end: only the image of its test holds it, so no start policy of
 	// another image can start it.
@@ -260,11 +268,11 @@ module_builds := [?]Module_Build {
 	// of that test holds them.
 	{name = "stops_refused", source = TEST_MODULE_SOURCES + "stops_refused", entry = true, image = true, only_in_image = BOOT_IMAGE_MISSING_CONSOLE},
 	{name = "stops_failed", source = TEST_MODULE_SOURCES + "stops_failed", entry = true, image = true, only_in_image = BOOT_IMAGE_MISSING_CONSOLE},
-	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", entry = true, image = true},
+	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
 	// Partner_Only: locks starts the lockers that load the kernel.
 	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true, menu = .Partner_Only},
-	{name = "log", source = SYSTEM_MODULE_SOURCES + "log", category = .System_Tool, entry = true, image = true},
+	{name = "log", source = SYSTEM_MODULE_SOURCES + "log", imports = {TEXT_RENDERING_MODULE}, category = .System_Tool, entry = true, image = true},
 	{name = "log_reader", source = TEST_MODULE_SOURCES + "log_reader", entry = true, image = true},
 	{name = "block", source = SYSTEM_MODULE_SOURCES + "block", category = .Service, entry = true, image = true},
 	{name = "frame", source = SYSTEM_MODULE_SOURCES + "frame", category = .Service, entry = true, image = true},
@@ -276,20 +284,20 @@ module_builds := [?]Module_Build {
 	{name = "tone", source = DEMONSTRATION_MODULE_SOURCES + "tone", entry = true, image = true},
 	{name = "iommu", source = TEST_MODULE_SOURCES + "iommu", entry = true, image = true},
 	{name = "network", source = SYSTEM_MODULE_SOURCES + "network", category = .Service, entry = true, image = true},
-	{name = "net", source = DEMONSTRATION_MODULE_SOURCES + "net", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "server", source = DEMONSTRATION_MODULE_SOURCES + "server", entry = true, image = true},
+	{name = "net", source = DEMONSTRATION_MODULE_SOURCES + "net", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "server", source = DEMONSTRATION_MODULE_SOURCES + "server", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
 	// Partner_Only: its server is the listener of the tool in the test of TCP.
-	{name = "fetch", source = DEMONSTRATION_MODULE_SOURCES + "fetch", entry = true, image = true, menu = .Partner_Only},
+	{name = "fetch", source = DEMONSTRATION_MODULE_SOURCES + "fetch", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true, menu = .Partner_Only},
 	{name = "module_files", source = SYSTEM_MODULE_SOURCES + "module_files", category = .Service, entry = true, image = true},
-	{name = "inspect", source = SYSTEM_MODULE_SOURCES + "inspect", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "debugger_window", source = SYSTEM_MODULE_SOURCES + "debugger_window", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "disk", source = DEMONSTRATION_MODULE_SOURCES + "disk", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "inspect", source = SYSTEM_MODULE_SOURCES + "inspect", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "debugger_window", source = SYSTEM_MODULE_SOURCES + "debugger_window", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "disk", source = DEMONSTRATION_MODULE_SOURCES + "disk", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "storage", source = SYSTEM_MODULE_SOURCES + "storage", category = .Service, entry = true, image = true},
-	{name = "notes", source = DEMONSTRATION_MODULE_SOURCES + "notes", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "assistant", source = APPLICATION_MODULE_SOURCES + "assistant", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "persistence_check", source = TEST_MODULE_SOURCES + "persistence_check", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "browser", source = DEMONSTRATION_MODULE_SOURCES + "browser", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "edit", source = SYSTEM_MODULE_SOURCES + "edit", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "notes", source = DEMONSTRATION_MODULE_SOURCES + "notes", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "assistant", source = APPLICATION_MODULE_SOURCES + "assistant", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "persistence_check", source = TEST_MODULE_SOURCES + "persistence_check", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "browser", source = DEMONSTRATION_MODULE_SOURCES + "browser", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "edit", source = SYSTEM_MODULE_SOURCES + "edit", category = .System_Tool, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "hierarchy", source = TEST_MODULE_SOURCES + "hierarchy", entry = true, image = true},
 	{name = "ranges", source = TEST_MODULE_SOURCES + "ranges", entry = true, image = true},
 	{name = "host", source = SYSTEM_MODULE_SOURCES + "host", category = .Service, entry = true, image = true},
@@ -309,11 +317,11 @@ module_builds := [?]Module_Build {
 	{name = "ssh_client", source = LIBRARY_MODULE_SOURCES + "ssh_client", image = true},
 	{name = "ghostty_vt", source = LIBRARY_MODULE_SOURCES + "ghostty_vt", image = true},
 	{name = "web_engine", source = LIBRARY_MODULE_SOURCES + "web_engine", image = true},
-	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", category = .System_Tool, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", entry = true, imports = {"cryptography", DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", entry = true, imports = {"cryptography", DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", category = .System_Tool, entry = true, imports = {"cryptography", DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "remote_display", source = SYSTEM_MODULE_SOURCES + "remote_display", category = .Service, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", category = .Service, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", category = .Service, entry = true, imports = {"cryptography", DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "sample", source = DEMONSTRATION_MODULE_SOURCES + "sample", image = true},
 	{name = "hostile_exports", source = DEMONSTRATION_MODULE_SOURCES + "hostile_exports", image = true},
 	{name = "calendar", source = LIBRARY_MODULE_SOURCES + "calendar", image = true},
@@ -322,15 +330,14 @@ module_builds := [?]Module_Build {
 	{name = "agenda", source = DEMONSTRATION_MODULE_SOURCES + "agenda", imports = {"calendar"}, image = true},
 	// Its import is not in the boot image: a loader refuses it.
 	{name = "lonely", source = DEMONSTRATION_MODULE_SOURCES + "lonely", imports = {"test_callee"}, image = true},
-	{name = "imports", source = DEMONSTRATION_MODULE_SOURCES + "imports", entry = true, imports = {"calendar"}, image = true},
-	{name = "errors", source = DEMONSTRATION_MODULE_SOURCES + "errors", entry = true, image = true},
-	{name = "interface_elements", source = DEMONSTRATION_MODULE_SOURCES + "interface_elements", entry = true, image = true},
-	{name = "tables", source = DEMONSTRATION_MODULE_SOURCES + "tables", entry = true, image = true},
-	{name = "interface_module", source = LIBRARY_MODULE_SOURCES + "interface_module", image = true},
+	{name = "imports", source = DEMONSTRATION_MODULE_SOURCES + "imports", entry = true, imports = {"calendar", TEXT_RENDERING_MODULE}, image = true},
+	{name = "errors", source = DEMONSTRATION_MODULE_SOURCES + "errors", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "interface_elements", source = DEMONSTRATION_MODULE_SOURCES + "interface_elements", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "tables", source = DEMONSTRATION_MODULE_SOURCES + "tables", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "interface_module", source = LIBRARY_MODULE_SOURCES + "interface_module", imports = {TEXT_RENDERING_MODULE}, image = true},
 	// It compares the package compiled in with the two modules, so it has
 	// no setting: its window layer is its own code.
-	{name = "interface_through_module", source = DEMONSTRATION_MODULE_SOURCES + "interface_through_module", entry = true, imports = {"interface_module", DRAWING_MODULE}, image = true},
-	{name = "text_rendering", source = LIBRARY_MODULE_SOURCES + "text_rendering", image = true},
+	{name = "interface_through_module", source = DEMONSTRATION_MODULE_SOURCES + "interface_through_module", entry = true, imports = {"interface_module", DRAWING_MODULE, TEXT_RENDERING_MODULE}, image = true},
 	// The utility modules of the record streams: each one runs as a
 	// process, with a generic record input and a generic record output
 	// (src/md/features/module_outputs.md, "Generic record inputs and the
@@ -345,10 +352,10 @@ module_builds := [?]Module_Build {
 	{name = "wired_reader", source = DEMONSTRATION_MODULE_SOURCES + "wired_reader", entry = true, image = true, menu = .Partner_Only},
 	// Partner_Only: the start list wires it to wired_reader.
 	{name = "wired_writer", source = DEMONSTRATION_MODULE_SOURCES + "wired_writer", entry = true, image = true, menu = .Partner_Only},
-	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", entry = true, image = true},
-	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", entry = true, image = true},
-	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},
-	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", category = .System_Tool, entry = true, image = true},
+	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", imports = {TEXT_RENDERING_MODULE}, entry = true, image = true},
+	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", imports = {TEXT_RENDERING_MODULE}, category = .System_Tool, entry = true, image = true},
 	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", category = .Service, entry = true, image = true},
 	// The default start policy and the rescue start policy: one module that
 	// reads the list that the root service maps (src/md/features/start_policy.md).
@@ -366,7 +373,7 @@ module_builds := [?]Module_Build {
 	// `module_files` only: the root service finds the import by the hash of
 	// its bytes (disk_processes.odin).
 	{name = STORE_LIBRARY_MODULE, source = TEST_MODULE_SOURCES + STORE_LIBRARY_MODULE, image = true, library = true, disk = true},
-	{name = STORE_IMPORTER_MODULE, source = TEST_MODULE_SOURCES + STORE_IMPORTER_MODULE, entry = true, imports = {STORE_LIBRARY_MODULE}, image = true, disk = true},
+	{name = STORE_IMPORTER_MODULE, source = TEST_MODULE_SOURCES + STORE_IMPORTER_MODULE, entry = true, imports = {STORE_LIBRARY_MODULE, TEXT_RENDERING_MODULE}, image = true, disk = true},
 	// A start policy in the store `module_files` only: principal 0 chooses
 	// it, and the next start runs it (src/md/features/start_policy.md).
 	{name = DISK_START_POLICY_MODULE, source = TEST_MODULE_SOURCES + DISK_START_POLICY_MODULE, entry = true, image = true, disk = true},
@@ -501,6 +508,11 @@ OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
 // setting imports the module: a host test checks it
 // (import_declarations_test.odin).
 DRAWING_MODULE :: "drawing"
+// The library module of the written part of the text, and the define of a
+// module that compiles that part in (src/md/features/text_rendering.md,
+// "Where the written shaping lives").
+TEXT_RENDERING_MODULE :: "text_rendering"
+WRITTEN_SHAPING_COMPILED_IN :: "WRITTEN_SHAPING_COMPILED_IN=true"
 
 DRAWING_THROUGH_MODULE :: "DRAWING_THROUGH_MODULE=true"
 

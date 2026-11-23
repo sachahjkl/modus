@@ -350,7 +350,7 @@ browser_machine_page_image_keeps_one_pointer_theme :: proc(t: ^testing.T) {
 	page_modules := BROWSER_MACHINE_PAGE_MODULES
 	all := make([dynamic]string, context.temp_allocator)
 	append(&all, ..page_modules[:])
-	append(&all, "cryptography")
+	append(&all, "cryptography", "text_rendering")
 	preference := pointer_pictures.RESOURCE_PREFERENCE
 	theme_names := names_as_a_set(preference[:])
 	cases := [?]struct {
@@ -390,8 +390,9 @@ browser_machine_page_image_keeps_the_modules_of_the_page :: proc(t: ^testing.T) 
 	page_modules := BROWSER_MACHINE_PAGE_MODULES
 	all := make([dynamic]string, context.temp_allocator)
 	append(&all, ..page_modules[:])
-	// The import of unlock and of remote, which the list does not name.
-	append(&all, "cryptography")
+	// The imports that the list does not name: of unlock and of remote, and
+	// of each module that draws text.
+	append(&all, "cryptography", "text_rendering")
 	tests := []string{"flood", "arena", "kernel_events", "shortage"}
 	with_tests := make([dynamic]string, context.temp_allocator)
 	append(&with_tests, "flood")
@@ -423,6 +424,7 @@ browser_machine_page_image_keeps_the_modules_of_the_page :: proc(t: ^testing.T) 
 	testing.expect_value(t, problem, "it is not a boot image")
 	without_import := make([dynamic]string, context.temp_allocator)
 	append(&without_import, ..page_modules[:])
+	append(&without_import, "text_rendering")
 	_, _, problem = browser_machine_page_image_files(page_image_base(without_import[:], resources))
 	testing.expect_value(t, problem, "it holds no module cryptography")
 	without_root := make([dynamic]string, context.temp_allocator)

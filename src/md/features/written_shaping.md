@@ -16,6 +16,8 @@ The written shaper of the text rendering places one glyph for each character ([t
 
 ## The chosen form
 
+**Where it runs.** All of this design runs in the library module `text_rendering` only. Each other module places a text of simple characters itself, and calls that module for each other line ([text_rendering.md](text_rendering.md), "Where the written shaping lives"). So the code of this file, its tables and the reader of CFF are in the boot image once.
+
 **The cluster.** A character and the marks after it (general category Mn or Me) are one cluster. A cluster holds at most `CLUSTER_MARK_LIMIT` (16) marks; a mark past it starts a cluster of its own.
 
 **The composition (UAX #15).** The marks of a cluster are put in canonical order by their combining class, a stable sort. Then each mark, in order, composes with the base when the table of the primary compositions (`compositions`, the canonical decompositions of two characters that are not excluded) names the pair and no mark of the same class before it stayed apart. The result is the composed character when a font of the chain has it; else the base and its marks stay apart. So e and U+0301 draw é, and e with U+0323 and U+0302, in either order, draws ệ (U+1EC7).

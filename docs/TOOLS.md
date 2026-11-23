@@ -1044,10 +1044,12 @@ The template hash does not change when a file moves, when a local is renamed, or
 
 ```
 name: my_process
-imports: drawing
+imports: drawing text_rendering
 defines: DRAWING_THROUGH_MODULE=true
 library: no
 ```
+
+A module that draws text imports `text_rendering`: it compiles the fast part of the text in, and calls that library module for each line that is not simple (`FONTS.md`, "12.3 The text shaping module").
 
 | Key | Value | When the key is absent |
 |---|---|---|

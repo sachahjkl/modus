@@ -413,6 +413,10 @@ Glyph_Source :: enum u8 {
 // One font file of the outlines, opened.
 Font :: struct {
 	opened: bool,
+	// A font of the script font set that the library module text_rendering
+	// holds for this process (written_part.odin): its measures and its
+	// glyph count are here, its file is not; its glyphs come from the module.
+	held:   bool,
 	file:   vector_font.Font_File,
 	hash:   [32]u8, // The hash that its record names.
 	own:    vector_font.Font_Measures, // From its outlines: the frame of a font of cells.
@@ -594,6 +598,18 @@ script_fonts_open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (
 	return script_fonts_open_in(state_set(), outlines, &outline)
 }
 
+// written_part_open asks the library module text_rendering to open the
+// fonts of this process for the written part, after open: the fonts of
+// the boot image, and the script font set when the starter mapped it. It
+// takes the fonts of the set that the module holds into the state, and
+// gives those that the set lacks or that the module refused. In a copy
+// with the written part compiled in it does nothing: script_fonts_open
+// opens the set.
+written_part_open :: proc "contextless" () -> (missing: Outline_Fonts) {
+	missing, _ = held_fonts_open()
+	return missing
+}
+
 // script_fonts_open_in is script_fonts_open over a set of fonts.
 script_fonts_open_in :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline) -> (missing: Outline_Fonts) {
 	wanted: Outline_Fonts
@@ -624,11 +640,15 @@ fonts_of_outlines_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_ou
 				font_at(set, font).hash = record.hash
 				missing -= {font}
 				// A script font of the state keeps the walk of its tables; a
-				// font whose tables pass the bound of the fill is refused.
-				if font in SCRIPT_FONTS && set == &state.font_set && !layout_cache_of(font, &font_at(set, font).file) {
-					font_at(set, font)^ = {}
-					missing += {font}
-					state.layout_refused += {font}
+				// font whose tables pass the bound of the fill is refused. The
+				// fast part opens no script font for its state: the library
+				// module holds them (written_part.odin).
+				when WRITTEN_SHAPING_COMPILED_IN {
+					if font in SCRIPT_FONTS && set == &state.font_set && !layout_cache_of(font, &font_at(set, font).file) {
+						font_at(set, font)^ = {}
+						missing += {font}
+						state.layout_refused += {font}
+					}
 				}
 			}
 		}
@@ -803,23 +823,8 @@ font_glyph_of :: proc "contextless" (face: Face, character: rune) -> (font: Outl
 
 // font_glyph_in is font_glyph_of over a set of fonts.
 font_glyph_in :: proc "contextless" (set: ^Font_Set, face: Face, character: rune) -> (font: Outline_Font, glyph_index: int) {
-	if face == .None || !set.opened || !character_valid(character) || !font_at(set, face_forms[face].primary).opened {
-		return .None, 0
-	}
-	chain := chain_of(face, character)
-	for each in chain {
-		if each == .None {
-			break
-		}
-		opened := font_at(set, each)
-		if !opened.opened {
-			continue
-		}
-		if index, problem := vector_font.glyph_of(&opened.file, character); problem == .None {
-			return each, index
-		}
-	}
-	return .None, 0
+	font, glyph_index, _ = chain_glyph(set, face, character, .Take)
+	return font, glyph_index
 }
 
 // font_of gives the first font of the chain of a face that has a glyph for

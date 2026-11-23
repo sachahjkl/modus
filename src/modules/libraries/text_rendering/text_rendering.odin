@@ -25,10 +25,11 @@
 // 3 Cells, 4 Cells_Without_Grid_Fit, 5 Cells_Bold); a text size is the
 // height of a line in 1/64 of a pixel, from 256 to 16384.
 //
-// **What it does not do**: no script font (the caller gives the font
-// outlines only, so Hebrew, Arabic, the ideographs and the emoji are the
-// replacement glyph), no shaping of the scripts of India and of Southeast
-// Asia. The composition of the marks and the order of a line of mixed
+// **What it does not do**, over the bytes of the caller: no script font
+// (the caller gives the font outlines only, so Hebrew, Arabic, the
+// ideographs and the emoji are the replacement glyph), no shaping of the
+// scripts of India and of Southeast Asia. The exports over the fonts of the
+// process do both (process_fonts.odin). The composition of the marks and the order of a line of mixed
 // direction are those of the package.
 package text_rendering_module
 
@@ -73,13 +74,20 @@ CALL_STACK_BOUND :: 16 << 10
 // The records of the deepest path of shape, counted by the depth at which
 // they run together (text_rendering.SHAPE_STACK_RECORDS_BYTES), with the
 // fonts and the outlines of a call, leave an eighth of the bound, 2 KiB,
-// for the other locals and the frames of the calls. A call opens the fonts
-// of the boot image only (Call_Fonts.room), and the shaper of the scripts
-// of India takes a font of the script font set only, so no call runs the
-// engine of the lookups. The freestanding build runs on no host, so this
-// is its bound; the host measures whole calls, with a line of marks that
-// the anchors of GPOS of its font place (one_call_stays_under_its_stack_bound).
+// for the other locals and the frames of the calls. A call over bytes
+// opens the fonts of the boot image only (Call_Fonts.room), and the shaper
+// of the scripts of India takes a font of the script font set only, so no
+// such call runs the engine of the lookups. The freestanding build runs on
+// no host, so this is its bound; the host measures whole calls, with a line
+// of marks that the anchors of GPOS of its font place
+// (one_call_stays_under_its_stack_bound).
 #assert(size_of(Call_Fonts) + size_of(font_outlines.Outlines) + text_rendering.SHAPE_STACK_RECORDS_BYTES <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
+// A call over the fonts of the process (process_fonts.odin) runs the
+// engine of the lookups, and holds no fonts on its stack: they are data of
+// the module. Its deepest path is the records of shape and the spacing; the
+// host measures each export with a line of the scripts of India, Arabic,
+// Hebrew and marks (the_exports_over_the_fonts_of_the_process).
+#assert(size_of(text_rendering.Spacing) + text_rendering.SHAPE_STACK_RECORDS_BYTES <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
 
 // face_and_size_check refuses a face (argument 2) and a text size
 // (argument 3) with an error record.
