@@ -25,15 +25,10 @@ store_test_grown :: proc(old: []$T, wanted: int) -> (grown: []T, ok: bool) {
 	return ([^]T)(base)[:min(max(wanted, 16) * 2, reserve)], true
 }
 
-store_test_jar_grow :: proc "contextless" (jar: ^Cookie_Jar, part: Jar_Part, wanted: int) -> bool {
+store_test_jar_grow :: proc "contextless" (jar: ^Cookie_Jar, wanted: int) -> bool {
 	context = runtime.default_context()
 	ok: bool
-	switch part {
-	case .Entries:
-		jar.entries, ok = store_test_grown(jar.entries, wanted)
-	case .Principals:
-		jar.shares, ok = store_test_grown(jar.shares, wanted)
-	}
+	jar.entries, ok = store_test_grown(jar.entries, wanted)
 	return ok
 }
 
@@ -45,20 +40,35 @@ store_test_cache_grow :: proc "contextless" (cache: ^Response_Cache, part: Cache
 		cache.entries, ok = store_test_grown(cache.entries, wanted)
 	case .Bodies:
 		cache.bodies, ok = store_test_grown(cache.bodies, wanted)
-	case .Principals:
-		cache.shares, ok = store_test_grown(cache.shares, wanted)
 	}
 	return ok
 }
 
-store_test_jar_make :: proc() -> ^Cookie_Jar {
+// store_test_jar_make gives a jar that serves a count of principals, each
+// with a share of cookies, in memory that grows from the heap.
+store_test_jar_make :: proc(principals := 2, share := 64) -> ^Cookie_Jar {
 	jar := new(Cookie_Jar)
 	jar.grow = store_test_jar_grow
+	cookie_jar_init(jar, make([]Principal_Part, principals), 0, share)
 	return jar
 }
 
-store_test_cache_make :: proc() -> ^Response_Cache {
+// store_test_cache_make gives a cache that serves a count of principals,
+// each with a share of entries and of bytes of bodies.
+store_test_cache_make :: proc(principals := 2, entry_share := 32, body_share := 128 << 10) -> ^Response_Cache {
 	cache := new(Response_Cache)
 	cache.grow = store_test_cache_grow
+	response_cache_init(cache, make([]Principal_Part, principals), 0, 0, entry_share, body_share)
 	return cache
 }
+
+store_test_jar_free :: proc(jar: ^Cookie_Jar) {
+	delete(jar.parts)
+	free(jar)
+}
+
+store_test_cache_free :: proc(cache: ^Response_Cache) {
+	delete(cache.parts)
+	free(cache)
+}
+
