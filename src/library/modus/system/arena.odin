@@ -189,6 +189,15 @@ arena_reset :: proc "contextless" (arena: ^Arena) {
 	arena.used_bytes = 0
 }
 
+// arena_reset_to sets the end of the arena back to a mark that an earlier
+// end gave (arena.used_bytes), and keeps what was pushed before it. A mark
+// past the end changes nothing: no push gave the bytes up to it.
+arena_reset_to :: proc "contextless" (arena: ^Arena, mark: u64) {
+	if mark <= arena.used_bytes {
+		arena.used_bytes = mark
+	}
+}
+
 // arena_end ends the arena whole: it unmaps the range and closes the
 // object, so each committed page and the frame list return to the budget
 // at once. Each address of the arena is then invalid. The arena becomes

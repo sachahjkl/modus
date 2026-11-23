@@ -18,8 +18,9 @@
 //
 // The recipes service keeps one realisation object for each recipe that it
 // realised, "realisation_<recipe hash>": the realisation record, its origin
-// and the bytes of its output, so a build of the same recipe after a start
-// takes it from the store and builds nothing.
+// and the count of the bytes of its output; and each output as the object
+// "blob_<output hash>", of any size that its store holds. A build of the
+// same recipe after a start takes them from the store and builds nothing.
 //
 // The projects service keeps one project object for each project of a
 // principal, "project_<principal>_<hash of the name>": the name, the
@@ -40,11 +41,85 @@ Private_Store_Status :: enum u8 {
 	Failed    = 3, // The storage service refused the access, or the port has no store.
 }
 
-// The port of a private store: a read and a write of a whole object.
+// The port of a private store: a read and a write of a whole object of any
+// size, a read from an offset, a remove, a listing and the counts of the
+// blocks. A procedure that a port does not give fails: a service of the
+// plans uses the first two only.
 Private_Store_Port :: struct {
-	user:  rawptr,
-	read:  proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
-	write: proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
+	user:       rawptr,
+	read:       proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
+	write:      proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
+	read_range: proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8) -> (count: int, status: Private_Store_Status),
+	remove:     proc "contextless" (user: rawptr, name: string) -> Private_Store_Status,
+	list:       proc "contextless" (user: rawptr, after: string, rows: []Private_Store_Entry, names: []u8) -> (count: int, status: Private_Store_Status),
+	usage:      proc "contextless" (user: rawptr) -> (blocks: i64, limit: i64, status: Private_Store_Status),
+}
+
+// One entry of a page of the listing of a private store: its name is
+// names[name_offset:][:name_count]. generation is the commit of its last
+// change, so a smaller generation is an older entry.
+Private_Store_Entry :: struct {
+	name_offset: int,
+	name_count:  int,
+	size:        i64,
+	generation:  i64,
+}
+
+// private_store_read_range reads the bytes of the object name from offset
+// into into, as far as they fit: an empty answer is the end of the object.
+private_store_read_range :: proc "contextless" (port: ^Private_Store_Port, name: string, offset: u64, into: []u8) -> (bytes: []u8, status: Private_Store_Status) {
+	if port == nil || port.read_range == nil {
+		return nil, .Failed
+	}
+	count: int
+	count, status = port.read_range(port.user, name, offset, into)
+	if status != .Ok {
+		return nil, status
+	}
+	if count < 0 || count > len(into) {
+		return nil, .Failed
+	}
+	return into[:count], .Ok
+}
+
+// private_store_remove removes the object name and its versions.
+private_store_remove :: proc "contextless" (port: ^Private_Store_Port, name: string) -> Private_Store_Status {
+	if port == nil || port.remove == nil {
+		return .Failed
+	}
+	return port.remove(port.user, name)
+}
+
+// private_store_list gives a page of the entries of the store after the
+// name after ("" from the start). An empty page: no more entries. Each row
+// is checked against names before it is given.
+private_store_list :: proc "contextless" (port: ^Private_Store_Port, after: string, rows: []Private_Store_Entry, names: []u8) -> (page: []Private_Store_Entry, status: Private_Store_Status) {
+	if port == nil || port.list == nil {
+		return nil, .Failed
+	}
+	count: int
+	count, status = port.list(port.user, after, rows, names)
+	if status != .Ok {
+		return nil, status
+	}
+	if count < 0 || count > len(rows) {
+		return nil, .Failed
+	}
+	for row in rows[:count] {
+		if row.name_offset < 0 || row.name_count <= 0 || row.name_offset > len(names) - row.name_count {
+			return nil, .Failed
+		}
+	}
+	return rows[:count], .Ok
+}
+
+// private_store_usage gives the blocks that the store holds and the most
+// that it can hold.
+private_store_usage :: proc "contextless" (port: ^Private_Store_Port) -> (blocks: i64, limit: i64, status: Private_Store_Status) {
+	if port == nil || port.usage == nil {
+		return 0, 0, .Failed
+	}
+	return port.usage(port.user)
 }
 
 // private_store_read reads the object name whole into into. A port with no
@@ -100,7 +175,7 @@ Memory_Private_Store :: struct {
 // of the writes.
 memory_private_store_port :: proc "contextless" (store: ^Memory_Private_Store) -> Private_Store_Port {
 	store.writes_allowed = -1
-	return {user = store, read = memory_private_store_read, write = memory_private_store_write}
+	return {user = store, read = memory_private_store_read, write = memory_private_store_write, read_range = memory_private_store_read_range, remove = memory_private_store_remove}
 }
 
 // memory_private_store_find gives the object name of a memory store, or nil.
@@ -126,6 +201,31 @@ memory_private_store_read :: proc "contextless" (user: rawptr, name: string, int
 	}
 	copy(into, object.bytes[:object.length])
 	return object.length, .Ok
+}
+
+@(private = "file")
+memory_private_store_read_range :: proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8) -> (count: int, status: Private_Store_Status) {
+	store := (^Memory_Private_Store)(user)
+	store.reads += 1
+	object := memory_private_store_find(store, name)
+	if object == nil {
+		return 0, .Absent
+	}
+	if offset >= u64(object.length) {
+		return 0, .Ok
+	}
+	return copy(into, object.bytes[offset:object.length]), .Ok
+}
+
+@(private = "file")
+memory_private_store_remove :: proc "contextless" (user: rawptr, name: string) -> Private_Store_Status {
+	store := (^Memory_Private_Store)(user)
+	object := memory_private_store_find(store, name)
+	if object == nil {
+		return .Absent
+	}
+	object^ = {}
+	return .Ok
 }
 
 @(private = "file")
@@ -510,10 +610,14 @@ PROJECT_NAME_HASH_DIGITS :: 24
 // realisation_object_name gives "realisation_" and the first digits of the
 // recipe hash.
 realisation_object_name :: proc "contextless" (recipe_hash: blake3.Hash) -> (name: Private_Object_Name) {
-	private_object_name_append(&name, "realisation_")
+	private_object_name_append(&name, REALISATION_OBJECT_PREFIX)
 	private_object_name_append_hash(&name, recipe_hash, REALISATION_NAME_HASH_DIGITS)
 	return name
 }
+
+// The prefix of the name of a realisation object: the retention rule of the
+// recipes service lists the store for it.
+REALISATION_OBJECT_PREFIX :: "realisation_"
 
 // project_object_name gives "project_<principal>_" and the first digits of
 // the hash of the project name.
@@ -525,14 +629,14 @@ project_object_name :: proc "contextless" (principal: u64, project_name: []u8) -
 	return name
 }
 
-// encode_realisation_object writes the realisation object of record, with
-// its origin word and the bytes of its output.
-encode_realisation_object :: proc "contextless" (record: ^object_cache.Realisation_Record, origin_word: u64, payload: []u8, output: []u8) -> (written: int, refusal: Recipe_Refusal) {
+// encode_realisation_object writes the realisation object of record: its
+// head, with its origin word and the count of the bytes of its output. The
+// output is the object of its output hash (blob_object_name).
+encode_realisation_object :: proc "contextless" (record: ^object_cache.Realisation_Record, origin_word: u64, output_length: u64, output: []u8) -> (written: int, refusal: Recipe_Refusal) {
 	if record == nil {
 		return 0, .Buffer_Too_Small
 	}
-	size := REALISATION_OBJECT_HEAD_SIZE + len(payload)
-	if len(output) < size {
+	if len(output) < REALISATION_OBJECT_HEAD_SIZE {
 		return 0, .Buffer_Too_Small
 	}
 	magic := REALISATION_OBJECT_MAGIC
@@ -549,25 +653,22 @@ encode_realisation_object :: proc "contextless" (record: ^object_cache.Realisati
 	place += object_cache.PUBLIC_KEY_SIZE
 	copy(output[place:place + object_cache.SIGNATURE_SIZE], record.signature[:])
 	place += object_cache.SIGNATURE_SIZE
-	byte_order.write_u64_little_endian(output, place, u64(len(payload)))
-	place += 8
-	copy(output[place:], payload)
-	return size, .None
+	byte_order.write_u64_little_endian(output, place, output_length)
+	return REALISATION_OBJECT_HEAD_SIZE, .None
 }
 
 // decode_realisation_object reads a realisation object of recipe_hash and
-// checks it whole: its head, its recipe hash, its output kind against
-// expected_kind, and the hash of its output bytes against its output hash.
-// Any fault is Store_Damaged: the reader never takes an output that its hash
-// does not name.
-decode_realisation_object :: proc "contextless" (input: []u8, recipe_hash: blake3.Hash, expected_kind: object_cache.Cache_Object_Kind) -> (record: object_cache.Realisation_Record, origin_word: u64, payload: []u8, refusal: Recipe_Refusal) {
-	if len(input) < REALISATION_OBJECT_HEAD_SIZE {
-		return {}, 0, nil, .Store_Damaged
+// checks it whole: its size, its head, its recipe hash and its output kind
+// against expected_kind. Any fault is Store_Damaged. The reader then checks
+// the bytes of the output against the output hash before it takes them.
+decode_realisation_object :: proc "contextless" (input: []u8, recipe_hash: blake3.Hash, expected_kind: object_cache.Cache_Object_Kind) -> (record: object_cache.Realisation_Record, origin_word: u64, output_length: u64, refusal: Recipe_Refusal) {
+	if len(input) != REALISATION_OBJECT_HEAD_SIZE {
+		return {}, 0, 0, .Store_Damaged
 	}
 	magic := REALISATION_OBJECT_MAGIC
 	for index in 0 ..< len(magic) {
 		if input[index] != magic[index] {
-			return {}, 0, nil, .Store_Damaged
+			return {}, 0, 0, .Store_Damaged
 		}
 	}
 	place := 8
@@ -582,22 +683,13 @@ decode_realisation_object :: proc "contextless" (input: []u8, recipe_hash: blake
 	place += object_cache.PUBLIC_KEY_SIZE
 	copy(record.signature[:], input[place:place + object_cache.SIGNATURE_SIZE])
 	place += object_cache.SIGNATURE_SIZE
-	length := byte_order.read_u64_little_endian(input, place)
-	place += 8
-	if length != u64(len(input) - REALISATION_OBJECT_HEAD_SIZE) {
-		return {}, 0, nil, .Store_Damaged
-	}
+	output_length = byte_order.read_u64_little_endian(input, place)
 	kind, kind_ok := object_cache.cache_object_kind_of_word(kind_word)
-	if !kind_ok || kind != expected_kind || record.recipe_hash != recipe_hash {
-		return {}, 0, nil, .Store_Damaged
+	if !kind_ok || kind != expected_kind || record.recipe_hash != recipe_hash || output_length > object_cache.MAX_OBJECT_PAYLOAD_BYTES {
+		return {}, 0, 0, .Store_Damaged
 	}
 	record.output_kind = kind
-	payload = input[place:]
-	recomputed, output_refusal := recipe_hash_output(kind, payload)
-	if output_refusal != .None || recomputed != record.output_hash {
-		return {}, 0, nil, .Store_Damaged
-	}
-	return record, origin_word, payload, .None
+	return record, origin_word, output_length, .None
 }
 
 // encode_project_object writes the project object of a project: its name,

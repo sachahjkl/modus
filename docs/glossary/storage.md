@@ -446,6 +446,16 @@ The design: `docs/STORAGE.md`, "Ranges".
 
 Do not use: dirty page, write buffer, uncommitted write, transaction (for this).
 
+### Staging object
+
+A staging object is the object that a writer fills by ranges before one commit makes the name of the result name its bytes.
+
+It keeps a write of many commits away from the name that readers use: a reader of the name sees the old bytes or the new ones, never a half. The service `module_files` writes a module file into `module_files_staging_of_<nickname>`, clones it onto the nickname in one commit, and removes it; a write that stops drops its pending changes and removes it, so the file before keeps running. Its name is longer than a nickname, so it never runs. It is not a version, and not a temporary file of a shared folder.
+
+The design: `src/md/features/processes_from_a_disk.md`, "How the file reaches the disk".
+
+Do not use: temporary file, scratch object, partial file.
+
 ### Tree hash
 
 The tree hash is the BLAKE3 hash of the list of the entries of a tree, each its name, its kind and its hash, sorted by name.

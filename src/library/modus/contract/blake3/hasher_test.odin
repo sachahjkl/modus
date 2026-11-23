@@ -9,13 +9,16 @@ import "core:testing"
 // that crosses the blocks and the chunks.
 @(test)
 the_hash_in_pieces_is_the_hash_of_the_whole :: proc(t: ^testing.T) {
-	input := make([]u8, 9 * CHUNK_SIZE + 3)
+	input := make([]u8, 1024 * 1024 + 1)
 	defer delete(input)
 	for &b, i in input {
 		b = u8(i % 251)
 	}
-	sizes := [?]int{0, 1, 63, 64, 65, 1023, 1024, 1025, 2047, 2048, 2049, 3072, 3073, 4096, 4097, 8192, 8193, 9 * CHUNK_SIZE + 3}
-	pieces := [?]int{1, 7, 64, 65, 1000, 1024, 5000}
+	// The pieces of the writers of the system come after the edges of the
+	// hash: 32 KiB (a piece of module_files), 64 KiB and 1 MiB (a step of
+	// its commits), each with one byte less and one more.
+	sizes := [?]int{0, 1, 63, 64, 65, 1023, 1024, 1025, 2047, 2048, 2049, 3072, 3073, 4096, 4097, 8192, 8193, 9 * CHUNK_SIZE + 3, 32 * 1024 - 1, 32 * 1024, 32 * 1024 + 1, 64 * 1024, 1024 * 1024, 1024 * 1024 + 1}
+	pieces := [?]int{1, 7, 64, 65, 1000, 1024, 5000, 32 * 1024}
 	for size in sizes {
 		whole := hash(input[:size])
 		for piece in pieces {

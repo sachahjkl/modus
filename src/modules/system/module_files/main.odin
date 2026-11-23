@@ -41,6 +41,7 @@
 // reaches the disk").
 package module_files
 
+import "internal:module_files/module_files_core"
 import "modus:contract/blake3"
 import "modus:contract/storage_status"
 import "modus:contract/datagram"
@@ -79,17 +80,9 @@ CALL_TAG :: 100_000 // Info.
 // The bytes of the path of a request.
 PATH_LIMIT :: 200
 
-// The bytes of one write_range: the call region of a connection has 64 KiB,
-// and holds the arguments too.
-WRITE_PIECE :: 32 * 1024
-
-// The bytes of the pending changes of one commit of a file. The storage
-// service holds the pending blocks of every connection in 4 MiB, so a
-// large file is committed in steps of 1 MiB, and the last commit sets its
-// size. A load of the nickname between two steps finds other bytes than
-// its hash names, and is refused; the version before stays in the store.
-COMMIT_STEP_BYTES :: 1024 * 1024
-#assert(COMMIT_STEP_BYTES % WRITE_PIECE == 0)
+// The bytes of one piece of a file: one write_range of the stream
+// (module_files_core, file_stream.odin).
+WRITE_PIECE :: module_files_core.WRITE_PIECE
 
 // The pages of the listing of the store that one list reads at most. A
 // storage service that never gives an empty page ends there.
@@ -265,14 +258,15 @@ network_failure :: proc "contextless" (error: ^errors.Error_Record, result: i64,
 }
 
 // fetch sends GET path to the web server of the grant, and writes the
-// body of the answer as the object name of the store, by pieces, as it
-// comes. The answer is input from the network: its head has a status 200
-// and a Content-Length of 1 byte to disk_process.FILE_BYTES_LIMIT, and each
-// piece of the body comes before the deadline after the piece before it.
-// size is the bytes of the body and hash the hash of the bytes written;
-// result is 0, or the result of a failed export. A body that ends early
-// leaves the committed steps of a file whose hash names no file: a load of
-// the nickname refuses it.
+// body of the answer into the staging object of the nickname name, by
+// pieces, as it comes; at its end the nickname names the bytes. The answer
+// is input from the network: its head has a status 200 and a
+// Content-Length of 1 byte to disk_process.FILE_BYTES_LIMIT, each full
+// piece of the body comes before the deadline after the piece before it,
+// and the whole body before module_files_core.receive_total_deadline. size is the bytes of
+// the body and hash the hash of the bytes written; result is 0, or the
+// result of a failed export. A body that ends early leaves the file before
+// under the nickname.
 fetch :: proc "contextless" (path: string, name: string, error: ^errors.Error_Record) -> (size: int, hash: blake3.Hash, result: i64) {
 	deadline := system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
 	index, connect_error := tcp.connect(&table, remote_address, remote_port, system.nanoseconds() / 1000)
@@ -339,31 +333,51 @@ fetch :: proc "contextless" (path: string, name: string, error: ^errors.Error_Re
 	if len(rest) > size {
 		return 0, {}, network_failure(error, ERROR_ANSWER, .Too_Long, .Bytes, path, "the answer has more bytes than its Content-Length")
 	}
-	stream := File_Stream{hasher = blake3.hasher_make()}
-	if failure := file_stream_piece(&stream, name, rest, error); failure != 0 {
-		return 0, {}, failure
+	stream: module_files_core.File_Stream
+	module_files_core.file_stream_begin(&stream, &client_file_store, name)
+	// Each way out before the end leaves the file before under the nickname.
+	defer module_files_core.file_stream_abandon(&stream)
+	if status := module_files_core.file_stream_piece(&stream, rest); status != .Ok {
+		return 0, {}, store_failure(error, &stream.store_error, status, .File, name)
 	}
+	// Two deadlines end the body: no full piece in LOAD_DEADLINE_MILLISECONDS,
+	// and the total of receive_total_deadline. Only a full piece moves the
+	// first, so a link that gives a byte now and then cannot hold the call;
+	// the second bounds a link that gives a piece just before each deadline.
+	total_deadline := module_files_core.receive_total_deadline(system.time(), size)
+	filled := 0
 	for stream.written < size {
-		count, _ := tcp.read(&table, index, piece[:min(len(piece), size - stream.written)])
-		if count > 0 {
-			// A piece that comes moves the deadline: a slow network passes
-			// a large file, and a network that gives nothing ends the call.
-			deadline = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
-			if failure := file_stream_piece(&stream, name, piece[:count], error); failure != 0 {
-				return 0, {}, failure
+		wanted := min(len(piece), size - stream.written)
+		count, _ := tcp.read(&table, index, piece[filled:wanted])
+		filled += count
+		if filled == wanted {
+			if status := module_files_core.file_stream_piece(&stream, piece[:filled]); status != .Ok {
+				return 0, {}, store_failure(error, &stream.store_error, status, .File, name)
 			}
+			filled = 0
+			deadline = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
+			continue
+		}
+		if count > 0 {
 			continue
 		}
 		if remote_ended(index) {
-			return 0, {}, network_failure(error, ERROR_ANSWER, .Too_Small, .Bytes, path, "the connection ended before the end of the body", i64(stream.written))
+			return 0, {}, network_failure(error, ERROR_ANSWER, .Too_Small, .Bytes, path, "the connection ended before the end of the body", i64(stream.written + filled))
 		}
-		if system.time() >= deadline {
-			return 0, {}, network_failure(error, ERROR_NETWORK, .No_Answer, .Milliseconds, path, "no byte of the body came before the deadline", i64(stream.written))
+		now := system.time()
+		if now >= deadline {
+			return 0, {}, network_failure(error, ERROR_NETWORK, .No_Answer, .Milliseconds, path, "no piece of the body came before the deadline", i64(stream.written + filled))
+		}
+		if now >= total_deadline {
+			return 0, {}, network_failure(error, ERROR_NETWORK, .No_Answer, .Milliseconds, path, "the body did not come before its total deadline", i64(stream.written + filled))
 		}
 		pump()
 	}
-	hash, result = file_stream_end(&stream, name, error)
-	return size, hash, result
+	status: storage_status.Status
+	if hash, status = module_files_core.file_stream_end(&stream); status != .Ok {
+		return 0, {}, store_failure(error, &stream.store_error, status, .File, name)
+	}
+	return size, hash, 0
 }
 
 // store_failure writes the fact of a refusal of the storage service, and
@@ -397,19 +411,22 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 
 // receive fetches a module file from the web server of the grant, and stores it in the store module_files under a nickname.
 //
-// The service sends `GET path` to the web server, takes a body of 1 byte to 64 MiB with a Content-Length, writes it as
-// the object `nickname` of the root tree of the store `module_files` of its principal by pieces as it comes, in commits
-// of 1 MiB, then gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The hash is the one to type in `start_from_disk`: the
-// root service checks the bytes against it at the start, so a file with other bytes never runs under it. A file of the
-// same nickname is replaced, and the store keeps the one before as a version.
+// The service sends `GET path` to the web server, takes a body of 1 byte to 64 MiB with a Content-Length, writes it
+// into the staging object of the nickname in the root tree of the store `module_files` of its principal by pieces as
+// it comes, in commits of 1 MiB, then makes the object `nickname` name the bytes in one commit, removes the staging
+// object, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that came. The hash is the one to type in
+// `start_from_disk`: the root service checks the bytes against it at the start, so a file with other bytes never runs
+// under it. A file of the same nickname is replaced whole, and the store keeps the one before as a version: one
+// receive makes one version. A staging object has a name longer than a nickname, so it never runs.
 //
 // - **nickname**: the name of the entry, 1 to 23 bytes, with no zero byte and no `/`; not `module_files` and not
 //   `grant_table`.
 // - **path**: the path of the request, 1 to 200 bytes that start with `/`, with no space and no control byte.
 // - **result**: the 64 hexadecimal digits of the hash.
 //
-// The caller must act for the principal of the store (**Acts_For_Principal**). The call ends when no byte comes for 30
-// seconds, the deadline of a load. The result is 64, or a negative number with an error record:
+// The caller must act for the principal of the store (**Acts_For_Principal**). The call ends when no piece of 32 KiB
+// comes for 30 seconds, the deadline of a load, or when the body takes longer than 30 seconds and its bytes at 64 KiB
+// each second: 1054 seconds for 64 MiB. The result is 64, or a negative number with an error record:
 //
 // - `No_Grant` (-1): the caller does not act for the principal of the store.
 // - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
@@ -417,8 +434,8 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 // - `Empty`, `Too_Long` or `Bad_Byte` (-3): the path; for `Bad_Byte`, the record holds the place of the byte.
 // - `No_Answer`, `Full` or `Refused` (-4): the connection to the web server, or the deadline.
 // - `Refused`, `Malformed`, `Too_Long` or `Too_Small` (-5): the answer: a status that is not 200 (the record holds
-//   it), no Content-Length of 1 byte to 64 MiB, or a body that ends early: the commits before it hold bytes whose hash
-//   names no file, which a load refuses.
+//   it), no Content-Length of 1 byte to 64 MiB, or a body that ends early: the file before stays under the nickname,
+//   and the staging object goes.
 // - `Refused` (-6): the service has no store, or the storage service refused the file.
 //
 // Example: `module_files.receive("visitor", "/visitor")`.
@@ -538,9 +555,10 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			}
 			entry_name := string(names[item.name_offset:][:item.name_count])
 			after_length = copy(after[:], entry_name)
-			// The disk grant table and the debug object of a module file
-			// are objects of the store, and no module file.
-			if entry_kind != .Object || entry_name == disk_process.TABLE_OBJECT_NAME || disk_process.debug_object_name_is(entry_name) {
+			// The disk grant table, the debug object of a module file and
+			// the staging object of a write are objects of the store, and
+			// no module file.
+			if entry_kind != .Object || entry_name == disk_process.TABLE_OBJECT_NAME || disk_process.debug_object_name_is(entry_name) || disk_process.staging_name_is(entry_name) {
 				continue
 			}
 			digits: [disk_process.HASH_DIGITS]u8

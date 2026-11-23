@@ -15,15 +15,16 @@ import "modus:contract/tree_hash"
 // The context of the hash of the native C builder.
 C_BUILDER_DOMAIN :: "modus builder c v1"
 
-// The bounds of a C build of one source by the service recipes. The module
-// c_compiler takes a larger source (64 MiB): these bounds are the memory
-// objects that the service makes for each build, and the module is an
-// object of the local store of recipes, which keeps it beside its
-// realisation in a slot of 64 KiB. The text of the assembly is many times
-// its source: one line of C gives several lines of assembly.
-C_SOURCE_BYTES_LIMIT :: 256 * 1024
-C_TEXT_BYTES_LIMIT :: 1024 * 1024
-C_MODULE_BYTES_LIMIT :: 64 * 1024
+// The bounds of a C build of one source by the service recipes: the source
+// that the module c_compiler takes, the text that the module assemble
+// takes, and the module that one object of a cache holds, as a realisation
+// is shared through a cache. The service makes the memory object of the
+// text and of the module of the size that the build needs
+// (src/md/features/program_loop.md, "The native C builder"): these bounds
+// cost no memory to a small build.
+C_SOURCE_BYTES_LIMIT :: 64 * 1024 * 1024
+C_TEXT_BYTES_LIMIT :: 256 * 1024 * 1024
+C_MODULE_BYTES_LIMIT :: object_cache.MAX_OBJECT_PAYLOAD_BYTES
 
 // The blocks of the output of a C build: one module file, in blocks of
 // 4 KiB.
@@ -84,15 +85,6 @@ c_build_module_refusal :: proc "contextless" (bytes: []u8) -> errors.Error_Recor
 	return {}
 }
 
-// c_build_substitute_refusal checks the module of a realisation against its
-// output hash: a realisation read back from the private store keeps its
-// object under the hash of its record, with no new hash of the bytes.
-c_build_substitute_refusal :: proc "contextless" (bytes: []u8, output_hash: blake3.Hash) -> errors.Error_Record {
-	if blake3.hash(bytes) != output_hash {
-		return errors.error_make(.Damaged, .Modules)
-	}
-	return {}
-}
 
 // c_build_module_room_refusal checks that the memory object of
 // memory_bytes that the caller lends holds the module.

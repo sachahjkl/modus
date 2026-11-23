@@ -83,14 +83,14 @@ builder_start_init :: proc "contextless" (ctx: ^system.Context) {
 // the inputs tree builder: it gives the canonical bytes of the root tree of
 // the output, or writes the cause of its refusal.
 @(private = "file")
-builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_payload: []u8, user_data: rawptr) -> (payload_length: int, ok: bool) {
+builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, staging: []u8, user_data: rawptr) -> (payload: []u8, ok: bool) {
 	start := (^recipes_core.Builder_Start)(user_data)
-	length, refusal := build_run(sandbox, out_payload)
+	length, refusal := build_run(sandbox, staging)
 	if refusal != .None {
 		start.refusal = refusal
-		return 0, false
+		return nil, false
 	}
-	return length, true
+	return staging[:length], true
 }
 
 // builder_file gives the module of the boot image whose hash is the hash of

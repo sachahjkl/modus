@@ -1,6 +1,7 @@
 #+build !freestanding
 package recipes_core
 
+import "core:mem"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/builder"
@@ -42,6 +43,9 @@ hash_literal :: proc(hash: blake3.Hash) -> string {
 @(private = "file")
 recipe_output :: proc(buffer: []u8, here: blake3.Hash, source: string) -> (written: int, ok: bool) {
 	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	pools := lex_evaluator.declaration_pools_of_scale(0)
+	memory, _ := mem.alloc_bytes(lex_evaluator.declaration_workspace_bytes(pools), 64, context.temp_allocator)
+	lex_evaluator.declaration_workspace_carve(workspace, memory, pools)
 	config := lex_evaluator.Declaration_Config{has_here = true, here_hash = here, stack_bytes = 2 * 1024 * 1024}
 	return lex_evaluator.declaration_evaluate_to_buffer(workspace, source, "", config, buffer)
 }

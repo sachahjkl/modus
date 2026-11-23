@@ -53,8 +53,12 @@ import "modus:line_editor"
 // depth of the parser.
 TEXT_BYTES_MOST :: line_editor.LINE_CAPACITY
 
-// The bytes and nesting depth of a multi-line declaration file (.lex).
-DECLARATION_TEXT_BYTES_MOST :: 64 * 1024
+// The bytes and nesting depth of a multi-line declaration file (.lex). A
+// file of the most bytes is a large generated declaration: its evaluator
+// sizes its pools from the bytes that it reads (lex_evaluator,
+// declaration_workspace_carve), so the bound costs no memory to a short
+// file. A place holds its offset in 32 bits.
+DECLARATION_TEXT_BYTES_MOST :: 16 * 1024 * 1024
 DECLARATION_PARSE_DEPTH_LIMIT :: 256
 
 // The nodes of the longest text: each node but the one refusal reads one

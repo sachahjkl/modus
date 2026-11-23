@@ -265,16 +265,17 @@ Memory_Start :: struct {
 }
 
 @(private = "file")
-memory_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_payload: []u8, user_data: rawptr) -> (payload_length: int, ok: bool) {
+memory_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, staging: []u8, user_data: rawptr) -> (payload: []u8, ok: bool) {
 	start := (^Builder_Start)(user_data)
 	memory := (^Memory_Start)(start.data)
 	memory.calls += 1
 	if memory.refusal != .None {
 		start.refusal = memory.refusal
-		return 0, false
+		return nil, false
 	}
-	copy(out_payload, memory.output)
-	return len(memory.output), true
+	// The output of a builder in a process of its own is memory of the
+	// service, not the staging.
+	return memory.output, true
 }
 
 @(private = "file")

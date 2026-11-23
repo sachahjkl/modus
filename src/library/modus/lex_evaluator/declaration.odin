@@ -26,6 +26,14 @@ DECLARATION_WITH_PAIR_CAPACITY :: 512
 DECLARATION_RECIPE_CAPACITY :: 256
 DECLARATION_TAGGED_RECORD_CAPACITY :: 128
 DECLARATION_TEXT_ARENA :: 64 * 1024
+// The pools that grow with the text of the files (Declaration_Pools): the
+// scale 0 holds a file of DECLARATION_UNIT_TEXT_BYTES with the node pool
+// and the text arena above, and each scale doubles both. A file of
+// lex_parser.DECLARATION_TEXT_BYTES_MOST takes the scale
+// DECLARATION_SCALE_MOST.
+DECLARATION_UNIT_TEXT_BYTES :: 64 * 1024
+DECLARATION_SCALE_MOST :: 8
+#assert(DECLARATION_UNIT_TEXT_BYTES << DECLARATION_SCALE_MOST == lex_parser.DECLARATION_TEXT_BYTES_MOST)
 DECLARATION_BINDING_CAPACITY :: 32
 // The fields of one record that a value writes: a recipe takes
 // plans_recipes.MAX_RECIPE_INPUTS inputs as fields, and its other fields.
@@ -76,7 +84,7 @@ Declaration_Config :: struct {
 	depth_limit:     int, // 0 -> EVALUATION_DEPTH_LIMIT
 	stack_bytes:     uint, // 0 -> EVALUATION_STACK_BYTES
 	text_bytes_most: int, // 0 -> lex_parser.DECLARATION_TEXT_BYTES_MOST
-	node_limit:      int, // 0 -> DECLARATION_NODE_POOL
+	node_limit:      int, // 0 -> the node pool of the workspace
 }
 
 // Result of evaluating a .lex declaration (and optionally forcing one field path).
@@ -103,15 +111,34 @@ Import_Entry :: struct {
 	root_value: Value,
 }
 
+// The pools of a workspace that grow with the text that it parses: a node
+// pool, with a thunk, a slot and a count of slots for each node, and the
+// text arena of the nested forms and of the texts of the evaluation.
+Declaration_Pools :: struct {
+	nodes:      int,
+	text_bytes: int,
+}
+
+// The pool that ran out in the last evaluation, when it is a pool that a
+// larger scale has more of: a caller then carves the next scale and
+// evaluates again.
+Declaration_Pool :: enum u8 {
+	None,
+	Nodes,
+	Text,
+}
+
 // Caller-owned memory for one declaration evaluation. Holds no heap
-// allocations and no global state.
+// allocations and no global state. The pools that grow with the text are
+// slices of memory that the caller carves (declaration_workspace_carve).
 Declaration_Workspace :: struct {
 	trees:               [DECLARATION_TREE_CAPACITY]lex_parser.Syntax_Tree,
 	tree_slots:          [DECLARATION_TREE_CAPACITY]Tree_Slot,
-	nodes:               [DECLARATION_NODE_POOL]lex_parser.Node,
-	thunks:              [DECLARATION_NODE_POOL]Thunk,
-	slots:               [DECLARATION_NODE_POOL]i16,
-	slot_counts:         [DECLARATION_NODE_POOL]u16,
+	nodes:               []lex_parser.Node,
+	thunks:              []Thunk,
+	slots:               []i16,
+	slot_counts:         []u16,
+	exhausted:           Declaration_Pool,
 	nodes_used:          int,
 	node_limit:          int,
 	calls:               [DECLARATION_CALL_CAPACITY + 1]Function_Call,
@@ -121,7 +148,7 @@ Declaration_Workspace :: struct {
 	with_pairs:          [DECLARATION_WITH_PAIR_CAPACITY]With_Pair,
 	recipes:             [DECLARATION_RECIPE_CAPACITY]Recipe_Value,
 	tagged_records:      [DECLARATION_TAGGED_RECORD_CAPACITY]Value,
-	text_arena:          [DECLARATION_TEXT_ARENA]u8,
+	text_arena:          []u8,
 	text_used:           int,
 	record_names:        [DECLARATION_RECORD_NAME_POOL]string,
 	record_names_used:   int,
@@ -148,6 +175,78 @@ Declaration_Workspace :: struct {
 	evaluation:          Evaluation,
 }
 
+// declaration_pools_of_scale gives the pools of a scale: the scale 0 has
+// DECLARATION_NODE_POOL nodes and a text arena of DECLARATION_TEXT_ARENA,
+// and each scale doubles both.
+declaration_pools_of_scale :: proc "contextless" (scale: uint) -> Declaration_Pools {
+	return {nodes = DECLARATION_NODE_POOL << scale, text_bytes = DECLARATION_TEXT_ARENA << scale}
+}
+
+// declaration_scale_of_text gives the first scale whose share of text,
+// DECLARATION_UNIT_TEXT_BYTES at the scale 0 and twice at each scale, holds
+// text_bytes: the bytes of the source and of the files that it imports.
+declaration_scale_of_text :: proc "contextless" (text_bytes: u64) -> uint {
+	scale: uint = 0
+	for scale < DECLARATION_SCALE_MOST && u64(DECLARATION_UNIT_TEXT_BYTES) << scale < text_bytes {
+		scale += 1
+	}
+	return scale
+}
+
+// declaration_scale_after gives the next scale after an evaluation at the
+// scale scale, when the pool that ran out is one that a larger scale has
+// more of; ok is false when no pool ran out, another pool did, or scale is
+// the largest.
+declaration_scale_after :: proc "contextless" (ws: ^Declaration_Workspace, scale: uint) -> (next: uint, ok: bool) {
+	switch ws.exhausted {
+	case .None:
+		return scale, false
+	case .Nodes, .Text:
+	}
+	return scale + 1, scale < DECLARATION_SCALE_MOST
+}
+
+// The alignment of each part of the memory of the pools: the largest of
+// their records.
+@(private = "file")
+POOLS_ALIGNMENT :: max(align_of(lex_parser.Node), align_of(Thunk))
+
+@(private = "file")
+pools_part_end :: proc "contextless" (start: int, size: int) -> int {
+	return (start + size + POOLS_ALIGNMENT - 1) &~ (POOLS_ALIGNMENT - 1)
+}
+
+// declaration_workspace_bytes gives the bytes of the memory of the pools.
+declaration_workspace_bytes :: proc "contextless" (pools: Declaration_Pools) -> int {
+	end := pools_part_end(0, pools.nodes * size_of(lex_parser.Node))
+	end = pools_part_end(end, pools.nodes * size_of(Thunk))
+	end = pools_part_end(end, pools.nodes * size_of(i16))
+	end = pools_part_end(end, pools.nodes * size_of(u16))
+	return pools_part_end(end, pools.text_bytes)
+}
+
+// declaration_workspace_carve gives the pools of ws the memory, from its
+// first byte. ok is false for a memory shorter than the pools, or whose
+// first byte is off the alignment of the pools: the workspace keeps its
+// pools then.
+declaration_workspace_carve :: proc "contextless" (ws: ^Declaration_Workspace, memory: []u8, pools: Declaration_Pools) -> bool {
+	if len(memory) < declaration_workspace_bytes(pools) || uintptr(raw_data(memory)) & (POOLS_ALIGNMENT - 1) != 0 {
+		return false
+	}
+	base := raw_data(memory)
+	at := 0
+	ws.nodes = ([^]lex_parser.Node)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(lex_parser.Node))
+	ws.thunks = ([^]Thunk)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(Thunk))
+	ws.slots = ([^]i16)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(i16))
+	ws.slot_counts = ([^]u16)(&base[at])[:pools.nodes]
+	at = pools_part_end(at, pools.nodes * size_of(u16))
+	ws.text_arena = base[at:][:pools.text_bytes]
+	return true
+}
+
 // bundle_loader returns a pure Declaration_Loader backed by a validated
 // read-only declaration_eval bundle slice. The slice pointer must stay valid
 // for the duration of the evaluation.
@@ -170,7 +269,8 @@ bundle_loader :: proc "contextless" (bundle: ^[]u8) -> Declaration_Loader {
 // that dotted field path and its transitive dependencies are forced.
 declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: string, field_path: string = "", config: Declaration_Config = {}) -> (result: Declaration_Result) {
 	ws.nodes_used = 0
-	ws.node_limit = config.node_limit > 0 ? min(config.node_limit, DECLARATION_NODE_POOL) : DECLARATION_NODE_POOL
+	ws.node_limit = config.node_limit > 0 ? min(config.node_limit, len(ws.nodes)) : len(ws.nodes)
+	ws.exhausted = .None
 	ws.text_used = 0
 	ws.import_count = 0
 	ws.loader = config.loader
@@ -211,6 +311,9 @@ declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: 
 	lex_parser.parse_declaration(nested, root_nodes, &ws.trees[0], ws.text_bytes_most, ws.parse_depth_limit)
 	if ws.trees[0].refusal.refusal != .None {
 		r := ws.trees[0].refusal
+		if r.refusal == .Nodes_Full && ws.node_limit == len(ws.nodes) {
+			ws.exhausted = .Nodes
+		}
 		return {
 			ok           = false,
 			failure_kind = parse_refusal_to_failure_kind(r.refusal),
@@ -331,6 +434,9 @@ declaration_pipe_desugar :: proc "contextless" (ws: ^Declaration_Workspace, sour
 			kind = .Depth_Bound_Reached
 		} else if form.refusal == .Too_Long || form.refusal == .Too_Many_Stages {
 			kind = .Pool_Exhausted
+			if form.refusal == .Too_Long {
+				ws.exhausted = .Text
+			}
 		}
 		decl_host_fail(ws, kind, "|>", place)
 		return "", false
@@ -346,6 +452,7 @@ declaration_pipe_desugar :: proc "contextless" (ws: ^Declaration_Workspace, sour
 decl_arena_append :: proc "contextless" (ws: ^Declaration_Workspace, a, b: string) -> (joined: string, ok: bool) {
 	need := len(a) + len(b)
 	if need > len(ws.text_arena) - ws.text_used {
+		ws.exhausted = .Text
 		decl_host_fail(ws, .Pool_Exhausted, "text arena", {})
 		return "", false
 	}
@@ -622,6 +729,7 @@ decl_host_record_memory :: proc "contextless" (data: rawptr, size: int) -> (byte
 	ws := (^Declaration_Workspace)(data)
 	start := (ws.text_used + 7) &~ 7
 	if size > len(ws.text_arena) - start {
+		ws.exhausted = .Text
 		decl_host_fail(ws, .Pool_Exhausted, "record memory", {})
 		return nil, false
 	}
@@ -939,6 +1047,9 @@ decl_load_source_into_tree :: proc "contextless" (ws: ^Declaration_Workspace, so
 	lex_parser.parse_declaration(nested, available, &ws.trees[tree_idx], ws.text_bytes_most, ws.parse_depth_limit)
 	if ws.trees[tree_idx].refusal.refusal != .None {
 		r := ws.trees[tree_idx].refusal
+		if r.refusal == .Nodes_Full && ws.node_limit == len(ws.nodes) {
+			ws.exhausted = .Nodes
+		}
 		decl_host_fail(ws, parse_refusal_to_failure_kind(r.refusal), lex_parser.node_text(&ws.trees[tree_idx], ws.trees[tree_idx].root), r.place)
 		return {}, false
 	}

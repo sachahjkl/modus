@@ -486,8 +486,9 @@ list_answer :: proc "contextless" (machine: ^Machine, answer: ^Storage_Answer) -
 		entry_name := string(answer.names[item.name_offset:][:item.name_count])
 		machine.after_length = copy(machine.after[:], entry_name)
 		// The entry of the process holds the file that this load read: a
-		// module never imports itself.
-		if item.class == .Object && entry_name != nickname(machine) {
+		// module never imports itself. A staging object holds a file that
+		// module_files still writes: no import names its bytes.
+		if item.class == .Object && entry_name != nickname(machine) && !disk_process.staging_name_is(entry_name) {
 			disk_process.scan_entry_add(&machine.scan, entry_name, item.size)
 		}
 	}

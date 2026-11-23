@@ -179,12 +179,16 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 // call makes one isolated call of the export with a name. For a Text result,
 // text has the bytes in the call region: copy them before the next call.
 // When the export answers a negative number, the status is Failed and error
-// has its error record, as the storage service wrote it.
+// has its error record, as the storage service wrote it. With no answer
+// before storage_status.ANSWER_BOUND_MILLISECONDS, the status is No_Answer
+// and the connection ends: the service can still write the answer into the
+// call region, which a next call would use.
 call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status) {
 	sent: Sent_Call
 	if sent, status = call_send(client, name, arguments); status != .Ok {
 		return 0, nil, status
 	}
+	deadline := call_deadline(system.time())
 	for {
 		// A revocation and the stop of the service are events.
 		wait := system.wait_begin()
@@ -196,8 +200,25 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 			return 0, nil, .Gone
 		}
 		system.wait_records(&wait, &client.calls.completions)
-		system.wait_end(&wait)
+		if system.wait_end(&wait, deadline) >= deadline {
+			// One last read: the answer can come with the deadline.
+			if value, text, status, answered = call_answer(client, &sent, arguments, error); answered {
+				return value, text, status
+			}
+			client.gone = true
+			return 0, nil, .No_Answer
+		}
 	}
+}
+
+// call_deadline gives the deadline of a call sent at the time now. A time
+// so large that the sum passes the largest time gives the largest time:
+// never a deadline in the past.
+call_deadline :: proc "contextless" (now: u64) -> u64 {
+	if now > system.WAIT_FOREVER - storage_status.ANSWER_BOUND_MILLISECONDS {
+		return system.WAIT_FOREVER
+	}
+	return now + storage_status.ANSWER_BOUND_MILLISECONDS
 }
 
 // A call that was sent and whose answer did not come yet: what call_answer
@@ -388,6 +409,27 @@ set_size :: proc "contextless" (client: ^Client, place: Place, name: string, siz
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = size}}
 	_, _, status := call(client, "set_size", arguments[:], error)
 	return status
+}
+
+// drop_pending drops the pending changes of this connection on the object
+// `name` under a place: the object stays as its last commit left it, and
+// the pending blocks go back to the storage service. A writer that stops a
+// write by ranges in its middle drops them, so that no pending block stays
+// held by a write that never commits.
+drop_pending :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> storage_status.Status {
+	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
+	_, _, status := call(client, "drop_pending", arguments[:], error)
+	return status
+}
+
+// clone makes the object `new_name` under a place a copy of the object
+// `name` under the same place, in one commit: the two name the same blocks
+// until one of them changes, and the state of new_name before becomes a
+// version. The result is the generation of the commit.
+clone :: proc "contextless" (client: ^Client, place: Place, name: string, new_name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: storage_status.Status) {
+	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {text = transmute([]u8)new_name}}
+	generation, _, status = call(client, "clone", arguments[:], error)
+	return generation, status
 }
 
 // What one commit of pending changes did: the row of the export commit.

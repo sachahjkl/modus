@@ -481,6 +481,7 @@ Built. A disk that stops to answer makes no client of the store wait for ever. T
 - **The log facts.** The two lines are the log facts `block_service.Device_Silent`, with the bound and the requests in flight as fields, and `storage_service.Disk_Silent`, with the cause as a Text field; the stop of the block service for a reset is `block_service.Device_Needs_Reset`.
 - **What a client gets.** A call that needs a block, a read too, gets `Device` at once. A disk that goes silent before the open is done leaves the storage service running with no store known: each call that names a store gets `Device`, and `usage` gives no count. The service does not stop: the root service would start it again for the next process with a store, with a new block service, a reset of a device that still holds a request, a new wait of 60 s and new lines, and the device could still write a data region that a stop frees. No client waits for a disk that does not answer.
 - **The handle of the block service** is closed at the silence: nothing waits for it after, and the stopped process frees its slot.
+- **A client waits for its answer at most 60 s** (`storage_status.ANSWER_BOUND_MILLISECONDS`): a storage service that runs and does not answer, a fault that the bounds above do not reach, gives the client the status `No_Answer`, and the connection ends, as the service can still write the answer into the call region; each later call gives `Gone`.
 
 ## 5. Not built: the next steps
 

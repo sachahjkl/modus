@@ -266,8 +266,10 @@ copied_source_name: [pr.MAX_ENTRY_NAME_BYTES]u8
 //
 // - **source_name**: the name of the source, a name of an entry of a tree: `hello.c`.
 // - **source**: a memory object with the source, which the caller lends with Read.
-// - **source_size**: the bytes of the source, 1 to 256 KiB, the bound of compile.
-// - **module**: a memory object that holds the module, at most 64 KiB, which the caller lends with Read and Write.
+// - **source_size**: the bytes of the source, 1 to 64 MiB, the bound of compile.
+// - **module**: a memory object that holds the module, at most 16 MiB, one object of a cache, which the caller lends
+//   with Read and Write. The service makes the memory of the text and of the module of each build of the size that
+//   the build needs, and reads the module from its store into this memory object.
 //
 // The log says whether the module was built or substituted, with the recipe hash and the hash of the module.
 //
@@ -277,7 +279,7 @@ copied_source_name: [pr.MAX_ENTRY_NAME_BYTES]u8
 // - ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL or ERROR_NOT_READY.
 // - `Unsupported` (-5): the service has no boot image, or the image has no module c_compiler or assemble.
 // - `Empty` or `Too_Long` (-4, argument 1): the name; `Bad_Value` (-4): a name that no tree takes.
-// - `Out_Of_Range` (-4, argument 3): a size of 0, past 256 KiB or past the memory object.
+// - `Out_Of_Range` (-4, argument 3): a size of 0, past 64 MiB or past the memory object.
 // - The error record of the step that failed (-5): the record of compile, whose value is the byte of the source that
 //   the diagnostic names (argument 2); of assemble; `No_Answer` when the compiler or the assembler gives no answer
 //   before the hang bound, which ends its call host; `Empty` or `Out_Of_Range` for a count of bytes that the call
@@ -341,6 +343,9 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 		return recipe_refusal_fail(error, ERROR_RECIPE, refusal, 1)
 	}
 	export_result = recipes_core.build_recipe(&service_state, &export_spec, .Cache_First, {}, nil, c_builder_invoke, nil, nil, &work)
+	// The store holds the module now, or the build failed: the memory of
+	// the module of the build ends here.
+	c_build_work_end(&work)
 	if export_result.refusal != .None {
 		if work.step != .None {
 			error^ = work.error
@@ -358,22 +363,15 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 		}
 		return recipe_refusal_fail(error, ERROR_BUILD, export_result.refusal, 1)
 	}
-	bytes, found := recipes_core.output_bytes(&service_state, export_result.output_hash)
+	length, found := recipes_core.output_length(&service_state, export_result.output_hash)
 	if !found {
 		return recipe_refusal_fail(error, ERROR_BUILD, .Cache_Miss, 1)
-	}
-	// A realisation read back from the private store keeps its object under
-	// the output hash of its record, with no new hash of the bytes: the
-	// module goes out only with the bytes that the hash names.
-	if refusal := pr.c_build_substitute_refusal(bytes, export_result.output_hash); refusal.kind != 0 {
-		error^ = refusal
-		return ERROR_BUILD
 	}
 	module_pages, module_size_status := system.memory_size(module.handle)
 	if module_size_status != .Ok {
 		module_pages = 0
 	}
-	if refusal := pr.c_build_module_room_refusal(len(bytes), module_pages * system.PAGE_SIZE); refusal.kind != 0 {
+	if refusal := pr.c_build_module_room_refusal(int(length), module_pages * system.PAGE_SIZE); refusal.kind != 0 {
 		error^ = refusal
 		return ERROR_BUILD
 	}
@@ -381,8 +379,19 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	if module_status != .Ok {
 		return errors.fail(error, ERROR_BUILD, .Refused, .None, pr.C_BUILD_ARGUMENT_MODULE, 0, 0, i64(module_status))
 	}
-	intrinsics.mem_copy_non_overlapping(module_address, raw_data(bytes), len(bytes))
+	// The module goes from the store into the memory of the caller by
+	// pieces, and out only with the bytes that its output hash names: a
+	// caller that changes its memory during the read gets a refusal.
+	bytes, read_refusal := recipes_core.output_read(&service_state, export_result.output_hash, ([^]u8)(module_address)[:length])
 	system.memory_unmap(module_address)
+	// The bytes of the store that are not the bytes of the output hash are
+	// a damaged module, which goes out to no caller.
+	if read_refusal == .Store_Damaged {
+		return errors.fail(error, ERROR_BUILD, .Damaged, .Modules)
+	}
+	if read_refusal != .None {
+		return recipe_refusal_fail(error, ERROR_BUILD, read_refusal, 1)
+	}
 	switch export_result.outcome {
 	case .From_Cache:
 		system.log_fact(.Info, C_Substituted{size = value_kinds.Size_In_Bytes(len(bytes)), recipe_hash = value_kinds.Hash_Field(export_result.recipe_hash), output_hash = value_kinds.Hash_Field(export_result.output_hash)}, name)

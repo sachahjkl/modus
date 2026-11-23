@@ -232,6 +232,29 @@ debug_object_name_is :: proc "contextless" (name: string) -> bool {
 
 #assert(HASH_DIGITS > NAME_LIMIT)
 
+// The prefix of the name of a staging object: the object of the store
+// module_files that a file is written into before its nickname names it
+// (src/md/features/processes_from_a_disk.md, "How the file reaches the
+// disk"). The prefix alone passes NAME_LIMIT, so a staging object is never
+// a name that can run, and a load never takes a file that is half written.
+STAGING_PREFIX :: "module_files_staging_of_"
+STAGING_NAME_LIMIT :: len(STAGING_PREFIX) + NAME_LIMIT
+
+#assert(len(STAGING_PREFIX) > NAME_LIMIT)
+
+// staging_name_write writes the name of the staging object of a nickname.
+staging_name_write :: proc "contextless" (out: ^[STAGING_NAME_LIMIT]u8, nickname: string) -> string {
+	length := copy(out[:], STAGING_PREFIX)
+	length += copy(out[length:], nickname)
+	return string(out[:length])
+}
+
+// staging_name_is says if the name of an object of the store is the name
+// of a staging object.
+staging_name_is :: proc "contextless" (name: string) -> bool {
+	return len(name) > len(STAGING_PREFIX) && name[:len(STAGING_PREFIX)] == STAGING_PREFIX
+}
+
 // The read of one file: the size that the storage service gave, and the
 // bytes that came. The root service keeps one for the load that runs.
 Read :: struct {

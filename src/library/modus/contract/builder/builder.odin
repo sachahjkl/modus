@@ -45,8 +45,9 @@ OUTPUT_PLACE :: "out" // Under BUILD_PLACE: the root of the store "out".
 
 // The most objects of the inputs of one build: each is one clone. 4096
 // objects hold the sources of a real program, its headers and its
-// libraries; the walk keeps their hashes in the memory of the service,
-// 128 KiB for the taken ones and 160 KiB for the trees that wait.
+// libraries; the walk keeps their hashes in the memory of the service:
+// 128 KiB for the taken ones, 160 KiB for the trees that wait, and 328 KiB
+// for the set of the seen hashes (recipes_core, Input_Closure).
 MAX_INPUT_OBJECTS :: 4096
 
 // The parts of the context of a builder: each holds a handle, and no other

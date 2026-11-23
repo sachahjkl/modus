@@ -81,7 +81,7 @@ sim_random :: proc "contextless" (bytes: []u8, user_data: rawptr) -> bool {
 // The builder of the simulation: a blob of the recipe hash and its input
 // hashes, or a tree with one entry named "out".
 @(private = "file")
-sim_build :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, output: []u8, user_data: rawptr) -> (int, bool) {
+sim_build :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, output: []u8, user_data: rawptr) -> ([]u8, bool) {
 	machine := (^Sim_Machine)(user_data)
 	machine.builds += 1
 	context = runtime.default_context()
@@ -102,17 +102,17 @@ sim_build :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, output: []u8
 		text := "built "
 		count := copy(output, text)
 		count += copy(output[count:], digest[:])
-		return count, true
+		return output[:count], true
 	case .Tree:
 		entry, refusal := tree_hash.tree_entry_make(.Object, "out", digest)
 		if refusal != .None {
-			return 0, false
+			return nil, false
 		}
 		entries := [1]tree_hash.Tree_Entry{entry}
 		written, encode_refusal := tree_hash.tree_encode(entries[:], output)
-		return written, encode_refusal == .None
+		return output[:written], encode_refusal == .None
 	}
-	return 0, false
+	return nil, false
 }
 
 @(private = "file")
@@ -326,7 +326,7 @@ world_pool :: proc(world: ^World) -> [3]Distributed_Peer {
 }
 
 @(private = "file")
-world_local_build :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, output: []u8, user_data: rawptr) -> (int, bool) {
+world_local_build :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, output: []u8, user_data: rawptr) -> ([]u8, bool) {
 	world := (^World)(user_data)
 	world.local_builds += 1
 	return sim_build(sandbox, output, world.laptop)
@@ -382,11 +382,11 @@ cache_prepare_on :: proc(cache: ^Sim_Machine, spec: ^pr.Recipe_Spec, signer: ^Si
 	refusal := pr.builder_sandbox_prepare(spec, &sandbox)
 	assert(refusal == .None)
 	builds := cache.builds
-	count, ok := sim_build(&sandbox, cache.cache_payload[:], cache)
+	built, ok := sim_build(&sandbox, cache.cache_payload[:], cache)
 	assert(ok)
 	cache.builds = builds
-	cache.cache_length = count
-	output_hash, _ := pr.recipe_hash_output(sandbox.output_kind, cache.cache_payload[:count])
+	cache.cache_length = len(built)
+	output_hash, _ := pr.recipe_hash_output(sandbox.output_kind, built)
 	cache.cache_record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = sandbox.output_kind, signer_public_key = signer.signer_public}
 	signing_bytes, _ := object_cache.realisation_signing_bytes(&cache.cache_record)
 	ed25519.sign(&signer.signer_key, signing_bytes[:], cache.cache_record.signature[:])
@@ -811,7 +811,8 @@ distributed_graph_refuses_bad_counts_and_checks_the_local_store :: proc(t: ^test
 	// output hash of its realisation.
 	sandbox: pr.Builder_Sandbox_Spec
 	pr.builder_sandbox_prepare(&alpha, &sandbox)
-	local_store_fixture.length, _ = sim_build(&sandbox, local_store_fixture.payload[:], world.laptop)
+	built, _ := sim_build(&sandbox, local_store_fixture.payload[:], world.laptop)
+	local_store_fixture.length = len(built)
 	output_hash, _ := pr.recipe_hash_output(.Blob, local_store_fixture.payload[:local_store_fixture.length])
 	local_store_fixture.record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = .Blob}
 	dag_recipe_add(world.scheduler, &alpha, nil)

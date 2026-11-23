@@ -284,12 +284,10 @@ inputs_recipe :: proc "contextless" (table: ^Loaded_Projects, state: ^Projects_S
 	project, project_refusal := project_of(table, state, principal, name)
 	if project_refusal != .None {
 		state.counters.total_refusals += 1
-		spec^ = {}
 		return project_refusal
 	}
 	if project.pin_count == 0 {
 		state.counters.total_refusals += 1
-		spec^ = {}
 		return .Pin_Not_Found
 	}
 	spec.builder_hash = pr.inputs_tree_builder_hash()
@@ -300,7 +298,7 @@ inputs_recipe :: proc "contextless" (table: ^Loaded_Projects, state: ^Projects_S
 		if input_refusal != .None {
 			state.counters.total_refusals += 1
 			spec^ = {}
-		return .Invalid_Pin_Name
+			return .Invalid_Pin_Name
 		}
 		spec.inputs[index] = input
 	}

@@ -92,6 +92,8 @@ the_recipe_hash_is_deterministic_and_names_each_part :: proc(t: ^testing.T) {
 	}
 }
 
+// A head that does not decode is refused, and builds nothing: the store is
+// damaged, and a build would hide it.
 @(test)
 a_damaged_realisation_in_the_store_is_refused_and_builds_nothing :: proc(t: ^testing.T) {
 	state := new(Recipes_State)
@@ -106,20 +108,18 @@ a_damaged_realisation_in_the_store_is_refused_and_builds_nothing :: proc(t: ^tes
 	name := pr.realisation_object_name(recipe)
 	object := pr.memory_private_store_find(store, pr.private_object_name_text(&name))
 	saved := object^
+	testing.expect_value(t, saved.length, pr.REALISATION_OBJECT_HEAD_SIZE)
 	damages := [?]struct {
 		offset: int,
 		length: int,
 	} {
 		{0, -1}, // The magic.
 		{8, -1}, // A byte of the recipe hash.
-		{40, -1}, // A byte of the output hash.
 		{72, -1}, // The output kind.
 		{80, -1}, // The origin.
-		{pr.REALISATION_OBJECT_HEAD_SIZE - 8, -1}, // The count of the output bytes.
-		{pr.REALISATION_OBJECT_HEAD_SIZE + 3, -1}, // A byte of the output.
+		{pr.REALISATION_OBJECT_HEAD_SIZE - 1, -1}, // The count of the output bytes, past one object of a cache.
 		{-1, pr.REALISATION_OBJECT_HEAD_SIZE - 1}, // Shorter than its head.
-		{-1, saved.length - 1}, // One byte of the output missing.
-		{-1, saved.length + 1}, // One byte more.
+		{-1, pr.REALISATION_OBJECT_HEAD_SIZE + 1}, // One byte more.
 	}
 	for damage, index in damages {
 		object^ = saved
@@ -140,6 +140,62 @@ a_damaged_realisation_in_the_store_is_refused_and_builds_nothing :: proc(t: ^tes
 	state_init(state, pr.memory_private_store_port(store))
 	whole := build_registered(state, registry, recipe, .Cache_First)
 	testing.expect_value(t, whole.outcome, pr.Recipe_Build_Outcome.From_Cache)
+}
+
+// An output that the store lacks, or whose bytes are not its hash, is a
+// miss: the build runs again and writes the output again, and the next
+// build takes it from the store. Cache_Only runs no build, and misses.
+@(test)
+an_absent_or_damaged_output_builds_again :: proc(t: ^testing.T) {
+	state := new(Recipes_State)
+	defer free(state)
+	registry := new(Recipe_Registry)
+	defer free(registry)
+	store := recipes_test_state_init(state)
+	defer free(store)
+	spec := store_test_spec()
+	recipe, _ := register_recipe(registry, &spec)
+	first := build_registered(state, registry, recipe, .Cache_First)
+	output_name := pr.blob_object_name(first.output_hash)
+	head_name := pr.realisation_object_name(recipe)
+	head := pr.memory_private_store_find(store, pr.private_object_name_text(&head_name))
+	Damage :: enum {
+		Output_Removed,
+		Output_Byte,
+		Output_Shorter,
+		Output_Longer,
+		Head_Output_Hash,
+		Head_Count,
+	}
+	for damage in Damage {
+		output := pr.memory_private_store_find(store, pr.private_object_name_text(&output_name))
+		if !testing.expectf(t, output != nil, "%v: the output is in the store", damage) {
+			return
+		}
+		switch damage {
+		case .Output_Removed:
+			output^ = {}
+		case .Output_Byte:
+			output.bytes[3] ~= 0x41
+		case .Output_Shorter:
+			output.length -= 1
+		case .Output_Longer:
+			output.length += 1
+		case .Head_Output_Hash:
+			head.bytes[40] ~= 0x41
+		case .Head_Count:
+			head.bytes[pr.REALISATION_OBJECT_HEAD_SIZE - 8] ~= 0x01
+		}
+		state_init(state, pr.memory_private_store_port(store))
+		only := build_registered(state, registry, recipe, .Cache_Only)
+		testing.expectf(t, only.refusal == .Cache_Miss, "%v: Cache_Only gives %v", damage, only.refusal)
+		again := build_registered(state, registry, recipe, .Cache_First)
+		testing.expectf(t, again.outcome == .Built_Locally && again.output_hash == first.output_hash, "%v: %v %v", damage, again.outcome, again.refusal)
+		testing.expect_value(t, state.counters.local_builds, u64(1))
+		state_init(state, pr.memory_private_store_port(store))
+		read := build_registered(state, registry, recipe, .Cache_First)
+		testing.expectf(t, read.outcome == .From_Cache, "%v: the build wrote the store whole again: %v", damage, read.outcome)
+	}
 }
 
 @(test)

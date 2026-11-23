@@ -255,6 +255,23 @@ Module_Space :: struct {
 	next:        u64, // Where the next module goes.
 	modules:     [MODULE_SPACE_CAPACITY]Placed,
 	prepared:    ^Prepared_Modules, // Not nil: each module maps its shared code from this table. nil: each module is a copy of its own.
+	// The modules that place loads now, the first at the bottom: the path
+	// from the module of the caller to the import that loads. place walks
+	// the imports with this table, not with a call for each import, so a
+	// chain of MODULE_SPACE_CAPACITY modules costs the stack one frame.
+	frames: [MODULE_SPACE_CAPACITY]Place_Frame,
+}
+
+// One module that place loads: its place, the hash that its importer
+// named and the hash of its file, the import that a replacement changed to
+// it, its header, and its next import to place.
+Place_Frame :: struct {
+	item:         int,
+	replaces:     [32]u8,
+	hash:         [32]u8,
+	head:         module.Header,
+	import_count: int,
+	next_import:  int,
 }
 
 // cycles gives the cycle counter of the processor (`rdtsc`), with no kernel
@@ -301,7 +318,7 @@ module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error
 		before[number] = item.users
 	}
 	next := space.next
-	index = place(space, hash, file, nil, error)
+	index = place(space, hash, file, error)
 	if index >= 0 {
 		return index, true
 	}
@@ -493,10 +510,69 @@ module_fits_below_band :: proc "contextless" (next, memory_size: u64) -> bool {
 }
 
 // place puts a module in the space, after its imports. named is the hash
-// that the caller or an import of importer names. first is the file of the
-// first module.
+// that the caller names, and first is its file. It walks the imports in
+// depth with the frames of the space: an import is placed before the
+// module that imports it, and a module waits in its frame while its
+// imports load. A failure stops the walk, and the space keeps the places
+// for module_space_load to undo.
 @(private)
-place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, importer: ^Placed, error: ^module.Load_Error) -> (result: int) {
+place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, error: ^module.Load_Error) -> int {
+	root, new := place_enter(space, named, first, nil, error)
+	if root < 0 || !new {
+		return root
+	}
+	depth := 1
+	for depth > 0 {
+		frame := &space.frames[depth - 1]
+		item := &space.modules[frame.item]
+		if frame.next_import < frame.import_count {
+			number := frame.next_import
+			record, _ := module.record(item.file, .Imports, u32(number + 1), module.Import)
+			at, entered := place_enter(space, record.hash, nil, item, error)
+			if at < 0 {
+				return place_failed(space, depth, error)
+			}
+			item.import_places[number] = u8(at)
+			item.import_count += 1
+			frame.next_import += 1
+			// A module that the space held already needs no frame. Each new
+			// module takes a free place, so the depth never passes the places.
+			if entered {
+				depth += 1
+			}
+			continue
+		}
+		if !place_finish(space, item, frame.head, frame.import_count, error) {
+			return place_failed(space, depth, error)
+		}
+		depth -= 1
+	}
+	return root
+}
+
+// place_failed ends a walk that failed with depth frames: a failure on the
+// path of a replaced import says which replacement the loader applied, if
+// no replacement nearer to the failure says it. The nearest is the frame on
+// top.
+@(private)
+place_failed :: proc "contextless" (space: ^Module_Space, depth: int, error: ^module.Load_Error) -> int {
+	for index := depth - 1; index >= 0; index -= 1 {
+		frame := &space.frames[index]
+		if frame.replaces != {} && error.replaced.hash == {} {
+			error.replaced = named_of(space.source, frame.replaces)
+			error.replacement = named_of(space.source, frame.hash)
+		}
+	}
+	return -1
+}
+
+// place_enter finds the module of a hash that the caller or an import of
+// importer names. A module that the space holds gains one user (new is
+// false). Else it takes a free place, its addresses and its file, and its
+// frame on top of the frames of the space (new is true): its imports are
+// not placed yet. index is -1 on a failure, with the error record.
+@(private)
+place_enter :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, importer: ^Placed, error: ^module.Load_Error) -> (index: int, new: bool) {
 	hash := named
 	replaces: [32]u8
 	if importer != nil {
@@ -507,8 +583,9 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 			}
 		}
 	}
-	// A failure here concerns this module, as the import of importer.
-	fail :: proc "contextless" (space: ^Module_Space, error: ^module.Load_Error, stage: module.Load_Stage, importer: ^Placed, named: [32]u8, hash: [32]u8) -> int {
+	// A failure here concerns this module, as the import of importer. A
+	// replaced import says which replacement the loader applied.
+	fail :: proc "contextless" (space: ^Module_Space, error: ^module.Load_Error, stage: module.Load_Stage, importer: ^Placed, named: [32]u8, hash: [32]u8, replaces: [32]u8) -> (int, bool) {
 		error.stage = u32(stage)
 		if importer != nil {
 			error.module = named_of(space.source, importer.hash)
@@ -516,28 +593,26 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 		} else {
 			error.module = named_of(space.source, hash)
 		}
-		return -1
-	}
-	// A failure on the path of a replaced import says which replacement
-	// the loader applied, if no replacement nearer to the failure says it.
-	defer if result < 0 && replaces != {} && error.replaced.hash == {} {
-		error.replaced = named_of(space.source, replaces)
-		error.replacement = named_of(space.source, hash)
+		if replaces != {} && error.replaced.hash == {} {
+			error.replaced = named_of(space.source, replaces)
+			error.replacement = named_of(space.source, hash)
+		}
+		return -1, false
 	}
 	free := -1
-	for &item, index in space.modules {
+	for &item, place_index in space.modules {
 		if item.users == 0 {
-			free = free < 0 ? index : free
+			free = free < 0 ? place_index : free
 		} else if item.hash == hash {
 			if item.loading {
-				return fail(space, error, .Cycle, importer, named, hash)
+				return fail(space, error, .Cycle, importer, named, hash, replaces)
 			}
 			item.users += 1
-			return index
+			return place_index, false
 		}
 	}
 	if free < 0 {
-		return fail(space, error, .Room, importer, named, hash)
+		return fail(space, error, .Room, importer, named, hash, replaces)
 	}
 	file := first
 	original: []u8
@@ -546,14 +621,14 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	if importer != nil {
 		if file, stage, file_error = source_file(space.source, hash); stage != .None {
 			error.file_error = u32(file_error)
-			return fail(space, error, stage, importer, named, hash)
+			return fail(space, error, stage, importer, named, hash, replaces)
 		}
 	}
 	if replaces != {} {
 		// The names of the exports that the import slots use are in the module of the import.
 		if original, stage, file_error = source_file(space.source, replaces); stage != .None {
 			error.file_error = u32(file_error)
-			return fail(space, error, stage, importer, named, hash)
+			return fail(space, error, stage, importer, named, hash, replaces)
 		}
 	}
 	// Each file here was validated (module_space_load, source_file); a
@@ -562,46 +637,61 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	head, header_error := module.header(file)
 	if header_error != .None {
 		error.file_error = u32(header_error)
-		return fail(space, error, .Read, importer, named, hash)
+		return fail(space, error, .Read, importer, named, hash, replaces)
 	}
 	import_count := int(max(module.count(file, .Imports), 1)) - 1
 	if import_count > IMPORT_CAPACITY {
-		return fail(space, error, .Room, importer, named, hash)
+		return fail(space, error, .Room, importer, named, hash, replaces)
 	}
 	if !module_fits_below_band(space.next, head.memory_size) {
-		return fail(space, error, .Room, importer, named, hash)
+		return fail(space, error, .Room, importer, named, hash, replaces)
 	}
 	item := &space.modules[free]
 	item^ = {hash = hash, replaces = replaces, file = file, original = original, base = space.next, users = 1, loading = true}
 	// A page with no memory between two modules.
 	space.next += head.memory_size + PAGE_SIZE
+	// The frames on the stack of the walk are the modules that load: each
+	// holds a place with loading set, so they are fewer than the places.
+	depth := 0
+	for &placed in space.modules {
+		if placed.loading && &placed != item {
+			depth += 1
+		}
+	}
+	space.frames[depth] = {item = free, replaces = replaces, hash = hash, head = head, import_count = import_count}
+	return free, true
+}
+
+// place_finish binds a module whose imports are all placed, maps it, and
+// ends its load.
+@(private)
+place_finish :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, import_count: int, error: ^module.Load_Error) -> bool {
 	imports: [IMPORT_CAPACITY]module.Bound_Import
 	for number in 0 ..< import_count {
-		record, _ := module.record(file, .Imports, u32(number + 1), module.Import)
-		at := place(space, record.hash, nil, item, error)
-		if at < 0 {
-			return -1
-		}
-		item.import_places[number] = u8(at)
-		item.import_count += 1
-		used := &space.modules[at]
+		record, _ := module.record(item.file, .Imports, u32(number + 1), module.Import)
+		used := &space.modules[item.import_places[number]]
 		imports[number] = {file = used.file, base = uintptr(used.base)}
 		if used.hash != record.hash {
 			// A replacement: the import slots name exports of the module of the import.
 			imports[number].named = used.replaces == record.hash ? used.original : nil
 			if imports[number].named == nil {
+				stage: module.Load_Stage
+				file_error: module.Error
 				if imports[number].named, stage, file_error = source_file(space.source, record.hash); stage != .None {
 					error.file_error = u32(file_error)
-					return fail(space, error, stage, item, record.hash, used.hash)
+					error.stage = u32(stage)
+					error.module = named_of(space.source, item.hash)
+					error.imported = named_of(space.source, record.hash)
+					return false
 				}
 			}
 		}
 	}
 	if !place_map(space, item, head, imports[:import_count], error) {
-		return -1
+		return false
 	}
 	item.loading = false
-	return free
+	return true
 }
 
 // place_map puts a module in the process of the space, bound to its
@@ -681,14 +771,16 @@ binding_of :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> [32]u8
 	if item.import_count == 0 {
 		return {}
 	}
-	bytes: [IMPORT_CAPACITY * 40]u8
+	// The hash of the hash and the base of each import, one after the
+	// other, by an incremental hash: no buffer of all of them.
+	hasher := blake3.hasher_make()
 	for number in 0 ..< int(item.import_count) {
 		used := &space.modules[item.import_places[number]]
-		copy(bytes[number * 40:], used.hash[:])
 		base := transmute([8]u8)used.base
-		copy(bytes[number * 40 + 32:], base[:])
+		blake3.hasher_update(&hasher, used.hash[:])
+		blake3.hasher_update(&hasher, base[:])
 	}
-	return blake3.hash(bytes[:int(item.import_count) * 40])
+	return blake3.hasher_finish(&hasher)
 }
 
 // place_unmap removes each segment of a module that is mapped. It gives the

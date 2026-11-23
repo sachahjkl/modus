@@ -16,15 +16,19 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding recipes service process, including
-// local object staging and realisation tables.
-// One builder runs at a time, as a call host of its own budget:
-// 1024 pages of the service, system.CALL_HOST_PAGES (512) of the builder,
-// and the memory objects of one native C build (source up to 256 KiB,
-// assembly text up to 1 MiB, module up to 64 KiB) with its compiler and
-// assembler call hosts one at a time.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4096, processes = 2, threads = 2}
-#assert(4096 >= 1024 + system.CALL_HOST_PAGES)
+// Working memory budget for the freestanding recipes service process: 1024
+// pages of the service (the index of its local store, its staging, the
+// sandbox of a build), and one build at a time. A native C build holds the
+// memory objects of its source, of its text and of its module, each of the
+// size that the build needs, and one call host, the compiler then the
+// assembler, which takes the rest (c_builder_host_pages). C_BUILD_PAGES is
+// the build of the amalgamation of SQLite, about 9 MB of C: the tokens and
+// the tree of chibicc take about 40 bytes of memory for each byte of C, and
+// the text about 8; a smaller budget that the root service gives fails a
+// build that passes it with the error record of the budget.
+C_BUILD_PAGES :: 131072
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 132096, processes = 2, threads = 2}
+#assert(132096 == C_BUILD_SERVICE_PAGES_KEPT + C_BUILD_PAGES)
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {

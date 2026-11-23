@@ -128,16 +128,16 @@ build_with_inputs_tree :: proc "contextless" (state: ^Recipes_State, spec: ^pr.R
 }
 
 @(private = "file")
-inputs_tree_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_payload: []u8, user_data: rawptr) -> (payload_length: int, ok: bool) {
+inputs_tree_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, staging: []u8, user_data: rawptr) -> (payload: []u8, ok: bool) {
 	call := (^Inputs_Tree_Call)(user_data)
-	written, refusal := pr.inputs_tree_build(sandbox, out_payload)
+	written, refusal := pr.inputs_tree_build(sandbox, staging)
 	if refusal != .None {
 		if call != nil {
 			call.refusal = refusal
 		}
-		return 0, false
+		return nil, false
 	}
-	return written, true
+	return staging[:written], true
 }
 
 @(private = "file")

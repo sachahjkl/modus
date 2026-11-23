@@ -14,6 +14,9 @@ import "modus:lex_evaluator"
 import "modus:lex_parser"
 import "modus:system"
 
+// The bytes of a declaration file. The copy of the source and the pools
+// of the evaluation are memory of an arena of the budget of the call host,
+// sized from the file: a short file does not pay for the bound.
 SOURCE_BYTES_MOST :: lex_parser.DECLARATION_TEXT_BYTES_MOST
 FIELD_PATH_BYTES_MOST :: 256
 BUNDLE_BYTES_MOST :: 256 * 1024
@@ -28,12 +31,23 @@ ARGUMENT_OUTPUT :: 4
 
 MEMORY_MAP_ARGUMENT_MEMORY :: 1
 
-source_copy: [SOURCE_BYTES_MOST]u8
 field_path_copy: [FIELD_PATH_BYTES_MOST]u8
 bundle_copy: [BUNDLE_BYTES_MOST]u8
 bundle_view: []u8
 output_staging: [OUTPUT_BYTES_MOST]u8
 workspace: lex_evaluator.Declaration_Workspace
+
+// refusal_give gives the error record of the budget or of the arena as
+// the error record of the export.
+@(private)
+refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record) -> i64 {
+	if error != nil {
+		error^ = refusal
+		error.operation = 0
+		error.argument = 0
+	}
+	return ERROR
+}
 
 @(private)
 output_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
@@ -75,8 +89,25 @@ evaluate :: proc "c" (
 	if source_count > SOURCE_BYTES_MOST {
 		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_SOURCE, i64(source_count), SOURCE_BYTES_MOST)
 	}
-	intrinsics.mem_copy_non_overlapping(&source_copy[0], source.bytes, int(source_count))
-	source_text := string(source_copy[:source_count])
+	amounts, budget_status := system.budget_read()
+	if budget_status != .Ok {
+		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(budget_status))
+	}
+	arena_refusal: errors.Error_Record
+	arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages), 0, &arena_refusal)
+	if arena_status != .Ok {
+		return refusal_give(error, arena_refusal)
+	}
+	defer system.arena_end(&arena)
+	source_address, source_status := system.arena_push(&arena, source_count, 1, &arena_refusal)
+	if source_status != .Ok {
+		return refusal_give(error, arena_refusal)
+	}
+	intrinsics.mem_copy_non_overlapping(source_address, source.bytes, int(source_count))
+	source_text := string(([^]u8)(source_address)[:source_count])
+	// The arena holds the source first: a larger scale of the pools goes
+	// back to this mark, and the source stays.
+	pools_mark := arena.used_bytes
 
 	path_count := intrinsics.volatile_load(&field_path.count)
 	if path_count > FIELD_PATH_BYTES_MOST {
@@ -103,7 +134,30 @@ evaluate :: proc "c" (
 		config.here_hash, config.has_here = contract.bundle_here_hash(bundle_view)
 	}
 
-	written, ok := lex_evaluator.declaration_evaluate_to_buffer(&workspace, source_text, path_text, config, output_staging[:])
+	// The first scale is the one whose share of text holds the source and
+	// the bundle. A node pool or a text arena that the files fill doubles
+	// the scale, until the evaluation passes, no scale holds it, or the
+	// budget of the call host refuses the pools: then the call fails with
+	// that error record.
+	config.text_bytes_most = SOURCE_BYTES_MOST
+	scale := lex_evaluator.declaration_scale_of_text(source_count + bundle_count)
+	written: int
+	ok: bool
+	for {
+		system.arena_reset_to(&arena, pools_mark)
+		pools := lex_evaluator.declaration_pools_of_scale(scale)
+		pools_address, pools_status := system.arena_push(&arena, u64(lex_evaluator.declaration_workspace_bytes(pools)), 64, &arena_refusal)
+		if pools_status != .Ok {
+			return refusal_give(error, arena_refusal)
+		}
+		lex_evaluator.declaration_workspace_carve(&workspace, ([^]u8)(pools_address)[:lex_evaluator.declaration_workspace_bytes(pools)], pools)
+		written, ok = lex_evaluator.declaration_evaluate_to_buffer(&workspace, source_text, path_text, config, output_staging[:])
+		next, larger := lex_evaluator.declaration_scale_after(&workspace, scale)
+		if !larger {
+			break
+		}
+		scale = next
+	}
 	if !ok {
 		return errors.fail(error, ERROR, .Over_Limit, .Bytes, ARGUMENT_OUTPUT, 0, OUTPUT_BYTES_MOST)
 	}

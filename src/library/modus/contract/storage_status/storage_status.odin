@@ -14,7 +14,15 @@ Status :: enum u8 {
 	Damaged   = 3, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
 	Failed    = 4, // The export answered a negative number: the error record says why.
 	Too_Small = 5, // The bytes do not fit in the buffer of the caller: the count of the bytes is the result.
+	No_Answer = 6, // The storage service gave no answer before ANSWER_BOUND_MILLISECONDS: the connection ends, and each later call gives Gone.
 }
+
+// The bound of the wait for the answer of one call of the storage service.
+// A commit of the largest pending changes of a connection hashes and
+// writes a few MiB, which a working disk does in well under a second: the
+// bound only ends a hang of the service, so that its client gives a status
+// and goes on instead of waiting for ever.
+ANSWER_BOUND_MILLISECONDS :: 60_000
 
 // The name of each member, as Status names it.
 @(rodata)
@@ -25,6 +33,7 @@ STATUS_NAMES := [Status]string {
 	.Damaged   = "Damaged",
 	.Failed    = "Failed",
 	.Too_Small = "Too_Small",
+	.No_Answer = "No_Answer",
 }
 
 // The word of a Status in 8 bytes, for a record that holds it beside
