@@ -302,6 +302,144 @@ event_service :: proc "contextless" (registers: op.Guest_Registers, kind: op.Gue
 	return .None
 }
 
+// The switch of a page of a switching mapping (src/md/features/guest.md,
+// "The switch of a page"): each page is writable or executable, never both,
+// and a nested page fault that asks for the other access switches that one
+// page. The bits of an entry of the long mode page table that the switch
+// writes; the kernel checks that they are its own.
+ENTRY_WRITE :: u64(1) << 1
+ENTRY_NO_EXECUTE :: u64(1) << 63
+
+// switched_entry_bits gives the access bits of the entry of a page that a
+// fault asks for: a write gives Write and no execute, a fetch gives execute
+// and no Write. A fault that asks for both, or for neither (a read, which
+// switches nothing), is refused.
+switched_entry_bits :: proc "contextless" (write: bool, execute: bool) -> (bits: u64, ok: bool) {
+	if write == execute {
+		return 0, false
+	}
+	return write ? ENTRY_WRITE | ENTRY_NO_EXECUTE : 0, true
+}
+
+// switching_page_of gives the page of an address in a mapping of
+// page_count pages at mapping_address, or false for an address outside it:
+// below its first byte, or at its end and past it.
+switching_page_of :: proc "contextless" (mapping_address: u64, page_count: u64, address: u64) -> (page: u64, ok: bool) {
+	PAGE_BYTES :: 4096
+	if address < mapping_address {
+		return 0, false
+	}
+	page = (address - mapping_address) / PAGE_BYTES
+	if page >= page_count {
+		return 0, false
+	}
+	return page, true
+}
+
+// The switches of one guest processor, to find an instruction that writes
+// the page that holds it: the last switch, and how many times in a row the
+// same page switched to the other access at the same instruction of the
+// same address space of the guest (rip and cr3).
+Switch_Watch :: struct {
+	page:         u64, // The guest physical address of the page of the last switch.
+	address:      u64, // The rip of the guest at the last switch.
+	space:        u64, // The cr3 of the guest at the last switch.
+	write:        bool, // The last switch gave Write.
+	noted:        bool, // A switch was noted since the last loop.
+	alternations: u32,
+}
+
+// SWITCH_ALTERNATIONS_OF_A_LOOP: the alternations at one instruction that
+// mean that the instruction writes its own page. A fetch then a write of
+// one page at one rip happen once when an instruction writes a page of
+// code; twice in a row, the instruction never completes.
+SWITCH_ALTERNATIONS_OF_A_LOOP :: 2
+
+// switch_watch_forget ends the row of the watch: a switch that does not
+// count (switch_counts) is between two that do.
+switch_watch_forget :: proc "contextless" (watch: ^Switch_Watch) {
+	watch^ = {}
+}
+
+// switch_watch_note notes one switch, and says if the instruction writes
+// the page that holds it. The loop is found at a write only, so the exit
+// gives the address that the instruction writes, and the process can do
+// that write for it.
+switch_watch_note :: proc "contextless" (watch: ^Switch_Watch, page: u64, address: u64, space: u64, write: bool) -> (writes_own_page: bool) {
+	if watch.noted && page == watch.page && address == watch.address && space == watch.space && write != watch.write {
+		watch.alternations += 1
+	} else {
+		watch.alternations = 0
+	}
+	watch.page, watch.address, watch.space, watch.write, watch.noted = page, address, space, write, true
+	if watch.alternations >= SWITCH_ALTERNATIONS_OF_A_LOOP && write {
+		watch^ = {}
+		return true
+	}
+	return false
+}
+
+// FAULT_DURING_TABLE_WALK: bit 33 of the first exit information of a
+// nested page fault (the AMD manual, volume 2, "Nested Page Faults"): the
+// processor faulted while it walked the page table of the guest, not at the
+// access of the instruction. The bit 32 says the access of the instruction.
+FAULT_DURING_TABLE_WALK :: u64(1) << 33
+
+// switch_counts says if a switch counts toward the watch: not a fault of a
+// walk of the page table of the guest, and not a fault while the processor
+// delivered an event (exit_event, EXITINTINFO, is valid): in both, the
+// fault is not the access of the instruction at rip. A switch that does not
+// count ends the row: the watch forgets it.
+switch_counts :: proc "contextless" (information_1: u64, exit_event: u64) -> bool {
+	return information_1 & FAULT_DURING_TABLE_WALK == 0 && exit_event & EVENT_VALID == 0
+}
+
+// The facts of a nested page fault of a guest that decide its answer
+// (guest_page_answer in the kernel reads them under the guest lock).
+Fault_Facts :: struct {
+	mapped:      bool, // A mapping of the guest process covers the address.
+	switching:   bool, // The mapping was made with Write, Execute and No_Access.
+	large:       bool, // The mapping uses large pages.
+	has_access:  bool, // The protection of the whole mapping is not No_Access.
+	slot_no_access: bool, // The page has the mark No_Access in its slot.
+	committed:   bool, // The page is committed (an object made Uncommitted).
+	has_entry:   bool, // The page table holds the entry of the page.
+	present:     bool, // The entry is present.
+	allows:      bool, // The present entry already allows the access of the fault.
+	write:       bool, // The fault is a write.
+	execute:     bool, // The fault is a fetch.
+}
+
+// What the kernel does at a nested page fault.
+Fault_Answer :: enum u8 {
+	Refused        = 0, // The run ends with the exit Memory.
+	Page_Give      = 1, // The rule of a process: page_give gives a page on first use, or refuses.
+	Allowed        = 2, // The entry allows the access: a translation that a switch removed. Run again.
+	Give_Switched  = 3, // A page on first use of a switching mapping gets its frame with the access of the fault.
+	Switch         = 4, // A present page of a switching mapping gets the other access.
+}
+
+// fault_answer decides the answer of a nested page fault from its facts.
+// A switching mapping switches only for a fault of one access (a write or a
+// fetch, not both, not a read), on small pages, while the whole mapping has
+// access; inside it, a page that its slot or its commit refuses is refused.
+fault_answer :: proc "contextless" (facts: Fault_Facts) -> Fault_Answer {
+	if !facts.mapped {
+		return .Refused
+	}
+	_, asks_one_access := switched_entry_bits(facts.write, facts.execute)
+	if !facts.switching || !asks_one_access || facts.large || !facts.has_access {
+		return .Page_Give
+	}
+	if facts.slot_no_access || !facts.committed || !facts.has_entry {
+		return .Refused
+	}
+	if facts.present && facts.allows {
+		return .Allowed
+	}
+	return facts.present ? .Switch : .Give_Switched
+}
+
 // The exit codes of the intercepted instructions whose exit gives the
 // process the address of the next instruction, in the exit Other (the AMD
 // manual, volume 2, appendix C, "SVM Intercept Exit Codes").

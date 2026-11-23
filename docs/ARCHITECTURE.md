@@ -1553,7 +1553,7 @@ A process runs another system on the processor, in a guest, with the virtualizat
 A guest is a process that `Process_Create` made and that no thread ran. Its page table is the nested page table of its guest processor: a guest physical address is an address of that process.
 
 - `Memory_Map` with the process handle puts a memory object at a guest physical address. The rules of a mapping hold: no page is writable and executable.
-- Two forms are for guest memory only, in a process that no thread ran. `At_Address_Zero` maps at the guest physical address 0. `Write` with `Execute` and `No_Access` makes a mapping that `Memory_Protect` with the process handle switches between `Write` and `Execute`, never both. `Process_Start` refuses a process with such a mapping.
+- Two forms are for guest memory only, in a process that no thread ran. `At_Address_Zero` maps at the guest physical address 0. `Write` with `Execute` and `No_Access` makes a switching mapping: each page is writable or executable, never both, and a nested page fault that asks a page for the other access switches that one page, with no exit to the process. `Memory_Protect` with the process handle gives the whole mapping one access. `Process_Start` refuses a process with such a mapping.
 - `Memory_Unmap` and `Handle_Revoke` of the memory handle take the memory from the guest, as from any process.
 - A page on first use gets its frame when the guest touches it.
 - The guest is a line of each report of the processes: its name, its mapped pages, its stop.
@@ -1578,7 +1578,7 @@ The thread is the guest processor while the operation runs. The budget of its pr
 
 ### 3. The exits
 
-The kernel handles one exit itself: a nested page fault on a page on first use of a mapping that allows the access. Each other exit ends the operation with a `Guest_Exit_Kind`:
+The kernel handles two exits itself: a nested page fault on a page on first use of a mapping that allows the access, and one that asks a page of a switching mapping for its other access. Each other exit ends the operation with a `Guest_Exit_Kind`:
 
 | Exit | The results |
 |---|---|
@@ -1589,6 +1589,7 @@ The kernel handles one exit itself: a nested page fault on a page on first use o
 | `Memory` | the guest physical address and the access |
 | `Interrupted` | nothing: an interrupt of the machine ended the run; run again |
 | `Interrupt_Window` | nothing: the guest takes interrupts again; the next run delivers the external interrupt of the record |
+| `Writes_Own_Page` | the guest physical address of a page of a switching mapping that the instruction at `rip` writes: the instruction never completes |
 | `Shutdown` | nothing: the guest processor stopped on a triple fault |
 | `Refused_State` | nothing: the processor refused the state of the guest |
 | `Other` | the exit code and the first exit information of the processor; for `rdmsr`, `wrmsr`, `rdtsc` and `rdtscp`, the next instruction |

@@ -19,6 +19,16 @@
 // after the `hlt`: the instruction arrives as an exit `Other` with the
 // exit code 0x88 (icebp), because the kernel lets no guest deliver its debug
 // exception to itself.
+// Then the guest writes the page that holds its code: two pages at the guest
+// address 0x2000 are a switching mapping (made with Write, Execute and
+// No_Access), whose pages the kernel switches between Write and Execute at
+// each fault. `Memory_Protect` refuses to make it read only, and to change
+// one page of it. The code is
+//
+//     mov byte [0x2010], 0x90
+//
+// in the page that it writes: it never completes, and the run ends with the
+// exit `Writes_Own_Page`, with the address 0x2010 and b 0 (16-bit code).
 // Then it checks that a guest takes no thread: `Process_Start` of the guest
 // gives `Bad_State`.
 //
@@ -65,10 +75,55 @@ DEBUG_ADDRESS :: CODE_ADDRESS + 7 // The address of int1 in the guest.
 // vector 1): the kernel does not let a guest deliver it to itself.
 DEBUG_EXCEPTION_EXIT_CODE :: 0x88 // The exit of the instruction int1 (icebp).
 
+// The switching mapping: two pages at 0x2000, and the code that writes the
+// byte at 0x2010 in its own page: mov byte [0x2010], 0x90 (c6 06 10 20 90).
+SWITCHING_ADDRESS :: 0x2000
+SWITCHING_PAGES :: 2
+OWN_PAGE_CODE :: [?]u8{0xC6, 0x06, 0x10, 0x20, 0x90}
+OWN_PAGE_TARGET :: SWITCHING_ADDRESS + 0x10
+
 // The runs of the guest that an interrupt of the machine ends with nothing
 // to answer, before the process gives up: a count, not a time. A tick ends
 // at most one run, and the guest runs seven instructions.
 INTERRUPTED_RUNS_LIMIT :: 1000
+
+// switching_mapping maps two pages at SWITCHING_ADDRESS in the guest as a
+// switching mapping, with the code that writes its own page, gives the
+// whole mapping Execute, and checks that Memory_Protect refuses a read-only
+// protection and a part of it.
+switching_mapping :: proc "contextless" (guest: system.Handle) {
+	memory, memory_status := system.memory_create(SWITCHING_PAGES)
+	if memory_status != .Ok {
+		step_failed("Memory_Create of the switching pages", memory_status)
+	}
+	page, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		step_failed("Memory_Map of the switching pages", map_status)
+	}
+	code := OWN_PAGE_CODE
+	bytes := ([^]u8)(page)
+	for code_byte, index in code {
+		bytes[index] = code_byte
+	}
+	system.memory_unmap(page)
+	if _, guest_status := system.memory_map(memory, {.Write, .Execute, .No_Access}, guest, SWITCHING_ADDRESS); guest_status != .Ok {
+		step_failed("Memory_Map of the switching pages in the guest", guest_status)
+	}
+	whole := [1]op.Address_Range{{address = SWITCHING_ADDRESS, page_count = SWITCHING_PAGES}}
+	part := [1]op.Address_Range{{address = SWITCHING_ADDRESS, page_count = 1}}
+	if _, status := system.memory_protect(whole[:], {}, process = guest); status != .Bad_Operation {
+		system.log_fact(.Info, Step_Not_Refused{status_word = op.Status_Word(status), expected = .Bad_Operation, step = value_kinds.text_field("Memory_Protect read only", 36)})
+		system.stop(.Failed)
+	}
+	if _, status := system.memory_protect(part[:], {.Execute}, process = guest); status != .Bad_Operation {
+		system.log_fact(.Info, Step_Not_Refused{status_word = op.Status_Word(status), expected = .Bad_Operation, step = value_kinds.text_field("Memory_Protect of a part", 36)})
+		system.stop(.Failed)
+	}
+	system.log_fact(.Info, Switching_Protect_Refused{})
+	if _, status := system.memory_protect(whole[:], {.Execute}, process = guest); status != .Ok {
+		step_failed("Memory_Protect of the switching pages", status)
+	}
+}
 
 // step_failed writes the fact of a step that gave a status that stops the
 // demonstration, and stops the process with `Failed`.
@@ -106,6 +161,8 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		step_failed("Memory_Map of the code in the guest", guest_map_status)
 	}
 
+	switching_mapping(guest)
+
 	registers := op.Guest_Registers{rip = CODE_ADDRESS}
 	written_port, written_value, writes: u64
 	halted := false
@@ -142,7 +199,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 				system.log_fact(.Info, Instruction_Not_Reached{runs = u64(INTERRUPTED_RUNS_LIMIT), instruction = value_kinds.text_field("hlt", 8)})
 				system.stop(.Failed)
 			}
-		case .None, .Port_Read, .Cpuid, .Memory, .Shutdown, .Refused_State, .Other, .Interrupt_Window:
+		case .None, .Port_Read, .Cpuid, .Memory, .Shutdown, .Refused_State, .Other, .Interrupt_Window, .Writes_Own_Page:
 			system.log_fact(.Info, Exit_Unexpected{exit_kind = u64(exit.kind), exit_code = value_kinds.Hexadecimal_Sixteen_Digits(exit.code), information = value_kinds.Hexadecimal_Sixteen_Digits(exit.information), instruction_address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip)})
 			system.stop(.Failed)
 		}
@@ -177,6 +234,30 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		break
 	}
 	system.log_fact(.Info, Debug_Exit_Arrived{})
+
+	// The instruction writes the page that holds it: it never completes.
+	registers.rip = SWITCHING_ADDRESS
+	interrupted = 0
+	for {
+		exit, run_status := system.guest_run(guest, &registers)
+		if run_status != .Ok {
+			step_failed("Guest_Run at the write of its own page", run_status)
+		}
+		if exit.kind == .Interrupted {
+			interrupted += 1
+			if interrupted > INTERRUPTED_RUNS_LIMIT {
+				system.log_fact(.Info, Instruction_Not_Reached{runs = u64(INTERRUPTED_RUNS_LIMIT), instruction = value_kinds.text_field("mov", 8)})
+				system.stop(.Failed)
+			}
+			continue
+		}
+		if exit.kind != .Writes_Own_Page || exit.a != OWN_PAGE_TARGET || exit.b != 0 || registers.rip != SWITCHING_ADDRESS {
+			system.log_fact(.Info, Own_Page_Exit_Wrong{exit_kind = u64(exit.kind), address = value_kinds.Hexadecimal_Sixteen_Digits(exit.a), code_64 = exit.b, instruction_address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip)})
+			system.stop(.Failed)
+		}
+		break
+	}
+	system.log_fact(.Info, Own_Page_Write_Arrived{})
 
 	// A guest has no kernel half in its page table: no thread runs on it.
 	if _, start_status := system.call(.Process_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {

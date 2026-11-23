@@ -12,6 +12,7 @@ names := [?]string {
 	"debugger_window",
 	"edit",
 	"inspect",
+	"linux",
 	"log",
 	"manual",
 	"monitor",
@@ -71,6 +72,7 @@ name_icons := [?]Icon {
 	.Debugger,
 	.Document,
 	.Debugger,
+	.Window,
 	.Document,
 	.Manual,
 	.Monitor,
@@ -124,4 +126,4 @@ name_icons := [?]Icon {
 #assert(len(name_icons) == len(names))
 
 APPLICATION_COUNT :: 0 // The applications: the first names.
-TOOL_COUNT :: 11 // The tools: the names after the applications.
+TOOL_COUNT :: 12 // The tools: the names after the applications.

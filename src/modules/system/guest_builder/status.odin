@@ -7,6 +7,7 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import contract "modus:contract/guest_builder"
 import "modus:contract/value_kinds"
+import "modus:guest_regions"
 import "modus:system"
 
 // The counts of the builds of this process and the end of the last one.
@@ -91,7 +92,7 @@ disks_check :: proc "c" (spec_bytes: ^system.Bytes_To_Read, input_disk: ^system.
 	if !copied {
 		return ERROR
 	}
-	defer owned_memory_end(&memory)
+	defer guest_regions.owned_memory_end(&memory)
 	if len(disk) > 0 {
 		if _, disk_refusal := contract.validate_disk_image(disk, .Inputs_Read_Only, 0); disk_refusal != .None {
 			return errors.fail(error, ERROR, .Bad_Value, .None, ARGUMENT_INPUT_DISK, 0, 0, i64(disk_refusal))

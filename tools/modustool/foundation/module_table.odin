@@ -380,6 +380,9 @@ module_builds := [?]Module_Build {
 	// with a read-only input disk and a blank writable output disk
 	// (src/md/features/recipes.md).
 	{name = "guest_builder", source = SYSTEM_MODULE_SOURCES + "guest_builder", category = .Service, image = true},
+	// A shell of Linux in a terminal window: a guest that boots the kernel of
+	// its private store (src/md/features/linux_shell.md).
+	{name = "linux", source = SYSTEM_MODULE_SOURCES + "linux", category = .System_Tool, entry = true, image = true},
 	// The VirtIO-GPU device service: 2D scanout setup and Venus capability
 	// probing over the VirtIO-GPU 1.2 control queue (src/md/features/gpu_access.md).
 	{name = "gpu_device", source = SYSTEM_MODULE_SOURCES + "gpu_device", category = .Service, entry = true, image = true},

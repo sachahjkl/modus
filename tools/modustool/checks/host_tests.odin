@@ -317,6 +317,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SYSTEM_MODULE_SOURCES + "monitor",
 	foundation.SYSTEM_MODULE_SOURCES + "collector",
 	foundation.SYSTEM_MODULE_SOURCES + "guest_builder",
+	foundation.SYSTEM_MODULE_SOURCES + "linux",
+	foundation.SOURCE_FOLDER_PUBLIC + "/guest_regions",
 	foundation.SOURCE_FOLDER_PUBLIC + "/system",
 	foundation.SOURCE_FOLDER_PUBLIC + "/twins",
 	foundation.SOURCE_FOLDER_INTERNAL + "/kernel_events/kernel_events_rounds",

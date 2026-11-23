@@ -710,6 +710,16 @@ The design: `docs/ARCHITECTURE.md`, "A guest", section 1.
 
 Do not use: extended page table, EPT, second-level table.
 
+### Console line
+
+A console line is the line that a Linux guest writes now on its serial port, as the process that runs the guest keeps it: its text and a cursor.
+
+The process `linux` turns the bytes of the serial port into lines with it (`guest_os.Console_Line`): a line that ends goes to the terminal and to the log, and the line that does not end yet is the edit line of the terminal. It reads the few sequences of the line editing of a shell and drops the others, so no escape sequence of the guest reaches a process of the system. It is not a terminal emulator: it keeps one line, not a screen.
+
+The design: `src/md/features/linux_shell.md`, "The console line".
+
+Do not use: tty, pty, terminal emulator.
+
 ### Initial archive
 
 An initial archive is an archive of files in the cpio form that the process of a Linux guest places in the memory of the guest beside the kernel, and that Linux unpacks as its first tree of files.

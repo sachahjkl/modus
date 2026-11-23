@@ -51,10 +51,11 @@ Machine_Exit :: struct {
 Machine_Step :: enum u8 {
 	Continue       = 1, // Run the guest again with the record.
 	Not_Handled    = 2, // A port that no device of the machine has: the process answers it.
-	Switch_Write   = 3, // The guest writes its memory where it may now execute: the process gives that region Write.
-	Switch_Execute = 4, // The guest executes its memory where it may now write: the process gives that region Execute.
 	Halted         = 5, // The guest waits with no interrupt that can come: it stopped.
 	Failed         = 6, // The guest did what the machine does not answer: machine.failure says what.
+	// Only with waits_for_input: the guest ran hlt with its interrupts on and no interrupt waits. The process
+	// waits for an input, or for the time of linux_machine_wait_ticks, then calls linux_machine_resume.
+	Waiting        = 7,
 }
 
 Machine_Failure :: enum u8 {
@@ -64,7 +65,8 @@ Machine_Failure :: enum u8 {
 	Unknown_Exit          = 3,
 	Undecoded_Instruction = 4, // An access to a device by an instruction that the decode refuses.
 	Access_Mismatch       = 5, // The decoded instruction does not make the access that the exit gave.
-	Memory_Read_Fault     = 6, // A read of the memory of the guest faulted: the mapping lost its access.
+	Memory_Refused        = 6, // The kernel refused an access to the memory of the guest: its mapping gives no such access. The kernel switches each page between Write and Execute itself.
+	Writes_Own_Page       = 7, // An instruction writes the page that holds it, and the machine cannot do that write for it.
 }
 
 // The exit codes of the processor that the machine answers in an exit
@@ -125,19 +127,163 @@ Linux_Machine :: struct {
 	compatibility_system_call_target: u64,
 	sysenter:                         [3]u64,
 	page_attribute_table:             u64, // Kept for the guest: the nested page table, not this value, gives the memory type.
-	switch_address:                   u64, // The guest physical address of the last Switch_Write or Switch_Execute.
 	failure:                          Machine_Failure,
 	faults_injected:                  u64, // The general protection faults of refused model-specific registers.
 	unclaimed_accesses:               u64, // Accesses to an address or a port where no device answers.
 	// The record asks for an external interrupt only to open the interrupt window: no line went into
 	// service. The next exit takes the request back, and the machine asks again.
 	window_requested:                 bool,
+	// The caller waits for the input of a principal: at an idle hlt the machine gives Waiting, and the
+	// caller moves the clock with the time of the machine (linux_machine_resume). Else the clock jumps to
+	// the next tick at once, as a build needs (src/md/features/linux_shell.md, "The machine").
+	waits_for_input:                  bool,
+	// The writes that the machine did for an instruction that writes the page that holds it (exit
+	// Writes_Own_Page): a measure.
+	own_page_writes:                  u64,
+	// The debug registers of the guest: each access exits, and the machine keeps the values. No breakpoint
+	// of the guest reaches the processor.
+	debug_registers:                  [8]u64,
+}
+
+// The debug registers at the reset of a processor, and the bits of DR6 and
+// DR7 that read 1 whatever the guest writes.
+DEBUG_STATUS_FIXED :: u64(0xFFFF_0FF0)
+DEBUG_CONTROL_FIXED :: u64(0x400)
+// The exit codes of a read of DRn (0x20 + n) and of a write of DRn
+// (0x30 + n): the AMD manual, volume 2, appendix C.
+EXIT_DEBUG_REGISTER_READ :: u64(0x20)
+EXIT_DEBUG_REGISTER_WRITE :: u64(0x30)
+
+// machine_debug_register answers a mov to or from a debug register: the
+// instruction 0F 21 (read) or 0F 23 (write) with its ModRM, after an
+// optional REX in long mode, whose register agrees with the exit code. The
+// value stays in the machine: DR6 and DR7 keep their fixed bits, DR4 and
+// DR5 are DR6 and DR7. Each other form stops the guest.
+@(private = "file")
+machine_debug_register :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, code: u64) -> Machine_Step {
+	write := code >= EXIT_DEBUG_REGISTER_WRITE
+	index := code & 0xF
+	bytes: [4]u8
+	count := guest_instruction_fetch(machine.memory, registers^, registers.rip, bytes[:])
+	at := 0
+	rex := u8(0)
+	long := registers.efer & op.GUEST_EFER_LONG_MODE_ACTIVE != 0
+	if long && count > 0 && bytes[0] & 0xF0 == 0x40 {
+		rex = bytes[0]
+		at = 1
+	}
+	if count < at + 3 || bytes[at] != 0x0F || bytes[at + 1] != (write ? 0x23 : 0x21) || bytes[at + 2] >> 6 != 3 {
+		machine.failure = .Unknown_Exit
+		return .Failed
+	}
+	modrm := bytes[at + 2]
+	named := u64(modrm >> 3 & 7) | u64(rex >> 2 & 1) << 3
+	if named != index || index > 7 {
+		machine.failure = .Unknown_Exit
+		return .Failed
+	}
+	place := index == 4 || index == 5 ? index + 2 : index
+	general, known := enum_word.member_of_word(General_Register, u64(modrm & 7 | (rex & 1) << 3))
+	if !known {
+		machine.failure = .Unknown_Exit // Four bits name each register: this does not happen.
+		return .Failed
+	}
+	register := general_register_pointer(registers, general)
+	if write {
+		value := long ? register^ : register^ & 0xFFFF_FFFF
+		switch place {
+		case 6:
+			value = value | DEBUG_STATUS_FIXED
+		case 7:
+			value = value | DEBUG_CONTROL_FIXED
+		}
+		machine.debug_registers[place] = value
+	} else {
+		register^ = long ? machine.debug_registers[place] : machine.debug_registers[place] & 0xFFFF_FFFF
+	}
+	registers.rip += u64(at + 3)
+	return .Continue
+}
+
+// machine_own_page_write does the write of an instruction that writes the
+// page of a switching mapping that holds it (the exit Writes_Own_Page): the
+// page is never writable and executable at once, so the guest cannot do it.
+// Linux does it at its start: it patches its text with memcpy, whose own
+// page holds sites that it patches. The machine decodes the instruction
+// with the decode of a device access (a mov to memory), computes the linear
+// address of its operand, translates it through the page table of the
+// guest, and does the write only when it is the address of the exit: then
+// it writes the bytes through the memory of the process and moves rip past
+// the instruction, and the page of the guest stays as the kernel left it.
+// It refuses code that is not 64-bit (b of the exit is not 1, where the
+// decode would read the bytes of another mode), each other instruction (a
+// string store with rep, a lock), an address of 32 bits, an operand that is
+// not the address of the exit, and a write that crosses a page.
+@(private = "file")
+machine_own_page_write :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit) -> Machine_Step {
+	PAGE_BYTES :: u64(4096)
+	address := exit.a
+	refused := exit.b != 1
+	bytes: [INSTRUCTION_BYTES_MOST]u8
+	count := guest_instruction_fetch(machine.memory, registers^, registers.rip, bytes[:])
+	decoded, decode_refusal := device_access_decode(bytes[:count], true)
+	refused ||= decode_refusal != .None || decoded.direction != .Write
+	linear, computed := memory_operand_linear(registers^, decoded)
+	physical, mapped := guest_linear_to_physical(machine.memory, registers^, linear)
+	size := u64(decoded.size)
+	memory_bytes := u64(len(machine.memory.bytes))
+	refused ||= !computed || !mapped || physical != address
+	refused ||= address >= memory_bytes || size > memory_bytes - address || address % PAGE_BYTES + size > PAGE_BYTES
+	if refused {
+		machine.failure = .Writes_Own_Page
+		return .Failed
+	}
+	value := device_access_value(registers^, decoded)
+	for index in 0 ..< size {
+		machine.memory.bytes[address + index] = u8(value >> (index * 8))
+	}
+	device_access_complete(registers, decoded, 0)
+	machine.own_page_writes += 1
+	return .Continue
+}
+
+// linux_machine_wait_ticks gives the ticks of the timer from the clock of
+// the guest to its next interrupt, after a step Waiting; false when no
+// interrupt of the timer can come (the timer is off, or its line masked):
+// only an input wakes the guest then.
+linux_machine_wait_ticks :: proc "contextless" (machine: ^Linux_Machine) -> (ticks: u64, bounded: bool) {
+	deadline, timer_waits := timer_deadline(&machine.timer)
+	if !timer_waits || machine.interrupts.primary.mask & (1 << TIMER_INTERRUPT_LINE) != 0 {
+		return 0, false
+	}
+	return deadline > machine.clock ? deadline - machine.clock : 0, true
+}
+
+// linux_machine_resume ends a step Waiting: the clock of the guest moves by
+// the ticks that passed in the time of the machine, at most to the next
+// interrupt of the timer, and the machine asks for the interrupt that waits
+// (a tick, a key). A late wake gives the guest one tick, not a burst of
+// them.
+linux_machine_resume :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, passed_ticks: u64) {
+	ticks, bounded := linux_machine_wait_ticks(machine)
+	step := bounded ? min(passed_ticks, ticks) : passed_ticks
+	machine.clock = machine.clock + step >= machine.clock ? machine.clock + step : max(u64)
+	machine_interrupts_update(machine, registers)
+}
+
+// linux_machine_serial_input gives bytes of a principal to the serial port
+// of the guest, and gives how many the port took: its receive queue holds
+// SERIAL_RECEIVE_BYTES, and a byte past it is dropped and counted.
+linux_machine_serial_input :: proc "contextless" (machine: ^Linux_Machine, bytes: []u8) -> (taken: int) {
+	return serial_receive_put(&machine.serial, bytes)
 }
 
 // linux_machine_start makes the machine of a build on the memory of the
 // guest and its two disks.
 linux_machine_start :: proc "contextless" (machine: ^Linux_Machine, memory: Guest_Memory, input_disk: []u8, output_disk: []u8) {
 	machine^ = {memory = memory, page_attribute_table = PAGE_ATTRIBUTE_TABLE_RESET}
+	machine.debug_registers[6] = DEBUG_STATUS_FIXED
+	machine.debug_registers[7] = DEBUG_CONTROL_FIXED
 	machine.devices[.Console] = virtio_console_device()
 	machine.devices[.Input_Disk] = virtio_block_device(input_disk, true, "modus-inputs")
 	machine.devices[.Output_Disk] = virtio_block_device(output_disk, false, "modus-outputs")
@@ -214,6 +360,8 @@ linux_machine_handle_exit :: proc "contextless" (machine: ^Linux_Machine, regist
 	step := Machine_Step.Continue
 	switch exit.kind {
 	case .Interrupted, .Interrupt_Window:
+	case .Writes_Own_Page:
+		step = machine_own_page_write(machine, registers, exit)
 	case .Port_Read, .Port_Write:
 		step = machine_port(machine, registers, exit)
 	case .Memory:
@@ -366,21 +514,16 @@ machine_port :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Gues
 }
 
 // machine_memory answers a nested page fault: in the memory of the guest,
-// a switch of its region between Write and Execute; past it, an access to a
-// device, decoded from the instruction at rip.
+// the kernel refused the access (it switches each page between Write and
+// Execute itself, so an exit there is a mapping with no such access), and
+// the guest stops; past it, an access to a device, decoded from the
+// instruction at rip.
 @(private = "file")
 machine_memory :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit) -> Machine_Step {
 	address := exit.a
 	access := exit.b
 	if address < u64(len(machine.memory.bytes)) {
-		machine.switch_address = address
-		if access & FAULT_ACCESS_EXECUTE != 0 {
-			return .Switch_Execute
-		}
-		if access & FAULT_ACCESS_WRITE != 0 {
-			return .Switch_Write
-		}
-		machine.failure = .Memory_Read_Fault
+		machine.failure = .Memory_Refused
 		return .Failed
 	}
 	bytes: [INSTRUCTION_BYTES_MOST]u8
@@ -437,6 +580,9 @@ machine_halt :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Gues
 	if _, waiting := interrupt_acknowledge_peek(&machine.interrupts); waiting {
 		return .Continue
 	}
+	if machine.waits_for_input {
+		return .Waiting
+	}
 	deadline, timer_waits := timer_deadline(&machine.timer)
 	if !timer_waits || machine.interrupts.primary.mask & (1 << TIMER_INTERRUPT_LINE) != 0 {
 		return .Halted
@@ -455,6 +601,9 @@ interrupt_acknowledge_peek :: proc "contextless" (controllers: ^Interrupt_Contro
 // exception that the kernel intercepts and that goes back to the guest.
 @(private = "file")
 machine_other :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit) -> Machine_Step {
+	if exit.code >= EXIT_DEBUG_REGISTER_READ && exit.code < EXIT_DEBUG_REGISTER_WRITE + 16 {
+		return machine_debug_register(machine, registers, exit.code)
+	}
 	code, known := enum_word.member_of_word(Other_Exit_Code, exit.code)
 	if !known || code == .Model_Specific_Register && exit.information > 1 {
 		machine.failure = .Unknown_Exit

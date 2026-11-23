@@ -22,21 +22,9 @@ test_runner :: proc(runner: ^contract.Guest_Sandbox_Runner, output: []u8, max_ex
 	assert(contract.runner_start(runner) == .None)
 }
 
-// The region of a mapping of the memory of the guest: 2 MiB, and more past
-// GUEST_REGIONS_MOST regions, so that the mappings of a guest stay under the
-// capacity of a process.
+// The budget pays the memory of the guest at its bound and the two disks.
 @(test)
-guest_region_sizes :: proc(t: ^testing.T) {
-	testing.expect_value(t, guest_region_bytes(0), GUEST_REGION_BYTES_LEAST)
-	testing.expect_value(t, guest_region_bytes(64 * 1024 * 1024), GUEST_REGION_BYTES_LEAST)
-	testing.expect_value(t, guest_region_bytes(GUEST_REGIONS_MOST * GUEST_REGION_BYTES_LEAST), GUEST_REGION_BYTES_LEAST)
-	testing.expect_value(t, guest_region_bytes(GUEST_REGIONS_MOST * GUEST_REGION_BYTES_LEAST + 1), 2 * GUEST_REGION_BYTES_LEAST)
-	for pages in ([?]u64{16, 16_384, 65_535, GUEST_MEMORY_PAGES_MOST}) {
-		bytes := pages * 4096
-		region := guest_region_bytes(bytes)
-		testing.expect(t, region % GUEST_REGION_BYTES_LEAST == 0)
-		testing.expectf(t, (bytes + region - 1) / region <= GUEST_REGIONS_MOST, "%v pages make at most %v regions", pages, GUEST_REGIONS_MOST)
-	}
+budget_holds_the_guest_and_the_disks :: proc(t: ^testing.T) {
 	testing.expect(t, MODULE_BUDGET.working_memory_pages >= GUEST_MEMORY_PAGES_MOST + INPUT_DISK_BYTES_MOST / 4096 + OUTPUT_DISK_BYTES_MOST / 4096)
 }
 
@@ -157,27 +145,10 @@ build_exit_host_interrupts_not_counted :: proc(t: ^testing.T) {
 	testing.expect(t, refusal != .Nonzero_Guest_Exit)
 }
 
-// A kernel count past the memory of the guest is refused before the
-// rounding to a page, so no count wraps the size of the copy to 0.
+// Inside the memory of the guest, a fault reaches the process only when the
+// kernel refused it (the kernel switches each page itself): the build fails.
 @(test)
-kernel_staging_refuses_counts_past_memory :: proc(t: ^testing.T) {
-	memory := u64(64 * 1024 * 1024)
-	for count in ([?]u64{0, max(u64), max(u64) - 10, max(u64) - 4095, memory, memory - 1, memory + 1}) {
-		staging, fits := kernel_staging_bytes(count, memory)
-		testing.expectf(t, !fits && staging == 0, "the count %v is refused", count)
-	}
-	_, empty_fits := kernel_staging_bytes(1, 0)
-	testing.expect(t, !empty_fits)
-	staging, fits := kernel_staging_bytes(1, memory)
-	testing.expect(t, fits && staging == 4096)
-	staging, fits = kernel_staging_bytes(memory - 4096, memory)
-	testing.expect(t, fits && staging == memory - 4096)
-}
-
-// Inside the memory of the guest, a fault asks for a switch of its region:
-// a write gives Write, an instruction fetch gives Execute.
-@(test)
-build_exit_region_switch :: proc(t: ^testing.T) {
+build_exit_memory_refused :: proc(t: ^testing.T) {
 	runner := new(contract.Guest_Sandbox_Runner)
 	defer free(runner)
 	linux := new(guest_os.Linux_Machine)
@@ -189,9 +160,7 @@ build_exit_region_switch :: proc(t: ^testing.T) {
 	registers := op.Guest_Registers{}
 	test_runner(runner, output[:])
 	guest_os.linux_machine_start(linux, {ram}, nil, output[:])
-	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Memory, a = 0x8_0000, b = guest_os.FAULT_ACCESS_WRITE | 1}, &reported), Build_Exit_Action.Switch_Write)
-	testing.expect_value(t, linux.switch_address, u64(0x8_0000))
-	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Memory, a = 0x9_0000, b = guest_os.FAULT_ACCESS_EXECUTE | 1}, &reported), Build_Exit_Action.Switch_Execute)
-	testing.expect_value(t, linux.switch_address, u64(0x9_0000))
-	testing.expect_value(t, runner.state, contract.Guest_Build_State.Running)
+	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Memory, a = 0x8_0000, b = guest_os.FAULT_ACCESS_WRITE | 1}, &reported), Build_Exit_Action.End)
+	testing.expect_value(t, linux.failure, guest_os.Machine_Failure.Memory_Refused)
+	testing.expect_value(t, runner.state, contract.Guest_Build_State.Failed)
 }

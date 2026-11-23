@@ -232,6 +232,17 @@
       '';
     };
 
+    # The guest image of the process linux (src/md/features/linux_shell.md):
+    # the bzImage of Nixpkgs and a static busybox, of which the tool makes an
+    # initial archive. The host test of the boot protocol loads the kernel,
+    # and the test part linux writes both into the private store linux of
+    # its data disk. No module and no system image holds them: a guest image
+    # is data in a store.
+    guestImages = {
+      MODUS_LINUX_KERNEL_IMAGE = "${pkgs.linux}/bzImage";
+      MODUS_LINUX_GUEST_BUSYBOX = "${pkgs.pkgsStatic.busybox}/bin/busybox";
+    };
+
     # The folders of the store of the outside sources, for the tool: each
     # shell and the check set them.
     outsideSources = {
@@ -462,6 +473,7 @@
             find build/screenshots -maxdepth 1 -name '*.png' -exec cp {} $out/screenshots/ \;
           '';
         }
+        // guestImages
         // firmware
         // outsideSources);
     testParts = lib.genAttrs testPartNames machineTestPart;
@@ -555,12 +567,8 @@
           # publisher in secrets/production.yaml (secrets/README.md).
           packages = buildTools ++ [modustool pkgs.ffmpeg pkgs.sops] ++ preCommitCheck.enabledPackages;
           inherit (preCommitCheck) shellHook;
-          # A real kernel of Linux of 64 bits, the bzImage of Nixpkgs: the
-          # host test of the boot protocol in modus:contract/guest_os loads
-          # it when this variable names it. Only this shell carries it: no
-          # check, no system image and no release depends on it.
-          MODUS_LINUX_KERNEL_IMAGE = "${pkgs.linux}/bzImage";
         }
+        // guestImages
         // firmware
         // ownerPointerTheme
         // vectorFontSources

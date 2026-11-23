@@ -344,8 +344,9 @@ Operation :: enum u32 {
 	//   gives them access), `Receive_Handles` (this process agrees to receive handles through this memory
 	//   object from `Handle_Give`), `At_Address_Zero`, or `Write_Combining` (device memory of
 	//   `Device_Kind.Memory` that is write-combining, not uncached). No flag: read only. The kernel refuses any other
-	//   bit. `Write` with `Execute` needs `No_Access`: no page is writable and executable, and
-	//   `Memory_Protect` then gives the pages `Write` or `Execute` in turn. `Write` with `Execute` and
+	//   bit. `Write` with `Execute` needs `No_Access`: no page is writable and executable. Such a switching
+	//   mapping gets `Write`, `Execute` or `No_Access` from `Memory_Protect` for the whole mapping, and
+	//   the kernel switches each page between `Write` and `Execute` at the fault of the guest. `Write` with `Execute` and
 	//   `At_Address_Zero` are guest memory: only for another process that no thread ran
 	//   ([a guest](docs/ARCHITECTURE.md#a-guest)), which `Process_Start` then refuses.
 	// - `first`: the first page of the object.
@@ -1021,8 +1022,10 @@ Operation :: enum u32 {
 	// ```
 	Memory_Protect = 29, // (ranges: Address_Range, count, flags: Map_Flags, process) -> pages changed.
 	// Changes the protection of pages of mappings of this process, or of a guest: read only (no flag),
-	// `Write`, `Execute`, or `No_Access`. Guest memory mapped with `Write` and `Execute` switches between
-	// the two, never both at once ([a guest](docs/ARCHITECTURE.md#a-guest)). Each processor that runs a thread of the process forgets the old translations before
+	// `Write`, `Execute`, or `No_Access`. A switching mapping (guest memory mapped with `Write`, `Execute`
+	// and `No_Access`) takes only `Write`, `Execute` or `No_Access`, for the whole mapping: the kernel then
+	// switches each page between `Write` and `Execute` at the fault of the guest, never both at once
+	// ([a guest](docs/ARCHITECTURE.md#a-guest)). Each processor that runs a thread of the process forgets the old translations before
 	// the operation returns (one shoot-down). A table is done whole or not at all
 	// ([protection and the shoot-down](docs/ARCHITECTURE.md#protection-and-the-shoot-down)).
 	//
@@ -1048,7 +1051,9 @@ Operation :: enum u32 {
 	//
 	// - `Bad_Operation`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
 	//   `Write` with `Execute`, or `No_Access` with another flag; more than the mapping was made with; one
-	//   table names a mapping whole and in part; more than `RANGE_TABLE_PAGE_LIMIT` pages.
+	//   table names a mapping whole and in part; more than `RANGE_TABLE_PAGE_LIMIT` pages; read only, or a
+	//   part, of a switching mapping: the switch of a page gives it `Write` or `Execute` whatever such a
+	//   protection said.
 	// - `Bad_Address`: the process cannot read the table; a range is not on whole pages, is empty, or is not
 	//   inside one mapping; the mapping is a thread area or the time page; a part of a mapping of a
 	//   contiguous object.
@@ -1272,7 +1277,9 @@ Operation :: enum u32 {
 	// the run ends with `Interrupt_Window` when the guest takes interrupts again.
 	//
 	// The kernel gives a page on first use of a mapping of the guest its frame when the guest touches it,
-	// and enters the guest again: that exit does not end the operation. The operation ends at each other
+	// and enters the guest again: that exit does not end the operation. A page of a mapping made with
+	// `Write`, `Execute` and `No_Access` is writable or executable, never both: a fault that asks it for the
+	// other access switches that page, and does not end the operation either. The operation ends at each other
 	// exit, with the exit in its results.
 	//
 	// **Arguments**
@@ -1658,6 +1665,12 @@ Guest_Exit_Kind :: enum u64 {
 	// took no interrupt (its interrupt flag clear, or in its interrupt shadow), and the guest now takes one.
 	// The request stays in the record: the next run delivers it.
 	Interrupt_Window = 10,
+	// An instruction writes the page of a switching mapping that holds it: `a` is the guest physical address
+	// that it writes, `b` is 1 when the instruction is 64-bit code (its code segment has L, in long mode), else
+	// 0. A page is never writable and executable at once, so the instruction never completes: the
+	// process does the write for it through its own mapping of the memory and moves `rip` past it, or
+	// stops the guest.
+	Writes_Own_Page = 11,
 }
 
 // A module record: one module that a loader put in a process (Process_Module).

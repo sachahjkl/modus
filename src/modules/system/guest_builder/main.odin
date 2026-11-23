@@ -28,6 +28,7 @@ import "modus:contract/blake3"
 import "modus:contract/errors"
 import contract "modus:contract/guest_builder"
 import "modus:contract/guest_os"
+import "modus:guest_regions"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -46,11 +47,6 @@ TREE_OUTPUT_BYTES_MOST :: contract.UNPACK_NODE_BUFFER_BYTES
 
 // Name of the child guest process in kernel reports.
 GUEST_PROCESS_NAME :: "guest_builder guest"
-
-// The memory of the guest is mapped in regions of at least 2 MiB, so that
-// the process has at most GUEST_REGIONS_MOST mappings in the guest.
-GUEST_REGION_BYTES_LEAST :: u64(2 * 1024 * 1024)
-GUEST_REGIONS_MOST :: u64(120)
 
 // Failing return code of build(): the error record carries the exact cause.
 ERROR :: i64(-1)
@@ -88,43 +84,9 @@ sandbox_runner: contract.Guest_Sandbox_Runner
 machine: guest_os.Linux_Machine
 output_disk_hash: blake3.Hash
 
-// One memory object of this process, mapped here.
-Owned_Memory :: struct {
-	handle: system.Handle,
-	bytes:  []u8,
-}
-
-// owned_memory_make makes a memory object of at least byte_count bytes and
-// maps it here for writing.
-owned_memory_make :: proc "contextless" (byte_count: u64) -> (memory: Owned_Memory, status: system.Status) {
-	pages := max((byte_count + system.PAGE_SIZE - 1) / system.PAGE_SIZE, 1)
-	handle: system.Handle
-	handle, status = system.memory_create(pages)
-	if status != .Ok {
-		return {}, status
-	}
-	address: rawptr
-	address, status = system.memory_map(handle, {.Write})
-	if status != .Ok {
-		system.close(handle)
-		return {}, status
-	}
-	return {handle = handle, bytes = ([^]u8)(address)[:pages * system.PAGE_SIZE]}, .Ok
-}
-
-owned_memory_end :: proc "contextless" (memory: ^Owned_Memory) {
-	if memory.bytes != nil {
-		system.memory_unmap(raw_data(memory.bytes))
-	}
-	if memory.handle != 0 {
-		system.close(memory.handle)
-	}
-	memory^ = {}
-}
-
 // input_disk_copy copies the caller's input disk once into a memory object
 // of this process: the caller shares its memory and can change it.
-input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (memory: Owned_Memory, disk: []u8, ok: bool) {
+input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (memory: guest_regions.Owned_Memory, disk: []u8, ok: bool) {
 	if input_disk == nil {
 		return {}, nil, true
 	}
@@ -137,7 +99,7 @@ input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error:
 		return {}, nil, true
 	}
 	status: system.Status
-	memory, status = owned_memory_make(count)
+	memory, status = guest_regions.owned_memory_make(count)
 	if status != .Ok {
 		errors.fail(error, ERROR, .Budget, .Pages, ARGUMENT_INPUT_DISK, i64(count / system.PAGE_SIZE + 1))
 		return {}, nil, false
@@ -181,8 +143,6 @@ initial_archive_stage :: proc "contextless" (ram: []u8, parsed: guest_os.Linux_I
 // What the loop of a build does after one exit.
 Build_Exit_Action :: enum u8 {
 	Run_Again      = 1,
-	Switch_Write   = 2, // Give the region of machine.switch_address Write, then run again.
-	Switch_Execute = 3, // Give it Execute, then run again.
 	End            = 4, // The run ended: the state of the runner says how.
 }
 
@@ -201,12 +161,9 @@ build_exit_handle :: proc "contextless" (runner: ^contract.Guest_Sandbox_Runner,
 		if !contract.runner_answer_exit(runner, registers, exit.kind, exit.a, exit.b, exit.c, exit.next) {
 			action = .End
 		}
-	case .Switch_Write:
-		action = .Switch_Write
-	case .Switch_Execute:
-		action = .Switch_Execute
-	case .Halted, .Failed:
-		// The guest stopped with no exit status: the build failed.
+	case .Halted, .Failed, .Waiting:
+		// The guest stopped with no exit status: the build failed. A build
+		// never sets waits_for_input, so Waiting never comes.
 		runner.state = .Failed
 		if runner.refusal == .None {
 			runner.refusal = .Nonzero_Guest_Exit
@@ -219,28 +176,6 @@ build_exit_handle :: proc "contextless" (runner: ^contract.Guest_Sandbox_Runner,
 		return .End
 	}
 	return action
-}
-
-// kernel_staging_bytes gives the page-aligned size of the copy of the kernel
-// image, which waits at the top of the memory of the guest while the kernel
-// loads below it. The count is checked before the rounding: a count near the
-// largest u64 wraps the rounded size to 0, past every later check.
-kernel_staging_bytes :: proc "contextless" (kernel_count: u64, memory_bytes: u64) -> (staging_bytes: u64, fits: bool) {
-	if kernel_count == 0 || kernel_count >= memory_bytes {
-		return 0, false
-	}
-	staging_bytes = (kernel_count + system.PAGE_SIZE - 1) &~ u64(system.PAGE_SIZE - 1)
-	if staging_bytes >= memory_bytes {
-		return 0, false
-	}
-	return staging_bytes, true
-}
-
-// guest_region_bytes gives the size of one mapping of the memory of the
-// guest: 2 MiB, or more for a memory past GUEST_REGIONS_MOST regions of 2 MiB.
-guest_region_bytes :: proc "contextless" (memory_bytes: u64) -> u64 {
-	least := (memory_bytes + GUEST_REGIONS_MOST - 1) / GUEST_REGIONS_MOST
-	return max(GUEST_REGION_BYTES_LEAST, (least + GUEST_REGION_BYTES_LEAST - 1) / GUEST_REGION_BYTES_LEAST * GUEST_REGION_BYTES_LEAST)
 }
 
 // output_tree_map maps the caller's lent output memory object for writing.
@@ -285,9 +220,9 @@ write_report :: proc "contextless" (report: ^Guest_Build_Report, state: contract
 // The resources of one build, which build_end gives back in each case.
 Build_Resources :: struct {
 	guest:       system.Handle,
-	guest_ram:   Owned_Memory,
-	input_disk:  Owned_Memory,
-	output_disk: Owned_Memory,
+	guest_ram:   guest_regions.Owned_Memory,
+	input_disk:  guest_regions.Owned_Memory,
+	output_disk: guest_regions.Owned_Memory,
 }
 
 build_end :: proc "contextless" (resources: ^Build_Resources) {
@@ -295,9 +230,9 @@ build_end :: proc "contextless" (resources: ^Build_Resources) {
 		_ = system.process_stop(resources.guest)
 		system.close(resources.guest)
 	}
-	owned_memory_end(&resources.guest_ram)
-	owned_memory_end(&resources.input_disk)
-	owned_memory_end(&resources.output_disk)
+	guest_regions.owned_memory_end(&resources.guest_ram)
+	guest_regions.owned_memory_end(&resources.input_disk)
+	guest_regions.owned_memory_end(&resources.output_disk)
 	resources^ = {}
 }
 
@@ -309,46 +244,6 @@ refuse :: proc "contextless" (report: ^Guest_Build_Report, error: ^errors.Error_
 	write_report(report, .Refused, refusal)
 	system.log_fact(.Info, Build_Refused{refusal_code = u64(refusal), exit_code = 0, violations = sandbox_runner.sandbox_violations})
 	return errors.fail(error, ERROR, .Bad_Value, .None, argument, 0, 0, i64(refusal))
-}
-
-// guest_map maps the memory of the guest into the guest process in regions
-// that may each be written or executed, never both, and gives each region
-// Execute first: a kernel starts by running code.
-@(private = "file")
-guest_map :: proc "contextless" (guest: system.Handle, memory: system.Handle, memory_bytes: u64) -> (status: system.Status, step: string) {
-	region := guest_region_bytes(memory_bytes)
-	for address: u64 = 0; address < memory_bytes; address += region {
-		pages := min(region, memory_bytes - address) / system.PAGE_SIZE
-		flags := op.Map_Flags{.Write, .Execute, .No_Access}
-		if address == 0 {
-			flags += {.At_Address_Zero}
-		}
-		if _, status = system.memory_map(memory, flags, guest, address, address / system.PAGE_SIZE, pages); status != .Ok {
-			return status, "Memory_Map of guest memory"
-		}
-		ranges := [1]op.Address_Range{{address = address, page_count = pages}}
-		if _, status = system.memory_protect(ranges[:], {.Execute}, process = guest); status != .Ok {
-			return status, "Memory_Protect of guest memory"
-		}
-	}
-	return .Ok, ""
-}
-
-// guest_region_switch gives the region of a guest physical address the one
-// access that the guest asked for.
-@(private = "file")
-guest_region_switch :: proc "contextless" (guest: system.Handle, memory_bytes: u64, address: u64, write: bool) -> system.Status {
-	// The machine names an address of the guest: past the memory, the page
-	// count below wraps.
-	if address >= memory_bytes {
-		return .Bad_Address
-	}
-	region := guest_region_bytes(memory_bytes)
-	start := address / region * region
-	pages := min(region, memory_bytes - start) / system.PAGE_SIZE
-	ranges := [1]op.Address_Range{{address = start, page_count = pages}}
-	_, status := system.memory_protect(ranges[:], write ? op.Map_Flags{.Write} : op.Map_Flags{.Execute}, process = guest)
-	return status
 }
 
 // build boots the Linux kernel of the spec in a sandboxed guest and writes
@@ -406,14 +301,14 @@ build :: proc "c" (
 	if kernel_image.bytes == nil {
 		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_KERNEL)
 	}
-	staging_bytes, staging_fits := kernel_staging_bytes(kernel_count, memory_bytes)
+	staging_bytes, staging_fits := guest_regions.kernel_staging_bytes(kernel_count, memory_bytes)
 	if !staging_fits {
 		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_KERNEL, i64(min(kernel_count, 1 << 62)), i64(memory_bytes))
 	}
 	staging := memory_bytes - staging_bytes
 
 	status: system.Status
-	resources.guest_ram, status = owned_memory_make(memory_bytes)
+	resources.guest_ram, status = guest_regions.owned_memory_make(memory_bytes)
 	if status != .Ok {
 		build_end(&resources)
 		return errors.fail(error, ERROR, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages))
@@ -455,7 +350,7 @@ build :: proc "c" (
 		build_end(&resources)
 		return ERROR
 	}
-	resources.output_disk, status = owned_memory_make(spec.output_size_bound)
+	resources.output_disk, status = guest_regions.owned_memory_make(spec.output_size_bound)
 	if status != .Ok {
 		build_end(&resources)
 		return errors.fail(error, ERROR, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.output_size_bound / system.PAGE_SIZE + 1))
@@ -496,7 +391,7 @@ build :: proc "c" (
 		return errors.fail(error, ERROR, .Refused, .None, 0, i64(create_status))
 	}
 	resources.guest = system.Handle(created[0])
-	if map_status, step := guest_map(resources.guest, resources.guest_ram.handle, memory_bytes); map_status != .Ok {
+	if map_status, step := guest_regions.map_memory(resources.guest, resources.guest_ram.handle, memory_bytes); map_status != .Ok {
 		build_end(&resources)
 		system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(map_status), step = value_kinds.text_field(step, 40)})
 		return errors.fail(error, ERROR, .Refused, .None, 0, i64(map_status))
@@ -526,13 +421,6 @@ build :: proc "c" (
 		action := build_exit_handle(&sandbox_runner, &machine, &registers, machine_exit, &input_writes_reported)
 		switch action {
 		case .Run_Again:
-		case .Switch_Write, .Switch_Execute:
-			write := action == .Switch_Write
-			if switch_status := guest_region_switch(resources.guest, memory_bytes, machine.switch_address, write); switch_status != .Ok {
-				sandbox_runner.state = .Failed
-				system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(switch_status), step = value_kinds.text_field("Memory_Protect of a guest region", 40)})
-				break run_loop
-			}
 		case .End:
 			break run_loop
 		}

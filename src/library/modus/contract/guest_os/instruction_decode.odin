@@ -44,6 +44,27 @@ Device_Access_Direction :: enum u8 {
 	Write = 2, // The guest writes a register or an immediate to the device.
 }
 
+// The segment that a prefix names for the memory operand: in 64-bit code,
+// only fs and gs add a base.
+Segment_Override :: enum u8 {
+	None = 0,
+	Fs   = 1,
+	Gs   = 2,
+}
+
+// The memory operand of a decoded instruction: the parts of its address.
+Memory_Operand :: struct {
+	base:          General_Register,
+	has_base:      bool,
+	index:         General_Register,
+	has_index:     bool,
+	scale:         u8, // 1, 2, 4 or 8.
+	displacement:  i64,
+	rip_relative:  bool, // 64-bit code: the address after the instruction plus the displacement.
+	segment:       Segment_Override,
+	address_32:    bool, // The prefix 67: an address of 32 bits.
+}
+
 // One decoded access to a device.
 Device_Access :: struct {
 	direction:        Device_Access_Direction,
@@ -55,6 +76,7 @@ Device_Access :: struct {
 	destination_size: u8, // A read: the bytes of the register that it writes (movzx and movsx write more than they read).
 	sign_extend:      bool, // A read of movsx: the value fills the register with its sign bit.
 	length:           u8, // The bytes of the instruction.
+	operand:          Memory_Operand, // The parts of the address of the memory operand.
 }
 
 Instruction_Refusal :: enum u8 {
@@ -71,6 +93,8 @@ Instruction_Refusal :: enum u8 {
 device_access_decode :: proc "contextless" (bytes: []u8, long_mode: bool) -> (access: Device_Access, refusal: Instruction_Refusal) {
 	at := 0
 	operand_16 := false
+	address_32 := false
+	segment := Segment_Override.None
 	rex: u8 = 0
 	// The prefixes: the operand size, the address size (64-bit only), and the
 	// segments, which do not change the physical address that the kernel gave.
@@ -85,7 +109,15 @@ device_access_decode :: proc "contextless" (bytes: []u8, long_mode: bool) -> (ac
 			if !long_mode {
 				return {}, .Unknown_Opcode // 16-bit addressing: another form of the operand.
 			}
-		case 0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65:
+			address_32 = true
+		case 0x64:
+			segment = .Fs
+		case 0x65:
+			segment = .Gs
+		case 0x26, 0x2E, 0x36, 0x3E:
+			// In 64-bit code, es, cs, ss and ds have the base 0 and these
+			// prefixes do nothing: an fs or a gs before them stays. Outside
+			// 64-bit code no operand is computed.
 		case:
 			break prefixes
 		}
@@ -103,6 +135,8 @@ device_access_decode :: proc "contextless" (bytes: []u8, long_mode: bool) -> (ac
 	}
 	rex_w := rex & 0x8 != 0
 	rex_r := rex & 0x4 != 0
+	rex_x := rex & 0x2 != 0
+	rex_b := rex & 0x1 != 0
 	wide_size := u8(rex_w ? 8 : operand_16 ? 2 : 4)
 	opcode := u16(bytes[at])
 	at += 1
@@ -154,6 +188,7 @@ device_access_decode :: proc "contextless" (bytes: []u8, long_mode: bool) -> (ac
 	if access.immediate && register_field != 0 {
 		return {}, .Unknown_Opcode // C6 and C7 with another extension are not mov.
 	}
+	operand := Memory_Operand{scale = 1, segment = segment, address_32 = address_32}
 	displacement := 0
 	if rm == 4 {
 		// A SIB byte; its base 5 with the mode 0 has a displacement of 32 bits.
@@ -162,18 +197,51 @@ device_access_decode :: proc "contextless" (bytes: []u8, long_mode: bool) -> (ac
 		}
 		sib := bytes[at]
 		at += 1
+		operand.scale = u8(1) << (sib >> 6)
+		index_number := sib >> 3 & 0x7 | (rex_x ? 8 : 0)
+		// The index 4 with no REX.X is no index.
+		if index_number != 4 {
+			index_register, index_known := enum_word.member_of_word(General_Register, u64(index_number))
+			if !index_known {
+				return {}, .Unknown_Opcode // Cannot happen: four bits name each register.
+			}
+			operand.index, operand.has_index = index_register, true
+		}
 		if mode == 0 && sib & 0x7 == 5 {
 			displacement = 4
+		} else {
+			base_register, base_known := enum_word.member_of_word(General_Register, u64(sib & 0x7 | (rex_b ? 8 : 0)))
+			if !base_known {
+				return {}, .Unknown_Opcode
+			}
+			operand.base, operand.has_base = base_register, true
 		}
 	} else if mode == 0 && rm == 5 {
 		displacement = 4 // rip-relative in 64-bit code, an absolute address in 32-bit code.
+		operand.rip_relative = long_mode
+	} else {
+		base_register, base_known := enum_word.member_of_word(General_Register, u64(rm | (rex_b ? 8 : 0)))
+		if !base_known {
+			return {}, .Unknown_Opcode
+		}
+		operand.base, operand.has_base = base_register, true
 	}
 	if mode == 1 {
 		displacement = 1
 	} else if mode == 2 {
 		displacement = 4
 	}
+	if at + displacement > len(bytes) {
+		return {}, .Truncated
+	}
+	switch displacement {
+	case 1:
+		operand.displacement = i64(i8(bytes[at]))
+	case 4:
+		operand.displacement = i64(i32(u32(bytes[at]) | u32(bytes[at + 1]) << 8 | u32(bytes[at + 2]) << 16 | u32(bytes[at + 3]) << 24))
+	}
 	at += displacement
+	access.operand = operand
 	if at + immediate_bytes > len(bytes) {
 		return {}, .Truncated
 	}
@@ -208,6 +276,35 @@ device_access_decode :: proc "contextless" (bytes: []u8, long_mode: bool) -> (ac
 	}
 	access.length = u8(at)
 	return access, .None
+}
+
+// memory_operand_linear gives the linear address of the memory operand of
+// an instruction of 64-bit code, with the registers before it ran: false for
+// an address of 32 bits, which the machine does not compute.
+memory_operand_linear :: proc "contextless" (registers: op.Guest_Registers, access: Device_Access) -> (linear: u64, ok: bool) {
+	operand := access.operand
+	if operand.address_32 {
+		return 0, false
+	}
+	copy_of_registers := registers
+	linear = u64(operand.displacement)
+	if operand.has_base {
+		linear += general_register_pointer(&copy_of_registers, operand.base)^
+	}
+	if operand.has_index {
+		linear += general_register_pointer(&copy_of_registers, operand.index)^ * u64(operand.scale)
+	}
+	if operand.rip_relative {
+		linear += registers.rip + u64(access.length)
+	}
+	switch operand.segment {
+	case .None:
+	case .Fs:
+		linear += registers.fs_base
+	case .Gs:
+		linear += registers.gs_base
+	}
+	return linear, true
 }
 
 // general_register_pointer gives the field of a record that holds a

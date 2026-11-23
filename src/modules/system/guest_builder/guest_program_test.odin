@@ -746,9 +746,6 @@ guest_program_build_run :: proc(t: ^testing.T, build: ^Guest_Program_Build) {
 		testing.expectf(t, build.registers.inject_kind == 0, "no event for the program after %v", exit)
 		switch action {
 		case .Run_Again:
-		case .Switch_Write, .Switch_Execute:
-			testing.expectf(t, false, "a switch of a region in the software processor: %v", exit)
-			return
 		case .End:
 			return
 		}
@@ -863,7 +860,7 @@ guest_program_sees_the_refused_write :: proc(t: ^testing.T) {
 			}
 			testing.expectf(t, false, "a port that the program does not use: %v", exit)
 			return
-		case .Switch_Write, .Switch_Execute, .Halted, .Failed:
+		case .Halted, .Failed, .Waiting:
 			testing.expectf(t, false, "the machine stopped the program: %v", build.machine.failure)
 			return
 		}

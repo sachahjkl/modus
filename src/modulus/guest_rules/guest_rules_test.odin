@@ -437,3 +437,142 @@ undelivered_external_interrupt_is_delivered_again :: proc(t: ^testing.T) {
 	testing.expect_value(t, next, u64(0))
 	testing.expect_value(t, still, Pending_Injection{})
 }
+
+// The access of a switched page: a fault that asks for both accesses, or
+// for neither, switches nothing; a write gives Write and no execute, a fetch
+// execute and no Write. No result is both.
+@(test)
+switched_entry_bits_never_both :: proc(t: ^testing.T) {
+	_, both := switched_entry_bits(true, true)
+	testing.expect(t, !both)
+	_, neither := switched_entry_bits(false, false)
+	testing.expect(t, !neither)
+	write_bits, write_ok := switched_entry_bits(true, false)
+	testing.expect(t, write_ok && write_bits == ENTRY_WRITE | ENTRY_NO_EXECUTE)
+	fetch_bits, fetch_ok := switched_entry_bits(false, true)
+	testing.expect(t, fetch_ok && fetch_bits == 0)
+	for bits in ([?]u64{write_bits, fetch_bits}) {
+		writable := bits & ENTRY_WRITE != 0
+		executable := bits & ENTRY_NO_EXECUTE == 0
+		testing.expectf(t, !(writable && executable), "bits %x are writable and executable", bits)
+	}
+}
+
+// The page of an address in a mapping: below it, at its end and past it
+// refused; the first and the last page given.
+@(test)
+switching_page_edges :: proc(t: ^testing.T) {
+	BASE :: u64(0x20_0000)
+	PAGES :: u64(512)
+	for address in ([?]u64{0, BASE - 1, BASE + PAGES * 4096, BASE + PAGES * 4096 + 1, max(u64)}) {
+		_, ok := switching_page_of(BASE, PAGES, address)
+		testing.expectf(t, !ok, "address %x is outside", address)
+	}
+	_, empty := switching_page_of(BASE, 0, BASE)
+	testing.expect(t, !empty)
+	// The successful cases last: the first byte, the last byte of the first
+	// page, and the last byte of the mapping.
+	page, ok := switching_page_of(BASE, PAGES, BASE)
+	testing.expect(t, ok && page == 0)
+	page, ok = switching_page_of(BASE, PAGES, BASE + 4095)
+	testing.expect(t, ok && page == 0)
+	page, ok = switching_page_of(BASE, PAGES, BASE + PAGES * 4096 - 1)
+	testing.expect(t, ok && page == PAGES - 1)
+}
+
+// The watch of the switches: an instruction that writes its own page
+// switches the page to Write, then to execute, then to Write at one rip,
+// and is found at the second alternation; any other order is not.
+@(test)
+switch_watch_finds_a_write_of_its_own_page :: proc(t: ^testing.T) {
+	watch: Switch_Watch
+	// A page of code that an instruction elsewhere writes, then runs: one
+	// alternation at different rips, never a loop.
+	testing.expect(t, !switch_watch_note(&watch, 0x1000, 0x5000, 0x9000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x1000, 0x1010, 0x9000, false))
+	testing.expect(t, !switch_watch_note(&watch, 0x1000, 0x5000, 0x9000, true))
+	// The same access twice at one rip is no alternation.
+	watch = {}
+	testing.expect(t, !switch_watch_note(&watch, 0x2000, 0x2010, 0x9000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x2000, 0x2010, 0x9000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x2000, 0x2010, 0x9000, true))
+	// Another page between two alternations breaks the row.
+	watch = {}
+	testing.expect(t, !switch_watch_note(&watch, 0x3000, 0x3010, 0x9000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x3000, 0x3010, 0x9000, false))
+	testing.expect(t, !switch_watch_note(&watch, 0x4000, 0x3010, 0x9000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x3000, 0x3010, 0x9000, true))
+	// The page 0 at the rip 0 on a new watch is a first switch, not an
+	// alternation of the zero record.
+	watch = {}
+	testing.expect(t, !switch_watch_note(&watch, 0, 0, 0x9000, true))
+	testing.expect_value(t, watch.alternations, u32(0))
+	// The successful case last: Write, execute, Write at one rip and one
+	// page is a loop, and the watch starts again after it.
+	watch = {}
+	testing.expect(t, !switch_watch_note(&watch, 0x6000, 0x6008, 0x9000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x6000, 0x6008, 0x9000, false))
+	testing.expect(t, switch_watch_note(&watch, 0x6000, 0x6008, 0x9000, true))
+	testing.expect_value(t, watch, Switch_Watch{})
+	// The other order (execute first) is found at the next write: the exit
+	// then gives the address that the instruction writes.
+	testing.expect(t, !switch_watch_note(&watch, 0x7000, 0x7008, 0x9000, false))
+	testing.expect(t, !switch_watch_note(&watch, 0x7000, 0x7008, 0x9000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x7000, 0x7008, 0x9000, false))
+	testing.expect(t, switch_watch_note(&watch, 0x7000, 0x7008, 0x9000, true))
+}
+
+// The watch is keyed on the address space too: the same rip in another
+// cr3 is another instruction, and a switch that does not count ends the
+// row.
+@(test)
+switch_watch_keys_on_the_address_space :: proc(t: ^testing.T) {
+	watch: Switch_Watch
+	testing.expect(t, !switch_watch_note(&watch, 0x6000, 0x6008, 0x1000, true))
+	testing.expect(t, !switch_watch_note(&watch, 0x6000, 0x6008, 0x2000, false))
+	testing.expect(t, !switch_watch_note(&watch, 0x6000, 0x6008, 0x1000, true))
+	testing.expect_value(t, watch.alternations, u32(0))
+	// A forgotten row starts again.
+	testing.expect(t, !switch_watch_note(&watch, 0x6000, 0x6008, 0x1000, false))
+	switch_watch_forget(&watch)
+	testing.expect(t, !switch_watch_note(&watch, 0x6000, 0x6008, 0x1000, true))
+	testing.expect_value(t, watch.alternations, u32(0))
+	// A fault of a walk of the page table, or during the delivery of an
+	// event, does not count; the successful case last: a fault of the
+	// instruction counts.
+	testing.expect(t, !switch_counts(FAULT_DURING_TABLE_WALK | 0x2, 0))
+	testing.expect(t, !switch_counts(0x2, EVENT_VALID | 0x30))
+	testing.expect(t, !switch_counts(FAULT_DURING_TABLE_WALK, EVENT_VALID))
+	testing.expect(t, switch_counts(u64(1) << 32 | 0x2, 0))
+	testing.expect(t, switch_counts(0x10, 0x30)) // An event word that is not valid.
+}
+
+// The answer of a nested page fault: each fact that refuses first, then the
+// rule of a process, then the switch.
+@(test)
+fault_answer_tries_each_fact :: proc(t: ^testing.T) {
+	// A page of a switching mapping that would switch.
+	switching := Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, present = true, write = true}
+	testing.expect_value(t, fault_answer(switching), Fault_Answer.Switch)
+	cases := [?]struct {
+		facts:  Fault_Facts,
+		answer: Fault_Answer,
+		about:  string,
+	}{
+		{Fault_Facts{}, .Refused, "no mapping"},
+		{Fault_Facts{switching = true, write = true}, .Refused, "a switching fact with no mapping"},
+		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, slot_no_access = true, present = true, write = true}, .Refused, "a slot No_Access"},
+		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = false, has_entry = true, write = true}, .Refused, "a page not committed"},
+		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = false, write = true}, .Refused, "no entry"},
+		{Fault_Facts{mapped = true, switching = true, large = true, has_access = true, committed = true, has_entry = true, present = true, write = true}, .Page_Give, "a large mapping"},
+		{Fault_Facts{mapped = true, switching = true, has_access = false, committed = true, has_entry = true, present = true, write = true}, .Page_Give, "a mapping No_Access whole"},
+		{Fault_Facts{mapped = true, switching = false, has_access = true, committed = true, has_entry = true, present = true, write = true}, .Page_Give, "a mapping that does not switch"},
+		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, present = true}, .Page_Give, "a read"},
+		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, present = true, write = true, execute = true}, .Page_Give, "a write and a fetch at once"},
+		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, present = true, allows = true, write = true}, .Allowed, "an entry that allows it"},
+		{Fault_Facts{mapped = true, switching = true, has_access = true, committed = true, has_entry = true, present = false, execute = true}, .Give_Switched, "a page on first use"},
+	}
+	for case_of in cases {
+		testing.expectf(t, fault_answer(case_of.facts) == case_of.answer, "%s gives %v", case_of.about, case_of.answer)
+	}
+}
