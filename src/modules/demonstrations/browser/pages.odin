@@ -9,17 +9,21 @@ import "modus:system"
 // buffer of the module, and the origin worker parses it as it parses the
 // bytes of an answer. The state of each origin is in origin_worker.odin.
 
-// The bytes of an address as the address field holds it.
-ADDRESS_CAPACITY :: 160
-HOST_CAPACITY :: 64
-PATH_CAPACITY :: 64
-QUERY_CAPACITY :: 128
-FRAGMENT_CAPACITY :: 64
+// The bytes of an address as the address field holds it. The sizes are of
+// the addresses of the web of today: a search, a link with its tracking
+// query, a host of the longest name that DNS gives (RFC 1035, 253 bytes).
+ADDRESS_CAPACITY :: 2048
+HOST_CAPACITY :: html_css.MAX_ORIGIN_HOST_LEN
+PATH_CAPACITY :: 1024
+QUERY_CAPACITY :: 1024
+FRAGMENT_CAPACITY :: 256
 
 // The bytes of the HTML of one page, before the style sheet of the
-// appearance; the document is the style sheet and the page.
-PAGE_SOURCE_CAPACITY :: 16384
-DOCUMENT_SOURCE_CAPACITY :: 20480
+// appearance; the document is the style sheet and the page. A page of 1 MiB
+// holds the HTML of most pages of the web; a longer one is refused whole,
+// never cut.
+PAGE_SOURCE_CAPACITY :: 1 << 20
+DOCUMENT_SOURCE_CAPACITY :: PAGE_SOURCE_CAPACITY + 4096
 
 // An address, cut into the parts that the browser reads. The path starts
 // with '/', or is empty; the query has no '?'; the fragment has no '#' and
@@ -60,12 +64,12 @@ ADDRESS_PROBLEM_SENTENCES := [Address_Problem]string {
 	.Too_Long          = "the address is longer than the field holds",
 	.Scheme_Unknown    = "the address names no scheme that the browser reads: modus, http or https",
 	.Host_Empty        = "the address names no host",
-	.Host_Too_Long     = "the host of the address is longer than 64 bytes",
+	.Host_Too_Long     = "the host of the address is longer than 253 bytes",
 	.Host_Byte_Refused = "the host holds a byte that no host name holds",
 	.Port_Refused      = "the port of the address is not a number from 1 to 65535",
-	.Path_Too_Long     = "the path of the address is longer than 64 bytes",
-	.Query_Too_Long    = "the query of the address is longer than 128 bytes",
-	.Fragment_Too_Long = "the fragment of the address is longer than 64 bytes",
+	.Path_Too_Long     = "the path of the address is longer than 1024 bytes",
+	.Query_Too_Long    = "the query of the address is longer than 1024 bytes",
+	.Fragment_Too_Long = "the fragment of the address is longer than 256 bytes",
 }
 
 @(rodata)

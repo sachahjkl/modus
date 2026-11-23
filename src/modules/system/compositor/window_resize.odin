@@ -109,6 +109,7 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 		asked_width  = at_scale(client.resize_asked_width, surface_scale),
 		asked_height = at_scale(client.resize_asked_height, surface_scale),
 		clamp        = client.resize_asked_clamp,
+		screen_side_limit = bar.surface_screen_side_limit(screen.width, screen.height),
 	}
 	if facts.is_memory {
 		// A refused size reads as 0 bytes: the check refuses it.
@@ -345,6 +346,7 @@ surface_rescale_take :: proc "contextless" (client: ^Client, record: ring.Record
 		scale           = scale,
 		window_width    = client.width,
 		window_height   = client.height,
+		screen_side_limit = bar.surface_screen_side_limit(screen.width, screen.height),
 	}
 	if !through {
 		// A number with no proof of this process is neither used nor closed.

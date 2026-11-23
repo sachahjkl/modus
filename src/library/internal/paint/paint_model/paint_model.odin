@@ -10,11 +10,15 @@ import "base:intrinsics"
 import "modus:contract/lz4"
 import "modus:graphics"
 
-// The largest picture: the logical screen of the reference screen. The
-// pixels of a picture are one array of this size; the extent is the part in
-// use, so a resize never moves a pixel.
-PICTURE_WIDTH_LIMIT :: 1536
-PICTURE_HEIGHT_LIMIT :: 864
+// The largest picture: the reference screen in pixels of the screen, a
+// window over the whole screen at the scale 1. The pixels of a picture are
+// one array of this size; the extent is the part in use, so a resize never
+// moves a pixel. The arrays are module pages under the largest budget of a
+// process: a photo of a phone (4032 x 3024) needs a picture and its copy of
+// 49 MB each, which the budgets of the plan give
+// (src/md/features/paint_application.md, "The memory under the cap").
+PICTURE_WIDTH_LIMIT :: 1920
+PICTURE_HEIGHT_LIMIT :: 1080
 PICTURE_PIXELS :: PICTURE_WIDTH_LIMIT * PICTURE_HEIGHT_LIMIT
 PICTURE_BYTES :: PICTURE_PIXELS * size_of(graphics.Color)
 

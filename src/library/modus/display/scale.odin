@@ -21,9 +21,10 @@ import "modus:contract/value_kinds"
 import "modus:graphics"
 import "modus:system"
 
-// The largest width and height of a surface in pixels of the screen: a
-// window of SURFACE_LIMIT logical pixels at the largest scale that the
-// setting takes. The compositor refuses a larger surface.
+// The largest width and height of a surface in pixels of the screen that
+// the words of a window can name: a window of SURFACE_LIMIT logical pixels
+// at the largest scale that the setting takes. The compositor bounds each
+// surface by its screen in force too (bar.surface_screen_side_limit).
 SURFACE_SCREEN_LIMIT :: (SURFACE_LIMIT * int(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE
 
 // The place of the surface serial in a Present.

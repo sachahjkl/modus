@@ -101,7 +101,7 @@ SCROLL_LINE :: 3 * LINE
 
 // The back and forward history: the addresses of the pages that the window
 // showed, and the scroll of each when the window left it.
-HISTORY_CAPACITY :: 32
+HISTORY_CAPACITY :: 256
 
 History_Entry :: struct {
 	address: [ADDRESS_CAPACITY]u8,

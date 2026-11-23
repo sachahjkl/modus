@@ -24,7 +24,7 @@ DISPLAY_WINDOW_HANDLE_RIGHTS :: u32(1) << u32(op.Right.Read)
 DISPLAY_CONTROL_HANDLE_RIGHTS :: (u32(1) << u32(op.Right.Read)) | (u32(1) << u32(op.Right.Write))
 
 // Surface bounds of the Display contract.
-DISPLAY_SURFACE_LIMIT :: u32(2048)
+DISPLAY_SURFACE_LIMIT :: u32(8192)
 DISPLAY_PICTURE_COUNT :: u32(2)
 
 // Required export names of the Display role.

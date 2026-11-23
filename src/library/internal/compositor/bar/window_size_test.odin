@@ -341,6 +341,7 @@ answer_of_test :: proc() -> Surface_Resize_Facts {
 		asked = true,
 		asked_width = 880,
 		asked_height = 384,
+		screen_side_limit = surface_screen_side_limit(1920, 1080),
 	}
 }
 
@@ -388,7 +389,7 @@ surface_resize_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 		facts:   Surface_Resize_Facts,
 		refusal: Surface_Resize_Refusal,
 	}
-	cases: [12]Case
+	cases: [14]Case
 	for &each in cases {
 		each.facts = answer_of_test()
 	}
@@ -404,6 +405,10 @@ surface_resize_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	cases[9].facts.limits.least_height, cases[9].refusal = 392, .Outside_Limits
 	cases[10].facts.memory_bytes, cases[10].refusal = 880 * 384 * SURFACE_BYTES_FOR_EACH_PIXEL - 1, .Too_Small
 	cases[11].facts.memory_bytes, cases[11].refusal = 0, .Too_Small
+	// Limits of logical pixels at a scale can be past the screen: a side one
+	// pixel past the side of a surface on the reference screen.
+	cases[12].facts.width, cases[12].facts.asked_width, cases[12].facts.limits.largest_width, cases[12].refusal = 4097, 4097, 8192, .Past_Screen
+	cases[13].facts.screen_side_limit, cases[13].refusal = 0, .Past_Screen
 	for each, index in cases {
 		refusal := surface_resize_refusal(each.facts)
 		testing.expectf(t, refusal == each.refusal, "case %d gives %v, not %v", index, refusal, each.refusal)

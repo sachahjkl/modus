@@ -148,7 +148,7 @@ manifest_parse_refusals :: proc(t: ^testing.T) {
 		{"bad import name", "module: m\nabout: Ok.\nimports: ../a\n", "not a valid module name"},
 		{"budget zero value", "module: m\nabout: Ok.\nbudget: threads=0\n", "positive integer"},
 		{"budget window width alone", "module: m\nabout: Ok.\nbudget: window_width=640\n", "given together"},
-		{"budget window one past bound", "module: m\nabout: Ok.\nbudget: window_width=2049 window_height=100\n", "exceeds the limit"},
+		{"budget window one past bound", "module: m\nabout: Ok.\nbudget: window_width=8193 window_height=100\n", "exceeds the limit"},
 		{"enum with zero members", "module: m\nabout: Ok.\nenum Empty u32\n", "has 0 members"},
 		{"enum with 65 members", strings.to_string(too_many_members), "exceeds the limit"},
 		{"enum bad backing type", "module: m\nabout: Ok.\nenum Bad f32\n", "unknown backing type"},

@@ -327,10 +327,10 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		{7, 0xFF, -1, .Bad_Version},
 		{8, 0, -1, .Bad_Size}, // The width 0: the low byte of 40 is 40, and the others are 0.
 		{11, 0xFF, -1, .Bad_Size}, // A width past the largest.
-		{13, 0x04, -1, .Bad_Size}, // A height of 30 + 1024 past 864.
+		{13, 0x05, -1, .Bad_Size}, // A height of 30 + 1280 past 1080.
 		{12, 0, -1, .Bad_Size}, // The height 0.
-		{16, 1, -1, .Bad_Row}, // 1537 pixels: the low byte of 1536 (0x600) is 0.
-		{17, 0x07, -1, .Bad_Row},
+		{16, 1, -1, .Bad_Row}, // 1793 pixels: the low byte of 1920 (0x780) is 0x80.
+		{17, 0x06, -1, .Bad_Row}, // 1664 pixels.
 		{12, 31, -1, .Bad_Length}, // The height 31 with the rows of 30.
 		{20, 2, -1, .Bad_Slot},
 		{23, 0x80, -1, .Bad_Slot}, // The largest slot words name no slot.

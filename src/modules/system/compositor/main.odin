@@ -128,7 +128,8 @@ import "base:intrinsics"
 //   2 pages;
 // - its tables and the other mappings: 1647 pages;
 // - the mapping of the surface of each window: the largest surface,
-//   display.SURFACE_SCREEN_LIMIT, 4096 x 4096 pixels of the screen (2048
+//   bar.surface_screen_side_limit of the reference screen,
+//   bar.SURFACE_SCREEN_SIDE_FLOOR: 4096 x 4096 pixels of the screen (2048
 //   logical pixels at the largest scale, 2) of 8 bytes for two pictures,
 //   is 128 MiB, whose mapping takes at most 65 page tables of 2 MiB (its
 //   start need not be on a 2 MiB edge) and 2 page directories (it can
@@ -377,7 +378,11 @@ desktop_change_waits: bool
 full_measure: bool // The next frame draws the whole screen, and the log has its time.
 move_frames, move_time, move_longest: u64 // Nanoseconds.
 // The colors of one line of a title bar, and of its lighter top line.
-title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
+// The longest line of the screen that the measure of the title bar draws:
+// a line of the screen, not of a surface, so it does not follow the limit
+// of a surface.
+TITLE_ROW_PIXELS :: 8192
+title_row, title_light: [TITLE_ROW_PIXELS]graphics.Color
 
 // damage_add records that the desktop itself changed a rectangle of the
 // layout, in logical pixels: each change but the Present of a process. The
@@ -1349,6 +1354,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 		scale_word = record.values[0] >> display.SURFACE_CREATE_SCALE_SHIFT,
 		width      = record.values[1],
 		height     = record.values[2],
+		screen_side_limit = bar.surface_screen_side_limit(screen.width, screen.height),
 	}
 	if facts.is_memory {
 		if pages, size_status := system.memory_size(memory); size_status == .Ok {

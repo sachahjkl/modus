@@ -47,6 +47,10 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **Paint opens a photo of a phone.** A principal opens and paints a picture of 4032 × 3024 or larger. The picture and its copy before a stroke move into arenas of a budget that the plan of the principal gives past the largest budget of a process of today. [Design](src/md/features/paint_application.md)
+- **The document of the browser in arenas.** The tree, the style sheet, the boxes and the records of a page grow with the page, so a page past 8192 nodes, 1024 rules or 1 MiB of HTML opens, and a small page costs little memory. [Design](src/md/features/memory_without_a_bound.md)
+- **Cookies and a cache of the web client in the store.** The cookie jar and the cache of each principal are objects of its store, so a principal logged into many sites keeps each cookie, and a cached answer is longer than 4 KiB. [Design](src/md/features/desktop_to_browser.md)
+
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)

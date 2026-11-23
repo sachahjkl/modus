@@ -27,21 +27,26 @@ import "modus:contract/html_css"
 //   before it. The style sheet is reused only for the same origin and the
 //   same style text.
 
-ORIGIN_STATE_CAPACITY :: 8
-STORAGE_SLOT_CAPACITY :: 4
-COOKIE_SLOT_CAPACITY :: 4
-FORM_MEMORY_CAPACITY :: 4
+// The origins of one window, and what each keeps: a session of the web of
+// today visits some tens of sites, and a site sets some tens of cookies.
+// The oldest goes when a table is full, as before.
+ORIGIN_STATE_CAPACITY :: 32
+STORAGE_SLOT_CAPACITY :: 16
+COOKIE_SLOT_CAPACITY :: 16
+FORM_MEMORY_CAPACITY :: 8
 // The bytes of a key (a storage key, a cookie name, a path) and of a value.
-ORIGIN_KEY_CAPACITY :: 64
+// A key holds the path of a page, for the memory of its forms: its count is
+// a u16 on the wire.
+ORIGIN_KEY_CAPACITY :: PATH_CAPACITY
 ORIGIN_VALUE_CAPACITY :: 128
 TITLE_CAPACITY :: 64
 
 // The bytes of each message on the border.
 ORIGIN_WIRE_BYTES :: 8 + 1 + 2 + 2 + html_css.MAX_ORIGIN_HOST_LEN
-ORIGIN_REQUEST_BYTES :: 1 + 2 * ORIGIN_WIRE_BYTES + 4 + 1 + ORIGIN_KEY_CAPACITY + 1 + ORIGIN_VALUE_CAPACITY
+ORIGIN_REQUEST_BYTES :: 1 + 2 * ORIGIN_WIRE_BYTES + 4 + 2 + ORIGIN_KEY_CAPACITY + 1 + ORIGIN_VALUE_CAPACITY
 ORIGIN_REPLY_BYTES :: 1 + 1 + ORIGIN_VALUE_CAPACITY
 ORIGIN_RENDER_TREE_BYTES :: 1 + ORIGIN_WIRE_BYTES + 3 * 2 + 2 * 4 + 4 + 1 + 1 + 1 + TITLE_CAPACITY
-#assert(ORIGIN_KEY_CAPACITY <= int(max(u8)) && ORIGIN_VALUE_CAPACITY <= int(max(u8)) && TITLE_CAPACITY <= int(max(u8)))
+#assert(ORIGIN_KEY_CAPACITY <= int(max(u16)) && ORIGIN_VALUE_CAPACITY <= int(max(u8)) && TITLE_CAPACITY <= int(max(u8)))
 #assert(PATH_CAPACITY <= ORIGIN_KEY_CAPACITY)
 
 // The state of one origin.
@@ -257,6 +262,17 @@ take_count :: proc "contextless" (reader: ^Message_Reader, capacity: int, proble
 	return min(count, capacity)
 }
 
+// take_long_count reads a count of bytes of 16 bits and refuses one past
+// its capacity.
+@(private = "file")
+take_long_count :: proc "contextless" (reader: ^Message_Reader, capacity: int, problem: ^Message_Problem) -> int {
+	count := int(take_u16(reader))
+	if count > capacity && problem^ == .None {
+		problem^ = .Count_Too_Large
+	}
+	return min(count, capacity)
+}
+
 @(private = "file")
 take_flag :: proc "contextless" (reader: ^Message_Reader, problem: ^Message_Problem) -> bool {
 	word := take_u8(reader)
@@ -292,7 +308,7 @@ origin_request_encode :: proc "contextless" (request: ^Origin_Request, bytes: []
 	put_origin(&writer, &request.requester)
 	put_origin(&writer, &request.owner)
 	put_u32(&writer, u32(request.view_width))
-	put_u8(&writer, u8(clamp(request.key_count, 0, ORIGIN_KEY_CAPACITY)))
+	put_u16(&writer, u16(clamp(request.key_count, 0, ORIGIN_KEY_CAPACITY)))
 	put_array(&writer, request.key[:], request.key_count)
 	put_u8(&writer, u8(clamp(request.value_count, 0, ORIGIN_VALUE_CAPACITY)))
 	put_array(&writer, request.value[:], request.value_count)
@@ -319,7 +335,7 @@ origin_request_decode :: proc "contextless" (bytes: []u8) -> (request: Origin_Re
 	if (request.view_width < 0 || request.view_width > LARGEST_WIDTH) && problem == .None {
 		problem = .Width_Refused
 	}
-	request.key_count = take_count(&reader, ORIGIN_KEY_CAPACITY, &problem)
+	request.key_count = take_long_count(&reader, ORIGIN_KEY_CAPACITY, &problem)
 	take_array(&reader, request.key[:])
 	request.value_count = take_count(&reader, ORIGIN_VALUE_CAPACITY, &problem)
 	take_array(&reader, request.value[:])

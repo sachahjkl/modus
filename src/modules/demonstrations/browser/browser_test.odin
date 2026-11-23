@@ -1,6 +1,7 @@
 #+build !freestanding
 package browser
 
+import "core:fmt"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -74,6 +75,15 @@ address_parse_takes_the_edges :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Address_Problem.None)
 	testing.expect_value(t, address_host(&address), host)
 	testing.expect_value(t, address.port, u16(443))
+	// An address of the web of today, of 1 500 bytes: a path of 1 000 bytes
+	// and a query of 400, which the field of 160 bytes refused.
+	long_path := strings.concatenate({"/", strings.repeat("p", 999, context.temp_allocator)}, context.temp_allocator)
+	long_query := strings.repeat("q", 400, context.temp_allocator)
+	long_text := strings.concatenate({"https://example.org", long_path, "?", long_query}, context.temp_allocator)
+	address, problem = address_parse(long_text)
+	testing.expect_value(t, problem, Address_Problem.None)
+	testing.expect_value(t, string(address.path[:address.path_count]), long_path)
+	testing.expect_value(t, string(address.query[:address.query_count]), long_query)
 	address, problem = address_parse("HTTP://Example.ORG:65535/A?b=C")
 	testing.expect_value(t, problem, Address_Problem.None)
 	testing.expect_value(t, address.scheme, html_css.Document_Scheme.Http)
@@ -228,7 +238,10 @@ origin_state_is_refused_to_each_other_origin :: proc(t: ^testing.T) {
 origin_state_table_full :: proc(t: ^testing.T) {
 	globals_hold()
 	origin_states = {}
-	hosts := [ORIGIN_STATE_CAPACITY + 1]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
+	hosts: [ORIGIN_STATE_CAPACITY + 1]string
+	for &host, index in hosts {
+		host = fmt.tprintf("h%d", index)
+	}
 	origins: [ORIGIN_STATE_CAPACITY + 1]html_css.Document_Origin
 	for host, index in hosts {
 		address, _ := address_parse(strings.concatenate({"modus://", host}, context.temp_allocator))
@@ -249,7 +262,7 @@ origin_state_table_full :: proc(t: ^testing.T) {
 	testing.expect_value(t, new_status, Origin_Reply_Status.Done)
 	testing.expect_value(t, value, "new")
 	value, status = origin_storage_read(&origins[1], &origins[1], "k", buffer[:])
-	testing.expect_value(t, value, "b")
+	testing.expect_value(t, value, hosts[1])
 	// A value longer than a slot keeps the bytes that fit.
 	long := strings.repeat("v", ORIGIN_VALUE_CAPACITY + 5, context.temp_allocator)
 	origin_storage_write(&origins[1], "k", long)
@@ -263,7 +276,7 @@ origin_state_table_full :: proc(t: ^testing.T) {
 pages_escape_and_refuse :: proc(t: ^testing.T) {
 	globals_hold()
 	origin_states = {}
-	buffer: [PAGE_SOURCE_CAPACITY]u8
+	buffer := make([]u8, PAGE_SOURCE_CAPACITY, context.temp_allocator)
 	address, _ := address_parse("modus://forms/result?name=%3Cb%3E&query=%3Cscript%3E")
 	writer := Source_Writer{bytes = buffer[:]}
 	testing.expect_value(t, page_write(&writer, &address), Page_Kind.Form_Result)

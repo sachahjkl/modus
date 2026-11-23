@@ -47,8 +47,8 @@ METHOD_FIELD_BYTES :: 8
 // Access_Row, 48 bytes at most with its cut mark, and a zero byte.
 TARGET_FIELD_BYTES :: 56
 // The bytes of the Text field of the name of a page: web.PAGE_NAME_LIMIT
-// bytes at most, and a zero byte.
-PAGE_FIELD_BYTES :: 40
+// bytes at most, and a zero byte, up to a multiple of 8.
+PAGE_FIELD_BYTES :: 72
 // The bytes of the Text field of how a connection ended: the longest,
 // "aborted: an answer under 4096 bytes in one second", has 50 bytes.
 HOW_FIELD_BYTES :: 56
@@ -142,38 +142,38 @@ Pages_Read :: struct {
 // The store refused a page: the page that is served is the one before.
 @(log_fact = "server: the store refused the page /{page}: the page that is served did not change")
 Page_Refused :: struct {
-	page: [40]u8,
+	page: [72]u8,
 }
 
 // The store refused the index of the pages after a new page.
 @(log_fact = "server: the store refused the index of the pages: /{page} is not served")
 Index_Refused :: struct {
-	page: [40]u8,
+	page: [72]u8,
 }
 
 // A page is in the store.
 @(log_fact = "server: the page /{page} is in the store: {page_size}")
 Page_Stored :: struct {
 	page_size: value_kinds.Size_In_Bytes,
-	page:      [40]u8,
+	page:      [72]u8,
 }
 
 // The store refused the removal of a page: it is still served.
 @(log_fact = "server: the store refused the removal of /{page}: the page is still served")
 Removal_Refused :: struct {
-	page: [40]u8,
+	page: [72]u8,
 }
 
 // The store refused the index of the pages after a removal.
 @(log_fact = "server: the store refused the index of the pages after the removal of /{page}")
 Index_Refused_After_Removal :: struct {
-	page: [40]u8,
+	page: [72]u8,
 }
 
 // A page is out of the store.
 @(log_fact = "server: the page /{page} is out of the store")
 Page_Removed :: struct {
-	page: [40]u8,
+	page: [72]u8,
 }
 
 #assert(PAGE_FIELD_BYTES > web.PAGE_NAME_LIMIT)

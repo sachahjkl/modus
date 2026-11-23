@@ -72,7 +72,7 @@ origin_messages_refuse_broken_bytes :: proc(t: ^testing.T) {
 	OWNER_SCHEME :: 1 + ORIGIN_WIRE_BYTES + 8
 	WIDTH :: 1 + 2 * ORIGIN_WIRE_BYTES
 	KEY_COUNT :: WIDTH + 4
-	VALUE_COUNT :: KEY_COUNT + 1 + ORIGIN_KEY_CAPACITY
+	VALUE_COUNT :: KEY_COUNT + 2 + ORIGIN_KEY_CAPACITY
 	Case :: struct {
 		place:   int,
 		bytes:   []u8,
@@ -88,7 +88,8 @@ origin_messages_refuse_broken_bytes :: proc(t: ^testing.T) {
 		{REQUESTER_HOST_LENGTH, {0xFF, 0xFF}, .Host_Too_Long},
 		{WIDTH, {0xFF, 0xFF, 0xFF, 0xFF}, .Width_Refused},
 		{WIDTH, {u8((LARGEST_WIDTH + 1) & 0xFF), u8((LARGEST_WIDTH + 1) >> 8), 0, 0}, .Width_Refused},
-		{KEY_COUNT, {ORIGIN_KEY_CAPACITY + 1}, .Count_Too_Large},
+		{KEY_COUNT, {u8((ORIGIN_KEY_CAPACITY + 1) & 0xFF), u8((ORIGIN_KEY_CAPACITY + 1) >> 8)}, .Count_Too_Large},
+		{KEY_COUNT, {0xFF, 0xFF}, .Count_Too_Large},
 		{VALUE_COUNT, {ORIGIN_VALUE_CAPACITY + 1}, .Count_Too_Large},
 		{VALUE_COUNT, {255}, .Count_Too_Large},
 	}
@@ -103,7 +104,7 @@ origin_messages_refuse_broken_bytes :: proc(t: ^testing.T) {
 	// and a value at their capacity.
 	edge := good
 	copy(edge[WIDTH:], []u8{0, 0, 0, 0})
-	edge[KEY_COUNT] = ORIGIN_KEY_CAPACITY
+	edge[KEY_COUNT], edge[KEY_COUNT + 1] = u8(ORIGIN_KEY_CAPACITY & 0xFF), u8(ORIGIN_KEY_CAPACITY >> 8)
 	edge[VALUE_COUNT] = ORIGIN_VALUE_CAPACITY
 	_, problem := origin_request_decode(edge[:])
 	testing.expect_value(t, problem, Message_Problem.None)

@@ -60,9 +60,12 @@ deflate_block_kind_of_word :: proc "contextless" (word: u8) -> (kind: Deflate_Bl
 	return enum_word.member_of_word(Deflate_Block_Kind, u64(word))
 }
 
-// Maximum raw row byte count: MAX_IMAGE_WIDTH * 4 (16 KiB).
+// The bytes of a row that the workspace holds itself: a row of 4096 RGBA
+// pixels (16 KiB). A wider row takes its three row buffers from the scratch
+// past the workspace (png_minimum_scratch_bytes), so the width of an image
+// is bounded by the scratch that its caller gives, not by the workspace.
 @(private)
-PNG_MAX_ROW_BYTES :: MAX_IMAGE_WIDTH * RGBA_BYTES_PER_PIXEL
+PNG_INLINE_ROW_BYTES :: 4096 * RGBA_BYTES_PER_PIXEL
 
 // DEFLATE sliding window size (32 KiB) and mask.
 @(private)
@@ -97,9 +100,14 @@ Deflate_Huffman :: struct {
 @(private)
 Png_Workspace :: struct {
 	window:        [DEFLATE_WINDOW_SIZE]u8,
-	prev_row:      [PNG_MAX_ROW_BYTES]u8,
-	curr_row:      [PNG_MAX_ROW_BYTES]u8,
-	raw_row:       [1 + PNG_MAX_ROW_BYTES]u8,
+	inline_previous_row: [PNG_INLINE_ROW_BYTES]u8,
+	inline_current_row:  [PNG_INLINE_ROW_BYTES]u8,
+	inline_raw_row:      [1 + PNG_INLINE_ROW_BYTES]u8,
+	// The row buffers of this image: the inline ones, or parts of the
+	// scratch past the workspace for a row past PNG_INLINE_ROW_BYTES.
+	prev_row:      []u8,
+	curr_row:      []u8,
+	raw_row:       []u8,
 	litlen_table:  Deflate_Huffman,
 	dist_table:    Deflate_Huffman,
 	codelen_table: Deflate_Huffman,
@@ -107,8 +115,19 @@ Png_Workspace :: struct {
 	palette_alpha: [256]u8,
 }
 
-// Minimum caller-provided scratch size for any PNG up to 4096x4096.
+// Minimum caller-provided scratch size for a PNG whose rows have at most
+// 4096 RGBA pixels: the workspace and its alignment.
 PNG_MINIMUM_SCRATCH_BYTES :: size_of(Png_Workspace) + 16
+
+// png_minimum_scratch_bytes gives the scratch that a PNG with rows of a size
+// needs: the workspace, and for a row past the inline buffers, the three
+// row buffers of that size.
+png_minimum_scratch_bytes :: proc "contextless" (row_bytes: int) -> u64 {
+	if row_bytes <= PNG_INLINE_ROW_BYTES {
+		return PNG_MINIMUM_SCRATCH_BYTES
+	}
+	return PNG_MINIMUM_SCRATCH_BYTES + 3 * u64(row_bytes) + 1
+}
 
 // IEEE 802.3 CRC-32 lookup table.
 @(rodata, private)
@@ -433,7 +452,7 @@ png_probe :: proc "contextless" (bytes: []u8) -> (header: Image_Header, refusal:
 		width                 = meta.width,
 		height                = meta.height,
 		output_bytes          = meta.output_bytes,
-		minimum_scratch_bytes = PNG_MINIMUM_SCRATCH_BYTES,
+		minimum_scratch_bytes = png_minimum_scratch_bytes(meta.row_bytes),
 	}, .None
 }
 
@@ -1223,6 +1242,21 @@ png_decode_rgba :: proc "contextless" (bytes: []u8, output_rgba: []u8, scratch: 
 	}
 
 	tail_offset := align_pad + size_of(Png_Workspace)
+	// The row buffers: inline for a row of at most PNG_INLINE_ROW_BYTES,
+	// else the first bytes of the scratch past the workspace.
+	if meta.row_bytes <= PNG_INLINE_ROW_BYTES {
+		ws.prev_row, ws.curr_row, ws.raw_row = ws.inline_previous_row[:], ws.inline_current_row[:], ws.inline_raw_row[:]
+	} else {
+		row_area := 3 * meta.row_bytes + 1
+		if len(scratch) - tail_offset < row_area {
+			return {}, .Scratch_Too_Small
+		}
+		rows := scratch[tail_offset:][:row_area]
+		ws.prev_row = rows[:meta.row_bytes]
+		ws.curr_row = rows[meta.row_bytes:][:meta.row_bytes]
+		ws.raw_row = rows[2 * meta.row_bytes:]
+		tail_offset += row_area
+	}
 	tail_bytes := len(scratch) - tail_offset
 
 	if u64(tail_bytes) >= meta.expected_raw {
@@ -1305,6 +1339,6 @@ png_decode_rgba :: proc "contextless" (bytes: []u8, output_rgba: []u8, scratch: 
 		width                 = meta.width,
 		height                = meta.height,
 		output_bytes          = meta.output_bytes,
-		minimum_scratch_bytes = PNG_MINIMUM_SCRATCH_BYTES,
+		minimum_scratch_bytes = png_minimum_scratch_bytes(meta.row_bytes),
 	}, .None
 }

@@ -50,13 +50,13 @@ import "modus:system"
 import "modus:trigonometry"
 
 // The size of the window at its start, its least size and its largest:
-// the logical screen of the reference screen.
+// the reference screen, a window over the whole screen at the scale 1.
 WIDTH :: 640
 HEIGHT :: 440
 LEAST_WIDTH :: 600
 LEAST_HEIGHT :: 360
-LARGEST_WIDTH :: 1536
-LARGEST_HEIGHT :: 864
+LARGEST_WIDTH :: 1920
+LARGEST_HEIGHT :: 1080
 #assert(LARGEST_WIDTH == paint_model.PICTURE_WIDTH_LIMIT)
 #assert(LARGEST_HEIGHT == paint_model.PICTURE_HEIGHT_LIMIT)
 
@@ -67,14 +67,14 @@ LARGEST_HEIGHT :: 864
 // two pictures of the window at its largest size; the source states the
 // working memory. The arrays, in pages of 4 KiB:
 //
-//   picture_pixels    1296  the picture at its largest, 1536 x 864 x 4 bytes
-//   backup_pixels     1296  the picture before a stroke; the rows of a read
+//   picture_pixels    2025  the picture at its largest, 1920 x 1080 x 4 bytes
+//   backup_pixels     2025  the picture before a stroke; the rows of a read
 //   history_arena      256  the steps of undo, 1 MiB
-//   history_scratch     99  one strip of 32 rows and its compressed form
-//   fill_memory         73  the bitmap and the stack of a fill
+//   history_scratch    123  one strip of 32 rows and its compressed form
+//   fill_memory         96  the bitmap and the stack of a fill
 //   piece_bytes          9  one piece of a keep, and the header of a read
 //
-// The window: 1536 x 864 logical pixels at the largest scale, cut on each
+// The window: 1920 x 1080 logical pixels at the largest scale, cut on each
 // axis to the reference screen as the tool counts it
 // (src/md/features/desktop_to_browser.md, "The budgets"): 1920 x 1080
 // pixels, 4 bytes each, two pictures: 4050 pages. A resize holds the old

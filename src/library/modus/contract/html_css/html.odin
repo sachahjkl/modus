@@ -10,11 +10,15 @@ package html_css
 
 import "modus:contract/enum_word"
 
-MAX_DOM_NODES :: 512
+// The nodes, the attributes and the text of one document: a page of the
+// web of today has some thousands of nodes and some hundred KiB of text. A
+// node index is a u16, and NO_NODE is its largest value.
+MAX_DOM_NODES :: 8192
 MAX_DOM_DEPTH :: 64
-MAX_ATTRS :: 1024
-MAX_TEXT_POOL :: 32768
-MAX_ORIGIN_HOST_LEN :: 128
+MAX_ATTRS :: 16384
+MAX_TEXT_POOL :: 1 << 20
+#assert(MAX_DOM_NODES < int(max(u16)) && MAX_ATTRS <= int(max(u16)))
+MAX_ORIGIN_HOST_LEN :: 253 // The longest name of a host that DNS gives (RFC 1035).
 NO_NODE :: u16(0xFFFF)
 // The entries of the list of active formatting elements, markers included.
 ACTIVE_FORMATTING_CAPACITY :: 16

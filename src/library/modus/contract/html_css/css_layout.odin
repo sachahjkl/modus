@@ -6,7 +6,9 @@ package html_css
 
 import "modus:contract/draw_record"
 
-MAX_CSS_RULES :: 128
+// The rules of the style sheets of one document: a site of today has some
+// hundred rules for a page.
+MAX_CSS_RULES :: 1024
 MAX_SELECTORS_PER_RULE :: 8
 MAX_SELECTOR_NAME_LEN :: 64
 // A selector is at most 4 compound selectors joined by combinators, and a
@@ -14,12 +16,14 @@ MAX_SELECTOR_NAME_LEN :: 64
 MAX_COMPOUNDS_PER_SELECTOR :: 4
 MAX_CLASSES_PER_COMPOUND :: 4
 // The bytes of the class and id names of one style sheet.
-CSS_NAME_POOL_CAPACITY :: 8192
+// The bytes of the names of the selectors: a Css_Name holds an offset of
+// 16 bits.
+CSS_NAME_POOL_CAPACITY :: 65535
 // The ancestors that a selector with combinators reads: past them, a node
 // matches as if it had no other ancestor.
 SELECTOR_ANCESTOR_LIMIT :: 2 * MAX_DOM_DEPTH
 // The columns of a table: the cells past the last one get no box.
-TABLE_COLUMN_CAPACITY :: 32
+TABLE_COLUMN_CAPACITY :: 64
 MAX_LAYOUT_COORD :: 65536
 DEFAULT_FONT_SIZE :: i32(16)
 DEFAULT_TEXT_COLOR :: draw_record.Draw_Color(0xFF000000)
@@ -213,6 +217,10 @@ Layout_Box :: struct {
 
 // Fixed-capacity layout tree produced by compute_layout.
 Layout_Tree :: struct {
+	// The cascaded style of each node, which the layout reads. It is here,
+	// in the memory of the caller, and not on the stack: the styles of
+	// MAX_DOM_NODES nodes are larger than the stack of a thread.
+	node_styles: [MAX_DOM_NODES]Computed_Style,
 	boxes:     [MAX_DOM_NODES]Layout_Box,
 	box_count: u16,
 	root_box:  u16,
@@ -1661,11 +1669,10 @@ compute_layout :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, v
 	if tree.node_count == 0 {
 		return
 	}
-	styles: [MAX_DOM_NODES]Computed_Style
-	resolve_styles(tree, sheet, &styles)
+	resolve_styles(tree, sheet, &layout_out.node_styles)
 	vw := max(i32(0), min(viewport_width, MAX_LAYOUT_COORD))
 	_ = viewport_height
-	layout_out.root_box = layout_node(tree, &styles, layout_out, 0, NO_NODE, 0, 0, vw, false, 0)
+	layout_out.root_box = layout_node(tree, &layout_out.node_styles, layout_out, 0, NO_NODE, 0, 0, vw, false, 0)
 }
 
 // layout_find_box_by_id returns the Layout_Box index for the first element with matching HTML id attribute.

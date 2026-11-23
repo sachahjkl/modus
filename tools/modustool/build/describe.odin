@@ -1392,7 +1392,7 @@ BUDGET_REQUEST_NAME :: "MODULE_BUDGET"
 // The largest width and the largest height of a window part: the limit of
 // a surface of display.open. A larger part is a fault of the source, and
 // the product of two parts stays far from the end of 64 bits.
-BUDGET_WINDOW_PART_LIMIT :: 2048
+BUDGET_WINDOW_PART_LIMIT :: 8192
 
 // budget_request_read reads the constant BUDGET_REQUEST_NAME of one parsed
 // file into budget: the stated budget. A file with no such constant leaves
