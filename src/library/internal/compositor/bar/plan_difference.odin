@@ -12,13 +12,46 @@ import "modus:contract/text_encoding"
 // The bounds of the contract of a plan: one fact in one place.
 PLAN_DIFFERENCE_NAME_BYTES :: pr.PLAN_DISPLAY_NAME_BYTES
 PLAN_DIFFERENCE_ITEM_BYTES :: pr.PLAN_DISPLAY_ITEM_BYTES
-// The items of one side, and the lines of the items of both sides: the
-// dialog fits on the reference screen with no scroll, so the principal
-// never accepts a line that it did not see. An item is cut into lines of
-// PLAN_DIFFERENCE_LINE_CHARACTERS characters, never cut short.
+// The items of one side. An item is cut into lines of
+// PLAN_DIFFERENCE_LINE_CHARACTERS characters, never cut short, and the
+// dialog grows with its lines.
 PLAN_DIFFERENCE_ITEM_CAPACITY :: pr.PLAN_DISPLAY_ITEM_CAPACITY
 PLAN_DIFFERENCE_LINE_CHARACTERS :: pr.PLAN_DISPLAY_LINE_CHARACTERS
-PLAN_DIFFERENCE_LINE_CAPACITY :: pr.PLAN_DISPLAY_LINE_CAPACITY
+
+// Merge note, work/limits_paging_and_sync. That branch rewrote this dialog:
+// any count of items in memory that the caller of plan_difference_open
+// gives, a body that scrolls past PLAN_DIFFERENCE_VISIBLE_LINES, an accept
+// that counts only once seen_through, and the two sides read on the worker
+// of the compositor from a memory object (plan_difference_read, its
+// Plan_Difference_Source and Plan_Difference_Memory). Its item is one line
+// of 48 bytes, and its lists split at a comma. At the merge, keep that
+// paging and that worker, and keep the item of this branch:
+//
+// 1. The item: PLAN_DIFFERENCE_ITEM_BYTES is pr.PLAN_DISPLAY_ITEM_BYTES,
+//    384 bytes. plan_difference_items splits at the line feed
+//    (pr.PLAN_DISPLAY_ITEM_SEPARATOR), not at a comma, and refuses an item
+//    that text_encoding.text_valid refuses with Item_Not_Text, one item at
+//    a time: plan_difference_read reads the sides through it, so a
+//    difference from a memory object keeps the same border.
+// 2. The lines: plan_difference_body_lines counts each item as
+//    pr.plan_display_item_lines of its text, not as 1, and
+//    plan_difference_line gives the item and the line inside it
+//    (a field item_line, from 0) of a line of the body; the draw writes
+//    plan_difference_item_line(item, item_line) in the font of the cells.
+//    seen_through, the scroll bounds and the height of the view then count
+//    the wrapped lines, so an accept counts only once the last line of the
+//    last item showed. plan_difference_side_lines and the height of
+//    plan_difference_place of this branch leave: the view of that branch
+//    gives the height.
+// 3. The memory: an item takes size_of(Plan_Difference_Item), 392 bytes, so
+//    the arena of the difference that the worker takes from is sized by
+//    plan_difference_items_needed times that size.
+// 4. The list of plans_core (display_lists_of_difference of that branch,
+//    with its DISPLAY_LIST_ITEM_MOST) joins its items with
+//    pr.PLAN_DISPLAY_ITEM_SEPARATOR, writes a text value in quotes, and
+//    DISPLAY_LIST_ITEM_MOST becomes pr.PLAN_DISPLAY_ITEM_BYTES +
+//    len(pr.PLAN_DISPLAY_ITEM_SEPARATOR). No bound of lines is kept: the
+//    count of the items is the bound of that branch.
 
 // The places of the dialog, in pixels.
 PLAN_DIFFERENCE_WIDTH :: 480
@@ -71,7 +104,6 @@ Plan_Difference_Refusal :: enum u8 {
 	Item_Too_Long, // An item past PLAN_DIFFERENCE_ITEM_BYTES.
 	Too_Many_Items, // A side past PLAN_DIFFERENCE_ITEM_CAPACITY.
 	Item_Not_Text, // An item that is not UTF-8, or holds a control byte: the lines of the dialog would not be the item.
-	Too_Many_Lines, // The items of both sides take more than PLAN_DIFFERENCE_LINE_CAPACITY lines.
 	No_Change, // Nothing added and nothing removed: nothing to accept.
 	Not_A_Name, // The asker of an act is not an identifier: a name of a process.
 	Not_An_Act, // The act is not two identifiers with a period between them.
@@ -134,9 +166,6 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	}
 	if added_count == 0 && removed_count == 0 {
 		return 0, .No_Change, 2
-	}
-	if plan_difference_side_lines(added_items[:added_count]) + plan_difference_side_lines(removed_items[:removed_count]) > PLAN_DIFFERENCE_LINE_CAPACITY {
-		return 0, .Too_Many_Lines, 2
 	}
 	dialog.serial += 1
 	dialog.open = true

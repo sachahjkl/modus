@@ -160,18 +160,16 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 }
 
 // The bounds of the dialog of a difference on the trusted display: a plan
-// name, an item of a side, the items of one side, and the lines of the
-// items of both sides. An item is in the font of the cells, cut into lines
-// of PLAN_DISPLAY_LINE_CHARACTERS characters: the room of a line of the
-// dialog, 424 pixels, in cells of 8 pixels. No item is cut short, and the
-// dialog fits the reference screen. The compositor checks its own bounds
+// name, an item of a side, and the items of one side. An item is in the
+// font of the cells, cut into lines of PLAN_DISPLAY_LINE_CHARACTERS
+// characters: the room of a line of the dialog, 424 pixels, in cells of 8
+// pixels. No item is cut short. The compositor checks its own bounds
 // against these (src/md/features/powerbox.md, "The relation to the other
 // paths").
 PLAN_DISPLAY_NAME_BYTES :: 48
 PLAN_DISPLAY_ITEM_BYTES :: 64 + MAX_ENTRY_NAME_BYTES + PLAN_VALUE_TEXT_BYTES // The kind, the name, " = " and a text in quotes.
 PLAN_DISPLAY_ITEM_CAPACITY :: 8
 PLAN_DISPLAY_LINE_CHARACTERS :: 53
-PLAN_DISPLAY_LINE_CAPACITY :: 24
 // Between two items of a list: a line feed, which no item holds (the border
 // of a plan refuses a control byte in a text, and a name has none).
 PLAN_DISPLAY_ITEM_SEPARATOR :: "\n"

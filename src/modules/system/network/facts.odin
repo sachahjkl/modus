@@ -235,11 +235,16 @@ Address_Static :: struct {
 	gateway: [16]u8,
 }
 
-// The plan gives a static address that its border refuses: a part is
-// missing, the prefix is not 8 to 30, the address is no address of a
-// machine, or the gateway is outside its subnet.
-@(log_fact = "network: the static address of the plan is refused: a part is missing, or it is no address of a machine of its subnet; the address comes from DHCP")
-Address_Static_Refused :: struct {}
+// The plan gives a static address that its border refuses
+// (network.interface_address_of_text): the problem says which rule.
+@(log_fact = "network: the static address of the plan is refused ({address_problem}); the address comes from DHCP")
+Address_Static_Refused :: struct {
+	address_problem: [72]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
+// The bytes of the Text field of a problem of a static address: the
+// longest of network.INTERFACE_TEXT_PROBLEM_TEXTS, and a zero byte.
+ADDRESS_PROBLEM_FIELD_BYTES :: size_of(Address_Static_Refused{}.address_problem)
 
 @(log_fact = "network: no fresh bytes for the transaction words of DHCP: the machine holds no address")
 Address_No_Seed :: struct {}

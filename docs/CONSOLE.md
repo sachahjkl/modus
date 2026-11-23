@@ -201,7 +201,7 @@ plans.apply("home", plan { values = { browser = { home = "modus://guide" }, moni
 
 The console types each value by the description of its owner before the call: a member, as `.dark`, names a member of the enum of the setter of the owner; a number is in the range of its parameter; a text is in its bound, UTF-8, with no control byte. An owner is a module of the image, the name of a role (its holder: the one that the plan gives, else the default one), or `root`, the core. A plan-only value, which no setter takes, is a parameter of the export `plan_only` of its owner. Each refusal names what is wrong: "display.bar_edge has no member .botom: its members are .top, .bottom, .left, .right", "display.notification_show_milliseconds is 10, outside its range 1000 to 60000".
 
-A plan is one line of the console, 200 bytes at most. A text of a value takes one row of the plan for each 40 bytes; a plan holds 32 rows.
+A plan is one line of the console, 200 bytes at most (4096 after the merge of `work/limits_text_and_clipboard`). A text of a value takes one row of the plan for each 40 bytes; a plan holds 32 rows.
 
 ### Functions and lists
 

@@ -235,7 +235,7 @@ test_plans_apply_request_refuses_each_bad_input_and_asks_nothing :: proc(t: ^tes
 	testing.expect_value(t, too_many, pr.Plan_Refusal.Display_Refused)
 	// The lines of the dialog: a text value of 256 bytes is the item
 	// `value o.f0 = "…"` of 271 characters, 6 lines of 53. Five take 30
-	// lines, past the 24 of the dialog; four take 24, the last that fit.
+	// lines, and the lists hold them whole: the dialog has no bound of lines.
 	long_text := strings.repeat("a", pr.PLAN_VALUE_TEXT_BYTES, context.temp_allocator)
 	fields := [5]string{"f0", "f1", "f2", "f3", "f4"}
 	past_lines := pr.Plan_Spec{principal = 0, entry_count = 5}
@@ -243,8 +243,12 @@ test_plans_apply_request_refuses_each_bad_input_and_asks_nothing :: proc(t: ^tes
 		past_lines.entries[index], _ = pr.plan_entry_make_text_value("o", field, long_text, .Plan_Default)
 	}
 	testing.expect_value(t, pr.plan_display_item_lines(strings.concatenate({"value o.f0 = \"", long_text, "\""}, context.temp_allocator)), 6)
-	_, item_too_long := apply_request(state, &port, "home", &past_lines, {}, &difference, &lists)
-	testing.expect_value(t, item_too_long, pr.Plan_Refusal.Display_Refused)
+	thirty_lines: pr.Plan_Difference
+	testing.expect_value(t, pr.plan_diff_compute(nil, &past_lines, &thirty_lines), pr.Plan_Refusal.None)
+	thirty_lists: Plan_Display_Lists
+	testing.expect_value(t, display_lists_of_difference(&thirty_lines, &thirty_lists), pr.Plan_Refusal.None)
+	testing.expect_value(t, thirty_lists.added_count, 5)
+	testing.expect_value(t, thirty_lists.added_length, 5 * 271 + 4)
 	edge_entry := past_lines
 	edge_entry.entry_count = 4
 

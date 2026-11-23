@@ -801,7 +801,7 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 	return 1
 }
 
-// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of items that line feeds separate, an item at most 384 bytes of UTF-8 with no control byte. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes, more than 8 items on one side, or more than 24 lines of items: an item takes a line for each 53 characters); Bad_Value (-1, an empty item in a list); Bad_Byte (-1, an item that is not UTF-8 or holds a control byte).
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of items that line feeds separate, an item at most 384 bytes of UTF-8 with no control byte. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes, or more than 8 items on one side; an item takes a line for each 53 characters); Bad_Value (-1, an empty item in a list); Bad_Byte (-1, an item that is not UTF-8 or holds a control byte).
 //
 // **The act.** The focus starts on Refuse. An act counts 500 ms after the
 // dialog showed: Enter acts on the button that has the focus, Tab and the
@@ -841,8 +841,6 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
 	case .Item_Not_Text:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Byte, .Bytes, i64(argument))
-	case .Too_Many_Lines:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Display_Lines, i64(argument), 0, bar.PLAN_DIFFERENCE_LINE_CAPACITY)
 	case .Not_A_Name, .Not_An_Act, .No_Grant, .Bad_Serial:
 		// The plan face checks no identifier, and its caller is checked
 		// above: only the act face and a poll give these.
@@ -889,7 +887,7 @@ dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Too_Many_Lines, .Not_A_Name, .Not_An_Act:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Not_A_Name, .Not_An_Act:
 		// A poll shows nothing: it gives none of the refusals of a show.
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
 	}
@@ -955,7 +953,7 @@ act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> i64 {
 	case .Not_A_Name, .Not_An_Act:
 		// The argument of the export is the act; the asker is no argument.
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
-	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Too_Many_Lines, .Bad_Serial:
+	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Bad_Serial:
 		// The act face gives none of the refusals of a plan or of a poll.
 	}
 	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
@@ -999,7 +997,7 @@ act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Too_Many_Lines, .Not_A_Name, .Not_An_Act:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Not_A_Name, .Not_An_Act:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
 	}
 	if !closed {

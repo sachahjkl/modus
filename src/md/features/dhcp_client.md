@@ -27,7 +27,15 @@ The options that the client does not use are passed over by their length; the ov
 
 ## As built
 
-- The service reads its plan values at its start: a whole static address holds, and a refused one starts DHCP with one line of the log (`Address_Static_Refused`).
+- The service reads its plan values at its start: a whole static address holds, and a refused one starts DHCP with one line of the log that names the rule (`Address_Static_Refused`).
+
+## The static address of the plan
+
+The plan gives two texts to the owner `network`: `static_address`, the address and the bits of its prefix, "10.0.2.15/24", and `static_gateway`, "10.0.2.2". `network.interface_address_of_text` reads them: four numbers of 0 to 255 each with no zero before a digit, a prefix of one or two digits; then `network.interface_address_check`, the one border of an address of an interface, checks the prefix (1 to 32 bits), the address (not 0, all ones, multicast, nor the network or broadcast address of a prefix of 30 bits or less) and the gateway (on the link, not the address). The export `network.plan_only` describes the two texts, with their bounds, 9 to 18 and 7 to 15 bytes.
+
+Why texts and not numbers: a principal writes an address as it reads it; one number of 32 bits for 10.0.2.15 is 167772687, which no reader checks by eye on the trusted display.
+
+Why the rules of an interface and not of a reply of DHCP. The address of a plan is the address of the interface, which the service holds as a field with its prefix; a reply of a server keeps its own border (a prefix of 8 to 30 bits, a router that may be absent), because the server is hostile and the plan is not.
 - Each datagram from UDP port 67 to port 68 goes to the client before the check of the destination address: a reply comes to the broadcast address, or to the address that it offers. The UDP checksum is checked when the server wrote one.
 - A REQUEST of a renewal goes to the hardware address of the server when the table of the neighbors holds it, else to the broadcast hardware address with the server as the IPv4 destination.
 - The transaction words come from the generator of the process, seeded from its context; the generator spends bytes only at a step of the client.

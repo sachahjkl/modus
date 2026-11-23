@@ -4,6 +4,12 @@ package console
 // written in the console"): the names of the evaluation that make the
 // values of a plan, `plan`, `module` and `store`, and the reader that turns
 // a plan given to a table of plan rows into those rows (modus:plan_reader).
+//
+// Merge note, work/limits_text_and_clipboard: a line of the console holds
+// 4096 bytes there (line_editor.LINE_CAPACITY), not 200, so a plan of one
+// line can give each text value at its bound; nothing here names the bound
+// of a line. A plan longer than a line stays the Later entry of ROADMAP.md,
+// "A plan longer than one line".
 
 import "modus:contract/blake3"
 import pr "modus:contract/plans_recipes"

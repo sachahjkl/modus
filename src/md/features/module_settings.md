@@ -133,7 +133,7 @@ The owners and their fields, as built:
 - `settings`: each setting by its name in `settings.descriptions`, and `time_zone`, a default or a lock (`settings.choice_of_kept`).
 - `display` (the holder of the display): `bar_edge`, `do_not_disturb`, `notification_show_milliseconds`, `magnifier_eighths`, `consent_arm_milliseconds` (`display_choices.choices_of_record`).
 - `storage`: `keep_all_minutes` and `hours_end_hours`, the retention rule, with their order (`storage_retention.rule_of`), described by `storage.plan_only`.
-- `network`: `static_address`, `static_prefix` and `static_gateway` (`dhcp_client.static_of`), described by `network.plan_only`.
+- `network`: `static_address`, a text "10.0.2.15/24", and `static_gateway`, a text "10.0.2.2" (`dhcp_client.static_of`), described by `network.plan_only`.
 - `browser`: `home`, a text; `monitor`: `sample_interval`.
 - `root`: `budget_share`, and the start size and the largest size of the screen of memory (`root_plan_values.root_plan_of`); the core reads them at the start of the holder of the display.
 - any owner of a store: `store_blocks`, the quota of its store, which the core reads when it opens the store (`root_plan_values.store_blocks_of`).
@@ -250,4 +250,4 @@ Built: layers 1 to 8, and the DHCP client.
 - The browser (`home`) and the monitor (`sample_interval`) have module settings, kept in their private stores through `modus:kept_choices`, which the compositor uses too.
 - A lock of the plan makes each setter and each `reset` refuse a locked setting with `No_Grant`, unit `Plan_Lock`; a press on the desktop changes nothing under it.
 
-Not built: the palette and the window of settings do not read the ranges and the choices yet, and a plan is bound by one line of the console (`ROADMAP.md`).
+Not built: the palette and the window of settings do not read the ranges and the choices yet, and a plan is bound by one line of the console: 200 bytes on this branch, 4096 with the line of `work/limits_text_and_clipboard` (`ROADMAP.md`).

@@ -31,14 +31,14 @@ dhcp_message: [dhcp_client.MESSAGE_CAPACITY]u8
 // client, and the log says it.
 address_start :: proc "contextless" (ctx: ^system.Context, now: u64) {
 	plan, _ := system.plan_values_of_process(&ctx.values)
-	static, found, refused := dhcp_client.static_of(plan)
-	if found && !refused {
+	static, found, problem := dhcp_client.static_of(plan)
+	if found && problem == .None {
 		address_take(static.address, static.mask, static.prefix, static.gateway)
 		system.log_fact(.Info, Address_Static{address = address_field(static.address), prefix = u64(static.prefix), gateway = address_field(static.gateway)})
 		return
 	}
-	if refused {
-		system.log_fact(.Warning, Address_Static_Refused{})
+	if found {
+		system.log_fact(.Warning, Address_Static_Refused{address_problem = value_kinds.text_field(network.INTERFACE_TEXT_PROBLEM_TEXTS[problem], ADDRESS_PROBLEM_FIELD_BYTES)})
 	}
 	if !random.generator_from_context(&dhcp_generator, ctx) {
 		system.log_fact(.Error, Address_No_Seed{})

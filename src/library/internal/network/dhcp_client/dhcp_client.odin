@@ -10,11 +10,12 @@ package dhcp_client
 
 import "modus:contract/chosen_values"
 import "modus:contract/plan_values"
+import "modus:network"
 
 CLIENT_PORT :: 68
 SERVER_PORT :: 67
-// The prefixes that a machine takes: a subnet of 8 bits at most, and of 2
-// hosts at least.
+// The prefixes that a reply of a server may give: a subnet of 8 bits at
+// most, and of 2 hosts at least.
 PREFIX_LEAST :: 8
 PREFIX_MOST :: 30
 // The fixed part of a message and the magic cookie (RFC 2131, section 2).
@@ -497,11 +498,11 @@ client_receive :: proc "contextless" (client: ^Client, message: []u8, out: []u8,
 	return {}, .None
 }
 // The fields of the plan values of the owner `network`: a static address
-// of the machine, its prefix, and the gateway (0: none). Only the plan of
-// principal 0 gives them: an address of the machine is a plan-only value
-// (src/md/features/dhcp_client.md).
+// of the machine with its prefix, "10.0.2.15/24", and its gateway,
+// "10.0.2.2", two texts. Only the plan of principal 0 gives them: an
+// address of the machine is a plan-only value (src/md/features/dhcp_client.md,
+// "The static address of the plan").
 STATIC_ADDRESS_FIELD :: "static_address"
-STATIC_PREFIX_FIELD :: "static_prefix"
 STATIC_GATEWAY_FIELD :: "static_gateway"
 
 // A static address of the plan, as the service takes it.
@@ -509,33 +510,32 @@ Static :: struct {
 	address: u32,
 	mask:    u32,
 	prefix:  u8,
-	gateway: u32, // 0: no gateway.
+	gateway: u32,
 }
 
-// static_of is the border of the static address of the plan: the rules of
-// an address of a reply (address_holdable, a prefix from 8 to 30, a
-// gateway inside the subnet), the one border of each address that the
-// service takes. found is false when the plan gives no address: the
-// service asks DHCP. refused is true when the plan gives an address that
-// the border refuses: the service asks DHCP, and the log says why.
-static_of :: proc "contextless" (plan: plan_values.Owner_Values) -> (static: Static, found: bool, refused: bool) {
-	any :: proc "contextless" (word: u64) -> bool {return true}
+// static_of is the border of the static address of the plan: the two texts
+// are read and checked by network.interface_address_of_text, the one
+// border of an address of an interface. found is false when the plan gives
+// neither text: the service asks DHCP. A problem other than None: the plan
+// gives an address that the border refuses, or one text without the other;
+// the service asks DHCP, and the log says why.
+static_of :: proc "contextless" (plan: plan_values.Owner_Values) -> (static: Static, found: bool, problem: network.Interface_Text_Problem) {
+	any :: proc "contextless" (text: string) -> bool {return true}
 	empty: chosen_values.Record
-	address, _, has_address := plan_values.value_in_force(STATIC_ADDRESS_FIELD, empty, plan, any)
-	prefix, _, has_prefix := plan_values.value_in_force(STATIC_PREFIX_FIELD, empty, plan, any)
-	gateway, _, has_gateway := plan_values.value_in_force(STATIC_GATEWAY_FIELD, empty, plan, any)
-	if !has_address && !has_prefix && !has_gateway {
-		return {}, false, false
+	address_text, _, has_address := plan_values.text_in_force(STATIC_ADDRESS_FIELD, empty, plan, any)
+	gateway_text, _, has_gateway := plan_values.text_in_force(STATIC_GATEWAY_FIELD, empty, plan, any)
+	if !has_address && !has_gateway {
+		return {}, false, .None
 	}
-	if !has_address || !has_prefix || address > u64(max(u32)) || prefix < PREFIX_LEAST || prefix > PREFIX_MOST || gateway > u64(max(u32)) {
-		return {}, true, true
+	if !has_address {
+		return {}, true, .Address_Text
 	}
-	mask := ~u32(0) << (32 - u32(prefix))
-	if !address_holdable(u32(address), mask) {
-		return {}, true, true
+	if !has_gateway {
+		return {}, true, .Gateway_Text
 	}
-	if gateway != 0 && (u32(gateway) & mask != u32(address) & mask || !address_holdable(u32(gateway), mask) || gateway == address) {
-		return {}, true, true
+	address, mask, problem_of_text := network.interface_address_of_text(address_text, gateway_text)
+	if problem_of_text != .None {
+		return {}, true, problem_of_text
 	}
-	return {address = u32(address), mask = mask, prefix = u8(prefix), gateway = u32(gateway)}, true, false
+	return {address = address.local, mask = mask, prefix = address.prefix_length, gateway = address.gateway}, true, .None
 }

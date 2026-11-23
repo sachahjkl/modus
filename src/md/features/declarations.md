@@ -111,7 +111,7 @@ Why two calls, and not one that waits. An export of a service runs in the loop o
 
 Why every difference, and not only one that adds a grant. A difference with no new grant is still shown (step 2 above). `plans.apply` refuses a plan with no change with `No_Change`: the dialog has nothing to show, and the principal has nothing to accept.
 
-Why the whole difference or nothing. The dialog shows at most 8 items on each side, each of at most 256 bytes, and at most 24 lines of items in all ([powerbox.md](powerbox.md), "The relation to the other paths"). A difference past these bounds is refused with `Display_Refused` before any dialog: a principal never accepts a line that it did not see. An item is the kind and the name of its entry: `role`, `start`, `disk`, `store`, `value` or `lock`, the name, for a store its rights, and for a value its word or its text in quotes; a changed entry that adds or widens a grant, or changes a module, is on the side of the additions with `changed`, and one that only narrows is on the side of the removals.
+Why the whole difference or nothing. The dialog shows at most 8 items on each side, each of at most 384 bytes, which wraps over as many lines as it takes ([powerbox.md](powerbox.md), "The relation to the other paths"). A difference past these bounds is refused with `Display_Refused` before any dialog: a principal never accepts a line that it did not see. An item is the kind and the name of its entry: `role`, `start`, `disk`, `store`, `value` or `lock`, the name, for a store its rights, and for a value its word or its text in quotes; a changed entry that adds or widens a grant, or changes a module, is on the side of the additions with `changed`, and one that only narrows is on the side of the removals.
 
 Refused forms:
 

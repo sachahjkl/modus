@@ -4,6 +4,7 @@ package dhcp_client
 import "core:testing"
 import "modus:contract/chosen_values"
 import "modus:contract/plan_values"
+import "modus:network"
 
 HARDWARE :: [6]u8{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
 TRANSACTION :: u32(0x1234_5678)
@@ -275,36 +276,38 @@ a_refused_request_starts_again :: proc(t: ^testing.T) {
 	lost, _ := client_receive(&client, nak_renew, out[:], 6 + 43200 * 1000)
 	testing.expect(t, lost.event == .Lost && client.phase == .Init)
 }
-// The static address of the plan: no field asks DHCP; a part missing, a
-// prefix out of 8 to 30, an address that a machine cannot hold, and a
-// gateway outside the subnet or equal to the address are refused; a whole
-// address is taken.
+// The static address of the plan: no text asks DHCP; one text without the
+// other, and texts that network.interface_address_of_text refuses, start
+// DHCP with the problem; a whole address is taken. The edges of each text
+// are the tests of modus:network.
 @(test)
 a_static_address_of_the_plan_is_read_at_its_border :: proc(t: ^testing.T) {
 	plan_of :: proc(changes: []chosen_values.Change) -> (plan: plan_values.Owner_Values) {
-		bytes := make([]u8, chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE, context.temp_allocator)
+		bytes := make([]u8, chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE + 64, context.temp_allocator)
 		written, _ := chosen_values.write_record({}, changes, bytes)
 		plan.locks, _ = chosen_values.read_record(bytes[:written])
 		return plan
 	}
-	_, none_found, none_refused := static_of({})
-	testing.expect(t, !none_found && !none_refused)
+	_, none_found, none_problem := static_of({})
+	testing.expect(t, !none_found && none_problem == .None)
 	Case :: struct {
-		address, prefix, gateway: u64,
-		with_prefix: bool,
+		address, gateway: string,
+		problem:          network.Interface_Text_Problem,
 	}
-	for item in ([?]Case{{u64(ADDRESS), 0, 0, false}, {u64(ADDRESS), 7, 0, true}, {u64(ADDRESS), 31, 0, true}, {0, 24, 0, true}, {0x0A00_0200, 24, 0, true}, {0x0A00_02FF, 24, 0, true}, {0x7F00_0001, 8, 0, true}, {u64(ADDRESS), 24, 0x0A00_0302, true}, {u64(ADDRESS), 24, u64(ADDRESS), true}, {1 << 32, 24, 0, true}}) {
+	for item in ([?]Case{{"10.0.2.15/24", "", .Gateway_Text}, {"", "10.0.2.2", .Address_Text}, {"10.0.2.15", "10.0.2.2", .Prefix_Text}, {"10.0.2.15/33", "10.0.2.2", .Prefix_Length}, {"10.0.2.255/24", "10.0.2.2", .Local_Address}, {"10.0.2.15/24", "10.0.3.2", .Gateway}}) {
 		changes := make([dynamic]chosen_values.Change, context.temp_allocator)
-		append(&changes, chosen_values.Change{name = STATIC_ADDRESS_FIELD, kind = .Choose, value = item.address})
-		if item.with_prefix {
-			append(&changes, chosen_values.Change{name = STATIC_PREFIX_FIELD, kind = .Choose, value = item.prefix})
+		if item.address != "" {
+			append(&changes, chosen_values.Change{name = STATIC_ADDRESS_FIELD, kind = .Choose_Text, text = item.address})
 		}
-		if item.gateway != 0 {
-			append(&changes, chosen_values.Change{name = STATIC_GATEWAY_FIELD, kind = .Choose, value = item.gateway})
+		if item.gateway != "" {
+			append(&changes, chosen_values.Change{name = STATIC_GATEWAY_FIELD, kind = .Choose_Text, text = item.gateway})
 		}
-		_, found, refused := static_of(plan_of(changes[:]))
-		testing.expectf(t, found && refused, "%v is taken", item)
+		_, found, problem := static_of(plan_of(changes[:]))
+		testing.expectf(t, found && problem == item.problem, "%v gives %v", item, problem)
 	}
-	static, found, refused := static_of(plan_of({{name = STATIC_ADDRESS_FIELD, kind = .Choose, value = u64(ADDRESS)}, {name = STATIC_PREFIX_FIELD, kind = .Choose, value = 24}, {name = STATIC_GATEWAY_FIELD, kind = .Choose, value = u64(SERVER)}}))
-	testing.expect(t, found && !refused && static.address == ADDRESS && static.mask == MASK && static.prefix == 24 && static.gateway == SERVER)
+	// A word in place of a text is no text: the plan gives no address.
+	_, word_found, _ := static_of(plan_of({{name = STATIC_ADDRESS_FIELD, kind = .Choose, value = u64(ADDRESS)}}))
+	testing.expect(t, !word_found)
+	static, found, problem := static_of(plan_of({{name = STATIC_ADDRESS_FIELD, kind = .Choose_Text, text = "10.0.2.15/24"}, {name = STATIC_GATEWAY_FIELD, kind = .Choose_Text, text = "10.0.2.2"}}))
+	testing.expect(t, found && problem == .None && static.address == ADDRESS && static.mask == MASK && static.prefix == 24 && static.gateway == SERVER)
 }

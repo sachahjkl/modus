@@ -746,7 +746,6 @@ decimal_put :: proc "contextless" (text: []u8, length: int, word: u64) -> int {
 // principal never accepts a line that it did not see.
 display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Difference, lists: ^Plan_Display_Lists) -> pr.Plan_Refusal {
 	lists^ = {}
-	lines := 0
 	for index in 0 ..< int(difference.change_count) {
 		item := &difference.changes[index]
 		text: [pr.PLAN_DISPLAY_ITEM_BYTES + 1]u8 // One more byte: an item past the bound is refused, not cut.
@@ -805,12 +804,6 @@ display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Differen
 			addition = widens
 		}
 		if length > pr.PLAN_DISPLAY_ITEM_BYTES {
-			return .Display_Refused
-		}
-		// The lines of both sides: a difference that the dialog cannot show
-		// whole on the reference screen is refused here, before any dialog.
-		lines += pr.plan_display_item_lines(string(text[:length]))
-		if lines > pr.PLAN_DISPLAY_LINE_CAPACITY {
 			return .Display_Refused
 		}
 		if addition {

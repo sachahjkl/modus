@@ -11,9 +11,6 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 	long_name := strings.repeat("n", PLAN_DIFFERENCE_NAME_BYTES + 1, context.temp_allocator)
 	long_item := strings.repeat("i", PLAN_DIFFERENCE_ITEM_BYTES + 1, context.temp_allocator)
 	nine := "a\nb\nc\nd\ne\nf\ng\nh\ni"
-	// An item of 5 lines: 4 * 53 characters and one more.
-	five_lines := strings.repeat("x", 4 * PLAN_DIFFERENCE_LINE_CHARACTERS + 1, context.temp_allocator)
-	lines_25 := strings.join({five_lines, five_lines, five_lines, five_lines, five_lines}, "\n", context.temp_allocator)
 	cases := [?]struct {
 		name, added, removed: string,
 		refusal:              Plan_Difference_Refusal,
@@ -33,8 +30,6 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 		{"home", "a\x7fb", "", .Item_Not_Text, 2},
 		{"home", "a", "\xff", .Item_Not_Text, 3},
 		{"home", "a\xc3", "", .Item_Not_Text, 2},
-		// 25 lines: 5 items of 5 lines each.
-		{"home", lines_25, "", .Too_Many_Lines, 2},
 		{"home", long_item, "", .Item_Too_Long, 2},
 		{"home", "", nine, .Too_Many_Items, 3},
 	}
@@ -442,8 +437,8 @@ plan_difference_arm_time_of_the_principal_is_never_shorter :: proc(t: ^testing.T
 
 // An item takes a line for each 53 characters, cut at a whole character:
 // a comma stays in its item, a character of two bytes is never split, and
-// the lines of an item give back the item. 24 lines fit the room of the
-// reference screen; the dialog grows with them.
+// the lines of an item give back the item. The dialog grows with its
+// lines, with no bound of lines: 32 lines are shown whole.
 @(test)
 plan_difference_wraps_an_item_and_counts_its_lines :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
@@ -461,13 +456,13 @@ plan_difference_wraps_an_item_and_counts_its_lines :: proc(t: ^testing.T) {
 	exact := strings.repeat("q", PLAN_DIFFERENCE_LINE_CHARACTERS, context.temp_allocator)
 	plan_difference_open(&dialog, "home", exact, "", 0)
 	testing.expect(t, plan_difference_side_lines(dialog.added[:1]) == 1 && plan_difference_item_line(&dialog.added[0], 0) == exact && plan_difference_item_line(&dialog.added[0], 1) == "")
-	// 24 lines, the most: 8 items of 3 lines on one side.
+	// 32 lines: 8 items of 4 lines on one side, each item whole.
 	dialog.open = false
-	three := strings.repeat("w", 2 * PLAN_DIFFERENCE_LINE_CHARACTERS + 1, context.temp_allocator)
-	side := strings.join({three, three, three, three, three, three, three, three}, "\n", context.temp_allocator)
-	_, most_refusal, _ := plan_difference_open(&dialog, "home", side, "", 0)
-	testing.expect_value(t, most_refusal, Plan_Difference_Refusal.None)
-	_, y, _, height := plan_difference_place(&dialog, 1280, 32, 768)
-	testing.expect(t, y >= 32 && y + height <= 768)
-	testing.expect_value(t, height, 2 + PLAN_DIFFERENCE_TITLE_HEIGHT + 1 + PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_LINE + PLAN_DIFFERENCE_GAP + (1 + PLAN_DIFFERENCE_LINE_CAPACITY) * PLAN_DIFFERENCE_LINE + PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_BUTTON_HEIGHT + PLAN_DIFFERENCE_MARGIN)
+	four := strings.repeat("w", 3 * PLAN_DIFFERENCE_LINE_CHARACTERS + 1, context.temp_allocator)
+	side := strings.join({four, four, four, four, four, four, four, four}, "\n", context.temp_allocator)
+	_, many_refusal, _ := plan_difference_open(&dialog, "home", side, "", 0)
+	testing.expect_value(t, many_refusal, Plan_Difference_Refusal.None)
+	testing.expect_value(t, plan_difference_side_lines(dialog.added[:dialog.added_count]), 32)
+	_, _, _, height := plan_difference_place(&dialog, 1280, 32, 768)
+	testing.expect_value(t, height, 2 + PLAN_DIFFERENCE_TITLE_HEIGHT + 1 + PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_LINE + PLAN_DIFFERENCE_GAP + (1 + 32) * PLAN_DIFFERENCE_LINE + PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_BUTTON_HEIGHT + PLAN_DIFFERENCE_MARGIN)
 }

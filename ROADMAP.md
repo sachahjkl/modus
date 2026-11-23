@@ -45,7 +45,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
-- **A plan longer than one line.** A principal applies a plan of a declaration file, whose evaluation process gives its record, so a plan is no longer bound by the 200 bytes of a line of the console and can name a holder by a name of the catalog. [Design](src/md/features/declarations.md)
+- **A plan longer than one line.** A principal applies a plan of a declaration file, whose evaluation process gives its record, so a plan is no longer bound by a line of the console (200 bytes, 4096 with the line editor of `work/limits_text_and_clipboard`) and can name a holder by a name of the catalog. [Design](src/md/features/declarations.md)
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)

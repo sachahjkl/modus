@@ -1,6 +1,7 @@
 package build
 
 import "modus:contract/tpm_service"
+import "modus:network"
 import "modus:contract/value_kinds"
 import "modus:sentence"
 import "core:strings"
@@ -53,6 +54,11 @@ device_text_bytes_most :: proc() -> map[string]u32 {
 	most["address"] = len("255.255.255.255")
 	most["gateway"] = len("255.255.255.255")
 	most["reply_problem"] = len("an option past its end")
+	address_problems := make([dynamic]string, context.temp_allocator)
+	for text in network.INTERFACE_TEXT_PROBLEM_TEXTS {
+		append(&address_problems, text)
+	}
+	most["address_problem"] = longest(address_problems[:])
 	most["protocol"] = len("TCP")
 	most["end_reason"] = len("closed by this service")
 	most["pin_refusal"] = u32(pin_refusal_words_most())
