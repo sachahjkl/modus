@@ -488,7 +488,7 @@ Do not use: attribution line, copyright notice.
 
 The site is the documentation of the system as static pages, with their style sheet and their pictures, that `modustool site` writes in `build/site` from the files of the repository and the logs of the machine tests.
 
-Every fact of the site comes from a file: the guides from `docs/`, the reference tables from the sources, the numbers from the logs or the measure record, the news from `news/`. The command checks every page before it writes one, and stops on a fault, such as a broken link, with the page and the reason. Each page is whole with no script and makes no request to another host. The site workflow publishes it at `https://modus.froment.software/`.
+Every fact of the site comes from a file: the guides from `docs/`, the reference tables from the sources, the numbers from the logs or the measure record, the news from `news/`. The command checks every page before it writes one, and stops on a fault, such as a broken link, with the page and the reason. Each page is whole with no script and makes no request to another host. The site workflow publishes it at `https://modus.systems/`.
 
 The design: `docs/SITE.md`, "The command".
 
@@ -636,7 +636,7 @@ Do not use: progress page, "what runs today".
 
 The site address is the absolute address where a host serves the site, in the form `https://<host>/<path>`.
 
-`SITE_ADDRESS` holds it (`https://modus.froment.software/`), and `modustool site --address` sets another for one run. Some parts of a page must be absolute to be right for the process that reads them, so they exist only with a site address: the canonical address, Open Graph, the page graph and the sitemap. With no site address the pages have relative links only, and work from a folder of a disk.
+`SITE_ADDRESS` holds it (`https://modus.systems/`), and `modustool site --address` sets another for one run. Some parts of a page must be absolute to be right for the process that reads them, so they exist only with a site address: the canonical address, Open Graph, the page graph and the sitemap. With no site address the pages have relative links only, and work from a folder of a disk.
 
 The design: `docs/SITE.md`, "What other sites read".
 
@@ -646,7 +646,7 @@ Do not use: base URL, domain (for this), root.
 
 The canonical address of a page is its one absolute address, which the page names in its head with `<link rel="canonical">`: the site address and the folder of the page, with a final slash.
 
-A page can be reached at several addresses (with `index.html`, through a redirect page); the canonical address tells a search engine which one is the page. Example: `https://modus.froment.software/docs/reference/licenses/`. The command checks that each page has its own and that no two pages share one.
+A page can be reached at several addresses (with `index.html`, through a redirect page); the canonical address tells a search engine which one is the page. Example: `https://modus.systems/docs/reference/licenses/`. The command checks that each page has its own and that no two pages share one.
 
 The design: `docs/SITE.md`, "What other sites read".
 

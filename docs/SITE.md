@@ -1857,7 +1857,7 @@ The home shows one tile for each module of `build/boot.image`: the width from th
 
 ## How the site is published
 
-A GitHub workflow publishes the site. The site is at `https://modus.froment.software/` (`SITE_ADDRESS` in `tools/modustool/site/site_frame.odin`). `modustool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
+A GitHub workflow publishes the site. The site is at `https://modus.systems/` (`SITE_ADDRESS` in `tools/modustool/site/site_frame.odin`). `modustool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
 
 The site workflow (`glossary/project.md`), `.github/workflows/site.yml`, runs at each push to `master` and by hand (`workflow_dispatch`). It holds no logic: each step calls the tool or an action, and each action is pinned by a version tag.
 
@@ -1891,11 +1891,13 @@ The time of the step `modustool build` on a runner of GitHub is not measured yet
 
 The domain:
 
-- The custom domain is a setting of the repository (Settings, Pages: the source "GitHub Actions", the custom domain `modus.froment.software`, "Enforce HTTPS"). With a deployment of an artifact, GitHub Pages ignores a `CNAME` file: the site has none.
-- The record at Cloudflare: `modus.froment.software`, a `CNAME` to `sachahjkl.github.io`, through the proxy of Cloudflare. Not verified here: GitHub Pages makes the certificate of a custom domain only when its check of the record sees GitHub, and the proxy hides it. The usual order: the record with no proxy until GitHub shows "Enforce HTTPS", then the proxy, with the TLS mode "Full (strict)" of Cloudflare.
+- The custom domain is a setting of the repository (Settings, Pages: the source "GitHub Actions", the custom domain `modus.systems`, "Enforce HTTPS"). With a deployment of an artifact, GitHub Pages ignores a `CNAME` file: the site has none.
+- The domain is a verified domain of the GitHub account (a `TXT` record `_github-pages-challenge-<account>.modus.systems`), so that no other account can serve a page under it.
+- The records at Cloudflare, which serves the zone `modus.systems`: the root, a `CNAME` to `sachahjkl.github.io` that Cloudflare flattens into addresses, and `www`, a `CNAME` to the same host, both through the proxy of Cloudflare. GitHub Pages sends `www` to the root. Not verified here: GitHub Pages makes the certificate of a custom domain only when its check of the record sees GitHub, and the proxy hides it. The usual order: the record with no proxy until GitHub shows "Enforce HTTPS", then the proxy, with the TLS mode "Full (strict)" of Cloudflare.
 - The branch `gh-pages` that served the first version by hand is no longer read once the source is "GitHub Actions".
+- The first address, `modus.froment.software`, stays a record of the zone `froment.software` with the proxy of Cloudflare and one redirect rule: each request gets a `301` to the same path and query on `https://modus.systems`. A link that another site, a feed reader or a search engine kept still reaches its page.
 
-The headers: GitHub Pages sends no header that a site chooses. It sends `Access-Control-Allow-Origin: *` with each answer, which lets the page of a public object cache take the font of the name from the site (`src/md/infrastructure/public_object_cache.md`). The proxy of Cloudflare adds these to each answer for the host `modus.froment.software` (a rule that changes the headers of the response):
+The headers: GitHub Pages sends no header that a site chooses. It sends `Access-Control-Allow-Origin: *` with each answer, which lets the page of a public object cache take the font of the name from the site (`src/md/infrastructure/public_object_cache.md`). The proxy of Cloudflare adds these to each answer for the host `modus.systems` (a rule of the zone that changes the headers of the response; `www` and the first address answer with a redirect and get none):
 
 | Header | Value | Why |
 |---|---|---|
