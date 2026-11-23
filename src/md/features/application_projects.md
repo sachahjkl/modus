@@ -77,7 +77,44 @@ Refused: **a kind guessed from the hash** (a lookup in the store). The evaluatio
 
 ### The catalog of the system
 
-The catalog is the declaration that a project reads under the name `catalog`: a record of the modules and the recipes of the system on which a project is built. Its hashes are the hashes of the built modules, so the catalog is an output of the build of the system, never a file of the repository written by hand. Until the build writes it, the tests give the evaluator a catalog of the same form.
+The catalog declaration of the system is the declaration that a project reads under the name `catalog`: a record of the release number, the modules and the builders of the system on which a project is built. Its hashes come from the built boot image, so the build writes it deterministically after the boot image exists, never by hand in the repository.
+
+The build writes two files:
+
+- `build/catalog.lex`, from `build/boot.image`: holds every module of the boot image.
+- `build/catalog_release.lex`, for the release boot image (`build/boot_release.image`): holds only the shipped modules of a release, with no test module.
+
+Each file has one canonical Lex record shape:
+
+```
+// Catalog declaration of modus <release>.
+{
+  release = "<release>",
+  modules = {
+    <name> = module(blake3:<64 lowercase hexadecimal digits>),
+  },
+  c = {
+    compiler = module(blake3:<c_compiler hash>),
+    assembler = module(blake3:<assemble hash>),
+    module = (path) => recipe(module(blake3:<c_compiler hash>), {
+      assembler = module(blake3:<assemble hash>),
+      path = path,
+      source = here(),
+    }),
+  },
+}
+```
+
+- **`catalog.release`** is the release number string of the build (`release.RELEASE_NUMBER`).
+- **`catalog.modules.<name>`** gives each module of the boot image as a typed module file, `module(blake3:<hash>)`, in ascending byte order of module name. The generator checks every module entry's bytes against its stated BLAKE3 hash and checks that each name is a valid Lex field name with no duplicates.
+- **`catalog.c.module(path)`** gives the recipe that compiles `path` in `here()` with the `c_compiler` and `assemble` hashes of that build: `c_compiler` is the builder module, `assembler` is a typed `Blob` input, `source` is `here()` (a typed `Tree` input), and `path` stays in the recipe arguments. `catalog.c.compiler` and `catalog.c.assembler` expose the same two module files directly. Because both `c_compiler` and `assemble` ship with identical bytes in the development boot image and in the release boot image, a C project evaluates to one recipe hash against either catalog declaration.
+- **Determinism.** The generator reads only the boot image and the release number, sorts the module entries by name, and writes no host path or timestamp. Two builds of the same boot image write identical bytes.
+- **Border refusals.** The generator refuses a damaged boot image, an entry outside the image, an entry whose bytes do not hash to its stated BLAKE3 hash, an empty or malformed release number, a module name that is not a Lex field name or appears twice, a boot image without `c_compiler` or `assemble`, and, in release scope, any test module or module absent from the module table.
+
+Refused forms:
+
+- **Hand-written hashes in project files.** A project file names `catalog.c.module(...)` or `catalog.modules.<name>`, never raw module hashes of the system. Hand-written hashes go stale on every build and hide which system built the project.
+- **A catalog declaration that names test modules in a release build.** A release image ships no test module ([../infrastructure/release_image.md](../infrastructure/release_image.md), "The release boot image holds no test module"), so a release catalog declaration refuses every test module and every single-image test module.
 
 ### The layers
 
@@ -97,10 +134,11 @@ Layer 3 needs layer 2, and the QUIC client of the object cache inside the system
 
 ### The checks
 
-A host test takes the real files of the project and passes layer 1:
+Host tests take the real files of `src/outside/projects/collatz` and pass layer 1 against a catalog declaration generated from a boot image by the real generator:
 
 - the tree hash of the folder, from the bytes of its files;
-- the evaluation of `project.lex` with that `here()` and the catalog, whole and at `outputs.default`, which is a recipe;
+- the generated `catalog.lex` and `catalog_release.lex` from a boot image with every boot module: deterministic bytes, every boot module present with its exact BLAKE3 hash, no test module in the release catalog declaration, and direct parsing and evaluation by `lex_evaluator`;
+- the evaluation of `project.lex` with that `here()` and the generated `catalog.lex`, whole and at `outputs.default`, which is a recipe whose builder is `c_compiler` and whose inputs are `assembler` and `source`;
 - the load of the evaluation and of `pins.lex` by `projects_core`;
 - the recipe of the output, read back by `recipe_spec_of_output` from what the evaluator wrote, registered by `recipes_core` under the hash that the evaluator gave, and refused at its build with `Builder_Needs_Sandbox`: the stop of layer 2, read as a refusal of the service, not as a fault;
 - a realisation of that recipe from a cache, trusted only when the key of the policy signed it intact.
@@ -114,6 +152,6 @@ The refusals come first: a `pins.lex` with a damaged hash, a project whose `sour
 
 ## State
 
-Built: the project `src/outside/projects/collatz` (`project.lex`, `pins.lex`, `collatz.c`) and the host test of layer 1 with its refusals; one identity for a recipe: `here()` a tree and `module(...)` a module file as typed values (`Tree_Ref`, `Module_Ref`), the conversion `plans_recipes.recipe_spec_of_arguments` and `recipe_spec_of_output` with host tests of each refusal, and the evaluator that hashes each recipe through it.
+Built: the project `src/outside/projects/collatz` (`project.lex`, `pins.lex`, `collatz.c`) and the host test of layer 1 with its refusals; one identity for a recipe: `here()` a tree and `module(...)` a module file as typed values (`Tree_Ref`, `Module_Ref`), the conversion `plans_recipes.recipe_spec_of_arguments` and `recipe_spec_of_output` with host tests of each refusal, and the evaluator that hashes each recipe through it; the catalog declaration of the system written by the build (`build/catalog.lex` and `build/catalog_release.lex`) with its pure generator and host tests.
 
-Left: a C builder, a builder started in its sandbox with a signed realisation, the catalog of the system as an output of its build, and layer 3: each an entry of `ROADMAP.md`.
+Left: a C builder, a builder started in its sandbox with a signed realisation, and layer 3: each an entry of `ROADMAP.md`.

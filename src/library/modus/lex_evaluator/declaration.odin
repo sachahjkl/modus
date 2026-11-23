@@ -27,7 +27,7 @@ DECLARATION_RECIPE_CAPACITY :: 256
 DECLARATION_TAGGED_RECORD_CAPACITY :: 128
 DECLARATION_TEXT_ARENA :: 64 * 1024
 DECLARATION_BINDING_CAPACITY :: 32
-DECLARATION_RECORD_FIELDS_LIMIT :: 128
+DECLARATION_RECORD_FIELDS_LIMIT :: 512
 
 // Caller-supplied pure loader for `import(path)` and `declaration(hash)`.
 // Neither callback performs I/O inside the evaluator; in the sandboxed
@@ -134,9 +134,14 @@ Declaration_Workspace :: struct {
 	host_failure_place:  lex_parser.Place,
 	// The written arguments of a recipe and its record, kept here and not on
 	// the bounded stack of the evaluation: the record is about 7 KiB.
-	recipe_arguments:    [plans_recipes.MAX_RECIPE_ARGUMENT_VALUE_BYTES]u8,
-	recipe_spec:         plans_recipes.Recipe_Spec,
-	evaluation:          Evaluation,
+	recipe_arguments:        [plans_recipes.MAX_RECIPE_ARGUMENT_VALUE_BYTES]u8,
+	recipe_spec:             plans_recipes.Recipe_Spec,
+	// Field names collected during record serialization, kept here so deep
+	// record serialization takes no stack space and wide records such as
+	// catalog.modules fit.
+	record_field_names:      [DECLARATION_RECORD_FIELDS_LIMIT]string,
+	record_field_names_used: int,
+	evaluation:              Evaluation,
 }
 
 // bundle_loader returns a pure Declaration_Loader backed by a validated
@@ -164,6 +169,7 @@ declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: 
 	ws.node_limit = config.node_limit > 0 ? min(config.node_limit, DECLARATION_NODE_POOL) : DECLARATION_NODE_POOL
 	ws.text_used = 0
 	ws.import_count = 0
+	ws.record_field_names_used = 0
 	ws.loader = config.loader
 	ws.has_here = config.has_here
 	ws.here_hash = config.here_hash
@@ -954,6 +960,7 @@ decl_load_source_into_tree :: proc "contextless" (ws: ^Declaration_Workspace, so
 // declaration_serialize_value serializes a forced declaration value into
 // destination with deterministic sorted record keys.
 declaration_serialize_value :: proc "contextless" (ws: ^Declaration_Workspace, value: Value, destination: []u8) -> (written: int, failure: declaration_eval.Failure_Kind) {
+	ws.record_field_names_used = 0
 	writer := declaration_eval.output_writer_start(destination, {
 		status       = .Ok,
 		failure_kind = .None,
@@ -978,7 +985,7 @@ declaration_serialize_value :: proc "contextless" (ws: ^Declaration_Workspace, v
 // (Record_Literal or Record_With), then sorts them in strict ascending byte
 // order for deterministic canonical encoding.
 @(private)
-collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value: Value, names: ^[DECLARATION_RECORD_FIELDS_LIMIT]string, count: ^int, depth: int) -> bool {
+collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value: Value, names: []string, count: ^int, depth: int) -> bool {
 	if depth >= declaration_eval.OUTPUT_DEPTH_LIMIT {
 		return false
 	}
@@ -1006,7 +1013,7 @@ collect_lazy_record_fields :: proc "contextless" (evaluation: ^Evaluation, value
 				}
 			}
 			if !exists {
-				if count^ >= DECLARATION_RECORD_FIELDS_LIMIT {
+				if count^ >= len(names) {
 					return false
 				}
 				names[count^] = fname
@@ -1128,15 +1135,18 @@ serialize_value_into :: proc "contextless" (ws: ^Declaration_Workspace, writer: 
 		}
 		return .None
 	case .Record_Literal, .Record_With:
-		names: [DECLARATION_RECORD_FIELDS_LIMIT]string
+		start := ws.record_field_names_used
 		field_count := 0
-		if !collect_lazy_record_fields(&ws.evaluation, value, &names, &field_count, 0) {
+		if !collect_lazy_record_fields(&ws.evaluation, value, ws.record_field_names[start:], &field_count, 0) {
 			return .Pool_Exhausted
 		}
-		insertion_sort_names(names[:field_count])
+		names := ws.record_field_names[start:start + field_count]
+		insertion_sort_names(names)
+		ws.record_field_names_used = start + field_count
+		defer ws.record_field_names_used = start
 		declaration_eval.output_write_u8(writer, u8(declaration_eval.Value_Tag.Record))
 		declaration_eval.output_write_u32(writer, u32(field_count))
-		for fname in names[:field_count] {
+		for fname in names {
 			declaration_eval.output_write_string(writer, fname)
 			field_val, ok := field_force(&ws.evaluation, value, fname, {}, lex_parser.NO_NODE)
 			if !ok {

@@ -138,7 +138,13 @@ build_modules :: proc() -> bool {
 		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
 	}
 	build_measure_step("the seven boot images", step_started)
-	return images_built
+	if !images_built {
+		return false
+	}
+	step_started = time.tick_now()
+	system_catalogs_write() or_return
+	build_measure_step("the system catalog declarations", step_started)
+	return true
 }
 
 // library_modules_measure_print prints, for each library module of the

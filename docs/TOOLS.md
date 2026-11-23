@@ -1227,13 +1227,25 @@ modustool c-self-host
 
 The host test `chibicc_builds_itself_to_the_same_bytes` runs the same chain in a temporary folder.
 
+## The catalog declaration of the build
+
+Each build writes two Lex catalog declarations from the built boot image: `build/catalog.lex` for every module of `build/boot.image`, and `build/catalog_release.lex` for the release boot image without test modules. `release image` also writes `build/catalog_release.lex` directly from `build/boot_release.image`. The design is in `src/md/features/application_projects.md`, "The catalog of the system"; the code is `tools/modustool/build/system_catalog.odin`.
+
+Each file holds one canonical Lex record with three fields:
+
+- `catalog.release`: the release number text of the build (`release.RELEASE_NUMBER`).
+- `catalog.modules.<name>`: one typed module file, `module(blake3:<hash>)`, for each module of the boot image, sorted by name in ascending byte order.
+- `catalog.c`: `compiler` and `assembler` as typed module files for `c_compiler` and `assemble`, and `module(path)`, which returns the recipe that builds `path` in `here()` with `c_compiler` as the builder and `assemble` as a typed `Blob` input.
+
+The generator checks that every module entry lies inside the boot image and hashes to its stated BLAKE3 hash. It sorts entries by name so output stays deterministic across builds. It refuses a damaged image, a malformed release number, a module name that is not a Lex field name or appears twice, a missing `c_compiler` or `assemble` module, and any test module in a release catalog declaration. Projects such as `src/outside/projects/collatz/project.lex` evaluate against the generated catalog declaration instead of naming system hashes by hand.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The layout is in "The packages of the tool", below; the design is in `src/md/infrastructure/repository_layout.md`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
 
 | Command | What it does |
 |---|---|
-| `build [whole] [host_processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
+| `build [whole] [host_processes]` | Builds the modules, the boot images, the system catalog declarations (`build/catalog.lex` and `build/catalog_release.lex`) and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
 | `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt` (or against an unpacked SDK directory holding `SDK_MANIFEST.txt`): writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
 | `module-disk <disk file> <module file> ...` | Writes a data disk whose store `module_files` holds each module file under the name of its file, and prints the line of the console that starts each one ("A module from a source outside the repository") |
