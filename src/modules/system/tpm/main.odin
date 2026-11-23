@@ -116,8 +116,16 @@ UNSEAL_TRIES :: 3
 // largest is the answer of TPM2_Create with its creation data and ticket.
 MESSAGE_LIMIT :: 1024
 
+// The locality of the commands of the service: the page of its registers
+// is the page of locality 0. A report of a wait names it.
+LOCALITY :: 0
+
 registers: uintptr
 request_deadline: u64 // The time at which the request that runs ends: each wait of a step ends then too.
+// The request of a client that runs, for the reports of a wait. None:
+// the work of the service itself (the reads at the start, the lockout
+// check, the orderly shutdown).
+request_command: tpm_service.Command
 buffer_size: int // The bytes of the buffer of the interface, from its registers.
 command_bytes: [MESSAGE_LIMIT]u8
 answer_bytes: [MESSAGE_LIMIT]u8
@@ -153,13 +161,27 @@ buffer_erase :: proc "contextless" (count: int) {
 }
 
 // wait_for waits until the bits of a register hold a value, or the bound.
-wait_for :: proc "contextless" (offset: uintptr, mask: u32, value: u32) -> bool {
-	limit := min(system.time() + STEP_BOUND_MILLISECONDS, request_deadline)
+// A long wait reports itself each interval, and its bound says which bound
+// ended it (src/md/features/tpm_sealed_machine_key.md, "A wait that is
+// long"): the report names the step, the TPM command in the buffer and the
+// request that runs, so a stall is readable before the bound.
+wait_for :: proc "contextless" (offset: uintptr, mask: u32, value: u32, step: tpm_service.Device_Step) -> bool {
+	started := system.time()
+	step_limit := started + STEP_BOUND_MILLISECONDS
+	limit := min(step_limit, request_deadline)
+	progress := tpm_service.wait_progress_start(started)
+	command_code := byte_order.read_u32_big_endian(command_bytes[:], 6)
 	for register_read(offset) & mask != value {
-		if system.time() >= limit {
+		now := system.time()
+		if now >= limit {
+			bound := now >= step_limit ? "the bound of the step" : "the deadline of the work"
+			system.log_fact(.Warning, Wait_Bound_Reached{command_code = value_kinds.Hexadecimal_Sixteen_Digits(command_code), locality = LOCALITY, waited_milliseconds = now - started, step = step_field(step), request = request_field(request_command), bound = value_kinds.text_field(bound, BOUND_FIELD_BYTES)})
 			return false
 		}
-		system.sleep(system.time() + 1)
+		if due, passed_seconds := tpm_service.wait_progress_due(&progress, now); due {
+			system.log_fact(.Warning, Wait_Passed{passed_seconds = passed_seconds, command_code = value_kinds.Hexadecimal_Sixteen_Digits(command_code), locality = LOCALITY, waited_milliseconds = now - started, step = step_field(step), request = request_field(request_command)})
+		}
+		system.sleep(now + 1)
 	}
 	return true
 }
@@ -171,12 +193,12 @@ transact :: proc "contextless" (count: int) -> (answer: []u8, step: tpm_service.
 		return nil, .Answer // A command that did not fit its buffer.
 	}
 	register_write(REGISTER_LOCALITY_CONTROL, 1)
-	if !wait_for(REGISTER_LOCALITY_STATUS, 1, 1) {
+	if !wait_for(REGISTER_LOCALITY_STATUS, 1, 1, .Locality) {
 		return nil, .Locality
 	}
 	defer register_write(REGISTER_LOCALITY_CONTROL, 2)
 	register_write(REGISTER_CONTROL_REQUEST, 1)
-	if !wait_for(REGISTER_CONTROL_REQUEST, 1, 0) || !wait_for(REGISTER_CONTROL_STATUS, 2, 0) {
+	if !wait_for(REGISTER_CONTROL_REQUEST, 1, 0, .Ready) || !wait_for(REGISTER_CONTROL_STATUS, 2, 0, .Ready) {
 		return nil, .Ready
 	}
 	defer register_write(REGISTER_CONTROL_REQUEST, 2)
@@ -187,7 +209,7 @@ transact :: proc "contextless" (count: int) -> (answer: []u8, step: tpm_service.
 		intrinsics.volatile_store((^u8)(registers + DATA_BUFFER + uintptr(index)), command_bytes[index])
 	}
 	register_write(REGISTER_CONTROL_START, 1)
-	if !wait_for(REGISTER_CONTROL_START, 1, 0) {
+	if !wait_for(REGISTER_CONTROL_START, 1, 0, .Start) {
 		return nil, .Start
 	}
 	if register_read(REGISTER_CONTROL_STATUS) & 1 != 0 {
@@ -783,6 +805,10 @@ requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.
 		}
 		request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
 		authorization_used = false
+		request_command = request.command
+		// The end of this pass of the loop: the shutdown after the request
+		// still names it, and a wait after it is the work of the service.
+		defer request_command = .None
 		switch request.command {
 		case .None:
 			// Refused at the border above.

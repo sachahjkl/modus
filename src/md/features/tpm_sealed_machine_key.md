@@ -36,6 +36,19 @@ The service builds each TPM command itself. No client sends a raw command: a cli
 
 At its start, before it serves the ring, the service reads the count limits of the TPM and writes them on the log. Before the first request with an authorization value, it sets a random lockout authorization value, which nobody keeps, when the TPM has an empty one. No client asks for it, and a boot that seals only the machine key leaves the lockout hierarchy as it found it. The design is in [tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md), "The lockout authorization value": the count of the wrong passphrases of a named principal needs it.
 
+### A wait that is long
+
+Three waits of the path of a key are long by design: a step of the interface (120 s, `STEP_BOUND_MILLISECONDS`), a whole request of the service (300 s, `REQUEST_BOUND_MILLISECONDS`), and the wait of `unlock` for the answer of the service (600 s, `TPM_ANSWER_LIMIT`). A hardware TPM takes seconds to make a key, and a software TPM on a loaded host takes as long, so the bounds stay. Only a TPM that does not answer reaches them.
+
+A wait that is long must say what it waits for, while it waits. Each of the three waits writes a progress fact each 30 s of waiting (`tpm_service.WAIT_PROGRESS_INTERVAL_MILLISECONDS`), and a fact at its bound:
+
+- **A wait of the service** names the step of the interface (the locality, the ready state, the end of the command), the code of the TPM command in the buffer, the locality (0, the one that the service uses), the request of the client that runs (`Seal`, `Unseal`, `Pin_Read`, ...: "no request" for the reads at the start, the lockout check and the orderly shutdown), and the milliseconds waited. Its bound fact names the same parts, and which bound ended it: the bound of the step, or the deadline of the work that runs (a request, a flush, a check).
+- **The wait of `unlock`** names its request to the service and the milliseconds waited. Its bound fact names the request.
+
+The decision is pure, in the contract package `tpm_service` (`wait_progress_due`, `wait_progress_next`), with host tests. A report names a fixed time, its count times 30 s: the second report of a wait reads "60 s" whatever the moment of the check that wrote it. Each check writes one report at most, so a check that comes late writes the reports one after another, and the report of 60 s always comes, after the report of 30 s. A test can then wait for that sentence: the tool turns "a wait passed 60 s" into a failure that names the step, at every step of the machines that use the TPM ("The machines of the test").
+
+Refused: a shorter bound. It would refuse a slow TPM that works. Refused: a report with the time that the clock gives at the check. Its number changes with the load of the host, and no test can name it.
+
 ### The seal
 
 `Seal` runs these commands of TPM 2.0:
@@ -148,6 +161,7 @@ The test needs two systems with the same PCR 7 and two values of PCR 11, and one
 - **Secure Boot on.** The machines that seal run the firmware with Secure Boot, the enrolled variable store and a software TPM. The first system is the signed main volume (`boot_volume_secure_boot`). The second is the volume of the other system of the trusted boot (`boot_volume_other_system`): one byte of a module changed before its description was made and signed, so another PCR 11. Its boot program is signed for Secure Boot too. A signature of the boot program changes no byte of the boot image, so it changes no PCR 11.
 - **Secure Boot off.** One machine starts the same other system on the firmware with a TPM driver and no Secure Boot. That firmware starts a signed boot program too. Its PCR 11 is the PCR 11 of the last seal, and only PCR 7 differs: the TPM refuses because of PCR 7 alone, and the rule refuses the new seal.
 - **The TPM device is an option of the machine.** The firmware decides the driver and Secure Boot. The device decides if a TPM answers. Each firmware of the test that has a TPM driver can take the device.
+- **A stall fails at once.** Each machine of the part `principals` fails at any step when the TPM service or `unlock` writes the progress report of 60 s ("A wait that is long"). The failure quotes that line, so it names the step of the interface, the TPM command and the request that waited, where a step that waits for its line would only say, after its own bound, that the line did not come.
 
 ### The seal across an update
 
