@@ -295,6 +295,7 @@ static int should_wrap_in_savepoint(const char *sql) {
         statement_count++;
         if (starts_with_keyword_ci(next, "BEGIN") || starts_with_keyword_ci(next, "COMMIT") ||
             starts_with_keyword_ci(next, "END") || starts_with_keyword_ci(next, "ROLLBACK") ||
+            starts_with_keyword_ci(next, "SAVEPOINT") || starts_with_keyword_ci(next, "RELEASE") ||
             starts_with_keyword_ci(next, "VACUUM") || starts_with_keyword_ci(next, "PRAGMA"))
           return 0;
       }
@@ -482,8 +483,15 @@ Modus_Answer session_execute(const Modus_Text_Slice *sql, Modus_Table_Place *dat
     return answer_fail(error, MODUS_CALL_OUTCOME_ARGUMENT_REFUSED, MODUS_ERROR_KIND_BAD_VALUE, MODUS_ERROR_UNIT_NONE, 0,
                        0, 0, SQLITE_MISUSE);
 
-  if (sql->count > 0)
+  if (sql->count > 0) {
+    // Refuse interior NUL bytes so SQL is never silently truncated by C strings.
+    for (uint64_t i = 0; i < sql->count; i++) {
+      if (sql->address[i] == 0)
+        return answer_fail(error, MODUS_CALL_OUTCOME_ARGUMENT_REFUSED, MODUS_ERROR_KIND_BAD_VALUE,
+                           MODUS_ERROR_UNIT_BYTES, 1, (int64_t)i, (int64_t)sql->count, SQLITE_MISUSE);
+    }
     memcpy(session_sql_copy, sql->address, (size_t)sql->count);
+  }
   session_sql_copy[sql->count] = 0;
 
   // Bind main.db for the duration of this call only; always unbound before return.
@@ -538,20 +546,26 @@ Modus_Answer session_execute(const Modus_Text_Slice *sql, Modus_Table_Place *dat
       result_summary.truncated_rows = 0U;
       result_summary.has_rows = 1U;
 
-      for (int col = 0; col < col_count; col++) {
-        if (columns->address && columns->count < columns->capacity) {
-          Sqlite_Column_Row *row = &((Sqlite_Column_Row *)columns->address)[columns->count];
-          memset(row, 0, sizeof *row);
-          row->column_index = (uint32_t)col;
-          row->declared_kind = declared_kind_of(sqlite3_column_decltype(statement, col));
-          const char *cname = sqlite3_column_name(statement, col);
-          if (cname) {
-            size_t full_len = strlen(cname);
-            size_t kept = utf8_truncate_length((const uint8_t *)cname, full_len, SQLITE_COLUMN_NAME_BYTES);
-            memcpy(row->name, cname, kept);
-            row->name_length = (uint8_t)kept;
-            row->name_truncated = kept < full_len ? 1U : 0U;
-          }
+      // Cap emitted columns and per-row cells together so len(cells) / len(columns)
+      // never misaligns when a query produces more columns than columns->capacity.
+      int emitted_cols = 0;
+      if (columns->address && columns->capacity > entry_columns) {
+        uint64_t col_room = columns->capacity - entry_columns;
+        emitted_cols = (uint64_t)col_count <= col_room ? col_count : (int)col_room;
+      }
+
+      for (int col = 0; col < emitted_cols; col++) {
+        Sqlite_Column_Row *row = &((Sqlite_Column_Row *)columns->address)[columns->count];
+        memset(row, 0, sizeof *row);
+        row->column_index = (uint32_t)col;
+        row->declared_kind = declared_kind_of(sqlite3_column_decltype(statement, col));
+        const char *cname = sqlite3_column_name(statement, col);
+        if (cname) {
+          size_t full_len = strlen(cname);
+          size_t kept = utf8_truncate_length((const uint8_t *)cname, full_len, SQLITE_COLUMN_NAME_BYTES);
+          memcpy(row->name, cname, kept);
+          row->name_length = (uint8_t)kept;
+          row->name_truncated = kept < full_len ? 1U : 0U;
         }
         columns->count += 1ULL;
       }
@@ -559,14 +573,18 @@ Modus_Answer session_execute(const Modus_Text_Slice *sql, Modus_Table_Place *dat
       uint32_t row_index = 0U;
       int truncated = 0;
       while ((code = sqlite3_step(statement)) == SQLITE_ROW) {
+        if (emitted_cols == 0) {
+          truncated = 1;
+          break;
+        }
         // Atomic row emission: never emit a partial row when cells capacity fills.
-        if (!cells->address || cells->count > cells->capacity || (uint64_t)col_count > cells->capacity - cells->count) {
+        if (!cells->address || cells->count > cells->capacity || (uint64_t)emitted_cols > cells->capacity - cells->count) {
           truncated = 1;
           break;
         }
         uint64_t base_cell = cells->count;
         Sqlite_Cell_Row *cell_rows = (Sqlite_Cell_Row *)cells->address;
-        for (int col = 0; col < col_count; col++) {
+        for (int col = 0; col < emitted_cols; col++) {
           Sqlite_Cell_Row *cell = &cell_rows[base_cell + (uint64_t)col];
           memset(cell, 0, sizeof *cell);
           cell->row_index = row_index;
@@ -639,7 +657,7 @@ Modus_Answer session_execute(const Modus_Text_Slice *sql, Modus_Table_Place *dat
             break;
           }
         }
-        cells->count += (uint64_t)col_count;
+        cells->count += (uint64_t)emitted_cols;
         row_index++;
       }
 

@@ -82,23 +82,6 @@ format_table_info_sql :: proc "contextless" (table_name: string, out: []u8) -> (
 	return string(out[:pos]), true
 }
 
-// format_table_count_sql writes `SELECT count(*) FROM "<escaped>";`.
-format_table_count_sql :: proc "contextless" (table_name: string, out: []u8) -> (sql: string, ok: bool) {
-	prefix := "SELECT count(*) FROM \""
-	suffix := "\";"
-	if len(out) < len(prefix) + len(suffix) + 1 {
-		return "", false
-	}
-	pos := copy(out, prefix)
-	escaped_len, escaped_ok := escape_sql_identifier(table_name, out[pos:len(out) - len(suffix)])
-	if !escaped_ok {
-		return "", false
-	}
-	pos += escaped_len
-	pos += copy(out[pos:], suffix)
-	return string(out[:pos]), true
-}
-
 // sql_error_line_and_column converts a 0-based byte offset from sqlite3_error_offset
 // into 1-based line and column numbers for editor highlighting.
 sql_error_line_and_column :: proc "contextless" (sql: string, byte_offset: int) -> (line: int, column: int, valid: bool) {

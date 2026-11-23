@@ -55,7 +55,8 @@ Worker_Request :: struct {
 Worker_Result :: struct {
 	kind:            Result_Kind,
 	serial:          u64,
-	snapshot_index:  int, // 0 or 1 in double-buffered Result_Snapshot array.
+	has_snapshot:    bool, // True only when worker wrote snapshots[snapshot_index] and awaits UI ack.
+	snapshot_index:  int,  // 0 or 1 in double-buffered Result_Snapshot array.
 	problem:         Problem_Kind,
 	detail:          [DIAGNOSTIC_DETAIL_BYTES]u8,
 	detail_len:      int,
@@ -101,7 +102,7 @@ Storage_Sync_Port :: struct {
 	user_data:   rawptr,
 	write_range: proc "contextless" (user_data: rawptr, offset: u64, data: []u8) -> bool,
 	set_size:    proc "contextless" (user_data: rawptr, size: u64) -> bool,
-	commit:      proc "contextless" (user_data: rawptr) -> (generation: i64, ok: bool),
+	commit:      proc "contextless" (user_data: rawptr, committed_bytes: u64) -> (generation: i64, ok: bool),
 }
 
 // Reusable scratch buffers owned by the worker thread (never allocated on stack).
@@ -176,7 +177,7 @@ worker_sync_dirty_pages :: proc "contextless" (
 		}
 	}
 
-	gen, committed := sync.commit(sync.user_data)
+	gen, committed := sync.commit(sync.user_data, new_size)
 	if !committed {
 		return 0, ranges_written, false
 	}
@@ -252,8 +253,9 @@ worker_execute_and_sync :: proc "contextless" (
 
 	if outcome != .Succeeded {
 		problem = problem_of_sqlite_outcome(outcome)
-		if err.argument > 0 {
-			error_offset = i32(err.argument - 1)
+		// modus_sqlite_entry stores sqlite3_error_offset in err.value (-1 when none).
+		if err.value >= 0 {
+			error_offset = i32(err.value)
 		}
 		// Isolated calls drop non-error append tables on failure; fetch the
 		// saved diagnostic explicitly when d_count is 0.

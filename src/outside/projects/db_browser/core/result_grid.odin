@@ -30,11 +30,9 @@ Cell_Alignment :: enum u8 {
 }
 
 Table_Entry :: struct {
-	name:          [SQLITE_COLUMN_NAME_BYTES]u8,
-	name_len:      u8,
-	row_count:     i64,
-	has_row_count: bool,
-	is_view:       bool,
+	name:     [SQLITE_COLUMN_NAME_BYTES]u8,
+	name_len: u8,
+	is_view:  bool,
 }
 
 Schema_Column_Entry :: struct {

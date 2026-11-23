@@ -13,7 +13,6 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
-import "modus:contract/powerbox"
 import "modus:random"
 import "modus:storage"
 import "modus:system"
@@ -53,6 +52,7 @@ req_queue: core.Ring_Queue(core.Worker_Request)
 res_queue: core.Ring_Queue(core.Worker_Result)
 req_event: system.Event
 res_event: system.Event
+res_space_event: system.Event
 snapshot_acked_event: system.Event
 snapshot_in_flight: bool
 active_snapshot: int
@@ -117,6 +117,9 @@ worker_pop_result :: proc "contextless" (out: ^core.Worker_Result) -> bool {
 	system.lock(&worker_lock)
 	ok := core.queue_pop(&res_queue, out)
 	system.unlock(&worker_lock)
+	if ok {
+		system.event_wake(&res_space_event)
+	}
 	return ok
 }
 
@@ -148,19 +151,20 @@ worker_acquire_back_snapshot :: proc "contextless" () -> (index: int, snap: ^cor
 
 @(private = "file")
 worker_publish_result :: proc "contextless" (res: ^core.Worker_Result, owns_snapshot: bool) {
+	res.has_snapshot = owns_snapshot
 	for {
-		seen := system.event_count(&snapshot_acked_event)
+		seen := system.event_count(&res_space_event)
 		system.lock(&worker_lock)
-		if owns_snapshot {
+		pushed := core.queue_push(&res_queue, res)
+		if pushed && owns_snapshot {
 			snapshot_in_flight = true
 		}
-		pushed := core.queue_push(&res_queue, res)
 		system.unlock(&worker_lock)
 		if pushed {
 			system.event_wake(&res_event)
 			return
 		}
-		system.event_wait(&snapshot_acked_event, seen)
+		system.event_wait(&res_space_event, seen)
 	}
 }
 
@@ -419,7 +423,7 @@ sqlite_host_start :: proc "contextless" (ctx: ^system.Context) -> bool {
 		filled := u64(0)
 		for filled < u64(sz) {
 			part, r_st := storage.read_range(&worker_store, worker_store_place, SQLITE_STORE_OBJECT_NAME, filled, mod_buf[filled:])
-			if r_st != .Ok || len(part) == 0 {
+			if r_st != .Ok || len(part) == 0 || u64(len(part)) > u64(sz) - filled {
 				system.memory_unmap(mod_addr)
 				system.close(mod_mem)
 				return false
@@ -633,7 +637,7 @@ storage_sync_port :: proc "contextless" () -> core.Storage_Sync_Port {
 			}
 			return true
 		},
-		commit = proc "contextless" (_: rawptr) -> (i64, bool) {
+		commit = proc "contextless" (_: rawptr, committed_bytes: u64) -> (i64, bool) {
 			if !worker_store_opened || !storage.connected(&worker_store) {
 				return 0, false
 			}
@@ -650,7 +654,7 @@ storage_sync_port :: proc "contextless" () -> core.Storage_Sync_Port {
 				return 0, false
 			}
 			worker_current_generation = measure.generation
-			system.log_fact(.Info, Database_Committed{bytes = db_size, generation = measure.generation})
+			system.log_fact(.Info, Database_Committed{bytes = committed_bytes, generation = measure.generation})
 			return measure.generation, true
 		},
 	}
@@ -769,7 +773,7 @@ load_database_from_store :: proc "contextless" (generation: i64) -> (fresh: bool
 			system.log_fact(.Info, Store_Revoked{})
 			return false, .Store_Revoked
 		}
-		if r_st != .Ok || len(part) == 0 {
+		if r_st != .Ok || len(part) == 0 || u64(len(part)) > u64(sz) - filled {
 			return false, .Database_Damaged
 		}
 		filled += u64(len(part))
@@ -778,20 +782,12 @@ load_database_from_store :: proc "contextless" (generation: i64) -> (fresh: bool
 	return false, .None
 }
 
-// request_powerbox_store_pick builds a validated Store_Share request and asks
-// the trusted display (powerbox_pick_store) when a root-ring display connection
-// is granted.
+// request_powerbox_store_pick asks the trusted display (powerbox_pick_store)
+// to open a store picker when a root-ring display connection is granted.
+// Receiving and switching to the newly granted store handle awaits root-service
+// grant-request-ring wiring (src/md/features/db_browser.md, "State").
 @(private = "file")
 request_powerbox_store_pick :: proc "contextless" (ctx: ^system.Context) -> bool {
-	// Validate the typed Store_Share request parameters via powerbox contract.
-	req_item := powerbox.Request_Item{
-		kind_word         = u64(powerbox.Request_Item_Kind.Store_Share),
-		duration_word     = u64(powerbox.Grant_Duration.This_Run),
-		reason_word       = u64(powerbox.Grant_Reason.Open),
-		store_access_word = u64(powerbox.Store_Access_Mode.Read_Write),
-	}
-	_ = req_item
-
 	root_mem := ctx.handles[system.GRANT_ROOT]
 	if root_mem == 0 || len(boot_image_bytes) == 0 {
 		return false

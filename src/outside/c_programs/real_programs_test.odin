@@ -560,8 +560,11 @@ real_sqlite_runs_queries_over_the_modus_vfs :: proc(t: ^testing.T) {
 
 	// ---- Multi-statement error rolls back earlier write via implicit savepoint ----
 	sqlite_sync_to_store(t, loaded, db_buf, &store_backing, res.summary.database_bytes)
-	err_res := sqlite_exec_call(loaded, "UPDATE typed SET label = 'SHOULD_ROLLBACK' WHERE id = 1; SELEC broken;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	bad_sql := "UPDATE typed SET label = 'SHOULD_ROLLBACK' WHERE id = 1;\nSELEC broken;"
+	err_res := sqlite_exec_call(loaded, bad_sql, db_buf, col_buf, cell_buf, pay_buf, diag_buf)
 	testing.expect_value(t, err_res.answer.outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, err_res.err.argument, i64(1))
+	testing.expect_value(t, err_res.err.value, i64(strings.index(bad_sql, "SELEC")))
 	testing.expect(t, strings.contains(err_res.diagnostic, "syntax error"), "syntax diagnostic populated")
 	// session_last_diagnostic returns the same diagnostic text across call boundaries.
 	ld_ans, ld_text, _ := sqlite_last_diag_call(loaded, diag_buf)
@@ -571,6 +574,38 @@ real_sqlite_runs_queries_over_the_modus_vfs :: proc(t: ^testing.T) {
 	verify_res := sqlite_exec_call(loaded, "SELECT label FROM typed WHERE id = 1;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
 	testing.expect_value(t, verify_res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, sqlite_cell_text(verify_res.cells[0], verify_res.payload), "a|b\nc\"d'e é")
+
+	// ---- Interior NUL byte in SQL refused; explicit SAVEPOINT/RELEASE bypasses wrapper ----
+	nul_res := sqlite_exec_call(loaded, "SELECT 1;\x00DROP TABLE typed;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, nul_res.answer.outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, nul_res.err.kind, i64(errors.Kind.Bad_Value))
+
+	sp_res := sqlite_exec_call(loaded, "INSERT INTO typed(id, label, score, raw, note) VALUES (99, 'sp', 1.0, X'', NULL); SAVEPOINT user_sp; DELETE FROM typed WHERE id = 99; RELEASE user_sp;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, sp_res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+
+	// ---- Wide-column (>64 cols) query caps columns and per-row cells together without row shift ----
+	wide_cols: [64]Sqlite_Column_Row
+	wide_sql := strings.builder_make()
+	defer strings.builder_destroy(&wide_sql)
+	strings.write_string(&wide_sql, "WITH r(v) AS (VALUES (100), (200)) SELECT ")
+	for c in 0 ..< 65 {
+		if c > 0 {
+			strings.write_string(&wide_sql, ", ")
+		}
+		fmt.sbprintf(&wide_sql, "v + %d AS c%d", c, c)
+	}
+	strings.write_string(&wide_sql, " FROM r ORDER BY v;")
+	wide_res := sqlite_exec_call(loaded, strings.to_string(wide_sql), db_buf, wide_cols[:], cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, wide_res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, wide_res.summary.column_count, u32(65))
+	testing.expect_value(t, wide_res.summary.row_count, u32(2))
+	testing.expect_value(t, len(wide_res.columns), 64)
+	testing.expect_value(t, len(wide_res.cells), 128)
+	// Row 0 col 0 == 100, Row 1 col 0 == 200 (proving zero column shift!).
+	testing.expect_value(t, wide_res.cells[0].integer_or_bits, i64(100))
+	testing.expect_value(t, wide_res.cells[64].row_index, u32(1))
+	testing.expect_value(t, wide_res.cells[64].column_index, u32(0))
+	testing.expect_value(t, wide_res.cells[64].integer_or_bits, i64(200))
 
 	// ---- Atomic row emission (no partial row on cells cap) ----
 	small_cells: [5]Sqlite_Cell_Row // 2 columns per row -> fits 2 full rows (4 cells), must NOT emit half of row 3!

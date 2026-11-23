@@ -52,6 +52,7 @@ editor_layout: text_model.Layout
 editor_columns := text_model.COLUMNS_LEAST
 editor_top_row: int
 editor_visible_rows := 1
+editor_error_line := -1
 
 ratios := core.DEFAULT_SPLIT_RATIOS
 box_tree: box_layout.Box_Tree
@@ -243,9 +244,14 @@ action_pick_store :: proc "contextless" () {
 }
 
 @(private = "file")
+editor_clear_error_line :: proc "contextless" () {
+	session.error_offset = -1
+	editor_error_line = -1
+}
+
+@(private = "file")
 apply_worker_result :: proc "contextless" (res: ^core.Worker_Result) {
-	owns_snap := res.kind == .Opened || res.kind == .Query_Done || res.kind == .Schema_Updated || res.kind == .Sorted || res.kind == .Version_Previewed || res.kind == .Version_Restored
-	if owns_snap {
+	if res.has_snapshot {
 		worker_ack_snapshot(res.snapshot_index)
 	}
 	if !core.session_accept_serial(&session, res.serial) {
@@ -256,13 +262,23 @@ apply_worker_result :: proc "contextless" (res: ^core.Worker_Result) {
 	session.engine_ready = res.engine_ready
 
 	if res.problem == .Store_Revoked {
+		editor_error_line = -1
 		core.session_mark_revoked(&session)
 		return
 	}
 	if res.problem != .None {
 		detail := res.detail_len > 0 ? string(res.detail[:res.detail_len]) : ""
 		core.session_set_problem(&session, res.problem, detail, res.error_offset)
+		// Compute error line once when the worker answers, never per frame.
+		if res.error_offset >= 0 && editor_layout.row_count > 0 {
+			byte_place := clamp(int(res.error_offset), 0, text_model.text_length(&editor_text))
+			err_row := text_model.row_of(&editor_layout, byte_place)
+			editor_error_line = int(editor_layout.rows[clamp(err_row, 0, editor_layout.row_count - 1)].line)
+		} else {
+			editor_error_line = -1
+		}
 	} else {
+		editor_error_line = -1
 		core.session_clear_problem(&session)
 	}
 
@@ -322,7 +338,7 @@ editor_move :: proc "contextless" (motion: text_model.Motion, extend: bool) {
 editor_insert_rune :: proc "contextless" (ch: rune) {
 	switch text_model.text_insert_character(&editor_text, ch) {
 	case .None:
-		session.error_offset = -1
+		editor_clear_error_line()
 		editor_layout_refresh()
 	case .Too_Long:
 		core.session_set_problem(&session, .Editor_Full)
@@ -394,12 +410,12 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		editor_move(.Page_Down, shift)
 	case display.KEY_BACKSPACE:
 		if text_model.text_delete_before(&editor_text) {
-			session.error_offset = -1
+			editor_clear_error_line()
 			editor_layout_refresh()
 		}
 	case display.KEY_DELETE:
 		if text_model.text_delete_after(&editor_text) {
-			session.error_offset = -1
+			editor_clear_error_line()
 			editor_layout_refresh()
 		}
 	case display.KEY_ENTER:
@@ -439,7 +455,7 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 		return
 	}
 	if action == .Cut && text_model.selection_delete(&editor_text) {
-		session.error_offset = -1
+		editor_clear_error_line()
 		editor_layout_refresh()
 	}
 }
@@ -461,7 +477,7 @@ paste_event :: proc "contextless" (window: ^display.Window, event: display.Event
 	}
 	switch text_model.text_insert(&editor_text, room[:pasted]) {
 	case .None:
-		session.error_offset = -1
+		editor_clear_error_line()
 		editor_layout_refresh()
 	case .Too_Long:
 		core.session_set_problem(&session, .Editor_Full)
@@ -597,19 +613,18 @@ draw_sidebar :: proc "contextless" (table: ^interface.Draw_Table, lay: ^core.Win
 			ver := &session.versions[session.version_count - 1 - row]
 			label_buf: [64]u8
 			date_buf: [24]u8
-			label: string
+			num_buf: [24]u8
+			pos := 0
+			core.append_text(label_buf[:], &pos, "v")
+			core.append_text(label_buf[:], &pos, core.format_i64(ver.generation, num_buf[:]))
 			if ver.date != 0 {
-				label = calendar.iso_text(date_buf[:], ver.date)
-			} else {
-				pos := 0
-				num_buf: [24]u8
-				core.append_text(label_buf[:], &pos, "v")
-				core.append_text(label_buf[:], &pos, core.format_i64(ver.generation, num_buf[:]))
-				if ver.current {
-					core.append_text(label_buf[:], &pos, " (current)")
-				}
-				label = string(label_buf[:pos])
+				core.append_text(label_buf[:], &pos, " · ")
+				core.append_text(label_buf[:], &pos, calendar.iso_text(date_buf[:], ver.date))
 			}
+			if ver.current {
+				core.append_text(label_buf[:], &pos, " (current)")
+			}
+			label := string(label_buf[:pos])
 			color := is_chosen ? tokens.text_on_chosen : tokens.text
 			interface.draw_text(table, left, y + (core.PANE_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2, interface.text_fit(table, {}, label, room), color)
 		}
@@ -748,16 +763,6 @@ draw_editor :: proc "contextless" (frame: ^interface.Frame, lay: ^core.Window_La
 		editor_top_row = scrolled.first
 	}
 
-	// Highlight error line if sqlite3_error_offset reported a position.
-	err_line := -1
-	if session.error_offset >= 0 {
-		sql_buf: [4096]u8
-		sql_len := editor_copy_into(sql_buf[:])
-		if l, _, ok := core.sql_error_line_and_column(string(sql_buf[:sql_len]), int(session.error_offset)); ok {
-			err_line = l - 1
-		}
-	}
-
 	interface.draw_clip_push(table, int(body.x), int(body.y), int(body.width), int(body.height))
 	text_left := int(body.x) + core.PANE_PADDING
 	text_top := int(body.y) + core.PANE_PADDING
@@ -765,7 +770,7 @@ draw_editor :: proc "contextless" (frame: ^interface.Frame, lay: ^core.Window_La
 	end_row := min(editor_top_row + editor_visible_rows, editor_layout.row_count)
 	for row in editor_top_row ..< end_row {
 		y := text_top + (row - editor_top_row) * graphics.CELL_HEIGHT
-		is_err := err_line >= 0 && int(editor_layout.rows[row].line) == err_line
+		is_err := editor_error_line >= 0 && int(editor_layout.rows[row].line) == editor_error_line
 		draw_editor_row(table, text_left, y, row, sel_first, sel_last, is_err)
 	}
 	caret_row := text_model.row_of(&editor_layout, editor_text.caret)

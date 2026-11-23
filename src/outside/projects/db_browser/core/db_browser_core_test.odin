@@ -289,6 +289,7 @@ worker_sync_handles_vacuum_shrink_and_post_error_dirty_pages :: proc(t: ^testing
 		writes:          int,
 		set_size_called: bool,
 		set_size_value:  u64,
+		committed_bytes: u64,
 		commits:         int,
 	}
 
@@ -318,7 +319,8 @@ worker_sync_handles_vacuum_shrink_and_post_error_dirty_pages :: proc(t: ^testing
 			m := (^Mock_State)(ud)
 			summary^ = {dirty_pages = u64(m.dirty_count), database_bytes = m.new_db_size}
 			if m.fail_execute {
-				err^ = errors.error_make(.Bad_Value, .None, 8)
+				// Matches modus_sqlite_entry.c: argument=1 (sql param), value=byte offset on line 2.
+				err^ = errors.error_make(.Bad_Value, .None, 1, 14)
 				diag_count^ = 0
 				return .Argument_Refused
 			}
@@ -363,11 +365,12 @@ worker_sync_handles_vacuum_shrink_and_post_error_dirty_pages :: proc(t: ^testing
 			m.set_size_value = sz
 			return true
 		},
-		commit = proc "contextless" (ud: rawptr) -> (i64, bool) {
+		commit = proc "contextless" (ud: rawptr, committed_bytes: u64) -> (i64, bool) {
 			m := (^Mock_State)(ud)
 			if m.fail_commit {
 				return 0, false
 			}
+			m.committed_bytes = committed_bytes
 			m.commits += 1
 			return i64(m.commits), true
 		},
@@ -385,6 +388,7 @@ worker_sync_handles_vacuum_shrink_and_post_error_dirty_pages :: proc(t: ^testing
 	testing.expect_value(t, db_size, u64(8192))
 	testing.expect_value(t, mock.writes, 2)
 	testing.expect(t, mock.set_size_called && mock.set_size_value == 8192)
+	testing.expect_value(t, mock.committed_bytes, u64(8192))
 	testing.expect(t, mock.marked_synced && gen == 1)
 
 	// 2. Commit failure must NOT call mark_synced and must report Store_Write_Refused.
@@ -395,17 +399,20 @@ worker_sync_handles_vacuum_shrink_and_post_error_dirty_pages :: proc(t: ^testing
 	testing.expect_value(t, prob, Problem_Kind.Store_Write_Refused)
 	testing.expect(t, !mock.marked_synced, "failed commit must never clear dirty pages")
 
-	// 3. Failed SQL with residual dirty pages still fetches diagnostic AND syncs dirty pages.
+	// 3. Failed multi-line SQL with residual dirty pages reads err.value offset, fetches diagnostic, AND syncs dirty pages.
 	mock.fail_commit = false
 	mock.fail_execute = true
 	mock.dirty_count = 1
 	mock.marked_synced = false
+	multiline_sql := "SELECT 1;\nSELEC missing;"
 	err_off: i32
 	diag_len: int
-	outcome, prob, err_off, diag_len, _ = worker_execute_and_sync(&bridge, &sync, "SELECT * FROM missing;", db_buf, &db_size, false, snap, scratch)
+	outcome, prob, err_off, diag_len, _ = worker_execute_and_sync(&bridge, &sync, multiline_sql, db_buf, &db_size, false, snap, scratch)
 	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)
 	testing.expect_value(t, prob, Problem_Kind.Sql_Error)
-	testing.expect_value(t, err_off, i32(7))
+	testing.expect_value(t, err_off, i32(14))
+	err_line, err_col, err_valid := sql_error_line_and_column(multiline_sql, int(err_off))
+	testing.expect(t, err_valid && err_line == 2 && err_col == 5, "multi-line error offset maps to line 2 column 5")
 	testing.expect_value(t, string(scratch.diagnostic[:diag_len]), "no such table: missing")
 	testing.expect(t, mock.marked_synced, "residual dirty pages after SQL error must still be synced")
 }

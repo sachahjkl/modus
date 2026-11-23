@@ -58,8 +58,8 @@ The system holds no SQLite in its boot image or its base libraries ([`docs/PROPE
 **Two-thread architecture and budget.**
 
 - `MODULE_BUDGET`: `working_memory_pages = 4096` (16 MiB: 10 MiB for the isolated `sqlite` child call host plus 6 MiB for UI snapshots, editor arenas, and database buffer), `processes = 2`, `threads = 2`, `window_width = 1280`, `window_height = 960`.
-- **UI thread (`main.odin`)**: owns `display.Window`, `interface.Window_Memory`, `modus:layout` (`Box_Tree`, `Element_Tokens`, `Split_Pane`), `text_model` SQL editor with clipboard (`Ctrl+C/X/V`), and `interface.Action_Bar_State` (`Run`, `Open store`, `Versions`, `Refresh`). Renders only visible viewport rows from an immutable double-buffered `Result_Snapshot`.
-- **Worker thread (`worker.odin`)**: owns `storage.Client`, runs `sqlite.module` inside a zero-grant child call host (`host`) when available, executes queries, sorts rows off-thread, formats cells into the inactive `Result_Snapshot`, streams dirty 4 KiB page runs via `storage.write_range` + `storage.set_size` + `storage.commit`, lists/previews/restores CoW versions, handles powerbox `Store_Share` requests (`Ctrl+O`), and wakes the UI thread through `system.Event` (`Word_Wake`).
+- **UI thread (`main.odin`)**: owns `display.Window`, `interface.Window_Memory`, `modus:layout` (`Box_Tree`, `Element_Tokens`, `Split_Pane`), `text_model` SQL editor with clipboard (`Ctrl+C/X/V`), and `interface.Action_Bar_State` (`Run` `Ctrl+Enter`, `Open store` `Ctrl+O`, `Versions` `Ctrl+H`, `Refresh` `Ctrl+R`). Renders only visible viewport rows from an immutable double-buffered `Result_Snapshot`.
+- **Worker thread (`worker.odin`)**: owns `storage.Client`, runs `sqlite.module` inside a zero-grant child call host (`host`) when available, executes queries, sorts rows off-thread, formats cells into the inactive `Result_Snapshot`, streams dirty 4 KiB page runs via `storage.write_range` + `storage.set_size` + `storage.commit`, lists/previews/restores CoW versions, asks the trusted display to open the store picker (`powerbox_pick_store`) on `Ctrl+O`, and wakes the UI thread through `system.Event` (`Word_Wake`).
 
 **Layout and interaction.**
 
@@ -86,4 +86,4 @@ The system holds no SQLite in its boot image or its base libraries ([`docs/PROPE
 
 ## State
 
-Built: the typed `sqlite` module (`src/outside/c_programs/sqlite/`), real SQLite 3.54.1 host tests covering edge and refusal cases, and the `db_browser` outside Lex project (`src/outside/projects/db_browser/`) with its freestanding `core/` package and host test suite. Left: end-to-end cache substitution and tutorial film wiring.
+Built: the typed `sqlite` module (`src/outside/c_programs/sqlite/`), real SQLite 3.54.1 host tests covering edge and refusal cases, and the `db_browser` outside Lex project (`src/outside/projects/db_browser/`) with its freestanding `core/` package and host test suite. Left: receiving a granted `Store_Share` handle from the root service to switch and reload `main.db` after `Ctrl+O` opens the store picker, end-to-end cache substitution, and tutorial film wiring.
