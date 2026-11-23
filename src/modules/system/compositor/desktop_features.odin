@@ -715,9 +715,9 @@ desktop_zone_frame :: proc "contextless" (zone: desktop_layout.Snap_Zone) -> (x,
 // edges, within the limits that the process declared: a window that is not
 // resizable only moves. A window whose last request has no answer yet is
 // not maximized: the answer would change its size under the new one. A
-// maximized window in that state takes back its place, and asks for its
-// size later, at a drag of its edges: a process that never answers cannot
-// keep its window over the whole screen. A drag of the edges of the window
+// maximized window in that state takes back its place at once, and asks
+// for its saved size when the request ends (desktop_restore_size_after_answer):
+// a process that never answers cannot keep its window over the whole screen. A drag of the edges of the window
 // or a resize by keys holds it: the toggle waits for their end.
 desktop_toggle_maximize :: proc "contextless" (client: ^Client) -> bool {
 	if client == nil || !client.created || window_held_by_input(client) {

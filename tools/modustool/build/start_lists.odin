@@ -48,7 +48,8 @@ WIRING_OUTPUT_LOG :: "log"
 // The restarts of the input service: a stop that is no refusal (a fault,
 // a stop of a principal) gives the machine its keys and its pointer back,
 // with the tablet armed again by the root service. An absent PS/2
-// controller is a refusal: no restart. The window bounds a loop of stops,
+// controller with no tablet is a refusal: no restart; with a tablet the
+// service runs with the tablet only. The window bounds a loop of stops,
 // not the life of the machine: 3 restarts in each minute.
 INPUT_RESTARTS :: 3
 INPUT_RESTART_WINDOW_SECONDS :: 60
@@ -58,8 +59,8 @@ INPUT_RESTART_WINDOW_SECONDS :: 60
 // seed and the keys of the machine need them before any start policy.
 @(rodata)
 DEFAULT_START_LIST := [?]Start_List_Row {
-	// With no screen, no window reads a key. An absent PS/2 controller is
-	// the line of the input service itself, which stops.
+	// With no screen, no window reads a key. An absent PS/2 controller with
+	// no tablet is the line of the input service itself, which stops.
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started, restart_count = INPUT_RESTARTS, restart_window_seconds = INPUT_RESTART_WINDOW_SECONDS},
 	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},
