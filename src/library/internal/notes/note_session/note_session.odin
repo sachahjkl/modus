@@ -20,11 +20,11 @@ Session :: struct {
 	mode:            Mode,
 	loading:         bool, // The text waits for the result of a Load.
 	locked:          bool, // The note shown could not be read whole: no key changes it, and no commit writes it.
-	versions_asked:  bool, // A request Versions waits: the keys wait for its result.
-	restore_asked:   bool, // A request Restore waits: the keys wait for its result.
-	version_ready:   bool, // The preview holds the bytes of the version chosen: its Version result was Done.
-	write_refused:   bool, // The last write that came back was refused: the store does not hold the text that the window shows.
-	load_serial:     u64,
+	versions_asked:     bool, // A request Versions waits: the keys wait for its result.
+	restore_asked:      bool, // A request Restore waits: the keys wait for its result.
+	version_ready:      bool, // The preview holds the bytes of the version chosen: its Version result was Done.
+	version_unreadable: bool, // The version chosen could not be read: clears when another version is asked or versions close.
+	load_serial:        u64,
 	versions_serial: u64,
 	version_serial:  u64,
 	restore_serial:  u64,
@@ -39,12 +39,6 @@ text_keys_act :: proc "contextless" (session: ^Session) -> bool {
 // text, as a typed key does. A copy changes nothing, and needs no gate.
 cut_allowed :: proc "contextless" (session: ^Session) -> bool {
 	return text_keys_act(session)
-}
-
-// write_done records the result of a write: a refused one leaves the
-// window with a text that the store does not hold, until a write is done.
-write_done :: proc "contextless" (session: ^Session, status: store_work.Result_Status) {
-	session.write_refused = status != .Done
 }
 
 // list_keys_act says if a key can change the list or show another note:
@@ -181,17 +175,19 @@ versions_done :: proc "contextless" (session: ^Session, status: store_work.Resul
 	}
 	session.mode = .Versions
 	session.version_ready = false
+	session.version_unreadable = false
 	return true
 }
 
 // version_asked records a request Version of the version chosen.
 version_asked :: proc "contextless" (session: ^Session, serial: u64) {
-	session.version_serial, session.version_ready = serial, false
+	session.version_serial, session.version_ready, session.version_unreadable = serial, false, false
 }
 
 // version_done records the result of a Version that the window takes.
 version_done :: proc "contextless" (session: ^Session, status: store_work.Result_Status) {
 	session.version_ready = status == .Done
+	session.version_unreadable = status != .Done
 }
 
 // restore_allowed says if Enter restores the version chosen: its bytes
@@ -214,6 +210,8 @@ restore_done :: proc "contextless" (session: ^Session, status: store_work.Result
 		return false
 	}
 	session.mode = .Notes
+	session.version_ready = false
+	session.version_unreadable = false
 	return true
 }
 
@@ -221,6 +219,8 @@ restore_done :: proc "contextless" (session: ^Session, status: store_work.Result
 versions_closed :: proc "contextless" (session: ^Session) {
 	if session.mode == .Versions && !session.restore_asked {
 		session.mode = .Notes
+		session.version_ready = false
+		session.version_unreadable = false
 	}
 }
 

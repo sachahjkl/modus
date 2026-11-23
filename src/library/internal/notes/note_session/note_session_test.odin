@@ -116,17 +116,43 @@ a_cut_waits_for_the_versions_and_for_a_restore :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_refused_write_is_not_kept_until_a_write_is_done :: proc(t: ^testing.T) {
+an_unreadable_version_clears_after_escape_or_another_version :: proc(t: ^testing.T) {
 	session := listed_session()
-	testing.expect(t, !session.write_refused)
-	for status in ([?]store_work_status{.Refused, .Damaged, .Too_Long, .Absent, .No_Store}) {
-		write_done(&session, status)
-		testing.expect(t, session.write_refused)
-		// The keeping goes on: the next change writes again.
-		testing.expect(t, session.keeping && commit_allowed(&session))
+	versions_asked_now(&session, 1)
+	testing.expect(t, versions_done(&session, .Done, 3))
+	testing.expect(t, !session.version_unreadable)
+	for status in ([?]store_work_status{.Refused, .Damaged, .Too_Long, .Absent, .No_Store, .Unanswered}) {
+		version_asked(&session, 2)
+		testing.expect(t, !session.version_unreadable)
+		version_done(&session, status)
+		testing.expect(t, session.version_unreadable && !session.version_ready)
+		testing.expect(t, !restore_allowed(&session, false))
 	}
-	write_done(&session, .Done)
-	testing.expect(t, !session.write_refused)
+	// Choosing another version clears the unreadable state while it loads.
+	version_asked(&session, 3)
+	testing.expect(t, !session.version_unreadable)
+	version_done(&session, .Done)
+	testing.expect(t, !session.version_unreadable && session.version_ready)
+
+	// Escape after an unreadable version leaves Versions and clears the state.
+	version_asked(&session, 4)
+	version_done(&session, .Refused)
+	testing.expect(t, session.version_unreadable)
+	versions_closed(&session)
+	testing.expect_value(t, session.mode, Mode.Notes)
+	testing.expect(t, !session.version_unreadable && !session.version_ready)
+
+	// While a restore waits, Escape does not close Versions.
+	versions_asked_now(&session, 5)
+	testing.expect(t, versions_done(&session, .Done, 2))
+	version_asked(&session, 6)
+	version_done(&session, .Done)
+	restore_asked_now(&session, 7)
+	versions_closed(&session)
+	testing.expect_value(t, session.mode, Mode.Versions)
+	testing.expect(t, restore_done(&session, .Done))
+	testing.expect_value(t, session.mode, Mode.Notes)
+	testing.expect(t, !session.version_unreadable && !session.version_ready)
 }
 
 @(test)

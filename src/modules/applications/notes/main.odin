@@ -237,15 +237,17 @@ request_of_note :: proc "contextless" (kind: store_work.Request_Kind, note: ^not
 	return request_serial, true
 }
 
-// note_of_name gives the index of the note with an object name, or -1:
-// a result names its note, and the list can change before it comes.
-note_of_name :: proc "contextless" (name: string) -> int {
-	for index in 0 ..< notes.count {
-		if note_list.note_name(&notes.notes[index]) == name {
-			return index
-		}
+// shown_note_problem gives the problem of the note shown now: no store
+// stays, an unanswered store stays not kept, and a note whose last write
+// was refused shows not kept until a write of it succeeds.
+shown_note_problem :: proc "contextless" () -> Window_Problem {
+	if problem_shown == .No_Store {
+		return .No_Store
 	}
-	return -1
+	if !session.keeping || note_list.note_is_write_refused(&notes, shown) {
+		return .Not_Kept
+	}
+	return .None
 }
 
 // shown_text gives the text that the text pane shows: the version chosen
@@ -308,6 +310,7 @@ commit :: proc "contextless" () {
 	}
 	note := &notes.notes[shown]
 	if note_list.note_name_take(&notes, shown) != .None {
+		note.write_refused = true
 		problem_shown, change_wait.waiting = .Not_Kept, false
 		return
 	}
@@ -394,6 +397,7 @@ note_show :: proc "contextless" (index: int) {
 	}
 	shown = wanted
 	top_row = 0
+	problem_shown = shown_note_problem()
 	note_load_ask()
 	layout_refresh()
 	system.log_fact(.Info, Note_Shown{title = title_field(shown_title())})
@@ -416,6 +420,7 @@ note_new :: proc "contextless" () {
 	}
 	shown = index
 	note_session.note_shown_new(&session)
+	problem_shown = shown_note_problem()
 	text_model.text_replace_whole(&text, nil)
 	text_model.selection_set(&text, 0, 0)
 	top_row = 0
@@ -492,6 +497,9 @@ version_choose :: proc "contextless" (index: int) {
 	}
 	version_chosen = index
 	note_session.version_asked(&session, serial)
+	if problem_shown == .Version_Unreadable {
+		problem_shown = shown_note_problem()
+	}
 	text_model.text_replace_whole(&preview, nil)
 	text_model.selection_set(&preview, 0, 0)
 	top_row = 0
@@ -502,6 +510,9 @@ version_choose :: proc "contextless" (index: int) {
 versions_close :: proc "contextless" () {
 	note_session.versions_closed(&session)
 	if session.mode == .Notes {
+		if problem_shown == .Version_Unreadable {
+			problem_shown = shown_note_problem()
+		}
 		bar = {}
 		top_row = 0
 		layout_refresh()
@@ -592,16 +603,14 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		}
 		layout_refresh()
 	case .Write:
-		note_session.write_done(&session, result.status)
-		if result.status != .Done {
+		kept := result.status == .Done
+		_, _ = note_list.note_write_done(&notes, name, kept, result.generation)
+		if !kept {
 			problem_shown = .Not_Kept
 			return
 		}
-		if problem_shown == .Not_Kept {
+		if problem_shown == .Not_Kept && session.keeping && !note_list.note_is_write_refused(&notes, shown) {
 			problem_shown = .None
-		}
-		if index := note_of_name(name); index >= 0 {
-			notes.notes[index].generation = result.generation
 		}
 	case .Versions:
 		count := result.status == .Done ? min(result.byte_count / size_of(storage.Version), VERSION_ROWS_CAPACITY) : 0
@@ -617,12 +626,14 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		if result.status != .Done {
 			// The version cannot be read: Enter does not restore it, and
 			// the status band says why.
-			problem_shown = .Version_Unreadable
+			if result.status != .Unanswered {
+				problem_shown = .Version_Unreadable
+			}
 			layout_refresh()
 			return
 		}
 		if problem_shown == .Version_Unreadable {
-			problem_shown = .None
+			problem_shown = shown_note_problem()
 		}
 		text_take(&preview, result.bytes[:result.byte_count])
 		layout_refresh()
@@ -636,6 +647,10 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 			return
 		}
 		notes.notes[shown].generation = result.generation
+		notes.notes[shown].write_refused = false
+		if problem_shown == .Version_Unreadable || problem_shown == .Not_Kept {
+			problem_shown = shown_note_problem()
+		}
 		system.log_fact(.Info, Version_Restored{generation = restore_generation, commit = result.generation, title = title_field(text_title(&preview))})
 		bar = {}
 		top_row = 0
@@ -1040,7 +1055,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		switch {
 		case session.loading:
 			state = "loading"
-		case !session.keeping, session.write_refused:
+		case !session.keeping, note_list.note_is_write_refused(&notes, shown):
 			state = "not kept"
 		case change_wait.waiting:
 			state = "a change waits"
@@ -1090,6 +1105,9 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.draw_rectangle(table, status.x, status.y, status.width, 1, tokens.divider)
 	status_left := area_of(boxes.status_left)
 	left_words := window_problem_texts[problem_shown]
+	if session.mode == .Versions && session.version_unreadable && problem_shown == .None {
+		left_words = window_problem_texts[.Version_Unreadable]
+	}
 	left_color := tokens.failed
 	question_buffer: [TITLE_BYTES + 32]u8
 	if session.mode == .Delete {
