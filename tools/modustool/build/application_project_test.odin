@@ -12,25 +12,19 @@ import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
 import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/release"
 import "modus:contract/tree_hash"
 import "modus:lex_evaluator"
 
 // The first application of the system described as a Lex project, through
 // the layer that holds today (src/md/features/application_projects.md, "The
 // layers"): the real files of src/outside/projects/collatz, the tree hash of
-// the folder as here(), the evaluation of project.lex, the load by
-// projects_core, and the stop of layer 2 as the service gives it.
+// the folder as here(), the generated catalog declaration from a boot image,
+// the evaluation of project.lex, the load by projects_core, and the stop of
+// layer 2 as the service gives it.
 
 @(private = "file")
 COLLATZ_FOLDER :: "src/outside/projects/collatz"
-
-// The catalog of the system has the form that application_projects.md
-// gives; the build does not write it yet, so the test gives the evaluator
-// one of that form, with a stand-in hash for the C builder.
-@(private = "file")
-catalog_source :: proc(builder_literal: string) -> string {
-	return concat({"{\n  c = {\n    builder = module(", builder_literal, "),\n    module = (path) => recipe(module(", builder_literal, "), { source = here(), path = path }),\n  },\n}\n"})
-}
 
 @(private = "file")
 concat :: proc(parts: []string) -> string {
@@ -114,9 +108,36 @@ file_bytes :: proc(files: []Project_File, name: string) -> []u8 {
 	return nil
 }
 
+// generated_test_catalogs builds a boot image with c_compiler, assemble,
+// shipped modules, and a test module, then runs the real catalog declaration
+// generator to produce both catalog.lex and catalog_release.lex.
 @(private = "file")
-evaluation_config :: proc(here: blake3.Hash, builder: blake3.Hash, bindings: ^[1]lex_evaluator.Declaration_Binding) -> lex_evaluator.Declaration_Config {
-	bindings[0] = {name = "catalog", kind = .Lex_Source, source = catalog_source(hash_literal(builder))}
+generated_test_catalogs :: proc(t: ^testing.T, c_compiler_text, assemble_text: string) -> (dev_catalog, release_catalog: string, c_compiler_hash, assemble_hash: blake3.Hash, ok: bool) {
+	root_text, console_text, flood_text: string = "root-module", "console-module", "flood-test-module"
+	cc_bytes := transmute([]u8)c_compiler_text
+	asm_bytes := transmute([]u8)assemble_text
+	image_files := []Image_File {
+		{name = ROOT_SERVICE_MODULE, file = transmute([]u8)root_text},
+		{name = "console", file = transmute([]u8)console_text},
+		{name = CATALOG_C_COMPILER_MODULE, file = cc_bytes},
+		{name = CATALOG_ASSEMBLER_MODULE, file = asm_bytes},
+		{name = "flood", file = transmute([]u8)flood_text},
+	}
+	boot_image := boot_image_encode(image_files, len(image_files))
+	dev_problem, release_problem: string
+	dev_catalog, dev_problem = system_catalog_of_image(boot_image, release.RELEASE_NUMBER, .Boot_Image)
+	testing.expect_value(t, dev_problem, "")
+	release_catalog, release_problem = system_catalog_release_of_boot_image(boot_image, release.RELEASE_NUMBER)
+	testing.expect_value(t, release_problem, "")
+	if dev_problem != "" || release_problem != "" {
+		return "", "", {}, {}, false
+	}
+	return dev_catalog, release_catalog, blake3.hash(cc_bytes), blake3.hash(asm_bytes), true
+}
+
+@(private = "file")
+evaluation_config :: proc(here: blake3.Hash, catalog_lex: string, bindings: ^[1]lex_evaluator.Declaration_Binding) -> lex_evaluator.Declaration_Config {
+	bindings[0] = {name = "catalog", kind = .Lex_Source, source = catalog_lex}
 	return {bindings = bindings[:], has_here = true, here_hash = here, stack_bytes = 2 * 1024 * 1024}
 }
 
@@ -158,11 +179,12 @@ ed25519_check :: proc "contextless" (public_key: [object_cache.PUBLIC_KEY_SIZE]u
 	return ed25519.verify(&parsed, message, signature_copy[:])
 }
 
-// The refusals of layer 1, on the real files: a pins.lex with a damaged
-// hash, a project whose source is not a hash, a project with no pin asked
-// for the recipe of its inputs, a recipe whose builder needs the sandbox,
-// and a realisation of the project signed by a key that the policy does not
-// trust or with a wrong signature. Nothing is kept after a refusal.
+// The refusals of layer 1, on the real files with the generated catalog
+// declaration: a pins.lex with a damaged hash, a project whose source is not
+// a tree, a project with no pin asked for the recipe of its inputs, a recipe
+// whose builder needs the sandbox, and a realisation of the project signed
+// by a key that the policy does not trust or with a wrong signature. Nothing
+// is kept after a refusal.
 @(test)
 the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	files, read := project_files_read(t)
@@ -171,9 +193,12 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	}
 	here, tree_refusal := folder_tree_hash(files)
 	testing.expect_value(t, tree_refusal, tree_hash.Tree_Refusal.None)
-	builder := blake3.hash(transmute([]u8)string("the C builder of the catalog"))
+	catalog_lex, _, c_compiler_hash, _, catalog_ok := generated_test_catalogs(t, "c_compiler-module", "assemble-module")
+	if !catalog_ok {
+		return
+	}
 	bindings: [1]lex_evaluator.Declaration_Binding
-	config := evaluation_config(here, builder, &bindings)
+	config := evaluation_config(here, catalog_lex, &bindings)
 	project_lex := string(file_bytes(files, "project.lex"))
 
 	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
@@ -207,12 +232,12 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 
 	// A recipe whose arguments name the source by a bare hash: the
 	// evaluation refuses it, as the conversion does.
-	untyped := concat({"project {\n  source = here(),\n  outputs = { default = recipe(module(", hash_literal(builder), "), { source = ", hash_literal(here), " }) },\n}\n"})
+	untyped := concat({"project {\n  source = here(),\n  outputs = { default = recipe(module(", hash_literal(c_compiler_hash), "), { source = ", hash_literal(here), " }) },\n}\n"})
 	untyped_result := lex_evaluator.declaration_evaluate(workspace, untyped, "outputs.default", config)
 	testing.expect_value(t, untyped_result.failure_kind, declaration_eval.Failure_Kind.Recipe_Refused)
 	testing.expect_value(t, untyped_result.detail, pr.recipe_refusal_words[.Untyped_Hash])
 	// A builder given by a bare hash names no kind either.
-	bare_builder := concat({"project {\n  source = here(),\n  outputs = { default = recipe(", hash_literal(builder), ", { source = here() }) },\n}\n"})
+	bare_builder := concat({"project {\n  source = here(),\n  outputs = { default = recipe(", hash_literal(c_compiler_hash), ", { source = here() }) },\n}\n"})
 	bare_builder_result := lex_evaluator.declaration_evaluate(workspace, bare_builder, "outputs.default", config)
 	testing.expect_value(t, bare_builder_result.failure_kind, declaration_eval.Failure_Kind.Type_Error)
 	testing.expect_value(t, bare_builder_result.detail, "recipe")
@@ -263,10 +288,10 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	testing.expect_value(t, decision, object_cache.Substitution_Decision.Trust_By_Signer)
 }
 
-// Layer 1, the success case: the real project evaluates, whole and at its
-// output, loads, and names its output by a recipe that follows its source:
-// one changed byte of collatz.c gives another tree hash and another recipe,
-// and the same files give the same recipe.
+// Layer 1, the success case: the real project evaluates against the generated
+// catalog.lex (and catalog_release.lex), loads, registers its recipe with
+// recipes_core under one identity, and changes its recipe hash when any byte
+// of collatz.c, c_compiler, or assemble changes.
 @(test)
 the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) {
 	files, read := project_files_read(t)
@@ -275,9 +300,12 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	}
 	here, tree_refusal := folder_tree_hash(files)
 	testing.expect_value(t, tree_refusal, tree_hash.Tree_Refusal.None)
-	builder := blake3.hash(transmute([]u8)string("the C builder of the catalog"))
+	catalog_lex, release_catalog_lex, c_compiler_hash, assemble_hash, catalog_ok := generated_test_catalogs(t, "c_compiler-module", "assemble-module")
+	if !catalog_ok {
+		return
+	}
 	bindings: [1]lex_evaluator.Declaration_Binding
-	config := evaluation_config(here, builder, &bindings)
+	config := evaluation_config(here, catalog_lex, &bindings)
 	project_lex := string(file_bytes(files, "project.lex"))
 
 	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
@@ -305,9 +333,16 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	again, again_ok := output_recipe_hash(t, project_lex, config)
 	testing.expect(t, first_ok && again_ok && first == again, "the same files give the same recipe")
 
+	// Development catalog and release catalog give the exact same recipe hash
+	// because c_compiler and assemble have the same bytes in both images.
+	release_bindings: [1]lex_evaluator.Declaration_Binding
+	from_release, from_release_ok := output_recipe_hash(t, project_lex, evaluation_config(here, release_catalog_lex, &release_bindings))
+	testing.expect(t, from_release_ok && from_release == first, "catalog.lex and catalog_release.lex give the same collatz recipe hash")
+
 	// One identity: the hash that the evaluator gives is the hash under
 	// which the service registers the recipe of the output, through the
-	// real conversion, and the record names the source tree and the file.
+	// real conversion, and the record names c_compiler as builder and
+	// assembler and source as typed inputs.
 	output_length, output_ok := lex_evaluator.declaration_evaluate_to_buffer(workspace, project_lex, "outputs.default", config, evaluation[:])
 	testing.expect(t, output_ok, "outputs.default evaluates")
 	spec := new(pr.Recipe_Spec, context.temp_allocator)
@@ -315,12 +350,16 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	registered, register_refusal := recipes_core.register_evaluation(registry, evaluation[:output_length], spec)
 	testing.expect_value(t, register_refusal, pr.Recipe_Refusal.None)
 	testing.expect(t, registered == first, "the service registers the recipe under the hash of the evaluator")
-	testing.expect(t, spec.builder_hash == builder, "the builder of the catalog")
-	testing.expect_value(t, spec.input_count, u32(1))
-	testing.expect_value(t, string(spec.inputs[0].name_bytes[:spec.inputs[0].name_length]), "source")
-	testing.expect_value(t, spec.inputs[0].kind, object_cache.Cache_Object_Kind.Tree)
-	testing.expect(t, spec.inputs[0].hash == here, "the input is the tree of the folder")
+	testing.expect(t, spec.builder_hash == c_compiler_hash, "the builder of catalog.c.module is c_compiler")
+	testing.expect_value(t, spec.input_count, u32(2))
+	testing.expect_value(t, string(spec.inputs[0].name_bytes[:spec.inputs[0].name_length]), "assembler")
+	testing.expect_value(t, spec.inputs[0].kind, object_cache.Cache_Object_Kind.Blob)
+	testing.expect(t, spec.inputs[0].hash == assemble_hash, "the first input is the assemble module file")
+	testing.expect_value(t, string(spec.inputs[1].name_bytes[:spec.inputs[1].name_length]), "source")
+	testing.expect_value(t, spec.inputs[1].kind, object_cache.Cache_Object_Kind.Tree)
+	testing.expect(t, spec.inputs[1].hash == here, "the second input is the tree of the folder")
 
+	// One changed byte of collatz.c gives another tree and another recipe.
 	changed := slice.clone(files, context.temp_allocator)
 	for &file in changed {
 		if file.name == "collatz.c" {
@@ -331,6 +370,20 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	other_here, _ := folder_tree_hash(changed)
 	testing.expect(t, other_here != here, "a changed byte of the source gives another tree")
 	other_bindings: [1]lex_evaluator.Declaration_Binding
-	other, other_ok := output_recipe_hash(t, project_lex, evaluation_config(other_here, builder, &other_bindings))
+	other, other_ok := output_recipe_hash(t, project_lex, evaluation_config(other_here, catalog_lex, &other_bindings))
 	testing.expect(t, other_ok && other != first, "another source gives another recipe")
+
+	// One changed byte of c_compiler or assemble changes the generated
+	// catalog and gives another recipe.
+	other_cc_catalog, _, _, _, other_cc_ok := generated_test_catalogs(t, "c_compiler-module-v2", "assemble-module")
+	testing.expect(t, other_cc_ok && other_cc_catalog != catalog_lex)
+	other_cc_bindings: [1]lex_evaluator.Declaration_Binding
+	other_cc, other_cc_eval_ok := output_recipe_hash(t, project_lex, evaluation_config(here, other_cc_catalog, &other_cc_bindings))
+	testing.expect(t, other_cc_eval_ok && other_cc != first, "another c_compiler gives another recipe")
+
+	other_asm_catalog, _, _, _, other_asm_ok := generated_test_catalogs(t, "c_compiler-module", "assemble-module-v2")
+	testing.expect(t, other_asm_ok && other_asm_catalog != catalog_lex)
+	other_asm_bindings: [1]lex_evaluator.Declaration_Binding
+	other_asm, other_asm_eval_ok := output_recipe_hash(t, project_lex, evaluation_config(here, other_asm_catalog, &other_asm_bindings))
+	testing.expect(t, other_asm_eval_ok && other_asm != first, "another assemble gives another recipe")
 }

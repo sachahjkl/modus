@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import info "modus:contract/boot_info"
+import "modus:contract/release"
 import "modus:contract/system_description"
 import "modustool:foundation"
 
@@ -180,7 +181,8 @@ release_boot_image_of :: proc(build_image: []u8) -> (image: []u8, problem: strin
 }
 
 // release_boot_image_write writes the boot image of a release from the
-// boot image of the build.
+// boot image of the build, and its release catalog declaration with no test
+// module.
 release_boot_image_write :: proc() -> bool {
 	build_image := foundation.read_file(BOOT_IMAGE) or_return
 	image, problem := release_boot_image_of(build_image)
@@ -190,6 +192,15 @@ release_boot_image_write :: proc() -> bool {
 	}
 	if error := os.write_entire_file(BOOT_IMAGE_RELEASE, image); error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", BOOT_IMAGE_RELEASE, error)
+		return false
+	}
+	catalog_text, catalog_problem := system_catalog_of_image(image, release.RELEASE_NUMBER, .Release_Image)
+	if catalog_problem != "" {
+		fmt.eprintfln("modustool: release: %s", catalog_problem)
+		return false
+	}
+	if error := os.write_entire_file(CATALOG_RELEASE_FILE, transmute([]u8)catalog_text); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", CATALOG_RELEASE_FILE, error)
 		return false
 	}
 	return true
