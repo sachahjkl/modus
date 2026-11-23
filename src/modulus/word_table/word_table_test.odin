@@ -3,6 +3,34 @@ package word_table
 
 import "core:testing"
 
+// The physical address of a word from the entry of its page. The edges
+// first: an entry of 0 (no page: the offset alone must not pass), an entry
+// with a frame and no Present bit, a present entry of the kernel (no User
+// bit), then a page of 4 KiB and a large page, at the first and the last
+// word, and two pages of two processes with no frame at the same offset,
+// which give no address at all.
+@(test)
+a_word_has_an_address_only_in_a_frame_of_its_process :: proc(t: ^testing.T) {
+	_, none := word_physical(0, 0x7000_0010)
+	testing.expect(t, !none)
+	_, not_present := word_physical(0x0012_3000 | ENTRY_USER, 0x7000_0010)
+	testing.expect(t, !not_present)
+	_, kernel := word_physical(0x0012_3000 | ENTRY_PRESENT, 0x7000_0010)
+	testing.expect(t, !kernel)
+	small, small_ok := word_physical(0x0012_3000 | ENTRY_PRESENT | ENTRY_USER | 1 << 63, 0x7000_0FFC)
+	testing.expect(t, small_ok)
+	testing.expect_value(t, small, u64(0x0012_3FFC))
+	first, first_ok := word_physical(0x0012_3000 | ENTRY_PRESENT | ENTRY_USER, 0x7000_0000)
+	testing.expect(t, first_ok && first == 0x0012_3000)
+	large, large_ok := word_physical(0x0040_0000 | ENTRY_PRESENT | ENTRY_USER | ENTRY_LARGE, 0x7012_3454)
+	testing.expect(t, large_ok)
+	testing.expect_value(t, large, u64(0x0052_3454))
+	// Two processes, one untouched page each, the word at offset 0x10.
+	_, one := word_physical(0, 0x1000_0010)
+	_, other := word_physical(0, 0x2000_0010)
+	testing.expect(t, !one && !other)
+}
+
 // A table of 16 frames on the host.
 test_table :: proc() -> Table {
 	return {heads = make([]^Entry, buckets_of_frames(16)), frames = 16}

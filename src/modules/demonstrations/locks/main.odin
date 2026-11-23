@@ -60,8 +60,10 @@ import "modus:system"
 // the drawing module, which draws its text: 354 pages
 // (display.TEXT_MEMORY_PAGES). 7745 + 354 = 8099.
 // With the pages of the case of the wait room: a room of the most words
-// (op.wait_room_pages, 512 pages), its list and its words (160 pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8099 + 672, processes = 8, threads = 20, window_width = WIDTH, window_height = HEIGHT}
+// (op.wait_room_pages, 512 pages), its list and its words (160 pages);
+// and the two processes of the case of the untouched page, with 2 threads
+// and 1024 pages each (untouched_page.odin).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8099 + 672 + 2048, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)
@@ -691,6 +693,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Word_Wait_Counted{alone = pairs_alone, loaded = pairs_loaded, lost = lost_wakes})
 	}
 	wait_room_case(image) // wait_room.odin
+	untouched_page_case(image) // untouched_page.odin
 	for kind in op.Lock_Kind {
 		system.log_fact(.Info, Entry_Lock_Waits{waits = entry_locks[kind].waits, takes = entry_locks[kind].takes, lock = lock_field(kind)})
 	}

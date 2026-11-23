@@ -3,6 +3,7 @@ package kernel
 import info "modus:contract/boot_info"
 import "base:intrinsics"
 import "modulus:page_attributes"
+import "modulus:word_table"
 
 // Memory: the page frames, and the page tables of address spaces
 // (docs/ARCHITECTURE.md, "Memory").
@@ -16,6 +17,7 @@ PAGE_WRITE_COMBINING :: page_attributes.PAGE_WRITE_COMBINING // Writes gather an
 PAGE_CACHE_TYPE_BITS :: page_attributes.PAGE_CACHE_TYPE_BITS // The bits of an entry that select its cache type.
 PAGE_NO_EXECUTE :: u64(1) << 63
 PAGE_ADDRESS :: u64(0x000F_FFFF_FFFF_F000)
+#assert(word_table.ENTRY_PRESENT == PAGE_PRESENT && word_table.ENTRY_USER == PAGE_USER && word_table.ENTRY_ADDRESS == PAGE_ADDRESS && word_table.ENTRY_LARGE == PAGE_LARGE && word_table.LARGE_PAGE_SIZE == LARGE_PAGE_SIZE)
 
 // One bit per page frame. 1: in use, or not memory.
 // The frame lock protects frame_bits, frame_hint, free_frames,

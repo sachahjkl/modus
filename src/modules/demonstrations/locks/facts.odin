@@ -202,6 +202,14 @@ Wait_Room_Long :: struct {
 	time:   value_kinds.Time_In_Microseconds,
 }
 
+// Two processes wait each on a word of a page that they never touched.
+@(log_fact = "locks: two processes wait each on a word of a page that they never touched: the wake of one counted {woken} thread, and the other still waits: {other_waits}: {verdict}")
+Untouched_Page_Waits :: struct {
+	woken:       u64,
+	other_waits: u64,
+	verdict:     [16]u8,
+}
+
 // verdict_field gives the Text field of the verdict of a case in the words
 // of the line: "as it must" or "WRONG".
 verdict_field :: proc "contextless" (right: bool) -> [16]u8 {

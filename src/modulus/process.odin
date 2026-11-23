@@ -11,6 +11,7 @@ import "modulus:processor_counters"
 import "modulus:mapping_order"
 import "modulus:slot_set"
 import "modulus:table_sizes"
+import "modulus:word_table"
 
 // The objects, the handle tables, the processes and their threads
 // (docs/ARCHITECTURE.md, "Handle table"). The scheduler is in schedule.odin
@@ -386,18 +387,23 @@ Thread :: struct #align (64) {
 #assert(offset_of(Thread, frame) == 64)
 
 // word_address gives the physical address of a 32-bit word of a process,
-// or 0 if the process cannot read it.
+// or 0 if the process cannot read it. user_range makes the page present
+// first, as a read of the word by the process would: a page on first use
+// gets its frame of the object now, paid as that read pays it. Then only an
+// entry that names a frame of the process gives an address
+// (word_table.word_physical): an entry with no frame would give the offset
+// alone, which a page of another process gives too. The caller holds the
+// process lock, so the entry stays between the two.
 word_address :: proc "contextless" (process: ^Process, address: u64) -> u64 {
 	if address & 3 != 0 || !user_range(process, address, 4, false) {
 		return 0
 	}
-	entry := page_entry(process.table, address)^
-	// A large page: its frame is 2 MiB, and the bits 12 to 20 of the
-	// address are in the page.
-	if entry & PAGE_LARGE != 0 {
-		return entry & PAGE_ADDRESS &~ u64(LARGE_PAGE_SIZE - 1) | address & (LARGE_PAGE_SIZE - 1)
+	entry := page_entry(process.table, address)
+	if entry == nil {
+		return 0
 	}
-	return entry & PAGE_ADDRESS | address & (PAGE_SIZE - 1)
+	physical, ok := word_table.word_physical(entry^, address)
+	return ok ? physical : 0
 }
 
 

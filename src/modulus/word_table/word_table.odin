@@ -37,6 +37,33 @@ Entry :: struct #align (64) {
 }
 #assert(size_of(Entry) == 64)
 
+// The bits of an entry of a page table that word_physical reads, as the
+// kernel writes them (memory.odin asserts the same values).
+ENTRY_PRESENT :: u64(1) << 0
+ENTRY_USER :: u64(1) << 2
+ENTRY_LARGE :: u64(1) << 7
+ENTRY_ADDRESS :: u64(0x000F_FFFF_FFFF_F000)
+LARGE_PAGE_SIZE :: 2 * 1024 * 1024
+
+// word_physical gives the physical address of a waited word from the entry
+// of its page, or false when the entry names no frame of the process: not
+// present, or not a page of the process. Only an entry that names a frame
+// gives an address: an entry with no frame would give the offset of the
+// word alone, a low physical address that the same offset in a page of
+// another process gives too, and the two waits would share a word. The
+// wait makes the page present first, as a read of the word would
+// (src/md/data/table_sizes.md, "The word of a wait is a frame of its
+// process"); this is the check that it did.
+word_physical :: proc "contextless" (entry: u64, address: u64) -> (physical: u64, ok: bool) {
+	if entry & (ENTRY_PRESENT | ENTRY_USER) != ENTRY_PRESENT | ENTRY_USER {
+		return 0, false
+	}
+	if entry & ENTRY_LARGE != 0 {
+		return entry & ENTRY_ADDRESS &~ u64(LARGE_PAGE_SIZE - 1) | address & (LARGE_PAGE_SIZE - 1), true
+	}
+	return entry & ENTRY_ADDRESS | address & (PAGE_SIZE - 1), true
+}
+
 // The buckets: frames buckets, one for each frame, then DEVICE_BUCKETS.
 Table :: struct {
 	heads:  []^Entry,

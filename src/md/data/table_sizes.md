@@ -78,6 +78,16 @@ The library keeps a list that names a word twice from a fault of its caller: on 
 
 A `Word_Wait` of more than 1024 words registers its words in chunks of 1024, each one a section of the process lock: a wait of 32768 words releases the lock 32 times. By estimate a word costs under a microsecond; the case `locks` prints the time of one wait of 32768 words, which is not measured yet.
 
+## The word of a wait is a frame of its process
+
+The kernel names a waited word by its physical address. A page that the process never touched has no frame and no entry in its page table, and its entry would give the offset of the word alone: a low physical address that the same offset in an untouched page of another process gives too, so the two waits would share a word, and a wake of one process would end the wait of the other.
+
+**The choice: the page is made present, as the access would.** Before the kernel registers a word, `user_range` makes its page present for a read, as a read of the word by the process does: a page on first use gets its frame of the object now, paid as that read pays it, and a page that the process cannot read is refused (`Bad_Address`, and the entry does not wait). Then only an entry that names a present page of the process gives an address (`word_table.word_physical`, with host tests: no entry, an entry with no Present bit or no User bit, a page of 4 KiB and a large page). The same holds for `Word_Wake` and for the diagnosis of a refused wait, which take the same path (`word_address`).
+
+**Refused: a refusal of a word on a page with no frame.** A correct caller reads the word before it waits, which makes the page present, but a thread can wait on a word that a peer will write first, as a counter of a ring that is new: it would get `Bad_Address` for a page that it can read, and loop. The access that the wait implies is a read, and the kernel already gives that read its frame.
+
+The case `locks` starts two processes that each wait on the word at one offset of a page that they never touched: the wake of the first counts one thread, and the waiter of the second still waits.
+
 **Refused: 64 buckets for the machine.** A bucket held the words of every thread whose words had its hash, so one process with a large room made each wake of the machine walk its entries.
 
 **Refused: a hash table with a key.** The kernel has no secret to key it with at its start, and a process that knows the hash puts its words in the bucket of another word. A bucket for each frame needs no key: a process can put only the 1024 words of one frame in one bucket. So no service refuses a client, a start or a ring for its wait. A list that does not fit anyway (the kernel refused the room for the budget) is refused past the 64 words, ends only at its deadline, and writes one line: no loop turns with no wait.

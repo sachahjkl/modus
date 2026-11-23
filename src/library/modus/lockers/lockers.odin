@@ -15,6 +15,7 @@ VALUE_ROLE :: 1 // ROLE_MEASURE or ROLE_CHURN.
 VALUE_STOP_AFTER :: 2 // ROLE_CHURN: the milliseconds after which the process stops its peer, or itself with no peer. 0: never.
 VALUE_ROOM_WORDS :: 3 // ROLE_WAIT_ROOM: the words of the wait room that the process asks for.
 VALUE_BUDGET_END :: 4 // ROLE_WAIT_ROOM: 1: the process closes the one handle of its budget, which ends, before it waits.
+VALUE_WAKES :: 5 // ROLE_UNTOUCHED_WAIT: 1: the process wakes its own word after its waiter waits.
 
 // A locker of the measures: it works on the board.
 ROLE_MEASURE :: 0
@@ -32,6 +33,14 @@ CHURN_THREADS :: 4 // The threads that a churn locker can have at one time.
 // room return to the budget that pays the process then, whichever it is.
 ROLE_WAIT_ROOM :: 2
 ROOM_WAITED :: 100
+// A locker of the case of the untouched page: it maps a new memory object
+// and touches no page of it; a thread waits on the word at UNTOUCHED_OFFSET
+// of it, which the wait itself makes present. With VALUE_WAKES, its first
+// thread then wakes that word until the wake counts a thread, and writes
+// the count in `entries` of its slot. The waiter adds 1 to `count` of the
+// slot when its wait ends. Each adds 1 to `done`, then waits for its stop.
+ROLE_UNTOUCHED_WAIT :: 3
+UNTOUCHED_OFFSET :: 0x10
 
 LOCKER_CAPACITY :: 4 // The lockers that `locks` starts.
 FAULT_PAGES :: 256 // The pages of one memory object in the measure of the pages on first use.
