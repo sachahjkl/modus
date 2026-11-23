@@ -77,34 +77,45 @@ entry_label :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> 
 	return "", graphics.colors.dim
 }
 
-// entry_body gives the text under the label of an entry.
-entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> string {
+// The fonts of the body of an entry (docs/FONTS.md, section 12.6): the
+// line of an act is code, and the result of an act that ran is a value, so
+// both are in the font of the cells, Paper Mono, which a reader compares
+// character by character (in B612 a parenthesis at 14 px reads as a
+// bracket); the words that explain are in the interface font.
+FONT_CODE :: interface.Font{}
+
+// entry_body gives the text under the label of an entry: code, in the font
+// of the cells, then words, in the interface font, or in the font of the
+// cells when they are a value. Either can be empty.
+entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (code: string, words: string, words_are_value: bool) {
 	switch entry.kind {
 	case .Request, .Reply:
-		return string(entry.text[:entry.text_count])
+		return "", string(entry.text[:entry.text_count]), false
 	case .Reply_Refused:
 		kind, _ := errors.kind_of_word(entry.error.kind)
 		unit, _ := errors.unit_of_word(entry.error.unit)
-		return system.format(buffer, errors.KIND_NAMES[kind], ", unit ", errors.UNIT_NAMES[unit], ", argument ", entry.error.argument, ", value ", entry.error.value, ", limit ", entry.error.limit, "; no act of it runs")
+		return "", system.format(buffer, errors.KIND_NAMES[kind], ", unit ", errors.UNIT_NAMES[unit], ", argument ", entry.error.argument, ", value ", entry.error.value, ", limit ", entry.error.limit, "; no act of it runs"), false
 	case .Act:
-		line := string(entry.line[:entry.line_count])
+		code = string(entry.line[:entry.line_count])
 		switch entry.state {
 		case .Proposed:
-			return line
-		case .Done, .Refused:
-			return system.format(buffer, line, ": ", string(entry.text[:entry.text_count]))
+			return code, "", false
+		case .Done:
+			return code, string(entry.text[:entry.text_count]), true
+		case .Refused:
+			return code, string(entry.text[:entry.text_count]), false
 		case .Awaiting_Principal:
 			if entry.dialog == 0 {
-				return system.format(buffer, line, ": waiting for the trusted display")
+				return code, "waiting for the trusted display", false
 			}
-			return system.format(buffer, line, ": decide it in the act dialog of the trusted display")
+			return code, "decide it in the act dialog of the trusted display", false
 		case .Allowed_By_Principal:
-			return system.format(buffer, line, ": allowed; the act runs when the agent console of a wide grant runs it")
+			return code, "allowed; the act runs when the agent console of a wide grant runs it", false
 		case .Refused_By_Principal, .Not_Shown:
-			return system.format(buffer, line, ": nothing ran")
+			return code, "nothing ran", false
 		}
 	}
-	return ""
+	return "", "", false
 }
 
 // draw builds one frame: the conversation from the newest entry up, as far
@@ -116,6 +127,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	room := window.width - 2 * MARGIN
 	input_top := window.height - MARGIN - INPUT_HEIGHT
 	line := interface.line_height(interface.FONT_INTERFACE)
+	code_line := interface.line_height(FONT_CODE)
 	bottom := input_top - MARGIN
 	// From the newest entry up: only the entries that show are measured.
 	for index := talk.entry_count - 1; index >= 0 && bottom > MARGIN; index -= 1 {
@@ -123,15 +135,25 @@ draw :: proc "contextless" (window: ^display.Window) {
 		label_buffer: [160]u8
 		body_buffer: [assistant_contract.REPLY_TEXT_BYTES + assistant_contract.ACT_LINE_BYTES + 160]u8
 		label, color := entry_label(entry, label_buffer[:])
-		body := entry_body(entry, body_buffer[:])
-		lines := interface.text_wrapped_line_count(table, interface.FONT_INTERFACE, body, room)
-		height := line + lines * line + MARGIN / 2
+		code, words, words_are_value := entry_body(entry, body_buffer[:])
+		words_font := words_are_value ? FONT_CODE : interface.FONT_INTERFACE
+		words_line := words_are_value ? code_line : line
+		code_lines := code != "" ? interface.text_wrapped_line_count(table, FONT_CODE, code, room) : 0
+		word_lines := words != "" ? interface.text_wrapped_line_count(table, words_font, words, room) : 0
+		height := line + code_lines * code_line + word_lines * words_line + MARGIN / 2
 		top := bottom - height
 		if top < MARGIN {
 			break
 		}
 		interface.draw_text(table, MARGIN, top, label, color, interface.FONT_INTERFACE_BOLD)
-		interface.draw_text_wrapped(table, MARGIN, top + line, room, body, graphics.colors.text, interface.FONT_INTERFACE)
+		body_top := top + line
+		if code != "" {
+			interface.draw_text_wrapped(table, MARGIN, body_top, room, code, graphics.colors.text, FONT_CODE)
+			body_top += code_lines * code_line
+		}
+		if words != "" {
+			interface.draw_text_wrapped(table, MARGIN, body_top, room, words, graphics.colors.text, words_font)
+		}
 		bottom = top
 	}
 	if talk.entry_count == 0 {

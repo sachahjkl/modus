@@ -465,11 +465,16 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	// The words of the face: a plan, or one act of an agent that asked.
 	element, header, name_label, accept := "plan difference", "TRUSTED PLAN DIFFERENCE", "plan", "Accept plan"
 	add_heading := "adds"
+	// The act is code, service.export, in the font of the cells, as a
+	// reader compares it character by character (docs/FONTS.md, section
+	// 12.6); the items of a plan are names in the interface font.
+	item_font := interface.FONT_INTERFACE
 	switch dialog.face {
 	case .Plan:
 	case .Act:
 		element, header, name_label, accept = "act", "TRUSTED ACT", "asker", "Allow once"
 		add_heading = "runs"
+		item_font = interface.Font{}
 	}
 	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity(element)), .Alert_Dialog, {name = element})
 	defer interface.draw_element_pop(table)
@@ -498,8 +503,8 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		line_y += bar.PLAN_DIFFERENCE_LINE
 		for &item in side.items {
 			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, side.sign, side.color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
-			shown := interface.text_fit(table, interface.FONT_INTERFACE, bar.plan_difference_item_text(&item), text_x + text_room - item_x)
-			interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, interface.FONT_INTERFACE)
+			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(&item), text_x + text_room - item_x)
+			interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, item_font)
 			line_y += bar.PLAN_DIFFERENCE_LINE
 		}
 	}

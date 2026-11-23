@@ -199,6 +199,24 @@ an_act_runs_only_through_the_bridge :: proc(t: ^testing.T) {
 		testing.expectf(t, report.state == .Refused, "%q: %v %q", line, report.state, report.text)
 	}
 	testing.expect_value(t, counting.lines, 0)
+	// A line whose names the act dialog cannot show: the bridge stops it,
+	// and the outcome for the window is a refusal, never a wait that the
+	// window would refuse.
+	long_export := strings.concatenate({"plans.", strings.repeat("a", assistant_contract.ACT_NAME_BYTES + 5, context.temp_allocator), "()"}, context.temp_allocator)
+	for line in ([]string{long_export, "plans.Apply()", "plans._apply()"}) {
+		stopped := act_run(&runner, {kind = .Eval_Lex, line = line})
+		service, export := act_names(line)
+		testing.expectf(t, service == "" && export == "", "%q gave the names %q %q", line, service, export)
+		shown := act_outcome_for_display(stopped, service)
+		testing.expectf(t, shown.state == .Refused && shown.text == ACT_WITHOUT_NAMES_WORDS, "%q: %v %q, the bridge gave %v", line, shown.state, shown.text, stopped.state)
+	}
+	// A line with names keeps its wait; an outcome that is no wait is
+	// kept as the bridge gave it.
+	named := act_run(&runner, {kind = .Eval_Lex, line = `plans.apply("home")`})
+	named_service, _ := act_names(`plans.apply("home")`)
+	testing.expect_value(t, act_outcome_for_display(named, named_service).state, assistant_contract.Act_State.Awaiting_Principal)
+	testing.expect_value(t, act_outcome_for_display({state = .Done, text = "12"}, "").state, assistant_contract.Act_State.Done)
+	testing.expect_value(t, counting.lines, 0)
 	report := act_run(&runner, {kind = .Eval_Lex, line = "monitor.processes()"})
 	testing.expect_value(t, report.state, assistant_contract.Act_State.Done)
 	testing.expect_value(t, report.text, "1 rows of Process: slot 3, name console")
@@ -288,8 +306,14 @@ the_status_of_an_answer_is_three_digits :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(problem, "503"))
 }
 
+// The deadline of the answer in the test of a stall: the behaviour under
+// test, short so the test ends soon. The test asserts no duration.
+@(private = "file")
+STALL_TEST_DEADLINE :: 200 * time.Millisecond
+
 // An endpoint that takes the connection and never answers fails the model
-// within the deadline of the answer: the turn is Model_Failed, not a hang.
+// at the deadline of the answer, a parameter of the model under test: the
+// outcome is Model_Failed with the record No_Answer, not a hang.
 @(test)
 an_endpoint_that_stalls_fails_the_model :: proc(t: ^testing.T) {
 	listener, listen_error := net.listen_tcp({address = net.IP4_Loopback, port = 0})
@@ -297,11 +321,11 @@ an_endpoint_that_stalls_fails_the_model :: proc(t: ^testing.T) {
 	defer net.close(listener)
 	bound, bound_error := net.bound_endpoint(listener)
 	testing.expect(t, bound_error == nil)
-	model := Http_Model{endpoint = {host = "127.0.0.1", port = bound.port, path = "/v1"}, key = "k", model_name = "m", answer_deadline = 200 * time.Millisecond}
-	reply_model := http_model(&model)
-	text, problem := reply_model.reply(reply_model.user_data, nil, context.temp_allocator)
-	testing.expect_value(t, text, "")
-	testing.expectf(t, strings.contains(problem, "no whole answer within"), "%q", problem)
+	model := Http_Model{endpoint = {host = "127.0.0.1", port = bound.port, path = "/v1"}, key = "k", model_name = "m", answer_deadline = STALL_TEST_DEADLINE}
+	_, outcome, record, problem := model_answer(http_model(&model), nil)
+	testing.expect_value(t, outcome, Turn_Outcome.Model_Failed)
+	testing.expect_value(t, record.kind, i64(errors.Kind.No_Answer))
+	testing.expectf(t, strings.contains(problem, "no whole answer"), "%q", problem)
 }
 
 // The conversation keeps the last requests whole: an outcome never stays

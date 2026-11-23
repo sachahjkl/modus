@@ -95,6 +95,39 @@ exchange_keep :: proc(runner: ^Runner, reply: Model_Reply, outcomes: []string) {
 	}
 }
 
+// model_answer asks the model for its reply to the conversation and reads
+// it at the border: Answered with the reply; Model_Failed, with the record
+// No_Answer and the problem, when the model gives no reply, as when its
+// endpoint stalls past its deadline; Reply_Refused with the record of the
+// border.
+model_answer :: proc(model: Model, conversation: []Turn) -> (reply: Model_Reply, outcome: Turn_Outcome, record: errors.Error_Record, problem: string) {
+	raw, model_problem := model.reply(model.user_data, conversation, context.temp_allocator)
+	if model_problem != "" {
+		return {}, .Model_Failed, errors.error_make(.No_Answer), model_problem
+	}
+	decoded, decode_record, decoded_ok := model_reply_decode(raw)
+	if !decoded_ok {
+		return {}, .Reply_Refused, decode_record, ""
+	}
+	return decoded, .Answered, {}, ""
+}
+
+// The words of an act that the bridge stopped for the principal and whose
+// line names no export that the act dialog can show.
+ACT_WITHOUT_NAMES_WORDS :: "the act names no export that the trusted display can show"
+
+// act_outcome_for_display gives the outcome that the window takes for an
+// act. An act that waits for the principal needs the names of its one call
+// for the act dialog; with no names (a name past 31 bytes, an upper case
+// letter, a leading _), the act is refused, as the trusted display could
+// never show it, and the window never refuses the outcome.
+act_outcome_for_display :: proc(outcome: Act_Report, service: string) -> Act_Report {
+	if outcome.state != .Awaiting_Principal || service != "" {
+		return outcome
+	}
+	return {number = outcome.number, state = .Refused, text = ACT_WITHOUT_NAMES_WORDS}
+}
+
 // act_names gives the service and the export of the one call of a line,
 // with the parser of the bridge, or two empty texts for a line that is no
 // single call: the window and the trusted display read the names as typed
@@ -166,17 +199,16 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 	}
 	append(&runner.conversation, Turn{role = .Principal, text = strings.clone(text_result.text)})
 	conversation_bound(runner)
-	raw, model_problem := runner.model.reply(runner.model.user_data, runner.conversation[:], context.temp_allocator)
-	if model_problem != "" {
-		report.outcome, report.problem = .Model_Failed, model_problem
-		report.record = errors.error_make(.No_Answer)
-		window_problem_keep(&report, reply_refused_show(runner, report.serial, report.record))
-		return
-	}
-	reply, record, reply_ok := model_reply_decode(raw)
-	if !reply_ok {
-		report.outcome, report.record = .Reply_Refused, record
+	reply, answer_outcome, record, model_problem := model_answer(runner.model, runner.conversation[:])
+	switch answer_outcome {
+	case .Model_Failed, .Reply_Refused:
+		report.outcome, report.record, report.problem = answer_outcome, record, model_problem
 		window_problem_keep(&report, reply_refused_show(runner, report.serial, record))
+		return
+	case .Answered:
+	case .No_Request, .Window_Failed:
+		// model_answer gives neither: it calls no window.
+		report.outcome, report.problem = .Window_Failed, "the model step gave an outcome of the window"
 		return
 	}
 	outcomes: [assistant_contract.MODEL_ACT_CAPACITY]string
@@ -194,7 +226,7 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 			report.outcome, report.problem = .Window_Failed, problem
 			return
 		}
-		outcome := act_run(runner, act)
+		outcome := act_outcome_for_display(act_run(runner, act), service)
 		outcome.number = act_result.value
 		outcome_arguments := [3]machine.Call_Argument{{integer = outcome.number}, {integer = i64(outcome.state)}, {is_text = true, text = outcome.text}}
 		if _, problem = window_call(runner, "act_result", outcome_arguments[:]); problem != "" {
