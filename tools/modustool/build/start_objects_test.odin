@@ -93,27 +93,75 @@ the_start_budgets_are_read_from_the_module_alone :: proc(t: ^testing.T) {
 // The start grants of the repository: the console sends Wire from its root
 // ring, so its floor holds its wiring budget; the start policy prices its
 // wirings with its list; a module with no root ring wires nothing; a name
-// with no row wires nothing.
+// with no row wires nothing. The detector parses the Odin syntax tree:
+// comments, strings, unimported names, Wire_Step.None and calls to
+// unrelated procedures taking .Wire do not trigger a wiring part, while
+// calls to package helpers taking root_ring.Root_Command (positional or
+// named) and aliased imports of modus:contract/root_ring do.
 @(test)
 the_wiring_of_a_floor_follows_the_start_grants :: proc(t: ^testing.T) {
-	wires := []Fact_Source{{path = "src/modules/system/console/streams.odin", source = "package console\nstep :: root_ring.Wire_Step.Apply\n"}}
+	wires := []Fact_Source{{path = "src/modules/system/console/streams.odin", source = "package console\nimport \"modus:contract/root_ring\"\nstep :: proc() { _ = root_ring.Wire_Step.Apply }\n"}}
 	never := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\n"}}
-	in_a_package := []Fact_Source{{path = "src/library/modus/system/a.odin", source = "package system\nstep :: root_ring.Wire_Step.Apply\n"}}
-	in_a_test := []Fact_Source{{path = "src/modules/system/console/a_test.odin", source = "package console\nstep :: root_ring.Wire_Step.Apply\n"}}
-	console, console_ok := floor_wiring_derived("console", "src/modules/system/console", wires)
-	testing.expect(t, console_ok && console)
-	silent, silent_ok := floor_wiring_derived("console", "src/modules/system/console", never)
-	testing.expect(t, silent_ok && !silent, "a holder of the grant that never wires")
-	library, _ := floor_wiring_derived("console", "src/modules/system/console", in_a_package)
-	testing.expect(t, !library, "a step named in another package")
-	test_only, _ := floor_wiring_derived("console", "src/modules/system/console", in_a_test)
-	testing.expect(t, !test_only, "a step named in a test")
-	policy, policy_ok := floor_wiring_derived("start_policy", "src/modules/system/start_policy", {{path = "src/modules/system/start_policy/main.odin", source = "Wire_Step.List_Page"}})
+	in_comment := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\nimport \"modus:contract/root_ring\"\n// root_ring.Wire_Step.Apply and root_ring.Root_Command.Wire\n"}}
+	in_string := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\nimport \"modus:contract/root_ring\"\nTEXT :: \"root_ring.Wire_Step.List_Page Root_Command.Wire\"\n"}}
+	unimported := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\nWire_Step :: enum { Apply }\nstep :: Wire_Step.Apply\n"}}
+	wire_step_none := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\nimport \"modus:contract/root_ring\"\nstep :: root_ring.Wire_Step.None\n"}}
+	other_command := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\nimport \"modus:contract/root_ring\"\ndisk_request :: proc(kind: root_ring.Root_Command) {}\nrun :: proc() { disk_request(.Start) }\n"}}
+	unrelated_call := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\nOther :: enum { Wire }\nother_call :: proc(kind: Other) {}\nrun :: proc() { other_call(.Wire) }\n"}}
+	in_a_package := []Fact_Source{{path = "src/library/modus/system/a.odin", source = "package system\nimport \"modus:contract/root_ring\"\nstep :: root_ring.Wire_Step.Apply\n"}}
+	in_a_test := []Fact_Source{{path = "src/modules/system/console/a_test.odin", source = "package console\nimport \"modus:contract/root_ring\"\nstep :: root_ring.Wire_Step.Apply\n"}}
+	cross_file_call := []Fact_Source {
+		{path = "src/modules/system/console/commands.odin", source = "package console\nimport \"modus:contract/root_ring\"\ndisk_request :: proc(kind: root_ring.Root_Command, values: [7]u64) {}\n"},
+		{path = "src/modules/system/console/streams.odin", source = "package console\nrun :: proc() { disk_request(.Wire, {}) }\n"},
+	}
+	named_arg_call := []Fact_Source {
+		{path = "src/modules/system/console/commands.odin", source = "package console\nimport \"modus:contract/root_ring\"\ndisk_request :: proc(tag: u32, kind: root_ring.Root_Command) {}\n"},
+		{path = "src/modules/system/console/streams.odin", source = "package console\nrun :: proc() { disk_request(kind = .Wire, tag = 1) }\n"},
+	}
+	aliased_import := []Fact_Source{{path = "src/modules/system/console/streams.odin", source = "package console\nimport rr \"modus:contract/root_ring\"\nrun :: proc() { _ = rr.Root_Command.Wire }\n"}}
+	broken_source := []Fact_Source{{path = "src/modules/system/console/broken.odin", source = "package console\nproc( {\n"}}
+
+	// Refusal and non-wiring cases first.
+	for item in ([?]struct {
+		about:   string,
+		sources: []Fact_Source,
+	} {
+		{"a holder of the grant that never wires", never},
+		{"a comment naming Wire_Step and Root_Command.Wire", in_comment},
+		{"a string literal naming Wire_Step and Root_Command.Wire", in_string},
+		{"a local Wire_Step without importing modus:contract/root_ring", unimported},
+		{"Wire_Step.None alone", wire_step_none},
+		{"a call passing .Start instead of .Wire", other_command},
+		{"an unrelated procedure taking .Wire", unrelated_call},
+		{"a step named in another package", in_a_package},
+		{"a step named in a test", in_a_test},
+	}) {
+		got, got_ok := floor_wiring_derived("console", "src/modules/system/console", item.sources)
+		testing.expectf(t, got_ok && !got, "%s must not derive wiring", item.about)
+	}
+	_, broken_ok := floor_wiring_derived("console", "src/modules/system/console", broken_source)
+	testing.expect(t, !broken_ok, "a broken own source file fails floor_wiring_derived")
+
+	policy, policy_ok := floor_wiring_derived("start_policy", "src/modules/system/start_policy", wires)
 	testing.expect(t, policy_ok && !policy)
-	clock, clock_ok := floor_wiring_derived("clock", "src/modules/demonstrations/clock", {{path = "src/modules/demonstrations/clock/main.odin", source = "Wire_Step.List_Page"}})
+	clock, clock_ok := floor_wiring_derived("clock", "src/modules/demonstrations/clock", wires)
 	testing.expect(t, clock_ok && !clock, "no grant Root_Ring")
 	nobody, nobody_ok := floor_wiring_derived("no_such_module", "src/modules/x", wires)
 	testing.expect(t, nobody_ok && !nobody)
+
+	// Genuine wiring cases last.
+	for item in ([?]struct {
+		about:   string,
+		sources: []Fact_Source,
+	} {
+		{"root_ring.Wire_Step.Apply", wires},
+		{"cross-file helper call with positional .Wire", cross_file_call},
+		{"cross-file helper call with named .Wire", named_arg_call},
+		{"aliased import rr.Root_Command.Wire", aliased_import},
+	}) {
+		got, got_ok := floor_wiring_derived("console", "src/modules/system/console", item.sources)
+		testing.expectf(t, got_ok && got, "%s must derive wiring", item.about)
+	}
 }
 
 // A derived wiring budget is as large as the rest of the floor, so the

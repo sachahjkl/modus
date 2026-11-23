@@ -340,3 +340,39 @@ a_screen_of_memory_in_a_start_is_refused_outside_its_case :: proc(t: ^testing.T)
 	width, height, taken := screen_of_memory_of_start(size, true, "display", false)
 	testing.expect(t, taken && width == 1920 && height == 1080)
 }
+
+// kept_pages_of_start_list counts the start policy once: never twice if it
+// also appears in system_parts, and never in kept when a row of the list
+// names it. root and row modules are skipped, only the largest console
+// renderer counts, largest_pages is a floor on the result, and sums
+// saturate at max(u64).
+@(test)
+kept_pages_of_start_list_counts_the_start_policy_once :: proc(t: ^testing.T) {
+	renderers := []string{"serial_terminal", "grid_terminal", "dom_terminal"}
+	parts := []Kept_Floor {
+		{"root", 9_000},
+		{"start_policy", 400},
+		{"input", 500},
+		{"wiring", 600},
+		{"serial_terminal", 100},
+		{"grid_terminal", 700},
+		{"dom_terminal", 300},
+	}
+	// Start policy also in system_parts: counted once (400), root (9000) and
+	// row "input" (500) skipped, largest renderer (700), wiring (600), disk
+	// budget (200) -> 400 + 600 + 700 + 200 = 1900.
+	got := kept_pages_of_start_list("start_policy", 400, parts, renderers, []string{"input"}, 200, 1000)
+	testing.expect_value(t, got, u64(1900))
+	// Start policy named as a row: counted zero times in kept (already in
+	// row sizes), even when also listed in system_parts -> 600 + 700 + 200 = 1500.
+	got = kept_pages_of_start_list("start_policy", 400, parts, renderers, []string{"input", "start_policy"}, 200, 1000)
+	testing.expect_value(t, got, u64(1500))
+	// Sum below largest_pages: returns largest_pages.
+	got = kept_pages_of_start_list("start_policy", 400, parts, renderers, []string{"input"}, 0, 5000)
+	testing.expect_value(t, got, u64(5000))
+	// Empty inputs: returns largest_pages (0 when 0).
+	testing.expect_value(t, kept_pages_of_start_list("", 0, nil, nil, nil, 0, 0), u64(0))
+	// Saturates at max(u64) without wrapping.
+	overflow := []Kept_Floor{{"wiring", max(u64)}}
+	testing.expect_value(t, kept_pages_of_start_list("start_policy", max(u64), overflow, nil, nil, 10, 0), max(u64))
+}

@@ -73,15 +73,15 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 // as system.receive. When the counters of the ring say more records than
 // it holds, no record can be read and a wait on the ring ends at once: it
 // drops what the ring counts (ring.false_count_refuse), writes one line
-// that names the writer, and gives no record, so the next wait of this
-// service waits. Each ring that this service reads goes through it, but
-// the root ring and the ready ring of a process, which end
+// once per ring that names the writer, and gives no record, so the next
+// wait of this service waits. Each ring that this service reads goes
+// through it, but the root ring and the ready ring of a process, which end
 // (root_ring_serve, ready_ring_serve).
 root_receive :: proc "contextless" (queue: ^ring.Queue, writer: string) -> (record: ring.Record, ok: bool) {
 	if record, ok = system.receive(queue); ok {
 		return record, true
 	}
-	if ring.false_count_refuse(queue) {
+	if refused, first := ring.false_count_refuse(queue); refused && first {
 		system.log_fact(.Warning, Ring_Counters_Refused{ring_writer = text_field(writer, 32)})
 	}
 	return {}, false

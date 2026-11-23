@@ -1,5 +1,6 @@
 package root
 
+import "internal:root/start_policy_rules"
 import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -311,18 +312,14 @@ CONSOLE_RENDERERS :: [3]string{"serial_terminal", "grid_terminal", "dom_terminal
 
 // start_list_kept_pages gives the pages that the division of a start list
 // keeps for the starts that are no row and that can come before the list
-// is done: the floor of the start policy, of each part of the system that
-// this service starts in its own way and that the image holds (the largest
-// renderer of the console alone), and the budget of the disk processes
-// when it is not made yet. It is never below one share of the machine,
-// which this service keeps for its own work and for a start that a process
-// asks. The tool proves that these floors and the floors of the rows fit
-// in the least machine (start_lists.odin).
+// is done: the floor of the start policy once, of each part of the system
+// that this service starts in its own way and that the image holds (the
+// largest renderer of the console alone), and the budget of the disk
+// processes when it is not made yet. It is never below one share of the
+// machine, which this service keeps for its own work and for a start that
+// a process asks. The tool proves that these floors and the floors of the
+// rows fit in the least machine (start_lists.odin).
 start_list_kept_pages :: proc "contextless" (rows: []string) -> u64 {
-	kept: u64 = 0
-	add :: proc "contextless" (kept: ^u64, pages: u64) {
-		kept^ = kept^ > max(u64) - pages ? max(u64) : kept^ + pages
-	}
 	floor_pages :: proc "contextless" (name: string) -> u64 {
 		if find_running(name) != nil {
 			return 0
@@ -330,30 +327,14 @@ start_list_kept_pages :: proc "contextless" (rows: []string) -> u64 {
 		floor, ok := start_floor_of(image_file_checked(name), name, principals.MACHINE, true)
 		return ok ? floor.pages : 0
 	}
-	add(&kept, floor_pages(role_holder_name(.Start_Policy)))
-	renderer: u64 = 0
-	parts: for part in system_part_names {
-		if part == "root" {
-			continue
-		}
-		for row in rows {
-			if row == part {
-				continue parts
-			}
-		}
-		for item in CONSOLE_RENDERERS {
-			if item == part {
-				renderer = max(renderer, floor_pages(part))
-				continue parts
-			}
-		}
-		add(&kept, floor_pages(part))
+	policy_name := role_holder_name(.Start_Policy)
+	parts: [len(system_part_names)]start_policy_rules.Kept_Floor
+	for part, index in system_part_names {
+		parts[index] = {name = part, pages = part == "root" || part == policy_name ? 0 : floor_pages(part)}
 	}
-	add(&kept, renderer)
-	if disk_processes_budget == 0 {
-		add(&kept, disk_process.PROCESSES_BUDGET.pages)
-	}
-	return max(kept, largest_budget.pages)
+	disk_pages := disk_processes_budget == 0 ? disk_process.PROCESSES_BUDGET.pages : 0
+	renderers := CONSOLE_RENDERERS
+	return start_policy_rules.kept_pages_of_start_list(policy_name, floor_pages(policy_name), parts[:], renderers[:], rows, disk_pages, largest_budget.pages)
 }
 
 // start_list_reserved_all gives the pages that the rows of the start list
@@ -416,8 +397,10 @@ budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = prin
 disk_processes_budget: system.Handle
 
 // disk_processes_budget_get gives the budget of the disk processes, and makes
-// it from the budget of this service the first time.
-disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, status: system.Status) {
+// it from the budget of this service the first time. name names the disk
+// process whose start asks for it, so a refusal before Machine_Usable
+// names the process and the start-list reserves as the cause.
+disk_processes_budget_get :: proc "contextless" (name: string) -> (budget: system.Handle, status: system.Status) {
 	if disk_processes_budget != 0 {
 		return disk_processes_budget, .Ok
 	}
@@ -425,8 +408,10 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 	shared := disk_process.PROCESSES_BUDGET
 	// The rows of the start list that did not start keep their sizes: the
 	// budget of the disk processes takes no page of them.
-	if shared.pages > own.pages - min(own.pages, start_list_reserved_all()) {
-		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = .No_Budget})
+	reserved := start_list_reserved_all()
+	payable := own.pages - min(own.pages, reserved)
+	if reserved != 0 && shared.pages > payable {
+		system.log_fact(.Warning, Disk_Processes_Budget_Refused_Reserved{needed = value_kinds.Size_In_Pages(min(shared.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), reserved = value_kinds.Size_In_Pages(min(reserved, u64(max(i64)))), refused_process = module_name_field(name)})
 		return 0, .No_Budget
 	}
 	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})

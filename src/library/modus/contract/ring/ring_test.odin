@@ -739,6 +739,8 @@ a_false_count_is_refused_and_a_flood_is_not :: proc(t: ^testing.T) {
 
 // A reader refuses a false count by its own counter: the queue is empty, a
 // push works again, and an honest queue, empty or full, is left as it is.
+// first is true only on the first refusal of a ring since open, so a
+// reader logs once per ring and not once per false count.
 @(test)
 a_false_count_is_refused_by_the_count_of_the_reader :: proc(t: ^testing.T) {
 	memory := memory_of_pages(PAGE_COUNT)
@@ -746,19 +748,30 @@ a_false_count_is_refused_by_the_count_of_the_reader :: proc(t: ^testing.T) {
 	ring, opened := open(raw_data(memory), PAGE_COUNT)
 	testing.expect(t, opened)
 	queue := &ring.commands
-	testing.expect(t, !false_count_refuse(queue), "an empty queue")
+	refused, first := false_count_refuse(queue)
+	testing.expect(t, !refused && !first, "an empty queue")
 	for number in 0 ..< u32(CAPACITY) {
 		testing.expect(t, push(queue, numbered_record(number)))
 	}
-	testing.expect(t, !false_count_refuse(queue), "a full queue")
+	refused, first = false_count_refuse(queue)
+	testing.expect(t, !refused && !first, "a full queue")
 	testing.expect_value(t, count(queue), u32(CAPACITY))
 	ring.head.commands.write = ring.head.commands.read + u32(CAPACITY) + 1
-	testing.expect(t, false_count_refuse(queue))
+	refused, first = false_count_refuse(queue)
+	testing.expect(t, refused && first, "the first false count on this ring")
 	testing.expect(t, empty(queue) && !counters_refused(queue))
 	testing.expect(t, push(queue, numbered_record(7)))
 	record, popped := pop(queue)
 	testing.expect(t, popped && record == numbered_record(7))
+	// A second false count on the same ring is still dropped, with first == false.
 	ring.head.commands.write, ring.head.commands.read = 3, 9
-	testing.expect(t, false_count_refuse(queue), "a write behind the read")
+	refused, first = false_count_refuse(queue)
+	testing.expect(t, refused && !first, "a later false count on the same ring does not log again")
 	testing.expect_value(t, ring.head.commands.read, 3)
+	// A freshly opened ring logs once again.
+	reopened, reopened_ok := open(raw_data(memory), PAGE_COUNT)
+	testing.expect(t, reopened_ok)
+	reopened.head.commands.write, reopened.head.commands.read = u32(CAPACITY) + 1, 0
+	refused, first = false_count_refuse(&reopened.commands)
+	testing.expect(t, refused && first, "a newly opened ring reports its first false count")
 }

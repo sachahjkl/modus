@@ -152,6 +152,16 @@ Disk_Processes_Budget_Made :: struct {
 	threads:   u64,
 }
 
+// A disk process refused before Machine_Usable because the start-list
+// reserves hold pages that the budget of the disk processes needs.
+@(log_fact = "root: cannot start {refused_process}: the budget of the disk processes needs {needed}, and this service can give {held} because the start-list reserves hold {reserved}")
+Disk_Processes_Budget_Refused_Reserved :: struct {
+	needed:          value_kinds.Size_In_Pages,
+	held:            value_kinds.Size_In_Pages,
+	reserved:        value_kinds.Size_In_Pages,
+	refused_process: value_kinds.Module_Name_Field,
+}
+
 // A start refused: the budget that pays holds less of one part than the
 // process gets.
 @(log_fact = "root: cannot start {refused_process}: it gets {needed} {budget_part}, and the budget of {paying_budget} holds {held}")

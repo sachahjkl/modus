@@ -6,6 +6,7 @@ import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "core:fmt"
 import "core:math/bits"
+import "core:odin/ast"
 import "core:strings"
 import "modustool:foundation"
 
@@ -293,25 +294,151 @@ floor_grant_rows: []foundation.Start_Grant_Set_Row
 @(private = "file")
 floor_grant_rows_read: bool
 
-// floor_wiring_derived says if the module of name sends Wire from its root
-// ring: it holds the start grant Root_Ring, is not a start policy, whose
-// wiring pages its list prices, and a source of its own package names a
-// step of Wire (root_ring.Wire_Step). The root service then carves its
-// wiring budget from its floor. A holder of the grant that never wires gets
-// no wiring part. ok is false when the table cannot be read.
-floor_wiring_derived :: proc(name: string, module_folder: string, sources: []Fact_Source) -> (derived: bool, ok: bool) {
-	module_package := strings.trim_right(module_folder, "/")
-	wires := false
-	for source in sources {
-		folder := source.path[:max(strings.last_index_byte(source.path, '/'), 0)]
-		own := folder == module_package || strings.has_suffix(folder, strings.concatenate({"/", module_package}, context.temp_allocator))
-		if own && !strings.has_suffix(source.path, "_test.odin") && (strings.contains(source.source, "Wire_Step.") || strings.contains(source.source, "Root_Command.Wire")) {
-			wires = true
+// The import path of the root ring contract, whose Root_Command.Wire and
+// Wire_Step members identify a module that sends Wire from its root ring.
+@(private = "file")
+ROOT_RING_IMPORT_PATH :: "modus:contract/root_ring"
+
+// One parameter of a package procedure whose type is root_ring.Root_Command:
+// a call passing .Wire at index (or by name) sends Wire.
+@(private = "file")
+Root_Command_Param :: struct {
+	proc_name:  string,
+	param_name: string,
+	index:      int,
+}
+
+// One parsed source of a module's own package, paired with its local import
+// name for ROOT_RING_IMPORT_PATH ("" when the file does not import it).
+@(private = "file")
+Wiring_Parsed_File :: struct {
+	file:           ^ast.File,
+	root_ring_name: string,
+}
+
+// root_ring_import_name gives the local package identifier for
+// ROOT_RING_IMPORT_PATH in file, or "" when file does not import it.
+@(private = "file")
+root_ring_import_name :: proc(file: ^ast.File) -> string {
+	for item in file.imports {
+		if strings.trim(item.fullpath, "\"") != ROOT_RING_IMPORT_PATH {
+			continue
+		}
+		if item.name.text != "" {
+			return item.name.text
+		}
+		return "root_ring"
+	}
+	return ""
+}
+
+// selector_is_type says if expr is `<pkg>.<type_name>`.
+@(private = "file")
+selector_is_type :: proc(expr: ^ast.Expr, pkg: string, type_name: string) -> bool {
+	if expr == nil || pkg == "" {
+		return false
+	}
+	selector, is_selector := expr.derived.(^ast.Selector_Expr)
+	if !is_selector || selector.expr == nil || selector.field == nil {
+		return false
+	}
+	ident, is_ident := selector.expr.derived.(^ast.Ident)
+	return is_ident && ident.name == pkg && selector.field.name == type_name
+}
+
+// root_command_params_collect appends every parameter of type
+// `<pkg>.Root_Command` declared on a top-level procedure in file.
+@(private = "file")
+root_command_params_collect :: proc(file: ^ast.File, pkg: string, out: ^[dynamic]Root_Command_Param) {
+	if pkg == "" {
+		return
+	}
+	for decl in file.decls {
+		value_decl, is_value := decl.derived.(^ast.Value_Decl)
+		if !is_value || value_decl.is_mutable || len(value_decl.names) != 1 || len(value_decl.values) != 1 {
+			continue
+		}
+		proc_ident, has_name := value_decl.names[0].derived.(^ast.Ident)
+		proc_lit, is_proc := value_decl.values[0].derived.(^ast.Proc_Lit)
+		if !has_name || !is_proc || proc_lit.type == nil || proc_lit.type.params == nil {
+			continue
+		}
+		param_index := 0
+		for field in proc_lit.type.params.list {
+			is_root_command := selector_is_type(field.type, pkg, "Root_Command")
+			count := max(len(field.names), 1)
+			if is_root_command {
+				if len(field.names) == 0 {
+					append(out, Root_Command_Param{proc_name = proc_ident.name, index = param_index})
+				} else {
+					for name_expr, offset in field.names {
+						param_name := ""
+						if ident, ok := name_expr.derived.(^ast.Ident); ok {
+							param_name = ident.name
+						}
+						append(out, Root_Command_Param{proc_name = proc_ident.name, param_name = param_name, index = param_index + offset})
+					}
+				}
+			}
+			param_index += count
 		}
 	}
-	if !wires {
-		return false, true
+}
+
+// expr_is_implicit_wire says if expr is the implicit enum member `.Wire`.
+@(private = "file")
+expr_is_implicit_wire :: proc(expr: ^ast.Expr) -> bool {
+	if expr == nil {
+		return false
 	}
+	implicit, is_implicit := expr.derived.(^ast.Implicit_Selector_Expr)
+	return is_implicit && implicit.field != nil && implicit.field.name == "Wire"
+}
+
+// call_sends_wire says if call invokes a package procedure taking
+// root_ring.Root_Command with the implicit argument `.Wire`.
+@(private = "file")
+call_sends_wire :: proc(call: ^ast.Call_Expr, params: []Root_Command_Param) -> bool {
+	if call == nil || call.expr == nil {
+		return false
+	}
+	callee, is_ident := call.expr.derived.(^ast.Ident)
+	if !is_ident {
+		return false
+	}
+	for param in params {
+		if param.proc_name != callee.name {
+			continue
+		}
+		positional := 0
+		for arg in call.args {
+			if named, is_named := arg.derived.(^ast.Field_Value); is_named {
+				if field, ok := named.field.derived.(^ast.Ident); ok && param.param_name != "" && field.name == param.param_name {
+					if expr_is_implicit_wire(named.value) {
+						return true
+					}
+				}
+				continue
+			}
+			if positional == param.index && expr_is_implicit_wire(arg) {
+				return true
+			}
+			positional += 1
+		}
+	}
+	return false
+}
+
+// floor_wiring_derived says if the module of name sends Wire from its root
+// ring: it holds the start grant Root_Ring, is not a start policy, whose
+// wiring pages its list prices, and the parsed syntax tree of its own
+// package names root_ring.Root_Command.Wire, a step of root_ring.Wire_Step
+// (List_Page or Apply), or passes .Wire to a package procedure whose
+// parameter has type root_ring.Root_Command. The root service then carves
+// its wiring budget from its floor. A holder of the grant that never wires
+// gets no wiring part. ok is false when the grant table or an own source
+// file cannot be read.
+floor_wiring_derived :: proc(name: string, module_folder: string, sources: []Fact_Source) -> (derived: bool, ok: bool) {
 	if !floor_grant_rows_read {
 		text := foundation.read_text_file(foundation.ROOT_START_GRANT_SETS_FILE) or_return
 		rows, _, problem := start_grant_sets_read(text)
@@ -321,6 +448,7 @@ floor_wiring_derived :: proc(name: string, module_folder: string, sources: []Fac
 		}
 		floor_grant_rows, floor_grant_rows_read = rows, true
 	}
+	can_wire := false
 	for row in floor_grant_rows {
 		if row.name != name {
 			continue
@@ -330,7 +458,72 @@ floor_wiring_derived :: proc(name: string, module_folder: string, sources: []Fac
 			root_ring ||= grant == "Root_Ring"
 			start_policy ||= grant == "Start_Policy"
 		}
-		return root_ring && !start_policy, true
+		can_wire = root_ring && !start_policy
+		break
+	}
+	if !can_wire {
+		return false, true
+	}
+
+	module_package := strings.trim_right(module_folder, "/")
+	state: Describe_State
+	parsed := make([dynamic]Wiring_Parsed_File, context.temp_allocator)
+	command_params := make([dynamic]Root_Command_Param, context.temp_allocator)
+	for source in sources {
+		folder := source.path[:max(strings.last_index_byte(source.path, '/'), 0)]
+		own := folder == module_package || strings.has_suffix(folder, strings.concatenate({"/", module_package}, context.temp_allocator))
+		if !own || strings.has_suffix(source.path, "_test.odin") {
+			continue
+		}
+		file := parse_source(source.path, source.source, &state) or_return
+		if file.syntax_error_count != 0 {
+			fmt.eprintfln("modustool: %s: the parser found syntax errors", source.path)
+			return false, false
+		}
+		pkg := root_ring_import_name(file)
+		append(&parsed, Wiring_Parsed_File{file = file, root_ring_name = pkg})
+		root_command_params_collect(file, pkg, &command_params)
+	}
+
+	Walk :: struct {
+		pkg:    string,
+		params: []Root_Command_Param,
+		wires:  bool,
+	}
+	visit :: proc(visitor: ^ast.Visitor, node: ^ast.Node) -> ^ast.Visitor {
+		walk := (^Walk)(visitor.data)
+		if node == nil || walk.wires {
+			return nil
+		}
+		#partial switch item in node.derived {
+		case ^ast.Selector_Expr:
+			if walk.pkg != "" && item.field != nil {
+				if selector_is_type(item.expr, walk.pkg, "Root_Command") && item.field.name == "Wire" {
+					walk.wires = true
+					return nil
+				}
+				if selector_is_type(item.expr, walk.pkg, "Wire_Step") && (item.field.name == "List_Page" || item.field.name == "Apply") {
+					walk.wires = true
+					return nil
+				}
+			}
+		case ^ast.Call_Expr:
+			if call_sends_wire(item, walk.params) {
+				walk.wires = true
+				return nil
+			}
+		}
+		return visitor
+	}
+	for item in parsed {
+		walk := Walk{pkg = item.root_ring_name, params = command_params[:]}
+		visitor := ast.Visitor{visit = visit, data = &walk}
+		for decl in item.file.decls {
+			ast.walk(&visitor, decl)
+			if walk.wires {
+				return true, true
+			}
+		}
 	}
 	return false, true
 }

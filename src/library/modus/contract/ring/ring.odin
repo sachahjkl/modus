@@ -105,9 +105,10 @@ Head :: struct {
 // One queue, as one side sees it. This record is not in the shared memory:
 // the mask comes from the size of the memory.
 Queue :: struct {
-	counters: ^Counters, // The counters of the queue, in the shared head.
-	records:  [^]Record, // The first record of the queue, in the shared memory.
-	mask:     u32, // The capacity - 1.
+	counters:         ^Counters, // The counters of the queue, in the shared head.
+	records:          [^]Record, // The first record of the queue, in the shared memory.
+	mask:             u32, // The capacity - 1.
+	false_count_seen: bool, // A false count was refused on this queue since open.
 }
 
 // A ring that is mapped. head is nil for no ring.
@@ -151,7 +152,7 @@ open :: proc "contextless" (memory: rawptr, page_count: u64) -> (ring: Ring, ok:
 	}
 	head := (^Head)(memory)
 	records := ([^]Record)(uintptr(memory) + PAGE_SIZE)
-	return {head = head, commands = {&head.commands, records, u32(capacity) - 1}, completions = {&head.completions, records[capacity:], u32(capacity) - 1}}, true
+	return {head = head, commands = {counters = &head.commands, records = records, mask = u32(capacity) - 1}, completions = {counters = &head.completions, records = records[capacity:], mask = u32(capacity) - 1}}, true
 }
 
 // capacity gives the records that a queue holds when it is full.
@@ -218,14 +219,18 @@ counters_refused :: proc "contextless" (queue: ^Queue) -> bool {
 // count to the count of the writer, so the queue is empty, its records are
 // dropped, and a wait on it waits again. The reader writes only its own
 // counter. refused is false, and nothing changes, for a queue whose
-// counters hold.
-false_count_refuse :: proc "contextless" (queue: ^Queue) -> (refused: bool) {
-	if !counters_refused(queue) {
-		return false
-	}
+// counters hold. first is true on the first refusal since open, so a
+// reader logs once per ring and not once per false count.
+false_count_refuse :: proc "contextless" (queue: ^Queue) -> (refused: bool, first: bool) {
+	read := intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)
 	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire)
+	if write - read <= queue.mask + 1 {
+		return false, false
+	}
 	intrinsics.atomic_store_explicit(&queue.counters.read, write, .Release)
-	return true
+	first = !queue.false_count_seen
+	queue.false_count_seen = true
+	return true, first
 }
 
 // full says if a push into a queue would be refused now: the queue holds

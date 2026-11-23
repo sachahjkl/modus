@@ -478,4 +478,10 @@ the_kept_share_holds_the_starts_outside_the_list :: proc(t: ^testing.T) {
 	all := []Start_List_Floor{{"root", 900}, {"start_policy", 100}, {"clock", 7000}, start_list_kept_share(floors[:2], {{name = "clock"}}, 2000)}
 	testing.expect_value(t, start_list_floors_problem(all, 9900), "")
 	testing.expect(t, strings.contains(start_list_floors_problem(all, 9899), "keeps for a start that a process asks"))
+	// On the least machine, the kept share is TEST_MACHINE_LARGEST_BUDGET_PAGES
+	// (the machine share), not LARGEST_BUDGET_LEAST_PAGES: non-row floors
+	// between the two still keep the difference up to the machine share.
+	mid := []Start_List_Floor{{"root", 1000}, {"start_policy", module.LARGEST_BUDGET_LEAST_PAGES + 1000}, {"clock", 5000}}
+	least_share := start_list_kept_share(mid, {{name = "clock"}}, module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
+	testing.expect_value(t, least_share.pages, module.TEST_MACHINE_LARGEST_BUDGET_PAGES - (module.LARGEST_BUDGET_LEAST_PAGES + 1000))
 }

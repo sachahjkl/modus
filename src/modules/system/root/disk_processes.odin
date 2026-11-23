@@ -473,7 +473,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	// one budget of the disk processes: a file of a disk cannot take what
 	// the processes of the boot image need. Its name selects no exception.
 	disk_processes: system.Handle
-	disk_processes, status = disk_processes_budget_get()
+	disk_processes, status = disk_processes_budget_get(name)
 	if status == .Ok && context_refused(name, &context_grants, &values) {
 		// Two grants in one slot, or one value written twice: the table of
 		// the grants is damaged.

@@ -718,7 +718,7 @@ start_list_resources :: proc(path: string, without: string) -> (files: []resourc
 			if floors_problem == "" {
 				with_kept := make([dynamic]Start_List_Floor, context.temp_allocator)
 				append(&with_kept, ..floors)
-				append(&with_kept, start_list_kept_share(floors, kind.rows, module.LARGEST_BUDGET_LEAST_PAGES))
+				append(&with_kept, start_list_kept_share(floors, kind.rows, module.TEST_MACHINE_LARGEST_BUDGET_PAGES))
 				floors_problem = start_list_floors_problem(with_kept[:], module.TEST_MACHINE_ROOT_PAGES)
 			}
 			if floors_problem != "" {

@@ -76,7 +76,7 @@ compartment_open :: proc "contextless" (memory: rawptr, page_count: u64, compart
 		head := (^Head)(memory)
 		compartments := ([^]u8)(uintptr(memory) + PAGE_SIZE)
 		completions := ([^]Record)(uintptr(memory) + PAGE_SIZE + uintptr(capacity) * uintptr(compartment_size))
-		return {head = head, commands = {&head.commands, compartments, compartment_size, capacity - 1}, completions = {&head.completions, completions, capacity - 1}}, true
+		return {head = head, commands = {&head.commands, compartments, compartment_size, capacity - 1}, completions = {counters = &head.completions, records = completions, mask = capacity - 1}}, true
 	}
 	return {}, false
 }

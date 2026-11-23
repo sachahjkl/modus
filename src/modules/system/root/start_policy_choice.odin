@@ -277,7 +277,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 		system.range_mapped_put(&values, .Start_Policy_Pages)
 	}
 	disk_processes: system.Handle
-	disk_processes, status = disk_processes_budget_get()
+	disk_processes, status = disk_processes_budget_get(name)
 	if status == .Ok && context_refused(name, &context_grants, &values) {
 		status = .Bad_State
 	}

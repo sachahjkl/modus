@@ -18,8 +18,7 @@ import "modus:contract/value_kinds"
 import "internal:start_policy/wiring_rows"
 import "modus:system"
 
-// 32 pages for what it maps at its start, with their page tables; the
-// root service adds the pages of the wirings that the list header gives.
+// 32 pages for start mappings and page tables; root adds the list wiring pages.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
 // The state of one row while the machine runs.
@@ -89,18 +88,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	system.log_fact(.Info, Machine_Usable{})
-	// The start is done: the first state of work of the process
-	// (src/md/features/module_budget_request.md, "The first state of work").
-	system.ready()
+	system.ready() // First state of work (src/md/features/module_budget_request.md).
 	for {
 		wait := system.wait_begin()
 		started := false
 		for index in 0 ..< count {
 			started |= row_watch(index)
 		}
-		// The wait of a start can take the event of the stop of the process
-		// that it started, so the rows are read again before any wait.
-		if started {
+		if started { // A start wait can consume a child stop event; re-scan first.
 			continue
 		}
 		system.wait_end(&wait) // The stop of a process that it holds ends the wait.

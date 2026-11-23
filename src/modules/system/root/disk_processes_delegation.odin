@@ -712,7 +712,7 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 			load.step = .Module_Lent
 			return
 		}
-		budget, status := disk_processes_budget_get()
+		budget, status := disk_processes_budget_get(string(load.name[:load.name_length]))
 		given: system.Handle
 		if status == .Ok {
 			given, status = lent_file_make(&load.candidate, report.byte_count, budget)
