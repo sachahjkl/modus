@@ -657,8 +657,9 @@ fuzz_step_records_write :: proc(choices: ^Fuzz_Choices, sequence: ^operation_seq
 				form := fuzz_record_form_choose(choices)
 				placement := fuzz_thread_placement_write(choices, form)
 				fuzz_record_place(&place, .Thread_Placement, form, ([^]u8)(&placement)[:size_of(placement)])
-			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Read_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
-				// The command reads no structured record at address.
+			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Read_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
+				// The command reads no structured record at address: a wait
+				// room takes its count of words in size.
 			}
 		}
 	}

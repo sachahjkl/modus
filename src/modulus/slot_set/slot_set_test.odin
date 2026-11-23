@@ -69,23 +69,22 @@ a_remove_takes_only_its_slot :: proc(t: ^testing.T) {
 	testing.expect(t, found && slot == 70)
 }
 
-// The atomic forms refuse the same slots, and a copy holds what was added.
+// The place of a slot for the atomics of the kernel refuses the same slots
+// as add: the capacity, one past it and the largest slot give no word; the
+// first and the last slot give the word and the bit that add sets.
 @(test)
-the_atomic_forms_keep_the_rules :: proc(t: ^testing.T) {
+the_place_of_a_slot_keeps_the_rules :: proc(t: ^testing.T) {
 	set: Slot_Set(1024)
-	testing.expect(t, !add_atomic(&set, 1024))
-	testing.expect(t, !add_atomic(&set, max(u32)))
-	testing.expect(t, empty(&set))
-	testing.expect(t, add_atomic(&set, 1023))
-	testing.expect(t, add_atomic(&set, 1))
-	copied := copy_atomic(&set)
-	slot, found := take(&copied)
-	testing.expect(t, found && slot == 1)
-	slot, found = take(&copied)
-	testing.expect(t, found && slot == 1023)
-	testing.expect(t, empty(&copied))
-	testing.expect(t, has(&set, 1) && has(&set, 1023))
-	remove_atomic(&set, 1024)
-	remove_atomic(&set, 1)
-	testing.expect(t, !has(&set, 1) && has(&set, 1023))
+	for slot in ([?]u32{1024, 1025, max(u32)}) {
+		word, bit, ok := word_place(&set, slot)
+		testing.expect(t, !ok && word == nil && bit == 0)
+	}
+	for slot in ([?]u32{0, 1, 63, 64, 1023}) {
+		word, bit, ok := word_place(&set, slot)
+		testing.expect(t, ok)
+		word^ |= bit
+		testing.expect(t, has(&set, slot))
+		remove(&set, slot)
+		testing.expect(t, empty(&set))
+	}
 }

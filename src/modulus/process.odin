@@ -1048,13 +1048,13 @@ handle_insert :: proc "contextless" (process: ^Process, slot: Handle_Slot) -> op
 			intrinsics.atomic_add(&regions[slot.object].references, 1)
 		case .Process:
 			intrinsics.atomic_add(&processes[slot.object].references, 1)
-			slot_set.add_atomic(&processes[slot.object].holders, index_of_process(process))
+			slot_set_add_shared(&processes[slot.object].holders, index_of_process(process))
 		case .Thread:
 			intrinsics.atomic_add(&threads[slot.object].references, 1)
 		case .Budget:
 			intrinsics.atomic_add(&budgets[slot.object].references, 1)
 		case .Ports:
-			slot_set.add_atomic(&process.ports_handles, u32(index + 1))
+			slot_set_add_shared(&process.ports_handles, u32(index + 1))
 			intrinsics.atomic_store(&process.has_ports, true)
 			ports_changed(process)
 		case .Interrupt:
@@ -1209,7 +1209,7 @@ handle_close :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) {
 	case .Interrupt:
 		interrupt_handle_released(process, slot.object)
 	case .Ports:
-		slot_set.remove_atomic(&process.ports_handles, u32(intrinsics.ptr_sub(slot, &process.handles[0])))
+		slot_set_remove_shared(&process.ports_handles, u32(intrinsics.ptr_sub(slot, &process.handles[0])))
 		slot.kind = .None
 		ports_changed(process)
 	case .Machine:
@@ -2292,7 +2292,7 @@ process_cleanup :: proc "contextless" (index: u32) {
 	// holder of the process handle, such as the starter, still reads the
 	// last records of a process that stopped.
 	process.cleaned = true
-	holders := slot_set.copy_atomic(&process.holders)
+	holders := slot_set_copy_shared(&process.holders)
 	process_unlock(index, taken)
 	// Only the processes that received a handle to this one: a stop reads
 	// their handle tables, never the table of each process of the machine.
@@ -2337,7 +2337,7 @@ ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
 	if index != 0 {
 		// Only the handles of kind Ports: a process holds a thousand
 		// handles, and a switch reads none of the others.
-		places := slot_set.copy_atomic(&processes[index].ports_handles)
+		places := slot_set_copy_shared(&processes[index].ports_handles)
 		for place in slot_set.take(&places) {
 			slot := &processes[index].handles[place]
 			if intrinsics.atomic_load(&slot.kind) == .Ports {

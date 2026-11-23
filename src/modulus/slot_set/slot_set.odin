@@ -10,9 +10,9 @@
 // the set: `add` refuses it and `has` says false, so a caller that passes a
 // wrong slot changes nothing.
 //
-// The kernel holds the locks: this package reads and writes plain words,
-// except add_atomic and copy_atomic, for a set that several processors
-// write with no common lock.
+// The kernel holds the locks: this package reads and writes plain words.
+// A set that several processors write with no common lock is changed by
+// the kernel with its atomics, on the word that word_place gives.
 //
 // This package allocates no memory and calls no kernel operation.
 package slot_set
@@ -91,31 +91,13 @@ take :: proc "contextless" (set: ^Slot_Set($N)) -> (slot: u32, found: bool) {
 	return
 }
 
-// add_atomic puts a slot in a set that other processors write at the same
-// time, with one atomic or. false: the slot is past the capacity.
-add_atomic :: proc "contextless" (set: ^Slot_Set($N), slot: u32) -> bool {
+// word_place gives the word and the bit of a slot, for the kernel, which
+// changes a set that several processors write with its own atomics
+// (slot_sets_shared.odin): this package reaches no machine. false: the slot
+// is past the capacity, and the word is nil.
+word_place :: proc "contextless" (set: ^Slot_Set($N), slot: u32) -> (word: ^u64, bit: u64, ok: bool) {
 	if u64(slot) >= u64(N) {
-		return false
+		return nil, 0, false
 	}
-	intrinsics.atomic_or(&set.words[word_of(slot)], bit_of(slot))
-	return true
-}
-
-// remove_atomic takes a slot out of a set that other processors read at
-// the same time, with one atomic and. A slot past the capacity changes
-// nothing.
-remove_atomic :: proc "contextless" (set: ^Slot_Set($N), slot: u32) {
-	if u64(slot) >= u64(N) {
-		return
-	}
-	intrinsics.atomic_and(&set.words[word_of(slot)], ~bit_of(slot))
-}
-
-// copy_atomic gives a copy of a set that other processors write, each word
-// read whole. A slot that a writer adds during the copy can be missing.
-copy_atomic :: proc "contextless" (set: ^Slot_Set($N)) -> (copied: Slot_Set(N)) {
-	for &word, index in set.words {
-		copied.words[index] = intrinsics.atomic_load(&word)
-	}
-	return
+	return &set.words[word_of(slot)], bit_of(slot), true
 }
