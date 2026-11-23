@@ -120,6 +120,13 @@ Outline_Font :: enum u8 {
 	Noto_Sans_Telugu,
 	Noto_Sans_Kannada,
 	Noto_Sans_Malayalam,
+	// The scripts of the syllabic shapers past India (syllabic.odin).
+	Noto_Sans_Khmer,
+	Noto_Sans_Myanmar,
+	Noto_Serif_Tibetan, // Tibetan has no sans form in Noto.
+	Noto_Sans_Balinese,
+	Noto_Sans_Javanese,
+	Noto_Sans_Sundanese,
 }
 // The fonts of the font outlines of the boot image, and the fonts of the
 // script font set.
@@ -127,7 +134,7 @@ BOOT_FONTS :: Outline_Fonts{.B612, .B612_Bold, .Paper_Mono, .Paper_Mono_Semibold
 // The fonts of the boot image: the room of a set that opens them only
 // (font_set_test checks it against BOOT_FONTS).
 BOOT_FONT_COUNT :: 5
-SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam}
+SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam, .Noto_Sans_Khmer, .Noto_Sans_Myanmar, .Noto_Serif_Tibetan, .Noto_Sans_Balinese, .Noto_Sans_Javanese, .Noto_Sans_Sundanese}
 Outline_Fonts :: bit_set[Outline_Font]
 // The font field of the key of the private glyph cache and of a direct
 // glyph (src/md/features/script_fonts.md, "Subtle points"): wide enough for
@@ -185,6 +192,18 @@ outline_font_name :: proc "contextless" (font: Outline_Font) -> string {
 		return "noto_sans_kannada"
 	case .Noto_Sans_Malayalam:
 		return "noto_sans_malayalam"
+	case .Noto_Sans_Khmer:
+		return "noto_sans_khmer"
+	case .Noto_Sans_Myanmar:
+		return "noto_sans_myanmar"
+	case .Noto_Serif_Tibetan:
+		return "noto_serif_tibetan"
+	case .Noto_Sans_Balinese:
+		return "noto_sans_balinese"
+	case .Noto_Sans_Javanese:
+		return "noto_sans_javanese"
+	case .Noto_Sans_Sundanese:
+		return "noto_sans_sundanese"
 	}
 	return ""
 }
@@ -499,10 +518,11 @@ state_room: Font_Room
 // The memory of the caches of the walk of GSUB and GPOS of the script
 // fonts of the state (vector_font.layout_cache_fill): one pool, which each
 // font that opens takes its part of. A font past the pool is refused at its
-// open and logged (layout_refused_fonts). The 15 fonts of the set take 437
-// entries and 1 222 lookup indices (the_cache_of_each_font_of_the_set):
-// the pool holds more than twice that.
-LAYOUT_CACHE_ENTRY_LIMIT :: 1024
+// open and logged (layout_refused_fonts). A plan value: the 21 fonts of
+// the set take 519 entries and 1 578 lookup indices
+// (the_cache_of_each_font_of_the_set), and the pool holds more than twice
+// that, so a set of more fonts fits.
+LAYOUT_CACHE_ENTRY_LIMIT :: 1280
 LAYOUT_CACHE_INDEX_LIMIT :: 4096
 
 // The script fonts of CFF outlines whose Private dictionaries the state
@@ -772,6 +792,13 @@ chain_of :: proc "contextless" (face: Face, character: rune) -> Chain {
 	if script, found := script_of(character); found {
 		return scripts[script].chains[kind]
 	}
+	// The scripts of the syllabic shapers past India: rows of the written
+	// part only (src/md/features/written_shaping.md, "The chains").
+	when WRITTEN_SHAPING_COMPILED_IN {
+		if chain, found := syllabic_chain_of(kind, character); found {
+			return chain
+		}
+	}
 	return default_chains[kind]
 }
 
@@ -809,7 +836,9 @@ fonts_of_face :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
 		chain_add(&fonts, scripts[script].chains[kind])
 	}
 	chain_add(&fonts, default_chains[kind])
-	return fonts
+	// Each chain of the syllabic scripts past India names the font of its
+	// script, and only fonts of the boot image besides.
+	return fonts + SYLLABIC_SCRIPT_FONTS
 }
 
 // font_glyph_of gives the first font of the chain of a face that has a

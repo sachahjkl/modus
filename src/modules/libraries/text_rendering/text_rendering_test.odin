@@ -1020,9 +1020,9 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	testing.expect(t, cluster_table.count == 0 && no_marks.count == 0)
 
 	// The stack of each export over the fonts of the process, with the
-	// longest line of the scripts of India, Arabic, Hebrew, brackets and
-	// marks, in each face.
-	line := "हिन्दी क्षि بيت אב (123) é q̣̂ กำ "
+	// longest line of the scripts of India, Khmer, Myanmar, Tibetan,
+	// Arabic, Hebrew, brackets and marks, in each face.
+	line := "हिन्दी क्षि ក្រុ မြန်မာ བསྒྲུབས بيت אב (123) é q̣̂ กำ "
 	long_line := make([dynamic]u8)
 	defer delete(long_line)
 	for len(long_line) + len(line) < 2 * text_rendering.BIDI_GLYPH_LIMIT {

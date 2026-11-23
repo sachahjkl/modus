@@ -19,7 +19,7 @@ UNICODE_DATA_SOURCE_VARIABLE :: "UNICODE_DATA_SOURCE"
 UNICODE_TABLES_OUTPUT :: foundation.SOURCE_FOLDER_PUBLIC + "/text_rendering/unicode_tables.odin"
 
 // One line of a file of the database: a range of characters and its fields.
-@(private = "file")
+@(private)
 Unicode_Line :: struct {
 	first, last: rune,
 	fields:      []string,
@@ -28,7 +28,7 @@ Unicode_Line :: struct {
 // unicode_lines_read reads a file of the database: each line that is not a
 // comment, its range (one code point or first..last) and its fields after
 // the first, trimmed, with the comment cut.
-@(private = "file")
+@(private)
 unicode_lines_read :: proc(folder, name: string) -> (lines: [dynamic]Unicode_Line, version: string, ok: bool) {
 	path := foundation.join(folder, "/", name)
 	bytes, error := os.read_entire_file(path, context.temp_allocator)
@@ -81,14 +81,14 @@ Character_Run :: struct {
 }
 
 // A run of characters with one value, for a table of ranges.
-@(private = "file")
+@(private)
 Value_Range :: struct {
 	first, last: rune,
 	value:       string,
 }
 
 // ranges_merge sorts the ranges and joins two that touch and have one value.
-@(private = "file")
+@(private)
 ranges_merge :: proc(ranges: [dynamic]Value_Range) -> []Value_Range {
 	slice.sort_by(ranges[:], proc(a, b: Value_Range) -> bool {return a.first < b.first})
 	merged := make([dynamic]Value_Range, context.temp_allocator)
@@ -102,7 +102,7 @@ ranges_merge :: proc(ranges: [dynamic]Value_Range) -> []Value_Range {
 	return merged[:]
 }
 
-@(private = "file")
+@(private)
 ranges_write :: proc(out: ^strings.Builder, comment, name, type: string, ranges: []Value_Range, value_prefix: string) {
 	fmt.sbprintfln(out, "\n// %s: %d ranges.", comment, len(ranges))
 	fmt.sbprintfln(out, "@(rodata)\n%s := [?]%s {{", name, type)
@@ -398,6 +398,9 @@ run_unicode_tables :: proc(args: []string) -> int {
 		}
 		ranges_write(&out, table.comment, table.name, table.type, ranges_merge(ranges), ".")
 	}
+	if !syllabic_categories_write(&out, folder, category_lines[:], joining_lines[:]) {
+		return foundation.EXIT_FAILURE
+	}
 	// The paired brackets (BidiBrackets.txt), for the rule N0 of UAX #9.
 	bracket_lines, _, brackets_read := unicode_lines_read(folder, "BidiBrackets.txt")
 	if !brackets_read {
@@ -414,13 +417,18 @@ run_unicode_tables :: proc(args: []string) -> int {
 	}
 	fmt.sbprintln(&out, "}")
 	// The canonical decompositions of two characters in the blocks of the
-	// scripts of India: the vowel signs of two parts (ো is ে and া) and the
-	// letters with a nukta. The shaper decides which to apply
-	// (text_rendering.indic_decomposition_of).
-	fmt.sbprintln(&out, "\n// The canonical decompositions of two characters of the scripts of India (UnicodeData.txt), by the character.")
-	fmt.sbprintln(&out, "@(rodata)\nindic_decompositions := [?]Indic_Decomposition {")
+	// syllabic scripts: the vowel signs of two parts (ো is ে and া), the
+	// letters with a nukta, the stacks of Tibetan. Each shaper decides which
+	// to apply (text_rendering.syllabic_decomposition_of).
+	syllabic_blocks :: [?][2]rune{{0x0900, 0x0DFF}, {0x0F00, 0x0FFF}, {0x1000, 0x109F}, {0x1780, 0x17FF}, {0x1B00, 0x1BBF}, {0x1CC0, 0x1CCF}, {0xA980, 0xA9FF}, {0xAA60, 0xAA7F}}
+	fmt.sbprintln(&out, "\n// The canonical decompositions of two characters of the syllabic scripts (UnicodeData.txt), by the character.")
+	fmt.sbprintln(&out, "@(rodata)\nsyllabic_decompositions := [?]Syllabic_Decomposition {")
 	for line in data_lines {
-		if line.first < 0x0900 || line.first > 0x0DFF || len(line.fields) < 5 || line.fields[4] == "" || strings.has_prefix(line.fields[4], "<") {
+		in_blocks := false
+		for block in syllabic_blocks {
+			in_blocks ||= line.first >= block[0] && line.first <= block[1]
+		}
+		if !in_blocks || len(line.fields) < 5 || line.fields[4] == "" || strings.has_prefix(line.fields[4], "<") {
 			continue
 		}
 		parts := strings.fields(line.fields[4], context.temp_allocator)

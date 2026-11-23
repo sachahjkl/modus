@@ -204,11 +204,12 @@ fuzz_text_shaping_start :: proc() -> bool {
 	outline := text_rendering.outline_of(outline_memory)
 	missing := text_rendering.fonts_open(fuzz_shaping_fonts, &outlines, &outline)
 	// The script fonts of Arabic, Devanagari, Telugu and Malayalam (an
-	// explicit reph, a dot reph, pre-base forms), when the shell names them:
-	// the forms of Arabic, lam-alef and the engine of the lookups are then
-	// inside the target.
+	// explicit reph, a dot reph, pre-base forms), Khmer and Tibetan (the
+	// models of Khmer and USE), when the shell names them: the forms of
+	// Arabic, lam-alef, the engine of the lookups and the syllable machines
+	// are then inside the target.
 	script_inputs := make([dynamic]font_outlines.Font_Input)
-	for name in ([4]string{"noto_sans_arabic", "noto_sans_devanagari", "noto_sans_telugu", "noto_sans_malayalam"}) {
+	for name in ([6]string{"noto_sans_arabic", "noto_sans_devanagari", "noto_sans_telugu", "noto_sans_malayalam", "noto_sans_khmer", "noto_serif_tibetan"}) {
 		if script_bytes, found := fuzz_script_font_file(name); found {
 			append(&script_inputs, font_outlines.Font_Input{name, script_bytes})
 		}

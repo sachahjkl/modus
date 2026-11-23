@@ -638,7 +638,7 @@ mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sh
 // shaper_next shapes the next cluster of the text; false at its end.
 @(private)
 shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
-	if indic_shaped(shaper, shaped) {
+	if indic_shaped(shaper, shaped) || syllabic_shaped(shaper, shaped) {
 		return true
 	}
 	cluster := cluster_read_written(shaper.set, shaper.spacing.face, shaper.text, shaper.place, shaper.sara_am_taken) or_return
@@ -779,6 +779,11 @@ marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sha
 //     stage of the engine with its nested levels
 //     (vector_font.ENGINE_DEEPEST_RECORDS_BYTES): a call over the fonts of
 //     the process runs them;
+//   - syllabic_shaped, never inlined into shaper_next, with its window, its
+//     buffer and the bytes of its glyphs; under it the shaper of its model
+//     with its categories, its masks and the work of USE, or the
+//     positions of the first reordering of Myanmar, then a stage of the
+//     engine with its nested levels;
 //   - bidi_line_reorder with its levels and its order, then bidi_levels
 //     with its classes, its links and the stack of its isolates, then
 //     brackets_resolve with its openings and its pairs.
@@ -790,8 +795,10 @@ SHAPER_NEXT_RECORDS_BYTES :: 2 * size_of(Cluster) + FONT_MARK_LIMIT * size_of(in
 @(private)
 INDIC_SHAPED_RECORDS_BYTES :: size_of(Indic_Syllable) + size_of(vector_font.Engine_Buffer) + INDIC_SYLLABLE_LIMIT + vector_font.ENGINE_GLYPH_LIMIT * size_of(u32) + size_of(Indic_Work) + max(vector_font.ENGINE_DEEPEST_RECORDS_BYTES, vector_font.WOULD_SUBSTITUTE_RECORDS_BYTES)
 @(private)
+SYLLABIC_SHAPED_RECORDS_BYTES :: size_of(Syllabic_Text) + size_of(vector_font.Engine_Buffer) + vector_font.ENGINE_GLYPH_LIMIT * size_of(u32) + max(size_of(Universal_Work) + INDIC_SYLLABLE_LIMIT * (size_of(u32) + size_of(bool)) + size_of(Syllable_Categories) + SYLLABIC_WINDOW_LIMIT, vector_font.ENGINE_GLYPH_LIMIT * size_of(Indic_Place)) + vector_font.ENGINE_DEEPEST_RECORDS_BYTES
+@(private)
 BIDI_RECORDS_BYTES :: BIDI_GLYPH_LIMIT * (size_of(u8) + size_of(u16)) + BIDI_GLYPH_LIMIT * (size_of(Bidi_Class) + size_of(u8)) + (BIDI_DEPTH_LIMIT + 2) + BIDI_BRACKET_STACK_LIMIT * (size_of(rune) + size_of(u16)) + BIDI_BRACKET_PAIR_LIMIT * 2 * size_of(u16)
-SHAPE_STACK_RECORDS_BYTES :: 2 * size_of(Shaped) + max(SHAPER_NEXT_RECORDS_BYTES, INDIC_SHAPED_RECORDS_BYTES, BIDI_RECORDS_BYTES)
+SHAPE_STACK_RECORDS_BYTES :: 2 * size_of(Shaped) + max(SHAPER_NEXT_RECORDS_BYTES, INDIC_SHAPED_RECORDS_BYTES, SYLLABIC_SHAPED_RECORDS_BYTES, BIDI_RECORDS_BYTES)
 
 // shape places the characters of a text: it writes the placed glyphs that
 // fit from the start of placed, and gives the count of the full answer

@@ -399,6 +399,16 @@ fuzz_target_table := [?]Fuzz_Target {
 		start = fuzz_indic_shaping_start,
 	},
 	{
+		name = "syllabic_shaping",
+		kind = .Raw,
+		about = "support/text_rendering: the shapers of Khmer, Myanmar and the Universal Shaping Engine over a copy of the font of a script whose GSUB, GPOS and GDEF the input changes: each cluster at the byte of a character, text_width agrees, and the work of a call stays in its budget",
+		packages = {foundation.SOURCE_FOLDER_PUBLIC + "/text_rendering", foundation.SOURCE_FOLDER_PUBLIC + "/vector_font"},
+		input_limit = FUZZ_SYLLABIC_INPUT_LIMIT,
+		execute = fuzz_syllabic_shaping_execute,
+		seeds = fuzz_syllabic_shaping_seeds,
+		start = fuzz_syllabic_shaping_start,
+	},
+	{
 		name = "operation_sequence",
 		kind = .Raw,
 		about = "contract/operation_sequence: a sequence that check accepts follows each rule of its format and writes again to its bytes; a refusal names its step, its area or its argument",
