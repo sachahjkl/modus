@@ -338,3 +338,113 @@ the_acts_that_wait_follow_the_trusted_display :: proc(t: ^testing.T) {
 	a_refusal_of_the_display_other_than_busy_is_final(t)
 	an_act_that_leaves_the_ring_cancels_its_dialog(t)
 }
+
+@(private = "file")
+column_of :: proc(name: string) -> (column: assistant_contract.Act_Table_Column) {
+	copy(column.name[:], name)
+	return
+}
+
+@(private = "file")
+cell_of :: proc(text: string) -> (cell: assistant_contract.Act_Table_Cell) {
+	copy(cell.text[:], text)
+	return
+}
+
+// A conversation whose act 1 is Done, and act 2 waits for the principal.
+@(private = "file")
+done_conversation :: proc(t: ^testing.T) -> ^Conversation {
+	talk := taken_conversation(t)
+	error: errors.Error_Record
+	reply(talk, true, 1, "two acts", 2, &error)
+	act(talk, true, 1, 1, "monitor.processes()", "monitor", "processes", &error)
+	act(talk, true, 1, 1, "plans.apply(\"home\")", "plans", "apply", &error)
+	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "2 rows of Process", &error)
+	act_result(talk, true, 2, i64(assistant_contract.Act_State.Awaiting_Principal), "stopped", &error)
+	return talk
+}
+
+// act_table refuses each form that is not a whole table, with its record,
+// and keeps nothing: no grant, an act of no number, an act that is not
+// Done, a shape that names no member, an empty or long name, no column or
+// one past the bound, cells that are no whole count of rows, one row past
+// the bound, a total under the rows, a record of two rows, an empty column
+// name, a cell with a control byte or a byte after its zero.
+@(test)
+act_table_refuses_each_form_that_is_not_a_whole_table :: proc(t: ^testing.T) {
+	talk := done_conversation(t)
+	error: errors.Error_Record
+	columns := [2]assistant_contract.Act_Table_Column{column_of("slot"), column_of("name")}
+	cells := [4]assistant_contract.Act_Table_Cell{cell_of("1"), cell_of("root"), cell_of("2"), cell_of("devices")}
+	table := i64(assistant_contract.Act_Table_Shape.Table)
+	record := i64(assistant_contract.Act_Table_Shape.Record)
+	result, _ := act_table(talk, false, 1, table, "Process", 2, columns[:], cells[:], &error)
+	expect_refusal(t, result, error, .No_Grant)
+	for number in ([?]i64{0, -1, 3, max(i64)}) {
+		result, _ = act_table(talk, true, number, table, "Process", 2, columns[:], cells[:], &error)
+		expect_refusal(t, result, error, .Absent, 1)
+	}
+	result, _ = act_table(talk, true, 2, table, "Process", 2, columns[:], cells[:], &error)
+	expect_refusal(t, result, error, .State, 1)
+	for word in ([?]i64{0, -1, 3, max(i64)}) {
+		result, _ = act_table(talk, true, 1, word, "Process", 2, columns[:], cells[:], &error)
+		expect_refusal(t, result, error, .Bad_Value, 2)
+	}
+	result, _ = act_table(talk, true, 1, table, "", 2, columns[:], cells[:], &error)
+	expect_refusal(t, result, error, .Empty, 3)
+	result, _ = act_table(talk, true, 1, table, strings.repeat("n", assistant_contract.ACT_TABLE_NAME_BYTES + 1, context.temp_allocator), 2, columns[:], cells[:], &error)
+	expect_refusal(t, result, error, .Too_Long, 3)
+	result, _ = act_table(talk, true, 1, table, "Process", 0, nil, nil, &error)
+	expect_refusal(t, result, error, .Empty, 5)
+	many_columns := make([]assistant_contract.Act_Table_Column, assistant_contract.ACT_TABLE_COLUMN_CAPACITY + 1, context.temp_allocator)
+	for &column in many_columns {
+		column = column_of("c")
+	}
+	result, _ = act_table(talk, true, 1, table, "Process", 0, many_columns, nil, &error)
+	expect_refusal(t, result, error, .Too_Long, 5)
+	result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], cells[:3], &error)
+	expect_refusal(t, result, error, .Bad_Value, 6)
+	many_cells := make([]assistant_contract.Act_Table_Cell, 2 * (assistant_contract.ACT_TABLE_ROW_CAPACITY + 1), context.temp_allocator)
+	result, _ = act_table(talk, true, 1, table, "Process", 100, columns[:], many_cells, &error)
+	expect_refusal(t, result, error, .Too_Long, 6)
+	for total in ([?]i64{1, 0, -1, min(i64)}) {
+		result, _ = act_table(talk, true, 1, table, "Process", total, columns[:], cells[:], &error)
+		expect_refusal(t, result, error, .Bad_Value, 4)
+	}
+	result, _ = act_table(talk, true, 1, record, "Process", 2, columns[:], cells[:], &error)
+	expect_refusal(t, result, error, .Bad_Value, 6)
+	result, _ = act_table(talk, true, 1, record, "Process", 2, columns[:], cells[:2], &error)
+	expect_refusal(t, result, error, .Bad_Value, 6)
+	empty_name := [2]assistant_contract.Act_Table_Column{column_of("slot"), {}}
+	result, _ = act_table(talk, true, 1, table, "Process", 2, empty_name[:], cells[:], &error)
+	expect_refusal(t, result, error, .Bad_Value, 5)
+	testing.expect_value(t, error.found, 2)
+	bad_cells := [?]assistant_contract.Act_Table_Cell{cell_of("a\nb"), cell_of("\xc3"), cell_of("\x1b[31m")}
+	for bad in bad_cells {
+		damaged := cells
+		damaged[3] = bad
+		result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], damaged[:], &error)
+		expect_refusal(t, result, error, .Bad_Value, 6)
+		testing.expect_value(t, error.found, 2)
+	}
+	hidden := cells
+	hidden[0].text[5] = 'x'
+	result, _ = act_table(talk, true, 1, table, "Process", 2, columns[:], hidden[:], &error)
+	expect_refusal(t, result, error, .Bad_Value, 6)
+	testing.expect(t, !act_of(talk, 1).table.present)
+	// A whole table, last: it is kept once.
+	kept: ^Entry
+	result, kept = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
+	testing.expect(t, result == 1 && kept != nil && kept.table.present)
+	testing.expect(t, kept.table.row_count == 2 && kept.table.column_count == 2 && kept.table.total_rows == 18)
+	testing.expect_value(t, act_table_cell_text(&kept.table, 1, 1), "devices")
+	testing.expect_value(t, act_table_column_name(&kept.table, 0), "slot")
+	testing.expect_value(t, act_table_name(&kept.table), "Process")
+	result, _ = act_table(talk, true, 1, table, "Process", 18, columns[:], cells[:], &error)
+	expect_refusal(t, result, error, .State, 1)
+	// A record of one row, and an empty cell, pass on a new act.
+	talk = done_conversation(t)
+	one := [2]assistant_contract.Act_Table_Cell{cell_of("3"), {}}
+	result, kept = act_table(talk, true, 1, record, "Process", 1, columns[:], one[:], &error)
+	testing.expect(t, result == 1 && kept.table.shape == .Record && act_table_cell_text(&kept.table, 0, 1) == "")
+}

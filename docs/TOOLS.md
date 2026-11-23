@@ -759,7 +759,7 @@ The system has three source libraries (`modus`, `internal`, `modulus`), and the 
 Each other import is refused:
 
 - a package of `core:` in a source that is not a test: it reaches the host, and the system runs on the machine;
-- a support package or an internal part in a source of the kernel or of a contract package (`"modus:sentence"`, `"internal:console/console_results"`);
+- a support package or an internal part in a source of the kernel or of a contract package (`"modus:sentence"`, `"internal:console/console_stream"`);
 - a kernel part in a file outside `src/modulus`: `"modulus:iommu"` in a module, a support package, a contract package or their tests, and a relative path that lands in `src/modulus` (`"../../../modulus/iommu"` in a host test of a support package), which the compiler reads from the folder of the file and accepts in a host test;
 - `"modulus:"` alone and `"modulus:."`, which name the package of the kernel itself, and a part `.` after the name of a library (`"modus:contract/./ring"`), a second spelling of a package;
 - a relative path in a source that is not a test, and in any file of the kernel or of a contract package (`"../../sentence"`);

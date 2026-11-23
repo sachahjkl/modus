@@ -3,7 +3,7 @@ package console
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
 import "modus:console_condition"
-import "internal:console/console_results"
+import "modus:console_results"
 import "internal:console/console_stream"
 import "modus:lex_evaluator"
 import "modus:lex_parser"

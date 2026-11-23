@@ -235,6 +235,27 @@ table_cut_at_the_row_limit :: proc(t: ^testing.T) {
 	testing.expect_value(t, drawn_text(drawn), "a table with no valid description\n")
 }
 
+// A table that holds only its first rows, as a result that crossed a bound
+// of rows: the count of all rows comes from total_rows. A total under the
+// rows of the bytes, 0 and a negative total count the rows of the bytes.
+@(test)
+table_with_a_total_past_its_rows :: proc(t: ^testing.T) {
+	table := new(Test_Table, context.temp_allocator)
+	test_table_make(t, table)
+	test_table_add(table, 1, "x", 1)
+	test_table_add(table, 2, "y", 1)
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	draw_table(&sink, table.file, 1, test_table_bytes(table), 20, "", 18)
+	expected := "slot  name  pages\n" + "   1  x         1\n" + "   2  y         1\n" + "16 rows more are not shown\n" + "18 rows of Process\n"
+	testing.expect_value(t, drawn_text(drawn), expected)
+	for total in ([?]int{0, 1, -5}) {
+		drawn^ = {}
+		draw_table(&sink, table.file, 1, test_table_bytes(table), 20, "", total)
+		testing.expectf(t, strings.has_suffix(drawn_text(drawn), "   2  y         1\n2 rows of Process\n"), "total %d: %q", total, drawn_text(drawn))
+	}
+}
+
 @(test)
 record_fields :: proc(t: ^testing.T) {
 	table := new(Test_Table, context.temp_allocator)

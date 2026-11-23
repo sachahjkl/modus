@@ -9,6 +9,7 @@ import bridge_contract "modus:contract/agent_bridge"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
+import "modus:contract/text_encoding"
 
 // The service of the window, as remote names it.
 WINDOW_SERVICE :: "assistant"
@@ -161,6 +162,21 @@ Act_Report :: struct {
 	number: i64,
 	state:  assistant_contract.Act_State,
 	text:   string,
+	table:  Act_Result_Table, // Done: the typed result, when the bridge gave a whole table or record within the bounds.
+	table_problem: string, // The refusal of act_table by the window: the act shows its words only.
+}
+
+// The typed result of an act, within the bounds of the window
+// (src/md/features/assistant.md, "The result of an act"): the first rows,
+// each text cut with the cut mark past its bound.
+Act_Result_Table :: struct {
+	present:    bool,
+	shape:      assistant_contract.Act_Table_Shape,
+	name:       string,
+	columns:    []string,
+	cells:      []string, // Row after row: len(columns) cells in each row.
+	row_count:  int,
+	total_rows: i64,
 }
 
 // window_call calls an export of the window with values, and gives the
@@ -233,11 +249,35 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 			report.outcome, report.problem = .Window_Failed, problem
 			return
 		}
+		// A table that the window refuses is no failure of the turn: the
+		// act keeps its words, and the report says why the table is
+		// missing.
+		if outcome.state == .Done && outcome.table.present {
+			outcome.table_problem = act_table_show(runner, outcome.number, outcome.table)
+		}
 		outcomes[index] = fmt.tprintf("%v: %s", outcome.state, outcome.text)
 		report.acts[report.act_count] = outcome
 		report.act_count += 1
 	}
 	report.outcome = .Answered
+	return
+}
+
+// act_table_show gives the typed result of an act to the window: the
+// columns and the cells, row after row, as two tables of one Text field.
+act_table_show :: proc(runner: ^Runner, number: i64, table: Act_Result_Table) -> (problem: string) {
+	column_rows := make([][]machine.Call_Argument, len(table.columns), context.temp_allocator)
+	for column, index in table.columns {
+		column_rows[index] = make([]machine.Call_Argument, 1, context.temp_allocator)
+		column_rows[index][0] = {is_text = true, text = column}
+	}
+	cell_rows := make([][]machine.Call_Argument, len(table.cells), context.temp_allocator)
+	for cell, index in table.cells {
+		cell_rows[index] = make([]machine.Call_Argument, 1, context.temp_allocator)
+		cell_rows[index][0] = {is_text = true, text = cell}
+	}
+	arguments := [6]machine.Call_Argument{{integer = number}, {integer = i64(table.shape)}, {is_text = true, text = table.name}, {integer = table.total_rows}, {is_table = true, rows = column_rows}, {is_table = true, rows = cell_rows}}
+	_, problem = window_call(runner, "act_table", arguments[:])
 	return
 }
 
@@ -300,7 +340,90 @@ bridge_answer_read :: proc(answer: string) -> (report: Act_Report) {
 	if !result_ok {
 		return {state = .Refused, text = "the bridge gave neither a result nor an error"}
 	}
-	return {state = .Done, text = text_cut(result_words(result))}
+	return {state = .Done, text = text_cut(result_words(result)), table = result_table_read(result)}
+}
+
+// result_table_read reads the typed table of a result of the bridge: the
+// kind table or record, a name, columns that are texts, rows that are
+// arrays of texts of the width of the columns, and a total that is no
+// fewer than the rows. Any other form, and more columns than the window
+// takes, has no table: the act shows its words only. The texts keep the
+// bounds of the window: a control byte becomes a space, and a text past
+// its bound ends with the cut mark.
+result_table_read :: proc(result: json.Object) -> (table: Act_Result_Table) {
+	kind_value, _ := result["value_kind"].(json.String)
+	switch string(kind_value) {
+	case bridge_contract.lex_value_kind_name(.Table):
+		table.shape = .Table
+	case bridge_contract.lex_value_kind_name(.Record):
+		table.shape = .Record
+	case:
+		return {}
+	}
+	name, name_ok := result["record_name"].(json.String)
+	columns, columns_ok := result["columns"].(json.Array)
+	rows, rows_ok := result["rows"].(json.Array)
+	total, total_ok := result["total_rows"].(json.Integer)
+	if !name_ok || len(name) == 0 || !columns_ok || !rows_ok || !total_ok {
+		return {}
+	}
+	if len(columns) == 0 || len(columns) > assistant_contract.ACT_TABLE_COLUMN_CAPACITY || i64(total) < i64(len(rows)) {
+		return {}
+	}
+	if table.shape == .Record && (len(rows) != 1 || total != 1) {
+		return {}
+	}
+	table.name = field_text_cut(string(name), assistant_contract.ACT_TABLE_NAME_BYTES)
+	table.columns = make([]string, len(columns), context.temp_allocator)
+	for column, index in columns {
+		column_name, column_ok := column.(json.String)
+		if !column_ok || len(column_name) == 0 {
+			return {}
+		}
+		table.columns[index] = field_text_cut(string(column_name), assistant_contract.ACT_TABLE_NAME_BYTES)
+	}
+	table.row_count = min(len(rows), assistant_contract.ACT_TABLE_ROW_CAPACITY)
+	table.cells = make([]string, table.row_count * len(columns), context.temp_allocator)
+	for row, row_index in rows {
+		cells, cells_ok := row.(json.Array)
+		if !cells_ok || len(cells) != len(columns) {
+			return {}
+		}
+		for cell, column_index in cells {
+			text, text_ok := cell.(json.String)
+			if !text_ok {
+				return {}
+			}
+			if row_index < table.row_count {
+				table.cells[row_index * len(columns) + column_index] = field_text_cut(string(text), assistant_contract.ACT_TABLE_CELL_BYTES)
+			}
+		}
+	}
+	table.total_rows = i64(total)
+	table.present = true
+	return table
+}
+
+// field_text_cut gives a text within a bound of bytes, cut after a whole
+// character with the cut mark of the system; each control byte becomes a
+// space. An empty text stays empty: a cell can be empty.
+field_text_cut :: proc(text: string, bound: int) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	for character in text {
+		if !text_encoding.character_in_text(character) {
+			strings.write_byte(&builder, ' ')
+		} else {
+			strings.write_rune(&builder, character)
+		}
+	}
+	clean := strings.to_string(builder)
+	if len(clean) <= bound {
+		return clean
+	}
+	buffer := make([]u8, bound, context.temp_allocator)
+	given := copy(buffer, clean)
+	count, _, _ := cut_mark.apply(buffer, given, len(clean) - given)
+	return string(buffer[:count])
 }
 
 // result_words writes a typed result of the bridge as words: a value, or
@@ -356,7 +479,7 @@ result_words :: proc(result: json.Object) -> string {
 text_cut :: proc(text: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	for character in text {
-		if character < ' ' || character == 0x7F {
+		if !text_encoding.character_in_text(character) {
 			strings.write_byte(&builder, ' ')
 		} else {
 			strings.write_rune(&builder, character)

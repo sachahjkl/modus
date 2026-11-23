@@ -165,3 +165,65 @@ text_check :: proc "contextless" (text: string, bound: int) -> Text_Refusal {
 	}
 	return .None
 }
+
+// The typed result of an act that ran: a table or a record, as the bridge
+// gives it, within these bounds (src/md/features/assistant.md, "The
+// result of an act"). The runner carries the first rows; total_rows of
+// act_table counts all of them.
+ACT_TABLE_COLUMN_CAPACITY :: 24 // The columns of one result: the table of the processes has 16.
+ACT_TABLE_ROW_CAPACITY :: 8 // The rows that the window draws: the window has room for a head, 8 rows and their notes.
+ACT_TABLE_CELL_BYTES :: 64 // The text of one cell: a hash of 32 bytes in hexadecimal is the longest value.
+ACT_TABLE_NAME_BYTES :: 32 // The name of the record and of each column.
+
+// What a typed result is. The values cross the border of an export: 0
+// names no member.
+Act_Table_Shape :: enum u8 {
+	Table  = 1, // Rows of one record.
+	Record = 2, // One record: one row.
+}
+
+// One column of act_table: its name.
+Act_Table_Column :: struct {
+	name: [ACT_TABLE_NAME_BYTES]u8,
+}
+
+// One cell of act_table, row after row: the text of a field.
+Act_Table_Cell :: struct {
+	text: [ACT_TABLE_CELL_BYTES]u8,
+}
+
+// act_table_shape_of_word is the border of the word of a shape: false for
+// a word that names no member.
+act_table_shape_of_word :: proc "contextless" (word: i64) -> (shape: Act_Table_Shape, ok: bool) {
+	switch word {
+	case i64(Act_Table_Shape.Table):
+		return .Table, true
+	case i64(Act_Table_Shape.Record):
+		return .Record, true
+	}
+	return {}, false
+}
+
+// fixed_text reads the text of a fixed field of a row: the bytes before the
+// first zero. ok is false when a byte after that zero is not zero (a field
+// that hides bytes after its end), or when the text is not UTF-8 with no
+// control byte. An empty text is a text: a cell can be empty.
+fixed_text :: proc "contextless" (bytes: []u8) -> (text: string, ok: bool) {
+	end := len(bytes)
+	for value, index in bytes {
+		if value == 0 {
+			end = index
+			break
+		}
+	}
+	for value in bytes[end:] {
+		if value != 0 {
+			return "", false
+		}
+	}
+	text = string(bytes[:end])
+	if end > 0 && !text_encoding.text_valid(bytes[:end]) {
+		return "", false
+	}
+	return text, true
+}

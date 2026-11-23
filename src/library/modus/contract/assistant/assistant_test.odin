@@ -73,3 +73,34 @@ an_act_name_is_one_identifier_within_its_bound :: proc(t: ^testing.T) {
 	testing.expect(t, act_name_valid("plan_diff_ask2"))
 	testing.expect(t, act_name_valid(strings.repeat("a", ACT_NAME_BYTES, context.temp_allocator)))
 }
+
+// The word of a shape and the text of a fixed field: 0, one past the last
+// member and the largest word name no shape; a byte after the zero, a
+// control byte and a cut character are no text; an empty field, a field
+// full to its last byte and a text with its zeros pass.
+@(test)
+a_shape_and_a_fixed_text_cross_their_border :: proc(t: ^testing.T) {
+	for word in ([]i64{0, -1, 3, max(i64), min(i64)}) {
+		_, ok := act_table_shape_of_word(word)
+		testing.expectf(t, !ok, "the shape word %d", word)
+	}
+	for shape in Act_Table_Shape {
+		got, ok := act_table_shape_of_word(i64(shape))
+		testing.expect(t, ok && got == shape)
+	}
+	refused := [?][4]u8{{'a', 0, 'b', 0}, {'a', '\n', 0, 0}, {0xC3, 0, 0, 0}, {0, 0, 0, 1}, {0x7F, 0, 0, 0}}
+	for field in refused {
+		field := field
+		_, ok := fixed_text(field[:])
+		testing.expectf(t, !ok, "the field %v", field)
+	}
+	empty := [4]u8{}
+	text, ok := fixed_text(empty[:])
+	testing.expect(t, ok && text == "")
+	full := [4]u8{'a', 'b', 'c', 'd'}
+	text, ok = fixed_text(full[:])
+	testing.expect(t, ok && text == "abcd")
+	short := [4]u8{'h', 'i', 0, 0}
+	text, ok = fixed_text(short[:])
+	testing.expect(t, ok && text == "hi")
+}

@@ -37,6 +37,9 @@ scenario_assistant := [?]Step {
 	{kind = .Wait, text = "assistant: act 1 of request 1 is proposed: monitor.processes()"},
 	{kind = .Wait, text = "assistant: act 1 is done: "},
 	{kind = .Wait, text = " rows of Process: "},
+	// The typed result: the first 8 rows of the table of the processes,
+	// which the window draws as the console does.
+	{kind = .Wait, text = "assistant: act 1 shows 8 of "},
 	// A grant-adding act: the bridge stops it for the principal, and the
 	// principal refuses it on the trusted display with Enter, which acts on
 	// Refuse, the first focus of the dialog. The act of the last request

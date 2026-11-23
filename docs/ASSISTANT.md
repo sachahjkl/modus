@@ -26,7 +26,7 @@ Each entry has a label and words:
 | `you, request N` | The request that you typed |
 | `assistant` | The reply of the model |
 | `act N, proposed` | A line of Lex that the model proposes; the bridge has not answered yet |
-| `act N, done` | The line, and its result |
+| `act N, done` | The line, and its result. A table shows as the console shows it: a line of heads, aligned columns, the rows that fit the window (8 at most), then how many rows are not shown and how many rows the table has. A record shows one line for each field, its name and its value. A row holds 256 bytes: past them the widest cells end with "... and N bytes more", or the last columns are not shown, and a line says how many |
 | `act N, refused by the bridge` | The line, and why the bridge refused it |
 | `act N, waiting for the principal` | The line; the act dialog of the trusted display asks you |
 | `act N, refused by the principal` | You refused it: nothing ran |
@@ -99,6 +99,7 @@ The runner calls them through `remote`; each refuses a caller that does not act 
 | `assistant.reply_refused(serial, kind, unit, argument, value, limit)` | A reply refused at the border of the runner; no act of it comes |
 | `assistant.act(serial, kind, line, service, export)` | A proposed act, with the names of its one call, or two empty texts for a line that is no single call; gives its number. An act past the count of the reply is refused with `State` |
 | `assistant.act_result(act, state, text)` | The answer of the bridge: 2 done, 3 refused, 4 waiting for the principal |
+| `assistant.act_table(act, shape, name, total_rows, columns, cells)` | The typed result of a done act: its columns, and its first 8 rows, cell after cell. A table that is not whole is refused, and the act keeps its words |
 | `assistant.act_state(act)` | The state of an act: 5 allowed or 6 refused by the principal once you decided, 7 not shown by the trusted display |
 
 The runner cannot write the states 5, 6 and 7: `act_result` refuses them with `Bad_Value`.

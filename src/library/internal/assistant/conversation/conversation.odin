@@ -6,6 +6,7 @@
 // of the system, so a host test drives each border.
 package conversation
 
+import "base:intrinsics"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
 
@@ -44,6 +45,38 @@ Entry :: struct {
 	service_count: int,
 	export:        [assistant_contract.ACT_NAME_BYTES]u8, // An Act: the export of its one call.
 	export_count:  int,
+	table:         Act_Table, // An Act that is Done: its typed result, when act_table gave it.
+}
+
+// The typed result of an act: a table or a record, with its first rows
+// (src/md/features/assistant.md, "The result of an act").
+Act_Table :: struct {
+	present:      bool,
+	shape:        assistant_contract.Act_Table_Shape,
+	name:         [assistant_contract.ACT_TABLE_NAME_BYTES]u8,
+	total_rows:   int, // The rows of the whole result.
+	column_count: int,
+	row_count:    int, // The rows here: at most ACT_TABLE_ROW_CAPACITY.
+	columns:      [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]assistant_contract.Act_Table_Column,
+	cells:        [assistant_contract.ACT_TABLE_ROW_CAPACITY * assistant_contract.ACT_TABLE_COLUMN_CAPACITY]assistant_contract.Act_Table_Cell, // Row after row: column_count cells in each row.
+}
+
+// act_table_name gives the name of the record of a table.
+act_table_name :: proc "contextless" (table: ^Act_Table) -> string {
+	name, _ := assistant_contract.fixed_text(table.name[:])
+	return name
+}
+
+// act_table_column_name gives the name of a column.
+act_table_column_name :: proc "contextless" (table: ^Act_Table, column: int) -> string {
+	name, _ := assistant_contract.fixed_text(table.columns[column].name[:])
+	return name
+}
+
+// act_table_cell_text gives the text of a cell.
+act_table_cell_text :: proc "contextless" (table: ^Act_Table, row, column: int) -> string {
+	text, _ := assistant_contract.fixed_text(table.cells[row * table.column_count + column].text[:])
+	return text
 }
 
 // The entries, oldest first, in a ring of CONVERSATION_ENTRY_CAPACITY:
@@ -60,6 +93,10 @@ Conversation :: struct {
 	// export, so the principal never decides an act that the window no
 	// longer shows. One act dialog shows at a time, so one place is enough.
 	dialog_to_cancel: u64,
+	// The copy of a table that act_table checks before an entry takes it:
+	// the caller can change the call region during the call, so each record
+	// is read once, here.
+	staging:          Act_Table,
 }
 
 // The result of a refused call.
@@ -82,7 +119,10 @@ entry_add :: proc "contextless" (conversation: ^Conversation, kind: Entry_Kind, 
 		conversation.entry_count -= 1
 	}
 	entry := entry_at(conversation, conversation.entry_count)
-	entry^ = {kind = kind, serial = serial}
+	// An entry holds about 15 KiB: it is zeroed in place, with no
+	// temporary on the stack.
+	intrinsics.mem_zero(entry, size_of(Entry))
+	entry.kind, entry.serial = kind, serial
 	conversation.entry_count += 1
 	conversation.changed = true
 	return entry
@@ -426,4 +466,88 @@ acts_waiting_step :: proc "contextless" (conversation: ^Conversation, port: Act_
 		return true, .Decided, candidate, ""
 	}
 	return false, .None, nil, ""
+}
+
+// act_table keeps the typed result of an act that is Done: the columns and
+// the cells, row after row, read once into the staging copy, then checked
+// whole. Each refusal changes nothing (src/md/features/assistant.md, "The
+// result of an act"). The argument of a refusal: 1 the act, 2 the shape, 3
+// the name, 4 the total of rows, 5 the columns, 6 the cells; found is the
+// row of a column or a cell, from 1.
+act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act, shape_word: i64, name: string, total_rows: i64, columns: []assistant_contract.Act_Table_Column, cells: []assistant_contract.Act_Table_Cell, error: ^errors.Error_Record) -> (result: i64, kept: ^Entry) {
+	if !acts_for_principal {
+		return no_grant(error), nil
+	}
+	entry := act_of(conversation, act)
+	if entry == nil {
+		return errors.fail(error, ERROR_RESULT, .Absent, .Records, 1, act), nil
+	}
+	if entry.state != .Done || entry.table.present {
+		return errors.fail(error, ERROR_RESULT, .State, .None, 1, act, i64(entry.state)), nil
+	}
+	shape, shape_ok := assistant_contract.act_table_shape_of_word(shape_word)
+	if !shape_ok {
+		return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 2, shape_word), nil
+	}
+	// The name is in the call region, which the caller can change during
+	// the call: it is copied once into the staging copy, and the copy is
+	// checked.
+	if len(name) > assistant_contract.ACT_TABLE_NAME_BYTES {
+		return errors.fail(error, ERROR_RESULT, .Too_Long, .Bytes, 3, i64(len(name)), assistant_contract.ACT_TABLE_NAME_BYTES), nil
+	}
+	staging := &conversation.staging
+	intrinsics.mem_zero(staging, size_of(Act_Table))
+	name_count := copy(staging.name[:], name)
+	if refused, refusal := text_refusal(error, 3, string(staging.name[:name_count]), assistant_contract.ACT_TABLE_NAME_BYTES); refused {
+		return refusal, nil
+	}
+	column_count := len(columns)
+	if column_count == 0 {
+		return errors.fail(error, ERROR_RESULT, .Empty, .Records, 5, 0, assistant_contract.ACT_TABLE_COLUMN_CAPACITY), nil
+	}
+	if column_count > assistant_contract.ACT_TABLE_COLUMN_CAPACITY {
+		return errors.fail(error, ERROR_RESULT, .Too_Long, .Records, 5, i64(column_count), assistant_contract.ACT_TABLE_COLUMN_CAPACITY), nil
+	}
+	if len(cells) % column_count != 0 {
+		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 6, i64(len(cells)), i64(column_count)), nil
+	}
+	row_count := len(cells) / column_count
+	if row_count > assistant_contract.ACT_TABLE_ROW_CAPACITY {
+		return errors.fail(error, ERROR_RESULT, .Too_Long, .Records, 6, i64(row_count), assistant_contract.ACT_TABLE_ROW_CAPACITY), nil
+	}
+	switch shape {
+	case .Record:
+		if row_count != 1 || total_rows != 1 {
+			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 6, i64(row_count), 1), nil
+		}
+	case .Table:
+	}
+	if total_rows < i64(row_count) {
+		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 4, total_rows, i64(row_count)), nil
+	}
+	for index in 0 ..< column_count {
+		staging.columns[index] = intrinsics.volatile_load(&columns[index])
+	}
+	for index in 0 ..< len(cells) {
+		staging.cells[index] = intrinsics.volatile_load(&cells[index])
+	}
+	for index in 0 ..< column_count {
+		column_name, column_ok := assistant_contract.fixed_text(staging.columns[index].name[:])
+		if !column_ok || column_name == "" {
+			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 5, 0, assistant_contract.ACT_TABLE_NAME_BYTES, i64(index + 1)), nil
+		}
+	}
+	for index in 0 ..< len(cells) {
+		if _, cell_ok := assistant_contract.fixed_text(staging.cells[index].text[:]); !cell_ok {
+			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 6, 0, assistant_contract.ACT_TABLE_CELL_BYTES, i64(index / column_count + 1)), nil
+		}
+	}
+	staging.present = true
+	staging.shape = shape
+	staging.total_rows = int(total_rows)
+	staging.column_count = column_count
+	staging.row_count = row_count
+	intrinsics.mem_copy_non_overlapping(&entry.table, staging, size_of(Act_Table))
+	conversation.changed = true
+	return 1, entry
 }

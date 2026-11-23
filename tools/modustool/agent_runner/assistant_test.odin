@@ -367,3 +367,75 @@ the_names_of_an_act_come_from_the_parser_of_the_bridge :: proc(t: ^testing.T) {
 		testing.expectf(t, service == "" && export == "", "%q gave %q %q", line, service, export)
 	}
 }
+
+// The typed result of a bridge answer: a table keeps its columns, its
+// first rows within the bound and its total; a long cell ends with the cut
+// mark and keeps the bound, a control byte becomes a space, an empty cell
+// stays empty; a record is one row.
+@(test)
+a_table_of_the_bridge_crosses_typed_within_the_bounds :: proc(t: ^testing.T) {
+	rows := strings.builder_make(context.temp_allocator)
+	for index in 0 ..< 20 {
+		if index > 0 {
+			strings.write_byte(&rows, ',')
+		}
+		fmt.sbprintf(&rows, `["%d","name\u0001%d",""]`, index, index)
+	}
+	long := strings.repeat("ab", assistant_contract.ACT_TABLE_CELL_BYTES, context.temp_allocator)
+	// The braces of JSON are no format of fmt: the answer is joined.
+	answer := strings.concatenate({`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"table","record_name":"Process","columns":["slot","name","hash"],"rows":[["99","x\u0085y","`, long, `"],`, strings.to_string(rows), `],"total_rows":21}}`}, context.temp_allocator)
+	report := bridge_answer_read(answer)
+	testing.expect_value(t, report.state, assistant_contract.Act_State.Done)
+	table := report.table
+	testing.expect(t, table.present && table.shape == .Table && table.name == "Process")
+	testing.expect_value(t, len(table.columns), 3)
+	testing.expect_value(t, table.row_count, assistant_contract.ACT_TABLE_ROW_CAPACITY)
+	testing.expect_value(t, len(table.cells), 3 * assistant_contract.ACT_TABLE_ROW_CAPACITY)
+	testing.expect_value(t, table.total_rows, 21)
+	testing.expect(t, len(table.cells[2]) <= assistant_contract.ACT_TABLE_CELL_BYTES && strings.contains(table.cells[2], cut_mark.MARK_START))
+	// U+0085 is a control character of the window too: it becomes a
+	// space, so the window takes the cell.
+	testing.expect_value(t, table.cells[1], "x y")
+	testing.expect_value(t, text_cut("a\u0085b\u009fc"), "a b c")
+	testing.expect_value(t, table.cells[4], "name 0")
+	testing.expect_value(t, table.cells[5], "")
+	for cell in table.cells {
+		testing.expect_value(t, assistant_contract.text_check(cell == "" ? "x" : cell, assistant_contract.ACT_TABLE_CELL_BYTES), assistant_contract.Text_Refusal.None)
+	}
+	record := bridge_answer_read(`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"record","record_name":"Counts","columns":["processes","threads"],"rows":[["12","40"]],"total_rows":1}}`)
+	testing.expect(t, record.table.present && record.table.shape == .Record && record.table.row_count == 1)
+}
+
+// Each answer that is not a whole table within the bounds has no table:
+// the act shows its words only. A value has none either.
+@(test)
+a_table_that_is_not_whole_crosses_as_words_only :: proc(t: ^testing.T) {
+	many := strings.builder_make(context.temp_allocator)
+	many_row := strings.builder_make(context.temp_allocator)
+	for index in 0 ..< assistant_contract.ACT_TABLE_COLUMN_CAPACITY + 1 {
+		if index > 0 {
+			strings.write_byte(&many, ',')
+			strings.write_byte(&many_row, ',')
+		}
+		fmt.sbprintf(&many, `"c%d"`, index)
+		strings.write_string(&many_row, `"1"`)
+	}
+	head :: `{"jsonrpc":"2.0","id":1,"result":{"status":"Ok",`
+	results := []string {
+		`"value_kind":"table","record_name":"P","columns":["a","b"],"rows":[["1"]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"rows":[[1]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":[],"rows":[],"total_rows":0}}`,
+		`"value_kind":"table","record_name":"P","columns":[""],"rows":[],"total_rows":0}}`,
+		`"value_kind":"table","record_name":"","columns":["a"],"rows":[],"total_rows":0}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"rows":[["1"],["2"]],"total_rows":1}}`,
+		`"value_kind":"table","record_name":"P","columns":["a"],"rows":[["1"]]}}`,
+		`"value_kind":"table","record_name":"P","columns":"a","rows":[["1"]],"total_rows":1}}`,
+		`"value_kind":"record","record_name":"P","columns":["a"],"rows":[["1"],["2"]],"total_rows":2}}`,
+		`"value_kind":"integer","value":12}}`,
+		strings.concatenate({`"value_kind":"table","record_name":"P","columns":[`, strings.to_string(many), `],"rows":[[`, strings.to_string(many_row), `]],"total_rows":1}}`}, context.temp_allocator),
+	}
+	for result in results {
+		report := bridge_answer_read(strings.concatenate({head, result}, context.temp_allocator))
+		testing.expectf(t, report.state == .Done && !report.table.present, "%q gave a table", result)
+	}
+}

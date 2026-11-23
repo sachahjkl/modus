@@ -66,6 +66,16 @@ Act_Outcome :: struct {
 	text:  [96]u8,
 }
 
+// The typed result of an act that ran shows as a table or a record.
+@(log_fact = "assistant: act {act} shows {rows} of {total_rows} rows, {columns} columns, of {name}")
+Act_Table_Shown :: struct {
+	act:        u64,
+	rows:       u64,
+	total_rows: u64,
+	columns:    u64,
+	name:       [32]u8,
+}
+
 // An act that the bridge stopped shows on the trusted display.
 @(log_fact = "assistant: act {act} waits for the principal in the act dialog {dialog}")
 Act_Dialog_Shown :: struct {

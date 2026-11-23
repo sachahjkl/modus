@@ -21,6 +21,7 @@
 package assistant_window
 
 import "internal:assistant/conversation"
+import "internal:assistant/result_lines"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
 import "modus:display"
@@ -28,14 +29,17 @@ import "modus:graphics"
 import "modus:interface"
 import "modus:system"
 
-WIDTH :: 560
-HEIGHT :: 420
-// The window, the entries of the conversation (about 90 KiB), the two
-// draw tables (about 40 KiB), the stack, and the glyph memory of a window
-// of paint, which this process draws as: the tool counts the window at the
-// window bound (docs/MODULE_CONTRACT.md, "The budget that a module asks
-// for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1820, window_width = WIDTH, window_height = HEIGHT}
+// Room for a table of the processes: about 90 cells of the font of the
+// cells, and 24 lines.
+WIDTH :: 760
+HEIGHT :: 560
+// The window, the entries of the conversation (about 930 KiB: each act
+// keeps the cells of its typed result, 13 KiB), the lines of one drawn
+// result (about 55 KiB), the two draw tables (about 40 KiB), the stack,
+// and the glyph memory of a window of paint, which this process draws as:
+// the tool counts the window at the window bound (docs/MODULE_CONTRACT.md,
+// "The budget that a module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2060, window_width = WIDTH, window_height = HEIGHT}
 
 MARGIN :: 12
 INPUT_HEIGHT :: 28
@@ -128,6 +132,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	input_top := window.height - MARGIN - INPUT_HEIGHT
 	line := interface.line_height(interface.FONT_INTERFACE)
 	code_line := interface.line_height(FONT_CODE)
+	// The font of the cells has one advance: the width of a cell.
+	cell_width := max(interface.text_measured_width(table, FONT_CODE, "0"), 1)
 	bottom := input_top - MARGIN
 	// From the newest entry up: only the entries that show are measured.
 	for index := talk.entry_count - 1; index >= 0 && bottom > MARGIN; index -= 1 {
@@ -136,11 +142,22 @@ draw :: proc "contextless" (window: ^display.Window) {
 		body_buffer: [assistant_contract.REPLY_TEXT_BYTES + assistant_contract.ACT_LINE_BYTES + 160]u8
 		label, color := entry_label(entry, label_buffer[:])
 		code, words, words_are_value := entry_body(entry, body_buffer[:])
+		code_lines := code != "" ? interface.text_wrapped_line_count(table, FONT_CODE, code, room) : 0
+		// A result that came typed is drawn as the console draws it, in
+		// place of its words, within the room left above: the rows that
+		// fit, and the note of the drawer counts the others.
+		result: ^result_lines.Lines
+		if entry.kind == .Act && entry.state == .Done && entry.table.present {
+			line_room := (bottom - MARGIN - line - code_lines * code_line - MARGIN / 2) / code_line
+			if result_lines.fit(&result_memory, &entry.table, room / cell_width, line_room) {
+				result, words = &result_memory, ""
+			}
+		}
 		words_font := words_are_value ? FONT_CODE : interface.FONT_INTERFACE
 		words_line := words_are_value ? code_line : line
-		code_lines := code != "" ? interface.text_wrapped_line_count(table, FONT_CODE, code, room) : 0
 		word_lines := words != "" ? interface.text_wrapped_line_count(table, words_font, words, room) : 0
-		height := line + code_lines * code_line + word_lines * words_line + MARGIN / 2
+		result_line_count := result != nil ? result.line_count : 0
+		height := line + code_lines * code_line + word_lines * words_line + result_line_count * code_line + MARGIN / 2
 		top := bottom - height
 		if top < MARGIN {
 			break
@@ -153,6 +170,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 		if words != "" {
 			interface.draw_text_wrapped(table, MARGIN, body_top, room, words, graphics.colors.text, words_font)
+		}
+		if result != nil {
+			result_lines_paint(table, result, MARGIN, body_top, cell_width, code_line)
 		}
 		bottom = top
 	}

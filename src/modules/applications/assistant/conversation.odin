@@ -145,6 +145,56 @@ act_result_export :: proc "c" (act, state: i64, text: ^string, error: ^errors.Er
 	return result
 }
 
+// One column of act_table: its name. The description of an export states
+// its sizes as numbers; they are the ones of the contract.
+Act_Table_Column :: struct {
+	name: [32]u8,
+}
+
+// One cell of act_table, row after row: the text of a field.
+Act_Table_Cell :: struct {
+	text: [64]u8,
+}
+
+#assert(size_of(Act_Table_Column) == size_of(assistant_contract.Act_Table_Column) && len(Act_Table_Column{}.name) == assistant_contract.ACT_TABLE_NAME_BYTES)
+#assert(size_of(Act_Table_Cell) == size_of(assistant_contract.Act_Table_Cell) && len(Act_Table_Cell{}.text) == assistant_contract.ACT_TABLE_CELL_BYTES)
+
+// act_table gives the typed result of an act that is done, a table or a record, so the window draws it as the console does: a line of heads, aligned columns, the first rows and the count of the others.
+//
+// - **act**: the number that [act](assistant.act) gave; the act is done.
+// - **shape**: a word of assistant.Act_Table_Shape: 1 a table, 2 a record of one row.
+// - **name**: the name of the record, at most 32 bytes.
+// - **total_rows**: the rows of the whole result; the cells hold the first ones.
+// - **columns**: a table of `Act_Table_Column` rows, 1 to 24, each the name of a column.
+// - **cells**: a table of `Act_Table_Cell` rows, row after row, a cell for each column: at most 8 rows of the result.
+//
+// The result is 1, or a negative number with an error record: `No_Grant` (-1); `Absent` (-1, no act has the
+// number); `State` (-1, the act is not done, or has its table); `Bad_Value` (-1, a shape that names no member, a
+// record of another count of rows than 1, a total under the rows, a count of cells that is no whole count of rows, an
+// empty column name, or a name or a cell that is not UTF-8 with no control byte or that has a byte after its zero);
+// `Empty` or `Too_Long` (-1, the name, no column or more than 24, more than 8 rows).
+@(export, link_name = "act_table")
+act_table_export :: proc "c" (act, shape: i64, name: ^string, total_rows: i64, columns: ^system.Table_To_Read(Act_Table_Column), cells: ^system.Table_To_Read(Act_Table_Cell), error: ^errors.Error_Record) -> i64 {
+	// A count past the bound is refused before the table is sliced: the
+	// count is a word of the caller, up to the largest u64.
+	if !caller_acts_for_principal() {
+		return errors.fail(error, conversation.ERROR_RESULT, .No_Grant, .Acts_For_Principal)
+	}
+	if columns.count > assistant_contract.ACT_TABLE_COLUMN_CAPACITY {
+		return errors.fail(error, conversation.ERROR_RESULT, .Too_Long, .Records, 5, i64(min(columns.count, u64(max(i64)))), assistant_contract.ACT_TABLE_COLUMN_CAPACITY)
+	}
+	if cells.count > assistant_contract.ACT_TABLE_ROW_CAPACITY * assistant_contract.ACT_TABLE_COLUMN_CAPACITY {
+		return errors.fail(error, conversation.ERROR_RESULT, .Too_Long, .Records, 6, i64(min(cells.count, u64(max(i64)))), assistant_contract.ACT_TABLE_ROW_CAPACITY * assistant_contract.ACT_TABLE_COLUMN_CAPACITY)
+	}
+	column_records := transmute([]assistant_contract.Act_Table_Column)columns.records[:columns.count]
+	cell_records := transmute([]assistant_contract.Act_Table_Cell)cells.records[:cells.count]
+	result, kept := conversation.act_table(&talk, caller_acts_for_principal(), act, shape, name^, total_rows, column_records, cell_records, error)
+	if kept != nil {
+		system.log_fact(.Info, Act_Table_Shown{act = kept.act, rows = u64(kept.table.row_count), total_rows = u64(kept.table.total_rows), columns = u64(kept.table.column_count), name = value_kinds.text_field(conversation.act_table_name(&kept.table), FACT_NAME_BYTES)})
+	}
+	return result
+}
+
 // act_state gives the state of an act, a word of assistant.Act_State: the runner reads the decision of the principal on an act that waited.
 //
 // The result is the state, or a negative number with an error record: `No_Grant` (-1); `Absent` (-1, no act has

@@ -51,6 +51,9 @@ report_write :: proc(builder: ^strings.Builder, turn: Turn_Report) {
 		fmt.sbprintf(builder, "request %d answered, %d acts\n", report.serial, report.act_count)
 		for act in report.acts[:report.act_count] {
 			fmt.sbprintf(builder, "act %d: %v: %s\n", act.number, act.state, act.text)
+			if act.table_problem != "" {
+				fmt.sbprintf(builder, "act %d: the window refused its table, and shows its words: %s\n", act.number, act.table_problem)
+			}
 		}
 	case .Reply_Refused:
 		fmt.sbprintf(builder, "the reply to request %d was refused at the border: kind %d, unit %d, argument %d, value %d, limit %d, found %d\n", report.serial, report.record.kind, report.record.unit, report.record.argument, report.record.value, report.record.limit, report.record.found)
