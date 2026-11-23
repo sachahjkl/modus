@@ -350,3 +350,78 @@ a_second_decline_at_the_same_scale_is_no_news :: proc(t: ^testing.T) {
 		testing.expect_value(t, surface_decline_is_news(true, scale, .Sixteen_Eighths), scale != .Sixteen_Eighths)
 	}
 }
+
+// The release of a fixed window answers its clamp only: a release with no
+// request, the request of a resizable window, a request that is no clamp,
+// and a window with a pending surface end the request with no new size.
+// Each refusal of one fact comes first; the case that holds comes last.
+@(test)
+a_release_answers_the_clamp_of_a_fixed_window_only :: proc(t: ^testing.T) {
+	testing.expect(t, !release_answers_clamp(false, true, false, false))
+	testing.expect(t, !release_answers_clamp(true, true, true, false))
+	testing.expect(t, !release_answers_clamp(true, false, false, false))
+	testing.expect(t, !release_answers_clamp(true, true, false, true))
+	testing.expect(t, !release_answers_clamp(false, false, true, true))
+	testing.expect(t, release_answers_clamp(true, true, false, false))
+}
+
+// The offer after a clamp: interface_elements, 816 x 560, opened at 2 and
+// clamped to 816 x 482, released at the serial 1. The compositor took the
+// clamped size as its logical size, so an offer at the size before, one
+// pixel off on each axis, or of the old scale is refused; the offer of
+// 1632 x 964 at 2 is taken, in memory of that surface and no more.
+@(test)
+the_offer_after_a_clamp_has_the_clamped_size :: proc(t: ^testing.T) {
+	clamped := Surface_Rescale_Facts {
+		gift            = true,
+		is_memory       = true,
+		readable        = true,
+		memory_bytes    = 1632 * 964 * SURFACE_BYTES_FOR_EACH_PIXEL,
+		width           = 1632,
+		height          = 964,
+		scale_word      = u64(scale_factor.Scale.Sixteen_Eighths),
+		serial          = 2,
+		created         = true,
+		released        = true,
+		released_serial = 1,
+		scale           = .Sixteen_Eighths,
+		window_width    = 816,
+		window_height   = 482,
+	}
+	before := clamped
+	before.height, before.memory_bytes = 1120, 1632 * 1120 * SURFACE_BYTES_FOR_EACH_PIXEL
+	testing.expect_value(t, surface_rescale_refusal(before), Surface_Rescale_Refusal.Other_Size)
+	for step in ([?][2]i64{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+		off := clamped
+		off.width, off.height = u64(i64(off.width) + step[0]), u64(i64(off.height) + step[1])
+		testing.expectf(t, surface_rescale_refusal(off) == .Other_Size, "%v is taken", step)
+	}
+	old_scale := clamped
+	old_scale.scale_word = u64(scale_factor.Scale.Ten_Eighths)
+	testing.expect_value(t, surface_rescale_refusal(old_scale), Surface_Rescale_Refusal.Other_Scale)
+	short := clamped
+	short.memory_bytes -= 1
+	testing.expect_value(t, surface_rescale_refusal(short), Surface_Rescale_Refusal.Too_Small)
+	testing.expect_value(t, surface_rescale_refusal(clamped), Surface_Rescale_Refusal.None)
+}
+
+// The serial released after a refused offer: the next serial of a released
+// window with no pending surface moves it; a serial past it, the same
+// serial, an older one, a window that is not released, one with a pending
+// surface, and the largest serial move nothing. A second refused offer then
+// moves it again, so the window that offers again after each refusal meets
+// the serial that the compositor expects.
+@(test)
+a_refused_offer_moves_the_serial_released :: proc(t: ^testing.T) {
+	testing.expect_value(t, serial_after_refused_offer(true, false, 6, 8), 6)
+	testing.expect_value(t, serial_after_refused_offer(true, false, 6, 6), 6)
+	testing.expect_value(t, serial_after_refused_offer(true, false, 6, 5), 6)
+	testing.expect_value(t, serial_after_refused_offer(false, false, 6, 7), 6)
+	testing.expect_value(t, serial_after_refused_offer(true, true, 6, 7), 6)
+	testing.expect_value(t, serial_after_refused_offer(true, false, max(u64), 0), max(u64))
+	first := serial_after_refused_offer(true, false, 6, 7)
+	testing.expect_value(t, first, 7)
+	testing.expect_value(t, serial_after_refused_offer(true, false, first, 8), 8)
+	facts := Surface_Rescale_Facts{gift = true, is_memory = true, readable = true, memory_bytes = 1500 * 993 * SURFACE_BYTES_FOR_EACH_PIXEL, width = 1500, height = 993, scale_word = u64(scale_factor.Scale.Twelve_Eighths), serial = 8, created = true, released = true, released_serial = first, scale = .Twelve_Eighths, window_width = 1000, window_height = 662}
+	testing.expect_value(t, surface_rescale_refusal(facts), Surface_Rescale_Refusal.None)
+}

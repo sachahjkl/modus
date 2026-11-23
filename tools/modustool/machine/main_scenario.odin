@@ -3273,7 +3273,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = " for \"interface_elements\": interface_elements (module)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts interface_elements"},
-	{kind = .Wait, text = "compositor: window interface_elements resized from 816x560 to 816x", fails_on = "no surface of"},
+	// The compositor writes the new size at the release; the window writes
+	// that its layout scrolls at its first frame after it: the system fixes
+	// no order between the two.
+	{kind = .Wait, text = "compositor: window interface_elements resized from 816x560 to 816x", any_order = true, fails_on = "no surface of"},
 	{kind = .Wait, text = "interface: interface_elements: the layout of 816x560 scrolls in a view of 816x"},
 	{kind = .Key, text = "pgdn"},
 	{kind = .Wait, text = "interface: interface_elements: the keys move the view to "},

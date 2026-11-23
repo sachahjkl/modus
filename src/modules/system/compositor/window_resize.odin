@@ -262,10 +262,28 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	if keyboard_window_mode == .Resize {
 		keyboard_window_gone(index) // keyboard_desktop.odin
 	}
+	// The release of a fixed window can answer its clamp: it then offers
+	// the surface of the clamped size, and holds one surface at a time
+	// (src/md/features/window_resize.md, "The clamp of a fixed window").
+	answers_clamp := bar.release_answers_clamp(client.resize_asked, client.resize_asked_clamp, client.resizable, client.resize_pictures != nil)
 	damage_window(client)
 	surface_screen_damage(client)
 	if client.pictures != nil {
 		system.memory_unmap(client.pictures)
+	}
+	if answers_clamp {
+		// The offer after the release must have the clamped size
+		// (bar.surface_rescale_refusal reads the logical size); the frame
+		// of that size shows the background until it comes.
+		old_width, old_height := client.width, client.height
+		client.width, client.height = client.resize_asked_width, client.resize_asked_height
+		client.wanted_width, client.wanted_height = client.resize_asked_wanted_width, client.resize_asked_wanted_height
+		client.clamp_asks = 0
+		client.x, client.y = bar.window_place_kept(client.x, client.y, window_frame_of(client), desktop_width, desktop_height)
+		damage_window(client)
+		if client.width != old_width || client.height != old_height {
+			system.log_fact(.Info, Window_Resized{old_width = u64(old_width), old_height = u64(old_height), width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
+		}
 	}
 	if client.resize_pictures != nil {
 		system.memory_unmap(client.resize_pictures)
@@ -278,10 +296,12 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	client.resize_pending_edges = {}
 	client.resize_asked, client.resize_edges = false, {}
 	client.released, client.surface_serial = true, serial
-	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Released), 1 = serial})
 	// The release ended a request of the size: a scale that waited for it
-	// goes now.
+	// goes now, before the answer, so the window reads the scale while it
+	// releases and offers its next surface at it. Named after the answer,
+	// the window offered at its old scale, which the compositor refuses.
 	_ = window_scale_step(client) // scale.odin
+	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Released), 1 = serial})
 }
 
 // surface_rescale_take takes the record Surface_Rescale of a window: the
@@ -296,6 +316,9 @@ surface_rescale_take :: proc "contextless" (client: ^Client, record: ring.Record
 	serial := record.values[4]
 	refused :: proc "contextless" (client: ^Client, serial: u64) {
 		client.resizes_refused += 1
+		// The window counts the refused offer: its next one names the serial
+		// after it (bar.serial_after_refused_offer).
+		client.surface_serial = bar.serial_after_refused_offer(client.released, client.resize_pictures != nil, client.surface_serial, serial)
 		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Rescale_Refused), 1 = serial})
 	}
 	memory := system.Handle(record.values[0])

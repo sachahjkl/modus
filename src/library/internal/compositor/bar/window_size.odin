@@ -148,8 +148,8 @@ Surface_Resize_Facts :: struct {
 	asked:        bool, // The compositor sent Resized, and no answer came since.
 	asked_width, asked_height: int, // The size that it asked.
 	// The ask was a clamp to the work area (window_fit): the compositor
-	// chose the size, below the limits or for a fixed window, and the window
-	// scrolls its layout in it (src/md/features/window_scroll.md).
+	// chose the size, below the least size of a resizable window, and the
+	// window scrolls its layout in it (src/md/features/window_scroll.md).
 	clamp:        bool,
 }
 
@@ -175,7 +175,9 @@ surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Su
 		return .Not_Memory
 	case !facts.readable:
 		return .No_Read
-	case !facts.resizable && !facts.clamp:
+	case !facts.resizable:
+		// A fixed window answers its clamp by a release and an offer
+		// (release_answers_clamp), never by a resize.
 		return .Not_Resizable
 	case !facts.asked:
 		return .Not_Asked

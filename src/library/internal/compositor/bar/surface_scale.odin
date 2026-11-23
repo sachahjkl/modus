@@ -86,6 +86,35 @@ Surface_Rescale_Facts :: struct {
 	window_width, window_height: int, // The logical size of the window.
 }
 
+// release_answers_clamp says if a Surface_Release of a window answers the
+// request that waits: the clamp of a fixed window to the work area, which
+// the window takes by a release and an offer of the clamped size, so it
+// holds one surface at a time (src/md/features/window_resize.md, "The
+// clamp of a fixed window"). The compositor then takes the clamped size as
+// the logical size of the window, which the offer must have
+// (surface_rescale_refusal). A release with no request, a request of a
+// resizable window, a request that is no clamp, and a window with a
+// pending surface end the request with no new size.
+release_answers_clamp :: proc "contextless" (asked, clamp, resizable, pending: bool) -> bool {
+	return asked && clamp && !resizable && !pending
+}
+
+// serial_after_refused_offer gives the serial that the compositor holds as
+// released after it refused a Surface_Rescale. The window counts each offer:
+// after Rescale_Refused it waits in Released with the serial of the offer,
+// and its next offer names the serial after it. So a refused offer of the
+// next serial, from a released window with no pending surface, moves the
+// serial released to it; with no move, each later offer named a serial
+// past the one expected, and the window never showed a surface again. Any
+// other refused record (another serial, a window that is not released)
+// moves nothing.
+serial_after_refused_offer :: proc "contextless" (released, pending: bool, released_serial, offered_serial: u64) -> u64 {
+	if released && !pending && released_serial != max(u64) && offered_serial == released_serial + 1 {
+		return offered_serial
+	}
+	return released_serial
+}
+
 // The rule that a Surface_Rescale breaks. None: the compositor takes it.
 Surface_Rescale_Refusal :: enum {
 	None,

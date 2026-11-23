@@ -85,6 +85,7 @@ Rescale_Input_Kind :: enum u8 {
 	Resize_Offered, // The window sent Surface_Resize with the next serial (surface_resize).
 	Resize_Taken, // The answer Resize_Taken of a serial.
 	Resize_Refused, // The answer Resize_Refused of a serial.
+	Clamp_Asked, // A fixed window takes the clamp of the compositor: it releases its surface, then offers the surface of the clamped size.
 }
 
 Rescale_Input :: struct {
@@ -123,6 +124,13 @@ rescale_step :: proc "contextless" (machine: ^Rescale_Machine, input: Rescale_In
 			return rescale_offer(machine), false
 		case .Releasing, .Offered, .Resizing:
 			// The answer of the request comes first: one request at a time.
+		}
+	case .Clamp_Asked:
+		// The view is the clamped size already: the offer after the release
+		// makes the surface of it, at the scale wanted.
+		if machine.phase == .Steady {
+			machine.phase = .Releasing
+			return .Release, false
 		}
 	case .Resize_Offered:
 		if machine.phase == .Steady {
@@ -191,9 +199,38 @@ resize_end_of :: proc "contextless" (before: Rescale_Machine, input: Rescale_Inp
 		return .Keep_New
 	case .Resize_Refused:
 		return .Back_To_Shown
-	case .Scale_Named, .Released, .Taken, .Refused, .Resize_Offered:
+	case .Scale_Named, .Released, .Taken, .Refused, .Resize_Offered, .Clamp_Asked:
 	}
 	return .None
+}
+
+// clamp_refused says if a fixed window declines a clamp of the compositor:
+// a size of 0, or larger than the window opened with on an axis, is no
+// clamp; and a window between two surfaces, or in a resize, has no surface
+// to release, so it takes a clamp in Steady only. The compositor asks it
+// again when the request ends.
+clamp_refused :: proc "contextless" (machine: Rescale_Machine, width, height, opened_width, opened_height: int) -> bool {
+	return width < 1 || height < 1 || width > opened_width || height > opened_height || machine.phase != .Steady
+}
+
+// clamp_take answers the clamp of a fixed window to the work area: the
+// window takes the size as its view, with no choice of the process, and
+// releases its surface; at Released it offers the surface of the view at
+// the scale wanted, as a rescale (src/md/features/window_resize.md, "The
+// clamp of a fixed window"). So it holds one surface at a time, which its
+// budget pays. A clamp that clamp_refused refuses is declined.
+@(private)
+clamp_take :: proc "contextless" (window: ^Window, width, height: int) {
+	if clamp_refused(window.rescale, width, height, window.opened_width, window.opened_height) {
+		// A full ring keeps the request: the next present declines it.
+		_ = resize_decline(window)
+		return
+	}
+	// The release answers the request: no decline goes before it.
+	window.resize_asked = false
+	window.view_width, window.view_height = width, height
+	window.resized_picture_due = true
+	rescale_take(window, {kind = .Clamp_Asked})
 }
 
 // picture_owed_of says if a window owes the compositor a picture: it holds

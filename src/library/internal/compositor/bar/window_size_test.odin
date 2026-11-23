@@ -345,11 +345,13 @@ answer_of_test :: proc() -> Surface_Resize_Facts {
 }
 
 // A clamp to the work area: the compositor asked a size below the least
-// size, or of a fixed window. Without the clamp each is refused; with it,
-// it is taken. A clamp still needs the asked size, a request, readable
-// memory that holds two pictures, and a size of at most 32 bits.
+// size of a resizable window. Without the clamp it is refused; with it, it
+// is taken. A fixed window is refused with and without a clamp: it answers
+// its clamp by a release and an offer, which holds one surface at a time.
+// A clamp still needs the asked size, a request, readable memory that holds
+// two pictures, and a size of at most 32 bits.
 @(test)
-a_clamp_answer_passes_the_limits_and_a_fixed_window :: proc(t: ^testing.T) {
+a_clamp_answer_passes_the_least_size_and_never_resizes_a_fixed_window :: proc(t: ^testing.T) {
 	below := answer_of_test()
 	below.limits.least_height = 400
 	testing.expect_value(t, surface_resize_refusal(below), Surface_Resize_Refusal.Outside_Limits)
@@ -359,7 +361,8 @@ a_clamp_answer_passes_the_limits_and_a_fixed_window :: proc(t: ^testing.T) {
 	fixed.resizable = false
 	testing.expect_value(t, surface_resize_refusal(fixed), Surface_Resize_Refusal.Not_Resizable)
 	fixed.clamp = true
-	testing.expect_value(t, surface_resize_refusal(fixed), Surface_Resize_Refusal.None)
+	testing.expect_value(t, surface_resize_refusal(fixed), Surface_Resize_Refusal.Not_Resizable)
+	fixed = below
 	unasked := fixed
 	unasked.asked = false
 	testing.expect_value(t, surface_resize_refusal(unasked), Surface_Resize_Refusal.Not_Asked)

@@ -976,14 +976,13 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 // the compositor takes no other size, and no surface that the principal
 // did not ask for.
 //
-// The size is the view: the surface. A fixed window takes a Resized of at
-// most its size, and a resizable one a Resized below its least size: the
-// compositor clamps the window to the work area, and the layout keeps its
-// size (layout_size_of), which the window layer scrolls
-// (src/md/features/window_scroll.md).
+// The size is the view: the surface. A resizable window takes a Resized
+// below its least size: the compositor clamps the window to the work area,
+// and the layout keeps its size (layout_size_of), which the window layer
+// scrolls (src/md/features/window_scroll.md). A fixed window takes its
+// clamp in next_event, by a release and an offer (clamp_take), never here.
 //
-// The statuses: Ok; Bad_Operation for a fixed window asked a size larger
-// than it opened with, with no Resized to answer, for another size than
+// The statuses: Ok; Bad_Operation for a fixed window, with no Resized to answer, for another size than
 // the asked one, or for a size past its largest limit (nothing changes); No_Slot when the command ring is
 // full (nothing was made: call again later, or the next present declines
 // the request); No_Budget, or another status of Memory_Create, Memory_Map
@@ -993,7 +992,7 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 surface_resize :: proc "contextless" (window: ^Window, width, height: int, error: ^errors.Error_Record = nil) -> system.Status {
 	title := string(window.title[:window.title_count])
 	switch {
-	case !window.resizable && (width > window.opened_width || height > window.opened_height):
+	case !window.resizable:
 		errors.fail(error, 0, .State, .None, 1)
 		return .Bad_Operation
 	case window.rescale.phase != .Steady:
@@ -1256,10 +1255,11 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			// A fixed window gets Resized only as a clamp of the compositor to
 			// the work area: its layout keeps the size that it opened with, so
 			// the answer needs no choice of the process, and a process whose
-			// loop reads its events by itself takes the clamp too
-			// (src/md/features/window_scroll.md).
+			// loop reads its events by itself takes the clamp too. It holds
+			// one surface at a time (src/md/features/window_resize.md, "The
+			// clamp of a fixed window").
 			if !window.resizable {
-				_ = surface_resize(window, read.width, read.height)
+				clamp_take(window, read.width, read.height)
 			}
 		}
 		if read.kind == .Copy_Asked {
