@@ -1310,6 +1310,26 @@ The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and
 
 Do not use: maximum window size.
 
+### Presentation record
+
+The presentation record is the record that the holder of the display writes on the window ring of a window: how that window must draw now.
+
+It holds the scale of its surface, the appearance in force, the font and its grid fit, the order of the stripes, the contrast, the motion, the locale of the window, and the time zone. The holder of the display writes it at the start of the window and at each change. A window maps no shared page of settings. The scale and the time zone are an accepted fingerprint: a window draws at its scale and shows the local time.
+
+The design: `src/md/features/module_settings.md`, "The presentation record".
+
+Do not use: settings page (for this), theme, environment.
+
+### Presentation page
+
+The presentation page is the page of one process with a surface where its display library writes its presentation record, in the format of the settings page.
+
+The root service maps it with Write in that process only, at the fixed range `Presentation_Page`. The drawing module of the process reads it at its fixed address, so the record reaches each copy of the display library of the process. It is not the settings page: no other process maps it, and `settings` never writes it.
+
+The design: `src/md/features/module_settings.md`, "The presentation record".
+
+Do not use: private settings page, window settings.
+
 ### Work area
 
 The work area is the part of the logical screen that the holder of the display gives the windows: the screen without the parts that the holder draws itself, such as a bar.

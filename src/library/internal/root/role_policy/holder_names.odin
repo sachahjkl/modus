@@ -74,3 +74,28 @@ target_resolve :: proc "contextless" (names: ^Holder_Names, name: string) -> (mo
 	holder := holder_name(names, role)
 	return holder, holder != ""
 }
+
+// store_name_of_module gives the name of the private store of a module: the
+// name of the role that it holds now, else its own name. The store of a role
+// belongs to the role (src/md/features/module_settings.md, "The role
+// store"): a holder that the plan put in place of another, and the same
+// module after a restart, get the store of the one before, so the choices of
+// the principal for the role stay.
+store_name_of_module :: proc "contextless" (names: ^Holder_Names, module_name: string) -> string {
+	if role := role_of_module(names, module_name); role != .None {
+		return role_contract.role_properties(role).name
+	}
+	return module_name
+}
+
+// grant_row_name_of_module gives the name of the row of the start grant sets
+// whose grants a module gets: the row of the default holder of the role that
+// it holds now, else its own row. The grants of a role follow its holder: a
+// holder that the plan names does the work of the role with the grants that
+// the role needs, never with the grants of its own name.
+grant_row_name_of_module :: proc "contextless" (names: ^Holder_Names, module_name: string) -> string {
+	if role := role_of_module(names, module_name); role != .None && names.defaults[role] != "" {
+		return names.defaults[role]
+	}
+	return module_name
+}

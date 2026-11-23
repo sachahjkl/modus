@@ -211,6 +211,8 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, !sender_allowed(.Plan_Roles, {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy}))
 	testing.expect(t, !sender_allowed(.Plan_Roles, {.Plans} - ROOT_RING_GRANTS))
 	testing.expect(t, sender_allowed(.Plan_Roles, {.Plans}))
+	testing.expect(t, !sender_allowed(.Plan_Values, {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Acts_For_Principal}))
+	testing.expect(t, sender_allowed(.Plan_Values, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Plans}))
 	testing.expect(t, !sender_allowed(.Connect, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Connect, .Principals, .Debugger}))

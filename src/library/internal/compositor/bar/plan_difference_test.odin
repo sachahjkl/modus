@@ -3,7 +3,7 @@ package bar
 
 import "core:strings"
 import "core:testing"
-import pr "modus:contract/plans_recipes"
+import "modus:contract/powerbox"
 
 @(test)
 plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^testing.T) {
@@ -63,7 +63,7 @@ plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_key(&dialog, .Next, 1000), Plan_Difference_Decision.Pending)
 	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
 	// Enter at the show, and one millisecond before the arm: no act.
-	for now in ([?]u64{0, 1000, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS - 1}) {
+	for now in ([?]u64{0, 1000, 1000 + powerbox.CONSENT_ARM_MILLISECONDS - 1}) {
 		testing.expect_value(t, plan_difference_key(&dialog, .Act, now), Plan_Difference_Decision.Pending)
 		testing.expect(t, dialog.open)
 	}
@@ -77,7 +77,7 @@ plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_key(&dialog, .Other, 9000), Plan_Difference_Decision.Pending)
 	testing.expect(t, dialog.open)
 	// At the arm time, Enter on Accept accepts.
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS), Plan_Difference_Decision.Accepted)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + powerbox.CONSENT_ARM_MILLISECONDS), Plan_Difference_Decision.Accepted)
 	testing.expect(t, !dialog.open)
 	testing.expect_value(t, dialog.decision, Plan_Difference_Decision.Accepted)
 	// A closed dialog takes no act.
@@ -237,9 +237,9 @@ plan_difference_act_open_refuses_each_word_that_is_no_identifier :: proc(t: ^tes
 plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
 	serial, _, _ := plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS - 1), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + powerbox.CONSENT_ARM_MILLISECONDS - 1), Plan_Difference_Decision.Pending)
 	testing.expect(t, dialog.open)
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + powerbox.CONSENT_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
 	decision, known := plan_difference_decision_of_serial(&dialog, serial)
 	testing.expect(t, known && decision == .Refused)
 	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 5000)
@@ -254,7 +254,7 @@ plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
 // first arm time, never allows; Enter after the arm time of the move does.
 @(test)
 plan_difference_act_face_arms_again_after_each_move_of_the_focus :: proc(t: ^testing.T) {
-	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
 	dialog: Plan_Difference_Dialog
 	plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
 	// Tab before the arm time: no move, and Enter then refuses.
@@ -293,7 +293,7 @@ plan_difference_act_face_arms_again_after_each_move_of_the_focus :: proc(t: ^tes
 // only, under the same arm rule; a second press after the arm time acts.
 @(test)
 plan_difference_act_face_press_on_the_other_button_moves_the_focus_only :: proc(t: ^testing.T) {
-	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
 	SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM :: 1280, 32, 768
 	dialog: Plan_Difference_Dialog
 	plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
@@ -393,4 +393,38 @@ plan_difference_act_cancel_closes_the_dialog_of_its_asker_only :: proc(t: ^testi
 	testing.expect_value(t, dialog.decision, Plan_Difference_Decision.Refused)
 	closed, _ = plan_difference_act_cancel(&dialog, asker, i64(serial))
 	testing.expect(t, !closed)
+}
+
+// A longer arm time of the principal delays the act; a shorter one, 0 and
+// the largest value of the type change nothing below the one of the
+// contract, and the largest one never wraps the time.
+@(test)
+plan_difference_arm_time_of_the_principal_is_never_shorter :: proc(t: ^testing.T) {
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
+	for shorter in ([?]u64{0, 1, ARM - 1}) {
+		dialog: Plan_Difference_Dialog
+		dialog.arm_milliseconds_of_the_principal = shorter
+		_, refusal, _ := plan_difference_act_open(&dialog, "assistant", "notes.open", 1000)
+		testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+		testing.expect_value(t, plan_difference_arm_milliseconds(&dialog), ARM)
+		testing.expect(t, !plan_difference_armed(&dialog, 1000 + ARM - 1))
+		testing.expect(t, plan_difference_armed(&dialog, 1000 + ARM))
+	}
+	dialog: Plan_Difference_Dialog
+	dialog.arm_milliseconds_of_the_principal = 2_000
+	_, refusal, _ := plan_difference_act_open(&dialog, "assistant", "notes.open", 1000)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+	testing.expect(t, !plan_difference_armed(&dialog, 1000 + ARM))
+	testing.expect(t, !plan_difference_armed(&dialog, 2999))
+	testing.expect(t, plan_difference_armed(&dialog, 3000))
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 2999), Plan_Difference_Decision.Pending)
+	// The largest arm time: no act at any time, never one that a sum wraps.
+	largest: Plan_Difference_Dialog
+	largest.arm_milliseconds_of_the_principal = max(u64)
+	_, refusal, _ = plan_difference_act_open(&largest, "assistant", "notes.open", 1000)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+	testing.expect(t, !plan_difference_armed(&largest, 1000 + ARM))
+	testing.expect(t, !plan_difference_armed(&largest, max(u64)))
+	// A clock before the show is no act.
+	testing.expect(t, !plan_difference_armed(&dialog, 999))
 }

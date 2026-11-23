@@ -9,7 +9,7 @@ notifications_rate_limit_dnd_and_expiration :: proc(t: ^testing.T) {
 	testing.expect(t, !bad)
 
 	q: Notification_Queue
-	queue_init(&q, min_interval_ms = 500)
+	queue_init(&q)
 
 	_, re := queue_post(&q, 1, .Normal, 1000, 5000, nil, nil)
 	testing.expect_value(t, re, Notification_Refusal.Empty_Title)
@@ -41,7 +41,7 @@ notifications_rate_limit_dnd_and_expiration :: proc(t: ^testing.T) {
 @(test)
 a_labelled_source_stops_at_its_bound_of_cards :: proc(t: ^testing.T) {
 	q: Notification_Queue
-	queue_init(&q, min_interval_ms = 500)
+	queue_init(&q)
 	source := source_of_caller_name("clock")
 	testing.expect(t, source != PRINCIPAL_SOURCE && source & (u64(1) << 63) != 0)
 	testing.expect(t, source_of_caller_name("") != PRINCIPAL_SOURCE)
@@ -94,7 +94,7 @@ a_labelled_source_stops_at_its_bound_of_cards :: proc(t: ^testing.T) {
 @(test)
 a_full_queue_changes_nothing_and_the_rate_is_by_source :: proc(t: ^testing.T) {
 	q: Notification_Queue
-	queue_init(&q, min_interval_ms = 500)
+	queue_init(&q)
 	title := transmute([]u8)string("card")
 	for source in 1 ..= MAX_NOTIFICATIONS {
 		_, posted := queue_post(&q, u64(source), .Normal, 1000, 8000, title, nil)
@@ -110,7 +110,7 @@ a_full_queue_changes_nothing_and_the_rate_is_by_source :: proc(t: ^testing.T) {
 	testing.expect_value(t, again, Notification_Refusal.None)
 
 	other: Notification_Queue
-	queue_init(&other, min_interval_ms = 500)
+	queue_init(&other)
 	_, first := queue_post(&other, 1, .Normal, 0, 8000, title, nil)
 	_, shared_remainder := queue_post(&other, 17, .Normal, 0, 8000, title, nil)
 	testing.expect(t, first == .None && shared_remainder == .None)
@@ -118,4 +118,31 @@ a_full_queue_changes_nothing_and_the_rate_is_by_source :: proc(t: ^testing.T) {
 	testing.expect_value(t, soon, Notification_Refusal.Rate_Limited)
 	_, later := queue_post(&other, 1, .Normal, 600, 8000, title, nil)
 	testing.expect_value(t, later, Notification_Refusal.None)
+}
+
+// A time of a card outside the range of the contract is refused, at each
+// edge, and the refusal keeps no card and no time of the rate. A time that
+// would pass the largest time of the clock is refused too.
+@(test)
+a_show_time_outside_the_range_is_refused :: proc(t: ^testing.T) {
+	q: Notification_Queue
+	queue_init(&q)
+	title := transmute([]u8)string("the timer ended")
+	for refused_time in ([?]u64{0, 1, SHOW_MILLISECONDS_LEAST - 1, SHOW_MILLISECONDS_MOST + 1, max(u64)}) {
+		_, refusal := queue_post(&q, 1, .Normal, 1000, refused_time, title, nil)
+		testing.expect_value(t, refusal, Notification_Refusal.Show_Time_Out_Of_Range)
+	}
+	_, near_the_end := queue_post(&q, 1, .Normal, max(u64) - 10, SHOW_MILLISECONDS_LEAST, title, nil)
+	testing.expect_value(t, near_the_end, Notification_Refusal.Show_Time_Out_Of_Range)
+	testing.expect_value(t, source_card_count(&q, 1), 0)
+	// The refusals kept no time of the rate: a post at once is taken.
+	_, least := queue_post(&q, 1, .Normal, 1000, SHOW_MILLISECONDS_LEAST, title, nil)
+	testing.expect_value(t, least, Notification_Refusal.None)
+	_, most := queue_post(&q, 2, .Normal, 1000, SHOW_MILLISECONDS_MOST, title, nil)
+	testing.expect_value(t, most, Notification_Refusal.None)
+	// The rate of one source is the one number of the contract.
+	_, early := queue_post(&q, 1, .Normal, 1000 + RATE_INTERVAL_MILLISECONDS - 1, SHOW_MILLISECONDS_DEFAULT, title, nil)
+	testing.expect_value(t, early, Notification_Refusal.Rate_Limited)
+	_, on_time := queue_post(&q, 1, .Normal, 1000 + RATE_INTERVAL_MILLISECONDS, SHOW_MILLISECONDS_DEFAULT, title, nil)
+	testing.expect_value(t, on_time, Notification_Refusal.None)
 }

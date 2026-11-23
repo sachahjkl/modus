@@ -1,9 +1,12 @@
 package compositor
 
 import "internal:compositor/bar"
+import "modus:contract/chosen_values"
 import "modus:contract/desktop_shell"
+import "modus:contract/display_choices"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/module"
 import "modus:contract/notifications"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/pointer_pictures"
@@ -399,7 +402,11 @@ notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_R
 	case .Queue_Full:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Records, 0, 0, notifications.MAX_NOTIFICATIONS, notifications.MAX_NOTIFICATIONS)
 	case .Rate_Limited:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Milliseconds, 0, 0, i64(desktop_notifications.min_interval_ms))
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Milliseconds, 0, 0, i64(notifications.RATE_INTERVAL_MILLISECONDS))
+	case .Show_Time_Out_Of_Range:
+		// The compositor gives the time, never the caller: a time out of
+		// the range is the setting that its border refused.
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Milliseconds, 0, 0, i64(notifications.SHOW_MILLISECONDS_LEAST), i64(notifications.SHOW_MILLISECONDS_MOST))
 	case .Suppressed, .Nil_Queue, .Not_Found:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
 	}
@@ -538,23 +545,141 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 	return i64(id)
 }
 
-// bar_position moves the bar of the desktop to Top (1) or Bottom (2), and
-// returns 1, or a negative number with an error record. Left (3) and Right
-// (4) are taken and keep the bar at the top: the compositor draws no
-// vertical bar yet (src/md/features/bar_edge.md).
+// set changes the settings of the role Display, each optional: the edge of
+// the bar, "do not disturb", how long a card of a notification shows (in
+// milliseconds, 1000 to 60000), the factor of the magnifier when the
+// principal turns it on (in eighths, 12 to 64), and the arm time of a dialog
+// of the trusted display (in milliseconds, 500 to 10000: nothing makes it
+// shorter than 500). The compositor keeps them in the store of the role
+// first, then they hold, so a restart of the compositor keeps them
+// (src/md/features/module_settings.md). The result is 1, or -1 with an
+// error record: No_Grant for a caller that does not act for the principal,
+// Absent for a call that gives no setting, Bad_Value for a word that names
+// no member or a number out of its range (argument: its place, from 1),
+// Refused when the store did not keep the change. A refused call changes
+// nothing. The edges left and right are kept and draw the bar at the top:
+// the compositor draws no vertical bar yet (src/md/features/bar_edge.md).
 //
 // **Grant**: the caller must **act for the principal**.
-@(export, link_name = "bar_position")
-bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> i64 {
+//
+// ```
+// connect("compositor")
+// compositor.set(bar_edge = .bottom, notification_show_milliseconds = 12000)
+// ```
+@(export, link_name = "set", enum_getters = "bar_edge = bar_edge, do_not_disturb = do_not_disturb", parameter_ranges = "notification_show_milliseconds = 1000..60000, magnifier_eighths = 12..64, consent_arm_milliseconds = 500..10000")
+display_set_export :: proc "c" (
+	bar_edge_presence: module.Presence,
+	bar_edge: desktop_shell.Bar_Position,
+	do_not_disturb_presence: module.Presence,
+	do_not_disturb: display_choices.Do_Not_Disturb,
+	notification_show_milliseconds_presence: module.Presence,
+	notification_show_milliseconds: i64,
+	magnifier_eighths_presence: module.Presence,
+	magnifier_eighths: i64,
+	consent_arm_milliseconds_presence: module.Presence,
+	consent_arm_milliseconds: i64,
+	error: ^errors.Error_Record,
+) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	pos, ok := desktop_shell.bar_position_of_word(u64(pos_word))
-	if pos_word <= 0 || !ok {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, pos_word)
+	arguments := display_choices.Set_Arguments{bar_edge_presence, bar_edge, do_not_disturb_presence, do_not_disturb, notification_show_milliseconds_presence, notification_show_milliseconds, magnifier_eighths_presence, magnifier_eighths, consent_arm_milliseconds_presence, consent_arm_milliseconds}
+	changes, count, argument, problem := display_choices.changes_of_set(arguments)
+	switch problem {
+	case .None:
+	case .Nothing_Given:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .None, 0)
+	case .Bad_Value:
+		words := [5]i64{i64(bar_edge), i64(do_not_disturb), notification_show_milliseconds, magnifier_eighths, consent_arm_milliseconds}
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, i64(argument), words[argument - 1])
 	}
-	desktop_bar_position_set(pos)
-	return 1
+	return choice_change_fail(display_choices_change(changes[:count]), error, 0, 0)
+}
+
+// bar_edge gives the edge of the screen that holds the bar.
+@(export, link_name = "bar_edge")
+bar_edge_get :: proc "c" () -> desktop_shell.Bar_Position {
+	return display_choices_in_force.bar_edge
+}
+
+// do_not_disturb gives whether a card that is not critical shows: `.off`,
+// they show; `.on`, only a critical card shows.
+@(export, link_name = "do_not_disturb")
+do_not_disturb_get :: proc "c" () -> display_choices.Do_Not_Disturb {
+	return display_choices_in_force.do_not_disturb
+}
+
+// notification_time gives how long a card of a notification shows, in
+// milliseconds.
+@(export, link_name = "notification_time")
+notification_time_get :: proc "c" () -> i64 {
+	return i64(display_choices_in_force.notification_show_milliseconds)
+}
+
+// magnifier_factor gives the factor of the magnifier when it turns on, in
+// eighths.
+@(export, link_name = "magnifier_factor")
+magnifier_factor_get :: proc "c" () -> i64 {
+	return i64(display_choices_in_force.magnifier_eighths)
+}
+
+// consent_arm_time gives the arm time of a dialog of the trusted display, in
+// milliseconds.
+@(export, link_name = "consent_arm_time")
+consent_arm_time_get :: proc "c" () -> i64 {
+	return i64(display_choices_in_force.consent_arm_milliseconds)
+}
+
+// reset makes the choice of one setting of the role absent: the default
+// holds for it again. The result is 1, or -1 with an error record:
+// No_Grant, Bad_Value for a word that names no setting, Refused when the
+// store did not keep the change.
+//
+// **Grant**: the caller must **act for the principal**.
+//
+// ```
+// compositor.reset(.bar_edge)
+// ```
+@(export, link_name = "reset")
+display_reset_export :: proc "c" (setting: display_choices.Setting, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	member, ok := display_choices.setting_of_word(u64(setting))
+	if !ok {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(setting))
+	}
+	changes := [1]chosen_values.Change{{name = display_choices.SETTING_NAMES[member], kind = .Reset}}
+	return choice_change_fail(display_choices_change(changes[:]), error, 1, i64(setting))
+}
+
+// The state of one setting of the role: the setting, the layer that gives
+// its value (0 the contract default, 1 a default of the plan, 2 a choice of
+// the principal, 3 a lock of the plan), and the word of its value.
+Setting_State :: struct {
+	setting: i64,
+	layer:   i64,
+	value:   i64,
+}
+
+// settings_state gives one row for each setting of the role Display: which
+// layer gives its value, and the value. A reader sees that a choice hides a
+// default. The result is the count of the settings, or -1 with an error
+// record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "settings_state")
+settings_state_export :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	for setting in display_choices.Setting {
+		row := int(setting)
+		if row < len(result^) {
+			result[row] = {setting = i64(setting), layer = i64(display_choices_in_force.layers[setting]), value = i64(display_choices.word_of(display_choices_in_force, setting))}
+		}
+	}
+	return i64(len(display_choices.Setting))
 }
 
 // tray_widget_open opens the card of a tray widget, as a press on its part of the bar does, or closes the card that is open: 0 closes, 1 the control center, 2 the notification center, 3 the calendar. Opening a card closes the start menu, the menu of the windows, the list of the viewers and the context menu of the desktop. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a word that names no tray widget).

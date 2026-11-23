@@ -15,6 +15,8 @@ build_test_module :: proc(
 	records: []module_file_writer.Record_Description,
 	record_outputs: []module_file_writer.Record_Output_Part = nil,
 	record_inputs: []module_file_writer.Record_Input_Part = nil,
+	enums: []module_file_writer.Enum_Description = nil,
+	parameter_settings: []module.Parameter_Setting = nil,
 ) -> []u8 {
 	code := [16]u8{0 = 0xC3} // Single ret instruction.
 	segments := [1]module_file_writer.Segment_Part {
@@ -31,6 +33,8 @@ build_test_module :: proc(
 		records        = records,
 		record_outputs = record_outputs,
 		record_inputs  = record_inputs,
+		enums          = enums,
+		parameter_settings = parameter_settings,
 	}
 	needed, size_refusal := module_file_writer.file_size_needed(parts)
 	testing.expect_value(t, size_refusal.refusal, module_file_writer.Refusal.None)
@@ -44,7 +48,7 @@ build_test_module :: proc(
 // Records matching the Display contract exports: Pointer, Window, Screen,
 // Error_Record.
 @(private = "file")
-display_test_records :: proc() -> [4]module_file_writer.Record_Description {
+display_test_records :: proc() -> [5]module_file_writer.Record_Description {
 	@(static)
 	value_field := [1]module_file_writer.Field_Description {
 		{name = "value", offset = 0, type = .Integer, detail = 8},
@@ -54,20 +58,51 @@ display_test_records :: proc() -> [4]module_file_writer.Record_Description {
 		{name = "Window", size = 8, fields = value_field[:]},
 		{name = "Screen", size = 8, fields = value_field[:]},
 		{name = "Error_Record", size = 8, fields = value_field[:]},
+		{name = "Setting_State", size = 8, fields = value_field[:]},
 	}
 }
 
+// A fault of a holder of Display in its settings, for the refusals of the
+// check of the contract.
 @(private = "file")
-build_compliant_display_module :: proc(t: ^testing.T, include_extra_export: bool = false) -> []u8 {
-	records := display_test_records()
-	base_exports := [4]module_file_writer.Export_Part {
-		{name = "pointer", code_offset = 0, result = .Table, result_detail = 1, error_record = 4},
-		{name = "windows", code_offset = 0, result = .Table, result_detail = 2, error_record = 4},
-		{name = "screen", code_offset = 0, result = .Table, result_detail = 3, error_record = 4},
-		{name = "extra_diagnostics", code_offset = 0, result = .Integer},
+Display_Settings_Fault :: enum {
+	None,
+	Enum_Of_Another_Name, // The edge of the bar is an enum of another name.
+	Set_Not_Optional, // A parameter of set is not optional.
+	No_Settings_State, // The export settings_state is missing.
+	Range_Of_Another_Number, // The range of the time of a notification ends one past the contract.
+	No_Range, // The factor of the magnifier has no range.
+}
+
+// build_compliant_display_module writes the parts of the contract
+// (display_module_parts_write), with one fault, and an extra export.
+build_compliant_display_module :: proc(t: ^testing.T, include_extra_export: bool = false, fault := Display_Settings_Fault.None) -> []u8 {
+	@(static) parts: Display_Module_Parts
+	display_module_parts_write(&parts)
+	@(static) needs: [5]module.Parameter_Need
+	needs = {.Optional, .Optional, .Optional, .Optional, .Optional}
+	ranges := parts.set_ranges
+	ranges_used := ranges[:]
+	switch fault {
+	case .None:
+	case .Enum_Of_Another_Name:
+		parts.enums[0].name = "Edge"
+	case .Set_Not_Optional:
+		needs[1] = .Required
+		parts.exports[3].parameter_needs = needs[:]
+	case .No_Settings_State:
+		parts.exports[DISPLAY_MODULE_EXPORT_COUNT - 1].name = "settings_state_elsewhere"
+	case .Range_Of_Another_Number:
+		ranges[0].most += 1
+	case .No_Range:
+		ranges[1] = ranges[2]
+		ranges_used = ranges[:2]
 	}
-	count := include_extra_export ? 4 : 3
-	return build_test_module(t, base_exports[:count], records[:])
+	exports: [DISPLAY_MODULE_EXPORT_COUNT + 1]module_file_writer.Export_Part
+	copy(exports[:], parts.exports[:])
+	exports[DISPLAY_MODULE_EXPORT_COUNT] = {name = "extra_diagnostics", result = .Integer}
+	count := include_extra_export ? DISPLAY_MODULE_EXPORT_COUNT + 1 : DISPLAY_MODULE_EXPORT_COUNT
+	return build_test_module(t, exports[:count], parts.records[:], enums = parts.enums[:], parameter_settings = ranges_used)
 }
 
 @(test)
@@ -171,7 +206,7 @@ display_contract_hash_is_deterministic_and_sensitive :: proc(t: ^testing.T) {
 		hex_buf[idx * 2] = hex_digits[b >> 4]
 		hex_buf[idx * 2 + 1] = hex_digits[b & 0x0F]
 	}
-	testing.expect_value(t, string(hex_buf[:]), "9f17b56560096bdbfc85b82bd8ab977f002125fc3af535598da2b91cd826fa94")
+	testing.expect_value(t, string(hex_buf[:]), "6b2b3ec09f7328e7e62168c2c101aacbb15cbe662020a1b3147357d8e58965ca")
 
 	mutated := display_contract()
 	mutated.version += 1
@@ -415,6 +450,23 @@ display_contract_accepts_compliant_module_and_refuses_bad_ring_faces :: proc(t: 
 		module_fills_contract(good_module, {contract_hashes = hashes[:], ring_faces = bad_rings[:]}, contract).refusal,
 		Contract_Check_Refusal.Ring_Face_Mismatch,
 	)
+
+	// A holder whose settings are not those of the role is refused: an enum
+	// of another name, a setter whose parameter is not optional, a range
+	// that ends one past the contract, a number with no range, a missing
+	// state export.
+	Fault_Case :: struct {
+		fault:      Display_Settings_Fault,
+		difference: module.Difference,
+		parameter:  u32,
+	}
+	for item in ([?]Fault_Case{{.Enum_Of_Another_Name, .Parameter_Detail, 1}, {.Set_Not_Optional, .Parameter_Detail, 2}, {.Range_Of_Another_Number, .Parameter_Range, 3}, {.No_Range, .Parameter_Range, 4}}) {
+		faulty := build_compliant_display_module(t, fault = item.fault)
+		faulty_result := module_fills_contract(faulty, {contract_hashes = hashes[:], ring_faces = display_ring_faces()}, contract)
+		testing.expectf(t, faulty_result.refusal == .Wrong_Signature && faulty_result.difference == item.difference && faulty_result.parameter == item.parameter, "%v gives %v, %v at %d", item.fault, faulty_result.refusal, faulty_result.difference, faulty_result.parameter)
+	}
+	no_state := build_compliant_display_module(t, fault = .No_Settings_State)
+	testing.expect_value(t, module_fills_contract(no_state, {contract_hashes = hashes[:], ring_faces = display_ring_faces()}, contract).refusal, Contract_Check_Refusal.Missing_Export)
 
 	// Compliant module with extra export and multiple declared contract hashes passes.
 	other_hash := expected_hash

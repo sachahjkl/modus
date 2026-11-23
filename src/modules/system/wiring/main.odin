@@ -38,8 +38,8 @@ import "modus:system"
 // and list pages are paid from each asker's child wiring budget.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
-// Stall bound in wiring_core must stay identical to the system hang bound.
-#assert(wiring_core.STALL_HANG_BOUND_MS == system.TEST_HANG_BOUND_MILLISECONDS)
+// The stall bound of wiring_core is the answer bound of the services.
+#assert(wiring_core.STALL_HANG_BOUND_MS == system.ANSWER_BOUND_MILLISECONDS)
 
 // Poll cadence (milliseconds) while at least one Always_Holds_Writer wiring
 // is active, so full rings are observed without waking when none exist.

@@ -147,7 +147,11 @@ import "base:intrinsics"
 // 4050 + 10 + 9 + 3 + 2 + 1647 + 2144 + 2144 + 708 = 10717. A screen whose
 // frame and background the budget cannot pay is named on one line, and the
 // compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10717, processes = 1, threads = 2}
+// The third thread is the worker of the role store (display_choices.odin),
+// with its stack: 10717 + 64 = 10781. The tool reads one literal, so the
+// assert keeps the sum with the stack of the worker.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10781, processes = 1, threads = 3}
+#assert(10781 == 10717 + interface.BACKGROUND_STACK_PAGES)
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -196,7 +200,7 @@ Client :: struct {
 	declined_scale: scale_factor.Scale,
 	// The fit at a new scale (window_resize.md, "The fit at a new scale"): scale_due holds the scale in force for this window until its
 	// fit request ends; fit_due says that the fit to the newest work area is
-	// not asked yet; scale_told is the scale of the last Settings_Changed.
+	// not asked yet; scale_told is the scale of the last Presentation.
 	scale_due:  bool,
 	fit_due:    bool,
 	scale_told: scale_factor.Scale,
@@ -732,6 +736,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
 	height := int(ctx.values[VALUE_HEIGHT])
 	date_page = date.page_of(ctx)
+	display_choices_open(ctx) // display_choices.odin: the role store; its read waits for the first frame.
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
 	input_status, control_status: system.Status
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
@@ -813,6 +818,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		pointer_theme_choose(first_choice.pointer_theme)
 		pointer_form_choose(pointer_form_in_force(first_choice)) // pointer_picture.odin
+		// The first presentation record of each window: a compositor that
+		// starts after the boot pass names the settings in force.
+		presentation_told = settings.presentation_words_of(first_choice)
+		settings_count_told = u64(first_choice.change_count)
 	}
 
 	next_frame: u64
@@ -839,7 +848,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.wait_word(&wait, &display.settings_page.change_count, settings_seen)
 		}
 		palette_wait(&wait) // palette.odin
+		if display_choices_wait(&wait) { // display_choices.odin
+			deadline = 0
+		}
 		now := system.wait_end(&wait, deadline)
+		display_choices_step()
 		desktop_features_tick(now) // desktop_features.odin
 		quality_turn_start() // quality_measures.odin
 		if display.settings_page != nil {
@@ -1124,6 +1137,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			frames += 1
 			if frames == 1 {
 				system.log_fact(.Info, First_Frame{})
+				// The choices of the principal, after the first frame: the
+				// screen never waits for a store (display_choices.odin).
+				display_choices_load()
 				if system.measure_run() {
 					start_measures_run()
 				}
@@ -1160,6 +1176,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	// scale in force in the choice of a refused page.
 	rescaled := desktop_scale_take(choice, true)
 	settings_count_told = u64(choice.change_count)
+	presentation_told = settings.presentation_words_of(choice)
 	windows_declined_told = windows_declined_count() // scale.odin
 	// A new appearance: the background and the mark of the bar are pixels
 	// that the compositor keeps, so it draws them again; each record of the
@@ -1205,8 +1222,12 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 }
 
 // The change count of the last choice that the windows were told: the
-// first word of each Settings_Changed.
+// first word of each Presentation.
 settings_count_told: u64
+
+// The words of the presentation record of the last choice that the windows
+// were told (settings.presentation_words_of).
+presentation_told: [settings.PRESENTATION_WORDS]u64
 
 // work_area_send names the work area to a window, as the display contract
 // asks of each holder: the desktop without the bar, in logical pixels.
@@ -1370,13 +1391,12 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.surface_serial, client.surface_scale = 1, surface_scale
 	client.width, client.height = int(facts.width), int(facts.height)
 	client.wanted_width, client.wanted_height = client.width, client.height
-	// The process read another scale than the scale in force: the
-	// compositor names its own, and the window rescales to it. Until then
-	// its surface is cut to its interior.
+	// The first presentation record of the window, always: the window
+	// draws with it, and a process that read another scale than the scale
+	// in force rescales to the scale that it names. Until then its surface
+	// is cut to its interior.
 	client.scale_told = surface_scale
-	if surface_scale != scale {
-		settings_changed_send(client) // scale.odin
-	}
+	settings_changed_send(client) // scale.odin
 	// A disk process could title its window as a process of the system: its
 	// window has the nickname that the root service gave.
 	client.title = client.from_disk ? client.nickname : system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
@@ -1403,7 +1423,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	work_area_send(client)
 	// A window larger than the work area gets at most the work area from its
 	// first surface, and scrolls its layout (src/md/features/window_scroll.md).
-	// A window of another scale releases its surface at the Settings_Changed
+	// A window of another scale releases its surface at the Presentation
 	// above, and a window between two surfaces declines a request: its fit
 	// waits for its surface of the scale in force (window_fit_after_scale).
 	if surface_scale != scale {

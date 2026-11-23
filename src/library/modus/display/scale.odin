@@ -61,7 +61,7 @@ Rescale_Phase :: enum u8 {
 Rescale_Machine :: struct {
 	phase:  Rescale_Phase,
 	scale:  scale_factor.Scale, // The scale of the surface of the window: the one that it draws, or that it offered.
-	wanted: scale_factor.Scale, // The scale of the newest Settings_Changed.
+	wanted: scale_factor.Scale, // The scale of the newest Presentation.
 	serial: u64, // The surface serial of that surface.
 	// In Released: the budget of the window did not pay its surface at
 	// scale. A Scale_Named of that scale offers nothing: the budget would
@@ -78,7 +78,7 @@ Rescale_Action :: enum u8 {
 
 // The inputs of the machine.
 Rescale_Input_Kind :: enum u8 {
-	Scale_Named, // A Settings_Changed with its scale.
+	Scale_Named, // A Presentation with its scale.
 	Released, // The answer Released of a serial.
 	Taken, // The answer Rescale_Taken of a serial.
 	Refused, // The answer Rescale_Refused of a serial.

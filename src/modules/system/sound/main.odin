@@ -85,9 +85,8 @@ CONFIGURATION_BYTES :: 12
 CONFIGURATION_STREAMS :: 4
 
 // A device answers a control request in microseconds. The bound only ends
-// a hang of the device, and it is the one hang bound of a process, so the
-// line of this service comes before the bound of a step of a machine test.
-DEVICE_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+// a hang of the device: the answer bound of the services.
+DEVICE_ANSWER_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 device: virtio.Device
 control_queue: virtio.Queue

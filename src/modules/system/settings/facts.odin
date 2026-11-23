@@ -84,8 +84,7 @@ Boot_Pass_Source :: enum {
 	Nothing_Kept,
 	Read_Refused,
 	Kept,
-	Record_Refused_Defaults_Kept,
-	Record_Refused_Defaults_Not_Kept,
+	Record_Unreadable,
 	No_Store,
 }
 
@@ -128,10 +127,11 @@ Boot_Pass_Kept :: struct {
 	scale:           [8]u8,
 }
 
-// The record of the store is refused; the defaults took its place in the
-// store.
-@(log_fact = "settings: the boot pass: the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
-Boot_Pass_Record_Refused_Defaults_Kept :: struct {
+// The record of the store is one that this release cannot read: the
+// defaults hold, and the record stays as it is until the principal changes
+// a setting.
+@(log_fact = "settings: the boot pass: the record of the store is one that this release cannot read: the defaults, and the record stays: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
+Boot_Pass_Record_Unreadable :: struct {
 	elapsed:         value_kinds.Time_In_Microseconds,
 	font:            [8]u8,
 	subpixel_order:  [8]u8,
@@ -142,19 +142,14 @@ Boot_Pass_Record_Refused_Defaults_Kept :: struct {
 	scale:           [8]u8,
 }
 
-// The record of the store is refused, and the store refused the defaults:
-// the pass fails.
-@(log_fact = "settings: the boot pass: the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")
-Boot_Pass_Record_Refused_Defaults_Not_Kept :: struct {
-	elapsed:         value_kinds.Time_In_Microseconds,
-	font:            [8]u8,
-	subpixel_order:  [8]u8,
-	pointer_theme:   [8]u8,
-	grid_fit:        [8]u8,
-	keyboard_layout: [8]u8,
-	appearance:      [8]u8,
-	scale:           [8]u8,
+// A change does not fit the kept record, or names a setting that is not
+// valid: nothing changed.
+@(log_fact = "settings: the kept record refused a change ({problem}): nothing changed")
+Kept_Record_Refused :: struct {
+	problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
 }
+
+PROBLEM_FIELD_BYTES :: size_of(Kept_Record_Refused{}.problem)
 
 // The process has no private store: the defaults.
 @(log_fact = "settings: the boot pass: no private store: the defaults: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; in {elapsed}")

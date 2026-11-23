@@ -2,6 +2,7 @@ package fuzz
 
 import "core:mem"
 import "core:slice"
+import "modus:contract/chosen_values"
 import "modus:contract/language_tag"
 import op "modus:contract/operation"
 import "modus:contract/settings"
@@ -20,67 +21,54 @@ import "modustool:foundation"
 
 // fuzz_kept_settings_execute reads the input as a kept record, as the text
 // of a zone, and as a settings page. The model of a record is read from
-// its bytes: a record of this size, magic, version and count is accepted
-// only when each value inside its count names a value of its setting and
-// its language list passes language_list_valid; one value that names
-// nothing, or one damaged list, refuses the record whole. A refused record gives
-// the defaults; an accepted one gives its values, the default past its
-// count, and the valid zone, and kept_of of the choice reads again to the
-// same choice. A zone that zone_parse accepts is written and read again to
-// the same minutes. A page is read against the same model.
+// its bytes by chosen_values.read_record: a record that it refuses gives
+// the defaults. In a record that it accepts, each setting takes the word
+// of its name when its border takes the word, and its default otherwise:
+// one word that names nothing never refuses the other choices. The changes
+// from the defaults to the choice, written as a new record, read again to
+// the same choice. A zone that zone_parse accepts is written and read again
+// to the same minutes. A page is read against the same model.
 fuzz_kept_settings_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	before := slice.clone(input, context.temp_allocator)
-	choice, zone, ok := settings.kept_read(input)
+	choice, zone, layers, ok := settings.kept_read(input)
 	if !slice.equal(before, input) {
 		return fuzz_broken(.Contract, "kept_read changed the bytes that it read")
 	}
 	// The model: what the rule says of these bytes.
-	model_ok := len(input) == size_of(settings.Kept_Settings)
-	record: settings.Kept_Settings
+	record, problem := chosen_values.read_record(input)
+	model_ok := problem == .None
 	defaults := settings.values_of(settings.choice_default())
 	model_values := defaults
-	if model_ok {
-		copy(mem.ptr_to_bytes(&record), input)
-		model_ok = record.magic == settings.KEPT_MAGIC && record.version == settings.KEPT_VERSION && record.count <= settings.SETTING_CAPACITY
-	}
+	model_zone := i32(0)
 	if model_ok {
 		for setting in settings.Setting {
-			if u32(setting) >= record.count {
-				continue // A setting that the record did not hold: its default.
-			}
-			model_values[setting] = record.values[setting]
-			if !settings.value_valid(setting, record.values[setting]) {
-				model_ok = false
+			word, found := chosen_values.find(record, settings.descriptions[setting].name)
+			if found && word <= u64(max(u32)) && settings.value_valid(setting, u32(word)) {
+				model_values[setting] = u32(word)
 			}
 		}
-	}
-	model_languages := settings.Language_List{locales = record.languages, count = record.language_count}
-	if model_ok {
-		if problem, _, _ := settings.language_list_valid(model_languages); problem != .None {
-			model_ok = false
+		if word, found := chosen_values.find(record, settings.TIME_ZONE_NAME); found && settings.zone_offset_minutes_allowed(word) {
+			model_zone = i32(cast(i64)word)
 		}
 	}
 	if ok != model_ok {
-		return fuzz_broken(.Model, "kept_read gives ok %v, and the record has ok %v: a value of no member must refuse the whole record", ok, model_ok)
+		return fuzz_broken(.Model, "kept_read gives ok %v, and chosen_values gives the problem %v", ok, problem)
 	}
-	if !ok {
-		if settings.values_of(choice) != defaults || zone != 0 || choice.languages != (settings.Language_List{}) {
-			return fuzz_broken(.Contract, "kept_read refuses the record and gives values")
+	if settings.values_of(choice) != model_values || zone != model_zone || choice.languages != (settings.Language_List{}) {
+		return fuzz_broken(.Model, "kept_read gives the values %v and the zone %d of a record of the values %v and the zone %d", settings.values_of(choice), zone, model_values, model_zone)
+	}
+	for setting in settings.Setting {
+		if (layers.values[setting] == .Chosen) != (model_ok && fuzz_kept_word_taken(record, setting)) {
+			return fuzz_broken(.Model, "kept_read gives the layer %v to the setting %v", layers.values[setting], setting)
 		}
-	} else {
-		if settings.values_of(choice) != model_values {
-			return fuzz_broken(.Model, "kept_read gives the values %v of a record of the values %v", settings.values_of(choice), model_values)
-		}
-		if choice.languages != model_languages {
-			return fuzz_broken(.Model, "kept_read gives %d languages of a record of %d languages", choice.languages.count, record.language_count)
-		}
-		if zone != settings.zone_offset_minutes_valid(record.zone_offset_minutes) {
-			return fuzz_broken(.Contract, "kept_read gives the zone %d of a record of the zone %d", zone, record.zone_offset_minutes)
-		}
-		kept := settings.kept_of(choice, zone)
-		again_choice, again_zone, again_ok := settings.kept_read(mem.ptr_to_bytes(&kept))
-		if !again_ok || settings.values_of(again_choice) != settings.values_of(choice) || again_zone != zone || again_choice.languages != choice.languages {
-			return fuzz_broken(.Round_Trip, "the record of kept_of reads as %v, %d, %v", settings.values_of(again_choice), again_zone, again_ok)
+	}
+	if ok {
+		changes := settings.kept_changes_of(settings.choice_default(), 0, choice, zone)
+		buffer: [chosen_values.HEADER_SIZE + (len(settings.Setting) + 1) * chosen_values.ENTRY_SIZE]u8
+		written, write_problem := chosen_values.write_record({}, changes.changes[:changes.count], buffer[:])
+		again_choice, again_zone, _, again_ok := settings.kept_read(buffer[:written])
+		if write_problem != .None || !again_ok || settings.values_of(again_choice) != settings.values_of(choice) || again_zone != zone {
+			return fuzz_broken(.Round_Trip, "the record of the changes reads as %v, %d, %v (%v)", settings.values_of(again_choice), again_zone, again_ok, write_problem)
 		}
 	}
 	// The text of a zone: "-00:00" is read as UTC, which is written
@@ -165,65 +153,67 @@ fuzz_settings_page_check :: proc(input: []u8) -> Fuzz_Verdict {
 	return FUZZ_PASSED
 }
 
+// fuzz_kept_word_taken says if the record holds a word for the setting
+// that its border takes.
+@(private = "file")
+fuzz_kept_word_taken :: proc(record: chosen_values.Record, setting: settings.Setting) -> bool {
+	word, found := chosen_values.find(record, settings.descriptions[setting].name)
+	return found && word <= u64(max(u32)) && settings.value_valid(setting, u32(word))
+}
+
+// fuzz_kept_record_seed appends the record of the changes to the seeds.
+@(private = "file")
+fuzz_kept_record_seed :: proc(seeds: ^[dynamic][]u8, changes: []chosen_values.Change) {
+	buffer: [chosen_values.HEADER_SIZE + 16 * chosen_values.ENTRY_SIZE]u8
+	written, problem := chosen_values.write_record({}, changes, buffer[:])
+	if problem != .None {
+		panic("modustool: a seed of the kept record does not fit its record")
+	}
+	append(seeds, slice.clone(buffer[:written]))
+}
+
 fuzz_kept_settings_seeds :: proc(seeds: ^[dynamic][]u8) {
-	// The record of the defaults and of each last value, then the same
-	// with the count of the values at its bound and one past it.
-	// The last value that the border of each setting takes: for the scale,
-	// 2.
-	values: [settings.Setting]u32
+	// The record of nothing, then of each last value that the border of
+	// each setting takes, with the zone at its bound.
+	fuzz_kept_record_seed(seeds, nil)
+	changes: [dynamic]chosen_values.Change
+	changes.allocator = context.temp_allocator
 	for setting in settings.Setting {
-		values[setting] = settings.word_of_value(setting, int(settings.descriptions[setting].value_count) - 1)
-		for values[setting] > 0 && !settings.value_valid(setting, values[setting]) {
-			values[setting] -= 1
+		word := settings.word_of_value(setting, int(settings.descriptions[setting].value_count) - 1)
+		for word > 0 && !settings.value_valid(setting, word) {
+			word -= 1
 		}
+		append(&changes, chosen_values.Change{name = settings.descriptions[setting].name, kind = .Choose, value = u64(word)})
 	}
-	last, _, last_ok := settings.choice_of_values(values)
-	if !last_ok {
-		panic("modustool: the last value of a setting names no value of it")
-	}
-	for record_choice, index in ([2]settings.Choice{settings.choice_default(), last}) {
-		kept := settings.kept_of(record_choice, index == 0 ? 0 : settings.ZONE_OFFSET_MINUTES_MOST)
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
-		kept.count = settings.SETTING_CAPACITY
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
-		kept.count = settings.SETTING_CAPACITY + 1
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
-	}
-	// A value one past the last value of each setting, which refuses the
-	// record whole; then that value past the count of an older record,
-	// which the record does not hold.
+	append(&changes, chosen_values.Change{name = settings.TIME_ZONE_NAME, kind = .Choose, value = u64(settings.ZONE_OFFSET_MINUTES_MOST)})
+	fuzz_kept_record_seed(seeds, changes[:])
+	// A word one past the last value of each setting, which holds as no
+	// choice; a name that this release does not know; a zone off its step.
 	for setting in settings.Setting {
-		kept := settings.kept_of(last, 0)
-		kept.values[setting] = values[setting] + 1
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
-		kept.count = u32(setting)
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
+		word := settings.word_of_value(setting, int(settings.descriptions[setting].value_count))
+		fuzz_kept_record_seed(seeds, {{name = settings.descriptions[setting].name, kind = .Choose, value = u64(word)}, {name = "a_later_setting", kind = .Choose, value = max(u64)}})
 	}
-	// A record with a full language list, then the same list with one
-	// language past the capacity and with a language twice.
+	fuzz_kept_record_seed(seeds, {{name = settings.TIME_ZONE_NAME, kind = .Choose, value = 7}})
+	// The record of the last values, one byte short and one byte long.
+	buffer: [chosen_values.HEADER_SIZE + 16 * chosen_values.ENTRY_SIZE]u8
+	written, _ := chosen_values.write_record({}, changes[:], buffer[:])
+	append(seeds, slice.clone(buffer[:written - 1]))
+	longer := make([]u8, written + 1)
+	copy(longer, buffer[:written])
+	append(seeds, longer)
+	// A list of languages as the page holds it: the page check reads it.
 	{
 		languages: settings.Language_List
 		for tag in ([?]string{"fr-CA", "fr", "en", "de", "es", "ja", "ar-EG-u-nu-latn", "zh-Hant-TW"}) {
 			locale, _, _ := language_tag.tag_read(tag)
 			languages, _ = settings.language_list_add(languages, locale)
 		}
-		with_languages := last
+		page: settings.Page
+		with_languages := settings.choice_default()
 		with_languages.languages = languages
-		kept := settings.kept_of(with_languages, 0)
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
-		kept.language_count = settings.LANGUAGE_LIST_CAPACITY + 1
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
-		kept.language_count = settings.LANGUAGE_LIST_CAPACITY
-		kept.languages[1] = kept.languages[0]
-		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
+		settings.write(&page, with_languages, 0, .Dark)
+		append(seeds, slice.clone(mem.ptr_to_bytes(&page)))
 	}
-	// A record of another version, one byte short and one byte long.
-	kept := settings.kept_of(last, 0)
-	kept.version = settings.KEPT_VERSION + 1
-	append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
-	append(seeds, slice.clone(mem.ptr_to_bytes(&kept)[:size_of(kept) - 1]))
-	longer := make([]u8, size_of(kept) + 1)
-	append(seeds, longer)
 	// The texts of the zones at the edges.
 	for text in ([?]string{"+00:00", "-00:00", "-12:00", "+14:00", "+14:15", "+05:45", "+08:60"}) {
 		append(seeds, slice.clone(transmute([]u8)text))
@@ -231,8 +221,8 @@ fuzz_kept_settings_seeds :: proc(seeds: ^[dynamic][]u8) {
 }
 
 fuzz_kept_settings_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) {
-	if len(input) >= size_of(settings.Kept_Settings) {
-		append(regions, Fuzz_Region{offset = 0, type = settings.Kept_Settings, count = 1})
+	if len(input) >= size_of(settings.Page) {
+		append(regions, Fuzz_Region{offset = 0, type = settings.Page, count = 1})
 	}
 }
 

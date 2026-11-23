@@ -15,7 +15,7 @@ import "modus:system"
 
 // The bound of the wait for the completion of a Plan_Roles: the core
 // answers at once, so only a core that hangs meets it.
-ROLES_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+ROLES_ANSWER_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // The roles page that the core lent, mapped.
 roles_page: ^rd.Plan_Roles_Set

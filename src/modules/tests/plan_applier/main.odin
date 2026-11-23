@@ -19,7 +19,7 @@
 // The last case is the plan that commits: settings_stand_in as the holder
 // of Settings, accepted, generation 1.
 //
-// The display takes a decision only PLAN_DISPLAY_ARM_MILLISECONDS after it
+// The display takes a decision only powerbox.CONSENT_ARM_MILLISECONDS after it
 // showed the difference: this process writes one line for each dialog when
 // that time passed after the answer of `apply`, which came after the
 // dialog showed, so a key that the tool presses after that line counts.
@@ -40,6 +40,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/powerbox"
 import "modus:contract/role_contract"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -117,7 +118,7 @@ apply :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, expecte
 @(private = "file")
 decision_wait :: proc "contextless" (plan_name: string, ticket: i64, asked_at: u64, generation_row: ^pr.Plan_Generation_Row, error: ^errors.Error_Record) -> (generation: i64, status: call_status.Call_Status) {
 	armed := false
-	deadline := asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
+	deadline := asked_at + powerbox.CONSENT_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		rows: [1]pr.Plan_Generation_Row
 		arguments := [1]isolated.Argument{{integer = u64(ticket)}}
@@ -128,7 +129,7 @@ decision_wait :: proc "contextless" (plan_name: string, ticket: i64, asked_at: u
 			return generation, status
 		}
 		now := system.time()
-		if !armed && now >= asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS {
+		if !armed && now >= asked_at + powerbox.CONSENT_ARM_MILLISECONDS {
 			armed = true
 			system.log_fact(.Info, Dialog_Armed{ticket = u64(ticket)}, plan_name)
 		}

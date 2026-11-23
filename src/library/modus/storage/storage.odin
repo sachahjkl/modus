@@ -123,9 +123,17 @@ Client :: struct {
 // this process. ok is false for a process with no grant of a store, or a
 // file of the service that is not a valid module.
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
-	client.ring_memory = ctx.handles[GRANT_RING]
-	client.region_memory = ctx.handles[GRANT_REGION]
-	client.service = ctx.handles[GRANT_SERVICE]
+	return open_of_handles(ctx.handles[GRANT_RING], ctx.handles[GRANT_REGION], ctx.handles[GRANT_SERVICE], ctx.values[VALUE_FILE_SIZE])
+}
+
+// open_of_handles opens a private store from the three handles and the size
+// of the file of the storage service that its starter gave in other places
+// of the context than the usual ones: the holder of the display, whose first
+// values are its screen, gets its role store this way.
+open_of_handles :: proc "contextless" (ring_memory, region_memory, service: system.Handle, file_size: u64) -> (client: Client, ok: bool) {
+	client.ring_memory = ring_memory
+	client.region_memory = region_memory
+	client.service = service
 	if client.ring_memory == 0 || client.region_memory == 0 {
 		return {}, false
 	}
@@ -143,7 +151,7 @@ open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) 
 	}
 	client.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
 	file_address := uintptr(FILE_ADDRESS)
-	client.file = ([^]u8)(file_address)[:ctx.values[VALUE_FILE_SIZE]]
+	client.file = ([^]u8)(file_address)[:file_size]
 	if module.validate(client.file) != .None {
 		return {}, false
 	}

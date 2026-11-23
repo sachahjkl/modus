@@ -475,6 +475,25 @@ Root_Command :: enum u32 {
 	// the serial in force, values[1] its generation. Only the process with
 	// the start grant Plans sends this command.
 	Plan_Roles = 32,
+	// Plan_Values gives the core the plan values of principal 0: the
+	// defaults, the locks and the plan-only values of each owner of
+	// settings (src/md/features/module_settings.md, "Plan records").
+	// values[0] is a root_delegation.Plan_Roles_Step: Page, Apply or
+	// Rollback; values[1..6] are 0. Its name is not read.
+	//
+	// Page gives the values pages: plan_values.SET_PAGES pages that the core
+	// makes once and keeps. The completion: values[0] a handle of them with
+	// Read and Write, given through the root ring, values[1] the generation
+	// in force. The sender writes a set of plan_values there.
+	//
+	// Apply and Rollback copy the set once out of the pages, check it whole
+	// (plan_values.set_check), and replace the values in one step: a refused
+	// set changes nothing. An owner gets the values at its next start. The
+	// completion: values[0] the generation. A refusal has the kind Refused
+	// (unit Records) and the plan_values.Set_Problem as the value found;
+	// Bad_State with no pages. Only the process with the start grant Plans
+	// sends this command.
+	Plan_Values = 33,
 }
 
 // values[5] of a Debug_Start: what it does.
@@ -694,6 +713,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Start_Edit             = .Root_Ring,
 	.Debug_Start            = .Debugger,
 	.Plan_Roles             = .Plans,
+	.Plan_Values            = .Plans,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -875,6 +895,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Start_Edit             = .Command,
 	.Debug_Start            = .Command,
 	.Plan_Roles             = .Command,
+	.Plan_Values            = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -1051,6 +1072,7 @@ root_command_names := [Root_Command]string {
 	.Start_Edit             = "Start_Edit",
 	.Debug_Start            = "Debug_Start",
 	.Plan_Roles             = "Plan_Roles",
+	.Plan_Values            = "Plan_Values",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1090,6 +1112,7 @@ root_first_argument_names := [Root_Command]string {
 	.Start_Edit             = "store",
 	.Debug_Start            = "name",
 	.Plan_Roles             = "override",
+	.Plan_Values            = "step",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1130,6 +1153,7 @@ root_second_argument_names := [Root_Command]string {
 	.Start_Edit             = "name",
 	.Debug_Start            = "",
 	.Plan_Roles             = "",
+	.Plan_Values            = "",
 }
 
 // command_of_record reads the command that an error record names: the

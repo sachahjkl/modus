@@ -44,7 +44,7 @@ REQUEST_BUFFER_BYTES :: REQUEST_BUFFER_PAGES * system.PAGE_SIZE
 // The largest response that the service reads: the display info.
 RESPONSE_COPY_BYTES :: virtio_gpu.RESP_DISPLAY_INFO_SIZE
 MAX_CAPSETS_PROBED :: u32(16)
-DEVICE_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+DEVICE_ANSWER_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // The one Venus context of the service and its command ring blob.
 VENUS_CONTEXT_ID :: u32(1)

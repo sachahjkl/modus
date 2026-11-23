@@ -439,6 +439,10 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 			status = .Bad_Operation
 			break each
 		}
+		// An absent optional parameter carries nothing to lend.
+		if module.parameter_optional(function, index) && arguments[index].presence != .Given {
+			continue
+		}
 		switch type {
 		case .None, .Integer, .Text, .Enum:
 			// No handle and no memory object: nothing to lend.

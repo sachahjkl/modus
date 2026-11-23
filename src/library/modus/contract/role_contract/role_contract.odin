@@ -114,8 +114,14 @@ Required_Parameter :: struct {
 	type:        module.Type,
 	direction:   module.Direction,
 	detail:      u32,
-	record_name: string,
-	optional:    bool,
+	record_name: string, // A Record or a Table: the name of its record; an Enum: the name of its enum type.
+	optional:    bool, // A call may leave it out: its need is Optional.
+	// An Integer setter parameter: the range that the file of the holder
+	// gives in its table Parameter_Settings, from the constants of the
+	// contract (src/md/features/module_settings.md).
+	has_range:   bool,
+	least:       i64,
+	most:        i64,
 }
 
 // One required export of an Exports face in a role contract.
@@ -403,7 +409,11 @@ canonical_encode :: proc "contextless" (contract: Role_Contract, buffer: []u8) -
 				if !result_ok {
 					return 0, .Malformed_Contract
 				}
-				if module.call_argument_count(len(required_export.parameters), u8(result_type), required_export.has_error_record) > module.PARAMETER_CAPACITY {
+				words := len(required_export.parameters)
+				for parameter in required_export.parameters {
+					words += parameter.optional ? 1 : 0
+				}
+				if len(required_export.parameters) > module.PARAMETER_CAPACITY || module.call_argument_count(words, u8(result_type), required_export.has_error_record) > module.CALL_WORD_CAPACITY {
 					return 0, .Malformed_Contract
 				}
 				writer_bytes(&writer, required_export.name)
@@ -426,6 +436,9 @@ canonical_encode :: proc "contextless" (contract: Role_Contract, buffer: []u8) -
 					writer_u32(&writer, parameter.detail)
 					writer_bytes(&writer, parameter.record_name)
 					writer_byte(&writer, parameter.optional ? 1 : 0)
+					writer_byte(&writer, parameter.has_range ? 1 : 0)
+					writer_u64(&writer, cast(u64)parameter.least)
+					writer_u64(&writer, cast(u64)parameter.most)
 				}
 			}
 		case .Ring:
@@ -501,12 +514,29 @@ check_export_signature :: proc "contextless" (module_bytes: []u8, required: Requ
 		if module.parameter_optional(described, index) != expected.optional {
 			return .Wrong_Signature, .Parameter_Detail, u32(index + 1)
 		}
+		setting, has_setting := module.parameter_setting(module_bytes, export_index, index)
+		found_range := has_setting && setting.has_range
+		if found_range != expected.has_range || found_range && (setting.least != expected.least || setting.most != expected.most) {
+			return .Wrong_Signature, .Parameter_Range, u32(index + 1)
+		}
 		if found_type == .Record || found_type == .Table {
 			record_description, record_ok := module.record_type(module_bytes, described.parameter_details[index])
 			if !record_ok {
 				return .Malformed_Module, .None, u32(index + 1)
 			}
 			if len(expected.record_name) > 0 && module.string_at(module_bytes, record_description.name_offset, record_description.name_count) != expected.record_name {
+				return .Wrong_Signature, .Parameter_Detail, u32(index + 1)
+			}
+		} else if found_type == .Enum {
+			// The detail of an Enum parameter holds indexes of the module
+			// itself (its enum and its getter): two holders of one role
+			// number them as they like. The contract names the enum.
+			enum_index, _ := module.enum_detail_of(described.parameter_details[index])
+			enum_description, enum_problem := module.enum_type(module_bytes, enum_index)
+			if enum_problem != .None {
+				return .Malformed_Module, .None, u32(index + 1)
+			}
+			if len(expected.record_name) > 0 && module.string_at(module_bytes, enum_description.name_offset, enum_description.name_count) != expected.record_name {
 				return .Wrong_Signature, .Parameter_Detail, u32(index + 1)
 			}
 		} else if described.parameter_details[index] != expected.detail {

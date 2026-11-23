@@ -333,8 +333,8 @@ member_texts_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 }
 
 // An Enum parameter names an enum of the parts and a getter among the
-// exports, an optional bit is on an Enum parameter, an Enum result names an
-// enum, and a member has a name of a member: each edge is refused, and the
+// exports, an optional parameter is of a type that one word carries, an
+// Enum result names an enum, and a member has a name of a member: each edge is refused, and the
 // written file is checked by the readers of the enums last.
 @(test)
 enums_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
@@ -370,13 +370,19 @@ enums_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 	expect_problem(t, parts, .No_Getter)
 	storage.details[1], _ = module.enum_detail_make(1, 1)
 	expect_last_check_refusal(t, parts, .Enum_Not_Valid, .Functions, 1)
-	// An optional bit on a parameter that is no Enum, and past the
+	// An optional Text, Record, Table or Bytes, and more needs than
 	// parameters.
 	parts = enum_parts(&storage, enums[:])
-	storage.exports[1].optional_parameters = 0b01
-	expect_problem(t, parts, .Bad_Optional)
-	storage.exports[1].optional_parameters = 0b100
-	expect_problem(t, parts, .Bad_Optional)
+	needs := [3]module.Parameter_Need{.Optional, .Required, .Required}
+	for type in ([?]module.Type{.Text, .Record, .Table, .Bytes}) {
+		storage.parameters[0] = type
+		storage.exports[1].parameter_needs = needs[:1]
+		expect_refusal(t, parts, .Need_Not_Valid, .Exports, 1)
+	}
+	parts = enum_parts(&storage, enums[:])
+	storage.exports[1].parameter_needs = needs[:]
+	expect_refusal(t, parts, .Parameter_Lists_Disagree, .Exports, 1)
+	storage.exports[1].parameter_needs = nil
 	// An Enum result of no enum: 0, one past the last, the largest word,
 	// and the enum with the bits of a getter, which a result never has.
 	// Each is an enum refusal, never a refusal of a record.
@@ -390,22 +396,61 @@ enums_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 	enum_result := write_to_memory(t, parts)
 	delete(enum_result)
 	// A member with no name of a member, then a member that the reader
-	// refuses in the written file: the absent word.
+	// refuses in the written file: a value given twice.
 	parts = enum_parts(&storage, enums[:])
 	members[1].name = "Fast"
 	expect_refusal(t, parts, .Not_A_Name, .Members, 0)
-	members[1] = {"fast", 0xFFFF_FFFF}
+	members[1] = {"fast", 0}
 	expect_last_check_refusal(t, parts, .Enum_Not_Valid, .Enums, 0)
 	// The success comes last: an optional Enum parameter, read back.
 	members[1] = {"fast", 1}
 	parts = enum_parts(&storage, enums[:])
-	storage.exports[1].optional_parameters = 0b10
+	optional_second := [2]module.Parameter_Need{.Required, .Optional}
+	storage.exports[1].parameter_needs = optional_second[:]
 	file := write_to_memory(t, parts)
 	defer delete(file)
 	function, _ := module.function(file, 2)
 	described, problem := module.enum_type(file, 1)
 	value, found := module.enum_value_of_name(file, described, "fast")
 	testing.expect(t, problem == .None && found && value == 1 && module.parameter_optional(function, 1) && !module.parameter_optional(function, 0))
+	storage.exports[1].parameter_needs = nil
+}
+
+// A row of the settings of a parameter that a reader refuses is refused
+// at its row: a range on a parameter that is no Integer, an export past
+// the exports, two rows of one parameter. The success comes last: a range
+// read back. An optional parameter counts two words of the call form.
+@(test)
+parameter_settings_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
+	storage: Test_Storage
+	parts := test_parts(&storage)
+	storage.parameters = {.Integer, .Integer}
+	ranged := module.Parameter_Setting{export_index = 2, parameter = 0, has_range = true, least = 1000, most = 60000}
+	Case :: struct {
+		rows:    []module.Parameter_Setting,
+		problem: module.Parameter_Setting_Problem,
+		row:     u64,
+	}
+	cases := [?]Case {
+		{{{export_index = 3, parameter = 0, has_range = true}}, .No_Export, 0},
+		{{{export_index = 2, parameter = 0, has_range = true, least = 2, most = 1}}, .Bad_Range, 0},
+		{{ranged, ranged}, .Out_Of_Order, 1},
+	}
+	for item in cases {
+		parts.parameter_settings = item.rows
+		expect_last_check_refusal(t, parts, .Parameter_Setting_Not_Valid, .Parameter_Settings, item.row)
+		_, needed := file_size_needed(parts)
+		_ = needed
+	}
+	parts.parameter_settings = {ranged}
+	needs := [2]module.Parameter_Need{.Optional, .Optional}
+	storage.exports[1].parameter_needs = needs[:]
+	file := write_to_memory(t, parts)
+	defer delete(file)
+	row, found := module.parameter_setting(file, 2, 0)
+	testing.expect(t, found && row.has_range && row.least == 1000 && row.most == 60000)
+	function, _ := module.function(file, 2)
+	testing.expect_value(t, module.parameter_word_count(function), 4)
 }
 
 @(test)
@@ -421,23 +466,30 @@ the_call_form_has_at_most_its_capacity :: proc(t: ^testing.T) {
 	exports := [?]Export_Part{{name = "sum", result = .Integer}}
 	parts := Module_Parts{segments = segments[:], exports = exports[:]}
 
-	// One past the capacity, then the capacity with the buffer of a Text
-	// result, then with an error record.
+	// One parameter past the capacity, then the capacity of parameters with
+	// four optional ones (sixteen words) and the buffer of a Text result:
+	// seventeen words.
 	exports[0].parameters = parameters[:module.PARAMETER_CAPACITY + 1]
 	exports[0].parameter_names = names[:module.PARAMETER_CAPACITY + 1]
 	expect_refusal(t, parts, .Too_Many_Arguments, .Exports, 0)
 	exports[0].parameters = parameters[:module.PARAMETER_CAPACITY]
 	exports[0].parameter_names = names[:module.PARAMETER_CAPACITY]
+	needs := [module.CALL_WORD_CAPACITY - module.PARAMETER_CAPACITY]module.Parameter_Need{}
+	for &need in needs {
+		need = .Optional
+	}
+	exports[0].parameter_needs = needs[:]
 	exports[0].result = .Text
 	expect_refusal(t, parts, .Too_Many_Arguments, .Exports, 0)
 
-	// The capacity: its last parameter is written.
+	// The capacity: sixteen words, its last parameter is written.
 	exports[0].result = .Integer
 	file := write_to_memory(t, parts)
 	defer delete(file)
 	function, ok := module.function(file, 1)
 	testing.expect(t, ok)
 	testing.expect_value(t, int(function.parameter_count), module.PARAMETER_CAPACITY)
+	testing.expect_value(t, module.parameter_word_count(function), module.CALL_WORD_CAPACITY)
 	testing.expect_value(t, module.string_at(file, function.parameter_names[module.PARAMETER_CAPACITY - 1], u32(function.parameter_name_counts[module.PARAMETER_CAPACITY - 1])), "value")
 }
 

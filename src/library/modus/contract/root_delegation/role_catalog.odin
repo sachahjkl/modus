@@ -342,6 +342,24 @@ settings_faces := [1]role_contract.Required_Face {
 			result            = .Enum,
 			has_error_record  = false,
 		},
+		// The settings of the role are kept by the holder in the store of
+		// the role: a reset makes a choice absent, and the state gives the
+		// layer of each value (src/md/features/module_settings.md).
+		{
+			name              = "reset",
+			parameters        = {{type = .Enum, direction = .Read, record_name = "Setting"}},
+			result            = .Integer,
+			has_error_record  = true,
+			error_record_name = "Error_Record",
+		},
+		{
+			name               = "settings_state",
+			parameters         = nil,
+			result             = .Table,
+			result_record_name = "Setting_State",
+			has_error_record   = true,
+			error_record_name  = "Error_Record",
+		},
 	}},
 }
 

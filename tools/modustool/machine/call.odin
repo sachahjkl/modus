@@ -469,16 +469,21 @@ call_prepare_values :: proc(client: ^Call_Client, service, export: string, argum
 		if argument.is_member && type != .Enum {
 			return {}, fmt.tprintf("the parameter %s of %s.%s is %s, the argument is a member of an enum", name, service, export, parameter_type_name(file, function, number))
 		}
+		// An optional parameter: Absent when the call leaves it out, as the
+		// console gives it; Given before its value otherwise.
+		if module.parameter_optional(function, number) {
+			if !given[number] {
+				encoded[number] = {presence = .Absent}
+				continue
+			}
+			encoded[number].presence = .Given
+		}
 		switch type {
 		case .Enum:
 			enum_index, _ := module.enum_detail_of(function.parameter_details[number])
 			described, problem := module.enum_type(file, enum_index)
 			if problem != .None {
 				return {}, fmt.tprintf("the parameter %s of %s.%s names an enum that the module file does not describe: %v", name, service, export, problem)
-			}
-			if !given[number] {
-				encoded[number] = {integer = u64(module.enum_absent_word(described))}
-				break
 			}
 			if !argument.is_member {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is the enum %s: give one of its members, %s", name, service, export, module.enum_name(file, described), enum_members_text(file, described))
@@ -487,17 +492,17 @@ call_prepare_values :: proc(client: ^Call_Client, service, export: string, argum
 			if !found {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is the enum %s, which has no member %s: its members are %s", name, service, export, module.enum_name(file, described), argument.text, enum_members_text(file, described))
 			}
-			encoded[number] = {integer = u64(value)}
+			encoded[number].integer = u64(value)
 		case .Integer:
 			if argument.is_text {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is an Integer, the argument is a Text", name, service, export)
 			}
-			encoded[number] = {integer = u64(argument.integer)}
+			encoded[number].integer = u64(argument.integer)
 		case .Text:
 			if !argument.is_text {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is a Text, the argument is an Integer", name, service, export)
 			}
-			encoded[number] = {text = transmute([]u8)argument.text}
+			encoded[number].text = transmute([]u8)argument.text
 		case .Table, .Bytes:
 			// The answer of the remote service has one result place: the
 			// rows of a Change or Append table would not come back.
@@ -541,6 +546,10 @@ call_prepare_values :: proc(client: ^Call_Client, service, export: string, argum
 	field := u64(0)
 	details_end := u64(0)
 	for word, number in function.parameters[:function.parameter_count] {
+		// The Presence word of an optional parameter comes before its field.
+		if module.parameter_optional(function, number) {
+			field += 8
+		}
 		if has_details && number == details_index {
 			details_end = field + isolated.field_size(word)
 		}

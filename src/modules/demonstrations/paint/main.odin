@@ -1347,7 +1347,7 @@ events_take :: proc "contextless" (window: ^display.Window) {
 			if display.surface_resize(window, event.width, event.height) == .Ok {
 				interface.draw_whole_window_next(drawing)
 			}
-		case .Settings_Changed, .Surface_Answer:
+		case .Presentation, .Surface_Answer:
 			interface.draw_whole_window_next(drawing)
 		case .Copy_Asked:
 			drawing.input.copy_asked = true

@@ -183,7 +183,9 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if name == "unlock" && (unlock_run.stage != .Starting || find("unlock") != nil) {
 		return .Bad_State
 	}
-	work.start_grant_set = start_grant_set_of(name)
+	// The grants of a role follow its holder: a holder that the plan names
+	// gets the row of the role (role_policy.grant_row_name_of_module).
+	work.start_grant_set = start_grant_set_of(role_policy.grant_row_name_of_module(&role_holder_names, name))
 	// A replay holds no connection, no ring to another process and no
 	// right of the machine (src/md/features/record_and_replay.md, "The
 	// replay"): its start grant set is empty.
@@ -583,8 +585,15 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	if .Start_Policy in grants {
 		start_policy_pages_give(work)
 	} else if .Terminal not_in grants {
-		text_settings_give(work.mappings[:], &work.mapping_count, &work.values)
+		// The writer of the settings and the date service read the settings
+		// of the machine; each other process draws with its presentation
+		// record (src/md/features/module_settings.md).
+		page := .Settings in grants || .Clock in grants ? Text_Settings_Page.Machine : Text_Settings_Page.Presentation
+		text_settings_give(work.mappings[:], &work.mapping_count, &work.values, page, work.slot)
 	}
+	// The plan values of the owner of the module: its defaults and its
+	// locks, read-only, written at this start (plan_values.odin).
+	plan_values_page_give(work.slot, work.name, work.mappings[:], &work.mapping_count, &work.values)
 	if work.edit_target_page != 0 {
 		start_mapping_add(work, "the target of edit", {memory = work.edit_target_page, address = fixed_addresses.EDIT_TARGET_PAGE_ADDRESS, first = 0, page_count = 1})
 		system.range_mapped_put(&work.values, .Edit_Target_Page)

@@ -31,6 +31,8 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 		{.Module_Files, MODULE_FILES_ADDRESS},
 		{.Pointer_Themes, POINTER_THEMES_ADDRESS},
 		{.Settings_Page, SETTINGS_PAGE_ADDRESS},
+		{.Presentation_Page, PRESENTATION_PAGE_ADDRESS},
+		{.Plan_Values_Page, PLAN_VALUES_PAGE_ADDRESS},
 		{.Date_Page, DATE_PAGE_ADDRESS},
 		{.Storage_File, STORAGE_FILE_ADDRESS},
 		{.Module_Tables, MODULE_TABLES_ADDRESS},
@@ -79,8 +81,8 @@ the_set_of_the_mapped_ranges :: proc(t: ^testing.T) {
 }
 
 // The slots of the ranges that left: no member has their values. The
-// slots 3, 4, 5, 9 and 10 held the glyph caches of the boot image.
-free_slots := [6]uint{3, 4, 5, 9, 10, 13}
+// slots 5, 9 and 10 held the glyph caches of the boot image.
+free_slots := [4]uint{5, 9, 10, 13}
 
 // free_slot_bits gives the bits of the free slots.
 free_slot_bits :: proc() -> (bits: u64) {
@@ -101,6 +103,8 @@ the_members_keep_their_values :: proc(t: ^testing.T) {
 		{.Module_Files, 0},
 		{.Pointer_Themes, 1},
 		{.Settings_Page, 2},
+		{.Presentation_Page, 3},
+		{.Plan_Values_Page, 4},
 		{.Date_Page, 6},
 		{.Storage_File, 7},
 		{.Module_Tables, 8},

@@ -43,6 +43,7 @@ expected_fields :: proc() -> []Expected_Field {
 	enum_type: module.Enum_Type
 	member: module.Member
 	member_text: module.Member_Text
+	parameter_setting: module.Parameter_Setting
 	compartment_word: output.Compartment_Word
 	end_words: output.End_Words
 	list_head: output.Wiring_List_Head
@@ -113,7 +114,8 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Function", "parameters", offset_of(module.Function, parameters), size_of(function.parameters)},
 		{"module.Function", "parameter_name_counts", offset_of(module.Function, parameter_name_counts), size_of(function.parameter_name_counts)},
 		{"module.Function", "parameter_directions", offset_of(module.Function, parameter_directions), size_of(function.parameter_directions)},
-		{"module.Function", "optional_parameters", offset_of(module.Function, optional_parameters), size_of(function.optional_parameters)},
+		{"module.Function", "parameter_needs", offset_of(module.Function, parameter_needs), size_of(function.parameter_needs)},
+		{"module.Function", "reserved", offset_of(module.Function, reserved), size_of(function.reserved)},
 		{"module.Function", "text_offset", offset_of(module.Function, text_offset), size_of(function.text_offset)},
 		{"module.Function", "text_count", offset_of(module.Function, text_count), size_of(function.text_count)},
 		{"module.Function", "parameter_details", offset_of(module.Function, parameter_details), size_of(function.parameter_details)},
@@ -187,6 +189,14 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Member_Text", "text_count", offset_of(module.Member_Text, text_count), size_of(member_text.text_count)},
 		{"module.Member_Text", "tag_offset", offset_of(module.Member_Text, tag_offset), size_of(member_text.tag_offset)},
 		{"module.Member_Text", "tag_count", offset_of(module.Member_Text, tag_count), size_of(member_text.tag_count)},
+		{"module.Parameter_Setting", "export_index", offset_of(module.Parameter_Setting, export_index), size_of(parameter_setting.export_index)},
+		{"module.Parameter_Setting", "parameter", offset_of(module.Parameter_Setting, parameter), size_of(parameter_setting.parameter)},
+		{"module.Parameter_Setting", "has_range", offset_of(module.Parameter_Setting, has_range), size_of(parameter_setting.has_range)},
+		{"module.Parameter_Setting", "reserved", offset_of(module.Parameter_Setting, reserved), size_of(parameter_setting.reserved)},
+		{"module.Parameter_Setting", "least", offset_of(module.Parameter_Setting, least), size_of(parameter_setting.least)},
+		{"module.Parameter_Setting", "most", offset_of(module.Parameter_Setting, most), size_of(parameter_setting.most)},
+		{"module.Parameter_Setting", "choices_export", offset_of(module.Parameter_Setting, choices_export), size_of(parameter_setting.choices_export)},
+		{"module.Parameter_Setting", "instances_export", offset_of(module.Parameter_Setting, instances_export), size_of(parameter_setting.instances_export)},
 		{"output.Compartment_Word", "kind", offset_of(output.Compartment_Word, kind), size_of(compartment_word.kind)},
 		{"output.Compartment_Word", "serial", offset_of(output.Compartment_Word, serial), size_of(compartment_word.serial)},
 		{"output.End_Words", "end", offset_of(output.End_Words, end), size_of(end_words.end)},

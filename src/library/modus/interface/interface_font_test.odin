@@ -666,7 +666,7 @@ the_baseline_of_a_font_follows_its_face :: proc(t: ^testing.T) {
 }
 
 // The font of an interface text follows the settings page at each read,
-// with no event Settings_Changed between two reads: the case of a window
+// with no event Presentation between two reads: the case of a window
 // that read the page before the boot pass of `settings` and made its
 // surface after it, so that the compositor never told it. The setting
 // `spleen` gives a text in the font of the cells, in Spleen; `vector`

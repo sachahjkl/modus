@@ -20,19 +20,9 @@ build_display_module :: proc(t: ^testing.T) -> []u8 {
 	segments := [1]module_file_writer.Segment_Part {
 		{memory_offset = 0, memory_size = module.PAGE_SIZE, flags = {.Read, .Execute}, data = code[:]},
 	}
-	field := [1]module_file_writer.Field_Description{{name = "v", offset = 0, type = .Integer, detail = 8}}
-	records := [4]module_file_writer.Record_Description {
-		{name = "Pointer", size = 8, fields = field[:]},
-		{name = "Window", size = 8, fields = field[:]},
-		{name = "Screen", size = 8, fields = field[:]},
-		{name = "Error_Record", size = 8, fields = field[:]},
-	}
-	exports := [3]module_file_writer.Export_Part {
-		{name = "pointer", code_offset = 0, result = .Table, result_detail = 1, error_record = 4},
-		{name = "windows", code_offset = 0, result = .Table, result_detail = 2, error_record = 4},
-		{name = "screen", code_offset = 0, result = .Table, result_detail = 3, error_record = 4},
-	}
-	parts := module_file_writer.Module_Parts{segments = segments[:], exports = exports[:], records = records[:]}
+	display_parts: role_contract.Display_Module_Parts
+	role_contract.display_module_parts_write(&display_parts)
+	parts := module_file_writer.Module_Parts{segments = segments[:], exports = display_parts.exports[:], records = display_parts.records[:], enums = display_parts.enums[:], parameter_settings = display_parts.set_ranges[:]}
 	needed, sr := module_file_writer.file_size_needed(parts)
 	testing.expect_value(t, sr.refusal, module_file_writer.Refusal.None)
 	buf := make([]u8, int(needed), context.temp_allocator)

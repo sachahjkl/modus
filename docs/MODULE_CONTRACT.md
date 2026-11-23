@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/modus/contract/module/format.odin` is version 7 of the format at the level of bytes.
+`src/library/modus/contract/module/format.odin` is version 8 of the format at the level of bytes. A reader refuses a file of another version: before 1.0 no file of an earlier version is read.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -153,17 +153,18 @@ The loader reads none of these tables: they are for a caller that must know the 
 
 | Table | One record describes |
 |---|---|
-| Functions | One export (`module.Function`, 168 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (12 at most), the parameters that a call may leave out, the type and the detail of its result, and the description of its error record (0: it gives none) |
+| Functions | One export (`module.Function`, 180 bytes): its name, one line of help, its documentation text, the name, the type, the detail, the direction and the need (Required or Optional) of each of its parameters (12 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
 | Records | One record that an export receives or gives: its name, its size (256 bytes at most) and the range of its fields |
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle, Text or Bytes), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), its detail (the size of an integer, a text or bytes, the rights of a handle), and its field kind with the contract enum of a status (section 5, "The kind of a field") |
 | Enums | One enum that an export takes or gives: the name of its type, the range of its members, its size and its sign (section 5, "Enum parameters"). The file has the table when an export has an Enum |
 | Members | One member of an enum: its name and its value |
 | Member_Texts | The display text of one member for one language tag, in the order of the enum, the member and the tag (section 5, "The display text of a member"). The file has the table when a module gives a text |
+| Parameter_Settings | The settings of one parameter: the range of an Integer, the export that gives its choices, and the export that gives the instances that the first parameter names, in the order of the export and of the parameter (section 5, "Optional parameters and the settings of a parameter"). The file has the table when an export has one |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
-```byte-layout module.Function module.Record module.Field module.Documentation module.Enum_Type module.Member module.Member_Text
-module.Function, 168 bytes: one record of the table Functions
+```byte-layout module.Function module.Record module.Field module.Documentation module.Enum_Type module.Member module.Member_Text module.Parameter_Setting
+module.Function, 180 bytes: one record of the table Functions
 offset  size  field                  type
      0     4  name_offset            u32
      4     4  name_count             u32
@@ -175,12 +176,13 @@ offset  size  field                  type
     66    12  parameters             [PARAMETER_CAPACITY]u8
     78    12  parameter_name_counts  [PARAMETER_CAPACITY]u8
     90    12  parameter_directions   [PARAMETER_CAPACITY]u8
-   102     2  optional_parameters    u16
-   104     4  text_offset            u32
-   108     4  text_count             u32
-   112    48  parameter_details      [PARAMETER_CAPACITY]u32
-   160     4  result_detail          u32
-   164     4  error_record           u32
+   102    12  parameter_needs        [PARAMETER_CAPACITY]u8
+   114     2  reserved               u16
+   116     4  text_offset            u32
+   120     4  text_count             u32
+   124    48  parameter_details      [PARAMETER_CAPACITY]u32
+   172     4  result_detail          u32
+   176     4  error_record           u32
 
 module.Record, 24 bytes: one record of the table Records
 offset  size  field        type
@@ -235,6 +237,17 @@ offset  size  field          type
     12     4  text_count     u32
     16     4  tag_offset     u32
     20     4  tag_count      u32
+
+module.Parameter_Setting, 32 bytes: one record of the table Parameter_Settings
+offset  size  field             type
+     0     4  export_index      u32
+     4     1  parameter         u8
+     5     1  has_range         bool
+     6     2  reserved          u16
+     8     8  least             i64
+    16     8  most              i64
+    24     4  choices_export    u32
+    28     4  instances_export  u32
 ```
 
 A type is one byte, the value of a member of `module.Type`: Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The fields `result`, `parameters` and `type` hold the byte, not the enum: a reader takes each byte through `module.type_of_word` (or `function_result_type`, `function_parameter_type`, `field_type`), which refuses a byte that names no type, and never casts it. The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
@@ -545,7 +558,7 @@ One package writes the bytes of a module file: the contract package `modus:contr
 - **The memory.** `file_size_needed(parts)` gives the bytes of the file. `write(parts, output)` writes into the memory of the caller, and allocates nothing. Memory that is too small gives `Output_Too_Small` with the size that the file needs, and no byte changes.
 - **What it computes.** The header with the entry (the export `entry`) and the memory size, the directory, each table on 8 bytes, the string table, the rebase table in its bitmap form, and the data of each segment on its own pages with its zero bytes at the end not stored. A segment that is read-only after the load and that no rebase and no import slot writes becomes a constant segment: a part of the shared code of section 2.
 - **The refusals.** A refusal is a `Refusal_Record`: a member of `Refusal`, the table of the part, the index of the part in its list, and a value. The writer refuses a table past its bound (`Table_Past_Bound`: more than 2³² − 1 records with record 0, or a string table of more bytes), a name that is not 1 to 255 ASCII letters, digits and `_` with no digit first (`Not_A_Name`), two exports with one name, a Record or Table parameter or result or an error record that names no record (`Export_Without_Description`), a call form past 12 arguments, an export outside a segment with Execute, segments off pages, past 64 bits, longer than their memory, out of order or on one page (`Segment_Overlap`), a segment with Execute that the loader writes, an import slot, a rebase or an own-hash place outside writable data, rebases out of order or twice, a fact with the key 0, a key out of order, no record or no template, more than `module.RECORD_STREAM_INDEX_MOST` record outputs or record inputs (`Record_Streams_Past_Bound`), a record stream whose name is not a name (`Not_A_Name`) or whose record or terms name no record (`Record_Stream_Without_Description`), and the place of a record stream that is not 0 and not 4 aligned bytes in a segment with Write, no Execute and not `Read_Only_After_Load` (`Record_Stream_Place_Not_Writable`).
-- **The last check.** The written file passes `module.validate`, `module.function`, `module.record_type` and `module.fact` read each description, and `module.record_streams_check` takes the record streams: the order of their names, no name in both tables, a generic record output beside one generic record input. A file that a reader refuses gives `Record_Not_Valid`, `Fact_Not_Valid`, `Record_Streams_Not_Valid` (the row and the `module.Record_Stream_Fault`) or `Written_File_Not_Valid` (a place of a record stream that meets another write of a loader gives `module.Error.Bad_Record_Stream_Place`), and its bytes are set to zero. The file has the version 5 of the format (`module.VERSION`).
+- **The last check.** The written file passes `module.validate`, `module.function`, `module.record_type` and `module.fact` read each description, and `module.record_streams_check` takes the record streams: the order of their names, no name in both tables, a generic record output beside one generic record input. A file that a reader refuses gives `Record_Not_Valid`, `Fact_Not_Valid`, `Record_Streams_Not_Valid` (the row and the `module.Record_Stream_Fault`) or `Written_File_Not_Valid` (a place of a record stream that meets another write of a loader gives `module.Error.Bad_Record_Stream_Place`), and its bytes are set to zero. The file has the version of the format that `module.VERSION` gives.
 
 The tool keeps what reads its input: the linked ELF file, the Odin sources and the DWARF of the debug object. It reads the record streams from the sources and the place of each variable from the symbols of the linked file (`record_stream_place_of_elf` in `convert.odin`), and passes both to the writer, so a program of modus that writes a module writes its streams through the same code. The design: `src/md/features/first_compiler.md`, "1. The module file writer".
 
@@ -951,7 +964,7 @@ On x86-64 this is the System V AMD64 assignment:
 | Item | Rule |
 |---|---|
 | Parameters | Scalars only: an integer of 64 bits or less, a `f32` or `f64`, an address, a handle |
-| Integer parameters | Up to 12 (`module.PARAMETER_CAPACITY`). The first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order. The 7th to the 12th on the stack, one word of 8 bytes each: the 7th at the stack pointer of the call, the 8th 8 bytes above it, and so on |
+| Integer parameters | Up to 16 words (`module.CALL_WORD_CAPACITY`), for at most 12 parameters (`module.PARAMETER_CAPACITY`). The first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order. The 7th to the 16th on the stack, one word of 8 bytes each: the 7th at the stack pointer of the call, the 8th 8 bytes above it, and so on |
 | Float parameters | Up to 8, in `xmm0` to `xmm7`, in order |
 | Results | Up to 2 integers in `rax`, `rdx`, and up to 2 floats in `xmm0`, `xmm1` |
 | A record, a slice, a string, a variant | Passed as the address of memory that the caller owns. Never by value |
@@ -982,7 +995,7 @@ The description of a function is its list of parameters and results, each with a
 
 - **Direct call**: the values go in registers, as above.
 - **Isolated call**: the argument record is derived by rule: one field per parameter, in order. The results travel in a completion record. The derivation is mechanical; nobody writes a second encoding.
-- **One generic entry routine**: Because every parameter is a scalar, one small routine loads 6 integer registers and 8 float registers from two arrays, writes the integers 7 to 12 in six words of stack, and calls the export. It always writes the six words: a callee reads the words that it has, so the routine needs no count and no description. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `src/library/modus/system/enter.asm`: 44 instructions.
+- **One generic entry routine**: Because every parameter is a scalar, one small routine loads 6 integer registers and 8 float registers from two arrays, writes the integers 7 to 16 in ten words of stack, and calls the export. It always writes the ten words: a callee reads the words that it has, so the routine needs no count and no description. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `src/library/modus/system/enter.asm`: 44 instructions.
 
 ### Why an export takes more than six arguments
 
@@ -1252,7 +1265,7 @@ A library module (`glossary/desktop.md`) is a module that holds code that many m
 - An export does a whole piece of work on tables of the caller: "find the damage of this frame", "draw this draw table into these pixels". A direct call passes the address of each table place, and copies nothing (section "Tables and bytes as parameters", form (i)).
 - An export is not one small step that a caller repeats many times for one result. Such a step needs an adapter on each side of the border, and the adapter costs more than the call: one element of the interface through the adapter of `interface_module` costs about 100 ns more than the element compiled in, and a call through an import slot costs 2.4 ns (`INTERFACE.md`, section 7).
 - A parameter that the description cannot carry by its kind (a record that holds an address, a slice by value, a procedure value) is a sign that the border is in the wrong place, not a reason for a second call form. The description stays the one form: the same export serves a direct call, a call host and a service (P12, P19).
-- The count of the parameters is not such a sign. The description describes each export completely at each count, up to 12 arguments (section 4, "Why an export takes more than six arguments"). An export takes each table of its work as its own parameter: no record and no second call carries a table that has no place.
+- The count of the parameters is not such a sign. The description describes each export completely at each count, up to 12 parameters and 16 words of the call form (section 4, "Why an export takes more than six arguments"). An export takes each table of its work as its own parameter: no record and no second call carries a table that has no place.
 - The version of a record whose values have a meaning that the description does not hold (a kind of draw record) is in the name of each export that reads it: `execute_draw_table_in_rectangles_20`. Another version is another name, so a replacement with another version fails the check by name.
 
 **What stays compiled into each module, and why.**
@@ -1372,7 +1385,8 @@ The description of an export names each parameter and the result with one member
 
 | Limit | Value |
 |---|---|
-| Arguments of one export | 12 (`PARAMETER_CAPACITY`): its parameters, the buffer or the place of a result, and the address of an error record (`call_argument_count`). 6 in registers, the others on the stack |
+| Parameters of one export | 12 (`PARAMETER_CAPACITY`) |
+| Words of the call form of one export | 16 (`CALL_WORD_CAPACITY`): the words of its parameters (two for an optional one), the buffer or the place of a result, and the address of an error record (`call_argument_count`). 6 in registers, the others on the stack |
 | Size of a record that a call carries | 256 bytes (`RECORD_SIZE_LIMIT`) |
 | Handles that one call lends | 16 (`HANDLE_CAPACITY`): its Handle parameters and the Handle fields of its Record parameters |
 | A result record, and a record of a table | no Handle field |
@@ -1419,29 +1433,48 @@ grow :: proc "c" (rectangle: ^Rectangle, by: i64, result: ^Rectangle)
 fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64
 ```
 
-**What is not built.** Floating-point values, an unsigned Integer parameter, flags as their own type, variants and optional values other than an optional Enum have no member of `module.Type`. A set of flags crosses the boundary as an `Integer`, and an enum of a module in a field of a record is an `Integer` field. A struct of a record has the layout of the C language: no `#packed`, no `#align`, no `using`.
+**What is not built.** Floating-point values, an unsigned Integer parameter, flags as their own type and variants have no member of `module.Type`. A set of flags crosses the boundary as an `Integer`, and an enum of a module in a field of a record is an `Integer` field. A struct of a record has the layout of the C language: no `#packed`, no `#align`, no `using`.
 
 ### Enum parameters
 
 An export takes a value of a closed set as an enum, and its module file names the members: the console completes them and refuses a wrong one before the call, and the palette shows one row of buttons for them (`CONSOLE.md`, "8. The palette provider"). The design is `src/md/features/enum_parameters.md`.
 
 - **In the file**: the type `Enum` of a parameter or of a result. The table `Enums` holds one `module.Enum_Type` for each enum: the name of its type in the source, its first member and its count of members, from 1 to 64, its size (1, 2, 4 or 8 bytes) and its sign. The table `Members` holds the members of each enum, one after the other: a name in lower case of at most 31 bytes, a letter then letters, digits and `_`, and a value that fits the size and the sign. The detail of an Enum parameter holds the index of its enum in its low 16 bits and the index of its getter export in its high 16 bits, 0 for none (`module.enum_detail_of`); the detail of an Enum result is the index of its enum.
-- **An optional parameter**: bit n of `Function.optional_parameters` says that a call may leave out the parameter n, an Enum. A caller that leaves it out gives the absent word: each bit of the size of the enum set, which the caller writes as -1 in the register. No member has that value.
+- **An optional parameter**: an Enum parameter can be optional, as an Integer or a Handle can (section "Optional parameters and the settings of a parameter"). Each value that the size and the sign hold can be a member: no word is kept for absence.
 - **A getter**: an export with no parameter and no error record, whose result is an equal enum. The palette calls the getter of a parameter for the member in use, in a service or an isolated process only, never in the process of the console. The console also takes no export whose name or a name of a parameter is no name of Lex (`CONSOLE.md`, "8. The palette provider").
-- **The checks**: `module.enum_type` refuses a size that is not 1, 2, 4 or 8, a reserved byte that is not 0, no member or more than 64, members outside the table, a name that is not a name of a member or that two members have, a value that the size and the sign do not hold, the absent word, and a value that two members have. `module.function_enums_check` refuses an Enum parameter of no valid enum, a getter that names no export, takes a parameter, gives an error record or gives no Enum or another enum, an optional bit on a parameter that is no Enum or past the parameters, and an Enum result whose detail holds a getter. `information.check` gives the problem kind `Enum`; the writer of module files refuses such parts with `Enum_Not_Valid`. The check of a replacement compares two enums by their name, size, sign, and the name and the value of each member, and the optional bit of each parameter (`Difference.Parameter_Detail`); the getter is an index of its own file and is not compared.
-- **In the source**: the type of a parameter or of a result is the enum, `settings.Keyboard_Layout`. Each value of a member is an integer literal, or the value of the member before plus one; the tool evaluates no other expression. A member `United_States` is named `united_states`. Two attributes of the export name the getter of each parameter and the parameters that a call may leave out; the build gives them to the compiler as custom attributes (`foundation.CUSTOM_ATTRIBUTES_FLAG`):
+- **The checks**: `module.enum_type` refuses a size that is not 1, 2, 4 or 8, a reserved byte that is not 0, no member or more than 64, members outside the table, a name that is not a name of a member or that two members have, a value that the size and the sign do not hold, and a value that two members have. `module.function_enums_check` refuses an Enum parameter of no valid enum, a getter that names no export, takes a parameter, gives an error record or gives no Enum or another enum, and an Enum result whose detail holds a getter. `information.check` gives the problem kind `Enum`; the writer of module files refuses such parts with `Enum_Not_Valid`. The check of a replacement compares two enums by their name, size, sign, and the name and the value of each member, and the need of each parameter (`Difference.Parameter_Detail`); the getter is an index of its own file and is not compared.
+- **In the source**: the type of a parameter or of a result is the enum, `settings.Keyboard_Layout`. Each value of a member is an integer literal, or the value of the member before plus one; the tool evaluates no other expression. A member `United_States` is named `united_states`. The attribute `enum_getters` of the export names the getter of each parameter; the build gives it to the compiler as a custom attribute (`foundation.CUSTOM_ATTRIBUTES_FLAG`). A parameter that a call may leave out has its `module.Presence` parameter just before it:
 
   ```odin
-  @(export, link_name = "set", enum_getters = "font = font, scale = scale", optional_parameters = "font, scale")
-  set :: proc "c" (font: settings.Font, scale: scale_factor.Scale, error: ^errors.Error_Record) -> i64
+  @(export, link_name = "set", enum_getters = "font = font, scale = scale")
+  set :: proc "c" (font_presence: module.Presence, font: settings.Font, scale_presence: module.Presence, scale: scale_factor.Scale, error: ^errors.Error_Record) -> i64
 
   @(export, link_name = "font")
   font_get :: proc "c" () -> settings.Font
   ```
 
-- **The border in the export**: an argument comes in a register that the caller wrote, so it can hold a value that names no member. `enum_word.member_of_argument` gives the member, `given` false for the absent word, or a refusal that the export answers with an error record.
+- **The border in the export**: an argument comes in a register that the caller wrote, so it can hold a value that names no member. `enum_word.member_of_argument` gives the member, or a refusal that the export answers with an error record; `enum_word.optional_member_of_arguments` reads the Presence word first, `given` false for Absent.
 - **The readers**: the console types a member `.french` by its parameter (`CONSOLE.md`, "Values and their kinds"); `modustool call` takes `settings.set(keyboard_layout = .french)`, with the named arguments and the members of a line, and prints a result `.french`; the manual, the site and the signature that the console prints name an Enum parameter by the name of its enum.
 - **Not built**: an import declaration of an export with an Enum parameter, and an enum of a module as the field kind of a record.
+
+### Optional parameters and the settings of a parameter
+
+The design is `src/md/features/module_settings.md`, "The description of a parameter".
+
+- **The pair**: a parameter that a call may leave out crosses as two words of the call form: a `module.Presence` word, then its value. `Absent` is 0 and `Given` is 1. A caller that leaves the parameter out gives 0 and 0, so a caller that passes zeros passes absence. With `Given`, zero is a real value: a time zone of 0, a count of 0.
+- **The border in the export**: `module.presence_of_word` refuses each word other than 0 and 1, and the export answers that word with an error record, as it answers a value that names no member. An export never reads the value word of an Absent parameter.
+- **In the file**: `Function.parameter_needs` holds one byte for each parameter, a `module.Parameter_Need`: Required (0) or Optional (1). Optional is on an Integer, a Handle or an Enum only: a Text, a Record, a Table and Bytes are addresses. `module.function_needs_check` refuses a byte that names no need, Optional on another type, a need past the parameters and a reserved field that is not 0. The call form counts two words for each optional parameter (`module.parameter_word_count`, `module.parameter_word_index`), within `CALL_WORD_CAPACITY` (16): no bitmask bounds the count of optional parameters, and the setter of `settings` takes its seven settings in one call (15 words with its error record).
+- **Why two parameters and not one struct**: the C convention passes a struct of 16 bytes on the stack when one register is left, and a later word then takes that register. The words of the call would no longer follow the parameters in order.
+- **In the source**: the Presence parameter comes just before its parameter, alone in its declaration, with the name of that parameter and `_presence`. The build describes the pair as one parameter with the need Optional, and refuses a Presence parameter with another name, at the end, or before a Text, a Record, a Table or Bytes:
+
+  ```odin
+  @(export, link_name = "set", enum_getters = "bar_edge = bar_edge", parameter_ranges = "magnifier_eighths = 12..64")
+  set :: proc "c" (bar_edge_presence: module.Presence, bar_edge: desktop_shell.Bar_Position, magnifier_eighths_presence: module.Presence, magnifier_eighths: i64, error: ^errors.Error_Record) -> i64
+  ```
+
+- **The settings of a parameter**: three attributes of the export give, for an Integer parameter, its range (`parameter_ranges = "name = least..most"`, two decimal integers), the export that gives its choices (`parameter_choices = "name = export"`) and the export that gives the instances that the first parameter names (`parameter_instances = "name = export"`). A choices export and an instances export take no parameter and give a Table. The table `Parameter_Settings` holds one `module.Parameter_Setting` for each parameter that has one, in the order of the export and of the parameter; `module.parameter_settings_check` refuses a row of no export or no parameter, a range on another type or with its least above its largest, an export of the wrong form, instances on a parameter other than the first, a row of nothing, and two rows of one parameter. `module.parameter_setting` finds the row of a parameter.
+- **The readers**: the console refuses a value out of the range before the call, gives 0 and 0 for an optional parameter that the line leaves out, and the palette shows the range and the choices. The export checks the value again at its border: the range in the file is a description for the caller, never the check of the callee.
+- **A role contract** names the range of each setter parameter from the constants of its contract, so the check of a holder compares the numbers of its file with the one place of each fact.
 
 #### The display text of a member
 

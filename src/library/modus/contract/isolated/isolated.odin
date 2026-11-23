@@ -222,6 +222,7 @@ Slice :: struct {
 // One argument of a call, before it is encoded. The type of the parameter
 // says which field has the value.
 Argument :: struct {
+	presence: module.Presence, // An optional parameter: Absent (0) leaves it out, and encode writes 0 for its value.
 	integer: u64, // An Integer. A Handle: the handle, as the receiver names it.
 	text:    []u8, // A Text: the bytes, which `encode` copies into the call region.
 	record:  []u8, // The bytes of a Record: the size of its description.
@@ -239,9 +240,12 @@ Lent :: struct {
 // memory that they name. export_call puts the first 6 in registers and the
 // others on the stack.
 Call :: struct {
-	arguments:  [module.PARAMETER_CAPACITY]u64, // Argument n of the call form: the value of parameter n, then the buffer or the place of a result, then the error record.
-	slices:     [module.PARAMETER_CAPACITY]Slice, // slices[n]: the slice record of a Text.
-	records:    [module.PARAMETER_CAPACITY][module.RECORD_SIZE_LIMIT / 8]u64, // records[n]: the copy of a Record.
+	arguments:  [module.CALL_WORD_CAPACITY]u64, // Word n of the call form: the words of each parameter (a Presence word then the value for an optional one), then the buffer or the place of a result, then the error record.
+	// slices[n] and records[n]: the slice record of a Text and the copy of a
+	// Record, of the parameter n, or of a result at the word of its buffer,
+	// which can be past the parameters.
+	slices:     [module.CALL_WORD_CAPACITY]Slice,
+	records:    [module.CALL_WORD_CAPACITY][module.RECORD_SIZE_LIMIT / 8]u64,
 	lent:       [module.HANDLE_CAPACITY]Lent, // The handles to prove before the call, and to close after it.
 	lent_count: int, // The entries of `lent` in use.
 	result:     Slice, // A Record result: its place in the call region, as offsets.
@@ -252,10 +256,10 @@ Call :: struct {
 	mapping_count: int, // The entries of `mappings` in use.
 }
 
-// The largest argument record: a table field for each argument of the call
-// form, a buffer and an error record. The buffer and the error record take
-// arguments of the call form, so this bounds each valid description.
-ARGUMENT_RECORD_LIMIT :: module.PARAMETER_CAPACITY * size_of(Table_Field) + size_of(Slice) + 8
+// The largest argument record: a Presence word and a table field for each
+// parameter, a buffer and an error record. This bounds each valid
+// description.
+ARGUMENT_RECORD_LIMIT :: module.PARAMETER_CAPACITY * (8 + size_of(Table_Field)) + size_of(Slice) + 8
 
 ERROR_RECORD_SIZE :: 56 // src/library/modus/contract/errors: Error_Record.
 
@@ -305,15 +309,19 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	// The buffer of a result and the error record are arguments of the call
 	// form too: an export whose parameters fit can still have no argument
 	// free for them.
-	if function.parameter_count > module.PARAMETER_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > module.PARAMETER_CAPACITY || !directions_valid(function) {
+	if function.parameter_count > module.PARAMETER_CAPACITY || module.call_argument_count(module.parameter_word_count(function), function.result, function.error_record != 0) > module.CALL_WORD_CAPACITY || !directions_valid(function) {
 		return 0, false
 	}
-	for word in function.parameters[:function.parameter_count] {
+	if _, needs_valid := module.function_needs_check(function); !needs_valid {
+		return 0, false
+	}
+	for word, index in function.parameters[:function.parameter_count] {
 		field := field_size(word)
 		if field == 0 {
 			return 0, false
 		}
-		size += field
+		// An optional parameter: its Presence word comes first.
+		size += field + (module.parameter_optional(function, index) ? 8 : 0)
 	}
 	result_field := result_field_size(function.result) or_return
 	size += result_field
@@ -371,6 +379,18 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		type, type_ok := module.type_of_word(word)
 		if !type_ok {
 			return 0, 0, {}, {}, false
+		}
+		// An optional parameter: the Presence word, then the value, 0 when
+		// it is absent, so the export never reads a value that the caller
+		// did not give.
+		if module.parameter_optional(function, index) {
+			store(region, field, u64(arguments[index].presence))
+			field += 8
+			if arguments[index].presence != .Given {
+				store(region, field, u64(0))
+				field += field_size(word)
+				continue
+			}
 		}
 		switch type {
 		case .None:
@@ -546,11 +566,29 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		if !type_ok {
 			return refuse(refusal, .Bad_Value, .None, argument, u64(word), 0)
 		}
+		// The word of the value in the call form: an optional parameter has
+		// its Presence word before it. The receiver refuses a Presence word
+		// that names nothing, and proves no handle of an absent parameter.
+		word_index := module.parameter_word_index(function, index)
+		if module.parameter_optional(function, index) {
+			presence_word := load(record[:], field, u64)
+			presence, presence_ok := module.presence_of_word(module.Presence(presence_word))
+			if !presence_ok {
+				return refuse(refusal, .Bad_Value, .None, argument, presence_word, u64(max(module.Presence)))
+			}
+			call.arguments[word_index - 1] = presence_word
+			field += 8
+			if presence == .Absent {
+				call.arguments[word_index] = 0
+				field += field_size(word)
+				continue
+			}
+		}
 		switch type {
 		case .None:
 			// record_size refused a parameter of no type.
 		case .Integer, .Enum:
-			call.arguments[index] = load(record[:], field, u64)
+			call.arguments[word_index] = load(record[:], field, u64)
 		case .Text:
 			slice := load(record[:], field, Slice)
 			if slice.start > limit || slice.count > limit - slice.start {
@@ -561,7 +599,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 				start = u64(uintptr(raw_data(region))) + slice.start,
 				count = slice.count,
 			}
-			call.arguments[index] = u64(uintptr(&call.slices[index]))
+			call.arguments[word_index] = u64(uintptr(&call.slices[index]))
 		case .Record:
 			described_record, valid := module.record_type(file, function.parameter_details[index])
 			if !valid {
@@ -582,22 +620,23 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 					}
 				}
 			}
-			call.arguments[index] = u64(uintptr(&call.records[index]))
+			call.arguments[word_index] = u64(uintptr(&call.records[index]))
 		case .Handle:
-			call.arguments[index] = load(record[:], field, u64)
-			if !lent_handle_add(call, call.arguments[index], function.parameter_details[index]) {
-				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.arguments[index], len(call.lent))
+			call.arguments[word_index] = load(record[:], field, u64)
+			if !lent_handle_add(call, call.arguments[word_index], function.parameter_details[index]) {
+				return refuse(refusal, call.arguments[word_index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.arguments[word_index], len(call.lent))
 			}
 		case .Table, .Bytes:
 			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
 			if !direction_ok {
 				return refuse(refusal, .Bad_Value, .None, argument, u64(function.parameter_directions[index]), u64(max(module.Direction)))
 			}
-			table_decode(file, word, function.parameter_details[index], direction, index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
+			table_decode(file, word, function.parameter_details[index], direction, index, word_index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
 		}
 		field += field_size(word)
 	}
-	index := function.parameter_count
+	// The slot of a result buffer: after the words of the parameters.
+	index := module.parameter_word_count(function)
 	result_type, result_type_ok := module.function_result_type(function)
 	if !result_type_ok {
 		return refuse(refusal, .Bad_Value, .None, 0, u64(function.result), 0)
@@ -659,7 +698,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		}
 		region_range_add(&ranges, {start, start + ERROR_RECORD_SIZE, true, 0}, refusal) or_return
 		call.error = {start = start, count = ERROR_RECORD_SIZE}
-		error_argument := u64(function.parameter_count) + u64(result_type == .Text || result_type == .Table)
+		error_argument := u64(module.parameter_word_count(function)) + u64(result_type == .Text || result_type == .Table)
 		call.arguments[error_argument] = u64(uintptr(raw_data(region))) + start
 	}
 	return true
@@ -703,6 +742,6 @@ completion_value :: proc "contextless" (function: module.Function, register: u64
 // region. Call it after the export returned.
 result_store :: proc "contextless" (function: module.Function, call: ^Call, region: []u8) {
 	if function.result == u8(module.Type.Record) {
-		intrinsics.mem_copy_non_overlapping(raw_data(region[call.result.start:]), &call.records[function.parameter_count], int(call.result.count))
+		intrinsics.mem_copy_non_overlapping(raw_data(region[call.result.start:]), &call.records[module.parameter_word_count(function)], int(call.result.count))
 	}
 }

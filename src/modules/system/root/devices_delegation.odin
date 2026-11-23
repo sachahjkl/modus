@@ -35,7 +35,7 @@ DEVICES_RESTART_LIMIT :: 3
 
 // The bound of the wait for one answer of the devices service during the
 // classification of the bus: only a service that hangs meets it.
-DEVICES_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+DEVICES_ANSWER_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // The most answers of notices that one wait of a lookup, or one pass of the
 // loop, reads: each bind place has at most a Bind_Device and a

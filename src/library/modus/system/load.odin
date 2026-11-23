@@ -1294,6 +1294,12 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 				name(writer, &error.imported)
 				write_part(writer, " has ")
 				write_part(writer, u64(error.expected.detail))
+			case .Parameter_Range:
+				write_part(writer, "parameter ")
+				write_part(writer, u64(error.parameter))
+				write_part(writer, " has another range than ")
+				name(writer, &error.imported)
+				write_part(writer, " gives")
 			case .Parameter_Type, .Parameter_Detail, .Parameter_Direction:
 				write_part(writer, "parameter ")
 				write_part(writer, u64(error.parameter))

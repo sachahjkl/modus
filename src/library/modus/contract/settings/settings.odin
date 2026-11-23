@@ -28,7 +28,7 @@
 // A change: the sole writer (`settings`) makes change_count odd, writes the
 // values, the time zone, and the appearance in force, makes it even again,
 // and wakes the threads that wait on it (the compositor and `date`). The
-// compositor then sends the display event Settings_Changed to each window,
+// compositor then sends the display event Presentation to each window,
 // and each process draws again. A reader copies the values while
 // change_count stays even and the same (read).
 //
@@ -58,13 +58,20 @@
 package settings
 
 import "base:intrinsics"
+import "modus:contract/chosen_values"
 import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import "modus:contract/language_tag"
+import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 
 PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a process maps the settings page.
+// Where a process with a surface maps a page of its own, in the format of
+// the settings page, that its display library writes from the presentation
+// record of the holder of the display (src/md/features/module_settings.md,
+// "The presentation record").
+PRESENTATION_PAGE_ADDRESS :: fixed_addresses.PRESENTATION_PAGE_ADDRESS
 GRANT_PAGE :: 12 // The handle of the context of the process `settings`: the page, with Read and Write.
 VALUE_PASS :: op.CONTEXT_VALUE_SETTINGS_PASS // The process `settings`: the word of its Pass.
 
@@ -134,7 +141,7 @@ appearance_next :: proc "contextless" (appearance: Appearance) -> Appearance {
 	}
 	return .Auto
 }
-KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds Kept_Settings.
+KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds the record of the chosen values.
 
 // The settings, in the order of the page and of the window.
 Setting :: enum u32 {
@@ -582,18 +589,26 @@ choice_of_values :: proc "contextless" (values: [Setting]u32) -> (choice: Choice
 	return choice, {}, true
 }
 
-// The arguments of the export `set` of the process `settings`, each of the
-// enum of its setting, as its caller wrote them in the registers
-// (src/md/features/enum_parameters.md). A setting that the call leaves out
-// holds the absent word: each bit of its size set.
+// The arguments of the export `set` of the process `settings`, as its
+// caller wrote them in the registers: each setting is optional, a Presence
+// word then the enum of its setting (src/md/features/module_settings.md,
+// "The description of a parameter"). A caller that passes zeros passes
+// absence.
 Set_Arguments :: struct {
-	font:            Font,
-	subpixel_order:  Subpixel_Order,
-	pointer_theme:   Pointer_Theme,
-	grid_fit:        Grid_Fit,
-	keyboard_layout: Keyboard_Layout,
-	appearance:      Appearance,
-	scale:           scale_factor.Scale,
+	font_presence:            module.Presence,
+	font:                     Font,
+	subpixel_order_presence:  module.Presence,
+	subpixel_order:           Subpixel_Order,
+	pointer_theme_presence:   module.Presence,
+	pointer_theme:            Pointer_Theme,
+	grid_fit_presence:        module.Presence,
+	grid_fit:                 Grid_Fit,
+	keyboard_layout_presence: module.Presence,
+	keyboard_layout:          Keyboard_Layout,
+	appearance_presence:      module.Presence,
+	appearance:               Appearance,
+	scale_presence:           module.Presence,
+	scale:                    scale_factor.Scale,
 }
 
 // Why choice_of_arguments refuses the arguments of a call.
@@ -605,16 +620,16 @@ Set_Problem :: enum u8 {
 
 // choice_of_arguments is the border of the export `set`: the choice of now
 // with each setting that the call gives, or a refusal, which changes no
-// value. Each argument comes in a register, so a value can name no member:
-// enum_word.member_of_argument refuses it, as each word that crosses a
-// border. A setting left out keeps its value. The appearance in force, the
+// value. Each argument comes in a register, so a Presence word or a value
+// can name no member: module.optional_member_of_arguments refuses it, as
+// each word that crosses a border. A setting left out keeps its value. The appearance in force, the
 // time zone and the count are those of current.
 choice_of_arguments :: proc "contextless" (current: Choice, arguments: Set_Arguments) -> (changed: Choice, refused: Setting, problem: Set_Problem) {
 	changed = current
 	given_count := 0
 	given_ok: bool
-	take :: proc "contextless" (argument: $Enum, member: ^Enum, given_count: ^int) -> (ok: bool) {
-		value, given, valid := enum_word.member_of_argument(argument)
+	take :: proc "contextless" (presence: module.Presence, argument: $Enum, member: ^Enum, given_count: ^int) -> (ok: bool) {
+		value, given, valid := module.optional_member_of_arguments(presence, argument)
 		if !valid {
 			return false
 		}
@@ -624,25 +639,25 @@ choice_of_arguments :: proc "contextless" (current: Choice, arguments: Set_Argum
 		}
 		return true
 	}
-	if given_ok = take(arguments.font, &changed.font, &given_count); !given_ok {
+	if given_ok = take(arguments.font_presence, arguments.font, &changed.font, &given_count); !given_ok {
 		return current, .Font, .Bad_Value
 	}
-	if given_ok = take(arguments.subpixel_order, &changed.subpixel_order, &given_count); !given_ok {
+	if given_ok = take(arguments.subpixel_order_presence, arguments.subpixel_order, &changed.subpixel_order, &given_count); !given_ok {
 		return current, .Subpixel_Order, .Bad_Value
 	}
-	if given_ok = take(arguments.pointer_theme, &changed.pointer_theme, &given_count); !given_ok {
+	if given_ok = take(arguments.pointer_theme_presence, arguments.pointer_theme, &changed.pointer_theme, &given_count); !given_ok {
 		return current, .Pointer_Theme, .Bad_Value
 	}
-	if given_ok = take(arguments.grid_fit, &changed.grid_fit, &given_count); !given_ok {
+	if given_ok = take(arguments.grid_fit_presence, arguments.grid_fit, &changed.grid_fit, &given_count); !given_ok {
 		return current, .Grid_Fit, .Bad_Value
 	}
-	if given_ok = take(arguments.keyboard_layout, &changed.keyboard_layout, &given_count); !given_ok {
+	if given_ok = take(arguments.keyboard_layout_presence, arguments.keyboard_layout, &changed.keyboard_layout, &given_count); !given_ok {
 		return current, .Keyboard_Layout, .Bad_Value
 	}
-	if given_ok = take(arguments.appearance, &changed.appearance, &given_count); !given_ok {
+	if given_ok = take(arguments.appearance_presence, arguments.appearance, &changed.appearance, &given_count); !given_ok {
 		return current, .Appearance, .Bad_Value
 	}
-	if given_ok = take(arguments.scale, &changed.scale, &given_count); !given_ok {
+	if given_ok = take(arguments.scale_presence, arguments.scale, &changed.scale, &given_count); !given_ok {
 		return current, .Scale, .Bad_Value
 	}
 	if given_count == 0 {
@@ -766,71 +781,170 @@ write :: proc "contextless" (page: ^Page, choice: Choice, zone_offset_minutes: i
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 }
 
-// Kept_Settings: the record of the private store of `settings`, 440 bytes,
-// little-endian. A record with another magic or version is not used: the
-// defaults hold. Version 2 added the time zone, version 3 the language
-// list. The boot pass of `settings` writes the defaults in place of a
-// record of another version, so they hold once.
-KEPT_MAGIC :: u64(0x53474E4954544553) // The bytes "SETTINGS".
-KEPT_VERSION :: 3
+// The kept record of `settings` (src/md/features/module_settings.md, "The
+// precedence"): the values that the principal chose, and only them, as a
+// record of chosen values (modus:contract/chosen_values) in the object
+// KEPT_OBJECT_NAME. The key of each value is the name of its setting in
+// descriptions, and TIME_ZONE_NAME for the zone. The language list is its
+// own object, KEPT_LANGUAGES_OBJECT_NAME: it is no word. A setting that
+// the principal did not set has no entry, and its default holds.
+KEPT_LANGUAGES_OBJECT_NAME :: "languages"
 
-Kept_Settings :: struct {
-	magic:               u64,
-	version:             u32,
-	count:               u32, // The values that follow: the count of Setting when it was written.
-	values:              [SETTING_CAPACITY]u32,
-	zone_offset_minutes: i32, // The time zone.
-	language_count:      u32, // The languages of the list.
-	languages:           [LANGUAGE_LIST_CAPACITY]language_tag.Locale, // The language list, then zeros.
+// The layer of each value of the settings in force.
+Kept_Layers :: struct {
+	values:    [Setting]chosen_values.Layer,
+	time_zone: chosen_values.Layer,
+	languages: chosen_values.Layer,
 }
-#assert(size_of(Kept_Settings) == 440)
 
-// kept_of makes the record of a choice.
-kept_of :: proc "contextless" (choice: Choice, zone_offset_minutes: i32) -> (kept: Kept_Settings) {
-	kept.magic, kept.version, kept.count = KEPT_MAGIC, KEPT_VERSION, len(Setting)
+// zone_offset_minutes_allowed says if a word is a zone of the contract: a
+// signed count of minutes from -12:00 to +14:00, by quarters of an hour.
+zone_offset_minutes_allowed :: proc "contextless" (word: u64) -> bool {
+	minutes := cast(i64)word
+	return minutes >= i64(ZONE_OFFSET_MINUTES_LEAST) && minutes <= i64(ZONE_OFFSET_MINUTES_MOST) && minutes % i64(ZONE_OFFSET_MINUTES_STEP) == 0
+}
+
+// choice_of_kept gives the settings in force from a checked kept record and
+// the bytes of the language list, when the store holds them: each chosen
+// word that the border of its setting takes, and the default for each other
+// one. A word that its border refuses holds as no choice, and stays kept as
+// it was: a later release may know it. The choice holds no appearance in
+// force and no count.
+choice_of_kept :: proc "contextless" (record: chosen_values.Record, languages_bytes: []u8, languages_found: bool) -> (choice: Choice, zone_offset_minutes: i32, layers: Kept_Layers) {
+	choice = choice_default()
 	values := values_of(choice)
 	for setting in Setting {
-		kept.values[setting] = values[setting]
+		word, found := chosen_values.find(record, descriptions[setting].name)
+		if !found || word > u64(max(u32)) {
+			continue
+		}
+		if _, ok := value_place_of_word(setting, u32(word)); !ok {
+			continue
+		}
+		values[setting] = u32(word)
+		layers.values[setting] = .Chosen
 	}
-	kept.zone_offset_minutes = zone_offset_minutes_valid(zone_offset_minutes)
-	if problem, _, _ := language_list_valid(choice.languages); problem == .None {
-		kept.language_count = choice.languages.count
-		kept.languages = choice.languages.locales
+	choice, _, _ = choice_of_values(values)
+	if word, found := chosen_values.find(record, TIME_ZONE_NAME); found && zone_offset_minutes_allowed(word) {
+		zone_offset_minutes = i32(cast(i64)word)
+		layers.time_zone = .Chosen
 	}
-	return kept
-}
-
-// kept_read reads a record from its bytes: ok is false for bytes that are
-// not a record of this version, and for a record with a word that names no
-// value of its setting, or with a language list that language_list_valid
-// refuses: such a record is refused whole, as a record of another version
-// is, and never read as the default of that one setting. A
-// setting past the count of the record has its default, the word of its
-// first value: the record did not hold it. A record of the six settings
-// before the scale then reads with the scale 1.25, and keeps the other
-// settings of the principal. A zone that is not valid is UTC. The choice
-// holds no appearance in force and no count; a refusal gives the defaults.
-kept_read :: proc "contextless" (bytes: []u8) -> (choice: Choice, zone_offset_minutes: i32, ok: bool) {
-	if len(bytes) != size_of(Kept_Settings) {
-		return choice_default(), 0, false
-	}
-	kept: Kept_Settings // A copy: the bytes can be at any alignment.
-	intrinsics.mem_copy_non_overlapping(&kept, raw_data(bytes), size_of(kept))
-	if kept.magic != KEPT_MAGIC || kept.version != KEPT_VERSION || kept.count > SETTING_CAPACITY {
-		return choice_default(), 0, false
-	}
-	values := values_of(choice_default())
-	for setting in Setting {
-		if u32(setting) < kept.count {
-			values[setting] = kept.values[setting]
+	if languages_found && len(languages_bytes) == size_of(Language_List) {
+		list: Language_List // A copy: the bytes can be at any alignment.
+		intrinsics.mem_copy_non_overlapping(&list, raw_data(languages_bytes), size_of(list))
+		if problem, _, _ := language_list_valid(list); problem == .None {
+			choice.languages = list
+			layers.languages = .Chosen
 		}
 	}
-	values_ok: bool
-	choice, _, values_ok = choice_of_values(values)
-	languages := Language_List{locales = kept.languages, count = kept.language_count}
-	if problem, _, _ := language_list_valid(languages); !values_ok || problem != .None {
-		return choice_default(), 0, false
+	return choice, zone_offset_minutes, layers
+}
+
+// kept_read reads the bytes of the object KEPT_OBJECT_NAME: ok is false for
+// bytes that are no record of chosen values, and the defaults hold. The
+// language list is its own object: the choice holds none.
+kept_read :: proc "contextless" (bytes: []u8) -> (choice: Choice, zone_offset_minutes: i32, layers: Kept_Layers, ok: bool) {
+	record, problem := chosen_values.read_record(bytes)
+	if problem != .None {
+		return choice_default(), 0, {}, false
 	}
-	choice.languages = languages
-	return choice, zone_offset_minutes_valid(kept.zone_offset_minutes), true
+	choice, zone_offset_minutes, layers = choice_of_kept(record, nil, false)
+	return choice, zone_offset_minutes, layers, true
+}
+
+// The words of a presentation record after the count, the scale and the
+// windows that declined it, in the window event Presentation: the font,
+// the order of the stripes, the grid fit and the appearance in force, one
+// byte each; the time zone; the language, then the script and the region,
+// of the first language of the principal.
+PRESENTATION_WORDS :: 4
+
+// presentation_words_of gives the words of the presentation record of a
+// choice: what a window draws with, and nothing more. The pointer theme,
+// the layout of the keyboard and the rest of the language list stay with
+// the holders that use them.
+presentation_words_of :: proc "contextless" (choice: Choice) -> (words: [PRESENTATION_WORDS]u64) {
+	values := values_of(choice)
+	words[0] = u64(values[.Font]) | u64(values[.Subpixel_Order]) << 8 | u64(values[.Grid_Fit]) << 16 | u64(choice.appearance_in_force) << 24
+	words[1] = cast(u64)i64(choice.zone_offset_minutes)
+	if choice.languages.count > 0 {
+		locale := choice.languages.locales[0]
+		words[2] = transmute(u64)locale.language
+		script_and_region := [8]u8{}
+		copy(script_and_region[:4], locale.script[:])
+		copy(script_and_region[4:], locale.region[:])
+		words[3] = transmute(u64)script_and_region
+	}
+	return words
+}
+
+// presentation_of_words is the border of the words of a presentation
+// record, as a window reads them from its ring: the choice that the window
+// writes on its own page, with the scale that the record names and the
+// defaults for what the record does not carry. A word that names no value
+// of its setting, bits past the four bytes, a zone out of its range, a
+// locale that is not one canonical language, or a script or a region with
+// no language, refuses the whole record.
+presentation_of_words :: proc "contextless" (words: [PRESENTATION_WORDS]u64, scale: scale_factor.Scale) -> (choice: Choice, ok: bool) {
+	if words[0] >> 32 != 0 {
+		return choice_default(), false
+	}
+	values := values_of(choice_default())
+	values[.Font] = u32(words[0] & 0xFF)
+	values[.Subpixel_Order] = u32(words[0] >> 8 & 0xFF)
+	values[.Grid_Fit] = u32(words[0] >> 16 & 0xFF)
+	values[.Scale] = u32(scale)
+	in_force, in_force_ok := enum_word.member_of_word(Appearance_In_Force, words[0] >> 24 & 0xFF)
+	choice, _, ok = choice_of_values(values)
+	if !ok || !in_force_ok || !zone_offset_minutes_allowed(words[1]) {
+		return choice_default(), false
+	}
+	choice.appearance_in_force = in_force
+	choice.zone_offset_minutes = i32(cast(i64)words[1])
+	if words[2] == 0 {
+		if words[3] != 0 {
+			return choice_default(), false
+		}
+		return choice, true
+	}
+	locale: language_tag.Locale
+	locale.language = transmute([8]u8)words[2]
+	script_and_region := transmute([8]u8)words[3]
+	copy(locale.script[:], script_and_region[:4])
+	copy(locale.region[:], script_and_region[4:])
+	list := Language_List{count = 1}
+	list.locales[0] = locale
+	if problem, _, _ := language_list_valid(list); problem != .None {
+		return choice_default(), false
+	}
+	choice.languages = list
+	return choice, true
+}
+
+// Kept_Changes: the changes of the kept record that one change of the
+// settings makes: a word for each setting whose value changed, and the
+// zone when it changed.
+Kept_Changes :: struct {
+	changes: [len(Setting) + 1]chosen_values.Change,
+	count:   int,
+	languages_changed: bool,
+}
+
+// kept_changes_of gives the changes from the settings in force before to
+// the settings after: only what changed becomes a chosen value, so a choice
+// of the value in force records nothing and leaves a default a default.
+kept_changes_of :: proc "contextless" (before: Choice, before_zone: i32, after: Choice, after_zone: i32) -> (kept: Kept_Changes) {
+	before_values, after_values := values_of(before), values_of(after)
+	for setting in Setting {
+		if before_values[setting] != after_values[setting] {
+			kept.changes[kept.count] = {name = descriptions[setting].name, kind = .Choose, value = u64(after_values[setting])}
+			kept.count += 1
+		}
+	}
+	if before_zone != after_zone {
+		kept.changes[kept.count] = {name = TIME_ZONE_NAME, kind = .Choose, value = cast(u64)i64(after_zone)}
+		kept.count += 1
+	}
+	kept.languages_changed = before.languages != after.languages
+	return kept
 }

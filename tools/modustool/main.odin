@@ -451,7 +451,7 @@ COMMANDS :: [?]foundation.Command {
 	// of the kernel operations against the properties, no call of an
 	// allocator in a source of the system, and an error record from each
 	// export that fails.
-	{name = "rule-checks", about = "check that " + foundation.OPERATION_SOURCE + " declares the count of kernel operations that " + checks.OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, that no cast of a word to an enum skips its border, and that only the loader and the root service name the field image_checks of a load source", run = checks.run_rule_checks},
+	{name = "rule-checks", about = "check that " + foundation.OPERATION_SOURCE + " declares the count of kernel operations that " + checks.OPERATION_PROPERTY_DOCUMENT + " states, that no source file of the system that is not a test calls or names an allocator, that no export of a module gives a negative number with no error record, that no family of integer constants is used as a closed set of choices, that no cast of a word to an enum skips its border, that only the loader and the root service name the field image_checks of a load source, and that no service or library names a bound of the tests", run = checks.run_rule_checks},
 	{name = "library-imports", about = "check that each import of each source file of src/ follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of core: starts with the build line of the host", run = build.run_library_imports},
 	// Measures how similar the code pieces of the Odin sources are, and
 	// proposes where to factor them. It reads `src/` and `tools/`, gives a
@@ -1204,7 +1204,7 @@ run_check :: proc(args: []string) -> int {
 	// fails gives an error record, and no family of integer constants is a
 	// closed set of choices; only the loader and the root service name the
 	// field image_checks of a load source.
-	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() {
+	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() || !checks.service_deadline_check() {
 		return foundation.EXIT_FAILURE
 	}
 	// The stage tracker of the host of the browser machine, in Node: the

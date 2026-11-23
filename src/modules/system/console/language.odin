@@ -803,8 +803,10 @@ host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 		if item.parameters[index] == .Enum {
 			enum_index, _ := module.enum_detail_of(item.function.parameter_details[index])
 			signature.files[index], signature.details[index] = item.file, enum_index
-			signature.optional[index] = module.parameter_optional(item.function, index)
 		}
+		// Any parameter of an export can be optional: an Integer, a Handle
+		// or an Enum (src/md/features/module_settings.md).
+		signature.optional[index] = item.run == nil && module.parameter_optional(item.function, index)
 	}
 	return signature, true
 }
@@ -1132,16 +1134,20 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	}
 	for kind, index in found.parameters[:count] {
 		argument := &arguments[index]
-		// An optional Enum that the line leaves out has no value: the call
-		// gives the absent word, which names no member.
-		if kind == .Enum && argument.kind == .None && found.run == nil && module.parameter_optional(found.function, index) {
-			enum_index, _ := module.enum_detail_of(found.function.parameter_details[index])
-			described, _ := module.enum_type(found.file, enum_index)
-			argument^ = {kind = .Enum, integer = module.enum_absent_word(described), file = found.file, detail = enum_index}
+		// An optional parameter that the line leaves out has no value: the
+		// call gives the Presence word Absent, then 0.
+		if argument.kind == .None && found.run == nil && module.parameter_optional(found.function, index) {
 			continue
 		}
 		if !argument_accepted(found, index, argument^) {
 			return argument_refusal(name, found, index, argument^)
+		}
+		// The range of an Integer: the console refuses a value out of it
+		// before the call; the export checks it again at its border.
+		if kind == .Integer && found.run == nil && found.record == 0 {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, index); has_setting && setting.has_range && (argument.integer < setting.least || argument.integer > setting.most) {
+				return fail(name, ": the argument ", found.parameter_names[index], " is ", argument.integer, ", outside its range ", setting.least, " to ", setting.most)
+			}
 		}
 		if kind == .Record {
 			// A copy: the export can write in its record, and a call

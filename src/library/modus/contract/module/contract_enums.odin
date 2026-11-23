@@ -64,6 +64,7 @@ DIFFERENCE_NAMES := [Difference]string {
 	.Result_Detail       = "Result_Detail",
 	.Error_Record        = "Error_Record",
 	.Parameter_Direction = "Parameter_Direction",
+	.Parameter_Range     = "Parameter_Range",
 }
 
 // The words of Load_Stage, Error and Difference in 8 bytes, for a record

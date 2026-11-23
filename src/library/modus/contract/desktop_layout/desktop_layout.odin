@@ -7,6 +7,7 @@
 package desktop_layout
 
 import "modus:contract/enum_word"
+import "modus:contract/notifications"
 
 // Geometry rectangle in logical desktop pixels.
 Rect :: struct {
@@ -31,8 +32,10 @@ MAX_NOTIFICATIONS :: 16
 MAX_NOTIFICATIONS_PER_SENDER :: 4
 MAX_NOTIFICATION_TITLE_BYTES :: 64
 MAX_NOTIFICATION_BODY_BYTES :: 192
-NOTIFICATION_MIN_TTL_MS :: u64(1_000)
-NOTIFICATION_MAX_TTL_MS :: u64(60_000)
+// The range of the time that a card shows is the one of the contract of
+// the notifications: one fact, one number.
+NOTIFICATION_MIN_TTL_MS :: notifications.SHOW_MILLISECONDS_LEAST
+NOTIFICATION_MAX_TTL_MS :: notifications.SHOW_MILLISECONDS_MOST
 NOTIFICATION_CARD_WIDTH :: i32(340)
 NOTIFICATION_CARD_HEIGHT :: i32(72)
 NOTIFICATION_CARD_GAP :: i32(8)

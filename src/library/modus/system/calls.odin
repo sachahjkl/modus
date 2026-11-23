@@ -24,7 +24,7 @@ import "modus:contract/root_ring"
 
 // export_call takes one integer for each argument that a description can
 // have: the receiver of an isolated call passes its isolated.Call to it.
-#assert(CALL_INTEGERS == module.PARAMETER_CAPACITY)
+#assert(CALL_INTEGERS == module.CALL_WORD_CAPACITY)
 
 // A way to the exports of a module in another process: a call host that
 // this process started, or a connection to a service.
@@ -76,14 +76,23 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 		if !type_ok {
 			return not_done(error, index + 1, u64(word))
 		}
+		// The word of the value in the call form; an optional parameter has
+		// its Presence word before it, and an absent one gives 0 and 0.
+		word_index := module.parameter_word_index(function, index)
+		if module.parameter_optional(function, index) {
+			integers[word_index - 1] = u64(argument.presence)
+			if argument.presence != .Given {
+				continue
+			}
+		}
 		switch type {
 		case .None, .Integer, .Handle, .Enum:
-			integers[index] = argument.integer
+			integers[word_index] = argument.integer
 		case .Text:
 			slices[index] = {u64(uintptr(raw_data(argument.text))), u64(len(argument.text))}
-			integers[index] = u64(uintptr(&slices[index]))
+			integers[word_index] = u64(uintptr(&slices[index]))
 		case .Record:
-			integers[index] = u64(uintptr(raw_data(argument.record)))
+			integers[word_index] = u64(uintptr(raw_data(argument.record)))
 		case .Table, .Bytes:
 			size, _, valid := isolated.table_record(file, word, function.parameter_details[index])
 			if !valid {
@@ -96,13 +105,13 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 				return not_done(error, index + 1, argument.table.count)
 			}
 			places[index] = {address = u64(uintptr(raw_data(argument.table.records))), count = argument.table.count, capacity = capacity}
-			integers[index] = u64(uintptr(&places[index]))
+			integers[word_index] = u64(uintptr(&places[index]))
 		}
 	}
 	// record_size checked that an argument of the call form is free for it.
 	local_error: errors.Error_Record
 	if function.error_record != 0 {
-		integers[function.parameter_count] = u64(uintptr(error != nil ? error : &local_error))
+		integers[module.parameter_word_count(function)] = u64(uintptr(error != nil ? error : &local_error))
 	}
 	floats: [CALL_FLOATS]u64
 	out: [CALL_RESULTS]u64

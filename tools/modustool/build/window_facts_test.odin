@@ -147,7 +147,7 @@ the_facts_of_settings_write_the_lines_of_before :: proc(t: ^testing.T) {
 	// The scale is written by the name of its value: "1.375", "1.625" and
 	// "1.875" are the longest, 5 bytes. The next appearance of the Control
 	// Center names two values of the appearance, "light" the longest.
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"scale", u32(len("1.375"))}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}, {"languages", 111}, {"cause", 63}, {"before", u32(len("light"))}, {"after", u32(len("light"))}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"font", 6}, {"subpixel_order", 6}, {"pointer_theme", 6}, {"grid_fit", 6}, {"keyboard_layout", 6}, {"appearance", 6}, {"scale", u32(len("1.375"))}, {"store", u32(len(stores[1]))}, {"zone", 6}, {"in_force", 5}, {"setting_value", 5}, {"local_time", 5}, {"languages", 111}, {"cause", 63}, {"before", u32(len("light"))}, {"after", u32(len("light"))}, {"problem", u32(len("a count past its bytes"))}))
 }
 
 // The facts of inspect: the counts at their edges, the longest process
@@ -607,6 +607,7 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["act"] = 48
 	most["kind"] = u32(len("screen_reader"))
 	most["nickname"] = value_kinds.MODULE_NAME_FIELD_BYTES - 1
+	most["problem"] = u32(len("a count past its bytes"))
 	facts_expect_text_fields_last(t, file, most)
 }
 
@@ -791,6 +792,7 @@ the_lines_of_the_windows_with_no_value_write_the_lines_of_before :: proc(t: ^tes
 		{"compositor", "compositor", "Copy_Key_Without_Window", "compositor: the copy key with no window in front"},
 		{"compositor", "compositor", "Paste_Key_Without_Window", "compositor: the paste key with no window in front"},
 		{"compositor", "compositor", "Bar_In_Cell_Font", "compositor: the bar is in the font of the cells"},
+		{"compositor", "compositor", "Display_Choices_No_Store", "compositor: no role store: the choices of the role Display hold for this run only"},
 		{"compositor", "compositor", "No_Memory", "compositor: no memory"},
 		{"compositor", "compositor", "Two_Screen_Pages", "compositor: two screen pages: each frame reaches the screen whole, by a page flip"},
 		{"compositor", "compositor", "One_Screen_Page", "compositor: one screen page: each frame is written into the screen page that the display shows"},
@@ -857,8 +859,7 @@ the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) 
 			{"Boot_Pass_Nothing_Kept", "no settings kept: the defaults"},
 			{"Boot_Pass_Read_Refused", "the store gives no record (status not Ok): the defaults"},
 			{"Boot_Pass_Kept", "the settings kept in the store"},
-			{"Boot_Pass_Record_Refused_Defaults_Kept", "the record of the store is refused (another version, or a value that its setting does not have): the defaults, kept in its place"},
-			{"Boot_Pass_Record_Refused_Defaults_Not_Kept", "the record of the store is refused (another version, or a value that its setting does not have): the defaults, NOT kept: the store refused"},
+			{"Boot_Pass_Record_Unreadable", "the record of the store is one that this release cannot read: the defaults, and the record stays"},
 			{"Boot_Pass_No_Store", "no private store: the defaults"},
 		}
 		for boot in boot_cases {
@@ -866,6 +867,7 @@ the_other_lines_of_the_windows_write_the_lines_of_before :: proc(t: ^testing.T) 
 				facts_expect_line(t, render(t, settings_file, boot.type_name, {{"elapsed", elapsed}, {"font", "spleen"}, {"subpixel_order", "none"}, {"pointer_theme", "system"}, {"grid_fit", "off"}, {"keyboard_layout", "french"}, {"appearance", "light"}, {"scale", "1.375"}}), line_of_before("settings: the boot pass: ", boot.what, ": font spleen, subpixel order none, pointer theme system, grid fit off, keyboard layout french, appearance light, scale 1.375; in ", elapsed, " us"))
 			}
 		}
+		facts_expect_line(t, render(t, settings_file, "Kept_Record_Refused", {{"problem", "no room"}}), "settings: the kept record refused a change (no room): nothing changed")
 		facts_expect_line(t, render(t, settings_file, "Boot_Pass_Nothing_Kept", {{"elapsed", u64(12)}, {"font", "vector"}, {"subpixel_order", "rgb"}, {"pointer_theme", "owner"}, {"grid_fit", "on"}, {"keyboard_layout", "us"}, {"appearance", "auto"}, {"scale", "1.25"}}), "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; in 12 us")
 	}
 

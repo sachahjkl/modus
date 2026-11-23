@@ -992,7 +992,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		changed |= system.service_run(&service) > 0
 		for event in interface.window_next_event(&window_memory.drawing, &window, .Every_Event) {
 			switch event.kind {
-			case .Settings_Changed:
+			case .Presentation:
 				// A new font: each record is the same, each pixel of text is
 				// not. The next frame of each picture is whole.
 				interface.draw_whole_window_next(&window_memory.drawing)

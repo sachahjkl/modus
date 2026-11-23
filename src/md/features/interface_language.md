@@ -213,7 +213,7 @@ The service that takes a pack into the machine (`plans.apply`, and the tool for 
 
 Refused: a map of the rows of each module, page by page. The rows of `interface` are in each window, so the sections repeat, and each section pays up to a page of padding: about 240 KiB for 60 modules, for no secret.
 
-**A change of the language at run time is at once.** The principal moves `fr` before `en`. The process `settings` writes the list on the settings page; the compositor sends `Settings_Changed` to each window, as for each setting. Each window renders its texts again from the packs that it maps, and draws once. A text is rendered at that change, not in each frame. A change among the packs that a process maps needs no map.
+**A change of the language at run time is at once.** The principal moves `fr` before `en`. The process `settings` writes the list on the settings page; the compositor sends `Presentation` to each window, as for each setting. Each window renders its texts again from the packs that it maps, and draws once. A text is rendered at that change, not in each frame. A change among the packs that a process maps needs no map.
 
 **A new pack reaches a process at its next start.** A pack that a plan adds is mapped into each process that starts after the apply. A process that runs keeps its map: its texts fall back along the chain until it starts again. The window of `settings` marks a language whose pack came after the start of the windows.
 

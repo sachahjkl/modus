@@ -34,7 +34,7 @@ import "modus:system"
 WIRING_RESTART_LIMIT :: 3
 
 // Hang bound for one request to the delegated wiring service.
-WIRING_REQUEST_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+WIRING_REQUEST_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // Child wiring budget reserve carved from an asker's budget (pages only:
 // zero processes, zero threads, zero processor time, zero log records).

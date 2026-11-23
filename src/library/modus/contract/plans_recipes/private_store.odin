@@ -165,12 +165,6 @@ PLAN_DISPLAY_NAME_BYTES :: 48
 PLAN_DISPLAY_ITEM_BYTES :: 48
 PLAN_DISPLAY_ITEM_CAPACITY :: 8
 
-// The arm time of the dialog of a difference: the trusted display takes a
-// decision only this long after it showed the difference, so a key or a
-// press meant for a window does not accept the plan. A caller of apply
-// knows from it when a key of the principal counts.
-PLAN_DISPLAY_ARM_MILLISECONDS :: 500
-
 // The amount (isolated.CALLER_AMOUNT_MASK) of the grant of a connection to
 // the holder of Display whose caller holds the role Plans now. Each service
 // gives the amount its own meaning; the root service writes this one, and

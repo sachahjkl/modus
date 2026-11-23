@@ -37,6 +37,7 @@ Difference :: enum u32 {
 	Result_Detail   = 6, // A Record or Table result with another record, or an Enum result with another enum.
 	Error_Record    = 7, // One gives an error record and the other does not, or the two records differ.
 	Parameter_Direction = 8, // Parameter `parameter`: a Table or Bytes with another direction.
+	Parameter_Range = 9, // Parameter `parameter`: an Integer with another range in the table Parameter_Settings, or a range on one side only.
 }
 
 // One side of a difference: a type, its detail (the rights of a Handle, or a

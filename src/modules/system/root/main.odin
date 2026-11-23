@@ -112,6 +112,7 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:random"
 import "modus:screen_presence"
+import "modus:storage"
 import "modus:system"
 import terminal "modus:terminal"
 import "modus:contract/enum_word"
@@ -170,6 +171,9 @@ COMPOSITOR_VALUE_FILE_SIZE :: 5
 // of the boot image, mapped read-only (resources.odin).
 COMPOSITOR_VALUE_POINTER_THEME_ADDRESS :: 6
 COMPOSITOR_VALUE_POINTER_THEME_SIZE :: 7
+// The size of the file of the storage service, which the compositor maps
+// for its role store: the usual place of it is a value of its screen.
+COMPOSITOR_VALUE_STORAGE_FILE_SIZE :: 8
 POINTER_THEME_ADDRESS :: fixed_addresses.POINTER_THEMES_ADDRESS
 // The values of the context of the compositor for each pointer theme: the
 // second at the values that modus:contract/operation names for it.
@@ -749,6 +753,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page_create()
 	disk_process_page_create()
 	fresh_bytes_create() // fresh_bytes.odin
+	presentation_pages_create() // presentation_pages.odin
+	plan_values_owner_pages_create() // plan_values.odin
 	replacement_table_create()
 	remote_clients_create()
 	// The control ring exists with no compositor too: the loop waits on it,
@@ -1053,7 +1059,7 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	// values 0 to 3 are the screen, so the file is at values 4 and 5.
 	// The file, two pointer themes, the settings page, the font outlines,
 	// the date page, the fresh bytes page, and one place more.
-	mappings: [8]system.Mapping
+	mappings: [9]system.Mapping
 	mapping_count := 0
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == display_name && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
@@ -1090,9 +1096,11 @@ display_holder_start :: proc "contextless" () -> system.Status {
 			mapping_count += 1
 		}
 	}
-	text_settings_give(mappings[:], &mapping_count, &values)
+	text_settings_give(mappings[:], &mapping_count, &values, .Machine)
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
+	display_role_store_give(served, display_name, &context_grants, &values, mappings[:], &mapping_count)
+	plan_values_page_give(served, display_name, mappings[:], &mapping_count, &values)
 	if context_refused(display_name, &context_grants, &values) {
 		display_holder_place_free(served)
 		return .Bad_State
@@ -1123,6 +1131,38 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	}
 	started_log(display_name, principals.MACHINE, false)
 	return .Ok
+}
+
+// display_role_store_give gives the holder of the display the store of its
+// role (src/md/features/module_settings.md, "The role store"), in the
+// places of a private store: the edge of the bar, "do not disturb" and the
+// other choices of the role survive a restart of the holder and a change of
+// its module. With no storage service (no data disk), the holder runs with
+// no store and draws with the defaults of its contract: one line says so.
+display_role_store_give :: proc "contextless" (served: ^Started, display_name: string, context_grants: ^system.Context_Grants, values: ^system.Context_Values, mappings: []system.Mapping, mapping_count: ^int) {
+	// connection_open names the store by its caller, so the place takes the
+	// name of the holder first.
+	copy(served.name[:len(served.name) - 1], display_name)
+	_, storage_service, ring_memory, region_memory, status := connection_open(served, role_holder_name(.Storage))
+	if status != .Ok {
+		system.log_fact(.Warning, Display_Role_Store_Not_Given{status = status})
+		return
+	}
+	for &item in system.image_entries(image) {
+		if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset && mapping_count^ < len(mappings) {
+			mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
+			if !given {
+				system.log_fact(.Warning, Display_Role_Store_Not_Given{status = .Bad_Operation})
+				return
+			}
+			mappings[mapping_count^] = mapping
+			mapping_count^ += 1
+			system.value_put(values, COMPOSITOR_VALUE_STORAGE_FILE_SIZE, item.size)
+		}
+	}
+	system.grant_put(context_grants, system.GRANT_STORAGE_RING, {ring_memory, {.Read, .Write}})
+	system.grant_put(context_grants, system.GRANT_STORAGE_REGION, {region_memory, {.Read, .Write}})
+	system.grant_put(context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.process, {.Read}})
 }
 
 // display_holder_place_free frees the place of a display holder that did not
@@ -1992,7 +2032,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	// The settings page, font outlines, and fresh bytes page.
 	mappings: [3]system.Mapping
 	mapping_count := 0
-	text_settings_give(mappings[:], &mapping_count, &values)
+	text_settings_give(mappings[:], &mapping_count, &values, .Presentation, view)
 	fresh_bytes_page_give(view, mappings[:], &mapping_count, &values)
 	if context_refused(terminal_name, &context_grants, &values) {
 		fresh_bytes_forget(view)
@@ -2125,8 +2165,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 			copy(store_name[:len(store_name) - 1], store_override)
 		} else {
 			// The store of a disk process is the store of its nickname, with a
-			// prefix that no module name has (disk_processes.odin).
-			process_of_the_store := system.name_of(caller.name[:])
+			// prefix that no module name has (disk_processes.odin). The store of
+			// the holder of a role is the store of the role, which a new holder
+			// gets back (role_policy.store_name_of_module).
+			process_of_the_store := role_policy.store_name_of_module(&role_holder_names, system.name_of(caller.name[:]))
 			disk_store_name: [32]u8
 			if caller.from_disk {
 				process_of_the_store = disk_process.store_process_name(&disk_store_name, process_of_the_store)

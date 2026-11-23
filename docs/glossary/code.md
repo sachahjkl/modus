@@ -450,15 +450,49 @@ Do not use: accessor, property getter.
 
 ### Optional parameter
 
-An optional parameter is an Enum parameter that a call may leave out: the caller then gives its absent word.
+An optional parameter is a parameter that a call may leave out: it crosses as a Presence word, then its value.
 
-The bit of the parameter in `Function.optional_parameters` says it, from the attribute `optional_parameters` of the source. The absent word is each bit of the size of the enum set, which no member may have: the export reads it with `enum_word.member_of_argument`, which says that the call did not give it. A parameter of another type is never optional; the last parameter of a built-in command that a call may leave out is a fact of that command, not of the format.
+`Absent` (0) leaves it out and `Given` (1) gives the value, zero included; the export refuses any other word (`module.optional_member_of_arguments`, `module.optional_integer_of_arguments`). An Integer, a Handle or an Enum can be optional. The byte of the parameter in `Function.parameter_needs` says Optional; in the source, a parameter `<name>_presence: module.Presence` comes just before it. The last parameter of a built-in command that a call may leave out is a fact of that command, not of the format.
 
 Example: `settings.set(font = .spleen)` leaves out the six other settings, which keep their values.
 
-The design: `docs/MODULE_CONTRACT.md`, "Enum parameters".
+The design: `docs/MODULE_CONTRACT.md`, "Optional parameters and the settings of a parameter".
 
-Do not use: default parameter, nullable parameter.
+Do not use: default parameter, nullable parameter, absent word.
+
+### Setter
+
+A setter is an export whose optional parameters are settings: each parameter names its getter, and a call changes the settings that it gives and no other.
+
+Settings that one rule binds (the hour of light before the hour of dark) are parameters of one setter, so a call changes both or neither. A setter serves only a caller that acts for the principal; it refuses a value out of its range and a locked value, with an error record, and changes nothing. A reset export makes a chosen value absent again. A setter is the one door of a setting besides the plan.
+
+Example: `settings.set(font = .spleen, scale = .sixteen_eighths)`.
+
+The design: `src/md/features/module_settings.md`.
+
+Do not use: configure command, property setter.
+
+### Choices export
+
+A choices export is a table export that a parameter names in its description to give the choices of an open set: the identity and the display text of each.
+
+It is the getter of an enum for a set that the code does not know: the fonts of the boot image, the screens of the machine. A value of such a parameter is the identity of a choice, never its place in the list, so a list that changes moves no value. A kept identity that the list no longer holds stays kept. The console completes from it, and the window of settings draws its rows.
+
+The design: `src/md/features/module_settings.md`, "The description of a parameter".
+
+Do not use: dynamic enum, options list.
+
+### Instances export
+
+An instances export is a table export that a parameter names in its description to give the instances that a setter takes as its first argument: a screen, a keyboard, a store.
+
+An instance is a stable identity that the owner computes from its device or its object. The owner keeps one value for each instance, in memory that its budget pays: no count is fixed. The value of an instance that is absent stays kept, and holds again when the instance comes back.
+
+Example: `display.set_for(screen, scale = .sixteen_eighths)`.
+
+The design: `src/md/features/module_settings.md`, "The description of a parameter".
+
+Do not use: per-device setting, relocatable schema.
 
 ### Direction
 

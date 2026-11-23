@@ -41,7 +41,7 @@ import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 7 // The version of the format that this code reads and writes. A file of another version is refused. 7: the display texts of the members, the table Member_Texts.
+VERSION :: 8 // The version of the format that this code reads and writes. A file of another version is refused. 8: an optional parameter of any word type, as a Presence word then its value, and the table Parameter_Settings.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -142,6 +142,7 @@ Table_Kind :: enum u32 {
 	Enums          = 16, // `Enum_Type` records: the descriptions of the enums that the exports take and give.
 	Members        = 17, // `Member` records: the members of those enums.
 	Member_Texts   = 18, // `Member_Text` records: the display text of a member in a language, in the order of the enum, the member and the language.
+	Parameter_Settings = 19, // `Parameter_Setting` records: the range, the choices export and the instances export of a parameter, in the order of the export and of the parameter.
 }
 // The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)
@@ -262,8 +263,7 @@ Type :: enum u8 {
 	Enum    = 7, // One member of a closed set, as its value, in a register (enums.odin).
 	// A parameter: the detail names the description of the enum in the
 	// table Enums and the export that gives the value in use
-	// (enum_detail_of). An optional parameter that a call leaves out gets
-	// the absent word (enum_absent_word). A result: the detail is the
+	// (enum_detail_of). A result: the detail is the
 	// index of the description of the enum, and the callee gives the value
 	// in the low bytes of its integer result. A field of a record is never
 	// an Enum.
@@ -342,12 +342,20 @@ Table_Place :: struct {
 }
 #assert(size_of(Table_Place) == 24)
 
-// The arguments of the call form of one export: its parameters, the buffer
-// or the place of a result, and the address of an error record. The first 6
-// are in the integer registers, the others on the stack, as the convention of
-// the machine passes them (docs/MODULE_CONTRACT.md, section 4). A fixed bound
-// keeps a Function record and the private copy of a receiver of one size.
+// The parameters of one export at most. A fixed bound keeps a Function
+// record of one size.
 PARAMETER_CAPACITY :: 12
+
+// The words of the call form of one export at most: the words of its
+// parameters (two for an optional one: a Presence word, then its value),
+// the buffer or the place of a result, and the address of an error record.
+// The first 6 are in the integer registers, the others on the stack, as the
+// convention of the machine passes them (docs/MODULE_CONTRACT.md, section
+// 4). 16 holds seven optional settings and an error record, the setter of
+// `settings`; a fixed bound keeps the private copy of a receiver of one
+// size.
+CALL_WORD_CAPACITY :: 16
+#assert(CALL_WORD_CAPACITY >= PARAMETER_CAPACITY)
 
 // The description of one export. It is sufficient to call the export: the
 // console reads it. The loader does not.
@@ -357,7 +365,7 @@ Function :: struct {
 	about_offset:          u32, // One line of help, in the string table.
 	about_count:           u32, // The bytes of the line of help.
 	parameter_names:       [PARAMETER_CAPACITY]u32, // The name of each parameter, in the string table.
-	parameter_count:       u8, // At most PARAMETER_CAPACITY, and call_argument_count at most PARAMETER_CAPACITY.
+	parameter_count:       u8, // At most PARAMETER_CAPACITY, and call_argument_count at most CALL_WORD_CAPACITY.
 	result:                u8, // The type of the result, the byte of a Type (function_result_type): None, Integer, Text, Record or Table.
 	parameters:            [PARAMETER_CAPACITY]u8, // The type of each parameter, the byte of a Type (function_parameter_type), in the order of the arguments.
 	parameter_name_counts: [PARAMETER_CAPACITY]u8, // The bytes of the name of each parameter.
@@ -365,9 +373,12 @@ Function :: struct {
 	// Direction (function_parameter_direction), 0 (Read) for each other
 	// parameter.
 	parameter_directions:  [PARAMETER_CAPACITY]u8,
-	// Bit n: a call may leave out the parameter n, an Enum. The other
-	// bits are 0 (function_enums_check).
-	optional_parameters:   u16,
+	// Whether a call must give each parameter, the byte of a
+	// Parameter_Need: an Optional parameter takes two words of the call
+	// form, a Presence word then its value (parameter_settings.odin). 0
+	// past the parameters.
+	parameter_needs:       [PARAMETER_CAPACITY]u8,
+	reserved:              u16, // 0.
 	text_offset:           u32, // The documentation text of the export, in the string table.
 	text_count:            u32, // The bytes of the documentation text.
 	// What the type of each parameter needs: Type says what it is. An
@@ -382,12 +393,13 @@ Function :: struct {
 	// then: it fails when its integer result is negative.
 	error_record:          u32,
 }
-#assert(size_of(Function) == 168)
+#assert(size_of(Function) == 180)
 
 // call_argument_count gives the arguments of the call form of an export:
-// its parameters, one for the buffer of a Text or Table result or the place
+// the words of its parameters (parameter_word_count: two for an optional
+// one), one for the buffer of a Text or Table result or the place
 // of a Record result, and one for the address of an error record. A
-// description is valid only when it is at most PARAMETER_CAPACITY.
+// description is valid only when it is at most CALL_WORD_CAPACITY.
 //
 // Example: an export with 9 parameters, a Text result and an error record
 // has 11 arguments.
@@ -395,8 +407,8 @@ Function :: struct {
 // result is the byte of the type of the result, as Function.result holds it:
 // a byte that names no type takes no argument, and the check of the
 // description refuses it.
-call_argument_count :: proc "contextless" (parameter_count: int, result: u8, has_error_record: bool) -> int {
-	return parameter_count + int(result == u8(Type.Text) || result == u8(Type.Table) || result == u8(Type.Record)) + int(has_error_record)
+call_argument_count :: proc "contextless" (parameter_words: int, result: u8, has_error_record: bool) -> int {
+	return parameter_words + int(result == u8(Type.Text) || result == u8(Type.Table) || result == u8(Type.Record)) + int(has_error_record)
 }
 
 RECORD_SIZE_LIMIT :: 256 // The bytes of a record that a call carries.

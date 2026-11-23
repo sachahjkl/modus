@@ -5,7 +5,7 @@
 // A plan is applied whole: the dialog has no tick, only accept and refuse.
 package bar
 
-import pr "modus:contract/plans_recipes"
+import "modus:contract/powerbox"
 
 PLAN_DIFFERENCE_NAME_BYTES :: 48
 PLAN_DIFFERENCE_ITEM_BYTES :: 48
@@ -94,6 +94,7 @@ Plan_Difference_Dialog :: struct {
 	removed_count:        int,
 	shown_at_milliseconds: u64, // The clock of the system when the dialog showed.
 	armed_from_milliseconds: u64, // An act counts from this time on: the show, plus the arm time; on the act face, the last move of the focus too.
+	arm_milliseconds_of_the_principal: u64, // A longer arm time that the principal chose; under the one of the contract it changes nothing.
 	focus:                Plan_Difference_Button,
 	decision:             Plan_Difference_Decision, // Of the last dialog.
 }
@@ -250,7 +251,15 @@ plan_difference_item_text :: proc "contextless" (item: ^Plan_Difference_Item) ->
 // time after the show, and on the act face after the last move of the
 // focus too.
 plan_difference_armed :: proc "contextless" (dialog: ^Plan_Difference_Dialog, now_milliseconds: u64) -> bool {
-	return dialog.open && now_milliseconds >= dialog.armed_from_milliseconds + pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	// A difference, not a sum: a large arm time never wraps to an early act.
+	return dialog.open && now_milliseconds >= dialog.armed_from_milliseconds && now_milliseconds - dialog.armed_from_milliseconds >= plan_difference_arm_milliseconds(dialog)
+}
+
+// plan_difference_arm_milliseconds gives the arm time of the dialog: the
+// longer one that the principal chose, never one shorter than the one of the
+// contract, whatever the field holds.
+plan_difference_arm_milliseconds :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> u64 {
+	return max(dialog.arm_milliseconds_of_the_principal, powerbox.CONSENT_ARM_MILLISECONDS)
 }
 
 // plan_difference_focus_move gives the focus to a button. On the act face

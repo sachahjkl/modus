@@ -437,7 +437,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
 		system.value_put(&values, op.CONTEXT_VALUE_MEASURE_RUN, 1)
 	}
-	text_settings_give(mappings[:], &mapping_count, &values)
+	text_settings_give(mappings[:], &mapping_count, &values, .Presentation, slot)
 	// The store of the nickname, as start() gives a private store: the call
 	// ring, the call region, the storage service with the right Read, and
 	// its file. This service closes its handles of the connection after the

@@ -536,6 +536,20 @@ Plan_Roles_Refused :: struct {
 	serial:         u64,
 }
 
+// The core replaced the plan values with the set of a generation of the
+// plan of principal 0: each owner gets them at its next start.
+@(log_fact = "root: the plan values of generation {generation} are in force for {owners} owners, from the next start of each")
+Plan_Values_Replaced :: struct {
+	generation: u64,
+	owners:     u64,
+}
+
+// The core refused a set of plan values: no value changed.
+@(log_fact = "root: refused the plan values ({problem}): the values before stay in force")
+Plan_Values_Refused :: struct {
+	problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
 // One hash of the role contracts, as the root service computes it at its
 // start (root_delegation.role_contracts_digest): encoded counts the
 // contracts that pass their canonical encoding.

@@ -2,7 +2,9 @@
 package settings
 
 import "core:testing"
+import "modus:contract/chosen_values"
 import "modus:contract/language_tag"
+import "modus:contract/module"
 import "modus:contract/scale_factor"
 
 // A writer that stops in a change (an odd count) does not stop a reader:
@@ -86,76 +88,6 @@ the_zone_on_the_page :: proc(t: ^testing.T) {
 	changed := first
 	changed.zone_offset_minutes = 60
 	testing.expect(t, values_differ(first, changed))
-}
-
-// The kept record: a word that names no value of its setting refuses the
-// whole record, at each edge, and nothing of it is read; a record of the
-// version before and a short record are refused; a zone that is not valid
-// reads as UTC. A scale word outside 8 to 16 refuses the record as a
-// word that names no scale. A record of the six settings before the scale
-// keeps them and reads the scale 1.25. The record of a choice reads back
-// as that choice.
-@(test)
-the_kept_record :: proc(t: ^testing.T) {
-	written := Choice{font = .Spleen, appearance = .Light, scale = .Eleven_Eighths}
-	kept := kept_of(written, -210)
-	testing.expect_value(t, kept.language_count, 0)
-	testing.expect_value(t, kept.count, u32(len(Setting)))
-	bytes := ([^]u8)(&kept)[:size_of(kept)]
-	refused_words := [?]u32{len(Font), len(Font) + 1, 0x100, max(u32)}
-	for word in refused_words {
-		kept.values[Setting.Font] = word
-		read_choice, zone, ok := kept_read(bytes)
-		testing.expectf(t, !ok, "the font word %d names no font, and the record is taken", word)
-		testing.expect_value(t, values_of(read_choice), values_of(choice_default()))
-		testing.expect_value(t, zone, 0)
-	}
-	kept.values[Setting.Font] = u32(Font.Spleen)
-	refused_scales := [?]u32{0, scale_factor.EIGHTHS_OF_ONE - 1, u32(scale_factor.Scale.Sixteen_Eighths) + 1, max(u32)}
-	for word in refused_scales {
-		kept.values[Setting.Scale] = word
-		read_choice, _, ok := kept_read(bytes)
-		testing.expectf(t, !ok, "the scale word %d is taken in a record", word)
-		testing.expect_value(t, read_choice.scale, scale_factor.DEFAULT)
-	}
-	kept.values[Setting.Scale] = u32(scale_factor.Scale.Eleven_Eighths)
-	kept.values[Setting.Appearance] = len(Appearance)
-	_, _, ok := kept_read(bytes)
-	testing.expect(t, !ok)
-	kept.values[Setting.Appearance] = u32(Appearance.Light)
-	kept.version = KEPT_VERSION - 1
-	_, _, ok = kept_read(bytes)
-	testing.expect(t, !ok)
-	kept.version = KEPT_VERSION
-	_, _, ok = kept_read(bytes[:size_of(kept) - 8])
-	testing.expect(t, !ok)
-	kept.zone_offset_minutes = 7
-	_, zone, zone_ok := kept_read(bytes)
-	testing.expect(t, zone_ok)
-	testing.expect_value(t, zone, 0)
-	kept.zone_offset_minutes = -210
-	// A record written before the scale existed: the word past its count
-	// is no value of the record, so it is not read, and the scale has its
-	// default, not the word 0. Here the word past the count names nothing.
-	kept.count = u32(Setting.Scale)
-	kept.values[Setting.Scale] = max(u32)
-	before_scale, _, before_scale_ok := kept_read(bytes)
-	testing.expect(t, before_scale_ok)
-	testing.expect_value(t, before_scale.scale, scale_factor.DEFAULT)
-	testing.expect_value(t, before_scale.font, Font.Spleen)
-	testing.expect_value(t, before_scale.appearance, Appearance.Light)
-	// A record of fewer settings still: each past its count has its default.
-	kept.count = u32(Setting.Appearance)
-	older, _, older_ok := kept_read(bytes)
-	testing.expect(t, older_ok)
-	testing.expect_value(t, older.appearance, Appearance.Auto)
-	testing.expect_value(t, older.font, Font.Spleen)
-	kept.count = len(Setting)
-	kept.values[Setting.Scale] = u32(scale_factor.Scale.Eleven_Eighths)
-	read_choice, read_zone, read_ok := kept_read(bytes)
-	testing.expect(t, read_ok)
-	testing.expect_value(t, values_of(read_choice), values_of(written))
-	testing.expect_value(t, read_zone, -210)
 }
 
 // refused_words_of gives the words that the border of a setting must
@@ -319,25 +251,18 @@ an_all_zero_page_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, created.values[Setting.Scale], u32(scale_factor.DEFAULT))
 }
 
-// The arguments of a call that leaves out each setting: the absent word,
-// each bit of the size of the enum set, as the console writes it.
+// The arguments of a call that leaves out each setting: zeros, the Presence
+// Absent before each value, as the console writes them. A value word that
+// names no member is not read when its setting is absent.
 @(private = "file")
 nothing_given :: proc() -> Set_Arguments {
-	return {
-		font            = Font(max(u32)),
-		subpixel_order  = Subpixel_Order(max(u32)),
-		pointer_theme   = Pointer_Theme(max(u32)),
-		grid_fit        = Grid_Fit(max(u32)),
-		keyboard_layout = Keyboard_Layout(max(u32)),
-		appearance      = Appearance(max(u32)),
-		scale           = scale_factor.Scale(max(u8)),
-	}
+	return {font = Font(max(u32)), scale = scale_factor.Scale(0)}
 }
 
 // The border of the export set refuses a value past each enum, and
-// changes nothing then: one past the last member, the absent word less
-// one, a word of the scale under its first member, and a member of
-// another enum written into this one. A call that gives nothing is
+// changes nothing then: one past the last member, the largest word, a word
+// of the scale under its first member, a member of another enum written
+// into this one, and a Presence word past Given. A call that gives nothing is
 // refused, and so is a scale that no window fits.
 @(test)
 the_arguments_of_set_refuse_a_value_past_the_enum :: proc(t: ^testing.T) {
@@ -349,30 +274,35 @@ the_arguments_of_set_refuse_a_value_past_the_enum :: proc(t: ^testing.T) {
 		problem:   Set_Problem,
 	}
 	past := make([dynamic]Case, context.temp_allocator)
-	for word in ([?]u32{u32(max(Font)) + 1, max(u32) - 1, 1 << 16}) {
+	for word in ([?]u32{u32(max(Font)) + 1, max(u32) - 1, max(u32), 1 << 16}) {
 		arguments := nothing_given()
-		arguments.font = Font(word)
+		arguments.font_presence, arguments.font = .Given, Font(word)
 		append(&past, Case{arguments, .Font, .Bad_Value})
 	}
 	for word in ([?]u32{u32(max(Keyboard_Layout)) + 1, max(u32) - 1}) {
 		arguments := nothing_given()
-		arguments.keyboard_layout = Keyboard_Layout(word)
+		arguments.keyboard_layout_presence, arguments.keyboard_layout = .Given, Keyboard_Layout(word)
 		append(&past, Case{arguments, .Keyboard_Layout, .Bad_Value})
 	}
-	for word in ([?]u8{scale_factor.EIGHTHS_OF_ONE - 1, u8(max(scale_factor.Scale)) + 1, max(u8) - 1}) {
+	for word in ([?]u8{0, scale_factor.EIGHTHS_OF_ONE - 1, u8(max(scale_factor.Scale)) + 1, max(u8) - 1, max(u8)}) {
 		arguments := nothing_given()
-		arguments.scale = scale_factor.Scale(word)
+		arguments.scale_presence, arguments.scale = .Given, scale_factor.Scale(word)
 		append(&past, Case{arguments, .Scale, .Bad_Value})
 	}
 	// The member None of the subpixel order, 2, written as a layout of the
 	// keyboard, which has two members: a member of another enum is no
 	// member of this one.
 	another := nothing_given()
-	another.keyboard_layout = Keyboard_Layout(Subpixel_Order.None)
+	another.keyboard_layout_presence, another.keyboard_layout = .Given, Keyboard_Layout(Subpixel_Order.None)
+	for presence in ([?]u64{2, max(u64)}) {
+		wrong := nothing_given()
+		wrong.grid_fit_presence, wrong.grid_fit = module.Presence(presence), .Off
+		append(&past, Case{wrong, .Grid_Fit, .Bad_Value})
+	}
 	append(&past, Case{another, .Keyboard_Layout, .Bad_Value})
 	// A good value before a bad one changes nothing either.
 	mixed := nothing_given()
-	mixed.font, mixed.appearance = .Spleen, Appearance(3)
+	mixed.font_presence, mixed.font, mixed.appearance_presence, mixed.appearance = .Given, .Spleen, .Given, Appearance(3)
 	append(&past, Case{mixed, .Appearance, .Bad_Value})
 	append(&past, Case{nothing_given(), {}, .Nothing_Given})
 	for item in past {
@@ -383,13 +313,13 @@ the_arguments_of_set_refuse_a_value_past_the_enum :: proc(t: ^testing.T) {
 	// The successes come last: one setting, the others kept, and the count,
 	// the zone and the appearance in force kept.
 	layout := nothing_given()
-	layout.keyboard_layout = .French
+	layout.keyboard_layout_presence, layout.keyboard_layout = .Given, .French
 	changed, _, problem := choice_of_arguments(current, layout)
 	testing.expect_value(t, problem, Set_Problem.None)
 	expected := current
 	expected.keyboard_layout = .French
 	testing.expect_value(t, changed, expected)
-	each := Set_Arguments{font = .Spleen, subpixel_order = .None, pointer_theme = .Of_The_System, grid_fit = .Off, keyboard_layout = .French, appearance = .Light, scale = .Eleven_Eighths}
+	each := Set_Arguments{.Given, .Spleen, .Given, .None, .Given, .Of_The_System, .Given, .Off, .Given, .French, .Given, .Light, .Given, .Eleven_Eighths}
 	changed, _, problem = choice_of_arguments(current, each)
 	testing.expect_value(t, problem, Set_Problem.None)
 	testing.expect(t, changed.font == .Spleen && changed.subpixel_order == .None && changed.scale == .Eleven_Eighths && changed.zone_offset_minutes == 60 && changed.change_count == 8)
@@ -560,41 +490,6 @@ the_language_list_on_the_page :: proc(t: ^testing.T) {
 	testing.expect_value(t, choice.languages.count, 0)
 }
 
-// The kept record of version 3 holds the list: it reads back; a damaged
-// list refuses the record whole; a record of version 2 is refused.
-@(test)
-the_language_list_in_the_kept_record :: proc(t: ^testing.T) {
-	written := Choice{font = .Spleen, scale = .Ten_Eighths}
-	locales := full_locales(t)
-	for count in ([?]int{0, 1, LANGUAGE_LIST_CAPACITY}) {
-		written.languages, _, _, _ = language_list_of_locales(locales[:count])
-		kept := kept_of(written, 60)
-		read_choice, zone, ok := kept_read(([^]u8)(&kept)[:size_of(kept)])
-		testing.expectf(t, ok, "a record of %d languages is refused", count)
-		testing.expect(t, read_choice.languages == written.languages, "the record gives back the list")
-		testing.expect_value(t, zone, 60)
-	}
-	kept := kept_of(written, 60)
-	bytes := ([^]u8)(&kept)[:size_of(kept)]
-	kept.language_count = LANGUAGE_LIST_CAPACITY + 1
-	refused, _, ok := kept_read(bytes)
-	testing.expect(t, !ok && refused.languages == Language_List{}, "a record of 9 languages is taken")
-	kept.language_count = LANGUAGE_LIST_CAPACITY
-	kept.languages[7].script = {'l', 'a', 't', 'n'}
-	_, _, ok = kept_read(bytes)
-	testing.expect(t, !ok, "a record with a damaged locale is taken")
-	kept.languages[7] = kept.languages[0]
-	_, _, ok = kept_read(bytes)
-	testing.expect(t, !ok, "a record with a language twice is taken")
-	kept.languages[7] = locales[7]
-	kept.version = 2
-	_, _, ok = kept_read(bytes)
-	testing.expect(t, !ok, "a record of version 2 is taken")
-	kept.version = KEPT_VERSION
-	read_choice, _, read_ok := kept_read(bytes)
-	testing.expect(t, read_ok)
-	testing.expect_value(t, read_choice.languages.count, LANGUAGE_LIST_CAPACITY)
-}
 // The pass of the context: each word that names no pass is refused (3, one
 // past the last; 255; the largest word); each pass comes back from its
 // word.
@@ -649,4 +544,156 @@ the_next_appearance_cycles :: proc(t: ^testing.T) {
 		testing.expect(t, appearance_next(appearance) != appearance)
 		testing.expect_value(t, appearance_next(appearance_next(appearance_next(appearance))), appearance)
 	}
+}
+
+// The kept record holds chosen values only. A word that names no value of
+// its setting, a scale word outside 8 to 16, a zone that is not a quarter
+// of an hour in its range, a language list that is not whole: each holds
+// as no choice, at each edge, and the other choices still read. A record
+// of nothing gives the defaults, each with the layer of the contract.
+@(test)
+a_kept_word_that_its_border_refuses_holds_as_no_choice :: proc(t: ^testing.T) {
+	empty_choice, empty_zone, empty_layers := choice_of_kept({}, nil, false)
+	testing.expect(t, !values_differ(empty_choice, choice_default()))
+	testing.expect_value(t, empty_zone, 0)
+	for setting in Setting {
+		testing.expect_value(t, empty_layers.values[setting], chosen_values.Layer.Contract_Default)
+	}
+	buffer: [chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE]u8
+	for refused in ([?]u64{2, 255, u64(max(u32)), u64(max(u32)) + 1, max(u64)}) {
+		written, problem := chosen_values.write_record({}, {{name = "font", kind = .Choose, value = refused}, {name = "appearance", kind = .Choose, value = u64(Appearance.Light)}}, buffer[:])
+		testing.expect_value(t, problem, chosen_values.Record_Problem.None)
+		record, _ := chosen_values.read_record(buffer[:written])
+		choice, _, layers := choice_of_kept(record, nil, false)
+		testing.expectf(t, choice.font == .Vector && layers.values[.Font] == .Contract_Default, "the font word %d is taken", refused)
+		testing.expect_value(t, choice.appearance, Appearance.Light)
+		testing.expect_value(t, layers.values[.Appearance], chosen_values.Layer.Chosen)
+	}
+	for scale_word in ([?]u64{0, 7, 17, max(u64)}) {
+		written, _ := chosen_values.write_record({}, {{name = "scale", kind = .Choose, value = scale_word}}, buffer[:])
+		record, _ := chosen_values.read_record(buffer[:written])
+		choice, _, layers := choice_of_kept(record, nil, false)
+		testing.expectf(t, choice.scale == scale_factor.DEFAULT && layers.values[.Scale] == .Contract_Default, "the scale word %d is taken", scale_word)
+	}
+	minus_fifteen := word_of_minutes(-15)
+	for zone_word in ([?]u64{word_of_minutes(i64(ZONE_OFFSET_MINUTES_LEAST) - 15), word_of_minutes(i64(ZONE_OFFSET_MINUTES_MOST) + 15), 7, minus_fifteen + 1, max(u64) - 100}) {
+		written, _ := chosen_values.write_record({}, {{name = TIME_ZONE_NAME, kind = .Choose, value = zone_word}}, buffer[:])
+		record, _ := chosen_values.read_record(buffer[:written])
+		_, zone, layers := choice_of_kept(record, nil, false)
+		testing.expectf(t, zone == 0 && layers.time_zone == .Contract_Default, "the zone word %d is taken", zone_word)
+	}
+	for zone in ([?]i32{ZONE_OFFSET_MINUTES_LEAST, -15, 0, 345, ZONE_OFFSET_MINUTES_MOST}) {
+		written, _ := chosen_values.write_record({}, {{name = TIME_ZONE_NAME, kind = .Choose, value = word_of_minutes(i64(zone))}}, buffer[:])
+		record, _ := chosen_values.read_record(buffer[:written])
+		_, read_zone, layers := choice_of_kept(record, nil, false)
+		testing.expectf(t, read_zone == zone && layers.time_zone == .Chosen, "the zone %d is refused", zone)
+	}
+	// A language list: whole, cut by one byte, with a count past 8, with a
+	// language twice.
+	locales := full_locales(t)
+	list, _, _, _ := language_list_of_locales(locales[:2])
+	list_bytes := transmute([size_of(Language_List)]u8)list
+	choice, _, layers := choice_of_kept({}, list_bytes[:], true)
+	testing.expect(t, choice.languages == list && layers.languages == .Chosen)
+	_, _, cut_layers := choice_of_kept({}, list_bytes[:len(list_bytes) - 1], true)
+	testing.expect_value(t, cut_layers.languages, chosen_values.Layer.Contract_Default)
+	past := list
+	past.count = LANGUAGE_LIST_CAPACITY + 1
+	past_bytes := transmute([size_of(Language_List)]u8)past
+	past_choice, _, past_layers := choice_of_kept({}, past_bytes[:], true)
+	testing.expect(t, past_choice.languages == Language_List{} && past_layers.languages == .Contract_Default)
+	twice := list
+	twice.locales[1] = twice.locales[0]
+	twice_bytes := transmute([size_of(Language_List)]u8)twice
+	_, _, twice_layers := choice_of_kept({}, twice_bytes[:], true)
+	testing.expect_value(t, twice_layers.languages, chosen_values.Layer.Contract_Default)
+	_, _, absent_layers := choice_of_kept({}, list_bytes[:], false)
+	testing.expect_value(t, absent_layers.languages, chosen_values.Layer.Contract_Default)
+}
+
+// A change records only what changed: the value in force chosen again
+// records nothing, and the record of a change reads back as the change.
+@(test)
+a_change_records_only_what_changed :: proc(t: ^testing.T) {
+	before := choice_default()
+	same := kept_changes_of(before, 0, before, 0)
+	testing.expect_value(t, same.count, 0)
+	testing.expect(t, !same.languages_changed)
+	after := before
+	after.font = .Spleen
+	after.scale = .Eleven_Eighths
+	changed := kept_changes_of(before, 0, after, -210)
+	testing.expect_value(t, changed.count, 3)
+	buffer: [chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE]u8
+	written, problem := chosen_values.write_record({}, changed.changes[:changed.count], buffer[:])
+	testing.expect_value(t, problem, chosen_values.Record_Problem.None)
+	record, _ := chosen_values.read_record(buffer[:written])
+	read_choice, zone, layers := choice_of_kept(record, nil, false)
+	testing.expect(t, !values_differ(read_choice, after))
+	testing.expect_value(t, zone, -210)
+	testing.expect_value(t, layers.values[.Font], chosen_values.Layer.Chosen)
+	testing.expect_value(t, layers.values[.Grid_Fit], chosen_values.Layer.Contract_Default)
+	languages := after
+	languages.languages.count = 1
+	testing.expect(t, kept_changes_of(after, -210, languages, -210).languages_changed)
+}
+
+// word_of_minutes gives the word of a signed count of minutes, as the kept
+// record holds it.
+@(private = "file")
+word_of_minutes :: proc(minutes: i64) -> u64 {
+	return cast(u64)minutes
+}
+
+// The words of a presentation record: a byte past its setting, bits past
+// the four bytes, a zone off its step or past its range, a script with no
+// language, a language that is not canonical, each refuses the whole
+// record with the defaults. A record of zeros is the defaults with no
+// language. A choice reads back from its words, with only what a window
+// draws with: the pointer theme and the layout of the keyboard stay the
+// defaults, and only the first language crosses.
+@(test)
+a_presentation_record_is_read_at_its_border :: proc(t: ^testing.T) {
+	good := presentation_words_of(choice_default())
+	refused := make([dynamic][PRESENTATION_WORDS]u64, context.temp_allocator)
+	for shift in ([?]u64{0, 8, 16, 24}) {
+		words := good
+		words[0] = words[0] &~ (0xFF << shift) | 0xFE << shift
+		append(&refused, words)
+	}
+	past := good
+	past[0] |= u64(1) << 32
+	append(&refused, past)
+	for zone in ([?]i64{7, i64(ZONE_OFFSET_MINUTES_LEAST) - 15, i64(ZONE_OFFSET_MINUTES_MOST) + 15, min(i64)}) {
+		words := good
+		words[1] = cast(u64)zone
+		append(&refused, words)
+	}
+	no_language := good
+	no_language[2], no_language[3] = 0, 1
+	append(&refused, no_language)
+	upper := good
+	upper[2] = transmute(u64)[8]u8{'F', 'R', 0, 0, 0, 0, 0, 0}
+	append(&refused, upper)
+	long := good
+	long[2] = max(u64)
+	append(&refused, long)
+	for words in refused {
+		choice, ok := presentation_of_words(words, .Ten_Eighths)
+		testing.expectf(t, !ok && !values_differ(choice, choice_default()), "the words %x are taken", words)
+	}
+	zeros, zeros_ok := presentation_of_words({}, .Ten_Eighths)
+	testing.expect(t, zeros_ok && zeros.languages.count == 0 && zeros.zone_offset_minutes == 0)
+	chosen := choice_default()
+	chosen.font, chosen.grid_fit, chosen.subpixel_order = .Spleen, .Off, .None
+	chosen.pointer_theme, chosen.keyboard_layout = .Of_The_System, .French
+	chosen.appearance_in_force, chosen.zone_offset_minutes = .Light, ZONE_OFFSET_MINUTES_MOST
+	locales := full_locales(t)
+	chosen.languages, _, _, _ = language_list_of_locales(locales[:3])
+	read, ok := presentation_of_words(presentation_words_of(chosen), .Sixteen_Eighths)
+	testing.expect(t, ok)
+	testing.expect(t, read.font == .Spleen && read.grid_fit == .Off && read.subpixel_order == .None && read.scale == .Sixteen_Eighths)
+	testing.expect(t, read.appearance_in_force == .Light && read.zone_offset_minutes == ZONE_OFFSET_MINUTES_MOST)
+	testing.expect(t, read.pointer_theme == choice_default().pointer_theme && read.keyboard_layout == choice_default().keyboard_layout)
+	testing.expect(t, read.languages.count == 1 && read.languages.locales[0].language == locales[0].language && read.languages.locales[0].region == locales[0].region)
 }

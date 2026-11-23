@@ -16,6 +16,14 @@ import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/text_encoding"
 
+// The arm time of each consent door of the trusted display: the grant
+// dialog, the difference of a plan and the act of an agent. An answer counts
+// only this long after the dialog showed whole, and again after each change
+// of its rows or of its focus, so a key or a press meant for a window never
+// answers it. A principal may ask for a longer arm time; nothing makes it
+// shorter.
+CONSENT_ARM_MILLISECONDS :: u64(500)
+
 // Maximum items in a single grouped consent request batch or dialog. Sixteen
 // rows fit the reference screen without scrolling so the principal sees every
 // item before acting.
