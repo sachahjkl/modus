@@ -5,13 +5,14 @@ import "core:testing"
 import "modus:contract/draw_record"
 import "modus:contract/reference_screen"
 
-// The border refuses each word that names no count of the range: 0, 1, the
-// scale 1 (8 eighths), 9, one past the largest member, 255, a word whose
-// low byte names a member, and the largest word. The scale that it gives with a problem names no member, so a caller
-// that keeps it by mistake cannot draw at a scale that it did not get.
+// The border refuses each word that names no count of the range: 0, 1, 7
+// (one under the scale 1), 17 (one past the largest member), 255, a word
+// whose low byte names a member, and the largest words. The scale that it
+// gives with a problem names no member, so a caller that keeps it by
+// mistake cannot draw at a scale that it did not get.
 @(test)
 the_border_refuses_a_word_that_names_no_count_of_the_range :: proc(t: ^testing.T) {
-	refused := [?]u64{0, 1, EIGHTHS_OF_ONE, u64(Scale.Ten_Eighths) - 1, u64(Scale.Sixteen_Eighths) + 1, u64(max(u8)), 256 + u64(Scale.Ten_Eighths), u64(max(u32)), max(u64)}
+	refused := [?]u64{0, 1, EIGHTHS_OF_ONE - 1, u64(Scale.Sixteen_Eighths) + 1, u64(max(u8)), 256 + u64(Scale.Ten_Eighths), 256 + EIGHTHS_OF_ONE, u64(max(u32)), max(u64)}
 	for word in refused {
 		scale, problem := scale_of_word(word)
 		testing.expectf(t, problem == .No_Member, "the word %d gave %v", word, problem)
@@ -19,41 +20,24 @@ the_border_refuses_a_word_that_names_no_count_of_the_range :: proc(t: ^testing.T
 	}
 }
 
-// A count of the range past the window bound is refused with its own
-// problem, not with the problem of a word that names no member: the
-// settings window says that the windows do not fit yet.
+// The success case last: each count from 8, the scale 1, to 16, the scale
+// 2, is its member; the range has no hole; the default and the largest
+// scale are members.
 @(test)
-the_border_refuses_a_scale_past_the_window_bound :: proc(t: ^testing.T) {
-	for word in u64(WINDOW_BOUND) + 1 ..= u64(Scale.Sixteen_Eighths) {
-		_, member := enum_member_of(word)
-		testing.expectf(t, member, "the word %d names a member", word)
-		scale, problem := scale_of_word(word)
-		testing.expectf(t, problem == .Past_Window_Bound, "the word %d gave %v", word, problem)
-		testing.expectf(t, u8(scale) == 0, "the word %d gave the scale %d with its refusal", word, u8(scale))
-	}
-}
-
-// The success case last: each count from 10 to the window bound is its
-// member, and the default is one of them.
-@(test)
-the_border_takes_each_scale_up_to_the_window_bound :: proc(t: ^testing.T) {
-	for word in u64(Scale.Ten_Eighths) ..= u64(WINDOW_BOUND) {
+the_border_takes_each_scale_from_one_to_two :: proc(t: ^testing.T) {
+	testing.expect_value(t, u64(min(Scale)), u64(EIGHTHS_OF_ONE))
+	testing.expect_value(t, u64(max(Scale)), u64(2 * EIGHTHS_OF_ONE))
+	testing.expect_value(t, len(Scale), EIGHTHS_OF_ONE + 1)
+	for word in u64(EIGHTHS_OF_ONE) ..= u64(2 * EIGHTHS_OF_ONE) {
 		scale, problem := scale_of_word(word)
 		testing.expect_value(t, problem, Scale_Problem.None)
 		testing.expect_value(t, u64(scale), word)
 	}
-	_, default_problem := scale_of_word(u64(DEFAULT))
-	testing.expect_value(t, default_problem, Scale_Problem.None)
-}
-
-@(private = "file")
-enum_member_of :: proc(word: u64) -> (Scale, bool) {
-	for member in Scale {
-		if u64(member) == word {
-			return member, true
-		}
+	for scale in ([?]Scale{DEFAULT, LARGEST}) {
+		_, problem := scale_of_word(u64(scale))
+		testing.expect_value(t, problem, Scale_Problem.None)
 	}
-	return {}, false
+	testing.expect_value(t, LARGEST, max(Scale))
 }
 
 // Each edge rounds to the nearest pixel, a half up, also left of the
@@ -222,26 +206,25 @@ the_logical_screen_of_each_scale :: proc(t: ^testing.T) {
 	}
 }
 
-// The window bound: the least work area that a holder of the display gives
-// fits the logical screen of each scale up to WINDOW_BOUND, and not the
-// scale after it. No part of one holder is counted: a holder with no bar
-// and a holder that keeps HOLDER_LINES_MOST both give the least work area,
-// and a holder that keeps one line more does not.
+// The least work area fits the logical screen of each scale, the largest
+// one too, so the bar and the window that sets the scale back are on the
+// screen at each scale. No part of one holder is counted: a holder with no
+// bar and a holder that keeps HOLDER_LINES_MOST both give the least work
+// area at the largest scale, and a holder that keeps one line more does not.
 @(test)
-the_window_bound_is_the_largest_scale_that_the_least_work_area_fits :: proc(t: ^testing.T) {
-	TALLEST_WINDOW :: 708
+the_least_work_area_fits_each_scale :: proc(t: ^testing.T) {
+	SETTINGS_LEAST_HEIGHT :: 320
 	TITLE :: 40
-	testing.expect_value(t, WORK_AREA_LEAST_HEIGHT, TALLEST_WINDOW + TITLE)
+	testing.expect_value(t, WORK_AREA_LEAST_HEIGHT, SETTINGS_LEAST_HEIGHT + TITLE)
 	for scale in Scale {
 		_, height := logical_screen(scale)
-		fits := height >= WORK_AREA_LEAST_HEIGHT
-		testing.expectf(t, fits == (u8(scale) <= u8(WINDOW_BOUND)), "the scale %d eighths: the least work area fits %v", u8(scale), fits)
+		testing.expectf(t, height >= WORK_AREA_LEAST_HEIGHT, "the scale %d eighths: the least work area does not fit %d lines", u8(scale), height)
 	}
-	_, bound_height := logical_screen(WINDOW_BOUND)
-	testing.expect_value(t, bound_height, WINDOW_BOUND_LOGICAL_HEIGHT)
+	_, largest_height := logical_screen(LARGEST)
+	testing.expect_value(t, largest_height, LARGEST_LOGICAL_HEIGHT)
 	testing.expect(t, HOLDER_LINES_MOST >= 0)
 	for holder_lines in ([3]i64{0, HOLDER_LINES_MOST, HOLDER_LINES_MOST + 1}) {
-		work_height := bound_height - holder_lines
+		work_height := largest_height - holder_lines
 		testing.expectf(t, (work_height >= WORK_AREA_LEAST_HEIGHT) == (holder_lines <= HOLDER_LINES_MOST), "a holder that keeps %d lines", holder_lines)
 	}
 }

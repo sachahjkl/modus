@@ -314,7 +314,7 @@ Do not use: notification area, status area.
 
 A tray widget is a card of the bar that a button of the tray or the clock opens: the control center, the notification center, or the calendar.
 
-The control center has tiles for the bar edge, the magnifier, the appearance in force and the display, and buttons that start `settings`, `monitor`, `browser` and `edit`. The notification center lists the last 6 notifications that the desktop showed, with the button `Clear all`. The calendar shows the month of today, the time zone and the time since the boot. One card of the bar shows at a time; Escape and a press outside close it. The export `compositor.tray_widget_open` opens or closes one. A tray widget is not a window: no process draws it.
+The control center has tiles for the bar edge, the magnifier, the appearance and the display, and buttons that start `settings`, `monitor`, `browser` and `edit`. The notification center lists the last 6 notifications that the desktop showed, with the button `Clear all`. The calendar shows the month of today, the time zone and the time since the boot. One card of the bar shows at a time; Escape and a press outside close it. The export `compositor.tray_widget_open` opens or closes one. A tray widget is not a window: no process draws it.
 
 The design: `src/md/features/tray_widgets.md`.
 
@@ -1152,9 +1152,9 @@ Do not use: device-independent pixel, virtual pixel.
 
 ### Scale factor
 
-The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1.25 to 2 on the reference screen.
+The scale factor is the count of pixels of the screen for one logical pixel, in eighths: from 1 to 2 on the reference screen.
 
-For the desktop it is the setting `scale`, 1.25 by default or 1.375, so every window has the same scale; the scales up to 2 wait until each window fits their logical screen. A count of eighths keeps each spacing token on whole pixels of the screen; 1.3 has no value. The drawing module turns places into screen pixels and rounds each edge; no process computes a screen pixel. The boot display takes its own scale among the sizes of Spleen.
+For the desktop it is the setting `scale`, 1.25 by default, each eighth from 1 to 2, so every window has the same scale. A count of eighths keeps each spacing token on whole pixels of the screen; 1.3 has no value. The drawing module turns places into screen pixels and rounds each edge; no process computes a screen pixel. The boot display takes its own scale among the sizes of Spleen.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and `src/md/features/boot_display_scale.md`.
 
@@ -1302,9 +1302,9 @@ Do not use: pill (for this), badge, chip.
 
 ### Window bound
 
-The window bound is the largest size of a window: at most 1000 × 708 for the surface, which with a title of at most 40 lines fits the least work area of 748 lines.
+The window bound is the largest size of a window of the system: at most 1000 × 708 for the surface, which with a title of at most 40 lines fits under the bar at the default scale, 1.25, and at 1.375.
 
-It keeps each window inside the least work area that a holder of the display gives, at each scale up to 1.375 of the reference screen. It counts no bar: a holder keeps at most `scale_factor.HOLDER_LINES_MOST` lines of the logical screen for its own parts. A window larger than the bound is a fault of its layout. The range of the scale factor sets the bound: a scale above 1.375 needs a smaller bound or resizable windows.
+It keeps a window of the system whole on the screen at the default scale. It does not bound the scale: at a larger scale a window of the bound is taller than the work area, keeps its title on the screen, and is moved, or resized when it is resizable, to show the rest; the least work area that each holder of the display leaves, `scale_factor.WORK_AREA_LEAST_HEIGHT`, holds the window of settings at each scale. A window larger than the bound is a fault of its layout.
 
 The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and `src/md/features/roles_and_contracts.md`, "The work area".
 

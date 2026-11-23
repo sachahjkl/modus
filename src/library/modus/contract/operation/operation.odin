@@ -3867,14 +3867,15 @@ status_of_word :: proc "contextless" (word: u64) -> (status: Status, ok: bool) {
 	}
 	return {}, false
 }
-// The value 17: the process `settings` runs its boot pass (1): it reads the
-// settings kept in its store, writes the settings page, and stops, with no
-// window (modus:contract/settings).
+// The value 17: the pass that the process `settings` runs with no window,
+// the word of a settings.Pass: 1 for the pass at boot (it reads the
+// settings kept in its store, writes the settings page, and stops), 2 for
+// the next appearance that the Control Center asks (modus:contract/settings).
 //
-// The root service writes 1 when it starts `settings` at boot; each other
-// start of `settings` has 0 and opens its window. No other process reads
-// this value.
-CONTEXT_VALUE_SETTINGS_BOOT_PASS :: 17
+// The root service writes it when it starts `settings` for a pass; each
+// other start of `settings` has 0 and opens its window. No other process
+// reads this value.
+CONTEXT_VALUE_SETTINGS_PASS :: 17
 // The values 18 and 19: the address and the size of the second pointer
 // theme file that the root service gives the compositor (the theme of the
 // system, beside the theme of the owner at the values 6 and 7 of the

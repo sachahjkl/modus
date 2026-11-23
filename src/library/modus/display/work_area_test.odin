@@ -71,8 +71,8 @@ client_reads_work_area :: proc(t: ^testing.T, window: ^Window) -> (event: Event,
 // most lines that the contract lets a holder keep. The client library does
 // the same with each: the first Work_Area is the take of the window, a
 // later one changes the area and is no take, and the area holds the least
-// work area at each scale up to the window bound. A holder that keeps one
-// line more than the contract allows gives less than the least work area.
+// work area at each scale, the largest too. A holder that keeps one line
+// more than the contract allows gives less than the least work area.
 @(test)
 a_window_takes_its_work_area_from_any_holder_of_the_display :: proc(t: ^testing.T) {
 	holders := [2]Holder_Of_Test{{lines_kept = 0}, {lines_kept = scale_factor.HOLDER_LINES_MOST}}
@@ -86,7 +86,7 @@ a_window_takes_its_work_area_from_any_holder_of_the_display :: proc(t: ^testing.
 		_, _, named_before := work_area(&window)
 		testing.expect(t, !named_before, "a window names a work area before its holder sent one")
 
-		testing.expect(t, holder_takes_window(holder, &window.ring.completions, scale_factor.WINDOW_BOUND))
+		testing.expect(t, holder_takes_window(holder, &window.ring.completions, scale_factor.LARGEST))
 		event, first := client_reads_work_area(t, &window)
 		testing.expectf(t, first, "the holder that keeps %d lines: its first work area is no take", holder.lines_kept)
 		width, height, named := work_area(&window)
@@ -96,9 +96,6 @@ a_window_takes_its_work_area_from_any_holder_of_the_display :: proc(t: ^testing.
 		testing.expectf(t, height >= scale_factor.WORK_AREA_LEAST_HEIGHT, "the holder that keeps %d lines gives %d lines", holder.lines_kept, height)
 
 		for scale in scale_factor.Scale {
-			if u8(scale) > u8(scale_factor.WINDOW_BOUND) {
-				continue
-			}
 			testing.expect(t, holder_takes_window(holder, &window.ring.completions, scale))
 			again, again_first := client_reads_work_area(t, &window)
 			testing.expect(t, !again_first, "a later work area is a second take")
@@ -108,6 +105,6 @@ a_window_takes_its_work_area_from_any_holder_of_the_display :: proc(t: ^testing.
 		}
 	}
 	past := Holder_Of_Test{lines_kept = scale_factor.HOLDER_LINES_MOST + 1}
-	_, bound_height := scale_factor.logical_screen(scale_factor.WINDOW_BOUND)
-	testing.expect(t, bound_height - past.lines_kept < scale_factor.WORK_AREA_LEAST_HEIGHT)
+	_, largest_height := scale_factor.logical_screen(scale_factor.LARGEST)
+	testing.expect(t, largest_height - past.lines_kept < scale_factor.WORK_AREA_LEAST_HEIGHT)
 }

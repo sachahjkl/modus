@@ -67,7 +67,13 @@ the_place_of_a_scenario_on_the_screen :: proc(t: ^testing.T) {
 		_, smallest_ok := screen_place_of_logical(min(int), scale)
 		testing.expect(t, !smallest_ok)
 		limit, limit_ok := screen_place_of_logical(LOGICAL_PLACE_LIMIT, scale)
-		testing.expect(t, limit_ok && limit > LOGICAL_PLACE_LIMIT)
+		// At the scale 1 a logical place is its pixel of the screen; past it,
+		// the pixel is past the place.
+		if u64(scale) == scale_factor.EIGHTHS_OF_ONE {
+			testing.expect(t, limit_ok && limit == LOGICAL_PLACE_LIMIT)
+		} else {
+			testing.expect(t, limit_ok && limit > LOGICAL_PLACE_LIMIT)
+		}
 		_, screen_past_ok := logical_place_of_screen(LOGICAL_PLACE_LIMIT + 1, scale)
 		testing.expect(t, !screen_past_ok)
 		for pixel in -40 ..= reference_screen.WIDTH + 40 {
@@ -83,10 +89,15 @@ the_place_of_a_scenario_on_the_screen :: proc(t: ^testing.T) {
 	testing.expect(t, right <= reference_screen.WIDTH && bottom <= reference_screen.HEIGHT)
 	past_right, _ := screen_place_of_logical(LOGICAL_SCREEN_WIDTH + 1, MACHINE_SCALE)
 	testing.expect(t, past_right > reference_screen.WIDTH)
-	// The cells of Spleen of the body: 10 by 20 at 1.25 with the glyph at
-	// 1, 2; 11 by 22 at 1.375 with the glyph at 1, 3.
-	testing.expect_value(t, spleen_cells_of(.Ten_Eighths), Spleen_Cells{step = 10, glyph_x = 1, glyph_y = 2})
-	testing.expect_value(t, spleen_cells_of(.Eleven_Eighths), Spleen_Cells{step = 11, glyph_x = 1, glyph_y = 3})
+	// The cells of Spleen of the body, at the edges of the range first: 8
+	// by 16 at 1 and 16 by 32 at 2, where Spleen draws at 2, each glyph at
+	// the corner; 15 by 30 at 1.875, the last scale where it draws at 1;
+	// 10 by 20 at 1.25 with the glyph at 1, 2; 11 by 22 at 1.375 at 1, 3.
+	testing.expect_value(t, spleen_cells_of(.Eight_Eighths), Spleen_Cells{step = 8, spleen_scale = 1, glyph_x = 0, glyph_y = 0})
+	testing.expect_value(t, spleen_cells_of(.Sixteen_Eighths), Spleen_Cells{step = 16, spleen_scale = 2, glyph_x = 0, glyph_y = 0})
+	testing.expect_value(t, spleen_cells_of(.Fifteen_Eighths), Spleen_Cells{step = 15, spleen_scale = 1, glyph_x = 3, glyph_y = 7})
+	testing.expect_value(t, spleen_cells_of(.Ten_Eighths), Spleen_Cells{step = 10, spleen_scale = 1, glyph_x = 1, glyph_y = 2})
+	testing.expect_value(t, spleen_cells_of(.Eleven_Eighths), Spleen_Cells{step = 11, spleen_scale = 1, glyph_x = 1, glyph_y = 3})
 }
 
 // The line of the reference screen reads back as the size of the contract,

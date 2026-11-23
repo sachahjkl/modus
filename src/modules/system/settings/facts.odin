@@ -264,6 +264,28 @@ Window_Ready :: struct {
 	scale:           [8]u8,
 }
 
+// The context names a pass that is no member of settings.Pass: the process
+// writes nothing and stops.
+@(log_fact = "settings: the context names the pass {word}, which is no pass: nothing is written")
+Pass_Refused :: struct {
+	word: u64,
+}
+
+// The tile of the Control Center: the appearance after the one of the page.
+@(log_fact = "settings: the next appearance of the Control Center: {before} to {after}; {store}")
+Appearance_Next_Kept :: struct {
+	before: [8]u8,
+	after:  [8]u8,
+	store:  [32]u8,
+}
+#assert(size_of(Appearance_Next_Kept{}.before) == VALUE_NAME_FIELD_BYTES && size_of(Appearance_Next_Kept{}.store) == STORE_WORDS_FIELD_BYTES)
+
+// The tile of the Control Center, with a page that the reader refused: the
+// pass keeps nothing, since the defaults would take the place of the kept
+// record of each other setting.
+@(log_fact = "settings: the next appearance of the Control Center keeps nothing: the settings page holds a value that its setting does not have, or was never stable")
+Appearance_Next_Page_Refused :: struct {}
+
 // The window cannot be resized: the limits that this process gave were
 // refused, or the command ring of the window was full.
 @(log_fact = "settings: the window stays fixed: {cause}")

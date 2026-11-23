@@ -56,6 +56,47 @@ Windows_At_Scale :: struct {
 	scale:   u64,
 }
 
+// The root service answered a press on the tile Appearance with
+// Settings_Raise: the compositor raised the window of settings, with the
+// focus on the appearance in force.
+@(log_fact = "compositor: the tile appearance raises the window settings, with the focus on the appearance in force")
+Appearance_Tile_Goes_To_Settings :: struct {}
+
+// Settings_Raise named a window that closed since the answer of the root
+// service: nothing is raised, and a next press asks again.
+@(log_fact = "compositor: the root service asked to raise the window settings, and no window has its ring")
+Settings_Raise_Without_Window :: struct {}
+
+// A start of settings while its window runs: the root service asked to
+// raise that window in place of a second process.
+@(log_fact = "compositor: the root service raised the window settings in place of a second process settings")
+Settings_Window_Raised :: struct {}
+
+// Settings_Raise named a focus that is no member: nothing is raised.
+@(log_fact = "compositor: the root service asked to raise the window settings with the focus word {word}, which names no focus")
+Settings_Raise_Focus_Refused :: struct {
+	word: u64,
+}
+
+// A press on the tile Appearance: the compositor asks the root service,
+// which knows the process settings.
+@(log_fact = "compositor: the tile appearance asks for the next appearance")
+Appearance_Tile_Asks_Next :: struct {}
+
+// The control ring to the root service was full: the press is lost, and a
+// next press asks again.
+@(log_fact = "compositor: the tile appearance found the ring of the root service full: the press asks nothing")
+Appearance_Tile_Ring_Full :: struct {}
+
+// A window declined the scale in force: its budget does not pay a surface
+// at it. The compositor draws its frame with the background until the
+// window offers a surface at another scale.
+@(log_fact = "compositor: window {window} declined the scale of {scale} eighths: its budget does not pay its surface; its frame stays empty until another scale")
+Window_Declined_Scale :: struct {
+	scale:  u64,
+	window: value_kinds.Module_Name_Field,
+}
+
 // The first picture of a window reached the screen: from here on the
 // window is in the menu of the windows.
 @(log_fact = "compositor: window {window} is shown")

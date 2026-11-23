@@ -89,7 +89,7 @@ HEIGHT :: 312
 // The least budget of 2048 pages, in which it ran before it stated its
 // window, less that window at the scale 1 (525 pages): its module, its
 // stack, its tables, its blocks and its glyph memory. The tool counts the
-// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// window at the largest scale (docs/MODULE_CONTRACT.md, "The budget that a
 // module asks for").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1523, window_width = WIDTH, window_height = HEIGHT}
 

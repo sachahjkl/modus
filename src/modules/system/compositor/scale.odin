@@ -62,6 +62,12 @@ desktop_scale_take :: proc "contextless" (choice: settings.Choice, read_ok: bool
 	changed = taken != scale || desktop_width == 0
 	scale = taken
 	desktop_width, desktop_height = logical_pixel_of(screen.width), logical_pixel_of(screen.height)
+	// The zones of the maximize and of the snap are in logical pixels of the
+	// screen: they follow the new logical screen, or a maximize at the new
+	// scale would ask the size of the old one.
+	if changed {
+		desktop_features_resize(i32(desktop_width), i32(desktop_height), i32(BAR_HEIGHT)) // desktop_features.odin
+	}
 	before_x, before_y := pointer_x, pointer_y
 	pointer_x = clamp(pointer_x, 0, desktop_width - 1)
 	pointer_y = clamp(pointer_y, 0, desktop_height - 1)
@@ -76,6 +82,127 @@ desktop_scale_take :: proc "contextless" (choice: settings.Choice, read_ok: bool
 // from its corner and cuts it to this box.
 interior_screen_box :: proc "contextless" (client: ^Client) -> bar.Screen_Box {
 	return bar.screen_box_of({client.x + BORDER, client.y + TITLE_HEIGHT, client.x + BORDER + client.width, client.y + TITLE_HEIGHT + client.height}, scale)
+}
+
+// The count of the windows that declined the scale in force, as the last
+// Settings_Changed named it to each window.
+windows_declined_told: int
+
+// window_declined_scale_in_force says if a window declined the scale in
+// force and shows no surface: its budget does not pay a surface at it.
+window_declined_scale_in_force :: proc "contextless" (client: ^Client) -> bool {
+	return client.created && client.released && client.declined && client.declined_scale == scale
+}
+
+// windows_declined_count counts the windows that declined the scale in
+// force.
+windows_declined_count :: proc "contextless" () -> int {
+	count := 0
+	for &client in clients {
+		if window_declined_scale_in_force(&client) {
+			count += 1
+		}
+	}
+	return count
+}
+
+// settings_changed_send names the settings to a window: the count of the
+// change, the scale and the count of the windows that declined it. A
+// window whose fit waits (scale_due) is named the scale that it was told
+// before, so its fit request is not declined by a release.
+settings_changed_send :: proc "contextless" (client: ^Client) {
+	told := client.scale_due ? client.scale_told : scale
+	client.scale_told = told
+	send(client, .Settings_Changed, {0 = settings_count_told, 1 = u64(told), 2 = u64(windows_declined_told)})
+}
+
+// window_scale_step names the scale in force to a window whose scale is
+// due, once no request of its size waits. Once for each change of the
+// scale it fits the window into the work area of the scale, in the order
+// of bar.fit_order: a fit that gives a size no larger goes first, and the
+// end of its request calls this again; a fit that grows the window waits
+// until the window shows its surface at the new scale (window_fit_after_scale),
+// since the larger size at the old, larger scale can pass its budget. It
+// gives true when it sent the Settings_Changed.
+window_scale_step :: proc "contextless" (client: ^Client) -> (sent: bool) {
+	if !client.scale_due || client.resize_asked {
+		return false
+	}
+	if client.fit_due {
+		client.fit_due = false
+		client.fit_after_scale = false
+		x, y, width, height := window_fit_target(client)
+		switch bar.fit_order(client.width, client.height, width, height) {
+		case .Fit_First:
+			window_place_and_size_take(client, x, y, width, height) // window_resize.odin
+			if client.resize_asked {
+				return false
+			}
+		case .Scale_First:
+			client.fit_after_scale = true
+		}
+	}
+	client.scale_due = false
+	settings_changed_send(client)
+	return true
+}
+
+// window_fit_after_scale takes the fit that waited for the rescale, once
+// the window shows a surface of the scale in force: the size that grows is
+// paid at the new, smaller scale. A window that declined the scale shows
+// no such surface, and keeps its size.
+window_fit_after_scale :: proc "contextless" (client: ^Client) {
+	if !client.fit_after_scale || client.scale_due || client.surface_scale != scale || client.resize_asked {
+		return
+	}
+	client.fit_after_scale = false
+	x, y, width, height := window_fit_target(client)
+	window_place_and_size_take(client, x, y, width, height) // window_resize.odin
+}
+
+// window_fit_target gives the place and the size of a window in the work
+// area of the scale in force (bar.window_fit): a maximized window takes the
+// work area; a larger resizable window gets the size that fits, within its
+// limits; each window is moved onto the screen. The size is the surface of
+// the window, as window_place_and_size_take asks it.
+window_fit_target :: proc "contextless" (client: ^Client) -> (x, y, width, height: int) {
+	chrome_width, chrome_height := 2 * BORDER, TITLE_HEIGHT + BORDER
+	if client.decoration == .Client {
+		chrome_width, chrome_height = 0, 0
+	}
+	if client.maximized {
+		if zone_x, zone_y, outer_width, outer_height, ok := desktop_zone_frame(.Maximized); ok {
+			x, y, width, height = zone_x, zone_y, outer_width - chrome_width, outer_height - chrome_height
+			if client.resizable {
+				limits := size_range_of(client)
+				width = clamp(width, limits.least_width, limits.largest_width)
+				height = clamp(height, limits.least_height, limits.largest_height)
+			} else {
+				width, height = client.width, client.height
+			}
+			return
+		}
+	}
+	top := desktop_work_top()
+	work := bar.Work_Box{left = 0, top = top, width = desktop_width, height = desktop_work_bottom() - top}
+	return bar.window_fit({x = client.x, y = client.y, width = client.width, height = client.height, chrome_width = chrome_width, chrome_height = chrome_height, limits = size_range_of(client), resizable = client.resizable}, work)
+}
+
+// windows_declined_tell names a new count of the windows that declined the
+// scale in force to each window, in a Settings_Changed of the same scale:
+// the window of settings shows it, and each other window rescales to the
+// scale that it has already, which changes nothing.
+windows_declined_tell :: proc "contextless" () {
+	count := windows_declined_count()
+	if count == windows_declined_told {
+		return
+	}
+	windows_declined_told = count
+	for &client in clients {
+		if client.ring.head != nil {
+			settings_changed_send(&client)
+		}
+	}
 }
 
 // A change of the scale waits for each window to show a surface of the new
@@ -93,6 +220,11 @@ windows_at_scale_check :: proc "contextless" () {
 	windows: u64
 	for &client in clients {
 		if !client.created {
+			continue
+		}
+		// A window that declined the scale in force is settled: it waits
+		// for another scale, and the count of Settings_Changed names it.
+		if window_declined_scale_in_force(&client) {
 			continue
 		}
 		if client.released || client.resize_pictures != nil || client.surface_scale != scale {

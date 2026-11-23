@@ -128,26 +128,26 @@ import "base:intrinsics"
 //   2 pages;
 // - its tables and the other mappings: 1647 pages;
 // - the mapping of the surface of each window: the largest surface,
-//   display.SURFACE_SCREEN_LIMIT, 2816 x 2816 pixels of the screen (2048
-//   logical pixels at the window bound) of 8 bytes for two pictures, is
-//   60.5 MiB, whose mapping takes at most 32 page tables of 2 MiB (its
+//   display.SURFACE_SCREEN_LIMIT, 4096 x 4096 pixels of the screen (2048
+//   logical pixels at the largest scale, 2) of 8 bytes for two pictures,
+//   is 128 MiB, whose mapping takes at most 65 page tables of 2 MiB (its
 //   start need not be on a 2 MiB edge) and 2 page directories (it can
-//   cross a 1 GiB edge): 34 pages. 32 clients: 32 x 34 = 1088 pages. These
+//   cross a 1 GiB edge): 67 pages. 32 clients: 32 x 67 = 2144 pages. These
 //   two parts were the 2255 pages counted at the scale 1, with surfaces of
 //   2048 x 2048 and 19 pages each: 2255 - 32 x 19 = 1647;
 // - a resize maps the new surface of a window beside its old one until
 //   its Present (src/md/features/window_resize.md): one more such mapping
-//   for each client, 1088 pages. A rescale holds one surface at a time:
+//   for each client, 2144 pages. A rescale holds one surface at a time:
 //   the window releases the old one first;
 // - the glyph memory of its two copies of the text rendering, its own
 //   (its bar, its menus, its titles) and the one of the drawing module:
 //   each draws every glyph of its text into its own private glyph cache,
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
-// 4050 + 10 + 9 + 3 + 2 + 1647 + 1088 + 1088 + 708 = 8605. A screen whose
+// 4050 + 10 + 9 + 3 + 2 + 1647 + 2144 + 2144 + 708 = 10717. A screen whose
 // frame and background the budget cannot pay is named on one line, and the
 // compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8605, processes = 1, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10717, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -197,6 +197,20 @@ Client :: struct {
 	surface_serial: u64, // The surface serial of the surface shown, or of the one released.
 	surface_scale: scale_factor.Scale, // The scale at which the process made the surface shown.
 	released:    bool, // The process let its surface go: the compositor draws the frame with the background.
+	// The window declined this scale with Surface_Declined: its budget does
+	// not pay a surface at it. It counts among the windows that declined
+	// the scale while that scale is in force and it is released.
+	declined:       bool,
+	declined_scale: scale_factor.Scale,
+	// The fit at a new scale (window_resize.md, "The fit at a new scale"): scale_due holds the scale in force for this window until its
+	// fit request ends; fit_due says that the fit to the newest work area is
+	// not asked yet; scale_told is the scale of the last Settings_Changed.
+	scale_due:  bool,
+	fit_due:    bool,
+	scale_told: scale_factor.Scale,
+	// A fit that grows the window waits for its surface at the new scale
+	// (bar.fit_order): window_fit_after_scale takes it.
+	fit_after_scale: bool,
 	answer_due:  bar.Answer_Slot, // A Surface_Answer that the full ring of the window did not take (window_events.odin).
 	shown:       int, // The picture that surface is: the one that the last Present named.
 	// The proof that the window shows whole frames: the frames that read a
@@ -745,9 +759,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	gpu_scanout_open(ctx, frame_memory_handle, width, height)
 	background = canvas_create(width, height)
 	// The layout at the default scale until the settings page is read
-	// below: a page that the root service created holds it.
+	// below: a page that the root service created holds it. The first take
+	// sets up the features of the desktop at that logical screen.
 	desktop_scale_take(settings.choice_default(), true)
-	desktop_features_init(i32(desktop_width), i32(desktop_height), i32(BAR_HEIGHT))
 	// The background, the mark of the bar and the measures draw in the dark
 	// appearance: the settings are read below, and a change of the
 	// appearance draws the background and the mark again.
@@ -858,9 +872,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				palette_provider_remove()
 			case .Client_Started:
 				quality_window_started(system.Handle(record.values[0]), record.values[1])
-			case .None, .Start, .Stop:
-				// The border refused None above. Start and Stop go from the
-				// compositor to the root service, never to the compositor.
+			case .Settings_Raise:
+				settings_raise(record.values[0], record.values[1]) // tray_widgets.odin
+			case .None, .Start, .Stop, .Appearance_Next:
+				// The border refused None above. Start, Stop and
+				// Appearance_Next go from the compositor to the root service,
+				// never to the compositor.
 				system.log_fact(.Info, Control_Command_Not_Taken{word = u64(record.kind)})
 			}
 		}
@@ -1057,6 +1074,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					surface_rescale_take(&client, record) // window_resize.odin
 				case .Surface_Release:
 					surface_release_take(index, record) // window_resize.odin
+				case .Surface_Declined:
+					surface_declined_take(&client, record) // window_resize.odin
 				case .Resize_Declined:
 					resize_declined_take(&client)
 				case .Copy:
@@ -1132,6 +1151,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	// scale in force in the choice of a refused page.
 	rescaled := desktop_scale_take(choice, true)
 	settings_count_told = u64(choice.change_count)
+	windows_declined_told = windows_declined_count() // scale.odin
 	// A new appearance: the background and the mark of the bar are pixels
 	// that the compositor keeps, so it draws them again; each record of the
 	// screen reads the tokens at its next frame.
@@ -1151,10 +1171,17 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
-			send(&client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale)})
 			// The scale and the edge of the bar change the work area.
 			if client.created {
 				work_area_send(&client)
+			}
+			// A new scale: the window is fitted into the new work area
+			// first, and gets the scale when its fit request ends (scale.odin).
+			if rescaled && client.created {
+				client.scale_due, client.fit_due = true, true
+			}
+			if !window_scale_step(&client) {
+				settings_changed_send(&client)
 			}
 			told += 1
 		}
@@ -1179,7 +1206,7 @@ work_area_send :: proc "contextless" (client: ^Client) {
 }
 
 // The bar fits the lines that the display contract lets a holder keep, so
-// each window gets the least work area up to the window bound.
+// each window gets the least work area at each scale, the largest too.
 #assert(BAR_HEIGHT <= scale_factor.HOLDER_LINES_MOST)
 
 // send gives an event to a window. A full ring loses no key: the event
@@ -1273,6 +1300,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			window_grants_window_closed(system.name_of(client.title[:])) // powerbox_dialog.odin
 		}
 		client = {}
+		windows_declined_tell() // scale.odin: a window that declined the scale left.
 		palette_entries_refresh() // A window left.
 		windows_menu_rows_build() // start_menu.odin
 		return
@@ -1302,7 +1330,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// The process chose these numbers: check them against the memory
 	// itself. The record names the logical size and the scale: the pixels of
 	// the screen follow from the rule of each edge, so a logical size past
-	// the limit, a scale past the window bound, and a surface of pixels that
+	// the limit, a word that names no scale, and a surface of pixels that
 	// no logical size gives, are each refused (bar.surface_create_refusal).
 	facts := bar.Surface_Create_Facts {
 		is_memory  = kind == .Memory,
@@ -1333,8 +1361,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// The process read another scale than the scale in force: the
 	// compositor names its own, and the window rescales to it. Until then
 	// its surface is cut to its interior.
+	client.scale_told = surface_scale
 	if surface_scale != scale {
-		send(client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale)})
+		settings_changed_send(client) // scale.odin
 	}
 	// A disk process could title its window as a process of the system: its
 	// window has the nickname that the root service gave.

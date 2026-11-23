@@ -5,6 +5,33 @@ import "core:testing"
 import "modus:calendar"
 import "modus:interface"
 
+// Settings_Raise names the window of settings by the handle of its ring:
+// the word 0, a word past 32 bits, the largest word and the handle of no
+// window are refused first; then the handle of a window, at its place in
+// the order, and the one at the front when a handle is there twice.
+@(test)
+settings_raise_names_only_a_window_by_its_handle :: proc(t: ^testing.T) {
+	ring_memories := [?]u32{40, 41, 42, 41}
+	for word in ([?]u64{0, u64(max(u32)) + 1, max(u64), 43}) {
+		position, found := settings_raise_target(ring_memories[:], word)
+		expect_refused(t, position, found, word)
+	}
+	position, found := settings_raise_target(ring_memories[:0], 40)
+	expect_refused(t, position, found, 40)
+	position, found = settings_raise_target(ring_memories[:], 40)
+	testing.expect(t, found && position == 0)
+	position, found = settings_raise_target(ring_memories[:], 41)
+	testing.expect(t, found && position == 3)
+	biggest := [?]u32{max(u32)}
+	position, found = settings_raise_target(biggest[:], u64(max(u32)))
+	testing.expect(t, found && position == 0)
+}
+
+@(private = "file")
+expect_refused :: proc(t: ^testing.T, position: int, found: bool, word: u64) {
+	testing.expectf(t, !found && position == -1, "the word %d names the window at %d", word, position)
+}
+
 @(private = "file")
 SCREEN_WIDTHS_OF_TEST := [?]int{1920, 1280, 1024}
 @(private = "file")
@@ -256,7 +283,7 @@ the_parts_of_the_control_center_are_where_the_eye_sees_them :: proc(t: ^testing.
 		testing.expectf(t, (module != "") == launches && (label != "") == launches, "%v and its module", part)
 		testing.expectf(t, tray_part_closes_card(part) == launches, "%v and the close of its card", part)
 	}
-	testing.expect(t, !tray_part_takes_press(.Appearance_Tile) && !tray_part_takes_press(.Display_Tile) && !tray_part_takes_press(.None))
+	testing.expect(t, tray_part_takes_press(.Appearance_Tile) && !tray_part_takes_press(.Display_Tile) && !tray_part_takes_press(.None))
 }
 
 // The button Clear all has a place only with a history, in the head of
@@ -288,12 +315,13 @@ the_keys_walk_the_parts_of_a_card :: proc(t: ^testing.T) {
 	testing.expect_value(t, tray_part_step(.Notifications, -1, .Clear_All, false), Tray_Part.None)
 	testing.expect_value(t, tray_part_step(.Notifications, 1, .None, true), Tray_Part.Clear_All)
 	testing.expect_value(t, tray_part_step(.Notifications, 1, .Clear_All, false), Tray_Part.Clear_All)
-	testing.expect_value(t, tray_part_step(.Control_Center, 0, .None, true), Tray_Part.Bar_Edge_Tile)
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .None, true), Tray_Part.Appearance_Tile)
 	testing.expect_value(t, tray_part_step(.Control_Center, 0, .None, false), Tray_Part.Launch_Edit)
-	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Launch_Edit, true), Tray_Part.Bar_Edge_Tile)
-	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Bar_Edge_Tile, false), Tray_Part.Launch_Edit)
-	// A part that takes no press, or of another card, starts at an end.
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Launch_Edit, true), Tray_Part.Appearance_Tile)
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Appearance_Tile, false), Tray_Part.Launch_Edit)
 	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Appearance_Tile, true), Tray_Part.Bar_Edge_Tile)
+	// A part that takes no press, or of another card, starts at an end.
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Display_Tile, true), Tray_Part.Appearance_Tile)
 	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Clear_All, false), Tray_Part.Launch_Edit)
 	// A whole round reaches each part that acts once.
 	part := Tray_Part.None

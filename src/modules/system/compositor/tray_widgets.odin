@@ -147,8 +147,10 @@ tray_widgets_press :: proc "contextless" (x, y: int) -> bool {
 // tray_part_do does the act of a part of a card, from a press or from Enter.
 tray_part_do :: proc "contextless" (part: bar.Tray_Part) {
 	switch part {
-	case .None, .Appearance_Tile, .Display_Tile:
-		// These tiles say a state: they take no press.
+	case .None, .Display_Tile:
+		// These parts say a state: they take no press.
+	case .Appearance_Tile:
+		appearance_next_ask()
 	case .Bar_Edge_Tile:
 		switch bar_layout.edge {
 		case .Top:
@@ -471,4 +473,54 @@ calendar_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, widt
 	two_digits(&uptime_writer, seconds % 60)
 	interface.draw_text_right(table, grid_x + grid_width - bar.CALENDAR_GRID_INSET, foot_y, system.written(&uptime_writer), graphics.colors.dim)
 	_ = height
+}
+// The act name of the button of the appearance in force in the window of
+// settings (src/modules/system/settings, value_button).
+APPEARANCE_ACT_NAME :: "settings.set:appearance"
+
+// appearance_next_ask takes a press on the tile Appearance: the next
+// appearance, auto, dark, light. The page has one writer, the process
+// settings, and only the root service knows which process that is: an act
+// name is a claim that any window can make. So the compositor always asks
+// the root service, which starts settings for the pass of the next
+// appearance, or answers Settings_Raise for the window of settings that
+// runs. The tile shows the new appearance when the page changes.
+appearance_next_ask :: proc "contextless" () {
+	if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Appearance_Next)}) {
+		system.log_fact(.Warning, Appearance_Tile_Ring_Full{})
+		return
+	}
+	system.log_fact(.Info, Appearance_Tile_Asks_Next{})
+}
+
+// settings_raise takes Settings_Raise of the root service: it raises the
+// window of settings that the root service started, in place of a second
+// process settings. For the tile Appearance it puts the focus on the
+// appearance in force, where Enter on another value sets it. A focus word
+// that names no member, or a handle that names no window (the window
+// closed since the answer), is refused.
+settings_raise :: proc "contextless" (word: u64, focus_word: u64) {
+	focus, focus_ok := display.settings_raise_focus_of_word(focus_word)
+	if !focus_ok {
+		system.log_fact(.Info, Settings_Raise_Focus_Refused{word = focus_word})
+		return
+	}
+	ring_memories: [CLIENT_CAPACITY]u32
+	for position in 0 ..< order_count {
+		ring_memories[position] = u32(clients[order[position]].ring_memory)
+	}
+	position, found := bar.settings_raise_target(ring_memories[:order_count], word)
+	if !found {
+		system.log_fact(.Info, Settings_Raise_Without_Window{})
+		return
+	}
+	index := order[position]
+	raise(position)
+	switch focus {
+	case .Keep:
+		system.log_fact(.Info, Settings_Window_Raised{})
+	case .Appearance:
+		send(&clients[index], .Go_To, {0 = u64(display.act_name_hash(APPEARANCE_ACT_NAME))})
+		system.log_fact(.Info, Appearance_Tile_Goes_To_Settings{})
+	}
 }

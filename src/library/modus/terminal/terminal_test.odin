@@ -7,19 +7,24 @@ import "modus:contract/scale_factor"
 import "modus:system"
 import "core:testing"
 
-// The grid of the largest terminal covers the logical screen at each
-// scale: a maximized terminal is never larger than its grid. The edge is
-// the smallest scale, whose logical screen is the largest: one more cell
-// of the screen there would pass the limit.
+// The grid of the largest terminal covers the logical screen at the
+// default scale and at each larger one: a maximized terminal there is
+// never larger than its grid. The edge is the default scale, where the
+// grid is the screen exactly. Under it, the logical screen passes the grid,
+// and a maximized terminal stops at its limits: at 1, 240 x 67 cells.
 @(test)
-the_largest_grid_covers_the_logical_screen_at_each_scale :: proc(t: ^testing.T) {
+the_largest_grid_covers_the_logical_screen_from_the_default_scale :: proc(t: ^testing.T) {
 	for scale in scale_factor.Scale {
 		width, height := scale_factor.logical_screen(scale)
-		testing.expectf(t, int(width) / GRID_CELL_WIDTH <= COLUMNS_LIMIT && int(height) / GRID_CELL_HEIGHT <= ROWS_LIMIT, "the logical screen %dx%d at %v passes the grid", width, height, scale)
+		covered := int(width) / GRID_CELL_WIDTH <= COLUMNS_LIMIT && int(height) / GRID_CELL_HEIGHT <= ROWS_LIMIT
+		testing.expectf(t, covered == (scale >= scale_factor.DEFAULT), "the logical screen %dx%d at %v: covered %v", width, height, scale, covered)
 	}
-	width, height := scale_factor.logical_screen(min(scale_factor.Scale))
+	width, height := scale_factor.logical_screen(scale_factor.DEFAULT)
 	testing.expect_value(t, int(width) / GRID_CELL_WIDTH, COLUMNS_LIMIT)
 	testing.expect_value(t, int(height) / GRID_CELL_HEIGHT, ROWS_LIMIT)
+	width, height = scale_factor.logical_screen(min(scale_factor.Scale))
+	testing.expect_value(t, int(width) / GRID_CELL_WIDTH, 240)
+	testing.expect_value(t, int(height) / GRID_CELL_HEIGHT, 67)
 }
 
 // The context of a terminal, as the root service starts it. A slot and a

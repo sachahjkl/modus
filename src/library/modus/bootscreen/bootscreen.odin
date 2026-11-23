@@ -40,7 +40,7 @@ import op "modus:contract/operation"
 import "base:intrinsics"
 
 WIDTH :: 976 // The logical size of the panel: the size of the display at scale 1.
-HEIGHT :: 708 // Logical pixels: a window of this height fits the window bound of 768 lines under the bar and its title.
+HEIGHT :: 708 // Logical pixels: the panel at scale 1 leaves a bar and a title on a screen of 768 lines.
 PROCESSOR_ROWS :: 16 // The processors that the card of the processors shows.
 PROCESS_ROWS :: 12 // The processes that the card of the processes shows.
 

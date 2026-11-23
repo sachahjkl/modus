@@ -36,7 +36,7 @@ Surface_Create_Refusal :: enum {
 	None,
 	Not_Memory,
 	No_Read,
-	No_Scale, // The word names no scale up to the window bound.
+	No_Scale, // The word names no scale of the range.
 	Size_Out_Of_Range, // A logical side of 0, or past WINDOW_LOGICAL_LIMIT.
 	Too_Small, // The memory does not hold two pictures of its pixels of the screen.
 }
@@ -100,6 +100,60 @@ Surface_Rescale_Refusal :: enum {
 	Other_Scale, // Not the scale of the compositor.
 	Other_Size, // Not the logical size of the window at that scale, to the pixel.
 	Too_Small, // The memory does not hold two pictures of the size.
+}
+
+// The facts of a Surface_Declined: the window could not pay its surface at
+// the scale of the compositor, after its release.
+Surface_Declined_Facts :: struct {
+	scale_word:      u64,
+	serial:          u64,
+	created:         bool, // The window made its surface with Surface_Create.
+	released:        bool, // The compositor shows no surface of the window.
+	pending:         bool, // A surface of a resize or of a rescale waits for its Present.
+	released_serial: u64, // The serial of the surface that the window released.
+	scale:           scale_factor.Scale, // The scale of the compositor.
+}
+
+// The rule that a Surface_Declined breaks. None: the compositor counts the
+// window as one that declined the scale in force.
+Surface_Declined_Refusal :: enum {
+	None,
+	No_Window, // No Surface_Create came before.
+	Pending, // A surface waits for its Present.
+	Not_Released, // The compositor still shows a surface of the window.
+	Other_Serial, // Not the serial one past the released one: the window offered nothing in its place.
+	Other_Scale, // Not the scale of the compositor: the window declines no scale that is not in force.
+}
+
+// surface_declined_refusal decides a Surface_Declined from its facts. It
+// takes only the decline of the offer that the window owes in place of a
+// Surface_Rescale: a window cannot hide its surface by a decline while the
+// compositor shows it, nor be counted for a scale that is not in force.
+surface_declined_refusal :: proc "contextless" (facts: Surface_Declined_Facts) -> Surface_Declined_Refusal {
+	switch {
+	case !facts.created:
+		return .No_Window
+	case facts.pending:
+		return .Pending
+	case !facts.released:
+		return .Not_Released
+	case facts.serial != facts.released_serial + 1:
+		return .Other_Serial
+	}
+	scale, problem := scale_factor.scale_of_word(facts.scale_word)
+	if problem != .None || scale != facts.scale {
+		return .Other_Scale
+	}
+	return .None
+}
+
+// surface_decline_is_news says whether a taken Surface_Declined changes
+// what the compositor knows of the window: a window that declined the
+// scale in force and declines it again, at the next serial, changes
+// nothing, so it writes no fact and tells no window. Without this rule a
+// window fills the log with one warning per record.
+surface_decline_is_news :: proc "contextless" (was_declined: bool, declined_scale: scale_factor.Scale, scale: scale_factor.Scale) -> bool {
+	return !was_declined || declined_scale != scale
 }
 
 // surface_rescale_refusal decides a Surface_Rescale from its facts. A size

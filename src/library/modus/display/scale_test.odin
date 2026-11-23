@@ -2,8 +2,46 @@
 package display
 
 import "core:testing"
+import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
+
+// A due decline and a due release behind a full command ring: nothing goes
+// while the ring is full and nothing is lost; with room for one record the
+// decline goes first, with its own serial and scale, and the release waits;
+// with room again the release goes.
+@(test)
+a_due_decline_goes_before_the_due_action :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	window: Window
+	opened, opened_ok := ring.open(raw_data(ring_memory), ring.PAGE_COUNT)
+	testing.expect(t, opened_ok)
+	window.ring = opened
+	for ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Present)}) {
+	}
+	window.rescale = {phase = .Releasing, scale = .Twelve_Eighths, wanted = .Twelve_Eighths, serial = 6}
+	window.decline_due, window.decline_serial, window.decline_scale = true, 5, .Sixteen_Eighths
+	window.rescale_due = .Release
+	rescale_due_run(&window)
+	testing.expect(t, window.decline_due && window.rescale_due == .Release)
+	_, _ = ring.pop(&window.ring.commands)
+	rescale_due_run(&window)
+	testing.expect(t, !window.decline_due && window.rescale_due == .Release)
+	for _ in 0 ..< ring.capacity(&window.ring.commands) - 1 {
+		_, _ = ring.pop(&window.ring.commands)
+	}
+	declined, has_declined := ring.pop(&window.ring.commands)
+	testing.expect(t, has_declined)
+	testing.expect_value(t, declined.kind, u32(Command.Surface_Declined))
+	testing.expect(t, declined.values[0] == 5 && declined.values[1] == u64(scale_factor.Scale.Sixteen_Eighths))
+	rescale_due_run(&window)
+	testing.expect_value(t, window.rescale_due, Rescale_Action.None)
+	released, has_released := ring.pop(&window.ring.commands)
+	testing.expect(t, has_released)
+	testing.expect_value(t, released.kind, u32(Command.Surface_Release))
+	testing.expect_value(t, released.values[0], u64(6))
+}
 
 // With no settings page, and with a page that read refuses (the all-zero
 // page, whose scale word 0 names no scale), the scale of a new surface is
@@ -24,14 +62,22 @@ the_scale_in_force_of_a_page :: proc(t: ^testing.T) {
 	choice.scale = .Eleven_Eighths
 	settings.write(&page, choice, 0, .Dark)
 	testing.expect_value(t, scale_in_force(), scale_factor.Scale.Eleven_Eighths)
-	// A word past the window bound on the page is refused with the page.
-	page.values[settings.Setting.Scale] = u32(scale_factor.Scale.Twelve_Eighths)
-	testing.expect_value(t, scale_in_force(), scale_factor.DEFAULT)
+	// The ends of the range are taken; a word one past each end is refused
+	// with the page.
+	for scale in ([?]scale_factor.Scale{.Eight_Eighths, .Sixteen_Eighths}) {
+		choice.scale = scale
+		settings.write(&page, choice, 0, .Dark)
+		testing.expect_value(t, scale_in_force(), scale)
+	}
+	for word in ([?]u32{scale_factor.EIGHTHS_OF_ONE - 1, u32(scale_factor.Scale.Sixteen_Eighths) + 1}) {
+		page.values[settings.Setting.Scale] = word
+		testing.expect_value(t, scale_in_force(), scale_factor.DEFAULT)
+	}
 }
 
 // The size of a surface: a logical size at a scale, by the rule of each
 // edge; 1 logical pixel is at least 1 pixel of the screen, and the largest
-// logical size at the window bound is SURFACE_SCREEN_LIMIT.
+// logical size at the largest scale is SURFACE_SCREEN_LIMIT.
 @(test)
 the_size_of_a_surface :: proc(t: ^testing.T) {
 	width, height := surface_size_of(560, 592, .Ten_Eighths)
@@ -40,7 +86,7 @@ the_size_of_a_surface :: proc(t: ^testing.T) {
 	width, height = surface_size_of(1, 1, .Ten_Eighths)
 	testing.expect_value(t, width, 1)
 	testing.expect_value(t, height, 1)
-	largest_width, largest_height := surface_size_of(SURFACE_LIMIT, SURFACE_LIMIT, scale_factor.WINDOW_BOUND)
+	largest_width, largest_height := surface_size_of(SURFACE_LIMIT, SURFACE_LIMIT, scale_factor.LARGEST)
 	testing.expect_value(t, largest_width, SURFACE_SCREEN_LIMIT)
 	testing.expect_value(t, largest_height, SURFACE_SCREEN_LIMIT)
 }
@@ -264,4 +310,51 @@ the_answers_of_a_resize :: proc(t: ^testing.T) {
 	action, refused = rescale_step(&machine, {kind = .Resize_Taken, serial = 2})
 	testing.expect(t, action == .None && !refused)
 	testing.expect_value(t, machine, Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 2})
+}
+// A decline: the budget did not pay the offer. The machine leaves Offered
+// for Released with the serial of the offer, draws nothing, ignores a
+// Scale_Named of the declined scale, and at another scale offers the serial
+// after it. A decline in another phase changes nothing.
+@(test)
+a_declined_scale_waits_for_another_scale :: proc(t: ^testing.T) {
+	machine := Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 3}
+	action, _ := rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect_value(t, action, Rescale_Action.Release)
+	action, _ = rescale_step(&machine, {kind = .Released, serial = 3})
+	testing.expect_value(t, action, Rescale_Action.Offer)
+	testing.expect_value(t, machine.serial, 4)
+	rescale_declined_step(&machine)
+	testing.expect_value(t, machine.phase, Rescale_Phase.Released)
+	testing.expect_value(t, machine.serial, 4)
+	testing.expect(t, !rescale_draws(&machine))
+	testing.expect(t, !picture_owed_of(machine, 3))
+	// An answer of the offer that was never sent changes nothing.
+	action, _ = rescale_step(&machine, {kind = .Refused, serial = 4})
+	testing.expect_value(t, action, Rescale_Action.None)
+	testing.expect_value(t, machine.phase, Rescale_Phase.Released)
+	// The declined scale named again, as each change of another setting
+	// names it: no offer, the machine stays as it is.
+	declined := machine
+	for _ in 0 ..< 3 {
+		action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+		testing.expect_value(t, action, Rescale_Action.None)
+		testing.expect_value(t, machine, declined)
+	}
+	// Another scale: the offer of the next serial.
+	action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Twelve_Eighths})
+	testing.expect_value(t, action, Rescale_Action.Offer)
+	testing.expect_value(t, machine.serial, 5)
+	testing.expect_value(t, machine.scale, scale_factor.Scale.Twelve_Eighths)
+	testing.expect(t, !machine.declined)
+	// Back to the declined scale after the other one: an offer again, as
+	// the budget may pay it now.
+	_, _ = rescale_step(&machine, {kind = .Taken, serial = 5})
+	action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect_value(t, action, Rescale_Action.Release)
+	for phase in ([?]Rescale_Phase{.Steady, .Releasing, .Released, .Resizing}) {
+		other := Rescale_Machine{phase = phase, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 7}
+		before := other
+		rescale_declined_step(&other)
+		testing.expectf(t, other == before, "a decline in %v changed the machine", phase)
+	}
 }

@@ -127,7 +127,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		return
 	}
 	switch command {
-	case .None, .Surface_Create, .Present, .Pointer_Shape, .Act_Names, .Picture_Due, .Resizable, .Surface_Resize, .Surface_Rescale, .Surface_Release, .Resize_Declined, .Copy, .Copy_Declined, .Paste_Taken:
+	case .None, .Surface_Create, .Present, .Pointer_Shape, .Act_Names, .Picture_Due, .Resizable, .Surface_Resize, .Surface_Rescale, .Surface_Release, .Surface_Declined, .Resize_Declined, .Copy, .Copy_Declined, .Paste_Taken:
 		// The loop gives this procedure the commands of the two faces only.
 	case .Capture_Size_Ask:
 		send(client, .Capture_Size, {0 = u64(screen.width), 1 = u64(screen.height)})

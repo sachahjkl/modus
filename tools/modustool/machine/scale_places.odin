@@ -52,19 +52,23 @@ logical_place_of_screen :: proc(pixel: int, scale: scale_factor.Scale) -> (place
 // Spleen_Cells: where the glyphs of Spleen 8x16 of a text of the cells at
 // the body are on the screen at a scale that the setting takes. The cell of
 // the body is half its size on the screen wide, a half up, and two widths
-// high; Spleen draws at its scale 1 in the middle of the cell, as long as
-// the cell is under 16 by 32 (each scale up to the window bound).
+// high; Spleen draws each of its pixels as a square of its own whole scale,
+// the largest whose line is not above the line of the cell, in the middle
+// of the cell (graphics.spleen_scale_of): 1 under the scale 2, 2 at 2.
 Spleen_Cells :: struct {
-	step:              int, // The pixels of the screen from one cell to the next.
-	glyph_x, glyph_y:  int, // The glyph of 8 by 16 from the corner of its cell.
+	step:             int, // The pixels of the screen from one cell to the next.
+	spleen_scale:     int, // The side of the square that draws one pixel of a glyph.
+	glyph_x, glyph_y: int, // The glyph from the corner of its cell.
 }
 
-// spleen_cells_of gives the cells of a text of the body at a scale: 10 by
-// 20 pixels at 1.25, with the glyph 1 pixel right and 2 down; 11 by 22 at
-// 1.375.
+// spleen_cells_of gives the cells of a text of the body at a scale: 8 by
+// 16 pixels at 1 with the glyph at the corner; 10 by 20 at 1.25, with the
+// glyph 1 pixel right and 2 down; 11 by 22 at 1.375; 16 by 32 at 2, with
+// the glyph at the scale 2 and at the corner.
 spleen_cells_of :: proc(scale: scale_factor.Scale) -> Spleen_Cells {
 	// The body is a line of the height of a cell of Spleen, 16 pixels.
 	size := scale_factor.screen_text_size(u16(graphics.CELL_HEIGHT * text_rendering.SUBPIXEL), scale)
 	step := text_rendering.cell_columns(size)
-	return {step = step, glyph_x = (step - graphics.CELL_WIDTH) / 2, glyph_y = (2 * step - graphics.CELL_HEIGHT) / 2}
+	spleen_scale := max(1, 2 * step / graphics.CELL_HEIGHT)
+	return {step = step, spleen_scale = spleen_scale, glyph_x = (step - graphics.CELL_WIDTH * spleen_scale) / 2, glyph_y = (2 * step - graphics.CELL_HEIGHT * spleen_scale) / 2}
 }

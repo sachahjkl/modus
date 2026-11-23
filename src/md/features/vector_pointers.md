@@ -41,7 +41,7 @@ The contours of one layer are a union: the tool adds each contour in one directi
 
 **Hinting by design.** Each level and upright side is on an integer coordinate, so it is sharp at 24 and at 48. A stroke is 3 units wide: 1 pixel of fill between two pixels of edge at 24, 4 pixels of fill in 1 pixel of edge at 48. A symmetric shape has its centre on the pixel 11.
 
-**The sizes are 24, 30, 33 and 48.** The compositor asks for 24 logical pixels at the scale of the desktop: 30 at 1.25 and 33 at 1.375, the two scales that the setting takes ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). A size between them would help only a compositor that asks for it; the details are drawn for 24, and the edge stays 1 pixel at each size. A size is one number of the statement `sizes` when a scale needs it.
+**The sizes are 24, 30, 33 and 48.** The compositor asks for 24 logical pixels at the scale of the desktop: 24 at 1, 30 at 1.25, 33 at 1.375 and 48 at 2 ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). At the other scales it gets the next larger size: 30 for 27 at 1.125, 48 for 36 to 45 at 1.5 to 1.875, a pointer at most 3 pixels larger than asked at 1.125 and at most 12 at 1.5. A size for each eighth was refused for now: each is a set of pictures of each shape in the boot image, and the larger pointer is no fault of a layout; the details are drawn for 24, and the edge stays 1 pixel at each size. A size is one number of the statement `sizes` when a scale needs it.
 
 ## Refused forms
 

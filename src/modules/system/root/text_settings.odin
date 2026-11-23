@@ -1,7 +1,10 @@
 package root
 
 import "modus:contract/font_outlines"
+import "modus:contract/ring"
 import "modus:contract/settings"
+import "modus:display"
+import "modus:principals"
 import "modus:system"
 
 // The text of the system and the settings of the system (docs/FONTS.md):
@@ -22,9 +25,13 @@ settings_memory: system.Handle
 // The font outlines of the boot image: page_count 0 when the image has
 // none, or none that font_outlines.validate accepts.
 font_outlines_mapping: system.Mapping
-// The boot pass of `settings` is the next start of that name: start() gives
-// it the value VALUE_BOOT_PASS.
-settings_boot_pass: bool
+// The pass of the next start of `settings`: start() gives it in the value
+// VALUE_PASS. Window for each start that opens its window.
+settings_pass: settings.Pass
+// The process of the last pass that this service started, by its serial:
+// a slot of the table is used again, a serial is not. 0: none.
+settings_pass_process_serial: u64
+settings_pass_running_pass: settings.Pass
 
 // text_settings_create makes the settings page and finds the font
 // outlines. It writes the initial defaults before any process starts and
@@ -96,11 +103,159 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 // A machine with no data disk keeps the defaults. A start policy asks for
 // it, as the row settings of its list, and gets the status.
 settings_boot_pass_start :: proc "contextless" () -> system.Status {
-	settings_boot_pass = true
-	status := start("settings")
-	settings_boot_pass = false
-	if status != .Ok {
-		system.log_fact(.Warning, Settings_Boot_Pass_Failed{status = status})
+	decision, status := settings_pass_start(.Boot, principals.MACHINE)
+	switch decision {
+	case .Start:
+		if status != .Ok {
+			system.log_fact(.Warning, Settings_Boot_Pass_Failed{status = status})
+		}
+		return status
+	case .Raised, .Waits, .Refused:
+		// Another process settings runs and writes the page: its fact said
+		// so, and the start policy gets a refusal of the moment.
+		return .Bad_State
 	}
-	return status
+	return .Bad_State
+}
+
+// settings_pass_start decides a start of `settings` for a pass, then
+// starts it when the decision is Start, and keeps the serial of its
+// process, so that settings_running finds the pass that runs. status is
+// the status of the start, Ok with any other decision.
+settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64) -> (decision: Settings_Start_Decision, status: system.Status) {
+	settings_pass = pass
+	defer settings_pass = .Window
+	if decision = settings_start_decide(principal, .Other); decision != .Start {
+		return decision, .Ok
+	}
+	place: ^Started
+	status = start("settings", principal, place = &place)
+	if status == .Ok && place != nil {
+		settings_pass_process_serial = place.process_serial
+		settings_pass_running_pass = pass
+	}
+	return .Start, status
+}
+
+// settings_window_start takes Control.Start of `settings` from the desktop:
+// the one start of the window that waits for a pass that runs, so that a
+// press of the principal is not lost.
+settings_window_start :: proc "contextless" (principal: u64) {
+	if settings_start_decide(principal, .Desktop) == .Start {
+		start("settings", principal)
+	}
+}
+
+// settings_running finds the process `settings` that runs, a terminal
+// apart (it has the name of its process), and the pass that it runs.
+settings_running :: proc "contextless" () -> (item: ^Started, pass: settings.Pass) {
+	for &candidate in started {
+		if candidate.process == 0 || candidate.is_terminal || system.name_of(candidate.name[:]) != "settings" {
+			continue
+		}
+		if settings_pass_process_serial != 0 && candidate.process_serial == settings_pass_process_serial {
+			return &candidate, settings_pass_running_pass
+		}
+		item, pass = &candidate, .Window
+	}
+	return
+}
+
+// A start of the window of `settings` that came while a pass ran: it goes
+// when the pass stops (settings_start_due_step), in the session that asked.
+settings_start_due: bool
+settings_start_due_principal: u64
+
+// Who asks a start of `settings`: the desktop, whose start of the window
+// waits for a pass that runs, or another caller (a connection to the
+// service, a start policy, the debugger, a pass), which is refused then.
+Settings_Asker :: enum u8 {
+	Other,
+	Desktop,
+}
+
+// What a decision on a start of `settings` did. Only Start starts a
+// process; each other one answered with its fact, and starts none.
+Settings_Start_Decision :: enum u8 {
+	Start, // No process settings runs: the start goes on.
+	Raised, // A window runs: the compositor raises it.
+	Waits, // A pass runs, and the desktop asked the window: it starts when the pass stops.
+	Refused, // Another process settings runs, and the ask cannot wait.
+}
+
+// settings_start_decide is the one-writer check for each start of
+// `settings` (settings.start_answer): the pass asked is settings_pass.
+// So that two processes `settings` never run, an answer other than Start
+// asks the compositor to raise the window that runs, keeps the start of
+// the window of the desktop due until the pass stops, or refuses; each with
+// its fact. start() calls it for each caller; a caller that decides first
+// gets Start again from start(), since Start does nothing.
+settings_start_decide :: proc "contextless" (principal: u64, asker: Settings_Asker) -> Settings_Start_Decision {
+	item, pass := settings_running()
+	switch settings.start_answer(settings_pass, item != nil, pass) {
+	case .Start:
+		return .Start
+	case .Raise_Window:
+		if settings_raise_ask(item, .Keep) {
+			system.log_fact(.Info, Settings_Start_Raises_Window{})
+		}
+		return .Raised
+	case .Raise_Window_At_Appearance:
+		if settings_raise_ask(item, .Appearance) {
+			system.log_fact(.Info, Appearance_Next_Raises_Settings{})
+		}
+		return .Raised
+	case .Wait_For_Pass:
+		switch asker {
+		case .Desktop:
+			settings_start_due, settings_start_due_principal = true, principal
+			system.log_fact(.Info, Settings_Start_Waits_For_Pass{})
+			return .Waits
+		case .Other:
+			system.log_fact(.Info, Settings_Start_Refused_Pass_Runs{})
+			return .Refused
+		}
+	case .Refuse:
+		system.log_fact(.Info, Settings_Pass_Refused_Settings_Runs{})
+		return .Refused
+	}
+	return .Refused
+}
+
+// settings_raise_ask asks the compositor to raise the window of the process
+// `settings` that runs, with the focus where the ask needs it. A full ring
+// raises nothing, with its fact: the next ask asks again.
+settings_raise_ask :: proc "contextless" (item: ^Started, focus: display.Settings_Raise_Focus) -> (sent: bool) {
+	if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Settings_Raise), values = {0 = u64(item.client), 1 = u64(focus)}}) {
+		system.log_fact(.Warning, Settings_Raise_Ring_Full{})
+		return false
+	}
+	return true
+}
+
+// settings_start_due_step starts the window of `settings` that waited for
+// a pass, once no process `settings` runs. The loop calls it after reap.
+settings_start_due_step :: proc "contextless" () {
+	if !settings_start_due {
+		return
+	}
+	if item, _ := settings_running(); item != nil {
+		return
+	}
+	settings_start_due = false
+	if status := start("settings", settings_start_due_principal); status != .Ok {
+		system.log_fact(.Warning, Settings_Due_Start_Failed{status = status})
+	}
+}
+
+// settings_appearance_next_start takes the press on the tile Appearance
+// of the Control Center (settings_start_decide): it starts `settings` for
+// the next appearance in the session of the desktop, or asks the
+// compositor to raise the window of `settings` that runs, the one writer of
+// the page, or refuses while a pass runs.
+settings_appearance_next_start :: proc "contextless" () {
+	decision, status := settings_pass_start(.Appearance_Next, desktop_principal())
+	if decision == .Start && status != .Ok {
+		system.log_fact(.Warning, Appearance_Next_Not_Started{status = status})
+	}
 }

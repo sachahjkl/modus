@@ -71,7 +71,7 @@ HEIGHT :: 640
 // The least budget of 2048 pages, in which it ran before it stated its
 // window, less that window at the scale 1 (650 pages): its module, its
 // stack, its tables and its glyph memory. The tool counts the window at
-// the window bound (docs/MODULE_CONTRACT.md, "The budget that a module
+// the largest scale (docs/MODULE_CONTRACT.md, "The budget that a module
 // asks for").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1398, window_width = WIDTH, window_height = HEIGHT}
 // The sample period: one sample and one picture each 500 ms. The sample

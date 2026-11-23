@@ -70,6 +70,7 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 		client.resize_asked, client.resize_edges = false, {}
 		send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Refused), 1 = serial})
 		desktop_restore_size_after_answer(client) // desktop_features.odin
+		_ = window_scale_step(client) // scale.odin: the end of a fit request
 	}
 	// The process wrote the number of the handle: it can name any handle of
 	// the compositor. A number with no proof of this process is neither used
@@ -136,6 +137,8 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 	client.resize_pending_edges = client.resize_edges
 	client.resize_asked, client.resize_edges = false, {}
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Taken), 1 = serial})
+	// The scale after the answer: the window rescales its new surface.
+	_ = window_scale_step(client) // scale.odin
 }
 
 // resize_declined_take takes the record Resize_Declined: the process keeps
@@ -150,6 +153,7 @@ resize_declined_take :: proc "contextless" (client: ^Client) {
 	client.resize_asked, client.resize_edges = false, {}
 	system.log_fact(.Info, Window_Keeps_Size{width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
 	desktop_restore_size_after_answer(client) // desktop_features.odin
+	_ = window_scale_step(client) // scale.odin: the end of a fit request
 }
 
 // size_range_of gives the limits of a window as the pure procedures of the
@@ -202,6 +206,8 @@ resize_surface_take :: proc "contextless" (client: ^Client) {
 		system.log_fact(.Info, Window_Resized{old_width = u64(old_width), old_height = u64(old_height), width = u64(client.width), height = u64(client.height), window = window_field(client.title[:])})
 	}
 	desktop_restore_size_after_answer(client) // desktop_features.odin
+	// A fit that grows the window waits for this surface at the new scale.
+	window_fit_after_scale(client) // scale.odin
 }
 
 // surface_release_take takes the record Surface_Release of a window
@@ -237,6 +243,9 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	}
 	if client.resize_pictures != nil {
 		system.memory_unmap(client.resize_pictures)
+		// The compositor took that resize, so the window holds its size: the
+		// surface that the window offers after the release has it.
+		client.width, client.height = client.resize_logical_width, client.resize_logical_height
 	}
 	client.pictures, client.resize_pictures = nil, nil
 	client.surface = {}
@@ -244,6 +253,9 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	client.resize_asked, client.resize_edges = false, {}
 	client.released, client.surface_serial = true, serial
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Released), 1 = serial})
+	// The release ended a request of the size: a scale that waited for it
+	// goes now.
+	_ = window_scale_step(client) // scale.odin
 }
 
 // surface_rescale_take takes the record Surface_Rescale of a window: the
@@ -306,6 +318,43 @@ surface_rescale_take :: proc "contextless" (client: ^Client, record: ring.Record
 	client.resize_scale, client.resize_serial = scale, serial
 	client.resize_pending_edges = {}
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Rescale_Taken), 1 = serial})
+	if client.declined {
+		client.declined = false
+		windows_declined_tell() // scale.odin
+	}
+}
+
+// surface_declined_take takes the record Surface_Declined of a window: its
+// budget could not pay its surface at the scale in force, after its
+// release. The checks are bar.surface_declined_refusal. A taken record
+// moves the serial released to the serial of the offer, so the next
+// Surface_Rescale of the window names the serial after it; the frame of
+// the window keeps the background; the count of the windows that declined
+// the scale goes to each window. A second decline of the same scale is no
+// news (bar.surface_decline_is_news): no fact, no count. A refused record changes nothing, and is
+// counted with the refused resizes.
+surface_declined_take :: proc "contextless" (client: ^Client, record: ring.Record) {
+	serial := record.values[0]
+	facts := bar.Surface_Declined_Facts {
+		scale_word      = record.values[1],
+		serial          = serial,
+		created         = client.created,
+		released        = client.released,
+		pending         = client.resize_pictures != nil,
+		released_serial = client.surface_serial,
+		scale           = scale,
+	}
+	if bar.surface_declined_refusal(facts) != .None {
+		client.resizes_refused += 1
+		return
+	}
+	client.surface_serial = serial
+	if !bar.surface_decline_is_news(client.declined, client.declined_scale, scale) {
+		return
+	}
+	client.declined, client.declined_scale = true, scale
+	system.log_fact(.Warning, Window_Declined_Scale{scale = u64(scale), window = window_field(client.title[:])})
+	windows_declined_tell() // scale.odin
 }
 
 // surface_screen_damage records the part of the screen that the surface of

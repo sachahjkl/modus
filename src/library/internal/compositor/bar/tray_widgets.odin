@@ -177,7 +177,7 @@ tray_card_inside :: proc "contextless" (layout: Layout, screen_width: int, widge
 // the button Clear all of the notification center.
 Tray_Part :: enum u8 {
 	None,
-	Appearance_Tile, // The appearance in force. It takes no press.
+	Appearance_Tile, // The appearance in force. A press asks for the next one: auto, dark, light.
 	Bar_Edge_Tile, // A press moves the bar to the other edge.
 	Magnifier_Tile, // A press turns the magnifier on or off.
 	Display_Tile, // The scanout and the size of the screen. It takes no press.
@@ -191,7 +191,7 @@ Tray_Part :: enum u8 {
 // The parts that a press or Enter acts on, in the order of the keys, for
 // each widget.
 @(rodata)
-CONTROL_CENTER_PARTS_IN_ORDER := [?]Tray_Part{.Bar_Edge_Tile, .Magnifier_Tile, .Launch_Settings, .Launch_Monitor, .Launch_Browser, .Launch_Edit}
+CONTROL_CENTER_PARTS_IN_ORDER := [?]Tray_Part{.Appearance_Tile, .Bar_Edge_Tile, .Magnifier_Tile, .Launch_Settings, .Launch_Monitor, .Launch_Browser, .Launch_Edit}
 @(rodata)
 NOTIFICATION_PARTS_IN_ORDER := [?]Tray_Part{.Clear_All}
 
@@ -212,9 +212,9 @@ tray_part_widget :: proc "contextless" (part: Tray_Part) -> Tray_Widget {
 // only says a state takes none.
 tray_part_takes_press :: proc "contextless" (part: Tray_Part) -> bool {
 	switch part {
-	case .None, .Appearance_Tile, .Display_Tile:
+	case .None, .Display_Tile:
 		return false
-	case .Bar_Edge_Tile, .Magnifier_Tile, .Launch_Settings, .Launch_Monitor, .Launch_Browser, .Launch_Edit, .Clear_All:
+	case .Appearance_Tile, .Bar_Edge_Tile, .Magnifier_Tile, .Launch_Settings, .Launch_Monitor, .Launch_Browser, .Launch_Edit, .Clear_All:
 		return true
 	}
 	return false
@@ -602,4 +602,22 @@ calendar_cell_place :: proc "contextless" (layout: Layout, screen_width, row, co
 	}
 	grid_x, grid_y, _, _ := calendar_grid(layout, screen_width)
 	return grid_x + CALENDAR_GRID_INSET + column * CALENDAR_CELL_WIDTH, grid_y + CALENDAR_GRID_INSET + row * CALENDAR_CELL_HEIGHT, CALENDAR_CELL_WIDTH, CALENDAR_CELL_HEIGHT, true
+}
+
+// settings_raise_target finds the window that the record Settings_Raise of
+// the root service names: its word is the handle of Client_Add of the
+// window of settings. ring_memories holds the handle of each window in the
+// order of the screen, the front last. A word of 0, a word past the 32
+// bits of a handle, or the handle of no window names none: the window
+// closed since the answer, or the record is damaged.
+settings_raise_target :: proc "contextless" (ring_memories: []u32, word: u64) -> (position: int, found: bool) {
+	if word == 0 || word > u64(max(u32)) {
+		return -1, false
+	}
+	for index := len(ring_memories) - 1; index >= 0; index -= 1 {
+		if u64(ring_memories[index]) == word {
+			return index, true
+		}
+	}
+	return -1, false
 }

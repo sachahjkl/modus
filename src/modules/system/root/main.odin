@@ -1155,6 +1155,8 @@ root_loop_pass :: proc "contextless" () {
 	// its answers in the ring.
 	entropy_answers(&wait)
 	reap()
+	// After reap: a pass of settings that stopped lets a window of it start.
+	settings_start_due_step() // text_settings.odin
 	// After reap: the processes of a failed start policy are gone, and the
 	// rescue can start (start_policy.odin).
 	start_policy_step()
@@ -1194,14 +1196,20 @@ control_ring_serve :: proc "contextless" () {
 			continue
 		}
 		switch control_word {
-		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started:
+		case .Appearance_Next:
+			settings_appearance_next_start() // text_settings.odin
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise:
 			// This service sends these to the compositor, and takes none
 			// from it.
 			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
 		case .Start:
 			// The desktop starts a process in the session that runs.
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
-			start(system.name_of(name[:]), desktop_principal())
+			if system.name_of(name[:]) == "settings" {
+				settings_window_start(desktop_principal()) // text_settings.odin: waits for a pass that runs
+			} else {
+				start(system.name_of(name[:]), desktop_principal())
+			}
 		case .Stop:
 			for &item in started {
 				if item.process != 0 && item.client == system.Handle(record.values[0]) {
