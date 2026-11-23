@@ -146,6 +146,8 @@ fuzz_vector_font_seeds :: proc(seeds: ^[dynamic][]u8) {
 }
 
 // fuzz_script_font_file reads a script font that SCRIPT_FONT_SOURCES names.
+// With none, it says so on the error output: the target then runs without
+// that font and its seeds, which a reader of the run must know.
 fuzz_script_font_file :: proc(name: string) -> (bytes: []u8, found: bool) {
 	sources := os.get_env("SCRIPT_FONT_SOURCES", context.temp_allocator)
 	rest := sources
@@ -153,9 +155,13 @@ fuzz_script_font_file :: proc(name: string) -> (bytes: []u8, found: bool) {
 	for item in strings.split_iterator(&rest, ";") {
 		if strings.has_prefix(item, prefix) {
 			read, error := os.read_entire_file(item[len(prefix):], context.allocator)
+			if error != nil {
+				fmt.eprintfln("modustool: fuzz: the script font %s of SCRIPT_FONT_SOURCES cannot be read: %v; the target runs without it", name, error)
+			}
 			return read, error == nil
 		}
 	}
+	fmt.eprintfln("modustool: fuzz: SCRIPT_FONT_SOURCES names no %s (run in the development shell); the target runs without it and its seeds", name)
 	return nil, false
 }
 
@@ -187,8 +193,12 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 	cache_entries: [256]vector_font.Layout_Cache_Entry
 	cache_indices: [2048]u16
 	cache := vector_font.Layout_Cache{entries = cache_entries[:], indices = cache_indices[:]}
+	// One budget for the checks of this font, as one shaping call has.
+	budget := vector_font.layout_budget_of_text(64)
 	cached := font^
-	vector_font.layout_cache_fill(&cached, &cache)
+	if filled, _ := vector_font.layout_cache_fill(&cached, &cache); !filled {
+		cached.layout_cache = nil
+	}
 	for script in fuzz_layout_scripts {
 		for tag in fuzz_layout_features {
 			for place in ([2]vector_font.Table{font.gsub, font.gpos}) {
@@ -199,7 +209,7 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 					return fuzz_broken(.Two_Readers, "the cache of the walk gives %v and %d lookups; the walk gives %d", cache_problem, from_cache.count, walked.count)
 				}
 			}
-			_ = vector_font.layout_would_substitute(font, script, tag, usable[:min(len(usable), 3)])
+			_ = vector_font.layout_would_substitute(font, script, tag, usable[:min(len(usable), 3)], &budget)
 		}
 	}
 	for script in fuzz_layout_scripts {
@@ -216,9 +226,6 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 							return fuzz_broken(.Contract, "script_substitution gives the glyph %d of %d", value, font.glyph_count)
 						}
 					}
-				}
-				if ligature, ligature_problem := vector_font.script_ligature(font, script, tag, glyph, usable[0]); ligature_problem == .None && (ligature <= 0 || ligature >= font.glyph_count) {
-					return fuzz_broken(.Contract, "script_ligature gives the glyph %d of %d", ligature, font.glyph_count)
 				}
 			}
 		}
@@ -242,8 +249,8 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 			features[index] = {tag, 1 << uint(index)}
 		}
 		positions := [?]vector_font.Engine_Feature{{{'m', 'a', 'r', 'k'}, 1}, {{'m', 'k', 'm', 'k'}, 1}, {{'k', 'e', 'r', 'n'}, 1}, {{'d', 'i', 's', 't'}, 1}}
-		_ = vector_font.engine_stage(font, .Substitution, script, features[:], &buffer)
-		_ = vector_font.engine_stage(font, .Positioning, script, positions[:], &buffer)
+		_ = vector_font.engine_stage(font, .Substitution, script, features[:], &buffer, &budget)
+		_ = vector_font.engine_stage(font, .Positioning, script, positions[:], &buffer, &budget)
 		vector_font.engine_positions_finish(&buffer)
 		if buffer.count < 0 || buffer.count > vector_font.ENGINE_GLYPH_LIMIT {
 			return fuzz_broken(.Contract, "the engine leaves %d glyphs", buffer.count)
@@ -430,7 +437,7 @@ fuzz_font_of_cff :: proc(version: int) -> []u8 {
 // a resource that validate accepts with the same names and the same bytes.
 fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	bytes := fuzz_aligned_input(input)
-	outlines, problem := font_outlines.validate(bytes)
+	outlines, problem := font_outlines.validate(bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	if problem.kind > max(font_outlines.Problem_Kind) {
 		return fuzz_broken(.Contract, "validate gives a problem out of its enumeration: %d", u8(problem.kind))
 	}
@@ -448,7 +455,7 @@ fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if _, written := font_outlines.resource_write(fonts, out); !written {
 		return fuzz_broken(.Round_Trip, "resource_write refuses the fonts of a resource that validate accepted")
 	}
-	again, again_problem := font_outlines.validate(out)
+	again, again_problem := font_outlines.validate(out, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	if again_problem.kind != .None || again.count != len(fonts) {
 		return fuzz_broken(.Round_Trip, "validate refuses what resource_write wrote: %v", again_problem.kind)
 	}
@@ -462,7 +469,7 @@ fuzz_font_outlines_execute :: proc(input: []u8) -> Fuzz_Verdict {
 }
 
 fuzz_font_outlines_seeds :: proc(seeds: ^[dynamic][]u8) {
-	for count in ([?]int{1, 3, font_outlines.FONT_LIMIT}) {
+	for count in ([?]int{1, 3, 16}) {
 		fonts := make([]font_outlines.Font_Input, count, context.temp_allocator)
 		for &font, index in fonts {
 			font = {name = fmt.tprintf("font_%d", index), bytes = fuzz_font_seed[index * 16:][:16 + index]}

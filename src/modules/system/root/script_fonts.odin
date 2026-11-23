@@ -29,6 +29,9 @@ script_fonts_stage: Script_Fonts_Stage
 script_fonts_named: blake3.Hash
 // The set that the boot image names: a plan with no entry gives it back.
 script_fonts_image_named: blake3.Hash
+// The room of the records of the font outlines and of the set, which this
+// service checks one at a time: any count that the format allows.
+font_records_room: font_outlines.Record_Room
 // The memory of the set, which this service made, checked and keeps, and
 // the mapping that each process receives.
 script_fonts_memory: system.Handle
@@ -114,7 +117,7 @@ script_fonts_step :: proc "contextless" () {
 // the whole object already says that these are the bytes of that set.
 script_fonts_take :: proc "contextless" (file: ^Lent_File) {
 	bytes := file.bytes[:file.size]
-	outlines, problem := font_outlines.validate(bytes)
+	outlines, problem := font_outlines.validate(bytes, font_records_room[:])
 	if problem.kind != .None {
 		script_fonts_stage = .Absent
 		system.log_fact(.Warning, Script_Fonts_Refused_Form{problem_value = problem.value, problem = text_field(font_outlines.problem_sentences[problem.kind], 80)})

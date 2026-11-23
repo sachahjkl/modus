@@ -227,6 +227,11 @@ module_builds := [?]Module_Build {
 	{name = "audit_asker", source = TEST_MODULE_SOURCES + "audit_asker", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "plan_applier", source = TEST_MODULE_SOURCES + "plan_applier", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "settings_stand_in", source = TEST_MODULE_SOURCES + "settings_stand_in", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	// One source for both planners of the script font set: the define picks
+	// the set that the plan names, the whole font outlines or the cut ones.
+	{name = "script_fonts_planner", source = TEST_MODULE_SOURCES + "script_fonts_planner", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "script_fonts_cut_planner", source = TEST_MODULE_SOURCES + "script_fonts_planner", entry = true, image = true, defines = {"SCRIPT_FONTS_PLANNER_NAMES_A_CUT_SET=true"}, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "script_fonts_writer", source = TEST_MODULE_SOURCES + "script_fonts_writer", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
 	{name = "notify_border_of_the_compositor", source = TEST_MODULE_SOURCES + "notify_border_of_the_compositor", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},

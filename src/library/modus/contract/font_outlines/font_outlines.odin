@@ -34,10 +34,21 @@ RECORDS_OFFSET :: HEADER_SIZE // The records follow the header.
 // of the boot image, so each subset of resources/fonts has room
 // (paper_mono_semibold has 19 bytes).
 NAME_SIZE :: 32
-// The most fonts of one resource: the script font set holds fifteen. A
-// valid resource keeps its records in Outlines, on the stack of a call of
-// the library module text_rendering: 16 records are 1 280 bytes.
-FONT_LIMIT :: 16
+// The most fonts of one resource: a property of the format. A font of a
+// resource has an index of one byte, 1 to FONT_LIMIT, with 0 for none; the
+// font field of the key of a glyph cache and of a placed glyph holds the
+// fonts of the boot image and FONT_LIMIT more (text_rendering,
+// FONT_FIELD_BITS). The tool refuses to write more (resource_write), and
+// each reader refuses a header that names more (validate). The records of
+// a resource that a reader validated live in the room that the reader
+// gives (Outlines.records), sized from the header: a reader that takes
+// any resource gives a room of FONT_LIMIT records (Record_Room), a call of
+// the library module text_rendering a room of the fonts that it opens.
+FONT_LIMIT :: 255
+#assert(FONT_LIMIT < 1 << 8)
+
+// A room for the records of any resource that the format allows.
+Record_Room :: [FONT_LIMIT]Font_Record
 RESOURCE_NAME :: "font_outlines" // The name of the resource in the boot image.
 ADDRESS :: fixed_addresses.FONT_OUTLINES_ADDRESS // Where a process maps it, read-only.
 
@@ -142,7 +153,7 @@ SCRIPT_FALLBACK_PAST_CACHE_COUNT :: 2654 // The characters of script_fallback_pa
 Header :: struct {
 	magic:      u64, // MAGIC.
 	version:    u32, // VERSION.
-	font_count: u32, // The records: 1 to FONT_LIMIT.
+	font_count: u32, // The records: 1 to FONT_LIMIT, a property of the format.
 	file_size:  u64, // The bytes of the resource.
 	reserved:   [40]u8,
 }
@@ -166,6 +177,7 @@ Problem_Kind :: enum u8 {
 	Bad_Version, // Another version.
 	Bad_Size, // file_size is under the header or past the span of the range.
 	Bad_Count, // font_count is 0 or above FONT_LIMIT.
+	No_Room, // font_count is above the records of the room of the reader.
 	Bad_Name, // A name has a byte outside 33 to 126 before its end, no byte, or a byte after its end; or two records have one name.
 	Font_Outside, // A font file is empty, or passes the end of the resource.
 	Hash_Mismatch, // The bytes of the resource are not the object that the plan names, or a font file does not give the hash of its record.
@@ -180,6 +192,7 @@ problem_sentences := [Problem_Kind]string {
 	.Bad_Version  = "they have another version of the format",
 	.Bad_Size     = "their size is under their header or past their range",
 	.Bad_Count    = "their count of fonts is 0 or past the limit",
+	.No_Room      = "their count of fonts is past the room of the reader",
 	.Bad_Name     = "a font has a name that is not printable bytes, or the name of another font",
 	.Font_Outside = "a font file is empty or passes their end",
 	.Hash_Mismatch = "their bytes do not give the hash that names them",
@@ -199,7 +212,7 @@ Problem :: struct {
 // copy that validate checked, never from a second read of the bytes.
 Outlines :: struct {
 	header:  Header,
-	records: [FONT_LIMIT]Font_Record, // The first count records.
+	records: []Font_Record, // The count records, copied into the room of the reader.
 	count:   int, // The records: 1 to FONT_LIMIT.
 	bytes:   []u8, // The whole resource: file_size bytes.
 }
@@ -236,10 +249,12 @@ name_valid :: proc "contextless" (name: [NAME_SIZE]u8) -> bool {
 }
 
 // validate checks a resource: its header, then each record: its name, and
-// its font file inside the resource. It copies the header and each record
-// once, with one read, and checks the copies: a byte that changes after
-// that read changes no span that it gives.
-validate :: proc "contextless" (bytes: []u8) -> (outlines: Outlines, problem: Problem) {
+// its font file inside the resource. It copies the header, then each
+// record into the room of the caller, once, with one read, and checks the
+// copies: a byte that changes after that read changes no span that it
+// gives. A count past FONT_LIMIT is Bad_Count; a count past the room is
+// No_Room, with the room as its limit.
+validate :: proc "contextless" (bytes: []u8, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
 	if len(bytes) < HEADER_SIZE || uintptr(raw_data(bytes)) % 8 != 0 {
 		return {}, {kind = .Too_Short, value = u64(len(bytes)), limit = HEADER_SIZE}
 	}
@@ -258,6 +273,10 @@ validate :: proc "contextless" (bytes: []u8) -> (outlines: Outlines, problem: Pr
 	if count == 0 || count > FONT_LIMIT {
 		return {}, {kind = .Bad_Count, value = u64(count), limit = FONT_LIMIT}
 	}
+	if int(count) > len(room) {
+		return {}, {kind = .No_Room, value = u64(count), limit = u64(len(room))}
+	}
+	outlines.records = room[:count]
 	records_end := u64(RECORDS_OFFSET) + u64(count) * RECORD_SIZE
 	if records_end > u64(len(bytes)) {
 		return {}, {kind = .Too_Short, value = u64(len(bytes)), limit = records_end}
@@ -287,7 +306,7 @@ validate :: proc "contextless" (bytes: []u8) -> (outlines: Outlines, problem: Pr
 // validate_at checks the resource that a starter mapped at an address: the
 // size of its header, inside the span of the range, then the whole
 // resource.
-validate_at :: proc "contextless" (address: uintptr, span: u64) -> (outlines: Outlines, problem: Problem) {
+validate_at :: proc "contextless" (address: uintptr, span: u64, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
 	if address == 0 || address % 8 != 0 {
 		return {}, {kind = .Too_Short, value = u64(address)}
 	}
@@ -295,18 +314,18 @@ validate_at :: proc "contextless" (address: uintptr, span: u64) -> (outlines: Ou
 	if size < HEADER_SIZE || size > span {
 		return {}, {kind = .Bad_Size, value = size, limit = span}
 	}
-	return validate(([^]u8)(address)[:size])
+	return validate(([^]u8)(address)[:size], room)
 }
 
 // open validates the resource that the starter of a process mapped at
 // ADDRESS: Not_Mapped when the bit of its range is clear, and nothing is
 // read.
-open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (outlines: Outlines, problem: Problem) {
+open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
 	if .Font_Outlines not_in fixed_addresses.ranges_mapped(values) {
 		return {}, {kind = .Not_Mapped}
 	}
 	place := fixed_addresses.range_of(.Font_Outlines)
-	return validate_at(uintptr(place.address), place.span)
+	return validate_at(uintptr(place.address), place.span, room)
 }
 
 // The script font set (src/md/features/script_fonts.md): one data object
@@ -344,11 +363,11 @@ SCRIPT_FONTS_NAME_RESOURCE :: "script_fonts_name"
 // hash of the whole object and its form only: the hash of the whole
 // already names these bytes (src/md/features/script_fonts.md, "The hash of
 // each font against its record in the root service").
-script_fonts_check :: proc "contextless" (bytes: []u8, named: [32]u8) -> (outlines: Outlines, problem: Problem) {
+script_fonts_check :: proc "contextless" (bytes: []u8, named: [32]u8, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
 	if blake3.hash(bytes) != named {
 		return {}, {kind = .Hash_Mismatch}
 	}
-	outlines, problem = validate(bytes)
+	outlines, problem = validate(bytes, room)
 	if problem.kind != .None {
 		return {}, problem
 	}
@@ -364,12 +383,12 @@ script_fonts_check :: proc "contextless" (bytes: []u8, named: [32]u8) -> (outlin
 // process mapped at SCRIPT_FONTS_ADDRESS, as open does for the font
 // outlines: Not_Mapped when the bit of its range is clear. The root service
 // checked the hash of the set once, where it entered.
-script_fonts_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (outlines: Outlines, problem: Problem) {
+script_fonts_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
 	if .Script_Fonts not_in fixed_addresses.ranges_mapped(values) {
 		return {}, {kind = .Not_Mapped}
 	}
 	place := fixed_addresses.range_of(.Script_Fonts)
-	return validate_at(uintptr(place.address), place.span)
+	return validate_at(uintptr(place.address), place.span, room)
 }
 
 // font_bytes gives the font file of a record of a valid resource, from the

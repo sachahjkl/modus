@@ -8,15 +8,52 @@ package vector_font
 //
 // The tables are hostile input as the rest of the file: each read is
 // checked against its table, each count bounds its loop, a contextual
-// lookup nests at most ENGINE_NESTING_LIMIT deep, a run applies at most
-// ENGINE_STEP_LIMIT lookups at a position and tries at most
-// ENGINE_WORK_LIMIT rules and subtables, and a substitution that would pass
-// ENGINE_GLYPH_LIMIT glyphs is not made.
+// lookup nests at most ENGINE_NESTING_LIMIT deep, a stage applies at most
+// ENGINE_STEP_LIMIT lookups at the positions of its glyphs, and a
+// substitution that would pass ENGINE_GLYPH_LIMIT glyphs is not made. One
+// budget of work (Layout_Budget) bounds a whole shaping call: each stage
+// and each test of a feature on glyphs takes from it one unit for each
+// glyph that a lookup visits, each subtable, rule, ligature and nested
+// record that it tries, and each read of a walk of the tables; past it,
+// each stage stops with Too_Much_Work, and the shaper draws the rest of
+// the text with the plain glyphs of its characters.
 
 ENGINE_GLYPH_LIMIT :: 32
 ENGINE_NESTING_LIMIT :: 4
 ENGINE_STEP_LIMIT :: 4096
-ENGINE_WORK_LIMIT :: 1 << 16
+
+// The work of one shaping call, which each stage of the engine, each test
+// of a feature on glyphs (layout_would_substitute) and each walk of the
+// tables take from. A shaper gives one budget for one call, in proportion
+// to the bytes of its text (layout_budget_of_text).
+Layout_Budget :: struct {
+	work:  int, // The units taken.
+	limit: int,
+}
+
+// The units of work of one byte of a text, and of any text: the words of
+// the scripts of India take, on the fonts of the script font set, at most
+// 519 units for each byte (the_scripts_of_india_shape_as_harfbuzz prints
+// it); the bound is 63 times that, and still a linear bound of the call.
+LAYOUT_WORK_PER_BYTE :: 1 << 15
+LAYOUT_WORK_FLOOR :: 1 << 18
+
+// layout_budget_of_text gives the budget of a call that shapes a text of
+// a count of bytes.
+layout_budget_of_text :: proc "contextless" (bytes: int) -> Layout_Budget {
+	return {limit = LAYOUT_WORK_FLOOR + max(bytes, 0) * LAYOUT_WORK_PER_BYTE}
+}
+
+// layout_budget_take takes units of work; false when the budget is spent.
+layout_budget_take :: #force_inline proc "contextless" (budget: ^Layout_Budget, units := 1) -> bool {
+	budget.work += units
+	return budget.work <= budget.limit
+}
+
+// layout_budget_spent says if a budget has no unit left.
+layout_budget_spent :: #force_inline proc "contextless" (budget: ^Layout_Budget) -> bool {
+	return budget.work >= budget.limit
+}
 // The features of one stage: the presentation stage of the scripts of
 // India names eleven.
 ENGINE_STAGE_FEATURE_LIMIT :: 16
@@ -62,7 +99,7 @@ Engine :: struct {
 	buffer: ^Engine_Buffer,
 	mask:   u32,
 	steps:  int,
-	work:   int,
+	budget: ^Layout_Budget,
 }
 
 // The header of a lookup.
@@ -100,7 +137,10 @@ engine_buffer_prepare :: proc "contextless" (font: ^Font_File, buffer: ^Engine_B
 // merged in the order of the lookup list, each to the glyphs whose mask
 // holds the bit of a feature that names it. A feature that the font lacks
 // applies nothing.
-engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script: Feature_Tag, features: []Engine_Feature, buffer: ^Engine_Buffer) -> Font_Problem {
+engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script: Feature_Tag, features: []Engine_Feature, buffer: ^Engine_Buffer, budget: ^Layout_Budget) -> Font_Problem {
+	if layout_budget_spent(budget) {
+		return .Too_Much_Work
+	}
 	// The lookups of each feature, in the order of the lookup list; the
 	// stage merges them, so it has no bound of its own past the lookups of
 	// each feature.
@@ -120,8 +160,8 @@ engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script:
 		copy(indices[number][:], lookups.indices[:lookups.count])
 		counts[number] = lookups.count
 	}
-	engine := Engine{font = font, place = place, kind = kind, gdef = gdef_of(font), buffer = buffer}
-	for {
+	engine := Engine{font = font, place = place, kind = kind, gdef = gdef_of(font), buffer = buffer, budget = budget}
+	for !layout_budget_spent(budget) {
 		next := max(int)
 		for number in 0 ..< feature_count {
 			if cursors[number] < counts[number] {
@@ -144,7 +184,7 @@ engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script:
 		}
 		engine_lookup_apply(&engine, lookup, mask)
 	}
-	return .None
+	return layout_budget_spent(budget) ? .Too_Much_Work : .None
 }
 
 // engine_positions_finish gives each mark that a lookup attached its offset
@@ -173,7 +213,7 @@ engine_positions_finish :: proc "contextless" (buffer: ^Engine_Buffer) {
 lookup_head :: proc "contextless" (lookup: []u8, extension: int) -> (head: Lookup_Head, ok: bool) {
 	head.type = read_u16(lookup, 0) or_return
 	head.flag = read_u16(lookup, 2) or_return
-	// No bound of its own on the subtables: ENGINE_WORK_LIMIT counts each
+	// No bound of its own on the subtables: the budget of the call counts each
 	// that a run tries, and a font has lookups of more than 100 (the
 	// conjuncts of Noto Sans Devanagari).
 	head.subtables = read_u16(lookup, 4) or_return
@@ -253,14 +293,14 @@ engine_lookup_apply :: proc "contextless" (engine: ^Engine, lookup: []u8, mask: 
 			if glyph.mask & mask != 0 && !engine_skips(engine, &head, glyph) {
 				engine_apply_at(engine, lookup, &head, index, 0)
 			}
-			if engine.steps >= ENGINE_STEP_LIMIT {
+			if engine.steps >= ENGINE_STEP_LIMIT || !layout_budget_take(engine.budget) {
 				return
 			}
 		}
 		return
 	}
 	for index := 0; index < buffer.count; {
-		if engine.steps >= ENGINE_STEP_LIMIT {
+		if engine.steps >= ENGINE_STEP_LIMIT || !layout_budget_take(engine.budget) {
 			return
 		}
 		glyph := &buffer.glyphs[index]
@@ -302,8 +342,7 @@ engine_apply_at :: proc "contextless" (engine: ^Engine, lookup: []u8, head: ^Loo
 		}
 	}
 	for number in 0 ..< head.subtables {
-		engine.work += 1
-		if engine.work > ENGINE_WORK_LIMIT {
+		if !layout_budget_take(engine.budget) {
 			return false, index + 1
 		}
 		subtable, ok := engine_subtable(engine, lookup, number)
@@ -445,8 +484,7 @@ engine_ligature :: proc "contextless" (engine: ^Engine, head: ^Lookup_Head, subt
 	set := part_at(subtable, read_u16(subtable, 6 + 2 * coverage_index) or_else -1) or_else nil
 	ligature_count := read_u16(set, 0) or_else 0
 	for number in 0 ..< ligature_count {
-		engine.work += 1
-		if engine.work > ENGINE_WORK_LIMIT {
+		if !layout_budget_take(engine.budget) {
 			return false
 		}
 		entry := part_at(set, read_u16(set, 2 + 2 * number) or_else -1) or_else nil
@@ -559,6 +597,11 @@ engine_match :: proc "contextless" (engine: ^Engine, head: ^Lookup_Head, index: 
 @(private)
 engine_records :: proc "contextless" (engine: ^Engine, records: []u8, record_count, depth: int, positions: ^[ENGINE_GLYPH_LIMIT]u8, input_count: int) -> int {
 	for record in 0 ..< record_count {
+		// Each record counts, the ones that it skips too: a rule can name
+		// 65 535 records.
+		if !layout_budget_take(engine.budget) {
+			break
+		}
 		sequence_index := read_u16(records, 4 * record) or_else -1
 		lookup_index := read_u16(records, 4 * record + 2) or_else -1
 		if sequence_index < 0 || sequence_index >= input_count || depth + 1 >= ENGINE_NESTING_LIMIT {
@@ -617,8 +660,7 @@ engine_context :: proc "contextless" (engine: ^Engine, head: ^Lookup_Head, subta
 		}
 		rule_count := read_u16(set, 0) or_else 0
 		for number in 0 ..< rule_count {
-			engine.work += 1
-			if engine.work > ENGINE_WORK_LIMIT {
+			if !layout_budget_take(engine.budget) {
 				return false, index + 1
 			}
 			rule := part_at(set, read_u16(set, 2 + 2 * number) or_else -1) or_else nil
@@ -683,8 +725,7 @@ engine_chain_context :: proc "contextless" (engine: ^Engine, head: ^Lookup_Head,
 		rule_count := read_u16(set, 0) or_else 0
 		form := format == 1 ? Sequence_Form.Glyphs : Sequence_Form.Classes
 		for number in 0 ..< rule_count {
-			engine.work += 1
-			if engine.work > ENGINE_WORK_LIMIT {
+			if !layout_budget_take(engine.budget) {
 				return false, index + 1
 			}
 			rule := part_at(set, read_u16(set, 2 + 2 * number) or_else -1) or_else nil
@@ -973,25 +1014,25 @@ engine_mark_to_mark :: proc "contextless" (engine: ^Engine, head: ^Lookup_Head, 
 // contextual rule whose input is exactly these glyphs and that has no
 // backtrack and no lookahead. The shaper of the scripts of India asks it
 // which consonants take a below form or a post form, and if ra and the
-// virama make a reph.
-layout_would_substitute :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyphs: []int) -> bool {
-	if len(glyphs) == 0 || len(glyphs) > ENGINE_GLYPH_LIMIT {
+// virama make a reph. It takes its work from the budget of the call, and
+// is false once the budget is spent.
+layout_would_substitute :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyphs: []int, budget: ^Layout_Budget) -> bool {
+	if len(glyphs) == 0 || len(glyphs) > ENGINE_GLYPH_LIMIT || layout_budget_spent(budget) {
 		return false
 	}
 	lookups: Layout_Lookups
 	if layout_lookups(font, font.gsub, script, {'D', 'F', 'L', 'T'}, tag, &lookups) != .None {
 		return false
 	}
-	engine := Engine{font = font, place = font.gsub, kind = .Substitution, gdef = gdef_of(font)}
+	engine := Engine{font = font, place = font.gsub, kind = .Substitution, gdef = gdef_of(font), budget = budget}
 	for lookup in lookups.parts[:lookups.count] {
 		head := lookup_head(lookup, 7) or_continue
 		for number in 0 ..< head.subtables {
-			engine.work += 1
-			if engine.work > ENGINE_WORK_LIMIT {
+			if !layout_budget_take(engine.budget) {
 				return false
 			}
 			subtable := engine_subtable(&engine, lookup, number) or_continue
-			if subtable_would_apply(head.type, subtable, glyphs, &engine.work) {
+			if subtable_would_apply(head.type, subtable, glyphs, budget) {
 				return true
 			}
 		}
@@ -1015,7 +1056,7 @@ rule_input_matches :: proc "contextless" (input: ^Sequence, glyphs: []int) -> bo
 }
 
 @(private)
-subtable_would_apply :: proc "contextless" (type: int, subtable: []u8, glyphs: []int, work: ^int) -> bool {
+subtable_would_apply :: proc "contextless" (type: int, subtable: []u8, glyphs: []int, budget: ^Layout_Budget) -> bool {
 	first := glyphs[0]
 	format := read_u16(subtable, 0) or_else 0
 	switch type {
@@ -1028,8 +1069,7 @@ subtable_would_apply :: proc "contextless" (type: int, subtable: []u8, glyphs: [
 		}
 		set := part_at(subtable, read_u16(subtable, 6 + 2 * coverage_index) or_else -1) or_else nil
 		for number in 0 ..< (read_u16(set, 0) or_else 0) {
-			work^ += 1
-			if work^ > ENGINE_WORK_LIMIT {
+			if !layout_budget_take(budget) {
 				return false
 			}
 			entry := part_at(set, read_u16(set, 2 + 2 * number) or_else -1) or_else nil
@@ -1067,8 +1107,7 @@ subtable_would_apply :: proc "contextless" (type: int, subtable: []u8, glyphs: [
 			set := part_at(subtable, set_offset) or_else nil
 			form := format == 1 ? Sequence_Form.Glyphs : Sequence_Form.Classes
 			for number in 0 ..< (read_u16(set, 0) or_else 0) {
-				work^ += 1
-				if work^ > ENGINE_WORK_LIMIT {
+				if !layout_budget_take(budget) {
 					return false
 				}
 				rule := part_at(set, read_u16(set, 2 + 2 * number) or_else -1) or_else nil

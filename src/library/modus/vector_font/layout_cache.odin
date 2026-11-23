@@ -30,19 +30,32 @@ Layout_Cache :: struct {
 	complete:      [Layout_Kind]bool, // Each feature of each script of the table is in the cache; else layout_lookups walks the table.
 }
 
+// The reads of all the walks of one fill: a fill past them is refused.
+// The fill of a font of the script font set reads at most 5 595 (Noto Sans
+// Bengali; the test the_cache_of_each_font_of_the_set prints each).
+LAYOUT_FILL_READ_LIMIT :: 1 << 17
+
 // layout_cache_fill walks each table of a font into a cache, and gives the
-// cache to the font. A table that does not fit the memory of the cache, or
-// that a walk refuses, stays out of it: layout_lookups walks it.
-layout_cache_fill :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache) {
+// cache to the font when both tables fit it. complete is false for a table
+// that does not fit the memory of the cache, that a walk refuses, or whose
+// walks pass LAYOUT_FILL_READ_LIMIT: the font then keeps no cache, and its
+// owner refuses it (text_rendering), so no call of a hostile font walks
+// its tables again and again.
+layout_cache_fill :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache) -> (complete: bool, reads: int) {
 	cache.entry_count, cache.index_count = 0, 0
+	complete = true
 	for kind in Layout_Kind {
-		cache.complete[kind] = layout_cache_fill_table(font, cache, kind)
+		cache.complete[kind] = layout_cache_fill_table(font, cache, kind, &reads)
+		complete &&= cache.complete[kind]
 	}
-	font.layout_cache = cache
+	if complete {
+		font.layout_cache = cache
+	}
+	return complete, reads
 }
 
 @(private)
-layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache, kind: Layout_Kind) -> bool {
+layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_Cache, kind: Layout_Kind, reads: ^int) -> bool {
 	place := kind == .Substitution ? font.gsub : font.gpos
 	cache.script_counts[kind] = 0
 	if place.length == 0 {
@@ -59,8 +72,19 @@ layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_
 	if script_count > LAYOUT_CACHE_SCRIPT_LIMIT {
 		return false
 	}
-	for script_number in 0 ..< script_count {
+	// The walk takes the first record of a tag and stops there: a later
+	// record of the same tag is never read, so the cache skips it too.
+	seen: [LAYOUT_CACHE_SCRIPT_LIMIT]Feature_Tag
+	seen_count := 0
+	scripts: for script_number in 0 ..< script_count {
 		script_tag := tag_at(script_list, 2 + 6 * script_number) or_return
+		for earlier in seen[:seen_count] {
+			if earlier == script_tag {
+				continue scripts
+			}
+		}
+		seen[seen_count] = script_tag
+		seen_count += 1
 		script := part_at(script_list, read_u16(script_list, 6 + 6 * script_number) or_return) or_return
 		default_offset := read_u16(script, 0) or_return
 		if default_offset == 0 {
@@ -70,6 +94,10 @@ layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_
 		cache.scripts[kind][cache.script_counts[kind]] = script_tag
 		cache.script_counts[kind] += 1
 		for index_number in 0 ..< (read_u16(system, 4) or_return) {
+			reads^ += 1
+			if reads^ > LAYOUT_FILL_READ_LIMIT {
+				return false
+			}
 			feature_index := read_u16(system, 6 + 2 * index_number) or_return
 			if feature_index >= feature_count {
 				return false
@@ -80,7 +108,7 @@ layout_cache_fill_table :: proc "contextless" (font: ^Font_File, cache: ^Layout_
 			}
 			// The walk itself gives the lookups, so the cache answers as it.
 			lookups: Layout_Lookups
-			if layout_lookups_walk(font, place, script_tag, script_tag, tag, &lookups) != .None {
+			if layout_lookups_walk(font, place, script_tag, script_tag, tag, &lookups, reads) != .None || reads^ > LAYOUT_FILL_READ_LIMIT {
 				return false
 			}
 			if cache.entry_count == len(cache.entries) || cache.index_count + lookups.count > len(cache.indices) {

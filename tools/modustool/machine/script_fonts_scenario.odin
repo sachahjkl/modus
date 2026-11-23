@@ -2,6 +2,8 @@ package machine
 
 import "core:fmt"
 import "core:os"
+import "modus:contract/blake3"
+import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import "modustool:build"
 import "modustool:foundation"
@@ -23,6 +25,30 @@ import "modustool:resources"
 //   3. The object is one block past SCRIPT_FONTS_BYTES_LIMIT (64 MiB): the
 //      root service refuses it by its size, before a byte of it is lent,
 //      and maps nothing.
+//
+// Then four machines of the volume plan_and_audit, whose image alone holds
+// the test modules script_fonts_planner, script_fonts_cut_planner and
+// script_fonts_writer. A planner names, in a plan of principal 0, a set
+// that is not the set of the image: the font outlines of the boot image,
+// which have the form of a set, whole or less their last 8 bytes. The
+// tool writes the same bytes as the object of the disk.
+//
+//   4. The object is the font outlines; the set of the image is refused
+//      by its hash. script_fonts_planner applies its plan, the principal
+//      accepts it, and the root service says that the set holds at the
+//      next start.
+//   5. The same disk: the root service reads the set that the plan names,
+//      checks it and maps it. script_fonts_writer writes to it, and the
+//      kernel stops it on a page fault at the first byte of the set.
+//   6. The object is the cut font outlines, and script_fonts_cut_planner
+//      names them, as in 4.
+//   7. The same disk: the hash of the object is the hash that the plan
+//      names, and the root service refuses its form: its header gives
+//      another size. Nothing is mapped.
+//
+// A start from the disk refused as busy during the read of the set has no
+// case: the test would have to place the start inside the read, and the
+// time of the read depends on the speed of the host.
 //
 // The main machine holds no set: its interface_font says so
 // (main_scenario.odin).
@@ -117,6 +143,87 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	machine_test(part, too_large[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, 3), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_SCRIPT_FONTS}) or_return
 	foundation.test_passed_print("an object of %d bytes, one block past the bound of a script font set, was refused by its size: no set was mapped", len(large))
+
+	outlines := foundation.read_file(resources.FONT_OUTLINES_OUTPUT) or_return
+	script_fonts_planned_run(part, digits, outlines, false) or_return
+	return script_fonts_planned_run(part, digits, outlines[:len(outlines) - SCRIPT_FONTS_CUT_BYTES], true)
+}
+
+// The bytes that script_fonts_cut_planner cuts from the font outlines
+// (src/modules/tests/script_fonts_planner, CUT_BYTES).
+SCRIPT_FONTS_CUT_BYTES :: 8
+
+// script_fonts_planned_run runs two machines on a disk whose object is set:
+// the first applies the plan that names it, the second reads it. A whole
+// set is mapped, and its writer faults; a cut set is refused by its form.
+@(private = "file")
+script_fonts_planned_run :: proc(part: ^Test_Part_Run, image_digits: string, set: []u8, cut: bool) -> bool {
+	digits := resources.hash_digits(blake3.hash(set))
+	planner := cut ? "script_fonts_cut_planner" : "script_fonts_planner"
+	plan := cut ? "the cut font outlines" : "the font outlines"
+	first_number := cut ? 6 : 4
+	script_fonts_disk_write(set) or_return
+	fmt.printfln("modustool: %s: the store %s holds %s, %d bytes, hash %s", TEST_DISK_SCRIPT_FONTS, font_outlines.SCRIPT_FONTS_STORE_NAME, plan, len(set), digits)
+	wrong := fmt.tprintf("%s: WRONG", planner)
+	planned := [?]Step {
+		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
+		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", image_digits)},
+		{kind = .Wait, text = "root: refused script_fonts from the disk: its bytes have the hash ", fails_on = " fonts) is checked: each process that starts from now maps it"},
+		{kind = .Type, text = fmt.tprintf("start(\"%s\")", planner)},
+		{kind = .Wait, text = fmt.tprintf("script_fonts_planner: names the script font set %s, ", digits), fails_on = wrong},
+		{kind = .Wait, text = fmt.tprintf("compositor: the difference of the plan %s shows: 1 added, 0 removed", plan), any_order = true},
+		{kind = .Wait, text = fmt.tprintf("script_fonts_planner: the dialog of the plan %s takes the decision of the principal now", plan), fails_on = wrong},
+		{kind = .Key, text = "tab"},
+		{kind = .Key, text = "ret"},
+		{kind = .Wait, text = fmt.tprintf("compositor: the difference of the plan %s is accepted", plan), fails_on = fmt.tprintf("compositor: the difference of the plan %s is refused", plan)},
+		{kind = .Wait, text = fmt.tprintf("root: the plan of principal 0 names the script font set %s: it holds at the next start of the machine", digits), any_order = true},
+		{kind = .Wait, text = fmt.tprintf("script_fonts_planner: the principal accepted the plan: generation 1, which names the script font set %s", digits), fails_on = wrong},
+		{kind = .Wait, text = fmt.tprintf("root: %s stopped: itself, done", planner)},
+		{kind = .Front, text = "console"},
+		{kind = .Type, text = "shutdown()"},
+		{kind = .Wait, text = "kernel: the machine stops with code 0"},
+	}
+	machine_test(part, planned[:], {volume = build.BOOT_VOLUME_PLAN_AND_AUDIT, output = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, first_number), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_SCRIPT_FONTS}) or_return
+	foundation.test_passed_print("%s applied a plan of principal 0 that names %s, %s, and the root service took it for the next start", planner, plan, digits)
+
+	reading := [?]Step {
+		{kind = .Wait, text = fmt.tprintf("root: the plan of principal 0 names the script font set %s", digits), any_order = true},
+		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
+		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
+	}
+	read := make([dynamic]Step, context.temp_allocator)
+	append(&read, ..reading[:])
+	if cut {
+		refused := [?]Step {
+			{kind = .Wait, text = fmt.tprintf("root: the script font set is refused: %s, value %d", font_outlines.problem_sentences[.Bad_Size], len(set) + SCRIPT_FONTS_CUT_BYTES), fails_on = " fonts) is checked: each process that starts from now maps it"},
+		}
+		append(&read, ..refused[:])
+	} else {
+		writer_fault := fmt.tprintf(" address %016x, in module ", fixed_addresses.SCRIPT_FONTS_ADDRESS)
+		mapped := [?]Step {
+			{kind = .Wait, text = fmt.tprintf("root: the script font set %s (", digits), fails_on = "root: the script font set was not read"},
+			{kind = .Type, text = "start(\"script_fonts_writer\")"},
+			{kind = .Wait, text = fmt.tprintf("script_fonts_writer: writes the byte at %016x, the first of the script font set", fixed_addresses.SCRIPT_FONTS_ADDRESS), fails_on = "script_fonts_writer: WRONG"},
+			// The line of the kernel names the process, then the address of
+			// the fault: the next wait searches the same line.
+			{kind = .Wait, text = "kernel: process script_fonts_writer stopped: page fault vector 14 ", any_order = true, fails_on = "script_fonts_writer: WRONG"},
+			{kind = .Wait, text = writer_fault, fails_on = "script_fonts_writer: WRONG"},
+			{kind = .Wait, text = "root: script_fonts_writer stopped: "},
+		}
+		append(&read, ..mapped[:])
+	}
+	ending := [?]Step {
+		{kind = .Front, text = "console"},
+		{kind = .Type, text = "shutdown()"},
+		{kind = .Wait, text = "kernel: the machine stops with code 0"},
+	}
+	append(&read, ..ending[:])
+	machine_test(part, read[:], {volume = build.BOOT_VOLUME_PLAN_AND_AUDIT, output = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, first_number + 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_SCRIPT_FONTS}) or_return
+	if cut {
+		foundation.test_passed_print("the next start read %s, whose hash the plan names, and refused its form: no set was mapped", plan)
+	} else {
+		foundation.test_passed_print("the next start read and mapped %s, which the plan names, and script_fonts_writer stopped on a page fault at its first byte", plan)
+	}
 	return true
 }
 

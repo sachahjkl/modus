@@ -337,7 +337,18 @@ indic_syllable_read :: proc "contextless" (text: []u8, place: int) -> (syllable:
 			after_at += after.length
 			after = peek(text, after_at, script)
 		}
-		if after.length == 0 || after.kind != .Consonant || syllable.count + 3 > INDIC_SYLLABLE_LIMIT {
+		if after.length == 0 || after.kind != .Consonant {
+			break
+		}
+		// The parts of the virama, of the joiner and of the consonant, the
+		// consonant decomposed: all of them fit, or none is taken, so no
+		// character of the text is passed without its part.
+		consonant_parts: [3]rune
+		needed := 1 + indic_decomposed(after.character, &consonant_parts)
+		if joiner.kind == .Joiner || joiner.kind == .Non_Joiner {
+			needed += 1
+		}
+		if syllable.count + needed > INDIC_SYLLABLE_LIMIT {
 			break
 		}
 		take(&syllable, next.character, at)
@@ -444,6 +455,7 @@ Indic_Work :: struct {
 	masks:      [INDIC_SYLLABLE_LIMIT]u32,
 	count:      int,
 	reph:       bool,
+	budget:     ^vector_font.Layout_Budget, // The work of the shaping call.
 }
 
 @(private)
@@ -464,7 +476,7 @@ is_indic_joiner :: #force_inline proc "contextless" (kind: Indic_Kind) -> bool {
 // would says if a feature of the script applies to exactly these glyphs.
 @(private)
 indic_would :: proc "contextless" (work: ^Indic_Work, tag: string, glyphs: []int) -> bool {
-	return vector_font.layout_would_substitute(work.file, work.tag, {tag[0], tag[1], tag[2], tag[3]}, glyphs)
+	return vector_font.layout_would_substitute(work.file, work.tag, {tag[0], tag[1], tag[2], tag[3]}, glyphs, work.budget)
 }
 
 // consonant_place gives the position of a consonant after the base from
@@ -559,8 +571,16 @@ indic_first_reordering :: proc "contextless" (work: ^Indic_Work, syllable: ^Indi
 			break
 		}
 	}
-	if reph && base == 0 && limit <= 2 {
-		reph = false // No other consonant: ra is the base.
+	// A reph needs a consonant after it and its joiners: with none, ra is
+	// the base.
+	if reph {
+		other := false
+		for index in limit ..< count {
+			other ||= kinds[index] == .Consonant
+		}
+		if !other {
+			reph, base = false, 0
+		}
 	}
 	for index in 0 ..< min(base, count) {
 		places[index] = min(Indic_Place.Pre_Consonant, places[index])
@@ -937,10 +957,12 @@ indic_final_reordering :: proc "contextless" (work: ^Indic_Work, buffer: ^vector
 // indic_shape shapes a syllable with a font into a buffer, in the units
 // of the font: the glyphs, their advances and their offsets
 // (vector_font.engine_positions_finish). Each glyph names its character in
-// the syllable as read (sources).
+// the syllable as read (sources). Its stages and its tests of the font take
+// their work from the budget of the call.
 @(private)
-indic_shape :: proc "contextless" (file: ^vector_font.Font_File, syllable: ^Indic_Syllable, buffer: ^vector_font.Engine_Buffer, word_start: bool, sources: ^[INDIC_SYLLABLE_LIMIT]u8) {
+indic_shape :: proc "contextless" (file: ^vector_font.Font_File, syllable: ^Indic_Syllable, buffer: ^vector_font.Engine_Buffer, word_start: bool, sources: ^[INDIC_SYLLABLE_LIMIT]u8, budget: ^vector_font.Layout_Budget) {
 	work: Indic_Work
+	work.budget = budget
 	work.file = file
 	work.script = syllable.script
 	work.row = &indic_script_rows[syllable.script]
@@ -956,13 +978,13 @@ indic_shape :: proc "contextless" (file: ^vector_font.Font_File, syllable: ^Indi
 	}
 	sources^ = work.sources
 	vector_font.engine_buffer_prepare(file, buffer)
-	_ = vector_font.engine_stage(file, .Substitution, work.tag, indic_first_stage[:], buffer)
+	_ = vector_font.engine_stage(file, .Substitution, work.tag, indic_first_stage[:], buffer, work.budget)
 	for stage in indic_basic_stages {
 		single := [1]vector_font.Engine_Feature{stage}
-		_ = vector_font.engine_stage(file, .Substitution, work.tag, single[:], buffer)
+		_ = vector_font.engine_stage(file, .Substitution, work.tag, single[:], buffer, work.budget)
 	}
 	indic_final_reordering(&work, buffer, word_start)
-	_ = vector_font.engine_stage(file, .Substitution, work.tag, indic_presentation_stage[:], buffer)
+	_ = vector_font.engine_stage(file, .Substitution, work.tag, indic_presentation_stage[:], buffer, work.budget)
 	kept := 0
 	for glyph in buffer.glyphs[:buffer.count] {
 		if !is_indic_joiner(indic_kind_at(&work, glyph)) {
@@ -972,7 +994,7 @@ indic_shape :: proc "contextless" (file: ^vector_font.Font_File, syllable: ^Indi
 	}
 	buffer.count = kept
 	vector_font.engine_buffer_prepare(file, buffer)
-	_ = vector_font.engine_stage(file, .Positioning, work.tag, indic_position_stage[:], buffer)
+	_ = vector_font.engine_stage(file, .Positioning, work.tag, indic_position_stage[:], buffer, work.budget)
 	vector_font.engine_positions_finish(buffer)
 }
 
@@ -980,9 +1002,11 @@ indic_shape :: proc "contextless" (file: ^vector_font.Font_File, syllable: ^Indi
 // font that draws its first character, when it is a font of the script
 // font set with a table GSUB; false leaves the shaper as it was.
 @(private)
-indic_shaped :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
+indic_shaped :: #force_no_inline proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 	spacing := shaper.spacing
-	if spacing.cell_advance > 0 {
+	// Past the budget of the call, each character draws as its own
+	// cluster, with the plain glyph of its font.
+	if spacing.cell_advance > 0 || vector_font.layout_budget_spent(&shaper.budget) {
 		return false
 	}
 	syllable, read := indic_syllable_read(shaper.text, shaper.place)
@@ -1002,8 +1026,8 @@ indic_shaped :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 	}
 	buffer: vector_font.Engine_Buffer
 	sources: [INDIC_SYLLABLE_LIMIT]u8
-	indic_shape(file, &syllable, &buffer, !shaper.after_letter, &sources)
-	if buffer.count == 0 {
+	indic_shape(file, &syllable, &buffer, !shaper.after_letter, &sources, &shaper.budget)
+	if buffer.count == 0 || vector_font.layout_budget_spent(&shaper.budget) {
 		return false
 	}
 	row := &indic_script_rows[syllable.script]
@@ -1053,8 +1077,8 @@ indic_pair_stage := [?]vector_font.Engine_Feature{{{'d', 'i', 's', 't'}, INDIC_G
 // (dist and kern of GPOS), in units of the font: a syllable is shaped
 // alone, and HarfBuzz positions the pairs of a word across its syllables.
 @(private)
-indic_pair_units :: proc "contextless" (file: ^vector_font.Font_File, tag: vector_font.Feature_Tag, left, right: int) -> i32 {
-	if file.gpos.length == 0 {
+indic_pair_units :: proc "contextless" (file: ^vector_font.Font_File, tag: vector_font.Feature_Tag, left, right: int, budget: ^vector_font.Layout_Budget) -> i32 {
+	if file.gpos.length == 0 || vector_font.layout_budget_spent(budget) {
 		return 0
 	}
 	buffer: vector_font.Engine_Buffer
@@ -1063,14 +1087,16 @@ indic_pair_units :: proc "contextless" (file: ^vector_font.Font_File, tag: vecto
 	buffer.count = 2
 	vector_font.engine_buffer_prepare(file, &buffer)
 	advance := buffer.glyphs[0].x_advance
-	_ = vector_font.engine_stage(file, .Positioning, tag, indic_pair_stage[:], &buffer)
+	if vector_font.engine_stage(file, .Positioning, tag, indic_pair_stage[:], &buffer, budget) != .None {
+		return 0
+	}
 	return buffer.glyphs[0].x_advance - advance
 }
 
 // syllable_pair_of gives the pair of two shaped syllables of one font, in
 // 1/64 of a pixel, within half a line: 0 when either is not a syllable.
 @(private)
-syllable_pair_of :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, current, next: ^Shaped) -> i32 {
+syllable_pair_of :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, current, next: ^Shaped, budget: ^vector_font.Layout_Budget) -> i32 {
 	if !current.syllable || !next.syllable || spacing.cell_advance > 0 || spacing.without_pairs {
 		return 0
 	}
@@ -1079,7 +1105,7 @@ syllable_pair_of :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, curre
 		return 0
 	}
 	file := &font_at(set, last.font).file
-	units := indic_pair_units(file, current.script, int(last.index), int(next.base.index))
+	units := indic_pair_units(file, current.script, int(last.index), int(next.base.index), budget)
 	if units == 0 {
 		return 0
 	}

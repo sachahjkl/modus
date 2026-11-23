@@ -602,7 +602,7 @@ On a machine, the set is the object `script_fonts` of the store `script_fonts` o
 - `root: the script font set <hash> (<size>, 15 fonts) is checked: each process that starts from now maps it, read-only`;
 - with no set on the disk: `root: the data disk holds no script font set <hash>: ...`; with a set of other bytes, the refusal of the load, then `root: the script font set was not read: status ...`.
 
-A process that started before the set, and a machine with no set, draw each character of these scripts as the replacement glyph; nothing waits. The part `script_fonts` of the machine test checks both. The intent is `src/md/features/script_fonts.md`.
+A process that started before the set, and a machine with no set, draw each character of these scripts as the replacement glyph; nothing waits. The part `script_fonts` of the machine test checks both. It also checks a set that a plan of principal 0 names: the root service takes it at the next start, maps it read-only, so a write to it stops the process on a page fault, and refuses a set whose hash is right and whose form is not, with `root: the script font set is refused: ...`. The intent is `src/md/features/script_fonts.md`.
 
 The shaper (`text_rendering.shape`) reads a text by clusters: a base and its marks.
 

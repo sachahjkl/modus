@@ -52,8 +52,16 @@ Call_Fonts :: struct {
 	// The room of the set: a call opens the fonts of the boot image only,
 	// so a script font takes none of the stack of a call.
 	room:    [text_rendering.BOOT_FONT_COUNT]text_rendering.Font,
+	// The room of the records of the outlines of the caller: the font
+	// outlines of a boot image hold the fonts of the boot image. A
+	// resource with more records is refused (font_outlines.No_Room).
+	records: [CALL_RECORD_LIMIT]font_outlines.Font_Record,
 	outline: text_rendering.Measure_Memory,
 }
+
+// The records of the outlines of a caller that a call takes: the fonts of
+// the boot image, and room for three more.
+CALL_RECORD_LIMIT :: text_rendering.BOOT_FONT_COUNT + 3
 
 // The most stack that one call uses, its locals and those of each
 // procedure that it calls: a quarter of the stack of a worker thread.
@@ -62,11 +70,15 @@ CALL_STACK_BOUND :: 16 << 10
 // order of a line and the open of a font take the rest
 // (one_call_stays_under_its_stack_bound measures the whole call).
 #assert(size_of(Call_Fonts) <= 10 << 10)
-// The records of the deepest path, with the fonts and the outlines of a
-// call, leave an eighth of the bound, 2 KiB, for the other locals and the
-// frames of the calls: the freestanding build runs on no host, so this is
-// its bound; the host measures the whole call at 14 439 bytes
-// (one_call_stays_under_its_stack_bound).
+// The records of the deepest path of shape, counted by the depth at which
+// they run together (text_rendering.SHAPE_STACK_RECORDS_BYTES), with the
+// fonts and the outlines of a call, leave an eighth of the bound, 2 KiB,
+// for the other locals and the frames of the calls. A call opens the fonts
+// of the boot image only (Call_Fonts.room), and the shaper of the scripts
+// of India takes a font of the script font set only, so no call runs the
+// engine of the lookups. The freestanding build runs on no host, so this
+// is its bound; the host measures whole calls, with a line of marks that
+// the anchors of GPOS of its font place (one_call_stays_under_its_stack_bound).
 #assert(size_of(Call_Fonts) + size_of(font_outlines.Outlines) + text_rendering.SHAPE_STACK_RECORDS_BYTES <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
 
 // face_and_size_check refuses a face (argument 2) and a text size
@@ -103,7 +115,7 @@ call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_
 		errors.fail(error, -1, .Too_Long, .Bytes, 1, i64(min(count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 		return {}, false
 	}
-	resource, problem := font_outlines.validate(outlines.bytes[:count])
+	resource, problem := font_outlines.validate(outlines.bytes[:count], fonts.records[:])
 	if problem.kind != .None {
 		errors.fail(error, -1, .Bad_Value, .Bytes, 1, i64(problem.kind), 0, i64(problem.index) + 1)
 		return {}, false

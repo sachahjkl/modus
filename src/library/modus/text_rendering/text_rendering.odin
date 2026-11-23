@@ -129,9 +129,14 @@ BOOT_FONTS :: Outline_Fonts{.B612, .B612_Bold, .Paper_Mono, .Paper_Mono_Semibold
 BOOT_FONT_COUNT :: 5
 SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam}
 Outline_Fonts :: bit_set[Outline_Font]
-// The font is 5 bits in the key of the private glyph cache and in a
-// direct glyph (src/md/features/script_fonts.md, "Subtle points").
-FONT_FIELD_BITS :: 5
+// The font field of the key of the private glyph cache and of a direct
+// glyph (src/md/features/script_fonts.md, "Subtle points"): wide enough for
+// the fonts of the boot image and the largest script font set that the
+// format of the font outlines allows (font_outlines.FONT_LIMIT), with None.
+// A set is sized by its header, so a script added to it meets the bound of
+// the format, never this field.
+FONT_FIELD_BITS :: 9
+#assert(1 + BOOT_FONT_COUNT + font_outlines.FONT_LIMIT <= 1 << FONT_FIELD_BITS)
 #assert(int(max(Outline_Font)) < 1 << FONT_FIELD_BITS)
 
 // outline_font_name gives the name of the record of a font in the resource
@@ -477,6 +482,8 @@ State :: struct {
 	// (layout_cache_pool): a state of all zero takes it from its start.
 	layout_entries_used, layout_indices_used: int,
 	cff_caches_used:                          int,
+	layout_refused:                           Outline_Fonts, // The script fonts refused at their open (layout_cache_of).
+	layout_fill_reads:                        [Outline_Font]int, // The reads of the fill of each, a measure for the tests.
 }
 
 state: State
@@ -487,10 +494,12 @@ state_room: Font_Room
 
 // The memory of the caches of the walk of GSUB and GPOS of the script
 // fonts of the state (vector_font.layout_cache_fill): one pool, which each
-// font that opens takes its part of. A font past the pool walks its tables
-// at each call.
-LAYOUT_CACHE_ENTRY_LIMIT :: 2048
-LAYOUT_CACHE_INDEX_LIMIT :: 16384
+// font that opens takes its part of. A font past the pool is refused at its
+// open and logged (layout_refused_fonts). The 15 fonts of the set take 437
+// entries and 1 222 lookup indices (the_cache_of_each_font_of_the_set):
+// the pool holds more than twice that.
+LAYOUT_CACHE_ENTRY_LIMIT :: 1024
+LAYOUT_CACHE_INDEX_LIMIT :: 4096
 
 // The script fonts of CFF outlines whose Private dictionaries the state
 // keeps (vector_font.cff_private_cache_fill): Noto Sans Symbols 2 and Noto
@@ -510,19 +519,35 @@ layout_cache_pool: Layout_Cache_Pool
 
 // layout_cache_of fills the cache of the walk of a script font of the
 // state from the rest of the pool, and the cache of its Private
-// dictionaries when its outlines are CFF.
+// dictionaries when its outlines are CFF. false when the fill fails: the
+// tables pass the bound of a fill (vector_font.LAYOUT_FILL_READ_LIMIT), a
+// walk refuses them, or they pass the rest of the pool. The caller then
+// refuses the font, so no call walks its tables again.
 @(private)
-layout_cache_of :: proc "contextless" (font: Outline_Font, file: ^vector_font.Font_File) {
+layout_cache_of :: proc "contextless" (font: Outline_Font, file: ^vector_font.Font_File) -> bool {
 	pool := &layout_cache_pool
 	cache := &pool.caches[font]
 	cache^ = {entries = pool.entries[state.layout_entries_used:], indices = pool.indices[state.layout_indices_used:]}
-	vector_font.layout_cache_fill(file, cache)
+	complete, reads := vector_font.layout_cache_fill(file, cache)
+	if !complete {
+		return false
+	}
+	state.layout_fill_reads[font] = reads
 	state.layout_entries_used += cache.entry_count
 	state.layout_indices_used += cache.index_count
 	if file.cff.version != 0 && state.cff_caches_used < CFF_CACHE_FONT_LIMIT {
 		vector_font.cff_private_cache_fill(file, &pool.cff_caches[state.cff_caches_used])
 		state.cff_caches_used += 1
 	}
+	return true
+}
+
+// layout_refused_fonts gives the script fonts that the state refused at
+// their open, as their tables of GSUB and GPOS passed the bound of their
+// fill or the pool: each draws the replacement glyph, and the process says
+// so once (display.fallback_load).
+layout_refused_fonts :: proc "contextless" () -> Outline_Fonts {
+	return state.layout_refused
 }
 
 // state_set gives the set of the state, with its room.
@@ -590,7 +615,7 @@ fonts_of_outlines_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_ou
 		}
 		missing += {font}
 		name := outline_font_name(font)
-		for index in 0 ..< min(outlines.count, font_outlines.FONT_LIMIT) {
+		for index in 0 ..< min(outlines.count, len(outlines.records)) {
 			record := &outlines.records[index]
 			if font_outlines.name_of(record) != name {
 				continue
@@ -598,9 +623,12 @@ fonts_of_outlines_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_ou
 			if font_file_open(set, font, font_outlines.font_bytes(outlines, index), outline) == .None {
 				font_at(set, font).hash = record.hash
 				missing -= {font}
-				// A script font of the state keeps the walk of its tables.
-				if font in SCRIPT_FONTS && set == &state.font_set {
-					layout_cache_of(font, &font_at(set, font).file)
+				// A script font of the state keeps the walk of its tables; a
+				// font whose tables pass the bound of the fill is refused.
+				if font in SCRIPT_FONTS && set == &state.font_set && !layout_cache_of(font, &font_at(set, font).file) {
+					font_at(set, font)^ = {}
+					missing += {font}
+					state.layout_refused += {font}
 				}
 			}
 		}

@@ -14,7 +14,7 @@ import "modus:vector_font"
 // come from SCRIPT_FONT_SOURCES: the development shell and the check of
 // the flake set it.
 
-@(private = "file")
+@(private)
 script_font_names := [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai", "noto_sans_devanagari", "noto_sans_bengali", "noto_sans_gurmukhi", "noto_sans_gujarati", "noto_sans_oriya", "noto_sans_tamil", "noto_sans_telugu", "noto_sans_kannada", "noto_sans_malayalam"}
 
 // script_fonts_read reads the script fonts that names lists.
@@ -412,18 +412,18 @@ a_script_font_set_that_does_not_verify :: proc(t: ^testing.T) {
 	_, written := font_outlines.resource_write(scripts[:], bytes)
 	testing.expect(t, written)
 	named := blake3.hash(bytes)
-	_, problem := font_outlines.script_fonts_check(bytes, named)
+	_, problem := font_outlines.script_fonts_check(bytes, named, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	other := named
 	other[0] ~= 1
-	_, problem = font_outlines.script_fonts_check(bytes, other)
+	_, problem = font_outlines.script_fonts_check(bytes, other, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.Hash_Mismatch)
 	bytes[size - 1] ~= 1
-	_, problem = font_outlines.script_fonts_check(bytes, named)
+	_, problem = font_outlines.script_fonts_check(bytes, named, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.Hash_Mismatch)
 	// The object as named, and a font that is not the font of its record.
 	renamed := blake3.hash(bytes)
-	_, problem = font_outlines.script_fonts_check(bytes, renamed)
+	_, problem = font_outlines.script_fonts_check(bytes, renamed, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.Hash_Mismatch)
 	testing.expect_value(t, problem.index, u32(0))
 }
@@ -640,4 +640,25 @@ thai_marks_and_sara_am :: proc(t: ^testing.T) {
 	}
 	alone, _ := cluster_read(&state.font_set, .Interface, transmute([]u8)string("กำ"), 3)
 	testing.expect_value(t, alone.base, rune(0x0E33))
+}
+
+// Lam and alef make one glyph, and the cluster of the alef can take the
+// NIKHAHIT of a SARA AM after it: the cluster after the ligature then is
+// SARA AA, at the byte of SARA AM, and NIKHAHIT draws once.
+@(test)
+lam_alef_keeps_the_sara_am_that_it_took :: proc(t: ^testing.T) {
+	test_state_take()
+	names := [2]string{"noto_sans_arabic", "noto_sans_thai"}
+	words, script_words, _ := script_set_open(t, names[:])
+	defer delete(words)
+	defer delete(script_words)
+	placed: [16]Placed_Glyph
+	text := "لاำ"
+	count, _ := shape_text(t, .Interface, text, placed[:])
+	nikhahit := 0
+	for glyph in placed[:count] {
+		nikhahit += int(glyph.glyph == fallback_glyph(0x0E4D))
+	}
+	last := placed[count - 1]
+	testing.expectf(t, nikhahit == 1 && last.glyph == fallback_glyph(0x0E32) && last.cluster == 4, "lam-alef and SARA AM: %v", placed[:count])
 }

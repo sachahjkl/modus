@@ -805,7 +805,8 @@ font_outlines_write :: proc() -> (resource: Resource_File, ok: bool) {
 		fmt.eprintln("modustool: the font outlines cannot be written: a name or a file is refused")
 		return {}, false
 	}
-	if _, problem := font_outlines.validate(out); problem.kind != .None {
+	room := new(font_outlines.Record_Room, context.temp_allocator)
+	if _, problem := font_outlines.validate(out, room[:]); problem.kind != .None {
 		fmt.eprintfln("modustool: the font outlines are refused: %s", font_outlines.problem_sentences[problem.kind])
 		return {}, false
 	}

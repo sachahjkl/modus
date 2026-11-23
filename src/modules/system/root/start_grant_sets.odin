@@ -507,6 +507,14 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// plan names, and the grant to act for the principal, which plans.apply
 	// asks.
 	{name = "plan_applier", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	// The planners of the tests of the script font set: the grants of
+	// plan_applier, for a plan of one entry Script_Fonts. They get the
+	// font outlines, as each process that draws text, and hash them.
+	{name = "script_fonts_planner", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	{name = "script_fonts_cut_planner", grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	// The writer of the test of the mapping of the script font set: it
+	// needs no grant; it gets the set where the font outlines go.
+	{name = "script_fonts_writer"},
 	// The holder of Settings that the plan of that test names: it writes
 	// its line and stops, and needs no grant.
 	{name = "settings_stand_in"},

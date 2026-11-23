@@ -1,6 +1,7 @@
 #+build !freestanding
 package text_rendering
 
+import "core:fmt"
 import "core:testing"
 import "modus:vector_font"
 
@@ -204,6 +205,7 @@ the_scripts_of_india_shape_as_harfbuzz :: proc(t: ^testing.T) {
 	defer delete(words)
 	defer delete(script_words)
 	failed := 0
+	most_per_byte := 0
 	for script in expected_scripts {
 		font := Outline_Font.None
 		for each in Outline_Font {
@@ -217,6 +219,7 @@ the_scripts_of_india_shape_as_harfbuzz :: proc(t: ^testing.T) {
 			text := transmute([]u8)expected.word
 			got := make([dynamic]Script_Glyph, context.temp_allocator)
 			place := 0
+			budget := vector_font.layout_budget_of_text(len(text))
 			for {
 				syllable, read := indic_syllable_read(text, place)
 				if !read {
@@ -224,12 +227,12 @@ the_scripts_of_india_shape_as_harfbuzz :: proc(t: ^testing.T) {
 				}
 				buffer: vector_font.Engine_Buffer
 				sources: [INDIC_SYLLABLE_LIMIT]u8
-				indic_shape(file, &syllable, &buffer, place == 0, &sources)
+				indic_shape(file, &syllable, &buffer, place == 0, &sources, &budget)
 				// The pair across two syllables, as shape adds it.
 				if len(got) > 0 && buffer.count > 0 {
 					row := &indic_script_rows[syllable.script]
 					tag := vector_font.layout_has_script(file, file.gsub, row.tags[0]) ? row.tags[0] : row.tags[1]
-					got[len(got) - 1].advance += indic_pair_units(file, tag, int(got[len(got) - 1].glyph), int(buffer.glyphs[0].glyph))
+					got[len(got) - 1].advance += indic_pair_units(file, tag, int(got[len(got) - 1].glyph), int(buffer.glyphs[0].glyph), &budget)
 				}
 				for glyph in buffer.glyphs[:buffer.count] {
 					append(&got, Script_Glyph{i32(glyph.glyph), glyph.x_advance, glyph.x_offset, glyph.y_offset})
@@ -246,7 +249,12 @@ the_scripts_of_india_shape_as_harfbuzz :: proc(t: ^testing.T) {
 				failed += 1
 			}
 			testing.expectf(t, same, "%s %s: %v, HarfBuzz: %v", script.font, expected.word, got[:], expected.glyphs)
+			// The work of a word, never past its budget: a font of the set
+			// shapes far inside the bound of a call.
+			testing.expectf(t, !vector_font.layout_budget_spent(&budget), "%s %s: the budget is spent", script.font, expected.word)
+			most_per_byte = max(most_per_byte, budget.work / max(len(text), 1))
 		}
 	}
 	testing.expect_value(t, failed, 0)
+	fmt.printfln("text_rendering: the work of the words of the scripts of India: at most %d units for a byte, of a budget of %d for a byte", most_per_byte, vector_font.LAYOUT_WORK_PER_BYTE)
 }

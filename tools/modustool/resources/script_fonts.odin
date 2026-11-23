@@ -63,7 +63,8 @@ script_fonts_write :: proc() -> (set: []u8, hash: blake3.Hash, ok: bool) {
 		return nil, {}, false
 	}
 	hash = blake3.hash(set)
-	if _, problem := font_outlines.script_fonts_check(set, hash); problem.kind != .None {
+	room := new(font_outlines.Record_Room, context.temp_allocator)
+	if _, problem := font_outlines.script_fonts_check(set, hash, room[:]); problem.kind != .None {
 		fmt.eprintfln("modustool: the script font set is refused: %s", font_outlines.problem_sentences[problem.kind])
 		return nil, {}, false
 	}

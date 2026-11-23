@@ -195,7 +195,14 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 				break
 			}
 		}
-		sequence_resolve(line, levels[:count], links[:count], scratch[:length], paragraph, text, placed[:count])
+		if !sequence_resolve(line, levels[:count], links[:count], scratch[:length], paragraph, text, placed[:count]) {
+			// More pairs of brackets than N0 keeps: the line keeps the
+			// order of its text, as a line past BIDI_GLYPH_LIMIT does.
+			for index in 0 ..< count {
+				levels[index] = 0
+			}
+			return paragraph, false
+		}
 	}
 	// I1 and I2.
 	for index in 0 ..< count {
@@ -240,9 +247,9 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 // the glyphs inside an isolate are not in it, and its initiator and its
 // matched PDI are neutrals next to each other.
 @(private)
-sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, links: []u8, sequence: []u16, paragraph: u8, text: []u8, placed: []Placed_Glyph) {
+sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, links: []u8, sequence: []u16, paragraph: u8, text: []u8, placed: []Placed_Glyph) -> (resolved: bool) {
 	if len(sequence) == 0 {
-		return
+		return true
 	}
 	first, last := int(sequence[0]), int(sequence[len(sequence) - 1])
 	level := levels[first]
@@ -330,7 +337,7 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 		}
 	}
 	embedding := level % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
-	brackets_resolve(classes, sequence, sos, embedding, text, placed)
+	brackets_resolve(classes, sequence, sos, embedding, text, placed) or_return
 	// N1 and N2: a run of neutrals, the isolate characters too, takes the
 	// direction around it when both sides agree, else the direction of the
 	// embedding level.
@@ -345,27 +352,26 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 		}
 		side_before := position > 0 ? direction_of(classes[sequence[position - 1]]) : sos
 		side_after := end < len(sequence) ? direction_of(classes[sequence[end]]) : eos
-		resolved := side_before == side_after ? side_before : embedding
+		direction := side_before == side_after ? side_before : embedding
 		for each in position ..< end {
-			classes[sequence[each]] = resolved
+			classes[sequence[each]] = direction
 		}
 		position = end
 	}
+	return true
 }
 
 // The openings that the search of the bracket pairs holds (UAX #9, BD16):
-// past them, the search stops, and the pairs found so far stay.
+// past them, the search stops, and the pairs found so far stay, as the
+// algorithm says.
 BIDI_BRACKET_STACK_LIMIT :: 63
+// The pairs of brackets that N0 keeps for one isolating run sequence: a
+// sequence with more is refused whole, and its line keeps the order of its
+// text, visibly, as a line past BIDI_GLYPH_LIMIT does. More room would sit
+// on the stack of a call of the library module, which this part of the
+// shaper bounds (SHAPE_STACK_RECORDS_BYTES).
+BIDI_BRACKET_PAIR_LIMIT :: 63
 
-// The records that the deepest path of shape holds on its stack: the
-// cluster that shape holds and the one after it, the cluster that
-// shaper_next reads, the levels and the order of bidi_line_reorder, the
-// classes and the links of bidi_levels, and the openings and the pairs of
-// brackets_resolve. A call of the library module text_rendering adds its
-// fonts, and asserts the sum against its stack bound: the freestanding
-// build runs on no host, so its frames are bounded by these sizes, and the
-// host test measures the whole call.
-SHAPE_STACK_RECORDS_BYTES :: 2 * size_of(Shaped) + size_of(Cluster) + BIDI_GLYPH_LIMIT * (size_of(u8) + size_of(u16)) + BIDI_GLYPH_LIMIT * (size_of(Bidi_Class) + size_of(u8)) + BIDI_BRACKET_STACK_LIMIT * (size_of(rune) + size_of(u16) + 2 * size_of(u16))
 
 // brackets_resolve applies N0 to one isolating run sequence: each pair of
 // brackets (BD16) takes the embedding direction when a strong type inside
@@ -375,13 +381,13 @@ SHAPE_STACK_RECORDS_BYTES :: 2 * size_of(Shaped) + size_of(Cluster) + BIDI_GLYPH
 // takes its direction. Each bracket is a neutral whose character
 // BidiBrackets.txt pairs; a mark is never a bracket.
 @(private)
-brackets_resolve :: proc "contextless" (classes: []Bidi_Class, sequence: []u16, sos, embedding: Bidi_Class, text: []u8, placed: []Placed_Glyph) {
+brackets_resolve :: proc "contextless" (classes: []Bidi_Class, sequence: []u16, sos, embedding: Bidi_Class, text: []u8, placed: []Placed_Glyph) -> (kept: bool) {
 	Opening :: struct {
 		pair:     rune, // The closing bracket that pairs with it.
 		position: u16, // In the sequence.
 	}
 	openings: [BIDI_BRACKET_STACK_LIMIT]Opening
-	pairs: [BIDI_BRACKET_STACK_LIMIT][2]u16
+	pairs: [BIDI_BRACKET_PAIR_LIMIT][2]u16
 	depth, pair_count := 0, 0
 	search: for position in 0 ..< len(sequence) {
 		index := int(sequence[position])
@@ -407,10 +413,11 @@ brackets_resolve :: proc "contextless" (classes: []Bidi_Class, sequence: []u16, 
 		closing := character == 0x232A ? 0x3009 : character
 		for back := depth - 1; back >= 0; back -= 1 {
 			if openings[back].pair == closing {
-				if pair_count < len(pairs) {
-					pairs[pair_count] = {openings[back].position, u16(position)}
-					pair_count += 1
+				if pair_count == len(pairs) {
+					return false
 				}
+				pairs[pair_count] = {openings[back].position, u16(position)}
+				pair_count += 1
 				depth = back
 				break
 			}
@@ -455,6 +462,7 @@ brackets_resolve :: proc "contextless" (classes: []Bidi_Class, sequence: []u16, 
 			}
 		}
 	}
+	return true
 }
 
 // bidi_line_reorder gives the placed glyphs of a line their places on the

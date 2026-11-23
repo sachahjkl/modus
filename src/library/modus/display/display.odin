@@ -1453,6 +1453,12 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	if problems.fonts_missing != {} {
 		system.log(.Warning, "display: the font outlines lack ", u64(card(problems.fonts_missing)), " fonts of the fallback chains, or the renderer refuses them: the chains skip them")
 	}
+	// A script font whose tables pass the bound of their read at the open
+	// draws the box: the process says which, once. text_settings_load
+	// writes no line, as the drawing module runs it.
+	for font in text_rendering.layout_refused_fonts() {
+		system.log(.Warning, "display: the script font ", text_rendering.outline_font_name(font), " is refused: its tables of GSUB and GPOS pass the bound of their read at the open, or the memory of the cache: its characters draw the replacement glyph")
+	}
 }
 
 // What text_settings_load refused: the problem of the font outlines, and

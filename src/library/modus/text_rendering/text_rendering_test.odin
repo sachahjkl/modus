@@ -64,7 +64,7 @@ resource_of :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input) -> (outlin
 	written, ok := font_outlines.resource_write(fonts, bytes)
 	testing.expect(t, ok && written == size)
 	problem: font_outlines.Problem
-	outlines, problem = font_outlines.validate(bytes)
+	outlines, problem = font_outlines.validate(bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	return outlines, words
 }

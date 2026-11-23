@@ -810,7 +810,8 @@ machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) 
 		aligned := ([^]u8)(raw_data(machine_outlines_words))[:len(bytes)]
 		copy(aligned, bytes)
 		delete(bytes)
-		outlines, refused := font_outlines.validate(aligned)
+		room := new(font_outlines.Record_Room, context.temp_allocator)
+		outlines, refused := font_outlines.validate(aligned, room[:])
 		if refused.kind != .None {
 			fmt.eprintfln("modustool: test failed: %s is refused: %s", resources.FONT_OUTLINES_OUTPUT, font_outlines.problem_sentences[refused.kind])
 			delete(machine_outlines_words)

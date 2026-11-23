@@ -123,7 +123,8 @@ TEST :: Feature_Tag{'t', 'e', 's', 't'}
 
 // engine_run shapes glyphs with a table GSUB of the test.
 @(private = "file")
-engine_run :: proc(gsub: []u8, glyphs: []int) -> (buffer: Engine_Buffer, problem: Font_Problem) {
+engine_run :: proc(gsub: []u8, glyphs: []int, limit := LAYOUT_WORK_FLOOR) -> (buffer: Engine_Buffer, problem: Font_Problem) {
+	budget := Layout_Budget{limit = limit}
 	font: Font_File
 	font.bytes = gsub
 	font.gsub = {offset = 0, length = len(gsub)}
@@ -134,7 +135,7 @@ engine_run :: proc(gsub: []u8, glyphs: []int) -> (buffer: Engine_Buffer, problem
 	}
 	engine_buffer_prepare(&font, &buffer)
 	features := [1]Engine_Feature{{TEST, 1}}
-	problem = engine_stage(&font, .Substitution, {'D', 'F', 'L', 'T'}, features[:], &buffer)
+	problem = engine_stage(&font, .Substitution, {'D', 'F', 'L', 'T'}, features[:], &buffer, &budget)
 	return buffer, problem
 }
 

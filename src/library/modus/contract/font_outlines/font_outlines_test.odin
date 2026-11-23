@@ -1,7 +1,12 @@
 #+build !freestanding
 package font_outlines
 
+import "core:strings"
 import "core:testing"
+
+// A room for the records of any resource of the format, for each test.
+@(private = "file")
+test_room: Record_Room
 
 // Two small files in place of fonts: validate reads no byte of a font.
 @(private = "file")
@@ -31,10 +36,10 @@ the_writer_refuses_a_wrong_list :: proc(t: ^testing.T) {
 	out: [1024]u64
 	bytes := ([^]u8)(raw_data(out[:]))[:size_of(out)]
 	file := first_file[:]
-	too_many: [FONT_LIMIT + 1]Font_Input
-	names := [FONT_LIMIT + 1]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q"}
+	too_many := make([]Font_Input, FONT_LIMIT + 1, context.temp_allocator)
 	for &font, index in too_many {
-		font = {names[index], file}
+		name := [3]u8{'a' + u8(index / 26 / 26), 'a' + u8(index / 26 % 26), 'a' + u8(index % 26)}
+		font = {strings.clone(string(name[:]), context.temp_allocator), file}
 	}
 	long_name := "abcdefghijklmnopqrstuvwxyz012345"
 	#assert(len("abcdefghijklmnopqrstuvwxyz012345") == NAME_SIZE)
@@ -69,7 +74,7 @@ the_writer_refuses_a_wrong_list :: proc(t: ^testing.T) {
 	longest := [2]Font_Input{{long_name[:NAME_SIZE - 1], file}, {"paper_mono_semibold", file}}
 	written, ok = resource_write(longest[:], bytes)
 	testing.expect(t, ok && written == resource_size(longest[:]))
-	outlines, problem := validate(bytes[:written])
+	outlines, problem := validate(bytes[:written], test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
 	testing.expect_value(t, name_of(&outlines.records[0]), long_name[:NAME_SIZE - 1])
 	testing.expect_value(t, name_of(&outlines.records[1]), "paper_mono_semibold")
@@ -90,9 +95,9 @@ validate_refuses_a_damaged_resource :: proc(t: ^testing.T) {
 	original := make([]u8, len(bytes))
 	defer delete(original)
 	copy(original, bytes)
-	_, problem := validate(bytes[:HEADER_SIZE - 1])
+	_, problem := validate(bytes[:HEADER_SIZE - 1], test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.Too_Short)
-	_, problem = validate(nil)
+	_, problem = validate(nil, test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.Too_Short)
 	Damage :: enum {
 		Magic,
@@ -173,18 +178,28 @@ validate_refuses_a_damaged_resource :: proc(t: ^testing.T) {
 		case .Offset_And_Size_That_Wrap:
 			records[1].size = max(u64)
 		}
-		_, problem = validate(checked)
+		_, problem = validate(checked, test_room[:])
 		testing.expectf(t, problem.kind == expected[damage], "%v: %v, expected %v", damage, problem.kind, expected[damage])
 	}
 	copy(bytes, original)
-	_, problem = validate_at(0, 1 << 20)
+	_, problem = validate_at(0, 1 << 20, test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.Too_Short)
-	_, problem = validate_at(uintptr(raw_data(bytes)) + 4, 1 << 20)
+	_, problem = validate_at(uintptr(raw_data(bytes)) + 4, 1 << 20, test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.Too_Short)
-	_, problem = validate_at(uintptr(raw_data(bytes)), u64(len(bytes) - 1))
+	_, problem = validate_at(uintptr(raw_data(bytes)), u64(len(bytes) - 1), test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.Bad_Size)
+	// The room of the reader: one record is too few for two fonts, with
+	// the room as the limit; two are enough; no room is too few.
+	one: [1]Font_Record
+	_, problem = validate(bytes, one[:])
+	testing.expect(t, problem.kind == .No_Room && problem.value == 2 && problem.limit == 1)
+	_, problem = validate(bytes, nil)
+	testing.expect_value(t, problem.kind, Problem_Kind.No_Room)
+	two: [2]Font_Record
+	_, problem = validate(bytes, two[:])
+	testing.expect_value(t, problem.kind, Problem_Kind.None)
 	outlines: Outlines
-	outlines, problem = validate_at(uintptr(raw_data(bytes)), u64(len(bytes)))
+	outlines, problem = validate_at(uintptr(raw_data(bytes)), u64(len(bytes)), test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
 	testing.expect_value(t, outlines.count, 2)
 	testing.expect_value(t, name_of(&outlines.records[0]), "first")
@@ -203,7 +218,7 @@ validate_refuses_a_damaged_resource :: proc(t: ^testing.T) {
 a_change_after_validate_changes_no_span :: proc(t: ^testing.T) {
 	words, bytes := resource_make(t)
 	defer delete(words)
-	outlines, problem := validate(bytes)
+	outlines, problem := validate(bytes, test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
 	header := (^Header)(raw_data(bytes))
 	records := ([^]Font_Record)(&bytes[RECORDS_OFFSET])

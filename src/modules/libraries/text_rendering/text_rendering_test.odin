@@ -3,6 +3,8 @@ package text_rendering_module
 
 import "base:intrinsics"
 import "core:fmt"
+import "core:os"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import "modus:contract/errors"
@@ -68,7 +70,7 @@ Package_Fonts :: struct {
 
 @(private = "file")
 package_spacing :: proc(t: ^testing.T, fonts: ^Package_Fonts, outlines: ^Test_Outlines, face: text_rendering.Face, size: int) -> text_rendering.Spacing {
-	resource, problem := font_outlines.validate(outlines.bytes)
+	resource, problem := font_outlines.validate(outlines.bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	fonts.set.room = fonts.room[:]
 	outline := text_rendering.outline_of(&fonts.outline)
@@ -553,7 +555,7 @@ a_call_opens_the_fonts_of_its_face :: proc(t: ^testing.T) {
 	for character, index in ([3]rune{0x03A0, 0x0416, 0x0101}) {
 		testing.expectf(t, placed[index].glyph == text_rendering.FALLBACK_GLYPH_FIRST + u32(character) && placed[index].advance > 0, "U+%04X: the glyph %v, the advance %v", int(character), placed[index].glyph, placed[index].advance)
 	}
-	resource, problem := font_outlines.validate(outlines.bytes)
+	resource, problem := font_outlines.validate(outlines.bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	fonts := new(Package_Fonts)
 	defer free(fonts)
@@ -653,10 +655,46 @@ stack_used_by :: #force_no_inline proc(call: ^Stack_Call) -> int {
 	return int(top - deepest) + STACK_FRAME_MARGIN
 }
 
+// vector_font_source reads a font that VECTOR_FONT_SOURCES of the
+// development shell names.
+@(private = "file")
+vector_font_source :: proc(t: ^testing.T, name: string) -> []u8 {
+	sources := os.get_env("VECTOR_FONT_SOURCES", context.temp_allocator)
+	testing.expect(t, sources != "", "VECTOR_FONT_SOURCES is set: run the tests in the development shell")
+	rest := sources
+	prefix := strings.concatenate({name, "="}, context.temp_allocator)
+	for item in strings.split_iterator(&rest, ";") {
+		if strings.has_prefix(item, prefix) {
+			bytes, error := os.read_entire_file(item[len(prefix):], context.temp_allocator)
+			if testing.expectf(t, error == nil, "%s can be read", item[len(prefix):]) {
+				return bytes
+			}
+		}
+	}
+	return nil
+}
+
 @(test)
 one_call_stays_under_its_stack_bound :: proc(t: ^testing.T) {
-	outlines := repository_outlines(t)
-	defer delete(outlines.words)
+	// The fonts of the repository, then a caller whose interface font is
+	// the whole Noto Sans, with its GPOS: its marks go through the anchors
+	// (mark_anchor_offset), the deepest path of the shaper in a call.
+	cases := make([dynamic]Test_Outlines, context.temp_allocator)
+	append(&cases, repository_outlines(t))
+	if whole := vector_font_source(t, "noto_sans"); whole != nil {
+		fonts := [5]font_outlines.Font_Input{{"b612", whole}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}, {"noto_sans", noto_sans_file}}
+		append(&cases, test_outlines_of(t, fonts[:]))
+	}
+	defer for each in cases {
+		delete(each.words)
+	}
+	for &outlines in cases {
+		stack_calls_measure(t, &outlines)
+	}
+}
+
+@(private = "file")
+stack_calls_measure :: proc(t: ^testing.T, outlines: ^Test_Outlines) {
 	line := "abc \u05D0\u05D1\u05D2 (123) e\u0301 q\u0323\u0302 \u0628\u064A\u062A def "
 	text := make([dynamic]u8)
 	defer delete(text)
@@ -672,7 +710,7 @@ one_call_stays_under_its_stack_bound :: proc(t: ^testing.T) {
 	for face in ([?]i64{i64(text_rendering.Face.Interface), i64(text_rendering.Face.Cells_Bold)}) {
 		for export in 0 ..< 3 {
 			call := Stack_Call {
-				outlines = &outlines,
+				outlines = outlines,
 				face     = face,
 				text     = bytes_to_read(text[:]),
 				placed   = {records = raw_data(placed), capacity = u64(len(placed))},

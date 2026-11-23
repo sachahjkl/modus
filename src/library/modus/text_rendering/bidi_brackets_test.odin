@@ -1,6 +1,7 @@
 #+build !freestanding
 package text_rendering
 
+import "core:strings"
 import "core:testing"
 
 // The levels of the glyphs of a line, by the byte of each.
@@ -72,4 +73,46 @@ a_separator_and_the_space_before_it_take_the_paragraph_level :: proc(t: ^testing
 	// White space at the end of the line.
 	levels = levels_of(t, "א  ")
 	testing.expectf(t, levels[2] == 1 && levels[3] == 1, "the end of a line of right to left: %v", levels)
+}
+
+// The bounds of N0: 63 openings nested in a line of left to right after a
+// letter of right to left pair with their closings, so the closing of the
+// outer pair takes R; 64 openings fill the stack, the search stops there as
+// BD16 says, no pair is found, and N1 gives that closing L. 63 pairs one
+// after the other resolve; 64 are refused visibly: the line keeps the
+// order of its text, every level 0.
+@(test)
+the_bounds_of_the_bracket_pairs :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	placed := make([]Placed_Glyph, BIDI_GLYPH_LIMIT, context.temp_allocator)
+	levels_at :: proc(t: ^testing.T, text: string, placed: []Placed_Glyph) -> (levels: [BIDI_GLYPH_LIMIT]u8, count: int, rtl: bool) {
+		count, _ = shape_text(t, .Interface, text, placed)
+		scratch: [BIDI_GLYPH_LIMIT]u16
+		_, rtl = bidi_levels(transmute([]u8)text, placed[:count], levels[:count], scratch[:count])
+		return
+	}
+	for depth in ([2]int{BIDI_BRACKET_STACK_LIMIT, BIDI_BRACKET_STACK_LIMIT + 1}) {
+		text := strings.concatenate({"x א", strings.repeat("(", depth, context.temp_allocator), "ב", strings.repeat(")", depth, context.temp_allocator), "a"}, context.temp_allocator)
+		levels, count, _ := levels_at(t, text, placed)
+		// The last closing bracket is the glyph before a.
+		closing := levels[count - 2]
+		paired := depth <= BIDI_BRACKET_STACK_LIMIT
+		testing.expectf(t, closing == (paired ? 1 : 0), "%d openings: the last closing at the level %d", depth, closing)
+	}
+	for pairs in ([2]int{BIDI_BRACKET_PAIR_LIMIT, BIDI_BRACKET_PAIR_LIMIT + 1}) {
+		text := strings.concatenate({"x א", strings.repeat("(ב)", pairs, context.temp_allocator), "a"}, context.temp_allocator)
+		levels, count, rtl := levels_at(t, text, placed)
+		if pairs <= BIDI_BRACKET_PAIR_LIMIT {
+			testing.expectf(t, rtl && levels[count - 2] == 1, "%d pairs: the last closing at %d", pairs, levels[count - 2])
+		} else {
+			all_zero := true
+			for level in levels[:count] {
+				all_zero &&= level == 0
+			}
+			testing.expectf(t, !rtl && all_zero, "%d pairs: the line keeps the order of its text", pairs)
+		}
+	}
 }

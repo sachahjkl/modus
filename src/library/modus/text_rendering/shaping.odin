@@ -59,8 +59,8 @@ is_invisible_format :: proc "contextless" (character: rune) -> bool {
 FALLBACK_GLYPH_FIRST :: u32(1) << 24
 #assert(FALLBACK_GLYPH_FIRST > CHARACTER_COUNT && u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(REPLACEMENT_GLYPH))
 // The glyph of a form or a ligature that a substitution gave, with no
-// character: DIRECT_GLYPH_FIRST, the font in bits 16 to 20, the glyph
-// index in bits 0 to 15 (direct_glyph).
+// character: DIRECT_GLYPH_FIRST, the font in the FONT_FIELD_BITS bits from
+// bit 16, the glyph index in bits 0 to 15 (direct_glyph).
 DIRECT_GLYPH_FIRST :: u32(1) << 30
 DIRECT_GLYPH_SPAN :: u32(1) << (16 + FONT_FIELD_BITS)
 #assert(u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(DIRECT_GLYPH_FIRST) && u64(DIRECT_GLYPH_FIRST) + u64(DIRECT_GLYPH_SPAN) < u64(REPLACEMENT_GLYPH) - 1)
@@ -447,11 +447,15 @@ Shaper :: struct {
 	// The cluster before ended with a letter or a mark: the next syllable
 	// of a script of India does not start a word (the feature init).
 	after_letter:  bool,
+	// The work of the engine of the lookups for the whole call, in
+	// proportion to the bytes of the text (vector_font.layout_budget_of_text):
+	// each syllable, each test of the font and each pair take from it.
+	budget:        vector_font.Layout_Budget,
 }
 
 @(private)
 shaper_of :: proc "contextless" (spacing: ^Spacing, text: []u8) -> Shaper {
-	return {spacing = spacing, set = spacing.fonts != nil ? spacing.fonts : &state.font_set, text = text, sara_am_taken = -1}
+	return {spacing = spacing, set = spacing.fonts != nil ? spacing.fonts : &state.font_set, text = text, sara_am_taken = -1, budget = vector_font.layout_budget_of_text(len(text))}
 }
 
 // The Arabic letters that make a ligature with a lam before them: the
@@ -627,7 +631,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 		if cluster.base == LAM && next_length > 0 && next_valid && is_alef(next) {
 			ligature := lam_alef_of(next, before)
 			if ligature != 0 && character_drawn(shaper.set, spacing.face, ligature) {
-				if after_cluster, read := cluster_read(shaper.set, spacing.face, shaper.text, cluster.end); read {
+				if after_cluster, read := cluster_read(shaper.set, spacing.face, shaper.text, cluster.end, cluster.sara_am_taken); read {
 					ligature_cluster = after_cluster
 					ligature_made = true
 					shaped.base = resolve(spacing, ligature, true)
@@ -685,6 +689,9 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 	if ligature_made {
 		shaped.end = ligature_cluster.end
 		shaper.place = ligature_cluster.end
+		// The cluster after the ligature learns from the alef, the last
+		// cluster read, whether its SARA AM lost its NIKHAHIT.
+		shaper.sara_am_taken = ligature_cluster.sara_am_taken
 		marks_add(spacing, shaper.set, shaped, &ligature_cluster)
 	}
 	return true
@@ -710,6 +717,31 @@ marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sha
 		shaped.mark_count += 1
 	}
 }
+
+// The records on the stack of shape, by the depth at which they run
+// together. shape holds two Shaped; under it run, one at a time, three
+// branches:
+//   - shaper_next, with the cluster that it reads, the cluster after a lam
+//     (lam-alef), the marks of the forms of a letter of Arabic, then under
+//     it mark_place and mark_anchor_offset with its Layout_Lookups;
+//   - indic_shaped, never inlined into shaper_next, with its syllable, its
+//     buffer of the engine, its sources and its clusters: in a call of the
+//     library module it returns before the engine, as a call opens the
+//     fonts of the boot image only and indic_shaped takes a font of the
+//     script font set only;
+//   - bidi_line_reorder with its levels and its order, then bidi_levels
+//     with its classes, its links and the stack of its isolates, then
+//     brackets_resolve with its openings and its pairs.
+// The library module text_rendering adds its fonts and asserts the sum
+// against its stack bound: the freestanding build runs on no host, so its
+// frames are bounded by these sizes; the host test measures a whole call.
+@(private)
+SHAPER_NEXT_RECORDS_BYTES :: 2 * size_of(Cluster) + FONT_MARK_LIMIT * size_of(int) + size_of(vector_font.Layout_Lookups)
+@(private)
+INDIC_SHAPED_RECORDS_BYTES :: size_of(Indic_Syllable) + size_of(vector_font.Engine_Buffer) + INDIC_SYLLABLE_LIMIT + vector_font.ENGINE_GLYPH_LIMIT * size_of(u32)
+@(private)
+BIDI_RECORDS_BYTES :: BIDI_GLYPH_LIMIT * (size_of(u8) + size_of(u16)) + BIDI_GLYPH_LIMIT * (size_of(Bidi_Class) + size_of(u8)) + (BIDI_DEPTH_LIMIT + 2) + BIDI_BRACKET_STACK_LIMIT * (size_of(rune) + size_of(u16) + 2 * size_of(u16))
+SHAPE_STACK_RECORDS_BYTES :: 2 * size_of(Shaped) + max(SHAPER_NEXT_RECORDS_BYTES, INDIC_SHAPED_RECORDS_BYTES, BIDI_RECORDS_BYTES)
 
 // shape places the characters of a text: it writes the placed glyphs that
 // fit from the start of placed, and gives the count of the full answer
@@ -741,7 +773,7 @@ shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Gly
 		// Two syllables of a script of India: the pair of GPOS of the last
 		// glyph of the first and the first glyph of the next.
 		if has_next {
-			if pair := syllable_pair_of(spacing, shaper.set, &current, &next); pair != 0 {
+			if pair := syllable_pair_of(spacing, shaper.set, &current, &next, &shaper.budget); pair != 0 {
 				if current.mark_count > 0 {
 					current.marks[current.mark_count - 1].advance += pair
 				} else {
@@ -845,7 +877,7 @@ text_fit :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64) -> (co
 			x += i64(pair_of(spacing, current.base, next.base))
 		}
 		if has_next {
-			x += i64(syllable_pair_of(spacing, shaper.set, &current, &next))
+			x += i64(syllable_pair_of(spacing, shaper.set, &current, &next, &shaper.budget))
 		}
 		current = next
 		has_current = has_next

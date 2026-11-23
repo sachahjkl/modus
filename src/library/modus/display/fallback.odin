@@ -14,6 +14,12 @@ import "modus:text_rendering"
 // text_frame_begin: interface.window_frame_begin and the drawing module
 // call it, and a process that draws text by hand calls it at its frame.
 
+// The room of the records of the font outlines and of the script font set:
+// any count that the format allows. One room serves both, as each is
+// opened in turn and no record is kept past its open.
+@(private)
+outlines_room: font_outlines.Record_Room
+
 // fallback_load opens the font outlines that the starter mapped. The
 // problem is Not_Mapped when the starter gave no outlines: the text of the
 // process is then Spleen. missing names the fonts of the chains that the
@@ -22,7 +28,7 @@ import "modus:text_rendering"
 // (interface_module) opens them with it too.
 fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
 	outlines: font_outlines.Outlines
-	outlines, problem = font_outlines.open(&ctx.values)
+	outlines, problem = font_outlines.open(&ctx.values, outlines_room[:])
 	if problem.kind != .None {
 		return problem, {}
 	}
@@ -31,7 +37,7 @@ fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_out
 	// it: with none, each character of those scripts is the replacement
 	// glyph, and no line says so: a machine with no such set is the usual
 	// case (src/md/features/script_fonts.md).
-	if scripts, script_problem := font_outlines.script_fonts_open(&ctx.values); script_problem.kind == .None {
+	if scripts, script_problem := font_outlines.script_fonts_open(&ctx.values, outlines_room[:]); script_problem.kind == .None {
 		missing += text_rendering.script_fonts_open(&scripts)
 	}
 	return {}, missing

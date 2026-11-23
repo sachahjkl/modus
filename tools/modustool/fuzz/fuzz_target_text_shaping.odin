@@ -56,7 +56,7 @@ fuzz_shaping_font_from_input :: proc(face: text_rendering.Face, size: int, witho
 	if _, written := font_outlines.resource_write(fonts[:], bytes); !written {
 		return fuzz_broken(.Contract, "the resource of a font of %d bytes is not written", len(font_bytes))
 	}
-	outlines, problem := font_outlines.validate(bytes)
+	outlines, problem := font_outlines.validate(bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	if problem.kind != .None {
 		return fuzz_broken(.Round_Trip, "the resource that resource_write wrote is refused: %v", problem.kind)
 	}
@@ -193,7 +193,7 @@ fuzz_text_shaping_start :: proc() -> bool {
 	if _, written := font_outlines.resource_write(fonts[:], bytes); !written {
 		return false
 	}
-	outlines, problem := font_outlines.validate(bytes)
+	outlines, problem := font_outlines.validate(bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 	if problem.kind != .None {
 		return false
 	}
@@ -220,7 +220,7 @@ fuzz_text_shaping_start :: proc() -> bool {
 		if _, written := font_outlines.resource_write(script_inputs[:], script_bytes); !written {
 			return false
 		}
-		script_outlines, script_problem := font_outlines.validate(script_bytes)
+		script_outlines, script_problem := font_outlines.validate(script_bytes, new(font_outlines.Record_Room, context.temp_allocator)[:])
 		if script_problem.kind != .None {
 			return false
 		}

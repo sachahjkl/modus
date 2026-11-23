@@ -30,6 +30,7 @@ Font_Problem :: enum u8 {
 	No_Face, // A collection of fonts has no face of this number.
 	No_Feature, // The table GSUB has no single substitution of this feature for this glyph.
 	No_Room, // The set of fonts of the caller has no room for one more font.
+	Too_Much_Work, // The tables of the font take more work than the bound of the call: its budget, or the reads of a walk.
 }
 
 // The words of each problem, for the modus tool and the log.
@@ -44,6 +45,7 @@ font_problem_names := [Font_Problem]string {
 	.No_Face            = "the collection of fonts has no face of this number",
 	.No_Feature         = "the font has no single substitution of this feature for this glyph",
 	.No_Room            = "the set of fonts has no room for one more font",
+	.Too_Much_Work      = "the tables of the font take more work than the bound of the call",
 }
 
 // The tables of a font file, as offsets in the file.
