@@ -499,10 +499,26 @@ history_drop_oldest :: proc "contextless" (history: ^History) -> (freed: int) {
 	return freed
 }
 
+// history_part_measure gives the bytes that the blocks of the strips of a
+// box take in the arena, with no write. ok is false when a strip does not
+// compress.
+@(private)
+history_part_measure :: proc "contextless" (pixels: []graphics.Color, box: Box, scratch: ^History_Scratch) -> (bytes: int, ok: bool) {
+	for top := box.top; top < box.bottom; top += HISTORY_STRIP_ROWS {
+		written, refused := lz4.compress_block(box_pack(pixels, strip_of(box, top), scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
+		if refused != .None {
+			return 0, false
+		}
+		bytes += HISTORY_BLOCK_HEAD_BYTES + written
+	}
+	return bytes, true
+}
+
 // history_record keeps a change of the picture: the pixels of a box before
 // it, from a copy of the picture made before the change, and after it,
-// from the picture. The steps that redo would give are removed first; the
-// oldest steps go when the new one needs their room.
+// from the picture. The steps that redo would give are removed first. The
+// step is measured once; the oldest steps go until it fits; then it is
+// written.
 history_record :: proc "contextless" (history: ^History, before, after: []graphics.Color, box: Box, scratch: ^History_Scratch) -> Record_Outcome {
 	if box_empty(box) {
 		return .Empty
@@ -513,30 +529,30 @@ history_record :: proc "contextless" (history: ^History, before, after: []graphi
 		last := history.steps[history.count - 1]
 		history.used = last.offset + last.before_bytes + last.after_bytes
 	}
-	for history.count >= HISTORY_STEPS_LIMIT {
+	before_bytes, before_ok := history_part_measure(before, box, scratch)
+	after_bytes, after_ok := history_part_measure(after, box, scratch)
+	if !before_ok || !after_ok || before_bytes + after_bytes > len(history.arena) {
+		history_clear(history)
+		return .Too_Large
+	}
+	for history.count > 0 && (history.used + before_bytes + after_bytes > len(history.arena) || history.count >= HISTORY_STEPS_LIMIT) {
 		history_drop_oldest(history)
 	}
-	// The blocks go past the bytes in use; when they do not fit, the
-	// oldest step goes and the blocks are written again at the new end.
-	for {
-		offset := history.used
-		before_bytes, before_ok := history_part_write(history, before, box, offset, scratch)
-		if before_ok {
-			after_bytes, after_ok := history_part_write(history, after, box, offset + before_bytes, scratch)
-			if after_ok {
-				history.steps[history.count] = {box = box, offset = offset, before_bytes = before_bytes, after_bytes = after_bytes}
-				history.count += 1
-				history.done = history.count
-				history.used = offset + before_bytes + after_bytes
-				return .Kept
-			}
-		}
-		if history.count == 0 {
-			history_clear(history)
-			return .Too_Large
-		}
-		history_drop_oldest(history)
+	offset := history.used
+	written_before, wrote_before := history_part_write(history, before, box, offset, scratch)
+	written_after, wrote_after := history_part_write(history, after, box, offset + before_bytes, scratch)
+	// The compression gives the same bytes for the same pixels: a write
+	// that differs from its measure is a fault of the arena, and the step
+	// is not kept.
+	if !wrote_before || !wrote_after || written_before != before_bytes || written_after != after_bytes {
+		history_clear(history)
+		return .Too_Large
 	}
+	history.steps[history.count] = {box = box, offset = offset, before_bytes = before_bytes, after_bytes = after_bytes}
+	history.count += 1
+	history.done = history.count
+	history.used = offset + before_bytes + after_bytes
+	return .Kept
 }
 
 // history_part_apply writes the blocks of one part of a step into the
@@ -613,25 +629,31 @@ history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratc
 	return true
 }
 
-// The picture file: a header of FILE_HEADER_BYTES, then the rows of the
-// picture, FILE_ROW_PIXELS pixels each, 4 bytes for a pixel (0x00RRGGBB,
-// little endian), from row 0 to the height. A row of the picture is at one
-// place of the file whatever the extent: a keep writes the rows that
-// changed, and the store keeps the other blocks (src/md/features/
-// paint_application.md, "The keep writes the changed rows").
+// The picture file: a header of FILE_HEADER_BYTES, then two slots of
+// PICTURE_HEIGHT_LIMIT rows, FILE_ROW_PIXELS pixels each, 4 bytes for a
+// pixel (0x00RRGGBB, little endian). The picture is the rows 0 to its height
+// of the slot that the header names. A row is at one place of its slot
+// whatever the extent: a keep writes the rows that changed, and the store
+// keeps the other blocks. A large keep writes the other slot, then the
+// header that names it, so each commit holds one whole picture
+// (src/md/features/paint_application.md, "Each committed state is one
+// whole picture").
 //
 //   offset  size  field
 //        0     4  the magic "MPIC"
-//        4     4  the version, 2
+//        4     4  the version, 3
 //        8     4  the width: 1 to PICTURE_WIDTH_LIMIT
 //       12     4  the height: 1 to PICTURE_HEIGHT_LIMIT
 //       16     4  the pixels of a row of the file: FILE_ROW_PIXELS
+//       20     4  the current slot: 0 or 1
 FILE_MAGIC :: "MPIC"
-FILE_VERSION :: u32(2)
-FILE_HEADER_BYTES :: 20
+FILE_VERSION :: u32(3)
+FILE_HEADER_BYTES :: 24
 FILE_ROW_PIXELS :: PICTURE_WIDTH_LIMIT
 FILE_ROW_BYTES :: FILE_ROW_PIXELS * size_of(graphics.Color)
-FILE_BYTES_LIMIT :: FILE_HEADER_BYTES + PICTURE_HEIGHT_LIMIT * FILE_ROW_BYTES
+FILE_SLOT_BYTES :: PICTURE_HEIGHT_LIMIT * FILE_ROW_BYTES
+FILE_SLOTS :: 2
+FILE_BYTES_LIMIT :: FILE_HEADER_BYTES + FILE_SLOTS * FILE_SLOT_BYTES
 
 File_Problem :: enum u8 {
 	None        = 0, // The file is read.
@@ -640,9 +662,10 @@ File_Problem :: enum u8 {
 	Bad_Version = 3, // The version is not FILE_VERSION.
 	Bad_Size    = 4, // The width or the height is 0 or past the largest picture.
 	Bad_Row     = 5, // A row of the file is not FILE_ROW_PIXELS pixels.
-	Bad_Length  = 6, // The file is not the header and the rows of its height.
+	Bad_Length  = 6, // The file is too short for the rows of its slot, or the rows given are not those rows.
 	Bad_Pixel   = 7, // A pixel has a top byte that is not 0.
 	Bad_Margin  = 8, // A pixel past the width is not paper: a row of the file holds only paper past the width.
+	Bad_Slot    = 9, // The slot is not 0 or 1.
 }
 
 @(private)
@@ -658,28 +681,30 @@ word_write :: proc "contextless" (bytes: []u8, offset: int, value: u32) {
 	bytes[offset + 3] = u8(value >> 24)
 }
 
-// file_size gives the bytes of the file of a picture of a height.
-file_size :: proc "contextless" (height: int) -> int {
-	return FILE_HEADER_BYTES + clamp(height, 0, PICTURE_HEIGHT_LIMIT) * FILE_ROW_BYTES
+// file_rows_offset gives the place of a row of a slot in the file.
+file_rows_offset :: proc "contextless" (slot, row: int) -> int {
+	return FILE_HEADER_BYTES + clamp(slot, 0, FILE_SLOTS - 1) * FILE_SLOT_BYTES + row * FILE_ROW_BYTES
 }
 
-// file_row_offset gives the place of a row in the file.
-file_row_offset :: proc "contextless" (row: int) -> int {
-	return FILE_HEADER_BYTES + row * FILE_ROW_BYTES
+// file_size_of_slot gives the size of a file whose picture of a height is
+// in a slot: the slot 1 keeps the slot 0 before it.
+file_size_of_slot :: proc "contextless" (slot, height: int) -> int {
+	return file_rows_offset(slot, clamp(height, 0, PICTURE_HEIGHT_LIMIT))
 }
 
-// file_header_write writes the header of a picture into the first
-// FILE_HEADER_BYTES of a buffer. ok is false for an empty extent or a
-// buffer too small.
-file_header_write :: proc "contextless" (picture: ^Picture, bytes: []u8) -> (header: []u8, ok: bool) {
-	if picture.width <= 0 || picture.height <= 0 || len(bytes) < FILE_HEADER_BYTES {
+// file_header_write writes the header of a picture of a size in a slot into
+// the first FILE_HEADER_BYTES of a buffer. ok is false for an empty size, a
+// slot that is not 0 or 1, or a buffer too small.
+file_header_write :: proc "contextless" (width, height, slot: int, bytes: []u8) -> (header: []u8, ok: bool) {
+	if width <= 0 || width > PICTURE_WIDTH_LIMIT || height <= 0 || height > PICTURE_HEIGHT_LIMIT || slot < 0 || slot >= FILE_SLOTS || len(bytes) < FILE_HEADER_BYTES {
 		return nil, false
 	}
 	copy(bytes[:4], FILE_MAGIC)
 	word_write(bytes, 4, FILE_VERSION)
-	word_write(bytes, 8, u32(picture.width))
-	word_write(bytes, 12, u32(picture.height))
+	word_write(bytes, 8, u32(width))
+	word_write(bytes, 12, u32(height))
 	word_write(bytes, 16, u32(FILE_ROW_PIXELS))
+	word_write(bytes, 20, u32(slot))
 	return bytes[:FILE_HEADER_BYTES], true
 }
 
@@ -695,57 +720,86 @@ file_rows_copy :: proc "contextless" (picture: ^Picture, top, bottom: int, bytes
 	return bytes[:count], true
 }
 
-// picture_encode writes the whole file of a picture: the header and each
-// row of its extent. The first keep of a new picture writes it.
+// picture_encode writes the whole file of a picture in the slot 0: the
+// header and each row of its extent. A host test and a store in memory
+// start from it.
 picture_encode :: proc "contextless" (picture: ^Picture, file: []u8) -> (bytes: []u8, ok: bool) {
-	if _, header_ok := file_header_write(picture, file); !header_ok {
+	if _, header_ok := file_header_write(picture.width, picture.height, 0, file); !header_ok {
 		return nil, false
 	}
 	if _, rows_ok := file_rows_copy(picture, 0, picture.height, file[FILE_HEADER_BYTES:]); !rows_ok {
 		return nil, false
 	}
-	return file[:file_size(picture.height)], true
+	return file[:file_size_of_slot(0, picture.height)], true
 }
 
-// picture_decode reads a file into a picture. Each field and each pixel is
-// checked before any pixel changes: on a problem, the picture is as before.
-// On success the extent is the size of the file, and the pixels outside it
-// are paper.
+// File_Rows: where the rows of the picture of a header are in its file.
+File_Rows :: struct {
+	offset: int,
+	bytes:  int,
+}
+
+// file_rows_of_header checks a header and gives the place of the rows of
+// its picture. A reader reads these rows only.
+file_rows_of_header :: proc "contextless" (header: []u8) -> (rows: File_Rows, problem: File_Problem) {
+	if len(header) < FILE_HEADER_BYTES {
+		return {}, .Too_Short
+	}
+	if string(header[:4]) != FILE_MAGIC {
+		return {}, .Bad_Magic
+	}
+	if word_read(header, 4) != FILE_VERSION {
+		return {}, .Bad_Version
+	}
+	width, height := int(word_read(header, 8)), int(word_read(header, 12))
+	if width < 1 || width > PICTURE_WIDTH_LIMIT || height < 1 || height > PICTURE_HEIGHT_LIMIT {
+		return {}, .Bad_Size
+	}
+	if word_read(header, 16) != u32(FILE_ROW_PIXELS) {
+		return {}, .Bad_Row
+	}
+	slot := word_read(header, 20)
+	if slot >= FILE_SLOTS {
+		return {}, .Bad_Slot
+	}
+	return {offset = file_rows_offset(int(slot), 0), bytes = height * FILE_ROW_BYTES}, .None
+}
+
+// picture_decode reads a whole file into a picture: the header, then the
+// rows of its slot. Each field and each pixel is checked before any pixel
+// changes: on a problem, the picture is as before. On success the extent
+// is the size of the header, and the pixels outside it are paper.
 picture_decode :: proc "contextless" (file: []u8, picture: ^Picture) -> File_Problem {
 	if len(file) < FILE_HEADER_BYTES {
 		return .Too_Short
 	}
-	return picture_decode_parts(file[:FILE_HEADER_BYTES], file[FILE_HEADER_BYTES:], picture)
+	place, problem := file_rows_of_header(file[:FILE_HEADER_BYTES])
+	if problem != .None {
+		return problem
+	}
+	if len(file) < place.offset + place.bytes {
+		return .Bad_Length
+	}
+	return picture_decode_parts(file[:FILE_HEADER_BYTES], file[place.offset:][:place.bytes], picture)
 }
 
 // picture_decode_parts reads a file whose header and rows are in two
-// buffers: a read puts the rows in memory of the size of a picture, and
-// the header apart. The rows may be in the pixels of another picture, never
-// in the pixels of this one.
+// buffers: a read puts the rows of the slot in memory of the size of a
+// picture, and the header apart. The rows may be in the pixels of another
+// picture, never in the pixels of this one.
 picture_decode_parts :: proc "contextless" (header, rows: []u8, picture: ^Picture) -> File_Problem {
-	if len(header) < FILE_HEADER_BYTES {
-		return .Too_Short
+	place, problem := file_rows_of_header(header)
+	if problem != .None {
+		return problem
 	}
-	if string(header[:4]) != FILE_MAGIC {
-		return .Bad_Magic
-	}
-	if word_read(header, 4) != FILE_VERSION {
-		return .Bad_Version
-	}
-	width, height := int(word_read(header, 8)), int(word_read(header, 12))
-	if width < 1 || width > PICTURE_WIDTH_LIMIT || height < 1 || height > PICTURE_HEIGHT_LIMIT {
-		return .Bad_Size
-	}
-	if word_read(header, 16) != u32(FILE_ROW_PIXELS) {
-		return .Bad_Row
-	}
-	if len(header) != FILE_HEADER_BYTES || len(rows) != height * FILE_ROW_BYTES {
+	if len(header) != FILE_HEADER_BYTES || len(rows) != place.bytes {
 		return .Bad_Length
 	}
+	width, height := int(word_read(header, 8)), int(word_read(header, 12))
 	// The top byte of each pixel, little endian: the fourth byte of each
 	// four. A pixel of the screen has none.
-	for place := 3; place < len(rows); place += 4 {
-		if rows[place] != 0 {
+	for at := 3; at < len(rows); at += 4 {
+		if rows[at] != 0 {
 			return .Bad_Pixel
 		}
 	}
@@ -767,15 +821,23 @@ picture_decode_parts :: proc "contextless" (header, rows: []u8, picture: ^Pictur
 	return .None
 }
 
+// file_slot_of_header gives the slot of a header that file_rows_of_header
+// took.
+file_slot_of_header :: proc "contextless" (header: []u8) -> int {
+	return int(word_read(header, 20))
+}
+
 // The keep of the changed rows.
 
 KEEP_PAUSE_MILLISECONDS :: 1000 // The pause of the changes after which the picture is kept.
+KEEP_LONGEST_WAIT_MILLISECONDS :: 5000 // The longest wait of a change for its keep, whatever the pauses.
 
 // The rows of the picture that changed since the last keep, and when.
 Changed_Rows :: struct {
 	top, bottom:  int, // The band of changed rows: top included, bottom excluded. Empty when bottom <= top.
 	changed:      bool, // A change waits for a keep.
 	whole:        bool, // The object has none of the rows yet: the keep writes all of them.
+	first_change: u64, // The time of the system of the first change that waits, in milliseconds.
 	last_change:  u64, // The time of the system of the last change, in milliseconds.
 }
 
@@ -790,22 +852,36 @@ changed_rows_add :: proc "contextless" (rows: ^Changed_Rows, box: Box, now: u64)
 	} else {
 		rows.top, rows.bottom = min(rows.top, box.top), max(rows.bottom, box.bottom)
 	}
-	rows.changed = true
-	rows.last_change = now
+	changed_rows_mark(rows, now)
 }
 
-// changed_rows_mark marks a change of the header alone: a wider extent
-// changes no byte of a row of the file, only its width.
+// changed_rows_mark marks a change: of the header alone (a wider extent
+// changes no byte of a row of the file, only its width), or of the rows that
+// changed_rows_add added.
 changed_rows_mark :: proc "contextless" (rows: ^Changed_Rows, now: u64) {
+	if !rows.changed {
+		rows.first_change = now
+	}
 	rows.changed = true
 	rows.last_change = now
 }
 
 // keep_due says if the changes wait for a keep at a time of the system: a
-// pause of KEEP_PAUSE_MILLISECONDS since the last one. A time before the
-// last change is no pause.
+// pause of KEEP_PAUSE_MILLISECONDS since the last one, or
+// KEEP_LONGEST_WAIT_MILLISECONDS since the first one. A time before a
+// change is no wait.
 keep_due :: proc "contextless" (rows: ^Changed_Rows, now: u64) -> bool {
-	return rows.changed && now >= rows.last_change && now - rows.last_change >= KEEP_PAUSE_MILLISECONDS
+	if !rows.changed {
+		return false
+	}
+	paused := now >= rows.last_change && now - rows.last_change >= KEEP_PAUSE_MILLISECONDS
+	waited := now >= rows.first_change && now - rows.first_change >= KEEP_LONGEST_WAIT_MILLISECONDS
+	return paused || waited
+}
+
+// keep_due_time gives the time of the system at which the changes are due.
+keep_due_time :: proc "contextless" (rows: ^Changed_Rows) -> u64 {
+	return min(rows.last_change + KEEP_PAUSE_MILLISECONDS, rows.first_change + KEEP_LONGEST_WAIT_MILLISECONDS)
 }
 
 // keep_band gives the rows that a keep writes, cut to the height of the
@@ -819,7 +895,7 @@ keep_band :: proc "contextless" (rows: ^Changed_Rows, height: int) -> (top, bott
 
 // keep_taken empties the band when a keep took it.
 keep_taken :: proc "contextless" (rows: ^Changed_Rows) {
-	rows.top, rows.bottom, rows.changed, rows.whole = 0, 0, false, false
+	rows^ = {}
 }
 
 // The keep of the open picture as a state machine with no store and no
@@ -839,16 +915,38 @@ Store_Pending :: enum u8 {
 	Delete = 4, // Remove a picture that is not open.
 }
 
+// How a keep reaches the store, so that each commit holds one whole
+// picture.
+Keep_Form :: enum u8 {
+	One_Commit = 0, // The band fits one commit: its rows and the header, then one commit, in the current slot.
+	Other_Slot = 1, // The whole picture into the other slot, a commit after each KEEP_COMMIT_BYTES, then the header that names it.
+	New_Object = 2, // A new picture too large for one commit: a temporary object, then a rename to the picture.
+}
+
+// The object that a piece of a keep writes.
+Keep_Object :: enum u8 {
+	Picture = 0, // The object <name>.picture.
+	Partial = 1, // The object <name>.partial, which the list ignores.
+}
+
 Keep_State :: struct {
 	store_open:  bool, // The store is open, and listed.
+	started:     bool, // The first open is taken: before it, the picture does not change.
 	named:       bool, // The open picture has a name: it can be kept.
+	written:     bool, // The store holds the object of the open picture.
+	slot:        int, // The current slot of that object.
 	reading:     bool, // A read of a picture runs, or its result waits: the picture must not change.
 	rows:        Changed_Rows,
 	pending:     Store_Pending,
 	retry_at:    u64, // After a refused keep: no keep before this time of the system.
-	// A keep runs as a series of jobs of one piece each: the band that it
-	// writes, and the bytes of the band written so far.
+	// A keep runs as a series of jobs of one piece each: its form, the slot
+	// and the size of the picture that it writes, its band, and the bytes
+	// of the band written so far.
 	keeping:     bool,
+	form:        Keep_Form,
+	target_slot: int,
+	keep_width:  int,
+	keep_height: int,
 	keep_top:    int,
 	keep_bottom: int,
 	keep_done:   int,
@@ -857,25 +955,49 @@ Keep_State :: struct {
 // The bytes of one piece of a keep: a call of the store carries 64 KiB at
 // most, with its arguments.
 KEEP_PIECE_BYTES :: 32 * 1024
-// The bytes of rows between two commits of a keep: the store holds 4 MiB of
+// The bytes of rows that one commit holds at most: the store holds 4 MiB of
 // pending changes for all its connections.
 KEEP_COMMIT_BYTES :: 1024 * 1024
 
-// A piece of a keep: what the job writes, and whether it commits after.
+// A piece of a keep: what the job writes, and in which order: the rows,
+// then the header and the size when it is the last piece, then the commit,
+// then the rename.
 Keep_Piece :: struct {
-	first:  bool, // The first piece: the job writes the header and the size first.
-	offset: int, // The place of the piece in the object.
+	object: Keep_Object,
+	offset: int, // The place of the rows of the piece in the object.
 	bytes:  int, // The bytes of rows of the piece, 0 for a band with no row.
 	row:    int, // The first byte of the piece in the rows of the picture: row offset in the array.
+	header: bool, // The job writes the header and sets the size after the rows.
+	size:   int, // That size.
 	commit: bool, // The job commits after the piece.
+	rename: bool, // After the commit, the job renames the temporary object to the picture.
 	last:   bool, // The last piece of the keep.
 }
 
 // keep_begin starts a keep of the band of changed rows of a picture of a
-// height, and empties the band: a change from now on goes to the next keep.
-keep_begin :: proc "contextless" (state: ^Keep_State, height: int) {
-	state.keep_top, state.keep_bottom = keep_band(&state.rows, height)
-	state.keep_bottom = max(state.keep_bottom, state.keep_top)
+// size, chooses its form, and empties the band: a change from now on goes
+// to the next keep.
+keep_begin :: proc "contextless" (state: ^Keep_State, width, height: int) {
+	if !state.written {
+		state.rows.whole = true
+	}
+	top, bottom := keep_band(&state.rows, height)
+	bottom = max(bottom, top)
+	state.keep_width, state.keep_height = width, height
+	switch {
+	case (bottom - top) * FILE_ROW_BYTES <= KEEP_COMMIT_BYTES:
+		state.form = .One_Commit
+		state.target_slot = state.written ? state.slot : 0
+	case state.written:
+		state.form = .Other_Slot
+		state.target_slot = 1 - clamp(state.slot, 0, 1)
+		top, bottom = 0, height
+	case:
+		state.form = .New_Object
+		state.target_slot = 0
+		top, bottom = 0, height
+	}
+	state.keep_top, state.keep_bottom = top, bottom
 	state.keep_done = 0
 	state.keeping = true
 	keep_taken(&state.rows)
@@ -886,31 +1008,38 @@ keep_piece :: proc "contextless" (state: ^Keep_State) -> Keep_Piece {
 	band := (state.keep_bottom - state.keep_top) * FILE_ROW_BYTES
 	bytes := clamp(band - state.keep_done, 0, KEEP_PIECE_BYTES)
 	after := state.keep_done + bytes
+	last := after >= band
+	crossing := after / KEEP_COMMIT_BYTES != state.keep_done / KEEP_COMMIT_BYTES
 	return {
-		first  = state.keep_done == 0,
-		offset = file_row_offset(state.keep_top) + state.keep_done,
+		object = state.form == .New_Object ? .Partial : .Picture,
+		offset = file_rows_offset(state.target_slot, state.keep_top) + state.keep_done,
 		bytes  = bytes,
 		row    = state.keep_top * FILE_ROW_BYTES + state.keep_done,
-		commit = after >= band || after / KEEP_COMMIT_BYTES != state.keep_done / KEEP_COMMIT_BYTES,
-		last   = after >= band,
+		header = last,
+		size   = file_size_of_slot(state.target_slot, state.keep_height),
+		commit = last || state.form != .One_Commit && crossing,
+		rename = last && state.form == .New_Object,
+		last   = last,
 	}
 }
 
 // keep_piece_written takes a piece that the store wrote: true when the
-// keep is whole.
+// keep is whole, and the object holds the picture in its slot.
 keep_piece_written :: proc "contextless" (state: ^Keep_State, piece: Keep_Piece) -> (whole: bool) {
 	state.keep_done += piece.bytes
-	if state.keep_done >= (state.keep_bottom - state.keep_top) * FILE_ROW_BYTES {
-		state.keeping = false
-		return true
+	if !piece.last {
+		return false
 	}
-	return false
+	state.keeping = false
+	state.written = true
+	state.slot = state.target_slot
+	return true
 }
 
 // What the window asks of the store in a turn.
 Keep_Step :: enum u8 {
 	Nothing = 0, // No job: none is due, or one runs, or the act waits.
-	Keep    = 1, // Write the changed rows of the open picture.
+	Keep    = 1, // Write the next piece of the keep of the open picture.
 	Pending = 2, // Run the act that waits: its keep is done, or it needs none.
 }
 
@@ -951,13 +1080,16 @@ keep_step :: proc "contextless" (state: ^Keep_State, now: u64, job_running, drag
 // turn can then ask for it: never while a job runs (its end wakes the loop),
 // with no store, or for a picture with no name.
 keep_wake :: proc "contextless" (state: ^Keep_State, job_running: bool) -> (time: u64, due: bool) {
-	if state.keeping && state.store_open && !job_running {
-		return 1, true // The next piece is due at once: a time in the past.
-	}
-	if !state.store_open || job_running || !state.named || !state.rows.changed {
+	if !state.store_open || job_running {
 		return 0, false
 	}
-	return max(state.rows.last_change + KEEP_PAUSE_MILLISECONDS, state.retry_at), true
+	if state.keeping {
+		return 1, true // The next piece is due at once: a time in the past.
+	}
+	if !state.named || !state.rows.changed {
+		return 0, false
+	}
+	return max(keep_due_time(&state.rows), state.retry_at), true
 }
 
 // keep_refused takes a keep that the store refused: its rows go back to the
@@ -974,10 +1106,11 @@ keep_refused :: proc "contextless" (state: ^Keep_State, now: u64, height: int) -
 	return dropped
 }
 
-// change_allowed says if the picture may change now: not while a read of
-// another picture runs, whose result would replace the change.
+// change_allowed says if the picture may change now: not before the first
+// open is taken, and not while a read of another picture runs, whose result
+// would replace the change.
 change_allowed :: proc "contextless" (state: ^Keep_State) -> bool {
-	return !state.reading
+	return state.started && !state.reading
 }
 
 // pending_ask asks for an act. false: another act waits already, or the
@@ -999,7 +1132,7 @@ pending_started :: proc "contextless" (state: ^Keep_State) {
 }
 
 // read_taken says that the result of a read is taken: the picture may
-// change again.
+// change again. The object of the picture that it read is in a slot.
 read_taken :: proc "contextless" (state: ^Keep_State) {
 	state.reading = false
 }

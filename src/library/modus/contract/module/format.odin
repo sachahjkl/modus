@@ -510,6 +510,13 @@ Budget_Request :: struct {
 }
 #assert(size_of(Budget_Request) == 24)
 
+// The most that the root service gives a process of the boot image with no
+// exception: a request above it starts with this. A module that sizes its
+// memory to the cap checks its sum against these pages at compile time, so
+// the root service and the module read one value.
+LARGEST_BUDGET_PAGES :: 16384
+LARGEST_BUDGET :: Budget_Request{pages = LARGEST_BUDGET_PAGES, processes = 8, threads = 32}
+
 // The rebase table is not indexed. It is a sequence of 64-bit words in the
 // RELR form, and it names the 8-byte locations that hold a memory offset:
 //   an even word   is a memory offset: rebase that location; the cursor is

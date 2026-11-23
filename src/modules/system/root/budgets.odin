@@ -24,10 +24,11 @@ import "modus:system"
 // least budget does not grow with the scale.
 LEAST_BUDGET :: system.Budget_Request{pages = 2048, processes = 1, threads = 1}
 
-// The most that a process of the boot image with no exception gets. A
-// request above it starts with this. A disk process has a smaller largest
+// The most that a process of the boot image with no exception gets, from
+// the module contract, which a module that sizes its memory to it reads too.
+// A request above it starts with this. A disk process has a smaller largest
 // budget of its own (disk_process.LARGEST_BUDGET).
-LARGEST_BUDGET :: system.Budget_Request{pages = 16384, processes = 8, threads = 32}
+LARGEST_BUDGET :: module.LARGEST_BUDGET
 
 // The processor time of a process is one processor for each of its threads.
 PROCESSOR_OF_A_THREAD :: 1_000_000

@@ -295,7 +295,7 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 	defer delete(picture.pixels)
 	file := make([]u8, FILE_BYTES_LIMIT + FILE_ROW_BYTES)
 	defer delete(file)
-	_, refused := picture_encode(&picture, file[:file_size(30) - 1])
+	_, refused := picture_encode(&picture, file[:file_size_of_slot(0, 30) - 1])
 	testing.expect(t, !refused, "a buffer too small is refused")
 	empty := Picture{pixels = picture.pixels}
 	_, refused = picture_encode(&empty, file)
@@ -322,7 +322,8 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		{0, 'X', -1, .Bad_Magic},
 		{4, 0, -1, .Bad_Version},
 		{4, 1, -1, .Bad_Version}, // The compressed form of before.
-		{4, 3, -1, .Bad_Version},
+		{4, 2, -1, .Bad_Version}, // The rows of one slot of before.
+		{4, 4, -1, .Bad_Version},
 		{7, 0xFF, -1, .Bad_Version},
 		{8, 0, -1, .Bad_Size}, // The width 0: the low byte of 40 is 40, and the others are 0.
 		{11, 0xFF, -1, .Bad_Size}, // A width past the largest.
@@ -330,8 +331,10 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		{12, 0, -1, .Bad_Size}, // The height 0.
 		{16, 1, -1, .Bad_Row}, // 1537 pixels: the low byte of 1536 (0x600) is 0.
 		{17, 0x07, -1, .Bad_Row},
-		{12, 29, -1, .Bad_Length}, // The height 29 with the rows of 30.
 		{12, 31, -1, .Bad_Length}, // The height 31 with the rows of 30.
+		{20, 2, -1, .Bad_Slot},
+		{23, 0x80, -1, .Bad_Slot}, // The largest slot words name no slot.
+		{20, 1, -1, .Bad_Length}, // The slot 1, which this file does not hold.
 		{-1, 0, len(bytes) - 1, .Bad_Length},
 		{FILE_HEADER_BYTES + 3, 0x01, -1, .Bad_Pixel}, // The top byte of the first pixel.
 		{len(bytes) - 1, 0xFF, -1, .Bad_Pixel}, // The top byte of the last pixel.
@@ -351,10 +354,6 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		testing.expectf(t, picture_decode(damaged, &other) == test_case.problem, "the case %v", test_case)
 		testing.expect(t, other.generation == generation && other.width == 10 && other.pixels[0] == 0xABCDEF)
 	}
-	// One byte past the rows.
-	copy(file, bytes)
-	file[len(bytes)] = 0
-	testing.expect_value(t, picture_decode(file[:len(bytes) + 1], &other), File_Problem.Bad_Length)
 	testing.expect_value(t, picture_decode(bytes, &other), File_Problem.None)
 	testing.expect(t, other.width == 40 && other.height == 30)
 	for row in 0 ..< 30 {
@@ -364,12 +363,18 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, pixel_at(&other, 40, 0), COLOR_PAPER)
 	testing.expect_value(t, pixel_at(&other, 0, 30), COLOR_PAPER)
+	// A file longer than its slot holds a slot after it: the picture is the
+	// rows of its height, and a height 29 reads 29 rows.
+	copy(file, bytes)
+	file[12] = 29
+	testing.expect_value(t, picture_decode(file[:len(bytes) + 1], &other), File_Problem.None)
+	testing.expect(t, other.width == 40 && other.height == 29)
 	// The largest picture, at the exact limits, is read whole.
 	largest := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
 	defer delete(largest.pixels)
 	segment_draw(&largest, PICTURE_WIDTH_LIMIT - 1, PICTURE_HEIGHT_LIMIT - 1, PICTURE_WIDTH_LIMIT - 1, PICTURE_HEIGHT_LIMIT - 1, 1, 0x010203)
 	whole, whole_ok := picture_encode(&largest, file)
-	testing.expect(t, whole_ok && len(whole) == FILE_BYTES_LIMIT)
+	testing.expect(t, whole_ok && len(whole) == file_size_of_slot(0, PICTURE_HEIGHT_LIMIT))
 	testing.expect_value(t, picture_decode(whole, &other), File_Problem.None)
 	testing.expect(t, other.width == PICTURE_WIDTH_LIMIT && other.height == PICTURE_HEIGHT_LIMIT)
 	testing.expect_value(t, pixel_at(&other, PICTURE_WIDTH_LIMIT - 1, PICTURE_HEIGHT_LIMIT - 1), graphics.Color(0x010203))
@@ -395,10 +400,17 @@ the_rows_of_a_keep_are_the_rows_of_the_file :: proc(t: ^testing.T) {
 	rows, ok := file_rows_copy(&picture, box.top, box.bottom, band)
 	testing.expect(t, ok)
 	whole, _ := picture_encode(&picture, file)
-	testing.expect(t, string(whole[file_row_offset(box.top):][:len(rows)]) == string(rows))
-	testing.expect_value(t, file_row_offset(0), FILE_HEADER_BYTES)
-	testing.expect_value(t, file_size(PICTURE_HEIGHT_LIMIT + 1), FILE_BYTES_LIMIT)
-	testing.expect_value(t, file_size(-1), FILE_HEADER_BYTES)
+	testing.expect(t, string(whole[file_rows_offset(0, box.top):][:len(rows)]) == string(rows))
+	testing.expect_value(t, file_rows_offset(0, 0), FILE_HEADER_BYTES)
+	testing.expect_value(t, file_rows_offset(1, 0), FILE_HEADER_BYTES + FILE_SLOT_BYTES)
+	testing.expect_value(t, file_rows_offset(max(int), 0), FILE_HEADER_BYTES + FILE_SLOT_BYTES)
+	testing.expect_value(t, file_size_of_slot(0, PICTURE_HEIGHT_LIMIT + 1), FILE_HEADER_BYTES + FILE_SLOT_BYTES)
+	testing.expect_value(t, file_size_of_slot(1, PICTURE_HEIGHT_LIMIT), FILE_BYTES_LIMIT)
+	testing.expect_value(t, file_size_of_slot(0, -1), FILE_HEADER_BYTES)
+	for refused in ([][3]int{{0, 0, 0}, {41, 10, 0}, {10, 0, 0}, {10, 10, 2}, {10, 10, -1}, {PICTURE_WIDTH_LIMIT + 1, 10, 0}}) {
+		_, header_ok := file_header_write(refused[0], refused[1], refused[2], file)
+		testing.expectf(t, !header_ok || refused[0] == 41, "the header %v is refused", refused)
+	}
 }
 
 // The band of changed rows: an empty box adds nothing, a keep is due only
@@ -587,6 +599,7 @@ a_refused_keep_drops_its_act_and_waits :: proc(t: ^testing.T) {
 	dropped := keep_refused(&state, 1200, 50)
 	testing.expect_value(t, dropped, Store_Pending.Read)
 	testing.expect_value(t, state.pending, Store_Pending.None)
+	state.started = true
 	testing.expect(t, change_allowed(&state), "a dropped read lets the picture change again")
 	testing.expect(t, state.rows.whole && state.rows.changed)
 	testing.expect_value(t, keep_step(&state, 1200 + KEEP_PAUSE_MILLISECONDS, false, false), Keep_Step.Nothing)
@@ -641,6 +654,8 @@ a_picture_with_no_name_and_a_read_in_flight :: proc(t: ^testing.T) {
 	for now in ([]u64{0, KEEP_PAUSE_MILLISECONDS, max(u64)}) {
 		testing.expect_value(t, keep_step(&state, now, false, false), Keep_Step.Nothing)
 	}
+	testing.expect(t, !change_allowed(&state), "before the first open is taken, a stroke would be replaced")
+	state.started = true
 	testing.expect(t, change_allowed(&state))
 	testing.expect(t, pending_ask(&state, .Read))
 	testing.expect(t, !change_allowed(&state), "a stroke from the ask of a read to its take would be lost")
@@ -650,46 +665,294 @@ a_picture_with_no_name_and_a_read_in_flight :: proc(t: ^testing.T) {
 	testing.expect(t, change_allowed(&state))
 }
 
-// A keep runs in pieces that fit a call: the first writes the header, a
-// commit comes after each KEEP_COMMIT_BYTES and after the last piece, and
-// the pieces cover the band once. A band with no row is one piece with the
-// header alone.
+// A store in memory for the host tests of the keep: committed objects, the
+// pending changes of the one connection, and the calls of the storage
+// service that a keep makes.
+@(private = "file")
+Memory_Object :: struct {
+	committed: [dynamic]u8,
+	pending:   [dynamic]u8,
+	changed:   bool, // The object has pending changes.
+	exists:    bool, // A commit made it.
+}
+
+@(private = "file")
+Memory_Store :: struct {
+	objects: map[string]^Memory_Object,
+}
+
+@(private = "file")
+memory_object :: proc(store: ^Memory_Store, name: string) -> ^Memory_Object {
+	if object, found := store.objects[name]; found {
+		return object
+	}
+	object := new(Memory_Object)
+	store.objects[name] = object
+	return object
+}
+
+@(private = "file")
+memory_pending :: proc(object: ^Memory_Object) {
+	if !object.changed {
+		clear(&object.pending)
+		append(&object.pending, ..object.committed[:])
+		object.changed = true
+	}
+}
+
+@(private = "file")
+memory_write :: proc(store: ^Memory_Store, name: string, offset: int, data: []u8) {
+	object := memory_object(store, name)
+	memory_pending(object)
+	if len(object.pending) < offset + len(data) {
+		resize(&object.pending, offset + len(data))
+	}
+	copy(object.pending[offset:], data)
+}
+
+@(private = "file")
+memory_set_size :: proc(store: ^Memory_Store, name: string, size: int) {
+	object := memory_object(store, name)
+	memory_pending(object)
+	resize(&object.pending, size)
+}
+
+@(private = "file")
+memory_commit :: proc(store: ^Memory_Store, name: string) {
+	object := memory_object(store, name)
+	if object.changed {
+		clear(&object.committed)
+		append(&object.committed, ..object.pending[:])
+		object.changed = false
+	}
+	object.exists = true
+}
+
+@(private = "file")
+memory_rename :: proc(store: ^Memory_Store, from, to: string) -> bool {
+	if target, found := store.objects[to]; found && target.exists {
+		return false // The storage service refuses a name that exists.
+	}
+	object := store.objects[from]
+	delete_key(&store.objects, from)
+	store.objects[to] = object
+	return true
+}
+
+@(private = "file")
+memory_store_free :: proc(store: ^Memory_Store) {
+	for _, object in store.objects {
+		delete(object.committed)
+		delete(object.pending)
+		free(object)
+	}
+	delete(store.objects)
+}
+
+// What a stop after a commit leaves: the picture that a reader opens.
+@(private = "file")
+Read_Outcome :: enum {
+	Absent, // No object of the picture.
+	Old,
+	New,
+	Neither, // A mix, a damage: what a document never is (docs/PROPERTIES.md, "Persistence: no save action, and versions for all processes").
+}
+
+@(private = "file")
+memory_read :: proc(store: ^Memory_Store, old, new: ^Picture, scratch: ^Picture) -> Read_Outcome {
+	object, found := store.objects["sky.picture"]
+	if !found || !object.exists {
+		return .Absent
+	}
+	if picture_decode(object.committed[:], scratch) != .None {
+		return .Neither
+	}
+	same :: proc(first, second: ^Picture) -> bool {
+		if first.width != second.width || first.height != second.height {
+			return false
+		}
+		for row in 0 ..< first.height {
+			start := row * PICTURE_WIDTH_LIMIT
+			if string(([^]u8)(&first.pixels[start])[:first.width * 4]) != string(([^]u8)(&second.pixels[start])[:first.width * 4]) {
+				return false
+			}
+		}
+		return true
+	}
+	if same(scratch, new) {
+		return .New
+	}
+	if old != nil && same(scratch, old) {
+		return .Old
+	}
+	return .Neither
+}
+
+// memory_keep runs a whole keep of a picture on a store in memory, piece by
+// piece as the job does, and reads the picture after each commit. It gives
+// the outcomes, in their order, and the count of commits.
+@(private = "file")
+memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, picture, old: ^Picture, scratch: ^Picture) -> (outcomes: [dynamic]Read_Outcome) {
+	buffer := make([]u8, FILE_HEADER_BYTES + KEEP_PIECE_BYTES, context.temp_allocator)
+	pixels := ([^]u8)(raw_data(picture.pixels))[:PICTURE_BYTES]
+	keep_begin(state, picture.width, picture.height)
+	for state.keeping {
+		piece := keep_piece(state)
+		name := piece.object == .Partial ? "sky.partial" : "sky.picture"
+		if piece.bytes > 0 {
+			copy(buffer[FILE_HEADER_BYTES:], pixels[piece.row:][:piece.bytes])
+			memory_write(store, name, piece.offset, buffer[FILE_HEADER_BYTES:][:piece.bytes])
+		}
+		if piece.header {
+			header, ok := file_header_write(state.keep_width, state.keep_height, state.target_slot, buffer)
+			testing.expect(t, ok)
+			memory_write(store, name, 0, header)
+			memory_set_size(store, name, piece.size)
+		}
+		if piece.commit {
+			memory_commit(store, name)
+			append(&outcomes, memory_read(store, old, picture, scratch))
+		}
+		if piece.rename {
+			testing.expect(t, memory_rename(store, "sky.partial", "sky.picture"))
+			append(&outcomes, memory_read(store, old, picture, scratch))
+		}
+		keep_piece_written(state, piece)
+	}
+	return outcomes
+}
+
+// Each commit of a keep holds one whole picture: a stop after any commit
+// leaves the old picture or the new one, never a mix. The orders: the first
+// keep of a large new picture (a temporary object and its rename), a large
+// keep of the whole picture (the other slot, then the header), a keep of a
+// few rows (one commit), and a second large keep that comes back to the
+// first slot.
+@(test)
+each_commit_of_a_keep_holds_one_whole_picture :: proc(t: ^testing.T) {
+	store: Memory_Store
+	defer memory_store_free(&store)
+	first := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	defer delete(first.pixels)
+	second := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	defer delete(second.pixels)
+	scratch := picture_make(1, 1)
+	defer delete(scratch.pixels)
+	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
+		segment_draw(&first, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(row))
+	}
+	state := Keep_State{store_open = true, started = true, named = true}
+
+	// A new picture too large for one commit: no picture until the rename.
+	outcomes := memory_keep(t, &store, &state, &first, nil, &scratch)
+	testing.expect_value(t, state.form, Keep_Form.New_Object)
+	testing.expect(t, len(outcomes) > 2, "a large keep takes several commits")
+	for outcome, index in outcomes {
+		wanted := index == len(outcomes) - 1 ? Read_Outcome.New : Read_Outcome.Absent
+		testing.expectf(t, outcome == wanted, "the new picture, after the commit %d: %v", index, outcome)
+	}
+	testing.expect(t, state.written && state.slot == 0)
+
+	// A change of each row: the whole picture into the other slot.
+	copy(second.pixels, first.pixels)
+	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
+		segment_draw(&second, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(0x010000 + row))
+	}
+	changed_rows_add(&state.rows, {0, 0, PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT}, 100)
+	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch)
+	testing.expect_value(t, state.form, Keep_Form.Other_Slot)
+	for outcome, index in outcomes {
+		wanted := index == len(outcomes) - 1 ? Read_Outcome.New : Read_Outcome.Old
+		testing.expectf(t, outcome == wanted, "the other slot, after the commit %d: %v", index, outcome)
+	}
+	testing.expect(t, state.slot == 1)
+
+	// A few rows: one commit, in the current slot.
+	copy(first.pixels, second.pixels)
+	segment_draw(&second, 10, 40, 300, 44, 3, 0xABCDEF)
+	changed_rows_add(&state.rows, {0, 38, PICTURE_WIDTH_LIMIT, 46}, 200)
+	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch)
+	testing.expect_value(t, state.form, Keep_Form.One_Commit)
+	testing.expect_value(t, len(outcomes), 1)
+	testing.expect_value(t, outcomes[0], Read_Outcome.New)
+	testing.expect(t, state.slot == 1)
+
+	// A large keep again: back to the slot 0, the old picture until the
+	// header names it.
+	copy(first.pixels, second.pixels)
+	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
+		segment_draw(&second, 0, row, 99, row, 1, 0x00FF00)
+	}
+	changed_rows_add(&state.rows, {0, 0, 100, PICTURE_HEIGHT_LIMIT}, 300)
+	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch)
+	testing.expect_value(t, state.form, Keep_Form.Other_Slot)
+	for outcome, index in outcomes {
+		wanted := index == len(outcomes) - 1 ? Read_Outcome.New : Read_Outcome.Old
+		testing.expectf(t, outcome == wanted, "back to the slot 0, after the commit %d: %v", index, outcome)
+	}
+	testing.expect(t, state.slot == 0)
+	delete(outcomes)
+}
+
+// A keep runs in pieces that fit a call; the pieces cover the band once;
+// the header and the size come with the last piece; a keep of the header
+// alone is one piece; a refused piece ends the keep.
 @(test)
 a_keep_runs_in_pieces_that_fit_a_call :: proc(t: ^testing.T) {
-	state := Keep_State{store_open = true, named = true}
-	changed_rows_add(&state.rows, {0, 0, 10, PICTURE_HEIGHT_LIMIT}, 0)
-	state.rows.whole = true
-	keep_begin(&state, PICTURE_HEIGHT_LIMIT)
+	state := Keep_State{store_open = true, named = true, written = true, slot = 1}
+	changed_rows_add(&state.rows, {0, 10, 10, 50}, 0)
+	keep_begin(&state, 100, 60)
 	testing.expect(t, state.keeping && !state.rows.changed, "the band moved to the keep")
-	band := PICTURE_HEIGHT_LIMIT * FILE_ROW_BYTES
-	covered, pieces, commits := 0, 0, 0
+	testing.expect(t, state.form == .One_Commit && state.target_slot == 1)
+	band := 40 * FILE_ROW_BYTES
+	covered, commits := 0, 0
 	for state.keeping {
 		piece := keep_piece(&state)
 		testing.expect(t, piece.bytes > 0 && piece.bytes <= KEEP_PIECE_BYTES)
-		testing.expect_value(t, piece.first, pieces == 0)
-		testing.expect_value(t, piece.offset, FILE_HEADER_BYTES + covered)
-		testing.expect_value(t, piece.row, covered)
+		testing.expect_value(t, piece.offset, file_rows_offset(1, 10) + covered)
+		testing.expect_value(t, piece.row, 10 * FILE_ROW_BYTES + covered)
+		testing.expect_value(t, piece.header, piece.last)
+		testing.expect_value(t, piece.commit, piece.last)
+		testing.expect(t, !piece.rename && piece.object == .Picture)
 		commits += piece.commit ? 1 : 0
 		covered += piece.bytes
-		pieces += 1
-		whole := keep_piece_written(&state, piece)
-		testing.expect_value(t, whole, piece.last)
-		testing.expect(t, pieces <= band / KEEP_PIECE_BYTES + 1)
+		testing.expect_value(t, keep_piece_written(&state, piece), piece.last)
 	}
-	testing.expect_value(t, covered, band)
-	testing.expect_value(t, commits, (band + KEEP_COMMIT_BYTES - 1) / KEEP_COMMIT_BYTES)
+	testing.expect(t, covered == band && commits == 1)
 	// A keep of the header alone: a wider extent.
 	changed_rows_mark(&state.rows, 10)
-	keep_begin(&state, 40)
+	keep_begin(&state, 40, 60)
 	piece := keep_piece(&state)
-	testing.expect(t, piece.first && piece.bytes == 0 && piece.commit && piece.last)
+	testing.expect(t, piece.bytes == 0 && piece.header && piece.commit && piece.last)
+	testing.expect_value(t, piece.size, file_size_of_slot(1, 60))
 	testing.expect(t, keep_piece_written(&state, piece))
 	// A refused piece ends the keep, and its rows wait for the next one.
 	changed_rows_add(&state.rows, {0, 2, 10, 8}, 20)
-	keep_begin(&state, 40)
+	keep_begin(&state, 40, 40)
 	keep_refused(&state, 30, 40)
 	testing.expect(t, !state.keeping && state.rows.whole && state.rows.changed)
 	testing.expect_value(t, keep_step(&state, 30 + KEEP_RETRY_MILLISECONDS, false, false), Keep_Step.Keep)
+}
+
+// A keep is due at a pause of a second, or 5 seconds after the first change
+// that it holds: changes less than a second apart do not hold it back.
+@(test)
+a_keep_is_due_at_most_5_seconds_after_its_first_change :: proc(t: ^testing.T) {
+	rows: Changed_Rows
+	now := u64(1000)
+	changed_rows_add(&rows, {0, 0, 10, 10}, now)
+	for now < 1000 + KEEP_LONGEST_WAIT_MILLISECONDS - 500 {
+		now += 500
+		changed_rows_add(&rows, {0, 0, 10, 10}, now)
+		testing.expectf(t, !keep_due(&rows, now), "at %d: no pause, and under 5 s", now)
+	}
+	testing.expect(t, keep_due(&rows, 1000 + KEEP_LONGEST_WAIT_MILLISECONDS), "5 s after the first change")
+	testing.expect_value(t, keep_due_time(&rows), u64(1000 + KEEP_LONGEST_WAIT_MILLISECONDS))
+	testing.expect(t, !keep_due(&rows, 999), "a time before the first change is no wait")
+	keep_taken(&rows)
+	changed_rows_add(&rows, {0, 0, 10, 10}, 10_000)
+	testing.expect_value(t, rows.first_change, u64(10_000))
+	testing.expect_value(t, keep_due_time(&rows), u64(10_000 + KEEP_PAUSE_MILLISECONDS))
 }
 
 // A read waits for the end of a stroke: it takes the copy that the stroke

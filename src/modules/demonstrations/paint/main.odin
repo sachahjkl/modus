@@ -38,6 +38,7 @@ import "internal:paint/paint_model"
 import "modus:contract/accessibility"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
+import "modus:contract/module"
 import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
@@ -58,8 +59,8 @@ LARGEST_HEIGHT :: 864
 #assert(LARGEST_HEIGHT == paint_model.PICTURE_HEIGHT_LIMIT)
 
 // The budget of paint, under the largest budget that the root service
-// gives a process (LARGEST_BUDGET in src/modules/system/root/budgets.odin:
-// 16384 pages), with a margin. The tool counts the module pages (the code,
+// gives a process (module.LARGEST_BUDGET_PAGES of the module contract, which
+// the root service reads too: 16384 pages), with a margin. The tool counts the module pages (the code,
 // the data and each array below), the stacks of the two threads and the
 // two pictures of the window at its largest size; the source states the
 // working memory. The arrays, in pages of 4 KiB:
@@ -86,7 +87,6 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7051, threads = 2, 
 // The check of the sum against the cap, at compile time: an array that
 // grows past the cap stops the build here.
 PAGE_BYTES :: 4096
-PROCESS_PAGES_LARGEST :: 16384 // LARGEST_BUDGET of the root service.
 PAGES_MARGIN :: 512
 WINDOW_PAGES :: (2 * 2112 * 1188 * 4 + PAGE_BYTES - 1) / PAGE_BYTES
 #assert(WINDOW_PAGES == 4901)
@@ -95,7 +95,7 @@ WINDOW_PAGES :: (2 * 2112 * 1188 * 4 + PAGE_BYTES - 1) / PAGE_BYTES
 // that the tool counts (72 and 19 pages): a bound over the measured module.
 MODULE_PAGES_BOUND :: 512
 ARRAY_PAGES :: (2 * size_of([paint_model.PICTURE_PIXELS]graphics.Color) + paint_model.HISTORY_BYTES + size_of(paint_model.History_Scratch) + size_of(paint_model.Fill_Memory) + paint_model.FILE_HEADER_BYTES + paint_model.KEEP_PIECE_BYTES + paint_model.FILE_HEADER_BYTES + PAGE_BYTES - 1) / PAGE_BYTES
-#assert(ARRAY_PAGES + WINDOW_PAGES + MODULE_BUDGET.working_memory_pages + MODULE_PAGES_BOUND + PAGES_MARGIN <= PROCESS_PAGES_LARGEST)
+#assert(ARRAY_PAGES + WINDOW_PAGES + MODULE_BUDGET.working_memory_pages + MODULE_PAGES_BOUND + PAGES_MARGIN <= module.LARGEST_BUDGET_PAGES)
 
 GAP :: 4
 ROW_HEIGHT :: 28 // The row of the tools.
@@ -178,7 +178,10 @@ job_name_counts: [PICTURE_LIST_CAPACITY]int
 // of the model: keep.rows holds the changed rows.
 current_name: [paint_model.NAME_LIMIT]u8
 current_name_count: int
-current_written: bool
+// The suffix of the temporary object of a large first keep, which the list
+// ignores.
+PARTIAL_SUFFIX :: ".partial"
+#assert(len(PARTIAL_SUFFIX) <= len(paint_model.OBJECT_SUFFIX))
 keep: paint_model.Keep_State
 
 Store_Act :: enum u8 {
@@ -415,30 +418,43 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			request.act_failed = true
 			return
 		}
-		// One piece: the header and the size first, then its rows, and a
-		// commit after each KEEP_COMMIT_BYTES of rows and after the last
-		// piece: the store holds a bounded count of pending blocks for all
-		// its connections.
+		// One piece: its rows, then with the last piece the header and the
+		// size, then the commit, then the rename of a new picture
+		// (src/md/features/paint_application.md, "Each committed state is
+		// one whole picture").
 		piece := request.piece
+		target := object
+		partial_room: paint_model.Object_Name
+		if piece.object == .Partial {
+			partial_room.count = copy(partial_room.bytes[:], string(request.name[:request.name_count]))
+			partial_room.count += copy(partial_room.bytes[partial_room.count:], PARTIAL_SUFFIX)
+			target = string(partial_room.bytes[:partial_room.count])
+		}
 		error: errors.Error_Record
-		if piece.first {
-			if _, status := storage.write_range(&client, storage.ROOT, object, 0, piece_bytes[:paint_model.FILE_HEADER_BYTES], &error); status != .Ok {
-				store_failed(request, u64(status))
-				return
-			}
-			if status := storage.set_size(&client, storage.ROOT, object, u64(request.size), &error); status != .Ok {
+		if piece.bytes > 0 {
+			if _, status := storage.write_range(&client, storage.ROOT, target, u64(piece.offset), piece_bytes[paint_model.FILE_HEADER_BYTES:][:piece.bytes], &error); status != .Ok {
 				store_failed(request, u64(status))
 				return
 			}
 		}
-		if piece.bytes > 0 {
-			if _, status := storage.write_range(&client, storage.ROOT, object, u64(piece.offset), piece_bytes[paint_model.FILE_HEADER_BYTES:][:piece.bytes], &error); status != .Ok {
+		if piece.header {
+			if _, status := storage.write_range(&client, storage.ROOT, target, 0, piece_bytes[:paint_model.FILE_HEADER_BYTES], &error); status != .Ok {
+				store_failed(request, u64(status))
+				return
+			}
+			if status := storage.set_size(&client, storage.ROOT, target, u64(piece.size), &error); status != .Ok {
 				store_failed(request, u64(status))
 				return
 			}
 		}
 		if piece.commit {
-			if _, status := storage.commit(&client, storage.ROOT, object, &error); status != .Ok {
+			if _, status := storage.commit(&client, storage.ROOT, target, &error); status != .Ok {
+				store_failed(request, u64(status))
+				return
+			}
+		}
+		if piece.rename {
+			if _, status := storage.rename(&client, storage.ROOT, target, storage.ROOT, object, &error); status != .Ok {
 				store_failed(request, u64(status))
 				return
 			}
@@ -461,23 +477,29 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			store_failed(request, u64(status))
 			return
 		}
-		// The header into its buffer, the rows into the memory of a
-		// picture. An object larger than the largest file gives no bytes:
-		// the decode refuses an empty file, and the picture stays.
+		// The header into its buffer, then the rows of its slot into the
+		// memory of a picture. A header that the reader refuses, or an
+		// object too short for its rows, gives no rows: the decode refuses
+		// them, and the picture stays.
 		request.found = true
 		request.file_count = 0
-		if size < paint_model.FILE_HEADER_BYTES || size > paint_model.FILE_BYTES_LIMIT {
-			return
-		}
-		rows := ([^]u8)(raw_data(backup_pixels[:]))[:int(size) - paint_model.FILE_HEADER_BYTES]
 		header, header_status := storage.read_range(&client, storage.ROOT, object, 0, read_header[:])
-		if header_status != .Ok || len(header) != paint_model.FILE_HEADER_BYTES {
+		if header_status != .Ok {
 			store_failed(request, u64(header_status))
 			return
 		}
+		if len(header) != paint_model.FILE_HEADER_BYTES {
+			return
+		}
+		place, problem := paint_model.file_rows_of_header(header)
+		if problem != .None || size < i64(place.offset + place.bytes) {
+			request.file_count = paint_model.FILE_HEADER_BYTES
+			return
+		}
+		rows := ([^]u8)(raw_data(backup_pixels[:]))[:place.bytes]
 		read := 0
 		for read < len(rows) {
-			piece, piece_status := storage.read_range(&client, storage.ROOT, object, u64(paint_model.FILE_HEADER_BYTES + read), rows[read:min(read + paint_model.KEEP_PIECE_BYTES, len(rows))])
+			piece, piece_status := storage.read_range(&client, storage.ROOT, object, u64(place.offset + read), rows[read:min(read + paint_model.KEEP_PIECE_BYTES, len(rows))])
 			if piece_status != .Ok {
 				store_failed(request, u64(piece_status))
 				return
@@ -583,13 +605,14 @@ picture_changed_rows :: proc "contextless" (box: paint_model.Box) {
 	paint_model.changed_rows_add(&keep.rows, box, system.time())
 }
 
-// change_refused says if the picture must not change now, and says why: a
-// read of another picture runs, and would replace the change.
+// change_refused says if the picture must not change now, and says why:
+// the first open is not taken yet, or a read of another picture runs; each
+// would replace the change.
 change_refused :: proc "contextless" () -> bool {
 	if paint_model.change_allowed(&keep) {
 		return false
 	}
-	message = "reading a picture: wait"
+	message = keep.started ? "reading a picture: wait" : "the store opens: wait"
 	return true
 }
 
@@ -598,14 +621,12 @@ change_refused :: proc "contextless" () -> bool {
 // header and the rows of the piece into the buffer of the job.
 keep_ask :: proc "contextless" () {
 	if !keep.keeping {
-		keep.rows.whole ||= !current_written
-		paint_model.keep_begin(&keep, picture.height)
-		store_request.size = paint_model.file_size(picture.height)
+		paint_model.keep_begin(&keep, picture.width, picture.height)
 		store_request.band_rows = keep.keep_bottom - keep.keep_top
 	}
 	piece := paint_model.keep_piece(&keep)
-	if piece.first {
-		if _, ok := paint_model.file_header_write(&picture, piece_bytes[:]); !ok {
+	if piece.header {
+		if _, ok := paint_model.file_header_write(keep.keep_width, keep.keep_height, keep.target_slot, piece_bytes[:]); !ok {
 			keep.keeping = false
 			return
 		}
@@ -640,7 +661,7 @@ store_drive :: proc "contextless" (now: u64) {
 		picture_start_new(name)
 		message = "new picture"
 	case .Rename:
-		if current_written {
+		if keep.written {
 			store_request.old_count = copy(store_request.old_name[:], current_picture_name())
 			store_ask(.Rename, name)
 		} else {
@@ -660,7 +681,7 @@ picture_start_new :: proc "contextless" (name: string) {
 	paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height)
 	paint_model.history_clear(&history)
 	current_name_count = copy(current_name[:], name)
-	current_written = false
+	keep.written, keep.slot = false, 0
 	keep.named = current_name_count > 0
 	keep.rows = {}
 	drawn = 0
@@ -679,6 +700,9 @@ store_result_take :: proc "contextless" (now: u64) {
 	request := &store_request
 	switch request.act {
 	case .Open:
+		// The first open is taken: the picture may change from now, except
+		// while the read of the newest picture waits or runs.
+		keep.started = true
 		keep.store_open = request.opened && request.listed
 		pictures_copy(request)
 		if !keep.store_open {
@@ -702,8 +726,8 @@ store_result_take :: proc "contextless" (now: u64) {
 			// the store refused, and a try at once would fail the same way.
 			dropped := paint_model.keep_refused(&keep, now, picture.height)
 			message = dropped == .None ? "the store refused to keep the picture: it tries again" : "the store refused to keep the picture: the act of the panel is dropped"
-		} else if paint_model.keep_piece_written(&keep, request.piece) {
-			current_written = true
+		} else {
+			paint_model.keep_piece_written(&keep, request.piece)
 		}
 	case .Read:
 		paint_model.read_taken(&keep)
@@ -837,7 +861,7 @@ picture_decode_taken :: proc "contextless" (request: ^Store_Request) {
 	}
 	paint_model.history_clear(&history)
 	current_name_count = copy(current_name[:], name)
-	current_written = true
+	keep.written, keep.slot = true, paint_model.file_slot_of_header(read_header[:])
 	keep.named = true
 	keep.rows = {}
 	// The picture holds at least the canvas: the rest is paper, which the
@@ -1358,7 +1382,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		wait: system.Wait
 		display.wait_events(&wait, &window)
-		system.service_wait(&wait, &service)
+		// The calls of the console change the picture: while it must not
+		// change, they wait in their ring, and the loop does not wake for
+		// them.
+		if paint_model.change_allowed(&keep) {
+			system.service_wait(&wait, &service)
+		}
 		// A read that waits for the end of a drag is no reason to wake:
 		// the release of the pointer wakes the loop.
 		ready := interface.background_work_wait(&wait, &work) && !(store_request.act == .Read && drag.active)
