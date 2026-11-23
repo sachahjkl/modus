@@ -279,7 +279,9 @@ Evaluation :: struct {
 	zip_shape_id:          u32,
 	has_zip_shape:         bool,
 	dep_data:              rawptr,
-	on_shape_dep:          proc "contextless" (data: rawptr, shape_hash: u64),
+	on_shape_dep:          proc "contextless" (data: rawptr, import_owner: int, shape_hash: u64),
+	on_record_field:       proc "contextless" (data: rawptr, import_owner: int, sym: lex_parser.Sym_Id),
+	on_record_whole:       proc "contextless" (data: rawptr, import_owner: int),
 	root_chunk_id:         u16,
 	root_forced:           bool,
 	root_value:            Value,
@@ -831,6 +833,38 @@ lazy_record_base_shape :: proc "contextless" (eval: ^Evaluation, v: Value) -> (s
 	return 0, false
 }
 
+// lazy_record_import_owner returns the originating import slot index (>= 0)
+// when `v` is or wraps an imported module's root record, or -1 otherwise.
+lazy_record_import_owner :: proc "contextless" (eval: ^Evaluation, v: Value) -> int {
+	cur := v
+	for _ in 0 ..< 64 {
+		#partial switch cur.kind {
+		case .Record_Literal:
+			idx := int(cur.data)
+			if idx < 0 || idx >= eval.record_count {
+				return -1
+			}
+			f := eval.records[idx].flags
+			return f == 0 ? -1 : int(f) - 1
+		case .Record_With:
+			idx := int(cur.data)
+			if idx < 0 || idx >= eval.overlay_count {
+				return -1
+			}
+			cur = eval.overlays[idx].base
+		case .Plan_Value, .Project_Value:
+			idx := int(cur.data)
+			if idx < 0 || idx >= eval.tagged_record_count {
+				return -1
+			}
+			cur = eval.tagged_records[idx]
+		case:
+			return -1
+		}
+	}
+	return -1
+}
+
 // lazy_record_lookup_thunk resolves the Thunk_Ref of `sym` in a lazy record or
 // overlay chain without forcing any field.
 lazy_record_lookup_thunk :: proc "contextless" (eval: ^Evaluation, v: Value, sym: lex_parser.Sym_Id) -> (ref: Thunk_Ref, found: bool) {
@@ -846,6 +880,9 @@ lazy_record_lookup_thunk :: proc "contextless" (eval: ^Evaluation, v: Value, sym
 			fi, ok := shape_lookup_sym(eval, rec.shape_id, sym)
 			if !ok {
 				return NO_THUNK, false
+			}
+			if rec.flags != 0 && eval.on_record_field != nil {
+				eval.on_record_field(eval.dep_data, int(rec.flags) - 1, sym)
 			}
 			return eval.record_thunk_refs[int(rec.refs_off) + fi], true
 		case .Record_With:
@@ -940,11 +977,16 @@ lazy_record_compact :: proc "contextless" (eval: ^Evaluation, v: Value, chunk_id
 		}
 	}
 
+	owner := lazy_record_import_owner(eval, cur)
+	if owner >= 0 && eval.on_record_whole != nil {
+		eval.on_record_whole(eval.dep_data, owner)
+	}
 	rec_idx = u32(eval.record_count)
 	eval.records[rec_idx] = {
 		shape_id = shape_id,
 		refs_off = refs_off,
 		chunk_id = chunk_id,
+		flags    = owner >= 0 ? u16(owner + 1) : 0,
 		node_idx = node_idx,
 	}
 	eval.record_count += 1
@@ -2363,6 +2405,8 @@ vm_with :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: 
 		if !ls_ok || !rs_ok {
 			return refuse(eval, {refusal = .With_Kinds, chunk_id = chunk_id, node = node_idx, left_kind = left.kind, right_kind = right.kind})
 		}
+		record_shape_dep(eval, left, left_shape_id)
+		record_shape_dep(eval, right, right_shape_id)
 		// Strictly override-only: eagerly verify every field of right exists in
 		// left's shape without forcing any field value!
 		rshape := &eval.shapes[right_shape_id]

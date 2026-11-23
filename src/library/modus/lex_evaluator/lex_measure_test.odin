@@ -2,6 +2,7 @@
 package lex_evaluator
 
 import "core:fmt"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -467,6 +468,60 @@ lex_measure_suite :: proc(t: ^testing.T) {
 		fmt.printfln("W1b_500_file_full: ok=%v status=%v fail=%v imports=%d written=%d steps=%d time=%.3f ms blake3=%02x%02x%02x%02x",
 			ok_full, hdr.status, hdr.failure_kind, ws.import_count, written, hdr.steps_taken,
 			f64(full_ns) / 1e6, hash[0], hash[1], hash[2], hash[3])
+
+		// ---- W2: Incremental 1-file edit on the 500-file DAG (caller-owned Query_Cache)
+		qcache := new(Query_Cache, context.temp_allocator)
+		qbytes := query_cache_bytes(QUERY_CACHE_DEFAULT_POOLS)
+		qbacking, qerr := mem.alloc_bytes(qbytes, 64, context.temp_allocator)
+		assert(qerr == nil && query_cache_carve(qcache, qbacking, QUERY_CACHE_DEFAULT_POOLS))
+		qprof: Evaluation_Profile
+		qcfg := Declaration_Config{
+			loader      = {data = &fmap, load_path = measure_map_load_path},
+			stack_bytes = 16 * 1024 * 1024,
+			profile     = &qprof,
+		}
+		// Warm cache for outputs.app_0 and outputs.app_42.
+		_, _ = query_cache_evaluate_to_buffer(qcache, ws, root_src, "outputs.app_0", qcfg, out_buf)
+		_, _ = query_cache_evaluate_to_buffer(qcache, ws, root_src, "outputs.app_42", qcfg, out_buf)
+
+		// (a) Edit 1 leaf (app_042.lex) and query unaffected outputs.app_0 -> instant L2 hit.
+		for name, idx in fmap.names {
+			if name == "app_042.lex" {
+				fmap.sources[idx] = `let lib = import("lib_02.lex"), base = lib.cfg_10 in { id = 42, score = lib.scale(43) + base.weight + 100, meta = base with { weight = 7 } }`
+				break
+			}
+		}
+		qprof = {}
+		for r in 0 ..< MEASURE_ROUNDS {
+			start_w2 := time.tick_now()
+			_, _ = query_cache_evaluate_to_buffer(qcache, ws, root_src, "outputs.app_0", qcfg, out_buf)
+			samples[r] = time.duration_nanoseconds(time.tick_since(start_w2))
+		}
+		st_w2a := compute_stats(samples[:])
+		fmt.printfln("W2a_incremental_unaffected (outputs.app_0): l2_hits=%d l2_misses=%d min=%.4f ms median=%.4f ms",
+			qprof.cache_l2_hits, qprof.cache_l2_misses, f64(st_w2a.min_ns) / 1e6, f64(st_w2a.median_ns) / 1e6)
+
+		// (b) Query affected outputs.app_42 after leaf edit -> L2 miss + L1 hits for unchanged imports.
+		qprof = {}
+		start_w2b := time.tick_now()
+		w2b_n, w2b_ok := query_cache_evaluate_to_buffer(qcache, ws, root_src, "outputs.app_42", qcfg, out_buf)
+		w2b_ns := time.duration_nanoseconds(time.tick_since(start_w2b))
+		fmt.printfln("W2b_incremental_leaf_edit (outputs.app_42): ok=%v written=%d l1_hits=%d l1_misses=%d l2_misses=%d time=%.4f ms",
+			w2b_ok, w2b_n, qprof.cache_l1_hits, qprof.cache_l1_misses, qprof.cache_l2_misses, f64(w2b_ns) / 1e6)
+
+		// (c) Internal refactor of a pure-value leaf (app_000.lex computes same score = 4) -> early cutoff L2 hit on outputs.app_0!
+		for name, idx in fmap.names {
+			if name == "app_000.lex" {
+				fmap.sources[idx] = `let lib = import("lib_00.lex"), base = lib.cfg_00, tmp = lib.scale(1) in { id = 0, score = tmp + base.weight, meta = base with { weight = 0 } }`
+				break
+			}
+		}
+		qprof = {}
+		start_w2c := time.tick_now()
+		w2c_n, w2c_ok := query_cache_evaluate_to_buffer(qcache, ws, root_src, "outputs.app_0", qcfg, out_buf)
+		w2c_ns := time.duration_nanoseconds(time.tick_since(start_w2c))
+		fmt.printfln("W2c_incremental_early_cutoff (outputs.app_0): ok=%v written=%d l2_hits=%d l2_misses=%d time=%.4f ms",
+			w2c_ok, w2c_n, qprof.cache_l2_hits, qprof.cache_l2_misses, f64(w2c_ns) / 1e6)
 	}
 
 	// ---- W3: 10,000 console lines

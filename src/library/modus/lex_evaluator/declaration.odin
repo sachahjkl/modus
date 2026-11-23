@@ -127,6 +127,7 @@ Declaration_Config :: struct {
 	node_limit:      int, // 0 -> full carved node pool
 	profile:         ^Evaluation_Profile,
 	trace_log:       ^Trace_Log,
+	compile_cache:   ^Query_Cache,
 }
 
 // Result of evaluating a .lex declaration (and optionally forcing a field path).
@@ -153,6 +154,7 @@ Declaration_Result :: struct {
 Import_Entry :: struct {
 	by_hash:    bool,
 	path:       string,
+	source:     string,
 	hash:       blake3.Hash,
 	loading:    bool,
 	loaded:     bool,
@@ -208,6 +210,11 @@ Declaration_Workspace :: struct {
 	host_failure_place:  lex_parser.Place,
 	recipe_arguments:    [plans_recipes.MAX_RECIPE_ARGUMENT_VALUE_BYTES]u8,
 	recipe_spec:         plans_recipes.Recipe_Spec,
+	compile_cache:       ^Query_Cache,
+	dep_data:            rawptr,
+	on_shape_dep:        proc "contextless" (data: rawptr, import_owner: int, shape_hash: u64),
+	on_record_field:     proc "contextless" (data: rawptr, import_owner: int, sym: lex_parser.Sym_Id),
+	on_record_whole:     proc "contextless" (data: rawptr, import_owner: int),
 	evaluation:          Evaluation,
 }
 
@@ -571,9 +578,14 @@ declaration_evaluate :: proc "contextless" (ws: ^Declaration_Workspace, source: 
 	evaluation_start_with_pools(&ws.evaluation, &ws.trees[0], .Declaration, host, ws.vm_pools, budget, stack_bytes, depth_limit)
 	ws.evaluation.profile = config.profile
 	ws.evaluation.trace_log = config.trace_log
+	ws.compile_cache = config.compile_cache
+	ws.evaluation.dep_data = ws.dep_data
+	ws.evaluation.on_shape_dep = ws.on_shape_dep
+	ws.evaluation.on_record_field = ws.on_record_field
+	ws.evaluation.on_record_whole = ws.on_record_whole
 
-	// Parse root source into tree 0.
-	lex_parser.parse_declaration(source, decl_tree_storage(ws), &ws.trees[0], ws.text_bytes_most, ws.parse_depth_limit)
+	// Parse root source into tree 0 (using L1 compile cache if configured).
+	decl_parse_source(ws, source, &ws.trees[0])
 	if ws.trees[0].refusal.refusal != .None {
 		r := ws.trees[0].refusal
 		if r.refusal == .Nodes_Full {
@@ -786,6 +798,7 @@ serialize_value_into :: proc "contextless" (ws: ^Declaration_Workspace, writer: 
 		if !shape_ok {
 			return .Unserializable_Value
 		}
+		record_shape_dep(&ws.evaluation, value, shape_id)
 		shape := &ws.evaluation.shapes[shape_id]
 		fcount := int(shape.field_count)
 		declaration_eval.output_write_u8(writer, u8(declaration_eval.Value_Tag.Record))
@@ -1402,7 +1415,7 @@ decl_import_path :: proc "contextless" (ws: ^Declaration_Workspace, path: string
 	}
 	slot_idx := ws.import_count
 	ws.import_count += 1
-	ws.imports[slot_idx] = {by_hash = false, path = path, loading = true}
+	ws.imports[slot_idx] = {by_hash = false, path = path, source = source, loading = true}
 	val, eval_ok := decl_load_source_into_chunk(ws, source)
 	ws.imports[slot_idx].loading = false
 	if !eval_ok {
@@ -1410,6 +1423,12 @@ decl_import_path :: proc "contextless" (ws: ^Declaration_Workspace, path: string
 	}
 	ws.imports[slot_idx].loaded = true
 	ws.imports[slot_idx].root_value = val
+	if val.kind == .Record_Literal {
+		ridx := int(val.data)
+		if ridx >= 0 && ridx < ws.evaluation.record_count && ws.evaluation.records[ridx].flags == 0 {
+			ws.evaluation.records[ridx].flags = u16(slot_idx + 1)
+		}
+	}
 	return val, true
 }
 
@@ -1441,7 +1460,7 @@ decl_import_hash :: proc "contextless" (ws: ^Declaration_Workspace, hash: blake3
 	}
 	slot_idx := ws.import_count
 	ws.import_count += 1
-	ws.imports[slot_idx] = {by_hash = true, hash = hash, loading = true}
+	ws.imports[slot_idx] = {by_hash = true, hash = hash, source = source, loading = true}
 	val, eval_ok := decl_load_source_into_chunk(ws, source)
 	ws.imports[slot_idx].loading = false
 	if !eval_ok {
@@ -1449,7 +1468,34 @@ decl_import_hash :: proc "contextless" (ws: ^Declaration_Workspace, hash: blake3
 	}
 	ws.imports[slot_idx].loaded = true
 	ws.imports[slot_idx].root_value = val
+	if val.kind == .Record_Literal {
+		ridx := int(val.data)
+		if ridx >= 0 && ridx < ws.evaluation.record_count && ws.evaluation.records[ridx].flags == 0 {
+			ws.evaluation.records[ridx].flags = u16(slot_idx + 1)
+		}
+	}
 	return val, true
+}
+
+@(private)
+decl_parse_source :: proc "contextless" (ws: ^Declaration_Workspace, source: string, tree: ^lex_parser.Syntax_Tree) {
+	if ws.compile_cache != nil {
+		if l1_cache_lookup_into(ws.compile_cache, ws, source, tree) {
+			if ws.evaluation.profile != nil {
+				ws.evaluation.profile.cache_l1_hits += 1
+			}
+			return
+		}
+	}
+	lex_parser.parse_declaration(source, decl_tree_storage(ws), tree, ws.text_bytes_most, ws.parse_depth_limit)
+	if ws.compile_cache != nil {
+		if ws.evaluation.profile != nil {
+			ws.evaluation.profile.cache_l1_misses += 1
+		}
+		if tree.refusal.refusal == .None {
+			l1_cache_store(ws.compile_cache, source, tree)
+		}
+	}
 }
 
 @(private)
@@ -1462,7 +1508,7 @@ decl_load_source_into_chunk :: proc "contextless" (ws: ^Declaration_Workspace, s
 	tree_idx := ws.tree_count
 	ws.tree_count += 1
 	tree := &ws.trees[tree_idx]
-	lex_parser.parse_declaration(source, decl_tree_storage(ws), tree, ws.text_bytes_most, ws.parse_depth_limit)
+	decl_parse_source(ws, source, tree)
 	if tree.refusal.refusal != .None {
 		r := tree.refusal
 		if r.refusal == .Nodes_Full {

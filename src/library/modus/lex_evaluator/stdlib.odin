@@ -27,9 +27,9 @@ suggest_shape_fields :: proc "contextless" (eval: ^Evaluation, shape_id: u32, wa
 }
 
 @(private)
-record_shape_dep :: proc "contextless" (eval: ^Evaluation, shape_id: u32) {
+record_shape_dep :: proc "contextless" (eval: ^Evaluation, rec_val: Value, shape_id: u32) {
 	if eval.on_shape_dep != nil && int(shape_id) < eval.shape_count {
-		eval.on_shape_dep(eval.dep_data, eval.shapes[shape_id].shape_hash)
+		eval.on_shape_dep(eval.dep_data, lazy_record_import_owner(eval, rec_val), eval.shapes[shape_id].shape_hash)
 	}
 }
 
@@ -188,7 +188,7 @@ vm_destructure :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, src_v
 			refuse(eval, {refusal = .Pattern_Not_A_Record, chunk_id = frame.chunk_id, node = node_idx, left_kind = src_val.kind})
 			return false
 		}
-		record_shape_dep(eval, shape_id)
+		record_shape_dep(eval, src_val, shape_id)
 		// Strict check (default when no `...`): refuse any extra field in src's shape
 		// without forcing a single field value!
 		if !desc.has_rest {
@@ -552,7 +552,7 @@ vm_builtin_fields :: proc "contextless" (eval: ^Evaluation, rec_val: Value, chun
 		if !sok {
 			return refuse(eval, {refusal = .Operator_Kinds, chunk_id = chunk_id, node = node_idx, command = FIELDS_NAME, left_kind = rec_val.kind})
 		}
-		record_shape_dep(eval, shape_id)
+		record_shape_dep(eval, rec_val, shape_id)
 		shape := &eval.shapes[shape_id]
 		fcount := int(shape.field_count)
 		if !charge_steps(eval, u32(1 + fcount), chunk_id, node_idx) {
@@ -612,7 +612,7 @@ vm_builtin_values :: proc "contextless" (eval: ^Evaluation, rec_val: Value, chun
 	if !sok {
 		return refuse(eval, {refusal = .Operator_Kinds, chunk_id = chunk_id, node = node_idx, command = VALUES_NAME, left_kind = rec_val.kind})
 	}
-	record_shape_dep(eval, shape_id)
+	record_shape_dep(eval, rec_val, shape_id)
 	shape := &eval.shapes[shape_id]
 	fcount := int(shape.field_count)
 	if !charge_steps(eval, u32(1 + fcount), chunk_id, node_idx) {
@@ -663,7 +663,7 @@ vm_builtin_has :: proc "contextless" (eval: ^Evaluation, rec_val, name_val: Valu
 		if !sok {
 			return refuse(eval, {refusal = .Operator_Kinds, chunk_id = chunk_id, node = node_idx, command = HAS_NAME, left_kind = rec_val.kind, right_kind = name_val.kind})
 		}
-		record_shape_dep(eval, shape_id)
+		record_shape_dep(eval, rec_val, shape_id)
 		sym, has_sym := lex_parser.intern_lookup(&eval.interner, name)
 		if !has_sym {
 			return value_bool(false), true
@@ -692,6 +692,8 @@ vm_builtin_extend :: proc "contextless" (eval: ^Evaluation, left, right: Value, 
 	if !lok || !rok {
 		return refuse(eval, {refusal = .With_Kinds, chunk_id = chunk_id, node = node_idx, command = EXTEND_NAME, left_kind = left.kind, right_kind = right.kind})
 	}
+	record_shape_dep(eval, left, l_shape_id)
+	record_shape_dep(eval, right, r_shape_id)
 	l_shape := &eval.shapes[l_shape_id]
 	r_shape := &eval.shapes[r_shape_id]
 	lf := eval.shape_fields[int(l_shape.fields_off):int(l_shape.fields_off) + int(l_shape.field_count)]
@@ -784,6 +786,8 @@ vm_builtin_merge_deep :: proc "contextless" (eval: ^Evaluation, left, right: Val
 	if !lok || !rok {
 		return refuse(eval, {refusal = .With_Kinds, chunk_id = chunk_id, node = node_idx, command = MERGE_DEEP_NAME, left_kind = left.kind, right_kind = right.kind})
 	}
+	record_shape_dep(eval, left, l_shape_id)
+	record_shape_dep(eval, right, r_shape_id)
 	l_shape := &eval.shapes[l_shape_id]
 	r_shape := &eval.shapes[r_shape_id]
 	l_count := int(l_shape.field_count)
