@@ -334,10 +334,11 @@ object_versions_erase :: proc "contextless" (object: string) {
 }
 
 // root_command sends a command of the principals to the root service and
-// waits for its completion.
-root_command :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
+// waits for its completion. values is passed by pointer so key commands leave
+// no copy in the call parameter slot.
+root_command :: proc "contextless" (kind: root_ring.Root_Command, values: ^[7]u64) -> (completion: ring.Record, answered: bool) {
 	request_tag += 1
-	command_record := ring.Record{kind = u32(kind), tag = request_tag, values = values}
+	command_record := ring.Record{kind = u32(kind), tag = request_tag, values = values^}
 	sent := system.send(&requests.commands, command_record)
 	// Key commands carry secrets in values: leave no copy on this stack.
 	erase(([^]u8)(&command_record)[:size_of(command_record)])
@@ -364,14 +365,16 @@ root_command :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64
 record_give :: proc "contextless" () -> bool {
 	key := transmute([4]u64)signing_public_key
 	packed := principals.name_pack(the_name())
-	completion, answered := root_command(.Principal_Record, {key[0], key[1], key[2], key[3], packed[0], packed[1], packed[2]})
+	record_values := [7]u64{key[0], key[1], key[2], key[3], packed[0], packed[1], packed[2]}
+	completion, answered := root_command(.Principal_Record, &record_values)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(completion.kind), principal_name = principal_name_field()})
 		return false
 	}
 	number = completion.values[0]
 	words := transmute([4]u64)identifier
-	identified, identifier_answered := root_command(.Principal_Identifier, {words[0], words[1], words[2], words[3], number, 0, 0})
+	id_values := [7]u64{words[0], words[1], words[2], words[3], number, 0, 0}
+	identified, identifier_answered := root_command(.Principal_Identifier, &id_values)
 	if !identifier_answered || identified.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(identified.kind), principal_name = principal_name_field()})
 		return false
@@ -627,7 +630,9 @@ machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SI
 	values := transmute([4]u64)table_key
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
-	completion, answered := root_command(.Machine_Key, {values[0], values[1], values[2], values[3], u64(origin), 0, 0})
+	cmd_values := [7]u64{values[0], values[1], values[2], values[3], u64(origin), 0, 0}
+	defer erase(([^]u8)(&cmd_values)[:size_of(cmd_values)])
+	completion, answered := root_command(.Machine_Key, &cmd_values)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Machine_Table_Key_Not_Taken{outcome = outcome_field(completion.kind)})
 		return false
@@ -1863,7 +1868,8 @@ proof_given :: proc "contextless" () {
 // proof_end tells the root service how the proof ended. The root service
 // binds it to the terms of the screen; this process sees no terms.
 proof_end :: proc "contextless" (outcome: root_ring.Wide_Grant_Proof_Outcome) {
-	completion, answered := root_command(.Wide_Grant_Proof, {4 = proof_principal, 5 = u64(outcome)})
+	proof_values := [7]u64{4 = proof_principal, 5 = u64(outcome)}
+	completion, answered := root_command(.Wide_Grant_Proof, &proof_values)
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log_fact(.Info, Wide_Grant_Proof_Not_Taken{status = status_field(completion.kind)})
 	}
@@ -2059,7 +2065,8 @@ passphrase_change_report :: proc "contextless" (outcome: Write_Outcome, how: str
 // to the console that asked, and shows it in the window until Enter: a
 // change never ends with a silent close.
 change_end :: proc "contextless" (end: principals.Change_End, problem: principals.Change_Problem = .None) {
-	completion, answered := root_command(.Principal_Change_End, {4 = u64(end), 5 = u64(problem)})
+	end_values := [7]u64{4 = u64(end), 5 = u64(problem)}
+	completion, answered := root_command(.Principal_Change_End, &end_values)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Change_End_Not_Taken{outcome = outcome_field(completion.kind)})
 	}
@@ -2325,13 +2332,19 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	storage_words := transmute([4]u64)storage_key
 	defer erase(storage_key[:])
 	defer erase(([^]u8)(rawptr(&storage_words))[:size_of(storage_words)])
-	stored, stored_answered := root_command(.Principal_Storage_Key, {storage_words[0], storage_words[1], storage_words[2], storage_words[3], number, 0, 0})
+	storage_cmd := [7]u64{storage_words[0], storage_words[1], storage_words[2], storage_words[3], number, 0, 0}
+	defer erase(([^]u8)(&storage_cmd)[:size_of(storage_cmd)])
+	stored, stored_answered := root_command(.Principal_Storage_Key, &storage_cmd)
+	erase(([^]u8)(&storage_cmd)[:size_of(storage_cmd)])
 	if !stored_answered || stored.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Session_Not_Started{principal = number, outcome = outcome_field(stored.kind)})
 		message, message_failed = "The root service did not start the session.", true
 		return
 	}
-	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, u64(origin), 0})
+	unlock_cmd := [7]u64{values[0], values[1], values[2], values[3], number, u64(origin), 0}
+	defer erase(([^]u8)(&unlock_cmd)[:size_of(unlock_cmd)])
+	completion, answered := root_command(.Principal_Unlock, &unlock_cmd)
+	erase(([^]u8)(&unlock_cmd)[:size_of(unlock_cmd)])
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Session_Not_Started{principal = number, outcome = outcome_field(completion.kind)})
 		message, message_failed = "The root service did not start the session.", true
@@ -2870,7 +2883,8 @@ machine_key_without_window :: proc "contextless" () -> ! {
 		system.log_fact(.Info, No_Machine_Record{})
 		system.stop(.Done)
 	case .Unreadable:
-		completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
+		unreadable_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Unreadable)}
+		completion, answered := root_command(.Machine_Key, &unreadable_cmd)
 		taken := answered && completion.kind == u32(call_outcome.Call_Outcome.Succeeded)
 		if !taken {
 			system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
@@ -2886,7 +2900,8 @@ machine_key_without_window :: proc "contextless" () -> ! {
 	}
 	sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
 	key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
-	completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
+	awaited_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)}
+	completion, answered := root_command(.Machine_Key, &awaited_cmd)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 		system.stop(.Failed)
@@ -3091,7 +3106,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case .Present:
 			sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
 			key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
-			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
+			awaited_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)}
+			completion, answered := root_command(.Machine_Key, &awaited_cmd)
 			switch {
 			case !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded):
 				system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
@@ -3111,7 +3127,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// service refuses each change of the table of principal 0, and
 			// a new machine passphrase, so nothing is written over a table
 			// or a record that can be good.
-			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
+			unreadable_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Unreadable)}
+			completion, answered := root_command(.Machine_Key, &unreadable_cmd)
 			if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 				system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 			}

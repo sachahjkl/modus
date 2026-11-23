@@ -51,16 +51,21 @@ owned_key_cache_tick: u64
 owned_key_cache_misses: u64
 
 // Active store encryption context for block reads and writes during a call
-// or plan. Scopes nest cleanly (e.g., freeze_tree reading a source store
+// or plan. Keys are copied by value so cache eviction never aliases or dangles
+// a scope across nested operations (e.g. freeze_tree reading a source store
 // while committing objects to a target store).
 Store_Crypto_Scope :: struct {
-	keys:          ^store_encryption.Store_Keys,
+	keys:          store_encryption.Store_Keys,
+	has_keys:      bool,
 	store_index:   int,
+	owner_slot:    u8,
 	was_encrypted: bool,
 }
 
+active_store_keys_value: store_encryption.Store_Keys
 active_store_keys: ^store_encryption.Store_Keys
 active_store_index: int = -1
+active_store_owner_slot: u8
 
 // owned_cell says if the cell of a store keeps a name tag.
 owned_cell :: proc "contextless" (index: int) -> bool {
@@ -94,7 +99,7 @@ owned_tag :: proc "contextless" (keys: ^Principal_Storage, name: string) -> (fie
 }
 
 // owned_store_keys_put caches derived Store_Keys for an owned store cell.
-owned_store_keys_put :: proc "contextless" (store_index: int, slot: u64, keys: ^store_encryption.Store_Keys) -> ^store_encryption.Store_Keys {
+owned_store_keys_put :: proc "contextless" (store_index: int, slot: u64, keys: ^store_encryption.Store_Keys) {
 	target := -1
 	oldest := 0
 	for &entry, idx in owned_key_cache {
@@ -122,31 +127,30 @@ owned_store_keys_put :: proc "contextless" (store_index: int, slot: u64, keys: ^
 		used        = owned_key_cache_tick,
 		keys        = keys^,
 	}
-	return &owned_key_cache[target].keys
 }
 
-// owned_store_keys_get returns the verified Store_Keys for an owned store,
+// owned_store_keys_get copies the verified Store_Keys for an owned store,
 // deriving and caching them on a cache miss after verifying the Store_Block
-// MAC and rollback floor. Returns nil if the principal is locked or the
-// Store_Block fails verification.
-owned_store_keys_get :: proc "contextless" (store_index: int) -> ^store_encryption.Store_Keys {
+// MAC and rollback floor. Distinguishes .Device from .Wrong (locked principal
+// or verification failure).
+owned_store_keys_get :: proc "contextless" (store_index: int) -> (keys: store_encryption.Store_Keys, outcome: Read) {
 	if store_index < 0 || store_index >= store_numbers() || !owned_cell(store_index) {
-		return nil
+		return {}, .Wrong
 	}
 	checked := owned_checked[store_index]
 	if checked == 0 {
-		return nil
+		return {}, .Wrong
 	}
 	slot := u64(checked - 1)
 	pkeys := principal_keys_held(slot)
 	if pkeys == nil {
-		return nil
+		return {}, .Wrong
 	}
 	for &entry in owned_key_cache {
 		if entry.occupied && int(entry.store_index) == store_index && entry.slot == u8(slot) {
 			owned_key_cache_tick += 1
 			entry.used = owned_key_cache_tick
-			return &entry.keys
+			return entry.keys, .Good
 		}
 	}
 	// Cache miss: re-derive from principal_storage and verify Store_Block.
@@ -154,71 +158,97 @@ owned_store_keys_get :: proc "contextless" (store_index: int) -> ^store_encrypti
 	sb: format.Store_Block
 	defer intrinsics.mem_zero_volatile(&sb, size_of(sb))
 	sb_ptr := store_cell(store_index).store
-	if read_single(sb_ptr, (^Block)(&sb)) != .Good {
-		return nil
+	read_outcome := read_single_tagged(sb_ptr, (^Block)(&sb), store_index, checked)
+	if read_outcome != .Good {
+		return {}, read_outcome
 	}
 	if sb.owner != pkeys.identifier {
-		return nil
+		return {}, .Wrong
 	}
 	derived, ok := store_encryption.store_keys_of(pkeys.storage_key, pkeys.identifier, sb.salt)
 	defer intrinsics.mem_zero_volatile(&derived, size_of(derived))
 	if !ok {
-		return nil
+		return {}, .Wrong
 	}
 	if !store_encryption.store_block_verify(&derived, sb_ptr.block, sb_ptr.check, owned_min_generation[store_index], root.generation, &sb) {
-		return nil
+		return {}, .Wrong
 	}
 	if sb.store_generation > owned_min_generation[store_index] {
 		owned_min_generation[store_index] = sb.store_generation
 	}
-	return owned_store_keys_put(store_index, slot, &derived)
+	owned_store_keys_put(store_index, slot, &derived)
+	return derived, .Good
+}
+
+// store_crypto_save captures the current active encryption scope by value.
+@(private = "file")
+store_crypto_save :: proc "contextless" () -> (prev: Store_Crypto_Scope) {
+	prev.store_index = active_store_index
+	prev.owner_slot = active_store_owner_slot
+	prev.was_encrypted = object_source.encrypted
+	if active_store_keys != nil {
+		prev.keys = active_store_keys_value
+		prev.has_keys = true
+	}
+	return prev
+}
+
+// store_crypto_set_active installs keys by value into active_store_keys_value
+// (or volatile-zeroes it when keys == nil).
+store_crypto_set_active :: proc "contextless" (store_index: int, owner_slot: u8, keys: ^store_encryption.Store_Keys) {
+	if keys != nil {
+		active_store_keys_value = keys^
+		active_store_keys = &active_store_keys_value
+		object_source.encrypted = true
+	} else {
+		intrinsics.mem_zero_volatile(&active_store_keys_value, size_of(active_store_keys_value))
+		active_store_keys = nil
+		object_source.encrypted = false
+	}
+	active_store_index = store_index
+	active_store_owner_slot = owner_slot
 }
 
 // store_crypto_enter activates encryption keys for store_index (or clear
 // mode for a store of principal 0), returning the previous scope to restore
-// with store_crypto_leave. ok is false if an owned store has no verified
-// keys (locked principal or Store_Block verification failure).
-store_crypto_enter :: proc "contextless" (store_index: int) -> (prev: Store_Crypto_Scope, ok: bool) {
-	prev = {
-		keys          = active_store_keys,
-		store_index   = active_store_index,
-		was_encrypted = object_source.encrypted,
-	}
+// with store_crypto_leave. On failure (.Device or .Wrong), active state is
+// unchanged and prev is zeroed.
+store_crypto_enter :: proc "contextless" (store_index: int) -> (prev: Store_Crypto_Scope, outcome: Read) {
+	prev = store_crypto_save()
 	if store_index < 0 || store_index >= store_numbers() || !owned_cell(store_index) {
-		active_store_keys = nil
-		active_store_index = store_index
-		object_source.encrypted = false
-		return prev, true
+		store_crypto_set_active(store_index, 0, nil)
+		return prev, .Good
 	}
-	keys := owned_store_keys_get(store_index)
-	if keys == nil {
-		return prev, false
+	keys, read := owned_store_keys_get(store_index)
+	defer intrinsics.mem_zero_volatile(&keys, size_of(keys))
+	if read != .Good {
+		intrinsics.mem_zero_volatile(&prev.keys, size_of(prev.keys))
+		prev = {}
+		return {}, read
 	}
-	active_store_keys = keys
-	active_store_index = store_index
-	object_source.encrypted = true
-	return prev, true
+	store_crypto_set_active(store_index, owned_checked[store_index], &keys)
+	return prev, .Good
 }
 
-// store_crypto_enter_keys activates explicit keys (for a newly created owned
-// store whose cell is not yet committed to the store table).
-store_crypto_enter_keys :: proc "contextless" (store_index: int, keys: ^store_encryption.Store_Keys) -> (prev: Store_Crypto_Scope) {
-	prev = {
-		keys          = active_store_keys,
-		store_index   = active_store_index,
-		was_encrypted = object_source.encrypted,
-	}
-	active_store_keys = keys
-	active_store_index = store_index
-	object_source.encrypted = keys != nil
+// store_crypto_enter_keys activates explicit keys by value (for a plan or a
+// newly created owned store whose cell is not yet committed to the store table).
+store_crypto_enter_keys :: proc "contextless" (store_index: int, owner_slot: u8, keys: ^store_encryption.Store_Keys) -> (prev: Store_Crypto_Scope) {
+	prev = store_crypto_save()
+	store_crypto_set_active(store_index, owner_slot, keys)
 	return prev
 }
 
-// store_crypto_leave restores a previously saved Store_Crypto_Scope.
-store_crypto_leave :: proc "contextless" (prev: Store_Crypto_Scope) {
-	active_store_keys = prev.keys
-	active_store_index = prev.store_index
+// store_crypto_leave restores a previously saved Store_Crypto_Scope and
+// volatile-zeroes the saved key copy.
+store_crypto_leave :: proc "contextless" (prev: ^Store_Crypto_Scope) {
+	if prev.has_keys {
+		store_crypto_set_active(prev.store_index, prev.owner_slot, &prev.keys)
+	} else {
+		store_crypto_set_active(prev.store_index, prev.owner_slot, nil)
+	}
 	object_source.encrypted = prev.was_encrypted
+	intrinsics.mem_zero_volatile(&prev.keys, size_of(prev.keys))
+	prev.has_keys = false
 }
 
 // owned_find gives the store of a name of a named principal: the cell with
@@ -270,7 +300,7 @@ owned_store_open :: proc "contextless" (index: int, slot: u64, keys: ^Principal_
 	sb: format.Store_Block
 	defer intrinsics.mem_zero_volatile(&sb, size_of(sb))
 	sb_ptr := store_cell(index).store
-	if read_single(sb_ptr, (^Block)(&sb)) != .Good {
+	if read_single_tagged(sb_ptr, (^Block)(&sb), index, 0) != .Good {
 		return "", false
 	}
 	if sb.owner != keys.identifier {
@@ -292,18 +322,23 @@ owned_store_open :: proc "contextless" (index: int, slot: u64, keys: ^Principal_
 	if sb.store_generation > owned_min_generation[index] {
 		owned_min_generation[index] = sb.store_generation
 	}
-	_ = owned_store_keys_put(index, slot, &derived)
+	mark := u8(slot + 1)
+	owned_checked[index] = mark
+	cache_tag(sb_ptr, index, mark)
+	owned_store_keys_put(index, slot, &derived)
 	return opened_name, true
 }
 
-// owned_fields_read reads the owner fields of the store block of a store.
-owned_fields_read :: proc "contextless" (index: int) -> (owner: format.Store_Owner, ok: bool) {
+// owned_fields_read reads the owner fields of the store block of a store,
+// distinguishing transient .Device failures from .Wrong.
+owned_fields_read :: proc "contextless" (index: int) -> (owner: format.Store_Owner, outcome: Read) {
 	block: Block
 	defer intrinsics.mem_zero_volatile(&block, size_of(block))
-	if read_single(store_cell(index).store, &block) != .Good {
-		return {}, false
+	read := read_single_tagged(store_cell(index).store, &block, index, owned_checked[index])
+	if read != .Good {
+		return {}, read
 	}
-	return format.store_owner_of((^format.Store_Block)(&block)), true
+	return format.store_owner_of((^format.Store_Block)(&block)), .Good
 }
 
 // owned_make gives the owner fields, cell tag, and derived Store_Keys of a
@@ -340,15 +375,26 @@ owned_name_into :: proc "contextless" (index: int, slot: u64, buffer: ^[format.O
 // storage service that may have held decrypted plaintext from an unlocked
 // principal.
 erase_transient_buffers :: proc "contextless" () {
+	store_crypto_set_active(-1, 0, nil)
+	intrinsics.mem_zero_volatile(&plan.prev_crypto, size_of(plan.prev_crypto))
 	intrinsics.mem_zero_volatile(&plan.store_block, size_of(plan.store_block))
 	intrinsics.mem_zero_volatile(&plan.store_block_bytes, size_of(plan.store_block_bytes))
 	intrinsics.mem_zero_volatile(&plan.store_keys, size_of(plan.store_keys))
+	intrinsics.mem_zero_volatile(&plan.entries, size_of(plan.entries))
+	intrinsics.mem_zero_volatile(&plan.trees, size_of(plan.trees))
+	intrinsics.mem_zero_volatile(&plan.index_work, size_of(plan.index_work))
 	intrinsics.mem_zero_volatile(&plan.index_blocks, size_of(plan.index_blocks))
 	intrinsics.mem_zero_volatile(&plan.leaf_work, size_of(plan.leaf_work))
 	intrinsics.mem_zero_volatile(&plan.release_nodes, size_of(plan.release_nodes))
 	intrinsics.mem_zero_volatile(&plan.pool, size_of(plan.pool))
+	intrinsics.mem_zero_volatile(&plan_store_name_bytes, size_of(plan_store_name_bytes))
 	intrinsics.mem_zero_volatile(&reading_pool, size_of(reading_pool))
 	intrinsics.mem_zero_volatile(&freeze_tree_pool, size_of(freeze_tree_pool))
+	intrinsics.mem_zero_volatile(&freeze_work, size_of(freeze_work))
+	intrinsics.mem_zero_volatile(&gc_state, size_of(gc_state))
+	intrinsics.mem_zero_volatile(&gc_roots_copy, size_of(gc_roots_copy))
+	intrinsics.mem_zero_volatile(&gc_stored_hashes, size_of(gc_stored_hashes))
+	intrinsics.mem_zero_volatile(&gc_sweep_hashes, size_of(gc_sweep_hashes))
 	intrinsics.mem_zero_volatile(&object_work, size_of(object_work))
 	intrinsics.mem_zero_volatile(&object_node, size_of(object_node))
 	intrinsics.mem_zero_volatile(&object_nodes, size_of(object_nodes))
@@ -359,6 +405,10 @@ erase_transient_buffers :: proc "contextless" () {
 	intrinsics.mem_zero_volatile(&read_room, size_of(read_room))
 	intrinsics.mem_zero_volatile(&immutable_tree_scratch, size_of(immutable_tree_scratch))
 	intrinsics.mem_zero_volatile(&listed, size_of(listed))
+	intrinsics.mem_zero_volatile(&oldest, size_of(oldest))
+	intrinsics.mem_zero_volatile(&oldest_walks, size_of(oldest_walks))
+	intrinsics.mem_zero_volatile(&added_rows, size_of(added_rows))
+	intrinsics.mem_zero_volatile(&added_names, size_of(added_names))
 	intrinsics.mem_zero_volatile(&removal_names, size_of(removal_names))
 	intrinsics.mem_zero_volatile(&removal_values, size_of(removal_values))
 	intrinsics.mem_zero_volatile(&plan_fixed.release_lists, size_of(plan_fixed.release_lists))
@@ -374,9 +424,12 @@ erase_transient_buffers :: proc "contextless" () {
 // drops their pending pools, and erases transient plaintext buffers.
 owned_checks_clear :: proc "contextless" (slot: u64) {
 	mark := u8(slot + 1)
-	// Evict only block_cache entries tagged to stores owned by this slot.
+	// Evict only block_cache entries tagged to this slot or its verified stores.
 	for &entry in block_cache {
-		if entry.number != 0 && entry.store_index >= 0 && int(entry.store_index) < format.STORE_CAPACITY && owned_checked[entry.store_index] == mark {
+		if entry.number == 0 {
+			continue
+		}
+		if entry.owner_slot == mark || (entry.store_index >= 0 && int(entry.store_index) < format.STORE_CAPACITY && owned_checked[entry.store_index] == mark) {
 			intrinsics.mem_zero_volatile(&entry, size_of(Cached_Block))
 		}
 	}

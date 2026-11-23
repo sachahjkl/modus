@@ -4,7 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-
 ## Next
 
 - **A surface of unlock in no capture, and the unlock hints.** No capture of the screen holds the window of `unlock`, and the file of a principal keeps the layout in which its passphrase was typed. [Design](src/md/features/several_principals.md)

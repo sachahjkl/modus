@@ -235,6 +235,8 @@ State :: struct {
 	root:       Pointer, // The root of the block tree: an object node, the one block of data, or no block when each byte is zero.
 	size:       u64, // The bytes of the object.
 	data_check: u64, // For a 1-block encrypted object: value_check of its plaintext data block; 0 otherwise.
+	hash:       blake3.Hash, // Full object BLAKE3 hash when known (current Entry); zero for versions.
+	has_hash:   bool, // True when hash holds the authenticated Entry.hash to check on 1-block reads.
 }
 
 // node_valid checks the rules of the format for an object node of `level`
@@ -356,6 +358,12 @@ block_read :: proc "contextless" (source: ^Source, state: State, index: u64, int
 		return .Good
 	}
 	_, outcome = block_check(source, pointer, index, into, data_check, expected_value, value_known)
+	if outcome == .Good && format.object_levels(state.size) == 0 && state.has_hash {
+		if blake3.hash(into[:state.size]) != state.hash {
+			intrinsics.mem_zero_volatile(into, size_of(Block))
+			return .Wrong
+		}
+	}
 	return outcome
 }
 

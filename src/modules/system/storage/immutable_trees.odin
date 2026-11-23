@@ -389,11 +389,14 @@ freeze_tree :: proc "c" (place: i64, target_place: i64, result: ^[]u8, error: ^e
 		persist_entry_object = immutable_persist_entry_object,
 		data                 = &ctx,
 	}
-	scope, crypto_ok := store_crypto_enter(source_store_index)
-	if !crypto_ok {
+	scope, crypto_read := store_crypto_enter(source_store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail(error, .Callee_Unavailable, .Device)
+		}
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	root_hash, status := immutable_tree.freeze_tree(&freeze_work, &node_source, &freeze_tree_pool, source_root, &backend)
 	if status != .Ok {
 		return tree_store_status_fail(status, &ctx, error, 1)
@@ -619,11 +622,14 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 			return lookup_refusal(lookup, error, 1), 0
 		}
 		// Scan content-addressed (64 lowercase hex digit) object entries under place.
-		gc_scope, gc_crypto_ok := store_crypto_enter(store_index)
-		if !gc_crypto_ok {
+		gc_scope, gc_crypto_read := store_crypto_enter(store_index)
+		if gc_crypto_read != .Good {
+			if gc_crypto_read == .Device {
+				return call_outcome.fail(error, .Callee_Unavailable, .Device)
+			}
 			return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 		}
-		defer store_crypto_leave(gc_scope)
+		defer store_crypto_leave(&gc_scope)
 		cursor: Entry_Name
 		has_cursor := false
 		for {

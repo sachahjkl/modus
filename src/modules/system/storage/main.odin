@@ -593,11 +593,14 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 	if store_damaged[store_index] {
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 	}
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail(error, .Callee_Unavailable, .Device)
+		}
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	root_node, lookup := tree_of(store_index, path_names(&path))
 	if lookup != .Found {
 		if lookup == .Absent {
@@ -1106,11 +1109,14 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 	if located != .Succeeded {
 		return located, 0
 	}
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail(error, .Callee_Unavailable, .Device)
+		}
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	states: [2]State_Of_Object
 	for generation, index in ([2]i64{first, second}) {
 		state, state_refused := state_at(store_index, &object, generation, 3 + i64(index), error)

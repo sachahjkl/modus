@@ -441,26 +441,40 @@ pending_drop_of :: proc "contextless" (holder: system.Handle) {
 	}
 }
 
-// pending_drop_slot volatile-zeroes and drops every pending pool that holds
-// pending objects for any store belonging to principal `slot`.
+// pending_drop_slot volatile-zeroes all committed arena pages and drops every
+// pending pool belonging to principal `slot` (covering live objects, free
+// object lists, free block lists, and rewound arena bytes).
 pending_drop_slot :: proc "contextless" (slot: u64) {
 	for &pool in pending_pools {
 		if pool.holder == 0 {
 			continue
 		}
 		owns := false
-		for pending := pool.objects; pending != nil; pending = pending.next {
-			if owned_slot(system.name_of(pending.store[:])) == slot {
-				owns = true
-				break
+		if store_of, _, found := connection_store(pool.holder, 0); found && owned_slot(store_of.name) == slot {
+			owns = true
+		}
+		if !owns {
+			for pending := pool.objects; pending != nil; pending = pending.next {
+				if owned_slot(system.name_of(pending.store[:])) == slot {
+					owns = true
+					break
+				}
+			}
+		}
+		if !owns {
+			for pending := pool.free_objects; pending != nil; pending = pending.next {
+				if owned_slot(system.name_of(pending.store[:])) == slot {
+					owns = true
+					break
+				}
 			}
 		}
 		if !owns {
 			continue
 		}
-		for pending := pool.objects; pending != nil; pending = pending.next {
-			for block := pending.first_block; block != nil; block = block.next {
-				intrinsics.mem_zero_volatile(&block.bytes, size_of(block.bytes))
+		for &arena in pool.arenas[:pool.arena_count] {
+			if arena.base != nil && arena.committed_pages > 0 {
+				intrinsics.mem_zero_volatile(arena.base, int(arena.committed_pages * system.PAGE_SIZE))
 			}
 		}
 		pool_end(&pool)

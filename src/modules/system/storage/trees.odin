@@ -474,6 +474,10 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	}
 	if store_index >= 0 {
 		plan_reset(store_index)
+		if plan_refused() {
+			_, refusal := plan_refusal(error)
+			return -1, refusal
+		}
 		plan_cell().limit = store.limit
 		removal_stalled[store_index] = false // A change of the store tries a stopped removal again.
 		return store_index, .Succeeded
@@ -521,9 +525,7 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 		plan.encrypted = true
 		plan.owner_slot = slot
 		plan.store_keys = new_store_keys
-		active_store_keys = &plan.store_keys
-		active_store_index = store_index
-		object_source.encrypted = true
+		store_crypto_set_active(store_index, u8(slot + 1), &plan.store_keys)
 	} else {
 		copy(plan_cell().name[:NAME_CAPACITY - 1], store.name)
 	}
@@ -645,7 +647,7 @@ current_state :: proc "contextless" (entry: ^Entry) -> State_Of_Object {
 }
 
 tree_state :: proc "contextless" (state: State_Of_Object) -> block_tree.State {
-	return {root = state.root, size = state.size, data_check = state.data_check}
+	return {root = state.root, size = state.size, data_check = state.data_check, hash = state.hash, has_hash = state.has_hash}
 }
 
 // The work of a commit on one object (src/library/internal/storage/storage_object): the copies
@@ -712,12 +714,15 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		if hash_store < 0 {
 			return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Objects, name_argument)
 		}
-		hash_scope, hash_crypto_ok := store_crypto_enter(hash_store)
-		if !hash_crypto_ok {
+		hash_scope, hash_crypto_read := store_crypto_enter(hash_store)
+		if hash_crypto_read != .Good {
+			if hash_crypto_read == .Device {
+				return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
+			}
 			return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
 		}
 		hash, outcome := block_tree.state_hash(&object_source, tree_state(source), &object_hash_room)
-		store_crypto_leave(hash_scope)
+		store_crypto_leave(&hash_scope)
 		switch outcome {
 		case .Device:
 			return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
@@ -1552,11 +1557,11 @@ reading_outcome :: proc "contextless" (store_index: int) -> Lookup {
 
 // tree_of gives the root of the tree at a path of a store.
 tree_of :: proc "contextless" (store_index: int, path: []Entry_Name) -> (root_node: Pointer, outcome: Lookup) {
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
-		return {}, .Wrong
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		return {}, crypto_read == .Device ? .Device : .Wrong
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	tree.pool_reset(&reading_pool)
 	root_node = store_blocks[store_index].tree
 	for step in path {
@@ -1576,11 +1581,11 @@ tree_of :: proc "contextless" (store_index: int, path: []Entry_Name) -> (root_no
 
 // entry_of gives the entry of a name in the tree at a path of a store.
 entry_of :: proc "contextless" (store_index: int, path: []Entry_Name, name: Entry_Name) -> (value: Entry, outcome: Lookup) {
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
-		return {}, .Wrong
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		return {}, crypto_read == .Device ? .Device : .Wrong
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	root_node, found := tree_of(store_index, path)
 	if found != .Found {
 		return {}, found
@@ -1628,11 +1633,11 @@ tree_usage_walks: [NESTING_LIMIT + 1]tree.Walk
 
 // tree_usage counts the tree at a path of a store.
 tree_usage :: proc "contextless" (store_index: int, path: []Entry_Name) -> (counts: Tree_Usage, outcome: Lookup) {
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
-		return {}, .Wrong
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		return {}, crypto_read == .Device ? .Device : .Wrong
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	root_node, found := tree_of(store_index, path)
 	if found != .Found {
 		return {}, found
@@ -1765,11 +1770,14 @@ state_read :: proc "contextless" (store_index: int, state: State_Of_Object, offs
 	if state_damaged(state.root) {
 		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, argument)
 	}
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
+		}
 		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	count, read := block_tree.range_read(&object_source, tree_state(state), offset, result, &read_room, &object_node)
 	switch read {
 	case .Device:
@@ -1794,11 +1802,14 @@ versions_list :: proc "contextless" (store_index: int, object: ^Entry, error: ^e
 	if object.versions.block == 0 {
 		return 0, .Succeeded
 	}
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
+		}
 		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	index: Version_Index
 	switch read_version_index(object.versions, &index) {
 	case .Device:
@@ -1865,11 +1876,11 @@ own_blocks :: proc "contextless" (store_index: int, root: Pointer, size: u64) ->
 	if root.block == 0 || root.block >= opened.capacity || storage_mount.block_count(&opened, root.block) != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
 		return 0
 	}
-	scope, crypto_ok := store_crypto_enter(store_index)
-	if !crypto_ok {
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
 		return 0
 	}
-	defer store_crypto_leave(scope)
+	defer store_crypto_leave(&scope)
 	return own_under({block = root.block, check = root.check}, format.object_levels(size))
 }
 

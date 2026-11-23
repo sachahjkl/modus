@@ -2,6 +2,7 @@
 package storage_object
 
 import "core:testing"
+import "modus:contract/blake3"
 import "internal:storage/store_encryption"
 
 @(private = "file")
@@ -134,10 +135,16 @@ encrypted_object_single_multi_resize_cut_and_tamper :: proc(t: ^testing.T) {
 	testing.expect(t, res1.data_check != 0)
 	testing.expect(t, disk.blocks[res1.root.block] != b0, "data block on disk must be ciphertext")
 
-	state1 := State{root = res1.root, size = 1000, data_check = res1.data_check}
+	state1 := State{root = res1.root, size = 1000, data_check = res1.data_check, hash = blake3.hash(b0[:1000]), has_hash = true}
 	scratch_node: Node
 	testing.expect_value(t, block_read(&disk.source, state1, 0, &out, &scratch_node), Read.Good)
 	testing.expect(t, out == b0)
+
+	// Tampered 256-bit Entry.hash on 1-block read with matching data_check must fail and erase out.
+	bad_hash_state := state1
+	bad_hash_state.hash[31] ~= 0x01
+	testing.expect_value(t, block_read(&disk.source, bad_hash_state, 0, &out, &scratch_node), Read.Wrong)
+	testing.expect(t, out == Block{}, "failed 1-block hash check must erase output buffer")
 
 	// Wrong data_check on 1-block read must fail and erase out.
 	bad_state := State{root = res1.root, size = 1000, data_check = res1.data_check ~ 1}

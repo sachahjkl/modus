@@ -423,12 +423,13 @@ Cached_Block :: struct {
 	check:       u64,
 	used:        u64, // The count of reads at its last use.
 	store_index: i32, // Owning store cell index, or -1 for non-store blocks.
+	owner_slot:  u8,  // Principal slot + 1 for owned stores; 0 for principal 0 or untagged.
 	bytes:       Block,
 }
 block_cache: [64]Cached_Block // The nodes near the roots of the trees that the last calls used (always on-disk bytes).
 cache_reads: u64
 
-cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
+cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block, store_index := active_store_index, owner_slot := active_store_owner_slot) {
 	oldest := 0
 	for &entry, index in block_cache {
 		if entry.number == pointer.block {
@@ -440,8 +441,22 @@ cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 		}
 	}
 	cache_reads += 1
-	block_cache[oldest] = {number = pointer.block, check = pointer.check, used = cache_reads, store_index = i32(active_store_index)}
+	block_cache[oldest] = {number = pointer.block, check = pointer.check, used = cache_reads, store_index = i32(store_index), owner_slot = owner_slot}
 	block_cache[oldest].bytes = bytes^
+}
+
+// cache_tag binds an already cached block to its verified store and principal slot.
+cache_tag :: proc "contextless" (pointer: Pointer, store_index: int, owner_slot: u8) {
+	if pointer.block == 0 {
+		return
+	}
+	for &entry in block_cache {
+		if entry.number == pointer.block && entry.check == pointer.check {
+			entry.store_index = i32(store_index)
+			entry.owner_slot = owner_slot
+			return
+		}
+	}
 }
 
 // cache_forget drops a block from the cache: the erase of versions writes
@@ -454,12 +469,20 @@ cache_forget :: proc "contextless" (number: u64) {
 	}
 }
 
-// read_single reads one block, checked, through the cache (on-disk bytes).
-read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
+// read_single_tagged reads one block, checked, through the cache (on-disk
+// bytes), tagging any cache fill or untagged cache hit with store_index and
+// owner_slot so lock eviction always removes every block of that principal.
+read_single_tagged :: proc "contextless" (pointer: Pointer, into: ^Block, store_index: int, owner_slot: u8) -> Read {
 	cache_reads += 1
 	for &entry in block_cache {
 		if entry.number == pointer.block && entry.check == pointer.check && pointer.block != 0 {
 			entry.used = cache_reads
+			if store_index >= 0 && entry.store_index < 0 {
+				entry.store_index = i32(store_index)
+			}
+			if owner_slot != 0 && entry.owner_slot == 0 {
+				entry.owner_slot = owner_slot
+			}
 			into^ = entry.bytes
 			return .Good
 		}
@@ -467,9 +490,14 @@ read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
 	_, state := read_checked({pointer}, 0)
 	if state == .Good {
 		intrinsics.mem_copy_non_overlapping(into, raw_data(slot(0)), BLOCK_SIZE)
-		cache_put(pointer, into)
+		cache_put(pointer, into, store_index, owner_slot)
 	}
 	return state
+}
+
+// read_single reads one block, checked, through the cache (on-disk bytes).
+read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
+	return read_single_tagged(pointer, into, active_store_index, active_store_owner_slot)
 }
 
 // read_tree_node reads a B+ tree node and opens/authenticates it when an
@@ -1098,7 +1126,7 @@ plan_tables_bind :: proc "contextless" (writes: []Write, taken: []u64, delta_blo
 
 plan_crypto_end :: proc "contextless" () {
 	if plan.crypto_active {
-		store_crypto_leave(plan.prev_crypto)
+		store_crypto_leave(&plan.prev_crypto)
 		plan.crypto_active = false
 	}
 	intrinsics.mem_zero_volatile(&plan.store_keys, size_of(plan.store_keys))
@@ -1130,26 +1158,36 @@ plan_reset :: proc "contextless" (store_index: int) {
 	later_count = 0
 	plan.next = root
 	plan.store_block = store_index >= 0 ? storage_mount.store_block_of(store_blocks[store_index]) : {}
+	// Always switch away from any outer crypto scope before inspecting the
+	// target store, so a failure never leaks outer keys and plan_drop restores
+	// the outer scope cleanly.
+	plan.prev_crypto = store_crypto_enter_keys(store_index, 0, nil)
+	plan.crypto_active = true
 	// The head keeps no owner fields: the commit of a store of a principal
 	// keeps those of its verified store block and activates its Store_Keys.
 	if store_index >= 0 && store_index < store_numbers() && owned_cell(store_index) {
-		if keys := owned_store_keys_get(store_index); keys != nil {
-			if owner, read := owned_fields_read(store_index); read {
+		keys, keys_read := owned_store_keys_get(store_index)
+		defer intrinsics.mem_zero_volatile(&keys, size_of(keys))
+		switch keys_read {
+		case .Good:
+			owner, fields_read := owned_fields_read(store_index)
+			switch fields_read {
+			case .Good:
 				format.store_owner_set(&plan.store_block, owner)
 				plan.encrypted = true
 				plan.owner_slot = u64(owned_checked[store_index] - 1)
-				plan.store_keys = keys^
-				plan.prev_crypto = store_crypto_enter_keys(store_index, &plan.store_keys)
-				plan.crypto_active = true
-			} else {
+				plan.store_keys = keys
+				store_crypto_set_active(store_index, owned_checked[store_index], &plan.store_keys)
+			case .Device:
 				plan.device = true
+			case .Wrong:
+				plan.tree_damaged = true
 			}
-		} else {
+		case .Device:
+			plan.device = true
+		case .Wrong:
 			plan.tree_damaged = true
 		}
-	} else {
-		plan.prev_crypto = store_crypto_enter_keys(store_index, nil)
-		plan.crypto_active = true
 	}
 	plan.page_written = {}
 	if store_index >= 0 {
@@ -2664,7 +2702,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 		if plan.store_block.store_generation > owned_min_generation[plan.store_index] {
 			owned_min_generation[plan.store_index] = plan.store_block.store_generation
 		}
-		_ = owned_store_keys_put(plan.store_index, plan.owner_slot, &plan.store_keys)
+		owned_store_keys_put(plan.store_index, plan.owner_slot, &plan.store_keys)
 	}
 	plan_crypto_end()
 	// A commit can free the blocks that a repair found no room for.

@@ -184,7 +184,7 @@ Cryptography_Adjustment :: struct {
 }
 
 // The listed adjustments (docs/CRYPTOGRAPHY.md, section 4, "Listed
-// adjustments"). There are two groups.
+// adjustments"). There are four groups.
 //
 // The adjustments of _chacha20/chacha20.odin are one correction of the
 // origin, offered to Odin as its pull request 8329: the counter check of
@@ -207,6 +207,12 @@ Cryptography_Adjustment :: struct {
 // runs (docs/MODULE_CONTRACT.md, "Package variables are constant data at
 // the load"). The two calls that read it take the address of the table
 // themselves, so the code depends on no start.
+//
+// The adjustments of _chacha20/simd128/chacha20_simd128.odin switch `core:simd`
+// to `compatibility_simd`, lower the amd64 target feature attribute to baseline
+// `"sse2"` so it runs on every x86-64 processor and QEMU without SSE4.1, and
+// replace the runtime `core:sys/info` feature check with a compile-time
+// architecture predicate (`amd64` or `arm64`).
 cryptography_adjustments := [?]Cryptography_Adjustment {
 	{
 		"core/crypto/_edwards25519/edwards25519_table.odin",
