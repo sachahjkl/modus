@@ -3,6 +3,7 @@
 package tls_tcp
 
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:cryptography_primitives"
 
@@ -120,13 +121,14 @@ record_encrypt :: proc "contextless" (keys: ^Traffic_Keys, inner_type: Tls_Conte
 	err: errors.Error_Record
 
 	sealed: i64
+	sealed_outcome: call_outcome.Call_Outcome
 	switch keys.suite {
 	case .TLS_AES_128_GCM_SHA256:
-		sealed = cryptography_primitives.seal_with_aes_128_gcm(&key_text, &nonce_text, &aad_text, &plain_text, &cipher_slice, &err)
+		sealed_outcome, sealed = cryptography_primitives.seal_with_aes_128_gcm(&key_text, &nonce_text, &aad_text, &plain_text, &cipher_slice, &err)
 	case .TLS_CHACHA20_POLY1305_SHA256:
-		sealed = cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &plain_text, &cipher_slice, &err)
+		sealed_outcome, sealed = cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &plain_text, &cipher_slice, &err)
 	}
-	if sealed != i64(cipher_len) {
+	if sealed_outcome != .Succeeded || sealed != i64(cipher_len) {
 		return 0, .Crypto_Failed
 	}
 
@@ -171,13 +173,14 @@ record_decrypt :: proc "contextless" (keys: ^Traffic_Keys, record_bytes: []u8, p
 	err: errors.Error_Record
 
 	opened: i64
+	opened_outcome: call_outcome.Call_Outcome
 	switch keys.suite {
 	case .TLS_AES_128_GCM_SHA256:
-		opened = cryptography_primitives.open_with_aes_128_gcm(&key_text, &nonce_text, &aad_text, &sealed_text, &dest, &err)
+		opened_outcome, opened = cryptography_primitives.open_with_aes_128_gcm(&key_text, &nonce_text, &aad_text, &sealed_text, &dest, &err)
 	case .TLS_CHACHA20_POLY1305_SHA256:
-		opened = cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &sealed_text, &dest, &err)
+		opened_outcome, opened = cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &sealed_text, &dest, &err)
 	}
-	if opened != i64(inner_len) {
+	if opened_outcome != .Succeeded || opened != i64(inner_len) {
 		return {}, 0, .Authentication_Failed
 	}
 

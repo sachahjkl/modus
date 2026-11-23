@@ -253,8 +253,8 @@ history_clear :: proc "contextless" (arguments: []Value) -> Value {
 		return {kind = .Integer, integer = i64(count)} // It had no store.
 	}
 	error: errors.Error_Record
-	result, status := storage.remove(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, &error)
-	if status == .Ok || storage.export_failed_with(status, result, .Absent) {
+	_, status := storage.remove(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, &error)
+	if status == .Ok || status == .Absent {
 		return {kind = .Integer, integer = i64(count)}
 	}
 	text: [240]u8

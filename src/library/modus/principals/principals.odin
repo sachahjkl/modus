@@ -1373,7 +1373,7 @@ secret_keys_public_keys :: proc "contextless" (secrets: ^[SECRET_KEYS_SIZE]u8) -
 	error: errors.Error_Record
 	seed := string(secrets^[:32])
 	signing_result := signing[:]
-	if cryptography_primitives.ed25519_public_key(&seed, &signing_result, &error) != PUBLIC_KEY_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_public_key(&seed, &signing_result, &error); crypto_outcome != .Succeeded || crypto_count != PUBLIC_KEY_SIZE {
 		return {}, {}, false
 	}
 	base_point: [PUBLIC_KEY_SIZE]u8
@@ -1381,7 +1381,7 @@ secret_keys_public_keys :: proc "contextless" (secrets: ^[SECRET_KEYS_SIZE]u8) -
 	scalar := string(secrets^[32:])
 	point := string(base_point[:])
 	unlocking_result := unlocking[:]
-	if cryptography_primitives.x25519(&scalar, &point, &unlocking_result, &error) != PUBLIC_KEY_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.x25519(&scalar, &point, &unlocking_result, &error); crypto_outcome != .Succeeded || crypto_count != PUBLIC_KEY_SIZE {
 		return {}, {}, false
 	}
 	return signing, unlocking, true
@@ -1424,7 +1424,7 @@ record_open_verify :: proc "contextless" (
 	sealed_text := string(decoded.sealed[:])
 	result := recovered[:]
 	error: errors.Error_Record
-	if cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed_text, &result, &error) != SECRET_KEYS_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed_text, &result, &error); crypto_outcome != .Succeeded || crypto_count != SECRET_KEYS_SIZE {
 		return .Open_Failed
 	}
 	if crypto.compare_constant_time(recovered[:], expected_secrets^[:]) != 1 {
@@ -1512,7 +1512,7 @@ non_tpm_recovery_derive_key :: proc "contextless" (
 	info_text := string(info_bytes[:])
 	key_slice := out_key^[:]
 	error: errors.Error_Record
-	if cryptography_primitives.hkdf_sha256_expand(&prk_text, &info_text, value_kinds.Size_In_Bytes(KEY_SIZE), &key_slice, &error) != KEY_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.hkdf_sha256_expand(&prk_text, &info_text, value_kinds.Size_In_Bytes(KEY_SIZE), &key_slice, &error); crypto_outcome != .Succeeded || crypto_count != KEY_SIZE {
 		crypto.zero_explicit(out_key, size_of(out_key^))
 		return false
 	}
@@ -1573,7 +1573,7 @@ non_tpm_recovery_seal :: proc "contextless" (
 	plain_text := string(secrets^[:])
 	sealed_slice := out^[NON_TPM_RECOVERY_OFFSET_SEALED:][:SEALED_SIZE]
 	error: errors.Error_Record
-	if cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error) != SEALED_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error); crypto_outcome != .Succeeded || crypto_count != SEALED_SIZE {
 		out^ = {}
 		return .Bad_Keys
 	}
@@ -1658,7 +1658,7 @@ non_tpm_recovery_open :: proc "contextless" (
 	sealed_text := string(decoded.sealed[:])
 	result := recovered[:]
 	error: errors.Error_Record
-	if cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed_text, &result, &error) != SECRET_KEYS_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed_text, &result, &error); crypto_outcome != .Succeeded || crypto_count != SECRET_KEYS_SIZE {
 		return {}, .Not_Authentic
 	}
 	signing, unlocking, derived_ok := secret_keys_public_keys(&recovered)

@@ -2296,14 +2296,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface paint"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "paint.line(0, 0, 10, 10, 16)"},
-	{kind = .Wait, text = "error: paint.line: the argument color has the value 16, which the call refuses; it takes at most 15"},
+	{kind = .Wait, text = "error: paint.line: Argument_Refused: the argument color has the value 16, which the call refuses; it takes at most 15"},
 	// A text below the last row of the picture, and a glider at a negative
 	// column: each is refused with its record, and draws nothing. The
 	// picture of a new window is 640 x 352.
 	{kind = .Type, text = "paint.write(0, 352, \"below the picture\", 0)"},
-	{kind = .Wait, text = "error: paint.write: the argument y has the value 352, which the call refuses; it takes at most 351"},
+	{kind = .Wait, text = "error: paint.write: Argument_Refused: the argument y has the value 352, which the call refuses; it takes at most 351"},
 	{kind = .Type, text = "life.glider(-1, 10)"},
-	{kind = .Wait, text = "error: life.glider: the argument column has -1; it must have at least 0"},
+	{kind = .Wait, text = "error: life.glider: Argument_Refused: the argument column has -1; it must have at least 0"},
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
 	// (After the check of the log: these lines do not push the boot

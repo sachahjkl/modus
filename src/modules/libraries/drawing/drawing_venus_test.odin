@@ -3,6 +3,7 @@ package drawing
 
 import "core:testing"
 import "modus:contract/draw_record"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/venus_vulkan"
 import "modus:contract/webgpu_subset"
@@ -42,13 +43,13 @@ Venus_Call :: struct {
 }
 
 @(private = "file")
-call :: proc(arguments: Venus_Call) -> (result: i64, refused: errors.Error_Record) {
+call :: proc(arguments: Venus_Call) -> (result: i64, refused: errors.Error_Record, outcome: call_outcome.Call_Outcome) {
 	now := system.Table_To_Read(draw_record.Draw_Record){records = raw_data(arguments.records), count = u64(len(arguments.records)), capacity = u64(len(arguments.records))}
 	text := system.Bytes_To_Read{bytes = raw_data(arguments.text), count = u64(len(arguments.text)), capacity = u64(len(arguments.text))}
 	scratch := system.Bytes_To_Change{bytes = raw_data(arguments.scratch), count = u64(len(arguments.scratch)), capacity = u64(len(arguments.scratch))}
 	venus := system.Bytes_To_Change{bytes = raw_data(arguments.venus), count = u64(len(arguments.venus)), capacity = u64(len(arguments.venus))}
 	target := arguments.target
-	result = draw_table_to_venus_20(&now, &text, &scratch, &venus, &target, &refused)
+	outcome, result = draw_table_to_venus_20(&now, &text, &scratch, &venus, &target, &refused)
 	return
 }
 
@@ -67,8 +68,9 @@ fill_venus :: proc(bytes: []u8) {
 @(private = "file")
 expect_refused :: proc(t: ^testing.T, arguments: Venus_Call, kind: errors.Kind, unit: errors.Unit, argument: i64, value: i64, loc := #caller_location) {
 	fill_venus(arguments.venus)
-	result, refused := call(arguments)
-	testing.expect_value(t, result, -1, loc = loc)
+	result, refused, outcome := call(arguments)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused, loc = loc)
+	testing.expect_value(t, result, 0, loc = loc)
 	testing.expect_value(t, refused.kind, i64(kind), loc = loc)
 	testing.expect_value(t, refused.unit, i64(unit), loc = loc)
 	testing.expect_value(t, refused.argument, argument, loc = loc)
@@ -103,7 +105,8 @@ draw_table_to_venus_writes_the_frame :: proc(t: ^testing.T) {
 	scratch: [16384]u8
 	venus: [16384]u8
 	// An empty table clears the image and reads it back.
-	written, refused := call({scratch = scratch[:], venus = venus[:], target = TARGET})
+	written, refused, outcome := call({scratch = scratch[:], venus = venus[:], target = TARGET})
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.None))
 	testing.expect(t, written > 0)
 	types: [64]venus_vulkan.Command_Type
@@ -126,7 +129,8 @@ draw_table_to_venus_writes_the_frame :: proc(t: ^testing.T) {
 		pixel_rectangle(0x80FF_0000, 0, 0, 64, 48),
 		draw_record.record_of(draw_record.Draw_Clip_Pop{}, 0, 0, 0, 0, 0),
 	}
-	written, refused = call({records = records[:], scratch = scratch[:], venus = venus[:], target = TARGET})
+	written, refused, outcome = call({records = records[:], scratch = scratch[:], venus = venus[:], target = TARGET})
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.None))
 	count = command_types(t, venus[:written], types[:])
 	updates, scissors, draws := 0, 0, 0
@@ -151,7 +155,8 @@ draw_table_to_venus_writes_the_frame :: proc(t: ^testing.T) {
 	kept := TARGET
 	kept.start = 1
 	kept.format = 44
-	written, refused = call({records = records[:], scratch = scratch[:], venus = venus[:], target = kept})
+	written, refused, outcome = call({records = records[:], scratch = scratch[:], venus = venus[:], target = kept})
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, refused.kind, i64(errors.Kind.None))
 	testing.expect(t, written > 0)
 }
@@ -244,8 +249,8 @@ draw_table_to_venus_refuses_tables_and_sizes :: proc(t: ^testing.T) {
 	expect_refused(t, arguments, .Too_Small, .Bytes, ARGUMENT_TARGET, 64)
 
 	// An output one word short of the stream, and no output.
-	needed, _ := call(base)
-	testing.expect(t, needed > 4)
+	needed, _, needed_outcome := call(base)
+	testing.expect(t, needed_outcome == .Succeeded && needed > 4)
 	arguments = base
 	arguments.venus = venus[:needed - 4]
 	expect_refused(t, arguments, .Too_Small, .Bytes, ARGUMENT_VENUS, needed - 4)
@@ -253,7 +258,8 @@ draw_table_to_venus_refuses_tables_and_sizes :: proc(t: ^testing.T) {
 	expect_refused(t, arguments, .Too_Small, .Bytes, ARGUMENT_VENUS, 0)
 	// The exact size is enough.
 	arguments.venus = venus[:needed]
-	exact, _ := call(arguments)
+	exact, _, exact_outcome := call(arguments)
+	testing.expect_value(t, exact_outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, exact, needed)
 
 	// A frame whose stream does not fit in one packet.
@@ -277,14 +283,14 @@ draw_table_to_venus_refuses_tables_and_sizes :: proc(t: ^testing.T) {
 	output := system.Bytes_To_Change{bytes = &venus[0], count = len(venus), capacity = len(venus)}
 	target := TARGET
 	refused: errors.Error_Record
-	testing.expect_value(t, draw_table_to_venus_20(&now, &text, &huge, &output, &target, &refused), -1)
+	testing.expect_value(t, answer_of(draw_table_to_venus_20(&now, &text, &huge, &output, &target, &refused)), Answer{.Argument_Refused, 0})
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, refused.argument, ARGUMENT_SCRATCH)
 	ordinary := system.Bytes_To_Change{bytes = &scratch[0], count = len(scratch), capacity = len(scratch)}
-	testing.expect_value(t, draw_table_to_venus_20(&now, &text, &ordinary, &huge, &target, &refused), -1)
+	testing.expect_value(t, answer_of(draw_table_to_venus_20(&now, &text, &ordinary, &huge, &target, &refused)), Answer{.Argument_Refused, 0})
 	testing.expect_value(t, refused.argument, ARGUMENT_VENUS)
 	far := system.Table_To_Read(draw_record.Draw_Record){records = &records[0], count = TABLE_LIMIT + 1, capacity = 1}
-	testing.expect_value(t, draw_table_to_venus_20(&far, &text, &ordinary, &output, &target, &refused), -1)
+	testing.expect_value(t, answer_of(draw_table_to_venus_20(&far, &text, &ordinary, &output, &target, &refused)), Answer{.Argument_Refused, 0})
 	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, refused.argument, ARGUMENT_NOW)
 }

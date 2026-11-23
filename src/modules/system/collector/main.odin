@@ -8,6 +8,7 @@ package collector_service
 
 import "base:intrinsics"
 import "internal:collector/collector_core"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -64,7 +65,7 @@ fail :: proc "contextless" (text: string) -> ! {
 // for the principal of the collector: the act records of a wide grant are
 // the audit of its holder, which the holder never reads.
 @(private = "file")
-act_reader_check :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i64, ok: bool) {
+act_reader_check :: proc "contextless" (error: ^errors.Error_Record) -> (failure: call_outcome.Call_Outcome, ok: bool) {
 	_, failure, ok = principal_reader_of(space_service.store.principal, system.service_caller(), error)
 	return failure, ok
 }
@@ -72,39 +73,39 @@ act_reader_check :: proc "contextless" (error: ^errors.Error_Record) -> (failure
 // act_record_count returns the number of hash-chained act records of wide
 // grants stored in the collector.
 @(export)
-act_record_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+act_record_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := act_reader_check(error); !ok {
-		return failure
+		return failure, 0
 	}
 	if !manager_state.collector.initialized {
-		return errors.fail(error, -1, .State, .Records)
+		return call_outcome.fail(error, .Wrong_State, .State, .Records)
 	}
-	return i64(manager_state.collector.count)
+	return .Succeeded, i64(manager_state.collector.count)
 }
 
 // active_grant_count returns the number of currently active wide grants.
 @(export)
-active_grant_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+active_grant_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := act_reader_check(error); !ok {
-		return failure
+		return failure, 0
 	}
 	if !manager_state.collector.initialized {
-		return errors.fail(error, -1, .State, .Grants)
+		return call_outcome.fail(error, .Wrong_State, .State, .Grants)
 	}
-	return i64(manager_state.counters.active_grants)
+	return .Succeeded, i64(manager_state.counters.active_grants)
 }
 
 // status writes aggregate collector and wide-grant counters into out.
 @(export)
-status :: proc "c" (out: ^Collector_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (out: ^Collector_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := act_reader_check(error); !ok {
-		return failure
+		return failure, 0
 	}
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if !manager_state.collector.initialized {
-		return errors.fail(error, -2, .State, .Records)
+		return call_outcome.fail(error, .Wrong_State, .State, .Records)
 	}
 	out^ = {
 		active_grants        = i64(manager_state.counters.active_grants),
@@ -116,20 +117,20 @@ status :: proc "c" (out: ^Collector_Status, error: ^errors.Error_Record) -> i64 
 		recorded_acts        = i64(manager_state.collector.count),
 		refused_full_count   = i64(manager_state.collector.refused_full_count),
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // verify_chain walks the full hash-chained act store and reports integrity.
 @(export)
-verify_chain :: proc "c" (out: ^Chain_Verification_Report, error: ^errors.Error_Record) -> i64 {
+verify_chain :: proc "c" (out: ^Chain_Verification_Report, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if failure, ok := act_reader_check(error); !ok {
-		return failure
+		return failure, 0
 	}
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if !manager_state.collector.initialized {
-		return errors.fail(error, -2, .State, .Records)
+		return call_outcome.fail(error, .Wrong_State, .State, .Records)
 	}
 	refusal, failing_index := collector_core.collector_verify(&manager_state.collector)
 	out^ = {
@@ -140,9 +141,9 @@ verify_chain :: proc "c" (out: ^Chain_Verification_Report, error: ^errors.Error_
 	}
 	if refusal != .None {
 		system.log_fact(.Error, Chain_Verification_Failed{failing_index = failing_index, refusal_code = u64(refusal)})
-		return errors.fail(error, -3, .Damaged, .Records, 0, i64(failing_index), i64(manager_state.collector.count), i64(refusal))
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Records, 0, i64(failing_index), i64(manager_state.collector.count), i64(refusal))
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // act_records_read_for gives the act records of grant (0 for each grant)
@@ -158,34 +159,34 @@ act_records_read_for :: proc "contextless" (
 	result: ^system.Table_To_Append(wide_grants.Act_Record),
 	staging: []wide_grants.Act_Record,
 	error: ^errors.Error_Record,
-) -> i64 {
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if _, failure, ok := principal_reader_of(principal, connection, error); !ok {
-		return failure
+		return failure, 0
 	}
 	if !manager.collector.initialized {
-		return errors.fail(error, ERROR_SPACE, .State, .Records)
+		return call_outcome.fail(error, .Wrong_State, .State, .Records)
 	}
 	if grant < 0 {
-		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 1, grant, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, grant, 0)
 	}
 	if first < 0 {
-		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 2, first, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, first, 0)
 	}
 	if last < first {
-		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 3, last, first)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 3, last, first)
 	}
 	if result == nil {
-		return errors.fail(error, ERROR_SPACE, .Bad_Address, .None, 4)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 4)
 	}
 	room := result.count < result.capacity ? result.capacity - result.count : 0
 	copied, total, ok := collector_core.collector_query_acts(&manager.collector, u64(grant), u64(first), u64(last), staging[:min(room, u64(len(staging)))])
 	if !ok {
-		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 3, last, first)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 3, last, first)
 	}
 	for index in 0 ..< copied {
 		system.table_append(result, staging[index])
 	}
-	return i64(total)
+	return .Succeeded, i64(total)
 }
 
 // act_records_read gives the act records of the wide grants that this
@@ -194,10 +195,12 @@ act_records_read_for :: proc "contextless" (
 // records of one call; a reader that wants more asks again after the last
 // sequence that it received.
 //
-// The result is the count of such records, or a negative number with an
-// error record: ERROR_NO_CALLER, ERROR_NOT_PRINCIPAL, or ERROR_SPACE.
+// The result is the count of such records, or an outcome with an error
+// record: Grant_Or_Right_Missing (no connection, or a caller that does not
+// act for the principal), Wrong_State (no act store yet), Argument_Refused
+// (a grant, a first or a last out of its range).
 @(export, link_name = "act_records_read")
-act_records_read :: proc "c" (grant: i64, first: i64, last: i64, result: ^system.Table_To_Append(wide_grants.Act_Record), error: ^errors.Error_Record) -> i64 {
+act_records_read :: proc "c" (grant: i64, first: i64, last: i64, result: ^system.Table_To_Append(wide_grants.Act_Record), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return act_records_read_for(&manager_state, space_service.store.principal, system.service_caller(), grant, first, last, result, query_staging[:], error)
 }
 

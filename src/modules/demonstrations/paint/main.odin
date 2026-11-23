@@ -37,6 +37,7 @@ package paint
 import "internal:paint/paint_model"
 import "modus:contract/accessibility"
 import "modus:contract/draw_record"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/module"
 import "modus:contract/reference_screen"
@@ -274,19 +275,19 @@ bar: interface.Action_Bar_State
 // - **to_x**, **to_y**: the last point.
 // - **color**: the number of a color of the palette, 0 to 15.
 //
-// The result is the count of lines that calls drew since the last clear. It fails with -1 and an error record:
-// Bad_Value when the color is not 0 to 15; the record names the fifth argument.
+// The result is the count of lines that calls drew since the last clear. It fails with the outcome
+// Argument_Refused and an error record: Bad_Value when the color is not 0 to 15; the record names the fifth argument.
 //
 // Example: paint.line(0, 0, 479, 295, 4) draws a red diagonal.
 @(export, link_name = "line")
-line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_Record) -> i64 {
+line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if color < 0 || color >= paint_model.PALETTE_COUNT {
-		return errors.fail(error, -1, .Bad_Value, .None, 5, color, paint_model.PALETTE_COUNT - 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 5, color, paint_model.PALETTE_COUNT - 1)
 	}
 	limit :: paint_model.COORDINATE_LIMIT
 	picture_changed_rows(paint_model.segment_draw(&picture, int(clamp(from_x, -limit, limit)), int(clamp(from_y, -limit, limit)), int(clamp(to_x, -limit, limit)), int(clamp(to_y, -limit, limit)), EXPORT_LINE_WIDTH, paint_model.PALETTE[color]))
 	drawn += 1
-	return drawn
+	return .Succeeded, drawn
 }
 
 // write draws a text on the picture, with a color of the palette (0 to 15).
@@ -302,20 +303,20 @@ line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_R
 // The result is the count of bytes of the text. It fails with -1 and an error record: Bad_Value when x or y is
 // outside the picture, or when the color is not 0 to 15; the record names the argument.
 @(export, link_name = "write")
-write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Record) -> i64 {
+write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch {
 	case x < 0 || x >= i64(picture.width):
-		return errors.fail(error, -1, .Bad_Value, .None, 1, x, i64(picture.width) - 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, x, i64(picture.width) - 1)
 	case y < 0 || y >= i64(picture.height):
-		return errors.fail(error, -1, .Bad_Value, .None, 2, y, i64(picture.height) - 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, y, i64(picture.height) - 1)
 	case color < 0 || color >= paint_model.PALETTE_COUNT:
-		return errors.fail(error, -1, .Bad_Value, .None, 4, color, paint_model.PALETTE_COUNT - 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 4, color, paint_model.PALETTE_COUNT - 1)
 	}
 	graphics.text(paint_model.picture_canvas(&picture), int(x), int(y), text^, paint_model.PALETTE[color])
 	paint_model.picture_changed(&picture)
 	// The rows of one line of the font of the system.
 	picture_changed_rows(paint_model.box_cut(&picture, {0, int(y), picture.width, int(y) + graphics.LINE_HEIGHT}))
-	return i64(len(text))
+	return .Succeeded, i64(len(text))
 }
 
 // clear erases the picture.
@@ -475,7 +476,7 @@ store_job :: proc "contextless" (parameter: rawptr) {
 		}
 		// The size, then the object in pieces that fit the call region.
 		size, status := storage.size(&client, storage.ROOT, object)
-		if storage.export_failed_with(status, size, .Absent) {
+		if status == .Absent {
 			request.found = false
 			return
 		}

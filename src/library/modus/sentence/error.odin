@@ -1,5 +1,6 @@
 package sentence
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
@@ -471,6 +472,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " with ")
 		amount(writer, record.found, "bytes")
 		write_part(writer, ", which the starter of the process recorded: only a holder of the process handle changes it")
+	case .Callee_Stopped:
+		write_part(writer, "the process that ran the call stopped, with the stop cause ")
+		write_part(writer, record.value)
+		if record.found != 0 {
+			write_part(writer, " and the stop outcome ")
+			write_part(writer, record.found)
+		}
+	case .Connection_Ended:
+		write_part(writer, "the connection of the call ended, in the state ")
+		write_part(writer, record.found)
 	case .Refused:
 		// A status is named in words only when the record says whose status
 		// it is; any other status is a code, which stays on the detail lines
@@ -615,10 +626,23 @@ error_details_rest_text :: proc "contextless" (writer: ^Writer, shown: u64, coun
 	write_part(writer, count - shown == 1 ? " more error detail did not fit in the table of error details" : " more error details did not fit in the table of error details")
 }
 
+// call_failure_text writes the sentence of a call that did not succeed: the
+// name of the export, its call outcome, then the sentence of its error
+// record (src/md/api/call_outcome.md, "The sentence and the agent").
+//
+// Example: "storage.read: Nothing_Has_That_Name: the argument name: the
+// store has no object with this name".
+call_failure_text :: proc "contextless" (writer: ^Writer, outcome: call_outcome.Call_Outcome, record: ^errors.Error_Record, operation: string, argument: string) {
+	buffer: [160]u8
+	error_text(writer, record, format(buffer[:], operation, ": ", call_outcome.CALL_OUTCOME_NAMES[outcome]), argument)
+}
+
 // export_error_text writes the sentence of the error record of an export:
 // the names come from its description. prefix: the name of the service, or
-// "" for a module in this process.
-export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u32, prefix: string, record: ^errors.Error_Record) {
+// "" for a module in this process. With an outcome that is not Succeeded,
+// the sentence is the one of call_failure_text: the call outcome after the
+// name of the export.
+export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u32, prefix: string, record: ^errors.Error_Record, outcome := call_outcome.Call_Outcome.Succeeded) {
 	function, described := module.function(file, export)
 	buffer: [96]u8
 	name := "an export"
@@ -630,6 +654,10 @@ export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u3
 			number := record.argument - 1
 			argument = module.string_at(file, function.parameter_names[number], u32(function.parameter_name_counts[number]))
 		}
+	}
+	if outcome != .Succeeded {
+		call_failure_text(writer, outcome, record, name, argument)
+		return
 	}
 	error_text(writer, record, name, argument)
 }

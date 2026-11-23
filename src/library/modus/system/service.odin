@@ -382,13 +382,15 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	export_call(address, &prepared.arguments, &floats, &out)
 	isolated.result_store(function, &prepared, region)
 	isolated.counts_store(function, &prepared, region)
+	value, outcome_word := isolated.export_answer(function, {out[0], out[1]})
 	// A failure: the error record names the export. The export does not
 	// know its own number.
-	if prepared.error.count != 0 && i64(out[0]) < 0 {
+	if prepared.error.count != 0 && outcome_word != 0 {
 		error := (^errors.Error_Record)(raw_data(region[prepared.error.start:]))
 		error.operation = i64(command.kind)
 	}
-	completion.values[0] = isolated.completion_value(function, out[0])
+	completion.values[0] = value
+	completion.values[isolated.COMPLETION_OUTCOME_VALUE] = outcome_word
 	return completion
 }
 

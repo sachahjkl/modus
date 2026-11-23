@@ -328,7 +328,8 @@ header_protection_mask :: proc "contextless" (cryptography: ^Cryptography, keys:
 	sample_text := string(sample)
 	result := mask[:]
 	procedure := keys.suite == .Aes_128_Gcm_Sha256 ? cryptography.header_protection_mask_with_aes_128 : cryptography.header_protection_mask_with_chacha20
-	return procedure(&key, &sample_text, &result, error) == MASK_SIZE
+	outcome, count := procedure(&key, &sample_text, &result, error)
+	return outcome == .Succeeded && count == MASK_SIZE
 }
 
 // nonce_of gives the nonce of the AEAD for one packet: the iv with the packet number in its last 8 bytes, by exclusive or.
@@ -477,8 +478,8 @@ packet_payload_open :: proc "contextless" (cryptography: ^Cryptography, keys: ^P
 	sealed := string(datagram[payload_offset:header.end])
 	result := datagram[payload_offset:header.end]
 	open := keys.suite == .Aes_128_Gcm_Sha256 ? cryptography.open_with_aes_128_gcm : cryptography.open_with_chacha20_poly1305
-	count := open(&key, &nonce_text, &additional, &sealed, &result, error)
-	if count < 0 {
+	opened_outcome, count := open(&key, &nonce_text, &additional, &sealed, &result, error)
+	if opened_outcome != .Succeeded {
 		return false
 	}
 	first := unprotected.first_byte
@@ -620,7 +621,7 @@ packet_seal :: proc "contextless" (cryptography: ^Cryptography, keys: ^Packet_Ke
 	text := string(packet[payload_offset:][:payload_length])
 	result := packet[payload_offset:end]
 	seal := keys.suite == .Aes_128_Gcm_Sha256 ? cryptography.seal_with_aes_128_gcm : cryptography.seal_with_chacha20_poly1305
-	if seal(&key, &nonce_text, &additional, &text, &result, error) != i64(payload_length + TAG_SIZE) {
+	if sealed_outcome, sealed_count := seal(&key, &nonce_text, &additional, &text, &result, error); sealed_outcome != .Succeeded || sealed_count != i64(payload_length + TAG_SIZE) {
 		return 0, false
 	}
 	mask: [MASK_SIZE]u8

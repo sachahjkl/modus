@@ -15,6 +15,7 @@ package server
 // The store holds each page under its name, and one object PAGE_INDEX_NAME
 // with the names of the pages.
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/value_kinds"
@@ -27,13 +28,6 @@ PAGE_SIZE_LIMIT :: 60 * 1024 // Bytes of one page: the call region of a connecti
 PAGE_NAME_LIMIT :: web.PAGE_NAME_LIMIT
 PAGE_INDEX_NAME :: web.PAGE_INDEX_NAME
 PAGE_MEMORY_PAGES :: PAGE_CAPACITY * PAGE_SIZE_LIMIT / system.PAGE_SIZE
-
-ERROR_ACTS_FOR_PRINCIPAL :: -1
-ERROR_NAME :: -2
-ERROR_TOO_LARGE :: -3
-ERROR_FULL :: -4
-ERROR_ABSENT :: -5
-ERROR_STORE :: -6
 
 Page_Entry :: struct {
 	name:        [40]u8,
@@ -177,20 +171,22 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   .css, .js, .json or .svg.
 // - **text**: the bytes of the page, 60 KiB at most (the call region of a connection has 64 KiB).
 //
-// The caller must act for the principal (**Acts_For_Principal**). The result is the bytes of the page, or a
-// negative number with an error record:
+// The caller must act for the principal (**Acts_For_Principal**). The result is the bytes of the page, or an
+// outcome with an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal.
-// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the name; for `Bad_Byte`, the record holds the place of the byte.
-// - `Too_Long` (-3): the text has more than 60 KiB.
-// - `Full` (-4): 16 pages exist, and the name is new.
-// - `Refused` (-6): the server has no store, or the storage service refused the page or the index of the pages.
+// - `Grant_Or_Right_Missing`, `No_Grant`: the caller does not act for the principal.
+// - `Argument_Refused`, `Empty`, `Too_Long` or `Bad_Byte`: the name; for `Bad_Byte`, the record holds the place of
+//   the byte.
+// - `Argument_Refused`, `Too_Long`: the text has more than 60 KiB.
+// - `Budget_Or_Capacity_Exhausted`, `Full`: 16 pages exist, and the name is new.
+// - `Callee_Unavailable`, `Refused`: the server has no store, or the storage service refused the page or the index
+//   of the pages. The page that is served did not change.
 //
 // Example: `server.put("hello.html", "<h1>hello</h1>")`, then the host reads `http://<the address>/hello.html`.
 @(export, link_name = "put")
-put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i64 {
+put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	// The call region stays writable by the caller during the call: copy
 	// the name one time before the checks, then check and use the copy only.
@@ -198,19 +194,19 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	name_length := min(len(name^), len(name_copy))
 	copy(name_copy[:], name^)
 	if len(name^) == 0 {
-		return errors.fail(error, ERROR_NAME, .Empty, .Bytes, 1, 0, PAGE_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1, 0, PAGE_NAME_LIMIT)
 	}
 	if len(name^) > PAGE_NAME_LIMIT {
-		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(name^)), PAGE_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(name^)), PAGE_NAME_LIMIT)
 	}
 	if ok, bad := web.page_name_valid(string(name_copy[:name_length])); !ok {
-		return errors.fail(error, ERROR_NAME, .Bad_Byte, .Bytes, 1, i64(max(bad, 0)), 0, bad >= 0 ? i64(name_copy[bad]) : 0)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Byte, .Bytes, 1, i64(max(bad, 0)), 0, bad >= 0 ? i64(name_copy[bad]) : 0)
 	}
 	if len(text^) > PAGE_SIZE_LIMIT {
-		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, 2, i64(len(text^)), PAGE_SIZE_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(len(text^)), PAGE_SIZE_LIMIT)
 	}
 	if !store_connected {
-		return errors.fail(error, ERROR_STORE, .Refused, .Store)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
 	key := string(name_copy[:name_length])
 	place := page_find(key)
@@ -223,7 +219,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 		}
 	}
 	if place < 0 {
-		return errors.fail(error, ERROR_FULL, .Full, .Records, 0, 0, PAGE_CAPACITY)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, PAGE_CAPACITY)
 	}
 	// The bytes go to the staging buffer first (the call region can
 	// change), then to the store, then to the page memory: the page that is
@@ -231,7 +227,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	length := copy(page_staging[:PAGE_SIZE_LIMIT], text^)
 	if _, status := storage.write(&store_client, storage.ROOT, key, page_staging[:length]); status != .Ok {
 		system.log_fact(.Info, Page_Refused{page = page_field(key)})
-		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store, 0, 0, 0, i64(status))
 	}
 	was_used := pages[place].used
 	// A page that changes keeps its count of answers.
@@ -246,10 +242,10 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 		arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
 		storage.call(&store_client, "remove", arguments[:])
 		system.log_fact(.Info, Index_Refused{page = page_field(key)})
-		return errors.fail(error, ERROR_STORE, .Refused, .Store)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
 	system.log_fact(.Info, Page_Stored{page_size = value_kinds.Size_In_Bytes(length), page = page_field(key)})
-	return i64(length)
+	return .Succeeded, i64(length)
 }
 
 // remove takes a page out of the private store of the server: /name gives 404 from now on.
@@ -259,32 +255,32 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 //
 // - **name**: the name of a page, as [put](server.put) gave it.
 //
-// The caller must act for the principal (**Acts_For_Principal**). The result is 0, or a negative number with an
-// error record:
+// The caller must act for the principal (**Acts_For_Principal**). The result is 0, or an outcome with an error
+// record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal.
-// - `Absent` (-5): no page has this name.
-// - `Refused` (-6): the storage service refused the removal; the page is still served.
+// - `Grant_Or_Right_Missing`, `No_Grant`: the caller does not act for the principal.
+// - `Nothing_Has_That_Name`, `Absent`: no page has this name.
+// - `Callee_Unavailable`, `Refused`: the storage service refused the removal; the page is still served.
 @(export, link_name = "remove")
-remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
+remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [PAGE_NAME_LIMIT + 1]u8
 	name_length := min(len(name^), len(name_copy))
 	copy(name_copy[:], name^)
 	place := page_find(string(name_copy[:name_length]))
 	if place < 0 || len(name^) > PAGE_NAME_LIMIT {
-		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Objects, 1)
 	}
 	// The store first: a page that the store keeps stays served. Else a
 	// refused remove gives 404 until the next start of the server, and then
 	// the page again.
 	arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
-	_, _, status := storage.call(&store_client, "remove", arguments[:])
+	_, _, status, _ := storage.call(&store_client, "remove", arguments[:])
 	if status != .Ok {
 		system.log_fact(.Info, Removal_Refused{page = page_field(string(name_copy[:name_length]))})
-		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store, 0, 0, 0, i64(status))
 	}
 	pages[place] = {generation = page_generation_new()}
 	if !index_write() {
@@ -293,7 +289,7 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 		system.log_fact(.Info, Index_Refused_After_Removal{page = page_field(string(name_copy[:name_length]))})
 	}
 	system.log_fact(.Info, Page_Removed{page = page_field(string(name_copy[:name_length]))})
-	return 0
+	return .Succeeded, 0
 }
 
 // pages gives one row for each page that the server serves: its name, its bytes, the answers of it since the start, its content type.
@@ -304,7 +300,7 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 //
 // The result is the count of pages, 16 at most. It never fails.
 @(export, link_name = "pages")
-pages_export :: proc "c" (result: ^[]Page_Row, error: ^errors.Error_Record) -> i64 {
+pages_export :: proc "c" (result: ^[]Page_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	total := 0
 	for &item, index in pages {
 		if !item.used {
@@ -318,7 +314,7 @@ pages_export :: proc "c" (result: ^[]Page_Row, error: ^errors.Error_Record) -> i
 		}
 		total += 1
 	}
-	return i64(total)
+	return .Succeeded, i64(total)
 }
 
 // served gives the counts of the server: the requests that it answered, by class of status, its connections, its bytes and its pages.

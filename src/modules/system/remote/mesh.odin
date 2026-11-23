@@ -47,7 +47,8 @@ mesh_signature_verify :: proc "contextless" (
 	message_text := string(message)
 	signature_text := string(signature_copy[:])
 	error: errors.Error_Record
-	return ed25519_verify(&key_text, &message_text, &signature_text, &error) == 0
+	crypto_outcome, crypto_count := ed25519_verify(&key_text, &message_text, &signature_text, &error)
+	return crypto_outcome == .Succeeded && crypto_count == 0
 }
 
 // mesh_fill_random draws the CPace scalar of an exchange from the generator

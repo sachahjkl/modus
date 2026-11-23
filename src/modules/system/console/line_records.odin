@@ -1,5 +1,6 @@
 package console
 
+import "modus:contract/call_outcome"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -202,8 +203,14 @@ line_records_ask :: proc "contextless" (function: module.Function, export: u32, 
 			if completion.tag != sandbox.calls {
 				continue
 			}
-			if isolated.Status(completion.kind) != .Ok || i64(completion.values[0]) < 0 {
+			if isolated.Status(completion.kind) != .Ok {
 				return {}, 0, false
+			}
+			// An unreadable outcome word ends the read as a failure does.
+			if function.error_record != 0 {
+				if outcome, _ := call_outcome.outcome_of_word(completion.values[isolated.COMPLETION_OUTCOME_VALUE]); outcome != .Succeeded {
+					return {}, 0, false
+				}
 			}
 			described, has_record := module.record_type(line_records.file, function.result_detail)
 			if !has_record {

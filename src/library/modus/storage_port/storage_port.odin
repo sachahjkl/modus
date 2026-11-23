@@ -31,7 +31,7 @@ read :: proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: i
 	// The read of the storage client cuts an object that does not fit: the
 	// size comes first, so a long object is refused and never read in part.
 	size, size_status := storage.size(client, storage.ROOT, name, &error)
-	if storage.export_failed_with(size_status, size, .Absent) {
+	if size_status == .Absent {
 		return 0, .Absent
 	}
 	if size_status != .Ok || size < 0 {

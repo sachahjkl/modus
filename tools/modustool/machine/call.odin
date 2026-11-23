@@ -25,6 +25,7 @@ ends_with_a_bare_number :: proc(text: string) -> bool {
 }
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -68,7 +69,7 @@ CALL_TIME_LIMIT :: PEER_REMOTE_CALL_LIMIT + 10 * time.Second
 CALL_ERROR_DETAILS :: 16 // The places of the table of error details that the tool gives to an export.
 
 // What a call gave, for the machine test.
-Call_Outcome :: enum {
+Call_Result_Kind :: enum {
 	Result, // The export ran and gave its result.
 	Failed, // The export ran and gave an error record.
 	Refused, // The remote service or the service refused the call.
@@ -78,7 +79,7 @@ Call_Outcome :: enum {
 }
 
 Call_Result :: struct {
-	outcome:  Call_Outcome,
+	outcome:  Call_Result_Kind,
 	lines:    [dynamic]string, // What the tool prints, one line each.
 	rows:     int, // A Table: its count of rows.
 	value:    i64,
@@ -770,41 +771,18 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 		append(&outcome.lines, fmt.tprintf("error: the answer has the unknown status %d", u32(answer.status)))
 		return outcome
 	}
-	// The answer comes from the network: a word that names no status is
-	// refused, never read as a status.
-	call_status, call_status_known := enum_word.member_of_word(isolated.Status, u64(answer.call_status))
-	if !call_status_known {
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s gave the unknown status %d", call.service, answer.call_status))
-		return outcome
+	// The answer comes from the network: its outcome word goes through the
+	// border. The record of a word that names no outcome says so.
+	call_ended, unreadable := call_outcome.outcome_of_word(u64(answer.outcome))
+	if unreadable.kind != 0 {
+		answer.error = unreadable
 	}
-	switch call_status {
-	case .Ok:
-	case .Bad_Export:
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s has no export %d", call.service, call.index))
-		return outcome
-	case .Bad_Arguments:
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s refused the arguments of %s", call.service, call.export))
-		return outcome
-	case .Bad_Handle, .Load_Failed:
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s refused the call of %s: status %d", call.service, call.export, answer.call_status))
-		return outcome
-	case:
-		// Each other status of a call: the service refused it, with that
-		// status.
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s refused the call of %s: the status %v", call.service, call.export, call_status))
-		return outcome
-	}
-	if call.function.error_record != 0 && answer.value < 0 {
+	if call_ended != .Succeeded {
 		outcome.outcome = .Failed
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
 		sentence.write_part(&writer, "error: ")
-		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error)
+		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error, call_ended)
 		append(&outcome.lines, sentence.written(&writer))
 		if _, has_details := module.error_details_parameter(call.file, call.function); has_details {
 			error_details_lines(&outcome.lines, &call, answer, result)
@@ -892,6 +870,13 @@ Call_Table :: struct {
 	total:     i64, // The count of the full table, as the export gave it.
 }
 
+// answer_succeeded says if the call of an answer of `remote` succeeded: its
+// outcome word, read through the border, is Succeeded.
+answer_succeeded :: proc(answer: remote.Answer) -> bool {
+	outcome, _ := call_outcome.outcome_of_word(u64(answer.outcome))
+	return outcome == .Succeeded
+}
+
 // table_call makes a call with a Table result, and gives its rows.
 table_call :: proc(client: ^Call_Client, text: string) -> (table: Call_Table, ok: bool) {
 	call, problem := call_prepare(client, text)
@@ -899,7 +884,7 @@ table_call :: proc(client: ^Call_Client, text: string) -> (table: Call_Table, ok
 		return {}, false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || answer.value < 0 {
+	if !answered || answer.status != .Ok || !answer_succeeded(answer) {
 		return {}, false
 	}
 	table.described = module.record_type(call.file, call.function.result_detail) or_return
@@ -966,7 +951,7 @@ record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (v
 		return nil, false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
+	if !answered || answer.status != .Ok || !answer_succeeded(answer) || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
 		return nil, false
 	}
 	described := module.record_type(call.file, call.function.result_detail) or_return
@@ -993,7 +978,7 @@ record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (
 		return "", false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
+	if !answered || answer.status != .Ok || !answer_succeeded(answer) || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
 		return "", false
 	}
 	described := module.record_type(call.file, call.function.result_detail) or_return

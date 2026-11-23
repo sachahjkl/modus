@@ -118,6 +118,7 @@
 package unlock
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
@@ -150,11 +151,16 @@ Argon2id_Cost :: struct {
 }
 
 foreign _ {
-	argon2id :: proc "c" (password, salt: ^string, cost: ^Argon2id_Cost, work: ^system.Bytes_To_Change, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	argon2id :: proc "c" (password, salt: ^string, cost: ^Argon2id_Cost, work: ^system.Bytes_To_Change, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 }
 
 WIDTH :: 520
@@ -373,8 +379,8 @@ derive :: proc "contextless" (passphrase: []u8, salt_bytes: []u8, key: ^[princip
 		lanes            = 1,
 		tag_bytes        = principals.KEY_SIZE,
 	}
-	count := argon2id(&password, &salt, &cost, &work, &result, &error)
-	if count != principals.KEY_SIZE {
+	outcome, count := argon2id(&password, &salt, &cost, &work, &result, &error)
+	if outcome != .Succeeded || count != principals.KEY_SIZE {
 		system.log_fact(.Info, Derivation_Refused{error_kind = error.kind, error_argument = error.argument})
 		return false
 	}
@@ -386,7 +392,7 @@ public_keys_of :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8)
 	error: errors.Error_Record
 	seed := string(secrets^[:32])
 	signing_result := signing[:]
-	if ed25519_public_key(&seed, &signing_result, &error) != 32 {
+	if crypto_outcome, crypto_count := ed25519_public_key(&seed, &signing_result, &error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		return {}, {}, false
 	}
 	base_point: [32]u8
@@ -394,7 +400,7 @@ public_keys_of :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8)
 	scalar := string(secrets^[32:])
 	point := string(base_point[:])
 	unlocking_result := unlocking[:]
-	if x25519(&scalar, &point, &unlocking_result, &error) != 32 {
+	if crypto_outcome, crypto_count := x25519(&scalar, &point, &unlocking_result, &error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		return {}, {}, false
 	}
 	return signing, unlocking, true
@@ -479,7 +485,7 @@ passphrase_file_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	additional := string(principals.file_additional_data(sealed_bytes))
 	text := string(secrets^[:])
 	sealed := sealed_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		message, message_failed = "the seal of the keys failed", true
 		return 0, false
 	}
@@ -523,7 +529,7 @@ principal_keys_open :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZ
 	additional := string(principals.file_additional_data(&file_bytes))
 	sealed := string(file.sealed[:])
 	result := secrets^[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.SECRET_KEYS_SIZE {
 		return .Wrong
 	}
 	// The secret keys must be the keys of the record: a file whose public
@@ -675,7 +681,7 @@ machine_passphrase_alone_try :: proc "contextless" () {
 	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
 	sealed := string(machine_file.sealed[:])
 	result := machine_key[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_KEY_SIZE {
 		machine_refusals += 1
 		system.log_fact(.Info, Machine_Passphrase_Wrong{refusals = machine_refusals})
 		message, message_failed = "the passphrase is wrong: nothing is opened", true
@@ -735,7 +741,7 @@ machine_passphrase_alone_create :: proc "contextless" () {
 	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
 	text := string(machine_key[:])
 	sealed := machine_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		message, message_failed = "the seal of the key failed", true
 		return
 	}
@@ -1015,7 +1021,7 @@ machine_seal_create :: proc "contextless" () -> bool {
 	additional := string(principals.machine_tpm_file_additional_data(&machine_tpm_file_bytes))
 	text := string(machine_key[:])
 	sealed := machine_tpm_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		system.log_fact(.Info, Machine_Key_Recovery_Copy_Failed{})
 		return false
 	}
@@ -1184,7 +1190,8 @@ recovery_try :: proc "contextless" () {
 		sealed = string(machine_tpm_passphrase_file.recovery_sealed[:])
 	}
 	result := machine_key[:]
-	opened := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) == principals.MACHINE_KEY_SIZE
+	opened_outcome, opened_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error)
+	opened := opened_outcome == .Succeeded && opened_count == principals.MACHINE_KEY_SIZE
 	if opened && !with_passphrase {
 		opened = machine_key_passes(&machine_key)
 	}
@@ -1303,7 +1310,7 @@ machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MAC
 	additional := string(principals.machine_tpm_passphrase_file_additional_data(sealed_bytes))
 	text := string(machine_key^[:])
 	sealed := sealed_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		message, message_failed = "the seal of the key failed", true
 		return false
 	}
@@ -1346,7 +1353,7 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 	additional := string(principals.machine_tpm_passphrase_file_recovery_additional_data(&machine_tpm_passphrase_file_bytes))
 	text := string(machine_key[:])
 	recovery_sealed := machine_tpm_passphrase_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		message, message_failed = "the seal of the recovery copy failed", true
 		return
 	}
@@ -1435,7 +1442,7 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 	additional := string(principals.machine_tpm_passphrase_file_additional_data(&machine_tpm_passphrase_file_bytes))
 	sealed := string(machine_tpm_passphrase_file.sealed[:])
 	result := machine_key[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_KEY_SIZE {
 		system.log_fact(.Info, Machine_Key_Not_Consistent_With_Tpm_Secret{})
 		machine_recovery_ask("the record is not consistent: type the recovery key")
 		return
@@ -1530,7 +1537,7 @@ principal_tpm_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 	additional := string(principals.principal_tpm_file_additional_data(sealed_bytes))
 	text := string(secrets^[:])
 	sealed := sealed_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		message, message_failed = "the seal of the keys failed", true
 		return false
 	}
@@ -1583,7 +1590,7 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	additional := string(principals.principal_tpm_file_recovery_additional_data(&principal_tpm_file_bytes))
 	text := string(secrets[:])
 	recovery_sealed := principal_tpm_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		message, message_failed = "the seal of the recovery copy failed", true
 		return
 	}
@@ -1670,7 +1677,7 @@ principal_tpm_open :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 	additional := string(principals.principal_tpm_file_additional_data(&principal_tpm_file_bytes))
 	sealed := string(principal_tpm_file.sealed[:])
 	result := secrets^[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE || !public_keys_match(secrets) {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.SECRET_KEYS_SIZE || !public_keys_match(secrets) {
 		return .Not_Consistent
 	}
 	return .Opened
@@ -1771,7 +1778,7 @@ recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	additional := string(principals.principal_tpm_file_recovery_additional_data(&renewed_recovery_bytes))
 	text := string(secrets^[:])
 	recovery_sealed := renewed_recovery_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		system.log_fact(.Info, Recovery_Key_Kept_Seal_Failed{principal = number})
 		change_end(.Seal_Failed)
 		return
@@ -2000,7 +2007,7 @@ principal_recovery_try :: proc "contextless" () {
 	additional := string(principals.principal_tpm_file_recovery_additional_data(&principal_tpm_file_bytes))
 	sealed := string(principal_tpm_file.recovery_sealed[:])
 	result := secrets[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE || !public_keys_match(&secrets) {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.SECRET_KEYS_SIZE || !public_keys_match(&secrets) {
 		refusals += 1
 		system.log_fact(.Info, Principal_Recovery_Key_Wrong{principal = number, refusals = refusals, principal_name = principal_name_field()})
 		message, message_failed = "the recovery key is wrong: nothing is unlocked", true

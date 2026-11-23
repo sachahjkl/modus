@@ -1,6 +1,7 @@
 package console
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import info "modus:contract/boot_info"
 import "modus:contract/isolated"
@@ -2104,11 +2105,21 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	floats: [system.CALL_FLOATS]u64
 	results: [system.CALL_RESULTS]u64
 	system.export_call(item.address, &integers, &floats, &results)
-	if item.function.error_record != 0 && i64(results[0]) < 0 {
-		error.operation = i64(item.export)
-		result := export_failure(item, &error)
-		failure_details_set(details[:], details_place.count)
-		return result
+	// An export that can fail gives its call outcome first, then its value.
+	// The module is one that the line loaded, not one that the console was
+	// built with: the word goes through the border.
+	if item.function.error_record != 0 {
+		outcome, unreadable := call_outcome.outcome_of_word(results[0])
+		if outcome != .Succeeded {
+			if unreadable.kind != 0 {
+				error = unreadable
+			}
+			error.operation = i64(item.export)
+			result := export_failure(item, &error, outcome)
+			failure_details_set(details[:], details_place.count)
+			return result
+		}
+		results[0] = results[1]
 	}
 	switch item.result {
 	case .Integer:
@@ -2379,10 +2390,8 @@ sandbox_end :: proc "contextless" (sandbox: ^Sandbox) {
 
 // export_failure makes the line fail with the error record of an export
 // that failed: the sentence of the record, and the record itself with the
-// names of the export and of its parameters, from the description. The
-// result of the export is not shown: the record holds the facts, and a
-// bare number tells a reader nothing (docs/WRITING.md).
-export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record) -> Value {
+// names of the export and of its parameters, from the description.
+export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record, outcome: call_outcome.Call_Outcome) -> Value {
 	already := failed
 	argument := ""
 	if error.argument >= 1 && error.argument <= i64(item.parameter_count) {
@@ -2390,7 +2399,7 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	}
 	buffer: [240]u8
 	writer := system.Writer{buffer = buffer[:]}
-	system.error_text(&writer, error, item.name, argument)
+	system.call_failure_text(&writer, outcome, error, item.name, argument)
 	result := fail(system.written(&writer))
 	if !already {
 		failure_record_set(error^, item.name, item.parameter_names[:item.parameter_count])
@@ -2559,9 +2568,17 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				// rows that a failed export wrote in a Change table stay out
 				// of the values of the console (docs/MODULE_CONTRACT.md,
 				// section 8, "The table of error details").
-				if error_place.count != 0 && i64(completion.values[0]) < 0 {
+				outcome := call_outcome.Call_Outcome.Succeeded
+				unreadable: errors.Error_Record
+				if item.function.error_record != 0 {
+					outcome, unreadable = call_outcome.outcome_of_word(completion.values[isolated.COMPLETION_OUTCOME_VALUE])
+				}
+				if outcome != .Succeeded {
 					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
-					result := export_failure(item, &error)
+					if unreadable.kind != 0 {
+						error = unreadable
+					}
+					result := export_failure(item, &error, outcome)
 					if item.details_parameter != 0 {
 						if problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
 							fail_note("the process ", sandbox.name, " gave a wrong count for the table of error details: the details are missing")
@@ -2599,9 +2616,6 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					// The other process wrote the records and the count:
 					// read no more than the buffer, and copy the records
 					// out of the call region.
-					if i64(completion.values[0]) < 0 {
-						return table_error(item)
-					}
 					described, _ := module.record_type(item.file, item.function.result_detail)
 					rows, complete := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
 					if !complete {
@@ -2628,7 +2642,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				refusal := transmute(errors.Error_Record)completion.values
 				if refusal.kind != 0 {
 					refusal.operation = i64(item.export)
-					return export_failure(item, &refusal)
+					return export_failure(item, &refusal, system.outcome_of_call_status(.Refused, call_status))
 				}
 				return fail("the process ", sandbox.name, " refused the arguments of ", item.name)
 			case .Load_Failed:
@@ -2920,7 +2934,7 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
 		case .Refused:
 			return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
-		case .None, .Empty, .Too_Long, .Too_Small, .Bad_Value, .Bad_Flags, .Bad_Byte, .Bad_Address, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .No_Answer, .Unsupported, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Seed_Too_Weak, .Exists, .Starter_Module:
+		case .None, .Empty, .Too_Long, .Too_Small, .Bad_Value, .Bad_Flags, .Bad_Byte, .Bad_Address, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .No_Answer, .Unsupported, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Seed_Too_Weak, .Exists, .Starter_Module, .Callee_Stopped, .Connection_Ended:
 			// No record of a signed row: the grant of the console is missing.
 		}
 		return fail("the console has no grant to change the replacement table")

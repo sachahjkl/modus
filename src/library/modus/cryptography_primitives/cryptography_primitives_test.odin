@@ -5,10 +5,31 @@
 package cryptography_primitives
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "core:encoding/hex"
 import "core:testing"
 import "core:thread"
+
+// The pair of a procedure of the call form, as one value that a check
+// compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// refused says if a call refused an argument: the outcome Argument_Refused
+// and the value 0.
+@(private = "file")
+refused :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> bool {
+	return outcome == .Argument_Refused && value == 0
+}
 
 bytes_of :: proc(text: string) -> []u8 {
 	bytes, ok := hex.decode(transmute([]u8)text, context.temp_allocator)
@@ -56,7 +77,8 @@ an_open_while_another_thread_changes_the_sealed_text :: proc(t: ^testing.T) {
 		shared: Changing_Bytes
 		sealed_buffer := shared.bytes[:]
 		error: errors.Error_Record
-		shared.count = int(aead_call(aead, true, &key_text, &nonce, &additional, &text, &sealed_buffer, &error))
+		_, sealed_count := aead_call(aead, true, &key_text, &nonce, &additional, &text, &sealed_buffer, &error)
+		shared.count = int(sealed_count)
 		testing.expect_value(t, shared.count, len(SUNSCREEN) + TAG_SIZE)
 		shared.place = 20
 		shared.first = shared.bytes[20]
@@ -67,11 +89,11 @@ an_open_while_another_thread_changes_the_sealed_text :: proc(t: ^testing.T) {
 			sealed := string(shared.bytes[:shared.count])
 			opened: [256]u8
 			opened_buffer := opened[:]
-			count := aead_call(aead, false, &key_text, &nonce, &additional, &sealed, &opened_buffer, &error)
+			opened_outcome, count := aead_call(aead, false, &key_text, &nonce, &additional, &sealed, &opened_buffer, &error)
 			switch {
-			case count == i64(len(SUNSCREEN)) && string(opened[:count]) == SUNSCREEN:
+			case opened_outcome == .Succeeded && count == i64(len(SUNSCREEN)) && string(opened[:count]) == SUNSCREEN:
 				true_texts += 1
-			case count < 0 && error.kind == i64(errors.Kind.Not_Authentic):
+			case opened_outcome == .Argument_Refused && count == 0 && error.kind == i64(errors.Kind.Not_Authentic):
 				refusals += 1
 			case:
 				wrong_texts += 1
@@ -118,12 +140,12 @@ a_signature_while_another_thread_changes_the_message :: proc(t: ^testing.T) {
 		message := string(shared.bytes[:shared.count])
 		signature: [64]u8
 		signature_buffer := signature[:]
-		testing.expect_value(t, ed25519_sign(&secret, &message, &signature_buffer, &error), 64)
+		testing.expect_value(t, answer_of(ed25519_sign(&secret, &message, &signature_buffer, &error)), Answer{.Succeeded, 64})
 		signature_text := string(signature[:])
 		switch {
-		case ed25519_verify(&public, &first_text, &signature_text, &error) == 0:
+		case answer_of(ed25519_verify(&public, &first_text, &signature_text, &error)) == Answer{.Succeeded, 0}:
 			of_first += 1
-		case ed25519_verify(&public, &second_text, &signature_text, &error) == 0:
+		case answer_of(ed25519_verify(&public, &second_text, &signature_text, &error)) == Answer{.Succeeded, 0}:
 			of_second += 1
 		case:
 			of_neither += 1
@@ -150,21 +172,21 @@ arguments_of_a_wrong_size :: proc(t: ^testing.T) {
 	for size in ([]int{0, 15, 17, 31, 33}) {
 		key := string(key_bytes[:size])
 		nonce := string(nonce_bytes[:NONCE_SIZE])
-		testing.expect(t, seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &result, &error) < 0 && error.argument == 1, "a ChaCha20 key of a wrong size")
+		testing.expect(t, refused(seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &result, &error)) && error.argument == 1, "a ChaCha20 key of a wrong size")
 		if size != 16 {
-			testing.expect(t, seal_with_aes_128_gcm(&key, &nonce, &empty, &text, &result, &error) < 0 && error.argument == 1, "an AES key of a wrong size")
+			testing.expect(t, refused(seal_with_aes_128_gcm(&key, &nonce, &empty, &text, &result, &error)) && error.argument == 1, "an AES key of a wrong size")
 		}
 	}
 	key := string(key_bytes[:32])
 	for size in ([]int{11, 13}) {
 		nonce := string(nonce_bytes[:size])
-		testing.expect(t, seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &result, &error) < 0 && error.argument == 2)
+		testing.expect(t, refused(seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &result, &error)) && error.argument == 2)
 	}
 	nonce := string(nonce_bytes[:NONCE_SIZE])
 	short := string(output[:15])
-	testing.expect(t, open_with_chacha20_poly1305(&key, &nonce, &empty, &short, &result, &error) < 0 && error.kind == i64(errors.Kind.Too_Small) && error.argument == 4)
+	testing.expect(t, refused(open_with_chacha20_poly1305(&key, &nonce, &empty, &short, &result, &error)) && error.kind == i64(errors.Kind.Too_Small) && error.argument == 4)
 	long_additional := string(make([]u8, ADDITIONAL_LIMIT + 1, context.temp_allocator))
-	testing.expect(t, seal_with_chacha20_poly1305(&key, &nonce, &long_additional, &text, &result, &error) < 0 && error.argument == 3)
+	testing.expect(t, refused(seal_with_chacha20_poly1305(&key, &nonce, &long_additional, &text, &result, &error)) && error.argument == 3)
 }
 
 // A seal into a buffer with no room tells the size that it needs (a count,
@@ -181,11 +203,11 @@ a_result_with_no_room :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	small: [8]u8
 	small_buffer := small[:]
-	testing.expect_value(t, seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &small_buffer, &error), i64(len(SUNSCREEN) + TAG_SIZE))
+	testing.expect_value(t, answer_of(seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &small_buffer, &error)), Answer{.Succeeded, i64(len(SUNSCREEN) + TAG_SIZE)})
 	testing.expect(t, small == [8]u8{})
-	count := seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &sealed_buffer, &error)
+	_, count := seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &sealed_buffer, &error)
 	sealed := string(sealed_bytes[:count])
-	testing.expect(t, open_with_chacha20_poly1305(&key, &nonce, &empty, &sealed, &small_buffer, &error) < 0 && error.kind == i64(errors.Kind.Too_Small) && error.argument == 5)
+	testing.expect(t, refused(open_with_chacha20_poly1305(&key, &nonce, &empty, &sealed, &small_buffer, &error)) && error.kind == i64(errors.Kind.Too_Small) && error.argument == 5)
 }
 
 // A result that overlaps the text with an offset is an error record (the
@@ -201,18 +223,17 @@ results_that_overlap_and_refused_opens :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	text := string(area[:len(SUNSCREEN)])
 	shifted := area[1:]
-	testing.expect(t, seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &shifted, &error) < 0 && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 5)
+	testing.expect(t, refused(seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &shifted, &error)) && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 5)
 	in_place := area[:]
-	count := seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &in_place, &error)
+	_, count := seal_with_chacha20_poly1305(&key, &nonce, &empty, &text, &in_place, &error)
 	testing.expect_value(t, count, i64(len(SUNSCREEN) + TAG_SIZE))
 	sealed := string(area[:count])
 	opened_in_place := area[:]
-	testing.expect_value(t, open_with_chacha20_poly1305(&key, &nonce, &empty, &sealed, &opened_in_place, &error), i64(len(SUNSCREEN)))
+	testing.expect_value(t, answer_of(open_with_chacha20_poly1305(&key, &nonce, &empty, &sealed, &opened_in_place, &error)), Answer{.Succeeded, i64(len(SUNSCREEN))})
 	testing.expect_value(t, string(area[:len(SUNSCREEN)]), SUNSCREEN)
-	count = seal_with_aes_128_gcm(&key, &nonce, &empty, &text, &in_place, &error)
-	testing.expect(t, count < 0) // An AES key of 32 bytes: argument 1.
+	testing.expect(t, refused(seal_with_aes_128_gcm(&key, &nonce, &empty, &text, &in_place, &error))) // An AES key of 32 bytes: argument 1.
 	aes_key := string(key_bytes[:16])
-	count = seal_with_aes_128_gcm(&aes_key, &nonce, &empty, &text, &in_place, &error)
+	_, count = seal_with_aes_128_gcm(&aes_key, &nonce, &empty, &text, &in_place, &error)
 	area[count - 1] ~= 1
 	sealed = string(area[:count])
 	opened: [256]u8
@@ -220,7 +241,7 @@ results_that_overlap_and_refused_opens :: proc(t: ^testing.T) {
 		byte = 0xA5
 	}
 	opened_buffer := opened[:]
-	testing.expect(t, open_with_aes_128_gcm(&aes_key, &nonce, &empty, &sealed, &opened_buffer, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic))
+	testing.expect(t, refused(open_with_aes_128_gcm(&aes_key, &nonce, &empty, &sealed, &opened_buffer, &error)) && error.kind == i64(errors.Kind.Not_Authentic))
 	for byte in opened[:len(SUNSCREEN)] {
 		testing.expect_value(t, byte, 0)
 	}
@@ -234,10 +255,10 @@ hkdf_expand_at_its_limit :: proc(t: ^testing.T) {
 	key, info := string(key_bytes[:]), "label"
 	output := make([]u8, HKDF_EXPAND_LIMIT + 1, context.temp_allocator)
 	error: errors.Error_Record
-	testing.expect_value(t, hkdf_sha256_expand(&key, &info, HKDF_EXPAND_LIMIT, &output, &error), HKDF_EXPAND_LIMIT)
-	testing.expect(t, hkdf_sha256_expand(&key, &info, HKDF_EXPAND_LIMIT + 1, &output, &error) < 0 && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 3)
+	testing.expect_value(t, answer_of(hkdf_sha256_expand(&key, &info, HKDF_EXPAND_LIMIT, &output, &error)), Answer{.Succeeded, HKDF_EXPAND_LIMIT})
+	testing.expect(t, refused(hkdf_sha256_expand(&key, &info, HKDF_EXPAND_LIMIT + 1, &output, &error)) && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 3)
 	long_info := string(make([]u8, INFO_LIMIT + 1, context.temp_allocator))
-	testing.expect(t, hkdf_sha256_expand(&key, &long_info, 32, &output, &error) < 0 && error.argument == 2)
+	testing.expect(t, refused(hkdf_sha256_expand(&key, &long_info, 32, &output, &error)) && error.argument == 2)
 }
 
 // Each point of small order gives Bad_Value from x25519: its
@@ -259,7 +280,7 @@ x25519_refuses_points_of_small_order :: proc(t: ^testing.T) {
 		output: [32]u8
 		result := output[:]
 		error: errors.Error_Record
-		testing.expectf(t, x25519(&scalar, &point, &result, &error) < 0 && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 2, "the point %s", point_text)
+		testing.expectf(t, refused(x25519(&scalar, &point, &result, &error)) && error.kind == i64(errors.Kind.Bad_Value) && error.argument == 2, "the point %s", point_text)
 		testing.expect(t, output == [32]u8{})
 	}
 }

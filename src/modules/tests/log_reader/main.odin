@@ -367,7 +367,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	after: u64 = 0
 	for _ in 0 ..< CALL_LIMIT {
 		arguments := [1]isolated.Argument{{integer = after}}
-		count, status := system.call_isolated(&connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
+		count, status, _ := system.call_isolated(&connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
 		if status != .Ok {
 			return "the call of log.records did not come back"
 		}
@@ -420,7 +420,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	// no line before this call, so each run of its own is of a record that
 	// records() gave.
 	run_arguments := [1]isolated.Argument{{integer = 0}}
-	run_count, run_status := system.call_isolated(&connection, file, value_runs_export, run_arguments[:], nil, false, bytes_of(run_rows[:]))
+	run_count, run_status, _ := system.call_isolated(&connection, file, value_runs_export, run_arguments[:], nil, false, bytes_of(run_rows[:]))
 	if run_status != .Ok {
 		return "the call of log.value_runs did not come back"
 	}
@@ -653,7 +653,7 @@ FACT_BODY_RESERVED_BYTE :: 0xA5
 // reason of the first check that fails, or "".
 fact_rows_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, fact_records_export: u32, own_module_hash: [32]u8, first: i64) -> string {
 	arguments := [1]isolated.Argument{{integer = u64(first)}}
-	count, status := system.call_isolated(connection, file, fact_records_export, arguments[:], nil, false, bytes_of(fact_rows[:]))
+	count, status, _ := system.call_isolated(connection, file, fact_records_export, arguments[:], nil, false, bytes_of(fact_rows[:]))
 	if status != .Ok {
 		return "the call of log.fact_records did not come back"
 	}
@@ -732,7 +732,7 @@ Log_Refusal :: struct {
 // written fewer than the ring keeps.
 own_record_count :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32) -> (count: i64, ok: bool) {
 	arguments := [1]isolated.Argument{{integer = 0}}
-	result, status := system.call_isolated(connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
+	result, status, _ := system.call_isolated(connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
 	return result, status == .Ok && result >= 0
 }
 
@@ -893,7 +893,7 @@ lent_service_handle_refused :: proc "contextless" (connection: ^system.Call_Conn
 		return "the process handle of the log service, with no Give, was lent"
 	}
 	call_arguments := [2]isolated.Argument{{integer = u64(connection.process)}, {integer = 0}}
-	_, call_status := system.call_isolated(connection, file, records_export, call_arguments[:], nil, false, bytes_of(record_rows[:]))
+	_, call_status, _ := system.call_isolated(connection, file, records_export, call_arguments[:], nil, false, bytes_of(record_rows[:]))
 	if call_status != .Lend_Failed {
 		system.log_fact(.Info, Wrong_Service_Handle_Call{status = call_status_word(call_status)})
 		return "the call with the process handle of the log service was not refused"
@@ -1060,7 +1060,7 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 child_records_check :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32, value_runs_export: u32, index: int) -> string {
 	name := child_names[index]
 	arguments := [2]isolated.Argument{{integer = u64(children[index])}, {integer = 0}}
-	count, status := system.call_isolated(connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
+	count, status, _ := system.call_isolated(connection, file, records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
 	if status != .Ok {
 		system.log_fact(.Info, Wrong_Child_Records_Call{status = call_status_word(status), child = value_kinds.module_name_field(name)})
 		return "the call of log.process_records did not come back"
@@ -1087,7 +1087,7 @@ child_records_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	}
 
 	run_arguments := [2]isolated.Argument{{integer = u64(children[index])}, {integer = 0}}
-	run_count, run_status := system.call_isolated(connection, file, value_runs_export, run_arguments[:], nil, false, bytes_of(run_rows[:]))
+	run_count, run_status, _ := system.call_isolated(connection, file, value_runs_export, run_arguments[:], nil, false, bytes_of(run_rows[:]))
 	if run_status != .Ok {
 		system.log_fact(.Info, Wrong_Child_Runs_Call{status = call_status_word(run_status), child = value_kinds.module_name_field(name)})
 		return "the call of log.process_value_runs did not come back"
@@ -1114,7 +1114,7 @@ lent_memory_refused :: proc "contextless" (connection: ^system.Call_Connection, 
 	defer system.close(memory)
 	arguments := [2]isolated.Argument{{integer = u64(memory)}, {integer = 0}}
 	refusal: errors.Error_Record
-	_, status := system.call_isolated(connection, file, records_export, arguments[:], &refusal, false, bytes_of(record_rows[:]))
+	_, status, _ := system.call_isolated(connection, file, records_export, arguments[:], &refusal, false, bytes_of(record_rows[:]))
 	if status != .Failed || refusal.kind != i64(errors.Kind.Handle_Kind) || refusal.argument != LENT_PROCESS_ARGUMENT || refusal.limit != i64(op.Object_Kind.Process) || refusal.found != i64(op.Object_Kind.Memory) {
 		system.log_fact(.Info, Wrong_Memory_Lent{status = call_status_word(status), kind = errors.Kind_Word(refusal.kind), argument = refusal.argument, found_kind = op.Object_Kind_Word(refusal.found)})
 		return "the log service did not refuse a memory object in place of a process handle"

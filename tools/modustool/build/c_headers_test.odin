@@ -27,7 +27,7 @@ c_headers_refuses_bad_output_paths :: proc(t: ^testing.T) {
 	}
 }
 
-// Generates all five C11 headers twice to prove byte determinism, verifies
+// Generates all six C11 headers twice to prove byte determinism, verifies
 // every required header and static assertion exists, and compiles both
 // standalone header checks and a combined C11 verification program with
 // clang -std=c11 -Wall -Wextra -Werror -fsyntax-only to prove every
@@ -72,12 +72,13 @@ c_headers_generate_and_compile_cleanly :: proc(t: ^testing.T) {
 		testing.expectf(t, err == nil && state.exited && state.success, "standalone C11 check failed for %s: %s", name, string(stderr_bytes))
 	}
 
-	// Verify a realistic C11 consumer using all five headers together passes
+	// Verify a realistic C11 consumer using all six headers together passes
 	// every sizeof/offsetof _Static_assert and zero-warning strict compilation.
 	verify_c := foundation.join(root, "/verify_all.c")
 	verify_src := `#include "modus_types.h"
 #include "modus_operation.h"
 #include "modus_errors.h"
+#include "modus_call_outcome.h"
 #include "modus_ring.h"
 #include "modus_module.h"
 
@@ -98,6 +99,8 @@ int modus_c11_contract_verify(void) {
 	hdr.machine = MODUS_MODULE_MACHINE_X86_64;
 	hdr.table_count = MODUS_MODULE_TABLE_COUNT;
 
+	Modus_Answer answer = {MODUS_CALL_OUTCOME_ARGUMENT_REFUSED, 0};
+
 	Modus_Rights rights = MODUS_RIGHT_BIT(MODUS_RIGHT_READ) | MODUS_RIGHT_BIT(MODUS_RIGHT_WRITE);
 	Modus_Context ctx = {0};
 	ctx.handles[MODUS_CONTEXT_LOG] = 1U;
@@ -105,6 +108,8 @@ int modus_c11_contract_verify(void) {
 	return (cmd.kind == MODUS_OPERATION_MEMORY_CREATE &&
 	        err.kind == MODUS_ERROR_KIND_BAD_VALUE &&
 	        hdr.version == MODUS_MODULE_VERSION &&
+	        modus_effect_group_of(answer.outcome) == MODUS_EFFECT_GROUP_NOTHING_CHANGED &&
+	        modus_effect_group_of((Modus_Call_Outcome)17U) == MODUS_EFFECT_GROUP_CHANGE_IN_DOUBT &&
 	        rights != 0U &&
 	        ctx.handles[MODUS_CONTEXT_LOG] == 1U) ? 0 : 1;
 }

@@ -29,6 +29,7 @@
 // The design: (docs/MODULE_CONTRACT.md, "3. Static is dynamic").
 package tally
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:display"
 import "modus:graphics"
@@ -76,15 +77,15 @@ notes: [NOTE_CAPACITY]Note // notes[(calls - 1) % NOTE_CAPACITY] is the last.
 //
 // Example: `tally.add(-3, "a refund")`.
 @(export, link_name = "add")
-add :: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64 {
+add :: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if len(note) > NOTE_SIZE {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 2, i64(len(note)), NOTE_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(len(note)), NOTE_SIZE)
 	}
 	if amount < -count {
-		return errors.fail(error, -1, .Too_Small, .None, 1, amount, -count)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 1, amount, -count)
 	}
 	if amount > max(i64) - count {
-		return errors.fail(error, -1, .Bad_Value, .None, 1, amount, max(i64) - count)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, amount, max(i64) - count)
 	}
 	item := &notes[u64(calls) % NOTE_CAPACITY]
 	item.amount = amount
@@ -94,7 +95,7 @@ add :: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64
 	}
 	calls += 1
 	count += amount
-	return count
+	return .Succeeded, count
 }
 
 // total gives the count.

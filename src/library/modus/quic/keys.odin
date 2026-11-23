@@ -5,6 +5,7 @@ package quic
 // HKDF-Expand-Label, the Initial keys from a connection identifier, and the
 // integrity tag of a Retry packet.
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
@@ -18,7 +19,7 @@ import "modus:contract/value_kinds"
 //
 // **The form of each procedure** is the form of an export of a module: each text is a pointer to a
 // string, `result` is a pointer to the slice that receives the bytes, and the number that comes
-// back is the count of bytes written, or a negative number with an error record. The library
+// back is the count of bytes written, or a failure with its call outcome and an error record. The library
 // compares that count with the size that it expects, so a short result is a failure.
 //
 // Each result must be **private memory of the caller**, and it is: the keys are in records of the
@@ -44,7 +45,7 @@ Cryptography :: struct {
 	hkdf_sha256_extract:                 proc "c" (salt, input: ^string, result: ^[]u8) -> i64,
 	// HKDF-Expand with SHA-256 (RFC 5869, section 2.3): `length` bytes from a key and an info text. The
 	// info is an HkdfLabel of TLS 1.3 here (`hkdf_expand_label`).
-	hkdf_sha256_expand:                  proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64,
+	hkdf_sha256_expand:                  proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64),
 	// The header protection mask of the suites with AES: 5 bytes from a key of 16 bytes and a sample of
 	// 16 bytes (RFC 9001, section 5.4.3).
 	header_protection_mask_with_aes_128: Mask_Procedure,
@@ -60,15 +61,16 @@ Cryptography :: struct {
 	// X25519: the product of a scalar of 32 bytes and a point of 32 bytes. With the base point it gives
 	// the public key of a key share; with the key share of the peer it gives the shared secret. The
 	// handshake takes a refusal of a key share of the peer as illegal_parameter.
-	x25519:                              proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64,
+	x25519:                              proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64),
 	// Ed25519: the public key of 32 bytes of a private key of 32 bytes. A server computes the key that
 	// its Certificate carries.
-	ed25519_public_key:                  proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64,
+	ed25519_public_key:                  proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64),
 	// Ed25519: the signature of 64 bytes of a message. A server signs its CertificateVerify.
-	ed25519_sign:                        proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64,
-	// Ed25519: the check of a signature. It gives 0 when the signature verifies, a negative number with
-	// `Not_Authentic` when it does not. A client checks the CertificateVerify of the server.
-	ed25519_verify:                      proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64,
+	ed25519_sign:                        proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64),
+	// Ed25519: the check of a signature. It gives the outcome Succeeded when the signature verifies, and
+	// Argument_Refused with `Not_Authentic` when it does not. A client checks the CertificateVerify of the
+	// server.
+	ed25519_verify:                      proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64),
 }
 
 // The form of a seal or an open of the module `cryptography`, with any of its AEAD algorithms.
@@ -81,9 +83,9 @@ Cryptography :: struct {
 //   packet in place.
 // - `error`: the error record of a failure.
 //
-// **Result**: the count of bytes written: the text and 16 bytes for a seal, the sealed text minus
-// 16 bytes for an open. A negative number at a failure.
-Aead_Procedure :: #type proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64
+// **Result**: the call outcome first, then the count of bytes written: the text and 16 bytes for a
+// seal, the sealed text minus 16 bytes for an open. The outcome is not Succeeded at a failure.
+Aead_Procedure :: #type proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)
 
 // The form of a header protection mask of the module `cryptography`.
 //
@@ -92,8 +94,9 @@ Aead_Procedure :: #type proc "c" (key, nonce, additional, text: ^string, result:
 // - `result`: where the `MASK_SIZE` bytes go.
 // - `error`: the error record of a failure.
 //
-// **Result**: 5, the count of bytes of the mask, or a negative number at a failure.
-Mask_Procedure :: #type proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64
+// **Result**: the call outcome first, then 5, the count of bytes of the mask. The outcome is not
+// Succeeded at a failure.
+Mask_Procedure :: #type proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)
 
 // A cipher suite of TLS 1.3 that this library protects packets with: an AEAD algorithm and SHA-256.
 //
@@ -274,7 +277,8 @@ hkdf_expand_label :: proc "contextless" (cryptography: ^Cryptography, secret: []
 	key := string(secret)
 	info := string(hkdf_label)
 	result := output
-	return cryptography.hkdf_sha256_expand(&key, &info, value_kinds.Size_In_Bytes(len(output)), &result, error) == i64(len(output))
+	crypto_outcome, crypto_count := cryptography.hkdf_sha256_expand(&key, &info, value_kinds.Size_In_Bytes(len(output)), &result, error)
+	return crypto_outcome == .Succeeded && crypto_count == i64(len(output))
 }
 
 // packet_keys_from_secret gives the key, the iv and the header protection key of one direction from its secret.
@@ -484,5 +488,6 @@ retry_integrity_tag :: proc "contextless" (cryptography: ^Cryptography, original
 	key, nonce, empty := string(RETRY_KEY[:]), string(RETRY_NONCE[:]), ""
 	additional := string(pseudo_packet[:count])
 	result := tag[:]
-	return cryptography.seal_with_aes_128_gcm(&key, &nonce, &additional, &empty, &result, error) == TAG_SIZE
+	crypto_outcome, crypto_count := cryptography.seal_with_aes_128_gcm(&key, &nonce, &additional, &empty, &result, error)
+	return crypto_outcome == .Succeeded && crypto_count == TAG_SIZE
 }

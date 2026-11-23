@@ -2,6 +2,7 @@ package recipes_core
 
 import "modus:contract/blake3"
 import "modus:contract/builder"
+import "modus:contract/call_outcome"
 import "modus:contract/declaration_eval"
 import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
@@ -84,4 +85,24 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 		return errors.error_make(.Damaged, .None, argument, 0, 0, found)
 	}
 	return errors.error_make(.Refused, .None, argument, 0, 0, found)
+}
+
+// recipe_refusal_outcome gives the call outcome of a refusal of a recipe:
+// the one mapping of the exports of the service, beside its record.
+recipe_refusal_outcome :: proc "contextless" (refusal: pr.Recipe_Refusal) -> call_outcome.Call_Outcome {
+	switch refusal {
+	case .None, .Zero_Builder_Hash, .Bad_Output_Kind, .Bad_Build_Mode, .Invalid_Input_Name, .Zero_Input_Hash, .Duplicate_Input, .Bad_Input_Kind, .Nonzero_Padding, .Bad_Head_Value, .Untyped_Hash, .Nested_Input, .Not_A_Recipe, .Unsupported_Argument, .Too_Many_Inputs, .Arguments_Too_Large, .Buffer_Too_Small, .Damaged_Recipe:
+		return .Argument_Refused
+	case .Cache_Miss, .Unknown_Recipe:
+		return .Nothing_Has_That_Name
+	case .Store_Full, .Recipe_Limit_Reached:
+		return .Budget_Or_Capacity_Exhausted
+	case .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement, .Store_Damaged:
+		return .Data_Damaged
+	case .Builder_Failed, .Sandbox_Violation, .Store_Failed:
+		return .Callee_Unavailable
+	case .Builder_Needs_Sandbox:
+		return .Operation_Unsupported
+	}
+	return .Argument_Refused
 }

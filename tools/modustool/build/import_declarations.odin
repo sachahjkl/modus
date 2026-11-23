@@ -273,21 +273,60 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 			append(&parameters, parameter)
 		}
 	}
-	if type.results != nil && len(type.results.list) == 1 && type.results.list[0].type != nil {
-		result_type := type.results.list[0].type
-		result_text := source[result_type.pos.offset:result_type.end.offset]
-		if result_text != "i64" {
-			return {}, fmt.tprintf("the result type %s has no description", result_text), false
+	// The results: the value of an export that cannot fail (i64), or the
+	// call outcome first and the value of one that can (src/md/api/call_outcome.md).
+	result_texts: [3]string
+	result_count := 0
+	if type.results != nil {
+		for field in type.results.list {
+			if field.type == nil {
+				return {}, "the declaration has a result with no type", false
+			}
+			for _ in 0 ..< max(len(field.names), 1) {
+				if result_count == len(result_texts) {
+					return {}, "the declaration has more than two results", false
+				}
+				result_texts[result_count] = source[field.type.pos.offset:field.type.end.offset]
+				result_count += 1
+			}
 		}
-		if form.result == .None {
-			form.result = .Integer
+	}
+	gives_outcome, gives_value := false, false
+	switch result_count {
+	case 0:
+	case 1:
+		switch result_texts[0] {
+		case "i64":
+			gives_value = true
+		case OUTCOME_TYPE_TEXT:
+			gives_outcome = true
+		case:
+			return {}, fmt.tprintf("the result type %s has no description", result_texts[0]), false
 		}
-	} else if type.results != nil {
-		return {}, "the declaration has more than one result", false
+	case 2:
+		if result_texts[0] != OUTCOME_TYPE_TEXT || result_texts[1] != "i64" {
+			return {}, fmt.tprintf("the results (%s, %s) have no description: an export that can fail gives (%s, i64)", result_texts[0], result_texts[1], OUTCOME_TYPE_TEXT), false
+		}
+		gives_outcome, gives_value = true, true
+	case:
+		return {}, "the declaration has more than two results", false
+	}
+	if gives_outcome != form.has_error {
+		if form.has_error {
+			return {}, fmt.tprintf("the declaration takes an error record, so its export can fail: it gives %s first", OUTCOME_TYPE_TEXT), false
+		}
+		return {}, "the declaration gives a call outcome, so its last parameter is the error record", false
+	}
+	if gives_value && form.result == .None {
+		form.result = .Integer
 	}
 	form.parameters = parameters[:]
 	return form, "", true
 }
+
+// The type of the call outcome, as a declaration writes it: the tool
+// follows no alias.
+OUTCOME_TYPE_TEXT :: "call_outcome.Call_Outcome"
 
 // call_form_of_description gives the call form of an export as the tool
 // described it from the source of its module.

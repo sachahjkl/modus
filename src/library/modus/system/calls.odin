@@ -2,7 +2,9 @@ package system
 
 import "base:intrinsics"
 import info "modus:contract/boot_info"
+import "modus:contract/call_outcome"
 import "modus:contract/call_status"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -45,19 +47,22 @@ Call_Connection :: struct {
 // address of a table place over the memory of the argument. The export
 // works in that memory: a Change table and an Append table are changed in
 // place, and the count of an Append table is its new count. An export with
-// an error record writes it at `error`.
+// an error record can fail: it writes the record at `error`, and the call
+// outcome says how it ended (src/md/api/call_outcome.md). The outcome is
+// Succeeded for an export that cannot fail, and for a status that is not
+// Ok, which says that the export did not run.
 // It does the descriptions with an Integer result or none; another result
 // gives Not_Done: else it gives the address of the error record where the
 // export reads its buffer. It checks the
 // description as the receiver of an isolated call does (record_size), and
 // the record of each table.
-call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: call_status.Call_Status) {
+call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: call_status.Call_Status, outcome: call_outcome.Call_Outcome) {
 	function := function
-	not_done :: proc "contextless" (error: ^errors.Error_Record, argument: int, value: u64) -> (i64, call_status.Call_Status) {
+	not_done :: proc "contextless" (error: ^errors.Error_Record, argument: int, value: u64) -> (i64, call_status.Call_Status, call_outcome.Call_Outcome) {
 		if error != nil {
 			error^ = errors.error_make(.Bad_Value, .None, i64(argument), i64(value))
 		}
-		return 0, .Not_Done
+		return 0, .Not_Done, outcome_of_call_status(.Not_Done)
 	}
 	if _, described := isolated.record_size(function); !described || len(arguments) != int(function.parameter_count) {
 		return not_done(error, 0, u64(len(arguments)))
@@ -112,17 +117,27 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 			arguments[index].table.count = places[index].count
 		}
 	}
-	result = i64(out[0])
-	return result, function.error_record != 0 && result < 0 ? .Failed : .Ok
+	value, outcome_word := isolated.export_answer(function, {out[0], out[1]})
+	// The module of the export is not a module that this process was built
+	// with: its word goes through the border.
+	unreadable: errors.Error_Record
+	outcome, unreadable = call_outcome.outcome_of_word(outcome_word)
+	if outcome == .Succeeded {
+		return i64(value), .Ok, .Succeeded
+	}
+	if unreadable.kind != 0 && error != nil {
+		error^ = unreadable
+	}
+	return 0, .Failed, outcome
 }
 
 // call_isolated calls an export of a module in another process, through a
 // connection. It lends the handles and the memory objects of the
 // arguments, writes the argument record, waits for the answer, and copies
 // the answer of each Change and Append table back into the memory of the
-// caller. An export that fails gives a negative result and its error
-// record at `error`; of the tables, only its table of error details comes
-// back then.
+// caller. An export that fails gives the status Failed, its call outcome
+// and its error record at `error`; of the tables, only its table of error
+// details comes back then. The outcome is Succeeded with each other status.
 //
 // The seam of the three forms: a table argument with a memory object
 // (Table_Argument.memory_handle) goes into the call region when it fits there, and
@@ -142,15 +157,16 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // principal, or a builder) gives the hang bound of an answer (answer_deadline):
 // else a source that makes it loop holds the caller for ever. The caller then
 // ends the call host. WAIT_FOREVER (or 0): only the stop of the process ends it.
-call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil, deadline: u64 = WAIT_FOREVER) -> (result: i64, status: call_status.Call_Status) {
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil, deadline: u64 = WAIT_FOREVER) -> (result: i64, status: call_status.Call_Status, outcome: call_outcome.Call_Outcome) {
 	bound := deadline == 0 ? WAIT_FOREVER : deadline
 	// A deadline that passed before the call sends nothing: no work starts.
 	if deadline_passed(time(), bound) {
-		return 0, .Deadline_Passed
+		// Nothing left, so nothing ran: the call is not in doubt.
+		return 0, .Deadline_Passed, .Callee_Unavailable
 	}
 	function, described := module.function(file, export)
 	if !described {
-		return 0, .Refused
+		return 0, .Refused, .Operation_Unsupported
 	}
 	// lend writes the handles of the receiver in the arguments: the caller
 	// keeps its own for the next call. (A Handle field of a Record is
@@ -179,15 +195,15 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	lending: Lending
 	defer lend_end(&lending)
 	if lend(file, function, arguments, connection.ring_memory, &lending) != .Ok {
-		return 0, .Lend_Failed
+		return 0, .Lend_Failed, outcome_of_call_status(.Lend_Failed)
 	}
 	offset, size, result_place, error_place, encoded := isolated.encode(file, function, arguments, connection.region)
 	if !encoded {
-		return 0, .No_Room
+		return 0, .No_Room, outcome_of_call_status(.No_Room)
 	}
 	connection.tag += 1
 	if !send(&connection.calls.commands, ring.Record{kind = export, tag = connection.tag, values = {0 = offset, 1 = size}}) {
-		return 0, .Ring_Full
+		return 0, .Ring_Full, outcome_of_call_status(.Ring_Full)
 	}
 	for {
 		wait := wait_begin()
@@ -204,9 +220,9 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			wait_end(&wait, bound)
 			continue
 		case .Stopped:
-			return 0, .Stopped
+			return 0, .Stopped, outcome_of_call_status(.Stopped)
 		case .Deadline_Passed:
-			return 0, .Deadline_Passed
+			return 0, .Deadline_Passed, outcome_of_call_status(.Deadline_Passed)
 		case .Answered:
 		}
 		{
@@ -215,11 +231,25 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 				if error != nil {
 					error^ = transmute(errors.Error_Record)completion.values
 				}
-				return 0, .Refused
+				refusal, _ := enum_word.member_of_word(isolated.Status, u64(completion.kind))
+				return 0, .Refused, outcome_of_call_status(.Refused, refusal)
 			}
 			result = i64(completion.values[0])
-			if error_place.count != 0 && result < 0 {
+			// The other process wrote the word of the outcome: it goes
+			// through the border. An export that cannot fail has no outcome
+			// word to read.
+			unreadable: errors.Error_Record
+			if function.error_record != 0 {
+				outcome, unreadable = call_outcome.outcome_of_word(completion.values[isolated.COMPLETION_OUTCOME_VALUE])
+			}
+			if outcome == .Answer_Unreadable && unreadable.kind != 0 {
 				if error != nil {
+					error^ = unreadable
+				}
+				return 0, .Wrong_Answer, outcome
+			}
+			if outcome != .Succeeded {
+				if error != nil && error_place.count != 0 {
 					intrinsics.mem_copy_non_overlapping(error, raw_data(connection.region[error_place.start:]), size_of(errors.Error_Record))
 				}
 				// The error details come back with the error record: one
@@ -228,15 +258,15 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 				// the export failed, the status says that the details did
 				// not come.
 				if problem, _ := isolated.error_details_return(file, function, arguments, connection.region, offset); problem != .None {
-					return result, .Failed_With_Wrong_Details
+					return 0, .Failed_With_Wrong_Details, outcome
 				}
-				return result, .Failed
+				return 0, .Failed, outcome
 			}
 			if problem, parameter := isolated.tables_return(file, function, arguments, connection.region, offset); problem != .None {
 				if error != nil {
 					error^ = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
 				}
-				return result, .Wrong_Answer
+				return result, .Wrong_Answer, .Answer_Unreadable
 			}
 			// A Table result: the records are in the call region, and the
 			// count comes from the other process. The caller gets the
@@ -245,13 +275,13 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			if rows != nil && function.result == u8(module.Type.Table) && result > 0 {
 				described, has_record := module.record_type(file, function.result_detail)
 				if !has_record || described.size == 0 {
-					return 0, .Wrong_Answer
+					return 0, .Wrong_Answer, .Answer_Unreadable
 				}
 				table, _ := isolated.result_table(connection.region, result_place, u64(result), u64(described.size))
 				copied := copy(rows, table) / int(described.size)
-				return i64(copied), .Ok
+				return i64(copied), .Ok, .Succeeded
 			}
-			return result, .Ok
+			return result, .Ok, .Succeeded
 		}
 	}
 }
@@ -294,6 +324,86 @@ call_answer_step :: proc "contextless" (calls: ^ring.Ring, tag: u32, now, deadli
 		return {}, .Deadline_Passed
 	}
 	return {}, .Stopped
+}
+
+// outcome_of_call_status gives the call outcome of a status of the path
+// of a call, where the export gave none: the one place of this map until
+// the isolated call carries the outcome itself (src/md/api/call_outcome.md,
+// "The vocabularies of today"). refusal is the status of the receiver for
+// Refused. Ok and Failed have the outcome of the export; they give
+// Succeeded here.
+outcome_of_call_status :: proc "contextless" (status: call_status.Call_Status, refusal: isolated.Status = .Ok) -> call_outcome.Call_Outcome {
+	switch status {
+	case .Ok, .Failed:
+		return .Succeeded
+	case .Lend_Failed, .No_Room:
+		return .Argument_Refused
+	case .Ring_Full:
+		return .Callee_Busy
+	case .Stopped:
+		// The library cannot tell if the receiver read the command.
+		return .Callee_Stopped_During_The_Call
+	case .Deadline_Passed:
+		// The command left, and the callee can still run it.
+		return .Deadline_Passed_During_The_Call
+	case .Refused:
+		switch refusal {
+		case .Bad_Export:
+			return .Operation_Unsupported
+		case .Ok, .Bad_Arguments, .Bad_Handle, .Load_Failed:
+			return .Argument_Refused
+		}
+		return .Argument_Refused
+	case .Wrong_Answer, .Failed_With_Wrong_Details:
+		return .Answer_Unreadable
+	case .Not_Done:
+		return .Operation_Unsupported
+	}
+	return .Answer_Unreadable
+}
+
+// outcome_of_status gives the call outcome of a kernel refusal that an
+// export passes on to its caller: the one place of this map until each
+// completion of the kernel carries the outcome itself
+// (src/md/api/call_outcome.md, "The vocabularies of today"). The kernel
+// says No_Slot for a table of the caller (its handles, its mappings) and
+// for a table of the machine: the export that knows which table gives
+// Callee_Busy for the second itself.
+outcome_of_status :: proc "contextless" (status: Status) -> call_outcome.Call_Outcome {
+	switch status {
+	case .Ok:
+		return .Succeeded
+	case .Bad_Operation, .Bad_Handle, .Bad_Address:
+		return .Argument_Refused
+	case .No_Memory:
+		return .Callee_Busy
+	case .No_Slot, .No_Budget:
+		return .Budget_Or_Capacity_Exhausted
+	case .Bad_State:
+		return .Wrong_State
+	case .No_Right:
+		return .Grant_Or_Right_Missing
+	}
+	return .Argument_Refused
+}
+
+// outcome_of_own_status gives the call outcome of a kernel refusal of an
+// operation that an export runs on its own objects: its budget, its scratch
+// memory, its own grant. outcome_of_status reads a refusal as a fault of
+// the caller, who gave the handle or the address; here the caller gave
+// neither, and no change of its arguments makes the call run.
+outcome_of_own_status :: proc "contextless" (status: Status) -> call_outcome.Call_Outcome {
+	switch status {
+	case .Ok:
+		return .Succeeded
+	case .No_Memory:
+		return .Callee_Busy
+	case .No_Slot, .No_Budget:
+		return .Budget_Or_Capacity_Exhausted
+	case .Bad_Operation, .Bad_Handle, .Bad_Address, .Bad_State, .No_Right:
+		return .Callee_Unavailable
+	}
+	return .Callee_Unavailable
 }
 
 // The log records of each second that a call host gets by default.

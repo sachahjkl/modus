@@ -1,6 +1,6 @@
 package remote_service
 
-import "modus:contract/isolated"
+import "modus:contract/call_outcome"
 import "modus:contract/remote"
 import "modus:display"
 import "modus:graphics"
@@ -129,10 +129,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		switch {
 		case item.status == .Refused:
 			state, color = "refused by remote", graphics.colors.failed
-		case isolated.Status(item.call_status) != .Ok:
-			state, color = "refused by the service", graphics.colors.failed
-		case item.error != 0:
-			state, color = "error record", graphics.colors.boot_program
+		case item.outcome != .Succeeded:
+			state, color = call_outcome.CALL_OUTCOME_NAMES[item.outcome], graphics.colors.failed
 		}
 		if item.status != .Refused {
 			interface.draw_text(table, inside.x + 96, y, system.format(buffer[:], "export ", u64(item.export)), graphics.colors.dim)

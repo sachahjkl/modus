@@ -770,9 +770,9 @@ storage_case :: proc "contextless" (writer: ^system.Writer, export: string, expe
 	}
 	arguments := [3]isolated.Argument{{integer = u64(storage.ROOT)}, {text = transmute([]u8)name}, {text = transmute([]u8)data}}
 	error: errors.Error_Record
-	result, _, status := storage.call(&client, export, arguments[:export == "write" ? 3 : 2], &error)
+	_, _, status, outcome := storage.call(&client, export, arguments[:export == "write" ? 3 : 2], &error)
 	storage.error_text(writer, &client, &error)
-	return status == .Failed && result < 0 && error.kind == i64(expected)
+	return status == .Failed && outcome != .Succeeded && error.kind == i64(expected)
 }
 
 case_empty :: proc "contextless" (writer: ^system.Writer) -> bool {

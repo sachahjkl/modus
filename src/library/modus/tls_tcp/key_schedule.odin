@@ -102,8 +102,8 @@ hkdf_expand_label :: proc "contextless" (secret: []u8, label: string, ctx: []u8,
 	info_text := string(info)
 	result := out
 	err: errors.Error_Record
-	written := cryptography_primitives.hkdf_sha256_expand(&key_text, &info_text, value_kinds.Size_In_Bytes(len(out)), &result, &err)
-	if written != i64(len(out)) {
+	outcome, written := cryptography_primitives.hkdf_sha256_expand(&key_text, &info_text, value_kinds.Size_In_Bytes(len(out)), &result, &err)
+	if outcome != .Succeeded || written != i64(len(out)) {
 		return .Crypto_Failed
 	}
 	return .None
@@ -233,7 +233,7 @@ x25519_scalar_mult :: proc "contextless" (scalar, point: []u8, out: ^[X25519_KEY
 	p_text := string(point)
 	result := out[:]
 	err: errors.Error_Record
-	if cryptography_primitives.x25519(&s_text, &p_text, &result, &err) != X25519_KEY_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.x25519(&s_text, &p_text, &result, &err); crypto_outcome != .Succeeded || crypto_count != X25519_KEY_SIZE {
 		return .Invalid_Key_Share
 	}
 	return .None
@@ -247,7 +247,7 @@ ed25519_derive_public :: proc "contextless" (private_key: []u8, public_out: ^[ED
 	priv_text := string(private_key)
 	result := public_out[:]
 	err: errors.Error_Record
-	if cryptography_primitives.ed25519_public_key(&priv_text, &result, &err) != ED25519_KEY_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_public_key(&priv_text, &result, &err); crypto_outcome != .Succeeded || crypto_count != ED25519_KEY_SIZE {
 		return .Crypto_Failed
 	}
 	return .None
@@ -263,7 +263,7 @@ ed25519_sign_transcript :: proc "contextless" (private_key: []u8, transcript_has
 	msg_text := string(content[:])
 	result := sig_out[:]
 	err: errors.Error_Record
-	if cryptography_primitives.ed25519_sign(&priv_text, &msg_text, &result, &err) != ED25519_SIGNATURE_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_sign(&priv_text, &msg_text, &result, &err); crypto_outcome != .Succeeded || crypto_count != ED25519_SIGNATURE_SIZE {
 		return .Crypto_Failed
 	}
 	return .None
@@ -282,7 +282,7 @@ ed25519_verify_transcript :: proc "contextless" (public_key: []u8, transcript_ha
 	msg_text := string(content[:])
 	sig_text := string(signature)
 	err: errors.Error_Record
-	if cryptography_primitives.ed25519_verify(&pub_text, &msg_text, &sig_text, &err) != 0 {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_verify(&pub_text, &msg_text, &sig_text, &err); crypto_outcome != .Succeeded || crypto_count != 0 {
 		return .Invalid_Certificate_Verify
 	}
 	return .None

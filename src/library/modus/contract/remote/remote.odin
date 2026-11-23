@@ -160,10 +160,12 @@ REQUEST_FIELD_NAMES := [?]string{"kind", "export", "service", "hash", "arguments
 
 // The status of an answer.
 Status :: enum u32 {
-	// The call ran. call_status is the isolated.Status of the completion;
-	// value is the integer result. When value is negative and the export
-	// has an error record, error is the record that the service wrote, and
-	// the bytes of the answer are its error details (details_bytes).
+	// The remote service sent the call. outcome says how the call ended
+	// (call_outcome.Call_Outcome); value is the value of the export when it
+	// is Succeeded, else 0. When it is not Succeeded, error is the record of
+	// the export or of the receiver that refused the call record, and the
+	// bytes of the answer are the error details of the export
+	// (details_bytes).
 	Ok      = 0,
 	// The remote service refused the request, and no call ran: error says
 	// why. Its argument is the field of the Request (REQUEST_FIELD_NAMES).
@@ -174,8 +176,8 @@ Status :: enum u32 {
 // bytes, then the end of the stream.
 Answer :: struct {
 	status:      Status, // Ok or Refused.
-	call_status: u32, // isolated.Status.
-	value:       i64, // The integer result of the export.
+	outcome:     u32, // The word of the call_outcome.Call_Outcome of the call: a reader takes it with call_outcome.outcome_of_word.
+	value:       i64, // The value of the export; 0 when the outcome is not Succeeded.
 	total:       u32, // The bytes of the result after this header.
 	details:     u32, // A call that failed: the count of its error details, of the full answer, at most the largest u32. The bytes of the answer are the details that fit.
 	hash:        [32]u8, // The hash of the module of the service that runs, when the remote service knows it.
@@ -282,8 +284,9 @@ request_check :: proc "contextless" (bytes: []u8, region_size: u64) -> (request:
 }
 
 // result_bytes gives the bytes of the result that a call answer carries,
-// from the integer result of the export: the remote service does not trust
-// it as a count. A failure (a negative result) carries no bytes.
+// from the value of an export that succeeded: the remote service does not
+// trust it as a count. A count of 0, or past the largest i64, carries no
+// bytes.
 result_bytes :: proc "contextless" (request: Request, value: i64) -> u64 {
 	switch {
 	case request.result_count == 0:

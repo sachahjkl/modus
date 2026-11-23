@@ -16,9 +16,10 @@
 //   values[1]   the size of the argument record, in bytes
 //
 // The completion record:
-//   kind        a Status
-//   values[0], values[1]   the integer results
-//   values[2], values[3]   the float results
+//   kind        a Status: the receiver refused the call record, or not
+//   values[0]   the value of the export; 0 when its outcome is not Succeeded
+//   values[1]   the word of the call outcome of an export that can fail
+//               (COMPLETION_OUTCOME_VALUE), 0 for one that cannot
 //
 // The argument record is derived from the description of the export
 // (module.Function). It has one field per parameter, in order:
@@ -194,11 +195,11 @@ Service_Command :: enum u32 {
 }
 
 // The status of a completion of the call ring: the kind of the completion
-// record. With `Ok` the values are the results of the export; the integer
-// result can still be negative, and then the error record of the export says
-// why.
+// record. With `Ok` the export ran: values[0] is its value, and
+// values[COMPLETION_OUTCOME_VALUE] the word of its call outcome, which says
+// if it failed; its error record then says why.
 Status :: enum u32 {
-	Ok            = 0, // The export ran. values[0] and values[1]: its integer results; values[2] and values[3]: its float results.
+	Ok            = 0, // The export ran. values[0]: its value; values[1]: the word of its call outcome.
 	Bad_Export    = 1, // The module has no export with this index, or the export has no description.
 	Bad_Arguments = 2, // The argument record, or one of its slices, is not in the call region.
 	Bad_Handle    = 3, // A handle of the argument record did not come through the call ring, or it lacks a right of the description.
@@ -686,6 +687,27 @@ lent_handle_add :: proc "contextless" (call: ^Call, handle: u64, rights: u32) ->
 // Text and a Table give their count, whose bytes are in the call region.
 // No result, and a Record result, whose bytes are in the call region, give
 // 0; so does a byte that names no type, which record_size refused before.
+// The value of a completion that holds the call outcome word of an export
+// that can fail. The receiver writes the word as the export gave it; the
+// caller reads it through call_outcome.outcome_of_word.
+COMPLETION_OUTCOME_VALUE :: 1
+
+// export_answer reads the two integer result registers of an export
+// (src/md/api/call_outcome.md, "Where the outcome is"): an export that can
+// fail (function.error_record != 0) gives the outcome word first and its
+// value second; another gives its value alone. The value of an outcome
+// that is not Succeeded is 0: the bytes of the completion are then the
+// same at each run, and no word of the export passes by accident.
+export_answer :: proc "contextless" (function: module.Function, registers: [2]u64) -> (value: u64, outcome_word: u64) {
+	if function.error_record == 0 {
+		return completion_value(function, registers[0]), 0
+	}
+	if registers[0] != 0 {
+		return 0, registers[0]
+	}
+	return completion_value(function, registers[1]), 0
+}
+
 completion_value :: proc "contextless" (function: module.Function, register: u64) -> u64 {
 	type, type_ok := module.type_of_word(function.result)
 	if !type_ok {

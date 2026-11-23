@@ -8,6 +8,7 @@
 package declaration_eval_module
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import contract "modus:contract/declaration_eval"
 import "modus:contract/errors"
 import "modus:lex_evaluator"
@@ -18,8 +19,6 @@ SOURCE_BYTES_MOST :: lex_parser.DECLARATION_TEXT_BYTES_MOST
 FIELD_PATH_BYTES_MOST :: 256
 BUNDLE_BYTES_MOST :: 256 * 1024
 OUTPUT_BYTES_MOST :: 256 * 1024
-
-ERROR :: -1
 
 ARGUMENT_SOURCE :: 1
 ARGUMENT_FIELD_PATH :: 2
@@ -36,7 +35,7 @@ output_staging: [OUTPUT_BYTES_MOST]u8
 workspace: lex_evaluator.Declaration_Workspace
 
 @(private)
-output_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
+output_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
 	if status != .Ok {
@@ -48,10 +47,10 @@ output_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Re
 				error^ = errors.error_make(.Refused, argument = ARGUMENT_OUTPUT, found = i64(status))
 			}
 		}
-		return nil, false
+		return nil, system.outcome_of_status(status)
 	}
 	pages, _ := system.memory_size(memory)
-	return ([^]u8)(address)[:pages * system.PAGE_SIZE], true
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
 }
 
 // evaluate parses and lazily evaluates a .lex declaration in mode
@@ -65,22 +64,22 @@ evaluate :: proc "c" (
 	bundle: ^system.Bytes_To_Read,
 	output: system.Lent({.Read, .Write}),
 	error: ^errors.Error_Record,
-) -> i64 {
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// Copy every caller count and buffer once: in an isolated call the caller
 	// can change shared memory concurrently.
 	source_count := intrinsics.volatile_load(&source.count)
 	if source_count == 0 {
-		return errors.fail(error, ERROR, .Empty, .Bytes, ARGUMENT_SOURCE, 0, SOURCE_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_SOURCE, 0, SOURCE_BYTES_MOST)
 	}
 	if source_count > SOURCE_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_SOURCE, i64(source_count), SOURCE_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_SOURCE, i64(source_count), SOURCE_BYTES_MOST)
 	}
 	intrinsics.mem_copy_non_overlapping(&source_copy[0], source.bytes, int(source_count))
 	source_text := string(source_copy[:source_count])
 
 	path_count := intrinsics.volatile_load(&field_path.count)
 	if path_count > FIELD_PATH_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_FIELD_PATH, i64(path_count), FIELD_PATH_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_FIELD_PATH, i64(path_count), FIELD_PATH_BYTES_MOST)
 	}
 	if path_count > 0 {
 		intrinsics.mem_copy_non_overlapping(&field_path_copy[0], field_path.bytes, int(path_count))
@@ -89,7 +88,7 @@ evaluate :: proc "c" (
 
 	bundle_count := intrinsics.volatile_load(&bundle.count)
 	if bundle_count > BUNDLE_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_BUNDLE, i64(bundle_count), BUNDLE_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_BUNDLE, i64(bundle_count), BUNDLE_BYTES_MOST)
 	}
 	bundle_view = nil
 	config := lex_evaluator.Declaration_Config{}
@@ -97,7 +96,7 @@ evaluate :: proc "c" (
 		intrinsics.mem_copy_non_overlapping(&bundle_copy[0], bundle.bytes, int(bundle_count))
 		bundle_view = bundle_copy[:bundle_count]
 		if refusal := contract.bundle_validate(bundle_view); refusal != .None {
-			return errors.fail(error, ERROR, .Bad_Value, .None, ARGUMENT_BUNDLE, 0, 0, i64(refusal))
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, ARGUMENT_BUNDLE, 0, 0, i64(refusal))
 		}
 		config.loader = lex_evaluator.bundle_loader(&bundle_view)
 		config.here_hash, config.has_here = contract.bundle_here_hash(bundle_view)
@@ -105,16 +104,16 @@ evaluate :: proc "c" (
 
 	written, ok := lex_evaluator.declaration_evaluate_to_buffer(&workspace, source_text, path_text, config, output_staging[:])
 	if !ok {
-		return errors.fail(error, ERROR, .Over_Limit, .Bytes, ARGUMENT_OUTPUT, 0, OUTPUT_BYTES_MOST)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Bytes, ARGUMENT_OUTPUT, 0, OUTPUT_BYTES_MOST)
 	}
 
-	memory, mapped := output_map(output.handle, error)
-	if !mapped {
-		return ERROR
+	memory, map_outcome := output_map(output.handle, error)
+	if map_outcome != .Succeeded {
+		return map_outcome, 0
 	}
 	if written > len(memory) {
 		system.memory_unmap(raw_data(memory))
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, ARGUMENT_OUTPUT, i64(len(memory)), i64(written))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, ARGUMENT_OUTPUT, i64(len(memory)), i64(written))
 	}
 	intrinsics.mem_copy_non_overlapping(raw_data(memory), &output_staging[0], written)
 	system.memory_unmap(raw_data(memory))
@@ -126,5 +125,5 @@ evaluate :: proc "c" (
 			system.log_fact(.Info, Evaluation_Refused{steps = u64(header.steps_taken), failure = u64(header.failure_kind), line = header.line, column = header.column})
 		}
 	}
-	return i64(written)
+	return .Succeeded, i64(written)
 }

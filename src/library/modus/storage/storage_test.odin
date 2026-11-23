@@ -1,6 +1,9 @@
 #+build !freestanding
 package storage
 
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
+import "modus:contract/isolated"
 import "core:testing"
 
 // The kind of a Listed row comes from the storage service. Each word that
@@ -24,26 +27,32 @@ a_kind_that_names_no_entry_is_refused :: proc(t: ^testing.T) {
 	}
 }
 
-// The result of a failed export comes from the storage service. Each
-// result that names no answer is refused first: 0, a positive result, one
-// past each end of the answers, the largest and the smallest word. Then
-// each answer comes back from its own result.
+// The completion of a call comes from the storage service. Each outcome
+// word that names no member is read first: one past the last member, a
+// word far past it, the largest word. Each gives Answer_Unreadable, the
+// value 0 whatever the service wrote, and the record of the word. Then each
+// outcome that is not Succeeded gives its member and the value 0, and the
+// success gives the value last.
 @(test)
-a_result_that_names_no_answer_is_refused :: proc(t: ^testing.T) {
-	last := min(Export_Error)
-	refused := [?]i64{0, 1, i64(max(Export_Error)) + 1, i64(last) - 1, max(i64), min(i64)}
-	for result in refused {
-		_, ok := export_error_of_result(result)
-		testing.expectf(t, !ok, "the result %d names no answer, and it is taken", result)
-		testing.expect(t, !export_failed_with(.Failed, result, .No_Store))
-		testing.expect(t, !export_failed_with(.Failed, result, last))
+a_completion_reads_its_outcome_through_the_border :: proc(t: ^testing.T) {
+	refused := [?]u64{u64(max(call_outcome.Call_Outcome)) + 1, 1 << 32, max(u64)}
+	for word in refused {
+		values: [7]u64
+		values[0] = 12
+		values[isolated.COMPLETION_OUTCOME_VALUE] = word
+		value, outcome, unreadable := answer_of_completion(values)
+		testing.expect_value(t, outcome, call_outcome.Call_Outcome.Answer_Unreadable)
+		testing.expect_value(t, value, 0)
+		testing.expect_value(t, unreadable.kind, i64(errors.Kind.Bad_Value))
+		testing.expect_value(t, cast(u64)unreadable.value, word)
 	}
-	for answer in Export_Error {
-		read, ok := export_error_of_result(i64(answer))
-		testing.expect(t, ok)
-		testing.expect_value(t, read, answer)
-		// The answer counts only with the status Failed.
-		testing.expect(t, !export_failed_with(.Ok, i64(answer), answer))
-		testing.expect(t, export_failed_with(.Failed, i64(answer), answer))
+	for member in call_outcome.Call_Outcome {
+		values: [7]u64
+		values[0] = 12
+		values[isolated.COMPLETION_OUTCOME_VALUE] = u64(member)
+		value, outcome, unreadable := answer_of_completion(values)
+		testing.expect_value(t, outcome, member)
+		testing.expect_value(t, unreadable, errors.Error_Record{})
+		testing.expect_value(t, value, member == .Succeeded ? 12 : 0)
 	}
 }

@@ -5,6 +5,7 @@ import "base:intrinsics"
 import "core:testing"
 import "internal:collector/collector_core"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import pr "modus:contract/plans_recipes"
@@ -68,27 +69,48 @@ open_space :: proc(t: ^testing.T, service: ^Space_Service, source, output: strin
 	console := connection_of(PRINCIPAL, true, "console")
 	source_text, output_text, held_terms := source, output, terms
 	error: errors.Error_Record
-	number := space_open_for(service, &console, &source_text, &output_text, &held_terms, &error)
-	testing.expectf(t, number >= 1, "the space of %s.%s was refused: %v", source, output, error)
+	outcome, number := space_open_for(service, &console, &source_text, &output_text, &held_terms, &error)
+	testing.expectf(t, outcome == .Succeeded && number >= 1, "the space of %s.%s was refused: %v %v", source, output, outcome, error)
 	return number
 }
 
 @(private = "file")
-append_value :: proc(service: ^Space_Service, connection: ^system.Connection, space: i64, value: u8, error: ^errors.Error_Record) -> i64 {
+append_value :: proc(service: ^Space_Service, connection: ^system.Connection, space: i64, value: u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) {
 	bytes := [8]u8{value, value, value, value, value, value, value, value}
 	record := system.Bytes_To_Read{bytes = &bytes[0], count = len(bytes), capacity = len(bytes)}
 	return record_append_for(service, connection, space, &record, u64(100 + int(value)), error)
 }
 
+// The pair of a procedure behind an export, as one value that a check
+// reads.
 @(private = "file")
-expect_refusal :: proc(t: ^testing.T, result: i64, expected_result: i64, error: errors.Error_Record, kind: errors.Kind, unit: errors.Unit, location := #caller_location) {
-	testing.expect_value(t, result, expected_result, location)
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// A refusal gives its outcome, the value 0 and its error record.
+@(private = "file")
+expect_refusal :: proc(t: ^testing.T, answer: Answer, outcome: call_outcome.Call_Outcome, error: errors.Error_Record, kind: errors.Kind, unit: errors.Unit, location := #caller_location) {
+	testing.expect_value(t, answer.outcome, outcome, location)
+	testing.expect_value(t, answer.value, 0, location)
 	testing.expect_value(t, error.kind, i64(kind), location)
 	testing.expect_value(t, error.unit, i64(unit), location)
 }
 
 @(private = "file")
-read_all :: proc(service: ^Space_Service, connection: ^system.Connection, space: i64, heads: []wide_grants.Kept_Record_Head, bytes: []u8, error: ^errors.Error_Record) -> i64 {
+expect_answer :: proc(t: ^testing.T, answer: Answer, value: i64, location := #caller_location) {
+	testing.expect_value(t, answer.outcome, call_outcome.Call_Outcome.Succeeded, location)
+	testing.expect_value(t, answer.value, value, location)
+}
+
+@(private = "file")
+read_all :: proc(service: ^Space_Service, connection: ^system.Connection, space: i64, heads: []wide_grants.Kept_Record_Head, bytes: []u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) {
 	head_table := system.Table_To_Append(wide_grants.Kept_Record_Head){records = raw_data(heads), capacity = u64(len(heads))}
 	byte_place := system.Bytes_To_Append{bytes = raw_data(bytes), capacity = u64(len(bytes))}
 	return records_read_for(service, connection, space, -1, wide_grants.SPACE_RECORDS_MOST, &head_table, &byte_place, error)
@@ -105,42 +127,42 @@ a_wrong_principal_reads_and_lists_nothing :: proc(t: ^testing.T) {
 	space := open_space(t, service, "server", "orders", terms_of(.Audit, 4))
 	console := connection_of(PRINCIPAL, true, "console")
 	error: errors.Error_Record
-	testing.expect_value(t, append_value(service, &console, space, 1, &error), i64(0))
+	expect_answer(t, answer_of(append_value(service, &console, space, 1, &error)), i64(0))
 
 	stranger := connection_of(PRINCIPAL + 1, true, "console")
 	not_acting := connection_of(PRINCIPAL, false, "console")
 	machine := connection_of(0, true, "console")
 	callers := [?]^system.Connection{nil, &stranger, &not_acting, &machine}
 	for caller in callers {
-		expected := caller == nil ? ERROR_NO_CALLER : ERROR_NOT_PRINCIPAL
+		expected := call_outcome.Call_Outcome.Grant_Or_Right_Missing
 		unit := caller == nil ? errors.Unit.Connection : errors.Unit.Acts_For_Principal
 
 		rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
 		row_slice := rows[:]
 		error = {}
-		expect_refusal(t, spaces_for(service, caller, &row_slice, &error), expected, error, .No_Grant, unit)
+		expect_refusal(t, answer_of(spaces_for(service, caller, &row_slice, &error)), expected, error, .No_Grant, unit)
 		testing.expect(t, rows == {}, "a refused caller received a row")
 
 		heads: [4]wide_grants.Kept_Record_Head
 		bytes: [32]u8
 		error = {}
-		expect_refusal(t, read_all(service, caller, space, heads[:], bytes[:], &error), expected, error, .No_Grant, unit)
+		expect_refusal(t, answer_of(read_all(service, caller, space, heads[:], bytes[:], &error)), expected, error, .No_Grant, unit)
 		testing.expect(t, heads == {} && bytes == {}, "a refused caller received a record")
 
 		row: wide_grants.Space_Row
 		error = {}
-		expect_refusal(t, space_stats_for(service, caller, space, &row, &error), expected, error, .No_Grant, unit)
+		expect_refusal(t, answer_of(space_stats_for(service, caller, space, &row, &error)), expected, error, .No_Grant, unit)
 		testing.expect(t, row == {}, "a refused caller received the state of a space")
 
 		error = {}
-		expect_refusal(t, space_verify_for(service, caller, space, &error), expected, error, .No_Grant, unit)
+		expect_refusal(t, answer_of(space_verify_for(service, caller, space, &error)), expected, error, .No_Grant, unit)
 
 		source, output, terms := "server", "orders", terms_of(.Keep, 4)
 		error = {}
-		expect_refusal(t, space_open_for(service, caller, &source, &output, &terms, &error), expected, error, .No_Grant, unit)
+		expect_refusal(t, answer_of(space_open_for(service, caller, &source, &output, &terms, &error)), expected, error, .No_Grant, unit)
 
 		error = {}
-		expect_refusal(t, append_value(service, caller, space, 9, &error), expected, error, .No_Grant, unit)
+		expect_refusal(t, answer_of(append_value(service, caller, space, 9, &error)), expected, error, .No_Grant, unit)
 	}
 	held := wide_grants.space_of(&service.store, u32(space))
 	testing.expect_value(t, held.count, u32(1))
@@ -162,26 +184,26 @@ a_source_never_reads_or_erases_its_own_audit :: proc(t: ^testing.T) {
 	console := connection_of(PRINCIPAL, true, "console")
 	error: errors.Error_Record
 	for value in u8(0) ..< 3 {
-		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
+		expect_answer(t, answer_of(append_value(service, &console, space, value, &error)), i64(value))
 	}
 	source := connection_of(PRINCIPAL, true, "server")
 
 	heads: [4]wide_grants.Kept_Record_Head
 	bytes: [32]u8
 	error = {}
-	expect_refusal(t, read_all(service, &source, space, heads[:], bytes[:], &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+	expect_refusal(t, answer_of(read_all(service, &source, space, heads[:], bytes[:], &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
 	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Own_Space))
 	testing.expect(t, heads == {} && bytes == {}, "the source read its own audit")
 
 	row: wide_grants.Space_Row
 	error = {}
-	expect_refusal(t, space_stats_for(service, &source, space, &row, &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+	expect_refusal(t, answer_of(space_stats_for(service, &source, space, &row, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
 	testing.expect(t, row == {}, "the source read the state of its own audit")
 
 	// The source lists the space of another source, never its own.
 	rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
 	row_slice := rows[:]
-	testing.expect_value(t, spaces_for(service, &source, &row_slice, &error), i64(1))
+	expect_answer(t, answer_of(spaces_for(service, &source, &row_slice, &error)), i64(1))
 	testing.expect_value(t, rows[0].space, other)
 
 	// The source cannot set terms for its own pair, even the same ones.
@@ -189,17 +211,17 @@ a_source_never_reads_or_erases_its_own_audit :: proc(t: ^testing.T) {
 	for terms in ([?]wide_grants.Space_Terms{terms_of(.Audit, 4), terms_of(.Keep, 4), terms_of(.Audit, 4, .Keeps, 16)}) {
 		held_terms := terms
 		error = {}
-		expect_refusal(t, space_open_for(service, &source, &source_text, &output_text, &held_terms, &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+		expect_refusal(t, answer_of(space_open_for(service, &source, &source_text, &output_text, &held_terms, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
 	}
 	// Terms that would thin the audit are refused to the principal too.
 	keep_terms := terms_of(.Keep, 4)
 	error = {}
-	expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &keep_terms, &error), ERROR_SPACE, error, .Bad_Value, .None)
+	expect_refusal(t, answer_of(space_open_for(service, &console, &source_text, &output_text, &keep_terms, &error)), .Argument_Refused, error, .Bad_Value, .None)
 	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Bad_Kind))
 
 	testing.expect_value(t, wide_grants.space_count(&service.store), 2)
-	testing.expect_value(t, read_all(service, &console, space, heads[:], bytes[:], &error), i64(3))
-	testing.expect_value(t, space_verify_for(service, &console, space, &error), i64(0))
+	expect_answer(t, answer_of(read_all(service, &console, space, heads[:], bytes[:], &error)), i64(3))
+	expect_answer(t, answer_of(space_verify_for(service, &console, space, &error)), i64(0))
 }
 
 // An audit space takes records up to its bound exactly, then refuses the
@@ -218,19 +240,19 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 	for bound in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_RECORDS_MOST + 1, max(i64)}) {
 		terms := terms_of(.Audit, bound)
 		error = {}
-		expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &terms, &error), ERROR_SPACE, error, .Bad_Value, .None)
+		expect_refusal(t, answer_of(space_open_for(service, &console, &source_text, &output_text, &terms, &error)), .Argument_Refused, error, .Bad_Value, .None)
 	}
 	testing.expect_value(t, wide_grants.space_count(&service.store), 0)
 
 	space := open_space(t, service, "server", "requests", terms_of(.Audit, 4))
 	for value in u8(0) ..< 4 {
-		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
+		expect_answer(t, answer_of(append_value(service, &console, space, value, &error)), i64(value))
 	}
 	held := wide_grants.space_of(&service.store, u32(space))
 	error = {}
-	expect_refusal(t, append_value(service, &console, space, 4, &error), ERROR_FULL, error, .Full, .Records)
+	expect_refusal(t, answer_of(append_value(service, &console, space, 4, &error)), .Callee_Busy, error, .Full, .Records)
 	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Space_Full))
-	expect_refusal(t, append_value(service, &console, space, 5, &error), ERROR_FULL, error, .Full, .Records)
+	expect_refusal(t, answer_of(append_value(service, &console, space, 5, &error)), .Callee_Busy, error, .Full, .Records)
 	testing.expect_value(t, held.count, u32(4))
 	testing.expect_value(t, held.next_serial, u64(4))
 	testing.expect_value(t, held.refused_full, u64(2))
@@ -247,15 +269,15 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 	}
 	for &record in cases {
 		error = {}
-		result := record_append_for(service, &console, other, &record, 1, &error)
-		testing.expectf(t, result == ERROR_SPACE, "a record of %d bytes was kept", record.count)
+		outcome, value := record_append_for(service, &console, other, &record, 1, &error)
+		testing.expectf(t, outcome == .Argument_Refused && value == 0, "a record of %d bytes was kept: %v", record.count, outcome)
 		testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Wrong_Size))
 	}
 	error = {}
-	expect_refusal(t, record_append_for(service, &console, other, nil, 1, &error), ERROR_SPACE, error, .Bad_Address, .None)
+	expect_refusal(t, answer_of(record_append_for(service, &console, other, nil, 1, &error)), .Argument_Refused, error, .Bad_Address, .None)
 	for number in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_CAPACITY, wide_grants.SPACE_CAPACITY + 1, max(i64)}) {
 		error = {}
-		expect_refusal(t, append_value(service, &console, number, 1, &error), ERROR_SPACE, error, .Absent, .Records)
+		expect_refusal(t, answer_of(append_value(service, &console, number, 1, &error)), .Nothing_Has_That_Name, error, .Absent, .Records)
 	}
 	testing.expect_value(t, wide_grants.space_of(&service.store, u32(other)).next_serial, u64(0))
 
@@ -264,19 +286,19 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 	head_table := system.Table_To_Append(wide_grants.Kept_Record_Head){records = &heads[0], capacity = len(heads)}
 	for limit in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_RECORDS_MOST + 1, max(i64)}) {
 		error = {}
-		expect_refusal(t, records_read_for(service, &console, space, -1, limit, &head_table, nil, &error), ERROR_SPACE, error, .Out_Of_Range, .Records)
+		expect_refusal(t, answer_of(records_read_for(service, &console, space, -1, limit, &head_table, nil, &error)), .Argument_Refused, error, .Out_Of_Range, .Records)
 	}
 	error = {}
-	expect_refusal(t, records_read_for(service, &console, space, -2, 1, &head_table, nil, &error), ERROR_SPACE, error, .Bad_Value, .None)
+	expect_refusal(t, answer_of(records_read_for(service, &console, space, -2, 1, &head_table, nil, &error)), .Argument_Refused, error, .Bad_Value, .None)
 	testing.expect_value(t, head_table.count, u64(0))
-	testing.expect_value(t, records_read_for(service, &console, space, 1, 1, &head_table, nil, &error), i64(1))
+	expect_answer(t, answer_of(records_read_for(service, &console, space, 1, 1, &head_table, nil, &error)), i64(1))
 	testing.expect_value(t, heads[0].serial, i64(2))
 
 	// A record changed in place breaks the chain at its serial.
-	testing.expect_value(t, space_verify_for(service, &console, space, &error), i64(0))
+	expect_answer(t, answer_of(space_verify_for(service, &console, space, &error)), i64(0))
 	held.bytes[wide_grants.SPACE_RECORD_BYTES_MOST] ~= 0xFF
 	error = {}
-	expect_refusal(t, space_verify_for(service, &console, space, &error), ERROR_SPACE, error, .Damaged, .Records)
+	expect_refusal(t, answer_of(space_verify_for(service, &console, space, &error)), .Data_Damaged, error, .Damaged, .Records)
 	testing.expect_value(t, error.value, i64(1))
 }
 
@@ -295,19 +317,19 @@ a_record_is_kept_before_it_is_forwarded :: proc(t: ^testing.T) {
 	held := wide_grants.space_of(&service.store, u32(space))
 
 	for value in u8(0) ..< wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT {
-		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
+		expect_answer(t, answer_of(append_value(service, &console, space, value, &error)), i64(value))
 		// The newest record in the queue is one that the space holds.
 		testing.expect_value(t, held.next_serial, u64(value) + 1)
 	}
 	error = {}
-	expect_refusal(t, append_value(service, &console, space, 99, &error), ERROR_FULL, error, .Full, .Records)
+	expect_refusal(t, answer_of(append_value(service, &console, space, 99, &error)), .Callee_Busy, error, .Full, .Records)
 	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Forward_Full))
 	testing.expect_value(t, held.count, u32(wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT))
 	testing.expect_value(t, held.forwarded, u64(0))
 
 	heads: [wide_grants.SPACE_RECORDS_MOST]wide_grants.Kept_Record_Head
 	bytes: [wide_grants.SPACE_RECORDS_MOST * 8]u8
-	testing.expect_value(t, read_all(service, &console, space, heads[:], bytes[:], &error), i64(wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT))
+	expect_answer(t, answer_of(read_all(service, &console, space, heads[:], bytes[:], &error)), i64(wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT))
 
 	// Each queued record is a kept one, in order, with the same bytes.
 	for expected in u64(0) ..< wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT {
@@ -324,10 +346,10 @@ a_record_is_kept_before_it_is_forwarded :: proc(t: ^testing.T) {
 	// A full audit space that forwards refuses the record, and the queue
 	// stays empty.
 	small := open_space(t, service, "shop", "returns", terms_of(.Audit, 1, .Forward))
-	testing.expect_value(t, append_value(service, &console, small, 1, &error), i64(0))
+	expect_answer(t, answer_of(append_value(service, &console, small, 1, &error)), i64(0))
 	testing.expect_value(t, wide_grants.forward_done(&service.store), wide_grants.Space_Refusal.None)
 	error = {}
-	expect_refusal(t, append_value(service, &console, small, 2, &error), ERROR_FULL, error, .Full, .Records)
+	expect_refusal(t, answer_of(append_value(service, &console, small, 2, &error)), .Callee_Busy, error, .Full, .Records)
 	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Space_Full))
 	_, refusal := wide_grants.forward_peek(&service.store)
 	testing.expect_value(t, refusal, wide_grants.Space_Refusal.Forward_Empty)
@@ -389,8 +411,8 @@ act_records_are_refused_when_malformed_and_read_by_the_principal_only :: proc(t:
 	holder := connection_of(PRINCIPAL, false, "remote")
 	for caller in ([?]^system.Connection{nil, &stranger, &holder}) {
 		error = {}
-		result := act_records_read_for(manager, PRINCIPAL, caller, 0, 0, max(i64), &table, staging[:], &error)
-		testing.expect(t, result < 0, "a caller that does not act for the principal read act records")
+		outcome, value := act_records_read_for(manager, PRINCIPAL, caller, 0, 0, max(i64), &table, staging[:], &error)
+		testing.expectf(t, outcome == .Grant_Or_Right_Missing && value == 0, "a caller that does not act for the principal read act records: %v", outcome)
 		testing.expect_value(t, error.kind, i64(errors.Kind.No_Grant))
 	}
 	testing.expect_value(t, table.count, u64(0))
@@ -399,14 +421,14 @@ act_records_are_refused_when_malformed_and_read_by_the_principal_only :: proc(t:
 	bad_ranges := [?][3]i64{{-1, 0, 1}, {0, -1, 1}, {0, 3, 2}, {0, max(i64), min(i64)}}
 	for range in bad_ranges {
 		error = {}
-		expect_refusal(t, act_records_read_for(manager, PRINCIPAL, &console, range[0], range[1], range[2], &table, staging[:], &error), ERROR_SPACE, error, .Bad_Value, .None)
+		expect_refusal(t, answer_of(act_records_read_for(manager, PRINCIPAL, &console, range[0], range[1], range[2], &table, staging[:], &error)), .Argument_Refused, error, .Bad_Value, .None)
 	}
 	error = {}
-	expect_refusal(t, act_records_read_for(manager, PRINCIPAL, &console, 0, 0, 1, nil, staging[:], &error), ERROR_SPACE, error, .Bad_Address, .None)
+	expect_refusal(t, answer_of(act_records_read_for(manager, PRINCIPAL, &console, 0, 0, 1, nil, staging[:], &error)), .Argument_Refused, error, .Bad_Address, .None)
 	testing.expect_value(t, table.count, u64(0))
 
 	// By grant: the records of grant 1, in sequence order.
-	testing.expect_value(t, act_records_read_for(manager, PRINCIPAL, &console, 1, 0, max(i64), &table, staging[:], &error), i64(4))
+	expect_answer(t, answer_of(act_records_read_for(manager, PRINCIPAL, &console, 1, 0, max(i64), &table, staging[:], &error)), i64(4))
 	testing.expect_value(t, table.count, u64(4))
 	for sequence, index in ([?]u64{0, 1, 3, 5}) {
 		testing.expect_value(t, place[index].sequence_number, sequence)
@@ -415,17 +437,17 @@ act_records_are_refused_when_malformed_and_read_by_the_principal_only :: proc(t:
 
 	// By range: the sequences 1 ..= 3 of each grant, one past the end is no record.
 	table.count = 0
-	testing.expect_value(t, act_records_read_for(manager, PRINCIPAL, &console, 0, 1, 3, &table, staging[:], &error), i64(3))
+	expect_answer(t, answer_of(act_records_read_for(manager, PRINCIPAL, &console, 0, 1, 3, &table, staging[:], &error)), i64(3))
 	testing.expect_value(t, place[0].sequence_number, u64(1))
 	testing.expect_value(t, place[2].sequence_number, u64(3))
 	table.count = 0
-	testing.expect_value(t, act_records_read_for(manager, PRINCIPAL, &console, 0, 6, 6, &table, staging[:], &error), i64(0))
-	testing.expect_value(t, act_records_read_for(manager, PRINCIPAL, &console, 3, 0, max(i64), &table, staging[:], &error), i64(0))
+	expect_answer(t, answer_of(act_records_read_for(manager, PRINCIPAL, &console, 0, 6, 6, &table, staging[:], &error)), i64(0))
+	expect_answer(t, answer_of(act_records_read_for(manager, PRINCIPAL, &console, 3, 0, max(i64), &table, staging[:], &error)), i64(0))
 	testing.expect_value(t, table.count, u64(0))
 
 	// The count of the full answer passes what one call holds.
 	small := system.Table_To_Append(wide_grants.Act_Record){records = &place[0], capacity = 2}
-	testing.expect_value(t, act_records_read_for(manager, PRINCIPAL, &console, 0, 0, max(i64), &small, staging[:], &error), i64(6))
+	expect_answer(t, answer_of(act_records_read_for(manager, PRINCIPAL, &console, 0, 0, max(i64), &small, staging[:], &error)), i64(6))
 	testing.expect_value(t, small.count, u64(2))
 	testing.expect_value(t, place[1].sequence_number, u64(1))
 }
@@ -444,24 +466,24 @@ an_audit_space_survives_a_restart_of_the_collector :: proc(t: ^testing.T) {
 	space := open_space(t, service, "server", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST))
 	kept := u8(wide_grants.SPACE_SEGMENT_RECORDS * 2 + 3)
 	for value in u8(0) ..< kept {
-		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
+		expect_answer(t, answer_of(append_value(service, &console, space, value, &error)), i64(value))
 	}
 	last_hash := wide_grants.space_of(&service.store, u32(space)).last_hash
 
 	fixture_restart(fixture)
 	heads: [wide_grants.SPACE_RECORDS_MOST]wide_grants.Kept_Record_Head
 	bytes: [wide_grants.SPACE_RECORDS_MOST * 8]u8
-	testing.expect_value(t, read_all(service, &console, space, heads[:], bytes[:], &error), i64(kept))
+	expect_answer(t, answer_of(read_all(service, &console, space, heads[:], bytes[:], &error)), i64(kept))
 	for value in u8(0) ..< kept {
 		testing.expect_value(t, heads[value].serial, i64(value))
 		testing.expect_value(t, heads[value].time_ms, i64(100 + int(value)))
 		testing.expect_value(t, bytes[int(value) * 8], value)
 	}
 	testing.expect(t, wide_grants.space_of(&service.store, u32(space)).last_hash == last_hash, "the last link changed at the restart")
-	testing.expect_value(t, space_verify_for(service, &console, space, &error), i64(0))
-	testing.expect_value(t, record_count_for(service, &console, &error), i64(kept))
-	testing.expect_value(t, source_count_for(service, &console, &error), i64(1))
-	testing.expect_value(t, append_value(service, &console, space, kept, &error), i64(kept))
+	expect_answer(t, answer_of(space_verify_for(service, &console, space, &error)), i64(0))
+	expect_answer(t, answer_of(record_count_for(service, &console, &error)), i64(kept))
+	expect_answer(t, answer_of(source_count_for(service, &console, &error)), i64(1))
+	expect_answer(t, answer_of(append_value(service, &console, space, kept, &error)), i64(kept))
 
 	source := connection_of(PRINCIPAL, true, "server")
 	stranger := connection_of(PRINCIPAL + 1, true, "console")
@@ -469,11 +491,11 @@ an_audit_space_survives_a_restart_of_the_collector :: proc(t: ^testing.T) {
 		other_heads: [4]wide_grants.Kept_Record_Head
 		other_bytes: [32]u8
 		error = {}
-		expect_refusal(t, read_all(service, caller, space, other_heads[:], other_bytes[:], &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+		expect_refusal(t, answer_of(read_all(service, caller, space, other_heads[:], other_bytes[:], &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
 		testing.expect(t, other_heads == {} && other_bytes == {}, "a refused caller read the audit after the restart")
 		row: wide_grants.Space_Row
 		error = {}
-		expect_refusal(t, space_stats_for(service, caller, space, &row, &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+		expect_refusal(t, answer_of(space_stats_for(service, caller, space, &row, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
 		testing.expect(t, row == {}, "a refused caller read the state of the audit after the restart")
 	}
 }
@@ -489,7 +511,7 @@ a_damaged_segment_refuses_each_export_after_a_restart :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	space := open_space(t, service, "server", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST))
 	for value in u8(0) ..< wide_grants.SPACE_SEGMENT_RECORDS + 1 {
-		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
+		expect_answer(t, answer_of(append_value(service, &console, space, value, &error)), i64(value))
 	}
 	name_place: [wide_grants.SEGMENT_OBJECT_NAME_BYTES]u8
 	places := [?]int{wide_grants.SEGMENT_SPACE_AT, wide_grants.SEGMENT_FIRST_SERIAL_AT, wide_grants.SEGMENT_PREVIOUS_HASH_AT, wide_grants.SEGMENT_HEAD_BYTES + wide_grants.SEGMENT_RECORD_HEAD_BYTES}
@@ -502,27 +524,27 @@ a_damaged_segment_refuses_each_export_after_a_restart :: proc(t: ^testing.T) {
 			heads: [4]wide_grants.Kept_Record_Head
 			bytes: [32]u8
 			error = {}
-			expect_refusal(t, read_all(service, &console, space, heads[:], bytes[:], &error), ERROR_STORE, error, .Damaged, .Store)
+			expect_refusal(t, answer_of(read_all(service, &console, space, heads[:], bytes[:], &error)), .Data_Damaged, error, .Damaged, .Store)
 			testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Store_Damaged))
 			testing.expect(t, heads == {} && bytes == {}, "a damaged store served a record")
 			error = {}
-			expect_refusal(t, append_value(service, &console, space, 1, &error), ERROR_STORE, error, .Damaged, .Store)
+			expect_refusal(t, answer_of(append_value(service, &console, space, 1, &error)), .Data_Damaged, error, .Damaged, .Store)
 			error = {}
-			expect_refusal(t, space_verify_for(service, &console, space, &error), ERROR_STORE, error, .Damaged, .Store)
+			expect_refusal(t, answer_of(space_verify_for(service, &console, space, &error)), .Data_Damaged, error, .Damaged, .Store)
 			error = {}
-			expect_refusal(t, record_count_for(service, &console, &error), ERROR_STORE, error, .Damaged, .Store)
+			expect_refusal(t, answer_of(record_count_for(service, &console, &error)), .Data_Damaged, error, .Damaged, .Store)
 			rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
 			row_slice := rows[:]
 			error = {}
-			expect_refusal(t, spaces_for(service, &console, &row_slice, &error), ERROR_STORE, error, .Damaged, .Store)
+			expect_refusal(t, answer_of(spaces_for(service, &console, &row_slice, &error)), .Data_Damaged, error, .Damaged, .Store)
 			source_text, output_text, terms := "shop", "log", terms_of(.Audit, 4)
 			error = {}
-			expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &terms, &error), ERROR_STORE, error, .Damaged, .Store)
+			expect_refusal(t, answer_of(space_open_for(service, &console, &source_text, &output_text, &terms, &error)), .Data_Damaged, error, .Damaged, .Store)
 			object.bytes[place] ~= 0x10
 		}
 	}
 	fixture_restart(fixture)
-	testing.expect_value(t, space_verify_for(service, &console, space, &error), i64(0))
+	expect_answer(t, answer_of(space_verify_for(service, &console, space, &error)), i64(0))
 }
 
 // A write that the store refuses returns Device of the unit Store: the
@@ -537,21 +559,21 @@ a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 	console := connection_of(PRINCIPAL, true, "console")
 	error: errors.Error_Record
 	space := open_space(t, service, "shop", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST, .Forward))
-	testing.expect_value(t, append_value(service, &console, space, 0, &error), i64(0))
+	expect_answer(t, answer_of(append_value(service, &console, space, 0, &error)), i64(0))
 	testing.expect_value(t, wide_grants.forward_done(&service.store), wide_grants.Space_Refusal.None)
 	held := wide_grants.space_of(&service.store, u32(space))
 	snapshot := held^
 
 	fixture.memory.writes_allowed = fixture.memory.writes
 	error = {}
-	expect_refusal(t, append_value(service, &console, space, 1, &error), ERROR_STORE, error, .Device, .Store)
+	expect_refusal(t, answer_of(append_value(service, &console, space, 1, &error)), .Callee_Unavailable, error, .Device, .Store)
 	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Store_Failed))
 	testing.expect(t, held^ == snapshot, "a refused write changed the space")
 	_, refusal := wide_grants.forward_peek(&service.store)
 	testing.expect_value(t, refusal, wide_grants.Space_Refusal.Forward_Empty)
 
 	fixture.memory.writes_allowed = -1
-	testing.expect_value(t, append_value(service, &console, space, 1, &error), i64(1))
+	expect_answer(t, answer_of(append_value(service, &console, space, 1, &error)), i64(1))
 	item, queued := wide_grants.forward_peek(&service.store)
 	testing.expect_value(t, queued, wide_grants.Space_Refusal.None)
 	testing.expect_value(t, item.serial, u64(1))
@@ -561,6 +583,6 @@ a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {})
 	source_text, output_text, terms := "server", "orders", terms_of(.Audit, 4)
 	error = {}
-	expect_refusal(t, space_open_for(no_store, &console, &source_text, &output_text, &terms, &error), ERROR_STORE, error, .Device, .Store)
+	expect_refusal(t, answer_of(space_open_for(no_store, &console, &source_text, &output_text, &terms, &error)), .Callee_Unavailable, error, .Device, .Store)
 	testing.expect_value(t, wide_grants.space_count(&no_store.store), 0)
 }

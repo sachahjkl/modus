@@ -63,6 +63,7 @@
 // The design of the description tables: (docs/MODULE_CONTRACT.md, "Description tables").
 package manual
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:display"
 import "modus:graphics"
@@ -831,27 +832,27 @@ scroll :: proc "contextless" (rows_moved: int) {
 
 // text_result writes a text in the buffer of a Text result, and gives the
 // count of bytes of the full text.
-text_result :: proc "contextless" (text: string, result: ^[]u8) -> i64 {
+text_result :: proc "contextless" (text: string, result: ^[]u8) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	for i in 0 ..< min(len(text), len(result)) {
 		result[i] = text[i]
 	}
-	return i64(len(text))
+	return .Succeeded, i64(len(text))
 }
 
 // show shows the page of a module of the boot image, by name.
 //
-// **Result**: the count of exports of the module, or a negative number with an error record:
+// **Result**: the count of exports of the module, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module of the boot image has this name.
+// - `Absent`: no module of the boot image has this name.
 @(export, link_name = "show")
-show :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
+show :: proc "c" (name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	index := find(name^)
 	if index < 0 {
-		return errors.fail(error, -1, .Absent, .Modules, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	}
 	navigation_leave()
 	select(index)
-	return i64(page_log())
+	return .Succeeded, i64(page_log())
 }
 
 // page_log writes on the log which page the window shows. It gives the
@@ -871,16 +872,16 @@ page_log :: proc "contextless" () -> int {
 
 // about gives the line that says what a module is, by name.
 //
-// **Result**: the count of bytes of the line, or a negative number with an error record:
+// **Result**: the count of bytes of the line, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module of the boot image has this name.
+// - `Absent`: no module of the boot image has this name.
 //
 // A module with no documentation gives an empty text and 0: an answer, not a failure.
 @(export, link_name = "about")
-about :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+about :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	index := find(name^)
 	if index < 0 {
-		return errors.fail(error, -1, .Absent, .Modules, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	}
 	line, _ := module.documentation(file_of(&system.image_entries(image)[index]))
 	return text_result(line, result)
@@ -888,16 +889,16 @@ about :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) ->
 
 // signature gives the description of one export of a module as a text: its name, the name and the type of each parameter, and the type of the result. The exports have the numbers from 1.
 //
-// **Result**: the count of bytes of the text, or a negative number with an error record:
+// **Result**: the count of bytes of the text, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module of the boot image has this name.
-// - `Bad_Value` (-2): the module has no export with this number; the record gives the count of its exports as the
+// - `Absent`: no module of the boot image has this name.
+// - `Bad_Value`: the module has no export with this number; the record gives the count of its exports as the
 //   limit.
 @(export, link_name = "signature")
-signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	index := find(name^)
 	if index < 0 {
-		return errors.fail(error, -1, .Absent, .Modules, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	}
 	file := file_of(&system.image_entries(image)[index])
 	head, _ := module.header(file)
@@ -918,7 +919,7 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8, error: ^errors
 		}
 	}
 	// The loop counted each described export: number is their count.
-	return errors.fail(error, -2, .Bad_Value, .None, 2, export, number)
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, export, number)
 }
 
 // The entry of the manual: it opens its service and its window, then serves calls and keys until the principal

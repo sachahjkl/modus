@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:cryptography/ed25519"
@@ -32,7 +33,8 @@ sdk_test_keypair :: proc(t: ^testing.T, fill_byte: u8) -> (seed: [ed25519.PRIVAT
 	secret_text := string(seed[:])
 	pub_buf := pub[:]
 	err_rec: errors.Error_Record
-	count := cryptography_primitives.ed25519_public_key(&secret_text, &pub_buf, &err_rec)
+	outcome, count := cryptography_primitives.ed25519_public_key(&secret_text, &pub_buf, &err_rec)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, count, i64(ed25519.PUBLIC_KEY_SIZE))
 	return seed, pub
 }

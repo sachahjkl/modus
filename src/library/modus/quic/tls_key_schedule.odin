@@ -100,7 +100,8 @@ hkdf_expand_label_with_context :: proc "contextless" (cryptography: ^Cryptograph
 	key := string(secret)
 	info := string(hkdf_label)
 	result := output
-	return cryptography.hkdf_sha256_expand(&key, &info, value_kinds.Size_In_Bytes(len(output)), &result, error) == i64(len(output))
+	crypto_outcome, crypto_count := cryptography.hkdf_sha256_expand(&key, &info, value_kinds.Size_In_Bytes(len(output)), &result, error)
+	return crypto_outcome == .Succeeded && crypto_count == i64(len(output))
 }
 
 // hkdf_extract gives HKDF-Extract(salt, input) with SHA-256: 32 bytes (RFC 5869, section 2.2).

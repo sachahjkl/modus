@@ -115,6 +115,20 @@ export add_pair
 	testing.expect_value(t, add_pair.error_record, u32(2))
 }
 
+// An export that can fail and has no value gives its call outcome alone: an
+// error record with no result, or with a record result, is accepted.
+@(test)
+manifest_parse_outcome_without_value :: proc(t: ^testing.T) {
+	for result in ([2]string{"", "  result: record(Err)\n"}) {
+		source := strings.concatenate({"module: m\nabout: Ok.\nrecord Err size=8\n  field c offset=0 type=i64\nexport f\n  about: Test.\n", result, "  error_record: Err\n"}, context.temp_allocator)
+		manifest, problem := manifest_parse(source)
+		testing.expectf(t, problem == "", "the export with an error record and the result %q was refused: %s", result, problem)
+		if problem == "" {
+			testing.expect_value(t, manifest.description.exports[0].error_record, u32(1))
+		}
+	}
+}
+
 // Adversarial manifest inputs: edges (0, 1, bound, one past bound, negative)
 // and malformed directives are refused with a clear diagnostic.
 @(test)
@@ -172,7 +186,7 @@ manifest_parse_refusals :: proc(t: ^testing.T) {
 		{"export optional non-enum", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param x: integer optional\n", "allowed on enum parameters only"},
 		{"export getter missing", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nexport f\n  about: Test.\n  param e: enum(E) getter=missing\n", "names no export"},
 		{"export getter wrong return", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nexport g\n  about: Bad getter.\n  result: integer\nexport f\n  about: Test.\n  param e: enum(E) getter=g\n", "return an enum"},
-		{"export error_record with none result", "module: m\nabout: Ok.\nrecord Err size=8\n  field c offset=0 type=i64\nexport f\n  about: Test.\n  error_record: Err\n", "result must be integer, text, or table"},
+		{"export error_record with enum result", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nrecord Err size=8\n  field c offset=0 type=i64\nexport f\n  about: Test.\n  result: enum(E)\n  error_record: Err\n", "cannot be an enum"},
 		{"export table record with handle", "module: m\nabout: Ok.\nrecord With_Handle size=8\n  field h offset=0 type=handle(read)\nexport f\n  about: Test.\n  param t: table(With_Handle, read)\n", "cannot contain a handle"},
 		{"export 13 call arguments", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param p1: integer\n  param p2: integer\n  param p3: integer\n  param p4: integer\n  param p5: integer\n  param p6: integer\n  param p7: integer\n  param p8: integer\n  param p9: integer\n  param p10: integer\n  param p11: integer\n  param p12: integer\n  result: text\n", "at most 12"},
 		{"export duplicate name", "module: m\nabout: Ok.\nexport f\n  about: One.\nexport f\n  about: Two.\n", "declared twice"},

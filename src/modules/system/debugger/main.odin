@@ -75,6 +75,7 @@ package debugger
 
 import "base:intrinsics"
 import debug_object "modus:contract/debug_object"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
@@ -83,27 +84,6 @@ import "internal:debugger/debugging"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
 import "modus:system"
-
-// The results of an export that fails: a negative number, with an error
-// record.
-ERROR_ACTS_FOR_PRINCIPAL :: -1 // No_Grant, Acts_For_Principal: the caller does not act for the principal.
-ERROR_NOT_ATTACHED :: -2 // Absent, Debugged_Processes: the caller attached to no process.
-ERROR_BUSY :: -3 // Full, Debugged_Processes: the service debugs a process already.
-ERROR_REFUSED :: -4 // The root service or the kernel refused: the record is theirs, or Refused with the status.
-ERROR_THREAD :: -5 // Absent, Threads or Held_Threads: no such thread, or the thread is not held.
-ERROR_NO_DEBUG_OBJECT :: -6 // Absent, Debug_Objects: no debug object describes the module of the address.
-ERROR_FRAME :: -7 // Absent, Stack_Frames: the stack has no frame with this number.
-ERROR_VARIABLE :: -8 // Absent, Readable_Variables: no variable or global has the name, or it is not readable there.
-ERROR_PATH :: -9 // Bad_Byte or Bad_Value: the text is not a path, or a step of the path names nothing.
-ERROR_PLACE :: -10 // Absent, Source_Places: no procedure and no line has the place of the breakpoint.
-ERROR_BREAKPOINTS :: -11 // Full or Absent, Breakpoints: no breakpoint is free, or the number names none.
-ERROR_ADDRESS :: -12 // Bad_Address or Bad_Value: the process does not map the address, or the text is no address.
-ERROR_ENDED :: -13 // Absent, Processes: the process stopped, or the debug access ended.
-ERROR_AMBIGUOUS :: -14 // Bad_Value, Processes: two processes have the name and the module; the service cannot tell which one the handle names.
-ERROR_TEXT :: -15 // Too_Long, Bytes: a text argument is longer than the service takes.
-ERROR_RECORD :: -16 // Absent, Full, Out_Of_Range, Bad_Value or Damaged, Input_Histories: no record runs, a record or a replay runs already, a step back past the history, a module that is not the module of the history, or a header that is not valid.
-ERROR_CHECKPOINT :: -17 // Absent or Exists, Checkpoints: no checkpoint before the point of a step back, or one at this point already.
-ERROR_NO_WRITE :: -18 // Absent, Recorded_Writes: no input of the history wrote a byte of the range of a watch back.
 
 // The debug object of the module of a disk process, read from the store
 // into memory of this service: at most DEBUG_OBJECT_BYTES_LIMIT, 2048
@@ -254,8 +234,23 @@ text_copy :: proc "contextless" (buffer: []u8, text: ^string) -> (copied: string
 }
 
 // refused gives the result of an export that the kernel refused.
-refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> i64 {
-	return errors.fail(error, ERROR_REFUSED, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
+	return refuse(error, system.outcome_of_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+}
+
+// outcome_of_status_word gives the call outcome of a refusal of the root
+// service or of the kernel, from the status word of its completion.
+outcome_of_status_word :: proc "contextless" (word: u32) -> call_outcome.Call_Outcome {
+	status, _ := system.status_of_word(word)
+	return system.outcome_of_status(status)
+}
+
+// refuse writes the error record of a refusal and gives its call outcome.
+refuse :: proc "contextless" (error: ^errors.Error_Record, outcome: call_outcome.Call_Outcome, kind: errors.Kind, unit: errors.Unit = .None, argument: i64 = 0, value: i64 = 0, limit: i64 = 0, found: i64 = 0) -> call_outcome.Call_Outcome {
+	if error != nil {
+		error^ = errors.error_make(kind, unit, argument, value, limit, found)
+	}
+	return outcome
 }
 
 // root_request_send sends one command Debug to the root service and keeps
@@ -550,7 +545,7 @@ session_end :: proc "contextless" (why: string) {
 // `needs_the_grant` is false for the detach: a caller that lost the grant
 // to act for the principal can still end its debugging, so that no thread
 // of the process stays stopped.
-session_of_caller :: proc "contextless" (error: ^errors.Error_Record, needs_the_grant := true) -> (failure: i64) {
+session_of_caller :: proc "contextless" (error: ^errors.Error_Record, needs_the_grant := true) -> (failure: call_outcome.Call_Outcome) {
 	if session.attached {
 		// The root service revokes the handle when the grant `debug` of
 		// the caller is revoked, when another revocation takes the debug
@@ -561,19 +556,19 @@ session_of_caller :: proc "contextless" (error: ^errors.Error_Record, needs_the_
 	}
 	caller := system.service_caller()
 	if caller == nil || needs_the_grant && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if !session.attached || session.caller_ring != caller.ring_memory {
-		return errors.fail(error, ERROR_NOT_ATTACHED, .Absent, .Debugged_Processes)
+		return refuse(error, .Wrong_State, .Absent, .Debugged_Processes)
 	}
 	process: op.Process_Report
 	if !inspect_call(.Process, session.slot, &process, size_of(process)) || process.process_serial != session.process_serial || process.state == .None || process.state == .Stopped {
 		session_end("the process stopped")
-		return errors.fail(error, ERROR_ENDED, .Absent, .Processes)
+		return refuse(error, .Nothing_Has_That_Name, .Absent, .Processes)
 	}
 	reports_read()
 	records_take()
-	return 0
+	return .Succeeded
 }
 
 // reports_read reads the module records and the threads of the process of
@@ -710,14 +705,14 @@ thread_stopped :: proc "contextless" (number: u64) -> bool {
 // thread_of_argument checks the number of a thread that a caller gave: a
 // live thread of the process. With `stopped`, also a thread whose
 // registers can be read. A failure gives the result of the export.
-thread_of_argument :: proc "contextless" (thread: i64, stopped: bool, error: ^errors.Error_Record) -> (number: u64, failure: i64) {
+thread_of_argument :: proc "contextless" (thread: i64, stopped: bool, error: ^errors.Error_Record) -> (number: u64, failure: call_outcome.Call_Outcome) {
 	if thread < 0 || thread >= THREAD_CAPACITY || thread_report(u64(thread)) == nil {
-		return 0, errors.fail(error, ERROR_THREAD, .Absent, .Threads, 1)
+		return 0, refuse(error, .Nothing_Has_That_Name, .Absent, .Threads, 1)
 	}
 	if stopped && !thread_stopped(u64(thread)) {
-		return 0, errors.fail(error, ERROR_THREAD, .Absent, .Held_Threads, 1)
+		return 0, refuse(error, .Wrong_State, .Absent, .Held_Threads, 1)
 	}
-	return u64(thread), 0
+	return u64(thread), .Succeeded
 }
 
 // thread_release lets a thread run: the answer of its record, and the end

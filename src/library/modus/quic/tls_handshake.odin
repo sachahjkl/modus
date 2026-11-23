@@ -898,7 +898,7 @@ key_share_make :: proc "contextless" (handshake: ^Tls_Handshake, error: ^errors.
 	base_point[0] = 9
 	scalar, point := string(handshake.x25519_private_key[:]), string(base_point[:])
 	result := handshake.x25519_public_key[:]
-	if handshake.cryptography.x25519(&scalar, &point, &result, error) != 32 {
+	if crypto_outcome, crypto_count := handshake.cryptography.x25519(&scalar, &point, &result, error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	return true
@@ -928,7 +928,7 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 	defer secret_erase(&shared, size_of(shared))
 	scalar, point := string(handshake.x25519_private_key[:]), string(peer_key_share)
 	result := shared[:]
-	if handshake.cryptography.x25519(&scalar, &point, &result, error) != 32 {
+	if crypto_outcome, crypto_count := handshake.cryptography.x25519(&scalar, &point, &result, error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		return tls_fail(handshake, error, .Illegal_Parameter, .Bad_Value)
 	}
 	secret_erase(&handshake.x25519_private_key, size_of(handshake.x25519_private_key))
@@ -1004,7 +1004,7 @@ tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_
 		// The public key that the Certificate carries, from the private key.
 		secret := string(handshake.configuration.server_private_key[:])
 		result := handshake.server_public_key[:]
-		if cryptography.ed25519_public_key(&secret, &result, error) != ED25519_KEY_SIZE {
+		if crypto_outcome, crypto_count := cryptography.ed25519_public_key(&secret, &result, error); crypto_outcome != .Succeeded || crypto_count != ED25519_KEY_SIZE {
 			return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 		}
 		handshake.state = .Server_Waits_For_Client_Hello
@@ -1016,7 +1016,7 @@ tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_
 		// server asks for it.
 		secret := string(handshake.configuration.client_private_key[:])
 		result := handshake.client_public_key[:]
-		if cryptography.ed25519_public_key(&secret, &result, error) != ED25519_KEY_SIZE {
+		if crypto_outcome, crypto_count := cryptography.ed25519_public_key(&secret, &result, error); crypto_outcome != .Succeeded || crypto_count != ED25519_KEY_SIZE {
 			return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 		}
 	}
@@ -1654,7 +1654,7 @@ proof_of_key_send :: proc "contextless" (handshake: ^Tls_Handshake, private_key:
 	signature: [ED25519_SIGNATURE_SIZE]u8
 	secret, signed := string(private_key), string(content[:])
 	result := signature[:]
-	if handshake.cryptography.ed25519_sign(&secret, &signed, &result, error) != ED25519_SIGNATURE_SIZE {
+	if crypto_outcome, crypto_count := handshake.cryptography.ed25519_sign(&secret, &signed, &result, error); crypto_outcome != .Succeeded || crypto_count != ED25519_SIGNATURE_SIZE {
 		return tls_fail(handshake, error, .Internal_Error, .Refused, argument = 0)
 	}
 	writer = Writer{bytes = buffer[:]}
@@ -2068,7 +2068,7 @@ signature_verify :: proc "contextless" (handshake: ^Tls_Handshake, public_key: [
 		return false
 	}
 	public, signed, signature_text := string(public_key), string(content[:]), string(signature)
-	if handshake.cryptography.ed25519_verify(&public, &signed, &signature_text, error) != 0 {
+	if crypto_outcome, crypto_count := handshake.cryptography.ed25519_verify(&public, &signed, &signature_text, error); crypto_outcome != .Succeeded || crypto_count != 0 {
 		return tls_fail(handshake, error, .Decrypt_Error, .Not_Authentic)
 	}
 	return true

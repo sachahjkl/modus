@@ -34,6 +34,7 @@
 package cryptography_vectors
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:display"
@@ -41,19 +42,48 @@ import "modus:graphics"
 import "modus:interface"
 import "modus:system"
 
+// The pair of a procedure of the call form, as one value that a check
+// compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc "contextless" (outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// refused says if a call refused an argument: the outcome Argument_Refused
+// and the value 0.
+@(private = "file")
+refused_argument :: proc "contextless" (outcome: call_outcome.Call_Outcome, value: i64) -> bool {
+	return outcome == .Argument_Refused && value == 0
+}
+
 foreign _ {
-	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	sha256 :: proc "c" (text: ^string, result: ^[]u8) -> i64 ---
 	hmac_sha256 :: proc "c" (key, text: ^string, result: ^[]u8) -> i64 ---
 	hkdf_sha256_extract :: proc "c" (salt, input: ^string, result: ^[]u8) -> i64 ---
-	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 }
 
 LINE :: interface.TABLE_LINE
@@ -149,13 +179,13 @@ vectors_run :: proc "contextless" () {
 		nonce := bytes_from_hex(nonce_buffer[:], "070000004041424344454647")
 		additional := bytes_from_hex(additional_buffer[:], "50515253c0c1c2c3c4c5c6c7")
 		text := SUNSCREEN
-		count := seal_with_chacha20_poly1305(&key, &nonce, &additional, &text, &result, &error)
+		_, count := seal_with_chacha20_poly1305(&key, &nonce, &additional, &text, &result, &error)
 		passed := count == i64(len(SUNSCREEN) + 16) && same_as_hex(output[:16], "d31a8d34648e60db7b86afbc53ef7ec2") && same_as_hex(output[len(SUNSCREEN):][:16], "1ae10b594f09e26a7e902ecbd0600691")
 		sealed := string(output[:count])
 		opened_result := opened[:]
-		passed &&= open_with_chacha20_poly1305(&key, &nonce, &additional, &sealed, &opened_result, &error) == i64(len(SUNSCREEN)) && string(opened[:len(SUNSCREEN)]) == SUNSCREEN
+		passed &&= answer_of(open_with_chacha20_poly1305(&key, &nonce, &additional, &sealed, &opened_result, &error)) == Answer{.Succeeded, i64(len(SUNSCREEN))} && string(opened[:len(SUNSCREEN)]) == SUNSCREEN
 		output[5] ~= 1
-		refused := open_with_chacha20_poly1305(&key, &nonce, &additional, &sealed, &opened_result, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic) && no_byte_given(opened[:len(SUNSCREEN)])
+		refused := refused_argument(open_with_chacha20_poly1305(&key, &nonce, &additional, &sealed, &opened_result, &error)) && error.kind == i64(errors.Kind.Not_Authentic) && no_byte_given(opened[:len(SUNSCREEN)])
 		record_vector("ChaCha20-Poly1305", "RFC 8439 2.8.2", passed, true, refused)
 	}
 	// AES-128-GCM, the test case 4 of the GCM specification.
@@ -164,13 +194,13 @@ vectors_run :: proc "contextless" () {
 		nonce := bytes_from_hex(nonce_buffer[:], "cafebabefacedbaddecaf888")
 		additional := bytes_from_hex(additional_buffer[:], "feedfacedeadbeeffeedfacedeadbeefabaddad2")
 		text := bytes_from_hex(other_buffer[:], "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39")
-		count := seal_with_aes_128_gcm(&key, &nonce, &additional, &text, &result, &error)
+		_, count := seal_with_aes_128_gcm(&key, &nonce, &additional, &text, &result, &error)
 		passed := count == 76 && same_as_hex(output[:16], "42831ec2217774244b7221b784d0d49c") && same_as_hex(output[60:76], "5bc94fbc3221a5db94fae95ae7121a47")
 		sealed := string(output[:count])
 		opened_result := opened[:]
-		passed &&= open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error) == 60 && string(opened[:60]) == text
+		passed &&= answer_of(open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error)) == Answer{.Succeeded, 60} && string(opened[:60]) == text
 		output[70] ~= 1
-		refused := open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic) && no_byte_given(opened[:60])
+		refused := refused_argument(open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error)) && error.kind == i64(errors.Kind.Not_Authentic) && no_byte_given(opened[:60])
 		record_vector("AES-128-GCM", "GCM test case 4", passed, true, refused)
 	}
 	// SHA-256, FIPS 180-4.
@@ -193,7 +223,7 @@ vectors_run :: proc "contextless" () {
 		passed := hkdf_sha256_extract(&salt, &input, &result) == 32 && same_as_hex(output[:32], "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")
 		pseudorandom := string(bytes_from_hex(other_buffer[:], "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"))
 		info := bytes_from_hex(additional_buffer[:], "f0f1f2f3f4f5f6f7f8f9")
-		passed &&= hkdf_sha256_expand(&pseudorandom, &info, 42, &result, &error) == 42 && same_as_hex(output[:42], "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
+		passed &&= answer_of(hkdf_sha256_expand(&pseudorandom, &info, 42, &result, &error)) == Answer{.Succeeded, 42} && same_as_hex(output[:42], "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
 		record_vector("HKDF-SHA-256", "RFC 5869 A.1", passed)
 	}
 	// X25519, RFC 7748 5.2 and 6.1; the point 1, of small order, gives
@@ -201,13 +231,13 @@ vectors_run :: proc "contextless" () {
 	{
 		scalar := bytes_from_hex(key_buffer[:], "a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4")
 		point := bytes_from_hex(nonce_buffer[:], "e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c")
-		passed := x25519(&scalar, &point, &result, &error) == 32 && same_as_hex(output[:32], "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")
+		passed := answer_of(x25519(&scalar, &point, &result, &error)) == Answer{.Succeeded, 32} && same_as_hex(output[:32], "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")
 		alice := bytes_from_hex(key_buffer[:], "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
 		bob_public := bytes_from_hex(nonce_buffer[:], "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
-		passed &&= x25519(&alice, &bob_public, &result, &error) == 32 && same_as_hex(output[:32], "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
+		passed &&= answer_of(x25519(&alice, &bob_public, &result, &error)) == Answer{.Succeeded, 32} && same_as_hex(output[:32], "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
 		zero_point := bytes_from_hex(nonce_buffer[:], "0100000000000000000000000000000000000000000000000000000000000000")
 		output[0] = 0xA5
-		refused := x25519(&alice, &zero_point, &result, &error) < 0 && error.kind == i64(errors.Kind.Bad_Value) && output[0] == 0xA5
+		refused := refused_argument(x25519(&alice, &zero_point, &result, &error)) && error.kind == i64(errors.Kind.Bad_Value) && output[0] == 0xA5
 		record_vector("X25519", "RFC 7748 5.2, 6.1", passed, true, refused)
 	}
 	// Ed25519, RFC 8032 7.1 test 1 (an empty message) and test 2; a changed
@@ -215,25 +245,25 @@ vectors_run :: proc "contextless" () {
 	{
 		secret := bytes_from_hex(key_buffer[:], "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
 		message := ""
-		passed := ed25519_public_key(&secret, &result, &error) == 32 && same_as_hex(output[:32], "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+		passed := answer_of(ed25519_public_key(&secret, &result, &error)) == Answer{.Succeeded, 32} && same_as_hex(output[:32], "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
 		public := string(bytes_from_hex(nonce_buffer[:], "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"))
-		passed &&= ed25519_sign(&secret, &message, &result, &error) == 64 && same_as_hex(output[:64], "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+		passed &&= answer_of(ed25519_sign(&secret, &message, &result, &error)) == Answer{.Succeeded, 64} && same_as_hex(output[:64], "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
 		signature := string(output[:64])
-		passed &&= ed25519_verify(&public, &message, &signature, &error) == 0
+		passed &&= answer_of(ed25519_verify(&public, &message, &signature, &error)) == Answer{.Succeeded, 0}
 		output[40] ~= 1
-		refused := ed25519_verify(&public, &message, &signature, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic)
+		refused := refused_argument(ed25519_verify(&public, &message, &signature, &error)) && error.kind == i64(errors.Kind.Not_Authentic)
 		record_vector("Ed25519", "RFC 8032 7.1 test 1", passed, true, refused)
 	}
 	{
 		secret := bytes_from_hex(key_buffer[:], "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
 		message := bytes_from_hex(additional_buffer[:], "72")
-		passed := ed25519_public_key(&secret, &result, &error) == 32 && same_as_hex(output[:32], "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
+		passed := answer_of(ed25519_public_key(&secret, &result, &error)) == Answer{.Succeeded, 32} && same_as_hex(output[:32], "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
 		public := string(bytes_from_hex(nonce_buffer[:], "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"))
-		passed &&= ed25519_sign(&secret, &message, &result, &error) == 64 && same_as_hex(output[:64], "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00")
+		passed &&= answer_of(ed25519_sign(&secret, &message, &result, &error)) == Answer{.Succeeded, 64} && same_as_hex(output[:64], "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00")
 		signature := string(output[:64])
-		passed &&= ed25519_verify(&public, &message, &signature, &error) == 0
+		passed &&= answer_of(ed25519_verify(&public, &message, &signature, &error)) == Answer{.Succeeded, 0}
 		output[1] ~= 1
-		refused := ed25519_verify(&public, &message, &signature, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic)
+		refused := refused_argument(ed25519_verify(&public, &message, &signature, &error)) && error.kind == i64(errors.Kind.Not_Authentic)
 		record_vector("Ed25519", "RFC 8032 7.1 test 2", passed, true, refused)
 	}
 }
@@ -263,15 +293,15 @@ speeds_run :: proc "contextless" () {
 		sha256(&empty, &small)
 	}
 	empty_call_nanoseconds = (system.nanoseconds() - start) / ROUNDS
-	seal_with_chacha20_poly1305(&key, &nonce, &empty, &packet_text, &result, &error)
+	_, _ = seal_with_chacha20_poly1305(&key, &nonce, &empty, &packet_text, &result, &error)
 	start = system.nanoseconds()
 	for _ in 0 ..< ROUNDS {
-		seal_with_chacha20_poly1305(&key, &nonce, &empty, &packet_text, &result, &error)
+		_, _ = seal_with_chacha20_poly1305(&key, &nonce, &empty, &packet_text, &result, &error)
 	}
 	measure("seal ChaCha20-Poly1305", len(packet), start)
 	start = system.nanoseconds()
 	for _ in 0 ..< ROUNDS {
-		seal_with_aes_128_gcm(&short_key, &nonce, &empty, &packet_text, &result, &error)
+		_, _ = seal_with_aes_128_gcm(&short_key, &nonce, &empty, &packet_text, &result, &error)
 	}
 	measure("seal AES-128-GCM", len(packet), start)
 	start = system.nanoseconds()
@@ -281,28 +311,28 @@ speeds_run :: proc "contextless" () {
 	measure("SHA-256", len(packet), start)
 	start = system.nanoseconds()
 	for _ in 0 ..< ROUNDS {
-		hkdf_sha256_expand(&key, &empty, 32, &result, &error)
+		_, _ = hkdf_sha256_expand(&key, &empty, 32, &result, &error)
 	}
 	measure("HKDF expand, 32 bytes", 32, start)
 	key_bytes[0] = 9
 	start = system.nanoseconds()
 	for _ in 0 ..< ROUNDS {
-		x25519(&key, &key, &result, &error)
+		_, _ = x25519(&key, &key, &result, &error)
 	}
 	measure("X25519", 32, start)
 	start = system.nanoseconds()
 	for _ in 0 ..< ROUNDS {
-		ed25519_sign(&key, &key, &result, &error)
+		_, _ = ed25519_sign(&key, &key, &result, &error)
 	}
 	measure("Ed25519 sign, 32 bytes", 32, start)
 	signature := string(output[:64])
 	public_output: [32]u8
 	public_result := public_output[:]
-	ed25519_public_key(&key, &public_result, &error)
+	_, _ = ed25519_public_key(&key, &public_result, &error)
 	public := string(public_output[:])
 	start = system.nanoseconds()
 	for _ in 0 ..< ROUNDS {
-		ed25519_verify(&public, &key, &signature, &error)
+		_, _ = ed25519_verify(&public, &key, &signature, &error)
 	}
 	measure("Ed25519 verify, 32 bytes", 32, start)
 	for speed in speeds[:speed_count] {

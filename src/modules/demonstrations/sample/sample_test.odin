@@ -2,6 +2,7 @@
 package sample
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "core:testing"
 import "core:thread"
@@ -32,8 +33,8 @@ a_record_that_changes_during_the_call :: proc(t: ^testing.T) {
 		words := system.Table_To_Change(Word){records = &shared.words[0], count = 1, capacity = 1}
 		bytes := system.Bytes_To_Read{bytes = raw_data(text), count = 8, capacity = 8}
 		error: errors.Error_Record
-		result := sum_words(&words, &bytes, &error)
-		answers[result < 0 ? 1 : 0] += 1
+		outcome, _ := sum_words(&words, &bytes, &error)
+		answers[outcome == .Succeeded ? 0 : 1] += 1
 	}
 	intrinsics.atomic_store(&shared.stop, true)
 	thread.join(changer)
@@ -50,17 +51,23 @@ scale_values_up_to_stops_at_the_first_reading_too_large :: proc(t: ^testing.T) {
 	list := [4]Reading{{value = 30}, {value = 60}, {value = 90}, {value = 120}}
 	readings := system.Table_To_Change(Reading){records = &list[0], count = 4, capacity = 4}
 	error: errors.Error_Record
-	result := scale_values_up_to(&readings, 3, 200, &error)
-	testing.expect_value(t, result, -1)
+	// The first two readings changed before the refusal: the outcome says so.
+	outcome, value := scale_values_up_to(&readings, 3, 200, &error)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Stopped_After_A_Partial_Change)
+	testing.expect_value(t, value, 0)
 	testing.expect_value(t, errors.Kind(error.kind), errors.Kind.Bad_Value)
 	testing.expect_value(t, error.argument, 2)
 	testing.expect_value(t, error.value, 3)
 	testing.expect_value(t, error.limit, 2)
 	testing.expect(t, list[0].value == 90 && list[1].value == 180 && list[2].value == 90 && list[3].value == 120, "the readings before the third one are changed, the others not")
 	list = {{value = 1}, {value = 2}, {value = 3}, {value = 4}}
-	testing.expect_value(t, scale_values_up_to(&readings, 2, 200, &error), 4)
+	outcome, value = scale_values_up_to(&readings, 2, 200, &error)
+	testing.expect(t, outcome == .Succeeded && value == 4)
 	testing.expect(t, list[3].value == 8)
-	testing.expect_value(t, scale_values_up_to(&readings, 0, 200, &error), -1)
+	// A factor that the call refuses before any reading changes nothing.
+	outcome, value = scale_values_up_to(&readings, 0, 200, &error)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect(t, value == 0 && list[0].value == 2 && list[3].value == 8)
 	testing.expect_value(t, errors.Kind(error.kind), errors.Kind.Too_Small)
 }
 
@@ -71,11 +78,15 @@ scale_values_up_to_stops_at_the_first_reading_too_large :: proc(t: ^testing.T) {
 weigh_reads_nine_parameters_in_their_places :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	label := "A"
-	testing.expect_value(t, weigh(1, 2, 3, 4, 5, 6, 7, 8, &label, &error), 269)
+	outcome, value := weigh(1, 2, 3, 4, 5, 6, 7, 8, &label, &error)
+	testing.expect(t, outcome == .Succeeded && value == 269)
 	empty := ""
-	testing.expect_value(t, weigh(0, 0, 0, 0, 0, 0, 0, 1, &empty, &error), 8)
+	outcome, value = weigh(0, 0, 0, 0, 0, 0, 0, 1, &empty, &error)
+	testing.expect(t, outcome == .Succeeded && value == 8)
 	long := "a label of twenty bytes"
-	testing.expect_value(t, weigh(1, 2, 3, 4, 5, 6, 7, 8, &long, &error), -1)
+	outcome, value = weigh(1, 2, 3, 4, 5, 6, 7, 8, &long, &error)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, value, 0)
 	testing.expect_value(t, errors.Kind(error.kind), errors.Kind.Too_Long)
 	testing.expect_value(t, error.argument, 9)
 	testing.expect_value(t, error.value, 23)

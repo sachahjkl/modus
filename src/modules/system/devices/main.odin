@@ -8,6 +8,7 @@ package devices_service
 
 import "base:intrinsics"
 import dc "internal:devices/devices_core"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import rd "modus:contract/root_delegation"
@@ -54,12 +55,12 @@ region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
 
 // status writes aggregate devices service counters into out.
 @(export)
-status :: proc "c" (out: ^Devices_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (out: ^Devices_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if !service_state.initialized {
-		return errors.fail(error, -2, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
 	out^ = {
 		identity_count  = i64(service_state.counters.identity_count),
@@ -68,7 +69,7 @@ status :: proc "c" (out: ^Devices_Status, error: ^errors.Error_Record) -> i64 {
 		total_releases  = i64(service_state.counters.total_releases),
 		total_refusals  = i64(service_state.counters.total_refusals),
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 @(private = "file")

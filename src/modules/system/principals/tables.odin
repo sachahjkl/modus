@@ -11,6 +11,7 @@
 package principals_service
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -183,9 +184,9 @@ table_call :: proc "contextless" (command: ring.Record, write: bool) -> Table_An
 	limit := system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
 	for {
 		error: errors.Error_Record
-		value, text, status, answered := storage.call_answer(&client, &sent, arguments[:argument_count], &error)
+		_, text, status, outcome, answered := storage.call_answer(&client, &sent, arguments[:argument_count], &error)
 		if answered {
-			return table_answer_of(principal, write, value, text, status, &error, offset)
+			return table_answer_of(principal, write, outcome, text, status, &error, offset)
 		}
 		if !storage.connected(&client) {
 			return table_answer_failure(.Storage_Stopped)
@@ -202,14 +203,14 @@ table_call :: proc "contextless" (command: ring.Record, write: bool) -> Table_An
 // table_answer_of gives the answer of a call that the storage service
 // answered. A read writes the table that verified in the place of its input.
 @(private = "file")
-table_answer_of :: proc "contextless" (principal: u64, write: bool, value: i64, text: []u8, status: storage_status.Status, error: ^errors.Error_Record, offset: u64) -> Table_Answer {
+table_answer_of :: proc "contextless" (principal: u64, write: bool, outcome: call_outcome.Call_Outcome, text: []u8, status: storage_status.Status, error: ^errors.Error_Record, offset: u64) -> Table_Answer {
 	if write {
 		if status != .Ok {
 			return {status = .Storage_Refused, values = transmute([7]u64)error^}
 		}
 		return {status = .Ok}
 	}
-	if storage.export_failed_with(status, value, .Absent) {
+	if status == .Failed && outcome == .Nothing_Has_That_Name {
 		return {status = .Ok, values = {0 = u64(rd.Table_Read_Outcome.Absent)}}
 	}
 	if status != .Ok {

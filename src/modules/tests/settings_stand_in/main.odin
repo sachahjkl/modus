@@ -16,6 +16,7 @@
 // Settings for the pass 1" (Boot).
 package settings_stand_in
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
@@ -23,10 +24,10 @@ import "modus:system"
 
 // set_time_zone refuses each zone: this holder keeps no setting.
 //
-// The result is a negative number with the error record Unsupported.
+// The outcome is Operation_Unsupported, with the error record Unsupported.
 @(export, link_name = "set_time_zone")
-set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> i64 {
-	return errors.fail(error, -1, .Unsupported, .None, 1)
+set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return call_outcome.fail(error, .Operation_Unsupported, .Unsupported, .None, 1)
 }
 
 // font gives the font of the defaults.

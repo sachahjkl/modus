@@ -25,6 +25,7 @@ package guest_builder_module
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import contract "modus:contract/guest_builder"
 import "modus:contract/guest_os"
@@ -47,9 +48,6 @@ TREE_OUTPUT_BYTES_MOST :: contract.UNPACK_NODE_BUFFER_BYTES
 
 // Name of the child guest process in kernel reports.
 GUEST_PROCESS_NAME :: "guest_builder guest"
-
-// Failing return code of build(): the error record carries the exact cause.
-ERROR :: i64(-1)
 
 // Export parameter indices reported in errors.Error_Record.
 ARGUMENT_SPEC :: 1
@@ -86,26 +84,26 @@ output_disk_hash: blake3.Hash
 
 // input_disk_copy copies the caller's input disk once into a memory object
 // of this process: the caller shares its memory and can change it.
-input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (memory: guest_regions.Owned_Memory, disk: []u8, ok: bool) {
+input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (memory: guest_regions.Owned_Memory, disk: []u8, outcome: call_outcome.Call_Outcome) {
 	if input_disk == nil {
-		return {}, nil, true
+		return {}, nil, .Succeeded
 	}
 	count := intrinsics.volatile_load(&input_disk.count)
 	if count > INPUT_DISK_BYTES_MOST {
-		errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_INPUT_DISK, i64(count), i64(INPUT_DISK_BYTES_MOST))
-		return {}, nil, false
+		outcome, _ = call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_INPUT_DISK, i64(count), i64(INPUT_DISK_BYTES_MOST))
+		return {}, nil, outcome
 	}
 	if count == 0 {
-		return {}, nil, true
+		return {}, nil, .Succeeded
 	}
 	status: system.Status
 	memory, status = guest_regions.owned_memory_make(count)
 	if status != .Ok {
-		errors.fail(error, ERROR, .Budget, .Pages, ARGUMENT_INPUT_DISK, i64(count / system.PAGE_SIZE + 1))
-		return {}, nil, false
+		outcome, _ = call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, ARGUMENT_INPUT_DISK, i64(count / system.PAGE_SIZE + 1))
+		return {}, nil, outcome
 	}
 	intrinsics.mem_copy_non_overlapping(raw_data(memory.bytes), input_disk.bytes, int(count))
-	return memory, memory.bytes[:count], true
+	return memory, memory.bytes[:count], .Succeeded
 }
 
 // initial_archive_stage copies the initial archive of the caller to the
@@ -180,7 +178,7 @@ build_exit_handle :: proc "contextless" (runner: ^contract.Guest_Sandbox_Runner,
 
 // output_tree_map maps the caller's lent output memory object for writing.
 @(private = "file")
-output_tree_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
+output_tree_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
 	if status != .Ok {
@@ -192,10 +190,10 @@ output_tree_map :: proc "contextless" (memory: system.Handle, error: ^errors.Err
 				error^ = errors.error_make(.Refused, argument = ARGUMENT_OUTPUT_TREE, found = i64(status))
 			}
 		}
-		return nil, false
+		return nil, system.outcome_of_status(status)
 	}
 	pages, _ := system.memory_size(memory)
-	return ([^]u8)(address)[:pages * system.PAGE_SIZE], true
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
 }
 
 // write_report records the final state of sandbox_runner into report, and
@@ -236,20 +234,22 @@ build_end :: proc "contextless" (resources: ^Build_Resources) {
 	resources^ = {}
 }
 
-// refuse ends a build that the checks refused before its guest ran.
+// refuse ends a build that the checks refused before its guest ran: the
+// argument breaks a rule of the build.
 @(private = "file")
-refuse :: proc "contextless" (report: ^Guest_Build_Report, error: ^errors.Error_Record, resources: ^Build_Resources, refusal: contract.Guest_Builder_Refusal, argument: i64) -> i64 {
+refuse :: proc "contextless" (report: ^Guest_Build_Report, error: ^errors.Error_Record, resources: ^Build_Resources, refusal: contract.Guest_Builder_Refusal, argument: i64) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	build_end(resources)
 	sandbox_runner.state = .Refused
 	write_report(report, .Refused, refusal)
 	system.log_fact(.Info, Build_Refused{refusal_code = u64(refusal), exit_code = 0, violations = sandbox_runner.sandbox_violations})
-	return errors.fail(error, ERROR, .Bad_Value, .None, argument, 0, 0, i64(refusal))
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, 0, 0, i64(refusal))
 }
 
 // build boots the Linux kernel of the spec in a sandboxed guest and writes
 // the canonical MODTREE1 output tree into output_tree on clean exit code 0,
-// returning the canonical tree byte count written or -1 with an error
-// record. The report holds the BLAKE3 hash of the whole output disk.
+// returning the canonical tree byte count written, or an outcome with an
+// error record. The report holds the BLAKE3 hash of the whole output disk,
+// and the state of a build that ran its guest.
 @(export, link_name = "build")
 build :: proc "c" (
 	spec_bytes: ^system.Bytes_To_Read,
@@ -259,9 +259,9 @@ build :: proc "c" (
 	output_tree: system.Lent({.Read, .Write}),
 	report: ^Guest_Build_Report,
 	error: ^errors.Error_Record,
-) -> i64 {
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if report == nil {
-		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_REPORT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, ARGUMENT_REPORT)
 	}
 	report^ = {}
 	machine = {}
@@ -272,14 +272,14 @@ build :: proc "c" (
 	// Copy every caller length and buffer once before validating: the caller
 	// shares the call region and can modify memory concurrently.
 	if spec_bytes == nil {
-		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_SPEC)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, ARGUMENT_SPEC)
 	}
 	spec_count := intrinsics.volatile_load(&spec_bytes.count)
 	if spec_count != contract.SPEC_WIRE_SIZE {
-		return errors.fail(error, ERROR, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(min(spec_count, 1 << 62)), contract.SPEC_WIRE_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(min(spec_count, 1 << 62)), contract.SPEC_WIRE_SIZE)
 	}
 	if spec_bytes.bytes == nil {
-		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_SPEC)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, ARGUMENT_SPEC)
 	}
 	intrinsics.mem_copy_non_overlapping(&spec_wire_copy[0], spec_bytes.bytes, contract.SPEC_WIRE_SIZE)
 	spec, spec_refusal := contract.decode_build_spec(spec_wire_copy[:])
@@ -292,18 +292,18 @@ build :: proc "c" (
 	memory_bytes := spec.memory_pages * system.PAGE_SIZE
 
 	if kernel_image == nil {
-		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_KERNEL)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, ARGUMENT_KERNEL)
 	}
 	kernel_count := intrinsics.volatile_load(&kernel_image.count)
 	if kernel_count == 0 {
-		return errors.fail(error, ERROR, .Empty, .Bytes, ARGUMENT_KERNEL, 0, i64(memory_bytes))
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_KERNEL, 0, i64(memory_bytes))
 	}
 	if kernel_image.bytes == nil {
-		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_KERNEL)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, ARGUMENT_KERNEL)
 	}
 	staging_bytes, staging_fits := guest_regions.kernel_staging_bytes(kernel_count, memory_bytes)
 	if !staging_fits {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_KERNEL, i64(min(kernel_count, 1 << 62)), i64(memory_bytes))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_KERNEL, i64(min(kernel_count, 1 << 62)), i64(memory_bytes))
 	}
 	staging := memory_bytes - staging_bytes
 
@@ -311,7 +311,7 @@ build :: proc "c" (
 	resources.guest_ram, status = guest_regions.owned_memory_make(memory_bytes)
 	if status != .Ok {
 		build_end(&resources)
-		return errors.fail(error, ERROR, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages))
 	}
 	ram := resources.guest_ram.bytes[:memory_bytes]
 	kernel_slice := ram[staging:][:kernel_count]
@@ -344,16 +344,16 @@ build :: proc "c" (
 	}
 
 	input_bytes: []u8
-	ok: bool
-	resources.input_disk, input_bytes, ok = input_disk_copy(input_disk, error)
-	if !ok {
+	copied: call_outcome.Call_Outcome
+	resources.input_disk, input_bytes, copied = input_disk_copy(input_disk, error)
+	if copied != .Succeeded {
 		build_end(&resources)
-		return ERROR
+		return copied, 0
 	}
 	resources.output_disk, status = guest_regions.owned_memory_make(spec.output_size_bound)
 	if status != .Ok {
 		build_end(&resources)
-		return errors.fail(error, ERROR, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.output_size_bound / system.PAGE_SIZE + 1))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.output_size_bound / system.PAGE_SIZE + 1))
 	}
 	output_bytes := resources.output_disk.bytes[:spec.output_size_bound]
 
@@ -378,7 +378,7 @@ build :: proc "c" (
 	if refusal := contract.runner_start(&sandbox_runner); refusal != .None {
 		build_end(&resources)
 		write_report(report, sandbox_runner.state, refusal)
-		return errors.fail(error, ERROR, .State, .None, 0, 0, 0, i64(refusal))
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0, 0, 0, i64(refusal))
 	}
 
 	// The guest process: its nested page table holds the memory of the
@@ -388,13 +388,13 @@ build :: proc "c" (
 	if create_status != .Ok {
 		build_end(&resources)
 		system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(create_status), step = value_kinds.text_field("Process_Create of the guest", 40)})
-		return errors.fail(error, ERROR, .Refused, .None, 0, i64(create_status))
+		return call_outcome.fail(error, system.outcome_of_own_status(create_status), .Refused, .None, 0, i64(create_status))
 	}
 	resources.guest = system.Handle(created[0])
 	if map_status, step := guest_regions.map_memory(resources.guest, resources.guest_ram.handle, memory_bytes); map_status != .Ok {
 		build_end(&resources)
 		system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(map_status), step = value_kinds.text_field(step, 40)})
-		return errors.fail(error, ERROR, .Refused, .None, 0, i64(map_status))
+		return call_outcome.fail(error, system.outcome_of_own_status(map_status), .Refused, .None, 0, i64(map_status))
 	}
 
 	// No bound counts the exits Interrupted: they come from the timer of the
@@ -409,13 +409,13 @@ build :: proc "c" (
 			build_end(&resources)
 			write_report(report, .Refused, .Nonzero_Guest_Exit)
 			system.log_fact(.Info, Guests_Unsupported{})
-			return errors.fail(error, ERROR, .Unsupported, .None)
+			return call_outcome.fail(error, .Operation_Unsupported, .Unsupported, .None)
 		}
 		if run_status != .Ok {
 			build_end(&resources)
 			write_report(report, .Failed, .Nonzero_Guest_Exit)
 			system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(run_status), step = value_kinds.text_field("Guest_Run", 40)})
-			return errors.fail(error, ERROR, .Refused, .None, 0, i64(run_status))
+			return call_outcome.fail(error, system.outcome_of_own_status(run_status), .Refused, .None, 0, i64(run_status))
 		}
 		machine_exit := guest_os.Machine_Exit{kind = exit.kind, a = exit.a, b = exit.b, c = exit.c, next = exit.next, code = exit.code, information = exit.information}
 		action := build_exit_handle(&sandbox_runner, &machine, &registers, machine_exit, &input_writes_reported)
@@ -438,28 +438,30 @@ build :: proc "c" (
 		build_end(&resources)
 		write_report(report, sandbox_runner.state, finish_refusal)
 		system.log_fact(.Info, Build_Refused{refusal_code = u64(finish_refusal), exit_code = u64(sandbox_runner.guest_exit_code), violations = sandbox_runner.sandbox_violations})
-		return errors.fail(error, ERROR, .Refused, .None, 0, i64(sandbox_runner.guest_exit_code), 0, i64(finish_refusal))
+		// The guest ran and gave no output tree: the report holds its state
+		// and its exit, and the output tree of the caller is as it was.
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0, i64(sandbox_runner.guest_exit_code), 0, i64(finish_refusal))
 	}
 	build_end(&resources)
 
 	output_memory, mapped := output_tree_map(output_tree.handle, error)
-	if !mapped {
+	if mapped != .Succeeded {
 		sandbox_runner.output_tree_hash = {}
 		sandbox_runner.output_tree_bytes_written = 0
 		write_report(report, .Failed, .Output_Extraction_Failed)
-		return ERROR
+		return mapped, 0
 	}
 	if tree_written > len(output_memory) {
 		system.memory_unmap(raw_data(output_memory))
 		sandbox_runner.output_tree_hash = {}
 		sandbox_runner.output_tree_bytes_written = 0
 		write_report(report, .Failed, .Output_Extraction_Failed)
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, ARGUMENT_OUTPUT_TREE, i64(len(output_memory)), i64(tree_written))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, ARGUMENT_OUTPUT_TREE, i64(len(output_memory)), i64(tree_written))
 	}
 	intrinsics.mem_copy_non_overlapping(raw_data(output_memory), &tree_output_staging[0], tree_written)
 	system.memory_unmap(raw_data(output_memory))
 
 	write_report(report, .Succeeded, .None)
 	system.log_fact(.Info, Build_Completed{guest_exits = sandbox_runner.guest_exits_handled, tree_bytes = u64(tree_written), output_hash = value_kinds.Hash_Field(output_hash)})
-	return i64(tree_written)
+	return .Succeeded, i64(tree_written)
 }

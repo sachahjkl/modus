@@ -275,14 +275,14 @@ sdk_sign_root_digest :: proc(seed: [ed25519.PRIVATE_KEY_SIZE]u8, root_digest: bl
 	secret_text := string(seed_copy[:])
 	public_buffer := public_key[:]
 	error_record: errors.Error_Record
-	if cryptography_primitives.ed25519_public_key(&secret_text, &public_buffer, &error_record) != ed25519.PUBLIC_KEY_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_public_key(&secret_text, &public_buffer, &error_record); crypto_outcome != .Succeeded || crypto_count != ed25519.PUBLIC_KEY_SIZE {
 		return {}, {}, false
 	}
 
 	message := sdk_signature_message(root_digest)
 	signature_buffer := signature[:]
 	error_record = {}
-	if cryptography_primitives.ed25519_sign(&secret_text, &message, &signature_buffer, &error_record) != ed25519.SIGNATURE_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_sign(&secret_text, &message, &signature_buffer, &error_record); crypto_outcome != .Succeeded || crypto_count != ed25519.SIGNATURE_SIZE {
 		return {}, {}, false
 	}
 	return public_key, signature, true
@@ -297,7 +297,8 @@ sdk_verify_root_digest_signature :: proc(public_key: [ed25519.PUBLIC_KEY_SIZE]u8
 	message := sdk_signature_message(root_digest)
 	signature_text := string(sig_copy[:])
 	error_record: errors.Error_Record
-	return cryptography_primitives.ed25519_verify(&public_text, &message, &signature_text, &error_record) == 0
+	crypto_outcome, crypto_count := cryptography_primitives.ed25519_verify(&public_text, &message, &signature_text, &error_record)
+	return crypto_outcome == .Succeeded && crypto_count == 0
 }
 
 // sdk_manifest_format renders a canonical SDK_MANIFEST.txt document.

@@ -2,6 +2,7 @@ package storage_service
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import format "modus:contract/store"
@@ -401,20 +402,20 @@ name_keep :: proc "contextless" (given: string, error: ^errors.Error_Record, arg
 	copied: [format.ENTRY_NAME_CAPACITY + 1]u8
 	count := copy(copied[:], given)
 	if len(given) > format.ENTRY_NAME_CAPACITY {
-		errors.fail(error, failure(.Name), .Too_Long, .Bytes, argument, i64(len(given)), format.ENTRY_NAME_CAPACITY)
+		call_outcome.fail_with_value_first(error, .Argument_Refused, .Too_Long, .Bytes, argument, i64(len(given)), format.ENTRY_NAME_CAPACITY)
 		return {}, false
 	}
 	name := string(copied[:count])
 	switch refusal, offset, byte := format.name_refusal(name); refusal {
 	case .None:
 	case .Empty:
-		errors.fail(error, failure(.Name), .Empty, .Bytes, argument, 0, format.ENTRY_NAME_CAPACITY)
+		call_outcome.fail_with_value_first(error, .Argument_Refused, .Empty, .Bytes, argument, 0, format.ENTRY_NAME_CAPACITY)
 		return {}, false
 	case .Too_Long:
-		errors.fail(error, failure(.Name), .Too_Long, .Bytes, argument, i64(count), format.ENTRY_NAME_CAPACITY)
+		call_outcome.fail_with_value_first(error, .Argument_Refused, .Too_Long, .Bytes, argument, i64(count), format.ENTRY_NAME_CAPACITY)
 		return {}, false
 	case .Bad_Byte:
-		errors.fail(error, failure(.Name), .Bad_Byte, .Bytes, argument, i64(offset), 0, i64(byte))
+		call_outcome.fail_with_value_first(error, .Argument_Refused, .Bad_Byte, .Bytes, argument, i64(offset), 0, i64(byte))
 		return {}, false
 	}
 	copy(kept.key[:], name)
@@ -434,28 +435,28 @@ Store_Of :: struct {
 // store_prepare starts the plan of a change of a store: it refuses a store
 // that the service cannot change, and makes a new store for a first change
 // when `create`. It gives the index of the store, or the word of an Export_Error.
-store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^errors.Error_Record) -> (store_index: int, result: i64) {
+store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^errors.Error_Record) -> (store_index: int, result: call_outcome.Call_Outcome) {
 	if len(store.name) == 0 || store.limit == 0 {
-		return -1, errors.fail(error, failure(.No_Store), .No_Grant, .Store)
+		return -1, refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	if broken {
-		return -1, errors.fail(error, failure(.Disk), .Device, .None, 0, 0, 0, 1)
+		return -1, refuse(error, .Callee_Unavailable, .Device, .None, 0, 0, 0, 1)
 	}
 	store_index = store_find(store.name)
 	if store_index >= 0 && store_damaged[store_index] {
-		return -1, errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+		return -1, refuse(error, .Data_Damaged, .Damaged, .Stores)
 	}
 	if store_index >= 0 && store_faulty[store_index] {
-		return -1, errors.fail(error, failure(.Damaged), .Damaged, .Counts)
+		return -1, refuse(error, .Data_Damaged, .Damaged, .Counts)
 	}
 	if store_index >= 0 {
 		plan_reset(store_index)
 		plan.next.stores[store_index].limit = store.limit
 		removal_stalled[store_index] = false // A change of the store tries a stopped removal again.
-		return store_index, 0
+		return store_index, .Succeeded
 	}
 	if !create {
-		return -1, errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
+		return -1, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 	}
 	for &entry, index in root.stores {
 		if entry.name[0] == 0 {
@@ -464,55 +465,55 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 		}
 	}
 	if store_index < 0 {
-		return -1, errors.fail(error, failure(.Full), .Full) // The disk: a fact of all the stores, so no number.
+		return -1, refuse(error, .Budget_Or_Capacity_Exhausted, .Full) // The disk: a fact of all the stores, so no number.
 	}
 	plan_reset(store_index)
 	plan.next.stores[store_index] = {limit = store.limit}
 	copy(plan.next.stores[store_index].name[:NAME_CAPACITY - 1], store.name)
-	return store_index, 0
+	return store_index, .Succeeded
 }
 
 // path_refusal gives the error of a path of a place that the commit cannot
 // open: a tree of the path was removed or renamed since the place was
 // opened (Absent, unit Places), or the trees failed.
-path_refusal :: proc "contextless" (refusal: Open_Refusal, error: ^errors.Error_Record) -> i64 {
+path_refusal :: proc "contextless" (refusal: Open_Refusal, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	if refusal == .Absent {
-		return errors.fail(error, failure(.Absent), .Absent, .Places, 1)
+		return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
 	}
 	return plan_refusal(error)
 }
 
 // plan_refusal gives the error of a plan that plan_refused refuses.
-plan_refusal :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
-	result := plan_commit_refused(error)
+plan_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
+	value, outcome = plan_commit_refused(error)
 	plan_drop()
-	return result
+	return
 }
 
 // plan_commit_refused writes the error of a refused plan, as plan_commit
 // does, with no write.
-plan_commit_refused :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
+plan_commit_refused :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	plan_trees_failure_take()
 	switch {
 	case plan.tree_damaged:
 		store_damaged[plan.store_index] = true
-		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
 	case plan.device:
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	case plan.capacity_reached:
-		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
 	case plan.count_overflow:
-		return errors.fail(error, failure(.Full), .Over_Limit, .References, 0, i64(REFERENCE_LIMIT) + 1, i64(REFERENCE_LIMIT))
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .References, 0, i64(REFERENCE_LIMIT) + 1, i64(REFERENCE_LIMIT))
 	case plan.full:
-		return errors.fail(error, failure(.Full), .Full)
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full)
 	}
-	return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
+	return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Counts)
 }
 
 // commit_at_limit thins the oldest versions of the store until the plan
 // fits in the limit, writes the plan, checks the limit with the nodes
 // that the trees wrote, and commits.
-commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Record, limit_argument: i64) -> i64 {
+commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Record, limit_argument: i64) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	thinned_before := plan.thinned
 	for !plan_refused() && projected() > i64(store.limit) {
 		item, found := oldest_version_entry()
@@ -526,9 +527,12 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 	entry := &plan.next.stores[plan.store_index]
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
-		return errors.fail(error, failure(.No_Budget), .Over_Limit, .Blocks, limit_argument, i64(entry.used) + plan.used_change, i64(store.limit))
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, limit_argument, i64(entry.used) + plan.used_change, i64(store.limit))
 	}
-	generation := plan_commit(error)
+	generation, committed := plan_commit(error)
+	if committed != .Succeeded {
+		return 0, committed
+	}
 	if generation > 0 && at_limit != 0 && !limit_reached[plan.store_index] {
 		// One line for each store and each start of the service: the later
 		// commits at the limit thin the same way.
@@ -539,20 +543,20 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 			system.log_fact(.Info, Store_At_Limit_Thinned_Versions{limit = blocks_field(store.limit), generation = u64(generation), thinned = at_limit, store = store_field(store.name)})
 		}
 	}
-	return generation
+	return generation, .Succeeded
 }
 
 limit_reached: [STORE_CAPACITY]bool
 
 // minimum_refusal refuses a change whose current objects alone do not fit
 // in the limit: no version is thinned for it.
-minimum_refusal :: proc "contextless" (store: Store_Of, error: ^errors.Error_Record, argument: i64) -> (refused: bool, result: i64) {
+minimum_refusal :: proc "contextless" (store: Store_Of, error: ^errors.Error_Record, argument: i64) -> (refused: bool, result: call_outcome.Call_Outcome) {
 	needed := 1 + plan.store_block.node_blocks + plan.store_block.current_blocks
 	if needed > store.limit {
 		plan_drop()
-		return true, errors.fail(error, failure(.No_Budget), .Over_Limit, .Blocks, argument, i64(needed), i64(store.limit))
+		return true, refuse(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, argument, i64(needed), i64(store.limit))
 	}
-	return false, 0
+	return false, .Succeeded
 }
 
 // ---------------------------------------------------------------------
@@ -633,14 +637,14 @@ work_failure_take :: proc "contextless" () -> (damaged: bool) {
 // bytes when one exists (docs/STORAGE.md, "4.7 The same object one time").
 // A caller that reaches one tree of the store only must not learn, from
 // its count of blocks, what bytes the rest of the store holds.
-object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, finds_by_hash: bool, error: ^errors.Error_Record, name_argument: i64, pending: ^Pending_Object = nil, measure: ^Commit_Measure = nil) -> i64 {
+object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, kind: Change_Kind, data: []u8, given_source: State_Of_Object, finds_by_hash: bool, error: ^errors.Error_Record, name_argument: i64, pending: ^Pending_Object = nil, measure: ^Commit_Measure = nil) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	// While the store has a writable share of a tree open, no commit of it
 	// looks up a hash: the holder sees the count of blocks of the whole store
 	// (docs/STORAGE.md, "4.7 The same object one time").
 	looks_up := finds_by_hash && !writable_tree_share_open(store.name)
 	count := blocks_of(u64(len(data)))
 	if kind == .Write && count > WHOLE_WRITE_BLOCKS {
-		return errors.fail(error, failure(.Too_Large), .Too_Long, .Bytes, name_argument + 1, i64(len(data)), WHOLE_WRITE_BLOCKS * BLOCK_SIZE)
+		return call_outcome.fail_with_value_first(error, .Argument_Refused, .Too_Long, .Bytes, name_argument + 1, i64(len(data)), WHOLE_WRITE_BLOCKS * BLOCK_SIZE)
 	}
 	source := given_source
 	if (kind == .Restore || kind == .Clone) && !source.has_hash {
@@ -649,9 +653,9 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		hash, outcome := block_tree.state_hash(&object_source, tree_state(source), &object_hash_room)
 		switch outcome {
 		case .Device:
-			return errors.fail(error, failure(.Disk), .Device)
+			return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 		case .Wrong:
-			return errors.fail(error, failure(.Damaged), .Damaged, .Objects, name_argument)
+			return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, name_argument)
 		case .Good:
 		}
 		source.hash = hash
@@ -659,7 +663,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	creates := kind == .Write || kind == .Ranges
 	store_index, refused := store_prepare(store, creates && len(path) == 0, error)
 	if store_index < 0 {
-		return refused
+		return 0, refused
 	}
 	tree_index, open_refusal := plan_tree_open(path)
 	if tree_index < 0 {
@@ -671,7 +675,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 	}
 	if found && plan.entries[index].before.kind != u64(format.Entry_Kind.Object) {
 		plan_drop()
-		return errors.fail(error, failure(.Absent), .Absent, .Objects, name_argument) // The name is a tree.
+		return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Objects, name_argument) // The name is a tree.
 	}
 	if kind == .Ranges {
 		// The pending changes start from the state that the first of them
@@ -679,13 +683,13 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		base := found ? plan.entries[index].before.generation : 0
 		if base != pending.base_generation {
 			plan_drop()
-			return errors.fail(error, failure(.Pending), .Absent, .Pending, name_argument, 0, 0, 1)
+			return call_outcome.fail_with_value_first(error, .Another_Change_Came_First, .Absent, .Pending, name_argument, 0, 0, 1)
 		}
 	}
 	if !found {
 		if kind == .Restore {
 			plan_drop()
-			return errors.fail(error, failure(.Absent), .Absent, .Objects, name_argument)
+			return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Objects, name_argument)
 		}
 		index = plan_entry_new(tree_index, name.key)
 		if index < 0 {
@@ -708,7 +712,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		if kind == .Ranges && damaged_before {
 			// The pending changes read the state before: it is damaged.
 			plan_drop()
-			return errors.fail(error, failure(.Damaged), .Damaged, .Objects, name_argument)
+			return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, name_argument)
 		}
 		changes: []block_tree.Change
 		cut, size: u64
@@ -747,7 +751,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			if existed {
 				storage_mount.damaged_under_set(&opened, old.pointer.block)
 			}
-			return errors.fail(error, failure(.Damaged), .Damaged, .Objects, name_argument)
+			return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, name_argument)
 		}
 		if plan_refused() {
 			return plan_refusal(error)
@@ -772,7 +776,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			block_tree.work_write(&object_work, &finished)
 			if work_failure_take() {
 				plan_drop()
-				return errors.fail(error, failure(.Damaged), .Damaged, .Objects, name_argument)
+				return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, name_argument)
 			}
 			next.pointer = finished.root
 			new_blocks = finished.blocks
@@ -811,7 +815,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		plan.store_block.objects += 1
 	}
 	if too_large, result := minimum_refusal(store, error, name_argument + 1); too_large {
-		return result
+		return 0, result
 	}
 	item.entry = next
 	// The state before becomes a version. A damaged state (a block with a
@@ -830,10 +834,10 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 // versions. An empty tree goes. A tree with entries leaves its tree and
 // goes into the removal queue: its blocks are freed by the steps of the
 // removal (removal_step), each one a commit.
-entry_remove :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, error: ^errors.Error_Record) -> i64 {
+entry_remove :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	store_index, refused := store_prepare(store, false, error)
 	if store_index < 0 {
-		return refused
+		return 0, refused
 	}
 	tree_index, open_refusal := plan_tree_open(path)
 	if tree_index < 0 {
@@ -845,7 +849,7 @@ entry_remove :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: K
 	}
 	if !found {
 		plan_drop()
-		return errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
+		return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 	}
 	entry_free(index)
 	plan_finish()
@@ -859,26 +863,28 @@ entry_remove :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: K
 // before the commit names the freed blocks until the second root replaces
 // it. The current state of the object, its hash and its generation stay.
 // An object with no version makes no commit.
-versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, error: ^errors.Error_Record) -> (Erase_Measure, i64) {
+versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: Kept_Name, error: ^errors.Error_Record) -> (Erase_Measure, call_outcome.Call_Outcome) {
 	store_index, refused := store_prepare(store, false, error)
 	if store_index < 0 {
 		return {}, refused
 	}
 	tree_index, open_refusal := plan_tree_open(path)
 	if tree_index < 0 {
-		return {}, path_refusal(open_refusal, error)
+		_, path_outcome := path_refusal(open_refusal, error)
+		return {}, path_outcome
 	}
 	index, found := plan_entry_load(tree_index, name.key)
 	if plan_refused() {
-		return {}, plan_refusal(error)
+		_, plan_outcome := plan_refusal(error)
+		return {}, plan_outcome
 	}
 	if !found || plan.entries[index].before.kind != u64(format.Entry_Kind.Object) {
 		plan_drop()
-		return {}, errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
+		return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 	}
 	if plan.entries[index].before.versions.block == 0 {
 		plan_drop()
-		return {}, 0
+		return {}, .Succeeded
 	}
 	versions_release(index)
 	ended := -plan.versions_change
@@ -888,9 +894,9 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	// no zeros. They are read before the commit; a commit that succeeds
 	// keeps the plan, which the zeros read after it.
 	damaged := plan.dropped_versions + plan.release_damaged
-	generation := plan_commit(error)
-	if generation < 0 {
-		return {}, generation
+	generation, committed := plan_commit(error)
+	if committed != .Succeeded {
+		return {}, committed
 	}
 	kept := released_blocks_kept()
 	// A parameter has no address: the text of the name comes from a copy.
@@ -910,15 +916,15 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 		system.log_fact(.Error, Versions_Ended_Second_Root_Dropped{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
 		// No unit Dropped_Writes: its sentence says that the store keeps its
 		// state before, and the commit of the end is already on the disk.
-		return {}, errors.fail(error, failure(.Disk), .Device)
+		return {}, refuse(error, .Callee_Unavailable, .Device)
 	case .Device:
 		system.log_fact(.Error, Versions_Ended_Second_Root_Failed{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
-		return {}, errors.fail(error, failure(.Disk), .Device)
+		return {}, refuse(error, .Callee_Unavailable, .Device)
 	}
 	zeroed, not_zeroed, zeros_written := freed_blocks_zero()
 	if !zeros_written {
 		system.log_fact(.Error, Versions_Ended_Zeros_Failed{generation = root.generation, zeroed = zeroed, not_zeroed = not_zeroed, store = store_field(store_name), object = object_field(object_name)})
-		return {}, errors.fail(error, failure(.Disk), .Device)
+		return {}, refuse(error, .Callee_Unavailable, .Device)
 	}
 	if not_zeroed != 0 {
 		// The versions are ended; the bytes of these free blocks stay on the
@@ -935,7 +941,7 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	if damaged != 0 {
 		system.log_fact(.Warning, Erase_Damaged_Left{damaged = damaged, store = store_field(store_name), object = object_field(object_name)})
 	}
-	return {generation = i64(root.generation), versions = ended, zeroed = i64(zeroed), kept = i64(kept), damaged = i64(damaged)}, 0
+	return {generation = i64(root.generation), versions = ended, zeroed = i64(zeroed), kept = i64(kept), damaged = i64(damaged)}, .Succeeded
 }
 
 // entry_free takes a plan entry out of its tree, and frees what it names:
@@ -990,38 +996,38 @@ added_kinds: [ADD_LIMIT]format.Entry_Kind
 // entries_add adds empty objects and empty trees to one tree, in one
 // commit: all of them or none. The rows and the names are in the call
 // region: they are copied first, then checked.
-entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []Add_Row, names: []u8, error: ^errors.Error_Record) -> i64 {
+entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []Add_Row, names: []u8, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	if len(rows) > ADD_LIMIT {
-		return errors.fail(error, failure(.Full), .Too_Long, .Records, 2, i64(len(rows)), ADD_LIMIT)
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Too_Long, .Records, 2, i64(len(rows)), ADD_LIMIT)
 	}
 	count := copy(added_rows[:], rows)
 	for &row, number in added_rows[:count] {
 		// A word that names no kind, and the kind None, are refused.
 		added_kind, kind_ok := enum_word.member_of_word(format.Entry_Kind, u64(row.kind))
 		if !kind_ok || added_kind == .None {
-			return errors.fail(error, failure(.Name), .Bad_Value, .Records, 2, row.kind, i64(format.Entry_Kind.Tree), i64(number + 1))
+			return call_outcome.fail_with_value_first(error, .Argument_Refused, .Bad_Value, .Records, 2, row.kind, i64(format.Entry_Kind.Tree), i64(number + 1))
 		}
 		added_kinds[number] = added_kind
 		if row.name_offset < 0 || row.name_count < 0 || row.name_offset > i64(len(names)) || row.name_count > i64(len(names)) - row.name_offset {
-			return errors.fail(error, failure(.Name), .Out_Of_Range, .Bytes, 3, row.name_offset + row.name_count, i64(len(names)), i64(number + 1))
+			return call_outcome.fail_with_value_first(error, .Argument_Refused, .Out_Of_Range, .Bytes, 3, row.name_offset + row.name_count, i64(len(names)), i64(number + 1))
 		}
 		kept, ok := name_keep(string(names[row.name_offset:][:row.name_count]), error, 3)
 		if !ok {
 			if error != nil {
 				error.found = i64(number + 1) // The row of the name.
 			}
-			return failure(.Name)
+			return 0, .Argument_Refused
 		}
 		for earlier in added_names[:number] {
 			if earlier.key == kept.key {
-				return errors.fail(error, failure(.Exists), .Exists, .Objects, 3, 0, 0, i64(number + 1))
+				return call_outcome.fail_with_value_first(error, .Name_Already_Taken, .Exists, .Objects, 3, 0, 0, i64(number + 1))
 			}
 		}
 		added_names[number] = kept
 	}
 	store_index, refused := store_prepare(store, len(path) == 0, error)
 	if store_index < 0 {
-		return refused
+		return 0, refused
 	}
 	tree_index, open_refusal := plan_tree_open(path)
 	if tree_index < 0 {
@@ -1039,7 +1045,7 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 		key := added_names[number].key
 		if tree.put(&opened_tree.work, key[:], entry_bytes(&value), false) {
 			plan_drop()
-			return errors.fail(error, failure(.Exists), .Exists, .Objects, 3, 0, 0, i64(number + 1))
+			return call_outcome.fail_with_value_first(error, .Name_Already_Taken, .Exists, .Objects, 3, 0, 0, i64(number + 1))
 		}
 		if plan_refused() {
 			return plan_refusal(error)
@@ -1056,7 +1062,7 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	entry := &plan.next.stores[plan.store_index]
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
-		return errors.fail(error, failure(.No_Budget), .Over_Limit, .Blocks, 2, i64(entry.used) + plan.used_change, i64(store.limit))
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 2, i64(entry.used) + plan.used_change, i64(store.limit))
 	}
 	return plan_commit(error)
 }
@@ -1077,13 +1083,13 @@ path_under :: proc "contextless" (path: []Entry_Name, tree_path: []Entry_Name, n
 // entry_rename moves an entry inside one store, in one commit: from the
 // tree at `from_path` to the tree at `to_path`, with a new name. A tree
 // moves with all under it: its entry moves, nothing else is written.
-entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, from: Kept_Name, to_path: []Entry_Name, to: Kept_Name, error: ^errors.Error_Record) -> i64 {
+entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, from: Kept_Name, to_path: []Entry_Name, to: Kept_Name, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	if path_under(to_path, from_path, from.key) {
-		return errors.fail(error, failure(.Name), .Bad_Value, .Trees, 3, 0, 0)
+		return call_outcome.fail_with_value_first(error, .Argument_Refused, .Bad_Value, .Trees, 3, 0, 0)
 	}
 	store_index, refused := store_prepare(store, false, error)
 	if store_index < 0 {
-		return refused
+		return 0, refused
 	}
 	from_tree, from_refusal := plan_tree_open(from_path)
 	if from_tree < 0 {
@@ -1093,24 +1099,24 @@ entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, fr
 	if to_tree < 0 {
 		if to_refusal == .Absent {
 			plan_drop()
-			return errors.fail(error, failure(.Absent), .Absent, .Places, 3)
+			return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Places, 3)
 		}
 		return plan_refusal(error)
 	}
-	value: Entry
+	moved: Entry
 	from_key := from.key
 	to_key := to.key
-	if !tree.get(&plan.trees[from_tree].work, from_key[:], entry_bytes(&value)) {
+	if !tree.get(&plan.trees[from_tree].work, from_key[:], entry_bytes(&moved)) {
 		if plan_refused() {
 			return plan_refusal(error)
 		}
 		plan_drop()
-		return errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
+		return call_outcome.fail_with_value_first(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 	}
 	existing: Entry
 	if tree.get(&plan.trees[to_tree].work, to_key[:], entry_bytes(&existing)) {
 		plan_drop()
-		return errors.fail(error, failure(.Exists), .Exists, .Objects, 4)
+		return call_outcome.fail_with_value_first(error, .Name_Already_Taken, .Exists, .Objects, 4)
 	}
 	if plan_refused() {
 		return plan_refusal(error)
@@ -1118,14 +1124,14 @@ entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, fr
 	tree.remove(&plan.trees[from_tree].work, from_key[:])
 	plan.trees[from_tree].count_change -= 1
 	plan.trees[from_tree].changed = true
-	tree.put(&plan.trees[to_tree].work, to_key[:], entry_bytes(&value), false)
+	tree.put(&plan.trees[to_tree].work, to_key[:], entry_bytes(&moved), false)
 	plan.trees[to_tree].count_change += 1
 	plan.trees[to_tree].changed = true
 	plan_finish()
 	entry := &plan.next.stores[plan.store_index]
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
-		return errors.fail(error, failure(.No_Budget), .Over_Limit, .Blocks, 0, i64(entry.used) + plan.used_change, i64(store.limit))
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 0, i64(entry.used) + plan.used_change, i64(store.limit))
 	}
 	return plan_commit(error)
 }
@@ -1226,7 +1232,7 @@ removal_step :: proc "contextless" () -> bool {
 		return true
 	}
 	plan_finish()
-	if plan_commit(&error) < 0 {
+	if _, committed := plan_commit(&error); committed != .Succeeded {
 		removal_failed(store_index, .Commit_Failed)
 	}
 	return true
@@ -1566,27 +1572,27 @@ tree_usage_record :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) 
 }
 
 // lookup_refusal gives the error of a read that found no entry.
-lookup_refusal :: proc "contextless" (outcome: Lookup, error: ^errors.Error_Record, argument: i64) -> i64 {
-	switch outcome {
+lookup_refusal :: proc "contextless" (lookup: Lookup, error: ^errors.Error_Record, argument: i64) -> call_outcome.Call_Outcome {
+	switch lookup {
 	case .Device:
-		return errors.fail(error, failure(.Disk), .Device)
+		return refuse(error, .Callee_Unavailable, .Device)
 	case .Wrong:
-		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+		return refuse(error, .Data_Damaged, .Damaged, .Stores)
 	case .Absent, .Found:
 	}
-	return errors.fail(error, failure(.Absent), .Absent, .Objects, argument)
+	return refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, argument)
 }
 
 // object_locate finds the entry of an object for a read. It refuses a
 // store that the service does not know or cannot read, and a name that is
 // a tree.
-object_locate :: proc "contextless" (store_name: string, path: []Entry_Name, name: Kept_Name, error: ^errors.Error_Record, argument: i64) -> (store_index: int, value: Entry, result: i64) {
+object_locate :: proc "contextless" (store_name: string, path: []Entry_Name, name: Kept_Name, error: ^errors.Error_Record, argument: i64) -> (store_index: int, value: Entry, result: call_outcome.Call_Outcome) {
 	store_index = store_find(store_name)
 	if store_index < 0 {
-		return -1, {}, errors.fail(error, failure(.Absent), .Absent, .Objects, argument)
+		return -1, {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, argument)
 	}
 	if store_damaged[store_index] {
-		return -1, {}, errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+		return -1, {}, refuse(error, .Data_Damaged, .Damaged, .Stores)
 	}
 	outcome: Lookup
 	value, outcome = entry_of(store_index, path, name.key)
@@ -1594,29 +1600,29 @@ object_locate :: proc "contextless" (store_name: string, path: []Entry_Name, nam
 		return -1, {}, lookup_refusal(outcome, error, argument)
 	}
 	if value.kind != u64(format.Entry_Kind.Object) {
-		return -1, {}, errors.fail(error, failure(.Absent), .Absent, .Objects, argument)
+		return -1, {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, argument)
 	}
-	return store_index, value, 0
+	return store_index, value, .Succeeded
 }
 
 // state_read reads the bytes from `offset` of one state of an object,
 // checked, into result, up to its size. It gives the count of bytes, or
 // failure(.Disk), failure(.Damaged). A wrong block stays known: the state is
 // damaged, and a write of the object does not keep it as a version.
-state_read :: proc "contextless" (state: State_Of_Object, offset: u64, result: []u8, error: ^errors.Error_Record, argument: i64) -> i64 {
+state_read :: proc "contextless" (state: State_Of_Object, offset: u64, result: []u8, error: ^errors.Error_Record, argument: i64) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	if state_damaged(state.root) {
-		return errors.fail(error, failure(.Damaged), .Damaged, .Objects, argument)
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, argument)
 	}
-	count, outcome := block_tree.range_read(&object_source, tree_state(state), offset, result, &read_room, &object_node)
-	switch outcome {
+	count, read := block_tree.range_read(&object_source, tree_state(state), offset, result, &read_room, &object_node)
+	switch read {
 	case .Device:
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	case .Wrong:
 		storage_mount.damaged_under_set(&opened, state.root.block)
-		return errors.fail(error, failure(.Damaged), .Damaged, .Objects, argument)
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, argument)
 	case .Good:
 	}
-	return i64(count)
+	return i64(count), .Succeeded
 }
 
 read_room: Block // One block of data of a read.
@@ -1626,21 +1632,21 @@ listed: [format.VERSIONS_LIMIT]Version_Entry
 listed_count: int
 
 // versions_list reads the versions of an object into `listed`.
-versions_list :: proc "contextless" (object: ^Entry, error: ^errors.Error_Record) -> i64 {
+versions_list :: proc "contextless" (object: ^Entry, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	listed_count = 0
 	if object.versions.block == 0 {
-		return 0
+		return 0, .Succeeded
 	}
 	index: Version_Index
 	switch read_single(object.versions, (^Block)(&index)) {
 	case .Device:
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	case .Wrong:
-		return errors.fail(error, failure(.Damaged), .Damaged, .Objects, 2)
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, 2)
 	case .Good:
 	}
 	if index.leaf_count > format.VERSION_INDEX_CAPACITY {
-		return errors.fail(error, failure(.Damaged), .Damaged, .Objects, 2)
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, 2)
 	}
 	leaf: Version_Leaf
 	leaves := index.leaves[:index.leaf_count]
@@ -1650,15 +1656,15 @@ versions_list :: proc "contextless" (object: ^Entry, error: ^errors.Error_Record
 		_, outcome := read_checked(part, 0)
 		switch outcome {
 		case .Device:
-			return errors.fail(error, failure(.Disk), .Device)
+			return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 		case .Wrong:
-			return errors.fail(error, failure(.Damaged), .Damaged, .Objects, 2)
+			return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, 2)
 		case .Good:
 		}
 		for place in 0 ..< len(part) {
 			intrinsics.mem_copy_non_overlapping(&leaf, raw_data(slot(u64(place))), BLOCK_SIZE)
 			if leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
-				return errors.fail(error, failure(.Damaged), .Damaged, .Objects, 2)
+				return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Objects, 2)
 			}
 			for entry in leaf.entries[:leaf.count] {
 				if listed_count < len(listed) {
@@ -1668,24 +1674,24 @@ versions_list :: proc "contextless" (object: ^Entry, error: ^errors.Error_Record
 			}
 		}
 	}
-	return i64(listed_count)
+	return i64(listed_count), .Succeeded
 }
 
 // state_at gives the state of an object at a generation: its current
 // version, or the version with that generation.
-state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, error: ^errors.Error_Record) -> (state: State_Of_Object, result: i64) {
+state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, error: ^errors.Error_Record) -> (state: State_Of_Object, result: call_outcome.Call_Outcome) {
 	if generation == i64(object.generation) {
-		return current_state(object), 0
+		return current_state(object), .Succeeded
 	}
-	if count := versions_list(object, error); count < 0 {
-		return {}, count
+	if _, listed_outcome := versions_list(object, error); listed_outcome != .Succeeded {
+		return {}, listed_outcome
 	}
 	for entry in listed[:listed_count] {
 		if i64(entry.generation) == generation {
-			return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.root}, 0
+			return {generation = entry.generation, size = entry.size, time = entry.time, date = entry.date, root = entry.root}, .Succeeded
 		}
 	}
-	return {}, errors.fail(error, failure(.No_Version), .Absent, .Versions, argument, generation)
+	return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Versions, argument, generation)
 }
 
 // own_blocks gives the blocks that only one state holds: its root, when no

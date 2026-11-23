@@ -19,9 +19,10 @@
 //   tag check, and computes the tag of a seal over the bytes that it wrote).
 //   [The module](docs/CRYPTOGRAPHY.md#6-the-module-cryptography) says which
 //   arguments must be private.
-// - **A failure is an error record** and a negative count, never a boolean
-//   that a caller can forget. An open whose tag does not verify gives
-//   `Not_Authentic` and leaves no byte of the text in the result.
+// - **A failure is the call outcome `Argument_Refused` with an error
+//   record**, first in the pair of an export, never a boolean that a caller
+//   can forget. An open whose tag does not verify gives `Not_Authentic` and
+//   leaves no byte of the text in the result.
 // - **The copies of secrets that the call makes are erased**, and so is the
 //   stack below each procedure after the work (`erase_stack_below_the_caller`):
 //   the frames of the origin hold expanded keys and hash states.
@@ -30,6 +31,7 @@
 package cryptography_primitives
 
 import "base:runtime"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:cryptography/aes"
@@ -64,7 +66,6 @@ HKDF_EXPAND_LIMIT :: 255 * sha2.DIGEST_SIZE_256 // RFC 5869, section 2.3.
 HEADER_PROTECTION_SAMPLE_SIZE :: 16
 HEADER_PROTECTION_MASK_SIZE :: 5
 
-ERROR :: -1
 
 // zero_context gives the context of the code of the origin: all zero. The
 // origin uses no allocator here, and an assertion with no procedure goes to
@@ -85,9 +86,9 @@ size_check :: proc "contextless" (input: []u8, size: int, argument: i64, error: 
 		return true
 	}
 	if len(input) < size {
-		errors.fail(error, ERROR, len(input) == 0 ? .Empty : .Too_Small, .Bytes, argument, i64(len(input)), i64(size))
+		errors.fail(error, 0, len(input) == 0 ? .Empty : .Too_Small, .Bytes, argument, i64(len(input)), i64(size))
 	} else {
-		errors.fail(error, ERROR, .Too_Long, .Bytes, argument, i64(len(input)), i64(size))
+		errors.fail(error, 0, .Too_Long, .Bytes, argument, i64(len(input)), i64(size))
 	}
 	return false
 }
@@ -98,7 +99,7 @@ limit_check :: proc "contextless" (input: []u8, limit: int, argument: i64, error
 	if len(input) <= limit {
 		return true
 	}
-	errors.fail(error, ERROR, .Too_Long, .Bytes, argument, i64(len(input)), i64(limit))
+	errors.fail(error, 0, .Too_Long, .Bytes, argument, i64(len(input)), i64(limit))
 	return false
 }
 
@@ -119,17 +120,17 @@ aead_key_size := [Aead]int {
 // below. It reads each header once, copies the key, the nonce, the additional
 // data and the tag, and reads each byte of the text once.
 @(private)
-aead_run :: #force_no_inline proc "contextless" (aead: Aead, sealing: bool, key_text, nonce_text, additional_text, input_text: string, output_buffer: []u8, error: ^errors.Error_Record) -> i64 {
+aead_run :: #force_no_inline proc "contextless" (aead: Aead, sealing: bool, key_text, nonce_text, additional_text, input_text: string, output_buffer: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	context = zero_context()
 	key := transmute([]u8)key_text
 	nonce := transmute([]u8)nonce_text
 	additional := transmute([]u8)additional_text
 	input := transmute([]u8)input_text
 	if !size_check(key, aead_key_size[aead], 1, error) || !size_check(nonce, NONCE_SIZE, 2, error) || !limit_check(additional, ADDITIONAL_LIMIT, 3, error) || !limit_check(input, SEAL_LIMIT, 4, error) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	if !sealing && len(input) < TAG_SIZE {
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, 4, i64(len(input)), TAG_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 4, i64(len(input)), TAG_SIZE)
 	}
 	count := sealing ? len(input) + TAG_SIZE : len(input) - TAG_SIZE
 	if len(output_buffer) < count {
@@ -137,16 +138,16 @@ aead_run :: #force_no_inline proc "contextless" (aead: Aead, sealing: bool, key_
 		// open does not: a caller that reads a count of zero or more as a
 		// success would read the old bytes of its buffer as an authentic text.
 		if sealing {
-			return i64(count)
+			return .Succeeded, i64(count)
 		}
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, 5, i64(len(output_buffer)), i64(count))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 5, i64(len(output_buffer)), i64(count))
 	}
 	output := output_buffer[:count]
 	// A result that overlaps the text with an offset would stop the process
 	// in the origin; here it is an error record. An exact overlap (in place)
 	// is right.
 	if bytes.alias_inexactly(output, input) || bytes.alias(output, key) || bytes.alias(output, nonce) || bytes.alias(output, additional) {
-		return errors.fail(error, ERROR, .Bad_Value, .Bytes, 5)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 5)
 	}
 	key_copy: [32]u8
 	nonce_copy: [NONCE_SIZE]u8
@@ -172,7 +173,7 @@ aead_run :: #force_no_inline proc "contextless" (aead: Aead, sealing: bool, key_
 			aes.seal_gcm(&cipher, output[:len(input)], output[len(input):], nonce_copy[:], private_additional, input)
 			aes.reset_gcm(&cipher)
 		}
-		return i64(count)
+		return .Succeeded, i64(count)
 	}
 	// An open: the tag into the frame of the call, the sealed text into the
 	// result (each byte read once), then the check and the decryption in
@@ -195,38 +196,38 @@ aead_run :: #force_no_inline proc "contextless" (aead: Aead, sealing: bool, key_
 	}
 	if !authentic {
 		crypto.zero_explicit(raw_data(output), len(output))
-		return errors.fail(error, ERROR, .Not_Authentic, .Bytes, 4, i64(len(input)))
+		return call_outcome.fail(error, .Argument_Refused, .Not_Authentic, .Bytes, 4, i64(len(input)))
 	}
-	return i64(count)
+	return .Succeeded, i64(count)
 }
 
 // aead_call reads each header of the caller once, runs the AEAD, and
 // erases the stack where the code of the origin held the expanded key.
 @(private)
-aead_call :: proc "contextless" (aead: Aead, sealing: bool, key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := aead_run(aead, sealing, key^, nonce^, additional^, text^, result^, error)
+aead_call :: proc "contextless" (aead: Aead, sealing: bool, key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = aead_run(aead, sealing, key^, nonce^, additional^, text^, result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }
 
 // seal_with_chacha20_poly1305 encrypts a text and appends its tag of 16 bytes (RFC 8439). The
 // contract of the arguments and of the errors is that of the export of the module cryptography.
-seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return aead_call(.ChaCha20_Poly1305, true, key, nonce, additional, text, result, error)
 }
 
 // open_with_chacha20_poly1305 checks the tag of a sealed text and decrypts it (RFC 8439).
-open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return aead_call(.ChaCha20_Poly1305, false, key, nonce, additional, sealed, result, error)
 }
 
 // seal_with_aes_128_gcm encrypts a text and appends its tag of 16 bytes (NIST SP 800-38D).
-seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return aead_call(.Aes_128_Gcm, true, key, nonce, additional, text, result, error)
 }
 
 // open_with_aes_128_gcm checks the tag of a sealed text and decrypts it.
-open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return aead_call(.Aes_128_Gcm, false, key, nonce, additional, sealed, result, error)
 }
 
@@ -297,21 +298,21 @@ hkdf_sha256_extract :: proc "c" (salt, input: ^string, result: ^[]u8) -> i64 {
 }
 
 @(private)
-hkdf_sha256_expand_run :: #force_no_inline proc "contextless" (key_text, info_text: string, length: i64, output: []u8, error: ^errors.Error_Record) -> i64 {
+hkdf_sha256_expand_run :: #force_no_inline proc "contextless" (key_text, info_text: string, length: i64, output: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	context = zero_context()
 	key := transmute([]u8)key_text
 	info := transmute([]u8)info_text
 	if len(key) < sha2.DIGEST_SIZE_256 {
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, 1, i64(len(key)), sha2.DIGEST_SIZE_256)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1, i64(len(key)), sha2.DIGEST_SIZE_256)
 	}
 	if !limit_check(info, INFO_LIMIT, 2, error) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	if length < 1 || length > HKDF_EXPAND_LIMIT {
-		return errors.fail(error, ERROR, .Bad_Value, .Bytes, 3, length, HKDF_EXPAND_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 3, length, HKDF_EXPAND_LIMIT)
 	}
 	if i64(len(output)) < length {
-		return length
+		return .Succeeded, length
 	}
 	// The origin reads the info once for each block, and reads each block
 	// back from its output: the info and the output are in the frame of the
@@ -322,27 +323,27 @@ hkdf_sha256_expand_run :: #force_no_inline proc "contextless" (key_text, info_te
 	hkdf.expand(.SHA256, key, info_copy[:len(info)], expanded[:length])
 	copy(output, expanded[:length])
 	crypto.zero_explicit(&expanded, int(length))
-	return length
+	return .Succeeded, length
 }
 
 // hkdf_sha256_expand gives length bytes of output keying material from a pseudorandom key and an info
 // text, with SHA-256 (RFC 5869, section 2.3).
-hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := hkdf_sha256_expand_run(key^, info^, i64(length), result^, error)
+hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = hkdf_sha256_expand_run(key^, info^, i64(length), result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }
 
 @(private)
-x25519_run :: #force_no_inline proc "contextless" (scalar_text, point_text: string, output: []u8, error: ^errors.Error_Record) -> i64 {
+x25519_run :: #force_no_inline proc "contextless" (scalar_text, point_text: string, output: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	context = zero_context()
 	scalar := transmute([]u8)scalar_text
 	point := transmute([]u8)point_text
 	if !size_check(scalar, x25519_curve.SCALAR_SIZE, 1, error) || !size_check(point, x25519_curve.POINT_SIZE, 2, error) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	if len(output) < x25519_curve.POINT_SIZE {
-		return x25519_curve.POINT_SIZE
+		return .Succeeded, x25519_curve.POINT_SIZE
 	}
 	scalar_copy, point_copy, shared: [32]u8
 	copy(scalar_copy[:], scalar)
@@ -353,30 +354,30 @@ x25519_run :: #force_no_inline proc "contextless" (scalar_text, point_text: stri
 	if crypto.is_zero_constant_time(shared[:]) == 1 {
 		// A point of small order gives a shared secret of zeros (RFC 7748,
 		// section 6.1): no secret is shared, so the point is refused.
-		return errors.fail(error, ERROR, .Bad_Value, .Bytes, 2)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 2)
 	}
 	copy(output, shared[:])
-	return x25519_curve.POINT_SIZE
+	return .Succeeded, x25519_curve.POINT_SIZE
 }
 
 // x25519 gives the shared secret of a scalar of 32 bytes and a point of 32 bytes (RFC 7748). A point
 // of small order, whose shared secret is 32 zero bytes, is refused with `Bad_Value` (RFC 7748, section
 // 6.1).
-x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := x25519_run(scalar^, point^, result^, error)
+x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = x25519_run(scalar^, point^, result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }
 
 @(private)
-ed25519_public_key_run :: #force_no_inline proc "contextless" (secret_text: string, output: []u8, error: ^errors.Error_Record) -> i64 {
+ed25519_public_key_run :: #force_no_inline proc "contextless" (secret_text: string, output: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	context = zero_context()
 	secret := transmute([]u8)secret_text
 	if !size_check(secret, ed25519.PRIVATE_KEY_SIZE, 1, error) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	if len(output) < ed25519.PUBLIC_KEY_SIZE {
-		return ed25519.PUBLIC_KEY_SIZE
+		return .Succeeded, ed25519.PUBLIC_KEY_SIZE
 	}
 	secret_copy: [ed25519.PRIVATE_KEY_SIZE]u8
 	copy(secret_copy[:], secret)
@@ -386,31 +387,31 @@ ed25519_public_key_run :: #force_no_inline proc "contextless" (secret_text: stri
 	// The copy has the size of a private key: the origin refuses only
 	// another size.
 	if !ed25519.private_key_set_bytes(&private_key, secret_copy[:]) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	public_key: ed25519.Public_Key
 	ed25519.public_key_set_priv(&public_key, &private_key)
 	ed25519.public_key_bytes(&public_key, output[:ed25519.PUBLIC_KEY_SIZE])
-	return ed25519.PUBLIC_KEY_SIZE
+	return .Succeeded, ed25519.PUBLIC_KEY_SIZE
 }
 
 // ed25519_public_key gives the public key of a private key of 32 bytes (RFC 8032, section 5.1.5).
-ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := ed25519_public_key_run(secret^, result^, error)
+ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = ed25519_public_key_run(secret^, result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }
 
 @(private)
-ed25519_sign_run :: #force_no_inline proc "contextless" (secret_text, message_text: string, output: []u8, error: ^errors.Error_Record) -> i64 {
+ed25519_sign_run :: #force_no_inline proc "contextless" (secret_text, message_text: string, output: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	context = zero_context()
 	secret := transmute([]u8)secret_text
 	message := transmute([]u8)message_text
 	if !size_check(secret, ed25519.PRIVATE_KEY_SIZE, 1, error) || !limit_check(message, MESSAGE_LIMIT, 2, error) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	if len(output) < ed25519.SIGNATURE_SIZE {
-		return ed25519.SIGNATURE_SIZE
+		return .Succeeded, ed25519.SIGNATURE_SIZE
 	}
 	// The origin hashes the message two times (for r, then for the digest
 	// of R, A and M), and reads R back from the signature that it writes. A
@@ -428,29 +429,29 @@ ed25519_sign_run :: #force_no_inline proc "contextless" (secret_text, message_te
 	// The copy has the size of a private key: the origin refuses only
 	// another size.
 	if !ed25519.private_key_set_bytes(&private_key, secret_copy[:]) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	ed25519.sign(&private_key, message_copy[:len(message)], signature[:])
 	copy(output, signature[:])
-	return ed25519.SIGNATURE_SIZE
+	return .Succeeded, ed25519.SIGNATURE_SIZE
 }
 
 // ed25519_sign gives the signature of a message of 4096 bytes at most, 64 bytes, with a private key
 // of 32 bytes (RFC 8032, section 5.1.6).
-ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := ed25519_sign_run(secret^, message^, result^, error)
+ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = ed25519_sign_run(secret^, message^, result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }
 
 @(private)
-ed25519_verify_run :: #force_no_inline proc "contextless" (public_text, message_text, signature_text: string, error: ^errors.Error_Record) -> i64 {
+ed25519_verify_run :: #force_no_inline proc "contextless" (public_text, message_text, signature_text: string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	context = zero_context()
 	public := transmute([]u8)public_text
 	message := transmute([]u8)message_text
 	signature := transmute([]u8)signature_text
 	if !size_check(public, ed25519.PUBLIC_KEY_SIZE, 1, error) || !limit_check(message, MESSAGE_LIMIT, 2, error) || !size_check(signature, ed25519.SIGNATURE_SIZE, 3, error) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	public_copy: [ed25519.PUBLIC_KEY_SIZE]u8
 	message_copy: [MESSAGE_LIMIT]u8
@@ -460,21 +461,21 @@ ed25519_verify_run :: #force_no_inline proc "contextless" (public_text, message_
 	copy(signature_copy[:], signature)
 	public_key: ed25519.Public_Key
 	if !ed25519.public_key_set_bytes(&public_key, public_copy[:]) {
-		return errors.fail(error, ERROR, .Bad_Value, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 1)
 	}
 	if !ed25519.verify(&public_key, message_copy[:len(message)], signature_copy[:]) {
-		return errors.fail(error, ERROR, .Not_Authentic, .Bytes, 3)
+		return call_outcome.fail(error, .Argument_Refused, .Not_Authentic, .Bytes, 3)
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // ed25519_verify checks the signature of a message of 4096 bytes at most with a public key of 32
 // bytes (RFC 8032, section 5.1.7). The check is strict: a signature with a non-canonical S or R, or a
 // public key of small order, is refused.
-ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64 {
-	count := ed25519_verify_run(public^, message^, signature^, error)
+ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = ed25519_verify_run(public^, message^, signature^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }
 
 @(private)
@@ -484,15 +485,15 @@ Header_Protection :: enum {
 }
 
 @(private)
-header_protection_mask_run :: #force_no_inline proc "contextless" (kind: Header_Protection, key_text, sample_text: string, output: []u8, error: ^errors.Error_Record) -> i64 {
+header_protection_mask_run :: #force_no_inline proc "contextless" (kind: Header_Protection, key_text, sample_text: string, output: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	context = zero_context()
 	key := transmute([]u8)key_text
 	sample := transmute([]u8)sample_text
 	if !size_check(key, kind == .Aes_128 ? 16 : 32, 1, error) || !size_check(sample, HEADER_PROTECTION_SAMPLE_SIZE, 2, error) {
-		return ERROR
+		return .Argument_Refused, 0
 	}
 	if len(output) < HEADER_PROTECTION_MASK_SIZE {
-		return HEADER_PROTECTION_MASK_SIZE
+		return .Succeeded, HEADER_PROTECTION_MASK_SIZE
 	}
 	key_copy: [32]u8
 	sample_copy, block: [HEADER_PROTECTION_SAMPLE_SIZE]u8
@@ -518,22 +519,22 @@ header_protection_mask_run :: #force_no_inline proc "contextless" (kind: Header_
 		chacha20.reset(&cipher)
 	}
 	copy(output, block[:HEADER_PROTECTION_MASK_SIZE])
-	return HEADER_PROTECTION_MASK_SIZE
+	return .Succeeded, HEADER_PROTECTION_MASK_SIZE
 }
 
 // header_protection_mask_with_aes_128 gives the 5 bytes of the QUIC header protection mask of a
 // sample of 16 bytes with a key of 16 bytes: AES-128 of the sample (RFC 9001, section 5.4.3).
-header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := header_protection_mask_run(.Aes_128, key^, sample^, result^, error)
+header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = header_protection_mask_run(.Aes_128, key^, sample^, result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }
 
 // header_protection_mask_with_chacha20 gives the 5 bytes of the QUIC header protection mask of a
 // sample of 16 bytes with a key of 32 bytes: the ChaCha20 keystream at the counter and the nonce that
 // the sample gives (RFC 9001, section 5.4.4).
-header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := header_protection_mask_run(.ChaCha20, key^, sample^, result^, error)
+header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = header_protection_mask_run(.ChaCha20, key^, sample^, result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }

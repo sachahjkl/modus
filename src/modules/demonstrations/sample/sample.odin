@@ -34,6 +34,7 @@
 package sample
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:system"
@@ -73,15 +74,12 @@ grow :: proc "c" (rectangle: ^Rectangle, by: i64, result: ^Rectangle) {
 // the argument that an error record of the kernel names for it.
 MEMORY_MAP_ARGUMENT_MEMORY :: 1
 
-// The result of an export that fails: the error record says why.
-ERROR :: -1
-
-// bytes_of maps a memory object for the time of one export. ok is false
-// when the kernel refuses; then the error record holds the refusal, in the
-// words of the export: argument names the parameter of the export that
-// holds the handle.
+// bytes_of maps a memory object for the time of one export. The outcome
+// is the one of the kernel refusal when the kernel refuses; then the error
+// record holds the refusal, in the words of the export: argument names the
+// parameter of the export that holds the handle.
 @(private)
-bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argument: i64, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
+bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argument: i64, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, flags, error = &refusal)
 	if status != .Ok {
@@ -96,47 +94,47 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argu
 				error^ = errors.error_make(.Refused, .Kernel_Status, found = i64(status))
 			}
 		}
-		return nil, false
+		return nil, system.outcome_of_status(status)
 	}
 	// The map took the handle, so the kernel gives its size: a refusal maps no byte.
 	pages, _ := system.memory_size(memory)
-	return ([^]u8)(address)[:pages * system.PAGE_SIZE], true
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
 }
 
 // fill writes a value in each byte of a memory object, and gives the count
 // of bytes. The caller lends the object to read and to write.
 //
 // The handle is lent for this call only: the module cannot keep it. The value is taken modulo 256. When the
-// kernel refuses the map, the result is -1 with the error record of the kernel for the argument memory.
+// kernel refuses the map, the result is the outcome of the refusal with the error record of the kernel for the argument memory.
 @(export, link_name = "fill")
-fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64, error: ^errors.Error_Record) -> i64 {
-	bytes, ok := bytes_of(memory.handle, {.Write}, 1, error)
-	if !ok {
-		return ERROR
+fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, result_value: i64) {
+	bytes, mapped := bytes_of(memory.handle, {.Write}, 1, error)
+	if mapped != .Succeeded {
+		return mapped, 0
 	}
 	for &b in bytes {
 		b = u8(value)
 	}
 	system.memory_unmap(raw_data(bytes))
-	return i64(len(bytes))
+	return .Succeeded, i64(len(bytes))
 }
 
 // total adds the bytes of a memory object. The caller lends the object to
 // read only.
 //
-// When the kernel refuses the map, the result is -1 with the error record of the kernel for the argument memory.
+// When the kernel refuses the map, the result is the outcome of the refusal with the error record of the kernel for the argument memory.
 @(export, link_name = "total")
-total :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
-	bytes, ok := bytes_of(memory.handle, {}, 1, error)
-	if !ok {
-		return ERROR
+total :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	bytes, mapped := bytes_of(memory.handle, {}, 1, error)
+	if mapped != .Succeeded {
+		return mapped, 0
 	}
 	sum: i64
 	for b in bytes {
 		sum += i64(b)
 	}
 	system.memory_unmap(raw_data(bytes))
-	return sum
+	return .Succeeded, sum
 }
 
 // span_total adds the bytes of a part of a memory object. The handle is a
@@ -144,12 +142,12 @@ total :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) ->
 //
 // A span outside the object gives 0: the export checks first, count and their sum against the size. The handle
 // in a record is lent as a handle parameter is: the rights of the field description, for the call only. When the
-// kernel refuses the map, the result is -1 with the error record of the kernel for the argument span.
+// kernel refuses the map, the result is the outcome of the refusal with the error record of the kernel for the argument span.
 @(export, link_name = "span_total")
-span_total :: proc "c" (span: ^Span, error: ^errors.Error_Record) -> i64 {
-	bytes, ok := bytes_of(span.memory.handle, {}, 1, error)
-	if !ok {
-		return ERROR
+span_total :: proc "c" (span: ^Span, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	bytes, mapped := bytes_of(span.memory.handle, {}, 1, error)
+	if mapped != .Succeeded {
+		return mapped, 0
 	}
 	sum: i64
 	if span.first >= 0 && span.count >= 0 && span.first <= i64(len(bytes)) && span.count <= i64(len(bytes)) - span.first {
@@ -158,7 +156,7 @@ span_total :: proc "c" (span: ^Span, error: ^errors.Error_Record) -> i64 {
 		}
 	}
 	system.memory_unmap(raw_data(bytes))
-	return sum
+	return .Succeeded, sum
 }
 
 // spoil tries to write in a memory object that the caller lent to read. The
@@ -241,9 +239,9 @@ Word :: struct {
 	sum:   i64, // Written by the export: the sum of its bytes.
 }
 
-// sum_words writes in each word the sum of the bytes of the text that the word names, and gives the sum of all. A word that names bytes after the end of the text is an error, not a fault: the result is -1 with an error record of the kind Out_Of_Range (the end of the bytes of the word, the count of bytes of the text, and the number of the word).
+// sum_words writes in each word the sum of the bytes of the text that the word names, and gives the sum of all. A word that names bytes after the end of the text is an error, not a fault: the outcome is Argument_Refused with an error record of the kind Out_Of_Range (the end of the bytes of the word, the count of bytes of the text, and the number of the word), or Stopped_After_A_Partial_Change when the words before it already hold their sums.
 @(export, link_name = "sum_words")
-sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	total: i64
 	for &word, number in system.table_changed_records(words) {
 		// The rule of an export (docs/MODULE_CONTRACT.md): it copies a
@@ -254,7 +252,9 @@ sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes
 		copied := intrinsics.volatile_load(&word)
 		end := u64(copied.start) + u64(copied.count)
 		if end > text.count {
-			return errors.fail(error, -1, .Out_Of_Range, .Bytes, 1, i64(end), i64(text.count), i64(number + 1))
+			// The words before this one hold their sums in the table of the
+			// caller.
+			return call_outcome.fail(error, number > 0 ? .Stopped_After_A_Partial_Change : .Argument_Refused, .Out_Of_Range, .Bytes, 1, i64(end), i64(text.count), i64(number + 1))
 		}
 		sum: i64
 		for b in text.bytes[copied.start:end] {
@@ -263,7 +263,7 @@ sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes
 		word.sum = sum
 		total += sum
 	}
-	return total
+	return .Succeeded, total
 }
 
 // upper_case changes each letter of a range of bytes to upper case, in the memory of the caller (Bytes with the direction Change), and gives the count of letters that it changed.
@@ -279,25 +279,28 @@ upper_case :: proc "c" (text: ^system.Bytes_To_Change) -> i64 {
 	return changed
 }
 
-// scale_values_up_to multiplies the value, the minimum and the maximum of each reading by a factor, in order, in the memory of the caller (the direction Change), while each new value stays at most largest_value, and gives the count of readings. At the first reading whose value would pass it, it stops with -1 and an error record Bad_Value for the factor, with the largest factor that this reading takes: the readings before it are already changed. A caller in another process receives none of these changes: a failed export gives back only its table of error details.
+// scale_values_up_to multiplies the value, the minimum and the maximum of each reading by a factor, in order, in the memory of the caller (the direction Change), while each new value stays at most largest_value, and gives the count of readings. At the first reading whose value would pass it, it stops with an error record Bad_Value for the factor, with the largest factor that this reading takes. The outcome is Stopped_After_A_Partial_Change when the readings before it are already changed, and Argument_Refused when it is the first. A caller in another process receives none of these changes: a failed export gives back only its table of error details.
 //
-// A factor under 1 fails at once with -1 and an error record `Too_Small` for the factor, with the limit 1; no
-// reading changes.
+// A factor under 1 fails at once with the outcome `Argument_Refused` and an error record `Too_Small` for the factor,
+// with the limit 1; no reading changes.
 @(export, link_name = "scale_values_up_to")
-scale_values_up_to :: proc "c" (readings: ^system.Table_To_Change(Reading), factor: i64, largest_value: i64, error: ^errors.Error_Record) -> i64 {
+scale_values_up_to :: proc "c" (readings: ^system.Table_To_Change(Reading), factor: i64, largest_value: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if factor < 1 {
-		return errors.fail(error, -1, .Too_Small, .None, 2, factor, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 2, factor, 1)
 	}
+	changed := false
 	for &reading in system.table_changed_records(readings) {
 		// The record is copied before it is checked: in an isolated call it
 		// is in the call region, which the caller can change during the call.
 		copied := intrinsics.volatile_load(&reading)
 		if copied.value > largest_value / factor {
-			return errors.fail(error, -1, .Bad_Value, .None, 2, factor, copied.value > 0 ? largest_value / copied.value : 0)
+			// A change that happened is never hidden behind a refusal.
+			return call_outcome.fail(error, call_outcome.outcome_passed_on(.Argument_Refused, changed), .Bad_Value, .None, 2, factor, copied.value > 0 ? largest_value / copied.value : 0)
 		}
+		changed = true
 		reading = {sensor = copied.sensor, time = copied.time, value = copied.value * factor, minimum = copied.minimum * factor, maximum = copied.maximum * factor}
 	}
-	return i64(readings.count)
+	return .Succeeded, i64(readings.count)
 }
 
 // WEIGH_LABEL_LIMIT is the most bytes of the label of weigh.
@@ -305,20 +308,20 @@ WEIGH_LABEL_LIMIT :: 16
 
 // weigh gives the sum of eight numbers, each times its place (1 to 8), plus the value of each byte of a label. It takes nine parameters and an error record: ten arguments, four of them on the stack after the six registers (docs/MODULE_CONTRACT.md, "4. The call form"). Each number has another weight, so a value in the wrong place gives another sum: `weigh(1, 2, 3, 4, 5, 6, 7, 8, "A")` gives 269.
 //
-// A label of more than 16 bytes fails with -1 and an error record `Too_Long` for the label, argument 9.
+// A label of more than 16 bytes fails with the outcome `Argument_Refused` and an error record `Too_Long` for the label, argument 9.
 @(export, link_name = "weigh")
-weigh :: proc "c" (first, second, third, fourth, fifth, sixth, seventh, eighth: i64, label: ^string, error: ^errors.Error_Record) -> i64 {
+weigh :: proc "c" (first, second, third, fourth, fifth, sixth, seventh, eighth: i64, label: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The slice record is a copy of the receiver in an isolated call, and
 	// memory of the caller in a direct call: read it once.
 	text := intrinsics.volatile_load(label)
 	if len(text) > WEIGH_LABEL_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 9, i64(len(text)), WEIGH_LABEL_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 9, i64(len(text)), WEIGH_LABEL_LIMIT)
 	}
 	sum := first + 2 * second + 3 * third + 4 * fourth + 5 * fifth + 6 * sixth + 7 * seventh + 8 * eighth
 	for index in 0 ..< len(text) {
 		sum += i64(text[index])
 	}
-	return sum
+	return .Succeeded, sum
 }
 
 // The same module as a process: a service that serves the exports above.

@@ -10,6 +10,7 @@ package debugger
 // object of its module.
 
 import debug_object "modus:contract/debug_object"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
@@ -45,30 +46,30 @@ Stop_Frame_Row :: struct {
 //
 // **Errors**:
 //
-// - `No_Grant`, `Acts_For_Principal` (-1): the caller does not act for the
+// - `No_Grant`, `Acts_For_Principal`: the caller does not act for the
 //   principal.
-// - (-4) the record of the root service: `Absent`, `Stop_Reports` when no
+// - the record of the root service: `Absent`, `Stop_Reports` when no
 //   disk process of the principal of the caller with this nickname stopped
 //   on a fault, or 8 newer reports took its place; `No_Grant`,
 //   `Debug_Access` when the grant `debug` of the caller was revoked;
 //   `No_Answer` when the root service did not answer in 1500 ms;
 //   `Refused` with the status of the kernel.
-// - `Too_Long`, `Bytes` (-15): the name has no byte or more than 31.
+// - `Too_Long`, `Bytes`: the name has no byte or more than 31.
 //
 // ```
 // connect("debugger")
 // debugger.stop_report("visitor")
 // ```
 @(export, link_name = "stop_report")
-stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^errors.Error_Record) -> i64 {
+stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	caller := system.service_caller()
 	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	buffer: [PROCESS_NAME_LIMIT]u8
 	name, fits := text_copy(buffer[:], process)
 	if !fits || name == "" {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
 	}
 	kept: disk_process.Kept_Stop_Report
 	// The object of the module lives for this export: it is read again at
@@ -77,16 +78,16 @@ stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^er
 	defer held_object_forget(&read_object)
 	completion, answered, received := store_debug_object_read(name, caller.ring_memory, &read_object, 0, &kept)
 	if !answered {
-		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, DISK_DEBUG_OBJECT_MILLISECONDS)
+		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, DISK_DEBUG_OBJECT_MILLISECONDS)
 	}
 	if system.Status(completion.kind) != .Ok {
 		if error != nil {
 			error^ = errors.completion_record(completion.values)
 		}
-		return ERROR_REFUSED
+		return outcome_of_status_word(completion.kind), 0
 	}
 	if !received {
-		return refused(error, .Bad_Handle)
+		return refused(error, .Bad_Handle), 0
 	}
 	// The object of the module: the one read here, or the one of the
 	// session when the service debugs the same module from the store of
@@ -145,7 +146,7 @@ stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^er
 		named += 1
 	}
 	system.log_fact(.Info, Stop_Report_Read{frames = u64(frame_count), named = u64(named), debugged_process = value_kinds.module_name_field(name)})
-	return i64(frame_count)
+	return .Succeeded, i64(frame_count)
 }
 
 // stop_cause_write writes what stopped the process: "page fault at 0x0",

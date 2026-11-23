@@ -8,6 +8,7 @@
 package powerbox_service
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/powerbox"
 import "modus:contract/ring"
@@ -56,21 +57,21 @@ declared_contract_hash :: proc "contextless" () -> role_contract.Contract_Hash {
 // pending_count returns the number of active pending consent dialogs across
 // all sessions.
 @(export)
-pending_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+pending_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if service_state.next_dialog_serial == 0 {
-		return errors.fail(error, -1, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
-	return i64(service_state.counters.pending_dialogs)
+	return .Succeeded, i64(service_state.counters.pending_dialogs)
 }
 
 // status writes the aggregate powerbox counters into out.
 @(export)
-status :: proc "c" (out: ^Powerbox_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (out: ^Powerbox_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if service_state.next_dialog_serial == 0 {
-		return errors.fail(error, -2, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
 	out^ = {
 		pending_dialogs        = i64(service_state.counters.pending_dialogs),
@@ -81,7 +82,7 @@ status :: proc "c" (out: ^Powerbox_Status, error: ^errors.Error_Record) -> i64 {
 		total_refused_requests = i64(service_state.counters.total_refused_requests),
 		total_expired_dialogs  = i64(service_state.counters.total_expired_dialogs),
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // region_range_valid checks that [offset, offset + length) lies wholly within

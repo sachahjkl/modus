@@ -38,6 +38,7 @@
 package tables
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/call_status"
 import "modus:contract/isolated"
@@ -148,7 +149,7 @@ export_of :: proc "contextless" (name: string) -> (index: u32, function: module.
 }
 
 // call_hostile runs one export of hostile_exports in one way.
-call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument) -> (result: i64, status: call_status.Call_Status) {
+call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument) -> (result: i64, status: call_status.Call_Status, outcome: call_outcome.Call_Outcome) {
 	index := module.export_find(hostile_file, name)
 	function, _ := module.function(hostile_file, index)
 	address, _ := module.export_address(hostile_file, uintptr(hostile_base), index)
@@ -159,13 +160,13 @@ call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolate
 		return system.call_isolated(&hostile_host, hostile_file, index, arguments)
 	case .Service:
 		// No service holds the hostile exports: the caller skips this way.
-		return 0, .Refused
+		return 0, .Refused, .Operation_Unsupported
 	}
-	return 0, .Refused
+	return 0, .Refused, .Operation_Unsupported
 }
 
 // call runs one export with the same arguments in one way.
-call :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: call_status.Call_Status) {
+call :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: call_status.Call_Status, outcome: call_outcome.Call_Outcome) {
 	index, function, address := export_of(name)
 	switch way {
 	case .Direct:
@@ -238,13 +239,13 @@ run_cases :: proc "contextless" () {
 		readings_four(&memory)
 		arguments := [3]isolated.Argument{}
 		arguments[0].table = {records = bytes_of(&memory, 4 * 40), count = 4}
-		result, status := call(way, "sum_values", arguments[:1])
+		result, status, _ := call(way, "sum_values", arguments[:1])
 		answer_set(&sum.answers[way], status == .Ok && result == 100, result)
 
 		readings_four(&memory)
 		arguments[0].table = {records = bytes_of(&memory, 4 * 40), count = 4}
 		arguments[1] = {integer = 3}
-		result, status = call(way, "scale_values", arguments[:2])
+		result, status, _ = call(way, "scale_values", arguments[:2])
 		answer_set(&scale.answers[way], status == .Ok && result == 4 && memory[3].value == 120 && memory[0].maximum == 30 && memory[4] == {}, result, " rows; row 4: ", memory[3].value)
 
 		// 8 places: the table has a capacity of 6, then a guard of 2 records.
@@ -253,12 +254,12 @@ run_cases :: proc "contextless" () {
 		arguments[0] = {integer = 5}
 		arguments[1] = {integer = 100}
 		arguments[2].table = {records = bytes_of(&memory, 6 * 40), count = 2}
-		result, status = call(way, "append_readings", arguments[:3])
+		result, status, _ = call(way, "append_readings", arguments[:3])
 		answer_set(&appended.answers[way], status == .Ok && result == 4 && arguments[2].table.count == 7 && memory[2].value == 100 && memory[5].value == 103 && memory[1].value == 20 && guard_holds(bytes_of(&memory[6], 80)), result, " written, count ", arguments[2].table.count)
 
 		arguments[2].table = {count = 0}
 		arguments[0] = {integer = 3}
-		result, status = call(way, "append_readings", arguments[:3])
+		result, status, _ = call(way, "append_readings", arguments[:3])
 		answer_set(&empty.answers[way], status == .Ok && result == 0 && arguments[2].table.count == 3, result, " written, count ", arguments[2].table.count)
 
 		text := "tables go in"
@@ -267,19 +268,21 @@ run_cases :: proc "contextless" () {
 		arguments[1] = {}
 		arguments[1].table = {records = transmute([]u8)text, count = u64(len(text))}
 		error: errors.Error_Record
-		result, status = call(way, "sum_words", arguments[:2], &error)
+		result, status, _ = call(way, "sum_words", arguments[:2], &error)
 		answer_set(&words.answers[way], status == .Ok && result == 1064 && list[0].sum == 635 && list[1].sum == 214, result, "; words ", list[0].sum, " ", list[1].sum, " ", list[2].sum)
 
 		list[1] = {7, 9, 0}
 		error = {}
-		result, status = call(way, "sum_words", arguments[:2], &error)
-		answer_set(&outside.answers[way], status == .Failed && result == -1 && errors.Kind(error.kind) == .Out_Of_Range && error.found == 2 && error.value == 16 && error.limit == 12, "Out_Of_Range: word ", error.found, ", ", error.value)
+		outcome: call_outcome.Call_Outcome
+		result, status, outcome = call(way, "sum_words", arguments[:2], &error)
+		// The first word holds its sum: a change that the outcome states.
+		answer_set(&outside.answers[way], status == .Failed && outcome == .Stopped_After_A_Partial_Change && result == 0 && errors.Kind(error.kind) == .Out_Of_Range && error.found == 2 && error.value == 16 && error.limit == 12, "Out_Of_Range: word ", error.found, ", ", error.value)
 
 		changed: [12]u8
 		copy(changed[:], "tables go in")
 		arguments[0] = {}
 		arguments[0].table = {records = changed[:], count = 12}
-		result, status = call(way, "upper_case", arguments[:1])
+		result, status, _ = call(way, "upper_case", arguments[:1])
 		answer_set(&upper.answers[way], status == .Ok && result == 10 && string(changed[:]) == "TABLES GO IN", result, " letters: ", string(changed[:]))
 
 		// The export writes 4 records after the capacity, against the rule.
@@ -298,7 +301,7 @@ run_cases :: proc "contextless" () {
 			answer_set(&past.answers[way], false, "not reached")
 			continue
 		}
-		result, status = call_hostile(way, "append_past_capacity", arguments[:1])
+		result, status, _ = call_hostile(way, "append_past_capacity", arguments[:1])
 		holds := guard_holds(bytes_of(&memory[2], 6 * 40))
 		answer_set(&past.answers[way], way == .Direct ? !holds : holds && status == .Ok, holds ? "the guard holds" : "guard written: one space")
 	}
@@ -361,12 +364,12 @@ run_hostile :: proc "contextless" () {
 	index, function, _ := export_of("sum_values")
 	arguments := [2]isolated.Argument{}
 	arguments[0].table = {records = bytes_of(raw_data(large), LARGE_COUNT * 40), count = LARGE_COUNT}
-	_, status := system.call_isolated(&host, sample_file, index, arguments[:1])
+	_, status, _ := system.call_isolated(&host, sample_file, index, arguments[:1])
 	missing := isolated.room_missing(sample_file, function, arguments[:1], u64(len(host.region)))
 	hostile_add("65536 rows in the call region", status == .No_Room && missing.needed == LARGE_COUNT * 40, "refused: ", missing.needed, " bytes, ", missing.free, " free")
 
 	arguments[0].table.memory_handle = u64(large_memory)
-	result, lent_status := system.call_isolated(&host, sample_file, index, arguments[:1])
+	result, lent_status, _ := system.call_isolated(&host, sample_file, index, arguments[:1])
 	expected := i64(LARGE_COUNT) * (LARGE_COUNT - 1) / 2
 	hostile_add("the same rows in a lent memory object", lent_status == .Ok && result == expected, result)
 
@@ -375,7 +378,7 @@ run_hostile :: proc "contextless" () {
 	if ways_ready[.Service] {
 		arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64, memory_handle = u64(large_memory)}
 		refusal: errors.Error_Record
-		_, service_status := system.call_isolated(&service, sample_file, index, arguments[:1], &refusal, true)
+		_, service_status, _ := system.call_isolated(&service, sample_file, index, arguments[:1], &refusal, true)
 		refusal_add("a memory object to the service", service_status == .Refused && refusal.argument == 1, &refusal, "sum_values", "readings", .Memory_Object_To_Service)
 	}
 
@@ -442,7 +445,7 @@ run_hostile :: proc "contextless" () {
 	readings_index, readings_function, readings_address := export_of("readings")
 	arguments[0] = {integer = 4}
 	direct_refusal: errors.Error_Record
-	_, direct_status := system.call_direct(sample_file, readings_address, readings_function, arguments[:1], &direct_refusal)
+	_, direct_status, _ := system.call_direct(sample_file, readings_address, readings_function, arguments[:1], &direct_refusal)
 	hostile_add("call_direct of a Table result", direct_status == .Not_Done && readings_index != 0, "Not_Done: the result is not an Integer")
 }
 
@@ -496,7 +499,7 @@ measure :: proc "contextless" () {
 				start := system.nanoseconds()
 				ok := true
 				for call_number in 0 ..< calls {
-					result, status := system.call_isolated(connection, sample_file, index, arguments[:], nil, way == .Memory_Object)
+					result, status, _ := system.call_isolated(connection, sample_file, index, arguments[:], nil, way == .Memory_Object)
 					intrinsics.volatile_store(&sink, result)
 					if status != .Ok && ok {
 						system.log_fact(.Info, Measure_Call_Refused{rows = u64(size), call = u64(call_number), status = call_status.Call_Status_Word(status), way = value_kinds.text_field(measure_names[way], MEASURE_WAY_FIELD_BYTES)})

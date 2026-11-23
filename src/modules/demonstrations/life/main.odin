@@ -31,6 +31,7 @@
 // the left edge.
 package life
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:display"
 import "modus:graphics"
@@ -109,12 +110,12 @@ empty :: proc "c" () {
 // error record: `Too_Small` when `column` or `row` is negative; the record
 // names the argument, and no cell changes.
 @(export, link_name = "glider")
-glider :: proc "c" (column, row: i64, error: ^errors.Error_Record) -> i64 {
+glider :: proc "c" (column, row: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch {
 	case column < 0:
-		return errors.fail(error, -1, .Too_Small, .None, 1, column, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 1, column, 0)
 	case row < 0:
-		return errors.fail(error, -1, .Too_Small, .None, 2, row, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 2, row, 0)
 	}
 	// The modulo comes before the sum: a sum of the largest integer and an
 	// offset of the shape would be negative.
@@ -123,7 +124,7 @@ glider :: proc "c" (column, row: i64, error: ^errors.Error_Record) -> i64 {
 		cells[shown][(row % ROWS + cell[1]) % ROWS][(column % COLUMNS + cell[0]) % COLUMNS] = 1
 	}
 	board_generation += 1
-	return 1
+	return .Succeeded, 1
 }
 
 // The window is built with the interface package (docs/INTERFACE.md): the

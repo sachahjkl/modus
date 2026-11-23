@@ -1,6 +1,7 @@
 package storage_service
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import format "modus:contract/store"
 import "modus:contract/tree_hash"
@@ -58,7 +59,8 @@ Immutable_Context :: struct {
 	source_path:       ^Path,
 	target_path:       ^Path,
 	last_error:        errors.Error_Record,
-	last_export_error: i64,
+	last_outcome:      call_outcome.Call_Outcome, // The outcome of the last refused step of the store; Succeeded for none.
+	objects_written:   int, // The objects that the call wrote: a refusal after one is a partial change.
 }
 
 // path_is_same_or_under says whether candidate equals base or lies inside base.
@@ -133,25 +135,25 @@ immutable_read_object :: proc "contextless" (backend: ^immutable_tree.Store_Back
 		return int(min(value.size, u64(max(int)))), .Buffer_Too_Small
 	}
 	read_err: errors.Error_Record
-	read_bytes := state_read(current_state(&value), 0, buffer[:value.size], &read_err, 2)
-	if read_bytes < 0 {
+	read_bytes, read_outcome := state_read(current_state(&value), 0, buffer[:value.size], &read_err, 2)
+	if read_outcome != .Succeeded {
 		ctx.last_error = read_err
-		ctx.last_export_error = read_bytes
-		return 0, read_bytes == failure(.Disk) ? .Device_Error : .Damaged
+		ctx.last_outcome = read_outcome
+		return 0, read_outcome == .Callee_Unavailable ? .Device_Error : .Damaged
 	}
 	return int(read_bytes), .Ok
 }
 
 @(private = "file")
-export_error_to_backend_status :: proc "contextless" (result: i64) -> immutable_tree.Backend_Status {
-	if result >= 0 {
+export_error_to_backend_status :: proc "contextless" (result: call_outcome.Call_Outcome) -> immutable_tree.Backend_Status {
+	switch result {
+	case .Succeeded:
 		return .Ok
-	}
-	if result == failure(.Disk) {
+	case .Callee_Unavailable:
 		return .Device_Error
-	}
-	if result == failure(.No_Budget) || result == failure(.Full) {
+	case .Budget_Or_Capacity_Exhausted:
 		return .Full
+	case .Argument_Refused, .Nothing_Has_That_Name, .Name_Already_Taken, .Grant_Or_Right_Missing, .Callee_Busy, .Wrong_State, .Another_Change_Came_First, .Operation_Unsupported, .Data_Damaged, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 	}
 	return .Damaged
 }
@@ -161,7 +163,7 @@ immutable_write_object :: proc "contextless" (backend: ^immutable_tree.Store_Bac
 	ctx := (^Immutable_Context)(backend.data)
 	kept := kept_name_of_hex(name)
 	write_err: errors.Error_Record
-	result := object_change(
+	_, result := object_change(
 		ctx.target_path.store,
 		path_names(ctx.target_path),
 		kept,
@@ -172,11 +174,12 @@ immutable_write_object :: proc "contextless" (backend: ^immutable_tree.Store_Bac
 		&write_err,
 		2,
 	)
-	if result < 0 {
+	if result != .Succeeded {
 		ctx.last_error = write_err
-		ctx.last_export_error = result
+		ctx.last_outcome = result
 		return export_error_to_backend_status(result)
 	}
+	ctx.objects_written += 1
 	return .Ok
 }
 
@@ -191,7 +194,7 @@ immutable_persist_entry_object :: proc "contextless" (backend: ^immutable_tree.S
 	// Same store: zero-copy block-tree clone shares every data block immediately.
 	if ctx.source_path.store.name == ctx.target_path.store.name {
 		entry_copy := entry
-		result := object_change(
+		_, result := object_change(
 			ctx.target_path.store,
 			path_names(ctx.target_path),
 			kept,
@@ -202,11 +205,12 @@ immutable_persist_entry_object :: proc "contextless" (backend: ^immutable_tree.S
 			&write_err,
 			2,
 		)
-		if result < 0 {
+		if result != .Succeeded {
 			ctx.last_error = write_err
-			ctx.last_export_error = result
+			ctx.last_outcome = result
 			return export_error_to_backend_status(result)
 		}
+		ctx.objects_written += 1
 		return .Ok
 	}
 	// Cross-store freeze: blocks cannot be shared across stores, so copy bytes.
@@ -214,13 +218,13 @@ immutable_persist_entry_object :: proc "contextless" (backend: ^immutable_tree.S
 		return .Full
 	}
 	entry_copy := entry
-	read_bytes := state_read(current_state(&entry_copy), 0, immutable_tree_scratch[:entry.size], &write_err, 1)
-	if read_bytes < 0 {
+	read_bytes, read_outcome := state_read(current_state(&entry_copy), 0, immutable_tree_scratch[:entry.size], &write_err, 1)
+	if read_outcome != .Succeeded {
 		ctx.last_error = write_err
-		ctx.last_export_error = read_bytes
-		return read_bytes == failure(.Disk) ? .Device_Error : .Damaged
+		ctx.last_outcome = read_outcome
+		return read_outcome == .Callee_Unavailable ? .Device_Error : .Damaged
 	}
-	result := object_change(
+	_, result := object_change(
 		ctx.target_path.store,
 		path_names(ctx.target_path),
 		kept,
@@ -231,11 +235,12 @@ immutable_persist_entry_object :: proc "contextless" (backend: ^immutable_tree.S
 		&write_err,
 		2,
 	)
-	if result < 0 {
+	if result != .Succeeded {
 		ctx.last_error = write_err
-		ctx.last_export_error = result
+		ctx.last_outcome = result
 		return export_error_to_backend_status(result)
 	}
+	ctx.objects_written += 1
 	return .Ok
 }
 
@@ -245,36 +250,47 @@ tree_store_status_fail :: proc "contextless" (
 	ctx: ^Immutable_Context,
 	error: ^errors.Error_Record,
 	argument: i64,
-) -> i64 {
-	if ctx != nil && ctx.last_export_error < 0 {
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	refused: call_outcome.Call_Outcome
+	switch {
+	case ctx != nil && ctx.last_outcome != .Succeeded:
 		if error != nil {
 			error^ = ctx.last_error
 		}
-		return ctx.last_export_error
+		refused = ctx.last_outcome
+	case:
+		refused = tree_store_status_refusal(status, error, argument)
 	}
+	// The objects that the call wrote stay: a change that happened is never
+	// hidden behind a refusal.
+	return call_outcome.outcome_passed_on(refused, ctx != nil && ctx.objects_written > 0), 0
+}
+
+// tree_store_status_refusal writes the error record of a status of the
+// immutable trees, and gives its outcome.
+@(private = "file")
+tree_store_status_refusal :: proc "contextless" (status: immutable_tree.Tree_Store_Status, error: ^errors.Error_Record, argument: i64) -> call_outcome.Call_Outcome {
 	switch status {
 	case .Ok:
-		return 0
-	case .Absent:
-		return errors.fail(error, failure(.Absent), .Absent, .Trees, argument)
+		return .Succeeded
+	case .Absent, .Not_A_Tree:
+		return refuse(error, .Nothing_Has_That_Name, .Absent, .Trees, argument)
 	case .Corrupt_Tree, .Damaged:
-		return errors.fail(error, failure(.Damaged), .Damaged, .Trees, argument)
+		return refuse(error, .Data_Damaged, .Damaged, .Trees, argument)
 	case .Invalid_Name:
-		return errors.fail(error, failure(.Name), .Bad_Byte, .Bytes, argument)
-	case .Not_A_Tree:
-		return errors.fail(error, failure(.Absent), .Absent, .Trees, argument)
+		return refuse(error, .Argument_Refused, .Bad_Byte, .Bytes, argument)
 	case .Depth_Exceeded:
-		return errors.fail(error, failure(.Name), .Too_Long, .Trees, argument, NESTING_LIMIT + 1, NESTING_LIMIT)
+		return refuse(error, .Argument_Refused, .Too_Long, .Trees, argument, NESTING_LIMIT + 1, NESTING_LIMIT)
 	case .Too_Many_Entries:
-		return errors.fail(error, failure(.Full), .Too_Long, .Records, argument, tree_hash.MAX_TREE_ENTRIES + 1, tree_hash.MAX_TREE_ENTRIES)
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Too_Long, .Records, argument, tree_hash.MAX_TREE_ENTRIES + 1, tree_hash.MAX_TREE_ENTRIES)
 	case .Capacity_Exceeded, .Full:
-		return errors.fail(error, failure(.Full), .Full, .Trees, argument)
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Trees, argument)
 	case .Buffer_Too_Small:
-		return errors.fail(error, failure(.Too_Large), .Too_Small, .Bytes, argument)
+		return refuse(error, .Argument_Refused, .Too_Small, .Bytes, argument)
 	case .Device_Error:
-		return errors.fail(error, failure(.Disk), .Device)
+		return refuse(error, .Callee_Unavailable, .Device)
 	}
-	return errors.fail(error, failure(.Damaged), .Damaged, .Trees, argument)
+	return refuse(error, .Data_Damaged, .Damaged, .Trees, argument)
 }
 
 @(private = "file")
@@ -283,16 +299,16 @@ parse_hex_hash_argument :: proc "contextless" (given: string, error: ^errors.Err
 	copied: [immutable_tree.HASH_HEX_LENGTH + 1]u8
 	count := copy(copied[:], given)
 	if len(given) == 0 {
-		errors.fail(error, failure(.Name), .Empty, .Bytes, argument, 0, immutable_tree.HASH_HEX_LENGTH)
+		call_outcome.fail_with_value_first(error, .Argument_Refused, .Empty, .Bytes, argument, 0, immutable_tree.HASH_HEX_LENGTH)
 		return {}, false
 	}
 	if len(given) != immutable_tree.HASH_HEX_LENGTH {
-		errors.fail(error, failure(.Name), .Bad_Value, .Bytes, argument, i64(len(given)), immutable_tree.HASH_HEX_LENGTH)
+		call_outcome.fail_with_value_first(error, .Argument_Refused, .Bad_Value, .Bytes, argument, i64(len(given)), immutable_tree.HASH_HEX_LENGTH)
 		return {}, false
 	}
 	parsed, valid := immutable_tree.hex_to_hash(copied[:count])
 	if !valid {
-		errors.fail(error, failure(.Name), .Bad_Byte, .Bytes, argument)
+		call_outcome.fail_with_value_first(error, .Argument_Refused, .Bad_Byte, .Bytes, argument)
 		return {}, false
 	}
 	return parsed, true
@@ -304,52 +320,52 @@ parse_hex_hash_argument :: proc "contextless" (given: string, error: ^errors.Err
 //
 // **Error kinds**
 //
-// - `No_Grant` (-1, -12: no store, read-only connection, or target_place is not the caller's own store);
-// - `Absent` (-12, -7: place or target_place absent);
-// - `Bad_Value` (-3, unit Trees: target_place is equal to or inside place);
-// - `Too_Long` (-3, -5: tree nesting past 32 levels or more than 512 entries in one tree);
-// - `Over_Limit` (-2: store block limit exceeded);
-// - `Full` (-5), `Device` (-6), `Damaged` (-8).
+// - `No_Grant` (Grant_Or_Right_Missing: no store, read-only connection, or target_place is not the caller's own store);
+// - `Absent` (Argument_Refused, Nothing_Has_That_Name: place or target_place absent);
+// - `Bad_Value` (Argument_Refused, unit Trees: target_place is equal to or inside place);
+// - `Too_Long` (Argument_Refused, Budget_Or_Capacity_Exhausted: tree nesting past 32 levels or more than 512 entries in one tree);
+// - `Over_Limit` (Budget_Or_Capacity_Exhausted: store block limit exceeded);
+// - `Full`, `Device`, `Damaged`.
 @(export, link_name = "freeze_tree")
-freeze_tree :: proc "c" (place: i64, target_place: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+freeze_tree :: proc "c" (place: i64, target_place: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	caller := caller_of()
 	if refused, refusal := change_refusal(&caller, error); refused {
-		return refusal
+		return refusal, 0
 	}
 	source_path, source_ok := place_path(&caller, place, error, 1)
 	if !source_ok {
-		return failure(.Place)
+		return .Argument_Refused, 0
 	}
 	target_path, target_ok := place_path(&caller, target_place, error, 2)
 	if !target_ok {
-		return failure(.Place)
+		return .Argument_Refused, 0
 	}
 	if !target_path.own {
-		return errors.fail(error, failure(.No_Store), .No_Grant, .Store, 2)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 2)
 	}
 	if path_is_same_or_under(&target_path, &source_path) {
-		return errors.fail(error, failure(.Name), .Bad_Value, .Trees, 2)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Trees, 2)
 	}
 	if len(result) < blake3.HASH_SIZE {
-		return blake3.HASH_SIZE
+		return .Succeeded, blake3.HASH_SIZE
 	}
 
 	source_root: Pointer
 	source_store_index := store_find(source_path.store.name)
 	if source_store_index >= 0 {
 		if store_damaged[source_store_index] {
-			return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+			return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 		}
-		outcome: Lookup
-		source_root, outcome = tree_of(source_store_index, path_names(&source_path))
-		if outcome != .Found {
-			if outcome == .Absent {
-				return errors.fail(error, failure(.Absent), .Absent, .Places, 1)
+		lookup: Lookup
+		source_root, lookup = tree_of(source_store_index, path_names(&source_path))
+		if lookup != .Found {
+			if lookup == .Absent {
+				return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
 			}
-			return lookup_refusal(outcome, error, 1)
+			return lookup_refusal(lookup, error, 1), 0
 		}
 	} else if source_path.depth > 0 {
-		return errors.fail(error, failure(.Absent), .Absent, .Places, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
 	}
 
 	ctx := Immutable_Context {
@@ -369,7 +385,7 @@ freeze_tree :: proc "c" (place: i64, target_place: i64, result: ^[]u8, error: ^e
 		return tree_store_status_fail(status, &ctx, error, 1)
 	}
 	copy(result^[:blake3.HASH_SIZE], root_hash[:])
-	return blake3.HASH_SIZE
+	return .Succeeded, blake3.HASH_SIZE
 }
 
 // tree_read loads an immutable tree object by its 64-byte lowercase hex hash
@@ -378,30 +394,30 @@ freeze_tree :: proc "c" (place: i64, target_place: i64, result: ^[]u8, error: ^e
 //
 // **Error kinds**
 //
-// - `No_Grant` (-1);
-// - `Absent` (-12, -7: place or tree hash absent);
-// - `Empty`, `Bad_Value`, `Bad_Byte` (-3: invalid 64-byte lowercase hex hash);
-// - `Damaged` (-8: stored tree object failed canonical or hash verification);
-// - `Device` (-6).
+// - `No_Grant`;
+// - `Absent` (Argument_Refused, Nothing_Has_That_Name: place or tree hash absent);
+// - `Empty`, `Bad_Value`, `Bad_Byte` (Argument_Refused: invalid 64-byte lowercase hex hash);
+// - `Damaged` (Data_Damaged: stored tree object failed canonical or hash verification);
+// - `Device`.
 @(export, link_name = "tree_read")
-tree_read :: proc "c" (place: i64, hash_hex: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+tree_read :: proc "c" (place: i64, hash_hex: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if refused, refusal := disk_unopened_refusal(error); refused {
-		return refusal
+		return refusal, 0
 	}
 	caller := caller_of()
 	if caller.connection == nil {
-		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	target_path, ok := place_path(&caller, place, error, 1)
 	if !ok {
-		return failure(.Place)
+		return .Argument_Refused, 0
 	}
 	if target_path.own && target_path.store.limit == 0 {
-		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	hash, hash_ok := parse_hex_hash_argument(hash_hex^, error, 2)
 	if !hash_ok {
-		return failure(.Name)
+		return .Argument_Refused, 0
 	}
 	ctx := Immutable_Context {
 		caller      = &caller,
@@ -417,10 +433,10 @@ tree_read :: proc "c" (place: i64, hash_hex: ^string, result: ^[]u8, error: ^err
 		return tree_store_status_fail(status, &ctx, error, 2)
 	}
 	if len(canonical) > len(result) {
-		return i64(len(canonical))
+		return .Succeeded, i64(len(canonical))
 	}
 	copy(result^[:len(canonical)], canonical)
-	return i64(len(canonical))
+	return .Succeeded, i64(len(canonical))
 }
 
 // tree_entry looks up entry `name` inside the immutable tree `hash_hex` under
@@ -429,31 +445,31 @@ tree_read :: proc "c" (place: i64, hash_hex: ^string, result: ^[]u8, error: ^err
 //
 // **Error kinds**
 //
-// - those of [tree_read](storage.tree_read), plus `Absent` (-7: entry absent)
-//   and name validation errors (-3: argument 3).
+// - those of [tree_read](storage.tree_read), plus `Absent` (Nothing_Has_That_Name: entry absent)
+//   and name validation errors (Argument_Refused: argument 3).
 @(export, link_name = "tree_entry")
-tree_entry :: proc "c" (place: i64, hash_hex: ^string, name: ^string, result: ^[]Tree_Entry_Row, error: ^errors.Error_Record) -> i64 {
+tree_entry :: proc "c" (place: i64, hash_hex: ^string, name: ^string, result: ^[]Tree_Entry_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if refused, refusal := disk_unopened_refusal(error); refused {
-		return refusal
+		return refusal, 0
 	}
 	caller := caller_of()
 	if caller.connection == nil {
-		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	target_path, ok := place_path(&caller, place, error, 1)
 	if !ok {
-		return failure(.Place)
+		return .Argument_Refused, 0
 	}
 	if target_path.own && target_path.store.limit == 0 {
-		return errors.fail(error, failure(.No_Store), .No_Grant, .Store)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	hash, hash_ok := parse_hex_hash_argument(hash_hex^, error, 2)
 	if !hash_ok {
-		return failure(.Name)
+		return .Argument_Refused, 0
 	}
 	kept_name, name_ok := name_keep(name^, error, 3)
 	if !name_ok {
-		return failure(.Name)
+		return .Argument_Refused, 0
 	}
 	ctx := Immutable_Context {
 		caller      = &caller,
@@ -474,7 +490,7 @@ tree_entry :: proc "c" (place: i64, hash_hex: ^string, name: ^string, result: ^[
 			hash = value_kinds.Hash_Field(found_entry.hash),
 		}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // Context carried by module_gc callbacks during collect_garbage.
@@ -509,8 +525,8 @@ gc_read_object :: proc "contextless" (reader: ^module_gc.Object_Reader, hash: bl
 		return 0, .Too_Large
 	}
 	read_err: errors.Error_Record
-	read_bytes := state_read(current_state(&value), 0, buffer[:value.size], &read_err, 1)
-	if read_bytes < 0 {
+	read_bytes, read_outcome := state_read(current_state(&value), 0, buffer[:value.size], &read_err, 1)
+	if read_outcome != .Succeeded {
 		return 0, .Device_Error
 	}
 	return int(read_bytes), .Found
@@ -521,7 +537,8 @@ gc_delete_object :: proc "contextless" (user_data: rawptr, hash: blake3.Hash) ->
 	ctx := (^GC_Context)(user_data)
 	kept := kept_name_of_hex(immutable_tree.hash_to_hex(hash))
 	remove_err: errors.Error_Record
-	return entry_remove(ctx.target_path.store, path_names(ctx.target_path), kept, &remove_err) >= 0
+	_, removed := entry_remove(ctx.target_path.store, path_names(ctx.target_path), kept, &remove_err)
+	return removed == .Succeeded
 }
 
 // collect_garbage runs mark-and-sweep garbage collection over the
@@ -532,33 +549,33 @@ gc_delete_object :: proc "contextless" (user_data: rawptr, hash: blake3.Hash) ->
 //
 // **Error kinds**
 //
-// - `No_Grant` (-1, -12: no store, read-only connection, share, or foreign store);
-// - `Absent` (-12, -7: place absent, or a pinned tree root or child tree is absent);
-// - `Too_Long` (-5: more than GC_ROOT_CAPACITY roots or depth bound exceeded);
-// - `Bad_Value` (-3: unknown Root_Kind word or zero root hash);
-// - `Damaged` (-8: corrupt root, corrupt tree, or cycle detected; zero deletions performed);
-// - `Full` (-5: collector capacity exceeded);
-// - `Device` (-6).
+// - `No_Grant` (Grant_Or_Right_Missing: no store, read-only connection, share, or foreign store);
+// - `Absent` (Argument_Refused, Nothing_Has_That_Name: place absent, or a pinned tree root or child tree is absent);
+// - `Too_Long` (Budget_Or_Capacity_Exhausted: more than GC_ROOT_CAPACITY roots or depth bound exceeded);
+// - `Bad_Value` (Argument_Refused: unknown Root_Kind word or zero root hash);
+// - `Damaged` (Data_Damaged: corrupt root, corrupt tree, or cycle detected; zero deletions performed);
+// - `Full` (Budget_Or_Capacity_Exhausted: collector capacity exceeded);
+// - `Device`.
 @(export, link_name = "collect_garbage")
-collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Root_Row), result: ^[]Garbage_Measure, error: ^errors.Error_Record) -> i64 {
+collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Root_Row), result: ^[]Garbage_Measure, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	caller := caller_of()
 	if refused, refusal := change_refusal(&caller, error); refused {
-		return refusal
+		return refusal, 0
 	}
 	if share_of(caller.connection) != nil {
-		return errors.fail(error, failure(.Place), .No_Grant, .Changes)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Changes)
 	}
 	target_path, ok := place_path(&caller, place, error, 1)
 	if !ok {
-		return failure(.Place)
+		return .Argument_Refused, 0
 	}
 	if !target_path.own {
-		return errors.fail(error, failure(.No_Store), .No_Grant, .Store, 1)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 1)
 	}
 
 	records := system.table_records(roots)
 	if len(records) > GC_ROOT_CAPACITY {
-		return errors.fail(error, failure(.Full), .Too_Long, .Records, 2, i64(len(records)), GC_ROOT_CAPACITY)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 2, i64(len(records)), GC_ROOT_CAPACITY)
 	}
 	// Copy roots from call region and convert Root_Kind at the border.
 	root_count := len(records)
@@ -566,7 +583,7 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 		row := records[index]
 		checked_kind, kind_ok := module_gc.root_kind_of_word(u64(row.kind))
 		if !kind_ok {
-			return errors.fail(error, failure(.Name), .Bad_Value, .Records, 2, row.kind, i64(module_gc.Root_Kind.Pinned_Tree), i64(index + 1))
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 2, row.kind, i64(module_gc.Root_Kind.Pinned_Tree), i64(index + 1))
 		}
 		gc_roots_copy[index] = {
 			kind = checked_kind,
@@ -578,14 +595,14 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 	stored_count := 0
 	if store_index >= 0 {
 		if store_damaged[store_index] {
-			return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+			return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 		}
-		root_node, outcome := tree_of(store_index, path_names(&target_path))
-		if outcome != .Found {
-			if outcome == .Absent {
-				return errors.fail(error, failure(.Absent), .Absent, .Places, 1)
+		root_node, lookup := tree_of(store_index, path_names(&target_path))
+		if lookup != .Found {
+			if lookup == .Absent {
+				return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
 			}
-			return lookup_refusal(outcome, error, 1)
+			return lookup_refusal(lookup, error, 1), 0
 		}
 		// Scan content-addressed (64 lowercase hex digit) object entries under place.
 		cursor: Entry_Name
@@ -597,7 +614,7 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 			value: Entry
 			if !tree.first_from(&work, cursor[:], has_cursor, key[:], entry_bytes(&value)) {
 				if freeze_tree_pool.failure != .None {
-					return errors.fail(error, freeze_tree_pool.failure == .Device ? failure(.Disk) : failure(.Damaged), freeze_tree_pool.failure == .Device ? .Device : .Damaged, .Stores)
+					return call_outcome.fail(error, freeze_tree_pool.failure == .Device ? .Callee_Unavailable : .Data_Damaged, freeze_tree_pool.failure == .Device ? .Device : .Damaged, .Stores)
 				}
 				break
 			}
@@ -612,7 +629,7 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 				continue
 			}
 			if stored_count >= GC_CANDIDATE_CAPACITY {
-				return errors.fail(error, failure(.Full), .Full, .Objects, 1, GC_CANDIDATE_CAPACITY + 1, GC_CANDIDATE_CAPACITY)
+				return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 1, GC_CANDIDATE_CAPACITY + 1, GC_CANDIDATE_CAPACITY)
 			}
 			gc_stored_hashes[stored_count] = parsed_hash
 			stored_count += 1
@@ -639,17 +656,17 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 	switch collect_result.status {
 	case .Ok:
 	case .Bad_Root_Kind, .Zero_Root_Hash, .Bad_Depth_Bound:
-		return errors.fail(error, failure(.Name), .Bad_Value, .Records, 2)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 2)
 	case .Missing_Root, .Missing_Tree:
-		return errors.fail(error, failure(.Absent), .Absent, .Trees, 2)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Trees, 2)
 	case .Corrupt_Root, .Corrupt_Tree, .Cycle_Detected:
-		return errors.fail(error, failure(.Damaged), .Damaged, .Trees, 2)
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Trees, 2)
 	case .Depth_Exceeded:
-		return errors.fail(error, failure(.Name), .Too_Long, .Trees, 2, module_gc.MAX_TRAVERSAL_DEPTH + 1, module_gc.MAX_TRAVERSAL_DEPTH)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Trees, 2, module_gc.MAX_TRAVERSAL_DEPTH + 1, module_gc.MAX_TRAVERSAL_DEPTH)
 	case .Device_Error:
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail(error, .Callee_Unavailable, .Device)
 	case .Mark_Capacity_Exceeded, .Stack_Capacity_Exceeded, .Sweep_Capacity_Exceeded:
-		return errors.fail(error, failure(.Full), .Full, .Objects, 1)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 1)
 	}
 	if len(result) > 0 {
 		result[0] = {
@@ -658,5 +675,5 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 			trees_traversed = i64(collect_result.trees_traversed),
 		}
 	}
-	return 1
+	return .Succeeded, 1
 }

@@ -795,9 +795,6 @@ table_buffer :: proc "contextless" (file: []u8, detail: u32) -> (buffer: Table_B
 // table_take gives the Table value of a direct call: the export wrote the
 // records in the buffer, and gave the count of records of the full table.
 table_take :: proc "contextless" (item: ^Command, buffer: ^Table_Buffer, count: u64) -> Value {
-	if i64(count) < 0 {
-		return table_error(item)
-	}
 	if count > buffer.slice.capacity {
 		return fail("the result of ", item.name, " has ", count, " records; ", buffer.slice.capacity, " fit in the memory of the line")
 	}
@@ -806,11 +803,4 @@ table_take :: proc "contextless" (item: ^Command, buffer: ^Table_Buffer, count: 
 	table_used = start + int(count) * buffer.size
 	bytes := table_memory[start:table_used]
 	return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
-}
-
-// table_error reports the negative count of a Table result of an export
-// with no error record: the export had no table to give. The number is not
-// shown: a reader cannot act on it (docs/WRITING.md).
-table_error :: proc "contextless" (item: ^Command) -> Value {
-	return fail(item.name, " gave no table and no error record, so the cause is not known")
 }

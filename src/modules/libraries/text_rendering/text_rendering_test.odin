@@ -4,6 +4,7 @@ package text_rendering_module
 import "core:fmt"
 import "core:testing"
 import "core:time"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
 import "modus:system"
@@ -76,9 +77,24 @@ package_spacing :: proc(t: ^testing.T, fonts: ^Package_Fonts, outlines: ^Test_Ou
 	return spacing
 }
 
+// The pair of an export, as one value that a test compares.
 @(private = "file")
-expect_error :: proc(t: ^testing.T, result: i64, error: errors.Error_Record, kind: errors.Kind, argument: i64, loc := #caller_location) {
-	testing.expect_value(t, result, -1, loc = loc)
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// expect_error checks a refused argument that changed nothing: the outcome
+// Argument_Refused with the value 0, and the kind and the argument of the
+// record.
+@(private = "file")
+expect_error :: proc(t: ^testing.T, result: Answer, error: errors.Error_Record, kind: errors.Kind, argument: i64, loc := #caller_location) {
+	testing.expect_value(t, result, Answer{.Argument_Refused, 0}, loc = loc)
 	testing.expect_value(t, errors.Kind(error.kind), kind, loc = loc)
 	testing.expect_value(t, error.argument, argument, loc = loc)
 }
@@ -118,11 +134,11 @@ the_three_ways_give_the_same_records :: proc(t: ^testing.T) {
 		error: errors.Error_Record
 		direct: [64]text_rendering.Placed_Glyph
 		placed := system.Table_To_Append(text_rendering.Placed_Glyph){records = &direct[0], count = 0, capacity = 64}
-		testing.expect_value(t, shape_text(&outlines.table, i64(each.face), i64(each.size), &text_table, &placed, &error), i64(count))
+		testing.expect_value(t, answer_of(shape_text(&outlines.table, i64(each.face), i64(each.size), &text_table, &placed, &error)), Answer{.Succeeded, i64(count)})
 		testing.expect_value(t, error.kind, i64(0))
 		isolated: [64]text_rendering.Placed_Glyph
 		placed_copy := system.Table_To_Append(text_rendering.Placed_Glyph){records = &isolated[0], count = 0, capacity = 64}
-		testing.expect_value(t, shape_text(&copied.table, i64(each.face), i64(each.size), &text_copy, &placed_copy, &error), i64(count))
+		testing.expect_value(t, answer_of(shape_text(&copied.table, i64(each.face), i64(each.size), &text_copy, &placed_copy, &error)), Answer{.Succeeded, i64(count)})
 		testing.expectf(t, compiled_in == direct && direct == isolated, "%v at %v: the same placed glyphs in the three ways", each.face, each.size)
 		// The measure: the width of shape, in each way.
 		ranges := [2]text_rendering.Text_Range{{start = 0, count = u32(len(text))}, {start = 9, count = 2}}
@@ -130,19 +146,19 @@ the_three_ways_give_the_same_records :: proc(t: ^testing.T) {
 		testing.expect(t, problem == .None && ranges[0].width == width)
 		direct_ranges := [2]text_rendering.Text_Range{{start = 0, count = u32(len(text))}, {start = 9, count = 2}}
 		range_table := system.Table_To_Change(text_rendering.Text_Range){records = &direct_ranges[0], count = 2, capacity = 2}
-		testing.expect_value(t, measure_texts(&outlines.table, i64(each.face), i64(each.size), &text_table, &range_table, &error), 2)
+		testing.expect_value(t, answer_of(measure_texts(&outlines.table, i64(each.face), i64(each.size), &text_table, &range_table, &error)), Answer{.Succeeded, 2})
 		region_ranges := direct_ranges
 		region_ranges[0].width, region_ranges[1].width = 0, 0
 		range_copy := system.Table_To_Change(text_rendering.Text_Range){records = &region_ranges[0], count = 2, capacity = 2}
-		testing.expect_value(t, measure_texts(&copied.table, i64(each.face), i64(each.size), &text_copy, &range_copy, &error), 2)
+		testing.expect_value(t, answer_of(measure_texts(&copied.table, i64(each.face), i64(each.size), &text_copy, &range_copy, &error)), Answer{.Succeeded, 2})
 		testing.expect(t, ranges == direct_ranges && direct_ranges == region_ranges, "the same widths in the three ways")
 		// The lines in a box of a third of the text: the package gives the
 		// same lines, one break at a time.
 		room := width / 3
 		lines: [16]text_rendering.Text_Range
 		line_table := system.Table_To_Append(text_rendering.Text_Range){records = &lines[0], count = 0, capacity = 16}
-		line_count := break_text(&outlines.table, i64(each.face), i64(each.size), &text_table, room, &line_table, &error)
-		testing.expect(t, line_count > 1 && line_count <= 16)
+		line_outcome, line_count := break_text(&outlines.table, i64(each.face), i64(each.size), &text_table, room, &line_table, &error)
+		testing.expect(t, line_outcome == .Succeeded && line_count > 1 && line_count <= 16)
 		start := 0
 		for line in lines[:line_count] {
 			end, next := text_rendering.line_break(&spacing, text_bytes[start:], room)
@@ -167,13 +183,13 @@ placed_glyphs_across_calls :: proc(t: ^testing.T) {
 	two := bytes_to_read(transmute([]u8)string("To"))
 	size := i64(text_rendering.TEXT_SIZE_OF_SCALE_ONE)
 	face := i64(text_rendering.Face.Interface)
-	testing.expect_value(t, shape_text(&outlines.table, face, size, &two, &placed, &error), 2)
-	testing.expect_value(t, shape_text(&outlines.table, face, size, &two, &placed, &error), 4) // 1 of 2 fits.
+	testing.expect_value(t, answer_of(shape_text(&outlines.table, face, size, &two, &placed, &error)), Answer{.Succeeded, 2})
+	testing.expect_value(t, answer_of(shape_text(&outlines.table, face, size, &two, &placed, &error)), Answer{.Succeeded, 4}) // 1 of 2 fits.
 	testing.expect_value(t, memory[2].x, i32(0)) // The "T" of the second text, at its origin.
 	testing.expect_value(t, memory[2].glyph, text_rendering.glyph_of('T'))
 	empty := bytes_to_read(nil)
-	testing.expect_value(t, shape_text(&outlines.table, face, size, &empty, &placed, &error), 4)
-	testing.expect_value(t, shape_text(&outlines.table, face, size, &two, &placed, &error), 6)
+	testing.expect_value(t, answer_of(shape_text(&outlines.table, face, size, &empty, &placed, &error)), Answer{.Succeeded, 4})
+	testing.expect_value(t, answer_of(shape_text(&outlines.table, face, size, &two, &placed, &error)), Answer{.Succeeded, 6})
 	testing.expect_value(t, memory[3].glyph, u32(0xA5A5_A5A5))
 }
 
@@ -204,7 +220,7 @@ hostile_callers_are_refused :: proc(t: ^testing.T) {
 	}
 	// The face: the words around the members.
 	for word in ([?]i64{i64(text_rendering.Face.None), -1, i64(max(text_rendering.Face)) + 1, max(i64), min(i64)}) {
-		expect_error(t, shape_text(&outlines.table, word, size, &text, &placed, &error), error, .Bad_Value, 2)
+		expect_error(t, answer_of(shape_text(&outlines.table, word, size, &text, &placed, &error)), error, .Bad_Value, 2)
 		testing.expect_value(t, error.value, word)
 		unchanged(t, placed, room, sentinel)
 	}
@@ -212,12 +228,12 @@ hostile_callers_are_refused :: proc(t: ^testing.T) {
 	// i64 are too small; one past the largest and the largest i64 are past
 	// the bound.
 	for small in ([?]i64{0, 1, text_rendering.TEXT_SIZE_MINIMUM - 1, -1, min(i64)}) {
-		expect_error(t, shape_text(&outlines.table, face, small, &text, &placed, &error), error, .Too_Small, 3)
+		expect_error(t, answer_of(shape_text(&outlines.table, face, small, &text, &placed, &error)), error, .Too_Small, 3)
 		testing.expect_value(t, error.limit, i64(text_rendering.TEXT_SIZE_MINIMUM))
 		unchanged(t, placed, room, sentinel)
 	}
 	for large in ([?]i64{text_rendering.TEXT_SIZE_LIMIT + 1, max(i64)}) {
-		expect_error(t, shape_text(&outlines.table, face, large, &text, &placed, &error), error, .Bad_Value, 3)
+		expect_error(t, answer_of(shape_text(&outlines.table, face, large, &text, &placed, &error)), error, .Bad_Value, 3)
 		testing.expect_value(t, error.limit, i64(text_rendering.TEXT_SIZE_LIMIT))
 		unchanged(t, placed, room, sentinel)
 	}
@@ -225,60 +241,62 @@ hostile_callers_are_refused :: proc(t: ^testing.T) {
 	large := make([]u8, text_rendering.TEXT_LIMIT + 1)
 	defer delete(large)
 	large_text := bytes_to_read(large)
-	expect_error(t, shape_text(&outlines.table, face, size, &large_text, &placed, &error), error, .Too_Long, 4)
+	expect_error(t, answer_of(shape_text(&outlines.table, face, size, &large_text, &placed, &error)), error, .Too_Long, 4)
 	// A capacity of 2^63: a negative int.
 	huge := system.Table_To_Append(text_rendering.Placed_Glyph){records = &room[0], count = 0, capacity = 1 << 63}
-	expect_error(t, shape_text(&outlines.table, face, size, &text, &huge, &error), error, .Too_Long, 5)
+	expect_error(t, answer_of(shape_text(&outlines.table, face, size, &text, &huge, &error)), error, .Too_Long, 5)
 	unchanged(t, placed, room, sentinel)
 	// The outlines: another magic, no byte, not on 8 bytes, a count past
 	// the bound of a table, and outlines with no B612.
 	damaged := repository_outlines(t)
 	defer delete(damaged.words)
 	damaged.bytes[0] ~= 1
-	expect_error(t, shape_text(&damaged.table, face, size, &text, &placed, &error), error, .Bad_Value, 1)
+	expect_error(t, answer_of(shape_text(&damaged.table, face, size, &text, &placed, &error)), error, .Bad_Value, 1)
 	testing.expect_value(t, error.value, i64(font_outlines.Problem_Kind.Bad_Magic))
 	nothing := bytes_to_read(nil)
-	expect_error(t, shape_text(&nothing, face, size, &text, &placed, &error), error, .Bad_Value, 1)
+	expect_error(t, answer_of(shape_text(&nothing, face, size, &text, &placed, &error)), error, .Bad_Value, 1)
 	testing.expect_value(t, error.value, i64(font_outlines.Problem_Kind.Too_Short))
 	shifted := system.Bytes_To_Read{bytes = raw_data(outlines.bytes[1:]), count = outlines.table.count - 1, capacity = outlines.table.count - 1}
-	expect_error(t, shape_text(&shifted, face, size, &text, &placed, &error), error, .Bad_Value, 1)
+	expect_error(t, answer_of(shape_text(&shifted, face, size, &text, &placed, &error)), error, .Bad_Value, 1)
 	testing.expect_value(t, error.value, i64(font_outlines.Problem_Kind.Too_Short))
 	past := outlines.table
 	past.count = TABLE_LIMIT + 1
-	expect_error(t, shape_text(&past, face, size, &text, &placed, &error), error, .Too_Long, 1)
+	expect_error(t, answer_of(shape_text(&past, face, size, &text, &placed, &error)), error, .Too_Long, 1)
 	only_cells := [1]font_outlines.Font_Input{{"paper_mono", paper_mono_file}}
 	cells := test_outlines_of(t, only_cells[:])
 	defer delete(cells.words)
-	expect_error(t, shape_text(&cells.table, face, size, &text, &placed, &error), error, .Absent, 1)
+	expect_error(t, answer_of(shape_text(&cells.table, face, size, &text, &placed, &error)), error, .Absent, 1)
 	testing.expect_value(t, error.value, i64(text_rendering.Outline_Font.B612))
 	unchanged(t, placed, room, sentinel)
 	// The measure: a range past the bytes, and one over the limit; the
 	// ranges before it have their width, it and the next keep theirs.
 	ranges := [3]text_rendering.Text_Range{{start = 0, count = 2}, {start = 1, count = 2, width = 5}, {start = 0, count = 1, width = 5}}
 	range_table := system.Table_To_Change(text_rendering.Text_Range){records = &ranges[0], count = 3, capacity = 3}
-	expect_error(t, measure_texts(&outlines.table, face, size, &text, &range_table, &error), error, .Out_Of_Range, 5)
+	// The first range got its width before the refusal: a change that the
+	// outcome states.
+	testing.expect_value(t, answer_of(measure_texts(&outlines.table, face, size, &text, &range_table, &error)), Answer{.Stopped_After_A_Partial_Change, 0})
+	testing.expect(t, errors.Kind(error.kind) == .Out_Of_Range && error.argument == 5)
 	testing.expect(t, error.value == 3 && error.limit == 2 && error.found == 2)
 	testing.expect(t, ranges[0].width > 0 && ranges[1].width == 5 && ranges[2].width == 5)
 	long_ranges := [1]text_rendering.Text_Range{{start = 0, count = text_rendering.TEXT_LIMIT + 1}}
 	long_table := system.Table_To_Change(text_rendering.Text_Range){records = &long_ranges[0], count = 1, capacity = 1}
-	expect_error(t, measure_texts(&outlines.table, face, size, &large_text, &long_table, &error), error, .Too_Long, 5)
+	expect_error(t, answer_of(measure_texts(&outlines.table, face, size, &large_text, &long_table, &error)), error, .Too_Long, 5)
 	testing.expect_value(t, error.found, i64(1))
 	many_ranges := range_table
 	many_ranges.count = TABLE_LIMIT + 1
-	expect_error(t, measure_texts(&outlines.table, face, size, &text, &many_ranges, &error), error, .Too_Long, 5)
+	expect_error(t, answer_of(measure_texts(&outlines.table, face, size, &text, &many_ranges, &error)), error, .Too_Long, 5)
 	// The lines: a table past its bound, and a text past its limit.
 	lines: [2]text_rendering.Text_Range
 	huge_lines := system.Table_To_Append(text_rendering.Text_Range){records = &lines[0], count = 0, capacity = 1 << 63}
-	expect_error(t, break_text(&outlines.table, face, size, &text, 0, &huge_lines, &error), error, .Too_Long, 6)
+	expect_error(t, answer_of(break_text(&outlines.table, face, size, &text, 0, &huge_lines, &error)), error, .Too_Long, 6)
 	line_table := system.Table_To_Append(text_rendering.Text_Range){records = &lines[0], count = 0, capacity = 2}
-	expect_error(t, break_text(&outlines.table, face, size, &large_text, 0, &line_table, &error), error, .Too_Long, 4)
+	expect_error(t, answer_of(break_text(&outlines.table, face, size, &large_text, 0, &line_table, &error)), error, .Too_Long, 4)
 	testing.expect_value(t, line_table.count, u64(0))
 	// The edges that pass, last: the least size and the largest size.
 	for edge in ([?]i64{text_rendering.TEXT_SIZE_MINIMUM, text_rendering.TEXT_SIZE_LIMIT}) {
 		error = {}
 		placed.count = 0
-		result := shape_text(&outlines.table, face, edge, &text, &placed, &error)
-		testing.expect_value(t, result, i64(2))
+		testing.expect_value(t, answer_of(shape_text(&outlines.table, face, edge, &text, &placed, &error)), Answer{.Succeeded, 2})
 		testing.expect_value(t, placed.count, u64(2))
 		testing.expect_value(t, error.kind, i64(0))
 	}
@@ -298,11 +316,11 @@ the_lines_of_a_text :: proc(t: ^testing.T) {
 	face := i64(text_rendering.Face.Interface)
 	empty := bytes_to_read(nil)
 	table := system.Table_To_Append(text_rendering.Text_Range){records = &lines[0], count = 0, capacity = 16}
-	testing.expect_value(t, break_text(&outlines.table, face, size, &empty, 100, &table, &error), 0)
+	testing.expect_value(t, answer_of(break_text(&outlines.table, face, size, &empty, 100, &table, &error)), Answer{.Succeeded, 0})
 	euros := bytes_to_read(transmute([]u8)string("€€€"))
 	for room in ([?]i64{0, -1, min(i64)}) {
 		table.count = 0
-		testing.expect_value(t, break_text(&outlines.table, face, size, &euros, room, &table, &error), 3)
+		testing.expect_value(t, answer_of(break_text(&outlines.table, face, size, &euros, room, &table, &error)), Answer{.Succeeded, 3})
 		for line, index in lines[:3] {
 			testing.expect_value(t, line.start, u32(3 * index))
 			testing.expect_value(t, line.count, u32(3))
@@ -312,22 +330,22 @@ the_lines_of_a_text :: proc(t: ^testing.T) {
 	words := "one two three"
 	words_table := bytes_to_read(transmute([]u8)words)
 	table.count = 0
-	testing.expect_value(t, break_text(&outlines.table, face, size, &words_table, max(i64), &table, &error), 1)
+	testing.expect_value(t, answer_of(break_text(&outlines.table, face, size, &words_table, max(i64), &table, &error)), Answer{.Succeeded, 1})
 	testing.expect_value(t, lines[0].count, u32(len(words)))
 	whole := [1]text_rendering.Text_Range{{start = 0, count = u32(len(words))}}
 	whole_table := system.Table_To_Change(text_rendering.Text_Range){records = &whole[0], count = 1, capacity = 1}
-	testing.expect_value(t, measure_texts(&outlines.table, face, size, &words_table, &whole_table, &error), 1)
+	testing.expect_value(t, answer_of(measure_texts(&outlines.table, face, size, &words_table, &whole_table, &error)), Answer{.Succeeded, 1})
 	testing.expect_value(t, lines[0].width, whole[0].width)
 	// A room of the width of "one two": two lines, and no space at the end
 	// of the first or at the start of the second. A table of one line holds
 	// the first, and the count is the full answer.
 	pair := [1]text_rendering.Text_Range{{start = 0, count = 7}}
 	pair_table := system.Table_To_Change(text_rendering.Text_Range){records = &pair[0], count = 1, capacity = 1}
-	_ = measure_texts(&outlines.table, face, size, &words_table, &pair_table, &error)
+	testing.expect_value(t, answer_of(measure_texts(&outlines.table, face, size, &words_table, &pair_table, &error)), Answer{.Succeeded, 1})
 	one: [2]text_rendering.Text_Range
 	one[1] = {start = 99, count = 99, width = 99}
 	one_table := system.Table_To_Append(text_rendering.Text_Range){records = &one[0], count = 0, capacity = 1}
-	testing.expect_value(t, break_text(&outlines.table, face, size, &words_table, pair[0].width, &one_table, &error), 2)
+	testing.expect_value(t, answer_of(break_text(&outlines.table, face, size, &words_table, pair[0].width, &one_table, &error)), Answer{.Succeeded, 2})
 	testing.expect_value(t, one[0], text_rendering.Text_Range{start = 0, count = 7, width = pair[0].width})
 	testing.expect_value(t, one[1], text_rendering.Text_Range{start = 99, count = 99, width = 99})
 }
@@ -352,7 +370,7 @@ the_bounds_hold_at_each_size :: proc(t: ^testing.T) {
 	for size in ([?]i64{text_rendering.TEXT_SIZE_MINIMUM, text_rendering.TEXT_SIZE_LIMIT}) {
 		for face in ([?]text_rendering.Face{.Interface, .Interface_Bold, .Cells}) {
 			table := system.Table_To_Append(text_rendering.Placed_Glyph){records = raw_data(placed), count = 0, capacity = u64(len(placed))}
-			testing.expect_value(t, shape_text(&outlines.table, i64(face), size, &wide_text, &table, &error), i64(text_rendering.TEXT_LIMIT))
+			testing.expect_value(t, answer_of(shape_text(&outlines.table, i64(face), size, &wide_text, &table, &error)), Answer{.Succeeded, i64(text_rendering.TEXT_LIMIT)})
 			sum: i64
 			for glyph in placed {
 				testing.expect_value(t, i64(glyph.x), sum)
@@ -440,7 +458,8 @@ shape_through_module :: proc(t: ^testing.T, outlines: ^Test_Outlines, text: stri
 	error: errors.Error_Record
 	text_table := bytes_to_read(transmute([]u8)text)
 	table := system.Table_To_Append(text_rendering.Placed_Glyph){records = raw_data(placed), count = 0, capacity = u64(len(placed))}
-	result := shape_text(&outlines.table, i64(text_rendering.Face.Interface), i64(size), &text_table, &table, &error)
+	outcome, result := shape_text(&outlines.table, i64(text_rendering.Face.Interface), i64(size), &text_table, &table, &error)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, error.kind, i64(0))
 	count = int(result)
 	for glyph in placed[:min(count, len(placed))] {
@@ -579,9 +598,9 @@ the_time_of_one_call :: proc(t: ^testing.T) {
 		error: errors.Error_Record
 		table := system.Table_To_Append(text_rendering.Placed_Glyph){records = &placed[0], count = 0, capacity = len(LABEL)}
 		start := time.tick_now()
-		result := shape_text(&outlines.table, i64(text_rendering.Face.Interface), text_rendering.TEXT_SIZE_OF_SCALE_ONE, &label, &table, &error)
+		answer := answer_of(shape_text(&outlines.table, i64(text_rendering.Face.Interface), text_rendering.TEXT_SIZE_OF_SCALE_ONE, &label, &table, &error))
 		least = min(least, i64(time.tick_since(start)))
-		testing.expect_value(t, result, i64(len(LABEL)))
+		testing.expect_value(t, answer, Answer{.Succeeded, i64(len(LABEL))})
 	}
 	fmt.printfln("text_rendering: one call of shape_text on a label of %v bytes, the fonts of its face opened, the least of 200: %v ns", len(LABEL), least)
 }

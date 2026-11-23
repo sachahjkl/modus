@@ -13,8 +13,7 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 import contract "modus:contract/agent_bridge"
-import "modus:contract/enum_word"
-import "modus:contract/isolated"
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
@@ -278,25 +277,23 @@ remote_transport_eval_lex :: proc(
 		return {}, strings.clone(sentence.written(&writer), allocator), false
 	}
 
-	call_status, call_status_known := enum_word.member_of_word(isolated.Status, u64(answer.call_status))
-	if !call_status_known {
-		return {}, fmt.aprintf("remote service %s returned unknown call status %d", call.service, answer.call_status, allocator = allocator), false
+	// The answer comes from the network: its outcome word goes through the
+	// border, and the agent reads the outcome and its effect group by the
+	// names of their members.
+	outcome, unreadable := call_outcome.outcome_of_word(u64(answer.outcome))
+	if unreadable.kind != 0 {
+		answer.error = unreadable
 	}
-	switch call_status {
-	case .Ok:
-	case .Bad_Export:
-		return {}, fmt.aprintf("service %s has no export %d", call.service, call.index, allocator = allocator), false
-	case .Bad_Arguments:
-		return {}, fmt.aprintf("service %s refused the arguments of %s", call.service, call.export, allocator = allocator), false
-	case .Bad_Handle, .Load_Failed:
-		return {}, fmt.aprintf("service %s refused %s with status %v", call.service, call.export, call_status, allocator = allocator), false
-	}
-
-	if call.function.error_record != 0 && answer.value < 0 {
+	if outcome != .Succeeded {
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
-		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error)
-		return {}, strings.clone(sentence.written(&writer), allocator), false
+		argument := ""
+		if answer.error.argument >= 1 && answer.error.argument <= i64(call.function.parameter_count) {
+			number := answer.error.argument - 1
+			argument = module.string_at(call.file, call.function.parameter_names[number], u32(call.function.parameter_name_counts[number]))
+		}
+		sentence.call_failure_text(&writer, outcome, &answer.error, fmt.tprintf("%s.%s", call.service, call.export), argument)
+		return {}, fmt.aprintf("%s (effect group %s)", sentence.written(&writer), call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(outcome)], allocator = allocator), false
 	}
 
 	return decode_remote_call_result(&call, answer, result_bytes, allocator)

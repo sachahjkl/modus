@@ -540,7 +540,7 @@ Do not use: heartbeat, status channel, reconnect event.
 
 A call outcome is the one word that says how a call ended and what its caller can do next (`call_outcome.Call_Outcome`).
 
-It is one closed enum for every call: an export, an isolated call, a ring command, a kernel operation, a call from another machine. Each member is a whole phrase: `Succeeded`, `Argument_Refused`, `Nothing_Has_That_Name`, `Callee_Busy`, `Callee_Stopped_During_The_Call`, and twelve more. A direct call gives it first, in `rax`, then the value; a completion gives it in its `kind`. The error record explains it. A word that names no member is read as `Answer_Unreadable`. Designed, not built.
+It is one closed enum for every call. Each member is a whole phrase: `Succeeded`, `Argument_Refused`, `Nothing_Has_That_Name`, `Callee_Busy`, `Callee_Stopped_During_The_Call`, and twelve more. An export that can fail gives it first, in `rax`, then the value in `rdx`, and the compiler makes each caller read it. The rings, the kernel and `remote` still answer with their own status words, which their readers map to it at one place. The error record explains it. A word that names no member is read as `Answer_Unreadable`.
 
 The design: `src/md/api/call_outcome.md`, "The members".
 
@@ -550,7 +550,7 @@ Do not use: status (for this), error code, return code, result code.
 
 An effect group is what a call did to the state, as one of four groups that each call outcome belongs to: `Whole_Work_Done`, `Nothing_Changed`, `Partial_Change_Stated`, `Change_In_Doubt`.
 
-The group is a fixed function of the outcome (`call_outcome.effect_group_of`), and the four groups never change. Generic code (a relay, a replay, a test, a library that calls again) switches on the group, never on the outcomes. A new outcome joins `Nothing_Changed` only. No border, relay or export gives a group that promises more than what it received or caused. Designed, not built.
+The group is a fixed function of the outcome (`call_outcome.effect_group_of`), and the four groups never change. Generic code (a relay, a replay, a test, a library that calls again) switches on the group, never on the outcomes. A new outcome joins `Nothing_Changed` only. No border, relay or export gives a group that promises more than what it received or caused.
 
 The design: `src/md/api/call_outcome.md`, "The effect groups".
 

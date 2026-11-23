@@ -181,6 +181,12 @@ Kind :: enum i64 {
 	Starter_Module    = 40, // value: the address that the call names; limit: the base of a module record that the starter of the process wrote (op.Module_Writer.Starter); found: its size in bytes.
 	// The kernel gives it with `No_Right` for `Process_Module`, `Memory_Map` and `Memory_Unmap` of a process in
 	// itself over that record: only a holder of its process handle changes it.
+	Callee_Stopped    = 41, // The process that ran the call stopped. value: the word of its op.Stop_Cause; found: the word of its op.Stop_Outcome, or 0.
+	// A border of a call gives it with the outcome Callee_Stopped_During_The_Call, or Callee_Unavailable when the
+	// command was not read (src/md/api/call_outcome.md, "The failures of the path").
+	Connection_Ended  = 42, // The connection or the link of the call ended. found: the word of the state of the connection.
+	// A border of a call gives it with the outcome Connection_Ended_During_The_Call, or Callee_Unavailable when the
+	// command had not left.
 }
 
 // What did not answer, in `found` of a record No_Answer. The record
@@ -351,6 +357,8 @@ KIND_NAMES := [Kind]string {
 	.Seed_Too_Weak     = "Seed_Too_Weak",
 	.Exists            = "Exists",
 	.Starter_Module    = "Starter_Module",
+	.Callee_Stopped    = "Callee_Stopped",
+	.Connection_Ended  = "Connection_Ended",
 }
 
 // The name of each unit, as the contract names it. UNIT_NAMES gives the

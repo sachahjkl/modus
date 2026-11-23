@@ -78,6 +78,8 @@
 package remote_service
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/machine_wire"
@@ -102,20 +104,31 @@ import "modus:system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3421, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
-	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	sha256 :: proc "c" (text: ^string, result: ^[]u8) -> i64 ---
 	hmac_sha256 :: proc "c" (key, text: ^string, result: ^[]u8) -> i64 ---
 	hkdf_sha256_extract :: proc "c" (salt, input: ^string, result: ^[]u8) -> i64 ---
-	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64 ---
-	header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 }
 
 // The QUIC connections and their calls: remote.CONNECTION_CAPACITY records,
@@ -315,7 +328,7 @@ Recent :: struct {
 	service:      [32]u8,
 	export:       u32,
 	status:       remote.Status,
-	call_status:  u32,
+	outcome:      call_outcome.Call_Outcome,
 	text:         [96]u8, // A refusal: the sentence of its error record.
 	text_count:   int,
 	value:        i64,
@@ -837,7 +850,8 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 
 recent_add :: proc "contextless" (service: string, export: u32, answer: remote.Answer, bytes: u64, microseconds: u64) -> ^Recent {
 	item := &recent[recent_count % RECENT_CAPACITY]
-	item^ = {export = export, status = answer.status, call_status = answer.call_status, value = answer.value, error = answer.error.kind, bytes = bytes, microseconds = microseconds}
+	outcome, _ := call_outcome.outcome_of_word(u64(answer.outcome))
+	item^ = {export = export, status = answer.status, outcome = outcome, value = answer.value, error = answer.error.kind, bytes = bytes, microseconds = microseconds}
 	copy(item.service[:len(item.service) - 1], service)
 	recent_count += 1
 	return item
@@ -1222,14 +1236,32 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	connection.count += 1
 	counts.calls += 1
 	answer := remote.Answer {
-		status      = .Ok,
-		call_status = completion.kind,
-		value       = i64(completion.values[0]),
-		hash        = connection.hash,
+		status = .Ok,
+		hash   = connection.hash,
 	}
+	// The service wrote the status and the outcome word: each goes through
+	// its border, and the client gets one outcome.
 	result: []u8
-	if isolated.Status(completion.kind) == .Ok {
-		if request.error_start != 0 && answer.value < 0 {
+	refusal, refusal_known := enum_word.member_of_word(isolated.Status, u64(completion.kind))
+	switch {
+	case !refusal_known:
+		answer.outcome = u32(call_outcome.Call_Outcome.Answer_Unreadable)
+		answer.error = errors.error_make(.Bad_Value, .None, 0, i64(completion.kind), i64(max(isolated.Status)))
+		counts.failed += 1
+	case refusal != .Ok:
+		answer.outcome = u32(system.outcome_of_call_status(.Refused, refusal))
+		answer.error = transmute(errors.Error_Record)completion.values
+		counts.failed += 1
+	case:
+		outcome, unreadable := call_outcome.outcome_of_word(completion.values[isolated.COMPLETION_OUTCOME_VALUE])
+		answer.outcome = u32(outcome)
+		if outcome == .Succeeded {
+			answer.value = i64(completion.values[0])
+			result = connection.region[request.result_start:][:remote.result_bytes(request, answer.value)]
+		} else if unreadable.kind != 0 {
+			answer.error = unreadable
+			counts.failed += 1
+		} else if request.error_start != 0 {
 			// The service wrote it: values only, copied as values.
 			answer.error = (^errors.Error_Record)(raw_data(connection.region[request.error_start:]))^
 			counts.failed += 1
@@ -1238,7 +1270,7 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 			answer.details = u32(min(details_count, u64(max(u32))))
 			result = details
 		} else {
-			result = connection.region[request.result_start:][:remote.result_bytes(request, answer.value)]
+			counts.failed += 1
 		}
 	}
 	length := answer_put(buffer, answer, result)
@@ -1256,7 +1288,7 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 	}
 	secret := string(configuration.tls.server_private_key[:])
 	result := public_key[:]
-	if ed25519_public_key(&secret, &result, &error) != 32 {
+	if crypto_outcome, crypto_count := ed25519_public_key(&secret, &result, &error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		fail("the module cryptography refused to make the public key")
 	}
 	return true

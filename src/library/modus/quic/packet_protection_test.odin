@@ -6,10 +6,31 @@
 // module ships.
 package quic
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:cryptography_primitives"
 import "core:encoding/hex"
 import "core:testing"
+
+// The pair of a procedure of the call form, as one value that a check
+// compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// refused says if a call refused an argument: the outcome Argument_Refused
+// and the value 0.
+@(private = "file")
+refused :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> bool {
+	return outcome == .Argument_Refused && value == 0
+}
 
 // The values of RFC 9001, appendix A. A script that is not in the
 // repository copied each value from the text of the RFC (no value was typed
@@ -136,7 +157,7 @@ header_protection_masks_of_rfc_9001 :: proc(t: ^testing.T) {
 		key, sample := string(bytes_of(item.key)), string(bytes_of(item.sample))
 		mask: [MASK_SIZE]u8
 		result := mask[:]
-		testing.expect_value(t, item.procedure(&key, &sample, &result, &error), MASK_SIZE)
+		testing.expect_value(t, answer_of(item.procedure(&key, &sample, &result, &error)), Answer{.Succeeded, MASK_SIZE})
 		testing.expect_value(t, hex_of(mask[:]), item.expected_mask)
 	}
 }
@@ -473,7 +494,7 @@ chacha20_mask_at_the_last_counter :: proc(t: ^testing.T) {
 	key, sample_text := string(zero_key[:]), string(sample[:])
 	mask: [MASK_SIZE]u8
 	result := mask[:]
-	testing.expect_value(t, cryptography.header_protection_mask_with_chacha20(&key, &sample_text, &result, &error), MASK_SIZE)
+	testing.expect_value(t, answer_of(cryptography.header_protection_mask_with_chacha20(&key, &sample_text, &result, &error)), Answer{.Succeeded, MASK_SIZE})
 	testing.expect_value(t, hex_of(mask[:]), "ace4cd09e2")
 
 	keys: Packet_Keys

@@ -353,7 +353,7 @@ client_receive_kex_ecdh_reply :: proc "contextless" (s: ^Client_Session, wire: [
 	msg_str := string(exchange_h[:])
 	sig_str := string(host_sig[:])
 	verify_err: errors.Error_Record
-	if cryptography_primitives.ed25519_verify(&pub_str, &msg_str, &sig_str, &verify_err) != 0 {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_verify(&pub_str, &msg_str, &sig_str, &verify_err); crypto_outcome != .Succeeded || crypto_count != 0 {
 		return 0, .Bad_Host_Signature
 	}
 
@@ -520,7 +520,7 @@ client_write_userauth_publickey :: proc "contextless" (
 	sec_str := string(secret_copy[:])
 	pub_slice := pub_key[:]
 	err: errors.Error_Record
-	if cryptography_primitives.ed25519_public_key(&sec_str, &pub_slice, &err) != ED25519_PUBLIC_KEY_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_public_key(&sec_str, &pub_slice, &err); crypto_outcome != .Succeeded || crypto_count != ED25519_PUBLIC_KEY_SIZE {
 		return 0, .Crypto_Error
 	}
 
@@ -539,7 +539,7 @@ client_write_userauth_publickey :: proc "contextless" (
 	raw_sig: [ED25519_SIGNATURE_SIZE]u8
 	sign_msg := string(sign_data[:sign_len])
 	sig_slice := raw_sig[:]
-	if cryptography_primitives.ed25519_sign(&sec_str, &sign_msg, &sig_slice, &err) != ED25519_SIGNATURE_SIZE {
+	if crypto_outcome, crypto_count := cryptography_primitives.ed25519_sign(&sec_str, &sign_msg, &sig_slice, &err); crypto_outcome != .Succeeded || crypto_count != ED25519_SIGNATURE_SIZE {
 		return 0, .Crypto_Error
 	}
 

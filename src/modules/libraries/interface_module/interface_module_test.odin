@@ -2,9 +2,22 @@
 package interface_module
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:interface"
 import "modus:system"
+
+// The pair of an export, as one value that a test compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
 
 // A capacity over the largest int, as a hostile caller gives it: the
 // capacity is refused with an error record of the draw table, and a table
@@ -15,14 +28,14 @@ hostile_capacity_is_refused :: proc(t: ^testing.T) {
 	drawn := system.Table_To_Append(interface.Draw_Record){records = &memory[0], count = 0, capacity = 1 << 63}
 	area := Area{0, 0, 8, 8}
 	error: errors.Error_Record
-	testing.expect_value(t, draw_background(&drawn, &area, &error), ERROR)
+	testing.expect_value(t, answer_of(draw_background(&drawn, &area, &error)), Answer{.Argument_Refused, 0})
 	testing.expect_value(t, error.kind, i64(errors.Kind.Too_Long))
 	testing.expect_value(t, error.unit, i64(errors.Unit.Records))
 	testing.expect_value(t, error.argument, ARGUMENT_DRAWN)
 	testing.expect_value(t, error.value, max(i64)) // The capacity, past the largest i64.
 	testing.expect_value(t, error.limit, i64(TABLE_LIMIT))
 	drawn = {records = &memory[0], count = 0, capacity = 4}
-	testing.expect_value(t, draw_background(&drawn, &area, nil), 2)
+	testing.expect_value(t, answer_of(draw_background(&drawn, &area, nil)), Answer{.Succeeded, 2})
 }
 
 // A text table past 2^32 bytes: a text record names its bytes with a u32,
@@ -37,7 +50,7 @@ text_table_past_two_to_the_32_is_refused :: proc(t: ^testing.T) {
 	cell := Area{0, 0, 64, 16}
 	words := "abc"
 	error: errors.Error_Record
-	testing.expect_value(t, draw_cell_text(&drawn, &text, &cell, &words, 0, 0, &error), ERROR)
+	testing.expect_value(t, answer_of(draw_cell_text(&drawn, &text, &cell, &words, 0, 0, &error)), Answer{.Argument_Refused, 0})
 	testing.expect_value(t, error.kind, i64(errors.Kind.Out_Of_Range))
 	testing.expect_value(t, error.unit, i64(errors.Unit.Bytes))
 	testing.expect_value(t, error.argument, ARGUMENT_TEXT)
@@ -59,15 +72,15 @@ counts_of_the_full_answer_across_calls :: proc(t: ^testing.T) {
 	text_memory[4] = 0xA5
 	text := system.Bytes_To_Append{bytes = &text_memory[0], count = 0, capacity = 4}
 	area := Area{0, 0, 8, 8}
-	testing.expect_value(t, draw_background(&drawn, &area, nil), 2) // A rectangle and the grid.
-	testing.expect_value(t, draw_background(&drawn, &area, nil), 4) // 1 of 2 fits.
+	testing.expect_value(t, answer_of(draw_background(&drawn, &area, nil)), Answer{.Succeeded, 2}) // A rectangle and the grid.
+	testing.expect_value(t, answer_of(draw_background(&drawn, &area, nil)), Answer{.Succeeded, 4}) // 1 of 2 fits.
 	// A cell wide enough for the six characters: a text is cut to its cell,
 	// and this test is about the counts, not about the cut.
 	wide := Area{0, 0, 64, 16}
 	empty := ""
-	testing.expect_value(t, draw_cell_text(&drawn, &text, &wide, &empty, 0, 0, nil), 4) // Appends nothing.
+	testing.expect_value(t, answer_of(draw_cell_text(&drawn, &text, &wide, &empty, 0, 0, nil)), Answer{.Succeeded, 4}) // Appends nothing.
 	words := "abcdef"
-	testing.expect_value(t, draw_cell_text(&drawn, &text, &wide, &words, 0, 0, nil), 5)
+	testing.expect_value(t, answer_of(draw_cell_text(&drawn, &text, &wide, &words, 0, 0, nil)), Answer{.Succeeded, 5})
 	testing.expect_value(t, text.count, 6) // The 6 bytes of the full answer; 4 fit.
 	testing.expect_value(t, string(text_memory[:4]), "abcd")
 	testing.expect_value(t, text_memory[4], 0xA5)

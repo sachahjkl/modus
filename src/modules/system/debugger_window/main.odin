@@ -47,6 +47,7 @@
 // breakpoint, a breakpoint is removed.
 package debugger_window
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -448,10 +449,10 @@ call :: proc "contextless" (export: Export, arguments: []isolated.Argument, rows
 		return 0, false
 	}
 	error: errors.Error_Record
-	result, status := system.call_isolated(&connection, service_file, export_indexes[export], arguments, &error, false, rows)
+	result, status, outcome := system.call_isolated(&connection, service_file, export_indexes[export], arguments, &error, false, rows)
 	if status != .Ok {
 		if status == .Failed || status == .Failed_With_Wrong_Details {
-			status_set(true, "debugger.", export_names[export], " failed with the code ", result, ": the console gives its sentence")
+			status_set(true, "debugger.", export_names[export], " ended with ", call_outcome.CALL_OUTCOME_NAMES[outcome], ": the console gives its sentence")
 		} else {
 			status_set(true, "the call of debugger.", export_names[export], " did not come back from the service")
 		}

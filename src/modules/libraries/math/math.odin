@@ -28,29 +28,30 @@
 // example, wraps.
 package math
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 
 // gcd gives the greatest common divisor.
 //
 // It uses the absolute values, so the result is never negative; gcd(0, n) is the absolute value of n, and
-// gcd(0, 0) is 0. It fails with -1 and an error record: `Too_Small` when an argument is the most negative integer
+// gcd(0, 0) is 0. It fails with the outcome `Argument_Refused` and an error record: `Too_Small` when an argument is the most negative integer
 // (-9223372036854775808), whose absolute value does not fit in 64 bits; the record names the argument and the
 // least value that the call takes.
 //
 // Example: `gcd(84, 36)` gives 12.
 @(export, link_name = "gcd")
-gcd :: proc "c" (first, second: i64, error: ^errors.Error_Record) -> i64 {
+gcd :: proc "c" (first, second: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch {
 	case first == min(i64):
-		return errors.fail(error, -1, .Too_Small, .None, 1, first, min(i64) + 1)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 1, first, min(i64) + 1)
 	case second == min(i64):
-		return errors.fail(error, -1, .Too_Small, .None, 2, second, min(i64) + 1)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 2, second, min(i64) + 1)
 	}
 	a, b := abs(first), abs(second)
 	for b != 0 {
 		a, b = b, a % b
 	}
-	return a
+	return .Succeeded, a
 }
 
 // power gives an integer to a power.
@@ -94,13 +95,13 @@ NEXT_PRIME_LIMIT :: 1 << 40 // Above this, the search by trial division takes to
 //
 // The integer itself counts: next_prime(7) is 7. Below 2 the result is 2.
 //
-// **Result**: the prime, or a negative number with an error record:
+// **Result**: the prime, or the outcome `Argument_Refused` with an error record:
 //
-// - `Bad_Value` (-1): the integer is above 2^40, because the search by trial division takes too long for a call.
+// - `Bad_Value`: the integer is above 2^40, because the search by trial division takes too long for a call.
 @(export, link_name = "next_prime")
-next_prime :: proc "c" (from: i64, error: ^errors.Error_Record) -> i64 {
+next_prime :: proc "c" (from: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if from > NEXT_PRIME_LIMIT {
-		return errors.fail(error, -1, .Bad_Value, .None, 1, from, NEXT_PRIME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, from, NEXT_PRIME_LIMIT)
 	}
 	search: for candidate := max(from, 2);; candidate += 1 {
 		for divisor: i64 = 2; divisor * divisor <= candidate; divisor += 1 {
@@ -108,7 +109,7 @@ next_prime :: proc "c" (from: i64, error: ^errors.Error_Record) -> i64 {
 				continue search
 			}
 		}
-		return candidate
+		return .Succeeded, candidate
 	}
 }
 
@@ -134,24 +135,23 @@ number :: proc "c" (text: ^string) -> i64 {
 	return negative ? -value : value
 }
 
-// square_root gives the largest integer whose square is not above a value, or -1 with an error record: the error kind Too_Small, when the value is negative.
+// square_root gives the largest integer whose square is not above a value, or the outcome Argument_Refused with an error record: the error kind Too_Small, when the value is negative.
 //
 // It is the export of this module that shows an error record: the record names the first argument, its value,
 // and the limit 0.
 //
 // Example: `square_root(99)` gives 9.
 @(export, link_name = "square_root")
-square_root :: proc "c" (value: i64, error: ^errors.Error_Record) -> i64 {
+square_root :: proc "c" (value: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, root: i64) {
 	if value < 0 {
-		return errors.fail(error, -1, .Too_Small, .None, 1, value, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 1, value, 0)
 	}
-	root := i64(0)
 	for bit := i64(1) << 31; bit != 0; bit >>= 1 {
 		if candidate := root | bit; candidate * candidate <= value {
 			root = candidate
 		}
 	}
-	return root
+	return .Succeeded, root
 }
 
 // A Text result: the caller gives a buffer record {address, capacity} after

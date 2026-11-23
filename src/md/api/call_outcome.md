@@ -367,4 +367,15 @@ A host test of the contract checks that each member has an effect group and a pa
 
 ## State
 
-Decided: designed, not built. Nothing of this form is in the code. The steps are in the section Next of [`ROADMAP.md`](../../../ROADMAP.md).
+Built: the exports. The contract package `call_outcome` and its host tests; the kinds `Callee_Stopped` and `Connection_Ended`; each export with an error record returns the pair; `storage.Export_Error` is gone; each binding of an import that can fail carries `@(require_results)`, and `outcome_binding_check` refuses one that does not; the description refuses an export whose error record and outcome do not go together; the manifest of other languages and the C header `modus_call_outcome.h`; the console and `modus:sentence` write `error: <export>: <outcome>: <sentence>`.
+
+Left, each with a mapping at one place until its step:
+
+- **The isolated call.** `isolated.Status` and `call_status.Call_Status` stay. The receiver writes the outcome word in the value `isolated.COMPLETION_OUTCOME_VALUE` of the completion, and the record in the call region. `system.call_direct` and `system.call_isolated` give the outcome beside the status, and `system.outcome_of_call_status` maps a status of the path.
+- **`remote` and the agent bridge.** The answer of `remote` carries the outcome word of the export; its status and its relay words stay.
+- **The rings and the kernel.** They answer with their own statuses. An export that meets a refusal of the kernel gives `system.outcome_of_status`.
+- **WebAssembly.** No engine runs a WebAssembly module yet, so the adapter of the pair waits for it.
+- **The assembler** has no syntax for an export with an error record, so no assembly export can fail yet.
+- **The log facts.** `Call_Outcome` is not yet in the closed list of contract enums that a fact can hold ([../features/log_facts.md](../features/log_facts.md), "Enums of the contract as fields"). A failure fact names the end of a call through its record only, and it will name the outcome in its own word.
+
+The next steps are in [`ROADMAP.md`](../../../ROADMAP.md).
