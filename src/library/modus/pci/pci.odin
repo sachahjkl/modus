@@ -11,6 +11,7 @@
 // sets its message interrupt (MSI-X) before the start of the service.
 package pci
 
+import "base:intrinsics"
 import op "modus:contract/operation"
 import "modus:system"
 
@@ -165,6 +166,38 @@ bar_address :: proc "contextless" (place: Place, index: int) -> u64 {
 		address |= u64(read_32(place, offset + 4)) << 32
 	}
 	return address
+}
+
+// bar_addresses reads the memory address of each base address register from
+// a copy of the configuration, with no port access and no write. A port
+// register, an unset register, and the upper half of a 64-bit register
+// give 0.
+bar_addresses :: proc "contextless" (configuration: []u8) -> (addresses: [BAR_COUNT]u64) {
+	if len(configuration) < CONFIGURATION_SIZE {
+		return {}
+	}
+	for index := 0; index < BAR_COUNT; index += 1 {
+		offset := OFFSET_BAR + 4 * index
+		low := intrinsics.unaligned_load((^u32)(&configuration[offset]))
+		if low & 1 != 0 {
+			continue // Ports.
+		}
+		wide := (low >> 1) & 3 == 2
+		address := u64(low &~ 0xF)
+		if wide {
+			if index + 1 < BAR_COUNT {
+				high := intrinsics.unaligned_load((^u32)(&configuration[offset + 4]))
+				address |= u64(high) << 32
+			} else {
+				address = 0 // A 64-bit BAR cannot start at the last slot.
+			}
+		}
+		addresses[index] = address
+		if wide {
+			index += 1
+		}
+	}
+	return addresses
 }
 
 // capability gives the offset of the first capability of a kind in a copy

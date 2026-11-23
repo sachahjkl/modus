@@ -60,6 +60,16 @@ Scanout_Bound :: struct {
 	height:      u64,
 }
 
+// The first frame of a scanout: its rectangles went to the device in one
+// batch, which the device used whole (src/md/infrastructure/whole_frame.md,
+// "The screen through the scanout of the virtual GPU").
+@(log_fact = "gpu_device: the first frame of resource {resource_id}: {rectangles} rectangles in one batch of {requests} requests")
+Frame_Batch_First :: struct {
+	resource_id: u64,
+	rectangles:  u64,
+	requests:    u64,
+}
+
 // The queue memory could not be mapped or translated for DMA.
 @(log_fact = "gpu_device: the map of the queue gave the status {map_status}, its device address the status {address_status}")
 Queue_Not_Mapped :: struct {

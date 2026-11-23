@@ -241,6 +241,75 @@ find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (devic
 	return device, device.common != 0 && device.notify_base != 0 && device.device_config != 0
 }
 
+// The other kinds of virtio capability that place a structure in a BAR.
+CAPABILITY_ISR :: 3 // The interrupt status.
+CAPABILITY_SHARED_MEMORY :: 8 // A region of shared memory, with an offset and a length of 64 bits.
+SHARED_MEMORY_CAPABILITY_LENGTH :: 24
+
+// register_extents gives, for each BAR of a device, the end of the last
+// structure that its configuration places in it: each virtio structure
+// (common, notify, interrupt status, device configuration, shared memory)
+// and the MSI-X table and its pending bits. 0: no structure. The root
+// service takes the size of the memory of a BAR from it when a size by a
+// write of all ones cannot be made: on a device whose video memory the
+// display shows (src/md/infrastructure/whole_frame.md, "The screen
+// through the scanout of the virtual GPU"). It reads the copy only. A walk
+// ends after 48 steps, at a place before 0x40, or past the configuration;
+// an end past 64 bits stays at the largest value.
+register_extents :: proc "contextless" (configuration: []u8) -> (extents: [pci.BAR_COUNT]u64) {
+	if len(configuration) < pci.CONFIGURATION_SIZE {
+		return {}
+	}
+	extend :: proc "contextless" (extents: ^[pci.BAR_COUNT]u64, bar: u8, place, length: u64) {
+		if bar >= pci.BAR_COUNT || length == 0 {
+			return
+		}
+		end := place + length
+		if end < place {
+			end = max(u64)
+		}
+		extents[bar] = max(extents[bar], end)
+	}
+	offset := u32(configuration[pci.OFFSET_CAPABILITIES]) &~ 3
+	for _ in 0 ..< 48 {
+		if offset < 0x40 || offset > pci.CONFIGURATION_SIZE - 4 {
+			break
+		}
+		switch configuration[offset] {
+		case CAPABILITY_VIRTIO:
+			if offset <= pci.CONFIGURATION_SIZE - 16 && configuration[offset + 2] >= 16 {
+				kind := configuration[offset + 3]
+				bar := configuration[offset + 4]
+				place := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 8])))
+				length := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 12])))
+				switch kind {
+				case CAPABILITY_COMMON, CAPABILITY_NOTIFY, CAPABILITY_ISR, CAPABILITY_DEVICE:
+					extend(&extents, bar, place, length)
+				case CAPABILITY_SHARED_MEMORY:
+					if configuration[offset + 2] >= SHARED_MEMORY_CAPABILITY_LENGTH && offset <= pci.CONFIGURATION_SIZE - SHARED_MEMORY_CAPABILITY_LENGTH {
+						place |= u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 16]))) << 32
+						length |= u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 20]))) << 32
+						extend(&extents, bar, place, length)
+					}
+				}
+			}
+		case pci.CAPABILITY_MSI_X:
+			if offset <= pci.CONFIGURATION_SIZE - 12 {
+				// The table size is the field of 11 bits of the message
+				// control, minus one; each entry is 16 bytes, and each 64
+				// entries one word of 8 bytes of pending bits.
+				entries := u64(intrinsics.unaligned_load((^u16)(&configuration[offset + 2])) & 0x7FF) + 1
+				table := intrinsics.unaligned_load((^u32)(&configuration[offset + 4]))
+				pending := intrinsics.unaligned_load((^u32)(&configuration[offset + 8]))
+				extend(&extents, u8(table & 7), u64(table &~ 7), entries * 16)
+				extend(&extents, u8(pending & 7), u64(pending &~ 7), (entries + 63) / 64 * 8)
+			}
+		}
+		offset = u32(configuration[offset + 1]) &~ 3
+	}
+	return extents
+}
+
 // common_place gives the BAR and the place in it of the common
 // configuration, from the copy of the configuration of a device: the first
 // capability of that kind whose length holds COMMON_CONFIG_SIZE, as find

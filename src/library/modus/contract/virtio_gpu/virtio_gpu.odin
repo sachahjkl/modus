@@ -217,6 +217,7 @@ Validation_Problem :: enum u8 {
 	Capset_Data_Too_Large,
 	Misaligned_Offset,
 	Unknown_Map_Cache,
+	Present_Count_Out_Of_Range, // A present list of 0 rectangles, or of more than PRESENT_RECTANGLE_CAPACITY.
 }
 
 // Commands carried on the client service ring of the GPU device service.
@@ -225,13 +226,101 @@ Validation_Problem :: enum u8 {
 // vk.xml version of the host, 6 the resource id of the ring blob.
 // Venus_Submit takes: 0 a memory handle with the right Read, 1 the byte
 // offset of the Venus stream in it, 2 its byte length; it answers the length.
+// Attach_Framebuffer takes: 0 a memory handle with the right Read, of at
+// least framebuffer_bytes_with_list bytes, 1 the width, 2 the height, 3 the
+// Pixel_Format word. Present_Frame takes: 0 the count of the rectangles of
+// the present list of that memory; it answers 0 the count of the frames
+// that the service presented, this one included
+// (src/md/infrastructure/whole_frame.md, "The screen through the scanout
+// of the virtual GPU").
 Service_Command :: enum u32 {
 	None               = 0,
 	Display_Info       = 1,
 	Attach_Framebuffer = 2,
-	Present_Rect       = 3,
+	Present_Frame      = 3,
 	Venus_Info         = 4,
 	Venus_Submit       = 5,
+}
+
+// The rectangles of one present list: each is a TRANSFER_TO_HOST_2D and a
+// RESOURCE_FLUSH, each request two descriptors, in one batch of a control
+// queue of 64 descriptors.
+PRESENT_RECTANGLE_CAPACITY :: 15
+PRESENT_RECTANGLE_BYTES :: 16 // x, y, width and height, four little-endian u32.
+PRESENT_LIST_PAGE_BYTES :: 4096
+#assert(PRESENT_RECTANGLE_CAPACITY * PRESENT_RECTANGLE_BYTES <= PRESENT_LIST_PAGE_BYTES)
+
+// present_list_offset gives the place of the present list in the memory
+// of a framebuffer: the page after its pixels. Dimensions outside
+// dimensions_validate (0 or past MAX_RESOURCE_DIMENSION) return 0, false,
+// so width * height * 4 never wraps u64.
+present_list_offset :: proc "contextless" (width, height: u32) -> (offset: u64, ok: bool) {
+	if dimensions_validate(width, height) != .None {
+		return 0, false
+	}
+	pixels := u64(width) * u64(height) * 4
+	return (pixels + PRESENT_LIST_PAGE_BYTES - 1) / PRESENT_LIST_PAGE_BYTES * PRESENT_LIST_PAGE_BYTES, true
+}
+
+// framebuffer_bytes_with_list gives the bytes that the memory of a
+// framebuffer of Attach_Framebuffer holds: its pixels, then the page of its
+// present list. Returns 0, false for dimensions outside dimensions_validate.
+framebuffer_bytes_with_list :: proc "contextless" (width, height: u32) -> (bytes: u64, ok: bool) {
+	offset := present_list_offset(width, height) or_return
+	return offset + PRESENT_LIST_PAGE_BYTES, true
+}
+
+// present_list_encode writes rectangles into a present list. It writes
+// nothing on a refusal: a count of 0 or past the capacity, a list too
+// short for them, or a rectangle outside the framebuffer.
+present_list_encode :: proc "contextless" (list: []u8, rectangles: []Rect, width, height: u32) -> Validation_Problem {
+	if len(rectangles) == 0 || len(rectangles) > PRESENT_RECTANGLE_CAPACITY {
+		return .Present_Count_Out_Of_Range
+	}
+	if len(list) < len(rectangles) * PRESENT_RECTANGLE_BYTES {
+		return .Buffer_Too_Short
+	}
+	for rectangle in rectangles {
+		if problem := rect_fits_in_bounds(rectangle, width, height); problem != .None {
+			return problem
+		}
+	}
+	for rectangle, index in rectangles {
+		place := index * PRESENT_RECTANGLE_BYTES
+		byte_order.write_u32_little_endian(list, place, rectangle.x)
+		byte_order.write_u32_little_endian(list, place + 4, rectangle.y)
+		byte_order.write_u32_little_endian(list, place + 8, rectangle.width)
+		byte_order.write_u32_little_endian(list, place + 12, rectangle.height)
+	}
+	return .None
+}
+
+// present_list_decode reads count rectangles of a present list, which the
+// caller copied out of memory that another process writes, and checks
+// each against the framebuffer. The count is a word of a ring record: a
+// count of 0 or past the capacity is refused, as a rectangle that is empty
+// or outside the framebuffer.
+present_list_decode :: proc "contextless" (list: []u8, count: u64, width, height: u32) -> (rectangles: [PRESENT_RECTANGLE_CAPACITY]Rect, problem: Validation_Problem) {
+	if count == 0 || count > PRESENT_RECTANGLE_CAPACITY {
+		return {}, .Present_Count_Out_Of_Range
+	}
+	if u64(len(list)) < count * PRESENT_RECTANGLE_BYTES {
+		return {}, .Buffer_Too_Short
+	}
+	for index in 0 ..< int(count) {
+		place := index * PRESENT_RECTANGLE_BYTES
+		rectangle := Rect {
+			x      = byte_order.read_u32_little_endian(list, place),
+			y      = byte_order.read_u32_little_endian(list, place + 4),
+			width  = byte_order.read_u32_little_endian(list, place + 8),
+			height = byte_order.read_u32_little_endian(list, place + 12),
+		}
+		if rectangle_problem := rect_fits_in_bounds(rectangle, width, height); rectangle_problem != .None {
+			return {}, rectangle_problem
+		}
+		rectangles[index] = rectangle
+	}
+	return rectangles, .None
 }
 
 // Completion status words of the client service ring of the GPU device service.

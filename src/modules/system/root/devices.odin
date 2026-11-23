@@ -71,6 +71,45 @@ gpu_device_place :: proc "contextless" () -> (place: pci.Place, found: bool) {
 	return {}, false
 }
 
+// The address of the framebuffer of the firmware, from the boot record: 0
+// until the start of the holder of the display reads it, and with no
+// screen.
+firmware_framebuffer_address: u64
+
+// screen_device_bars gives the memory of the BARs of a device whose BAR
+// holds the framebuffer of the firmware, which the display shows: a size by
+// a write of all ones turns the memory of the device off, so the screen
+// too, and under KVM it deletes the memory slot of the video memory
+// (src/md/infrastructure/whole_frame.md, "The screen through the scanout of
+// the virtual GPU"). The size of each other BAR is the end of its last
+// structure (virtio.register_extents), rounded up to a page, with no write;
+// the BAR of the framebuffer gets no memory. holds_screen false: the device
+// holds no framebuffer, and pci.bars may size it.
+screen_device_bars :: proc "contextless" (configuration: []u8) -> (bars: [pci.BAR_COUNT]pci.Bar, holds_screen: bool) {
+	if firmware_framebuffer_address == 0 {
+		return {}, false
+	}
+	addresses := pci.bar_addresses(configuration)
+	for address in addresses {
+		if address == firmware_framebuffer_address {
+			holds_screen = true
+			break
+		}
+	}
+	if !holds_screen {
+		return {}, false
+	}
+	extents := virtio.register_extents(configuration)
+	for index in 0 ..< pci.BAR_COUNT {
+		address := addresses[index]
+		if address == 0 || address == firmware_framebuffer_address || extents[index] == 0 || extents[index] > max(u64) - system.PAGE_SIZE {
+			continue
+		}
+		bars[index] = {address = address, size = (extents[index] + system.PAGE_SIZE - 1) &~ (system.PAGE_SIZE - 1)}
+	}
+	return bars, true
+}
+
 // gpu_driver_start starts gpu_device automatically when a VirtIO-GPU PCI device
 // is present on bus 0, retaining its client ring handle for the Display holder.
 gpu_driver_start :: proc "contextless" () -> bool {
@@ -426,12 +465,13 @@ device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Devic
 	// The device: no line interrupt, its memory, and its message interrupt.
 	command := pci.read_16(place, pci.OFFSET_COMMAND)
 	pci.write_16(place, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER | pci.COMMAND_MEMORY | pci.COMMAND_NO_LINE_INTERRUPT)
-	armed.bars = pci.bars(place)
 	configuration: [pci.CONFIGURATION_SIZE / 4]u32
 	for &word, index in configuration {
 		word = pci.read_32(place, u32(index * 4))
 	}
 	bytes := transmute([pci.CONFIGURATION_SIZE]u8)configuration
+	screen_bars, holds_screen := screen_device_bars(bytes[:])
+	armed.bars = holds_screen ? screen_bars : pci.bars(place)
 	table := pci.capability(bytes[:], pci.CAPABILITY_MSI_X)
 	if table == 0 {
 		return armed, .Bad_Operation

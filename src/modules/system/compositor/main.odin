@@ -126,6 +126,9 @@ import "base:intrinsics"
 //   second page directory: 3 pages;
 // - the page of the display registers: a page table and a page directory,
 //   2 pages;
+// - the screen memory of the scanout of the virtual GPU (gpu_scanout.odin):
+//   2025 pages of pixels, the page of the present list, and 5 page tables:
+//   2031 pages;
 // - its tables and the other mappings: 1647 pages;
 // - the mapping of the surface of each window: the largest surface,
 //   display.SURFACE_SCREEN_LIMIT, 4096 x 4096 pixels of the screen (2048
@@ -144,10 +147,10 @@ import "base:intrinsics"
 //   each draws every glyph of its text into its own private glyph cache,
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages.
-// 4050 + 10 + 9 + 3 + 2 + 1647 + 2144 + 2144 + 708 = 10717. A screen whose
-// frame and background the budget cannot pay is named on one line, and the
-// compositor stops (entry).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10717, processes = 1, threads = 2}
+// 4050 + 10 + 9 + 3 + 2 + 2031 + 1647 + 2144 + 2144 + 708 = 12748. A
+// screen whose frame and background the budget cannot pay is named on one
+// line, and the compositor stops (entry).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 12748, processes = 1, threads = 2}
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.
@@ -320,7 +323,6 @@ screen_page_debts: interface.Picture_Debts
 page_flips: u64 // The page flips since the start.
 frames_on_the_shown_page: u64 // The frames written into the screen page that the display showed.
 frame: graphics.Canvas // The picture that the compositor builds, then copies to the screen.
-frame_memory_handle: system.Handle
 background: graphics.Canvas
 background_appearance: graphics.Appearance // The appearance of the pixels of `background` and of the mark of the bar.
 clients: [CLIENT_CAPACITY]Client
@@ -627,23 +629,6 @@ damage_bar :: proc "contextless" () {
 	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
 }
 
-canvas_create_with_handle :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, handle: system.Handle) {
-	pages := (u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	memory, status := system.memory_create(pages, 0, {.Contiguous})
-	if status != .Ok {
-		memory, status = system.memory_create(pages)
-	}
-	address: rawptr
-	if status == .Ok {
-		address, status = system.memory_map(memory)
-	}
-	if status != .Ok {
-		system.log_fact(.Info, No_Memory{})
-		system.stop(.Failed)
-	}
-	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}, memory
-}
-
 canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 	memory, status := system.memory_create((u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 	address: rawptr
@@ -756,13 +741,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// service runs on with no desktop.
 	canvas_pages := (u64(width) * u64(height) * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	needed_pages: u64 = 2 * canvas_pages
+	if ctx.handles[GRANT_GPU_RING] != 0 {
+		needed_pages += canvas_pages + 1 // The screen memory of the scanout and its present list.
+	}
 	budget_left, budget_status := system.budget_read()
 	if budget_status != .Ok || budget_left.pages < needed_pages {
 		system.log_fact(.Info, Screen_Past_Budget{width = u64(width), height = u64(height), needed_pages = needed_pages, budget_pages = u64(budget_left.pages)})
 		system.stop(.Failed)
 	}
-	frame, frame_memory_handle = canvas_create_with_handle(width, height)
-	gpu_scanout_open(ctx, frame_memory_handle, width, height)
+	frame = canvas_create(width, height)
+	gpu_scanout_open(ctx, width, height) // gpu_scanout.odin
 	background = canvas_create(width, height)
 	// The layout at the default scale until the settings page is read
 	// below: a page that the root service created holds it. The first take
@@ -839,7 +827,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.wait_word(&wait, &display.settings_page.change_count, settings_seen)
 		}
 		palette_wait(&wait) // palette.odin
+		deadline = gpu_scanout_wait(&wait, deadline) // gpu_scanout.odin
 		now := system.wait_end(&wait, deadline)
+		gpu_scanout_poll(now)
 		desktop_features_tick(now) // desktop_features.odin
 		quality_turn_start() // quality_measures.odin
 		if display.settings_page != nil {
@@ -1772,8 +1762,11 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 		canvas := graphics.view(frame, area.left, area.top, area.right - area.left, area.bottom - area.top)
 		pointer_draw(canvas, -area.left, -area.top) // pointer_picture.odin
 	}
-	screen_put(areas)
-	gpu_scanout_present(areas)
+	if gpu_attached {
+		gpu_scanout_put(areas) // gpu_scanout.odin
+	} else {
+		screen_put(areas)
+	}
 }
 
 // screen_put puts the frame in memory on the screen. With one screen page,
@@ -1785,7 +1778,7 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 screen_put :: proc "contextless" (areas: []Rectangle) {
 	if screen_page_count < bochs_display.PAGE_COUNT {
 		for area in areas {
-			screen_copy(screen_pages[0], area)
+			screen_copy(screen_pages[0], area, red_first)
 		}
 		frames_on_the_shown_page += 1
 		return
@@ -1797,7 +1790,7 @@ screen_put :: proc "contextless" (areas: []Rectangle) {
 	}
 	interface.damage_of_picture(&screen_page_debts, hidden, &changed, {0, 0, screen.width, screen.height}, &copied, &owed_by_the_shown_page)
 	for rectangle in copied.rectangles[:copied.count] {
-		screen_copy(screen_pages[hidden], {rectangle.left, rectangle.top, rectangle.right, rectangle.bottom})
+		screen_copy(screen_pages[hidden], {rectangle.left, rectangle.top, rectangle.right, rectangle.bottom}, red_first)
 	}
 	if !bochs_display.page_show(display_registers, hidden, screen.height) {
 		// The device kept another offset: it shows no page that this
@@ -1806,7 +1799,7 @@ screen_put :: proc "contextless" (areas: []Rectangle) {
 		system.log_fact(.Info, Page_Flip_Refused{screen_page = u64(hidden)})
 		bochs_display.page_show(display_registers, 0, screen.height)
 		screen_page_count, screen_page_shown = 1, 0
-		screen_copy(screen_pages[0], {0, 0, screen.width, screen.height})
+		screen_copy(screen_pages[0], {0, 0, screen.width, screen.height}, red_first)
 		frames_on_the_shown_page += 1
 		return
 	}
@@ -1816,8 +1809,9 @@ screen_put :: proc "contextless" (areas: []Rectangle) {
 }
 
 // screen_copy copies a rectangle of the frame in memory into a screen page,
-// in the order of the bytes of the screen.
-screen_copy :: proc "contextless" (page: graphics.Canvas, area: Rectangle) {
+// in the order of the bytes of the screen: swap_red_and_blue for a screen
+// whose red byte comes first.
+screen_copy :: proc "contextless" (page: graphics.Canvas, area: Rectangle, swap_red_and_blue: bool) {
 	width, height := area.right - area.left, area.bottom - area.top
 	canvas := graphics.view(frame, area.left, area.top, width, height)
 	target := graphics.view(page, area.left, area.top, width, height)
@@ -1825,7 +1819,7 @@ screen_copy :: proc "contextless" (page: graphics.Canvas, area: Rectangle) {
 		for y in 0 ..< height {
 			for column in 0 ..< width {
 				color := desktop_magnifier_sample(area.left + column, area.top + y)
-				if red_first {
+				if swap_red_and_blue {
 					color = color >> 16 & 0xFF | color & 0xFF00 | (color & 0xFF) << 16
 				}
 				target.pixels[y * target.stride + column] = color
@@ -1833,7 +1827,7 @@ screen_copy :: proc "contextless" (page: graphics.Canvas, area: Rectangle) {
 		}
 		return
 	}
-	if !red_first {
+	if !swap_red_and_blue {
 		graphics.copy(target, 0, 0, canvas)
 		return
 	}

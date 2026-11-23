@@ -1,7 +1,7 @@
 // The GPU device service: the device service of one VirtIO-GPU 1.2 PCI device
 // (vendor 0x1AF4, device 0x1050). It verifies the PCI identity, negotiates
 // VirtIO-GPU features, drives the control queue for 2D scanout setup and
-// rectangle presentation (Get_Display_Info, Resource_Create_2D,
+// the present of whole frames in one batch each (Get_Display_Info, Resource_Create_2D,
 // Resource_Attach_Backing, Set_Scanout, Transfer_To_Host_2D, Resource_Flush,
 // Resource_Unref), and, when the device carries Venus, creates one Venus
 // context with the blob of its command ring and submits client Venus streams
@@ -97,14 +97,25 @@ venus_context_id: u32
 venus_ring_resource_id: u32
 venus_ring_cache: virtio_gpu.Map_Cache
 
-// Currently attached 2D scanout framebuffer.
+// Currently attached 2D scanout framebuffer, and its mapping in this
+// service: the service reads the present list of its last page.
 framebuffer_memory: system.Handle
+framebuffer_mapping: rawptr
 framebuffer_physical: u64
 framebuffer_size: u64
 framebuffer_width: u32
 framebuffer_height: u32
 framebuffer_resource_id: u32
+framebuffer_frames: u64 // The frames presented on the bound resource.
 next_resource_id: u32 = 1
+
+// The size of one TRANSFER_TO_HOST_2D and of one RESOURCE_FLUSH request in
+// the request buffer, and of one answer in the response buffer.
+BATCH_REQUEST_SLOT_BYTES :: 64
+BATCH_RESPONSE_SLOT_BYTES :: virtio_gpu.CTRL_HEADER_SIZE
+#assert(virtio_gpu.TRANSFER_TO_HOST_2D_SIZE <= BATCH_REQUEST_SLOT_BYTES && virtio_gpu.RESOURCE_FLUSH_SIZE <= BATCH_REQUEST_SLOT_BYTES)
+#assert(2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY * BATCH_REQUEST_SLOT_BYTES <= REQUEST_BUFFER_BYTES)
+#assert(2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY * BATCH_RESPONSE_SLOT_BYTES <= system.PAGE_SIZE)
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
@@ -548,8 +559,23 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 	}
 	region_bytes := pages * system.PAGE_SIZE
 	required_bytes := u64(width) * u64(height) * 4
-	if region_bytes < required_bytes {
-		return .Out_Of_Range, errors.ring_fail(ATTACH, .Too_Small, .Bytes, 1, i64(region_bytes), i64(required_bytes))
+	// The pixels, then the page of the present list.
+	needed_bytes, needed_ok := virtio_gpu.framebuffer_bytes_with_list(width, height)
+	if !needed_ok {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 2, i64(width), i64(height))
+	}
+	if region_bytes < needed_bytes {
+		return .Out_Of_Range, errors.ring_fail(ATTACH, .Too_Small, .Bytes, 1, i64(region_bytes), i64(needed_bytes))
+	}
+	// The service reads the present list through its own mapping, read
+	// only; the device reads the pixels through the backing.
+	mapping, map_status := system.memory_map(handle, {})
+	if map_status != .Ok {
+		return .No_Framebuffer, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(map_status))
+	}
+	mapping_kept := false
+	defer if !mapping_kept {
+		system.memory_unmap(mapping)
 	}
 
 	// The previous scanout stays on the screen and keeps its memory until
@@ -597,10 +623,16 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 	if framebuffer_resource_id != 0 {
 		resource_release(framebuffer_resource_id)
 	}
+	if framebuffer_mapping != nil {
+		system.memory_unmap(framebuffer_mapping)
+	}
 	if framebuffer_memory != 0 {
 		system.close(framebuffer_memory)
 	}
 	kept = true
+	mapping_kept = true
+	framebuffer_mapping = mapping
+	framebuffer_frames = 0
 	framebuffer_memory = handle
 	framebuffer_physical = physical
 	framebuffer_size = region_bytes
@@ -616,42 +648,145 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 	return .Ok, {0 = u64(resource_id), 1 = u64(active_scanout_id)}
 }
 
-// present_rect transfers a damaged rectangle to the host and flushes the scanout.
-present_rect :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu.Service_Status, values: [7]u64) {
-	PRESENT :: u32(virtio_gpu.Service_Command.Present_Rect)
-	if framebuffer_resource_id == 0 {
+// present_frame presents the rectangles of the present list of the
+// framebuffer: for each, a TRANSFER_TO_HOST_2D then a RESOURCE_FLUSH, all
+// given to the device before one notice, so that the device takes them in
+// one turn and the display shows the frame whole
+// (src/md/infrastructure/whole_frame.md, "The screen through the scanout
+// of the virtual GPU"). The list is copied out of the memory of the client
+// before its check. It answers when the device used every request.
+present_frame :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu.Service_Status, values: [7]u64) {
+	PRESENT :: u32(virtio_gpu.Service_Command.Present_Frame)
+	if framebuffer_resource_id == 0 || framebuffer_mapping == nil {
 		return .No_Framebuffer, errors.ring_fail(PRESENT, .Absent, .Region)
 	}
-	if command.values[0] > u64(max(u32)) || command.values[1] > u64(max(u32)) || command.values[2] > u64(max(u32)) || command.values[3] > u64(max(u32)) {
-		return .Out_Of_Range, errors.ring_fail(PRESENT, .Out_Of_Range, .None, 1)
+	count := command.values[0]
+	// Each rectangle is two requests of two descriptors each.
+	capacity := min(u64(virtio_gpu.PRESENT_RECTANGLE_CAPACITY), u64(control_queue.size) / 4)
+	if count == 0 || count > capacity {
+		return .Out_Of_Range, errors.ring_fail(PRESENT, .Bad_Value, .None, 1, i64(min(count, 1 << 62)), i64(capacity))
 	}
-	rect := virtio_gpu.Rect{
-		x      = u32(command.values[0]),
-		y      = u32(command.values[1]),
-		width  = u32(command.values[2]),
-		height = u32(command.values[3]),
+	list: [virtio_gpu.PRESENT_RECTANGLE_CAPACITY * virtio_gpu.PRESENT_RECTANGLE_BYTES]u8
+	list_offset, list_offset_ok := virtio_gpu.present_list_offset(framebuffer_width, framebuffer_height)
+	if !list_offset_ok {
+		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0)
 	}
-	if rect_prob := virtio_gpu.rect_fits_in_bounds(rect, framebuffer_width, framebuffer_height); rect_prob != .None {
-		return .Out_Of_Range, errors.ring_fail(PRESENT, .Out_Of_Range, .None, 1, i64(rect_prob))
-	}
-
-	byte_offset := (u64(rect.y) * u64(framebuffer_width) + u64(rect.x)) * 4
-	transfer_bytes, xfer_prob := virtio_gpu.transfer_to_host_2d_encode(framebuffer_resource_id, rect, byte_offset, framebuffer_width, framebuffer_height, request_buffer[:REQUEST_BUFFER_BYTES])
-	if xfer_prob != .None {
-		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(xfer_prob))
-	}
-	if _, ok := control_nodata("TRANSFER_TO_HOST_2D", transfer_bytes); !ok {
-		return .Device_Error, errors.ring_fail(PRESENT, .Device, .None, 0)
+	list_place := uintptr(framebuffer_mapping) + uintptr(list_offset)
+	intrinsics.mem_copy_non_overlapping(&list[0], rawptr(list_place), int(count) * virtio_gpu.PRESENT_RECTANGLE_BYTES)
+	rectangles, list_problem := virtio_gpu.present_list_decode(list[:], count, framebuffer_width, framebuffer_height)
+	if list_problem != .None {
+		return .Out_Of_Range, errors.ring_fail(PRESENT, .Out_Of_Range, .None, 1, i64(list_problem))
 	}
 
-	flush_bytes, flush_prob := virtio_gpu.resource_flush_encode(framebuffer_resource_id, rect, framebuffer_width, framebuffer_height, request_buffer[:REQUEST_BUFFER_BYTES])
-	if flush_prob != .None {
-		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(flush_prob))
+	// Encode every request of the batch before giving any chain to the
+	// queue, so a failed encode leaves no partial chains queued.
+	requests := 2 * int(count)
+	request_lengths: [2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY]int
+	for index in 0 ..< int(count) {
+		rectangle := rectangles[index]
+		byte_offset := (u64(rectangle.y) * u64(framebuffer_width) + u64(rectangle.x)) * 4
+		transfer := request_buffer[(2 * index) * BATCH_REQUEST_SLOT_BYTES:][:BATCH_REQUEST_SLOT_BYTES]
+		transfer_bytes, transfer_problem := virtio_gpu.transfer_to_host_2d_encode(framebuffer_resource_id, rectangle, byte_offset, framebuffer_width, framebuffer_height, transfer)
+		flush := request_buffer[(2 * index + 1) * BATCH_REQUEST_SLOT_BYTES:][:BATCH_REQUEST_SLOT_BYTES]
+		flush_bytes, flush_problem := virtio_gpu.resource_flush_encode(framebuffer_resource_id, rectangle, framebuffer_width, framebuffer_height, flush)
+		if transfer_problem != .None || flush_problem != .None {
+			return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(transfer_problem), i64(flush_problem))
+		}
+		request_lengths[2 * index] = transfer_bytes
+		request_lengths[2 * index + 1] = flush_bytes
 	}
-	if _, ok := control_nodata("RESOURCE_FLUSH", flush_bytes); !ok {
+	for slot in 0 ..< requests {
+		batch_request_give(slot, request_lengths[slot])
+	}
+	// The answers of an earlier batch are in the same slots: a device that
+	// writes a short answer must not leave an old Ok there.
+	intrinsics.mem_zero(response_buffer, requests * BATCH_RESPONSE_SLOT_BYTES)
+	// One publish of the index and one notice for the whole frame.
+	virtio.notify(&control_queue)
+	received, answered := batch_answers_wait(requests)
+	if !answered {
 		return .Device_Error, errors.ring_fail(PRESENT, .Device, .None, 0)
 	}
-	return .Ok, {}
+	for slot in 0 ..< requests {
+		answer: [BATCH_RESPONSE_SLOT_BYTES]u8
+		answer_bytes := int(min(received[slot], BATCH_RESPONSE_SLOT_BYTES))
+		if answer_bytes > 0 {
+			intrinsics.mem_copy_non_overlapping(&answer[0], &response_buffer[slot * BATCH_RESPONSE_SLOT_BYTES], answer_bytes)
+		}
+		decoded, problem := virtio_gpu.nodata_response_decode(answer[:answer_bytes])
+		if problem != .None {
+			if problem == .Device_Error_Response {
+				system.log_fact(.Error, Request_Refused{response_word = u64(decoded.command_type), request = request_field(slot % 2 == 0 ? "TRANSFER_TO_HOST_2D" : "RESOURCE_FLUSH")})
+			}
+			return .Device_Error, errors.ring_fail(PRESENT, .Device, .None, 0, i64(problem))
+		}
+	}
+	framebuffer_frames += 1
+	if framebuffer_frames == 1 {
+		system.log_fact(.Info, Frame_Batch_First{resource_id = u64(framebuffer_resource_id), rectangles = count, requests = u64(requests)})
+	}
+	return .Ok, {0 = framebuffer_frames}
+}
+
+// batch_request_give gives the device the request in the slot of the
+// request buffer, with its answer in the same slot of the response buffer:
+// the descriptors 2 * slot and 2 * slot + 1. The device sees it at the next
+// notice.
+batch_request_give :: proc "contextless" (slot: int, request_bytes: int) {
+	head := u16(2 * slot)
+	control_queue.descriptors[head] = {
+		address = request_physical + u64(slot * BATCH_REQUEST_SLOT_BYTES),
+		length  = u32(request_bytes),
+		flags   = virtio.DESCRIPTOR_NEXT,
+		next    = head + 1,
+	}
+	control_queue.descriptors[head + 1] = {
+		address = response_physical + u64(slot * BATCH_RESPONSE_SLOT_BYTES),
+		length  = BATCH_RESPONSE_SLOT_BYTES,
+		flags   = virtio.DESCRIPTOR_DEVICE_WRITES,
+	}
+	virtio.give(&control_queue, head)
+}
+
+// batch_answers_wait waits until the device used each of the requests of a
+// batch, up to the hang bound. A used chain that is not a head of the
+// batch, or a chain used twice, stops the service: the device then writes
+// where the service does not expect it.
+batch_answers_wait :: proc "contextless" (requests: int) -> (received: [2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY]u32, ok: bool) {
+	used_heads: [2 * virtio_gpu.PRESENT_RECTANGLE_CAPACITY]bool
+	used_count := 0
+	deadline := system.time() + DEVICE_ANSWER_BOUND_MILLISECONDS
+	for used_count < requests {
+		wait := system.wait_begin()
+		for used_count < requests {
+			item := virtio.used(&control_queue) or_break
+			if item.id % 2 != 0 || int(item.id / 2) >= requests || used_heads[item.id / 2] {
+				fail("the device answered a request of a frame that was not given")
+			}
+			slot := int(item.id / 2)
+			received[slot] = item.length
+			// Keep draining every chain of the batch even on a short answer:
+			// the caller passes received[slot] to nodata_response_decode,
+			// which refuses a short header.
+			if item.length < BATCH_RESPONSE_SLOT_BYTES {
+				system.log_fact(.Error, Request_Refused{response_word = u64(item.length), request = request_field("a short answer of a frame")})
+			}
+			used_heads[slot] = true
+			used_count += 1
+		}
+		if used_count == requests {
+			break
+		}
+		if virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {
+			fail("the device needs a reset")
+		}
+		if system.time() >= deadline {
+			system.log_fact(.Error, Device_Silent{bound = DEVICE_ANSWER_BOUND_MILLISECONDS, request = request_field("a frame batch")})
+			fail("the device did not answer a frame batch")
+		}
+		system.wait_end(&wait, deadline)
+	}
+	return received, true
 }
 
 // entry verifies PCI identity (vendor 0x1AF4, device 0x1050), starts the
@@ -711,8 +846,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				case .Attach_Framebuffer:
 					result, values = attach_framebuffer(command)
-				case .Present_Rect:
-					result, values = present_rect(command)
+				case .Present_Frame:
+					result, values = present_frame(command)
 				case .Venus_Info:
 					values = {
 						0 = u64(venus_context_id != 0),

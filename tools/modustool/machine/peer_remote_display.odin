@@ -44,8 +44,7 @@ PEER_DISPLAY_STRANGER_KEY_FIRST :: 0x7a
 VIEWER_KEY_MARK :: "{viewer key}"
 // The viewer frames of a small damage that the measure line takes, at most.
 PEER_DISPLAY_SMALL_FRAMES :: 5
-// A viewer frame of a small damage: at most this many pixels.
-PEER_DISPLAY_SMALL_PIXELS :: 64 * 64
+
 // The largest rectangle of a pointer picture: the pointer theme of the
 // system draws at the sizes 24 and 48. The comparison excludes no larger
 // rectangle, so a wrong place of the pointer cannot hide a part of the
@@ -121,6 +120,10 @@ Peer_Remote_Display :: struct {
 	small_bytes:       [PEER_DISPLAY_SMALL_FRAMES]u64,
 	small_times:       [PEER_DISPLAY_SMALL_FRAMES]time.Duration,
 	small_count:       int,
+	// The pixels of the last viewer frame and of the smallest one after the
+	// whole screen: a failure of the small frames names what came.
+	last_frame_pixels:     u64,
+	smallest_frame_pixels: u64,
 }
 
 peer_display_make :: proc(number: int) -> ^Peer_Remote_Display {
@@ -332,10 +335,14 @@ peer_display_record :: proc(state: ^Peer_Remote_Display, record: protocol.Servic
 		copy(state.shown[:pixel_count], state.pixels[:pixel_count])
 		state.shown_pointer = state.pointer
 		state.frames_taken += 1
+		state.last_frame_pixels = state.frame_pixels
+		if state.whole_measured && (state.smallest_frame_pixels == 0 || state.frame_pixels < state.smallest_frame_pixels) {
+			state.smallest_frame_pixels = state.frame_pixels
+		}
 		if !state.whole_measured && state.frame_pixels == u64(pixel_count) {
 			state.whole_measured = true
 			state.whole_bytes, state.whole_time = state.frame_bytes, spent
-		} else if state.frame_pixels > 0 && state.frame_pixels <= PEER_DISPLAY_SMALL_PIXELS && state.small_count < PEER_DISPLAY_SMALL_FRAMES {
+		} else if state.frame_pixels > 0 && state.frame_pixels <= protocol.small_damage_pixels(state.screen.width, state.screen.height) && state.small_count < PEER_DISPLAY_SMALL_FRAMES {
 			state.small_bytes[state.small_count] = state.frame_bytes
 			state.small_times[state.small_count] = spent
 			state.small_count += 1
@@ -844,9 +851,10 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 		count := state.small_count
 		bytes := state.small_bytes
 		times := state.small_times
+		frames, last_pixels, smallest_pixels, screen := state.frames_taken, state.last_frame_pixels, state.smallest_frame_pixels, state.screen
 		sync.mutex_unlock(&state.lock)
 		if count < PEER_DISPLAY_SMALL_FRAMES {
-			return false, fmt.tprintf("%d viewer frames of a small damage came, not %d", count, PEER_DISPLAY_SMALL_FRAMES)
+			return false, fmt.tprintf("%d viewer frames of a small damage (at most %d pixels) came, not %d; the viewer took %d viewer frames in all, the smallest after the whole screen of %d pixels, the last of %d", count, protocol.small_damage_pixels(screen.width, screen.height), PEER_DISPLAY_SMALL_FRAMES, frames, smallest_pixels, last_pixels)
 		}
 		slice.sort(bytes[:])
 		slice.sort(times[:])

@@ -428,3 +428,21 @@ protocol_v2_records_refuse_edges_and_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, input_echo_check(&tracker, 10, 10), Record_Problem.None)
 	testing.expect_value(t, tracker.last_echo_count, u64(10))
 }
+
+// A small damage is a share of the screen: the clock of the bar at the
+// scale 1.25 (its viewer frames hold 4824 pixels) and at the scale 2.0 (304
+// by 32 pixels) fits the reference screen and a screen of 1280 by 800; a
+// window of 400 by 300 does not. No screen has no small damage, and the
+// largest sizes do not wrap.
+@(test)
+a_small_damage_is_a_share_of_the_screen :: proc(t: ^testing.T) {
+	testing.expect_value(t, small_damage_pixels(1920, 1080), u64(32400))
+	testing.expect_value(t, small_damage_pixels(1280, 800), u64(16000))
+	testing.expect(t, 4824 <= small_damage_pixels(1920, 1080))
+	testing.expect(t, 304 * 32 <= small_damage_pixels(1920, 1080))
+	testing.expect(t, 304 * 32 <= small_damage_pixels(1280, 800))
+	testing.expect(t, 400 * 300 > small_damage_pixels(1920, 1080))
+	testing.expect_value(t, small_damage_pixels(0, 1080), u64(0))
+	testing.expect_value(t, small_damage_pixels(1920, 0), u64(0))
+	testing.expect_value(t, small_damage_pixels(max(u32), max(u32)), u64(max(u32)) * u64(max(u32)) / SMALL_DAMAGE_SCREEN_DIVISOR)
+}

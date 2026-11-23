@@ -178,7 +178,13 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // (start_policy_scenario.odin), or "" for a new copy. serial_input: the
 // FIFO that is the input of the serial line of a test machine, which the
 // caller made and opened (serial_input_linux.odin), or "" for none.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None) -> (command: []string, ok: bool) {
+// gpu_scanout gives a test machine the display device of the machine of a
+// person, the VirtIO-GPU with its VGA part (`-vga virtio`): the compositor
+// shows the screen through its scanout
+// (src/md/infrastructure/whole_frame.md, "The screen through the scanout
+// of the virtual GPU"). The other test machines keep the standard VGA and
+// its page flip, which the main test checks.
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None, gpu_scanout := false) -> (command: []string, ok: bool) {
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -402,6 +408,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// No display device: the firmware finds no graphics output, and the
 		// kernel gives the root service no framebuffer.
 		append(&list, "-vga", "none")
+	} else if gpu_scanout || test_output == "" {
+		// The machine of a person, and the part gpu_scanout: the firmware
+		// and the boot program draw on the VGA part, then the compositor
+		// takes the scanout. virtio-gpu-pci with no VGA has a graphics
+		// output with no framebuffer in the firmware: no screen at all.
+		append(&list, "-vga", "virtio")
 	}
 	if sound_output != "" {
 		// The sound device writes each frame that its stream gives to a wave

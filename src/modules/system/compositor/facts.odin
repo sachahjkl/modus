@@ -851,6 +851,31 @@ Two_Screen_Pages :: struct {}
 @(log_fact = "compositor: one screen page: each frame is written into the screen page that the display shows")
 One_Screen_Page :: struct {}
 
+// The screen is the scanout of the virtual GPU: each frame goes to the
+// device in one batch of its damage rectangles
+// (src/md/infrastructure/whole_frame.md).
+@(log_fact = "compositor: the screen is the scanout of the virtual GPU, resource {resource_id} at {width}x{height}: each frame goes to the device in one batch of its damage rectangles")
+Screen_Is_Gpu_Scanout :: struct {
+	width:       u64,
+	height:      u64,
+	resource_id: u64,
+}
+
+// gpu_device answered, but the compositor did not take its scanout: the
+// status of the step that failed. The screen pages stay.
+@(log_fact = "compositor: the scanout of the virtual GPU is not taken (status {status}): the screen pages show the frames")
+Gpu_Scanout_Not_Taken :: struct {
+	status: u64,
+}
+
+// A present of the scanout was refused, or had no answer in the hang
+// bound: the screen pages take the frames from a whole frame on.
+@(log_fact = "compositor: the scanout of the virtual GPU ended after {presents} frames (status {status}): the screen pages take the frames")
+Gpu_Present_Refused :: struct {
+	status:   u64,
+	presents: u64,
+}
+
 // The context gives no framebuffer.
 @(log_fact = "compositor: no framebuffer")
 No_Framebuffer :: struct {}

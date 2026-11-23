@@ -1219,6 +1219,7 @@ Machine_Options :: struct {
 	without_ps2_controller: bool,
 	entropy_device_silent:  bool,
 	no_network_device: bool, // The machine has no network device (network_scenario.odin).
+	gpu_scanout: bool, // The display device is the VirtIO-GPU with its VGA part, as on the machine of a person (gpu_scanout_scenario.odin).
 	data_disk_without_ioevent: bool, // The data disk has no ioevent file (machine_command).
 	without_pit:    bool, // No 8254: `-machine q35,pit=off` (src/md/features/missing_hardware.md).
 	// The variable store of the firmware that the machines of a part share,
@@ -1346,7 +1347,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet, options.gpu_scanout)
 		if !ok {
 			return false
 		}

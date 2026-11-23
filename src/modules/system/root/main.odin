@@ -999,6 +999,12 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	if console_renderer != .Desktop_Terminal {
 		return .Bad_State
 	}
+	// The address of the framebuffer of the firmware is in the boot record.
+	// With no boot record, the address is 0: no page flip, and the GPU
+	// whose BAR holds the screen is sized as any device.
+	if _, inspect_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&screen_data.boot)), size_of(screen_data.boot)); inspect_status == .Ok {
+		firmware_framebuffer_address = screen_data.boot.framebuffer_address
+	}
 	_ = gpu_driver_start()
 	show("the root service starts the compositor", .Running, .Compositor)
 	served := part_place_take()
@@ -1018,14 +1024,8 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	context_grants: system.Context_Grants
 	// The two screen pages of the standard VGA and its registers, in place
 	// of the framebuffer of the firmware: the compositor then puts each
-	// frame on the screen by a page flip. The address of the framebuffer is
-	// in the boot record. With no boot record, the address is 0: no page
-	// flip.
-	framebuffer_address: u64
-	if _, inspect_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&screen_data.boot)), size_of(screen_data.boot)); inspect_status == .Ok {
-		framebuffer_address = screen_data.boot.framebuffer_address
-	}
-	pages_memory, display_registers := display_open(framebuffer_address, root_screen_values[0], root_screen_values[1], root_screen_values[2])
+	// frame on the screen by a page flip.
+	pages_memory, display_registers := display_open(firmware_framebuffer_address, root_screen_values[0], root_screen_values[1], root_screen_values[2])
 	defer if pages_memory != 0 {
 		system.close(pages_memory) // The compositor holds its own handle.
 	}
