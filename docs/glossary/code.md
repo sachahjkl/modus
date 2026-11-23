@@ -1063,3 +1063,13 @@ An angle in code is a value in turns, and its type or its name says so: `angle_t
 The design: `src/md/data/angles_in_turns.md`.
 
 Do not use: radian, degree (for an angle in code).
+
+### Inline capacity
+
+An inline capacity is a fast path sized for the common case, with a slower path past it that goes on with no refusal.
+
+It holds the usual amount in place (in a thread, a record or a fixed table) and moves to the next tier when the use passes it: an arena, a structure that grows, the disk. Its size comes from a measure of the observed use. Tests cross each tier, and each move to a slower tier is counted. Example: a thread holds 64 words of a wait in place; past them, its wait room in the budget of its process holds the rest. It is not a limit: no call is refused because the inline place is full.
+
+The rule: `AGENTS.md`, "Work".
+
+Do not use: small buffer, fixed capacity, cap (for this).

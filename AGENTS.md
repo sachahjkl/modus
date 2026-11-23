@@ -78,6 +78,18 @@ Each kind of content has one place. The intent of a design is in `src/md`. A gui
 - A word of transport (a value of the context, a field of a record, an argument of an operation, a word of a ring) becomes its enum at one place only, at the border, and that place refuses a value that names no member. Past the border, the code passes the enum, never the word, and each `switch` on it is checked whole by the compiler (no `#partial` on a closed set, no default case that turns an unknown value into a known one).
 - Angles are in turns (1.0 is a whole circle, 0.25 a right angle), never in radians or degrees, and the type or the name says so (`angle_turns`). The trigonometric routines of the system (`modus:trigonometry`) take turns. A derivative of a function of an angle in turns gains a factor of 2π: code that takes a formula of calculus from a book must add it. Host code that calls `core:math`, which takes radians, converts at that one call, with a comment (`src/md/data/angles_in_turns.md`).
 - A constant stays a constant only when it is a quantity or a place: a size, a capacity, a limit, an address, an index in a fixed array (`CONTEXT_LOG`). A guide names an enum and its members, not the numbers.
+- A bound that refuses a real use is a fault, not a limit to keep: fix it in the current work, never defer it to the roadmap.
+- Each bound in the code is one of four kinds, and its comment or intent file names the kind and its reason:
+  - **Computed**: it follows from the machine or the budget (the memory at boot, the stated budget of a process).
+  - **Plan value**: a value of the plan, with a default and the reason of that default written beside it.
+  - **Format property**: a fact of a format, a protocol or the hardware (a name of 255 bytes, a page of 2 MiB), written as such.
+  - **Inline capacity**: a fast path sized for the common case, with a slower path past it (docs/glossary/code.md, "Inline capacity").
+- A number with none of these four reasons is refused. A default with no stated reason is such a number.
+- An inline capacity is a threshold of speed, never a refusal:
+  - Past it, the code moves to the next tier (an arena, a structure that grows, the disk) and goes on. It never answers "full" because the inline place is full.
+  - Its size comes from a measure of the observed use, and the comment names that measure.
+  - Tests cross each tier: the capacity, one past it, and the next tier.
+  - Each move to a slower tier is counted and visible in a measure or a fact, so that a process that lives on the slow path shows.
 - Pictures: each picture that you produce and view goes in `~/Projects/kernel-devlog`, in a dated folder. Never delete a folder of the devlog.
 - A test never depends on the speed of the hardware: a test checks a condition, and a time in it only ends a hang. Use the one hang bound (`HANG_BOUND` in the tool, `system.TEST_HANG_BOUND_MILLISECONDS` in a module), on a stall where the case can count its progress. Never assert a speed, a duration or a rate: print it as a measure. A behaviour in time is checked by order and by the clock of the system, with no upper bound but the hang bound. Read `docs/TOOLS.md`, "The bounds of the tests".
 - A test that fails once is read to its cause before it is called a flake.
