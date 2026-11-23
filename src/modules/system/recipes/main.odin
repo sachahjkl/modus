@@ -16,19 +16,19 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding recipes service process: 1024
-// pages of the service (the index of its local store, its staging, the
-// sandbox of a build), and one build at a time. A native C build holds the
-// memory objects of its source, of its text and of its module, each of the
-// size that the build needs, and one call host, the compiler then the
-// assembler, which takes the rest (c_builder_host_pages). C_BUILD_PAGES is
-// the build of the amalgamation of SQLite, about 9 MB of C: the tokens and
-// the tree of chibicc take about 40 bytes of memory for each byte of C, and
-// the text about 8; a smaller budget that the root service gives fails a
-// build that passes it with the error record of the budget.
-C_BUILD_PAGES :: 131072
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 132096, processes = 2, threads = 2}
-#assert(132096 == C_BUILD_SERVICE_PAGES_KEPT + C_BUILD_PAGES)
+// The budget that the service asks for: 1024 pages of the service (the
+// index of its local store, its staging, the sandbox of a build), and one
+// typical native C build: a program of the size of Lua, about 700 KB of C,
+// at C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE, with its call host. A budget
+// reserves its pages, so the service states a typical build, not the
+// largest. The starter grants up to a share of the machine; each build
+// plans its memory from what the grant holds at the call (c_build_plan),
+// so a larger grant runs a build of SQLite, and a smaller one refuses it
+// with the pages that it needs.
+TYPICAL_C_BUILD_PAGES :: 9216
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10240, processes = 2, threads = 2}
+#assert(10240 == C_BUILD_SERVICE_PAGES_KEPT + TYPICAL_C_BUILD_PAGES)
+#assert(TYPICAL_C_BUILD_PAGES * system.PAGE_SIZE >= 700 * 1024 * C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE + system.CALL_HOST_PAGES * system.PAGE_SIZE)
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -267,6 +267,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	store_port, store_open := storage_port.bind(ctx)
 	recipes_core.state_init(&service_state, store_port)
+	// The retention rule of the store never removes an input of a
+	// registered recipe.
+	service_state.registry = &service_registry
 	builder_start_init(ctx)
 	c_builder_bind(ctx)
 	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0})

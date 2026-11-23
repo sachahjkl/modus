@@ -334,9 +334,11 @@ fetch :: proc "contextless" (path: string, name: string, error: ^errors.Error_Re
 		return 0, {}, network_failure(error, ERROR_ANSWER, .Too_Long, .Bytes, path, "the answer has more bytes than its Content-Length")
 	}
 	stream: module_files_core.File_Stream
-	module_files_core.file_stream_begin(&stream, &client_file_store, name)
+	if status := module_files_core.file_stream_begin(&stream, &client_file_store, name); status != .Ok {
+		return 0, {}, store_failure(error, &stream.store_error, status, .File, name)
+	}
 	// Each way out before the end leaves the file before under the nickname.
-	defer module_files_core.file_stream_abandon(&stream)
+	defer file_stream_abandon_reported(&stream)
 	if status := module_files_core.file_stream_piece(&stream, rest); status != .Ok {
 		return 0, {}, store_failure(error, &stream.store_error, status, .File, name)
 	}
@@ -378,6 +380,65 @@ fetch :: proc "contextless" (path: string, name: string, error: ^errors.Error_Re
 		return 0, {}, store_failure(error, &stream.store_error, status, .File, name)
 	}
 	return size, hash, 0
+}
+
+// The staging objects that one pass of staging_objects_remove removes at
+// most, and the pages of the listing that it reads.
+STAGING_REMOVE_BATCH :: 16
+
+// staging_objects_remove removes each staging object of the store: a stop
+// of this service between the clone and the remove of a write, or a remove
+// that failed, leaves one, which no load reads and which holds blocks. The
+// service runs it at its start, when no write of its own runs, and the
+// listing runs it too. A staging object that the remove refuses stays, and
+// the listing shows it. It gives the count of staging objects that stay.
+staging_objects_remove :: proc "contextless" () -> (kept: int) {
+	rows: [16]storage.Listed
+	names: [16 * 64]u8
+	after: [64]u8
+	after_length := 0
+	for _ in 0 ..< LIST_PAGE_LIMIT {
+		page, status := storage.list(&store_client, storage.ROOT, string(after[:after_length]), rows[:], names[:])
+		if status != .Ok || len(page) == 0 {
+			return kept
+		}
+		found: [STAGING_REMOVE_BATCH][64]u8
+		found_lengths: [STAGING_REMOVE_BATCH]int
+		found_count := 0
+		for item in page {
+			if item.name_offset < 0 || item.name_count <= 0 || item.name_count > i64(len(after)) || item.name_offset > i64(len(names)) - item.name_count {
+				return kept
+			}
+			entry_name := string(names[item.name_offset:][:item.name_count])
+			after_length = copy(after[:], entry_name)
+			if disk_process.staging_name_is(entry_name) && found_count < len(found) {
+				found_lengths[found_count] = copy(found[found_count][:], entry_name)
+				found_count += 1
+			}
+		}
+		// The names are copied before the removes: a remove changes the
+		// listing, and the next page starts after the last name read.
+		for index in 0 ..< found_count {
+			name := string(found[index][:found_lengths[index]])
+			store_error: errors.Error_Record
+			if generation, removed := storage.remove(&store_client, storage.ROOT, name, &store_error); removed != .Ok || generation < 0 {
+				kept += 1
+				continue
+			}
+			system.log_fact(.Info, Staging_Removed{file_name = value_kinds.text_field(name, FILE_NAME_FIELD_BYTES)})
+		}
+	}
+	return kept
+}
+
+// file_stream_abandon_reported abandons a write that stops, and writes the
+// fact of pending changes that the storage service did not drop: they stay
+// held on this connection until the next write of the nickname drops them.
+file_stream_abandon_reported :: proc "contextless" (stream: ^module_files_core.File_Stream) {
+	module_files_core.file_stream_abandon(stream)
+	if stream.pending_kept {
+		system.log_fact(.Warning, Staging_Pending_Kept{nickname = value_kinds.module_name_field(stream.nickname)})
+	}
 }
 
 // store_failure writes the fact of a refusal of the storage service, and
@@ -528,6 +589,9 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
 		return errors.fail(error, ERROR_STORE, .Refused, .Store)
 	}
+	// A staging object that a stop left goes first; one that stays is a
+	// row of the listing, so the listing hides nothing that holds blocks.
+	staging_objects_remove()
 	rows: [16]storage.Listed
 	names: [16 * 64]u8
 	after: [64]u8
@@ -555,10 +619,9 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 			}
 			entry_name := string(names[item.name_offset:][:item.name_count])
 			after_length = copy(after[:], entry_name)
-			// The disk grant table, the debug object of a module file and
-			// the staging object of a write are objects of the store, and
-			// no module file.
-			if entry_kind != .Object || entry_name == disk_process.TABLE_OBJECT_NAME || disk_process.debug_object_name_is(entry_name) || disk_process.staging_name_is(entry_name) {
+			// The disk grant table and the debug object of a module file are
+			// objects of the store, and no module file.
+			if entry_kind != .Object || entry_name == disk_process.TABLE_OBJECT_NAME || disk_process.debug_object_name_is(entry_name) {
 				continue
 			}
 			digits: [disk_process.HASH_DIGITS]u8
@@ -607,6 +670,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if store_client, opened = storage.open(ctx); !opened {
 		fail("no store: the root service gave no connection to the store module_files")
 	}
+	staging_objects_remove()
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")

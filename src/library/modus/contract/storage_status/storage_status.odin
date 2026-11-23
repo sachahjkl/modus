@@ -5,6 +5,8 @@
 // (value_kinds.Contract_Enum).
 package storage_status
 
+import block "modus:contract/block"
+
 // The result of a call of a client of the storage service. The values
 // cross the log in a fact: each value is explicit.
 Status :: enum u8 {
@@ -14,15 +16,18 @@ Status :: enum u8 {
 	Damaged   = 3, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
 	Failed    = 4, // The export answered a negative number: the error record says why.
 	Too_Small = 5, // The bytes do not fit in the buffer of the caller: the count of the bytes is the result.
-	No_Answer = 6, // The storage service gave no answer before ANSWER_BOUND_MILLISECONDS: the connection ends, and each later call gives Gone.
+	No_Answer = 6, // The storage service gave no answer before ANSWER_BOUND_MILLISECONDS. The next call waits for that answer first, then runs.
 }
 
 // The bound of the wait for the answer of one call of the storage service.
-// A commit of the largest pending changes of a connection hashes and
-// writes a few MiB, which a working disk does in well under a second: the
-// bound only ends a hang of the service, so that its client gives a status
-// and goes on instead of waiting for ever.
-ANSWER_BOUND_MILLISECONDS :: 60_000
+// A call that needs the disk waits at most the bound of the disk
+// (block.NO_ANSWER_BOUND_MILLISECONDS), then the storage service answers
+// Device: so a client waits twice as long, and a silent disk gives the
+// client the answer Device, never No_Answer. Past this bound the storage
+// service itself does not answer: the client gives a status and goes on
+// instead of waiting for ever.
+ANSWER_BOUND_MILLISECONDS :: 2 * block.NO_ANSWER_BOUND_MILLISECONDS
+#assert(ANSWER_BOUND_MILLISECONDS > block.NO_ANSWER_BOUND_MILLISECONDS)
 
 // The name of each member, as Status names it.
 @(rodata)

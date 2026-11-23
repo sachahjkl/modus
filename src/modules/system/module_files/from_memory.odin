@@ -86,7 +86,11 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 	// the hash names the bytes that the store holds.
 	count := int(size)
 	stream: module_files_core.File_Stream
-	module_files_core.file_stream_begin(&stream, &client_file_store, name)
+	if status := module_files_core.file_stream_begin(&stream, &client_file_store, name); status != .Ok {
+		system.memory_unmap(address)
+		return store_failure(error, &stream.store_error, status, .File, name)
+	}
+	defer file_stream_abandon_reported(&stream)
 	for stream.written < count {
 		taken := min(len(piece), count - stream.written)
 		intrinsics.mem_copy_non_overlapping(&piece[0], rawptr(uintptr(address) + uintptr(stream.written)), taken)

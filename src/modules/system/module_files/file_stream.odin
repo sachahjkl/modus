@@ -30,6 +30,12 @@ client_file_store := module_files_core.File_Store {
 		return status
 	},
 	drop_pending = proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> storage_status.Status {
-		return storage.drop_pending(&store_client, storage.ROOT, name, error)
+		status := storage.drop_pending(&store_client, storage.ROOT, name, error)
+		// No pending change, or no such object: nothing is held.
+		if status == .Failed && error.kind == i64(errors.Kind.Absent) && (error.unit == i64(errors.Unit.Pending) || error.unit == i64(errors.Unit.Objects)) {
+			error^ = {}
+			return .Ok
+		}
+		return status
 	},
 }

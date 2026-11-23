@@ -9,9 +9,11 @@ import "modus:contract/errors"
 import "modus:contract/storage_status"
 import "modus:disk_process"
 
-// A store in memory with the semantics of the calls of a file stream: the
-// pending changes of an object are apart from its committed bytes until a
-// commit, a drop forgets them, and a clone makes a version of its target.
+// A store in memory with the semantics of the calls of a file stream, as
+// the storage service has them: the pending changes of an object are apart
+// from its committed bytes until a commit, a drop forgets them, a remove
+// removes the committed object and leaves its pending changes held, and a
+// clone makes a version of its target.
 Fake_Store :: struct {
 	committed:     map[string][dynamic]u8,
 	pending:       map[string][dynamic]u8,
@@ -20,6 +22,7 @@ Fake_Store :: struct {
 	drops:         int,
 	writes:        int,
 	write_failing: int, // The write_range that fails, counted from 1; 0: none.
+	drop_refused:  bool, // Each drop_pending is refused, and drops nothing.
 	context_of_test: runtime.Context, // The calls of the stream are contextless: the maps take the allocator of the test.
 }
 
@@ -98,12 +101,15 @@ fake_file_store :: proc(store: ^Fake_Store) -> File_Store {
 			store := fake_of(user)
 			context = store.context_of_test
 			delete_key(&store.committed, name)
-			delete_key(&store.pending, name)
 			return .Ok
 		},
 		drop_pending = proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> storage_status.Status {
 			store := fake_of(user)
 			context = store.context_of_test
+			if store.drop_refused {
+				error^ = errors.error_make(.Refused, .Pending)
+				return .Failed
+			}
 			store.drops += 1
 			delete_key(&store.pending, name)
 			return .Ok
@@ -125,7 +131,9 @@ bytes_of :: proc(count: int, seed: u8) -> []u8 {
 @(private = "file")
 stream_whole :: proc(store: ^File_Store, nickname: string, bytes: []u8, head: int) -> (hash: blake3.Hash, status: storage_status.Status) {
 	stream: File_Stream
-	file_stream_begin(&stream, store, nickname)
+	if status = file_stream_begin(&stream, store, nickname); status != .Ok {
+		return
+	}
 	if status = file_stream_piece(&stream, bytes[:head]); status != .Ok {
 		return
 	}
@@ -180,7 +188,7 @@ the_head_of_the_answer_shifts_the_steps :: proc(t: ^testing.T) {
 	fake: Fake_Store
 	store := fake_file_store(&fake)
 	stream: File_Stream
-	file_stream_begin(&stream, &store, "hello")
+	testing.expect_value(t, file_stream_begin(&stream, &store, "hello"), storage_status.Status.Ok)
 	bytes := bytes_of(2 * COMMIT_STEP_BYTES, 3)
 	testing.expect_value(t, file_stream_piece(&stream, bytes[:100]), storage_status.Status.Ok)
 	at := 100
@@ -214,7 +222,7 @@ a_write_that_stops_keeps_the_file_before :: proc(t: ^testing.T) {
 
 	// The body ends after one step and one piece more.
 	stream: File_Stream
-	file_stream_begin(&stream, &store, "hello")
+	testing.expect_value(t, file_stream_begin(&stream, &store, "hello"), storage_status.Status.Ok)
 	new_bytes := bytes_of(COMMIT_STEP_BYTES + WRITE_PIECE, 1)
 	for at := 0; at < len(new_bytes); at += WRITE_PIECE {
 		testing.expect_value(t, file_stream_piece(&stream, new_bytes[at:at + WRITE_PIECE]), storage_status.Status.Ok)
@@ -225,10 +233,10 @@ a_write_that_stops_keeps_the_file_before :: proc(t: ^testing.T) {
 	_, staging_left := fake.committed[staging_of("hello")]
 	testing.expect(t, !staging_left)
 	testing.expect_value(t, len(fake.pending), 0)
-	testing.expect_value(t, fake.drops, 1)
+	drops := fake.drops
 	// A second abandon does nothing.
 	file_stream_abandon(&stream)
-	testing.expect_value(t, fake.drops, 1)
+	testing.expect_value(t, fake.drops, drops)
 
 	// The third write_range is refused: its status and the error record of
 	// the store come back, and nothing changed under the nickname.
@@ -238,7 +246,6 @@ a_write_that_stops_keeps_the_file_before :: proc(t: ^testing.T) {
 	testing.expect_value(t, status, storage_status.Status.Failed)
 	testing.expect(t, string(fake.committed["hello"][:]) == string(old))
 	testing.expect_value(t, len(fake.pending), 0)
-	testing.expect_value(t, fake.drops, 2)
 }
 
 // A shorter file over a longer one, and over a longer staging object that
@@ -285,4 +292,42 @@ the_total_deadline_follows_the_length :: proc(t: ^testing.T) {
 	testing.expect_value(t, receive_total_deadline(0, RECEIVE_LEAST_BYTES_PER_SECOND), u64(RECEIVE_START_MILLISECONDS + 1000))
 	testing.expect_value(t, receive_total_deadline(0, disk_process.FILE_BYTES_LIMIT), u64(RECEIVE_START_MILLISECONDS + 1_024_000))
 	testing.expect_value(t, receive_total_deadline(5, 1), u64(5 + RECEIVE_START_MILLISECONDS))
+}
+
+// A drop that the store refuses: the abandon reports it, the pending
+// changes stay held, a remove does not drop them, and the next write of
+// the nickname drops them before it writes. A drop refused at the start of
+// a write stops the write: it never writes over pending changes.
+@(test)
+a_refused_drop_is_reported_then_dropped_by_the_next_write :: proc(t: ^testing.T) {
+	fake: Fake_Store
+	store := fake_file_store(&fake)
+	old := bytes_of(WRITE_PIECE, 3)
+	_, status := stream_whole(&store, "hello", old, 0)
+	testing.expect_value(t, status, storage_status.Status.Ok)
+
+	stream: File_Stream
+	testing.expect_value(t, file_stream_begin(&stream, &store, "hello"), storage_status.Status.Ok)
+	testing.expect_value(t, file_stream_piece(&stream, bytes_of(WRITE_PIECE, 4)), storage_status.Status.Ok)
+	fake.drop_refused = true
+	file_stream_abandon(&stream)
+	testing.expect(t, stream.pending_kept)
+	_, held := fake.pending[staging_of("hello")]
+	testing.expect(t, held, "a remove leaves the pending changes held")
+	testing.expect(t, string(fake.committed["hello"][:]) == string(old))
+
+	// The drop is refused again: the next write does not start.
+	again: File_Stream
+	testing.expect_value(t, file_stream_begin(&again, &store, "hello"), storage_status.Status.Failed)
+	testing.expect(t, !again.open)
+	testing.expect_value(t, again.store_error.kind, i64(errors.Kind.Refused))
+
+	// The store drops again: the next write drops the held changes first,
+	// and writes the new file whole.
+	fake.drop_refused = false
+	new_bytes := bytes_of(WRITE_PIECE + 7, 5)
+	_, status = stream_whole(&store, "hello", new_bytes, 0)
+	testing.expect_value(t, status, storage_status.Status.Ok)
+	testing.expect(t, string(fake.committed["hello"][:]) == string(new_bytes))
+	testing.expect_value(t, len(fake.pending), 0)
 }

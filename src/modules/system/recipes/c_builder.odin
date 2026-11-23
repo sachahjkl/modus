@@ -114,6 +114,20 @@ c_builder_bind :: proc "contextless" (ctx: ^system.Context) {
 // of a build runs: its tables, its stack and its connections.
 C_BUILD_SERVICE_PAGES_KEPT :: 1024
 
+// The memory of a build for each byte of its source: the tokens and the
+// tree of chibicc take about 40 bytes for each byte of C, and the text of
+// the assembly about 8. A build plans its memory from it and from what the
+// grant of this service holds at the call (c_build_plan).
+C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE :: 48
+
+// c_build_plan gives the pages that a build of a source of source_bytes
+// needs, and if the pages that the budget holds now pay them with the
+// pages that the service keeps.
+c_build_plan :: proc "contextless" (budget_pages: u64, source_bytes: u64) -> (needed: u64, fits: bool) {
+	needed = (source_bytes * C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE + system.PAGE_SIZE - 1) / system.PAGE_SIZE + system.CALL_HOST_PAGES
+	return needed, budget_pages >= C_BUILD_SERVICE_PAGES_KEPT && budget_pages - C_BUILD_SERVICE_PAGES_KEPT >= needed
+}
+
 // c_builder_host_pages gives the pages of the budget of a call host of a
 // build: what the budget of this service still holds, after the memory
 // objects of the build, less the pages that it keeps. The compiler and the
@@ -233,6 +247,19 @@ c_builder_call_sized :: proc "contextless" (work: ^C_Build_Work, file: []u8, nam
 // error record in the work, and gives ok false: no realisation is kept.
 c_builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, staging: []u8, user_data: rawptr) -> (payload: []u8, ok: bool) {
 	work := (^C_Build_Work)(user_data)
+	// The memory of the build comes from what the grant holds now: a build
+	// that it cannot pay is refused before any call host starts, with the
+	// pages that it needs and the pages that are left.
+	own, budget_status := system.budget_read()
+	if budget_status != .Ok {
+		c_build_fail(work, .Compiler_Start, errors.error_make(.Refused, .None, 0, 0, 0, i64(budget_status)))
+		return nil, false
+	}
+	if needed, fits := c_build_plan(own.pages, u64(len(work.source))); !fits {
+		left := own.pages > C_BUILD_SERVICE_PAGES_KEPT ? own.pages - C_BUILD_SERVICE_PAGES_KEPT : 0
+		c_build_fail(work, .Compiler_Start, errors.error_make(.Budget, .Pages, 0, 0, i64(needed), i64(left)))
+		return nil, false
+	}
 	// The source goes through its memory object, which the call host maps
 	// with Read only; the text memory with the rights of the description.
 	compile_arguments := [2]isolated.Argument{{table = {records = work.source, count = u64(len(work.source)), memory_handle = u64(work.source_memory)}}, {}}

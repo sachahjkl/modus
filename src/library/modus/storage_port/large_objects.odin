@@ -59,6 +59,15 @@ write_large :: proc "contextless" (port: ^pr.Private_Store_Port, name: string, d
 	}
 	client := (^storage.Client)(port.user)
 	error: errors.Error_Record
+	// Pending changes that an earlier failed write could not drop go first:
+	// a write never starts over them. A write after writes that dropped
+	// their changes makes no call more.
+	if pending_kept {
+		if !pending_drop(client, string(pending_kept_name[:pending_kept_length])) {
+			return .Failed
+		}
+		pending_kept = false
+	}
 	// An object that fits the call region is one write: one call, one
 	// commit.
 	if len(data) <= WRITE_PIECE_BYTES {
@@ -88,11 +97,35 @@ write_large :: proc "contextless" (port: ^pr.Private_Store_Port, name: string, d
 	return .Ok
 }
 
+// write_large_abandon ends a write that failed: it drops its pending
+// changes. A refused drop leaves them held on this connection, and the
+// next write of the name drops them before it writes.
 @(private = "file")
 write_large_abandon :: proc "contextless" (client: ^storage.Client, name: string) -> pr.Private_Store_Status {
-	ignored: errors.Error_Record
-	_ = storage.drop_pending(client, storage.ROOT, name, &ignored)
+	if !pending_drop(client, name) {
+		pending_kept = true
+		pending_kept_length = copy(pending_kept_name[:], name)
+	}
 	return .Failed
+}
+
+// The object of a failed write whose pending changes the storage service
+// did not drop: the next write drops them first. One client of the private
+// store serves each process (store_client).
+@(private = "file")
+pending_kept: bool
+@(private = "file")
+pending_kept_name: [64]u8
+@(private = "file")
+pending_kept_length: int
+
+// pending_drop drops the pending changes of this connection on the object
+// name: true when it dropped them, or the object had none.
+@(private = "file")
+pending_drop :: proc "contextless" (client: ^storage.Client, name: string) -> bool {
+	error: errors.Error_Record
+	status := storage.drop_pending(client, storage.ROOT, name, &error)
+	return status == .Ok || status == .Failed && error.kind == i64(errors.Kind.Absent) && (error.unit == i64(errors.Unit.Pending) || error.unit == i64(errors.Unit.Objects))
 }
 
 // The procedures of the port over the client of this process.

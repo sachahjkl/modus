@@ -509,6 +509,13 @@ recipe_verify_cache_realisation :: proc "contextless" (
 	return {}, .Malformed_Output
 }
 
+// The bytes of the output of a recipe that the recipes service keeps and
+// gives: one object of a cache, as a realisation is shared through a
+// cache. The protocol of the cache carries a larger object in frames of
+// 1 MiB checked against its BLAKE3 root (src/md/features/recipes.md, "The
+// local store"): with it this bound is the bound of that protocol.
+RECIPE_OUTPUT_BYTES_MOST :: object_cache.MAX_OBJECT_PAYLOAD_BYTES
+
 // recipe_hash_output computes the content-addressed digest of a builder's
 // output bytes according to output_kind (domain-separated tree_hash for Tree,
 // plain BLAKE3 for Blob).

@@ -26,6 +26,7 @@ package recipes_core
 
 import "modus:contract/blake3"
 import "modus:contract/object_cache"
+import "modus:contract/byte_order"
 import pr "modus:contract/plans_recipes"
 
 // The entries of the index of the local store in memory. A full index
@@ -39,7 +40,7 @@ REALISATION_INDEX_CAPACITY :: 1024
 // module comes from its call host in a memory object of its own size. The
 // bytes of one output object of the store: one object of a cache.
 STAGING_BYTES :: 65536
-OUTPUT_BYTES_MOST :: object_cache.MAX_OBJECT_PAYLOAD_BYTES
+OUTPUT_BYTES_MOST :: pr.RECIPE_OUTPUT_BYTES_MOST
 
 // The bytes of one read of an object of the store: the call region of the
 // storage service holds them with the arguments.
@@ -142,6 +143,13 @@ Recipes_State :: struct {
 	// The listing of the store of the retention rule.
 	list_rows:      [RETENTION_LIST_ROWS]pr.Private_Store_Entry,
 	list_names:     [RETENTION_LIST_ROWS * 64]u8,
+	// What the retention rule never removes: the inputs of the registered
+	// recipes, of the build that runs, and of a holder that the service
+	// names (a queue of builds). nil: none.
+	registry:            ^Recipe_Registry,
+	building:            ^pr.Recipe_Spec,
+	retention_keep:      proc "contextless" (hash: blake3.Hash, user_data: rawptr) -> bool,
+	retention_keep_user: rawptr,
 }
 
 // state_init zeroes state, binds the private store that keeps the
@@ -392,44 +400,58 @@ store_local_realisation :: proc "contextless" (
 // retention_make_room keeps the outputs and the realisations under
 // RETENTION_PERCENT of the blocks of the store: before an output of bytes,
 // it removes the oldest realisations, by the commit of their object, and
-// their outputs, until the output fits. An output past the whole share is
-// Store_Full at once, and removes nothing. A store with no counts or no
-// listing has no rule: its own refusal bounds it.
+// their outputs, until the output fits. It first counts, with one listing,
+// what the realisations that it may remove hold: when even all of them
+// cannot make room, it refuses with Store_Full and removes nothing. An
+// output that an input of a recipe names is never removed
+// (retention_protected). A store with no counts or no listing has no rule:
+// its own refusal bounds it.
 @(private)
 retention_make_room :: proc "contextless" (state: ^Recipes_State, bytes: u64) -> pr.Recipe_Refusal {
 	if state.store.usage == nil || state.store.list == nil {
 		return .None
 	}
 	// The blocks of the output, the node of its blocks and the head.
-	needed := i64((bytes + STORE_BLOCK_BYTES - 1) / STORE_BLOCK_BYTES) + 2
-	fits, refusal := retention_fits(state, needed)
-	for refusal == .None && !fits {
-		// One listing finds a batch of the oldest; each remove is followed
-		// by a count, so the rule removes no more than the output needs.
-		oldest: [RETENTION_BATCH]Retention_Candidate
-		count, list_refusal := retention_oldest(state, oldest[:])
-		if list_refusal != .None {
-			return list_refusal
-		}
-		if count == 0 {
-			return .Store_Full
-		}
+	needed := blocks_of_bytes(bytes) + 2
+	fits, refusal := retention_fits(state, needed, 0)
+	if refusal != .None || fits {
+		return refusal
+	}
+	oldest: [RETENTION_BATCH]Retention_Candidate
+	count, removable, scan_refusal := retention_scan(state, oldest[:])
+	if scan_refusal != .None {
+		return scan_refusal
+	}
+	if fits, refusal = retention_fits(state, needed, removable); refusal != .None || !fits {
+		return refusal != .None ? refusal : .Store_Full
+	}
+	for count > 0 {
 		for &candidate in oldest[:count] {
 			if refusal = retention_remove(state, &candidate); refusal != .None {
 				return refusal
 			}
-			if fits, refusal = retention_fits(state, needed); fits || refusal != .None {
-				break
+			if fits, refusal = retention_fits(state, needed, 0); fits || refusal != .None {
+				return refusal
 			}
 		}
+		count, _, scan_refusal = retention_scan(state, oldest[:])
+		if scan_refusal != .None {
+			return scan_refusal
+		}
 	}
-	return refusal
+	return .Store_Full
+}
+
+@(private = "file")
+blocks_of_bytes :: proc "contextless" (bytes: u64) -> i64 {
+	return i64((bytes + STORE_BLOCK_BYTES - 1) / STORE_BLOCK_BYTES)
 }
 
 // retention_fits says if needed blocks more stay under the share of the
-// store. A need past the whole share is Store_Full: no remove helps.
+// store, once freed blocks are gone. A need past the whole share is
+// Store_Full: no remove helps.
 @(private = "file")
-retention_fits :: proc "contextless" (state: ^Recipes_State, needed: i64) -> (fits: bool, refusal: pr.Recipe_Refusal) {
+retention_fits :: proc "contextless" (state: ^Recipes_State, needed: i64, freed: i64) -> (fits: bool, refusal: pr.Recipe_Refusal) {
 	blocks, limit, status := pr.private_store_usage(&state.store)
 	if status != .Ok || blocks < 0 || limit < 0 {
 		return false, .Store_Failed
@@ -438,40 +460,90 @@ retention_fits :: proc "contextless" (state: ^Recipes_State, needed: i64) -> (fi
 	if needed > share {
 		return false, .Store_Full
 	}
-	return blocks <= share - needed, .None
+	return blocks - min(freed, blocks) <= share - needed, .None
 }
 
-// One realisation that the retention rule can remove: its name and the
-// commit of its last change.
+// retention_protected says if an output is an input of a recipe: of a
+// registered recipe, of the build that runs, or of a holder that the
+// service names (retention_keep: a queue of builds). Such an output stays:
+// a recipe that names it as an input would find no input.
+@(private)
+retention_protected :: proc "contextless" (state: ^Recipes_State, hash: blake3.Hash) -> bool {
+	spec_names :: proc "contextless" (spec: ^pr.Recipe_Spec, hash: blake3.Hash) -> bool {
+		for index in 0 ..< min(int(spec.input_count), len(spec.inputs)) {
+			if spec.inputs[index].hash == hash {
+				return true
+			}
+		}
+		return false
+	}
+	if state.building != nil && spec_names(state.building, hash) {
+		return true
+	}
+	if state.registry != nil {
+		for &slot in state.registry.recipes {
+			if slot.active && spec_names(&slot.spec, hash) {
+				return true
+			}
+		}
+	}
+	return state.retention_keep != nil && state.retention_keep(hash, state.retention_keep_user)
+}
+
+// One realisation that the retention rule can remove: its name, the commit
+// of its last change, and the output that it names.
 Retention_Candidate :: struct {
-	name:       [64]u8,
-	length:     int,
-	generation: i64,
+	name:        [64]u8,
+	length:      int,
+	generation:  i64,
+	recipe_hash: blake3.Hash,
+	output_hash: blake3.Hash,
 }
 
-// retention_oldest lists the store and gives its oldest realisations,
-// oldest first, at most len(oldest).
+// retention_scan lists the store, reads the head of each realisation, and
+// gives the oldest realisations that the rule may remove, oldest first, at
+// most len(oldest), with the blocks that all of them hold. A realisation
+// whose output is protected is no candidate; a head that does not decode
+// is one, with no output.
 @(private = "file")
-retention_oldest :: proc "contextless" (state: ^Recipes_State, oldest: []Retention_Candidate) -> (count: int, refusal: pr.Recipe_Refusal) {
+retention_scan :: proc "contextless" (state: ^Recipes_State, oldest: []Retention_Candidate) -> (count: int, removable: i64, refusal: pr.Recipe_Refusal) {
 	after: [64]u8
 	after_length := 0
 	for {
 		page, status := pr.private_store_list(&state.store, string(after[:after_length]), state.list_rows[:], state.list_names[:])
 		if status != .Ok {
-			return 0, .Store_Failed
+			return 0, 0, .Store_Failed
 		}
 		if len(page) == 0 {
-			return count, .None
+			return count, removable, .None
 		}
+		// The names of the page are copied before a read of a head: the
+		// read uses the memory of the service, not the names of the page.
 		for row in page {
 			name := string(state.list_names[row.name_offset:][:row.name_count])
 			if len(name) > len(after) {
-				return 0, .Store_Failed
+				return 0, 0, .Store_Failed
 			}
 			after_length = copy(after[:], name)
 			if len(name) <= len(pr.REALISATION_OBJECT_PREFIX) || name[:len(pr.REALISATION_OBJECT_PREFIX)] != pr.REALISATION_OBJECT_PREFIX {
 				continue
 			}
+			candidate := Retention_Candidate{generation = row.generation}
+			candidate.length = copy(candidate.name[:], name)
+			output_blocks: i64 = 0
+			head, head_status := pr.private_store_read(&state.store, name, state.store_head[:])
+			if head_status == .Ok && len(head) == pr.REALISATION_OBJECT_HEAD_SIZE {
+				// The hashes are read as they are: a head that does not
+				// decode goes too.
+				copy(candidate.recipe_hash[:], head[8:8 + blake3.HASH_SIZE])
+				copy(candidate.output_hash[:], head[8 + blake3.HASH_SIZE:8 + 2 * blake3.HASH_SIZE])
+				if retention_protected(state, candidate.output_hash) {
+					continue
+				}
+				output_length := byte_order.read_u64_little_endian(head, pr.REALISATION_OBJECT_HEAD_SIZE - 8)
+				output_blocks = blocks_of_bytes(min(output_length, OUTPUT_BYTES_MOST)) + 1
+			}
+			removable += blocks_of_bytes(u64(row.size)) + 1 + output_blocks
 			// The candidates stay sorted, the oldest first: a newer one than
 			// each of a full list is no candidate.
 			place := count
@@ -485,8 +557,7 @@ retention_oldest :: proc "contextless" (state: ^Recipes_State, oldest: []Retenti
 			for index := last; index > place; index -= 1 {
 				oldest[index] = oldest[index - 1]
 			}
-			oldest[place] = {generation = row.generation}
-			oldest[place].length = copy(oldest[place].name[:], name)
+			oldest[place] = candidate
 			count = min(count + 1, len(oldest))
 		}
 	}
@@ -498,32 +569,21 @@ retention_oldest :: proc "contextless" (state: ^Recipes_State, oldest: []Retenti
 @(private = "file")
 retention_remove :: proc "contextless" (state: ^Recipes_State, candidate: ^Retention_Candidate) -> pr.Recipe_Refusal {
 	name := string(candidate.name[:candidate.length])
-	head, status := pr.private_store_read(&state.store, name, state.store_head[:])
-	output_hash: blake3.Hash
-	has_output := false
-	if status == .Ok && len(head) == pr.REALISATION_OBJECT_HEAD_SIZE {
-		// The hashes are read as they are: the remove does not trust the
-		// head, and a head that does not decode goes too.
-		recipe_hash: blake3.Hash
-		copy(recipe_hash[:], head[8:8 + blake3.HASH_SIZE])
-		copy(output_hash[:], head[8 + blake3.HASH_SIZE:8 + 2 * blake3.HASH_SIZE])
-		has_output = true
-		for &slot in state.realisations {
-			if slot.active && slot.record.recipe_hash == recipe_hash {
-				slot = {}
-			}
+	for &slot in state.realisations {
+		if slot.active && slot.record.recipe_hash == candidate.recipe_hash {
+			slot = {}
 		}
 	}
 	if removed := pr.private_store_remove(&state.store, name); removed != .Ok && removed != .Absent {
 		return .Store_Failed
 	}
-	if has_output {
-		output_name := pr.blob_object_name(output_hash)
+	if candidate.output_hash != {} {
+		output_name := pr.blob_object_name(candidate.output_hash)
 		if removed := pr.private_store_remove(&state.store, pr.private_object_name_text(&output_name)); removed != .Ok && removed != .Absent {
 			return .Store_Failed
 		}
 		for &slot in state.objects {
-			if slot.active && slot.hash == output_hash {
+			if slot.active && slot.hash == candidate.output_hash {
 				slot = {}
 			}
 		}
@@ -557,6 +617,10 @@ build_recipe :: proc "contextless" (
 		return {outcome = .Refused, refusal = .Bad_Build_Mode}
 	}
 
+	// The inputs of this build stay in the store while it runs: the
+	// retention rule of its realisation removes none of them.
+	state.building = spec
+	defer state.building = nil
 	rhash, hash_refusal := pr.recipe_hash(spec)
 	if hash_refusal != .None {
 		state.counters.total_refusals += 1
@@ -577,7 +641,10 @@ build_recipe :: proc "contextless" (
 	// then the private store.
 	if checked_mode == .Cache_First || checked_mode == .Cache_Only {
 		recalled := false
-		if find_local_realisation(state, rhash) == nil {
+		// The index can hold the realisation and have forgotten its output:
+		// the store answers then, as for a realisation that it forgot.
+		known := find_local_realisation(state, rhash)
+		if known == nil || find_local_object(state, known.record.output_hash) == nil {
 			found, recall_refusal := realisation_recall(state, rhash, expected_kind)
 			if recall_refusal != .None {
 				state.counters.total_refusals += 1

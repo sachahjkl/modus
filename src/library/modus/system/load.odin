@@ -260,6 +260,10 @@ Module_Space :: struct {
 	// the imports with this table, not with a call for each import, so a
 	// chain of MODULE_SPACE_CAPACITY modules costs the stack one frame.
 	frames: [MODULE_SPACE_CAPACITY]Place_Frame,
+	// The map of a module whose imports are placed: nil is place_map, with
+	// the kernel; a host test gives one that maps nothing and counts, so the
+	// walk of a load runs with no kernel.
+	map_module: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, error: ^module.Load_Error) -> bool,
 }
 
 // One module that place loads: its place, the hash that its importer
@@ -687,7 +691,8 @@ place_finish :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: m
 			}
 		}
 	}
-	if !place_map(space, item, head, imports[:import_count], error) {
+	map_module := space.map_module != nil ? space.map_module : place_map
+	if !map_module(space, item, head, imports[:import_count], error) {
 		return false
 	}
 	item.loading = false

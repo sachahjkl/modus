@@ -24,7 +24,7 @@ C_BUILDER_DOMAIN :: "modus builder c v1"
 // cost no memory to a small build.
 C_SOURCE_BYTES_LIMIT :: 64 * 1024 * 1024
 C_TEXT_BYTES_LIMIT :: 256 * 1024 * 1024
-C_MODULE_BYTES_LIMIT :: object_cache.MAX_OBJECT_PAYLOAD_BYTES
+C_MODULE_BYTES_LIMIT :: RECIPE_OUTPUT_BYTES_MOST
 
 // The blocks of the output of a C build: one module file, in blocks of
 // 4 KiB.

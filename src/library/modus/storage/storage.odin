@@ -117,6 +117,10 @@ Client :: struct {
 	file:          []u8, // The file of the storage service: the descriptions of its exports.
 	tag:           u32, // The tag of the last call.
 	gone:          bool, // The connection ended: each call gives Gone.
+	// A call past its bound whose answer has not come: the service can still
+	// write the call region, so the next call waits for that answer first.
+	// 0: none.
+	late_tag:      u32,
 }
 
 // open opens the connection that the root service gave in the context of
@@ -180,10 +184,16 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 // text has the bytes in the call region: copy them before the next call.
 // When the export answers a negative number, the status is Failed and error
 // has its error record, as the storage service wrote it. With no answer
-// before storage_status.ANSWER_BOUND_MILLISECONDS, the status is No_Answer
-// and the connection ends: the service can still write the answer into the
-// call region, which a next call would use.
+// before storage_status.ANSWER_BOUND_MILLISECONDS, the status is No_Answer:
+// the service can still write the answer into the call region, so the next
+// call waits for that answer first (late_answer_wait), and runs when it
+// came. The connection stays: a service that was slow once serves again.
 call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status) {
+	if client.late_tag != 0 {
+		if status = late_answer_wait(client); status != .Ok {
+			return 0, nil, status
+		}
+	}
 	sent: Sent_Call
 	if sent, status = call_send(client, name, arguments); status != .Ok {
 		return 0, nil, status
@@ -205,10 +215,49 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 			if value, text, status, answered = call_answer(client, &sent, arguments, error); answered {
 				return value, text, status
 			}
-			client.gone = true
+			client.late_tag = sent.tag
 			return 0, nil, .No_Answer
 		}
 	}
+}
+
+// late_answer_wait waits, up to the bound of a call, for the answer of the
+// call that passed its bound, and drops it: the call region is then the
+// region of this client again. No_Answer when it does not come, Gone when
+// the connection ended.
+@(private = "file")
+late_answer_wait :: proc "contextless" (client: ^Client) -> storage_status.Status {
+	deadline := call_deadline(system.time())
+	for {
+		wait := system.wait_begin()
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has := system.receive(&client.calls.completions)
+			if !has {
+				break
+			}
+			if late_answer_is(client, completion.tag) {
+				return .Ok
+			}
+		}
+		if !connected(client) {
+			return .Gone
+		}
+		system.wait_records(&wait, &client.calls.completions)
+		if system.wait_end(&wait, deadline) >= deadline {
+			return .No_Answer
+		}
+	}
+}
+
+// late_answer_is says if a completion is the answer of the late call, and
+// clears the late call when it is: an answer of another tag is an answer
+// that no call waits for any more.
+late_answer_is :: proc "contextless" (client: ^Client, tag: u32) -> bool {
+	if client.late_tag == 0 || tag != client.late_tag {
+		return false
+	}
+	client.late_tag = 0
+	return true
 }
 
 // call_deadline gives the deadline of a call sent at the time now. A time
@@ -411,27 +460,6 @@ set_size :: proc "contextless" (client: ^Client, place: Place, name: string, siz
 	return status
 }
 
-// drop_pending drops the pending changes of this connection on the object
-// `name` under a place: the object stays as its last commit left it, and
-// the pending blocks go back to the storage service. A writer that stops a
-// write by ranges in its middle drops them, so that no pending block stays
-// held by a write that never commits.
-drop_pending :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> storage_status.Status {
-	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
-	_, _, status := call(client, "drop_pending", arguments[:], error)
-	return status
-}
-
-// clone makes the object `new_name` under a place a copy of the object
-// `name` under the same place, in one commit: the two name the same blocks
-// until one of them changes, and the state of new_name before becomes a
-// version. The result is the generation of the commit.
-clone :: proc "contextless" (client: ^Client, place: Place, name: string, new_name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: storage_status.Status) {
-	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {text = transmute([]u8)new_name}}
-	generation, _, status = call(client, "clone", arguments[:], error)
-	return generation, status
-}
-
 // What one commit of pending changes did: the row of the export commit.
 Commit_Measure :: struct {
 	generation:     i64,
@@ -456,6 +484,16 @@ commit :: proc "contextless" (client: ^Client, place: Place, name: string, error
 		measure = (^Commit_Measure)(raw_data(bytes))^
 	}
 	return measure, status
+}
+
+// drop_pending drops the pending changes of this connection on one object:
+// a read of this connection then sees the last commit. The other pending
+// objects of the connection stay. Failed with Pending: the object has no
+// pending change.
+drop_pending :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> storage_status.Status {
+	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
+	_, _, status := call(client, "drop_pending", arguments[:], error)
+	return status
 }
 
 // open_tree gives the place of the tree `name` under a place.
@@ -775,5 +813,14 @@ erase_versions :: proc "contextless" (client: ^Client, place: Place, name: strin
 restore :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status) {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}}
 	commit, _, status = call(client, "restore", arguments[:], error)
+	return commit, status
+}
+
+// clone makes the object `new_name` under a place a copy of the object
+// `name` under the same place, in one commit: the two name the same blocks
+// until one of them changes. The result is the generation of the commit.
+clone :: proc "contextless" (client: ^Client, place: Place, name: string, new_name: string, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status) {
+	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {text = transmute([]u8)new_name}}
+	commit, _, status = call(client, "clone", arguments[:], error)
 	return commit, status
 }

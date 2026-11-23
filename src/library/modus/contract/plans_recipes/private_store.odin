@@ -685,7 +685,7 @@ decode_realisation_object :: proc "contextless" (input: []u8, recipe_hash: blake
 	place += object_cache.SIGNATURE_SIZE
 	output_length = byte_order.read_u64_little_endian(input, place)
 	kind, kind_ok := object_cache.cache_object_kind_of_word(kind_word)
-	if !kind_ok || kind != expected_kind || record.recipe_hash != recipe_hash || output_length > object_cache.MAX_OBJECT_PAYLOAD_BYTES {
+	if !kind_ok || kind != expected_kind || record.recipe_hash != recipe_hash || output_length > RECIPE_OUTPUT_BYTES_MOST {
 		return {}, 0, 0, .Store_Damaged
 	}
 	record.output_kind = kind

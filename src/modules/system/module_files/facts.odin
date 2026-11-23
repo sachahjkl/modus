@@ -161,3 +161,18 @@ File_Stored :: struct {
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 #assert(size_of(File_Not_Hashed) == 8 + FILE_NAME_FIELD_BYTES)
 #assert(size_of(Serving) == 16 + ADDRESS_FIELD_BYTES)
+
+// A write that stopped could not drop the pending changes of its staging
+// object: they stay held on the connection of the service until the next
+// write of the nickname drops them.
+@(log_fact = "module_files: the pending changes of the staging object of {nickname} were not dropped: the next write of the nickname drops them")
+Staging_Pending_Kept :: struct {
+	nickname: value_kinds.Module_Name_Field,
+}
+
+// A staging object that a stop or a refused remove left: the service
+// removed it.
+@(log_fact = "module_files: removed the staging object {file_name}, which a write that stopped left")
+Staging_Removed :: struct {
+	file_name: [72]u8,
+}

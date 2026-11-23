@@ -282,3 +282,84 @@ the_index_forgets_and_the_store_remembers :: proc(t: ^testing.T) {
 	testing.expect_value(t, builder.builds, builds)
 	testing.expect_value(t, state.counters.cache_hits_store, u64(1))
 }
+
+// Even the removal of each realisation that the rule may remove cannot make
+// room: the rule refuses with Store_Full, and removes nothing. An output
+// that a registered recipe, the build that runs, or a holder of the service
+// names as an input is never removed, and the rule removes the others.
+@(test)
+the_retention_rule_keeps_inputs_and_removes_nothing_in_vain :: proc(t: ^testing.T) {
+	state := new(Recipes_State, context.temp_allocator)
+	registry := new(Recipe_Registry, context.temp_allocator)
+	store: Large_Store
+	state_init(state, large_store_port(&store))
+	state.registry = registry
+	store.block_limit = 400 // A share of 300 blocks.
+	OUTPUT :: 39 * 4096 // 40 blocks, and 2 of its head.
+	hashes: [7]blake3.Hash
+	for index in 0 ..< len(hashes) {
+		builder := Large_Builder{output = large_output(OUTPUT, u8(index))}
+		built := build_recipe(state, large_spec(index), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+		testing.expect_value(t, built.outcome, pr.Recipe_Build_Outcome.Built_Locally)
+		hashes[index] = built.output_hash
+	}
+	// The first two outputs are inputs: of a registered recipe, and of a
+	// holder of the service.
+	consumer := new(pr.Recipe_Spec, context.temp_allocator)
+	consumer.builder_hash = blake3.hash(transmute([]u8)string("a consumer"))
+	consumer.output_kind = .Blob
+	consumer.input_count = 1
+	consumer.inputs[0], _ = pr.recipe_input_make("first", .Blob, hashes[0])
+	_, registered := register_recipe(registry, consumer)
+	testing.expect_value(t, registered, pr.Recipe_Refusal.None)
+	Keep :: struct {
+		hash: blake3.Hash,
+	}
+	keep := Keep{hash = hashes[1]}
+	state.retention_keep = proc "contextless" (hash: blake3.Hash, user_data: rawptr) -> bool {
+		return hash == (^Keep)(user_data).hash
+	}
+	state.retention_keep_user = &keep
+
+	// 5 realisations may go, about 210 blocks; an output of 280 blocks needs
+	// more than they free: refused, and nothing removed.
+	removes := store.removes
+	objects := len(store.objects)
+	huge := Large_Builder{output = large_output(279 * 4096, 9)}
+	refused := build_recipe(state, large_spec(100), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &huge)
+	testing.expect_value(t, refused.refusal, pr.Recipe_Refusal.Store_Full)
+	testing.expect_value(t, store.removes, removes)
+	testing.expect_value(t, len(store.objects), objects)
+
+	// An output that fits once two realisations go: the protected ones stay.
+	more := Large_Builder{output = large_output(OUTPUT, 20)}
+	built := build_recipe(state, large_spec(20), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &more)
+	testing.expect_value(t, built.outcome, pr.Recipe_Build_Outcome.Built_Locally)
+	testing.expect(t, state.counters.retention_removals >= 1)
+	for kept in hashes[:2] {
+		name := pr.blob_object_name(kept)
+		_, held := store.objects[pr.private_object_name_text(&name)]
+		testing.expect(t, held, "a protected input stays in the store")
+	}
+	third := pr.blob_object_name(hashes[2])
+	_, third_held := store.objects[pr.private_object_name_text(&third)]
+	testing.expect(t, !third_held, "the oldest output that no input names goes first")
+}
+
+// The index holds a realisation and forgot its output: the store answers,
+// and the recipe does not build again.
+@(test)
+a_forgotten_output_of_a_known_realisation_comes_from_the_store :: proc(t: ^testing.T) {
+	state := new(Recipes_State, context.temp_allocator)
+	store: Large_Store
+	state_init(state, large_store_port(&store))
+	builder := Large_Builder{output = large_output(100, 1)}
+	first := build_recipe(state, large_spec(1), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+	testing.expect_value(t, first.outcome, pr.Recipe_Build_Outcome.Built_Locally)
+	for &slot in state.objects {
+		slot = {}
+	}
+	again := build_recipe(state, large_spec(1), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+	testing.expect_value(t, again.outcome, pr.Recipe_Build_Outcome.From_Cache)
+	testing.expect_value(t, builder.builds, 1)
+}

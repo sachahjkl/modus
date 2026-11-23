@@ -41,7 +41,9 @@ receive_total_deadline :: proc "contextless" (start: u64, size: int) -> u64 {
 
 // The calls of the storage service that the write of a file makes: the
 // client of this service on a machine, a fake in a host test. Each call
-// writes the error record of a status Failed.
+// writes the error record of a status Failed. drop_pending gives Ok when it
+// dropped the pending changes of the object, or the object had none; a
+// remove does not drop them, as in the storage service.
 File_Store :: struct {
 	user:         rawptr,
 	write_range:  proc "contextless" (user: rawptr, name: string, offset: u64, bytes: []u8, error: ^errors.Error_Record) -> storage_status.Status,
@@ -64,13 +66,22 @@ File_Stream :: struct {
 	written:        int,
 	committed:      int,
 	open:           bool, // The staging object can hold pending changes or bytes: an end or an abandon must close it.
+	pending_kept:   bool, // The drop of an abandon was refused: the pending changes stay on this connection until the next write of the nickname drops them.
 	store_error:    errors.Error_Record, // The record of the refused call, for a status Failed.
 }
 
-// file_stream_begin starts the write of a file of a nickname.
-file_stream_begin :: proc "contextless" (stream: ^File_Stream, store: ^File_Store, nickname: string) {
-	stream^ = {store = store, nickname = nickname, hasher = blake3.hasher_make(), open = true}
+// file_stream_begin starts the write of a file of a nickname. It drops
+// first the pending changes that an earlier write of the nickname could
+// not drop, so a write never starts over them; a refusal of that drop
+// gives its status, and the write does not start.
+file_stream_begin :: proc "contextless" (stream: ^File_Stream, store: ^File_Store, nickname: string) -> storage_status.Status {
+	stream^ = {store = store, nickname = nickname, hasher = blake3.hasher_make()}
 	stream.staging_length = len(disk_process.staging_name_write(&stream.staging, nickname))
+	if status := store.drop_pending(store.user, file_stream_staging(stream), &stream.store_error); status != .Ok {
+		return status
+	}
+	stream.open = true
+	return .Ok
 }
 
 // file_stream_staging gives the name of the staging object of the write.
@@ -136,9 +147,12 @@ file_stream_end :: proc "contextless" (stream: ^File_Stream) -> (hash: blake3.Ha
 }
 
 // file_stream_abandon ends a write that stops before its end: it drops the
-// pending changes of the staging object and removes it. The nickname keeps
-// the file before. A failure of the drop or of the remove changes nothing
-// for the caller: it already has the error record of the first failure.
+// pending changes of the staging object, then removes it. The nickname
+// keeps the file before. The caller keeps the error record of the first
+// failure; a refused drop sets pending_kept, which the caller reports, and
+// the next file_stream_begin of the nickname drops them again. A refused
+// remove leaves a staging object, which the service removes at its next
+// start.
 file_stream_abandon :: proc "contextless" (stream: ^File_Stream) {
 	if !stream.open {
 		return
@@ -147,6 +161,8 @@ file_stream_abandon :: proc "contextless" (stream: ^File_Stream) {
 	store := stream.store
 	staging := file_stream_staging(stream)
 	ignored: errors.Error_Record
-	_ = store.drop_pending(store.user, staging, &ignored)
+	if store.drop_pending(store.user, staging, &ignored) != .Ok {
+		stream.pending_kept = true
+	}
 	_ = store.remove(store.user, staging, &ignored)
 }
