@@ -332,22 +332,3 @@ resize_interval_at_its_edges :: proc(t: ^testing.T) {
 	testing.expect_value(t, resize_interval_decide(5000, 9000, 0), Resize_Refusal.Too_Soon)
 	testing.expect_value(t, resize_interval_decide(max(u64), max(u64) - RESIZE_INTERVAL_MILLISECONDS, max(u64) - RESIZE_INTERVAL_MILLISECONDS), Resize_Refusal.None)
 }
-
-// The paid size: the largest step that fits and holds the start size; a
-// start size larger than each step that fits keeps the start size.
-@(test)
-paid_size_takes_the_largest_step_that_fits :: proc(t: ^testing.T) {
-	up_to_4k :: proc "contextless" (width, height: u64, data: rawptr) -> bool {return width * height <= 3840 * 2160}
-	none :: proc "contextless" (width, height: u64, data: rawptr) -> bool {return false}
-	all :: proc "contextless" (width, height: u64, data: rawptr) -> bool {return true}
-	width, height := paid_size_of(1920, 1080, up_to_4k, nil)
-	testing.expect(t, width == 3840 && height == 2160)
-	width, height = paid_size_of(1920, 1080, none, nil)
-	testing.expect(t, width == 1920 && height == 1080)
-	width, height = paid_size_of(1920, 1080, all, nil)
-	testing.expect(t, width == 7680 && height == 4320)
-	width, height = paid_size_of(4000, 1080, up_to_4k, nil)
-	testing.expect(t, width == 4000 && height == 1080, "a start size wider than each step that fits got a step")
-	width, height = paid_size_of(320, 240, up_to_4k, nil)
-	testing.expect(t, width == 3840 && height == 2160)
-}

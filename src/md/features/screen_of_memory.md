@@ -48,7 +48,9 @@ Else it makes the new frame and the new background first, then frees the old one
 
 ### The budget of a screen of memory
 
-The root service decides a budget at the start of a process and does not raise it. On a machine with a screen of memory, it pays the screen pictures of a module (the compositor, `remote_display`) at the largest of 7680 × 4320, 5120 × 2880, 3840 × 2160, 2560 × 1440 and 1920 × 1080 that holds the size of the start row and that the share of a process pays (`memory_screen.paid_size_of`), so a viewer can grow the screen up to it. A larger size gets `Compositor_Budget` or `Service_Budget`. From the stated budgets, on the test machine of 1 GiB, where the share of a process is about 50 000 pages, the compositor pays 3840 × 2160; this is an estimate from the stated parts, not a measure.
+A budget is a reservation: the root service moves its pages into the budget of a process at its start (`Budget_Create`), and no kernel operation adds pages to a budget later. The root service pays the screen pictures of the compositor and of `remote_display` at the size of the start row. A larger size that a viewer asks is paid from the pages that each budget has left, a few hundred pages for `remote_display`: a size past them gets `Service_Budget` or `Compositor_Budget`, and a smaller size passes. Paying a larger size at the start was refused: it reserves the pages of a 4K or 5K screen, about 190 MiB, on each machine with no screen, also when no viewer asks.
+
+Not built: the growth of the budgets of both processes when a viewer asks a larger size (the roadmap entry "A screen of memory that grows"). The smallest form: `remote_display` asks the root service, in one command of its root ring, for the pages of both processes at the new size; the root service makes one extra budget for each from its own pages, within the share of a process, and gives each its handle with Spend, or refuses both. Each process makes its pictures of the new size from that budget, and closes it when the size shrinks, which gives the pages back. One command for both, so both grow at the same step or neither does.
 
 ### The capture face across a change of size
 
@@ -63,7 +65,7 @@ When its copies of the new size are refused, `remote_display` asks the composito
 - **A screen of memory as a part of the machine parts page.** The page names what the root service checked. The size is a decision of a start list, and two start lists of one image can disagree.
 - **A third picture in the compositor, the screen beside the frame.** It costs one picture and one copy of the damage in each frame for pixels that no device reads.
 - **A size from a setting, or from the plan.** A start row already gives a size for each start of the holder; a setting would need a writer before the compositor starts.
-- **A budget raised at a change of size.** The budget of a process is decided at its start, at the largest paid size that its share holds; a size past it is refused with its cause.
+- **The pictures paid at the largest size at the start.** A budget is a reservation: about 190 MiB for a 4K or 5K screen on each machine with no screen, also when no viewer asks.
 - **The old frame freed before the new one is made.** A refused memory would leave the compositor with no frame.
 - **The capture face ended at a change and opened again.** The mark would leave the bar while a viewer looks.
 - **A refusal of a size that ends the connection.** A size that the budget does not pay is a state of the machine, not a fault of the viewer: the viewer gets a record with the cause and keeps its session. A size outside the bounds is a fault, and ends it.
@@ -72,15 +74,15 @@ When its copies of the new size are refused, `remote_display` asks the composito
 ## The subtle points
 
 - **The records of a viewer that cross a change.** A viewer sends a pointer or a request of screen pieces at the size that it knows. Until it takes a viewer frame at the size in force, its border reads its records against the largest side of the screen in force and of each screen before it since that viewer last saw the size in force (`remote_display.Screen_Lag`): two changes in a row keep the largest, and `remote_display` cuts each place and each rectangle to the new screen. The compositor cuts a pointer of a viewer to a screen of memory too: its change can come before the change of `remote_display`.
-- **The budget of `remote_display` is decided at its start.** It starts after the compositor, so the root service knows the screen of memory, and pays its three screen pictures at the paid size above.
+- **The budget of `remote_display` is decided at its start.** It starts after the compositor, so the root service knows the screen of memory, and pays its three screen pictures at the size of the start row.
 - **Two viewers that ask.** The last ask holds; each refusal goes to the viewer that asked.
 - **The pointer after a change.** The compositor keeps the pointer inside the new desktop, and the viewers that did not move it receive a warp.
 
 ## The tests
 
 - On the host: the border of the start list at its edges (0 × 0, one side 0, 319 × 240, 320 × 240, 7680 × 4320, 7681 × 4320, a size on a row that is not `display`); the word of the `Start` at the same edges; `screen_presence.screen_form` for each form; the records `Screen_Size_Ask` and `Screen_Size_Refused` at their edges, a cause that names no member, a reserved word that is not 0; the decision of the change of size of the compositor and of the service (`memory_screen.resize_decide`, `memory_screen.service_resize_decide`).
-- On a machine with no display device (the test part `screen_of_memory`): the line of the screen of memory, the console in it, a viewer that sees the whole desktop of 1920 × 1080, a size of 2560 × 1440 that the viewer asks and receives with the whole screen at that size, a size past the bounds that ends the viewer with `Bad_Record`. On the machine of `remote_display`, which has a screen of a device, an ask gets `Screen_Size_Refused` with `Device_Screen`.
+- On a machine with no display device (the test part `screen_of_memory`): the line of the screen of memory, the console in it, a viewer that sees the whole desktop of 1920 × 1080, a size of 2560 × 1440 that the budget of `remote_display` does not pay and that gets `Service_Budget`, a size of 1280 × 720 that the viewer asks and receives with the whole screen at that size, a size past the bounds that ends the viewer with `Bad_Record`. On the machine of `remote_display`, which has a screen of a device, an ask gets `Screen_Size_Refused` with `Device_Screen`.
 
 ## State
 
-Built: the size of the start row (format version 4), the start of the compositor with no framebuffer, the frame as the screen, the change of size from a viewer with its causes, the capture face across a change, protocol version 3. Left: a size that the plan of principal 0 gives as a machine policy, which waits for machine policy in the plan.
+Built: the size of the start row (format version 4), the start of the compositor with no framebuffer, the frame as the screen, the change of size from a viewer with its causes, the capture face across a change, protocol version 3. Left: the growth of the budgets for a larger size (above); a size that the plan of principal 0 gives as a machine policy, which waits for machine policy in the plan.

@@ -8,8 +8,9 @@ import "modustool:foundation"
 // memory of 1920 x 1080, the size of the row display of the default start
 // list, with the input service and the console in it. The peer of the
 // tool is a viewer with the input: it sees the whole desktop, asks for
-// 2560 x 1440 and receives that size and the whole screen, then asks a
-// size past the bounds, which ends its session with Bad_Record.
+// 2560 x 1440, which the budget of remote_display does not pay, asks for
+// 1280 x 720 and receives that size and the whole screen, then asks a size
+// past the bounds, which ends its session with Bad_Record.
 
 TEST_OUTPUT_SCREEN_OF_MEMORY :: foundation.BUILD_FOLDER + "/test_output_screen_of_memory.txt"
 
@@ -30,12 +31,16 @@ scenario_screen_of_memory := [?]Step {
 	{kind = .Remote_Display_Case, text = "view"},
 	{kind = .Wait, text = "compositor: the capture face is open: a copy of 1920x1080 after each frame", any_order = true},
 	{kind = .Wait, text = "remote_display: a measure: the whole screen of 1920x1080", any_order = true},
-	// The viewer asks 2560 x 1440: the compositor takes it, the desktop
-	// fits it, and the viewer receives the size and the whole screen.
-	{kind = .Remote_Display_Case, text = "ask 2560x1440"},
-	{kind = .Wait, text = "compositor: the screen of memory is now 2560 x 1440, which a viewer asked: ", any_order = true},
-	{kind = .Wait, text = "remote_display: the screen is now 2560 x 1440: 1 viewers receive its size and the whole screen", any_order = true},
-	{kind = .Wait, text = "compositor: the capture face is open: a copy of 2560x1440 after each frame", any_order = true},
+	// The budgets pay the screen at its start size: a larger size gets the
+	// budget cause of remote_display, and the session goes on.
+	{kind = .Remote_Display_Case, text = "ask 2560x1440 refused Service_Budget"},
+	{kind = .Wait, text = "remote_display: refused the screen of 2560 x 1440 that the viewer ", any_order = true},
+	// A smaller size: the compositor takes it, the desktop fits it, and the
+	// viewer receives the size and the whole screen.
+	{kind = .Remote_Display_Case, text = "ask 1280x720"},
+	{kind = .Wait, text = "compositor: the screen of memory is now 1280 x 720, which a viewer asked: ", any_order = true},
+	{kind = .Wait, text = "remote_display: the screen is now 1280 x 720: 1 viewers receive its size and the whole screen", any_order = true},
+	{kind = .Wait, text = "compositor: the capture face is open: a copy of 1280x720 after each frame", any_order = true},
 	// A size past the bounds is a fault of the viewer: its border ends the
 	// session.
 	{kind = .Remote_Display_Case, text = "ask 7681x4320 ends Bad_Record"},

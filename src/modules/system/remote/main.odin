@@ -96,13 +96,13 @@ import "modus:system"
 // each, and a buffer of a request or an answer of about 64 KiB for each
 // stream: 6912 pages (TABLE_PAGES), in one mapping of the process
 // (docs/QUIC.md, section 7); the mappings of the call ring and the call
-// region of each of its 320 connections to services (32 clients, 10
-// services), which the root service makes and pays: up to 4 page tables
-// and directories each, 1280 pages; and the glyph memory of the copy of
-// the text rendering of the drawing module, which draws its text: 354
-// pages (display.TEXT_MEMORY_PAGES). 6912 + 1280 + 354 = 8546, under the
-// least largest budget of a process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8546, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// region of each of its 128 connections to services (the share of the root
+// service, remote.SERVICE_CONNECTIONS), which the root service makes and
+// pays: up to 4 page tables and directories each, 512 pages; and the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 6912 + 512 + 354 =
+// 7778, under the least largest budget of a process.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7778, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -263,23 +263,13 @@ record_clients: [CAPACITY]Record_Client
 // for the ready completion of the service are states of the loop, not
 // waits of it: a service that starts slowly, or never, holds no other
 // client (src/md/api/call_ring_ready.md).
-Service_Connection_State :: enum u8 {
-	Free, // The place is free.
-	Connecting, // Connect is sent; the answer of the root service has not come.
-	Readying, // The connection is mapped; the ready completion of the service has not come.
-	Ready, // Calls go through it.
-	Refused, // It did not become ready: refusal holds why, for the first call that waits for it.
-	Giving_Up, // Connect had no answer within the hang bound: Disconnect is sent, and a late answer of Connect has its handles closed.
-	// The connection ended, and its Disconnect waits for room in the root
-	// ring: the place stays taken until the root service frees its side.
-	Ending,
-}
+Service_Connection_State :: remote.Service_Place_State
 
 // A connection to one service: the root service made it, for one row of
 // the client table.
 Service_Connection :: struct {
 	state:         Service_Connection_State,
-	disconnect_owed: bool, // Giving_Up: its Disconnect waits for room in the root ring.
+	disconnect_owed: bool, // Giving_Up and Refused: its Disconnect waits for room in the root ring.
 	connect_tag:   u32, // Connecting and Giving_Up: the tag of the Connect.
 	deadline:      u64, // Connecting, Readying and Giving_Up: the hang bound of the state.
 	refusal:       errors.Error_Record, // Refused and Giving_Up: why.
@@ -299,9 +289,10 @@ Service_Connection :: struct {
 }
 
 // The connections to services that this process holds: one for each of
-// its clients and each service that it calls (remote.SERVICE_CONNECTIONS).
-// The root service gives the rows of the client table half of its
-// connection table (remote.root_places_for_client_rows), so a local caller
+// its clients and each service that it calls, within the share of the
+// root service (remote.SERVICE_CONNECTIONS). The root service gives the
+// rows of the client table half of its connection table
+// (remote.ROOT_PLACES_FOR_CLIENT_ROWS), so a local caller
 // always finds a place there, and each service keeps
 // isolated.SERVICE_CONNECTION_LOCAL_RESERVE of its callers for local
 // callers: a row past either bound gets the refusal of the root service
@@ -622,7 +613,7 @@ service_connections_of_ended_grants :: proc "contextless" () {
 	for &item in service_connections {
 		if item.state == .Refused {
 			if !remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
-				item = {}
+				connection_forget(&item, item.disconnect_owed)
 			}
 			continue
 		}
@@ -690,7 +681,13 @@ calls_work :: proc "contextless" () {
 	client_table_version_seen = intrinsics.atomic_load_explicit(&client_table.version, .Acquire)
 	remote.client_table_read(client_table, &client_rows)
 	service_connections_of_ended_grants()
-	disconnects_owed_work()
+	// A Disconnect that went frees a place: a call that waits for it, or for
+	// a place of its service and its row, asks for a connection again.
+	if disconnects_owed_work() > 0 {
+		for &call in calls {
+			call.service_pending = false
+		}
+	}
 	// An offer whose code ended admits no key: the connection of its
 	// machine ends below, in client_grant_check.
 	machine_wire.pairing_expire(&mesh, now)
@@ -918,21 +915,18 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 			free = &item
 			continue
 		}
-		if remote.name_text(&item.name) != name || item.row != client.row || item.serial != client.serial {
-			continue
-		}
-		switch item.state {
-		case .Ready:
+		switch remote.service_place_lookup(item.state, remote.name_text(&item.name) == name && item.row == client.row, item.serial == client.serial) {
+		case .Skip:
+		case .Use:
 			return &item, {}, false
-		case .Connecting, .Readying:
+		case .Pending:
 			return nil, {}, true
-		case .Refused:
+		case .Refusal:
 			refusal := item.refusal
-			item = {}
+			connection_forget(&item, item.disconnect_owed)
 			return nil, refusal, false
-		case .Giving_Up:
+		case .Given_Up:
 			return nil, item.refusal, false
-		case .Free, .Ending:
 		}
 	}
 	if free == nil {
@@ -1019,7 +1013,9 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 connection_refuse :: proc "contextless" (connection: ^Service_Connection, tell: bool, refusal: errors.Error_Record) {
 	kept := connection^
 	connection_end(connection, tell)
-	connection^ = {state = .Refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
+	// A Disconnect that the root ring did not take stays owed in Refused.
+	state, owed := remote.service_place_after_refusal(connection.state)
+	connection^ = {state = state, disconnect_owed = owed, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
 }
 
 // connections_progress moves each connection that waits: the answers of
@@ -1142,7 +1138,7 @@ service_connections_reclaim_refused :: proc "contextless" () {
 		grant_holds := remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls)
 		slot := remote.Service_Slot_Key{name = item.name, row = item.row, serial = item.serial}
 		if remote.refused_slot_reclaimable(slot, grant_holds, waiting[:waiting_count]) {
-			item = {}
+			connection_forget(&item, item.disconnect_owed)
 		}
 	}
 }
@@ -1154,7 +1150,12 @@ connections_wait :: proc "contextless" (wait: ^system.Wait) -> (limit: u64) {
 	asked := false
 	for &connection in service_connections {
 		switch connection.state {
-		case .Free, .Ready, .Refused:
+		case .Free, .Ready:
+			continue
+		case .Refused:
+			if connection.disconnect_owed {
+				system.wait_room(wait, &requests.commands)
+			}
 			continue
 		case .Ending:
 			// An owed Disconnect goes when the root ring has room.
@@ -1196,10 +1197,10 @@ connection_forget :: proc "contextless" (connection: ^Service_Connection, owed: 
 
 // disconnects_owed_work sends the owed Disconnect records, as the root ring
 // takes them (remote.disconnects_owed_send).
-disconnects_owed_work :: proc "contextless" () {
+disconnects_owed_work :: proc "contextless" () -> (sent: int) {
 	owes :: proc "contextless" (place: int) -> bool {
 		item := &service_connections[place]
-		return item.state == .Ending || item.state == .Giving_Up && item.disconnect_owed
+		return remote.service_place_owes_disconnect(item.state, item.disconnect_owed)
 	}
 	send :: proc "contextless" (place: int) -> bool {
 		item := &service_connections[place]
@@ -1213,7 +1214,7 @@ disconnects_owed_work :: proc "contextless" () {
 		}
 		return true
 	}
-	remote.disconnects_owed_send(len(service_connections), owes, send)
+	return remote.disconnects_owed_send(len(service_connections), owes, send)
 }
 
 // connection_end closes what this process holds of a connection to a

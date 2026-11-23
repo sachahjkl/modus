@@ -419,9 +419,9 @@ connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
 
 // The connections that this service holds: each client of each service,
 // at one time.
-CONNECTION_CAPACITY :: 256
+CONNECTION_CAPACITY :: isolated.ROOT_CONNECTION_CAPACITY
 // The connections for the rows of the client table take at most half of
-// the table (remote.root_places_for_client_rows): the other half stays for
+// the table (remote.ROOT_PLACES_FOR_CLIENT_ROWS): the other half stays for
 // local callers.
 
 connections: [CONNECTION_CAPACITY]Connection
@@ -2156,7 +2156,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// A connection for a row of the client table (a client of another
 	// machine) never takes the last places of the table or of the service:
 	// the clients that a principal allowed cannot shut out a local caller.
-	if free == nil || !isolated.connection_place_open(client.place != 0, count, used, used_for_client_rows, CONNECTION_CAPACITY, remote.root_places_for_client_rows(CONNECTION_CAPACITY)) {
+	if free == nil || !isolated.connection_place_open(client.place != 0, count, used, used_for_client_rows, CONNECTION_CAPACITY, remote.ROOT_PLACES_FOR_CLIENT_ROWS) {
 		return nil, nil, 0, 0, .No_Slot
 	}
 	// The service ring keeps room for one Disconnect for each connection:

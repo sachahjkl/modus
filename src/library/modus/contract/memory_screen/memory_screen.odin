@@ -529,25 +529,3 @@ resize_interval_decide :: proc "contextless" (now, viewer_asked_at, screen_chang
 	}
 	return .None
 }
-
-// The sizes that a budget pays for a screen of memory, from the largest: a
-// viewer asks any size, and these steps bound what the root service pays
-// at the start of a module (paid_size_of).
-@(rodata)
-PAID_SIZES := [?][2]u64{{7680, 4320}, {5120, 2880}, {3840, 2160}, {2560, 1440}, {1920, 1080}}
-
-// paid_size_of gives the size of a screen of memory that the budget of a
-// module pays: the largest of PAID_SIZES that holds the start size on each
-// side and whose pages fits, else the start size. fits says if a size
-// fits the share of a process (the starter computes the request).
-//
-// Example: a start size of 1920 x 1080 and a share that pays 4K and not
-// 5K give 3840 x 2160.
-paid_size_of :: proc "contextless" (start_width, start_height: u64, fits: proc "contextless" (width, height: u64, data: rawptr) -> bool, data: rawptr) -> (width, height: u64) {
-	for size in PAID_SIZES {
-		if size[0] >= start_width && size[1] >= start_height && fits(size[0], size[1], data) {
-			return size[0], size[1]
-		}
-	}
-	return start_width, start_height
-}

@@ -7,6 +7,6 @@ guide: docs/QUIC.md
 
 A machine with no display device, such as a server, now runs the desktop and the console in memory, at 1920 x 1080. A viewer of the remote display sees that desktop and drives it with its keys and its pointer.
 
-A viewer with the input can ask the desktop for another size, up to 7680 x 4320. The desktop takes the size at once, each window fits it again, and each viewer receives the new size and the whole screen. When the budget of the compositor or of the remote display does not pay that size, the viewer gets the cause and keeps its session.
+A viewer with the input can ask the desktop for another size. The desktop takes the size at once, each window fits it again, and each viewer receives the new size and the whole screen. The memory of the desktop is paid at the size of its start, so a smaller size passes; for a larger size, the viewer gets the cause and keeps its session.
 
 On a machine with a screen, the size is the size of the screen, and an ask gets the cause that the screen is a device.

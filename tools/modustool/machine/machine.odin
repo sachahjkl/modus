@@ -74,8 +74,8 @@ CONSOLE_SCROLL_BAR_TRACK_START_Y :: 17 + 4 // Near the start of the track: a thu
 // The line of remote when the last client of a client key leaves, after
 // one call to one service: the slot of that connection is free, and no
 // other slot is in use. The capacity is remote.SERVICE_CONNECTIONS.
-REMOTE_ONE_SLOT_FREED :: "remote: ended 1 connections to services that no client uses (the last client of their key left, or no call for 60 s): their slots are free; 0 of 320 slots in use"
-#assert(remote.SERVICE_CONNECTIONS == 320)
+REMOTE_ONE_SLOT_FREED :: "remote: ended 1 connections to services that no client uses (the last client of their key left, or no call for 60 s): their slots are free; 0 of 128 slots in use"
+#assert(remote.SERVICE_CONNECTIONS == 128)
 
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.

@@ -1,6 +1,5 @@
 package root
 
-import "modus:contract/memory_screen"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/reference_screen"
@@ -183,25 +182,11 @@ budget_decided :: proc "contextless" (file: []u8, name: string, largest: system.
 	// The screen pictures of the module have the size of the screen of this
 	// machine. A request past the limit of pictures gets no screen: the
 	// module gets the rest of its request, and one line names the part.
+	// A budget is a reservation of the pages of this service: the pictures
+	// of a screen of memory are paid at the size of its start, never at a
+	// size that a viewer may ask one day (src/md/features/screen_of_memory.md,
+	// "The budget of a screen of memory").
 	width, height := screen_in_force()
-	// On a screen of memory, a viewer can ask another size: the pictures
-	// are paid at the largest step of memory_screen.PAID_SIZES that the
-	// share of a process pays, so a viewer can grow the screen up to it
-	// (src/md/features/screen_of_memory.md).
-	if request.screen_pictures != 0 && root_screen_values[0] == 0 && screen_of_memory_size[0] != 0 {
-		Share :: struct {
-			request: module.Budget_Request,
-			pages:   u64,
-			plan:    u64,
-		}
-		share := Share{request, u64(largest.pages), plan_screen_pages_of(name)}
-		fits :: proc "contextless" (width, height: u64, data: rawptr) -> bool {
-			share := (^Share)(data)
-			with, ok := module.budget_request_of_screen(share.request, width, height, share.plan)
-			return ok && with.pages <= share.pages
-		}
-		width, height = memory_screen.paid_size_of(width, height, fits, &share)
-	}
 	with_screen, screen_ok := module.budget_request_of_screen(request, width, height, plan_screen_pages_of(name))
 	if !screen_ok {
 		system.log_fact(.Warning, Budget_Screen_Pictures_Refused{screen_pictures = request.screen_pictures, started_process = module_name_field(name)})

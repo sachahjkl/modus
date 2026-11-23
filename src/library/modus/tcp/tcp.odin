@@ -1225,9 +1225,14 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 		return
 	}
 	original := header.sequence // The sequence of the segment as it came (RFC 5961 3.2).
-	// 1. Is the segment in the window?
+	// 1. Is the segment in the window? The window is the one that the
+	// remote read: receive_edge rounded up to a unit of the scale
+	// (segment_send). The bytes taken past receive_edge, under its
+	// rounding, can put receive_next past it: the window is then 0, never a
+	// subtraction that wraps to a window of 4 GiB.
 	length := sequence_length(header)
-	window := connection.receive_edge - connection.receive_next
+	edge_window := before(connection.receive_edge, connection.receive_next) ? 0 : connection.receive_edge - connection.receive_next
+	window := window_field_of(edge_window, connection.receive_scale) << connection.receive_scale
 	acceptable: bool
 	if length == 0 {
 		acceptable = window == 0 ? header.sequence == connection.receive_next : inside(header.sequence, connection.receive_next, window)
@@ -1266,13 +1271,9 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 			header.flags -= {.Fin} // A FIN that arrived before.
 		}
 	}
-	// The edge that the remote read is receive_edge rounded up to a unit of
-	// the scale (segment_send), and it can pass the free room of the buffer:
-	// a byte past that room is not taken.
-	// The bytes taken past receive_edge, under its rounding, can put
-	// receive_next past it: the window is then 0.
-	edge_window := before(connection.receive_edge, connection.receive_next) ? 0 : connection.receive_edge - connection.receive_next
-	limit := connection.receive_next + window_field_of(edge_window, connection.receive_scale) << connection.receive_scale
+	// The window that the remote read can pass the free room of the
+	// buffer by less than one unit: a byte past that room is not taken.
+	limit := connection.receive_next + window
 	buffer_end := connection.receive_next + (table.receive_size - connection.receive_ready)
 	if before(buffer_end, limit) {
 		limit = buffer_end

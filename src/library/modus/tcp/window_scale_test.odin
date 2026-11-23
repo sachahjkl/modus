@@ -324,3 +324,26 @@ bytes_past_the_free_room_are_not_taken :: proc(t: ^testing.T) {
 	testing.expect_value(t, connection.bytes_received - before_bytes, 10)
 	testing.expect_value(t, connection.receive_ready, listener.table.receive_size)
 }
+
+// receive_next past receive_edge, as the bytes taken under the rounding of
+// the edge leave it: the window is 0, not a window that wraps. An old
+// duplicate gets its ACK and gives no byte; a FIN far past the window is
+// not taken; a segment at receive_next with data gives no byte either.
+@(test)
+a_receive_next_past_the_edge_keeps_a_window_of_zero :: proc(t: ^testing.T) {
+	listener := listener_make(1 << 20)
+	defer listener_free(listener)
+	connection := listener_established(t, listener)
+	connection.receive_edge = connection.receive_next - 5
+	next := connection.receive_next
+	received := connection.bytes_received
+	old := Header{source_port = 4000, destination_port = PORT_B, sequence = next - 100, acknowledgment = connection.send_next, flags = {.Ack}, window = 1000}
+	answer, answered := listener_take(listener, old, 3)
+	testing.expect(t, answered && answer.acknowledgment == next, "an old duplicate got no ACK of receive_next")
+	testing.expect_value(t, connection.bytes_received, received)
+	far := Header{source_port = 4000, destination_port = PORT_B, sequence = next + 1 << 20, acknowledgment = connection.send_next, flags = {.Ack, .Fin}, window = 1000}
+	listener_take(listener, far, 4)
+	testing.expect(t, !connection.fin_waiting, "a FIN far past the window was taken")
+	testing.expect_value(t, connection.state, State.Established)
+	testing.expect_value(t, connection.receive_next, next)
+}

@@ -4,6 +4,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
+- **A screen of memory that grows.** A viewer asks a screen of memory larger than its start size, and the root service gives the compositor and `remote_display` the pages of that size at the same step, within the share of a process, and takes them back when the size shrinks; today such a size is refused with its budget cause. [Design](src/md/features/screen_of_memory.md)
+
 ## Next
 
 - **The kernel tables sized from the memory of the machine.** The kernel sizes its tables of processes, threads, memory objects and budgets at its start, in a reserve of addresses, so a large machine runs more processes and a small one keeps more pages for its budgets; today the tables have fixed sizes that a machine of 1 GiB holds.
