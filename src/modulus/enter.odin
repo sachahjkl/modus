@@ -148,6 +148,32 @@ status_of_outcome :: proc "contextless" (outcome: Operation_Outcome) -> op.Statu
 	machine_stop(.Invariant_Broken)
 }
 
+// outcome_of_status lifts a contract status into Operation_Outcome with a
+// whole switch so no cast skips the set.
+outcome_of_status :: proc "contextless" (status: op.Status) -> Operation_Outcome {
+	switch status {
+	case .Ok:
+		return .Ok
+	case .Bad_Operation:
+		return .Bad_Operation
+	case .Bad_Handle:
+		return .Bad_Handle
+	case .Bad_Address:
+		return .Bad_Address
+	case .No_Memory:
+		return .No_Memory
+	case .No_Slot:
+		return .No_Slot
+	case .Bad_State:
+		return .Bad_State
+	case .No_Right:
+		return .No_Right
+	case .No_Budget:
+		return .No_Budget
+	}
+	return .Bad_Operation
+}
+
 // The facts of the kernel operation that runs on a processor, in one
 // record: command_run sets it to its start before each run of an
 // operation, so no fact of an earlier operation stays for a reader. The
@@ -565,7 +591,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		region := &regions[slot.object]
 		offset, address, length := v[1], v[2], v[3]
 		if status := op.memory_read_arguments_status(offset, length, region.page_count, region.device); status != .Ok {
-			return Operation_Outcome(u32(status))
+			return outcome_of_status(status)
 		}
 		// The pages of the caller are present (user_range), and its process
 		// lock keeps them so: the copy into them does not fault.

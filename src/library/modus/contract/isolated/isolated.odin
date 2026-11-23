@@ -573,7 +573,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		word_index := module.parameter_word_index(function, index)
 		if module.parameter_optional(function, index) {
 			presence_word := load(record[:], field, u64)
-			presence, presence_ok := module.presence_of_word(module.Presence(presence_word))
+			presence, presence_ok := module.presence_of_word(presence_word)
 			if !presence_ok {
 				return refuse(refusal, .Bad_Value, .None, argument, presence_word, u64(max(module.Presence)))
 			}

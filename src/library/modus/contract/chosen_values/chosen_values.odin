@@ -21,6 +21,7 @@
 package chosen_values
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/text_encoding"
 
 // The bytes "CHOSEN02" and the size of the header: the magic, the count of
@@ -153,9 +154,15 @@ entry_name :: proc "contextless" (record: Record, index: int) -> string {
 	return string(entry[:length])
 }
 
+// entry_kind_of_word is the border of the kind byte of an entry.
+entry_kind_of_word :: proc "contextless" (word: u8) -> (kind: Entry_Kind, ok: bool) {
+	return enum_word.member_of_word(Entry_Kind, u64(word))
+}
+
 // entry_kind gives the kind of an entry of a checked record.
 entry_kind :: proc "contextless" (record: Record, index: int) -> Entry_Kind {
-	return Entry_Kind(record.entries[index * ENTRY_SIZE + NAME_SIZE])
+	kind, ok := entry_kind_of_word(record.entries[index * ENTRY_SIZE + NAME_SIZE])
+	return ok ? kind : .Word
 }
 
 // entry_value gives the word of a word entry of a checked record.

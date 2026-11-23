@@ -13,6 +13,7 @@ package root_plan_values
 
 import "modus:contract/chosen_values"
 import "modus:contract/memory_screen"
+import module "modus:contract/module"
 import "modus:contract/plan_values"
 
 // The owner of the values of the root service in a set of plan values.
@@ -27,11 +28,11 @@ MEMORY_SCREEN_MOST_HEIGHT_FIELD :: "memory_screen_most_height"
 STORE_BLOCKS_FIELD :: "store_blocks"
 
 // The share: the largest budget of one process is the budget of the machine
-// over this count. The default is a quarter, as the limits of the kernel
-// fixed it; 1 gives one process the whole machine, 64 a sixty-fourth.
-BUDGET_SHARE_LEAST :: u64(1)
-BUDGET_SHARE_MOST :: u64(64)
-BUDGET_SHARE_DEFAULT :: u64(4)
+// over this count. Stated once in module/format.odin; 1 gives one process
+// the whole machine, 64 a sixty-fourth, default 4 (a quarter).
+BUDGET_SHARE_LEAST :: module.LARGEST_BUDGET_SHARE_LEAST
+BUDGET_SHARE_MOST :: module.LARGEST_BUDGET_SHARE_MOST
+BUDGET_SHARE_DEFAULT :: module.LARGEST_BUDGET_SHARE_DEFAULT
 
 // The quota of a store, in blocks: at least one, and at most the blocks of
 // a data disk of 4 GiB in blocks of 4 KiB. The storage service refuses a
@@ -93,15 +94,16 @@ Root_Plan :: struct {
 // The defaults of the contract: what holds when the plan gives nothing.
 ROOT_PLAN_DEFAULTS :: Root_Plan {
 	budget_share               = BUDGET_SHARE_DEFAULT,
-	memory_screen_start_width  = memory_screen.MAX_WIDTH,
-	memory_screen_start_height = memory_screen.MAX_HEIGHT,
+	memory_screen_start_width  = memory_screen.DEFAULT_WIDTH,
+	memory_screen_start_height = memory_screen.DEFAULT_HEIGHT,
 	memory_screen_most_width   = memory_screen.MAX_WIDTH,
 	memory_screen_most_height  = memory_screen.MAX_HEIGHT,
 }
 
 @(private = "file")
 share_valid :: proc "contextless" (word: u64) -> bool {
-	return word >= BUDGET_SHARE_LEAST && word <= BUDGET_SHARE_MOST
+	_, ok := module.budget_share_of_word(word)
+	return ok
 }
 
 @(private = "file")

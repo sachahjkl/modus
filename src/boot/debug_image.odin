@@ -15,12 +15,15 @@ import "base:intrinsics"
 DEBUG_IMAGE_PATH :: "\\DEBUG\\OBJECTS.IMG"
 
 // debug_image_read reads the debug image of the volume of the boot program
-// into pages of its own. It gives 0 and 0 when the volume has no such file,
-// when the file is empty, or when the firmware refuses a
-// step. It runs after the last allocation of the start that stops the
-// machine when it fails, and it never stops the machine itself: a start
-// never fails for the debug image. A failed read gives its pages back.
-debug_image_read :: proc "contextless" () -> (address: u64, size: u64) {
+// into pages of its own, up to `limit` bytes (computed from free physical
+// memory and capped at fixed_addresses.RANGE_SPAN, so an unsigned or oversized
+// file never exhausts memory needed by the kernel and root service). It gives
+// 0 and 0 when the volume has no such file, when the file is empty or over
+// `limit`, or when the firmware refuses a step. It runs after the last
+// allocation of the start that stops the machine when it fails, and it never
+// stops the machine itself: a start never fails for the debug image. A failed
+// read gives its pages back.
+debug_image_read :: proc "contextless" (limit: u64) -> (address: u64, size: u64) {
 	services := system.boot_services
 	loaded_guid := EFI_LOADED_IMAGE_GUID
 	file_system_guid := EFI_SIMPLE_FILE_SYSTEM_GUID
@@ -58,9 +61,10 @@ debug_image_read :: proc "contextless" () -> (address: u64, size: u64) {
 		print("boot program: the debug image is empty: not read\r\n")
 		return 0, 0
 	}
-	// Format property: a count of pages that wraps names no memory.
-	if size > max(u64) - PAGE_SIZE {
-		print("boot program: the debug image is larger than an address holds: not read\r\n")
+	// Computed bound: at most limit (one quarter of free physical memory,
+	// capped at fixed_addresses.RANGE_SPAN), and never past u64 page rounding.
+	if limit == 0 || size > limit || size > max(u64) - PAGE_SIZE {
+		print("boot program: the debug image is larger than the computed bound: not read\r\n")
 		return 0, 0
 	}
 	page_count := (size + PAGE_SIZE - 1) / PAGE_SIZE

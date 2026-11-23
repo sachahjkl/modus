@@ -1596,10 +1596,10 @@ pictures_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.A
 	y = list.y + list.height + 2 * GAP
 	PAGE_BUTTON_WIDTH :: (PANEL_WIDTH - GAP) / 2
 	pages_y := y + ROW_HEIGHT + 2 * GAP
-	if picture_page > 0 && interface.button(frame, {x, pages_y, PAGE_BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("previous page"), "previous").activated {
+	if picture_page > 0 && interface.button(frame, {x, pages_y, PAGE_BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("previous page"), "Previous").activated {
 		pictures_page_ask(picture_page - 1)
 	}
-	if pictures_more && interface.button(frame, {x + PAGE_BUTTON_WIDTH + GAP, pages_y, PAGE_BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("next page"), "next").activated {
+	if pictures_more && interface.button(frame, {x + PAGE_BUTTON_WIDTH + GAP, pages_y, PAGE_BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("next page"), "Next").activated {
 		pictures_page_ask(picture_page + 1)
 	}
 	if picture_name_count == 0 {

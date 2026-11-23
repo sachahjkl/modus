@@ -18,6 +18,7 @@ package remote_service
 // design says of a machine with no machine key.
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
@@ -314,20 +315,19 @@ mesh_fill_random :: proc "contextless" (bytes: []u8, _: rawptr) -> bool {
 // identity, and makes the state of the mesh empty. No role holder is given
 // yet: a role call of a paired machine is refused until the root service
 // gives remote a connection to the real holder for the row of that machine.
-// 0, or -1 with an error record.
-mesh_identity_set :: proc "contextless" (public_key: [32]u8, error: ^errors.Error_Record) -> i64 {
+mesh_identity_set :: proc "contextless" (public_key: [32]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	services := machine_wire.Peer_Services {
 		signature_verify = mesh_signature_verify,
 		fill_random      = mesh_fill_random,
 	}
 	memory, memory_status := mesh_memory_make(error)
 	if memory_status != .Ok {
-		return -1
+		return .Budget_Or_Capacity_Exhausted, 0
 	}
 	if !machine_wire.peer_init(&mesh, public_key, services, memory) {
-		return errors.fail(error, -1, .Bad_Value, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // mesh_serve answers one mesh frame of a stream: the request is in
@@ -352,9 +352,9 @@ mesh_serve :: proc "contextless" (buffer: []u8, received: int, peer_identity: [3
 // mesh_principal_set names the principal root key whose signed machine list
 // this machine follows. A second call with another key starts again with no
 // list and no row of a list.
-mesh_principal_set :: proc "contextless" (principal_root_public_key: [32]u8, error: ^errors.Error_Record) -> i64 {
+mesh_principal_set :: proc "contextless" (principal_root_public_key: [32]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !machine_mesh.machine_list_holder_init(&mesh.machine_list, principal_root_public_key) {
-		return errors.fail(error, -1, .Bad_Value, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
 	}
 	index := mesh.paired.count - 1
 	for index >= 0 {
@@ -368,75 +368,66 @@ mesh_principal_set :: proc "contextless" (principal_root_public_key: [32]u8, err
 	mesh.revocations = {}
 	mesh.has_revocations = false
 	mesh.has_principal = true
-	return 0
-}
-
-@(private = "file")
-mesh_identity_check :: proc "contextless" (error: ^errors.Error_Record) -> bool {
-	if !mesh.has_identity {
-		errors.fail(error, -1, .State, .None, 0, 0, 0, 0)
-		return false
-	}
-	return true
+	return .Succeeded, 0
 }
 
 // mesh_pairing_offer starts a pairing on this machine and writes the code to
 // show. uses_word is the word of the uses that the principal gives the
 // machine that types the code: its row takes them when the exchange of the
-// mesh frames confirms (machine_wire.serve). 0, or -1 with an error record.
-mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE_TEXT_SIZE]u8, uses_word: u64, error: ^errors.Error_Record) -> i64 {
+// mesh frames confirms (machine_wire.serve).
+mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE_TEXT_SIZE]u8, uses_word: u64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if code_text == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
-	if !mesh_identity_check(error) {
-		return -1
+	if !mesh.has_identity {
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
 	uses, uses_known := remote.client_uses_of_word(uses_word)
 	if !uses_known {
-		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
 	}
 	mesh.pairing_uses = uses
 	random_bytes: [8]u8
 	defer machine_mesh.clear_bytes_explicitly(random_bytes[:])
 	if !random.fill_for_a_key(&process_generator, random_bytes[:], .Processor, error) {
-		return -1
+		return .Wrong_State, 0
 	}
 	text, status := machine_mesh.pairing_offer(&mesh.pairing, mesh.identity.public_key, random_bytes, system.time())
 	if status != .Ok {
 		return mesh_pairing_fail(error, status, 0)
 	}
 	code_text^ = text
-	return 0
+	return .Succeeded, 0
 }
 
 // mesh_pairing_join starts a pairing with the code that the principal
 // typed, and the uses that it gives the machine that showed the code.
-mesh_pairing_join :: proc "contextless" (code_text: []u8, uses_word: u64, error: ^errors.Error_Record) -> i64 {
-	if !mesh_identity_check(error) {
-		return -1
+mesh_pairing_join :: proc "contextless" (code_text: []u8, uses_word: u64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if !mesh.has_identity {
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
 	uses, uses_known := remote.client_uses_of_word(uses_word)
 	if !uses_known {
-		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
 	}
 	mesh.pairing_uses = uses
 	status := machine_mesh.pairing_join(&mesh.pairing, mesh.identity.public_key, code_text, system.time())
 	if status != .Ok {
 		return mesh_pairing_fail(error, status, 1)
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // mesh_machine_list_update takes the wire bytes of a signed machine list.
-// 0 when it is accepted, 1 when it is accepted with a machine that has no
-// TPM attestation (the setting allowed it, and the window warns), or -1
-// with an error record. revoked counts the rows that left at once.
-mesh_machine_list_update :: proc "contextless" (wire: []u8, revoked: ^int, error: ^errors.Error_Record) -> i64 {
-	if !mesh_identity_check(error) {
-		return -1
+// On success value is 0, or 1 when accepted with a machine that has no TPM
+// attestation (the setting allowed it, and the window warns). revoked counts
+// the rows that left at once.
+mesh_machine_list_update :: proc "contextless" (wire: []u8, revoked: ^int, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if !mesh.has_identity {
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
 	if !mesh.has_principal {
-		return errors.fail(error, -1, .Absent, .Principals, 0)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Principals, 0)
 	}
 	candidate, decode_status := machine_mesh.machine_list_decode(wire)
 	if !machine_mesh.machine_list_status_accepted(decode_status) {
@@ -460,22 +451,22 @@ mesh_machine_list_update :: proc "contextless" (wire: []u8, revoked: ^int, error
 	if not_added > 0 {
 		// The list holds: its revocations took effect. A machine with no
 		// free row is said, never dropped in silence.
-		return errors.fail(error, -1, .Full, .Records, 1, i64(not_added), machine_mesh.MAX_PAIRED_MACHINES)
+		return call_outcome.fail(error, .Stopped_After_A_Partial_Change, .Full, .Records, 1, i64(not_added), machine_mesh.MAX_PAIRED_MACHINES)
 	}
 	if status == .Accepted_Without_Tpm_Warning {
-		return 1
+		return .Succeeded, 1
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // mesh_revocation_list_update takes a newer revocation list of the
 // principal, signed by a machine of its newest machine list.
-mesh_revocation_list_update :: proc "contextless" (candidate: ^machine_mesh.Revocation_List, error: ^errors.Error_Record) -> i64 {
+mesh_revocation_list_update :: proc "contextless" (candidate: ^machine_mesh.Revocation_List, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if candidate == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if !mesh.machine_list.has_list {
-		return errors.fail(error, -1, .Absent, .Versions, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Versions, 1)
 	}
 	status := machine_mesh.revocation_list_apply_update(
 		&mesh.machine_list.list,
@@ -487,32 +478,32 @@ mesh_revocation_list_update :: proc "contextless" (candidate: ^machine_mesh.Revo
 	switch status {
 	case .Accepted:
 		mesh.has_revocations = true
-		return 0
+		return .Succeeded, 0
 	case .Refused_Invalid_Signature, .Refused_Wrong_Grantor, .Refused_Signer_Not_Active:
-		return errors.fail(error, -1, .Not_Authentic, .None, 1, 0, 0, i64(status))
+		return call_outcome.fail(error, .Argument_Refused, .Not_Authentic, .None, 1, 0, 0, i64(status))
 	case .Refused_Replay_Or_Downgrade:
-		return errors.fail(error, -1, .Bad_Value, .Versions, 1, i64(candidate.epoch), 0, i64(mesh.revocations.epoch))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Versions, 1, i64(candidate.epoch), 0, i64(mesh.revocations.epoch))
 	case .Refused_Too_Many_Entries:
-		return errors.fail(error, -1, .Too_Long, .Records, 1, i64(candidate.revoked_count), machine_mesh.MAX_REVOKED_GRANTS)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(candidate.revoked_count), machine_mesh.MAX_REVOKED_GRANTS)
 	case .Refused_Buffer_Too_Small:
-		return errors.fail(error, -1, .Too_Small, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1)
 	case .Refused_Nil_Input, .Refused_Zero_Key, .Refused_Zero_Epoch, .Refused_Zero_Serial, .Refused_Not_Strictly_Sorted:
-		return errors.fail(error, -1, .Bad_Value, .None, 1, 0, 0, i64(status))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, 0, 0, i64(status))
 	}
-	return errors.fail(error, -1, .Bad_Value, .None, 1, 0, 0, i64(status))
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, 0, 0, i64(status))
 }
 
 // mesh_grant_check checks the wire bytes of a signed grant that a principal
 // of another machine presents to this machine, for the receiver root key
 // that the handshake proved: signature against the newest machine list,
 // this machine as the server, the receiver, a life of one day at most or
-// the revocation list, and the time. 0, or -1 with an error record.
-mesh_grant_check :: proc "contextless" (wire: []u8, grantee_root_public_key: [32]u8, error: ^errors.Error_Record) -> i64 {
-	if !mesh_identity_check(error) {
-		return -1
+// the revocation list, and the time.
+mesh_grant_check :: proc "contextless" (wire: []u8, grantee_root_public_key: [32]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if !mesh.has_identity {
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
 	if !mesh.machine_list.has_list {
-		return errors.fail(error, -1, .Absent, .Versions, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Versions, 1)
 	}
 	grant, decode_status := machine_mesh.signed_grant_decode(wire)
 	if decode_status != .Accepted {
@@ -532,7 +523,7 @@ mesh_grant_check :: proc "contextless" (wire: []u8, grantee_root_public_key: [32
 	if status != .Accepted {
 		return mesh_grant_fail(error, status, &grant, now)
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // mesh_partner_connection_end ends the exchanges of a paired machine whose
@@ -544,24 +535,23 @@ mesh_partner_connection_end :: proc "contextless" (partner: [32]u8) {
 }
 
 // mesh_object_accept keeps an object that a paired machine sent for a
-// requested hash, only when its bytes hash to it. 0, or -1 with an error
-// record.
+// requested hash, only when its bytes hash to it.
 mesh_object_accept :: proc "contextless" (
 	peer_identity: [32]u8,
 	kind_word: u64,
 	requested_hash: blake3.Hash,
 	payload: []u8,
 	error: ^errors.Error_Record,
-) -> i64 {
-	if !mesh_identity_check(error) {
-		return -1
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if !mesh.has_identity {
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
 	if _, paired := machine_mesh.paired_machine_find(&mesh.paired, peer_identity); !paired {
-		return errors.fail(error, -1, .Absent, .Records, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, 1)
 	}
 	kind, kind_ok := object_cache.cache_object_kind_of_word(kind_word)
 	if !kind_ok {
-		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(kind_word))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(kind_word))
 	}
 	// The bytes that the store takes for this object count in the share of
 	// the partner that sent it (mesh_object_grow), as for an object that
@@ -570,19 +560,19 @@ mesh_object_accept :: proc "contextless" (
 	status := machine_sync.object_store_accept(&mesh.objects, kind, requested_hash, payload)
 	switch status {
 	case .Stored, .Already_Stored:
-		return 0
+		return .Succeeded, 0
 	case .Refused_Hash_Mismatch:
-		return errors.fail(error, -1, .Not_Authentic, .None, 4)
+		return call_outcome.fail(error, .Argument_Refused, .Not_Authentic, .None, 4)
 	case .Refused_Malformed:
-		return errors.fail(error, -1, .Bad_Value, .None, 4, 0, 0, i64(status))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 4, 0, 0, i64(status))
 	case .Refused_Full:
-		return errors.fail(error, -1, .Full, .Objects, 0, 0, i64(len(mesh.objects.objects)))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 0, 0, i64(len(mesh.objects.objects)))
 	case .Refused_Too_Large:
-		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(len(payload)), i64(len(mesh.objects.bytes) - mesh.objects.bytes_used))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 4, i64(len(payload)), i64(len(mesh.objects.bytes) - mesh.objects.bytes_used))
 	case .Refused_Nil_Input:
-		return errors.fail(error, -1, .State, .None, 0)
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
-	return errors.fail(error, -1, .Bad_Value, .None, 0, 0, 0, i64(status))
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 0, 0, 0, i64(status))
 }
 
 // mesh_object_lookup gives the bytes of an object that this process kept.
@@ -592,74 +582,74 @@ mesh_object_lookup :: proc "contextless" (hash: blake3.Hash) -> (bytes: []u8, fo
 }
 
 @(private = "file")
-mesh_pairing_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_mesh.Pairing_Status, argument: i64) -> i64 {
+mesh_pairing_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_mesh.Pairing_Status, argument: i64) -> (call_outcome.Call_Outcome, i64) {
 	found := i64(status)
 	switch status {
 	case .Ok:
-		return 0
+		return .Succeeded, 0
 	case .Refused_Nil_Input, .Refused_Bad_Phase:
-		return errors.fail(error, -1, .State, .None, 0, 0, 0, i64(mesh.pairing.phase))
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0, 0, 0, i64(mesh.pairing.phase))
 	case .Refused_Code_Expired:
-		return errors.fail(error, -1, .Over_Limit, .Milliseconds, argument, 0, i64(machine_mesh.PAIRING_CODE_LIFETIME_MS))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Milliseconds, argument, 0, i64(machine_mesh.PAIRING_CODE_LIFETIME_MS))
 	case .Refused_Spent_Ledger_Full:
-		return errors.fail(error, -1, .Full, .Records, 0, 0, machine_mesh.MAX_SPENT_PAIRING_CODES)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, machine_mesh.MAX_SPENT_PAIRING_CODES)
 	case .Refused_Table_Full:
-		return errors.fail(error, -1, .Full, .Records, 0, 0, machine_mesh.MAX_PAIRED_MACHINES)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, machine_mesh.MAX_PAIRED_MACHINES)
 	case .Refused_Already_Paired:
-		return errors.fail(error, -1, .Exists, .Records, argument)
+		return call_outcome.fail(error, .Name_Already_Taken, .Exists, .Records, argument)
 	case .Refused_Peer_Key_Mismatch, .Refused_Exchange, .Refused_Confirmation_Failed:
-		return errors.fail(error, -1, .Not_Authentic, .None, argument, 0, 0, found)
+		return call_outcome.fail(error, .Argument_Refused, .Not_Authentic, .None, argument, 0, 0, found)
 	case .Refused_Bad_Side, .Refused_Zero_Key, .Refused_Same_Machine, .Refused_Zero_Code, .Refused_Bad_Code_Text,
 	     .Refused_Code_Spent, .Refused_Bad_Channel_Binding, .Refused_Bad_Uses:
-		return errors.fail(error, -1, .Bad_Value, .None, argument, 0, 0, found)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, 0, 0, found)
 	}
-	return errors.fail(error, -1, .Bad_Value, .None, argument, 0, 0, found)
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, 0, 0, found)
 }
 
 @(private = "file")
-mesh_machine_list_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_mesh.Machine_List_Status, sequence_number: u64) -> i64 {
+mesh_machine_list_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_mesh.Machine_List_Status, sequence_number: u64) -> (call_outcome.Call_Outcome, i64) {
 	found := i64(status)
 	switch status {
 	case .Accepted, .Accepted_Without_Tpm_Warning:
-		return 0
+		return .Succeeded, 0
 	case .Refused_Invalid_Signature, .Refused_Root_Key_Mismatch:
-		return errors.fail(error, -1, .Not_Authentic, .None, 1, 0, 0, found)
+		return call_outcome.fail(error, .Argument_Refused, .Not_Authentic, .None, 1, 0, 0, found)
 	case .Refused_Replay_Or_Downgrade:
 		// The list of this machine is newer: value is the number of the
 		// candidate, found the number that this machine holds.
-		return errors.fail(error, -1, .Bad_Value, .Versions, 1, i64(sequence_number), 0, i64(mesh.machine_list.list.sequence_number))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Versions, 1, i64(sequence_number), 0, i64(mesh.machine_list.list.sequence_number))
 	case .Refused_Without_Tpm:
-		return errors.fail(error, -1, .No_Grant, .None, 1, 0, 0, found)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .None, 1, 0, 0, found)
 	case .Refused_Too_Many_Entries:
-		return errors.fail(error, -1, .Too_Long, .Records, 1, 0, machine_mesh.MAX_MACHINE_LIST_ENTRIES)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, 0, machine_mesh.MAX_MACHINE_LIST_ENTRIES)
 	case .Refused_Buffer_Too_Small:
-		return errors.fail(error, -1, .Too_Small, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1)
 	case .Refused_Nil_Input, .Refused_Zero_Root_Key, .Refused_Zero_Sequence_Number, .Refused_Empty_List,
 	     .Refused_Bad_Entry_State, .Refused_Zero_Key, .Refused_Duplicate_Machine_Id, .Refused_Duplicate_Signing_Key,
 	     .Refused_Duplicate_Transport_Key, .Refused_Bad_Uses, .Refused_Bad_Timestamps, .Refused_Malformed_Wire:
-		return errors.fail(error, -1, .Bad_Value, .None, 1, 0, 0, found)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, 0, 0, found)
 	}
-	return errors.fail(error, -1, .Bad_Value, .None, 1, 0, 0, found)
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, 0, 0, found)
 }
 
 @(private = "file")
-mesh_grant_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_mesh.Grant_Check_Status, grant: ^machine_mesh.Signed_Grant, now_ms: u64) -> i64 {
+mesh_grant_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_mesh.Grant_Check_Status, grant: ^machine_mesh.Signed_Grant, now_ms: u64) -> (call_outcome.Call_Outcome, i64) {
 	found := i64(status)
 	switch status {
 	case .Accepted:
-		return 0
+		return .Succeeded, 0
 	case .Refused_Expired:
-		return errors.fail(error, -1, .Over_Limit, .Milliseconds, 1, i64(now_ms), i64(grant.expires_at_ms))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Milliseconds, 1, i64(now_ms), i64(grant.expires_at_ms))
 	case .Refused_Invalid_Signature, .Refused_Wrong_Grantor, .Refused_Grantor_Key_Not_Active, .Refused_Bad_Revocation_List:
-		return errors.fail(error, -1, .Not_Authentic, .None, 1, 0, 0, found)
+		return call_outcome.fail(error, .Argument_Refused, .Not_Authentic, .None, 1, 0, 0, found)
 	case .Refused_Revoked, .Refused_Long_Grant_Without_Revocation, .Refused_Stale_Revocation_List, .Refused_Wrong_Grantee,
 	     .Refused_Wrong_Serving_Machine, .Refused_Serving_Machine_Not_Active, .Refused_Not_Yet_Valid:
-		return errors.fail(error, -1, .No_Grant, .Grants, 1, 0, 0, found)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Grants, 1, 0, 0, found)
 	case .Refused_Buffer_Too_Small:
-		return errors.fail(error, -1, .Too_Small, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1)
 	case .Refused_Nil_Input, .Refused_Zero_Serial, .Refused_Zero_Key, .Refused_Zero_Target_Hash, .Refused_Bad_Target_Kind,
 	     .Refused_Bad_Rights, .Refused_Bad_Lifetime, .Refused_Malformed_Wire:
-		return errors.fail(error, -1, .Bad_Value, .None, 1, 0, 0, found)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, 0, 0, found)
 	}
-	return errors.fail(error, -1, .Bad_Value, .None, 1, 0, 0, found)
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, 0, 0, found)
 }

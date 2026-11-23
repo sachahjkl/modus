@@ -1,6 +1,7 @@
 package locks
 
 import "base:intrinsics"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import op "modus:contract/operation"
@@ -54,10 +55,15 @@ pages_back_wait :: proc "contextless" (pages: u64) -> bool {
 	return false
 }
 
+// The result of the thread of the room end case.
+Room_Thread_Result :: struct {
+	status: system.Status,
+}
+
 // room_thread_run asks for a room and ends with it.
 room_thread_run :: proc "c" (parameter: rawptr) -> ! {
-	status := (^system.Status)(parameter)
-	_, status^ = room_ask(0, ROOM_WORDS_ASKED, nil)
+	result := (^Room_Thread_Result)(parameter)
+	_, result.status = room_ask(0, ROOM_WORDS_ASKED, nil)
 	system.thread_stop()
 }
 
@@ -81,7 +87,7 @@ room_locker_case :: proc "contextless" (image: []u8, budget_end: bool) -> (room_
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	grants[lockers.GRANT_BOARD] = {board_memory, {.Read, .Write}}
-	values[lockers.VALUE_ROLE] = lockers.ROLE_WAIT_ROOM
+	values[lockers.VALUE_ROLE] = u64(lockers.Role.Wait_Room)
 	values[lockers.VALUE_ROOM_WORDS] = 2 * lockers.ROOM_WAITED
 	values[lockers.VALUE_BUDGET_END] = budget_end ? 1 : 0
 	process, start_status := system.process_start(system.image_find(image, "locker"), "room", grants, random.values_with_seed(&process_generator, values), LOCKER_AMOUNTS)
@@ -92,7 +98,8 @@ room_locker_case :: proc "contextless" (image: []u8, budget_end: bool) -> (room_
 	for intrinsics.atomic_load(&slot.done) == 0 && system.time() < deadline {
 		system.word_wait(&slot.done, 0, deadline)
 	}
-	room_status = system.Status(slot.count)
+	status, status_ok := enum_word.member_of_word(system.Status, slot.count)
+	room_status = status_ok ? status : .Bad_Operation
 	system.process_stop(process)
 	system.close(process)
 	return room_status, pages_back_wait(before.pages)
@@ -278,16 +285,16 @@ wait_room_case :: proc "contextless" (image: []u8) {
 
 	// The ends of a room: its thread, its process stopped in a wait, and
 	// its process after its budget ended.
-	thread_room_status := system.Status.Bad_State
+	thread_room_result := Room_Thread_Result{status = .Bad_State}
 	thread_before, _ := system.budget_read()
 	thread_end := false
-	if thread, started := system.thread_start(room_thread_run, &thread_room_status); started == .Ok {
+	if thread, started := system.thread_start(room_thread_run, &thread_room_result); started == .Ok {
 		system.thread_wait(thread)
 		thread_end = pages_back_wait(thread_before.pages)
 	}
 	stopped_status, stopped_back := room_locker_case(image, false)
 	ended_status, ended_back := room_locker_case(image, true)
-	ends_right := thread_room_status == .Ok && thread_end && stopped_status == .Ok && stopped_back && ended_status == .Ok && ended_back
+	ends_right := thread_room_result.status == .Ok && thread_end && stopped_status == .Ok && stopped_back && ended_status == .Ok && ended_back
 
 	system.log_fact(.Info, Wait_Room_Checked{
 		inline_words = op.WORD_WAIT_INLINE,

@@ -113,7 +113,8 @@ screen_of_memory_resize :: proc "contextless" (client: ^Client, width, height: u
 			pages_left = u64(budget.pages)
 		}
 	}
-	refusal, same := memory_screen.resize_decide(screen_of_memory, width, height, u32(screen.width), u32(screen.height), pages_left)
+	blocked := trusted_dialog_open() || local_input_window_shows()
+	refusal, same := memory_screen.resize_decide(screen_of_memory, width, height, u32(screen.width), u32(screen.height), pages_left, blocked)
 	if refusal == .None && !same {
 		if windows, taken := screen_of_memory_take(int(width), int(height), paying); taken {
 			system.log_fact(.Info, Screen_Of_Memory_Resized{width = width, height = height, windows = u64(windows)})

@@ -27,6 +27,7 @@
 // [private glyph cache](term:private-glyph-cache).
 package text_rendering
 
+import "modus:contract/enum_word"
 import "modus:contract/font_outlines"
 import "modus:contract/text_encoding"
 import "modus:vector_font"
@@ -138,6 +139,16 @@ Outline_Fonts :: bit_set[Outline_Font]
 FONT_FIELD_BITS :: 9
 #assert(1 + BOOT_FONT_COUNT + font_outlines.FONT_LIMIT <= 1 << FONT_FIELD_BITS)
 #assert(int(max(Outline_Font)) < 1 << FONT_FIELD_BITS)
+
+// outline_font_of_word is the border of the word of an Outline_Font: false
+// for a word that names no member, and for None.
+outline_font_of_word :: proc "contextless" (word: u64) -> (font: Outline_Font, ok: bool) {
+	member := enum_word.member_of_word(Outline_Font, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
 
 // outline_font_name gives the name of the record of a font in the resource
 // of the outlines: the name of its file in resources/fonts.

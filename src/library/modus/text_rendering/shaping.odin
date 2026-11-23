@@ -78,10 +78,11 @@ direct_glyph_parts :: proc "contextless" (glyph: u32) -> (font: Outline_Font, in
 		return .None, 0, false
 	}
 	number := (glyph >> 16) & (1 << FONT_FIELD_BITS - 1)
-	if number == 0 || number > u32(max(Outline_Font)) {
+	font, ok = outline_font_of_word(u64(number))
+	if !ok {
 		return .None, 0, false
 	}
-	return Outline_Font(number), int(glyph & 0xFFFF), true
+	return font, int(glyph & 0xFFFF), true
 }
 
 // The base of a mark with no base (the Unicode Standard, "Display of

@@ -6,6 +6,8 @@ package storage_port
 
 import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/storage_status"
+import store "modus:contract/store"
 import "modus:storage"
 
 // The bytes of one write_range: the call region holds them with the
@@ -17,6 +19,76 @@ WRITE_PIECE_BYTES :: 32 * 1024
 COMMIT_STEP_BYTES :: 1024 * 1024
 #assert(COMMIT_STEP_BYTES % WRITE_PIECE_BYTES == 0)
 
+// The storage operations that read_large_with and write_large_with call:
+// the live client in the system, or a host stub in tests.
+@(private)
+Large_Ops :: struct {
+	size:         proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> (i64, storage_status.Status),
+	read_range:   proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8, error: ^errors.Error_Record) -> ([]u8, storage_status.Status),
+	write:        proc "contextless" (user: rawptr, name: string, data: []u8, error: ^errors.Error_Record) -> (i64, storage_status.Status),
+	write_range:  proc "contextless" (user: rawptr, name: string, offset: u64, data: []u8, error: ^errors.Error_Record) -> (i64, storage_status.Status),
+	set_size:     proc "contextless" (user: rawptr, name: string, size: u64, error: ^errors.Error_Record) -> storage_status.Status,
+	commit:       proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> storage_status.Status,
+	drop_pending: proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> storage_status.Status,
+}
+
+// The object of a failed write whose pending changes the storage service
+// did not drop: the next write drops them first. The name holds one entry
+// name of the storage format (store.ENTRY_NAME_CAPACITY, 255 bytes).
+@(private)
+Pending_State :: struct {
+	kept:   bool,
+	name:   [store.ENTRY_NAME_CAPACITY]u8,
+	length: int,
+}
+
+@(private = "file")
+client_size :: proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> (i64, storage_status.Status) {
+	return storage.size((^storage.Client)(user), storage.ROOT, name, error)
+}
+
+@(private = "file")
+client_read_range :: proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8, error: ^errors.Error_Record) -> ([]u8, storage_status.Status) {
+	return storage.read_range((^storage.Client)(user), storage.ROOT, name, offset, into, error)
+}
+
+@(private = "file")
+client_write :: proc "contextless" (user: rawptr, name: string, data: []u8, error: ^errors.Error_Record) -> (i64, storage_status.Status) {
+	return storage.write((^storage.Client)(user), storage.ROOT, name, data, error)
+}
+
+@(private = "file")
+client_write_range :: proc "contextless" (user: rawptr, name: string, offset: u64, data: []u8, error: ^errors.Error_Record) -> (i64, storage_status.Status) {
+	return storage.write_range((^storage.Client)(user), storage.ROOT, name, offset, data, error)
+}
+
+@(private = "file")
+client_set_size :: proc "contextless" (user: rawptr, name: string, size: u64, error: ^errors.Error_Record) -> storage_status.Status {
+	return storage.set_size((^storage.Client)(user), storage.ROOT, name, size, error)
+}
+
+@(private = "file")
+client_commit :: proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> storage_status.Status {
+	_, status := storage.commit((^storage.Client)(user), storage.ROOT, name, error)
+	return status
+}
+
+@(private = "file")
+client_drop_pending :: proc "contextless" (user: rawptr, name: string, error: ^errors.Error_Record) -> storage_status.Status {
+	return storage.drop_pending((^storage.Client)(user), storage.ROOT, name, error)
+}
+
+@(private = "file")
+CLIENT_LARGE_OPS :: Large_Ops {
+	size         = client_size,
+	read_range   = client_read_range,
+	write        = client_write,
+	write_range  = client_write_range,
+	set_size     = client_set_size,
+	commit       = client_commit,
+	drop_pending = client_drop_pending,
+}
+
 // read_large reads an object of any size into into using storage.read_range,
 // so a service can read multi-megabyte guest kernels or initial archives
 // without opening a second client.
@@ -24,9 +96,16 @@ read_large :: proc "contextless" (port: ^pr.Private_Store_Port, name: string, in
 	if port == nil || port.user == nil {
 		return 0, .Failed
 	}
-	client := (^storage.Client)(port.user)
+	return read_large_with(port.user, CLIENT_LARGE_OPS, name, into)
+}
+
+@(private)
+read_large_with :: proc "contextless" (user: rawptr, ops: Large_Ops, name: string, into: []u8) -> (count: int, status: pr.Private_Store_Status) {
+	if user == nil {
+		return 0, .Failed
+	}
 	error: errors.Error_Record
-	size, size_status := storage.size(client, storage.ROOT, name, &error)
+	size, size_status := ops.size(user, name, &error)
 	if size_status == .Absent {
 		return 0, .Absent
 	}
@@ -38,8 +117,8 @@ read_large :: proc "contextless" (port: ^pr.Private_Store_Port, name: string, in
 	}
 	read_total := u64(0)
 	for read_total < u64(size) {
-		chunk, read_status := storage.read_range(client, storage.ROOT, name, read_total, into[read_total:size], &error)
-		if read_status != .Ok || len(chunk) == 0 {
+		chunk, read_status := ops.read_range(user, name, read_total, into[read_total:size], &error)
+		if read_status != .Ok || len(chunk) == 0 || u64(len(chunk)) > u64(size) - read_total {
 			return 0, .Failed
 		}
 		read_total += u64(len(chunk))
@@ -57,74 +136,75 @@ write_large :: proc "contextless" (port: ^pr.Private_Store_Port, name: string, d
 	if port == nil || port.user == nil {
 		return .Failed
 	}
-	client := (^storage.Client)(port.user)
+	return write_large_with(port.user, CLIENT_LARGE_OPS, &pending_state, name, data)
+}
+
+@(private)
+write_large_with :: proc "contextless" (user: rawptr, ops: Large_Ops, pending: ^Pending_State, name: string, data: []u8) -> pr.Private_Store_Status {
+	if user == nil || pending == nil {
+		return .Failed
+	}
 	error: errors.Error_Record
 	// Pending changes that an earlier failed write could not drop go first:
 	// a write never starts over them. A write after writes that dropped
 	// their changes makes no call more.
-	if pending_kept {
-		if !pending_drop(client, string(pending_kept_name[:pending_kept_length])) {
+	if pending.kept {
+		if !pending_drop_with(user, ops, string(pending.name[:pending.length])) {
 			return .Failed
 		}
-		pending_kept = false
+		pending.kept = false
 	}
 	// An object that fits the call region is one write: one call, one
 	// commit.
 	if len(data) <= WRITE_PIECE_BYTES {
-		generation, status := storage.write(client, storage.ROOT, name, data, &error)
+		generation, status := ops.write(user, name, data, &error)
 		return status == .Ok && generation >= 0 ? .Ok : .Failed
 	}
 	committed := 0
 	for written := 0; written < len(data); {
 		part := data[written:min(written + WRITE_PIECE_BYTES, len(data))]
-		if _, status := storage.write_range(client, storage.ROOT, name, u64(written), part, &error); status != .Ok {
-			return write_large_abandon(client, name)
+		if _, status := ops.write_range(user, name, u64(written), part, &error); status != .Ok {
+			return write_large_abandon_with(user, ops, pending, name)
 		}
 		written += len(part)
 		if written - committed >= COMMIT_STEP_BYTES {
-			if _, status := storage.commit(client, storage.ROOT, name, &error); status != .Ok {
-				return write_large_abandon(client, name)
+			if status := ops.commit(user, name, &error); status != .Ok {
+				return write_large_abandon_with(user, ops, pending, name)
 			}
 			committed = written
 		}
 	}
-	if status := storage.set_size(client, storage.ROOT, name, u64(len(data)), &error); status != .Ok {
-		return write_large_abandon(client, name)
+	if status := ops.set_size(user, name, u64(len(data)), &error); status != .Ok {
+		return write_large_abandon_with(user, ops, pending, name)
 	}
-	if _, status := storage.commit(client, storage.ROOT, name, &error); status != .Ok {
-		return write_large_abandon(client, name)
+	if status := ops.commit(user, name, &error); status != .Ok {
+		return write_large_abandon_with(user, ops, pending, name)
 	}
 	return .Ok
 }
 
-// write_large_abandon ends a write that failed: it drops its pending
+// write_large_abandon_with ends a write that failed: it drops its pending
 // changes. A refused drop leaves them held on this connection, and the
 // next write of the name drops them before it writes.
 @(private = "file")
-write_large_abandon :: proc "contextless" (client: ^storage.Client, name: string) -> pr.Private_Store_Status {
-	if !pending_drop(client, name) {
-		pending_kept = true
-		pending_kept_length = copy(pending_kept_name[:], name)
+write_large_abandon_with :: proc "contextless" (user: rawptr, ops: Large_Ops, pending: ^Pending_State, name: string) -> pr.Private_Store_Status {
+	if !pending_drop_with(user, ops, name) {
+		pending.kept = true
+		pending.length = copy(pending.name[:], name)
 	}
 	return .Failed
 }
 
-// The object of a failed write whose pending changes the storage service
-// did not drop: the next write drops them first. One client of the private
-// store serves each process (store_client).
+// One client of the private store serves each process (store_client).
 @(private = "file")
-pending_kept: bool
-@(private = "file")
-pending_kept_name: [64]u8
-@(private = "file")
-pending_kept_length: int
+pending_state: Pending_State
 
-// pending_drop drops the pending changes of this connection on the object
-// name: true when it dropped them, or the object had none.
+// pending_drop_with drops the pending changes of this connection on the
+// object name: true when it dropped them, or the object had none.
 @(private = "file")
-pending_drop :: proc "contextless" (client: ^storage.Client, name: string) -> bool {
+pending_drop_with :: proc "contextless" (user: rawptr, ops: Large_Ops, name: string) -> bool {
 	error: errors.Error_Record
-	status := storage.drop_pending(client, storage.ROOT, name, &error)
+	status := ops.drop_pending(user, name, &error)
 	return status == .Ok || status == .Failed && error.kind == i64(errors.Kind.Absent) && (error.unit == i64(errors.Unit.Pending) || error.unit == i64(errors.Unit.Objects))
 }
 

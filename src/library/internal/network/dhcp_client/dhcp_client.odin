@@ -9,6 +9,7 @@
 package dhcp_client
 
 import "modus:contract/chosen_values"
+import "modus:contract/enum_word"
 import "modus:contract/plan_values"
 import "modus:network"
 
@@ -49,19 +50,22 @@ Message_Type :: enum u8 {
 	Inform   = 8,
 }
 
-// The options that the client reads or writes (RFC 2132).
-OPTION_PAD :: 0
-OPTION_SUBNET_MASK :: 1
-OPTION_ROUTER :: 3
-OPTION_REQUESTED_ADDRESS :: 50
-OPTION_LEASE_TIME :: 51
-OPTION_OVERLOAD :: 52
-OPTION_MESSAGE_TYPE :: 53
-OPTION_SERVER :: 54
-OPTION_PARAMETERS :: 55
-OPTION_RENEW_TIME :: 58
-OPTION_REBIND_TIME :: 59
-OPTION_END :: 255
+// The options that the client reads or writes (RFC 2132). The values cross
+// the network, so they are stated.
+Option :: enum u8 {
+	Pad               = 0,
+	Subnet_Mask       = 1,
+	Router            = 3,
+	Requested_Address = 50,
+	Lease_Time        = 51,
+	Overload          = 52,
+	Message_Type      = 53,
+	Server            = 54,
+	Parameters        = 55,
+	Renew_Time        = 58,
+	Rebind_Time       = 59,
+	End               = 255,
+}
 
 // Why the border refused a message. A refused message changes nothing.
 Reply_Problem :: enum u8 {
@@ -168,17 +172,17 @@ reply_read :: proc "contextless" (message: []u8, transaction: u32, hardware: [6]
 	for at < len(message) {
 		code := message[at]
 		if ended {
-			if code != OPTION_PAD {
+			if code != u8(Option.Pad) {
 				return {}, .Bytes_After_End
 			}
 			at += 1
 			continue
 		}
-		switch code {
-		case OPTION_PAD:
+		if code == u8(Option.Pad) {
 			at += 1
 			continue
-		case OPTION_END:
+		}
+		if code == u8(Option.End) {
 			ended = true
 			at += 1
 			continue
@@ -193,37 +197,49 @@ reply_read :: proc "contextless" (message: []u8, transaction: u32, hardware: [6]
 		}
 		seen[code] = true
 		four := length == 4
-		switch code {
-		case OPTION_OVERLOAD:
-			return {}, .Overload
-		case OPTION_MESSAGE_TYPE:
-			if length != 1 {
-				return {}, .Bad_Option_Length
+		if option, known := enum_word.member_of_word(Option, u64(code)); known {
+			switch option {
+			case .Pad, .End, .Requested_Address, .Parameters:
+				// Pad and End leave above; client-only request options carry no reply field.
+			case .Overload:
+				return {}, .Overload
+			case .Message_Type:
+				if length != 1 {
+					return {}, .Bad_Option_Length
+				}
+				has_type, type_word = true, value[0]
+			case .Server:
+				if !four {
+					return {}, .Bad_Option_Length
+				}
+				reply.server, has_server = be32(value, 0), true
+			case .Lease_Time:
+				if !four {
+					return {}, .Bad_Option_Length
+				}
+				reply.lease_seconds, has_lease = be32(value, 0), true
+			case .Subnet_Mask:
+				if !four {
+					return {}, .Bad_Option_Length
+				}
+				reply.mask, has_mask = be32(value, 0), true
+			case .Renew_Time:
+				if !four {
+					return {}, .Bad_Option_Length
+				}
+				reply.renew_seconds = be32(value, 0)
+			case .Rebind_Time:
+				if !four {
+					return {}, .Bad_Option_Length
+				}
+				reply.rebind_seconds = be32(value, 0)
+			case .Router:
+				// A list of routers: the client takes the first.
+				if length < 4 || length % 4 != 0 {
+					return {}, .Bad_Option_Length
+				}
+				reply.router = be32(value, 0)
 			}
-			has_type, type_word = true, value[0]
-		case OPTION_SERVER, OPTION_LEASE_TIME, OPTION_SUBNET_MASK, OPTION_RENEW_TIME, OPTION_REBIND_TIME:
-			if !four {
-				return {}, .Bad_Option_Length
-			}
-			word := be32(value, 0)
-			switch code {
-			case OPTION_SERVER:
-				reply.server, has_server = word, true
-			case OPTION_LEASE_TIME:
-				reply.lease_seconds, has_lease = word, true
-			case OPTION_SUBNET_MASK:
-				reply.mask, has_mask = word, true
-			case OPTION_RENEW_TIME:
-				reply.renew_seconds = word
-			case OPTION_REBIND_TIME:
-				reply.rebind_seconds = word
-			}
-		case OPTION_ROUTER:
-			// A list of routers: the client takes the first.
-			if length < 4 || length % 4 != 0 {
-				return {}, .Bad_Option_Length
-			}
-			reply.router = be32(value, 0)
 		}
 		at += 2 + length
 	}
@@ -343,21 +359,21 @@ message_write :: proc "contextless" (out: []u8, client: ^Client, kind: Message_T
 	copy(out[28:34], client.hardware[:])
 	be32_put(out, FIXED_SIZE, MAGIC_COOKIE)
 	at := MESSAGE_LEAST
-	out[at], out[at + 1], out[at + 2] = OPTION_MESSAGE_TYPE, 1, u8(kind)
+	out[at], out[at + 1], out[at + 2] = u8(Option.Message_Type), 1, u8(kind)
 	at += 3
 	if kind == .Request && client.phase == .Requesting {
-		out[at], out[at + 1] = OPTION_REQUESTED_ADDRESS, 4
+		out[at], out[at + 1] = u8(Option.Requested_Address), 4
 		be32_put(out, at + 2, client.offer.address)
 		at += 6
-		out[at], out[at + 1] = OPTION_SERVER, 4
+		out[at], out[at + 1] = u8(Option.Server), 4
 		be32_put(out, at + 2, client.offer.server)
 		at += 6
 	}
-	parameters := [6]u8{OPTION_SUBNET_MASK, OPTION_ROUTER, OPTION_LEASE_TIME, OPTION_SERVER, OPTION_RENEW_TIME, OPTION_REBIND_TIME}
-	out[at], out[at + 1] = OPTION_PARAMETERS, u8(len(parameters))
+	parameters := [6]u8{u8(Option.Subnet_Mask), u8(Option.Router), u8(Option.Lease_Time), u8(Option.Server), u8(Option.Renew_Time), u8(Option.Rebind_Time)}
+	out[at], out[at + 1] = u8(Option.Parameters), u8(len(parameters))
 	copy(out[at + 2:], parameters[:])
 	at += 2 + len(parameters)
-	out[at] = OPTION_END
+	out[at] = u8(Option.End)
 	return MESSAGE_LEAST + 64 // A fixed length, with room after END: padding.
 }
 

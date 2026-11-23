@@ -28,6 +28,7 @@ import "modus:contract/date"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "internal:storage/storage_retention"
@@ -61,6 +62,15 @@ STATE_PAGES_OF_16_GIB :: 10704
 // service had before the tool counted (1 829 pages).
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 12533, processes = 1, threads = 1}
 #assert(MODULE_BUDGET.working_memory_pages == 1829 + STATE_PAGES_OF_16_GIB)
+// On the machine of the machine tests (50 000 pages per process), the working
+// memory and the fixed static tables of the module (under 10 240 pages, 40 MiB)
+// stay well below the largest budget so no test boot writes Budget_Part_Limited.
+// On the smallest machine (16 384 pages), the static tables and base working
+// pages (1 829) leave memory for storage_mount.open_with_forms, which halves
+// its disk tables and count-tree cache when the budget refuses.
+STORAGE_MODULE_PAGES_BOUND :: 10240
+#assert(MODULE_BUDGET.working_memory_pages + STORAGE_MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
+#assert(1829 + STORAGE_MODULE_PAGES_BOUND <= module.LARGEST_BUDGET_LEAST_PAGES)
 
 // refuse writes the error record of a refusal and gives its call outcome:
 // the last result of a procedure of this service that gives the outcome of

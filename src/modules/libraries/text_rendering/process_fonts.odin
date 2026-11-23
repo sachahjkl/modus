@@ -285,10 +285,13 @@ glyph_outline :: proc "c" (face: i64, font: i64, glyph: i64, points: ^system.Tab
 	if intrinsics.atomic_load_explicit(&process_fonts_stage, .Acquire) != .Open {
 		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
-	if font <= i64(text_rendering.Outline_Font.None) || font > i64(max(text_rendering.Outline_Font)) {
+	if font <= 0 {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, font, i64(max(text_rendering.Outline_Font)))
 	}
-	outline_font := text_rendering.Outline_Font(font)
+	outline_font, font_ok := text_rendering.outline_font_of_word(u64(font))
+	if !font_ok {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, font, i64(max(text_rendering.Outline_Font)))
+	}
 	opened := text_rendering.font_at(&text_rendering.state.font_set, outline_font)
 	if outline_font not_in text_rendering.fonts_of_face(face_checked) || !opened.opened {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .None, 2, font)

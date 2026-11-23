@@ -39,7 +39,7 @@ untouched_start :: proc "contextless" (image: []u8, board: system.Handle, index:
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	grants[lockers.GRANT_BOARD] = {board, {.Read, .Write}}
-	values[lockers.VALUE_ROLE] = lockers.ROLE_UNTOUCHED_WAIT
+	values[lockers.VALUE_ROLE] = u64(lockers.Role.Untouched_Wait)
 	values[lockers.VALUE_INDEX] = index
 	values[lockers.VALUE_WAKES] = wakes ? 1 : 0
 	process, _ := system.process_start(system.image_find(image, "locker"), wakes ? "waker" : "sleeper", grants, random.values_with_seed(&process_generator, values), UNTOUCHED_AMOUNTS)

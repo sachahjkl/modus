@@ -295,6 +295,19 @@ resize_decide_refuses_at_each_edge :: proc(t: ^testing.T) {
 	}
 	refusal, same = resize_decide(true, 1920, 1080, 1920, 1080, 0)
 	testing.expect(t, refusal == .None && same, "the size in force is no change, whatever the budget")
+	// While a trusted dialog or a local-input-only window shows, a size
+	// change is refused before the budget check, while the size in force
+	// stays a no-op and device/bounds checks still run first.
+	refusal, same = resize_decide(false, 2560, 1440, 1920, 1080, max(u64), blocked = true)
+	testing.expect(t, refusal == .Device_Screen && !same)
+	refusal, same = resize_decide(true, MAX_WIDTH + 1, 1080, 1920, 1080, max(u64), blocked = true)
+	testing.expect(t, refusal == .Outside_Bounds && !same)
+	refusal, same = resize_decide(true, 1920, 1080, 1920, 1080, 0, blocked = true)
+	testing.expect(t, refusal == .None && same, "the size in force stays a no-op while blocked")
+	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, max(u64), blocked = true)
+	testing.expect(t, refusal == .Trusted_Surface && !same)
+	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, 0, blocked = true)
+	testing.expect(t, refusal == .Trusted_Surface && !same, "Trusted_Surface runs before Compositor_Budget")
 	needed := COMPOSITOR_PICTURES * picture_pages(2560, 1440)
 	testing.expect_value(t, needed, 7200)
 	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, needed - 1)
@@ -352,6 +365,8 @@ a_growth_of_the_budgets_is_refused_at_each_edge :: proc(t: ^testing.T) {
 		{proc(facts: ^Grow_Facts) {facts.from_service = false}, .Not_The_Service},
 		{proc(facts: ^Grow_Facts) {facts.screen_of_memory = false}, .No_Screen_Of_Memory},
 		{proc(facts: ^Grow_Facts) {facts.width = MAX_WIDTH + 1}, .Outside_Bounds},
+		{proc(facts: ^Grow_Facts) {facts.max_width = 2559}, .Outside_Bounds},
+		{proc(facts: ^Grow_Facts) {facts.max_height = 1439}, .Outside_Bounds},
 		{proc(facts: ^Grow_Facts) {facts.height = MIN_HEIGHT - 1}, .Outside_Bounds},
 		{proc(facts: ^Grow_Facts) {facts.width, facts.height = max(u64), max(u64)}, .Outside_Bounds},
 		{proc(facts: ^Grow_Facts) {facts.now, facts.last_growth_at = 5000, 4001}, .Too_Soon},
@@ -373,6 +388,7 @@ a_growth_of_the_budgets_is_refused_at_each_edge :: proc(t: ^testing.T) {
 		testing.expectf(t, refusal == item.refusal && a == 0 && b == 0, "%v gave %v", item.refusal, refusal)
 	}
 	edge := good
+	edge.max_width, edge.max_height = 2560, 1440
 	edge.compositor_paid = edge.share - compositor_pages
 	edge.service_paid = edge.share - service_pages
 	refusal, a, b := screen_budget_grow_decide(edge)

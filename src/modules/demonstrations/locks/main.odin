@@ -463,7 +463,7 @@ stress :: proc "contextless" (image: []u8, processes_free: u64) {
 		for &churner, index in churners {
 			grants: [op.CONTEXT_HANDLES]system.Grant
 			values: [op.CONTEXT_VALUES]u64
-			values[lockers.VALUE_ROLE] = lockers.ROLE_CHURN
+			values[lockers.VALUE_ROLE] = u64(lockers.Role.Churn)
 			values[lockers.VALUE_STOP_AFTER] = 1 + (round + u64(index)) % 4
 			if index != 0 {
 				grants[lockers.GRANT_PEER] = {churners[index - 1], {.Control}}

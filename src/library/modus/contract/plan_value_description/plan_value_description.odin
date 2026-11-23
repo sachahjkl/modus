@@ -245,8 +245,14 @@ text_check :: proc "contextless" (described: Described, text: string) -> (refusa
 
 // holders_of_plan gives the holder of each role that a plan names: of a
 // chain of interposition, the outermost module, which the callers reach.
+// A first pass records each role's entry count and last index in O(entries),
+// so roles with a single holder need no inner scan; only roles with multiple
+// entries (interposition chains) resolve their outermost holder.
 holders_of_plan :: proc "contextless" (plan: ^pr.Plan_Spec) -> (holders: Role_Holders) {
 	count := int(plan.entry_count)
+	role_counts: [role_contract.Role]int
+	role_last: [role_contract.Role]int
+	has_multi := false
 	for index in 0 ..< count {
 		entry := &plan.entries[index]
 		if entry.kind_word != u64(pr.Plan_Entry_Kind.Role_Holder) {
@@ -254,6 +260,29 @@ holders_of_plan :: proc "contextless" (plan: ^pr.Plan_Spec) -> (holders: Role_Ho
 		}
 		role, ok := role_contract.role_from_word(entry.role_word)
 		if !ok || role == .None {
+			continue
+		}
+		role_counts[role] += 1
+		role_last[role] = index
+		if role_counts[role] > 1 {
+			has_multi = true
+		}
+	}
+	for role in role_contract.Role {
+		if role_counts[role] == 1 {
+			holders.hashes[role], holders.given[role] = plan.entries[role_last[role]].module_hash, true
+		}
+	}
+	if !has_multi {
+		return holders
+	}
+	for index in 0 ..< count {
+		entry := &plan.entries[index]
+		if entry.kind_word != u64(pr.Plan_Entry_Kind.Role_Holder) {
+			continue
+		}
+		role, ok := role_contract.role_from_word(entry.role_word)
+		if !ok || role == .None || role_counts[role] <= 1 {
 			continue
 		}
 		outermost := true

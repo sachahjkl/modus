@@ -314,10 +314,16 @@ sources_wait :: proc "contextless" (waiting: ^system.Wait) -> (not_waited: bool)
 	system.wait_wiring(waiting)
 	room := system.wait_room_left(waiting) - COLLECTOR_WAIT_WORDS_KEPT
 	rings := max(room, 0) / system.INPUT_RECORDS_WAIT_WORDS
-	source_rings := rings / 2
-	pair_rings := rings - source_rings
-	not_waited = system.wait_input_records(waiting, &sources, source_rings) > 0
-	not_waited ||= system.wait_output_room(waiting, &forward, pair_rings) > 0
+	// Give full output rings room first while keeping half of the slots (or
+	// all open sources when fewer) for sources, then give sources whatever
+	// slots remain so unused room on either side serves the other.
+	source_count := system.input_tags(&sources, pair_source_tags[:])
+	source_reserve := source_count < len(pair_source_tags) ? min(source_count, rings / 2) : rings / 2
+	pair_rings := rings - source_reserve
+	not_waited = system.wait_output_room(waiting, &forward, pair_rings) > 0
+	room_after := system.wait_room_left(waiting) - COLLECTOR_WAIT_WORDS_KEPT
+	source_rings := max(room_after, 0) / system.INPUT_RECORDS_WAIT_WORDS
+	not_waited ||= system.wait_input_records(waiting, &sources, source_rings) > 0
 	return not_waited
 }
 

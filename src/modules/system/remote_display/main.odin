@@ -1099,7 +1099,17 @@ capture_size_event :: proc "contextless" (width, height, refusal_word: u64) {
 			screen_change = {u32(min(width, u64(max(u32)))), u32(min(height, u64(max(u32))))}
 			screen_change_waits = true
 		}
-	case .Closed, .Refused, .Opening:
+	case .Opening:
+		// The screen changed while Capture_Open was in flight: hold the new
+		// size so screen_change_apply opens a face of that size once
+		// Capture_Opened arrives.
+		if width == u64(screen.width) && height == u64(screen.height) {
+			screen_change_waits = false
+		} else {
+			screen_change = {u32(min(width, u64(max(u32)))), u32(min(height, u64(max(u32))))}
+			screen_change_waits = true
+		}
+	case .Closed, .Refused:
 	}
 }
 
@@ -1253,7 +1263,8 @@ extra_take :: proc "contextless" (handle: system.Handle, growth, width, height: 
 // number of each, and the root service closes its own handle: the pages
 // return.
 extras_give_back :: proc "contextless" () {
-	for extra in memory_screen.held_extras_give_back(&extras, copies_growth) {
+	keep_opening := capture_state == .Opening ? opening_growth : 0
+	for extra in memory_screen.held_extras_give_back(&extras, copies_growth, keep_opening) {
 		if extra.handle == 0 {
 			continue
 		}
@@ -1464,7 +1475,12 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 // size that this process cannot pay, and the next viewer asks again.
 capture_open_failed :: proc "contextless" () {
 	system.log_fact(.Info, Capture_Memory_Not_Given{})
+	screen_change_waits, size_ask_in_flight, screen_reverting = false, false, false
+	held_picture = -1
+	opening_growth = 0
+	copies_growth = 0
 	mirror_release()
+	extras_give_back()
 	capture_refuse()
 }
 
@@ -1475,6 +1491,11 @@ capture_open_failed :: proc "contextless" () {
 // closes the face; the next bound viewer asks again.
 capture_opened_take :: proc "contextless" (memory: system.Handle, past_handle: bool) {
 	if capture_state != .Opening {
+		if memory != 0 && !past_handle {
+			if _, _, through := system.handle_state(memory, window_memory); through {
+				system.close(memory)
+			}
+		}
 		return
 	}
 	capture_state = .Closed
@@ -1513,6 +1534,7 @@ capture_opened_take :: proc "contextless" (memory: system.Handle, past_handle: b
 	// The old copies are gone: each extra budget that holds none of the new
 	// ones goes back.
 	copies_growth = opening_growth
+	opening_growth = 0
 	extras_give_back()
 	viewers_tell()
 }
@@ -1684,7 +1706,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	listen_port = quic_endpoint.listen_port
 	status: system.Status
 	window_memory = ctx.handles[system.GRANT_DISPLAY]
-	if window, status = system.ring_open(window_memory); status != .Ok {
+	if window, status = system.ring_open(window_memory, receive_handles = true); status != .Ok {
 		fail("no ring of a window: the capture face rides it")
 	}
 	// The root ring carries Screen_Budget: the growth of the budgets of a

@@ -59,6 +59,7 @@
 package kernel
 
 import info "modus:contract/boot_info"
+import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "base:intrinsics"
@@ -169,29 +170,13 @@ first_run :: proc "c" () -> ! {
 }
 
 // debug_image_pages checks the range of the debug image that the boot
-// program gives: on a page, with no wrap of its end, and inside one range of
-// the memory of the boot (its computed bound), which the kernel never gives as a free frame. A
-// memory object over other memory would let the root service read and
-// give pages that the kernel uses.
+// program gives: on a page, at most fixed_addresses.RANGE_SPAN, with no wrap
+// of its end, and inside one range of the memory of the boot, which the kernel
+// never gives as a free frame. A memory object over other memory would let the
+// root service read and give pages that the kernel uses.
 debug_image_pages :: proc "contextless" (boot: ^info.Boot_Info) -> (pages: u64, accepted: bool) {
-	start, size := boot.debug_image, boot.debug_image_size
-	if start == 0 || start % PAGE_SIZE != 0 || size == 0 || size > max(u64) - PAGE_SIZE {
-		return 0, false
-	}
-	pages = (size + PAGE_SIZE - 1) / PAGE_SIZE
-	if start > max(u64) - pages * PAGE_SIZE {
-		return 0, false
-	}
-	end := start + pages * PAGE_SIZE
-	for range in info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range) {
-		if kind, ok := info.memory_kind_of_word(range.kind); !ok || kind != .Boot || range.page_count > (max(u64) - range.start) / PAGE_SIZE {
-			continue
-		}
-		if start >= range.start && end <= range.start + range.page_count * PAGE_SIZE {
-			return pages, true
-		}
-	}
-	return 0, false
+	ranges := info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range)
+	return info.debug_image_pages(boot.debug_image, boot.debug_image_size, ranges, fixed_addresses.RANGE_SPAN)
 }
 
 // root_start builds the first process from the module "root" of the boot
@@ -303,8 +288,10 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	if boot.debug_image_size != 0 {
 		if pages, accepted := debug_image_pages(boot); accepted {
 			debug_image_region = region_device(boot.debug_image, pages)
-			record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = debug_image_region})
-			record.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE] = boot.debug_image_size
+			if debug_image_region != 0 {
+				record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = debug_image_region})
+				record.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE] = boot.debug_image_size
+			}
 		} else {
 			log("kernel: the debug image of the boot program is refused: its range is not on a page, is over its bound, or is not memory of the boot; a stop report names no procedure")
 		}

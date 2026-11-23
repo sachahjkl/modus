@@ -261,16 +261,20 @@ unmap_role :: proc "contextless" (ctx: ^system.Context) -> ! {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_CHURN {
+	role, role_ok := enum_word.member_of_word(lockers.Role, ctx.values[lockers.VALUE_ROLE])
+	if !role_ok {
+		system.log_fact(.Info, Role_Word_Unknown{role_word = ctx.values[lockers.VALUE_ROLE]})
+		system.stop(.Refused)
+	}
+	switch role {
+	case .Measure:
+	case .Churn:
 		churn(ctx.values[lockers.VALUE_STOP_AFTER], ctx.handles[lockers.GRANT_PEER])
-	}
-	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_WAIT_ROOM {
+	case .Wait_Room:
 		wait_room_role(ctx)
-	}
-	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_UNTOUCHED_WAIT {
+	case .Untouched_Wait:
 		untouched_role(ctx)
-	}
-	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_UNMAP_WAIT {
+	case .Unmap_Wait:
 		unmap_role(ctx)
 	}
 	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])

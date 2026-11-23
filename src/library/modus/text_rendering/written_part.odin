@@ -129,11 +129,8 @@ held_font_of :: proc "contextless" (font: Outline_Font) -> (held: Held_Font) {
 // member, is not taken. It gives the font when it is missing or refused.
 @(private)
 held_font_take :: proc "contextless" (held: Held_Font) -> (missing: Outline_Fonts) {
-	if int(held.font) <= int(Outline_Font.None) || int(held.font) > int(max(Outline_Font)) {
-		return {}
-	}
-	font := Outline_Font(held.font)
-	if font not_in SCRIPT_FONTS {
+	font, font_ok := outline_font_of_word(u64(held.font))
+	if !font_ok || font not_in SCRIPT_FONTS {
 		return {}
 	}
 	switch held.standing {
@@ -285,10 +282,11 @@ when WRITTEN_SHAPING_COMPILED_IN {
 			return .None, 0
 		}
 		word := found >> 16
-		if word <= i64(Outline_Font.None) || word > i64(max(Outline_Font)) {
+		outline_font, font_ok := outline_font_of_word(u64(word))
+		if !font_ok {
 			return .None, 0
 		}
-		return Outline_Font(word), int(found & 0xFFFF)
+		return outline_font, int(found & 0xFFFF)
 	}
 
 	// held_glyph_outline reads the outline of a glyph of a font that the

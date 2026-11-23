@@ -431,6 +431,7 @@ Resize_Refusal :: enum u32 {
 	Compositor_Budget = 3, // The pages left in the budget of the compositor do not pay a new frame and a new background.
 	Service_Budget    = 4, // The pages left in the budget of the service of the remote display do not pay its copies.
 	Too_Soon          = 5, // The screen changed size, or the viewer asked one, less than the least time ago.
+	Trusted_Surface   = 6, // A trusted dialog or a local-input-only window (wide grant screen or proof) is open.
 }
 
 // The words of each cause in a line of the log.
@@ -442,6 +443,7 @@ RESIZE_REFUSAL_SENTENCES := [Resize_Refusal]string {
 	.Compositor_Budget = "the budget of the compositor does not pay a frame and a background of that size",
 	.Service_Budget    = "the budget of remote_display does not pay its copies of that size",
 	.Too_Soon          = "the screen changed size, or the viewer asked one, less than a second ago",
+	.Trusted_Surface   = "a trusted dialog or a local-input window is open",
 }
 
 // resize_refusal_of_word is the border of a word of Resize_Refusal: a word
@@ -482,7 +484,7 @@ COMPOSITOR_PICTURES :: 2
 //
 // Example: a screen of memory of 1920 x 1080 with 10 000 pages left takes
 // 2560 x 1440 (2 x 3600 pages); with 7199 left it refuses Compositor_Budget.
-resize_decide :: proc "contextless" (memory: bool, width, height: u64, current_width, current_height: u32, pages_left: u64) -> (refusal: Resize_Refusal, same: bool) {
+resize_decide :: proc "contextless" (memory: bool, width, height: u64, current_width, current_height: u32, pages_left: u64, blocked := false) -> (refusal: Resize_Refusal, same: bool) {
 	switch {
 	case !memory:
 		return .Device_Screen, false
@@ -490,6 +492,8 @@ resize_decide :: proc "contextless" (memory: bool, width, height: u64, current_w
 		return .Outside_Bounds, false
 	case width == u64(current_width) && height == u64(current_height):
 		return .None, true
+	case blocked:
+		return .Trusted_Surface, false
 	case pages_left < COMPOSITOR_PICTURES * picture_pages(width, height):
 		return .Compositor_Budget, false
 	}
@@ -616,6 +620,7 @@ Grow_Facts :: struct {
 	from_service:          bool, // The sender holds the start grant Screen_Capture.
 	screen_of_memory:      bool, // The machine has no screen of a device, and the compositor draws into a screen of memory.
 	width, height:         u64,
+	max_width, max_height: u64, // Plan cap on the screen of memory; 0 means MAX_WIDTH / MAX_HEIGHT.
 	compositor_extras:     int, // The extra budgets that the compositor holds: 0, 1, or 2 during a replacement.
 	service_extras:        int, // The extra budgets that the service holds.
 	compositor_paid:       u64, // The pages of the budget of the compositor at its start, and of the extra budgets that it holds.
@@ -755,12 +760,14 @@ face_ended_goes_to_start :: proc "contextless" (screen_of_memory: bool, pictures
 // Example: a growth to 2560 x 1440 gives the compositor 7200 pages and the
 // service 10801 pages, when each sum stays inside the share.
 screen_budget_grow_decide :: proc "contextless" (facts: Grow_Facts) -> (refusal: Grow_Refusal, compositor_pages, service_pages: u64) {
+	limit_width := facts.max_width != 0 ? min(facts.max_width, MAX_WIDTH) : MAX_WIDTH
+	limit_height := facts.max_height != 0 ? min(facts.max_height, MAX_HEIGHT) : MAX_HEIGHT
 	switch {
 	case !facts.from_service:
 		return .Not_The_Service, 0, 0
 	case !facts.screen_of_memory:
 		return .No_Screen_Of_Memory, 0, 0
-	case !size_in_bounds(facts.width, facts.height):
+	case !size_in_bounds(facts.width, facts.height) || facts.width > limit_width || facts.height > limit_height:
 		return .Outside_Bounds, 0, 0
 	case facts.last_growth_at != 0 && facts.now - min(facts.last_growth_at, facts.now) < RESIZE_INTERVAL_MILLISECONDS:
 		// A clock that went back counts as age 0.

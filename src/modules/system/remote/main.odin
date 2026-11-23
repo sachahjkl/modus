@@ -1543,7 +1543,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The key of the service is the identity of this machine to its paired
 	// machines (mesh.odin).
 	mesh_error: errors.Error_Record
-	if mesh_identity_set(public_key, &mesh_error) != 0 {
+	if mesh_outcome, _ := mesh_identity_set(public_key, &mesh_error); mesh_outcome != .Succeeded {
 		fail("the public key of the service is not a machine identity")
 	}
 	key_text: [64]u8

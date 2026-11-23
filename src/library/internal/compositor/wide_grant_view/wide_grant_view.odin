@@ -48,16 +48,22 @@ screen_line_count :: proc "contextless" (screen: ^Screen) -> int {
 	return LINE_FIRST_WINDOW + screen.window_count
 }
 
+@(rodata, private)
+fixed_line_kinds := [LINE_FIRST_WINDOW]Line_Kind{.View_Screen, .Send_Input, .Until_Lock}
+
 screen_line_kind :: proc "contextless" (line: int) -> Line_Kind {
-	if line >= LINE_FIRST_WINDOW {
-		return .Window
+	if line >= 0 && line < len(fixed_line_kinds) {
+		return fixed_line_kinds[line]
 	}
-	return Line_Kind(line)
+	return .Window
 }
 
 // screen_line_offered says if a line can change: a scope that the ask did
 // not propose, and "until the lock" for an ask of one hour or less, cannot.
 screen_line_offered :: proc "contextless" (screen: ^Screen, line: int) -> bool {
+	if line < 0 {
+		return false
+	}
 	switch screen_line_kind(line) {
 	case .View_Screen:
 		return .View_Screen in screen.show.authorities
@@ -73,6 +79,9 @@ screen_line_offered :: proc "contextless" (screen: ^Screen, line: int) -> bool {
 
 // screen_line_on says if a line is ticked.
 screen_line_on :: proc "contextless" (screen: ^Screen, line: int) -> bool {
+	if line < 0 {
+		return false
+	}
 	switch screen_line_kind(line) {
 	case .View_Screen:
 		return .View_Screen in screen.chosen

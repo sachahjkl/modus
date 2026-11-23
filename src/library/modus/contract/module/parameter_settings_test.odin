@@ -50,12 +50,12 @@ setter_with :: proc() -> (function: Function) {
 @(test)
 a_presence_word_past_given_is_refused :: proc(t: ^testing.T) {
 	for word in ([?]u64{2, 3, 0x100, max(u64)}) {
-		_, ok := presence_of_word(Presence(word))
+		_, ok := presence_of_word(word)
 		testing.expectf(t, !ok, "the presence word %d is taken", word)
 	}
-	absent, absent_ok := presence_of_word(Presence(0))
+	absent, absent_ok := presence_of_word(0)
 	testing.expect(t, absent_ok && absent == .Absent)
-	given, given_ok := presence_of_word(Presence(1))
+	given, given_ok := presence_of_word(1)
 	testing.expect(t, given_ok && given == .Given)
 }
 

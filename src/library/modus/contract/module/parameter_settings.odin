@@ -22,8 +22,8 @@ Presence :: enum u64 {
 
 // presence_of_word is the border of the word of a Presence: false for a
 // word that names no member.
-presence_of_word :: proc "contextless" (word: Presence) -> (presence: Presence, ok: bool) {
-	return enum_word.member_of_word(Presence, u64(word))
+presence_of_word :: proc "contextless" (word: u64) -> (presence: Presence, ok: bool) {
+	return enum_word.member_of_word(Presence, word)
 }
 
 // optional_member_of_arguments is the border of an optional Enum parameter
@@ -37,7 +37,7 @@ presence_of_word :: proc "contextless" (word: Presence) -> (presence: Presence, 
 // true`; `optional_member_of_arguments(Presence(2), Font(0))` is `{},
 // false, false`.
 optional_member_of_arguments :: proc "contextless" (presence: Presence, argument: $Enum) -> (member: Enum, given: bool, ok: bool) where intrinsics.type_is_enum(Enum) {
-	switch read, read_ok := presence_of_word(presence); {
+	switch read, read_ok := presence_of_word(u64(presence)); {
 	case !read_ok:
 		return {}, false, false
 	case read == .Absent:
@@ -52,7 +52,7 @@ optional_member_of_arguments :: proc "contextless" (presence: Presence, argument
 // and ok is false for a Presence word that names no member. The range of
 // the value is the check of the export.
 optional_integer_of_arguments :: proc "contextless" (presence: Presence, value: i64) -> (integer: i64, given: bool, ok: bool) {
-	switch read, read_ok := presence_of_word(presence); {
+	switch read, read_ok := presence_of_word(u64(presence)); {
 	case !read_ok:
 		return 0, false, false
 	case read == .Absent:
@@ -104,7 +104,7 @@ optional_type_allowed :: proc "contextless" (type: Type) -> bool {
 //
 // Example: `optional_text_of_arguments(.Absent, nil)` is `"", false, true`.
 optional_text_of_arguments :: proc "contextless" (presence: Presence, text: ^string) -> (value: string, given: bool, ok: bool) {
-	switch read, read_ok := presence_of_word(presence); {
+	switch read, read_ok := presence_of_word(u64(presence)); {
 	case !read_ok:
 		return "", false, false
 	case read == .Absent:

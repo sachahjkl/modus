@@ -228,9 +228,10 @@ owner_fits_page :: proc "contextless" (values: Owner_Values) -> bool {
 	return OWNER_PAGE_HEADER_SIZE + max(chosen_values.record_size(values.defaults), chosen_values.HEADER_SIZE) + max(chosen_values.record_size(values.locks), chosen_values.HEADER_SIZE) <= OWNER_PAGE_SIZE
 }
 
-// owner_bytes_most gives the bytes of the entries and the texts that the
-// values of one owner may hold, so that its page holds them: the border of
-// a plan refuses an owner past it.
+// Format property: the bytes of the entries and the texts that the values
+// of one owner may hold inside one OWNER_PAGE_SIZE (4096-byte) page, after
+// the page header and the two chosen_values headers. The border of a plan
+// refuses an owner past it.
 OWNER_BYTES_MOST :: OWNER_PAGE_SIZE - OWNER_PAGE_HEADER_SIZE - 2 * chosen_values.HEADER_SIZE
 
 // set_check checks a whole set, as the core reads its copy of the page of

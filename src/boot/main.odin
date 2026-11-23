@@ -19,6 +19,7 @@ package boot
 
 import info "modus:contract/boot_info"
 import "modus:contract/enum_word"
+import "modus:contract/fixed_addresses"
 import "modus:contract/reference_screen"
 import "modus:bootscreen"
 import "internal:boot_program/firmware_memory_map"
@@ -172,8 +173,10 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	// The page tables need the size of physical memory, so the memory map is
 	// read once now, and once more after the last allocation.
 	top := u64(MINIMUM_DIRECT_MAP)
+	debug_image_limit := u64(0)
 	{
 		list, _ := read_memory_map(&firmware_map, ranges)
+		debug_image_limit = info.debug_image_bound(ranges[:list.count], fixed_addresses.RANGE_SPAN)
 		for range in ranges[:list.count] {
 			op.boot_range_add(&display_data.boot, range.start, range.page_count, u64(range.kind))
 			if range.kind != u32(info.Memory_Kind.Reserved) {
@@ -191,7 +194,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	// debug image never takes the memory that the start needs; before the
 	// last read of the memory map, which gives its pages the kind Boot. The
 	// page tables map all memory, its pages too.
-	boot.debug_image, boot.debug_image_size = debug_image_read()
+	boot.debug_image, boot.debug_image_size = debug_image_read(debug_image_limit)
 	start_request_note(boot)
 	rescue_entry_write()
 	print("boot program: ok\r\n")

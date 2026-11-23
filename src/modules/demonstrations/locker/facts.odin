@@ -15,3 +15,9 @@ Slot_Past_Board :: struct {
 Mode_Word_Unknown :: struct {
 	mode_word: u64,
 }
+
+// The context holds a word of the role that names no role.
+@(log_fact = "locker: the context names the role {role_word}, which names no role")
+Role_Word_Unknown :: struct {
+	role_word: u64,
+}

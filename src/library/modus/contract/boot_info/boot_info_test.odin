@@ -214,3 +214,68 @@ the_trust_decision_refuses_each_record_that_cannot_have_happened :: proc(t: ^tes
 		testing.expect(t, sentence != "")
 	}
 }
+
+// The computed bound and kernel range check of the debug image at every edge:
+// zero, unaligned start, max(u64) - PAGE_SIZE and +1, start + span wrap,
+// range.page_count wrap, non-.Boot ranges, exact boundary and boundary + page,
+// and limit / limit + 1.
+@(test)
+debug_image_bound_and_pages_check_edges :: proc(t: ^testing.T) {
+	SPAN :: u64(1) << 40
+	// Empty map gives 0 bound.
+	testing.expect_value(t, debug_image_bound(nil, SPAN), u64(0))
+	// Non-free and wrapping ranges are ignored; free ranges sum to 1/4 capped at span.
+	bound_ranges := [?]Memory_Range {
+		{start = 0x10_0000, page_count = 1024, kind = u32(Memory_Kind.Boot)},
+		{start = 0x50_0000, page_count = 4096, kind = u32(Memory_Kind.Reserved)},
+		{start = 0x100_0000, page_count = 4000, kind = u32(Memory_Kind.Free)},
+		{start = 0x200_0000, page_count = max(u64), kind = u32(Memory_Kind.Free)},
+		{start = 0x300_0000, page_count = 4000, kind = 99},
+	}
+	testing.expect_value(t, debug_image_bound(bound_ranges[:], SPAN), u64(4000) * PAGE_SIZE / DEBUG_IMAGE_FREE_SHARE)
+	// Cap at range_span when free memory / 4 exceeds it.
+	testing.expect_value(t, debug_image_bound(bound_ranges[:], 1024), u64(1024))
+
+	boot_base := u64(0x20_0000)
+	boot_pages := u64(10)
+	ranges := [?]Memory_Range {
+		{start = 0x10_0000, page_count = 16, kind = u32(Memory_Kind.Free)},
+		{start = boot_base, page_count = boot_pages, kind = u32(Memory_Kind.Boot)},
+		{start = 0x40_0000, page_count = 16, kind = u32(Memory_Kind.Reserved)},
+		{start = 0x50_0000, page_count = max(u64), kind = u32(Memory_Kind.Boot)},
+		{start = 0x60_0000, page_count = 16, kind = 99},
+	}
+	Case :: struct {
+		start: u64,
+		size:  u64,
+		limit: u64,
+	}
+	refused := [?]Case {
+		{0, PAGE_SIZE, SPAN},                                             // start == 0
+		{boot_base + 1, PAGE_SIZE, SPAN},                                 // unaligned start
+		{boot_base, 0, SPAN},                                             // size == 0
+		{boot_base, max(u64) - PAGE_SIZE, max(u64)},                      // past boot range
+		{boot_base, max(u64) - PAGE_SIZE + 1, max(u64)},                  // size > max(u64) - PAGE_SIZE
+		{max(u64) - PAGE_SIZE + 1, PAGE_SIZE, SPAN},                      // unaligned near top
+		{max(u64) &~ (PAGE_SIZE - 1), 2 * PAGE_SIZE, SPAN},               // start + span wraps u64
+		{0x10_0000, PAGE_SIZE, SPAN},                                     // .Free range, not .Boot
+		{0x40_0000, PAGE_SIZE, SPAN},                                     // .Reserved range
+		{0x50_0000, PAGE_SIZE, SPAN},                                     // wrapping .Boot range skipped
+		{0x60_0000, PAGE_SIZE, SPAN},                                     // unknown Memory_Kind
+		{boot_base, boot_pages * PAGE_SIZE + 1, SPAN},                    // 1 byte past .Boot boundary
+		{boot_base, (boot_pages + 1) * PAGE_SIZE, SPAN},                  // 1 page past .Boot boundary
+		{boot_base - PAGE_SIZE, 2 * PAGE_SIZE, SPAN},                     // starts before .Boot range
+		{boot_base, 2 * PAGE_SIZE + 1, 2 * PAGE_SIZE},                    // 1 byte past limit
+	}
+	for item in refused {
+		pages, ok := debug_image_pages(item.start, item.size, ranges[:], item.limit)
+		testing.expectf(t, !ok && pages == 0, "refused case %v was accepted with %d pages", item, pages)
+	}
+	// Exact boundaries accepted.
+	pages_one, ok_one := debug_image_pages(boot_base, 1, ranges[:], SPAN)
+	testing.expect(t, ok_one && pages_one == 1)
+	pages_exact, ok_exact := debug_image_pages(boot_base, boot_pages * PAGE_SIZE, ranges[:], boot_pages * PAGE_SIZE)
+	testing.expect(t, ok_exact && pages_exact == boot_pages)
+	pages_sub, ok_sub := debug_image_pages(boot_base + PAGE_SIZE, (boot_pages - 1) * PAGE_SIZE - 7, ranges[:], SPAN)
+	testing.expect(t, ok_sub && pages_sub == boot_pages - 1)
+}

@@ -1,5 +1,7 @@
 package vector_font
 
+import "modus:contract/enum_word"
+
 // The table GDEF (OpenType): the class of each glyph (base, ligature, mark,
 // component), the attachment class of each mark, and the mark sets that a
 // lookup names with its flag UseMarkFilteringSet. The lookup flags of the
@@ -92,10 +94,11 @@ class_value :: proc "contextless" (definition: []u8, glyph: int) -> int {
 // classes is None.
 glyph_class_of :: proc "contextless" (gdef: ^Gdef, glyph: int) -> Glyph_Class {
 	value := class_value(gdef.glyph_classes, glyph)
-	if value < 1 || value > 4 {
+	if value < 1 {
 		return .None
 	}
-	return Glyph_Class(value)
+	class, ok := enum_word.member_of_word(Glyph_Class, u64(value))
+	return ok ? class : .None
 }
 
 // mark_set_holds says if the mark set of an index holds a glyph; false for

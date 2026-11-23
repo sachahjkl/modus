@@ -82,6 +82,8 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 		screen_of_memory      = desktop_of_memory && compositor != nil,
 		width                 = width,
 		height                = height,
+		max_width             = u64(root_plan_in_force.memory_screen_most_width),
+		max_height            = u64(root_plan_in_force.memory_screen_most_height),
 		share                 = u64(largest_budget.pages),
 		now                   = system.time(),
 		last_growth_at        = screen_budget_table.last_growth_at,

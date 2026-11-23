@@ -1108,15 +1108,20 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	display_name := role_holder_name(.Display)
 	start_grant_set := start_grant_set_of(display_name)
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
+	root_plan_read() // plan_values.odin
 	values: system.Context_Values
 	screen_values := root_screen_values
 	if memory {
+		start_size := screen_of_memory
+		if root_plan_in_force.memory_screen_layer != .Contract_Default {
+			start_size = {root_plan_in_force.memory_screen_start_width, root_plan_in_force.memory_screen_start_height}
+		}
 		// The width is the pixels of a line, and the format is 0: the
 		// compositor reads no pixel of a device.
-		screen_values = {u64(screen_of_memory[0]), u64(screen_of_memory[1]), u64(screen_of_memory[0]), 0}
+		screen_values = {u64(start_size[0]), u64(start_size[1]), u64(start_size[0]), 0}
 		// The screen in force of the budgets: the budget of the compositor
 		// and of each module with screen pictures pays them at this size.
-		screen_of_memory_size = screen_of_memory
+		screen_of_memory_size = start_size
 	}
 	system.value_put(&values, COMPOSITOR_VALUE_WIDTH, screen_values[0])
 	system.value_put(&values, COMPOSITOR_VALUE_HEIGHT, screen_values[1])
@@ -1169,7 +1174,6 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
 	display_role_store_give(served, display_name, &context_grants, &values, mappings[:], &mapping_count)
 	plan_values_page_give(served, display_name, mappings[:], &mapping_count, &values)
-	root_plan_read() // plan_values.odin
 	if context_refused(display_name, &context_grants, &values) {
 		display_holder_place_free(served)
 		return .Bad_State
@@ -1194,7 +1198,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	}
 	desktop_of_memory = memory
 	if memory {
-		system.log_fact(.Info, Compositor_On_Screen_Of_Memory{width = u64(screen_of_memory[0]), height = u64(screen_of_memory[1])})
+		system.log_fact(.Info, Compositor_On_Screen_Of_Memory{width = u64(screen_of_memory_size[0]), height = u64(screen_of_memory_size[1])})
 	}
 	served.process = display_holder
 	served.process_slot, served.process_serial, _ = system.process_place(display_holder)

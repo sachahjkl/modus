@@ -76,6 +76,20 @@ indic_script_rows := [Indic_Script]Indic_Script_Row {
 	.Malayalam  = {{{'m', 'l', 'm', '2'}, {'m', 'l', 'y', 'm'}}, 0x0D4D, 0x0D30, .After_Main, .Logical, true},
 }
 
+@(rodata, private)
+indic_scripts_in_order := [9]Indic_Script{
+	.Devanagari,
+	.Bengali,
+	.Gurmukhi,
+	.Gujarati,
+	.Oriya,
+	.Tamil,
+	.Telugu,
+	.Kannada,
+	.Malayalam,
+}
+#assert(len(indic_scripts_in_order) == len(Indic_Script))
+
 // indic_script_of_character gives the script of a character of the blocks
 // that the shaper takes.
 @(private)
@@ -83,7 +97,7 @@ indic_script_of_character :: #force_inline proc "contextless" (character: rune) 
 	if character < 0x0900 || character > 0x0D7F {
 		return {}, false
 	}
-	return Indic_Script((character - 0x0900) >> 7), true
+	return indic_scripts_in_order[(character - 0x0900) >> 7], true
 }
 
 // is_indic_character says if the Indic shaper takes a character.

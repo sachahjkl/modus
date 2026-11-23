@@ -237,30 +237,13 @@ store_blocks_planned :: proc "contextless" (owner: string, start_grant_set: ^Sta
 root_plan_in_force: root_plan_values.Root_Plan = root_plan_values.ROOT_PLAN_DEFAULTS
 
 // root_plan_read reads the values of the owner `root` at the start of the
-// holder of the display, and logs them once.
-//
-// Merge note, the share: on work/limits_kernel_and_budgets the core reads
-// the share through budget_share_take (src/modules/system/root/budgets.odin)
-// with the border module.budget_share_of_word, LARGEST_BUDGET_SHARE_LEAST 1
-// to LARGEST_BUDGET_SHARE_MOST 64, default 4: the same range as
-// root_plan_values.BUDGET_SHARE_*. At the merge, call
-// budget_share_take(root_plan_in_force.budget_share) here, before the start
-// of the next process, and keep one of the two borders (the constants of
-// module/format.odin are the place of the fact; root_plan_values then names
-// them).
-//
-// Merge note, the screen of memory: on work/limits_remote_and_network the
-// screen of memory is paid at its start size and grows through the root
-// command Screen_Budget (screen_budgets, memory_screen.screen_budget_grow_decide);
-// no fixed cost row stays. At the merge, give the compositor its start size
-// from memory_screen_start_width and _height in its context at this start,
-// and make memory_screen_most_width and _height the largest size that
-// screen_budget_grow_decide grants; the borders are memory_screen.MIN_* to
-// MAX_*, which that branch raises to 7680 x 4320.
+// holder of the display and on each committed plan change, updates the budget
+// share in force, and logs them once.
 root_plan_read :: proc "contextless" () {
 	values, _ := plan_values_of(root_plan_values.OWNER)
 	plan, sizes_refused := root_plan_values.root_plan_of(values)
 	root_plan_in_force = plan
+	_ = budget_share_take(root_plan_in_force.budget_share)
 	system.log_fact(.Info, Root_Plan_Values_Read{budget_share = plan.budget_share, start_width = u64(plan.memory_screen_start_width), start_height = u64(plan.memory_screen_start_height), most_width = u64(plan.memory_screen_most_width), most_height = u64(plan.memory_screen_most_height), sizes_refused = sizes_refused ? 1 : 0})
 }
 

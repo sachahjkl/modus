@@ -32,7 +32,7 @@ unmap_wait_case :: proc "contextless" (image: []u8) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	grants[lockers.GRANT_BOARD] = {board_memory, {.Read, .Write}}
-	values[lockers.VALUE_ROLE] = lockers.ROLE_UNMAP_WAIT
+	values[lockers.VALUE_ROLE] = u64(lockers.Role.Unmap_Wait)
 	values[lockers.VALUE_INDEX] = 0
 	unmapper, start_status := system.process_start(system.image_find(image, "locker"), "unmapper", grants, random.values_with_seed(&process_generator, values), UNTOUCHED_AMOUNTS)
 	if start_status != .Ok {

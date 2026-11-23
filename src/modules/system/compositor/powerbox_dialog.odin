@@ -10,6 +10,7 @@ package compositor
 
 import "base:intrinsics"
 import "internal:compositor/bar"
+import "modus:contract/enum_word"
 import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
@@ -249,7 +250,9 @@ plan_difference_worker_start :: proc "contextless" () {
 
 @(private = "file")
 plan_reading_stage :: proc "contextless" () -> Plan_Reading_Stage {
-	return Plan_Reading_Stage(intrinsics.atomic_load_explicit(&plan_reading.stage, .Acquire))
+	word := intrinsics.atomic_load_explicit(&plan_reading.stage, .Acquire)
+	stage, ok := enum_word.member_of_word(Plan_Reading_Stage, u64(word))
+	return ok ? stage : .Idle
 }
 
 @(private = "file")

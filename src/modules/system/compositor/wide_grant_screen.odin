@@ -301,8 +301,7 @@ screen_line_y :: proc "contextless" (top: int, line: int) -> int {
 
 // local_input_window_shows says if a window marked local is open: while
 // the proof of a wide grant asks for a passphrase, no input of a viewer
-// reaches the desktop at all.
-@(private = "file")
+// reaches the desktop at all, and a viewer cannot resize the screen.
 local_input_window_shows :: proc "contextless" () -> bool {
 	for position in 0 ..< order_count {
 		if clients[order[position]].local_input_only {

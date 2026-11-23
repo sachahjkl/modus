@@ -2,6 +2,7 @@ package fuzz
 
 import "core:mem"
 import "core:slice"
+import "../foundation"
 import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
@@ -274,8 +275,8 @@ fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case, start_grant_s
 		name_in_image   = case_of.flags & FUZZ_ROOT_RING_NAME_IN_IMAGE != 0,
 		replaces_itself = case_of.flags & FUZZ_ROOT_RING_REPLACES_ITSELF != 0,
 		chained         = case_of.flags & FUZZ_ROOT_RING_CHAINED != 0,
-		decision        = replacement_signature.Decision(values[5] % (u64(max(replacement_signature.Decision)) + 1)),
-		problem         = replacement_list.List_Problem(values[6] % (u64(max(replacement_list.List_Problem)) + 1)),
+		decision        = foundation.enum_member_at(replacement_signature.Decision, int(values[5] % u64(len(replacement_signature.Decision)))),
+		problem         = foundation.enum_member_at(replacement_list.List_Problem, int(values[6] % u64(len(replacement_list.List_Problem)))),
 	}
 	table_full := case_of.flags & FUZZ_ROOT_RING_TABLE_FULL != 0
 	capacity := i64(values[3] >> 1)
@@ -301,7 +302,8 @@ fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case, start_grant_s
 	if read.kind != i64(wanted.kind) || read.unit != i64(wanted.unit) || read.argument != wanted.argument || read.value != wanted.value || read.limit != wanted.limit || read.found != wanted.found {
 		return fuzz_broken(.Model, "the record of the Replace of %v is %v, and the model %v", facts, read, wanted)
 	}
-	if read.operation != i64(root_ring.Root_Command.Replace) || !fuzz_error_record_named(read) || errors.Kind(read.kind) not_in call_outcome.KINDS_OF[outcome] {
+	kind, kind_ok := errors.kind_of_word(read.kind)
+	if read.operation != i64(root_ring.Root_Command.Replace) || !fuzz_error_record_named(read) || !kind_ok || kind not_in call_outcome.KINDS_OF[outcome] {
 		return fuzz_broken(.Contract, "the record of a refused Replace is %v with %v", read, outcome)
 	}
 	if _, _, known := root_ring.replace_refusal_of_record(outcome, read); !known {

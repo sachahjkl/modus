@@ -534,3 +534,54 @@ image_entry_bytes :: proc "contextless" (image: []u8, entry: ^Image_Entry) -> (b
 	}
 	return image[offset:][:size], true
 }
+
+// Computed bound share: the unsigned debug image takes at most one quarter of
+// the free physical memory reported by the firmware, leaving three quarters
+// for the kernel, its tables, and the root service.
+DEBUG_IMAGE_FREE_SHARE :: u64(4)
+
+// debug_image_bound computes the largest debug image size that the boot
+// program may read into memory: at most one quarter of the free physical
+// memory in `ranges`, and at most `range_span` (the fixed mapping span of
+// the root service). Ranges whose page count wraps an address are ignored.
+debug_image_bound :: proc "contextless" (ranges: []Memory_Range, range_span: u64) -> u64 {
+	free_bytes := u64(0)
+	for range in ranges {
+		kind, ok := memory_kind_of_word(range.kind)
+		if !ok || kind != .Free || range.page_count > (max(u64) - range.start) / PAGE_SIZE {
+			continue
+		}
+		bytes := range.page_count * PAGE_SIZE
+		if bytes > max(u64) - free_bytes {
+			free_bytes = max(u64)
+		} else {
+			free_bytes += bytes
+		}
+	}
+	return min(free_bytes / DEBUG_IMAGE_FREE_SHARE, range_span)
+}
+
+// debug_image_pages checks the debug image range that the boot program gives
+// the kernel: non-empty, page-aligned, at most `limit` bytes, with no address
+// wrap, and wholly inside one `.Boot` range of `ranges` (which the kernel
+// never gives as free frames).
+debug_image_pages :: proc "contextless" (start, size: u64, ranges: []Memory_Range, limit: u64) -> (pages: u64, accepted: bool) {
+	if start == 0 || start % PAGE_SIZE != 0 || size == 0 || size > limit || size > max(u64) - PAGE_SIZE {
+		return 0, false
+	}
+	pages = (size + PAGE_SIZE - 1) / PAGE_SIZE
+	span := pages * PAGE_SIZE
+	if start > max(u64) - span {
+		return 0, false
+	}
+	end := start + span
+	for range in ranges {
+		if kind, ok := memory_kind_of_word(range.kind); !ok || kind != .Boot || range.page_count > (max(u64) - range.start) / PAGE_SIZE {
+			continue
+		}
+		if start >= range.start && end <= range.start + range.page_count * PAGE_SIZE {
+			return pages, true
+		}
+	}
+	return 0, false
+}

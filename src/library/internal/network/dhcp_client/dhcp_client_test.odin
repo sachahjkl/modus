@@ -12,9 +12,9 @@ SERVER :: u32(0x0A00_0202) // 10.0.2.2
 ADDRESS :: u32(0x0A00_020F) // 10.0.2.15
 MASK :: u32(0xFFFF_FF00)
 
-// Option: one option of a test message.
+// Test_Option: one option of a test message.
 @(private = "file")
-Option :: struct {
+Test_Option :: struct {
 	code:  u8,
 	bytes: []u8,
 }
@@ -28,7 +28,7 @@ word_bytes :: proc(value: u32) -> []u8 {
 
 // reply_of writes a BOOTREPLY with its options, then END.
 @(private = "file")
-reply_of :: proc(address: u32, options: []Option) -> []u8 {
+reply_of :: proc(address: u32, options: []Test_Option) -> []u8 {
 	message := make([]u8, MESSAGE_CAPACITY, context.temp_allocator)
 	message[0], message[1], message[2] = 2, 1, 6
 	be32_put(message, 4, TRANSACTION)
@@ -42,17 +42,17 @@ reply_of :: proc(address: u32, options: []Option) -> []u8 {
 		copy(message[at + 2:], option.bytes)
 		at += 2 + len(option.bytes)
 	}
-	message[at] = OPTION_END
+	message[at] = u8(Option.End)
 	return message
 }
 
 // good_options gives the options of a good ACK or OFFER.
 @(private = "file")
-good_options :: proc(kind: Message_Type) -> [dynamic]Option {
-	options := make([dynamic]Option, context.temp_allocator)
+good_options :: proc(kind: Message_Type) -> [dynamic]Test_Option {
+	options := make([dynamic]Test_Option, context.temp_allocator)
 	type_byte := make([]u8, 1, context.temp_allocator)
 	type_byte[0] = u8(kind)
-	append(&options, Option{OPTION_MESSAGE_TYPE, type_byte}, Option{OPTION_SERVER, word_bytes(SERVER)}, Option{OPTION_LEASE_TIME, word_bytes(86400)}, Option{OPTION_SUBNET_MASK, word_bytes(MASK)}, Option{OPTION_ROUTER, word_bytes(SERVER)})
+	append(&options, Test_Option{u8(Option.Message_Type), type_byte}, Test_Option{u8(Option.Server), word_bytes(SERVER)}, Test_Option{u8(Option.Lease_Time), word_bytes(86400)}, Test_Option{u8(Option.Subnet_Mask), word_bytes(MASK)}, Test_Option{u8(Option.Router), word_bytes(SERVER)})
 	return options
 }
 
@@ -96,7 +96,7 @@ a_hostile_reply_is_refused :: proc(t: ^testing.T) {
 		append(&cases, Case{m, .Bytes_After_End})
 	}
 	twice := good_options(.Ack)
-	append(&twice, Option{OPTION_SERVER, word_bytes(SERVER)})
+	append(&twice, Test_Option{u8(Option.Server), word_bytes(SERVER)})
 	append(&cases, Case{reply_of(ADDRESS, twice[:]), .Option_Twice})
 	long_type := good_options(.Ack)
 	long_type[0].bytes = word_bytes(5)
@@ -143,11 +143,11 @@ a_hostile_reply_is_refused :: proc(t: ^testing.T) {
 	}
 	for times in ([?]Times{{50000, 40000}, {43200, 43200}, {80000, 86400}, {86400, 90000}, {1, 86400}}) {
 		bad := good_options(.Ack)
-		append(&bad, Option{OPTION_RENEW_TIME, word_bytes(times.renew)}, Option{OPTION_REBIND_TIME, word_bytes(times.rebind)})
+		append(&bad, Test_Option{u8(Option.Renew_Time), word_bytes(times.renew)}, Test_Option{u8(Option.Rebind_Time), word_bytes(times.rebind)})
 		append(&cases, Case{reply_of(ADDRESS, bad[:]), .Bad_Times})
 	}
 	overload := good_options(.Ack)
-	append(&overload, Option{OPTION_OVERLOAD, []u8{3}})
+	append(&overload, Test_Option{u8(Option.Overload), []u8{3}})
 	append(&cases, Case{reply_of(ADDRESS, overload[:]), .Overload})
 	for item, index in cases {
 		_, refused := reply_read(item.message, TRANSACTION, HARDWARE)
@@ -167,8 +167,8 @@ a_hostile_reply_is_refused :: proc(t: ^testing.T) {
 	}
 	// What is taken at the edges: a NAK needs no lease, a router list of
 	// two, an infinite lease with no times, a prefix of 8 and of 30.
-	nak := make([dynamic]Option, context.temp_allocator)
-	append(&nak, Option{OPTION_MESSAGE_TYPE, []u8{u8(Message_Type.Nak)}}, Option{OPTION_SERVER, word_bytes(SERVER)})
+	nak := make([dynamic]Test_Option, context.temp_allocator)
+	append(&nak, Test_Option{u8(Option.Message_Type), []u8{u8(Message_Type.Nak)}}, Test_Option{u8(Option.Server), word_bytes(SERVER)})
 	nak_reply, nak_problem := reply_read(reply_of(0, nak[:]), TRANSACTION, HARDWARE)
 	testing.expect(t, nak_problem == .None && nak_reply.kind == .Nak)
 	two_routers := good_options(.Ack)
@@ -203,7 +203,7 @@ the_exchange_and_the_times_of_a_lease :: proc(t: ^testing.T) {
 	testing.expect(t, !client_tick(&client, out[:], 999, TRANSACTION).send)
 	discover := client_tick(&client, out[:], 1000, TRANSACTION)
 	testing.expect(t, discover.send && discover.broadcast && !discover.from_address && discover.length >= MESSAGE_LEAST)
-	testing.expect(t, out[0] == 1 && be32(out[:], 4) == TRANSACTION && out[MESSAGE_LEAST] == OPTION_MESSAGE_TYPE && out[MESSAGE_LEAST + 2] == u8(Message_Type.Discover))
+	testing.expect(t, out[0] == 1 && be32(out[:], 4) == TRANSACTION && out[MESSAGE_LEAST] == u8(Option.Message_Type) && out[MESSAGE_LEAST + 2] == u8(Message_Type.Discover))
 	// The waits double: 4 s, 8 s, ... up to 64 s.
 	now := u64(1000)
 	for expected in ([?]u64{8_000, 16_000, 32_000, 64_000, 64_000}) {
@@ -253,8 +253,8 @@ a_refused_request_starts_again :: proc(t: ^testing.T) {
 	client_start(&client, HARDWARE, 0)
 	client_tick(&client, out[:], 0, TRANSACTION)
 	client_receive(&client, reply_of(ADDRESS, good_options(.Offer)[:]), out[:], 1)
-	nak := make([dynamic]Option, context.temp_allocator)
-	append(&nak, Option{OPTION_MESSAGE_TYPE, []u8{u8(Message_Type.Nak)}}, Option{OPTION_SERVER, word_bytes(SERVER)})
+	nak := make([dynamic]Test_Option, context.temp_allocator)
+	append(&nak, Test_Option{u8(Option.Message_Type), []u8{u8(Message_Type.Nak)}}, Test_Option{u8(Option.Server), word_bytes(SERVER)})
 	refused, _ := client_receive(&client, reply_of(0, nak[:]), out[:], 2)
 	testing.expect(t, refused.event == .None && client.phase == .Init)
 	client_tick(&client, out[:], 2, TRANSACTION)
@@ -263,7 +263,7 @@ a_refused_request_starts_again :: proc(t: ^testing.T) {
 	testing.expect(t, client.phase == .Bound)
 	client_tick(&client, out[:], 4 + 43200 * 1000, TRANSACTION + 1)
 	testing.expect(t, client.phase == .Renewing)
-	other := make([dynamic]Option, context.temp_allocator)
+	other := make([dynamic]Test_Option, context.temp_allocator)
 	for option in good_options(.Ack) {
 		append(&other, option)
 	}

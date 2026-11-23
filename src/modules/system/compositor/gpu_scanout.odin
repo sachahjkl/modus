@@ -44,7 +44,7 @@ gpu_presents: u64 // The frames that the scanout showed: the service answered ea
 gpu_frames_merged: u64 // The frames whose damage waited for an answer, and went with a later present.
 
 // gpu_call_at_start sends one command and waits for its answer, up to the
-// hang bound: the start of the compositor only, before its loop.
+// answer bound: the start of the compositor only, before its loop.
 @(private = "file")
 gpu_call_at_start :: proc "contextless" (cmd: virtio_gpu.Service_Command, values: [7]u64 = {}) -> (reply: ring.Record, ok: bool) {
 	tag := gpu_tag
@@ -52,7 +52,7 @@ gpu_call_at_start :: proc "contextless" (cmd: virtio_gpu.Service_Command, values
 	if !system.send(&gpu_ring.commands, ring.Record{kind = u32(cmd), tag = tag, values = values}) {
 		return {}, false
 	}
-	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	deadline := system.time() + system.ANSWER_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
 		if record, got := system.receive(&gpu_ring.completions); got {
@@ -193,7 +193,7 @@ gpu_present_send :: proc "contextless" (in_draw: bool) {
 }
 
 // gpu_scanout_poll takes the answer of the present in flight, then sends
-// the damage that waited. A refusal, or no answer in the hang bound, ends
+// the damage that waited. A refusal, or no answer in the answer bound, ends
 // the scanout.
 gpu_scanout_poll :: proc "contextless" (now: u64) {
 	if !gpu_attached {
@@ -210,7 +210,7 @@ gpu_scanout_poll :: proc "contextless" (now: u64) {
 		}
 		gpu_presents = record.values[0]
 	}
-	if gpu_in_flight && now - gpu_in_flight_since >= system.TEST_HANG_BOUND_MILLISECONDS {
+	if gpu_in_flight && now - gpu_in_flight_since >= system.ANSWER_BOUND_MILLISECONDS {
 		gpu_scanout_end(u64(virtio_gpu.Service_Status.Device_Error), false)
 		return
 	}
@@ -226,7 +226,7 @@ gpu_scanout_wait :: proc "contextless" (wait: ^system.Wait, deadline: u64) -> u6
 		return deadline
 	}
 	system.wait_records(wait, &gpu_ring.completions)
-	return min(deadline, gpu_in_flight_since + system.TEST_HANG_BOUND_MILLISECONDS)
+	return min(deadline, gpu_in_flight_since + system.ANSWER_BOUND_MILLISECONDS)
 }
 
 // gpu_scanout_end writes why the scanout ended, releases the screen memory

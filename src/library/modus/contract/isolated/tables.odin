@@ -334,6 +334,9 @@ tables_return_of :: proc "contextless" (file: []u8, function: module.Function, a
 	for pass in 0 ..< 2 {
 		field := offset
 		for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+			if module.parameter_optional(function, index) {
+				field += 8
+			}
 			defer field += field_size(word)
 			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
 			if !is_table_or_bytes(word) || !direction_ok || direction == .Read || (only_parameter != 0 && index + 1 != only_parameter) {
@@ -398,6 +401,10 @@ room_missing :: proc "contextless" (file: []u8, function: module.Function, argum
 		type, type_ok := module.type_of_word(word)
 		if !type_ok {
 			return {}
+		}
+		// An absent optional parameter writes no bytes past the argument record.
+		if module.parameter_optional(function, index) && arguments[index].presence != .Given {
+			continue
 		}
 		switch type {
 		case .None, .Integer, .Handle, .Enum:

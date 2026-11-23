@@ -642,3 +642,74 @@ the_grant_of_a_connection_names_the_principal :: proc(t: ^testing.T) {
 	testing.expect_value(t, erasing & CALLER_AMOUNT_MASK, 64)
 	testing.expect(t, erasing & CALLER_READS_ONLY == 0)
 }
+
+// Optional parameters before an Append table add 8 bytes each to the
+// argument record; tables_return must skip them to read the count, and
+// room_missing must not count the bytes of an absent optional Text.
+@(test)
+optional_parameter_before_append_table :: proc(t: ^testing.T) {
+	storage: [512]u8
+	file := table_file(&storage)
+	function := description(.Integer, .Text, .Table)
+	function.parameter_needs[0] = u8(module.Parameter_Need.Optional)
+	function.parameter_needs[1] = u8(module.Parameter_Need.Optional)
+	function.parameter_directions[2] = u8(module.Direction.Append)
+	function.parameter_details[2] = 1
+
+	Row :: struct {
+		name:  [16]u8,
+		value: i64,
+	}
+	rows: [3]Row
+	ignored_text := "ignored bytes when absent"
+	args := [3]Argument{
+		{presence = .Given, integer = 17},
+		{presence = .Absent, text = transmute([]u8)ignored_text},
+		{table = {records = ([^]u8)(&rows)[:size_of(rows)], count = 1}},
+	}
+	region: [256]u8
+	offset, size, _, encoded := encode(file, function, args[:], region[:])
+	testing.expect(t, encoded)
+	// Argument record: (8 + 8) + (8 + 16) + 32 = 72 bytes.
+	testing.expect_value(t, size, u64(72))
+
+	call: Call
+	testing.expect(t, decode(file, function, offset, size, region[:], &call))
+	// Optional parameters each take 2 call words: word 0..1 for Integer,
+	// word 2..3 for Text, word 4 for the Append Table_Place.
+	testing.expect_value(t, call.arguments[0], u64(module.Presence.Given))
+	testing.expect_value(t, call.arguments[1], u64(17))
+	testing.expect_value(t, call.arguments[2], u64(module.Presence.Absent))
+	place := (^module.Table_Place)(uintptr(call.arguments[4]))
+	testing.expect_value(t, place.count, u64(1))
+	testing.expect_value(t, place.capacity, u64(3))
+
+	// Callee appends one row at index 1 and stores the new count 2.
+	out_rows := ([^]Row)(uintptr(place.address))
+	copy(out_rows[1].name[:], "appended")
+	out_rows[1].value = 99
+	place.count = 2
+	counts_store(function, &call, region[:])
+
+	problem, parameter := tables_return(file, function, args[:], region[:], offset)
+	testing.expect_value(t, problem, Return_Problem.None)
+	testing.expect_value(t, parameter, 0)
+	testing.expect_value(t, args[2].table.count, u64(2))
+	testing.expect_value(t, rows[1].value, i64(99))
+
+	// A count smaller than entry count is refused at parameter 3.
+	place.count = 1
+	counts_store(function, &call, region[:])
+	problem, parameter = tables_return(file, function, args[:], region[:], offset)
+	testing.expect_value(t, problem, Return_Problem.Count_Smaller)
+	testing.expect_value(t, parameter, 3)
+
+	// room_missing ignores ignored_text when parameter 2 is Absent: 72-byte
+	// argument record leaves 40 bytes in a 112-byte region, while 2 rows
+	// need 48 bytes.
+	args[2].table.count = 1
+	missing := room_missing(file, function, args[:], 112)
+	testing.expect_value(t, missing.parameter, 3)
+	testing.expect_value(t, missing.needed, u64(48))
+	testing.expect_value(t, missing.free, u64(40))
+}
