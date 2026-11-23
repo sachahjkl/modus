@@ -420,13 +420,13 @@ create :: proc "contextless" () {
 	// service from the sources of the processor; a weak seed is refused.
 	if !random.fill_for_a_key(&generator, secrets[:], .Processor, &error) {
 		system.log_fact(.Info, Principal_Not_Created_Seed_Too_Weak{})
-		message, message_failed = "the seed of the machine is too weak for a key", true
+		message, message_failed = "The seed of the machine is too weak for a key.", true
 		return
 	}
 	ok: bool
 	file.signing_public_key, file.unlock_public_key, ok = public_keys_of(&secrets)
 	if !ok {
-		message, message_failed = "the module cryptography refused the keys", true
+		message, message_failed = "The module cryptography refused the keys.", true
 		return
 	}
 	file.name, file.name_length = name, name_length
@@ -438,11 +438,11 @@ create :: proc "contextless" () {
 	}
 	if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, file_bytes[:]); status != .Ok {
 		system.log_fact(.Info, Principal_File_Not_Kept{status_word = u64(status)})
-		message, message_failed = "the store did not keep the principal", true
+		message, message_failed = "The store did not keep the account.", true
 		return
 	}
 	if !record_give() {
-		message, message_failed = "the root service did not take the record", true
+		message, message_failed = "The root service did not take the record.", true
 		return
 	}
 	principal_pin_after_creation(file_bytes[:])
@@ -464,12 +464,12 @@ passphrase_file_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	// under one key.
 	if !random.fill_for_a_key(&generator, sealed_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, sealed_file.nonce[:], .Processor, &error) {
 		system.log_fact(.Info, Keys_Not_Sealed_Seed_Too_Weak{})
-		message, message_failed = "the seed of the machine is too weak for a key", true
+		message, message_failed = "The seed of the machine is too weak for a key.", true
 		return 0, false
 	}
 	started := system.time()
 	if !derive(typed[:typed_count], sealed_file.salt[:], &key) {
-		message, message_failed = "the derivation of the key failed", true
+		message, message_failed = "The key was not derived: cryptography refused it. Try again.", true
 		return 0, false
 	}
 	derived = system.time() - started
@@ -480,7 +480,7 @@ passphrase_file_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	text := string(secrets^[:])
 	sealed := sealed_file.sealed[:]
 	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
-		message, message_failed = "the seal of the keys failed", true
+		message, message_failed = "The keys were not sealed: cryptography refused the seal.", true
 		return 0, false
 	}
 	principals.file_encode(sealed_file, sealed_bytes)
@@ -543,28 +543,28 @@ passphrase_try :: proc "contextless" () {
 	sealed_by_the_tpm := principal_form == .Sealed_By_The_Tpm
 	switch principal_keys_open(&secrets) {
 	case .Derivation_Failed:
-		message, message_failed = "the derivation of the key failed", true
+		message, message_failed = "Nothing unlocked: cryptography refused key derivation.", true
 	case .Wrong:
 		refusals += 1
 		if sealed_by_the_tpm {
 			system.log_fact(.Info, Passphrase_Wrong_Counted_By_Tpm{principal = number, refusals = refusals, principal_name = principal_name_field()})
-			message, message_failed = "the passphrase is wrong: the TPM counts each wrong try", true
+			message, message_failed = "Wrong passphrase: the TPM counts each wrong try.", true
 		} else {
 			system.log_fact(.Info, Passphrase_Wrong{principal = number, refusals = refusals, principal_name = principal_name_field()})
-			message, message_failed = "the passphrase is wrong: nothing is unlocked", true
+			message, message_failed = "Wrong passphrase: nothing is unlocked.", true
 		}
 	case .Locked_Out:
 		system.log_fact(.Info, Passphrase_Locked_Out{principal = number, principal_name = principal_name_field()})
-		principal_recovery_ask("the TPM refuses tries for now: type the recovery key")
+		principal_recovery_ask("The TPM refuses tries for now: type your recovery key.")
 	case .Tpm_Refused:
-		principal_recovery_ask("the TPM refuses: type the recovery key of the principal")
+		principal_recovery_ask("The TPM refused: type your recovery key.")
 	case .Not_Consistent:
 		if sealed_by_the_tpm {
 			system.log_fact(.Info, Keys_Not_Consistent_With_Tpm_Secret{principal = number})
-			principal_recovery_ask("the file is not consistent: type the recovery key")
+			principal_recovery_ask("The file is not consistent: type your recovery key.")
 		} else {
 			system.log_fact(.Info, Keys_Do_Not_Match_Public_Keys{principal = number})
-			message, message_failed = "the record is not consistent: nothing is unlocked", true
+			message, message_failed = "The record is not consistent: nothing is unlocked.", true
 		}
 	case .Opened:
 		if sealed_by_the_tpm {
@@ -618,7 +618,7 @@ after_machine :: proc "contextless" () {
 principal_ask :: proc "contextless" () {
 	if principal_form == .Sealed_By_The_Tpm && !has_tpm {
 		system.log_fact(.Info, Principal_Keys_Need_Tpm{principal = number, principal_name = principal_name_field()})
-		principal_recovery_ask("no TPM: type the recovery key of the principal")
+		principal_recovery_ask("No TPM: type your recovery key.")
 		return
 	}
 	mode = .Unlock
@@ -666,7 +666,7 @@ machine_passphrase_alone_try :: proc "contextless" () {
 	defer erase(machine_key[:])
 	defer erase(key[:])
 	if !derive(typed[:typed_count], machine_file.salt[:], &key) {
-		message, message_failed = "the derivation of the key failed", true
+		message, message_failed = "Machine key not opened: cryptography refused key derivation.", true
 		return
 	}
 	error: errors.Error_Record
@@ -678,11 +678,11 @@ machine_passphrase_alone_try :: proc "contextless" () {
 	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE {
 		machine_refusals += 1
 		system.log_fact(.Info, Machine_Passphrase_Wrong{refusals = machine_refusals})
-		message, message_failed = "the passphrase is wrong: nothing is opened", true
+		message, message_failed = "Wrong passphrase: nothing is opened.", true
 		return
 	}
 	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
-		message, message_failed = "the root service did not take the key", true
+		message, message_failed = "The root service did not take the key.", true
 		return
 	}
 	system.log_fact(.Info, Machine_Passphrase_Opened{})
@@ -720,12 +720,12 @@ machine_passphrase_alone_create :: proc "contextless" () {
 	// service from the sources of the processor; a weak seed is refused.
 	if !random.fill_for_a_key(&generator, machine_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_file.salt[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_file.nonce[:], .Processor, &error) {
 		system.log_fact(.Info, Machine_Passphrase_Not_Set_Seed_Too_Weak{})
-		message, message_failed = "the seed of the machine is too weak for a key", true
+		message, message_failed = "The seed of the machine is too weak for a key.", true
 		return
 	}
 	started := system.time()
 	if !derive(typed[:typed_count], machine_file.salt[:], &key) {
-		message, message_failed = "the derivation of the key failed", true
+		message, message_failed = "The key was not derived: cryptography refused it. Try again.", true
 		return
 	}
 	derived := system.time() - started
@@ -736,17 +736,17 @@ machine_passphrase_alone_create :: proc "contextless" () {
 	text := string(machine_key[:])
 	sealed := machine_file.sealed[:]
 	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
-		message, message_failed = "the seal of the key failed", true
+		message, message_failed = "The key was not sealed: cryptography refused the seal.", true
 		return
 	}
 	principals.machine_file_encode(&machine_file, &machine_file_bytes)
 	if !pin_announce(.Machine_Key, machine_file_bytes[:]) {
-		message, message_failed = "the pin of the TPM refuses the record", true
+		message, message_failed = "The pin of the TPM refuses the record.", true
 		return
 	}
 	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_file_bytes[:]); status != .Ok {
 		system.log_fact(.Info, Machine_Passphrase_Record_Not_Kept{status_word = u64(status)})
-		message, message_failed = "the store did not keep the record", true
+		message, message_failed = "The store did not keep the record.", true
 		return
 	}
 	pin_settle(.Machine_Key, machine_file_bytes[:])
@@ -1068,7 +1068,7 @@ machine_key_sealed_commit :: proc "contextless" () {
 write_failed :: proc "contextless" () {
 	erase(recovery_text[:])
 	mode = .Write_Result
-	message, message_failed = "the store did not keep it: nothing is set; ask again", true
+	message, message_failed = "The store did not keep it: nothing is set. Ask again.", true
 }
 
 // write_unknown shows, until Enter again, that the store gave no answer on
@@ -1079,9 +1079,9 @@ write_failed :: proc "contextless" () {
 // disk holds. The caller writes the fact that names what was not answered.
 write_unknown :: proc "contextless" () {
 	mode = .Write_Unknown
-	message, message_failed = "the record may be on the disk: keep this recovery key", true
+	message, message_failed = "The record may be on the disk: keep this recovery key.", true
 	if pending_write == .Principal_Created {
-		message = "the file may be on the disk: keep this recovery key"
+		message = "The file may be on the disk: keep this recovery key."
 	}
 }
 
@@ -1191,11 +1191,11 @@ recovery_try :: proc "contextless" () {
 	if !opened {
 		machine_refusals += 1
 		system.log_fact(.Info, Machine_Recovery_Key_Wrong{refusals = machine_refusals})
-		message, message_failed = "the recovery key is wrong: nothing is opened", true
+		message, message_failed = "Wrong recovery key: nothing is opened.", true
 		return
 	}
 	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
-		message, message_failed = "the root service did not take the key", true
+		message, message_failed = "The root service did not take the key.", true
 		return
 	}
 	system.log_fact(.Info, Machine_Recovery_Key_Opened{})
@@ -1246,12 +1246,12 @@ tpm_passphrase_seal_begin :: proc "contextless" (owner: Secret_Owner, salt, nonc
 		case .Named_Principal:
 			system.log_fact(.Info, Keys_Not_Sealed_By_Tpm_Seed_Too_Weak{})
 		}
-		message, message_failed = "the seed of the machine is too weak for a key", true
+		message, message_failed = "The seed of the machine is too weak for a key.", true
 		return {}, 0, false
 	}
 	started := system.time()
 	if !derive(typed[:typed_count], salt, &passphrase_key) {
-		message, message_failed = "the derivation of the key failed", true
+		message, message_failed = "The key was not derived: cryptography refused it. Try again.", true
 		return {}, 0, false
 	}
 	derived = system.time() - started
@@ -1267,10 +1267,10 @@ tpm_passphrase_seal_begin :: proc "contextless" (owner: Secret_Owner, salt, nonc
 		switch owner {
 		case .Machine:
 			system.log_fact(.Info, Machine_Key_Not_Sealed_With_Passphrase{})
-			message, message_failed = "the TPM service did not seal the key", true
+			message, message_failed = "The TPM service did not seal the key.", true
 		case .Named_Principal:
 			system.log_fact(.Info, Principal_Keys_Not_Sealed_By_Tpm{principal_name = principal_name_field()})
-			message, message_failed = "the TPM service did not seal the keys", true
+			message, message_failed = "The TPM service did not seal the keys.", true
 		}
 		return {}, 0, false
 	}
@@ -1304,7 +1304,7 @@ machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MAC
 	text := string(machine_key^[:])
 	sealed := sealed_file.sealed[:]
 	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
-		message, message_failed = "the seal of the key failed", true
+		message, message_failed = "The key was not sealed: cryptography refused the seal.", true
 		return false
 	}
 	principals.machine_tpm_passphrase_file_encode(sealed_file, sealed_bytes)
@@ -1312,7 +1312,7 @@ machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MAC
 	// it with the same checks.
 	if _, _, problem := principals.machine_tpm_passphrase_file_decode(sealed_bytes^[:]); problem != .None {
 		system.log_fact(.Info, Machine_Tpm_Passphrase_Record_Not_Decoded{problem = problem_field(principals.machine_tpm_passphrase_file_problem_sentences[problem])})
-		message, message_failed = "the record does not decode", true
+		message, message_failed = "The record does not decode.", true
 		return false
 	}
 	system.log_fact(.Info, Machine_Key_Sealed_With_Passphrase{derivation = derivation_field(derived)})
@@ -1333,7 +1333,7 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 	machine_tpm_passphrase_file = {}
 	if !random.fill_for_a_key(&generator, machine_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, machine_tpm_passphrase_file.recovery_nonce[:], .Processor, &error) {
 		system.log_fact(.Info, Machine_Passphrase_Not_Set_Seed_Too_Weak{})
-		message, message_failed = "the seed of the machine is too weak for a key", true
+		message, message_failed = "The seed of the machine is too weak for a key.", true
 		return
 	}
 	// The copy under the recovery key: its additional data stops before the
@@ -1347,7 +1347,7 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 	text := string(machine_key[:])
 	recovery_sealed := machine_tpm_passphrase_file.recovery_sealed[:]
 	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.MACHINE_SEALED_SIZE {
-		message, message_failed = "the seal of the recovery copy failed", true
+		message, message_failed = "Recovery copy not sealed: cryptography refused the seal.", true
 		return
 	}
 	if !machine_tpm_passphrase_seal(&machine_key, &machine_tpm_passphrase_file, &machine_tpm_passphrase_file_bytes) {
@@ -1361,7 +1361,7 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 	pending_write = .Machine_Passphrase_Set
 	system.log_fact(.Info, Machine_Passphrase_Recovery_Key_Shown{})
 	mode = .Recovery_Shown
-	message, message_failed = "write it down, then Enter: the passphrase is set then", false
+	message, message_failed = "Write it down, then press Enter to set the passphrase.", false
 }
 
 // machine_passphrase_commit writes the record of the machine passphrase
@@ -1406,7 +1406,7 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 	defer erase(tpm_secret[:])
 	defer erase(machine_key[:])
 	if !derive(typed[:typed_count], machine_tpm_passphrase_file.salt[:], &passphrase_key) {
-		message, message_failed = "the derivation of the key failed", true
+		message, message_failed = "Machine key not opened: cryptography refused key derivation.", true
 		return
 	}
 	authorization := principals.machine_authorization_value(&passphrase_key)
@@ -1417,14 +1417,14 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 	case answered && status == .Authorization_Fails:
 		machine_refusals += 1
 		system.log_fact(.Info, Machine_Passphrase_Wrong_Counted_By_Tpm{refusals = machine_refusals})
-		message, message_failed = "the passphrase is wrong: the TPM counts each wrong try", true
+		message, message_failed = "Wrong passphrase: the TPM counts each wrong try.", true
 		return
 	case answered && status == .Locked_Out:
 		system.log_fact(.Info, Machine_Passphrase_Locked_Out{})
-		machine_recovery_ask("the TPM refuses tries for now: type the recovery key")
+		machine_recovery_ask("The TPM refuses tries for now: type the recovery key.")
 		return
 	case:
-		machine_recovery_ask("the TPM refuses: type the recovery key of the machine")
+		machine_recovery_ask("The TPM refused: type the machine recovery key.")
 		return
 	}
 	seal_key := principals.machine_tpm_passphrase_seal_key(&tpm_secret, &passphrase_key)
@@ -1437,11 +1437,11 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 	result := machine_key[:]
 	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE {
 		system.log_fact(.Info, Machine_Key_Not_Consistent_With_Tpm_Secret{})
-		machine_recovery_ask("the record is not consistent: type the recovery key")
+		machine_recovery_ask("The record is not consistent: type the recovery key.")
 		return
 	}
 	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
-		message, message_failed = "the root service did not take the key", true
+		message, message_failed = "The root service did not take the key.", true
 		return
 	}
 	system.log_fact(.Info, Machine_Key_Released_To_Passphrase{})
@@ -1462,7 +1462,7 @@ machine_passphrase_reseal_ask :: proc "contextless" (machine_key: ^[principals.M
 	case:
 		opened_machine_key = machine_key^
 		mode = .Machine_Reseal_First
-		message, message_failed = "type a machine passphrase: the TPM seals the key to it", false
+		message, message_failed = "Type a machine passphrase: the TPM seals the key to it.", false
 		system.log_fact(.Info, Machine_Passphrase_Reseal_Awaited{})
 		return
 	}
@@ -1484,18 +1484,18 @@ machine_passphrase_reseal :: proc "contextless" () {
 	if !machine_tpm_passphrase_seal(&opened_machine_key, &renewed, &renewed_bytes) {
 		system.log_fact(.Info, Machine_Key_Not_Resealed{})
 		mode = .Machine_Reseal_Result
-		message, message_failed = "not sealed again: the recovery key opens it at next start", true
+		message, message_failed = "Not sealed again: the recovery key opens it next start.", true
 		return
 	}
 	if !pin_announce(.Machine_Key, renewed_bytes[:]) {
 		mode = .Machine_Reseal_Result
-		message, message_failed = "the pin of the TPM refuses the seal: the recovery key opens it", true
+		message, message_failed = "TPM pin refuses the seal: the recovery key opens it.", true
 		return
 	}
 	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, renewed_bytes[:]); status != .Ok {
 		system.log_fact(.Info, Machine_Reseal_Not_Kept{status_word = u64(status)})
 		mode = .Machine_Reseal_Result
-		message, message_failed = "the store did not keep the seal: the recovery key opens it", true
+		message, message_failed = "Store did not keep the seal: the recovery key opens it.", true
 		return
 	}
 	pin_settle(.Machine_Key, renewed_bytes[:])
@@ -1531,7 +1531,7 @@ principal_tpm_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 	text := string(secrets^[:])
 	sealed := sealed_file.sealed[:]
 	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
-		message, message_failed = "the seal of the keys failed", true
+		message, message_failed = "The keys were not sealed: cryptography refused the seal.", true
 		return false
 	}
 	principals.principal_tpm_file_encode(sealed_file, sealed_bytes)
@@ -1539,7 +1539,7 @@ principal_tpm_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 	// it with the same checks.
 	if _, _, problem := principals.principal_tpm_file_decode(sealed_bytes^[:]); problem != .None {
 		system.log_fact(.Info, Principal_Tpm_File_Not_Decoded{problem = problem_field(principals.principal_tpm_file_problem_sentences[problem])})
-		message, message_failed = "the file of the principal does not decode", true
+		message, message_failed = "Your key file does not decode.", true
 		return false
 	}
 	system.log_fact(.Info, Principal_Keys_Sealed_By_Tpm{derivation = derivation_field(derived), principal_name = principal_name_field()})
@@ -1561,13 +1561,13 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	principal_tpm_file = {}
 	if !random.fill_for_a_key(&generator, secrets[:], .Processor, &error) || !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, principal_tpm_file.recovery_nonce[:], .Processor, &error) {
 		system.log_fact(.Info, Principal_Not_Created_Seed_Too_Weak{})
-		message, message_failed = "the seed of the machine is too weak for a key", true
+		message, message_failed = "The seed of the machine is too weak for a key.", true
 		return
 	}
 	ok: bool
 	principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key, ok = public_keys_of(&secrets)
 	if !ok {
-		message, message_failed = "the module cryptography refused the keys", true
+		message, message_failed = "The module cryptography refused the keys.", true
 		return
 	}
 	principal_tpm_file.name, principal_tpm_file.name_length = name, name_length
@@ -1584,7 +1584,7 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	text := string(secrets[:])
 	recovery_sealed := principal_tpm_file.recovery_sealed[:]
 	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.SEALED_SIZE {
-		message, message_failed = "the seal of the recovery copy failed", true
+		message, message_failed = "Recovery copy not sealed: cryptography refused the seal.", true
 		return
 	}
 	if !principal_tpm_seal(&secrets, &principal_tpm_file, &principal_tpm_file_bytes) {
@@ -1598,7 +1598,7 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	pending_write = .Principal_Created
 	system.log_fact(.Info, New_Principal_Sealed_By_Tpm{principal_name = principal_name_field()})
 	mode = .Principal_Recovery_Shown
-	message, message_failed = "write it down, then Enter: the principal is created then", false
+	message, message_failed = "Write it down, then press Enter to create the account.", false
 }
 
 // principal_created_commit writes the file of a new principal sealed by
@@ -1687,25 +1687,25 @@ change_proof_try :: proc "contextless" () {
 	sealed_by_the_tpm := principal_form == .Sealed_By_The_Tpm
 	switch principal_keys_open(&secrets) {
 	case .Derivation_Failed:
-		message, message_failed = "the derivation of the key failed", true
+		message, message_failed = "Nothing changed: cryptography refused key derivation.", true
 	case .Wrong:
 		refusals += 1
 		if sealed_by_the_tpm {
 			system.log_fact(.Info, Current_Passphrase_Wrong_Counted_By_Tpm{principal = number, refusals = refusals, principal_name = principal_name_field()})
-			message, message_failed = "the passphrase is wrong: the TPM counts each wrong try", true
+			message, message_failed = "Wrong passphrase: the TPM counts each wrong try.", true
 		} else {
 			system.log_fact(.Info, Current_Passphrase_Wrong{principal = number, refusals = refusals, principal_name = principal_name_field()})
-			message, message_failed = "the passphrase is wrong: nothing changes", true
+			message, message_failed = "Wrong passphrase: nothing changes.", true
 		}
 	case .Locked_Out:
 		system.log_fact(.Info, Change_Locked_Out{principal = number, principal_name = principal_name_field()})
-		message, message_failed = "the TPM refuses tries for now: nothing changes", true
+		message, message_failed = "The TPM refuses tries for now: nothing changes.", true
 	case .Tpm_Refused:
 		system.log_fact(.Info, Change_Tpm_Refused{principal = number, principal_name = principal_name_field()})
-		message, message_failed = "the TPM refuses: nothing changes", true
+		message, message_failed = "The TPM refused: nothing changes.", true
 	case .Not_Consistent:
 		system.log_fact(.Info, Change_Keys_Not_Consistent{principal = number})
-		message, message_failed = "the file is not consistent: nothing changes", true
+		message, message_failed = "The file is not consistent: nothing changes.", true
 	case .Opened:
 		system.log_fact(.Info, Current_Passphrase_Opened{principal = number, principal_name = principal_name_field()})
 		if change_mode == .New_Recovery_Key {
@@ -1714,7 +1714,7 @@ change_proof_try :: proc "contextless" () {
 		}
 		opened_secrets = secrets
 		mode = .New_Passphrase_First
-		message, message_failed = "type the new passphrase", false
+		message, message_failed = "Type the new passphrase.", false
 	}
 }
 
@@ -1754,7 +1754,7 @@ recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 		recovery_text = principals.recovery_key_text(&recovery_key)
 		system.log_fact(.Info, Recovery_Key_Renewed{principal = number, principal_name = principal_name_field()})
 		mode = .Principal_Recovery_Shown
-		message, message_failed = "write it down, then Enter: the file is written then", false
+		message, message_failed = "Write it down, then press Enter to write the file.", false
 		return
 	}
 	renewed_recovery_file = principal_tpm_file
@@ -1787,7 +1787,7 @@ recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	recovery_text = principals.recovery_key_text(&recovery_key)
 	system.log_fact(.Info, Recovery_Key_Renewed{principal = number, principal_name = principal_name_field()})
 	mode = .Principal_Recovery_Shown
-	message, message_failed = "write it down, then Enter: the file is written then", false
+	message, message_failed = "Write it down, then press Enter to write the file.", false
 }
 
 // recovery_key_commit writes the file with the copy under the new recovery
@@ -1976,19 +1976,19 @@ principal_recovery_try :: proc "contextless" () {
 	defer erase(secrets[:])
 	if principal_form == .Passphrase {
 		if !principal_non_tpm_recovery_present {
-			message, message_failed = "no recovery copy exists for this principal", true
+			message, message_failed = "No recovery copy exists for your account.", true
 			return
 		}
 		if _, open_problem := principals.non_tpm_recovery_open(principal_non_tpm_recovery_bytes[:], &recovery_key, number, &secrets); open_problem != .None || !public_keys_match(&secrets) {
 			refusals += 1
 			system.log_fact(.Info, Principal_Recovery_Key_Wrong{principal = number, refusals = refusals, principal_name = principal_name_field()})
-			message, message_failed = "the recovery key is wrong: nothing is unlocked", true
+			message, message_failed = "Wrong recovery key: nothing is unlocked.", true
 			return
 		}
 		system.log_fact(.Info, Principal_Recovery_Key_Opened{principal = number, principal_name = principal_name_field()})
 		opened_secrets = secrets
 		mode = .New_Passphrase_First
-		message, message_failed = "type a new passphrase for the principal", false
+		message, message_failed = "Type a new passphrase.", false
 		system.log_fact(.Info, Principal_Reseal_Awaited{principal = number, principal_name = principal_name_field()})
 		return
 	}
@@ -2003,7 +2003,7 @@ principal_recovery_try :: proc "contextless" () {
 	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE || !public_keys_match(&secrets) {
 		refusals += 1
 		system.log_fact(.Info, Principal_Recovery_Key_Wrong{principal = number, refusals = refusals, principal_name = principal_name_field()})
-		message, message_failed = "the recovery key is wrong: nothing is unlocked", true
+		message, message_failed = "Wrong recovery key: nothing is unlocked.", true
 		return
 	}
 	system.log_fact(.Info, Principal_Recovery_Key_Opened{principal = number, principal_name = principal_name_field()})
@@ -2015,7 +2015,7 @@ principal_recovery_try :: proc "contextless" () {
 	case:
 		opened_secrets = secrets
 		mode = .New_Passphrase_First
-		message, message_failed = "type a passphrase: the TPM seals the keys to it again", false
+		message, message_failed = "Type a passphrase: the TPM seals the keys to it again.", false
 		system.log_fact(.Info, Principal_Reseal_Awaited{principal = number, principal_name = principal_name_field()})
 		return
 	}
@@ -2171,7 +2171,7 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, u64(origin), 0})
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log_fact(.Info, Session_Not_Started{principal = number, status = status_field(completion.kind)})
-		message, message_failed = "the root service did not start the session", true
+		message, message_failed = "The root service did not start the session.", true
 		return
 	}
 	mode = .Done
@@ -2201,12 +2201,12 @@ machine_seal_sentence :: proc "contextless" () -> string {
 	}
 	switch form {
 	case .Sealed_By_The_Tpm:
-		return "sealed by the TPM to PCR 7 and 11, with a copy for recovery"
+		return "Sealed by the TPM to PCR 7 and 11, with a copy for recovery."
 	case .Sealed_By_The_Tpm_With_Passphrase:
-		return "sealed by the TPM with the passphrase, with a copy for recovery"
+		return "Sealed by the TPM with the passphrase and a recovery copy."
 	case .Passphrase, .Unknown:
 	}
-	return "no TPM seal: the passphrase alone protects the key"
+	return "No TPM seal: the passphrase alone protects the key."
 }
 
 // machine_recovery_offered says if the window offers the recovery key of
@@ -2245,91 +2245,100 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	// shows: a new recovery key. The widest line, the message after a new
 	// seal, has 60 cells of 8 pixels after a margin of 12 pixels: it fits in
 	// the window of 520 pixels.
-	label := "principal  "
+	label := "Unlock  "
 	subject := the_name()
-	prompt := "passphrase  "
+	prompt := "Passphrase  "
 	// The keys of the mode, in the action bar (docs/INTERFACE.md, "4.4 The
 	// action bar"): Enter, and Escape that clears what is typed. A mode
 	// whose Enter does another thing with nothing typed says it in the
 	// name of the item.
-	enter_name := "unlock"
+	enter_name := "Unlock"
 	clears := true
 	note := "" // A fact at the left of the bar.
 	switch mode {
 	case .Unlock, .Done:
 	case .Create_First:
-		label = "new principal  "
+		label = "New account  "
+		enter_name = "Create"
 	case .Create_Again:
-		label = "new principal  "
-		prompt = "again  "
+		label = "New account  "
+		prompt = "Again  "
+		enter_name = "Create"
 	case .Machine_Unlock:
-		label, subject = "machine passphrase  ", "principal 0"
-		enter_name = "unlock; empty: skip"
+		label, subject = "Machine passphrase", ""
+		enter_name = "Unlock; empty: skip"
 	case .Machine_Create_First:
-		label, subject = "new machine passphrase  ", "principal 0"
-		enter_name = "set"
+		label, subject = "New machine passphrase", ""
+		enter_name = "Set"
 	case .Machine_Create_Again:
-		label, subject = "new machine passphrase  ", "principal 0"
-		prompt = "again  "
-		enter_name = "set"
+		label, subject = "New machine passphrase", ""
+		prompt = "Again  "
+		enter_name = "Set"
 	case .Machine_Recovery:
-		label, subject = "machine key  ", "principal 0"
-		prompt = "recovery key  "
-		enter_name = "open; empty: skip"
+		label, subject = "Machine key", ""
+		prompt = "Recovery key  "
+		enter_name = "Open; empty: skip"
 		if machine_passphrase_back() {
-			enter_name, clears = "open; empty: the passphrase", false
+			enter_name, clears = "Open; empty: passphrase", false
 		}
 	case .Machine_Reseal_Result:
-		label, subject = "machine key  ", "principal 0"
-		prompt = "new seal  "
-		enter_name, clears = "done", false
+		label, subject = "Machine key", ""
+		prompt = "New seal  "
+		enter_name, clears = "Done", false
 	case .Machine_Reseal_First:
-		label, subject = "new machine passphrase  ", "principal 0"
-		enter_name = "seal; empty: skip"
+		label, subject = "New machine passphrase", ""
+		enter_name = "Seal; empty: skip"
 	case .Machine_Reseal_Again:
-		label, subject = "new machine passphrase  ", "principal 0"
-		prompt = "again  "
-		enter_name = "seal"
+		label, subject = "New machine passphrase", ""
+		prompt = "Again  "
+		enter_name = "Seal"
 	case .Recovery_Shown:
-		label, subject = "machine key sealed by the TPM  ", "principal 0"
-		prompt = "recovery key  "
-		enter_name, clears, note = "done", false, "it is shown one time"
+		label, subject = "Machine key sealed by the TPM", ""
+		prompt = "Recovery key  "
+		enter_name, clears, note = "Done", false, "Shown one time"
 	case .Principal_Recovery:
-		prompt = "recovery key  "
-		enter_name = "open"
+		label = "Recover  "
+		prompt = "Recovery key  "
+		enter_name = "Open"
 		if has_tpm || principal_form == .Passphrase {
-			enter_name, clears = "open; empty: the passphrase", false
+			enter_name, clears = "Open; empty: passphrase", false
 		}
 	case .Principal_Recovery_Shown:
-		label = principal_form == .Passphrase ? "recovery copy  " : "keys sealed by the TPM  "
-		prompt = "recovery key  "
-		enter_name, clears, note = "done", false, "it is shown one time"
+		label = principal_form == .Passphrase ? "Recovery copy  " : "Keys sealed by the TPM  "
+		prompt = "Recovery key  "
+		enter_name, clears, note = "Done", false, "Shown one time"
 	case .New_Passphrase_First:
-		prompt = "new passphrase  "
-		enter_name = change_mode == .Change_Passphrase ? "seal; empty: cancel" : "seal"
+		label = "Passphrase  "
+		prompt = "New passphrase  "
+		enter_name = change_mode == .Change_Passphrase ? "Seal; empty: cancel" : "Seal"
 	case .New_Passphrase_Again:
-		prompt = "again  "
-		enter_name = "seal"
+		label = "Passphrase  "
+		prompt = "Again  "
+		enter_name = "Seal"
 	case .Change_Current:
 		// 54 cells of 8 pixels after a margin of 12: it fits in 520 pixels.
-		prompt = "current passphrase  "
-		enter_name = "check; empty: cancel"
+		label = "Passphrase  "
+		prompt = "Current passphrase  "
+		enter_name = "Check; empty: cancel"
 	case .Change_Result:
-		prompt = "change  "
-		enter_name, clears = "done", false
+		label = "Passphrase  "
+		prompt = "Change  "
+		enter_name, clears = "Done", false
 	case .Write_Result:
 		if pending_write != .Principal_Created {
-			label, subject = "machine key  ", "principal 0"
+			label, subject = "Machine key", ""
+		} else {
+			label = "Account  "
 		}
-		prompt = "write  "
-		enter_name, clears = "done", false
+		prompt = "Write  "
+		enter_name, clears = "Done", false
 	case .Write_Unknown:
-		label = "keys sealed by the TPM  "
+		label = "Keys sealed by the TPM  "
 		if pending_write != .Principal_Created {
-			label, subject = "machine key  ", "principal 0"
+			label, subject = "Machine key", ""
 		}
-		prompt = "recovery key  "
-		enter_name, clears = "done", false
+		prompt = "Recovery key  "
+		enter_name, clears = "Done", false
 	}
 	x := interface.draw_text(table, 12, 12, label, graphics.colors.dim)
 	interface.draw_text(table, x, 12, subject, graphics.colors.text)
@@ -2382,10 +2391,10 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	case of_the_machine:
 		interface.draw_text(table, 12, 116, machine_seal_sentence(), graphics.colors.dim)
 	case of_the_principal_tpm:
-		// 62 cells of 8 pixels after a margin of 12: it fits in 520 pixels.
-		interface.draw_text(table, 12, 116, "sealed by the TPM with the passphrase, with a copy for recovery", graphics.colors.dim)
+		// 58 cells of 8 pixels after a margin of 12: it fits in 520 pixels.
+		interface.draw_text(table, 12, 116, "Sealed by the TPM with the passphrase and a recovery copy.", graphics.colors.dim)
 	case:
-		interface.draw_text(table, 12, 116, "no TPM seal: the passphrase alone protects the keys", graphics.colors.dim)
+		interface.draw_text(table, 12, 116, "No TPM seal: the passphrase alone protects the keys.", graphics.colors.dim)
 	}
 	bar_y := HEIGHT - interface.ACTION_BAR_ROW_HEIGHT
 	interface.draw_rectangle(table, 0, bar_y, WIDTH, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
@@ -2402,11 +2411,11 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	// wrong try counts in the TPM, against the machine passphrase and each
 	// named principal together.
 	if machine_recovery_offered() || principal_recovery_offered() {
-		items[item_count] = interface.action_bar_item("recovery key", 1, "Ctrl", "r")
+		items[item_count] = interface.action_bar_item("Recovery key", 1, "Ctrl", "r")
 		item_count += 1
 	}
 	if clears {
-		items[item_count] = interface.action_bar_item("clear", 1, "Esc")
+		items[item_count] = interface.action_bar_item("Clear", 1, "Esc")
 		item_count += 1
 	}
 	// The items stand from the right edge: the fact at the left changes
@@ -2420,7 +2429,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 enter :: proc "contextless" (window: ^display.Window) {
 	switch mode {
 	case .Unlock:
-		message, message_failed = "deriving the key", false
+		message, message_failed = "Deriving the key.", false
 		draw(window)
 		passphrase_try()
 	case .Machine_Unlock:
@@ -2431,7 +2440,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 			after_machine()
 			return
 		}
-		message, message_failed = "deriving the key", false
+		message, message_failed = "Deriving the key.", false
 		draw(window)
 		machine_try()
 	case .Machine_Recovery:
@@ -2442,14 +2451,14 @@ enter :: proc "contextless" (window: ^display.Window) {
 			if machine_passphrase_back() {
 				system.log_fact(.Info, Machine_Recovery_Key_Not_Typed_Passphrase_Asked{})
 				mode = .Machine_Unlock
-				message, message_failed = "the disk grants of the machine wait for it", false
+				message, message_failed = "The disk grants of the machine wait for it.", false
 				return
 			}
 			system.log_fact(.Info, Machine_Recovery_Key_Not_Typed{})
 			after_machine()
 			return
 		}
-		message, message_failed = "opening the copy of the machine key", false
+		message, message_failed = "Opening the copy of the machine key.", false
 		draw(window)
 		recovery_try()
 	case .Principal_Recovery:
@@ -2463,14 +2472,14 @@ enter :: proc "contextless" (window: ^display.Window) {
 			}
 			return
 		}
-		message, message_failed = "opening the copy of the keys", false
+		message, message_failed = "Opening the copy of the keys.", false
 		draw(window)
 		principal_recovery_try()
 	case .Recovery_Shown, .Principal_Recovery_Shown:
 		// Its user wrote the recovery key down. The file or the record that
 		// holds the copy under it is written only now. The key is erased
 		// unless the write is not known: then it stays on the screen.
-		message, message_failed = "writing", false
+		message, message_failed = "Writing.", false
 		draw(window)
 		if mode == .Principal_Recovery_Shown && change_mode == .New_Recovery_Key {
 			erase(recovery_text[:])
@@ -2516,7 +2525,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 			mode = .Done
 			return
 		}
-		message, message_failed = "deriving the key", false
+		message, message_failed = "Deriving the key.", false
 		draw(window)
 		change_proof_try()
 	case .Create_First, .Machine_Create_First, .New_Passphrase_First, .Machine_Reseal_First:
@@ -2553,7 +2562,7 @@ enter :: proc "contextless" (window: ^display.Window) {
 				// other first modes are above.
 				mode = .New_Passphrase_Again
 			}
-			message, message_failed = "type it again", false
+			message, message_failed = "Type it again.", false
 		}
 	case .Create_Again, .Machine_Create_Again, .New_Passphrase_Again, .Machine_Reseal_Again:
 		// The mode of the first passphrase, for a second one that differs
@@ -2570,11 +2579,11 @@ enter :: proc "contextless" (window: ^display.Window) {
 			// The creation of a named principal starts again at its first mode.
 		}
 		if string(first[:first_count]) != string(typed[:typed_count]) {
-			message, message_failed = "the two passphrases differ: type a new one", true
+			message, message_failed = "The two passphrases differ: type a new one.", true
 			mode = first_mode
 		} else {
 			again_mode := mode
-			message, message_failed = "deriving the key", false
+			message, message_failed = "Deriving the key.", false
 			draw(window)
 			switch again_mode {
 			case .Machine_Create_Again:
@@ -2825,7 +2834,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(.Failed)
 		}
 		mode = .Recovery_Shown
-		message = "write it down, then Enter: the record is written then"
+		message = "Write it down, then press Enter to write the record."
 	case .Create_Principal:
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
@@ -2836,7 +2845,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(.Refused)
 		}
 		mode = .Create_First
-		message = "type a passphrase of 8 bytes at least"
+		message = "Type a passphrase of 8 bytes at least."
 	case .Set_Machine_Passphrase:
 		// The root service refuses a second machine passphrase; the record
 		// is read again here, as the store is the truth. Only a store that
@@ -2851,7 +2860,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(.Refused)
 		}
 		mode = .Machine_Create_First
-		message = "type a passphrase of 8 bytes at least"
+		message = "Type a passphrase of 8 bytes at least."
 	case .Change_Passphrase, .New_Recovery_Key:
 		// The root service starts these modes only for a principal whose
 		// session runs, passing that principal's number in VALUE_PRINCIPAL.
@@ -2883,9 +2892,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		mode = .Change_Current
 		if principal_form == .Sealed_By_The_Tpm {
-			message = "type the current passphrase: the TPM counts each wrong try"
+			message = "Type your current passphrase: the TPM counts wrong tries."
 		} else {
-			message = "type the current passphrase of the principal"
+			message = "Type your current passphrase."
 		}
 		system.log_fact(.Info, Change_Asked{principal = number, principal_name = principal_name_field()})
 	case .Unlock, .Unlock_Machine_Key_Held:
@@ -2932,11 +2941,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		switch {
 		case machine_recovery:
 			mode = .Machine_Recovery
-			message = "the TPM refuses: type the recovery key of the machine"
+			message = "The TPM refused: type the machine recovery key."
 			system.log_fact(.Info, Machine_Recovery_Awaited{})
 		case machine_asked:
 			mode = .Machine_Unlock
-			message = "the disk grants of the machine wait for it"
+			message = "The disk grants of the machine wait for it."
 			system.log_fact(.Info, Machine_Passphrase_Awaited{})
 		case principal_found:
 			principal_ask()
@@ -3031,14 +3040,14 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 			erase(typed[:])
 			typed_count = 0
 			system.log_fact(.Info, Machine_Recovery_Asked{})
-			machine_recovery_ask("type the recovery key of the machine")
+			machine_recovery_ask("Type the machine recovery key.")
 		case principal_recovery_offered():
 			erase(typed[:])
 			typed_count = 0
 			// Not principal_recovery_ask: its line says that the TPM refused,
 			// and here the TPM was not asked.
 			mode = .Principal_Recovery
-			message, message_failed = "type the recovery key of the principal", false
+			message, message_failed = "Type your recovery key.", false
 			system.log_fact(.Info, Principal_Recovery_Asked{principal = number, principal_name = principal_name_field()})
 		}
 	case text_encoding.character_in_text(press.character):

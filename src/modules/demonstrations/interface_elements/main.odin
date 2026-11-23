@@ -58,11 +58,11 @@ TICK :: 100 // Milliseconds between two frames.
 // freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
 	return {
-		interface.action_bar_item("next element", 6, "Tab"),
-		interface.action_bar_item("element before", 3, "Shift", "Tab"),
-		interface.action_bar_item("press", 5, "Enter"),
-		interface.action_bar_item("line before", 4, "Up"),
-		interface.action_bar_item("line after", 4, "Down"),
+		interface.action_bar_item("Next element", 6, "Tab"),
+		interface.action_bar_item("Element before", 3, "Shift", "Tab"),
+		interface.action_bar_item("Press", 5, "Enter"),
+		interface.action_bar_item("Line before", 4, "Up"),
+		interface.action_bar_item("Line after", 4, "Down"),
 	}
 }
 bar: interface.Action_Bar_State
@@ -99,7 +99,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	interface.action_bar_input_take(frame, &bar)
 	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, CARDS_HEIGHT}, "ELEMENTS", "modus:interface", graphics.colors.kernel)
 	column := interface.column_of(content, 8)
-	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "press this button")
+	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "Press this button")
 	if pressed.activated {
 		presses += 1
 		system.log_fact(.Info, Button_Pressed{presses = presses})
@@ -128,7 +128,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	cells: [3]interface.Area
 	sizes := [3]interface.Size{interface.share(), interface.characters(10), interface.characters(10)}
 	interface.row_split(interface.column_take(&column, 24), sizes[:], cells[:], 16)
-	interface.table_header(frame, cells[:], {"element", "records", "bytes"}, {.Left, .Right, .Right})
+	interface.table_header(frame, cells[:], {"Element", "Records", "Bytes"}, {.Left, .Right, .Right})
 	Line :: struct {
 		name:          string,
 		records, size: u64,
@@ -171,7 +171,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 		interface.label_value_line(frame, interface.column_take(&column, 16), fact.name, interface.text_of(&value))
 	}
 	interface.column_take(&column, 8)
-	overlay := interface.button(frame, interface.column_take(&column, 24), interface.identity("damage"), show_damage ? "hide the damage" : "show the damage", show_damage)
+	overlay := interface.button(frame, interface.column_take(&column, 24), interface.identity("damage"), show_damage ? "Hide the damage" : "Show the damage", show_damage)
 	if overlay.activated {
 		show_damage = !show_damage
 		system.log_fact(.Info, Damage_Overlay_Changed{overlay = value_kinds.text_field(show_damage ? "shown" : "hidden", OVERLAY_FIELD_BYTES)})

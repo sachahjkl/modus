@@ -324,33 +324,67 @@ zone_text :: proc "contextless" (buffer: []u8, minutes: i32) -> string {
 	return string(buffer[:ZONE_TEXT_SIZE])
 }
 
-// zone_parse reads the text of a zone: a sign, two digits of hours, a
-// colon and two digits of minutes, from "-12:00" to "+14:00", by quarters
-// of an hour. ok is false for any other text: "+8:00", "+08", "UTC",
-// "+08:10", "+15:00".
-zone_parse :: proc "contextless" (text: string) -> (minutes: i32, ok: bool) {
-	if len(text) != ZONE_TEXT_SIZE || text[0] != '+' && text[0] != '-' || text[3] != ':' {
-		return 0, false
+// Why zone_parse_checked refused a text.
+Zone_Problem :: enum u8 {
+	None,         // The text is a zone.
+	Empty,        // No bytes.
+	Too_Short,    // Fewer than ZONE_TEXT_SIZE bytes.
+	Too_Long,     // More than ZONE_TEXT_SIZE bytes.
+	Bad_Byte,     // Byte at detail_value is not '+', '-', ':', or a digit; detail_found is the byte.
+	Minutes_Over, // The minutes part (detail_value) is 60 or more; detail_found is 2.
+	Out_Of_Range, // The offset in minutes (detail_value) is outside [-720, +840].
+	Not_Quarter,  // The offset in minutes (detail_value) is not a multiple of 15; detail_found is the remainder.
+}
+
+// zone_parse_checked reads the text of a zone and reports the exact cause
+// of each refusal so a caller can write a specific error record.
+zone_parse_checked :: proc "contextless" (text: string) -> (minutes: i32, problem: Zone_Problem, detail_value: i64, detail_found: i64) {
+	if len(text) == 0 {
+		return 0, .Empty, 0, 0
+	}
+	if len(text) < ZONE_TEXT_SIZE {
+		return 0, .Too_Short, i64(len(text)), 0
+	}
+	if len(text) > ZONE_TEXT_SIZE {
+		return 0, .Too_Long, i64(len(text)), 0
+	}
+	if text[0] != '+' && text[0] != '-' {
+		return 0, .Bad_Byte, 0, i64(text[0])
+	}
+	if text[3] != ':' {
+		return 0, .Bad_Byte, 3, i64(text[3])
 	}
 	digit_places := [4]int{1, 2, 4, 5}
 	for place in digit_places {
 		if text[place] < '0' || text[place] > '9' {
-			return 0, false
+			return 0, .Bad_Byte, i64(place), i64(text[place])
 		}
 	}
 	hours := i32(text[1] - '0') * 10 + i32(text[2] - '0')
 	rest := i32(text[4] - '0') * 10 + i32(text[5] - '0')
 	if rest >= 60 {
-		return 0, false
+		return 0, .Minutes_Over, i64(rest), 2
 	}
 	minutes = hours * 60 + rest
 	if text[0] == '-' {
 		minutes = -minutes
 	}
-	if zone_offset_minutes_valid(minutes) != minutes {
-		return 0, false
+	if minutes < ZONE_OFFSET_MINUTES_LEAST || minutes > ZONE_OFFSET_MINUTES_MOST {
+		return 0, .Out_Of_Range, i64(minutes), 0
 	}
-	return minutes, true
+	if minutes % ZONE_OFFSET_MINUTES_STEP != 0 {
+		return 0, .Not_Quarter, i64(minutes), i64(minutes % ZONE_OFFSET_MINUTES_STEP)
+	}
+	return minutes, .None, 0, 0
+}
+
+// zone_parse reads the text of a zone: a sign, two digits of hours, a
+// colon and two digits of minutes, from "-12:00" to "+14:00", by quarters
+// of an hour. ok is false for any other text: "+8:00", "+08", "UTC",
+// "+08:10", "+15:00".
+zone_parse :: proc "contextless" (text: string) -> (minutes: i32, ok: bool) {
+	parsed_minutes, problem, _, _ := zone_parse_checked(text)
+	return parsed_minutes, problem == .None
 }
 
 // The names of the appearance in force, by its number, for the log.

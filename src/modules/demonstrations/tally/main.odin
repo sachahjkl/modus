@@ -164,7 +164,7 @@ draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
 // array: an item is made by a call, and a freestanding process runs no
 // call before its entry.
 bar_items :: proc "contextless" () -> [1]interface.Action_Bar_Item {
-	return {interface.action_bar_item("add 1", 1, "Space")}
+	return {interface.action_bar_item("Add 1", 1, "Space")}
 }
 bar: interface.Action_Bar_State
 bar_acted: bool // A press on the item ran its key: the next turn draws the new count.

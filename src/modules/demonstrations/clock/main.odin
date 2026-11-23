@@ -97,9 +97,9 @@ Section :: enum u8 {
 
 @(rodata)
 SECTION_NAMES := [Section]string {
-	.Clock     = "clock",
-	.Stopwatch = "stopwatch",
-	.Timer     = "timer",
+	.Clock     = "Clock",
+	.Stopwatch = "Stopwatch",
+	.Timer     = "Timer",
 }
 
 // The memory of the interface package for the window (docs/INTERFACE.md).
@@ -188,7 +188,7 @@ notification_job :: proc "contextless" (parameter: rawptr) {
 		return
 	}
 	room: clock_model.Text_Room
-	title := "the timer ended"
+	title := "The timer ended"
 	body := clock_model.remaining_text(&room, notification_duration)
 	arguments: [2]isolated.Argument
 	arguments[0].text = transmute([]u8)title
@@ -280,7 +280,7 @@ calendar_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 	title: clock_model.Text_Room
 	interface.draw_text(frame.table, area.x, area.y + (BUTTON_HEIGHT - interface.LINE) / 2, clock_model.month_title_text(&title, year, month), graphics.colors.text, interface.FONT_INTERFACE_BOLD)
 	// The button today shows only away from the month of today.
-	labels := [3]string{"previous", calendar_year == 0 ? "" : "today", "next"}
+	labels := [3]string{"Previous", calendar_year == 0 ? "" : "Today", "Next"}
 	BUTTON_WIDTH :: 88
 	row_width := buttons_row_width(labels[:], BUTTON_WIDTH)
 	switch buttons_row(frame, {area.x + area.width - row_width, area.y, row_width, BUTTON_HEIGHT}, labels[:], BUTTON_WIDTH) {
@@ -320,7 +320,7 @@ calendar_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 // clock_section draws the local time, the date and the calendar.
 clock_section :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, milliseconds: i64, known: bool, zone: i64) {
 	if !known {
-		interface.cell_text(frame, {area.x, area.y, area.width, interface.LINE}, "the system has no date: the date page is absent or holds no date.", graphics.colors.dim)
+		interface.cell_text(frame, {area.x, area.y, area.width, interface.LINE}, "The system has no date: the date page is absent or holds no date.", graphics.colors.dim)
 		return
 	}
 	today := clock_model.local_civil(milliseconds, zone)
@@ -343,9 +343,9 @@ stopwatch_section :: proc "contextless" (frame: ^interface.Frame, area: interfac
 	labels: [3]string
 	switch watch.state {
 	case .Running:
-		labels = {"stop", watch.lap_count < clock_model.LAP_CAPACITY ? "lap" : "", ""}
+		labels = {"Stop", watch.lap_count < clock_model.LAP_CAPACITY ? "Lap" : "", ""}
 	case .Stopped:
-		labels = {"start", "", watch.elapsed_of_runs > 0 || watch.lap_count > 0 ? "reset" : ""}
+		labels = {"Start", "", watch.elapsed_of_runs > 0 || watch.lap_count > 0 ? "Reset" : ""}
 	}
 	BUTTON_WIDTH :: 104
 	row_width := buttons_row_width(labels[:], BUTTON_WIDTH)
@@ -366,7 +366,7 @@ stopwatch_section :: proc "contextless" (frame: ^interface.Frame, area: interfac
 	table_width := min(area.width, 480)
 	table_x := area.x + (area.width - table_width) / 2
 	interface.row_split({table_x, y, table_width, interface.TABLE_LINE}, sizes[:], cells[:], 16)
-	interface.table_header(frame, cells[:], {"lap", "lap time", "total"}, {.Left, .Right, .Right})
+	interface.table_header(frame, cells[:], {"Lap", "Lap time", "Total"}, {.Left, .Right, .Right})
 	y += interface.TABLE_LINE
 	band := 0
 	for index := watch.lap_count - 1; index >= 0 && y + interface.TABLE_LINE <= area.y + area.height; index -= 1 {
@@ -423,19 +423,19 @@ timer_section :: proc "contextless" (frame: ^interface.Frame, area: interface.Ar
 	}
 	y += BAR_HEIGHT + MARGIN
 	if ended {
-		text_centered(frame, {area.x, y, area.width, interface.LINE}, "the timer ended.", graphics.colors.warning, interface.FONT_INTERFACE)
+		text_centered(frame, {area.x, y, area.width, interface.LINE}, "The timer ended.", graphics.colors.warning, interface.FONT_INTERFACE)
 		y += interface.LINE + MARGIN
 	}
 	labels: [2]string
 	switch timer.state {
 	case .Ready:
-		labels = {"start", ""}
+		labels = {"Start", ""}
 	case .Running:
-		labels = {"pause", "reset"}
+		labels = {"Pause", "Reset"}
 	case .Paused:
-		labels = {"resume", "reset"}
+		labels = {"Resume", "Reset"}
 	case .Ended:
-		labels = {"", "reset"}
+		labels = {"", "Reset"}
 	}
 	BUTTON_WIDTH :: 104
 	row_width := buttons_row_width(labels[:], BUTTON_WIDTH)

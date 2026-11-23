@@ -1241,7 +1241,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		x = interface.draw_text(table, x, status_y, " of ", graphics.colors.dim)
 		status_end = interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.colors.dim)
 	} else if process == 0 && measure {
-		interface.draw_text(table, TEXT_X, status_y, "the process does not run", own_colors().stopped)
+		interface.draw_text(table, TEXT_X, status_y, "The process does not run.", own_colors().stopped)
 	}
 	if measure {
 		// At the right: the frames of the terminal.
@@ -1360,7 +1360,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 // A procedure, not a global array: an item is made by a call, and a
 // freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
-	return {interface.action_bar_item("lines before", 1, "Page Up"), interface.action_bar_item("lines after", 1, "Page Down")}
+	return {interface.action_bar_item("Lines before", 1, "Page Up"), interface.action_bar_item("Lines after", 1, "Page Down")}
 }
 bar: interface.Action_Bar_State
 bar_result: interface.Action_Bar_Result // What the action bar of the last frame ran.

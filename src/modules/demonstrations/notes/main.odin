@@ -122,16 +122,16 @@ Window_Problem :: enum u8 {
 
 @(rodata)
 window_problem_texts := [Window_Problem]string {
-	.None      = "",
-	.No_Store  = "no store: the notes are not kept",
-	.Not_Kept  = "the store refused the note: the changes are not kept",
-	.Full      = "the note is full: a key that adds a byte is refused",
-	.Too_Long  = "the note in the store is too long to show: it is not written over",
-	.List_Full = "the list is full: delete a note to make a new one",
-	.Selection = "the selection is longer than the clipboard limit of 4096 bytes",
-	.Busy      = "the store is busy: the act did not start, try it again",
-	.Unreadable = "the note could not be read: it is not shown and not written over",
-	.Version_Unreadable = "this version could not be read: it cannot be restored",
+	.None               = "",
+	.No_Store           = "No store: the notes are not kept.",
+	.Not_Kept           = "The store refused the note: the changes are not kept.",
+	.Full               = "The note is full: a key that adds a byte is refused.",
+	.Too_Long           = "The note in the store is too long to show: it is not written over.",
+	.List_Full          = "The list is full: delete a note to make a new one.",
+	.Selection          = "The selection is longer than the clipboard limit of 4096 bytes.",
+	.Busy               = "The store is busy: the act did not start. Try again.",
+	.Unreadable         = "The note cannot be read: it is not shown and not written over.",
+	.Version_Unreadable = "This version cannot be read: it cannot be restored.",
 }
 
 // The keys of each mode, in its action bar (docs/INTERFACE.md, "4.4 The
@@ -141,22 +141,22 @@ bar_items :: proc "contextless" (items: ^[5]interface.Action_Bar_Item) -> int {
 	switch session.mode {
 	case .Notes:
 		items^ = {
-			interface.action_bar_item("new note", 4, "Ctrl", "N"),
-			interface.action_bar_item("delete", 2, "Ctrl", "D"),
-			interface.action_bar_item("versions", 3, "Ctrl", "H"),
-			interface.action_bar_item("previous", 1, "Ctrl", "Page Up"),
-			interface.action_bar_item("next", 0, "Ctrl", "Page Down"),
+			interface.action_bar_item("New note", 4, "Ctrl", "N"),
+			interface.action_bar_item("Delete", 2, "Ctrl", "D"),
+			interface.action_bar_item("Versions", 3, "Ctrl", "H"),
+			interface.action_bar_item("Previous", 1, "Ctrl", "Page Up"),
+			interface.action_bar_item("Next", 0, "Ctrl", "Page Down"),
 		}
 		return 5
 	case .Versions:
-		items[0] = interface.action_bar_item("older", 3, "Down")
-		items[1] = interface.action_bar_item("newer", 2, "Up")
-		items[2] = interface.action_bar_item("restore", 4, "Enter")
-		items[3] = interface.action_bar_item("back", 1, "Esc")
+		items[0] = interface.action_bar_item("Older", 3, "Down")
+		items[1] = interface.action_bar_item("Newer", 2, "Up")
+		items[2] = interface.action_bar_item("Restore", 4, "Enter")
+		items[3] = interface.action_bar_item("Back", 1, "Esc")
 		return 4
 	case .Delete:
-		items[0] = interface.action_bar_item("delete", 1, "Enter")
-		items[1] = interface.action_bar_item("keep", 0, "Esc")
+		items[0] = interface.action_bar_item("Delete", 1, "Enter")
+		items[1] = interface.action_bar_item("Keep", 0, "Esc")
 		return 2
 	}
 	return 0
@@ -1097,7 +1097,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		if title == "" {
 			title = "empty note"
 		}
-		left_words = system.format(question_buffer[:], "delete \"", title, "\"?")
+		left_words = system.format(question_buffer[:], "Delete \"", title, "\"?")
 		left_color = tokens.warning
 	}
 	if left_words != "" {

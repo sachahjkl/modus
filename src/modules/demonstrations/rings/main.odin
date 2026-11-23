@@ -285,7 +285,7 @@ POINTER_NOTE :: "click a square: left adds, right stops or starts"
 // A procedure, not a global array: an item is made by a call, and a
 // freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
-	return {interface.action_bar_item("add a record", 2, "a"), interface.action_bar_item("stop or start", 1, "1-6")}
+	return {interface.action_bar_item("Add record", 2, "a"), interface.action_bar_item("Stop or start", 1, "1-6")}
 }
 #assert(relay.NODE_COUNT == 6) // The face "1-6" names the keys of the processes.
 bar: interface.Action_Bar_State

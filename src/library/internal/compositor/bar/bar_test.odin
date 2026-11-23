@@ -354,7 +354,7 @@ places_follow_the_measured_widths :: proc(t: ^testing.T) {
 		testing.expectf(t, text_width_in(.Interface, label_of(process, &buffer)) + ICON_SIZE + ICON_GAP + 2 * PADDING <= line_width, "%s fits its line", process)
 	}
 	// The labels of the quick actions fit the least column in both fonts.
-	for label in ([?]string{"demonstrations", "bar to bottom", "bar to top", "magnifier"}) {
+	for label in ([?]string{"Demonstrations", "Bar to bottom", "Bar to top", "Magnifier"}) {
 		testing.expectf(t, text_width_in(.Interface, label) + ICON_SIZE + ICON_GAP + 2 * PADDING <= COLUMN_LEAST, "%s fits an action line", label)
 		testing.expectf(t, text_width_in(.None, label) + ICON_SIZE + ICON_GAP + 2 * PADDING <= COLUMN_LEAST, "%s fits an action line in the cells", label)
 	}

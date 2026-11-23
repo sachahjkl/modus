@@ -191,7 +191,7 @@ query_display_info :: proc "contextless" () {
 		if dec_problem == .Device_Error_Response {
 			system.log_fact(.Error, Request_Refused{response_word = u64(info.header.command_type), request = request_field("GET_DISPLAY_INFO")})
 		}
-		fail("the device returned an invalid display info response")
+		fail("the device returned a display info response that breaks the virtio GPU contract")
 	}
 	limit := min(num_scanouts, u32(virtio_gpu.MAX_SCANOUTS))
 	for scanout in u32(0) ..< limit {

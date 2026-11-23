@@ -311,15 +311,15 @@ scenario_debugger_commands := [?]Step {
 	// press on the field gives it the focus again.
 	{kind = .Click_Element, text = "debugger_window", element = DEBUGGER_WINDOW_PLACE_FIELD},
 	{kind = .Keys, text = "debug_target::add_step"},
-	{kind = .Click_Element, text = "debugger_window", element = "break at"},
+	{kind = .Click_Element, text = "debugger_window", element = "Break at"},
 	{kind = .Wait, text = "debugger_window: a breakpoint at debug_target::add_step"},
 	{kind = .Click_Element, text = "debugger_window", element = DEBUGGER_WINDOW_PLACE_FIELD},
 	{kind = .Keys, text = "debug_target::rounds"},
-	{kind = .Click_Element, text = "debugger_window", element = "watch"},
+	{kind = .Click_Element, text = "debugger_window", element = "Watch"},
 	{kind = .Wait, text = "debugger_window: a watch of 8 bytes at debug_target::rounds"},
 	{kind = .Click_Element, text = "debugger_window", element = DEBUGGER_WINDOW_PLACE_FIELD},
 	{kind = .Keys, text = "debug_target::table"},
-	{kind = .Click_Element, text = "debugger_window", element = "memory"},
+	{kind = .Click_Element, text = "debugger_window", element = "Memory"},
 	// The count of the rows depends on the place of the global in its
 	// page: the line is waited for up to the count.
 	{kind = .Wait, text = "debugger_window: the memory at debug_target::table: "},
@@ -339,9 +339,9 @@ scenario_debugger_commands := [?]Step {
 	// the list over the cards; detach has the lowest priority, so it is
 	// in the list. A press on its row runs its key, d, as the key does.
 	{kind = .Click_Element, text = "debugger_window", element = "more"},
-	{kind = .Wait, text = "interface: debugger_window: the element detach at "},
+	{kind = .Wait, text = "interface: debugger_window: the element Detach at "},
 	{kind = .Shot, text = "action_bar_more"},
-	{kind = .Click_Element, text = "debugger_window", element = "detach"},
+	{kind = .Click_Element, text = "debugger_window", element = "Detach"},
 	{kind = .Wait, text = "debugger_window: detached from debug_target"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	{kind = .Close, text = "debugger_window"},

@@ -153,13 +153,13 @@ Window_Problem :: enum u8 {
 @(rodata)
 window_problem_texts := [Window_Problem]string {
 	.None               = "",
-	.No_Store           = "no store: the text is not kept",
-	.Damaged            = "the text in the store is damaged: the next change writes a new text",
-	.Too_Long           = "the text in the store is too long for the editor: nothing is kept",
-	.Not_Kept           = "the store refused the text: the changes are not kept",
-	.Full               = "the text is full: a key that adds a byte is refused",
-	.Selection_Too_Long = "the selection is longer than the clipboard limit of 4096 bytes",
-	.Invalid_Target     = "the target object is not valid: nothing is kept",
+	.No_Store           = "No store: the text is not kept.",
+	.Damaged            = "The text in the store is damaged: the next change writes a new text.",
+	.Too_Long           = "The text in the store is too long for the editor: nothing is kept.",
+	.Not_Kept           = "The store refused the text: the changes are not kept.",
+	.Full               = "The text is full: a key that adds a byte is refused.",
+	.Selection_Too_Long = "The selection is longer than the clipboard limit of 4096 bytes.",
+	.Invalid_Target     = "The target object path is refused: nothing is kept.",
 }
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
@@ -167,10 +167,10 @@ window_problem_texts := [Window_Problem]string {
 // call, and a freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [4]interface.Action_Bar_Item {
 	return {
-		interface.action_bar_item("find", 3, "Ctrl", "F"),
-		interface.action_bar_item("undo", 2, "Ctrl", "Z"),
-		interface.action_bar_item("redo", 1, "Ctrl", "Y"),
-		interface.action_bar_item("versions", 0, "Ctrl", "H"),
+		interface.action_bar_item("Find", 3, "Ctrl", "F"),
+		interface.action_bar_item("Undo", 2, "Ctrl", "Z"),
+		interface.action_bar_item("Redo", 1, "Ctrl", "Y"),
+		interface.action_bar_item("Versions", 0, "Ctrl", "H"),
 	}
 }
 bar: interface.Action_Bar_State

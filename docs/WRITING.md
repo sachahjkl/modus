@@ -169,4 +169,5 @@ error: tally.add: the argument note has 40 bytes; it can have at most 36 bytes
 
 - The host test `each_sentence_keeps_the_words_of_the_guide` of `src/library/modus/sentence` writes the sentence of each error kind with each unit. It refuses a word of section 2, a bare negative number, a capital letter at the start and an end period.
 - The machine test refuses a failed line of the console, or of the tool on the host, that ends with a bare number in parentheses.
-- Review holds the other rules. The planned checks are in `ROADMAP.md`.
+- `display_text_check` (`tools/modustool/checks/display_text_check.odin`), run by `modustool check` and `modustool rule-checks`, parses each non-test module source and refuses forbidden words of section 2, contractions, `Error` or `Failure` titles, `failed` with no cause after it, non-sentence case, and wrong end periods in `member_texts`, setting descriptions and labels, window problem texts, action bar items, buttons, and context menu items.
+- Review holds the other rules.

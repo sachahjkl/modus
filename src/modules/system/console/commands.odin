@@ -2399,7 +2399,7 @@ fault_kind_text :: proc "contextless" (kind: op.Fault_Kind) -> string {
 	case .Breakpoint:
 		return "breakpoint"
 	case .Invalid_Opcode:
-		return "invalid instruction"
+		return "instruction not understood by the processor"
 	case .Segment_Not_Present:
 		return "segment not present"
 	case .Stack_Fault:
@@ -2969,7 +2969,7 @@ edit_object :: proc "contextless" (arguments: []Value) -> Value {
 	case .Too_Deep:
 		return fail("edit: the object path has too many nested trees")
 	case .Bad_Segment:
-		return fail("edit: the object path has an invalid name at byte ", u64(path_offset))
+		return fail("edit: the object path has a refused name at byte ", u64(path_offset))
 	}
 	if requests.head == nil {
 		return fail_no_answer()

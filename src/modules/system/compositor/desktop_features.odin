@@ -259,16 +259,16 @@ desktop_context_menu_open :: proc "contextless" (x, y: int) {
 	// The entry of the toggle names what it does to the window in front.
 	front_maximized := order_count > 0 && clients[order[order_count - 1]].maximized
 	items := [10]interface.Context_Menu_Item{
-		{id = u32(Desktop_Context_Action.New_Console), label = "New Console"},
-		{id = u32(Desktop_Context_Action.Open_Monitor), label = "Open Monitor"},
-		{id = u32(Desktop_Context_Action.Open_Clock), label = "Open Clock"},
-		{id = u32(Desktop_Context_Action.Snap_Left), label = "Snap Window Left", shortcut = "Ctrl+Shift+Left"},
-		{id = u32(Desktop_Context_Action.Snap_Right), label = "Snap Window Right", shortcut = "Ctrl+Shift+Right"},
-		{id = u32(Desktop_Context_Action.Maximize), label = front_maximized ? "Restore Window" : "Maximize Window", shortcut = "Ctrl+Shift+Up"},
-		{id = u32(Desktop_Context_Action.Toggle_Mag), label = "Toggle Magnifier", shortcut = "Ctrl+Shift+M"},
-		{id = u32(Desktop_Context_Action.Restore_All), label = "Restore Minimized"},
-		{id = u32(Desktop_Context_Action.Bar_Top), label = "Bar Position Top", disabled = !at_bottom},
-		{id = u32(Desktop_Context_Action.Bar_Bottom), label = "Bar Position Bottom", disabled = at_bottom},
+		{id = u32(Desktop_Context_Action.New_Console), label = "New console"},
+		{id = u32(Desktop_Context_Action.Open_Monitor), label = "Open monitor"},
+		{id = u32(Desktop_Context_Action.Open_Clock), label = "Open clock"},
+		{id = u32(Desktop_Context_Action.Snap_Left), label = "Snap window left", shortcut = "Ctrl+Shift+Left"},
+		{id = u32(Desktop_Context_Action.Snap_Right), label = "Snap window right", shortcut = "Ctrl+Shift+Right"},
+		{id = u32(Desktop_Context_Action.Maximize), label = front_maximized ? "Restore window" : "Maximize window", shortcut = "Ctrl+Shift+Up"},
+		{id = u32(Desktop_Context_Action.Toggle_Mag), label = "Toggle magnifier", shortcut = "Ctrl+Shift+M"},
+		{id = u32(Desktop_Context_Action.Restore_All), label = "Restore minimized"},
+		{id = u32(Desktop_Context_Action.Bar_Top), label = "Bar position top", disabled = !at_bottom},
+		{id = u32(Desktop_Context_Action.Bar_Bottom), label = "Bar position bottom", disabled = at_bottom},
 	}
 	// The menu stays on the desktop: it never covers the bar at the bottom.
 	interface.context_menu_open(&desktop_context_menu, x, y, desktop_width, desktop_work_bottom(), items[:])
@@ -596,7 +596,7 @@ desktop_taskbar_menu_open :: proc "contextless" (x, y: int) -> bool {
 	taskbar_menu_window = order[last_used]
 	client := &clients[taskbar_menu_window]
 	items := [3]interface.Context_Menu_Item {
-		{id = u32(Desktop_Context_Action.Window_Front), label = client.minimized ? "Restore" : "Bring to Front", disabled = window_in_front(taskbar_menu_window)},
+		{id = u32(Desktop_Context_Action.Window_Front), label = client.minimized ? "Restore" : "Bring to front", disabled = window_in_front(taskbar_menu_window)},
 		{id = u32(Desktop_Context_Action.Window_Minimize), label = "Minimize", disabled = client.minimized},
 		{id = u32(Desktop_Context_Action.Window_Close), label = "Close"},
 	}

@@ -327,24 +327,24 @@ Frame_Acts :: struct {
 // freestanding process runs no call before its entry.
 attached_items :: proc "contextless" () -> [14]interface.Action_Bar_Item {
 	return {
-		interface.action_bar_item("thread before", 6, "Up"),
-		interface.action_bar_item("thread after", 6, "Down"),
-		interface.action_bar_item("frame before", 5, "Page Up"),
-		interface.action_bar_item("frame after", 5, "Page Down"),
-		interface.action_bar_item("hold", 8, "h"),
-		interface.action_bar_item("let run", 8, "r"),
-		interface.action_bar_item("let each run", 4, "c"),
-		interface.action_bar_item("one instruction", 7, "s"),
-		interface.action_bar_item("one line", 7, "l"),
-		interface.action_bar_item("one line, over each call", 5, "o"),
-		interface.action_bar_item("breakpoint at the line", 3, "b"),
-		interface.action_bar_item("registers or variables", 2, "g"),
-		interface.action_bar_item("keys leave the field", 1, "Esc"),
-		interface.action_bar_item("detach", 0, "d"),
+		interface.action_bar_item("Thread before", 6, "Up"),
+		interface.action_bar_item("Thread after", 6, "Down"),
+		interface.action_bar_item("Frame before", 5, "Page Up"),
+		interface.action_bar_item("Frame after", 5, "Page Down"),
+		interface.action_bar_item("Hold", 8, "h"),
+		interface.action_bar_item("Let run", 8, "r"),
+		interface.action_bar_item("Let each run", 4, "c"),
+		interface.action_bar_item("One instruction", 7, "s"),
+		interface.action_bar_item("One line", 7, "l"),
+		interface.action_bar_item("One line, over each call", 5, "o"),
+		interface.action_bar_item("Breakpoint at line", 3, "b"),
+		interface.action_bar_item("Registers or variables", 2, "g"),
+		interface.action_bar_item("Keys leave field", 1, "Esc"),
+		interface.action_bar_item("Detach", 0, "d"),
 	}
 }
 detached_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
-	return {interface.action_bar_item("attach", 2, "Enter"), interface.action_bar_item("remove a character", 1, "Backspace")}
+	return {interface.action_bar_item("Attach", 2, "Enter"), interface.action_bar_item("Remove character", 1, "Backspace")}
 }
 bar: interface.Action_Bar_State
 
@@ -894,7 +894,7 @@ Window_Boxes :: struct {
 
 // The labels of the three buttons of the debug place field, and their acts.
 @(rodata)
-place_button_labels := [3]string{"break at", "watch", "memory"}
+place_button_labels := [3]string{"Break at", "Watch", "Memory"}
 @(rodata)
 place_button_acts := [3]Element_Act{.Break_At_Place, .Watch_Place, .Memory_Place}
 
