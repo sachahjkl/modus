@@ -134,7 +134,7 @@ Declaration_Workspace :: struct {
 	host_failure_place:  lex_parser.Place,
 	// The written arguments of a recipe and its record, kept here and not on
 	// the bounded stack of the evaluation: the record is about 7 KiB.
-	recipe_arguments:    [plans_recipes.MAX_RECIPE_ARG_BYTES + 64]u8,
+	recipe_arguments:    [plans_recipes.MAX_RECIPE_ARGUMENT_VALUE_BYTES]u8,
 	recipe_spec:         plans_recipes.Recipe_Spec,
 	evaluation:          Evaluation,
 }
@@ -755,19 +755,26 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 		// conversion of the contract (src/md/features/application_projects.md,
 		// "One identity for a recipe"); it builds nothing.
 		a_writer := declaration_eval.Output_Writer{buffer = ws.recipe_arguments[:]}
-		if ser_err := serialize_value_into(ws, &a_writer, arguments[1], 0); ser_err != .None || a_writer.overflow {
+		ser_err := serialize_value_into(ws, &a_writer, arguments[1], 0)
+		if ser_err != .None {
 			if !refused(&ws.evaluation) && ws.host_failure_kind == .None {
-				decl_host_fail(ws, ser_err != .None ? ser_err : .Pool_Exhausted, "recipe", {})
+				decl_host_fail(ws, ser_err, "recipe", {})
 			}
 			return {}, false
 		}
+		// The buffer holds the largest value that converts, so a value that
+		// does not fit is one that the conversion refuses as too large.
+		if a_writer.overflow {
+			decl_host_fail(ws, .Recipe_Refused, plans_recipes.recipe_refusal_words[.Arguments_Too_Large], {})
+			return {}, false
+		}
 		if refusal := plans_recipes.recipe_spec_of_arguments(builder_hash, ws.recipe_arguments[:a_writer.written], &ws.recipe_spec); refusal != .None {
-			decl_host_fail(ws, .Type_Error, plans_recipes.recipe_refusal_words[refusal], {})
+			decl_host_fail(ws, .Recipe_Refused, plans_recipes.recipe_refusal_words[refusal], {})
 			return {}, false
 		}
 		recipe_hash, hash_refusal := plans_recipes.recipe_hash(&ws.recipe_spec)
 		if hash_refusal != .None {
-			decl_host_fail(ws, .Type_Error, plans_recipes.recipe_refusal_words[hash_refusal], {})
+			decl_host_fail(ws, .Recipe_Refused, plans_recipes.recipe_refusal_words[hash_refusal], {})
 			return {}, false
 		}
 		idx := ws.evaluation.recipe_count
@@ -792,7 +799,10 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 		return decl_import_path(ws, path)
 
 	case "declaration":
-		if len(arguments) != 1 || arguments[0].kind != .Hash {
+		// A declaration is a tree: here(), or the hash of one exact
+		// declaration, whose kind this function names
+		// (src/md/features/application_projects.md, "declaration takes a tree").
+		if len(arguments) != 1 || (arguments[0].kind != .Tree_Ref && arguments[0].kind != .Hash) {
 			decl_host_fail(ws, .Type_Error, "declaration", {})
 			return {}, false
 		}

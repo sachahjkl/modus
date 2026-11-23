@@ -319,6 +319,7 @@ Failure_Kind :: enum u8 {
 	Import_Not_Found     = 14,
 	Pool_Exhausted       = 15,
 	Unserializable_Value = 16,
+	Recipe_Refused       = 17, // The conversion of a recipe refused it: the detail is the words of its refusal (plans_recipes.recipe_refusal_words).
 }
 
 // Canonical value tags in the output buffer.

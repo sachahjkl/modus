@@ -99,7 +99,7 @@ list_keep_items :: proc "contextless" (keeping: ^List_Keeping, evaluation: ^Eval
 			return 0, {refusal = .Table, kind = .Table}
 		case .Hash:
 			return 0, {refusal = .Hash, kind = .Hash}
-		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// The evaluator refuses an untyped item and an item with no value
 			// before; the others have no place in a list of the console.
 			return 0, {refusal = .Kind, kind = item.kind}

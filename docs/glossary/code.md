@@ -870,11 +870,21 @@ The design: `src/md/features/declarations.md`, "The services of the declarations
 
 Do not use: build daemon, builder (for this).
 
+### Tree reference
+
+A tree reference is a value of Lex that holds the tree hash of a tree and says that it is a tree.
+
+`here()` gives one: the tree of the source of the current project. It is the kind `Tree_Ref` of the output of an evaluation, beside the module file of `module(...)`. A recipe takes a tree reference as an input of the kind Tree, and `declaration(here())` reads the declaration in it. A bare hash literal holds the same bytes and names no kind, so it is no input. Example: `project { source = here() }`.
+
+The design: `src/md/features/application_projects.md`, "One identity for a recipe".
+
+Do not use: source hash, directory reference.
+
 ### Recipe
 
 A recipe is a builder hash, a table of the names and hashes of its inputs, and a typed argument record: it names how an output is made.
 
-The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the inputs sorted by name, and the bytes of the argument record. `recipe(builder, arguments)` is a lazy value of Lex; forcing it gives its hash and builds nothing. `recipes.build` realises it, from a realisation or in a sandbox. It is a record, not a script.
+The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the output kind, the source date, the inputs sorted by name with the kind of each, and the bytes of the argument record (`plans_recipes.recipe_hash`). `recipe(module(builder), arguments)` is a lazy value of Lex; forcing it gives its hash and builds nothing. Each field of the arguments that is a tree reference or a module file is an input, with its kind; a bare hash names no kind and is refused, in the arguments and as the builder. The evaluator and the service `recipes` read it with one conversion, so a declaration and the service give one hash. `recipes.build` realises it, from a realisation or in a sandbox. It is a record, not a script.
 
 The design: `src/md/features/recipes.md`.
 

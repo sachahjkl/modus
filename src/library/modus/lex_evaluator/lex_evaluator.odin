@@ -152,7 +152,7 @@ Value :: struct {
 	text:      string,
 	record:    []u8, // A Record: its bytes. A Table: the bytes of its records.
 	file:      []u8, // A Record, a Table, a Stream or a Record_Input: the module that has the description of the record.
-	detail:    u32, // A Record, a Table, a Stream or a Record_Input: record index. A List/Store_Ref: item count. A Hash/Module_Ref/Follow_Ref: hash pool index.
+	detail:    u32, // A Record, a Table, a Stream or a Record_Input: record index. A List/Store_Ref: item count. A Hash/Module_Ref/Tree_Ref/Follow_Ref: hash pool index.
 	call:      Call_Index, // A Function, a Record_Literal: the call in which it was written, whose thunks its body or its fields read.
 	condition: ^console_condition.Condition, // The argument of a parameter of the form Condition, in the memory of the host.
 }
@@ -366,8 +366,8 @@ hash_intern :: proc "contextless" (evaluation: ^Evaluation, hash: blake3.Hash) -
 	return u32(idx), true
 }
 
-// hash_of returns the 32-byte BLAKE3 hash of a Hash, Module_Ref, Follow_Ref
-// or Recipe_Ref value.
+// hash_of returns the 32-byte BLAKE3 hash of a Hash, Module_Ref, Tree_Ref,
+// Follow_Ref or Recipe_Ref value.
 hash_of :: proc "contextless" (evaluation: ^Evaluation, value: Value) -> (hash: blake3.Hash, ok: bool) {
 	switch value.kind {
 	case .Hash, .Module_Ref, .Tree_Ref, .Follow_Ref:

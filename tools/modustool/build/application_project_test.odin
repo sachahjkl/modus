@@ -191,7 +191,7 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	// A pins.lex whose hash is not 64 hexadecimal digits.
 	damaged := "{\n  tool = { tree = blake3:12 },\n}\n"
 	_, refusal := projects_core.load_project(table, state, 1, name, evaluation[:evaluation_length], transmute([]u8)damaged)
-	testing.expect(t, refusal != .None, "a damaged hash in pins.lex is refused")
+	testing.expect_value(t, refusal, pr.Project_Refusal.Invalid_Hash_Literal)
 	testing.expect(t, projects_core.find_loaded(table, 1, name) == nil, "a refused load keeps no project")
 
 	// A project whose source is a text, and one whose source is a bare
@@ -209,11 +209,13 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	// evaluation refuses it, as the conversion does.
 	untyped := concat({"project {\n  source = here(),\n  outputs = { default = recipe(module(", hash_literal(builder), "), { source = ", hash_literal(here), " }) },\n}\n"})
 	untyped_result := lex_evaluator.declaration_evaluate(workspace, untyped, "outputs.default", config)
-	testing.expect(t, !untyped_result.ok, "a bare hash names no input")
+	testing.expect_value(t, untyped_result.failure_kind, declaration_eval.Failure_Kind.Recipe_Refused)
+	testing.expect_value(t, untyped_result.detail, pr.recipe_refusal_words[.Untyped_Hash])
 	// A builder given by a bare hash names no kind either.
 	bare_builder := concat({"project {\n  source = here(),\n  outputs = { default = recipe(", hash_literal(builder), ", { source = here() }) },\n}\n"})
 	bare_builder_result := lex_evaluator.declaration_evaluate(workspace, bare_builder, "outputs.default", config)
-	testing.expect(t, !bare_builder_result.ok, "a builder by a bare hash is refused")
+	testing.expect_value(t, bare_builder_result.failure_kind, declaration_eval.Failure_Kind.Type_Error)
+	testing.expect_value(t, bare_builder_result.detail, "recipe")
 
 	// Loaded right, the project has no pin, so no recipe of its inputs.
 	evaluation_length, _ = lex_evaluator.declaration_evaluate_to_buffer(workspace, project_lex, "", config, evaluation[:])
@@ -223,20 +225,18 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	_, inputs_refusal := projects_core.inputs_recipe(table, state, 1, name)
 	testing.expect_value(t, inputs_refusal, pr.Project_Refusal.Pin_Not_Found)
 
-	// The recipe of the output, through the one conversion: the evaluator
-	// writes outputs.default, the contract reads it back as the record of
-	// the service, and the service refuses a builder that needs the sandbox,
-	// and keeps nothing.
+	// The recipe of the output, on the path of the export
+	// register_evaluation: the evaluator writes outputs.default, the service
+	// converts it with the one conversion and registers it, and refuses at
+	// its build a builder that needs the sandbox, and keeps nothing.
 	spec := new(pr.Recipe_Spec, context.temp_allocator)
 	output_length, output_ok := lex_evaluator.declaration_evaluate_to_buffer(workspace, project_lex, "outputs.default", config, evaluation[:])
 	testing.expect(t, output_ok, "outputs.default evaluates")
-	_, spec_refusal := pr.recipe_spec_of_output(evaluation[:output_length], spec)
-	testing.expect_value(t, spec_refusal, pr.Recipe_Refusal.None)
 	recipes := new(recipes_core.Recipes_State, context.temp_allocator)
 	registry := new(recipes_core.Recipe_Registry, context.temp_allocator)
 	recipes_store := new(pr.Memory_Private_Store, context.temp_allocator)
 	recipes_core.state_init(recipes, pr.memory_private_store_port(recipes_store))
-	recipe, register_refusal := recipes_core.register_recipe(registry, spec)
+	recipe, register_refusal := recipes_core.register_evaluation(registry, evaluation[:output_length], spec)
 	testing.expect_value(t, register_refusal, pr.Recipe_Refusal.None)
 	built := recipes_core.build_registered(recipes, registry, recipe, .Cache_First)
 	testing.expect_value(t, built.refusal, pr.Recipe_Refusal.Builder_Needs_Sandbox)
@@ -311,18 +311,15 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	output_length, output_ok := lex_evaluator.declaration_evaluate_to_buffer(workspace, project_lex, "outputs.default", config, evaluation[:])
 	testing.expect(t, output_ok, "outputs.default evaluates")
 	spec := new(pr.Recipe_Spec, context.temp_allocator)
-	written, spec_refusal := pr.recipe_spec_of_output(evaluation[:output_length], spec)
-	testing.expect_value(t, spec_refusal, pr.Recipe_Refusal.None)
-	testing.expect(t, written == first, "the output carries the hash of the evaluator")
+	registry := new(recipes_core.Recipe_Registry, context.temp_allocator)
+	registered, register_refusal := recipes_core.register_evaluation(registry, evaluation[:output_length], spec)
+	testing.expect_value(t, register_refusal, pr.Recipe_Refusal.None)
+	testing.expect(t, registered == first, "the service registers the recipe under the hash of the evaluator")
 	testing.expect(t, spec.builder_hash == builder, "the builder of the catalog")
 	testing.expect_value(t, spec.input_count, u32(1))
 	testing.expect_value(t, string(spec.inputs[0].name_bytes[:spec.inputs[0].name_length]), "source")
 	testing.expect_value(t, spec.inputs[0].kind, object_cache.Cache_Object_Kind.Tree)
 	testing.expect(t, spec.inputs[0].hash == here, "the input is the tree of the folder")
-	registry := new(recipes_core.Recipe_Registry, context.temp_allocator)
-	registered, register_refusal := recipes_core.register_recipe(registry, spec)
-	testing.expect_value(t, register_refusal, pr.Recipe_Refusal.None)
-	testing.expect(t, registered == first, "the service registers the recipe under the hash of the evaluator")
 
 	changed := slice.clone(files, context.temp_allocator)
 	for &file in changed {

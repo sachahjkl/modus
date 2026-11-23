@@ -663,7 +663,9 @@ console_modules_read :: proc "contextless" (reader: ^declaration_eval.Output_Rea
 	}
 	for index in 0 ..< int(count) {
 		tag, tag_refusal := declaration_eval.output_read_tag(reader)
-		if tag_refusal != .None || (tag != .Module_Ref && tag != .Hash) {
+		// A module of the console is a module file: a bare hash names no
+		// kind (src/md/features/application_projects.md).
+		if tag_refusal != .None || tag != .Module_Ref {
 			return .Invalid_Module_Name
 		}
 		module_hash, hash_refusal := declaration_eval.output_read_hash(reader)
