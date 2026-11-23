@@ -657,14 +657,14 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 //
 // - **time_zone**: the offset in minutes, -720 to 840; the zone takes a whole quarter of an hour, and the border of the zone refuses another number at the start of this service.
 //
-// The result is -1 with an error record: No_Grant, unit Plan_Lock: a principal changes the zone with set_time_zone.
+// Each call fails with the outcome Grant_Or_Right_Missing and the error record No_Grant, unit Plan_Lock: a principal changes the zone with set_time_zone.
 //
 // ```
 // plans.apply("zone", plan { values = { settings = { time_zone = 480 } } }, {})
 // ```
 @(export, link_name = "plan_only", parameter_ranges = "time_zone = -720..840")
-plan_only_export :: proc "c" (time_zone_presence: module.Presence, time_zone: i64, error: ^errors.Error_Record) -> i64 {
-	return errors.fail(error, -1, .No_Grant, .Plan_Lock, 0)
+plan_only_export :: proc "c" (time_zone_presence: module.Presence, time_zone: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 0)
 }
 
 // The range of the description is the range of the border of the zone.
@@ -721,7 +721,7 @@ set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> (outco
 		return call_outcome.fail(error, .Argument_Refused, .Not_Multiple, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_STEP), detail_found)
 	}
 	if settings.time_zone_locked(kept_plan) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 1)
 	}
 	current, _ := settings.read(page)
 	if !change(current, minutes, {time_zone = true}) {
@@ -852,7 +852,7 @@ reset_and_write :: proc "contextless" (changes: []chosen_values.Change, language
 	if languages {
 		error: errors.Error_Record
 		// No object is no choice already: the reset holds.
-		if result, status := storage.remove(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, &error); status != .Ok && !storage.export_failed_with(status, result, .Absent) {
+		if _, status := storage.remove(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, &error); status != .Ok && status != .Absent {
 			system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
 			return false
 		}
@@ -877,52 +877,52 @@ reset_and_write :: proc "contextless" (changes: []chosen_values.Change, language
 // settings.reset(.font)
 // ```
 @(export, link_name = "reset")
-reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> i64 {
+reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	member, ok := enum_word.member_of_word(settings.Setting, u64(setting))
 	if !ok {
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, i64(setting))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(setting))
 	}
 	if settings.setting_locked(kept_plan, member) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 1)
 	}
 	changes := [1]chosen_values.Change{{name = settings.descriptions[member].name, kind = .Reset}}
 	if !reset_and_write(changes[:], false) {
-		return errors.fail(error, ERROR_STORE, .Refused, .None, 1)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 1)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // reset_time_zone makes the choice of the time zone absent: UTC holds again.
 // The result is 1, or an error record as for reset.
 @(export, link_name = "reset_time_zone")
-reset_time_zone :: proc "c" (error: ^errors.Error_Record) -> i64 {
+reset_time_zone :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if settings.time_zone_locked(kept_plan) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 0)
 	}
 	changes := [1]chosen_values.Change{{name = settings.TIME_ZONE_NAME, kind = .Reset}}
 	if !reset_and_write(changes[:], false) {
-		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // reset_languages makes the choice of the language list absent: English
 // holds again. The result is 1, or an error record as for reset.
 @(export, link_name = "reset_languages")
-reset_languages :: proc "c" (error: ^errors.Error_Record) -> i64 {
+reset_languages :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if !reset_and_write(nil, true) {
-		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // The state of one setting: the setting (its number in settings.Setting,
@@ -940,9 +940,9 @@ Setting_State :: struct {
 // value, and the value. A reader sees that a choice hides a default. The
 // result is the count of the rows, 9, or an error record.
 @(export, link_name = "settings_state")
-settings_state :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> i64 {
+settings_state :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	values := settings.values_of(kept_choice)
 	rows: [len(settings.Setting) + 2]Setting_State
@@ -952,7 +952,7 @@ settings_state :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Recor
 	rows[len(settings.Setting)] = {setting = i64(len(settings.Setting)), layer = i64(kept_layers.time_zone), value = i64(kept_zone_offset_minutes)}
 	rows[len(settings.Setting) + 1] = {setting = i64(len(settings.Setting) + 1), layer = i64(kept_layers.languages), value = i64(kept_choice.languages.count)}
 	copy(result^, rows[:])
-	return i64(len(rows))
+	return .Succeeded, i64(len(rows))
 }
 
 // repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix).

@@ -22,7 +22,7 @@ a_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 		testing.expectf(t, !refused, "the layer %v is taken", layer)
 	}
 	plan_of :: proc(entry: Plan_Entry) -> (plan: Plan_Spec) {
-		plan.entry_count = 1
+		plan = test_plan(0, 1, 2)
 		plan.entries[0] = entry
 		return plan
 	}
@@ -61,12 +61,12 @@ a_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	testing.expect_value(t, twice_refusal, Plan_Refusal.Duplicate_Entry)
 	// The hash holds the word and the layer; a change asks the consent.
 	current := plan_of(good)
-	proposed := current
+	proposed := test_plan_copy(&current)
 	proposed.entries[0].value_word = 1
 	first, _ := plan_hash(&current)
 	second, _ := plan_hash(&proposed)
 	testing.expect(t, first != second)
-	locked := current
+	locked := test_plan_copy(&current)
 	locked.entries[0].value_layer_word = u64(chosen_values.Layer.Locked)
 	third, _ := plan_hash(&locked)
 	testing.expect(t, third != first)
@@ -79,7 +79,7 @@ a_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	// The row reads back.
 	row_of: [1]Plan_Entry_Row
 	testing.expect_value(t, plan_rows_of_entry(&current.entries[0], row_of[:]), 1)
-	back: Plan_Spec
+	back := test_plan(0, 0)
 	refusal, _ := plan_of_rows(0, row_of[:], &back)
 	testing.expect(t, refusal == .None && back.entries[0] == current.entries[0])
 	owner, field, parts_ok := plan_value_parts(&back.entries[0])
@@ -108,7 +108,7 @@ a_text_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	most, most_made := plan_entry_make_text_value("browser", "home", string(long[:PLAN_VALUE_TEXT_BYTES]), .Locked)
 	testing.expect(t, empty_made && most_made)
 	plan_of :: proc(entry: Plan_Entry) -> (plan: Plan_Spec) {
-		plan.entry_count = 1
+		plan = test_plan(0, 1, 2)
 		plan.entries[0] = entry
 		return plan
 	}
@@ -167,7 +167,7 @@ a_text_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	count = plan_rows_of_entry(&long_entry, rows[:])
 	testing.expect_value(t, count, PLAN_TEXT_ROWS_MOST)
 	testing.expect_value(t, plan_rows_of_entry(&long_entry, rows[:PLAN_TEXT_ROWS_MOST - 1]), 0)
-	back: Plan_Spec
+	back := test_plan(0, 0)
 	refusal, _ := plan_of_rows(0, rows[:count], &back)
 	testing.expect(t, refusal == .None && back.entry_count == 1 && plan_value_text(&back.entries[0]) == string(long[:PLAN_VALUE_TEXT_BYTES]))
 	for text in ([?]string{"", "0123456789012345678901234567890123456789"}) {
@@ -206,16 +206,17 @@ a_text_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	testing.expect(t, past_refusal == .Bad_Value && past_at == u32(past_count))
 	digest, _ := plan_hash(&first)
 	record := Applied_Plan_Record{plan_hash = digest, generation = 1}
-	object: [PLAN_GENERATION_WIRE_MOST]u8
+	object := make([]u8, plan_generation_size(first.entry_count), context.temp_allocator)
 	written, encode_refusal := encode_plan_generation(&record, &first, object[:])
 	testing.expect_value(t, encode_refusal, Plan_Refusal.None)
-	decoded: Plan_Spec
+	decoded := test_plan(0, 0)
 	_, decode_refusal := decode_plan_generation(object[:written], 0, 1, &decoded)
 	testing.expect(t, decode_refusal == .None && plan_value_text(&decoded.entries[0]) == "http://example.org/a,b")
 	// An object of the row before, magic MODPGEN1, and a magic one byte
 	// past: each refused at its head, with no plan.
 	for last in ([2]u8{'1', '3'}) {
-		older := object
+		older := make([]u8, len(object), context.temp_allocator)
+		copy(older, object)
 		older[7] = last
 		_, older_refusal := decode_plan_generation(older[:written], 0, 1, &decoded)
 		testing.expect_value(t, older_refusal, Plan_Refusal.Bad_Header)

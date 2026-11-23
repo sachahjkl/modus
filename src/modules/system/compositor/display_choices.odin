@@ -1,5 +1,6 @@
 package compositor
 
+import "modus:contract/call_outcome"
 import "modus:contract/chosen_values"
 import "modus:contract/desktop_shell"
 import "modus:contract/display_choices"
@@ -144,16 +145,18 @@ display_setting_of_name :: proc "contextless" (name: string) -> (display_choices
 
 // choice_change_fail answers a change, in the words of the setters: 1 when
 // it holds, Bad_Value for a refused value, Refused with no role store.
-choice_change_fail :: proc "contextless" (result: kept_choices.Change_Result, error: ^errors.Error_Record, argument: i64, value: i64) -> i64 {
+choice_change_fail :: proc "contextless" (result: kept_choices.Change_Result, error: ^errors.Error_Record, argument: i64, value: i64) -> (outcome: call_outcome.Call_Outcome, changed: i64) {
 	switch result {
 	case .Taken:
-		return 1
+		return .Succeeded, 1
 	case .No_Room:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, argument, value)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, value)
 	case .No_Store:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .Store, argument, value)
+		// No storage service gave the holder a role store: the call did not
+		// run, and the choice of this run is all there is.
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store, argument, value)
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
+	return call_outcome.fail(error, .Argument_Refused, .Refused, .None)
 }
 
 // The log facts of the choices of the role.

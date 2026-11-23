@@ -3,7 +3,7 @@
 // parameters of its export "set", else of its export "plan_only", and the
 // core gives the type of its own values (root_plan_values). Two borders
 // type a value by it: the console, which reads a plan that a principal
-// writes (modus:plan_reader), and the plans service, which takes a plan as
+// writes (internal:console/plan_reader), and the plans service, which takes a plan as
 // rows (entries_check). One description, one check.
 //
 // This package allocates no memory and calls no kernel operation: the
@@ -246,7 +246,7 @@ text_check :: proc "contextless" (described: Described, text: string) -> (refusa
 // holders_of_plan gives the holder of each role that a plan names: of a
 // chain of interposition, the outermost module, which the callers reach.
 holders_of_plan :: proc "contextless" (plan: ^pr.Plan_Spec) -> (holders: Role_Holders) {
-	count := min(int(plan.entry_count), pr.MAX_PLAN_ENTRIES)
+	count := int(plan.entry_count)
 	for index in 0 ..< count {
 		entry := &plan.entries[index]
 		if entry.kind_word != u64(pr.Plan_Entry_Kind.Role_Holder) {
@@ -277,7 +277,7 @@ holders_of_plan :: proc "contextless" (plan: ^pr.Plan_Spec) -> (holders: Role_Ho
 // entry that it names. index is the entry, from 0.
 entries_check :: proc "contextless" (image: Image, plan: ^pr.Plan_Spec) -> (refusal: Refusal, index: u32) {
 	holders := holders_of_plan(plan)
-	for entry_index in u32(0) ..< min(plan.entry_count, pr.MAX_PLAN_ENTRIES) {
+	for entry_index in u32(0) ..< plan.entry_count {
 		entry := &plan.entries[entry_index]
 		if entry.kind_word != u64(pr.Plan_Entry_Kind.Value) {
 			continue

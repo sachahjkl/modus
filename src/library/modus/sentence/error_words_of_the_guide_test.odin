@@ -162,6 +162,8 @@ a_change_during_a_repair_of_the_counts :: proc(t: ^testing.T) {
 	record = errors.error_make(.Busy, .Requests, 0, 3, 7, 0)
 	error_text(&writer, &record, "storage.write", "")
 	testing.expect(t, !strings.contains(written(&writer), "repair"))
+}
+
 // A refusal under a lock of the plan names the plan as its fix, never the
 // starter of the process; a reset with no argument names the setting.
 @(test)

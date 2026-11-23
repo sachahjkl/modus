@@ -1225,16 +1225,17 @@ display_role_store_give :: proc "contextless" (served: ^Started, display_name: s
 	// connection_open names the store by its caller, so the place takes the
 	// name of the holder first.
 	copy(served.name[:len(served.name) - 1], display_name)
-	_, storage_service, ring_memory, region_memory, status := connection_open(served, role_holder_name(.Storage))
-	if status != .Ok {
-		system.log_fact(.Warning, Display_Role_Store_Not_Given{status = status})
+	open_refusal: [7]u64
+	_, storage_service, ring_memory, region_memory, opened := connection_open(served, role_holder_name(.Storage), &open_refusal, u32(root_ring.Root_Command.Connect))
+	if opened != .Succeeded {
+		system.log_fact(.Warning, Display_Role_Store_Not_Given{outcome = opened})
 		return
 	}
 	for &item in system.image_entries(image) {
 		if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset && mapping_count^ < len(mappings) {
 			mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
 			if !given {
-				system.log_fact(.Warning, Display_Role_Store_Not_Given{status = .Bad_Operation})
+				system.log_fact(.Warning, Display_Role_Store_Not_Given{outcome = .Argument_Refused})
 				return
 			}
 			mappings[mapping_count^] = mapping
@@ -2305,7 +2306,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 			process_of_the_store := role_policy.store_name_of_module(&role_holder_names, system.name_of(caller.name[:]))
 			if process_of_the_store == "" {
 				system.log_fact(.Warning, Role_Store_Refused{caller = module_name_field(system.name_of(caller.name[:]))})
-				return nil, nil, 0, 0, .Bad_Operation
+				return nil, nil, 0, 0, root_ring.refuse(refusal, .Nothing_Has_That_Name, kind, .Absent, .Stores, 1)
 			}
 			disk_store_name: [32]u8
 			if caller.from_disk {

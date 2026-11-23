@@ -58,7 +58,7 @@ Problem :: enum u8 {
 	Text_Past_Bound     = 16, // A text outside the bound of its parameter, or past PLAN_VALUE_TEXT_BYTES (name, field, integer: its bytes, least, most).
 	Text_Not_Plain      = 17, // A text that is not UTF-8, or holds a control byte (name, field).
 	Default_And_Lock    = 18, // A field in values and in locks, or twice (name, field).
-	Too_Many_Rows       = 19, // More entries than MAX_PLAN_ENTRIES, or more rows than the rows given (integer: the bound of the entries, or the rows given).
+	Too_Many_Rows       = 19, // More rows than the rows given, which the region of one call bounds (integer: the rows given).
 	Name_Not_Valid      = 20, // A name of an owner, a field or a store that a plan cannot hold (name, field).
 	Field_Type          = 21, // A parameter that is no Integer, Enum or Text: a plan gives it no value (name, field).
 	Owner_Is_A_Holder   = 22, // A module that holds a role: its values are named by the role (name, role).
@@ -171,9 +171,6 @@ record_names :: proc "contextless" (reader: ^Reader, record: lex_evaluator.Value
 // text (pr.plan_rows_of_entry). The bound of a plan is its entries.
 @(private = "file")
 row_add :: proc "contextless" (reader: ^Reader, entry: ^pr.Plan_Entry) -> (refusal: Refusal) {
-	if reader.entries >= pr.MAX_PLAN_ENTRIES {
-		return {problem = .Too_Many_Rows, integer = pr.MAX_PLAN_ENTRIES}
-	}
 	room := len(reader.rows) - reader.count
 	written := room > 0 ? pr.plan_rows_of_entry(entry, reader.rows[reader.count:][:room]) : 0
 	if written == 0 {

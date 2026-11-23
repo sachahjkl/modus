@@ -3,7 +3,7 @@ package console
 // A plan written in the console (src/md/features/declarations.md, "A plan
 // written in the console"): the names of the evaluation that make the
 // values of a plan, `plan`, `module` and `store`, and the reader that turns
-// a plan given to a table of plan rows into those rows (modus:plan_reader).
+// a plan given to a table of plan rows into those rows (internal:console/plan_reader).
 //
 // Merge note, work/limits_text_and_clipboard: a line of the console holds
 // 4096 bytes there (line_editor.LINE_CAPACITY), not 200, so a plan of one
@@ -12,9 +12,10 @@ package console
 // "A plan longer than one line".
 
 import "modus:contract/blake3"
+import "modus:contract/isolated"
 import pr "modus:contract/plans_recipes"
 import "modus:lex_evaluator"
-import "modus:plan_reader"
+import "internal:console/plan_reader"
 import "modus:sentence"
 import "modus:system"
 
@@ -80,8 +81,12 @@ plan_name_run :: proc "contextless" (name: string, arguments: []Value) -> Value 
 	return fail("no name of a plan: ", name)
 }
 
-// The rows of the plans of one line: one table of rows of the largest plan.
-plan_rows_bytes: [pr.PLAN_ROWS_MOST * size_of(pr.Plan_Entry_Row)]u8
+// Format property: the rows of a plan are one table argument of one call,
+// so they fit the region of a call, past its first page.
+PLAN_ROWS_OF_A_CALL :: (isolated.REGION_PAGES - 1) * 4096 / size_of(pr.Plan_Entry_Row)
+
+// The rows of the plans of one line: one table of the rows of one call.
+plan_rows_bytes: [PLAN_ROWS_OF_A_CALL * size_of(pr.Plan_Entry_Row)]u8
 
 // plan_rows_of_argument turns a plan given to a table parameter of an
 // export into the rows of that table, when its record is the record of the
@@ -96,7 +101,7 @@ plan_rows_of_argument :: proc "contextless" (found: ^Command, index: int, argume
 		fail(found.name, ": the argument ", found.parameter_names[index], " is no table of the rows of a plan, so it takes no plan")
 		return false
 	}
-	rows := ([^]pr.Plan_Entry_Row)(raw_data(plan_rows_bytes[:]))[:pr.PLAN_ROWS_MOST]
+	rows := ([^]pr.Plan_Entry_Row)(raw_data(plan_rows_bytes[:]))[:PLAN_ROWS_OF_A_CALL]
 	count, refusal := plan_reader.read(&line_evaluation, argument^, console_image_of_plans(), rows)
 	if refusal.problem != .None {
 		writer := sentence.Writer{buffer = scratch[scratch_count:]}

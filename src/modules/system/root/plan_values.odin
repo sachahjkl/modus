@@ -28,7 +28,7 @@ package root
 
 import "base:intrinsics"
 import "internal:root/role_policy"
-import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import "modus:contract/plan_values"
 import rd "modus:contract/root_delegation"
 import "modus:contract/root_plan_values"
@@ -70,48 +70,42 @@ plan_values_owner_address: uintptr
 
 // plan_values_command runs Plan_Values for its one sender, the process
 // with the start grant Plans.
-plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answer: ^[7]u64) -> system.Status {
+plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answer: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Plan_Values)
 	step, step_known := rd.plan_roles_step_of_word(values[0])
 	// plan_roles_step_of_word refuses None; Loaded is a step of Plan_Roles
 	// only. Each gets its error record here, as a word that names no step.
 	if !step_known || step == .None || step == .Loaded {
-		answer^ = errors.ring_fail(kind, .Bad_Value, .None, 1, i64(min(values[0], u64(max(i64)))), i64(rd.Plan_Roles_Step.Rollback))
-		return .Bad_Operation
+		return root_ring.refuse(answer, .Argument_Refused, kind, .Bad_Value, .None, 1, i64(min(values[0], u64(max(i64)))), i64(rd.Plan_Roles_Step.Rollback))
 	}
 	// values[1] of Committed is its generation; each other word is 0.
 	first_zero := step == .Committed ? 2 : 1
 	for index in first_zero ..< len(values) {
 		if values[index] != 0 {
-			answer^ = errors.ring_fail(kind, .Bad_Value, .None, i64(index + 1), i64(min(values[index], u64(max(i64)))), 0)
-			return .Bad_Operation
+			return root_ring.refuse(answer, .Argument_Refused, kind, .Bad_Value, .None, i64(index + 1), i64(min(values[index], u64(max(i64)))), 0)
 		}
 	}
 	switch step {
 	case .None, .Loaded:
 		// Refused above; the answer still carries its error record.
-		answer^ = errors.ring_fail(kind, .Bad_Value, .None, 1, i64(values[0]), i64(rd.Plan_Roles_Step.Rollback))
-		return .Bad_Operation
+		return root_ring.refuse(answer, .Argument_Refused, kind, .Bad_Value, .None, 1, i64(values[0]), i64(rd.Plan_Roles_Step.Rollback))
 	case .Page:
-		status := plan_values_pages_give(item, answer)
-		if status != .Ok {
-			answer^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
+		if status := plan_values_pages_give(item, answer); status != .Ok {
+			return root_ring.refuse(answer, system.outcome_of_own_status(status), kind, .Refused, .None, 0, 0, 0, i64(status))
 		}
-		return status
+		return .Succeeded
 	case .Committed:
 		return plan_values_commit(values[1], answer)
 	case .Apply, .Rollback:
 	}
 	if plan_values_pages == nil {
-		answer^ = errors.ring_fail(kind, .State, .Requests)
-		return .Bad_State
+		return root_ring.refuse(answer, .Wrong_State, kind, .State, .Requests)
 	}
 	intrinsics.mem_copy_non_overlapping(&plan_values_copy, plan_values_pages, plan_values.SET_SIZE)
 	head, problem := plan_values.set_check(plan_values_copy[:])
 	if problem != .None {
 		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[problem], 24)})
-		answer^ = errors.ring_fail(kind, .Refused, .Records, 0, 0, 0, i64(problem))
-		return .Bad_State
+		return root_ring.refuse(answer, .Argument_Refused, kind, .Refused, .Records, 0, 0, 0, i64(problem))
 	}
 	// The set waits for the commit of the store (the step Committed): an
 	// owner never holds a value of a generation that the store refused.
@@ -120,18 +114,17 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 	plan_values_pending_held = true
 	system.log_fact(.Info, Plan_Values_Taken{generation = head.generation, owners = u64(head.owner_count)})
 	answer^ = {0 = head.generation}
-	return .Ok
+	return .Succeeded
 }
 
 // plan_values_commit puts the set taken for generation in force: the
 // store committed it. A step for another generation, or with no set taken,
 // is refused.
 @(private = "file")
-plan_values_commit :: proc "contextless" (generation: u64, answer: ^[7]u64) -> system.Status {
+plan_values_commit :: proc "contextless" (generation: u64, answer: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Plan_Values)
 	if !plan_values_pending_held || generation != plan_values_pending_generation {
-		answer^ = errors.ring_fail(kind, .State, .Versions, 2, i64(min(generation, u64(max(i64)))), 0, i64(plan_values_pending_generation))
-		return .Bad_State
+		return root_ring.refuse(answer, .Wrong_State, kind, .State, .Versions, 2, i64(min(generation, u64(max(i64)))), 0, i64(plan_values_pending_generation))
 	}
 	// The quota of a store is a plan value: a change of it writes the grant
 	// of each open connection to the holder of Storage again, as a change
@@ -151,8 +144,7 @@ plan_values_commit :: proc "contextless" (generation: u64, answer: ^[7]u64) -> s
 		plan_values_generation = plan_values_saved_generation
 		plan_values_given = plan_values_saved_given
 		system.log_fact(.Warning, Plan_Values_Grants_Busy{generation = generation})
-		answer^ = errors.ring_fail(kind, .Busy, .Requests)
-		return .Bad_State
+		return root_ring.refuse(answer, .Callee_Busy, kind, .Busy, .Requests)
 	}
 	plan_values_pending_held = false
 	grants_change_send()
@@ -160,7 +152,7 @@ plan_values_commit :: proc "contextless" (generation: u64, answer: ^[7]u64) -> s
 	root_plan_read()
 	system.log_fact(.Info, Plan_Values_Replaced{generation = head.generation, owners = u64(head.owner_count), pages = u64(pages)})
 	answer^ = {0 = head.generation}
-	return .Ok
+	return .Succeeded
 }
 
 // plan_values_pages_publish writes the values page of each process that

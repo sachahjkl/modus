@@ -50,10 +50,10 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 
 // reset refuses each setting: this holder keeps no setting.
 //
-// The result is a negative number with the error record Unsupported.
+// Each call fails with the outcome Operation_Unsupported and the error record Unsupported.
 @(export, link_name = "reset")
-reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> i64 {
-	return errors.fail(error, -1, .Unsupported, .None, 1)
+reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return call_outcome.fail(error, .Operation_Unsupported, .Unsupported, .None, 1)
 }
 
 // The state of one setting, as the contract of the role names it.
@@ -66,8 +66,8 @@ Setting_State :: struct {
 // settings_state gives no row: this holder keeps no setting, so each
 // value is its default.
 @(export, link_name = "settings_state")
-settings_state :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> i64 {
-	return 0
+settings_state :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return .Succeeded, 0
 }
 
 @(export, link_name = "entry")

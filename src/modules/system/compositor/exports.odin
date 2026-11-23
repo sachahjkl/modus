@@ -401,7 +401,7 @@ notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_R
 	case .Queue_Full:
 		return call_outcome.fail(error, .Callee_Busy, .Full, .Records, 0, 0, notifications.MAX_NOTIFICATIONS, notifications.MAX_NOTIFICATIONS)
 	case .Rate_Limited:
-		return call_outcome.fail(error, .Callee_Busy, .Busy, .Milliseconds, 0, 0, i64(desktop_notifications.min_interval_ms))
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .Milliseconds, 0, 0, i64(notifications.RATE_INTERVAL_MILLISECONDS))
 	case .Show_Time_Out_Of_Range:
 		// The compositor gives the time, never the caller: a time out of
 		// the range is the setting that its border refused.

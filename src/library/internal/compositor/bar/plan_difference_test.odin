@@ -434,7 +434,6 @@ test_open :: proc(dialog: ^Plan_Difference_Dialog, plan_name, added, removed: st
 
 // items_text gives a list of count distinct items that line feeds
 // separate.
-@(private = "file")
 items_text :: proc(count: int) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	for index in 0 ..< count {
@@ -452,7 +451,7 @@ items_text :: proc(count: int) -> string {
 // body; each line of the body is a heading or an item, in order.
 @(test)
 plan_difference_accept_counts_only_after_the_last_line_showed :: proc(t: ^testing.T) {
-	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
 	dialog: Plan_Difference_Dialog
 	// A body of exactly the visible lines needs no scroll.
 	test_open(&dialog, "home", items_text(PLAN_DIFFERENCE_VISIBLE_LINES - 1), "", 0)

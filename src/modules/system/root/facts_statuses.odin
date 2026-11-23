@@ -89,9 +89,9 @@ Compositor_Service_Ring_Failed :: struct {
 	status: op.Status,
 }
 
-@(log_fact = "root: the holder of the display gets no role store (status {status}): it draws with the defaults of its contract, and keeps no choice")
+@(log_fact = "root: the holder of the display gets no role store ({outcome}): it draws with the defaults of its contract, and keeps no choice")
 Display_Role_Store_Not_Given :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 @(log_fact = "root: cannot start the compositor: status {status}")

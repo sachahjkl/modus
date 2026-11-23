@@ -131,15 +131,18 @@ host_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []u8, ok:
 Run :: struct {
 	tree:       lex_parser.Syntax_Tree,
 	evaluation: lex_evaluator.Evaluation,
-	rows:       [pr.MAX_PLAN_ENTRIES]pr.Plan_Entry_Row,
+	rows:       [TEST_ROWS]pr.Plan_Entry_Row,
 	count:      int,
 	refusal:    Refusal,
 	evaluated:  bool,
 }
 
+// The rows that a test gives a read when it names no count.
+TEST_ROWS :: 32
+
 // read_text evaluates a line and reads its plan with rows_given rows.
 @(private = "file")
-read_text :: proc(image: ^Fake_Image, text: string, rows_given := pr.MAX_PLAN_ENTRIES) -> ^Run {
+read_text :: proc(image: ^Fake_Image, text: string, rows_given := TEST_ROWS) -> ^Run {
 	run := new(Run, context.temp_allocator)
 	lex_parser.parse(text, {}, &run.tree)
 	host := lex_evaluator.Evaluation_Host{data = &run.evaluation, name_value = host_none, command_find = host_command_find, call_run = host_call_run, record_memory = host_memory}

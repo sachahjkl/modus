@@ -22,13 +22,13 @@ an_optional_pair_crosses_the_call_region :: proc(t: ^testing.T) {
 	testing.expect(t, described && size == 24)
 	region: [256]u8
 	arguments := [2]Argument{{presence = .Given, integer = 0}, {integer = 7}}
-	offset, encoded_size, _, _, ok := encode(nil, function, arguments[:], region[:])
+	offset, encoded_size, _, ok := encode(nil, function, arguments[:], region[:])
 	testing.expect(t, ok && encoded_size == 24)
 	call: Call
 	testing.expect(t, decode(nil, function, offset, encoded_size, region[:], &call))
 	testing.expect(t, call.arguments[0] == u64(module.Presence.Given) && call.arguments[1] == 0 && call.arguments[2] == 7)
 	absent := [2]Argument{{presence = .Absent, integer = 99}, {integer = 7}}
-	offset, encoded_size, _, _, ok = encode(nil, function, absent[:], region[:])
+	offset, encoded_size, _, ok = encode(nil, function, absent[:], region[:])
 	testing.expect(t, ok)
 	call = {}
 	testing.expect(t, decode(nil, function, offset, encoded_size, region[:], &call))
@@ -69,7 +69,7 @@ an_optional_pair_crosses_the_call_region :: proc(t: ^testing.T) {
 	guide := "modus://guide"
 	left := "left behind"
 	given_text := [2]Argument{{presence = .Given, text = transmute([]u8)guide}, {integer = 7}}
-	offset, encoded_size, _, _, ok = encode(nil, text, given_text[:], region[:])
+	offset, encoded_size, _, ok = encode(nil, text, given_text[:], region[:])
 	testing.expect(t, ok)
 	call = {}
 	testing.expect(t, decode(nil, text, offset, encoded_size, region[:], &call))
@@ -79,7 +79,7 @@ an_optional_pair_crosses_the_call_region :: proc(t: ^testing.T) {
 		testing.expect(t, slice.count == len("modus://guide") && string(([^]u8)(uintptr(slice.start))[:slice.count]) == "modus://guide")
 	}
 	absent_text := [2]Argument{{presence = .Absent, text = transmute([]u8)left}, {integer = 7}}
-	offset, encoded_size, _, _, ok = encode(nil, text, absent_text[:], region[:])
+	offset, encoded_size, _, ok = encode(nil, text, absent_text[:], region[:])
 	testing.expect(t, ok)
 	call = {}
 	testing.expect(t, decode(nil, text, offset, encoded_size, region[:], &call))

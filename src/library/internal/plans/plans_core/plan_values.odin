@@ -64,71 +64,88 @@ VALUES_SEND_TRIES :: 3
 // refuse it (plan_values.set_check): the plan border took each entry, so
 // that is a fault of this code.
 plan_values_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation: u64, out: []u8) -> (written: int, ok: bool) {
-	Owner_Records :: struct {
-		owner:    string,
-		defaults: [pr.MAX_PLAN_ENTRIES]chosen_values.Change,
-		locks:    [pr.MAX_PLAN_ENTRIES]chosen_values.Change,
-		defaults_count, locks_count: int,
-	}
-	@(static) owners: [plan_values.OWNER_CAPACITY]Owner_Records
+	// Format property: a set holds at most this many entries of chosen
+	// values, each of at least ENTRY_SIZE bytes, so the values of one owner
+	// fit these scratch tables whatever the count of the entries of the
+	// plan.
+	SET_ENTRIES_MOST :: plan_values.SET_SIZE / chosen_values.ENTRY_SIZE
+	@(static) defaults: [SET_ENTRIES_MOST]chosen_values.Change
+	@(static) locks: [SET_ENTRIES_MOST]chosen_values.Change
 	// The records of every owner, one after the other: the texts of a plan
 	// fit a set, so they fit this.
 	@(static) bytes: [plan_values.SET_SIZE]u8
+	blocks: [plan_values.OWNER_CAPACITY]plan_values.Owner_Block
 	owner_count := 0
-	count := plan == nil ? 0 : min(int(plan.entry_count), pr.MAX_PLAN_ENTRIES)
-	for index in 0 ..< count {
-		entry := &plan.entries[index]
-		if entry.kind_word != u64(pr.Plan_Entry_Kind.Value) {
+	at := 0
+	count := plan == nil ? 0 : int(plan.entry_count)
+	// Each owner in the order of its first entry: one pass over the plan
+	// for each owner, and the owners are at most OWNER_CAPACITY.
+	for first in 0 ..< count {
+		first_entry := &plan.entries[first]
+		if first_entry.kind_word != u64(pr.Plan_Entry_Kind.Value) {
 			continue
 		}
-		owner, field, parts_ok := pr.plan_value_parts(entry)
-		layer, layer_ok := pr.plan_value_layer_of_word(entry.value_layer_word)
-		if !parts_ok || !layer_ok {
+		owner, _, owner_ok := pr.plan_value_parts(first_entry)
+		if !owner_ok {
 			return 0, false
 		}
-		place := -1
-		for other in 0 ..< owner_count {
-			if owners[other].owner == owner {
-				place = other
+		seen := false
+		for index in 0 ..< owner_count {
+			if blocks[index].owner == owner {
+				seen = true
 			}
 		}
-		if place < 0 {
-			if owner_count == plan_values.OWNER_CAPACITY {
+		if seen {
+			continue
+		}
+		if owner_count == plan_values.OWNER_CAPACITY {
+			return 0, false
+		}
+		defaults_count, locks_count := 0, 0
+		for index in first ..< count {
+			entry := &plan.entries[index]
+			if entry.kind_word != u64(pr.Plan_Entry_Kind.Value) {
+				continue
+			}
+			entry_owner, field, parts_ok := pr.plan_value_parts(entry)
+			layer, layer_ok := pr.plan_value_layer_of_word(entry.value_layer_word)
+			if !parts_ok || !layer_ok {
 				return 0, false
 			}
-			place = owner_count
-			owners[place] = {owner = owner}
-			owner_count += 1
+			if entry_owner != owner {
+				continue
+			}
+			change := chosen_values.Change{name = field, kind = .Choose, value = entry.value_word}
+			if entry.value_kind_word == u64(chosen_values.Entry_Kind.Text) {
+				change = {name = field, kind = .Choose_Text, text = pr.plan_value_text(entry)}
+			}
+			if layer == .Locked {
+				if locks_count == len(locks) {
+					return 0, false
+				}
+				locks[locks_count] = change
+				locks_count += 1
+			} else {
+				if defaults_count == len(defaults) {
+					return 0, false
+				}
+				defaults[defaults_count] = change
+				defaults_count += 1
+			}
 		}
-		records := &owners[place]
-		change := chosen_values.Change{name = field, kind = .Choose, value = entry.value_word}
-		if entry.value_kind_word == u64(chosen_values.Entry_Kind.Text) {
-			change = {name = field, kind = .Choose_Text, text = pr.plan_value_text(entry)}
-		}
-		if layer == .Locked {
-			records.locks[records.locks_count] = change
-			records.locks_count += 1
-		} else {
-			records.defaults[records.defaults_count] = change
-			records.defaults_count += 1
-		}
-	}
-	blocks: [plan_values.OWNER_CAPACITY]plan_values.Owner_Block
-	at := 0
-	for index in 0 ..< owner_count {
-		records := &owners[index]
-		defaults_written, defaults_problem := chosen_values.write_record({}, records.defaults[:records.defaults_count], bytes[at:])
+		defaults_written, defaults_problem := chosen_values.write_record({}, defaults[:defaults_count], bytes[at:])
 		if defaults_problem != .None {
 			return 0, false
 		}
-		defaults := bytes[at:][:defaults_written]
+		defaults_bytes := bytes[at:][:defaults_written]
 		at += defaults_written
-		locks_written, locks_problem := chosen_values.write_record({}, records.locks[:records.locks_count], bytes[at:])
+		locks_written, locks_problem := chosen_values.write_record({}, locks[:locks_count], bytes[at:])
 		if locks_problem != .None {
 			return 0, false
 		}
-		blocks[index] = {owner = records.owner, defaults = defaults, locks = bytes[at:][:locks_written]}
+		blocks[owner_count] = {owner = owner, defaults = defaults_bytes, locks = bytes[at:][:locks_written]}
 		at += locks_written
+		owner_count += 1
 	}
 	written = plan_values.set_write(out, MACHINE_PRINCIPAL, max(generation, 1), blocks[:owner_count])
 	if written == 0 {
@@ -144,7 +161,7 @@ plan_has_values :: proc "contextless" (plan: ^pr.Plan_Spec) -> bool {
 	if plan == nil {
 		return false
 	}
-	for entry in plan.entries[:min(int(plan.entry_count), pr.MAX_PLAN_ENTRIES)] {
+	for entry in plan.entries[:plan.entry_count] {
 		if entry.kind_word == u64(pr.Plan_Entry_Kind.Value) {
 			return true
 		}

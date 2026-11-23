@@ -6,6 +6,7 @@ package monitor
 // The store is read after the first picture, on the worker of the keeper:
 // until then the period of the plan or of the contract holds.
 
+import "modus:contract/call_outcome"
 import "modus:contract/chosen_values"
 import "modus:contract/errors"
 import module "modus:contract/module"
@@ -118,22 +119,22 @@ settings_step :: proc "contextless" () {
 // monitor.set(sample_interval = 1000)
 // ```
 @(export, link_name = "set", parameter_ranges = "sample_interval = 250..5000")
-set_export :: proc "c" (sample_interval_presence: module.Presence, sample_interval: i64, error: ^errors.Error_Record) -> i64 {
+set_export :: proc "c" (sample_interval_presence: module.Presence, sample_interval: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	interval, refusal := sample_interval_of_arguments(sample_interval_presence, sample_interval)
 	switch refusal {
 	case .None:
 	case .Presence_Not_Member:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(min(u64(sample_interval_presence), u64(max(i64)))), i64(module.Presence.Given))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(min(u64(sample_interval_presence), u64(max(i64)))), i64(module.Presence.Given))
 	case .Absent:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .None, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Absent, .None, 0)
 	case .Out_Of_Range:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, sample_interval, SAMPLE_INTERVAL_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, sample_interval, SAMPLE_INTERVAL_MOST)
 	}
 	if plan_values.locked(monitor_plan, SAMPLE_INTERVAL_NAME, sample_interval_border) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 1)
 	}
 	changes := [1]chosen_values.Change{{name = SAMPLE_INTERVAL_NAME, kind = .Choose, value = interval}}
 	return settings_change(changes[:], error, 1, sample_interval)
@@ -152,12 +153,12 @@ sample_interval_get :: proc "c" () -> i64 {
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "reset")
-reset_export :: proc "c" (error: ^errors.Error_Record) -> i64 {
+reset_export :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if plan_values.locked(monitor_plan, SAMPLE_INTERVAL_NAME, sample_interval_border) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 0)
 	}
 	changes := [1]chosen_values.Change{{name = SAMPLE_INTERVAL_NAME, kind = .Reset}}
 	return settings_change(changes[:], error, 0, 0)
@@ -177,26 +178,26 @@ Setting_State :: struct {
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "settings_state")
-settings_state_export :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> i64 {
+settings_state_export :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
 		result[0] = {layer = i64(sample_interval_layer), value = i64(sample_interval_in_force)}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 @(private = "file")
-settings_change :: proc "contextless" (changes: []chosen_values.Change, error: ^errors.Error_Record, argument: i64, value: i64) -> i64 {
+settings_change :: proc "contextless" (changes: []chosen_values.Change, error: ^errors.Error_Record, argument: i64, value: i64) -> (outcome: call_outcome.Call_Outcome, changed: i64) {
 	switch kept_choices.kept_change(&monitor_kept, changes) {
 	case .Taken:
 		sample_interval_in_force, sample_interval_layer = sample_interval_of_record(kept_choices.kept_record(&monitor_kept), monitor_plan)
-		return 1
+		return .Succeeded, 1
 	case .No_Room:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, argument, value)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, value)
 	case .No_Store:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .Store, argument, value)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store, argument, value)
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
+	return call_outcome.fail(error, .Argument_Refused, .Refused, .None)
 }

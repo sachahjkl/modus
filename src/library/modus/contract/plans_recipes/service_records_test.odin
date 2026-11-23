@@ -85,38 +85,38 @@ plan_of_rows_refuses_empty_and_past_the_bound :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Plan_Refusal.Buffer_Too_Small)
 }
 
-// The bound of a plan is its entries: MAX_PLAN_ENTRIES texts of the
-// longest length, PLAN_ROWS_MOST rows, are one plan; one row more is
-// refused before any row is read, and one text entry more is refused at
-// its first row.
+// The bound of a plan is its entries, in the memory of the plan: the rows
+// of a text count as one entry. A plan whose memory holds ENTRIES entries
+// takes ENTRIES texts of the longest length, and refuses one text entry
+// more at its first row; then two entries of one row after ENTRIES - 1
+// texts: the second one is refused at its row.
 @(test)
 the_rows_of_a_text_count_as_one_entry :: proc(t: ^testing.T) {
-	rows := make([]Plan_Entry_Row, PLAN_ROWS_MOST + PLAN_TEXT_ROWS_MOST, context.temp_allocator)
+	ENTRIES :: 32
+	rows := make([]Plan_Entry_Row, (ENTRIES + 1) * PLAN_TEXT_ROWS_MOST, context.temp_allocator)
 	text: [PLAN_VALUE_TEXT_BYTES]u8
 	for &byte in text {
 		byte = 'a'
 	}
 	count := 0
-	for index in 0 ..= MAX_PLAN_ENTRIES {
+	for index in 0 ..= ENTRIES {
 		owner := [3]u8{'o', 'a' + u8(index % 26), 'a' + u8(index / 26)}
 		entry, made := plan_entry_make_text_value(string(owner[:]), "home", string(text[:]), .Plan_Default)
 		testing.expect(t, made)
 		count += plan_rows_of_entry(&entry, rows[count:])
 	}
-	testing.expect_value(t, count, PLAN_ROWS_MOST + PLAN_TEXT_ROWS_MOST)
-	plan := new(Plan_Spec, context.temp_allocator)
-	refusal, _ := plan_of_rows(0, rows[:PLAN_ROWS_MOST], plan)
+	testing.expect_value(t, count, (ENTRIES + 1) * PLAN_TEXT_ROWS_MOST)
+	plan := test_plan(0, 0, ENTRIES)
+	refusal, _ := plan_of_rows(0, rows[:ENTRIES * PLAN_TEXT_ROWS_MOST], &plan)
 	testing.expect_value(t, refusal, Plan_Refusal.None)
-	testing.expect_value(t, plan.entry_count, u32(MAX_PLAN_ENTRIES))
-	testing.expect_value(t, int(plan.entries[MAX_PLAN_ENTRIES - 1].value_text_length), PLAN_VALUE_TEXT_BYTES)
+	testing.expect_value(t, plan.entry_count, u32(ENTRIES))
+	testing.expect_value(t, int(plan.entries[ENTRIES - 1].value_text_length), PLAN_VALUE_TEXT_BYTES)
 	past_index: u32
-	refusal, past_index = plan_of_rows(0, rows[:PLAN_ROWS_MOST + 1], plan)
+	refusal, past_index = plan_of_rows(0, rows, &plan)
 	testing.expect_value(t, refusal, Plan_Refusal.Too_Many_Entries)
-	testing.expect_value(t, past_index, u32(0))
-	testing.expect(t, plan_is_zero(plan))
-	// 31 texts, then two entries of one row: 219 rows, within the rows, and
-	// 33 entries, refused at the first row of the 33rd.
-	texts := (MAX_PLAN_ENTRIES - 1) * PLAN_TEXT_ROWS_MOST
+	testing.expect_value(t, past_index, u32(ENTRIES * PLAN_TEXT_ROWS_MOST))
+	testing.expect(t, plan_is_zero(&plan))
+	texts := (ENTRIES - 1) * PLAN_TEXT_ROWS_MOST
 	one_more := make([]Plan_Entry_Row, texts + 2, context.temp_allocator)
 	copy(one_more, rows[:texts])
 	for index in 0 ..< 2 {
@@ -124,10 +124,10 @@ the_rows_of_a_text_count_as_one_entry :: proc(t: ^testing.T) {
 		testing.expect(t, word_made)
 		testing.expect_value(t, plan_rows_of_entry(&word, one_more[texts + index:]), 1)
 	}
-	refusal, past_index = plan_of_rows(0, one_more, plan)
+	refusal, past_index = plan_of_rows(0, one_more, &plan)
 	testing.expect_value(t, refusal, Plan_Refusal.Too_Many_Entries)
 	testing.expect_value(t, past_index, u32(texts + 1))
-	testing.expect(t, plan_is_zero(plan))
+	testing.expect(t, plan_is_zero(&plan))
 }
 
 @(test)

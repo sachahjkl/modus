@@ -66,7 +66,7 @@ Plan_Make_Problem :: enum u8 {
 // plan, or of a `with`, in the order of their first place. ok is false for
 // a value of another kind, or past DECLARATION_RECORD_FIELDS_LIMIT names.
 record_field_names :: proc "contextless" (evaluation: ^Evaluation, value: Value, names: ^[DECLARATION_RECORD_FIELDS_LIMIT]string) -> (count: int, ok: bool) {
-	ok = collect_lazy_record_fields(evaluation, value, names, &count, 0)
+	ok = collect_lazy_record_fields(evaluation, value, names[:], &count, 0)
 	return count, ok
 }
 

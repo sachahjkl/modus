@@ -177,20 +177,21 @@ a_text_of_the_plan_reaches_its_owner :: proc(t: ^testing.T) {
 	word, word_ok := chosen_values.find(monitor.locks, "sample_interval")
 	testing.expect(t, word_ok && word == 1000)
 	// 32 texts of 256 bytes for one owner.
-	full: pr.Plan_Spec
+	TEXTS :: 32
+	full := test_plan(0, 0, TEXTS)
 	long: [pr.PLAN_VALUE_TEXT_BYTES]u8
 	for &byte in long {
 		byte = 'a'
 	}
 	field: [3]u8 = {'f', 'a', 'a'}
-	for index in 0 ..< pr.MAX_PLAN_ENTRIES {
+	for index in 0 ..< TEXTS {
 		field[1], field[2] = 'a' + u8(index / 26), 'a' + u8(index % 26)
 		full.entries[index], _ = pr.plan_entry_make_text_value("browser", string(field[:]), string(long[:]), .Plan_Default)
 	}
 	// 32 texts of 256 bytes do not fit the page of one owner: the border of
 	// the plan refuses them at the entry that passes the page, and the core
 	// would refuse the set; the entries that fit pass.
-	full.entry_count = pr.MAX_PLAN_ENTRIES
+	full.entry_count = TEXTS
 	refusal, bad := pr.plan_validate(&full)
 	testing.expect_value(t, refusal, pr.Plan_Refusal.Values_Too_Large)
 	per_entry := chosen_values.ENTRY_SIZE + pr.PLAN_VALUE_TEXT_BYTES

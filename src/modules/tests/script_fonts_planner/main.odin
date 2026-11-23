@@ -30,6 +30,7 @@ import "modus:contract/errors"
 import "modus:contract/font_outlines"
 import "modus:contract/isolated"
 import "modus:contract/module"
+import "modus:contract/powerbox"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/role_contract"
 import "modus:contract/value_kinds"
@@ -79,7 +80,7 @@ bytes_of :: proc "contextless" (value: ^$T) -> []u8 {
 @(private = "file")
 decision_wait :: proc "contextless" (ticket: i64, asked_at: u64, generation_row: ^pr.Plan_Generation_Row, error: ^errors.Error_Record) -> (generation: i64, status: call_outcome.Call_Outcome) {
 	armed := false
-	deadline := asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
+	deadline := asked_at + powerbox.CONSENT_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		rows: [1]pr.Plan_Generation_Row
 		arguments := [1]isolated.Argument{{integer = u64(ticket)}}
@@ -90,7 +91,7 @@ decision_wait :: proc "contextless" (ticket: i64, asked_at: u64, generation_row:
 			return generation, status
 		}
 		now := system.time()
-		if !armed && now >= asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS {
+		if !armed && now >= asked_at + powerbox.CONSENT_ARM_MILLISECONDS {
 			armed = true
 			system.log_fact(.Info, Dialog_Armed{ticket = u64(ticket)}, PLAN_NAME)
 		}

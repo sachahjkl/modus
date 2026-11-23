@@ -8,6 +8,7 @@ package browser
 // that the principal chose replaces it if no other page was loaded.
 
 import "modus:contract/chosen_values"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -28,8 +29,10 @@ HOME_DEFAULT :: "modus://welcome"
 // export states it (parameter_ranges), the console checks it before the
 // call, and home_problem_of checks it again.
 HOME_BYTES_LEAST :: 1
-HOME_BYTES_MOST :: ADDRESS_CAPACITY
-#assert(HOME_BYTES_MOST <= chosen_values.TEXT_BYTES_MOST)
+// Format property: the store keeps a text of at most
+// chosen_values.TEXT_BYTES_MOST bytes, and the address field holds
+// ADDRESS_CAPACITY.
+HOME_BYTES_MOST :: min(ADDRESS_CAPACITY, chosen_values.TEXT_BYTES_MOST)
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
 
@@ -164,13 +167,13 @@ acts_for_principal :: proc "contextless" () -> bool {
 
 // set changes the settings of the browser, each optional: home, the
 // address that the browser opens at its start: a page built in
-// (modus://welcome, modus://guide) or an address of HTTP or HTTPS, 1 to 160
+// (modus://welcome, modus://guide) or an address of HTTP or HTTPS, 1 to 1024
 // bytes. The browser keeps it in its private store, in the form that its
 // address field writes, so the next start opens it. The result is 1, or -1
 // with an error record: No_Grant for a caller that does not act for the
 // principal, or with the unit Plan_Lock when a lock of the plan holds the
 // home; Absent for a call that gives no setting; Too_Long (unit Bytes) for
-// a home past 160 bytes; Bad_Value (argument 1) for an empty home, a home
+// a home past 1024 bytes; Bad_Value (argument 1) for an empty home, a home
 // that is not UTF-8, or an address that the browser refuses (found: the
 // problem of the address, from 1); Refused when the browser has no store. A
 // refused call changes nothing.
@@ -181,31 +184,31 @@ acts_for_principal :: proc "contextless" () -> bool {
 // connect("browser")
 // browser.set(home = "modus://guide")
 // ```
-@(export, link_name = "set", parameter_ranges = "home = 1..160")
-set_export :: proc "c" (home_presence: module.Presence, home: ^string, error: ^errors.Error_Record) -> i64 {
+@(export, link_name = "set", parameter_ranges = "home = 1..1024")
+set_export :: proc "c" (home_presence: module.Presence, home: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	text, given, ok := module.optional_text_of_arguments(home_presence, home)
 	if !ok {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(home_presence))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(home_presence))
 	}
 	if !given {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .None, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Absent, .None, 0)
 	}
 	room: [ADDRESS_CAPACITY + 8]u8
 	canonical, problem, address_problem := home_problem_of(text, room[:])
 	switch problem {
 	case .None:
 	case .Too_Long, .Canonical_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(text)), HOME_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(text)), HOME_BYTES_MOST)
 	case .Too_Short, .Not_Utf8:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(len(text)))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(len(text)))
 	case .Address_Refused:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(len(text)), 0, i64(address_problem))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(len(text)), 0, i64(address_problem))
 	}
 	if plan_values.text_locked(browser_plan, HOME_NAME, home_border) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 1)
 	}
 	changes := [1]chosen_values.Change{{name = HOME_NAME, kind = .Choose_Text, text = canonical}}
 	return settings_change(changes[:], error, 1, i64(len(text)))
@@ -227,12 +230,12 @@ home_get :: proc "c" (result: ^[]u8) -> i64 {
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "reset")
-reset_export :: proc "c" (error: ^errors.Error_Record) -> i64 {
+reset_export :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if plan_values.text_locked(browser_plan, HOME_NAME, home_border) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 0)
 	}
 	changes := [1]chosen_values.Change{{name = HOME_NAME, kind = .Reset}}
 	return settings_change(changes[:], error, 0, 0)
@@ -253,26 +256,26 @@ Setting_State :: struct {
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "settings_state")
-settings_state_export :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> i64 {
+settings_state_export :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
 		result[0] = {layer = i64(home_layer), value = i64(home_length)}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 @(private = "file")
-settings_change :: proc "contextless" (changes: []chosen_values.Change, error: ^errors.Error_Record, argument: i64, value: i64) -> i64 {
+settings_change :: proc "contextless" (changes: []chosen_values.Change, error: ^errors.Error_Record, argument: i64, value: i64) -> (outcome: call_outcome.Call_Outcome, changed: i64) {
 	switch kept_choices.kept_change(&browser_kept, changes) {
 	case .Taken:
 		settings_take()
-		return 1
+		return .Succeeded, 1
 	case .No_Room:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, argument, value)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, value)
 	case .No_Store:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .Store, argument, value)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store, argument, value)
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
+	return call_outcome.fail(error, .Argument_Refused, .Refused, .None)
 }

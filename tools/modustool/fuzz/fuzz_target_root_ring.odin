@@ -136,7 +136,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return true
 	case .Machine_Usable:
 		return .Start_Policy in start_grant_set
-	case .Plan_Roles:
+	case .Plan_Roles, .Plan_Values:
 		return .Plans in start_grant_set
 	case .Screen_Budget:
 		return .Screen_Capture in start_grant_set

@@ -175,8 +175,8 @@ Getter_Ran :: struct {}
 mode_set :: proc "c" (mode: Mode, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The caller wrote the register: a word that names no member is
 	// refused, never read as a mode.
-	member, given, ok := enum_word.member_of_argument(mode)
-	if !ok || !given {
+	member, ok := enum_word.member_of_argument(mode)
+	if !ok {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(transmute(u32)mode))
 	}
 	return .Succeeded, i64(member)
