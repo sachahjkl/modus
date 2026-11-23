@@ -1,0 +1,4 @@
+name: store_explorer
+imports: drawing text_rendering
+defines: DRAWING_THROUGH_MODULE=true
+library: no
