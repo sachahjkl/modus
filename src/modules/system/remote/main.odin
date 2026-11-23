@@ -1086,7 +1086,10 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	// (src/md/features/wide_grants.md, "The path of a grant, end to end").
 	if row := client_rows[client.row]; row.wide_grant != 0 && row.serial == client.serial {
 		if outcome, status := call_act_record(row.wide_grant, client.principal, connection.hash, u64(received)); outcome == .Refused {
-			return refuse(buffer, errors.error_make(.Busy, .Records, remote.FIELD_SERVICE, i64(status), 0), service, connection.hash)
+			// The cause for the agent: its record found no room, so the call
+			// did not run. A space that is full for the grant stays so: each
+			// next call is refused too, until the grant ends.
+			return refuse(buffer, errors.error_make(.Full, .Act_Records, remote.FIELD_SERVICE, 0, 0, i64(status)), service, connection.hash)
 		}
 	}
 	completion, call_error, called := isolated_call_make(connection, request, arguments)

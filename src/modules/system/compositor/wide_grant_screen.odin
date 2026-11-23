@@ -144,9 +144,19 @@ wide_grant_screen_answer :: proc "contextless" (give: bool) {
 // wide_grant_mark_take takes Wide_Grant_Mark of the root service, the one
 // writer of the mark.
 wide_grant_mark_take :: proc "contextless" (values: [7]u64) {
-	if !wide_grant_view.display_mark_take(&wide_grant_display, &wide_grant_screen, values) {
+	// The end of a grant: the counts of the last window leave first.
+	if values[0] == 0 {
+		wide_grant_counts_write()
+	}
+	started, ok := wide_grant_view.display_mark_take(&wide_grant_display, &wide_grant_screen, values)
+	if !ok {
 		system.log_fact(.Info, Wide_Grant_Screen_Word_Refused{})
 		return
+	}
+	// A view that is open when the grant starts gets its record of the open
+	// now: the agent may read the screen through it from here on.
+	if started && capture.client >= 0 && !wide_grant_view_record(true, capture.client) {
+		capture_end("the act record of the view did not leave")
 	}
 	damage_whole_screen()
 }
@@ -159,6 +169,7 @@ wide_grant_revoke_press :: proc "contextless" () -> bool {
 		return false
 	}
 	grant := wide_grant_display.mark.grant_serial
+	wide_grant_counts_write()
 	if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Wide_Grant_Revoke_Pressed), values = {0 = grant}}) {
 		system.log_fact(.Warning, Wide_Grant_Answer_Not_Sent{})
 		return true
@@ -216,7 +227,7 @@ mark_place :: proc "contextless" () -> (x, y, width, height: int) {
 
 @(private = "file")
 card_place :: proc "contextless" () -> (x, y, width, height: int) {
-	height = POWERBOX_TITLE_HEIGHT + 3 * WIDE_GRANT_SCREEN_LINE + 2 * POWERBOX_MARGIN + POWERBOX_BUTTON_HEIGHT
+	height = POWERBOX_TITLE_HEIGHT + 4 * WIDE_GRANT_SCREEN_LINE + 2 * POWERBOX_MARGIN + POWERBOX_BUTTON_HEIGHT
 	x = max(0, (desktop_width - WIDE_GRANT_SCREEN_WIDTH) / 2)
 	y = max(desktop_work_top() + 16, min((desktop_height - height) / 2, desktop_work_bottom() - height - 16))
 	return x, y, WIDE_GRANT_SCREEN_WIDTH, height
@@ -335,7 +346,7 @@ viewer_pointer_surface :: proc "contextless" (x, y: int) -> (surface: wide_grant
 	case bar.inside_bar(bar_layout, y):
 		return .Bar, 0
 	}
-	if index, edges := resize_edges_under_pointer(); edges != {} && index >= 0 {
+	if index, edges := resize_edges_at(x, y); edges != {} && index >= 0 {
 		return .Overlay, 0
 	}
 	position := window_position_at(x, y)
@@ -391,6 +402,23 @@ wide_grant_record :: proc "contextless" (record: wide_grants.Act_Stream_Record) 
 	return false
 }
 
+// wide_grant_viewer_input_checked gives the verdict of an input of a
+// viewer on a surface, and logs the first input that a grant refuses.
+// false: the input goes nowhere.
+wide_grant_viewer_input_checked :: proc "contextless" (surface: wide_grant_view.Surface, window_id: u64) -> bool {
+	switch wide_grant_view.viewer_input_verdict(&wide_grant_display, surface, window_id) {
+	case .Allowed:
+		return true
+	case .Dropped_Counted:
+		if wide_grant_display.dropped_input == 1 {
+			system.log_fact(.Info, Wide_Grant_Viewer_Input_Refused{grant = wide_grant_display.mark.grant_serial})
+		}
+	case .Dropped:
+	}
+	damage_bar()
+	return false
+}
+
 // wide_grant_input_allowed is the one step of an input of a viewer under a
 // grant: the record of its window leaves first when the window changed,
 // then the act counts on it. false: the act must not run.
@@ -405,8 +433,34 @@ wide_grant_input_allowed :: proc "contextless" (window_id: u64, act: wide_grants
 		}
 		wide_grants.input_target_taken(target, window_id)
 	}
-	wide_grants.input_target_count(target, act)
+	wide_grants.input_target_count(target, act, system.time())
 	return true
+}
+
+// wide_grant_counts_write writes the counts of the window of the input
+// that wait, with the time of their last act. The loop calls it at
+// INPUT_COUNTS_INTERVAL_MILLISECONDS, and the end of a grant before the mark
+// clears. A record that did not leave keeps the counts for the next try.
+wide_grant_counts_write :: proc "contextless" () {
+	if !wide_grant_display.active {
+		return
+	}
+	target := &wide_grant_display.target
+	if record, needed := wide_grants.input_target_counts_record(target, wide_grant_display.mark.grant_serial, wide_grant_display.mark.principal_id); needed && wide_grant_record(record) {
+		wide_grants.input_target_counts_taken(target)
+	}
+}
+
+// The time of the last write of the counts, for the interval.
+wide_grant_counts_written_ms: u64
+
+// wide_grant_counts_tick writes the counts at their interval while a grant
+// holds.
+wide_grant_counts_tick :: proc "contextless" (now_ms: u64) {
+	if wide_grant_display.active && now_ms - wide_grant_counts_written_ms >= wide_grants.INPUT_COUNTS_INTERVAL_MILLISECONDS {
+		wide_grant_counts_written_ms = now_ms
+		wide_grant_counts_write()
+	}
 }
 
 // wide_grant_view_record writes the open (true) or the close of a view of
@@ -490,9 +544,17 @@ wide_grant_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		acts_text: [64]u8
 		acts_count := copy(acts_text[:], "Acts recorded: ")
 		acts_count += digits_write(acts_text[acts_count:], wide_grant_display.acts_recorded)
-		acts_count += copy(acts_text[acts_count:], ", refused: ")
-		acts_count += digits_write(acts_text[acts_count:], wide_grant_display.dropped_acts + wide_grant_display.dropped_input)
 		interface.draw_text(table, x + POWERBOX_MARGIN, line_y + 2 * WIDE_GRANT_SCREEN_LINE, string(acts_text[:acts_count]), graphics.colors.dim, interface.FONT_INTERFACE)
+		// Why acts were refused: a record with no room means that the space
+		// of the act records of the grant is full, or its ring is; each next
+		// act is refused until the grant ends.
+		refused_text: [96]u8
+		refused_count := copy(refused_text[:], "Refused: ")
+		refused_count += digits_write(refused_text[refused_count:], wide_grant_display.dropped_acts)
+		refused_count += copy(refused_text[refused_count:], " with no room for their record, ")
+		refused_count += digits_write(refused_text[refused_count:], wide_grant_display.dropped_input)
+		refused_count += copy(refused_text[refused_count:], " out of your windows")
+		interface.draw_text(table, x + POWERBOX_MARGIN, line_y + 3 * WIDE_GRANT_SCREEN_LINE, interface.text_fit(table, interface.FONT_INTERFACE, string(refused_text[:refused_count]), width - 2 * POWERBOX_MARGIN), graphics.colors.dim, interface.FONT_INTERFACE)
 		revoke_x, revoke_y, revoke_width, revoke_height := revoke_place()
 		interface.draw_rectangle(table, revoke_x, revoke_y, revoke_width, revoke_height, graphics.colors.stop_process)
 		interface.draw_text(table, revoke_x + 12, revoke_y + (revoke_height - graphics.CELL_HEIGHT) / 2, "Revoke", graphics.COLOR_WHITE, interface.FONT_INTERFACE)

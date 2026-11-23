@@ -8,6 +8,7 @@ import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
+import "modus:contract/wide_grants"
 
 // A list of three start rows that the border takes, and its bytes, for the
 // cases that change one field.
@@ -253,17 +254,44 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	reader_restarts := record_change(bytes, 0, proc(record: ^Row_Record) {record.restart_count = RESTART_LIMIT})
 	problem, _, _ := list_read(reader_restarts, &list)
 	testing.expect_value(t, problem, List_Problem.None)
-	// A row with terms: the list keeps them, with their count.
-	with_terms := change(good, proc(record: ^Wiring_Row_Record) {
-		record.wiring.terms_count = START_LIST_TERMS_BYTES
-		for index in 0 ..< START_LIST_TERMS_BYTES {
-			record.terms[index] = u8(index + 1)
-		}
-	})
-	problem, _, _ = list_read(wiring_change(bytes, 4, 1, with_terms), &list)
-	testing.expect_value(t, problem, List_Problem.None)
-	testing.expect_value(t, list.wirings[1].wiring.terms_count, u32(START_LIST_TERMS_BYTES))
-	testing.expect_value(t, list.wirings[1].terms, with_terms.terms)
+	// Terms that name no audit that keeps what leaves a server: each field
+	// at its edges, and bytes that are no terms.
+	audit :: wide_grants.Space_Terms{kind_word = i64(wide_grants.Collector_Space_Kind.Audit), bound_records = 1, forwarding_word = i64(wide_grants.Space_Forwarding.Keeps), record_size = 1}
+	bad_terms := [?]wide_grants.Space_Terms {
+		{},
+		{kind_word = i64(wide_grants.Collector_Space_Kind.Keep), bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = 3, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = -1, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = i64(wide_grants.Space_Forwarding.Forward), record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = 0, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 0, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = -1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = wide_grants.SPACE_AUDIT_BOUND_MOST + 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = max(i64), forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 0},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = wide_grants.SPACE_RECORD_BYTES_MOST + 1},
+	}
+	for terms in bad_terms {
+		row := good
+		row.wiring.terms_count = START_LIST_TERMS_BYTES
+		row.terms = transmute([START_LIST_TERMS_BYTES]u8)terms
+		expect_refused(t, wiring_change(bytes, 4, 1, row), .Bad_Terms, 1)
+	}
+	// A row with terms at each edge of their range: the list keeps them,
+	// with their count.
+	good_terms := [?]wide_grants.Space_Terms {
+		audit,
+		{kind_word = audit.kind_word, bound_records = wide_grants.SPACE_AUDIT_BOUND_MOST, forwarding_word = audit.forwarding_word, record_size = wide_grants.SPACE_RECORD_BYTES_MOST},
+	}
+	for terms in good_terms {
+		with_terms := good
+		with_terms.wiring.terms_count = START_LIST_TERMS_BYTES
+		with_terms.terms = transmute([START_LIST_TERMS_BYTES]u8)terms
+		problem, _, _ = list_read(wiring_change(bytes, 4, 1, with_terms), &list)
+		testing.expect_value(t, problem, List_Problem.None)
+		testing.expect_value(t, list.wirings[1].wiring.terms_count, u32(START_LIST_TERMS_BYTES))
+		testing.expect_value(t, list.wirings[1].terms, with_terms.terms)
+	}
 }
 
 // The writer of a list refuses more start rows or wiring rows than a list

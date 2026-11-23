@@ -263,7 +263,7 @@ act_kind_is_lifecycle :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
 	case .Grant_Started, .Grant_Revoked, .Grant_Expired:
 		return true
-	case .None, .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Forbidden_Act_Blocked, .Call_Made, .Target_Window_Changed:
+	case .None, .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Forbidden_Act_Blocked, .Call_Made, .Target_Window_Changed, .Input_Counted:
 		return false
 	}
 	return false
@@ -407,7 +407,7 @@ act_space_refusal_map :: proc "contextless" (refusal: Space_Refusal) -> Act_Wiri
 		return .Audit_Space_Full
 	case .Store_Failed, .Store_Damaged:
 		return .Store_Refused
-	case .Bad_Bound, .Bound_Past_Room, .Space_Limit_Reached:
+	case .Bad_Bound, .Space_Limit_Reached:
 		return .Bad_Bound
 	case .Bad_Kind, .Bad_Forwarding, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held:
 		return .Store_Refused
@@ -853,6 +853,34 @@ act_links_close_ended :: proc "contextless" (router: ^Grant_Act_Router, links: ^
 	}
 	for &link in links.links {
 		if !link.active || link.state != .Open || !link.pending || count >= len(closed_tags) {
+			continue
+		}
+		for producer in Act_Producer {
+			if producer == .None || router.space_numbers[producer] != link.space {
+				continue
+			}
+			link_close(&link, errors.error_make(.Refused, .Records, 0, i64(Act_Wiring_Refusal.Grant_Revoked), i64(link.record_size), i64(link.tag)))
+			closed_tags[count] = link.tag
+			count += 1
+			break
+		}
+	}
+	return count
+}
+
+// act_links_close_replaced closes each open link that feeds an act space of
+// a router whose grant ended because a newer grant replaces it, pending
+// record or not: once the newer grant holds, a record of the old grant on
+// such a ring would close a ring of the newer one. A record that the ring
+// still held is lost, and the record of the end says that the grant was
+// replaced. It writes the tags of the rings that the caller closes, and
+// gives their count. A router that holds a grant closes nothing.
+act_links_close_replaced :: proc "contextless" (router: ^Grant_Act_Router, links: ^Source_Links, closed_tags: []u32) -> (count: int) {
+	if router.state != .Ended {
+		return 0
+	}
+	for &link in links.links {
+		if !link.active || link.state != .Open || count >= len(closed_tags) {
 			continue
 		}
 		for producer in Act_Producer {

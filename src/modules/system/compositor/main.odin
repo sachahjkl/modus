@@ -1136,6 +1136,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			tray_widgets_second() // tray_widgets.odin: the foot of the calendar.
 			if wide_grant_display.active {
 				damage_bar() // The mark shows the minutes left.
+				wide_grant_counts_tick(now) // wide_grant_screen.odin
 			}
 		}
 		if damage_count > 0 && now >= next_frame {

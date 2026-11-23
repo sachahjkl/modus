@@ -103,24 +103,24 @@ space_open_keeps_one_space_for_one_pair_and_bounds_the_room :: proc(t: ^testing.
 	testing.expect(t, resized != first, "a new record size gets a new space")
 	testing.expect_value(t, source_count(store), 1)
 
-	// The room of all the spaces: 256 records, 8 used.
-	big, big_refusal := space_open(store, text("a"), text("o"), audit_terms(SPACE_RECORDS_MOST))
-	testing.expect_value(t, big_refusal, Space_Refusal.None)
-	_, refusal = space_open(store, text("b"), text("o"), audit_terms(SPACE_RECORDS_MOST))
+	// The three act spaces of a wide grant, at the largest bound, and two
+	// audits of servers fit beside the two spaces above; one more fits.
+	for name in ([?]string{"root", "remote", "compositor"}) {
+		_, refusal = space_open(store, text(name), text("acts"), audit_terms(SPACE_AUDIT_BOUND_MOST, 64))
+		testing.expect_value(t, refusal, Space_Refusal.None)
+	}
+	for name in ([?]string{"shop", "mail"}) {
+		_, refusal = space_open(store, text(name), text("orders"), audit_terms(SPACE_RECORDS_MOST))
+		testing.expect_value(t, refusal, Space_Refusal.None)
+	}
+	_, refusal = space_open(store, text("d"), text("o"), audit_terms(SPACE_RECORDS_MOST))
 	testing.expect_value(t, refusal, Space_Refusal.None)
-	_, refusal = space_open(store, text("c"), text("o"), audit_terms(SPACE_RECORDS_MOST))
-	testing.expect_value(t, refusal, Space_Refusal.None)
-	testing.expect_value(t, space_room_left(store), u32(SPACE_ROOM_RECORDS - 8 - 3 * SPACE_RECORDS_MOST))
-	_, refusal = space_open(store, text("d"), text("o"), audit_terms(i64(space_room_left(store)) + 1))
-	testing.expect_value(t, refusal, Space_Refusal.Bound_Past_Room)
-	_, refusal = space_open(store, text("d"), text("o"), audit_terms(i64(space_room_left(store))))
-	testing.expect_value(t, refusal, Space_Refusal.None)
-	_ = big
+	testing.expect_value(t, space_count(store), SPACE_CAPACITY)
 
 	// Each place taken: the next pair is refused with no change.
 	_, refusal = space_open(store, text("e"), text("o"), audit_terms(1))
-	testing.expect_value(t, refusal, Space_Refusal.Bound_Past_Room)
-	testing.expect_value(t, space_count(store), 6)
+	testing.expect_value(t, refusal, Space_Refusal.Space_Limit_Reached)
+	testing.expect_value(t, space_count(store), SPACE_CAPACITY)
 }
 
 @(test)

@@ -29,6 +29,7 @@ package wide_grants
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/value_kinds"
 
 // The records of one segment.
 SPACE_SEGMENT_RECORDS :: 16
@@ -109,6 +110,20 @@ SPACE_INDEX_BYTES_MOST :: SPACE_INDEX_HEAD_BYTES + SPACE_CAPACITY * SPACE_INDEX_
 // The bytes of the name of a segment object: "collector_space_<n>_segment_<k>".
 SEGMENT_OBJECT_NAME_BYTES :: 48
 
+// The slot map of a space Audit, "collector_space_<n>_slots": the first
+// bytes, the version, the context string of its hash, and its size. It
+// names the segment of each slot, so a start reads the map and the last
+// segments only, never each slot.
+SLOT_MAP_MAGIC :: "mcolslot"
+SLOT_MAP_VERSION :: 1
+SLOT_MAP_HASH_DOMAIN :: "modus collector slot map v1"
+SLOT_MAP_HEAD_BYTES :: 16
+SLOT_MAP_BYTES :: SLOT_MAP_HEAD_BYTES + SPACE_SEGMENT_SLOTS * 8 + blake3.HASH_SIZE
+
+// The segments that a start reads into the ring: those that hold the
+// newest SPACE_RECORDS_MOST records, at most one of them not full.
+LOAD_SEGMENTS_MOST :: SPACE_RECORDS_MOST / SPACE_SEGMENT_RECORDS + 1
+
 // Whether the spaces of a store were read back from its private store. The
 // store reads them at its first step: a read that fails leaves Not_Loaded,
 // and the next step reads again; a damaged object leaves Damaged until the
@@ -166,6 +181,68 @@ segment_object_name :: proc "contextless" (into: ^[SEGMENT_OBJECT_NAME_BYTES]u8,
 	at = text_write(into[:], at, "_segment_")
 	at = decimal_write(into[:], at, u32(segment % SPACE_SEGMENT_SLOTS))
 	return string(into[:at])
+}
+
+// slot_map_object_name gives the name of the slot map of the space
+// space_number in into.
+slot_map_object_name :: proc "contextless" (into: ^[SEGMENT_OBJECT_NAME_BYTES]u8, space_number: u32) -> string {
+	at := text_write(into[:], 0, "collector_space_")
+	at = decimal_write(into[:], at, space_number)
+	at = text_write(into[:], at, "_slots")
+	return string(into[:at])
+}
+
+// slot_map_persist writes the slot map of a space whole, as the store
+// holds it.
+slot_map_persist :: proc "contextless" (store: ^Space_Store, space_number: u32) -> Space_Refusal {
+	bytes: [SLOT_MAP_BYTES]u8
+	copy(bytes[:8], SLOT_MAP_MAGIC)
+	byte_order.write_u32_little_endian(bytes[:], 8, SLOT_MAP_VERSION)
+	byte_order.write_u32_little_endian(bytes[:], 12, space_number)
+	for entry, slot in store.slot_maps[space_number - 1] {
+		byte_order.write_u64_little_endian(bytes[:], SLOT_MAP_HEAD_BYTES + slot * 8, entry)
+	}
+	at := SLOT_MAP_HEAD_BYTES + SPACE_SEGMENT_SLOTS * 8
+	map_hash := blake3.derive_key(SLOT_MAP_HASH_DOMAIN, bytes[:at])
+	copy(bytes[at:][:blake3.HASH_SIZE], map_hash[:])
+	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+	if pr.private_store_write(&store.store_port, slot_map_object_name(&name_place, space_number), bytes[:]) != .Ok {
+		return .Store_Failed
+	}
+	return .None
+}
+
+// slot_map_load reads the slot map of a space into the store. No object is
+// a map of no slot; a map of another space, another size or a broken hash
+// is damage.
+@(private = "file")
+slot_map_load :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (present: bool, refusal: Space_Refusal) {
+	store.slot_maps[space_number - 1] = {}
+	buffer: [SLOT_MAP_BYTES]u8
+	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+	bytes, status := pr.private_store_read(&store.store_port, slot_map_object_name(&name_place, space_number), buffer[:])
+	store.load_reads += 1
+	switch status {
+	case .Ok:
+	case .Absent:
+		return false, .None
+	case .Too_Large:
+		return false, .Store_Damaged
+	case .Failed:
+		return false, .Store_Failed
+	}
+	if len(bytes) != SLOT_MAP_BYTES || string(bytes[:8]) != SLOT_MAP_MAGIC || byte_order.read_u32_little_endian(bytes, 8) != SLOT_MAP_VERSION || byte_order.read_u32_little_endian(bytes, 12) != space_number {
+		return false, .Store_Damaged
+	}
+	at := SLOT_MAP_HEAD_BYTES + SPACE_SEGMENT_SLOTS * 8
+	map_hash := blake3.derive_key(SLOT_MAP_HASH_DOMAIN, bytes[:at])
+	if string(map_hash[:]) != string(bytes[at:]) {
+		return false, .Store_Damaged
+	}
+	for slot in 0 ..< SPACE_SEGMENT_SLOTS {
+		store.slot_maps[space_number - 1][slot] = byte_order.read_u64_little_endian(bytes, SLOT_MAP_HEAD_BYTES + slot * 8)
+	}
+	return true, .None
 }
 
 // name_field_valid says if a name field of a stored object holds a name that
@@ -259,6 +336,19 @@ segment_persist :: proc "contextless" (
 		return {}, .Store_Damaged
 	}
 	record_count := u32(serial - first_index + 1)
+	// A new segment takes its slot in the map first: a stop between the two
+	// writes leaves a map that names a segment that its slot does not hold
+	// yet, which a start reads as the end of the records.
+	slot := segment % SPACE_SEGMENT_SLOTS
+	map_entry := &store.slot_maps[space_number - 1][slot]
+	if map_entry^ != segment + 1 {
+		before := map_entry^
+		map_entry^ = segment + 1
+		if refusal = slot_map_persist(store, space_number); refusal != .None {
+			map_entry^ = before
+			return {}, refusal
+		}
+	}
 	length := segment_length(space.record_size, record_count)
 	bytes := store.segment_bytes[:length]
 	segment_head_write(bytes, store.principal, space_number, space, segment, record_count, segment_previous_hash(space, segment))
@@ -482,7 +572,6 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		return .Store_Damaged
 	}
 	previous_number: u32 = 0
-	room: u32 = 0
 	for row_index in 0 ..< int(count) {
 		row := bytes[SPACE_INDEX_HEAD_BYTES + row_index * SPACE_INDEX_ROW_BYTES:][:SPACE_INDEX_ROW_BYTES]
 		space_number := byte_order.read_u32_little_endian(row, SPACE_INDEX_ROW_SPACE_AT)
@@ -516,10 +605,6 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		if !name_field_valid(source) || !name_field_valid(output) {
 			return .Store_Damaged
 		}
-		room += window
-		if room > SPACE_ROOM_RECORDS {
-			return .Store_Damaged
-		}
 		space := &store.spaces[space_number - 1]
 		space^ = {}
 		space.active = true
@@ -541,44 +626,195 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	return .None
 }
 
-// space_segments_load reads the kept segments of one space in order, from
-// the first kept one, into its ring, each chained to the one before it. The
-// first slot with no kept segment ends them; space_slots_free_check then
-// reads each other slot. A space that no index row names has no segment.
+// space_segments_load reads one space at a start: its slot map, then the
+// segments that hold its newest records into its ring, each chained to the
+// one before it, from the hash and the last link of the segment before the
+// first one that it reads (or the anchors). The map names one run of
+// segments from the first kept one; a map that names a later segment past
+// a gap, a segment in another slot, or a space that no index row names is
+// damage. A map that names a last segment that its slot does not hold yet
+// is a stop between the two writes of a new segment: the records end
+// before it. The other segments are read by space_verify, not at a start:
+// a start reads a few objects for each space, whatever its count.
 @(private = "file")
 space_segments_load :: proc "contextless" (store: ^Space_Store, space_number: u32) -> Space_Refusal {
 	space := &store.spaces[space_number - 1]
+	present, map_refusal := slot_map_load(store, space_number)
+	if map_refusal != .None {
+		return map_refusal
+	}
 	if !space.active {
-		return space_slots_free_check(store, space_number, false, 0, 0)
+		return present ? .Store_Damaged : .None
+	}
+	slots := &store.slot_maps[space_number - 1]
+	first_segment := space.kept_first_serial / SPACE_SEGMENT_RECORDS
+	last: u64
+	named := false
+	for segment in first_segment ..< first_segment + SPACE_SEGMENT_SLOTS {
+		if slots[segment % SPACE_SEGMENT_SLOTS] != segment + 1 {
+			break
+		}
+		last, named = segment, true
+	}
+	for entry, slot in slots {
+		if entry == 0 {
+			continue
+		}
+		segment := entry - 1
+		if segment % SPACE_SEGMENT_SLOTS != u64(slot) || (segment >= first_segment && (!named || segment > last)) {
+			return .Store_Damaged
+		}
+	}
+	if !named {
+		return .None
+	}
+	start := first_segment
+	if last - first_segment >= LOAD_SEGMENTS_MOST {
+		start = last - (LOAD_SEGMENTS_MOST - 1)
 	}
 	link := space.anchor_link
 	previous := space.anchor_segment_hash
-	first_segment := space.kept_first_serial / SPACE_SEGMENT_RECORDS
-	for segment in first_segment ..< first_segment + SPACE_SEGMENT_SLOTS {
-		name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
-		name := segment_object_name(&name_place, space_number, segment)
-		bytes, status := pr.private_store_read(&store.store_port, name, store.segment_bytes[:])
+	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+	if start > first_segment {
+		// The segment before the first one read gives the link and the hash
+		// that chain it.
+		bytes, status := pr.private_store_read(&store.store_port, segment_object_name(&name_place, space_number, start - 1), store.segment_bytes[:])
+		store.load_reads += 1
 		switch status {
 		case .Ok:
-		case .Absent:
-			return space_slots_free_check(store, space_number, true, first_segment, segment)
-		case .Too_Large:
+		case .Absent, .Too_Large:
 			return .Store_Damaged
 		case .Failed:
 			return .Store_Failed
 		}
 		stored_segment, head_ok := segment_index_of(bytes)
-		if head_ok && stored_segment < first_segment {
-			// A segment that rotated out holds the slot: the kept ones ended.
-			return space_slots_free_check(store, space_number, true, first_segment, segment)
+		if !head_ok || stored_segment != start - 1 || len(bytes) != segment_length(space.record_size, SPACE_SEGMENT_RECORDS) || !segment_whole(bytes) {
+			return .Store_Damaged
+		}
+		previous, link = segment_tail_read(bytes)
+		space.closed_segment_hash = previous
+	}
+	space.next_serial = start * SPACE_SEGMENT_RECORDS
+	space.first_serial = space.next_serial
+	space.window_link = link
+	space.last_hash = link
+	for segment in start ..= last {
+		bytes, status := pr.private_store_read(&store.store_port, segment_object_name(&name_place, space_number, segment), store.segment_bytes[:])
+		store.load_reads += 1
+		older := false
+		switch status {
+		case .Ok:
+			stored_segment, head_ok := segment_index_of(bytes)
+			older = head_ok && stored_segment < segment && stored_segment % SPACE_SEGMENT_SLOTS == segment % SPACE_SEGMENT_SLOTS
+		case .Absent:
+			older = true
+		case .Too_Large:
+			return .Store_Damaged
+		case .Failed:
+			return .Store_Failed
+		}
+		if older {
+			// Only the last segment may be missing: its map came first.
+			return segment == last ? .None : .Store_Damaged
 		}
 		segment_hash, record_count, ok := segment_check(store, space_number, space, segment, previous, bytes, &link, .Load)
-		if !ok {
+		if !ok || (record_count < SPACE_SEGMENT_RECORDS && segment != last) {
 			return .Store_Damaged
 		}
 		previous = segment_hash
-		if record_count < SPACE_SEGMENT_RECORDS {
-			return space_slots_free_check(store, space_number, true, first_segment, segment + 1)
+	}
+	return .None
+}
+
+// Where records_read writes the records that it reads.
+Records_Out :: struct {
+	heads:         []Kept_Record_Head,
+	bytes:         []u8,
+	count:         int,
+	written_bytes: int,
+	limit:         int,
+}
+
+// records_out_put gives one record to the reader: its head and its bytes
+// when both fit, and the count either way.
+records_out_put :: proc "contextless" (out: ^Records_Out, serial, time_ms: u64, link: blake3.Hash, record: []u8) {
+	size := len(record)
+	if out.count < len(out.heads) && out.written_bytes + size <= len(out.bytes) {
+		out.heads[out.count] = {
+			serial     = i64(min(serial, u64(max(i64)))),
+			time_ms    = i64(min(time_ms, u64(max(i64)))),
+			size       = i64(size),
+			chain_hash = value_kinds.Hash_Field(link),
+		}
+		copy(out.bytes[out.written_bytes:][:size], record)
+		out.written_bytes += size
+	}
+	out.count += 1
+}
+
+// space_segments_read reads the kept records from serial start up to
+// before end from the segments of a space, for a reader of the whole
+// audit: the records before the ring. It reads the segment before the
+// first one for the link that chains it (or takes the anchor), checks each
+// segment whole, its number, the serial of each record and its last link,
+// and gives each record its link. It stops at the limit of out.
+space_segments_read :: proc "contextless" (store: ^Space_Store, space_number: u32, space: ^Collector_Space, start: u64, end: u64, out: ^Records_Out) -> Space_Refusal {
+	if start >= end || out.count >= out.limit {
+		return .None
+	}
+	first_segment := space.kept_first_serial / SPACE_SEGMENT_RECORDS
+	segment := start / SPACE_SEGMENT_RECORDS
+	link := space.anchor_link
+	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
+	if segment > first_segment {
+		bytes, status := pr.private_store_read(&store.store_port, segment_object_name(&name_place, space_number, segment - 1), store.segment_bytes[:])
+		switch status {
+		case .Ok:
+		case .Absent, .Too_Large:
+			return .Chain_Broken
+		case .Failed:
+			return .Store_Failed
+		}
+		stored_segment, head_ok := segment_index_of(bytes)
+		if !head_ok || stored_segment != segment - 1 || !segment_whole(bytes) {
+			return .Chain_Broken
+		}
+		_, link = segment_tail_read(bytes)
+	}
+	for ; segment * SPACE_SEGMENT_RECORDS < end && out.count < out.limit; segment += 1 {
+		bytes, status := pr.private_store_read(&store.store_port, segment_object_name(&name_place, space_number, segment), store.segment_bytes[:])
+		switch status {
+		case .Ok:
+		case .Absent, .Too_Large:
+			return .Chain_Broken
+		case .Failed:
+			return .Store_Failed
+		}
+		stored_segment, head_ok := segment_index_of(bytes)
+		if !head_ok || stored_segment != segment || !segment_whole(bytes) {
+			return .Chain_Broken
+		}
+		record_count := byte_order.read_u64_little_endian(bytes, SEGMENT_RECORD_COUNT_AT)
+		if record_count < 1 || record_count > SPACE_SEGMENT_RECORDS || len(bytes) != segment_length(space.record_size, u32(record_count)) {
+			return .Chain_Broken
+		}
+		at := SEGMENT_HEAD_BYTES
+		for index in segment * SPACE_SEGMENT_RECORDS ..< segment * SPACE_SEGMENT_RECORDS + record_count {
+			serial := byte_order.read_u64_little_endian(bytes, at)
+			time_ms := byte_order.read_u64_little_endian(bytes, at + 8)
+			record := bytes[at + SEGMENT_RECORD_HEAD_BYTES:][:space.record_size]
+			if serial != index {
+				return .Chain_Broken
+			}
+			link = space_record_hash(link, serial, time_ms, record)
+			if serial >= start && serial < end && out.count < out.limit {
+				records_out_put(out, serial, time_ms, link, record)
+			}
+			at += SEGMENT_RECORD_HEAD_BYTES + int(space.record_size)
+		}
+		_, stored_link := segment_tail_read(bytes)
+		if stored_link != link {
+			return .Chain_Broken
 		}
 	}
 	return .None
@@ -639,6 +875,7 @@ space_store_ready :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 	case .Not_Loaded:
 	}
 	store.damaged_space = 0
+	store.load_reads = 1
 	refusal := space_index_load(store)
 	for space_number in u32(1) ..= SPACE_CAPACITY {
 		if refusal != .None {
@@ -700,7 +937,7 @@ space_segments_verify :: proc "contextless" (store: ^Space_Store, space_number: 
 	case .None:
 	case .Store_Failed:
 		return .Store_Failed, 0
-	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Bound_Past_Room, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held:
+	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held:
 		return .Chain_Broken, after * SPACE_SEGMENT_RECORDS
 	}
 	return .None, 0

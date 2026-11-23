@@ -1,7 +1,7 @@
 package root
 
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:system"
 
 // The log facts of the principals, of their sessions and of the trust of
 // the boot (src/md/features/log_facts.md). Each fact template is the
@@ -261,7 +261,7 @@ Wide_Grant_Authority_Key_Refused :: struct {
 
 @(log_fact = "root: the ring of the wide grants of a collector was not made: {status}")
 Wide_Grant_Collector_Ring_Failed :: struct {
-	status: system.Status,
+	status: op.Status,
 }
 
 @(log_fact = "root: the trusted display shows the screen {flow} of a wide grant of principal {principal}")
@@ -304,7 +304,7 @@ Wide_Grant_Collector_Refused :: struct {
 
 @(log_fact = "root: a wiring of the act records of a wide grant was refused: {status}; the grant ends")
 Wide_Grant_Wiring_Refused :: struct {
-	status: system.Status,
+	status: op.Status,
 }
 
 @(log_fact = "root: the wide grant {grant_serial} of principal {principal} holds, with {writers} writers of act records")

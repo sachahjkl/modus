@@ -73,7 +73,9 @@ private_store_write :: proc "contextless" (port: ^Private_Store_Port, name: stri
 }
 
 // The objects and the bytes of each object of a memory store.
-MEMORY_PRIVATE_STORE_OBJECTS :: 64
+// Enough for a whole audit space of the collector in its slots, its index
+// and its maps: a test reads its first record after thousands of others.
+MEMORY_PRIVATE_STORE_OBJECTS :: 320
 MEMORY_PRIVATE_STORE_OBJECT_BYTES :: 8192
 MEMORY_PRIVATE_STORE_NAME_BYTES :: 64
 

@@ -1047,6 +1047,33 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 			return false, fmt.tprintf("the first call after the silence did not open a new connection (%d connections before, %d after)", before, after)
 		}
 		return true, "the first call after the silence opened a new connection, and got its answer"
+	case "reconnect under a wide grant":
+		// The peer leaves its open connection with no close, as a client
+		// that lost it, and calls at once on a new connection, before
+		// `remote` ends the old one at its idle bound. Under a wide grant,
+		// `remote` counts two connections of one key: it ends both with the
+		// code Revoked, and the root service ends the grant. The call does
+		// not run.
+		sync.mutex_lock(&state.lock)
+		was_active := state.active
+		state.active = false
+		before, revoked_before := state.connections_made, state.revoked_ends
+		sync.mutex_unlock(&state.lock)
+		if !was_active {
+			return false, "the peer had no open connection to remote to leave: a call must come before this case"
+		}
+		request, problem := remote_case_request(machine, "monitor.count(\"processors\")")
+		if problem != "" {
+			return false, problem
+		}
+		outcome := remote_case_call(state, request)
+		sync.mutex_lock(&state.lock)
+		made, revoked := state.connections_made - before, state.revoked_ends - revoked_before
+		sync.mutex_unlock(&state.lock)
+		if outcome.outcome == .Answer || made != 1 || revoked < 1 {
+			return false, fmt.tprintf("a second connection under a wide grant: the call gave %v (%d new connections, %d ends with the code Revoked), not an end with the code Revoked: %s", outcome.outcome, made, revoked, outcome.reason)
+		}
+		return true, "a second connection of the key under a wide grant: remote ended it with the code Revoked, and the call did not run"
 	case "close":
 		// The peer closes its connection to `remote` and waits for its end,
 		// so that a grant that ends next ends while no client of its row is

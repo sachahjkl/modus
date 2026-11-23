@@ -66,10 +66,16 @@ call_made_record :: proc "contextless" (grant_serial: u64, principal_id: u64, se
 // The window that takes the input of a viewer under a grant, as its last
 // record names it, and what it took since.
 Input_Target :: struct {
-	window:  u64, // 0: no record names a window yet.
-	keys:    u64,
-	presses: u64,
+	window:      u64, // 0: no record names a window yet.
+	keys:        u64,
+	presses:     u64,
+	last_act_ms: u64, // The time of the last act that the counts hold.
 }
+
+// INPUT_COUNTS_INTERVAL_MILLISECONDS is the time after which the display
+// writes the counts of the window of the input while a grant holds, so a
+// long grant on one window does not keep them all to its end.
+INPUT_COUNTS_INTERVAL_MILLISECONDS :: u64(10_000)
 
 // What a viewer gives a window.
 Input_Act :: enum u8 {
@@ -102,13 +108,42 @@ input_target_taken :: proc "contextless" (target: ^Input_Target, window: u64) {
 	target^ = {window = window}
 }
 
-// input_target_count counts an act that ran on the window of the target.
-input_target_count :: proc "contextless" (target: ^Input_Target, act: Input_Act) {
+// input_target_count counts an act that ran on the window of the target
+// at time_ms.
+input_target_count :: proc "contextless" (target: ^Input_Target, act: Input_Act, time_ms: u64) {
 	switch act {
 	case .Key:
 		target.keys += 1
 	case .Press:
 		target.presses += 1
 	case .Move:
+		return
 	}
+	target.last_act_ms = max(target.last_act_ms, time_ms)
+}
+
+// input_target_counts_record gives the record of the counts that wait, or
+// false when no key and no press waits. Its time is the time of the last
+// act that it counts: at the end of a grant, that time is before the end,
+// and the collector keeps the record.
+input_target_counts_record :: proc "contextless" (target: ^Input_Target, grant_serial: u64, principal_id: u64) -> (record: Act_Stream_Record, needed: bool) {
+	if target.window == 0 || target.keys == 0 && target.presses == 0 {
+		return {}, false
+	}
+	return {
+		grant_serial     = grant_serial,
+		principal_id     = principal_id,
+		timestamp_ms     = target.last_act_ms,
+		producer_word    = u64(Act_Producer.Trusted_Display),
+		act_kind_word    = u64(Act_Kind.Input_Counted),
+		target_window_id = target.window,
+		detail_word_0    = target.keys,
+		detail_word_1    = target.presses,
+	}, true
+}
+
+// input_target_counts_taken says that the record of the counts left: they
+// start again from 0 on the same window.
+input_target_counts_taken :: proc "contextless" (target: ^Input_Target) {
+	target.keys, target.presses = 0, 0
 }

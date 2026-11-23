@@ -363,7 +363,7 @@ required_authority_for_act :: proc "contextless" (kind: wide_grants.Act_Kind) ->
 	switch kind {
 	case .Frame_Read:
 		return .View_Screen, true
-	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Target_Window_Changed:
+	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Target_Window_Changed, .Input_Counted:
 		return .Send_Input, true
 	case .Action_Invoked:
 		return .Read_Semantic_Tree, true

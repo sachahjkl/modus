@@ -25,7 +25,6 @@ import "modus:interface"
 import "internal:compositor/bar"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "internal:compositor/wide_grant_view"
 import "modus:contract/wide_grants"
 import "modus:key_path"
 import "modus:system"
@@ -193,8 +192,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		// the bound and nothing lies over it, and only after the record of
 		// its window left (internal:compositor/wide_grant_view).
 		surface, window_id := viewer_key_surface() // wide_grant_screen.odin
-		if wide_grant_view.viewer_input_verdict(&wide_grant_display, surface, window_id) != .Allowed {
-			damage_bar()
+		if !wide_grant_viewer_input_checked(surface, window_id) {
 			return
 		}
 		// The path of a key of the input service: the palette, the
@@ -224,8 +222,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		// its bound, by the hit test of a press, after the record of its
 		// window left (wide_grant_screen.odin).
 		surface, target_window := viewer_pointer_surface(logical_pixel_of(int(x)), logical_pixel_of(int(y)))
-		if wide_grant_view.viewer_input_verdict(&wide_grant_display, surface, target_window) != .Allowed {
-			damage_bar()
+		if !wide_grant_viewer_input_checked(surface, target_window) {
 			return
 		}
 		if !wide_grant_input_allowed(target_window, buttons != 0 ? wide_grants.Input_Act.Press : wide_grants.Input_Act.Move) {

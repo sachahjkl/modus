@@ -7,6 +7,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/start_list"
+import "modus:contract/wide_grants"
 
 // The lends of one test: the readers lent in order, and the lend that
 // fails (from 1; 0: none). Each test runs on its own thread.
@@ -32,6 +33,14 @@ lends_reset :: proc(failing: int) {
 	lent_readers, lend_count, lend_failing = {}, 0, failing
 }
 
+// The terms of an audit space that keeps what leaves a server, the one kind
+// that the border of a start list takes.
+@(private = "file")
+test_terms :: proc() -> [start_list.START_LIST_TERMS_BYTES]u8 {
+	terms := wide_grants.Space_Terms{kind_word = i64(wide_grants.Collector_Space_Kind.Audit), bound_records = 300, forwarding_word = i64(wide_grants.Space_Forwarding.Keeps), record_size = 24}
+	return transmute([start_list.START_LIST_TERMS_BYTES]u8)terms
+}
+
 // A list that the border takes: two readers, a writer whose three wiring
 // rows go to them, the log among them, and a row with no wiring row.
 @(private = "file")
@@ -50,9 +59,7 @@ wired_list :: proc(with_terms := false) -> (list: start_list.List) {
 	if with_terms {
 		// The second row carries the terms of an audit space of its reader.
 		wirings[1].wiring.terms_count = start_list.START_LIST_TERMS_BYTES
-		for index in 0 ..< start_list.START_LIST_TERMS_BYTES {
-			wirings[1].terms[index] = u8(0xA0 + index)
-		}
+		wirings[1].terms = test_terms()
 	}
 	bytes := make([]u8, start_list.list_size(4, 3), context.temp_allocator)
 	_, written := start_list.list_write(rows[:], wirings[:], bytes)
@@ -197,9 +204,8 @@ the_terms_of_a_row_follow_the_handles :: proc(t: ^testing.T) {
 	testing.expect_value(t, checked.rows[1].terms_count, u32(start_list.START_LIST_TERMS_BYTES))
 	testing.expect_value(t, checked.rows[0].terms_count, u32(0))
 	testing.expect_value(t, checked.rows[2].terms_count, u32(0))
-	for index in 0 ..< start_list.START_LIST_TERMS_BYTES {
-		testing.expect_value(t, page[terms_at + index], u8(0xA0 + index))
-	}
+	expected := test_terms()
+	testing.expect(t, string(page[terms_at:][:start_list.START_LIST_TERMS_BYTES]) == string(expected[:]), "the terms on the page differ from the terms of the row")
 	// A page too small for the terms: no list, and both numbers go back.
 	lends_reset(0)
 	small := make([]u8, terms_at + start_list.START_LIST_TERMS_BYTES - 1, context.temp_allocator)

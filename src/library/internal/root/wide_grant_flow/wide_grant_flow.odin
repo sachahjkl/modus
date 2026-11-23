@@ -100,6 +100,10 @@ Flow :: struct {
 	wired:          u32, // The rings of `acts` wired so far.
 	end:            End_Work,
 	keys:           [KEY_RECORDS_MOST]Key_Record,
+	// The one record of the keys that find no place, each place being held
+	// by a key barred for the run: their refusals count together, so a new
+	// key cannot ask with no pause once the table is barred whole.
+	unplaced:       Key_Record,
 	proof_failures: [PRINCIPALS_MOST]u32,
 }
 
@@ -113,9 +117,22 @@ key_record_of :: proc "contextless" (flow: ^Flow, key: [32]u8) -> ^Key_Record {
 	return nil
 }
 
+// key_table_barred says if each place of the table holds a key barred for
+// the run: a key with no record shares the record unplaced.
+@(private = "file")
+key_table_barred :: proc "contextless" (flow: ^Flow) -> bool {
+	for &record in flow.keys {
+		if record.key == ([32]u8{}) || record.refused < REFUSED_SCREENS_MOST {
+			return false
+		}
+	}
+	return true
+}
+
 // key_record_take gives the record of a key, or a free one, or the one
-// whose pause ended first with no refusal count that bars the key. A key
-// barred for the run keeps its place.
+// whose pause ended first with no refusal count that bars the key, or the
+// shared record unplaced when each place is barred. A key barred for the
+// run keeps its place.
 @(private = "file")
 key_record_take :: proc "contextless" (flow: ^Flow, key: [32]u8) -> ^Key_Record {
 	if found := key_record_of(flow, key); found != nil {
@@ -135,7 +152,7 @@ key_record_take :: proc "contextless" (flow: ^Flow, key: [32]u8) -> ^Key_Record 
 		}
 	}
 	if oldest == nil {
-		return nil
+		return &flow.unplaced
 	}
 	oldest^ = {key = key}
 	return oldest
@@ -156,7 +173,11 @@ flow_ask :: proc "contextless" (flow: ^Flow, principal: u64, client_key: [32]u8,
 	if flow.proof_failures[principal] >= PROOF_FAILURES_MOST {
 		return 0, .Proofs_Refused
 	}
-	if record := key_record_of(flow, client_key); record != nil {
+	record := key_record_of(flow, client_key)
+	if record == nil && key_table_barred(flow) {
+		record = &flow.unplaced
+	}
+	if record != nil {
 		if record.refused >= REFUSED_SCREENS_MOST {
 			return 0, .Refused_For_Run
 		}
@@ -186,9 +207,10 @@ flow_ask :: proc "contextless" (flow: ^Flow, principal: u64, client_key: [32]u8,
 @(private = "file")
 flow_fields_clear :: proc "contextless" (flow: ^Flow) {
 	keys := flow.keys
+	unplaced := flow.unplaced
 	failures := flow.proof_failures
 	serial := flow.serial
-	flow^ = {serial = serial, keys = keys, proof_failures = failures}
+	flow^ = {serial = serial, keys = keys, unplaced = unplaced, proof_failures = failures}
 }
 
 // flow_screen gives the screen of the flow, for the trusted display.
@@ -201,14 +223,12 @@ flow_screen :: proc "contextless" (flow: ^Flow) -> wide_grants.Screen_Show {
 }
 
 // flow_screen_refused counts a refused screen of the key of the flow: the
-// key pauses. A key with no place left in the table is barred for the run:
-// the flow never forgets a refusal to let a key ask again.
+// key pauses. A key with no place left in the table counts in the shared
+// record of the keys with no place: the flow never forgets a refusal to
+// let a key ask again.
 @(private = "file")
 flow_screen_refused :: proc "contextless" (flow: ^Flow, now_ms: u64) {
 	record := key_record_take(flow, flow.client_key)
-	if record == nil {
-		return
-	}
 	record.refused += 1
 	record.paused_until_ms = now_ms + REFUSED_SCREEN_PAUSE_MILLISECONDS
 }

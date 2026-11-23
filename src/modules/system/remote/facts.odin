@@ -81,8 +81,8 @@ Client_Key_Proved :: struct {
 @(log_fact = "remote: the client key {client_key_head} of principal {principal} asked for a wide grant: screen {flow}")
 Wide_Grant_Asked_By_Agent :: struct {
 	principal:       u64,
-	client_key_head: [24]u8,
 	flow:            u64,
+	client_key_head: [24]u8,
 }
 
 // A second connection of a key whose row holds a wide grant: both

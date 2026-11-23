@@ -37,6 +37,7 @@ import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
+import "modus:contract/wide_grants"
 
 // The names of the two lists in the resource table of the boot image.
 START_LIST_RESOURCE :: "start_list"
@@ -383,7 +384,7 @@ List_Problem :: enum u8 {
 	// A start row again: place is the start row from 0.
 	Window_Without_Restarts = 22, // A restart window on a row with no restart: a bound of nothing.
 	// A wiring row again.
-	Bad_Terms = 23, // Terms of another size, an offset of terms, or bytes of terms in a row with no terms.
+	Bad_Terms = 23, // Terms of another size, an offset of terms, terms that name no space Audit that keeps (wide_grants.server_audit_terms_valid), or bytes of terms in a row with no terms.
 }
 
 @(rodata)
@@ -412,7 +413,7 @@ LIST_PROBLEM_TEXTS := [List_Problem]string {
 	.Writer_Restarts      = "a wiring row has a writer row with restarts",
 	// A start row again.
 	.Window_Without_Restarts = "a row has a restart window and no restart",
-	.Bad_Terms               = "a wiring row has terms of another size, or bytes of terms with no terms",
+	.Bad_Terms               = "a wiring row has terms of another size, terms that name no audit of what leaves a server, or bytes of terms with no terms",
 }
 
 // parts_of_word is the border of a word of Machine_Parts: a bit that names
@@ -587,6 +588,13 @@ wiring_row_of_record :: proc "contextless" (record: ^Wiring_Row_Record, index: i
 	// The row holds no offset, and no byte of terms when it has none.
 	has_terms := record.wiring.terms_count == START_LIST_TERMS_BYTES
 	if record.wiring.terms_offset != 0 || (record.wiring.terms_count != 0 && !has_terms) || (!has_terms && record.terms != ([START_LIST_TERMS_BYTES]u8{})) {
+		return {}, .Bad_Terms, {}
+	}
+	// Terms name a space Audit that keeps what leaves a server, and nothing
+	// else: a kind, a forwarding, a bound or a size out of range is refused
+	// here, not by the collector at the start of the machine.
+	#assert(size_of(wide_grants.Space_Terms) == START_LIST_TERMS_BYTES)
+	if has_terms && !wide_grants.server_audit_terms_valid(transmute(wide_grants.Space_Terms)record.terms) {
 		return {}, .Bad_Terms, {}
 	}
 	// A list of 0 bytes: a condition needs bytes that a start list does not

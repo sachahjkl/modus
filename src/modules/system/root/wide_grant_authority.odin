@@ -648,8 +648,11 @@ wide_grant_end_work :: proc "contextless" () {
 		}
 	}
 	if wide_grant_flow.flow_unwire_due(flow) && wiring_request.stage == .Idle {
-		if audit_unwire_begin(link.owner, flow.serial) == .Ok {
+		if status, done := audit_unwire_begin(link != nil ? link.owner : nil, flow.serial); status == .Ok {
 			wide_grant_flow.flow_unwire_sent(flow)
+			if done {
+				wide_grant_wire_answered(.Unwire, flow.serial, .Ok) // wirings.odin
+			}
 		}
 	}
 	if settled, late := wide_grant_flow.flow_end_settle(flow, system.time()); settled {

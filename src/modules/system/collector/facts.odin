@@ -14,10 +14,11 @@ Service_Ready :: struct {
 
 // The audit spaces that a start read back from the private store, each
 // segment checked.
-@(log_fact = "collector: read {spaces} audit spaces with {records} records from its store")
+@(log_fact = "collector: read {spaces} audit spaces with {records} records from its store, in {objects} objects")
 Spaces_Loaded :: struct {
 	spaces:  u64,
 	records: u64,
+	objects: u64, // A measure: the objects that the start read, a few for each space whatever its count of records.
 }
 
 // A start found a damaged object of its audit spaces: each step of a space

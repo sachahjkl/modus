@@ -334,7 +334,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			// The rings of the grant before close now, not at the next
 			// pass: once this grant holds, a record of the other grant on an
 			// old ring would close a ring of this one.
-			act_sources_of_ended_grant_close()
+			act_sources_of_replaced_grant_close() // sources.odin
 			authorities, _ := wide_grants.wide_authorities_from_word(copied_create_request.terms.authorities_word)
 			attach_refusal := wide_grants.Act_Wiring_Refusal.Store_Refused
 			if space_service.store.store_port.write != nil {
@@ -635,7 +635,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// A read that fails is tried again at the first step that needs it.
 		loaded := wide_grants.space_store_ready(&space_service.store)
 		if loaded == .None {
-			system.log_fact(.Info, Spaces_Loaded{spaces = u64(wide_grants.space_count(&space_service.store)), records = wide_grants.kept_record_count(&space_service.store)})
+			system.log_fact(.Info, Spaces_Loaded{spaces = u64(wide_grants.space_count(&space_service.store)), records = wide_grants.kept_record_count(&space_service.store), objects = u64(space_service.store.load_reads)})
 		} else if loaded == .Store_Damaged {
 			system.log_fact(.Error, Spaces_Store_Damaged{space = u64(space_service.store.damaged_space)})
 		}

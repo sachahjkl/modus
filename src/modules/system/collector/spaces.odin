@@ -75,8 +75,8 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 	switch refusal {
 	case .Space_Full, .Forward_Full:
 		return errors.fail(error, ERROR_FULL, .Full, .Records, argument, 0, 0, found)
-	case .Space_Limit_Reached, .Bound_Past_Room:
-		return errors.fail(error, ERROR_SPACE, .Over_Limit, .Records, argument, 0, wide_grants.SPACE_ROOM_RECORDS, found)
+	case .Space_Limit_Reached:
+		return errors.fail(error, ERROR_SPACE, .Over_Limit, .Records, argument, 0, wide_grants.SPACE_CAPACITY, found)
 	case .Bad_Limit:
 		return errors.fail(error, ERROR_SPACE, .Out_Of_Range, .Records, argument, 0, wide_grants.SPACE_RECORDS_MOST, found)
 	case .Unknown_Space, .Forward_Empty:

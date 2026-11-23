@@ -304,6 +304,7 @@ Unit :: enum i64 {
 	Checkpoints = 60, // The checkpoints that the debugger service keeps of a recorded process (src/md/features/record_and_replay.md). Absent: no checkpoint is at or before the input point that a step back names. Exists: a checkpoint is at this input point, or at a later one, already.
 	Recorded_Writes = 61, // Absent: no input of the history before the point wrote a byte of the range of a watch back (src/md/features/record_and_replay.md). value: the address; limit: the count of bytes; found: the point, 0 for the whole history.
 	Kernel_Status = 62, // Refused: a kernel operation inside the call refused, and found is its op.Status, which a sentence names in words.
+	Act_Records = 63, // Full: the act record of a call under a wide grant found no room, and the call did not run (src/md/features/wide_grants.md, "The size of the act records"): the audit space of the grant in the collector is full, or its ring did not take the record. found: the wide_grants.Act_Write_Status of the write.
 }
 
 // The name of each error kind, as the contract names it: a column of a
@@ -420,6 +421,7 @@ UNIT_MEMBER_NAMES := [Unit]string {
 	.Checkpoints        = "Checkpoints",
 	.Recorded_Writes    = "Recorded_Writes",
 	.Kernel_Status      = "Kernel_Status",
+	.Act_Records        = "Act_Records",
 }
 
 // The word of a Kind as the record of another party holds it: a field of a
@@ -582,6 +584,7 @@ UNIT_NAMES := [Unit]string {
 	.Checkpoints = "checkpoints of the recorded process",
 	.Recorded_Writes = "writes of the input history",
 	.Kernel_Status = "status of the kernel",
+	.Act_Records   = "act records of the wide grant",
 }
 
 // A ring completion (src/library/modus/contract/ring) has the status of the contract of its

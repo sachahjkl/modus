@@ -188,23 +188,29 @@ display_answer_given :: proc "contextless" (display: ^Display, answer: wide_gran
 // display_mark_take takes a mark of the root service, its one writer. A
 // clear ends the mark, its card and a screen that still shows. A mark of
 // another screen than the last answer bounds the input to no window.
-display_mark_take :: proc "contextless" (display: ^Display, screen: ^Screen, values: [7]u64) -> bool {
-	mark, ok := wide_grants.mark_of_values(values)
-	if !ok {
-		return false
-	}
+// started: the mark names a grant that did not hold before, so each view
+// that is open gets its record of the open.
+display_mark_take :: proc "contextless" (display: ^Display, screen: ^Screen, values: [7]u64) -> (started: bool, ok: bool) {
+	mark := wide_grants.mark_of_values(values) or_return
 	if mark.grant_serial == 0 {
 		display^ = {}
 		screen^ = {}
-		return true
+		return false, true
 	}
+	started = !display.active || display.mark.grant_serial != mark.grant_serial
 	bound := display.given
 	if bound.flow_serial != mark.flow_serial {
 		bound = {}
 	}
+	if !started {
+		// The same grant again keeps its counts and its target.
+		display.mark = mark
+		display.bound = bound
+		return false, true
+	}
 	given := display.given
 	display^ = {active = true, mark = mark, bound = bound, given = given}
-	return true
+	return true, true
 }
 
 // display_window_closed takes a window that closed: it leaves the bound

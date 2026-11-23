@@ -628,6 +628,33 @@ test_the_seventeenth_grant_rotates_the_oldest_out :: proc(t: ^testing.T) {
 	testing.expect_value(t, broken.state, Act_Wiring_State.Unwired)
 }
 
+// A grant that a newer one replaces closes each of its rings, with a
+// pending record or not, and only once it ended.
+@(test)
+test_a_replaced_grant_closes_each_of_its_rings :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := act_test_store_bind(store, 0)
+	defer free(memory)
+	router: Grant_Act_Router
+	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
+	links: Source_Links
+	link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
+	closed: [4]u32
+	// A grant that holds closes nothing.
+	testing.expect_value(t, act_links_close_replaced(&router, &links, closed[:]), 0)
+	testing.expect_value(t, act_wiring_revoke(&router, store, 1, .Replaced_By_Newer_Grant, 200), Act_Wiring_Refusal.None)
+	// No pending record, and the ring closes anyway; with no room for its
+	// tag, nothing closes.
+	testing.expect(t, !link.pending)
+	testing.expect_value(t, act_links_close_replaced(&router, &links, closed[:0]), 0)
+	testing.expect_value(t, link.state, Source_Link_State.Open)
+	testing.expect_value(t, act_links_close_replaced(&router, &links, closed[:]), 1)
+	testing.expect_value(t, closed[0], u32(5))
+	testing.expect_value(t, link.state, Source_Link_State.Ended)
+	testing.expect_value(t, act_links_close_replaced(&router, &links, closed[:]), 0)
+}
+
 // An agent fills the space of its act records. While the grant holds, the
 // collector reads no more of a ring once the space has room for one ring
 // only: the ring fills, and the writer refuses its next act. A record that

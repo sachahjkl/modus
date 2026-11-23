@@ -242,6 +242,16 @@ act_sources_of_ended_grant_close :: proc "contextless" () {
 	}
 }
 
+// act_sources_of_replaced_grant_close closes each ring of the act records
+// of a grant that a newer one replaces (wide_grants.act_links_close_replaced).
+act_sources_of_replaced_grant_close :: proc "contextless" () {
+	closed: [wide_grants.SOURCE_LINKS_MOST]u32
+	closed_count := wide_grants.act_links_close_replaced(&grant_act_router, &source_links, closed[:])
+	for tag in closed[:closed_count] {
+		system.input_close(&sources, tag)
+	}
+}
+
 // act_link_ended ends the grant that holds when a ring of its act records
 // ended (main.odin, act_ring_closed).
 @(private = "file")

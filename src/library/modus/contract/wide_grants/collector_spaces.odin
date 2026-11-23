@@ -22,17 +22,18 @@ import "modus:contract/enum_word"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/value_kinds"
 
-// The spaces that one collector holds at once.
+// The spaces that one collector holds at once. Each one holds a ring of
+// SPACE_RECORDS_MOST records in the memory of the collector, whatever its
+// bound: the memory of the collector pays SPACE_CAPACITY rings, so the count
+// of the spaces is the one bound of that memory, and a space of any bound
+// fits while a place is free. Three act spaces of a wide grant and five
+// audits of servers fit at once.
 SPACE_CAPACITY :: 8
 
 // The records that one space holds in memory at most: the largest bound of
 // a space Keep, and the window of the newest records of a space Audit,
 // whose records stay in the private store up to its bound.
 SPACE_RECORDS_MOST :: 64
-
-// The records that the bounds of all the spaces hold together: a space whose
-// bound does not fit what the others left is refused.
-SPACE_ROOM_RECORDS :: 256
 
 // The bytes of a record of a space at most: the largest record that a record
 // description allows.
@@ -68,7 +69,6 @@ Space_Refusal :: enum u8 {
 	Bad_Kind            = 1,
 	Bad_Forwarding      = 2,
 	Bad_Bound           = 3,
-	Bound_Past_Room     = 4,
 	Space_Limit_Reached = 5,
 	Bad_Name            = 6,
 	Bad_Record_Size     = 7,
@@ -189,6 +189,10 @@ Space_Store :: struct {
 	forward_first: u32,
 	forward_count: u32,
 	forward:       [FORWARD_QUEUE_CAPACITY]Forward_Item,
+	// The slot map of each space Audit, as its object holds it: for each
+	// slot, the number of the segment that it holds, plus 1; 0: none.
+	slot_maps:     [SPACE_CAPACITY][SPACE_SEGMENT_SLOTS]u64,
+	load_reads:    int, // The objects that the last load of the spaces read: a measure.
 	segment_bytes: [SEGMENT_BYTES_MOST]u8,
 	index_bytes:   [SPACE_INDEX_BYTES_MOST]u8,
 }
@@ -237,21 +241,26 @@ name_field_equal :: proc "contextless" (field: ^[SPACE_NAME_BYTES]u8, name: []u8
 	return true
 }
 
-// space_room_left gives the records that a new space can still bound.
-space_room_left :: proc "contextless" (store: ^Space_Store) -> u32 {
-	used: u32 = 0
-	for &space in store.spaces {
-		if space.active {
-			used += space.window
-		}
-	}
-	return used >= SPACE_ROOM_RECORDS ? 0 : SPACE_ROOM_RECORDS - used
-}
-
 // space_open gives the number (from 1) of the space of the source and the
 // record output, with terms. A pair that already has an active space with
 // the same record size and the same terms gives that space; a pair whose
 // record size changed gets a new space, and the old one stays.
+// server_audit_terms_valid says if the terms of a row of a start list name
+// what such a row may ask: a space Audit that keeps the records that leave
+// a server, never one that forwards them (a pair needs a writer that the
+// start list does not hold), with a bound and a record size in range. The
+// record size is checked against the record of the writer when the
+// collector opens the link.
+server_audit_terms_valid :: proc "contextless" (terms: Space_Terms) -> bool {
+	return(
+		terms.kind_word == i64(Collector_Space_Kind.Audit) &&
+		terms.forwarding_word == i64(Space_Forwarding.Keeps) &&
+		terms.bound_records >= 1 &&
+		terms.bound_records <= SPACE_AUDIT_BOUND_MOST &&
+		terms.record_size >= 1 &&
+		terms.record_size <= SPACE_RECORD_BYTES_MOST 	)
+}
+
 space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, terms: Space_Terms) -> (space_number: u32, refusal: Space_Refusal) {
 	if ready := space_store_ready(store); ready != .None {
 		return 0, ready
@@ -298,9 +307,6 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 	}
 	if free < 0 {
 		return 0, .Space_Limit_Reached
-	}
-	if window > space_room_left(store) {
-		return 0, .Bound_Past_Room
 	}
 	space := &store.spaces[free]
 	space^ = {}
@@ -590,31 +596,32 @@ records_read :: proc "contextless" (
 	if limit < 1 || limit > SPACE_RECORDS_MOST {
 		return 0, .Bad_Limit
 	}
-	written_bytes := 0
+	out := Records_Out{heads = heads, bytes = bytes, limit = limit}
+	// A space Audit keeps its records in the private store: a reader that
+	// starts before the ring reads them there, oldest first, then the ring.
+	start := space.kind == .Audit ? space.kept_first_serial : 0
+	if after >= 0 && u64(after) + 1 > start {
+		start = u64(after) + 1
+	}
+	ring_first := space.count > 0 ? space.first_serial : space.next_serial
+	if space.kind == .Audit && start < ring_first {
+		if refusal = space_segments_read(store, space_number, space, start, ring_first, &out); refusal != .None {
+			return 0, refusal
+		}
+	}
 	for index in 0 ..< space.count {
-		if count >= limit {
+		if out.count >= limit {
 			break
 		}
 		place := (space.first + index) % space.window
 		serial := space.serials[place]
-		if after >= 0 && serial <= u64(after) {
+		if serial < start {
 			continue
 		}
-		size := int(space.record_size)
-		if count < len(heads) && written_bytes + size <= len(bytes) {
-			heads[count] = {
-				serial     = i64(min(serial, u64(max(i64)))),
-				time_ms    = i64(min(space.times[place], u64(max(i64)))),
-				size       = i64(size),
-				chain_hash = value_kinds.Hash_Field(space.hashes[place]),
-			}
-			offset := int(place) * SPACE_RECORD_BYTES_MOST
-			copy(bytes[written_bytes:][:size], space.bytes[offset:][:size])
-			written_bytes += size
-		}
-		count += 1
+		offset := int(place) * SPACE_RECORD_BYTES_MOST
+		records_out_put(&out, serial, space.times[place], space.hashes[place], space.bytes[offset:][:space.record_size])
 	}
-	return count, .None
+	return out.count, .None
 }
 
 // space_verify walks the chain of an audit space from its first record and

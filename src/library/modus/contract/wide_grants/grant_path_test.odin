@@ -205,11 +205,11 @@ the_input_of_a_viewer_leaves_one_record_per_target :: proc(t: ^testing.T) {
 	_, needed = input_target_record(&target, 2, 1, 7, 100)
 	testing.expect(t, needed)
 	input_target_taken(&target, 7)
-	for _ in 0 ..< 40 {
-		input_target_count(&target, .Key)
+	for index in u64(0) ..< 40 {
+		input_target_count(&target, .Key, 101 + index)
 	}
-	input_target_count(&target, .Press)
-	input_target_count(&target, .Move)
+	input_target_count(&target, .Press, 141)
+	input_target_count(&target, .Move, 150)
 	_, needed = input_target_record(&target, 2, 1, 7, 110)
 	testing.expect(t, !needed)
 	next, next_needed := input_target_record(&target, 2, 1, 9, 120)
@@ -222,6 +222,38 @@ the_input_of_a_viewer_leaves_one_record_per_target :: proc(t: ^testing.T) {
 	testing.expect_value(t, kind, Act_Kind.Target_Window_Changed)
 	input_target_taken(&target, 9)
 	testing.expect_value(t, target, Input_Target{window = 9})
+}
+
+// The counts of the last window: none waits with no key and no press, and
+// a move counts nothing; the record of the counts carries the time of the
+// last act, so at the end of a grant it comes before the end; once taken,
+// the counts start again on the same window.
+@(test)
+the_counts_of_the_last_window_are_kept :: proc(t: ^testing.T) {
+	target: Input_Target
+	_, needed := input_target_counts_record(&target, 2, 1)
+	testing.expect(t, !needed)
+	input_target_taken(&target, 5)
+	input_target_count(&target, .Move, 200)
+	_, needed = input_target_counts_record(&target, 2, 1)
+	testing.expect(t, !needed)
+	input_target_count(&target, .Key, 210)
+	input_target_count(&target, .Key, 220)
+	input_target_count(&target, .Press, 230)
+	input_target_count(&target, .Move, 900)
+	counts, counts_needed := input_target_counts_record(&target, 2, 1)
+	testing.expect(t, counts_needed)
+	testing.expect_value(t, counts.timestamp_ms, u64(230))
+	testing.expect_value(t, counts.target_window_id, u64(5))
+	testing.expect_value(t, counts.detail_word_0, u64(2))
+	testing.expect_value(t, counts.detail_word_1, u64(1))
+	_, kind, refusal := act_stream_record_validate(&counts)
+	testing.expect_value(t, refusal, Act_Wiring_Refusal.None)
+	testing.expect_value(t, kind, Act_Kind.Input_Counted)
+	input_target_counts_taken(&target)
+	_, needed = input_target_counts_record(&target, 2, 1)
+	testing.expect(t, !needed)
+	testing.expect_value(t, target.window, u64(5))
 }
 
 // The border of a screen and of a mark: a flow of 0, a word past the

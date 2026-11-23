@@ -136,8 +136,8 @@ an_answer_that_breaks_a_rule_gives_no_terms :: proc(t: ^testing.T) {
 
 // The keys table holds KEY_RECORDS_MOST keys. A key past them takes the
 // place of the key whose pause ended first, never of a key barred for the
-// run; with every place barred, a new refused key is not counted and its
-// ask is not refused for it.
+// run; with every place barred, the refusals of new keys count together in
+// one shared record: they pause, then each new key is barred for the run.
 @(test)
 the_table_of_keys_keeps_its_bound :: proc(t: ^testing.T) {
 	flow: Flow
@@ -160,6 +160,30 @@ the_table_of_keys_keeps_its_bound :: proc(t: ^testing.T) {
 	flow_to_idle(&flow)
 	_, refusal = flow_ask(&flow, 1, key_of(1), view, 1000, 60)
 	testing.expect_value(t, refusal, Flow_Refusal.Paused)
+
+	// Each place barred for the run.
+	barred: Flow
+	for number in 0 ..< KEY_RECORDS_MOST {
+		for _ in 0 ..< REFUSED_SCREENS_MOST {
+			serial, _ = flow_ask(&barred, 1, key_of(number), view, 1000, max(u64) / 4)
+			_, _ = flow_screen_answer(&barred, refuse_values(serial), 0)
+		}
+	}
+	now := max(u64) / 2
+	for refused in 0 ..< REFUSED_SCREENS_MOST {
+		new_key := key_of(100 + refused)
+		serial, refusal = flow_ask(&barred, 1, new_key, view, 1000, now)
+		testing.expect_value(t, refusal, Flow_Refusal.None)
+		_, _ = flow_screen_answer(&barred, refuse_values(serial), now)
+		testing.expect_value(t, barred.unplaced.refused, u32(refused + 1))
+		// Another new key shares the pause.
+		_, refusal = flow_ask(&barred, 1, key_of(200 + refused), view, 1000, now + 1)
+		testing.expect_value(t, refusal, refused + 1 >= REFUSED_SCREENS_MOST ? Flow_Refusal.Refused_For_Run : Flow_Refusal.Paused)
+		now += REFUSED_SCREEN_PAUSE_MILLISECONDS
+	}
+	_, refusal = flow_ask(&barred, 1, key_of(300), view, 1000, now)
+	testing.expect_value(t, refusal, Flow_Refusal.Refused_For_Run)
+	testing.expect_value(t, barred.keys[0].key, key_of(0))
 }
 
 // The proof: a proof in another stage, a proof of another principal (no
@@ -304,6 +328,11 @@ the_end_of_a_grant_retries_until_done :: proc(t: ^testing.T) {
 	// The wirings end only after the collector answered the revocation.
 	testing.expect(t, !flow_unwire_due(&flow))
 	_ = flow_revoke_answered(&flow, 5)
+	testing.expect(t, flow_unwire_due(&flow))
+	// An answer before the request is sent is not awaited and changes
+	// nothing: the root service marks the request sent first, even when the
+	// answer comes at once with no wiring service.
+	testing.expect_value(t, flow_unwired(&flow, true), Flow_Refusal.Not_Awaited)
 	testing.expect(t, flow_unwire_due(&flow))
 	flow_unwire_sent(&flow)
 	testing.expect(t, !flow_unwire_due(&flow))

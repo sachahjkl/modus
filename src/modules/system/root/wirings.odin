@@ -811,23 +811,23 @@ audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, p
 // audit_unwire_begin asks the end of every wiring whose asker is the
 // collector: the wirings of the audit of a wide grant, which only the core
 // asks for in its name. Its answer reaches wide_grant_wire_answered. With no
-// wiring service, or no collector, no wiring is left, and the answer Ok
-// comes at once. .No_Slot: the wiring service serves another request; the
-// caller tries again at the next pass.
-audit_unwire_begin :: proc "contextless" (collector: ^Started, flow_serial: u64) -> system.Status {
+// wiring service, or no collector, no wiring is left: done says that the
+// end is done at once, and the caller marks the request sent before it
+// gives the answer, so the flow reads the answer of a request that it
+// sent. .No_Slot: the wiring service serves another request; the caller
+// tries again at the next pass.
+audit_unwire_begin :: proc "contextless" (collector: ^Started, flow_serial: u64) -> (status: system.Status, done: bool) {
 	if wiring_process == nil || collector == nil || collector.process == 0 {
-		wide_grant_wire_answered(.Unwire, flow_serial, .Ok)
-		return .Ok
+		return .Ok, true
 	}
 	values: [7]u64
-	status, held := wirings_revoke_begin(nil, collector, 0, &values)
+	held: bool
+	status, held = wirings_revoke_begin(nil, collector, 0, &values)
 	if status == .Ok && held {
 		wiring_request.audit = .Unwire
 		wiring_request.audit_flow_serial = flow_serial
-	} else if status == .Ok {
-		wide_grant_wire_answered(.Unwire, flow_serial, .Ok)
 	}
-	return status
+	return status, status == .Ok && !held
 }
 
 // wirings_revoke_begin delegates revocation of the recorded grant `.Wirings`

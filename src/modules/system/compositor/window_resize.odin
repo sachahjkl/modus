@@ -429,12 +429,19 @@ surface_screen_damage :: proc "contextless" (client: ^Client) {
 // waits for its process has no edge: a new drag of it waits for the answer.
 // edges is empty when no edge is there.
 resize_edges_under_pointer :: proc "contextless" () -> (index: int, edges: bar.Resize_Edges) {
+	return resize_edges_at(pointer_x, pointer_y)
+}
+
+// resize_edges_at gives the window whose edges are at the logical place
+// (x, y), and the edges, as resize_edges_under_pointer: the pointer of a
+// viewer of a wide grant is not the local pointer.
+resize_edges_at :: proc "contextless" (x, y: int) -> (index: int, edges: bar.Resize_Edges) {
 	hits: [CLIENT_CAPACITY]bar.Window_Hit
 	for row in 0 ..< order_count {
 		client := &clients[order[order_count - 1 - row]]
 		hits[row] = {outer = outer_rectangle_of(client), resizable = client.resizable && !client.resize_asked && client.resize_pictures == nil && !client.released}
 	}
-	row, found := bar.resize_target(hits[:order_count], BORDER, pointer_x, pointer_y)
+	row, found := bar.resize_target(hits[:order_count], BORDER, x, y)
 	if row < 0 {
 		return -1, {}
 	}

@@ -8,6 +8,12 @@ import "modus:contract/wide_grants"
 SHOW :: wide_grants.Screen_Show{flow_serial = 4, principal_id = 1, authorities = {.View_Screen, .Send_Input}, duration_ms = wide_grants.SCREEN_DURATION_UNTIL_LOCK, client_key_head = 0xAB}
 
 @(private = "file")
+mark_taken :: proc(display: ^Display, screen: ^Screen, values: [7]u64) -> bool {
+	_, ok := display_mark_take(display, screen, values)
+	return ok
+}
+
+@(private = "file")
 mark_of :: proc(flow_serial: u64, authorities: wide_grants.Wide_Authorities) -> [7]u64 {
 	return wide_grants.mark_values({grant_serial = 9, principal_id = 1, authorities = authorities, ends_at_ms = 5000, flow_serial = flow_serial})
 }
@@ -85,7 +91,7 @@ a_closed_window_leaves_the_screen_and_the_bound :: proc(t: ^testing.T) {
 	testing.expect_value(t, answer.window_count, u32(1))
 	testing.expect_value(t, answer.window_ids[0], u64(12))
 	display_answer_given(&display, answer)
-	testing.expect(t, display_mark_take(&display, &screen, mark_of(SHOW.flow_serial, {.View_Screen, .Send_Input})))
+	testing.expect(t, mark_taken(&display, &screen, mark_of(SHOW.flow_serial, {.View_Screen, .Send_Input})))
 	testing.expect_value(t, viewer_input_verdict(&display, .Window, 12), Verdict.Allowed)
 	display_window_closed(&display, &screen, 12)
 	// A console opens: the compositor gives it the next id, 13.
@@ -109,10 +115,10 @@ the_input_of_a_viewer_stays_in_the_bound :: proc(t: ^testing.T) {
 	answer, _ := screen_answer(&screen, true)
 	display_answer_given(&display, answer)
 
-	testing.expect(t, display_mark_take(&display, &screen, mark_of(SHOW.flow_serial, {.View_Screen})))
+	testing.expect(t, mark_taken(&display, &screen, mark_of(SHOW.flow_serial, {.View_Screen})))
 	testing.expect_value(t, viewer_input_verdict(&display, .Window, 21), Verdict.Dropped_Counted)
 
-	testing.expect(t, display_mark_take(&display, &screen, mark_of(SHOW.flow_serial, {.View_Screen, .Send_Input})))
+	testing.expect(t, mark_taken(&display, &screen, mark_of(SHOW.flow_serial, {.View_Screen, .Send_Input})))
 	for surface in ([?]Surface{.Overlay, .Bar, .Desktop}) {
 		testing.expect_value(t, viewer_input_verdict(&display, surface, 21), Verdict.Dropped_Counted)
 	}
@@ -121,13 +127,35 @@ the_input_of_a_viewer_stays_in_the_bound :: proc(t: ^testing.T) {
 	testing.expect_value(t, viewer_input_verdict(&display, .Window, 0), Verdict.Dropped_Counted)
 	testing.expect_value(t, viewer_input_verdict(&display, .Window, 21), Verdict.Allowed)
 
-	testing.expect(t, display_mark_take(&display, &screen, mark_of(SHOW.flow_serial + 1, {.View_Screen, .Send_Input})))
+	testing.expect(t, mark_taken(&display, &screen, mark_of(SHOW.flow_serial + 1, {.View_Screen, .Send_Input})))
 	testing.expect_value(t, viewer_input_verdict(&display, .Window, 21), Verdict.Dropped_Counted)
 
-	testing.expect(t, !display_mark_take(&display, &screen, {0, 1, 0, 0, 0, 0, 0}))
+	testing.expect(t, !mark_taken(&display, &screen, {0, 1, 0, 0, 0, 0, 0}))
 	testing.expect(t, display.active)
 	screen.open = true
-	testing.expect(t, display_mark_take(&display, &screen, {}))
+	testing.expect(t, mark_taken(&display, &screen, {}))
 	testing.expect(t, !display.active && !screen.open)
 	testing.expect_value(t, viewer_input_verdict(&display, .Window, 21), Verdict.Allowed)
+}
+
+// A grant starts once: its first mark says so, and a view that is open gets
+// its record then; the same mark again keeps the counts of the window and
+// starts nothing; a mark of another grant starts again; a clear starts
+// nothing.
+@(test)
+a_grant_starts_once_for_its_open_views :: proc(t: ^testing.T) {
+	screen: Screen
+	display: Display
+	started, ok := display_mark_take(&display, &screen, mark_of(4, {.View_Screen}))
+	testing.expect(t, ok && started)
+	display.target = {window = 3, keys = 5}
+	started, ok = display_mark_take(&display, &screen, mark_of(4, {.View_Screen}))
+	testing.expect(t, ok && !started)
+	testing.expect_value(t, display.target.keys, u64(5))
+	other := wide_grants.mark_values({grant_serial = 10, principal_id = 1, authorities = {.View_Screen}, ends_at_ms = 5000, flow_serial = 4})
+	started, ok = display_mark_take(&display, &screen, other)
+	testing.expect(t, ok && started)
+	testing.expect_value(t, display.target.keys, u64(0))
+	started, ok = display_mark_take(&display, &screen, {})
+	testing.expect(t, ok && !started)
 }
