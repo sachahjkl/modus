@@ -194,6 +194,9 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 			return grant == .Plans
 		case .Screen_Capture:
 			return grant == .Screen_Capture
+		case .Remote_Clients:
+			// A ring grant alone is never Remote_Clients, which gives no ring.
+			return false
 		}
 		return false
 	}
@@ -569,5 +572,38 @@ a_screen_of_memory_word_at_its_edges :: proc(t: ^testing.T) {
 	for size in ([?][2]u32{{320, 240}, {1920, 1080}, {7680, 4320}}) {
 		width, height, ok = screen_of_memory_of_word(screen_of_memory_word(size[0], size[1]))
 		testing.expect(t, ok && width == size[0] && height == size[1])
+	}
+}
+
+// The commands of the path of a wide grant: the proof comes from the
+// holder of Principals alone, the ask and the end from a root ring; the
+// outcome of a proof refuses None, one past the last member and the
+// largest word before it takes each member.
+@(test)
+the_wide_grant_commands_keep_their_senders :: proc(t: ^testing.T) {
+	testing.expect(t, !sender_allowed(.Wide_Grant_Proof, {.Root_Ring, .Connect, .Debugger, .Start_Policy, .Plans}))
+	testing.expect(t, sender_allowed(.Wide_Grant_Proof, {.Principals}))
+	for command in ([2]Root_Command{.Wide_Grant_Ask, .Wide_Grant_End}) {
+		testing.expect(t, !sender_allowed(command, {.Principals, .Connect, .Debugger, .Start_Policy, .Plans}))
+		testing.expect(t, sender_allowed(command, {.Root_Ring}))
+	}
+	// The ask of an agent and its second connection come from the holder of
+	// Remote_Clients with a root ring only: a console, and Remote_Clients
+	// with no root ring, send neither.
+	for command in ([2]Root_Command{.Wide_Grant_Agent_Ask, .Wide_Grant_Second_Connection}) {
+		testing.expect(t, !sender_allowed(command, {.Root_Ring, .Principals, .Connect, .Debugger, .Start_Policy, .Plans}))
+		testing.expect(t, !sender_allowed(command, {.Remote_Clients}))
+		testing.expect(t, sender_allowed(command, {.Connect, .Remote_Clients}))
+	}
+	for word in ([?]u64{0, u64(max(Wide_Grant_Proof_Outcome)) + 1, max(u64)}) {
+		_, ok := wide_grant_proof_outcome_of_word(word)
+		testing.expectf(t, !ok, "the outcome word %d is taken", word)
+	}
+	for outcome in Wide_Grant_Proof_Outcome {
+		if outcome == .None {
+			continue
+		}
+		read, ok := wide_grant_proof_outcome_of_word(u64(outcome))
+		testing.expect(t, ok && read == outcome)
 	}
 }

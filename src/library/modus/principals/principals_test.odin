@@ -1209,6 +1209,29 @@ the_keys_of_the_machine_passphrase_with_the_tpm_differ :: proc(t: ^testing.T) {
 // A new passphrase after a recovery changes the salt, the parts and the
 // seal under the seal key: the additional data of the copy under the
 // recovery key stays, so that copy still opens.
+// The proof of a wide grant: a principal past the table, no record, a
+// file of another principal, a machine key that the TPM alone seals, and a
+// record of the TPM with no TPM service each refuse the proof; principal 0
+// with a machine passphrase, alone or with the TPM, and a named principal
+// whose file is its own are asked.
+@(test)
+the_proof_of_a_wide_grant_needs_a_passphrase_here :: proc(t: ^testing.T) {
+	testing.expect_value(t, proof_problem(PRINCIPAL_CAPACITY, true, .Passphrase, true, PRINCIPAL_CAPACITY), Proof_Problem.Bad_Principal)
+	testing.expect_value(t, proof_problem(max(u64), true, .Passphrase, true, 0), Proof_Problem.Bad_Principal)
+	testing.expect_value(t, proof_problem(MACHINE, false, .Passphrase, true, 0), Proof_Problem.No_Record)
+	testing.expect_value(t, proof_problem(MACHINE, true, .Unknown, true, 0), Proof_Problem.No_Record)
+	testing.expect_value(t, proof_problem(MACHINE, true, .Sealed_By_The_Tpm, true, 0), Proof_Problem.No_Passphrase)
+	testing.expect_value(t, proof_problem(MACHINE, true, .Sealed_By_The_Tpm_With_Passphrase, false, 0), Proof_Problem.No_Tpm)
+	if PRINCIPAL_CAPACITY > 1 {
+		named := u64(1)
+		testing.expect_value(t, proof_problem(named, false, .Unknown, true, named), Proof_Problem.No_Record)
+		testing.expect_value(t, proof_problem(named, true, .Unknown, true, MACHINE), Proof_Problem.Other_Principal)
+		testing.expect_value(t, proof_problem(named, true, .Unknown, false, named), Proof_Problem.None)
+	}
+	testing.expect_value(t, proof_problem(MACHINE, true, .Passphrase, false, 0), Proof_Problem.None)
+	testing.expect_value(t, proof_problem(MACHINE, true, .Sealed_By_The_Tpm_With_Passphrase, true, 0), Proof_Problem.None)
+}
+
 @(test)
 a_new_machine_passphrase_keeps_the_copy_under_the_recovery_key :: proc(t: ^testing.T) {
 	file := test_machine_tpm_passphrase_file()

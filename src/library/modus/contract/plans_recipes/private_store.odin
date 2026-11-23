@@ -163,10 +163,12 @@ private_store_write :: proc "contextless" (port: ^Private_Store_Port, name: stri
 	return port.write(port.user, name, data)
 }
 
-// The objects and the bytes of each object of a memory store. A read of a
-// range takes at most MEMORY_PRIVATE_STORE_RANGE_BYTES bytes, as the call
-// region of a storage client bounds one call.
-MEMORY_PRIVATE_STORE_OBJECTS :: 64
+// The objects and the bytes of each object of a memory store: enough
+// objects for a whole audit space of the collector in its slots, its index
+// and its maps (a test reads its first record after thousands of others).
+// A read of a range takes at most MEMORY_PRIVATE_STORE_RANGE_BYTES bytes,
+// as the call region of a storage client bounds one call.
+MEMORY_PRIVATE_STORE_OBJECTS :: 320
 MEMORY_PRIVATE_STORE_OBJECT_BYTES :: 65536
 MEMORY_PRIVATE_STORE_RANGE_BYTES :: 8192
 MEMORY_PRIVATE_STORE_NAME_BYTES :: 64
@@ -207,6 +209,16 @@ memory_private_object_bytes :: proc "contextless" (store: ^Memory_Private_Store,
 		return store.large_bytes[object.large_start:][:object.length]
 	}
 	return object.bytes[:object.length]
+}
+
+// private_store_remove removes the object name, in one commit. Absent: no
+// object has the name, which a caller that removes an object again takes
+// as done.
+private_store_remove :: proc "contextless" (port: ^Private_Store_Port, name: string) -> Private_Store_Status {
+	if port == nil || port.remove == nil {
+		return .Failed
+	}
+	return port.remove(port.user, name)
 }
 
 // memory_private_store_port gives the port of a memory store, with no bound
@@ -320,15 +332,20 @@ memory_private_store_read_range :: proc "contextless" (user: rawptr, name: strin
 	return copy(into[:most], memory_private_object_bytes(store, object)[offset:]), .Ok
 }
 
+// A remove counts as a write, under the same bound of the writes.
 @(private = "file")
 memory_private_store_remove :: proc "contextless" (user: rawptr, name: string) -> Private_Store_Status {
 	store := (^Memory_Private_Store)(user)
+	if store.writes_allowed >= 0 && store.writes >= store.writes_allowed {
+		return .Failed
+	}
 	object := memory_private_store_find(store, name)
 	if object == nil {
 		return .Absent
 	}
 	object^ = {}
 	store.removes += 1
+	store.writes += 1
 	return .Ok
 }
 

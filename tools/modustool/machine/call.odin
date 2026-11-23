@@ -30,6 +30,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/remote"
+import "modus:contract/wide_grants"
 import "core:encoding/hex"
 import "core:fmt"
 import "core:os"
@@ -633,6 +634,28 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	if !written {
 		return {}, nil, {outcome = .Request_Too_Large, reason = "the request does not fit in a call region"}, false
 	}
+	return stream_send(client, bytes)
+}
+
+// wide_grant_ask_send gives the ask of a wide grant to the peer: a stream
+// of the kind Wide_Grant_Ask, which names no key, since `remote` takes the
+// key that the client proved in its handshake
+// (src/md/features/wide_grants.md, "The ask of an agent"). The value of the
+// answer is the number of the screen.
+wide_grant_ask_send :: proc(client: ^Call_Client, authorities: wide_grants.Wide_Authorities, duration_ms: u64) -> (answer: remote.Answer, transport: Call_Transport, ok: bool) {
+	bytes, written := wide_grants.wide_grant_ask_write(client.request, authorities, duration_ms)
+	if !written {
+		return {}, {outcome = .Lost, reason = "the ask does not fit in a request"}, false
+	}
+	answer, _, transport, ok = stream_send(client, bytes)
+	return answer, transport, ok
+}
+
+// stream_send gives the bytes of one stream to the peer, and gives the
+// answer: its header and the bytes of the result. ok is false when no whole
+// answer came: transport says why.
+@(private = "file")
+stream_send :: proc(client: ^Call_Client, bytes: []u8) -> (answer: remote.Answer, result: []u8, transport: Call_Transport, ok: bool) {
 	received, sent := socket_call(client, bytes)
 	if !sent {
 		return {}, nil, {outcome = .Peer_Absent, reason = fmt.tprintf("the peer of the tool does not answer at %s: does `modustool run` run?", client.socket)}, false

@@ -21,9 +21,24 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 
-// The ends of one process at one time: the root service gives no more
-// (ENDS_OF_A_PROCESS_MOST in the root service).
-STREAM_END_CAPACITY :: 16
+// The ends of a process have no count: the table grows in an arena that
+// its budget pays, one place for each end that the wiring service gives
+// (stream_ends_grow; src/md/features/module_outputs.md, "The bounds of the
+// wirings"). A reader of more rings than one wait holds reads the others
+// again at this period.
+READ_POLL_MILLISECONDS :: u64(10)
+
+// The wakes of a read at its poll period: a measure of the poll that the
+// wait room of the kernel removes (stream_read_poll_wakes).
+@(private = "package")
+read_poll_wakes: u64
+
+// stream_read_poll_wakes gives the wakes of the reads of this process at
+// their poll period, past the rings that one wait holds: 0 while each read
+// waits on each of its rings.
+stream_read_poll_wakes :: proc "contextless" () -> u64 {
+	return intrinsics.atomic_load(&read_poll_wakes)
+}
 
 // One end that the process holds. Free when command is None.
 @(private = "package")
@@ -95,7 +110,7 @@ refused_full_mark :: proc "contextless" (index: u32, full: bool, pair: u32 = 0) 
 }
 
 @(private = "package")
-stream_ends: [STREAM_END_CAPACITY]Stream_End
+stream_ends: []Stream_End
 
 // The tags of the ends that this process closed and whose word Closed did
 // not fit the completion queue of the wiring ring yet. Each end gives one
@@ -103,9 +118,109 @@ stream_ends: [STREAM_END_CAPACITY]Stream_End
 // finds no room past it is dropped, and the root service then frees the
 // count of that end at the stop of a side or at a revocation.
 @(private = "package")
-closed_tags: [STREAM_END_CAPACITY]u32
+closed_tags: []u32
 @(private = "package")
 closed_tag_count: int
+
+// The arenas of the table of the ends and of the closed tags: made at the
+// first end that the process takes, from what its budget holds then.
+@(private = "package")
+Stream_End_Table :: struct {
+	ends:  Arena,
+	tags:  Arena,
+	made:  bool,
+	count: int,
+}
+@(private = "package")
+stream_end_table: Stream_End_Table
+
+when ODIN_OS != .Freestanding {
+	// A host test gives the memory of the table and the places that its
+	// budget pays: the seam then grows the table in it with no kernel.
+	@(private = "package")
+	stream_ends_host_backing: []Stream_End
+	@(private = "package")
+	closed_tags_host_backing: []u32
+	@(private = "package")
+	stream_ends_host_paid: int
+}
+
+// stream_ends_grow adds one place to the table of the ends and one to the
+// closed tags, as the budget of the process pays them; the table never
+// moves. false: the budget pays no more, and nothing changed.
+@(private = "package")
+stream_ends_grow :: proc "contextless" () -> bool {
+	table := &stream_end_table
+	when ODIN_OS != .Freestanding {
+		if stream_ends_host_seam_active {
+			if table.count >= stream_ends_host_paid || table.count >= len(stream_ends_host_backing) || table.count >= len(closed_tags_host_backing) {
+				return false
+			}
+			stream_ends_host_backing[table.count] = {}
+			closed_tags_host_backing[table.count] = 0
+			table.count += 1
+			stream_ends = stream_ends_host_backing[:table.count]
+			closed_tags = closed_tags_host_backing[:table.count]
+			return true
+		}
+	}
+	if !table.made {
+		amounts, read := budget_read()
+		if read != .Ok || amounts.pages == 0 {
+			return false
+		}
+		pages := arena_reservation_pages(amounts.pages)
+		ends, ends_status := arena_create(pages)
+		if ends_status != .Ok {
+			return false
+		}
+		tags, tags_status := arena_create(pages)
+		if tags_status != .Ok {
+			_ = arena_end(&ends)
+			return false
+		}
+		table.ends, table.tags, table.made = ends, tags, true
+	}
+	end_place, end_status := arena_push(&table.ends, size_of(Stream_End), align_of(Stream_End))
+	if end_status != .Ok {
+		return false
+	}
+	tag_place, tag_status := arena_push(&table.tags, size_of(u32), align_of(u32))
+	if tag_status != .Ok {
+		// The place of the end stays in the arena, free: the next growth
+		// counts it once its tag is paid.
+		_ = arena_pop(&table.ends, size_of(Stream_End))
+		return false
+	}
+	intrinsics.mem_zero(end_place, size_of(Stream_End))
+	(^u32)(tag_place)^ = 0
+	table.count += 1
+	stream_ends = ([^]Stream_End)(table.ends.base)[:table.count]
+	closed_tags = ([^]u32)(table.tags.base)[:table.count]
+	return true
+}
+
+// stream_end_places gives the places of the table of the ends of this
+// process: the most rings that input_tags or output_pairs can list, so a
+// caller sizes its list of tags from it.
+stream_end_places :: proc "contextless" () -> int {
+	return len(stream_ends)
+}
+
+// stream_end_free_place gives a free place of the table of the ends, and
+// grows the table by one when none is free. nil: the budget pays no more.
+@(private = "package")
+stream_end_free_place :: proc "contextless" () -> ^Stream_End {
+	for &end in stream_ends {
+		if end.command == .None {
+			return &end
+		}
+	}
+	if !stream_ends_grow() {
+		return nil
+	}
+	return &stream_ends[len(stream_ends) - 1]
+}
 
 // The wiring ring of the process: the handle 16 of its context, or the ring
 // that the root service gave an asker with its list page.
@@ -483,15 +598,11 @@ stream_end_take :: proc "contextless" (given: output.Given_End, record: ring.Rec
 	if given.condition != 0 && !handle_through(given.condition, {.Read}) {
 		return refuse(record, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_TERMS + 1, i64(given.condition)))
 	}
-	place: ^Stream_End
-	for &end in stream_ends {
-		if end.command == .None {
-			place = &end
-			break
-		}
-	}
+	// A place that the budget does not pay refuses the end: the wiring
+	// service ends it at the word Refused.
+	place := stream_end_free_place()
 	if place == nil {
-		return refuse(record, .No_Slot, errors.error_make(.Full, .Wirings, 0, STREAM_END_CAPACITY + 1, STREAM_END_CAPACITY))
+		return refuse(record, .No_Slot, errors.error_make(.Budget, .Pages, 0, i64(len(stream_ends) + 1), i64(len(stream_ends))))
 	}
 	// A ring of a pair carries the records of one source that this process
 	// reads: the root service gives the end of the source first, so a pair
@@ -1585,10 +1696,6 @@ asker_close :: proc "contextless" (number: u32) -> bool {
 	return false
 }
 
-// One wait of a reader holds each end of the process: the 16 ends at most
-// fit the 64 places of a wait on the stack (output.reader_wait_words), so a
-// read never needs groups of rings, nor a wait set.
-#assert(output.READER_WAIT_WORDS_BESIDE_RINGS + output.READER_WAIT_WORDS_OF_A_RING * STREAM_END_CAPACITY <= WAIT_INLINE_WORDS)
 
 // stream_read is the reader of input_read and asker_read: the ends of one
 // record input, or the one end of an asker. A record input reads its ends
@@ -1637,11 +1744,20 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 		if !found {
 			return {}, .No_Writer
 		}
+		// One wait holds output.READER_RINGS_WAITED_MOST rings: a reader of
+		// more waits on those and reads each ring again at its poll period.
 		waiting := wait_begin()
+		rings_waited := 0
+		unwaited := false
 		for &end in stream_ends {
 			if end.command != command || !end.opened || (command == .Reader_End && (end.index != index || (tag != 0 && end.tag != tag))) || (command == .Asker_End && end.tag != tag) {
 				continue
 			}
+			if rings_waited >= output.READER_RINGS_WAITED_MOST {
+				unwaited = true
+				continue
+			}
+			rings_waited += 1
 			// The write that stream_end_read loaded when it found the ring
 			// empty: a record that the writer pushed after that load ends
 			// the wait at once.
@@ -1656,8 +1772,16 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 			wait_word(&waiting, wake_word, wake_value)
 		}
 		closed_words_wait(&waiting)
-		if wait_end(&waiting, deadline) >= deadline {
+		wait_until := deadline
+		if unwaited {
+			wait_until = min(deadline, time() + READ_POLL_MILLISECONDS)
+		}
+		woke := wait_end(&waiting, wait_until)
+		if woke >= deadline {
 			return {}, .No_Record
+		}
+		if unwaited && woke >= wait_until {
+			intrinsics.atomic_add(&read_poll_wakes, 1)
 		}
 	}
 }

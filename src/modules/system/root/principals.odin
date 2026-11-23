@@ -281,6 +281,8 @@ principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) ->
 	principal_records[number].state = .Unlocked
 	// The client keys that the principal allowed take calls again.
 	remote_clients_session_changed(number, false)
+	// The proofs of wide grants not given count from 0 again.
+	wide_grant_principal_unlocked(number) // wide_grant_authority.odin
 	unlock_run.failed_stops = 0
 	system.log_fact(.Info, Session_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
 	return .Succeeded
@@ -296,9 +298,16 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> call_outcome.Call_
 	if number == principals.MACHINE {
 		return root_ring.refuse(completion, .Nothing_Has_That_Name, u32(root_ring.Root_Command.Principal_Lock), .Absent, .Principals)
 	}
+	// A wide grant of the principal ends at the lock, with its reason. Its
+	// collector stops when the end settled, after its record of the end.
+	wide_grant_principal_locked(number) // wide_grant_authority.odin
 	count: u64
 	for &item in started {
 		if item.process != 0 && item.principal == number {
+			if wide_grant_collector_held_at_lock(&item) {
+				count += 1
+				continue
+			}
 			started_process_stop(&item)
 			if !item.is_terminal {
 				count += 1
@@ -341,7 +350,9 @@ unlock_stopped :: proc "contextless" () {
 	// the stage Stopped says that no `unlock` creates.
 	asked := unlock_run.stage == .Stop_Asked
 	unlock_run.stage = .Stopped
-	if asked || !principal_locked() {
+	// The run that proves a wide grant ends by itself, and unlocks nothing:
+	// its stop is no failed unlock.
+	if asked || !principal_locked() || unlock_run.mode == .Prove_Wide_Grant {
 		return
 	}
 	unlock_run.failed_stops += 1

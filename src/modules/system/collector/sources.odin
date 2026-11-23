@@ -40,8 +40,7 @@ COLLECTOR_WAIT_WORDS_KEPT :: 16
 // word that the loop can wait on.
 PENDING_RETRY_MILLISECONDS :: 1000
 
-source_links: wide_grants.Source_Links
-source_tags: [wide_grants.SOURCE_LINKS_MOST]u32
+source_links: wide_grants.Source_Links // Its port: link_tables_port, set at the start.
 source_record: [module.RECORD_SIZE_LIMIT]u8
 
 // forward_write is the write of the port of the pairs: one record into the
@@ -132,11 +131,36 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 				return
 			}
 		}
+		// A ring of act records is not read while its space has room for one
+		// ring only: the ring fills, and its writer refuses its next act. Each
+		// record in the ring is an act that ran, which that room keeps.
+		if space := wide_grants.space_of(&space_service.store, link.space); space != nil && wide_grants_space_is_acts(space) && !wide_grants.act_link_may_read(&grant_act_router, &space_service.store, link) {
+			return
+		}
 		item, status := system.input_read_from(&sources, link.tag, source_record[:], 0)
 		switch status {
 		case .Ok:
 			switch item.kind {
 			case .Record:
+				// A ring of an act record output carries the records of the
+				// grant that holds only: a record of no grant, of an ended
+				// grant or of another producer closes the ring, and its space
+				// keeps nothing (wide_grants.act_link_keep).
+				if space := wide_grants.space_of(&space_service.store, link.space); space != nil && wide_grants_space_is_acts(space) {
+					expected_producer, _ := wide_grants.act_producer_from_source_name(wide_grants_name_slice(&space.source))
+					act_step, act_refusal, space_refusal := wide_grants.act_link_keep(&grant_act_router, &space_service.store, link, source_record[:item.record_size], expected_producer, system.time())
+					switch act_step {
+					case .Kept:
+						continue
+					case .Held:
+						return
+					case .Refused:
+						system.log_fact(.Warning, Act_Source_Refused{wiring_number = u64(link.tag), act_refusal_code = u64(act_refusal), space_refusal_code = u64(space_refusal)})
+						system.input_close(&sources, link.tag)
+						act_ring_closed(system.time()) // main.odin
+						return
+					}
+				}
 				step, refusal := wide_grants.link_keep(&space_service.store, link, source_record[:item.record_size], system.time())
 				switch step {
 				case .Kept:
@@ -152,13 +176,16 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 			}
 		case .Ended:
 			wide_grants.link_end(link, source_end_error(item))
+			act_link_ended(link)
 			return
 		case .Bad_Record:
 			wide_grants.link_end(link, item.refusal)
+			act_link_ended(link)
 			return
 		case .No_Writer:
 			// The library closed the ring with no end record.
 			wide_grants.link_end(link, errors.error_make(.State, .Wirings, 0, 0, 0, i64(link.tag)))
+			act_link_ended(link)
 			return
 		case .No_Record, .Full, .No_Reader:
 			return
@@ -173,6 +200,8 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 // that ended and whose pair is not settled): the loop then tries again
 // after PENDING_RETRY_MILLISECONDS.
 sources_pass :: proc "contextless" () -> (pending: bool) {
+	link_tables_follow_the_ends() // link_tables.odin
+	act_sources_of_ended_grant_close()
 	count := system.input_tags(&sources, source_tags[:])
 	for tag in source_tags[:count] {
 		link := wide_grants.link_of(&source_links, tag)
@@ -202,10 +231,38 @@ sources_pass :: proc "contextless" () -> (pending: bool) {
 	return pending
 }
 
+// act_sources_of_ended_grant_close closes the rings of the act records of
+// a grant that ended, before any read: a record that a full space held, or
+// one that came after the end, is kept nowhere
+// (wide_grants.act_links_close_ended).
+act_sources_of_ended_grant_close :: proc "contextless" () {
+	closed_count := wide_grants.act_links_close_ended(&grant_act_router, &source_links, closed_tags)
+	for tag in closed_tags[:closed_count] {
+		system.input_close(&sources, tag)
+	}
+}
+
+// act_sources_of_replaced_grant_close closes each ring of the act records
+// of a grant that a newer one replaces (wide_grants.act_links_close_replaced).
+act_sources_of_replaced_grant_close :: proc "contextless" () {
+	closed_count := wide_grants.act_links_close_replaced(&grant_act_router, &source_links, closed_tags)
+	for tag in closed_tags[:closed_count] {
+		system.input_close(&sources, tag)
+	}
+}
+
+// act_link_ended ends the grant that holds when a ring of its act records
+// ended (main.odin, act_ring_closed).
+@(private = "file")
+act_link_ended :: proc "contextless" (link: ^wide_grants.Source_Link) {
+	if space := wide_grants.space_of(&space_service.store, link.space); space != nil && wide_grants_space_is_acts(space) {
+		act_ring_closed(system.time())
+	}
+}
+
 // The pairs that forward holds, as output_pairs lists them, and the rings
-// of sources read after them.
-pair_tags: [wide_grants.SOURCE_LINKS_MOST]u32
-pair_source_tags: [wide_grants.SOURCE_LINKS_MOST]u32
+// of sources read after them: pair_tags and pair_source_tags, in
+// link_tables.odin.
 
 // pairs_orphaned_close closes each end of forward whose pair has no source
 // that this collector keeps: no link and no ring of sources of that
@@ -261,6 +318,35 @@ sources_wait :: proc "contextless" (waiting: ^system.Wait) -> (not_waited: bool)
 	not_waited = system.wait_input_records(waiting, &sources, source_rings) > 0
 	not_waited ||= system.wait_output_room(waiting, &forward, pair_rings) > 0
 	return not_waited
+}
+
+// The wakes of the loop at its retry period to read rings that its wait
+// could not hold: a measure of the poll that the wait room of the kernel
+// removes (ROADMAP.md, "A reader waits on each of its rings").
+poll_wakes: u64
+
+// poll_wakes_count counts one wake of the poll, and writes the count, with
+// the wakes of the reads of the library, at each power of two: a bounded
+// line of what the poll costs.
+poll_wakes_count :: proc "contextless" () {
+	poll_wakes += 1
+	if poll_wakes & (poll_wakes - 1) == 0 {
+		system.log_fact(.Info, Poll_Wakes_Counted{wakes = poll_wakes, read_wakes = system.stream_read_poll_wakes()})
+	}
+}
+
+@(private = "file")
+wide_grants_name_slice :: proc "contextless" (field: ^[wide_grants.SPACE_NAME_BYTES]u8) -> []u8 {
+	length := 0
+	for length < len(field) && field[length] != 0 {
+		length += 1
+	}
+	return field[:length]
+}
+
+@(private = "file")
+wide_grants_space_is_acts :: proc "contextless" (space: ^wide_grants.Collector_Space) -> bool {
+	return string(wide_grants_name_slice(&space.output)) == wide_grants.ACT_OUTPUT_NAME
 }
 
 #assert(system.INPUT_RECORDS_WAIT_WORDS == system.OUTPUT_ROOM_WAIT_WORDS)

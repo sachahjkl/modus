@@ -20,21 +20,30 @@ import "modus:contract/output"
 import "modus:contract/ring"
 import ws "modus:contract/wiring_service"
 
-// The processes that `wiring` tracks at one time.
-PROCESS_CAPACITY :: 32
-
-// The ends that one process holds at one time (system.STREAM_END_CAPACITY).
-ENDS_OF_A_PROCESS_MOST :: 16
-
-// The ends of one service that one asker holds through its connections.
+// The ends of one service that one asker holds through its connections: a
+// share, so that two askers cannot take the ends of a service from the
+// others. The ends of a process are what its budget pays, with no count
+// (src/md/features/module_outputs.md, "The bounds of the wirings").
 CONNECTED_ENDS_OF_AN_ASKER_MOST :: 4
 
-// The wirings of the whole machine at one time.
-WIRINGS_OF_THE_MACHINE_MOST :: 24
-
-// The askers that hold a list page at one time.
+// The askers that hold a list page at one time: a share of the mappings of
+// the root service.
 LIST_PAGE_ASKERS_MOST :: 4
-#assert(LIST_PAGE_ASKERS_MOST * CONNECTED_ENDS_OF_AN_ASKER_MOST <= ENDS_OF_A_PROCESS_MOST)
+
+// Where the tables of the wiring service grow: in arenas on a machine, on
+// the heap in a host test. Each gives the table with count entries at
+// least, at the same address, the entries before kept, zeroed past them;
+// nil when the budget does not pay them. The processes are paid by the
+// budget of the service: the root service registers one for each process
+// with a record stream, which the slots of the machine bound. The entries
+// of the wirings are paid by the wiring budget of the asker whose wiring
+// needs them (payer, its index in the processes), so one asker fills no
+// more of the table than its own budget pays.
+Wiring_Tables_Port :: struct {
+	user:           rawptr,
+	processes_grow: proc "contextless" (user: rawptr, count: int) -> []Process_Entry,
+	wirings_grow:   proc "contextless" (user: rawptr, count: int, payer: int) -> []Wiring_Entry,
+}
 
 // The generic record inputs of one process whose fixed type is kept until
 // its stop.
@@ -74,6 +83,7 @@ Process_Entry :: struct {
 	log_ends_given:     int,
 	generic_types:      [GENERIC_TYPES_OF_A_PROCESS_MOST]Generic_Type_Kept,
 	generic_type_count: int,
+	visit_mark:         u32, // The search of a cycle that reached the process last (graph_reaches).
 }
 
 // Tracked state of one active wiring.
@@ -106,8 +116,10 @@ Wiring_Entry :: struct {
 
 // Whole pure state of the delegated wiring service.
 State :: struct {
-	processes:           [PROCESS_CAPACITY]Process_Entry,
-	wirings:             [WIRINGS_OF_THE_MACHINE_MOST]Wiring_Entry,
+	processes:           []Process_Entry, // In the memory of tables: they grow and never move.
+	wirings:             []Wiring_Entry,
+	tables:              Wiring_Tables_Port,
+	visit_generation:    u32, // The number of the last search of a cycle.
 	wiring_number_next:  u32,
 	wirings_running:     int,
 	list_page_holders:   int,
@@ -187,10 +199,12 @@ Stop_Action :: struct {
 	asker_empty:   bool, // True if asker's wirings_asked just reached 0.
 }
 
-// state_init prepares a zeroed State with wiring_number_next = 1 and the
-// built-in description file for output.Log_Output_Record.
-state_init :: proc "contextless" (s: ^State) {
+// state_init prepares a zeroed State over the tables of its port, with
+// wiring_number_next = 1 and the built-in description file for
+// output.Log_Output_Record.
+state_init :: proc "contextless" (s: ^State, tables: Wiring_Tables_Port) {
 	s^ = {}
+	s.tables = tables
 	s.wiring_number_next = 1
 	if size, ok := output.log_output_file_write(s.log_output_bytes[:]); ok {
 		s.log_output_size = size
@@ -212,6 +226,51 @@ image_slice_of :: proc "contextless" (image: []u8, offset, size: u64) -> []u8 {
 		return nil
 	}
 	return image[offset:][:size]
+}
+
+// processes_ensure makes the table of the processes hold count entries.
+// false: the budget does not pay them, and nothing changed.
+processes_ensure :: proc "contextless" (s: ^State, count: int) -> bool {
+	if len(s.processes) >= count {
+		return true
+	}
+	if s.tables.processes_grow == nil {
+		return false
+	}
+	grown := s.tables.processes_grow(s.tables.user, count)
+	if len(grown) < count || (len(s.processes) > 0 && raw_data(grown) != raw_data(s.processes)) {
+		return false
+	}
+	s.processes = grown
+	return true
+}
+
+// wirings_ensure makes the table of the wirings hold count entries, the
+// new ones paid by the wiring budget of the asker payer. false: that budget
+// does not pay them, and nothing changed.
+wirings_ensure :: proc "contextless" (s: ^State, count: int, payer: int) -> bool {
+	if len(s.wirings) >= count {
+		return true
+	}
+	if s.tables.wirings_grow == nil {
+		return false
+	}
+	grown := s.tables.wirings_grow(s.tables.user, count, payer)
+	if len(grown) < count || (len(s.wirings) > 0 && raw_data(grown) != raw_data(s.wirings)) {
+		return false
+	}
+	s.wirings = grown
+	return true
+}
+
+// process_index_valid says if index names an active process of the table.
+process_index_valid :: proc "contextless" (s: ^State, index: int) -> bool {
+	return index >= 0 && index < len(s.processes) && s.processes[index].active
+}
+
+// wiring_slot_valid says if slot names an active wiring of the table.
+wiring_slot_valid :: proc "contextless" (s: ^State, slot: int) -> bool {
+	return slot >= 0 && slot < len(s.wirings) && s.wirings[slot].active
 }
 
 // process_find locates an active process matching BOTH slot and serial.
@@ -261,9 +320,11 @@ process_register :: proc "contextless" (s: ^State, id: ws.Process_Identity, modu
 		}
 	}
 	if free_index < 0 {
-		// The table holds the processes of the whole machine, and frees a
-		// place when one ends.
-		return -1, .Callee_Busy, make_error(command_op, .Full, .Processes, 0, 0, i64(len(s.processes)))
+		// No free entry: the table grows, as the budget pays.
+		free_index = len(s.processes)
+		if !processes_ensure(s, free_index + 1) {
+			return -1, .Budget_Or_Capacity_Exhausted, make_error(command_op, .Full, .Processes, 0, 0, i64(len(s.processes)))
+		}
 	}
 	s.processes[free_index] = {
 		active        = true,
@@ -296,7 +357,7 @@ list_page_reserve :: proc "contextless" (s: ^State, asker_id: ws.Process_Identit
 
 // list_page_unreserve rolls back a fresh reservation after an allocation error.
 list_page_unreserve :: proc "contextless" (s: ^State, asker_index: int) {
-	if asker_index < 0 || asker_index >= PROCESS_CAPACITY || !s.processes[asker_index].active {
+	if !process_index_valid(s, asker_index) {
 		return
 	}
 	if s.processes[asker_index].has_list_page {
@@ -338,7 +399,7 @@ process_file_slice :: proc "contextless" (s: ^State, work: ^Plan_Work, image: []
 	if proc_index == CHILD_PROCESS_INDEX {
 		return image_slice_of(image, work.child_offset, work.child_size), work.child_offset, work.child_size
 	}
-	if proc_index < 0 || proc_index >= PROCESS_CAPACITY || !s.processes[proc_index].active {
+	if !process_index_valid(s, proc_index) {
 		return nil, 0, 0
 	}
 	entry := &s.processes[proc_index]
@@ -356,7 +417,7 @@ generic_type_fixed :: proc "contextless" (s: ^State, work: ^Plan_Work, image: []
 			return plan_file_slice(s, image, plan.writer_is_log_file, plan.writer_file_offset, plan.writer_file_size), plan.writer_is_log_file, plan.writer_file_offset, plan.writer_file_size, plan.description, true
 		}
 	}
-	if proc_index >= 0 && proc_index < PROCESS_CAPACITY && s.processes[proc_index].active {
+	if process_index_valid(s, proc_index) {
 		entry := &s.processes[proc_index]
 		for kept in entry.generic_types[:entry.generic_type_count] {
 			if kept.index == input_index {
@@ -433,67 +494,69 @@ graph_reaches :: proc "contextless" (s: ^State, work: ^Plan_Work, row_limit: u32
 	if from_proc == target_proc {
 		return true
 	}
-	// Map CHILD_PROCESS_INDEX to slot PROCESS_CAPACITY in the visited/queue arrays.
-	node_id :: proc "contextless" (idx: int) -> int {
-		if idx == CHILD_PROCESS_INDEX {
-			return PROCESS_CAPACITY
-		}
-		if idx >= 0 && idx < PROCESS_CAPACITY {
-			return idx
-		}
-		return -1
+	node_valid :: proc "contextless" (s: ^State, idx: int) -> bool {
+		return idx == CHILD_PROCESS_INDEX || idx >= 0 && idx < len(s.processes)
 	}
-	start_node := node_id(from_proc)
-	goal_node := node_id(target_proc)
-	if start_node < 0 || goal_node < 0 {
+	if !node_valid(s, from_proc) || !node_valid(s, target_proc) {
 		return false
 	}
-	visited: [PROCESS_CAPACITY + 1]bool
-	queue: [PROCESS_CAPACITY + 1]int
-	head, tail := 0, 0
-	visited[start_node] = true
-	queue[tail] = from_proc
-	tail += 1
-	for head < tail {
-		current := queue[head]
-		head += 1
-		// Traverse active wirings.
-		if current >= 0 {
-			for &kept in s.wirings {
-				if !kept.active || kept.writer_index != current || kept.reader_index < 0 {
-					continue
-				}
-				next := kept.reader_index
-				next_id := node_id(next)
-				if next_id == goal_node {
-					return true
-				}
-				if next_id >= 0 && !visited[next_id] {
-					visited[next_id] = true
-					queue[tail] = next
-					tail += 1
-				}
-			}
+	// The reached processes carry the mark of this search, a number that
+	// grows at each search, so no table of a fixed count holds them. The
+	// marks spread along the edges until none is added: at most one pass for
+	// each process, each pass over the wirings and the rows.
+	s.visit_generation += 1
+	if s.visit_generation == 0 {
+		for &entry in s.processes {
+			entry.visit_mark = 0
 		}
-		// Traverse earlier rows of the same list.
-		for row_num in 1 ..< row_limit {
-			plan := &work.plans[row_num - 1]
-			if plan.writer_index != current {
+		s.visit_generation = 1
+	}
+	mark := s.visit_generation
+	child_reached := false
+	reached :: proc "contextless" (s: ^State, idx: int, mark: u32, child_reached: bool) -> bool {
+		if idx == CHILD_PROCESS_INDEX {
+			return child_reached
+		}
+		return idx >= 0 && idx < len(s.processes) && s.processes[idx].visit_mark == mark
+	}
+	reach :: proc "contextless" (s: ^State, idx: int, mark: u32, child_reached: ^bool) -> (added: bool) {
+		if idx == CHILD_PROCESS_INDEX {
+			added = !child_reached^
+			child_reached^ = true
+			return added
+		}
+		if idx < 0 || idx >= len(s.processes) || s.processes[idx].visit_mark == mark {
+			return false
+		}
+		s.processes[idx].visit_mark = mark
+		return true
+	}
+	_ = reach(s, from_proc, mark, &child_reached)
+	for {
+		added := false
+		for &kept in s.wirings {
+			if !kept.active || kept.writer_index < 0 || kept.reader_index < 0 || !reached(s, kept.writer_index, mark, child_reached) {
 				continue
 			}
-			next := plan.reader_index
-			next_id := node_id(next)
-			if next_id == goal_node {
+			if kept.reader_index == target_proc {
 				return true
 			}
-			if next_id >= 0 && !visited[next_id] {
-				visited[next_id] = true
-				queue[tail] = next
-				tail += 1
+			added = reach(s, kept.reader_index, mark, &child_reached) || added
+		}
+		for row_num in 1 ..< row_limit {
+			plan := &work.plans[row_num - 1]
+			if !node_valid(s, plan.writer_index) || !node_valid(s, plan.reader_index) || !reached(s, plan.writer_index, mark, child_reached) {
+				continue
 			}
+			if plan.reader_index == target_proc {
+				return true
+			}
+			added = reach(s, plan.reader_index, mark, &child_reached) || added
+		}
+		if !added {
+			return false
 		}
 	}
-	return false
 }
 
 @(private = "file")
@@ -518,6 +581,7 @@ resolve_end_from_request :: proc "contextless" (s: ^State, work: ^Plan_Work, req
 		}
 		facts.started_by_asker = lent.started_by_asker != 0
 		facts.started_by_start_policy = lent.started_by_start_policy != 0
+		facts.audit_wired_by_root = lent.audit_wired_by_root != 0
 		return idx, facts, true
 	case .Connected:
 		for i in 0 ..< req.connected_count {
@@ -540,6 +604,13 @@ resolve_end_from_request :: proc "contextless" (s: ^State, work: ^Plan_Work, req
 	case .None:
 	}
 	return -1, facts, false
+}
+
+// audit_row_allowed says if a row that names the fact of the audit of a wide
+// grant has the one form that the fact allows: a Wire of a record output,
+// with the pace Always_Holds_Writer, whose reader is the asker.
+audit_row_allowed :: proc "contextless" (form: output.Wiring_List_Form, row: output.Checked_Wiring, reader_idx: int, asker_idx: int) -> bool {
+	return form == .Wire && row.writer_stream == .Record_Output && row.pace == .Always_Holds_Writer && row.paired_row == 0 && reader_idx >= 0 && reader_idx == asker_idx
 }
 
 // paired_source_of gives the row of the source of the pair of the row
@@ -619,6 +690,14 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 	}
 	if !output.wiring_end_allowed(row.writer_end, writer_facts) || !output.wiring_end_allowed(row.reader_end, reader_facts) {
 		return .Grant_Or_Right_Missing, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
+	}
+	// The fact of the audit of a wide grant names one row only: a Wire of
+	// a record output to the asker itself, which holds its writer. Any other
+	// row that carries it is refused, so the fact opens no other wiring.
+	if writer_facts.audit_wired_by_root || reader_facts.audit_wired_by_root {
+		if !audit_row_allowed(work.form, row, reader_idx, work.asker_index) {
+			return .No_Right, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
+		}
 	}
 	// Self-wire or directed cycle refused.
 	if writer_idx == reader_idx || graph_reaches(s, work, number, reader_idx, writer_idx) {
@@ -812,25 +891,21 @@ asker_ends_in :: proc "contextless" (s: ^State, asker_idx: int, proc_idx: int) -
 check_limits :: proc "contextless" (s: ^State, work: ^Plan_Work, ring_room: Ring_Room_Proc, ring_room_data: rawptr) -> (status: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	op_code := work.command_op
 	rows := int(work.list.row_count)
-	asker := &s.processes[work.asker_index]
-	if asker.wirings_asked + rows > output.WIRINGS_OF_AN_ASKER_MOST {
-		return .Budget_Or_Capacity_Exhausted, make_error(op_code, .Full, .Wirings, 0, i64(asker.wirings_asked + rows), output.WIRINGS_OF_AN_ASKER_MOST)
-	}
-	if s.wirings_running + rows > WIRINGS_OF_THE_MACHINE_MOST {
-		// The table of the machine, which every asker shares, frees a place
-		// when a wiring ends.
-		return .Callee_Busy, make_error(op_code, .Full, .Wirings, 0, i64(s.wirings_running + rows), WIRINGS_OF_THE_MACHINE_MOST)
+	// No count of the wirings of an asker or of the machine: the wiring
+	// budget of the asker pays the rings, and the table grows here for each
+	// row of the list before any of them takes a place, so an allocation
+	// never fails in the middle of a plan.
+	if !wirings_ensure(s, s.wirings_running + rows, work.asker_index) {
+		return .Budget_Or_Capacity_Exhausted, make_error(op_code, .Full, .Wirings, 0, i64(s.wirings_running + rows), i64(len(s.wirings)))
 	}
 	for number in 1 ..= work.list.row_count {
 		plan := &work.plans[number - 1]
 		ends := [2]int{plan.writer_index, plan.reader_index}
 		connected := [2]bool{plan.row.writer_end == .Connected, plan.row.reader_end == .Connected}
 		for proc_idx, side in ends {
+			// The ends of a process are what its budget pays: its library
+			// refuses an end that it cannot place, and the wiring ends.
 			needed := ends_needed(work, proc_idx)
-			given := proc_idx >= 0 ? s.processes[proc_idx].ends_given : 0
-			if given + int(needed) > ENDS_OF_A_PROCESS_MOST {
-				return .Budget_Or_Capacity_Exhausted, make_error(op_code, .Full, .Wirings, 0, i64(given + int(needed)), ENDS_OF_A_PROCESS_MOST, i64(number))
-			}
 			if connected[side] && proc_idx >= 0 {
 				held := asker_ends_in(s, work.asker_index, proc_idx)
 				through_connection := connected_ends_needed(work, proc_idx)
@@ -981,7 +1056,7 @@ wiring_slot_allocate :: proc "contextless" (s: ^State, asker_index: int, plan: ^
 // wiring_bind_child replaces CHILD_PROCESS_INDEX with the child's actual
 // registered process index upon Commit_Start_Wiring.
 wiring_bind_child :: proc "contextless" (s: ^State, wiring_slot: int, child_proc_index: int) {
-	if wiring_slot < 0 || wiring_slot >= WIRINGS_OF_THE_MACHINE_MOST || !s.wirings[wiring_slot].active {
+	if !wiring_slot_valid(s, wiring_slot) {
 		return
 	}
 	kept := &s.wirings[wiring_slot]
@@ -996,7 +1071,7 @@ wiring_bind_child :: proc "contextless" (s: ^State, wiring_slot: int, child_proc
 // wiring_mark_delivered updates writer, reader, asker counts and fixes any
 // generic reader type once both sides of a wiring have been delivered.
 wiring_mark_delivered :: proc "contextless" (s: ^State, wiring_slot: int, plan: ^Row_Plan) {
-	if wiring_slot < 0 || wiring_slot >= WIRINGS_OF_THE_MACHINE_MOST || !s.wirings[wiring_slot].active {
+	if !wiring_slot_valid(s, wiring_slot) {
 		return
 	}
 	kept := &s.wirings[wiring_slot]
@@ -1043,7 +1118,7 @@ generic_type_keep :: proc "contextless" (entry: ^Process_Entry, plan: ^Row_Plan)
 // Returns the effective End_Word to write (None if end_written already or
 // asked == .None) and whether asker's wirings_asked just hit 0.
 wiring_end_slot :: proc "contextless" (s: ^State, wiring_slot: int, asked: output.End_Word) -> (end_to_write: output.End_Word, asker_empty: bool) {
-	if wiring_slot < 0 || wiring_slot >= WIRINGS_OF_THE_MACHINE_MOST || !s.wirings[wiring_slot].active {
+	if !wiring_slot_valid(s, wiring_slot) {
 		return .None, false
 	}
 	kept := &s.wirings[wiring_slot]
@@ -1164,7 +1239,7 @@ revoke_asker_apply :: proc "contextless" (s: ^State, asker_id: ws.Process_Identi
 	if !ok {
 		return 0, false
 	}
-	for idx in 0 ..< WIRINGS_OF_THE_MACHINE_MOST {
+	for idx in 0 ..< len(s.wirings) {
 		kept := &s.wirings[idx]
 		if !kept.active || kept.asker_index != asker_idx {
 			continue
@@ -1197,7 +1272,7 @@ process_stop_apply :: proc "contextless" (s: ^State, notice: ws.Process_Stop_Not
 		return 0, -1, false
 	}
 	stopped_by_kernel := notice.kind == .Process_Stopped && notice.cause != .None
-	for w_idx in 0 ..< WIRINGS_OF_THE_MACHINE_MOST {
+	for w_idx in 0 ..< len(s.wirings) {
 		kept := &s.wirings[w_idx]
 		if !kept.active {
 			continue
@@ -1275,7 +1350,7 @@ process_stop_apply :: proc "contextless" (s: ^State, notice: ws.Process_Stop_Not
 // the observed read cursor. The instant read_cursor advances or the ring is
 // no longer full, stall tracking resets to 0.
 wiring_stall_observe :: proc "contextless" (s: ^State, wiring_slot: int, ring_full: bool, read_cursor: u32, now_ms: u64) {
-	if wiring_slot < 0 || wiring_slot >= WIRINGS_OF_THE_MACHINE_MOST {
+	if wiring_slot < 0 || wiring_slot >= len(s.wirings) {
 		return
 	}
 	kept := &s.wirings[wiring_slot]
@@ -1314,7 +1389,7 @@ wiring_stall_expire :: proc "contextless" (s: ^State, now_ms: u64, actions: []St
 	if len(actions) == 0 {
 		return 0
 	}
-	for idx in 0 ..< WIRINGS_OF_THE_MACHINE_MOST {
+	for idx in 0 ..< len(s.wirings) {
 		if count >= len(actions) {
 			break
 		}

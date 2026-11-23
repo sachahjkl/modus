@@ -11,6 +11,7 @@ import "modus:contract/isolated"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/wide_grants"
 import "modus:system"
+import "modus:contract/start_list"
 
 // The test runs on the host: the module links src/library/modus/system,
 // whose call of an export is an entry of the machine that the host does
@@ -54,7 +55,7 @@ fixture_restart :: proc(fixture: ^Service_Fixture) {
 	port := pr.memory_private_store_port(&fixture.memory)
 	fixture.memory.writes_allowed = writes_allowed
 	fixture.service = {}
-	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, port)
+	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, port, wide_grants.space_window_heap_port())
 }
 
 @(private = "file")
@@ -137,7 +138,7 @@ a_wrong_principal_reads_and_lists_nothing :: proc(t: ^testing.T) {
 		expected := call_outcome.Call_Outcome.Grant_Or_Right_Missing
 		unit := caller == nil ? errors.Unit.Connection : errors.Unit.Acts_For_Principal
 
-		rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
+		rows: [64]wide_grants.Space_Row
 		row_slice := rows[:]
 		error = {}
 		expect_refusal(t, answer_of(spaces_for(service, caller, &row_slice, &error)), expected, error, .No_Grant, unit)
@@ -201,7 +202,7 @@ a_source_never_reads_or_erases_its_own_audit :: proc(t: ^testing.T) {
 	testing.expect(t, row == {}, "the source read the state of its own audit")
 
 	// The source lists the space of another source, never its own.
-	rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
+	rows: [64]wide_grants.Space_Row
 	row_slice := rows[:]
 	expect_answer(t, answer_of(spaces_for(service, &source, &row_slice, &error)), i64(1))
 	testing.expect_value(t, rows[0].space, other)
@@ -237,7 +238,7 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 	error: errors.Error_Record
 
 	source_text, output_text := "server", "requests"
-	for bound in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_RECORDS_MOST + 1, max(i64)}) {
+	for bound in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_AUDIT_BOUND_MOST + 1, max(i64)}) {
 		terms := terms_of(.Audit, bound)
 		error = {}
 		expect_refusal(t, answer_of(space_open_for(service, &console, &source_text, &output_text, &terms, &error)), .Argument_Refused, error, .Bad_Value, .None)
@@ -275,7 +276,8 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 	}
 	error = {}
 	expect_refusal(t, answer_of(record_append_for(service, &console, other, nil, 1, &error)), .Argument_Refused, error, .Bad_Address, .None)
-	for number in ([?]i64{min(i64), -1, 0, wide_grants.SPACE_CAPACITY, wide_grants.SPACE_CAPACITY + 1, max(i64)}) {
+	places := i64(len(service.store.spaces))
+	for number in ([?]i64{min(i64), -1, 0, places + 1, i64(max(u32)), i64(max(u32)) + 1, max(i64)}) {
 		error = {}
 		expect_refusal(t, answer_of(append_value(service, &console, number, 1, &error)), .Nothing_Has_That_Name, error, .Absent, .Records)
 	}
@@ -296,7 +298,7 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 
 	// A record changed in place breaks the chain at its serial.
 	expect_answer(t, answer_of(space_verify_for(service, &console, space, &error)), i64(0))
-	held.bytes[wide_grants.SPACE_RECORD_BYTES_MOST] ~= 0xFF
+	held.ring.bytes[wide_grants.SPACE_RECORD_BYTES_MOST] ~= 0xFF
 	error = {}
 	expect_refusal(t, answer_of(space_verify_for(service, &console, space, &error)), .Data_Damaged, error, .Damaged, .Records)
 	testing.expect_value(t, error.value, i64(1))
@@ -515,7 +517,7 @@ a_damaged_segment_refuses_each_export_after_a_restart :: proc(t: ^testing.T) {
 	}
 	name_place: [wide_grants.SEGMENT_OBJECT_NAME_BYTES]u8
 	places := [?]int{wide_grants.SEGMENT_SPACE_AT, wide_grants.SEGMENT_FIRST_SERIAL_AT, wide_grants.SEGMENT_PREVIOUS_HASH_AT, wide_grants.SEGMENT_HEAD_BYTES + wide_grants.SEGMENT_RECORD_HEAD_BYTES}
-	for segment in u32(0) ..< 2 {
+	for segment in u64(0) ..< 2 {
 		object := pr.memory_private_store_find(&fixture.memory, wide_grants.segment_object_name(&name_place, u32(space), segment))
 		testing.expect(t, object != nil, "a segment is missing")
 		for place in places {
@@ -533,7 +535,7 @@ a_damaged_segment_refuses_each_export_after_a_restart :: proc(t: ^testing.T) {
 			expect_refusal(t, answer_of(space_verify_for(service, &console, space, &error)), .Data_Damaged, error, .Damaged, .Store)
 			error = {}
 			expect_refusal(t, answer_of(record_count_for(service, &console, &error)), .Data_Damaged, error, .Damaged, .Store)
-			rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
+			rows: [64]wide_grants.Space_Row
 			row_slice := rows[:]
 			error = {}
 			expect_refusal(t, answer_of(spaces_for(service, &console, &row_slice, &error)), .Data_Damaged, error, .Damaged, .Store)
@@ -580,9 +582,140 @@ a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 
 	no_store := new(Space_Service)
 	defer free(no_store)
-	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {})
+	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {}, wide_grants.space_window_heap_port())
 	source_text, output_text, terms := "server", "orders", terms_of(.Audit, 4)
 	error = {}
 	expect_refusal(t, answer_of(space_open_for(no_store, &console, &source_text, &output_text, &terms, &error)), .Callee_Unavailable, error, .Device, .Store)
 	testing.expect_value(t, wide_grants.space_count(&no_store.store), 0)
+}
+
+// Fresh authority key passed through context value slots verifies a minted
+// wide grant in collector_core, while another key, a tampered grant, or a
+// zero key is refused. Act outputs of all four producers wire to principal-
+// isolated audit spaces at the grant and stop recording on revocation.
+@(test)
+wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
+
+	fresh_key := blake3.hash(transmute([]u8)string("fresh-start-key-1"))
+	other_key := blake3.hash(transmute([]u8)string("fresh-start-key-2"))
+	verifier := blake3.hash(transmute([]u8)string("passphrase-verified"))
+
+	auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&auth, fresh_key, .Entropy))
+	key_words, words_ok := wide_grants.authority_context_words(&auth)
+	testing.expect(t, words_ok)
+	collector_key := wide_grants.authority_key_from_words(key_words)
+
+	manager := new(collector_core.Wide_Grant_Manager)
+	defer free(manager)
+	testing.expect(t, !collector_core.manager_init(manager, PRINCIPAL, {}), "zero key must be refused")
+	testing.expect(t, collector_core.manager_init(manager, PRINCIPAL, collector_key))
+
+	terms := wide_grants.Wide_Grant_Terms {
+		principal_id          = PRINCIPAL,
+		grantee_identity_hash = blake3.hash(transmute([]u8)string("agent-key-1")),
+		authorities_word      = wide_grants.wide_authorities_to_word({.View_Screen, .Send_Input}),
+		target_window_count   = 1,
+		target_window_ids     = {0 = 101},
+		duration_ms           = wide_grants.DEFAULT_WIDE_GRANT_DURATION_MS,
+		survives_restart      = false,
+	}
+	testing.expect_value(t, wide_grants.wide_grant_terms_seal(&terms), wide_grants.Wide_Grant_Refusal.None)
+
+	// Proof from another key is refused.
+	other_auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&other_auth, other_key, .Processor))
+	wrong_proof, _ := wide_grants.authority_mint_proof(&other_auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 100)
+	_, wrong_refusal := collector_core.manager_create_grant(manager, &terms, &wrong_proof, 100, 100 + terms.duration_ms)
+	testing.expect_value(t, wrong_refusal, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
+
+	// Proof from fresh key is accepted; tampered proof is refused.
+	good_proof, mint_r := wide_grants.authority_mint_proof(&auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 200)
+	testing.expect_value(t, mint_r, wide_grants.Wide_Grant_Refusal.None)
+	tampered := good_proof
+	tampered.proof_tag[3] ~= 0x80
+	_, tampered_r := collector_core.manager_create_grant(manager, &terms, &tampered, 200, 200 + terms.duration_ms)
+	testing.expect_value(t, tampered_r, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
+
+	serial, created_r := collector_core.manager_create_grant(manager, &terms, &good_proof, 200, 200 + terms.duration_ms)
+	testing.expect_value(t, created_r, wide_grants.Wide_Grant_Refusal.None)
+	testing.expect_value(t, serial, u64(1))
+
+	// Wire all four act spaces at grant, verify producer isolation, and revoke.
+	router: wide_grants.Grant_Act_Router
+	testing.expect_value(t, wide_grants.act_wiring_attach(&router, &service.store, serial, PRINCIPAL, {.View_Screen, .Send_Input}, terms.duration_ms, 200), wide_grants.Act_Wiring_Refusal.None)
+	_, emit_r := wide_grants.act_wiring_emit(&router, &service.store, {
+		grant_serial     = serial,
+		principal_id     = PRINCIPAL,
+		timestamp_ms     = 210,
+		producer_word    = u64(wide_grants.Act_Producer.Trusted_Display),
+		act_kind_word    = u64(wide_grants.Act_Kind.Key_Injected),
+		target_window_id = 101,
+		detail_word_0    = 3,
+	})
+	testing.expect_value(t, emit_r, wide_grants.Act_Wiring_Refusal.None)
+
+	// A producer cannot read its own audit space; the principal's reader can.
+	compositor_caller := connection_of(PRINCIPAL, true, "compositor")
+	principal_reader := connection_of(PRINCIPAL, true, "auditor")
+	heads: [4]wide_grants.Kept_Record_Head
+	bytes: [4 * size_of(wide_grants.Act_Stream_Record)]u8
+	error: errors.Error_Record
+	expect_refusal(t, read_all(service, &compositor_caller, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+	testing.expect_value(t, read_all(service, &principal_reader, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error), i64(1))
+
+	// Revocation ends recording cleanly.
+	testing.expect_value(t, collector_core.manager_revoke_grant(manager, serial, 300, .Principal_Revoked), wide_grants.Wide_Grant_Refusal.None)
+	testing.expect_value(t, wide_grants.act_wiring_revoke(&router, &service.store, serial, .Principal_Revoked, 300), wide_grants.Act_Wiring_Refusal.None)
+	_, post_revoke := wide_grants.act_wiring_emit(&router, &service.store, {
+		grant_serial     = serial,
+		principal_id     = PRINCIPAL,
+		timestamp_ms     = 310,
+		producer_word    = u64(wide_grants.Act_Producer.Remote_Service),
+		act_kind_word    = u64(wide_grants.Act_Kind.Frame_Read),
+		target_window_id = 101,
+	})
+	testing.expect_value(t, post_revoke, wide_grants.Act_Wiring_Refusal.Grant_Revoked)
+}
+
+// The export space_open opens no act space of a wide grant: a caller that
+// acts for the principal, with the terms of the grant or with another
+// record size, is refused with No_Grant and the value Act_Space, and the
+// act space that the grant opened stays open with its records.
+@(test)
+the_export_opens_no_act_space :: proc(t: ^testing.T) {
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
+	act, opened := wide_grants.space_open(&service.store, transmute([]u8)string("remote"), transmute([]u8)string(wide_grants.ACT_OUTPUT_NAME), wide_grants.act_audit_space_terms())
+	testing.expect_value(t, opened, wide_grants.Space_Refusal.None)
+	console := connection_of(PRINCIPAL, true, "console")
+	for record_size in ([?]i64{i64(size_of(wide_grants.Act_Stream_Record)), 8}) {
+		source_text, output_text := "remote", wide_grants.ACT_OUTPUT_NAME
+		terms := wide_grants.act_audit_space_terms()
+		terms.record_size = record_size
+		error: errors.Error_Record
+		expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &terms, &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Records)
+		testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Act_Space))
+		testing.expect_value(t, error.argument, i64(2))
+	}
+	space := wide_grants.space_of(&service.store, act)
+	testing.expect(t, space != nil && !space.closed && space.ring != nil, "the act space closed")
+	testing.expect_value(t, wide_grants.space_count(&service.store), 1)
+}
+
+// The wiring pages that the collector states are the pages of its act
+// rings as the start list counts the pages of a wiring row, and the root
+// service carves them whatever the collector spent before: the rule of the
+// root on a request that states them, one that states more than its pages,
+// and one that states none.
+@(test)
+the_collector_states_the_pages_of_its_act_rings :: proc(t: ^testing.T) {
+	row := start_list.wiring_pages_of_row(wide_grants.ACT_RING_CAPACITY, size_of(wide_grants.Act_Stream_Record))
+	testing.expect_value(t, COLLECTOR_ACT_RING_PAGES, row)
+	testing.expect_value(t, COLLECTOR_ACT_WIRING_PAGES, start_list.WIRING_PAGES_OF_THE_ASKER + u64(wide_grants.ACT_SPACES_RESERVED) * row)
+	testing.expect_value(t, MODULE_BUDGET.wiring_pages, COLLECTOR_ACT_WIRING_PAGES)
 }

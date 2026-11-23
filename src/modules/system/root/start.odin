@@ -4,6 +4,7 @@ package root
 // tables of this service give the name, the services that the start grant set needs,
 // and one context whose handles each take their own slot.
 
+import "base:intrinsics"
 import "internal:root/role_policy"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
@@ -15,6 +16,8 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/settings"
+import "modus:contract/wide_grants"
+import "modus:disk_process"
 import "modus:display"
 import "modus:pci"
 import "modus:principals"
@@ -137,6 +140,10 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		return outcome
 	}
 	start_wiring_keep(&work)
+	if name == "collector" {
+		wide_grant_collector_started(&work) // wide_grant_authority.odin
+	}
+	wide_grant_process_started(work.slot)
 	if place != nil {
 		place^ = work.slot
 	}
@@ -326,6 +333,9 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_
 // of the process is freed with what this service made for it, and the
 // device service that the start started stops.
 start_abandon :: proc "contextless" (work: ^Start_Work) {
+	if work.name == "collector" {
+		wide_grant_collector_abandon(work)
+	}
 	if work.slot != nil {
 		release(work.slot)
 	}
@@ -423,6 +433,10 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	switch work.name {
 	case "unlock":
 		unlock_values_write(&work.values)
+	case "collector":
+		// The collector receives its principal, the authority key of the
+		// wide grants and the ring of the grants (wide_grant_authority.odin).
+		wide_grant_collector_context(work)
 	case "module_files":
 		// The module file service serves the callers of the principal of
 		// its store only, and learns that principal here.
@@ -535,7 +549,15 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_O
 	// The capture face and the input face ride this ring: the compositor
 	// takes them only from the client whose record says so.
 	capture: u64 = .Screen_Capture in work.start_grant_set.grants ? display.CLIENT_CAPTURE : 0
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), display.CLIENT_ADD_CAPTURE = capture}})
+	// The window of unlock that proves a principal for a wide grant takes
+	// the keys of the input service only: an agent with input never types
+	// the proof of its own grant.
+	local_input_only: u64 = work.name == "unlock" && unlock_run.mode == .Prove_Wide_Grant ? display.CLIENT_LOCAL_INPUT_ONLY : 0
+	// Values 1 to 3: the name of the module, the one name of the window
+	// that the process does not choose; value 4 is 0 for a process of the
+	// boot image.
+	name := disk_process.name_pack(work.name)
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), 1 = name[0], 2 = name[1], 3 = name[2], display.CLIENT_ADD_CAPTURE = capture, display.CLIENT_ADD_LOCAL_INPUT_ONLY = local_input_only}})
 	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
 	return .Succeeded
 }
@@ -703,6 +725,18 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	}
 	load_error: module.Load_Error
 	process_budget := budget_of(work.file, name)
+	// The collector of principal 0 keeps the audits of the start list: this
+	// service pays their memory (start_policy.odin, start_list_audits). The
+	// largest budget of one process bounds it, as each part.
+	if name == wide_grants.COLLECTOR_MODULE_NAME && work.principal == principals.MACHINE && start_list_audits > 0 {
+		widened := process_budget.pages + start_list_audits * wide_grants.SPACE_AUDIT_PAGES
+		process_budget.pages = min(widened, module.LARGEST_BUDGET_PAGES)
+	}
+	// The start policy pays the wirings of its list: the header gives their
+	// pages, and this service adds them (start_policy.odin).
+	if is_role_holder(name, .Start_Policy) && start_list_wiring_pages > 0 {
+		process_budget.pages = min(process_budget.pages + start_list_wiring_pages, module.LARGEST_BUDGET_PAGES)
+	}
 	status: system.Status
 	// The start of the measure of the start of a window: the load of the
 	// module, its hash and Process_Start are in it
@@ -714,6 +748,10 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	// no handle of this service for its budget: the handle table of this
 	// service holds one handle for each process that it keeps one for.
 	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.start_grant_set.grants)
+	// The collector pays the rings of the audit of a wide grant, which the
+	// root service asks in its name (src/md/features/wide_grants.md, "The
+	// path of a grant, end to end").
+	work.wiring.keep_budget ||= work.name == "collector"
 	held_entry: ^u64
 	switch work.hold {
 	case .None:
@@ -724,7 +762,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		work.slot.held_for_replay = true
 	}
 	work.slot.budget_pages = process_budget.pages
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
+	seeded_values := random.values_with_seed(&process_generator, work.values.values)
+	defer {
+		intrinsics.mem_zero_volatile(&seeded_values, size_of(seeded_values))
+		intrinsics.mem_zero_volatile(&work.values.values, size_of(work.values.values))
+	}
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.

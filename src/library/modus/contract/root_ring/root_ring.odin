@@ -507,6 +507,35 @@ Root_Command :: enum u32 {
 	// Bad_State and the kind Absent when the sender holds none of that
 	// growth.
 	Screen_Budget = 33,
+	// Wide_Grant_Ask opens the path of a wide grant
+	// (src/md/features/wide_grants.md, "The path of a grant, end to end"):
+	// values[0..3] the client key of the agent, values[4] the word of the
+	// scopes that it proposes (wide_grants.Wide_Authorities), values[5] the
+	// duration in milliseconds, values[6] 0. The sender acts for the
+	// principal of the row of the key in the client table. The completion
+	// comes at once, with the serial of the flow in values[0]: the grant
+	// comes after the screen and the proof.
+	Wide_Grant_Ask = 34,
+	// Wide_Grant_Proof is the end of the proof of `unlock` in the mode
+	// Prove_Wide_Grant: values[4] the principal, values[5] a
+	// Wide_Grant_Proof_Outcome. Only the holder of Principals sends it.
+	Wide_Grant_Proof = 35,
+	// Wide_Grant_End ends the wide grant of a client key: values[0..3] the
+	// key. The sender acts for the principal of the grant.
+	Wide_Grant_End = 36,
+	// Wide_Grant_Agent_Ask is the ask of an agent through `remote`
+	// (src/md/features/wide_grants.md, "The ask of an agent"): values[0..3]
+	// the key that the client proved in its handshake, values[4] the word of
+	// the scopes, values[5] the duration in milliseconds, values[6] 0. The
+	// principal is the principal of the row of the key. Only the holder of
+	// Remote_Clients sends it. The completion: the serial of the flow in
+	// values[0], as for Wide_Grant_Ask.
+	Wide_Grant_Agent_Ask = 37,
+	// Wide_Grant_Second_Connection says that a second connection of a key
+	// came while the row of the key held a wide grant: values[0..3] the key,
+	// the other values 0. The root service ends the grant with the reason
+	// Duplicate_Connection. Only the holder of Remote_Clients sends it.
+	Wide_Grant_Second_Connection = 38,
 }
 
 // The step of a Screen_Budget, in values[0].
@@ -554,6 +583,22 @@ screen_budget_words_of_values :: proc "contextless" (values: [7]u64) -> (words: 
 		}
 	}
 	return words, 0, true
+}
+
+// values[5] of a Wide_Grant_Proof: how the proof of the principal ended.
+// The values cross the root ring.
+Wide_Grant_Proof_Outcome :: enum u64 {
+	None      = 0, // Refused at the border.
+	Proved    = 1, // The passphrase opened the keys of the principal.
+	Cancelled = 2, // The principal ended the window with no passphrase.
+	Refused   = 3, // The principal has no passphrase that proves it here.
+}
+
+// wide_grant_proof_outcome_of_word is the border of values[5] of a
+// Wide_Grant_Proof: a word that names no member, and None, are refused.
+wide_grant_proof_outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Wide_Grant_Proof_Outcome, ok: bool) {
+	member := enum_word.member_of_word(Wide_Grant_Proof_Outcome, word) or_return
+	return member, member != .None
 }
 
 // values[5] of a Debug_Start: what it does.
@@ -759,6 +804,9 @@ Root_Command_Sender :: enum u8 {
 	// The process with the start grant Screen_Capture only: the service of
 	// the remote display, for the budgets of a screen of memory.
 	Screen_Capture,
+	// The process with the start grant Remote_Clients and a root ring: it
+	// names a client key that proved itself in its handshake.
+	Remote_Clients,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -799,6 +847,11 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Debug_Start            = .Debugger,
 	.Plan_Roles             = .Plans,
 	.Screen_Budget          = .Screen_Capture,
+	.Wide_Grant_Ask         = .Root_Ring,
+	.Wide_Grant_Proof       = .Principals,
+	.Wide_Grant_End         = .Root_Ring,
+	.Wide_Grant_Agent_Ask   = .Remote_Clients,
+	.Wide_Grant_Second_Connection = .Remote_Clients,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -929,6 +982,8 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 		return .Plans in start_grant_set
 	case .Screen_Capture:
 		return .Screen_Capture in start_grant_set
+	case .Remote_Clients:
+		return .Remote_Clients in start_grant_set
 	}
 	return false
 }
@@ -1192,6 +1247,11 @@ root_command_names := [Root_Command]string {
 	.Debug_Start            = "Debug_Start",
 	.Plan_Roles             = "Plan_Roles",
 	.Screen_Budget          = "Screen_Budget",
+	.Wide_Grant_Ask         = "Wide_Grant_Ask",
+	.Wide_Grant_Proof       = "Wide_Grant_Proof",
+	.Wide_Grant_End         = "Wide_Grant_End",
+	.Wide_Grant_Agent_Ask   = "Wide_Grant_Agent_Ask",
+	.Wide_Grant_Second_Connection = "Wide_Grant_Second_Connection",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1232,6 +1292,11 @@ root_first_argument_names := [Root_Command]string {
 	.Debug_Start            = "name",
 	.Plan_Roles             = "override",
 	.Screen_Budget          = "step",
+	.Wide_Grant_Ask         = "key",
+	.Wide_Grant_Proof       = "name",
+	.Wide_Grant_End         = "key",
+	.Wide_Grant_Agent_Ask   = "key",
+	.Wide_Grant_Second_Connection = "key",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1273,6 +1338,11 @@ root_second_argument_names := [Root_Command]string {
 	.Debug_Start            = "",
 	.Plan_Roles             = "",
 	.Screen_Budget          = "",
+	.Wide_Grant_Ask         = "scopes",
+	.Wide_Grant_Proof       = "principal",
+	.Wide_Grant_End         = "",
+	.Wide_Grant_Agent_Ask   = "scopes",
+	.Wide_Grant_Second_Connection = "",
 }
 
 // command_of_record reads the command that an error record names: the

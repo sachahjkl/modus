@@ -789,6 +789,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	principals_start()
 	// The random seed of the system: before the first process starts.
 	random_seed_make()
+	// The fresh authority key for wide grants: generated from strong entropy
+	// before any process starts and given only to the collector in its context.
+	wide_grant_authority_start()
 	// The settings page and the font outlines, before the first window.
 	text_settings_create()
 	date_page_create()
@@ -1163,11 +1166,13 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 		return .Bad_State
 	}
 	// The compositor imports the drawing module: its load needs the boot
-	// image as the source of its imports.
+	// image as the source of its imports. Pass Start_Wiring so its `acts`
+	// record output receives a wiring ring for wide-grant auditing.
 	display_holder_load_error: module.Load_Error
 	display_budget := budget_of(image_file_checked(display_name), display_name)
 	served.budget_pages = display_budget.pages
-	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
+	display_wiring: system.Start_Wiring
+	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring)
 	if status != .Ok {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -1185,12 +1190,16 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	served.process = display_holder
 	served.process_slot, served.process_serial, _ = system.process_place(display_holder)
 	served.start_grant_set = start_grant_set
+	served.wiring_memory = display_wiring.wiring_memory
 	copy(served.name[:len(served.name) - 1], display_name)
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == display_name {
 			served.module_offset = item.offset
 			served.module_size = item.size
 		}
+	}
+	if wiring_process != nil {
+		wiring_register_process(served)
 	}
 	started_log(display_name, principals.MACHINE, false)
 	powerbox_service_start() // powerbox_picker.odin
@@ -1264,6 +1273,7 @@ root_loop_pass :: proc "contextless" () {
 	devices_answers(&wait)
 	principals_answers(&wait)
 	powerbox_answers(&wait) // powerbox_picker.odin
+	wide_grant_deadline := wide_grant_pass(&wait) // wide_grant_authority.odin
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
@@ -1278,7 +1288,7 @@ root_loop_pass :: proc "contextless" () {
 	// read of the entropy device in flight (entropy.odin), the hang
 	// bound of a start policy that runs, and any in-flight request to
 	// the delegated wiring service.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake(), picker_listing_deadline()))
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake(), picker_listing_deadline(), wide_grant_deadline))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -1295,7 +1305,11 @@ control_ring_serve :: proc "contextless" () {
 			settings_appearance_next_start() // text_settings.odin
 		case .Screen_Budget_Release:
 			screen_budget_release(.Compositor, record.values[0], role_holder_name(.Display)) // screen_budgets.odin
-		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Screen_Budget_Give:
+		case .Wide_Grant_Screen_Answer:
+			wide_grant_screen_answered(record.values) // wide_grant_authority.odin
+		case .Wide_Grant_Revoke_Pressed:
+			wide_grant_revoke_pressed(record.values)
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Screen_Budget_Give, .Wide_Grant_Screen_Show, .Wide_Grant_Mark:
 			// This service sends these to the compositor, and takes none
 			// from it.
 			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
@@ -2437,6 +2451,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	devices_service_end(item)
 	principals_service_end(item)
 	powerbox_service_end(item) // powerbox_picker.odin
+	wide_grant_process_released(item) // wide_grant_authority.odin
 	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {

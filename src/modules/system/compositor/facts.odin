@@ -1482,3 +1482,25 @@ Store_Picker_Listed :: struct {
 // gave no connection, or the storage service did not answer.
 @(log_fact = "compositor: the store picker received no list of stores")
 Store_Picker_No_List :: struct {}
+
+// The facts of the screen and the mark of a wide grant
+// (wide_grant_screen.odin).
+
+@(log_fact = "compositor: a record of the screen or the mark of a wide grant was refused at its border")
+Wide_Grant_Screen_Word_Refused :: struct {}
+
+@(log_fact = "compositor: the control ring is full: the answer of a wide grant was not sent; press again")
+Wide_Grant_Answer_Not_Sent :: struct {}
+
+// Once for each grant: the first input of a viewer that the grant refused,
+// on a surface out of the windows that the principal picked. The card of
+// the mark counts the others.
+@(log_fact = "compositor: the wide grant {grant} refused an input of a viewer out of its windows")
+Wide_Grant_Viewer_Input_Refused :: struct {
+	grant: u64,
+}
+
+@(log_fact = "compositor: the principal pressed revoke on the wide grant {grant}")
+Wide_Grant_Revoke_Pressed :: struct {
+	grant: u64,
+}

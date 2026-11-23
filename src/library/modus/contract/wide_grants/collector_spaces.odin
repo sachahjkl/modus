@@ -22,15 +22,30 @@ import "modus:contract/enum_word"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/value_kinds"
 
-// The spaces that one collector holds at once.
-SPACE_CAPACITY :: 8
+// The name of the module of the collector, as a start list and the root
+// service name it.
+COLLECTOR_MODULE_NAME :: "collector"
 
-// The records that one space holds at most: the largest bound of a space.
+// The pages that one audit of a start list adds to the budget of the
+// collector: its window, and its place and its row of the index, which a
+// page holds with room (src/md/features/wide_grants.md, "The starter pays
+// for the audits"). The root service widens the budget by it.
+SPACE_AUDIT_PAGES :: SPACE_WINDOW_PAGES + 1
+
+// How long a closed audit space is kept before its removal, until a plan
+// states it: a principal reads or copies the audit of a module in the
+// quarter after its update, and the storage service keeps the versions of
+// the removed objects by its own retention after that.
+CLOSED_AUDIT_RETENTION_DEFAULT_MILLISECONDS :: i64(90 * 24 * 3600 * 1000)
+
+// How often the collector tries again to date a closed space while no date
+// is known.
+CLOSED_AUDIT_DATE_RETRY_MILLISECONDS :: u64(60_000)
+
+// The records that one space holds in memory at most: the largest bound of
+// a space Keep, and the window of the newest records of a space Audit,
+// whose records stay in the private store up to its bound.
 SPACE_RECORDS_MOST :: 64
-
-// The records that the bounds of all the spaces hold together: a space whose
-// bound does not fit what the others left is refused.
-SPACE_ROOM_RECORDS :: 256
 
 // The bytes of a record of a space at most: the largest record that a record
 // description allows.
@@ -44,8 +59,10 @@ FORWARD_QUEUE_PER_SPACE_LIMIT :: 4
 // The records that wait to be forwarded at most, across the spaces: the
 // part of each source that the collector reads at once.
 FORWARD_QUEUE_CAPACITY :: 64
-#assert(FORWARD_QUEUE_PER_SPACE_LIMIT * SOURCE_LINKS_MOST <= FORWARD_QUEUE_CAPACITY)
-#assert(FORWARD_QUEUE_PER_SPACE_LIMIT * SPACE_CAPACITY <= FORWARD_QUEUE_CAPACITY)
+// Only a space that a source feeds forwards: the part of each fits for the
+// sources that forward at once; past them the queue holds a record, which
+// waits and is not lost.
+#assert(FORWARD_QUEUE_PER_SPACE_LIMIT * FORWARD_SOURCES_SHARED <= FORWARD_QUEUE_CAPACITY)
 
 // The bytes of the name of a source process and of a record output.
 SPACE_NAME_BYTES :: 32
@@ -66,7 +83,6 @@ Space_Refusal :: enum u8 {
 	Bad_Kind            = 1,
 	Bad_Forwarding      = 2,
 	Bad_Bound           = 3,
-	Bound_Past_Room     = 4,
 	Space_Limit_Reached = 5,
 	Bad_Name            = 6,
 	Bad_Record_Size     = 7,
@@ -82,6 +98,46 @@ Space_Refusal :: enum u8 {
 	Store_Failed        = 17, // The private store refused a read or a write: nothing changed.
 	Store_Damaged       = 18, // An object of the private store does not decode, or breaks its chain.
 	Space_Held          = 19, // Another wiring of the same source feeds the space now.
+	Memory_Refused      = 20, // The budget of the collector did not pay the window of the space: nothing changed.
+	Space_Closed        = 21, // The space closed when its record size changed: it keeps its records and takes no more.
+	Space_Removed       = 22, // The space closed, and its retention ended: its records are removed, or being removed.
+	Act_Space           = 23, // The pair names an act space of a wide grant, which only the grant opens (act_wiring_attach).
+}
+
+// The window of an open space: the ring of its newest records in memory,
+// and the slot map of a space Audit. The collector commits it from its
+// budget when the space opens and decommits it when the space closes.
+Space_Window :: struct {
+	serials:  [SPACE_RECORDS_MOST]u64,
+	times:    [SPACE_RECORDS_MOST]u64,
+	hashes:   [SPACE_RECORDS_MOST]blake3.Hash,
+	bytes:    [SPACE_RECORDS_MOST * SPACE_RECORD_BYTES_MOST]u8,
+	// For each slot, the number of the segment that it holds, plus 1; 0:
+	// none, as the slot map object holds it.
+	slot_map: [SPACE_SEGMENT_SLOTS]u64,
+}
+
+// The pages of the window of one space.
+SPACE_WINDOW_PAGES :: (size_of(Space_Window) + 4095) / 4096
+
+// Where the memory of the spaces comes from: the budget of the collector on
+// a machine, the heap in a host test. No count of the store is fixed.
+//
+// - window_take gives a zeroed window, or nil when it is not paid;
+//   window_give returns it; windows_left says how many windows the budget
+//   still pays.
+// - places_grow gives the table of the places with count places at least,
+//   at the same address, the places before kept; nil when it is not paid.
+// - index_grow gives a buffer of bytes for the index, or nil; the bytes
+//   of the buffer before are not kept, as a write or a read of the index
+//   fills it whole.
+Space_Memory_Port :: struct {
+	user:         rawptr,
+	window_take:  proc "contextless" (user: rawptr) -> ^Space_Window,
+	window_give:  proc "contextless" (user: rawptr, window: ^Space_Window),
+	windows_left: proc "contextless" (user: rawptr) -> u32,
+	places_grow:  proc "contextless" (user: rawptr, count: u32) -> []Collector_Space,
+	index_grow:   proc "contextless" (user: rawptr, bytes: int) -> []u8,
 }
 
 // The terms of a space, as space_open takes them: the kind (Keep or Audit),
@@ -132,28 +188,44 @@ Space_Reader :: struct {
 	name:               [SPACE_NAME_BYTES]u8,
 }
 
-// One space.
+// One space. The ring in memory holds the newest records, window of them
+// at most; a space Audit keeps each record in the private store too, from
+// kept_first_serial, and refuses a record past its bound.
 Collector_Space :: struct {
 	active:         bool,
 	kind:           Collector_Space_Kind,
 	forwarding:     Space_Forwarding,
 	bound:          u32,
+	window:         u32, // The places of the ring in memory: min(bound, SPACE_RECORDS_MOST).
 	record_size:    u32,
 	source:         [SPACE_NAME_BYTES]u8,
 	output:         [SPACE_NAME_BYTES]u8,
 	first:          u32, // The place of the oldest record in the ring of the space.
-	count:          u32,
+	count:          u32, // The records in the ring.
+	first_serial:   u64, // The serial of the record at first.
 	next_serial:    u64,
 	removed:        u64,
 	refused_full:   u64,
 	forwarded:      u64,
 	unforwarded:    u64, // The kept records whose pair ended before they left: the space keeps them, and no reader got them.
 	last_hash:      blake3.Hash,
-	segment_hashes: [SPACE_SEGMENTS_MOST]blake3.Hash, // The hash of each audit segment in the private store.
-	serials:        [SPACE_RECORDS_MOST]u64,
-	times:          [SPACE_RECORDS_MOST]u64,
-	hashes:         [SPACE_RECORDS_MOST]blake3.Hash,
-	bytes:          [SPACE_RECORDS_MOST * SPACE_RECORD_BYTES_MOST]u8,
+	window_link:    blake3.Hash, // The link of the record before first_serial: where the chain of the ring starts.
+	// A space Audit: the first record that the private store keeps. The
+	// records before it rotated out (space_rotate_before), whole segments
+	// at a time; the anchors close the chain at that place.
+	kept_first_serial:   u64,
+	anchor_segment_hash: blake3.Hash, // The hash of the segment before the first kept one.
+	anchor_link:         blake3.Hash, // The link of the record before kept_first_serial.
+	closed_segment_hash: blake3.Hash, // The hash of the last full segment: the previous one of the open segment.
+	// A space Audit whose record size changed: no window, no new record; its
+	// records stay in the store, after window_link, which is its last link.
+	closed:         bool,
+	closed_at_ms:   i64, // The date of the close, in milliseconds since 1970; 0 until a pass of the collector knows a date.
+	// The retention of a closed space ended: its objects are being removed
+	// (active), or are removed and its place is free (not active).
+	removing:       bool,
+	place_removed:  bool,
+	ring:           ^Space_Window, // nil for a closed space.
 }
 
 // One record that waits to be forwarded: a copy, so a space Keep that
@@ -172,12 +244,15 @@ Space_Store :: struct {
 	store_port:    pr.Private_Store_Port,
 	load_state:    Space_Load_State,
 	damaged_space: u32, // The space whose objects were damaged at the read, from 1; 0 for the index.
-	spaces:        [SPACE_CAPACITY]Collector_Space,
+	spaces:        []Collector_Space, // The places, in the memory of the port: they grow and never move.
 	forward_first: u32,
 	forward_count: u32,
 	forward:       [FORWARD_QUEUE_CAPACITY]Forward_Item,
+	memory:        Space_Memory_Port,
+	index_dirty:   bool, // The memory holds a change that no write of the index took yet: the next pass writes it.
+	load_reads:    int, // The objects that the last load of the spaces read: a measure.
 	segment_bytes: [SEGMENT_BYTES_MOST]u8,
-	index_bytes:   [SPACE_INDEX_BYTES_MOST]u8,
+	index_bytes:   []u8, // The buffer of the index, in the memory of the port.
 }
 
 // space_forwarding_of_word is the border of the forwarding word of terms.
@@ -190,12 +265,100 @@ space_forwarding_of_word :: proc "contextless" (word: u64) -> (forwarding: Space
 }
 
 // space_store_init empties store for principal, over the private store of
-// store_port. The audit spaces come back from that store at the first step.
-space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64, store_port: pr.Private_Store_Port) {
+// store_port and the memory of memory. The audit spaces come back from that
+// store at the first step.
+space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64, store_port: pr.Private_Store_Port, memory: Space_Memory_Port) {
 	store^ = {}
 	store.principal = principal
 	store.store_port = store_port
+	store.memory = memory
 }
+
+// space_index_bytes_of gives the bytes of an index of count places.
+space_index_bytes_of :: proc "contextless" (count: int) -> int {
+	return SPACE_INDEX_HEAD_BYTES + count * SPACE_INDEX_ROW_BYTES + blake3.HASH_SIZE
+}
+
+// space_places_ensure makes the table hold count places at least. false:
+// the budget does not pay them, and nothing changed. The buffer of the index
+// grows only at a write of the index (space_index_persist), so a load that
+// grows the table keeps the bytes that it read.
+space_places_ensure :: proc "contextless" (store: ^Space_Store, count: int) -> bool {
+	if len(store.spaces) < count {
+		if store.memory.places_grow == nil {
+			return false
+		}
+		grown := store.memory.places_grow(store.memory.user, u32(count))
+		if len(grown) < count || (len(store.spaces) > 0 && raw_data(grown) != raw_data(store.spaces)) {
+			return false
+		}
+		store.spaces = grown
+	}
+	return true
+}
+
+// space_index_buffer_ensure makes the buffer of the index hold bytes.
+space_index_buffer_ensure :: proc "contextless" (store: ^Space_Store, bytes: int) -> bool {
+	if len(store.index_bytes) >= bytes {
+		return true
+	}
+	if store.memory.index_grow == nil {
+		return false
+	}
+	grown := store.memory.index_grow(store.memory.user, bytes)
+	if len(grown) < bytes {
+		return false
+	}
+	store.index_bytes = grown
+	return true
+}
+
+// space_windows_left gives the windows that the budget still pays.
+space_windows_left :: proc "contextless" (store: ^Space_Store) -> u32 {
+	if store.memory.windows_left == nil {
+		return 0
+	}
+	return store.memory.windows_left(store.memory.user)
+}
+
+// space_window_take gives a window to the space of space_number, or false
+// when the budget does not pay it.
+space_window_take :: proc "contextless" (store: ^Space_Store, space_number: u32) -> bool {
+	if store.memory.window_take == nil {
+		return false
+	}
+	window := store.memory.window_take(store.memory.user)
+	if window == nil {
+		return false
+	}
+	store.spaces[space_number - 1].ring = window
+	return true
+}
+
+// space_window_give returns the window of a space, if it holds one.
+space_window_give :: proc "contextless" (store: ^Space_Store, space_number: u32) {
+	space := &store.spaces[space_number - 1]
+	if space.ring != nil && store.memory.window_give != nil {
+		store.memory.window_give(store.memory.user, space.ring)
+	}
+	space.ring = nil
+}
+
+// space_windows_open gives the spaces that hold a window, and the act
+// spaces among them.
+space_windows_open :: proc "contextless" (store: ^Space_Store) -> (open: u32, acts: u32) {
+	for &space in store.spaces {
+		if space.ring != nil {
+			open += 1
+			if space_is_act(&space) {
+				acts += 1
+			}
+		}
+	}
+	return open, acts
+}
+
+
 
 @(private = "file")
 name_valid :: proc "contextless" (name: []u8) -> bool {
@@ -224,21 +387,27 @@ name_field_equal :: proc "contextless" (field: ^[SPACE_NAME_BYTES]u8, name: []u8
 	return true
 }
 
-// space_room_left gives the records that a new space can still bound.
-space_room_left :: proc "contextless" (store: ^Space_Store) -> u32 {
-	used: u32 = 0
-	for &space in store.spaces {
-		if space.active {
-			used += space.bound
-		}
-	}
-	return used >= SPACE_ROOM_RECORDS ? 0 : SPACE_ROOM_RECORDS - used
+// server_audit_terms_valid says if the terms of a row of a start list name
+// what such a row may ask: a space Audit that keeps the records that leave
+// a server, never one that forwards them (a pair needs a writer that the
+// start list does not hold), with a bound and a record size in range. The
+// record size is checked against the record of the writer when the
+// collector opens the link.
+server_audit_terms_valid :: proc "contextless" (terms: Space_Terms) -> bool {
+	kind_ok := terms.kind_word == i64(Collector_Space_Kind.Audit) && terms.forwarding_word == i64(Space_Forwarding.Keeps)
+	bound_ok := terms.bound_records >= 1 && terms.bound_records <= SPACE_AUDIT_BOUND_MOST
+	size_ok := terms.record_size >= 1 && terms.record_size <= SPACE_RECORD_BYTES_MOST
+	return kind_ok && bound_ok && size_ok
 }
 
 // space_open gives the number (from 1) of the space of the source and the
-// record output, with terms. A pair that already has an active space with
-// the same record size and the same terms gives that space; a pair whose
-// record size changed gets a new space, and the old one stays.
+// record output, with terms. A pair that already has an open space with
+// the same record size and the same terms gives that space. A pair whose
+// record size changed gets a new space, and the old one closes in memory:
+// a space Audit keeps its place and its records in the store, a space Keep
+// frees its place (src/md/features/wide_grants.md, "The memory of the
+// spaces"). A new space takes a window from the budget, and leaves the
+// windows of the act spaces that are not open.
 space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, terms: Space_Terms) -> (space_number: u32, refusal: Space_Refusal) {
 	if ready := space_store_ready(store); ready != .None {
 		return 0, ready
@@ -260,17 +429,23 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 	if !forwarding_ok {
 		return 0, .Bad_Forwarding
 	}
-	if terms.bound_records < 1 || terms.bound_records > SPACE_RECORDS_MOST {
+	if terms.bound_records < 1 || terms.bound_records > i64(space_bound_most(kind)) {
 		return 0, .Bad_Bound
 	}
 	if terms.record_size < 1 || terms.record_size > SPACE_RECORD_BYTES_MOST {
 		return 0, .Bad_Record_Size
 	}
 	bound := u32(terms.bound_records)
+	window := min(bound, SPACE_RECORDS_MOST)
 	record_size := u32(terms.record_size)
 	free := -1
+	changed := -1 // The open space of the pair with another record size.
 	for &space, index in store.spaces {
-		if space.active && name_field_equal(&space.source, source) && name_field_equal(&space.output, output) && space.record_size == record_size {
+		if space.active && !space.closed && name_field_equal(&space.source, source) && name_field_equal(&space.output, output) {
+			if space.record_size != record_size {
+				changed = index
+				continue
+			}
 			if space.kind != kind || space.forwarding != forwarding || space.bound != bound {
 				// One pair and one record keep one space: terms that change
 				// it would turn an audit into a space that removes records.
@@ -283,41 +458,191 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 		}
 	}
 	if free < 0 {
-		return 0, .Space_Limit_Reached
+		// No free place: the table grows, as the budget pays.
+		free = len(store.spaces)
+		if !space_places_ensure(store, free + 1) {
+			return 0, .Memory_Refused
+		}
 	}
-	if bound > space_room_left(store) {
-		return 0, .Bound_Past_Room
+	// The room of the window. A space that is not an act space leaves the
+	// windows of the act spaces that are not open. A change of size holds
+	// the old window and the new one for a moment, then gives the old one
+	// back: it needs one window, and leaves the room of the act spaces as
+	// it was.
+	act := space_names_act(source, output)
+	_, acts := space_windows_open(store)
+	kept := act ? 0 : ACT_SPACES_RESERVED - min(acts, ACT_SPACES_RESERVED)
+	needed := changed >= 0 ? 1 : 1 + kept
+	if space_windows_left(store) < needed {
+		return 0, .Memory_Refused
 	}
 	space := &store.spaces[free]
 	space^ = {}
+	if !space_window_take(store, u32(free + 1)) {
+		return 0, .Memory_Refused
+	}
 	space.active = true
 	space.kind = kind
 	space.forwarding = forwarding
 	space.bound = bound
+	space.window = window
 	space.record_size = record_size
 	copy(space.source[:], source)
 	copy(space.output[:], output)
-	if kind == .Audit {
+	// The old space is closed in the index first, with its ring still in
+	// memory: a refused write leaves it as it was.
+	old: ^Collector_Space
+	old_before: Collector_Space
+	if changed >= 0 {
+		old = &store.spaces[changed]
+		old_before = old^
+		if old.kind == .Audit {
+			old.closed = true
+		}
+	}
+	if kind == .Audit || (old != nil && old.kind == .Audit) {
 		// The index names the space before its first record, so a stop after
-		// a record never leaves a segment that no index names.
+		// a record never leaves a segment that no index names; it names the
+		// closed space with its last link.
 		if persisted := space_index_persist(store); persisted != .None {
+			if old != nil {
+				old^ = old_before
+			}
+			space_window_give(store, u32(free + 1))
 			space^ = {}
 			return 0, persisted
 		}
 	}
+	if old != nil {
+		space_close(store, u32(changed + 1))
+	}
 	return u32(free + 1), .None
+}
+
+// The act spaces of a wide grant, one for each wired writer: their windows
+// stay free for them.
+ACT_SPACES_RESERVED :: u32(3)
+
+// space_names_act says if a source and an output name an act space: the
+// output acts of a wired writer.
+space_names_act :: proc "contextless" (source, output: []u8) -> bool {
+	if string(output) != ACT_OUTPUT_NAME {
+		return false
+	}
+	for producer in ACT_PRODUCERS_WIRED {
+		if string(source) == ACT_PRODUCER_NAMES[producer] {
+			return true
+		}
+	}
+	return false
+}
+
+// space_is_act says if a space is an act space of a wide grant.
+space_is_act :: proc "contextless" (space: ^Collector_Space) -> bool {
+	return space_names_act(name_field_text(&space.source), name_field_text(&space.output))
+}
+
+// name_field_text gives the bytes of a name field before its first zero.
+@(private = "file")
+name_field_text :: proc "contextless" (field: ^[SPACE_NAME_BYTES]u8) -> []u8 {
+	length := 0
+	for length < SPACE_NAME_BYTES && field[length] != 0 {
+		length += 1
+	}
+	return field[:length]
+}
+
+// space_ring_empty empties the ring of a space whose records stay in the
+// store: the ring starts after its last record.
+@(private = "file")
+space_ring_empty :: proc "contextless" (space: ^Collector_Space) {
+	space.first = 0
+	space.count = 0
+	space.first_serial = space.next_serial
+	space.window_link = space.last_hash
+}
+
+// space_close closes the space of space_number in memory: a space Audit
+// gives back its window and keeps its place, its records in the store and
+// its last link; a space Keep, whose records are in memory only, frees its
+// place.
+space_close :: proc "contextless" (store: ^Space_Store, space_number: u32) {
+	space := &store.spaces[space_number - 1]
+	space_window_give(store, space_number)
+	switch space.kind {
+	case .Audit:
+		space.closed = true
+		space.closed_at_ms = 0
+		space_ring_empty(space)
+	case .Keep, .None:
+		space^ = {}
+	}
+}
+
+// space_bound_most gives the largest bound of a space of kind: a space Keep
+// holds its records in memory only, a space Audit in the private store.
+space_bound_most :: proc "contextless" (kind: Collector_Space_Kind) -> u32 {
+	switch kind {
+	case .Audit:
+		return SPACE_AUDIT_BOUND_MOST
+	case .Keep:
+		return SPACE_RECORDS_MOST
+	case .None:
+		return 0
+	}
+	return 0
+}
+
+// space_place_of gives the place in the ring of a record whose serial the
+// ring holds.
+space_place_of :: proc "contextless" (space: ^Collector_Space, serial: u64) -> u32 {
+	return u32((u64(space.first) + (serial - space.first_serial)) % u64(space.window))
+}
+
+// space_window_drop_oldest takes the oldest record out of the ring: a
+// space Keep thins it; a space Audit keeps it in the private store.
+space_window_drop_oldest :: proc "contextless" (space: ^Collector_Space) {
+	if space.count == 0 {
+		return
+	}
+	space.window_link = space.ring.hashes[space.first]
+	space.first = (space.first + 1) % space.window
+	space.count -= 1
+	space.first_serial += 1
+}
+
+// space_kept_count gives the records that a space keeps: in the private
+// store for a space Audit, in memory for a space Keep.
+space_kept_count :: proc "contextless" (space: ^Collector_Space) -> u64 {
+	if space.kind == .Audit {
+		return space.next_serial - space.kept_first_serial
+	}
+	return u64(space.count)
 }
 
 // space_of gives the active space of space_number, or nil.
 space_of :: proc "contextless" (store: ^Space_Store, space_number: u32) -> ^Collector_Space {
-	if space_number == 0 || space_number > SPACE_CAPACITY {
+	if space_number == 0 || int(space_number) > len(store.spaces) {
 		return nil
 	}
 	space := &store.spaces[space_number - 1]
-	if !space.active {
+	if !space.active || space.removing {
 		return nil
 	}
 	return space
+}
+
+// space_missing gives why space_of gave no space: Space_Removed for a space
+// whose retention ended, Unknown_Space for a number that names none.
+space_missing :: proc "contextless" (store: ^Space_Store, space_number: u32) -> Space_Refusal {
+	if space_number == 0 || int(space_number) > len(store.spaces) {
+		return .Unknown_Space
+	}
+	space := &store.spaces[space_number - 1]
+	if space.removing || space.place_removed {
+		return .Space_Removed
+	}
+	return .Unknown_Space
 }
 
 // space_record_hash gives the link of a record in the chain of its space:
@@ -345,20 +670,23 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 	}
 	space := space_of(store, space_number)
 	if space == nil {
-		return 0, .Unknown_Space
+		return 0, space_missing(store, space_number)
+	}
+	if space.closed || space.ring == nil {
+		return 0, .Space_Closed
 	}
 	if u32(len(record)) != space.record_size || len(record) > SPACE_RECORD_BYTES_MOST {
 		return 0, .Wrong_Size
 	}
-	if space.count >= space.bound {
-		switch space.kind {
-		case .Audit:
+	switch space.kind {
+	case .Audit:
+		if space.next_serial - space.kept_first_serial >= u64(space.bound) {
 			space.refused_full += 1
 			return 0, .Space_Full
-		case .Keep:
-		case .None:
-			return 0, .Bad_Kind
 		}
+	case .Keep:
+	case .None:
+		return 0, .Bad_Kind
 	}
 	forwards := space.forwarding == .Forward
 	if forwards && (store.forward_count >= FORWARD_QUEUE_CAPACITY || forward_count_of(store, space_number) >= FORWARD_QUEUE_PER_SPACE_LIMIT) {
@@ -374,22 +702,29 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 			return 0, persisted
 		}
 	}
-	if space.count >= space.bound {
-		// A space Keep thins its oldest record, and counts it.
-		space.first = (space.first + 1) % space.bound
-		space.count -= 1
-		space.removed += 1
+	if space.count >= space.window {
+		// A space Keep thins its oldest record, and counts it; a space Audit
+		// keeps it in the private store, out of the ring.
+		space_window_drop_oldest(space)
+		if space.kind == .Keep {
+			space.removed += 1
+		}
 	}
 	serial = space.next_serial
-	place := (space.first + space.count) % space.bound
-	space.serials[place] = serial
-	space.times[place] = time_ms
+	place := (space.first + space.count) % space.window
+	space.ring.serials[place] = serial
+	space.ring.times[place] = time_ms
 	offset := int(place) * SPACE_RECORD_BYTES_MOST
-	copy(space.bytes[offset:][:len(record)], record)
+	copy(space.ring.bytes[offset:][:len(record)], record)
+	if space.count == 0 {
+		space.first_serial = serial
+	}
 	if space.kind == .Audit {
 		space.last_hash = space_record_hash(space.last_hash, serial, time_ms, record)
-		space.hashes[place] = space.last_hash
-		space.segment_hashes[serial / SPACE_SEGMENT_RECORDS] = segment_hash
+		space.ring.hashes[place] = space.last_hash
+		if serial % SPACE_SEGMENT_RECORDS == SPACE_SEGMENT_RECORDS - 1 {
+			space.closed_segment_hash = segment_hash
+		}
 	}
 	space.count += 1
 	space.next_serial += 1
@@ -519,7 +854,7 @@ records_read :: proc "contextless" (
 	}
 	space := space_of(store, space_number)
 	if space == nil {
-		return 0, .Unknown_Space
+		return 0, space_missing(store, space_number)
 	}
 	if allowed := space_read_allowed(store, space, reader); allowed != .None {
 		return 0, allowed
@@ -527,31 +862,32 @@ records_read :: proc "contextless" (
 	if limit < 1 || limit > SPACE_RECORDS_MOST {
 		return 0, .Bad_Limit
 	}
-	written_bytes := 0
+	out := Records_Out{heads = heads, bytes = bytes, limit = limit}
+	// A space Audit keeps its records in the private store: a reader that
+	// starts before the ring reads them there, oldest first, then the ring.
+	start := space.kind == .Audit ? space.kept_first_serial : 0
+	if after >= 0 && u64(after) + 1 > start {
+		start = u64(after) + 1
+	}
+	ring_first := space_ring_first(space)
+	if space.kind == .Audit && start < ring_first {
+		if refusal = space_segments_read(store, space_number, space, start, ring_first, &out); refusal != .None {
+			return 0, refusal
+		}
+	}
 	for index in 0 ..< space.count {
-		if count >= limit {
+		if out.count >= limit {
 			break
 		}
-		place := (space.first + index) % space.bound
-		serial := space.serials[place]
-		if after >= 0 && serial <= u64(after) {
+		place := (space.first + index) % space.window
+		serial := space.ring.serials[place]
+		if serial < start {
 			continue
 		}
-		size := int(space.record_size)
-		if count < len(heads) && written_bytes + size <= len(bytes) {
-			heads[count] = {
-				serial     = i64(min(serial, u64(max(i64)))),
-				time_ms    = i64(min(space.times[place], u64(max(i64)))),
-				size       = i64(size),
-				chain_hash = value_kinds.Hash_Field(space.hashes[place]),
-			}
-			offset := int(place) * SPACE_RECORD_BYTES_MOST
-			copy(bytes[written_bytes:][:size], space.bytes[offset:][:size])
-			written_bytes += size
-		}
-		count += 1
+		offset := int(place) * SPACE_RECORD_BYTES_MOST
+		records_out_put(&out, serial, space.ring.times[place], space.ring.hashes[place], space.ring.bytes[offset:][:space.record_size])
 	}
-	return count, .None
+	return out.count, .None
 }
 
 // space_verify walks the chain of an audit space from its first record and
@@ -565,18 +901,20 @@ space_verify :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (
 	}
 	space := space_of(store, space_number)
 	if space == nil {
-		return .Unknown_Space, 0
+		return space_missing(store, space_number), 0
 	}
 	if space.kind != .Audit {
 		return .Bad_Kind, 0
 	}
-	link: blake3.Hash
+	// The ring starts at the link of the record before it: the records
+	// before are in the private store, which space_segments_verify reads.
+	link := space.window_link
 	for index in 0 ..< space.count {
-		place := (space.first + index) % space.bound
+		place := (space.first + index) % space.window
 		offset := int(place) * SPACE_RECORD_BYTES_MOST
-		link = space_record_hash(link, space.serials[place], space.times[place], space.bytes[offset:][:space.record_size])
-		if link != space.hashes[place] {
-			return .Chain_Broken, space.serials[place]
+		link = space_record_hash(link, space.ring.serials[place], space.ring.times[place], space.ring.bytes[offset:][:space.record_size])
+		if link != space.ring.hashes[place] {
+			return .Chain_Broken, space.ring.serials[place]
 		}
 	}
 	if link != space.last_hash {
@@ -615,7 +953,7 @@ space_stats :: proc "contextless" (store: ^Space_Store, space_number: u32, reade
 	}
 	space := space_of(store, space_number)
 	if space == nil {
-		return {}, .Unknown_Space
+		return {}, space_missing(store, space_number)
 	}
 	if allowed := space_read_allowed(store, space, reader); allowed != .None {
 		return {}, allowed
@@ -624,14 +962,22 @@ space_stats :: proc "contextless" (store: ^Space_Store, space_number: u32, reade
 }
 
 // space_open_allowed decides whether reader sets the terms of a space of
-// source: a reader that acts for the principal and is not that source, since
-// the terms of an audit are the choice of the starter, not of its subject.
-space_open_allowed :: proc "contextless" (store: ^Space_Store, source: []u8, reader: ^Space_Reader) -> Space_Refusal {
+// source and output: a reader that acts for the principal and is not that
+// source, since the terms of an audit are the choice of the starter, not of
+// its subject, and a pair that is no act space of a wide grant, which only
+// act_wiring_attach opens.
+space_open_allowed :: proc "contextless" (store: ^Space_Store, source: []u8, output: []u8, reader: ^Space_Reader) -> Space_Refusal {
 	if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
 		return .Not_Principal
 	}
 	if name_field_equal(&reader.name, source) {
 		return .Own_Space
+	}
+	// The act spaces of a wide grant open only with the grant: a caller
+	// that opened one with another record size would close the audit of
+	// the grant.
+	if space_names_act(source, output) {
+		return .Act_Space
 	}
 	return .None
 }
@@ -644,7 +990,7 @@ space_row_of :: proc "contextless" (space: ^Collector_Space, space_number: u32) 
 		forwarding_word = i64(space.forwarding),
 		bound_records   = i64(space.bound),
 		record_size     = i64(space.record_size),
-		kept            = i64(space.count),
+		kept            = i64(min(space_kept_count(space), u64(max(i64)))),
 		removed         = i64(min(space.removed, u64(max(i64)))),
 		refused_full    = i64(min(space.refused_full, u64(max(i64)))),
 		forwarded       = i64(min(space.forwarded, u64(max(i64)))),
@@ -692,7 +1038,7 @@ kept_record_count :: proc "contextless" (store: ^Space_Store) -> u64 {
 	total: u64 = 0
 	for &space in store.spaces {
 		if space.active {
-			total += u64(space.count)
+			total += space_kept_count(&space)
 		}
 	}
 	return total

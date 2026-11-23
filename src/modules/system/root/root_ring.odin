@@ -236,6 +236,16 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.outcome = plan_roles_command(item, record.values, &answer.values)
 	case .Screen_Budget:
 		answer.outcome = screen_budget_command(item, record, &answer.values) // screen_budgets.odin
+	case .Wide_Grant_Ask:
+		answer.outcome = wide_grant_ask(item, record, &answer.values)
+	case .Wide_Grant_Proof:
+		answer.outcome = wide_grant_proof(item, record, &answer.values)
+	case .Wide_Grant_End:
+		answer.outcome = wide_grant_end_command(item, record, &answer.values)
+	case .Wide_Grant_Agent_Ask:
+		answer.outcome = wide_grant_agent_ask(item, record, &answer.values)
+	case .Wide_Grant_Second_Connection:
+		answer.outcome = wide_grant_second_connection(item, record, &answer.values)
 	}
 	return answer
 }

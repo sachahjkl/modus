@@ -9,9 +9,11 @@
 // calls no kernel operation, and allocates no memory.
 package wide_grants
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
+import op "modus:contract/operation"
 
 // Maximum explicit target window identifiers bound to a single wide grant.
 MAX_TARGET_WINDOWS :: 16
@@ -44,12 +46,14 @@ ACT_RECORD_ENCODE_BUFFER_CAPACITY :: 128
 GENESIS_PREVIOUS_HASH :: blake3.Hash{}
 
 // Context handle slots and value slots for the freestanding collector service.
-// The authority key fills four value slots, from the first one, in little
-// endian order of its bytes.
+// The principal sits in slot 4 (GRANT_VALUE_SERVICE_PRINCIPAL), and the
+// authority key fills four value slots from slot 5 (5..8) in little-endian
+// order of its bytes, avoiding the service and storage file slots (1..3) and
+// the system seed slots (9..12).
 SERVICE_RING_SLOT :: 10
 SERVICE_REGION_SLOT :: 11
-CONTEXT_VALUE_PRINCIPAL_SLOT :: 0
-CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT :: 1
+CONTEXT_VALUE_PRINCIPAL_SLOT :: 4
+CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT :: 5
 CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT :: 4
 
 // Maximum commands drained from the collector service ring in a single pass.
@@ -97,6 +101,10 @@ Revocation_Reason :: enum u64 {
 	Principal_Revoked       = 1,
 	Replaced_By_Newer_Grant = 2,
 	Duplicate_Connection    = 3,
+	Session_Locked          = 4, // The session of the principal was locked.
+	Time_Bound              = 5, // The duration of the terms ran out.
+	Audit_Ring_Closed       = 6, // A ring of act records of the grant ended or was closed: no act of its writer has a reader.
+	Mark_Not_Shown          = 7, // The trusted display did not take the mark of the grant.
 }
 
 // Closed lifecycle state machine of a wide grant.
@@ -122,6 +130,16 @@ Act_Kind :: enum u64 {
 	Grant_Revoked         = 7,
 	Grant_Expired         = 8,
 	Forbidden_Act_Blocked = 9,
+	Call_Made             = 10, // A call of an export through `remote`: detail 0 the head of the hash of the service, detail 1 the bytes of the request.
+	// The input of a viewer reaches another window: the target window, then
+	// detail 0 the keys and detail 1 the presses that the window before it
+	// took. It comes before the first act on its window.
+	Target_Window_Changed = 11,
+	// The keys (detail 0) and the presses (detail 1) that the window of the
+	// last record took since that record: at an interval while a grant
+	// holds, and at its end with the time of the last act, so the counts of
+	// the last window are not lost.
+	Input_Counted = 12,
 }
 
 // Closed set of refusal reasons returned by wide grant border validators,
@@ -187,6 +205,10 @@ Collector_Ring_Status :: enum u32 {
 	Refused     = 1,
 	Bad_Command = 2,
 	Busy        = 3,
+	// A record that the collector sends with no command, tag 0: it ended
+	// the grant of values[0] itself, with the Revocation_Reason of
+	// values[1] (an audit ring closed, or its end time).
+	Grant_Ended = 4,
 }
 
 // Fixed-layout terms of one wide grant proposed and fixed before principal
@@ -322,10 +344,121 @@ authority_key_from_words :: proc "contextless" (words: [CONTEXT_VALUE_AUTHORITY_
 	return key
 }
 
+// authority_key_to_words packs an authority key into the four context value
+// words in little-endian order of its bytes.
+authority_key_to_words :: proc "contextless" (key: Authority_Key) -> (words: [CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT]u64) {
+	local := key
+	for word_index in 0 ..< CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT {
+		words[word_index] = byte_order.read_u64_little_endian(local[:], word_index * 8)
+	}
+	return words
+}
+
 // authority_key_is_valid refuses the all-zero key: a key that everybody
 // knows authenticates nothing.
 authority_key_is_valid :: proc "contextless" (key: Authority_Key) -> bool {
 	return key != (Authority_Key{})
+}
+
+// Least entropy strength accepted for generating a fresh wide-grant authority
+// key at boot: jitter-only (Weak) seeds are refused fail-closed.
+AUTHORITY_KEY_LEAST_ENTROPY :: op.Seed_Strength.Processor
+
+// Closed lifecycle state of the unlock authority's wide-grant key.
+Authority_Key_Status :: enum u8 {
+	Uninitialized        = 0,
+	Ready                = 1,
+	Refused_Weak_Entropy = 2,
+	Refused_Zero_Key     = 3,
+}
+
+// State held exclusively by the unlock authority (the root service) for
+// minting keyed Wide_Grant_Proof records and handing the authority key to
+// the collector in its context at start.
+Wide_Grant_Authority :: struct {
+	status:            Authority_Key_Status,
+	key:               Authority_Key,
+	next_proof_serial: u64,
+}
+
+// authority_init_from_bytes initializes the unlock authority from fresh random
+// bytes produced by the system generator. Refuses weak entropy (below
+// AUTHORITY_KEY_LEAST_ENTROPY or unknown Seed_Strength) and refuses an
+// all-zero key, leaving the authority unusable so the collector refuses every
+// wide grant.
+authority_init_from_bytes :: proc "contextless" (
+	authority: ^Wide_Grant_Authority,
+	key_bytes: Authority_Key,
+	entropy_strength: op.Seed_Strength,
+) -> bool {
+	authority_erase(authority)
+	strength, strength_ok := op.seed_strength_of_word(u64(entropy_strength))
+	if !strength_ok || strength < AUTHORITY_KEY_LEAST_ENTROPY {
+		authority.status = .Refused_Weak_Entropy
+		return false
+	}
+	if !authority_key_is_valid(key_bytes) {
+		authority.status = .Refused_Zero_Key
+		return false
+	}
+	authority.key = key_bytes
+	authority.next_proof_serial = 1
+	authority.status = .Ready
+	return true
+}
+
+// authority_context_words returns the four context value words carrying the
+// authority key to the collector when the authority is ready. Refuses any
+// non-ready or zero-key state with ok == false.
+authority_context_words :: proc "contextless" (authority: ^Wide_Grant_Authority) -> (words: [CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT]u64, ok: bool) {
+	if authority == nil || authority.status != .Ready || !authority_key_is_valid(authority.key) {
+		return {}, false
+	}
+	return authority_key_to_words(authority.key), true
+}
+
+// authority_mint_proof issues a fresh keyed Wide_Grant_Proof bound to terms
+// with a strictly increasing proof serial. Refuses when the authority key is
+// not ready, when the serial counter is exhausted, or when terms/origin fail
+// validation, leaving next_proof_serial unchanged on any refusal.
+authority_mint_proof :: proc "contextless" (
+	authority: ^Wide_Grant_Authority,
+	terms: ^Wide_Grant_Terms,
+	kind: Proof_Kind,
+	origin: Proof_Origin,
+	verifier_key_or_token_hash: blake3.Hash,
+	proof_timestamp_ms: u64,
+) -> (proof: Wide_Grant_Proof, refusal: Wide_Grant_Refusal) {
+	if authority == nil || authority.status != .Ready || !authority_key_is_valid(authority.key) {
+		return {}, .Invalid_Proof
+	}
+	if authority.next_proof_serial == 0 || authority.next_proof_serial == max(u64) {
+		return {}, .Invalid_Proof
+	}
+	proof, refusal = wide_grant_proof_make(
+		authority.key,
+		terms,
+		kind,
+		origin,
+		authority.next_proof_serial,
+		verifier_key_or_token_hash,
+		proof_timestamp_ms,
+	)
+	if refusal != .None {
+		return {}, refusal
+	}
+	authority.next_proof_serial += 1
+	return proof, .None
+}
+
+// authority_erase clears the authority key material with a volatile zero write.
+authority_erase :: proc "contextless" (authority: ^Wide_Grant_Authority) {
+	if authority == nil {
+		return
+	}
+	intrinsics.mem_zero_volatile(&authority.key, size_of(authority.key))
+	authority.status = .Uninitialized
+	authority.next_proof_serial = 0
 }
 
 wide_grant_state_from_word :: proc "contextless" (word: u64) -> (state: Wide_Grant_State, ok: bool) {
@@ -396,9 +529,9 @@ act_requires_principal_proof :: proc "contextless" (action: Sensitive_Action) ->
 // non-zero target window identifier.
 act_kind_requires_target_window :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
-	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked:
+	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Target_Window_Changed, .Input_Counted:
 		return true
-	case .None, .Frame_Read, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked:
+	case .None, .Frame_Read, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made:
 		return false
 	}
 	return true
@@ -411,7 +544,9 @@ act_kind_is_agent_invocable :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
 	case .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked:
 		return true
-	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked:
+	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made, .Target_Window_Changed, .Input_Counted:
+		// A call and a change of target are recorded by their writer on its
+		// own ring, never through the manager of the collector.
 		return false
 	}
 	return false

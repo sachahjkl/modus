@@ -22,6 +22,7 @@ package collector_service
 
 import "base:intrinsics"
 import "modus:contract/call_outcome"
+import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/wide_grants"
@@ -54,6 +55,40 @@ Space_Service :: struct {
 // the thread.
 space_service: Space_Service
 
+// The date page of the collector, which dates the close of an audit space
+// and ends its retention; nil: no date is known.
+closed_date_page: ^date.Page
+
+// closed_spaces_pass dates the closed audit spaces and removes those whose
+// retention ended, and gives the time of the system of the next pass with
+// work, or WAIT_FOREVER. The retention is the default of the contract:
+// no plan states one yet (src/md/features/wide_grants.md, "The end of a
+// closed audit space").
+closed_spaces_pass :: proc "contextless" (now_ms: u64) -> (deadline: u64) {
+	retention := wide_grants.CLOSED_AUDIT_RETENTION_DEFAULT_MILLISECONDS
+	date_ms, date_known := date.milliseconds_now(closed_date_page, now_ms)
+	removed, refusal := wide_grants.space_closed_pass(&space_service.store, date_ms, date_known, retention)
+	if removed > 0 {
+		system.log_fact(.Info, Closed_Spaces_Removed{spaces = u64(removed)})
+	}
+	if refusal != .None && refusal != .Store_Failed {
+		system.log_fact(.Warning, Closed_Spaces_Pass_Refused{refusal = refusal})
+	}
+	due_date, dated_due, at_once, undated := wide_grants.space_closed_next_due(&space_service.store, retention)
+	deadline = system.WAIT_FOREVER
+	if at_once || refusal != .None {
+		deadline = now_ms + PENDING_RETRY_MILLISECONDS
+	}
+	if undated || dated_due && !date_known {
+		deadline = min(deadline, now_ms + wide_grants.CLOSED_AUDIT_DATE_RETRY_MILLISECONDS)
+	}
+	if dated_due && date_known {
+		wait_ms := due_date > date_ms ? u64(due_date - date_ms) : 0
+		deadline = min(deadline, now_ms + min(wait_ms, system.WAIT_FOREVER - now_ms - 1))
+	}
+	return deadline
+}
+
 // principal_reader_of gives who calls, as the root service wrote it in the
 // grant of the connection, and refuses a caller that does not act for
 // principal.
@@ -82,8 +117,16 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 	switch refusal {
 	case .Space_Full, .Forward_Full:
 		return call_outcome.fail(error, .Callee_Busy, .Full, .Records, argument, 0, 0, found)
-	case .Space_Limit_Reached, .Bound_Past_Room:
-		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Records, argument, 0, wide_grants.SPACE_ROOM_RECORDS, found)
+	case .Space_Limit_Reached:
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Records, argument, 0, 0, found)
+	case .Act_Space:
+		// The act spaces of a wide grant open only with the grant.
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Records, argument, 0, 0, found)
+	case .Space_Removed:
+		// The space closed when its record size changed, and its retention
+		// ended: its records are removed (src/md/features/wide_grants.md,
+		// "The end of a closed audit space").
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, argument, 0, 0, found)
 	case .Bad_Limit:
 		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Records, argument, 0, wide_grants.SPACE_RECORDS_MOST, found)
 	case .Unknown_Space, .Forward_Empty:
@@ -98,7 +141,20 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Store, argument, 0, 0, found)
 	case .Space_Held:
 		return call_outcome.fail(error, .Name_Already_Taken, .Exists, .Records, argument, 0, 0, found)
-	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Bad_Name, .Bad_Record_Size, .Wrong_Size:
+	case .Memory_Refused:
+		// The window of the space: the budget pays no more, or keeps the
+		// windows of the act spaces of a wide grant (src/md/features/wide_grants.md,
+		// "The memory of the spaces").
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, argument, 0, wide_grants.SPACE_WINDOW_PAGES, found)
+	case .Space_Closed:
+		// The record size of the source changed: the space keeps its records
+		// and takes no more.
+		return call_outcome.fail(error, .Wrong_State, .State, .Records, argument, 0, 0, found)
+	case .Bad_Bound:
+		// The largest bound: SPACE_RECORDS_MOST for a space Keep, which holds
+		// its records in memory, SPACE_AUDIT_BOUND_MOST for a space Audit.
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, 0, wide_grants.SPACE_AUDIT_BOUND_MOST, found)
+	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Name, .Bad_Record_Size, .Wrong_Size:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, 0, 0, found)
 	}
 	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, 0, 0, found)
@@ -128,7 +184,9 @@ name_copy :: proc "contextless" (text: ^string, place: []u8, argument: i64, erro
 // store, before any narrowing to u32.
 @(private = "file")
 space_number_valid :: proc "contextless" (space: i64) -> bool {
-	return space >= 1 && space <= wide_grants.SPACE_CAPACITY
+	// The table grows at the load of the store, so the bound here is the one
+	// of the type; the store refuses a number with no place after its load.
+	return space >= 1 && space <= i64(max(u32))
 }
 
 space_open_for :: proc "contextless" (service: ^Space_Service, connection: ^system.Connection, source: ^string, output: ^string, terms: ^wide_grants.Space_Terms, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
@@ -140,12 +198,12 @@ space_open_for :: proc "contextless" (service: ^Space_Service, connection: ^syst
 	if !source_ok {
 		return source_failure, 0
 	}
-	if allowed := wide_grants.space_open_allowed(&service.store, source_name, &reader); allowed != .None {
-		return space_refusal_fail(error, allowed, 1)
-	}
 	output_name, output_failure, output_ok := name_copy(output, service.copied_output_name[:], 2, error)
 	if !output_ok {
 		return output_failure, 0
+	}
+	if allowed := wide_grants.space_open_allowed(&service.store, source_name, output_name, &reader); allowed != .None {
+		return space_refusal_fail(error, allowed, allowed == .Act_Space ? 2 : 1)
 	}
 	if terms == nil {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 3)

@@ -672,7 +672,8 @@ browser_machine_console_image_holds_the_console_and_no_desktop :: proc(t: ^testi
 	for resource, index in resources {
 		testing.expect_value(t, resource.name, index == 0 ? start_list.START_LIST_RESOURCE : start_list.RESCUE_LIST_RESOURCE)
 		list: start_list.List
-		read_problem, _, _ := start_list.list_read(resource.file, &list)
+		place := make([]start_list.Wiring_Row, start_list.list_wiring_count(resource.file), context.temp_allocator)
+		read_problem, _, _ := start_list.list_read(resource.file, &list, place)
 		testing.expect_value(t, read_problem, start_list.List_Problem.None)
 		testing.expect_value(t, list.row_count, 1)
 		row := list.rows[0]

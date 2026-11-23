@@ -6,6 +6,7 @@
   "quic": ["quic_scenario.odin"],
   "remote_display": ["remote_display_scenario.odin"],
   "gpu_scanout": ["gpu_scanout_scenario.odin"],
+  "wide_grant": ["wide_grant_scenario.odin"],
   "network": ["network_scenario.odin"],
   "principals": ["principals_scenario.odin", "tpm_key_scenario.odin"],
   "disk_processes": ["disk_processes.odin", "program_loop_scenario.odin"],

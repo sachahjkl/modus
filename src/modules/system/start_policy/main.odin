@@ -18,10 +18,9 @@ import "modus:contract/value_kinds"
 import "internal:start_policy/wiring_rows"
 import "modus:system"
 
-// 32 pages for what it maps at its start, with their page tables, and the
-// reserve of its wirings, which the tool checks against each list.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 96, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == 32 + start_list.WIRING_PAGES_RESERVE)
+// 32 pages for what it maps at its start, with their page tables; the
+// root service adds the pages of the wirings that the list header gives.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
 // The state of one row while the machine runs.
 Row_State :: struct {
@@ -65,7 +64,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	list_start := ([^]u8)(uintptr(start_list.START_LIST_ADDRESS))
-	problem, place, _ := start_list.list_read(list_start[:list_size], &list)
+	wiring_place, _ := system.table_make(start_list.Wiring_Row, start_list.list_wiring_count(list_start[:list_size])) // A refused table refuses the list.
+	problem, place, _ := start_list.list_read(list_start[:list_size], &list, wiring_place)
 	if problem != .None {
 		system.log_fact(.Error, Start_List_Refused{row = u64(place), list_problem = value_kinds.text_field(start_list.LIST_PROBLEM_TEXTS[problem], LIST_PROBLEM_FIELD_BYTES)})
 		system.stop(.Refused)

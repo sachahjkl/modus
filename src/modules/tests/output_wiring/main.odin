@@ -917,43 +917,72 @@ log_case :: proc "contextless" () {
 	system.log_fact(.Info, Flood_Log_Kept{records = u64(next), calls = calls})
 }
 
-// limit_case: the wirings of this process up to its limit, one past it
-// with Wire and with the list of a Start, and the revocation of the grant
-// wirings.
+// The wirings that limit_case holds at most: a bound of the test, which the
+// budget of this asker meets first.
+LIMIT_CASE_WIRINGS_MOST :: 1024
+
+// limit_case: the wirings of an asker have no count: this process holds 8,
+// a 9th and 20, then wires until the budget of its wirings or of its own
+// ends pays no more; the next Wire and the row of a Start are refused, each
+// with the budget unchanged; then the revocation of the grant wirings.
 @(private = "file")
 limit_case :: proc "contextless" () {
 	settled := budget_pages()
 	writer := start_child("output_writer")
-	numbers: [output.WIRINGS_OF_AN_ASKER_MOST]u32
-	for &number in numbers {
+	numbers: [LIMIT_CASE_WIRINGS_MOST]u32
+	held := 0
+	status: system.Status
+	answer: [7]u64
+	for held < len(numbers) {
 		handles := [1]u32{lend(writer)}
-		status, answer := wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
-		if status != .Succeeded || answer[0] == 0 {
-			wrong_refused("a wiring up to the limit gave the status", status, answer)
+		status, answer = wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
+		if status != .Ok || answer[0] == 0 {
+			break
 		}
-		number = u32(answer[0])
+		numbers[held] = u32(answer[0])
+		held += 1
 		// The root service records the grant before it answers the Wire.
 		if granted, _ := grants_read(); .Wirings not_in granted {
 			wrong("a wiring is held and the grant wirings is not granted; the grants", transmute(u64)granted)
 		}
 	}
+	if held < 20 {
+		wrong_refused("a wiring of an asker before its 20th gave the status", status, answer)
+	}
+	if held == len(numbers) {
+		wrong("the budget of this asker paid each wiring of the test; wirings:", u64(held))
+	}
+	// The refusal that ended the loop is the budget's: of the wirings
+	// (No_Budget, Budget of Pages) or of the place of an end (No_Slot), and
+	// it changed nothing.
+	budget_refused :: proc "contextless" (what: string, before: u64, status: system.Status, answer: [7]u64) {
+		record := errors.completion_record(answer)
+		by_budget := status == .No_Budget && errors.Kind(record.kind) == .Budget && errors.Unit(record.unit) == .Pages
+		by_place := status == .No_Slot && errors.Kind(record.kind) == .Full
+		if !by_budget && !by_place {
+			wrong_refused(what, status, answer)
+		}
+		if budget_pages() != before {
+			wrong("a refused wiring changed the budget of this asker; pages:", budget_pages())
+		}
+	}
 	before := budget_pages()
 	handles := [1]u32{lend(writer)}
-	status, answer := wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
-	refused("one wiring past the limit of an asker", before, status, answer, .Budget_Or_Capacity_Exhausted, fail(.Wire, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
+	status, answer = wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
+	budget_refused("one wiring past the budget of an asker gave the status", before, status, answer)
 	// The row of a Start counts as a Wire does: the start is refused
 	// whole, before the child runs.
 	rows := [1]output.Wiring{row(.Child, 0, WRITER_ASKED, .Asker, 0, 0)}
 	list_write(rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("one row of a Start past the limit of an asker", before, status, answer, .Budget_Or_Capacity_Exhausted, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
-	grant_wirings_revoke(output.WIRINGS_OF_AN_ASKER_MOST)
-	asker_ends_close(numbers[:], Large)
+	budget_refused("one row of a Start past the budget of an asker gave the status", before, status, answer)
+	grant_wirings_revoke(held)
+	asker_ends_close(numbers[:held], Large)
 	processes := [1]system.Handle{writer}
 	stopped_wait(processes[:])
 	system.close(writer)
-	budget_settled_wait(settled, "the limit of an asker")
-	system.log_fact(.Info, Asker_Limit_Checked{wirings = output.WIRINGS_OF_AN_ASKER_MOST})
+	budget_settled_wait(settled, "the wirings of an asker")
+	system.log_fact(.Info, Asker_Limit_Checked{wirings = u64(held)})
 }
 
 // side_case: output_side refuses the end of its start, then writes words
@@ -987,7 +1016,10 @@ side_case :: proc "contextless" () {
 	// the end of that call (grant_wirings_revoke).
 	grant_wirings_revoke(0)
 
-	numbers: [output.WIRINGS_OF_AN_ASKER_MOST]u32
+	// The wirings of output_side go back in batches, so a full wiring ring
+	// of output_side, not the budget of this asker, refuses the next end.
+	SIDE_BATCH :: 8
+	numbers: [SIDE_BATCH]u32
 	held := 0
 	wire_side :: proc "contextless" (process: system.Handle) -> (call_outcome.Call_Outcome, [7]u64) {
 		handles := [1]u32{lend(process)}

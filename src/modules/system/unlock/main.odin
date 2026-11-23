@@ -668,23 +668,8 @@ machine_try :: proc "contextless" () {
 // and the root service receives nothing.
 machine_passphrase_alone_try :: proc "contextless" () {
 	machine_key: [principals.MACHINE_KEY_SIZE]u8
-	key: [principals.KEY_SIZE]u8
 	defer erase(machine_key[:])
-	defer erase(key[:])
-	if !derive(typed[:typed_count], machine_file.salt[:], &key) {
-		message, message_failed = "Machine key not opened: cryptography refused key derivation.", true
-		return
-	}
-	error: errors.Error_Record
-	key_text := string(key[:])
-	nonce_text := string(machine_file.nonce[:])
-	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
-	sealed := string(machine_file.sealed[:])
-	result := machine_key[:]
-	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_KEY_SIZE {
-		machine_refusals += 1
-		system.log_fact(.Info, Machine_Passphrase_Wrong{refusals = machine_refusals})
-		message, message_failed = "Wrong passphrase: nothing is opened.", true
+	if !machine_passphrase_alone_open(&machine_key) {
 		return
 	}
 	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
@@ -693,6 +678,30 @@ machine_passphrase_alone_try :: proc "contextless" () {
 	}
 	system.log_fact(.Info, Machine_Passphrase_Opened{})
 	after_machine()
+}
+
+// machine_passphrase_alone_open opens the machine key under the machine
+// passphrase alone, and gives it to no one. A refusal sets the message.
+machine_passphrase_alone_open :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8) -> bool {
+	key: [principals.KEY_SIZE]u8
+	defer erase(key[:])
+	if !derive(typed[:typed_count], machine_file.salt[:], &key) {
+		message, message_failed = "Machine key not opened: cryptography refused key derivation.", true
+		return false
+	}
+	error: errors.Error_Record
+	key_text := string(key[:])
+	nonce_text := string(machine_file.nonce[:])
+	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
+	sealed := string(machine_file.sealed[:])
+	result := machine_key^[:]
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_KEY_SIZE {
+		machine_refusals += 1
+		system.log_fact(.Info, Machine_Passphrase_Wrong{refusals = machine_refusals})
+		message, message_failed = "Wrong passphrase: nothing is opened.", true
+		return false
+	}
+	return true
 }
 
 // machine_create sets the machine passphrase. With the TPM service and
@@ -1412,15 +1421,31 @@ machine_passphrase_commit :: proc "contextless" () {
 // passphrase. When the TPM refuses for another cause, the window asks for
 // the recovery key.
 machine_tpm_passphrase_try :: proc "contextless" () {
+	machine_key: [principals.MACHINE_KEY_SIZE]u8
+	defer erase(machine_key[:])
+	if !machine_tpm_passphrase_open(&machine_key, recovery_offered = true) {
+		return
+	}
+	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
+		message, message_failed = "The root service did not take the key.", true
+		return
+	}
+	system.log_fact(.Info, Machine_Key_Released_To_Passphrase{})
+	after_machine()
+}
+
+// machine_tpm_passphrase_open opens the machine key that the TPM seals
+// with the machine passphrase, and gives it to no one. A refusal sets the
+// message; with recovery_offered, a refusal of the TPM asks for the
+// recovery key, else it ends the try.
+machine_tpm_passphrase_open :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE]u8, recovery_offered: bool) -> bool {
 	passphrase_key: [principals.KEY_SIZE]u8
 	tpm_secret: [principals.TPM_SECRET_SIZE]u8
-	machine_key: [principals.MACHINE_KEY_SIZE]u8
 	defer erase(passphrase_key[:])
 	defer erase(tpm_secret[:])
-	defer erase(machine_key[:])
 	if !derive(typed[:typed_count], machine_tpm_passphrase_file.salt[:], &passphrase_key) {
 		message, message_failed = "Machine key not opened: cryptography refused key derivation.", true
-		return
+		return false
 	}
 	authorization := principals.machine_authorization_value(&passphrase_key)
 	defer erase(authorization[:])
@@ -1431,14 +1456,14 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 		machine_refusals += 1
 		system.log_fact(.Info, Machine_Passphrase_Wrong_Counted_By_Tpm{refusals = machine_refusals})
 		message, message_failed = "Wrong passphrase: the TPM counts each wrong try.", true
-		return
+		return false
 	case answered && unsealed == .Callee_Busy:
 		system.log_fact(.Info, Machine_Passphrase_Locked_Out{})
-		machine_recovery_ask("The TPM refuses tries for now: type the recovery key.")
-		return
+		machine_open_refused(recovery_offered, "The TPM refuses tries for now: type the recovery key.", "The TPM refuses tries for now: no grant is given.")
+		return false
 	case:
-		machine_recovery_ask("The TPM refused: type the machine recovery key.")
-		return
+		machine_open_refused(recovery_offered, "The TPM refused: type the machine recovery key.", "The TPM refused: no grant is given.")
+		return false
 	}
 	seal_key := principals.machine_tpm_passphrase_seal_key(&tpm_secret, &passphrase_key)
 	defer erase(seal_key[:])
@@ -1447,18 +1472,24 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 	nonce_text := string(machine_tpm_passphrase_file.nonce[:])
 	additional := string(principals.machine_tpm_passphrase_file_additional_data(&machine_tpm_passphrase_file_bytes))
 	sealed := string(machine_tpm_passphrase_file.sealed[:])
-	result := machine_key[:]
+	result := machine_key^[:]
 	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_KEY_SIZE {
 		system.log_fact(.Info, Machine_Key_Not_Consistent_With_Tpm_Secret{})
-		machine_recovery_ask("The record is not consistent: type the recovery key.")
+		machine_open_refused(recovery_offered, "The record is not consistent: type the recovery key.", "The record is not consistent: no grant is given.")
+		return false
+	}
+	return true
+}
+
+// machine_open_refused asks for the recovery key at an unlock; the proof of
+// a wide grant offers no recovery, and ends with its sentence.
+@(private = "file")
+machine_open_refused :: proc "contextless" (recovery_offered: bool, recovery_sentence: string, proof_sentence: string) {
+	if recovery_offered {
+		machine_recovery_ask(recovery_sentence)
 		return
 	}
-	if !machine_key_give(&machine_key, root_ring.Machine_Key_State.Opened) {
-		message, message_failed = "The root service did not take the key.", true
-		return
-	}
-	system.log_fact(.Info, Machine_Key_Released_To_Passphrase{})
-	after_machine()
+	message, message_failed = proof_sentence, true
 }
 
 // machine_passphrase_reseal_ask goes on after the recovery key opened a
@@ -1721,6 +1752,10 @@ change_proof_try :: proc "contextless" () {
 		message, message_failed = "The file is not consistent: nothing changes.", true
 	case .Opened:
 		system.log_fact(.Info, Current_Passphrase_Opened{principal = number, principal_name = principal_name_field()})
+		if change_mode == .Prove_Wide_Grant {
+			proof_given()
+			return
+		}
 		if change_mode == .New_Recovery_Key {
 			recovery_key_prepare(&secrets)
 			return
@@ -1728,6 +1763,76 @@ change_proof_try :: proc "contextless" () {
 		opened_secrets = secrets
 		mode = .New_Passphrase_First
 		message, message_failed = "Type the new passphrase.", false
+	}
+}
+
+// The principal whose passphrase proves a wide grant, and whether it is the
+// machine passphrase of principal 0 (src/md/features/wide_grants.md, "The
+// path of a grant, end to end").
+proof_principal: u64
+proof_by_machine_passphrase: bool
+
+// prove_start reads the record of the principal that the root service
+// names, and asks for its passphrase. A principal with no passphrase that
+// proves it here (no record, or a machine key that the TPM alone seals)
+// ends the run with Refused: no grant.
+prove_start :: proc "contextless" (requested_principal: u64) {
+	change_mode = .Prove_Wide_Grant
+	proof_principal = requested_principal
+	present := false
+	if requested_principal == principals.MACHINE {
+		present = machine_record_read() == .Present
+	} else if requested_principal < principals.PRINCIPAL_CAPACITY {
+		present = principal_file_read()
+	}
+	if problem := principals.proof_problem(requested_principal, present, machine_form, has_tpm, number); problem != .None {
+		system.log_fact(.Info, Wide_Grant_Proof_Not_Possible{principal = requested_principal, problem_code = u64(problem)})
+		proof_end(.Refused)
+		system.stop(.Refused)
+	}
+	proof_by_machine_passphrase = requested_principal == principals.MACHINE
+	message = proof_by_machine_passphrase ? "type the machine passphrase to give the wide grant" : "type your passphrase to give the wide grant"
+	mode = .Change_Current
+	system.log_fact(.Info, Wide_Grant_Proof_Asked{principal = requested_principal})
+}
+
+// proof_try opens the keys of the principal, or the machine key, with the
+// passphrase typed, and gives them to no one: the open is the proof. A
+// wrong passphrase leaves the window open.
+proof_try :: proc "contextless" () {
+	if !proof_by_machine_passphrase {
+		change_proof_try()
+		return
+	}
+	machine_key: [principals.MACHINE_KEY_SIZE]u8
+	defer erase(machine_key[:])
+	opened := false
+	switch machine_form {
+	case .Passphrase:
+		opened = machine_passphrase_alone_open(&machine_key)
+	case .Sealed_By_The_Tpm_With_Passphrase:
+		opened = machine_tpm_passphrase_open(&machine_key, recovery_offered = false)
+	case .Unknown, .Sealed_By_The_Tpm:
+		message, message_failed = "The machine key opens with no passphrase: no grant is given.", true
+	}
+	if opened {
+		proof_given()
+	}
+}
+
+// proof_given ends a proof that opened the keys.
+proof_given :: proc "contextless" () {
+	system.log_fact(.Info, Wide_Grant_Proof_Given{principal = proof_principal})
+	proof_end(.Proved)
+	mode = .Done
+}
+
+// proof_end tells the root service how the proof ended. The root service
+// binds it to the terms of the screen; this process sees no terms.
+proof_end :: proc "contextless" (outcome: root_ring.Wide_Grant_Proof_Outcome) {
+	completion, answered := root_command(.Wide_Grant_Proof, {4 = proof_principal, 5 = u64(outcome)})
+	if !answered || system.Status(completion.kind) != .Ok {
+		system.log_fact(.Info, Wide_Grant_Proof_Not_Taken{status = status_field(completion.kind)})
 	}
 }
 
@@ -2333,6 +2438,10 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		label = "Passphrase  "
 		prompt = "Current passphrase  "
 		enter_name = "Check; empty: cancel"
+		if change_mode == .Prove_Wide_Grant {
+			prompt = proof_by_machine_passphrase ? "Machine passphrase  " : "Passphrase  "
+			enter_name = "Give; empty: cancel"
+		}
 	case .Change_Result:
 		label = "Passphrase  "
 		prompt = "Change  "
@@ -2534,13 +2643,21 @@ enter :: proc "contextless" (window: ^display.Window) {
 		// session goes on.
 		if typed_count == 0 {
 			system.log_fact(.Info, Current_Passphrase_Not_Typed{principal = number})
-			change_end(.Cancelled)
+			if change_mode == .Prove_Wide_Grant {
+				proof_end(.Cancelled)
+			} else {
+				change_end(.Cancelled)
+			}
 			mode = .Done
 			return
 		}
 		message, message_failed = "Deriving the key.", false
 		draw(window)
-		change_proof_try()
+		if change_mode == .Prove_Wide_Grant {
+			proof_try()
+		} else {
+			change_proof_try()
+		}
 	case .Create_First, .Machine_Create_First, .New_Passphrase_First, .Machine_Reseal_First:
 		// In a change, Enter with nothing ends it: the keys that the proof
 		// opened must not wait for anyone at the keyboard.
@@ -2910,6 +3027,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			message = "Type your current passphrase."
 		}
 		system.log_fact(.Info, Change_Asked{principal = number, principal_name = principal_name_field()})
+	case .Prove_Wide_Grant:
+		prove_start(ctx.values[principals.VALUE_PRINCIPAL])
 	case .Unlock, .Unlock_Machine_Key_Held:
 		principal_found = principal_file_read()
 		// After a lock the root service holds the key of the table of

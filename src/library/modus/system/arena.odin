@@ -340,6 +340,18 @@ arena_trim :: proc "contextless" (arena: ^Arena, keep_bytes: u64, error: ^errors
 	return status
 }
 
+// arena_pop takes back the last size bytes that the arena gave, as the
+// undo of a push whose work failed after it: the next push takes the same
+// addresses again. The pages stay committed. false: the arena gave fewer
+// bytes than size, and nothing changed.
+arena_pop :: proc "contextless" (arena: ^Arena, size: u64) -> bool {
+	if size > arena.used_bytes {
+		return false
+	}
+	arena.used_bytes -= size
+	return true
+}
+
 // arena_end ends the arena whole: it unmaps the range and closes the
 // object, so each committed page and the frame list return to the budget
 // at once. Each address of the arena is then invalid. The arena becomes

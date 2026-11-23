@@ -12,6 +12,7 @@ import "modus:contract/ring"
 import "modus:contract/start_grant"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
+import "modus:contract/wide_grants"
 import "modus:disk_process"
 import "modus:principals"
 import "modus:random"
@@ -648,6 +649,43 @@ commands_start :: proc "contextless" () {
 	//
 	// Errors: the principal of this console did not allow the key.
 	command("remote_disallow", {.Text}, .Text, "end the grant of a client key of remote", remote_disallow)
+	// Asks for a wide grant to a client key of `remote` that the principal
+	// of this console allowed: the agent that holds the key sees the
+	// screen, and with the input sends keys and the pointer to the windows
+	// that the principal picks (src/md/features/wide_grants.md). The
+	// trusted display shows the screen of the grant; the principal picks the
+	// scopes, the windows and the duration there, then types the passphrase
+	// in `unlock`. Each act of the agent leaves a record in the collector of
+	// the principal. It gives the number of the screen.
+	//
+	// - `key`: the key, as `remote_allow` took it.
+	// - `scopes`: `view`, or `view_and_input`.
+	// - `minutes`: the longest duration that the screen offers, 1 to 1440.
+	//
+	// ```
+	// > agent_allow("6a1f...", "view_and_input", 60)
+	// 1
+	// ```
+	//
+	// The grant ends at its end time, at the lock of the session, at
+	// `agent_disallow`, and at a press on revoke in the mark of the bar.
+	//
+	// Errors: the scopes are not `view` or `view_and_input`; this console
+	// does not act for its principal; the principal did not allow the key;
+	// another grant is on its way; the key had a screen refused in the last
+	// ten minutes, or three in this run.
+	command("agent_allow", {.Text, .Text, .Integer}, .Integer, "ask for a wide grant to a client key of remote: the trusted display shows its screen", agent_allow)
+	// Ends the wide grant of a client key of `remote`, or the screen or
+	// the proof on its way.
+	//
+	// - `key`: the key, as `agent_allow` took it.
+	//
+	// ```
+	// > agent_disallow("6a1f...")
+	// ```
+	//
+	// Errors: the principal of this console holds no grant for the key.
+	command("agent_disallow", {.Text}, .None, "end the wide grant of a client key of remote", agent_disallow)
 	// Gives one row for each key of a client of `remote` that the principal
 	// of this console allowed, with its state: `holds` (each call of the
 	// client acts for the principal), `locked` (the session of the
@@ -3269,6 +3307,56 @@ remote_disallow :: proc "contextless" (arguments: []Value) -> Value {
 		return {kind = .Text, text = scratch_text(completion.values[0], " connections to services ended; the disk grant table of this principal did not take the revocation, so the key can come back at the next start of the machine: revoke it again then")}
 	}
 	return {kind = .Text, text = scratch_text(completion.values[0], " connections to services ended")}
+}
+
+// agent_allow asks the root service for the screen of a wide grant. A
+// text of scopes or a count of minutes out of its bound is refused here,
+// before any record.
+agent_allow :: proc "contextless" (arguments: []Value) -> Value {
+	scopes: wide_grants.Wide_Authorities
+	switch arguments[1].text {
+	case "view":
+		scopes = {.View_Screen}
+	case "view_and_input":
+		scopes = {.View_Screen, .Send_Input}
+	case:
+		return fail("agent_allow: the scopes must be \"view\" or \"view_and_input\"")
+	}
+	minutes := arguments[2].integer
+	most := i64(wide_grants.MAX_WIDE_GRANT_DURATION_MS / 60_000)
+	if minutes < 1 || minutes > most {
+		return fail("agent_allow: the minutes must be 1 to ", u64(most), "; the argument is out of that range")
+	}
+	key, parsed := disk_process.hash_parse(arguments[0].text)
+	if !parsed {
+		return fail("agent_allow: the key must be 64 hexadecimal digits; the argument has ", u64(len(arguments[0].text)), " bytes, or a byte that is no digit")
+	}
+	key_values := transmute([4]u64)key
+	completion, answered := disk_request(.Wide_Grant_Ask, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = wide_grants.wide_authorities_to_word(scopes), 5 = u64(minutes) * 60_000}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("agent_allow: ", completion)
+	}
+	return {kind = .Integer, integer = i64(completion.values[0])}
+}
+
+// agent_disallow asks the root service to end the wide grant of a key.
+agent_disallow :: proc "contextless" (arguments: []Value) -> Value {
+	key, parsed := disk_process.hash_parse(arguments[0].text)
+	if !parsed {
+		return fail("agent_disallow: the key must be 64 hexadecimal digits; the argument has ", u64(len(arguments[0].text)), " bytes, or a byte that is no digit")
+	}
+	key_values := transmute([4]u64)key
+	completion, answered := disk_request(.Wide_Grant_End, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3]}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail_root("agent_disallow: ", completion)
+	}
+	return {}
 }
 
 // remote_clients gives one row for each key of a client of `remote` that

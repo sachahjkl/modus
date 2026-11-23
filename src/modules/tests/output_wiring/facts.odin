@@ -163,9 +163,10 @@ Flood_Log_Kept :: struct {
 	calls:   u64,
 }
 
-// The wirings of an asker up to their limit, the one past it refused, and
-// the revocation of the grant wirings.
-@(log_fact = "output_wiring: {wirings} wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must")
+// The wirings of an asker with no count, past 8, 9 and 20, until its
+// budget pays no more; the next refused, and the revocation of the grant
+// wirings.
+@(log_fact = "output_wiring: {wirings} wirings of one asker, past 8, 9 and 20, until its budget paid no more; one more refused with Wire and with a Start, each with the budget unchanged, then the revocation of the grant wirings: as it must")
 Asker_Limit_Checked :: struct {
 	wirings: u64,
 }

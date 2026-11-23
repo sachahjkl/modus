@@ -59,6 +59,11 @@ Client :: struct {
 	// (client_display_paused): the row holds no View and no Input, as
 	// principal 0 cannot see the screen of a named session.
 	not_in_front:   u64,
+	// The serial of the wide grant that the key holds, from the collector;
+	// 0: none. `remote` writes an act record before each call of a key whose
+	// row holds one (src/md/features/wide_grants.md, "The path of a grant,
+	// end to end").
+	wide_grant:     u64,
 }
 
 // client_display_paused says if a row of a principal holds no View and no
@@ -140,6 +145,23 @@ client_table_write :: proc "contextless" (table: ^Client_Table, place: int, clie
 	intrinsics.atomic_thread_fence(.Release)
 	table.clients[place] = client
 	intrinsics.atomic_store_explicit(&table.version, table.version + 1, .Release)
+}
+
+// second_connection_ends_grant says if a connection of key that binds now
+// ends the wide grant of its row: the row holds a grant, and another
+// connection bound to the same key is open (src/md/features/wide_grants.md,
+// "An agent key stolen from the host"). other_keys are the keys of the
+// other connections that are bound to a row now.
+second_connection_ends_grant :: proc "contextless" (row: Client, key: [32]u8, other_keys: [][32]u8) -> bool {
+	if row.wide_grant == 0 || row.key != key || key == ([32]u8{}) {
+		return false
+	}
+	for other in other_keys {
+		if other == key {
+			return true
+		}
+	}
+	return false
 }
 
 // client_find gives the place of the row of a key in a copy of the table,

@@ -359,23 +359,15 @@ find_grant_allocation_slot :: proc "contextless" (manager: ^Wide_Grant_Manager) 
 }
 
 @(private = "file")
-saturating_add_u64 :: proc "contextless" (a, b: u64) -> u64 {
-	if b > max(u64) - a {
-		return max(u64)
-	}
-	return a + b
-}
-
-@(private = "file")
 required_authority_for_act :: proc "contextless" (kind: wide_grants.Act_Kind) -> (authority: wide_grants.Wide_Authority, valid: bool) {
 	switch kind {
 	case .Frame_Read:
 		return .View_Screen, true
-	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked:
+	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Target_Window_Changed, .Input_Counted:
 		return .Send_Input, true
 	case .Action_Invoked:
 		return .Read_Semantic_Tree, true
-	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked:
+	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made:
 		return .View_Screen, false
 	}
 	return .View_Screen, false
@@ -390,10 +382,17 @@ manager_create_grant :: proc "contextless" (
 	terms: ^wide_grants.Wide_Grant_Terms,
 	proof: ^wide_grants.Wide_Grant_Proof,
 	now_ms: u64,
+	ends_at_ms: u64,
 ) -> (grant_serial: u64, refusal: wide_grants.Wide_Grant_Refusal) {
 	// A manager without the authority key cannot check any proof.
 	if !manager.initialized {
 		return 0, .Invalid_Proof
+	}
+	// The root service fixes the one end time of the grant when the proof
+	// is given: it is past now, and no later than the duration that the
+	// proof covers.
+	if ends_at_ms <= now_ms || ends_at_ms - now_ms > terms.duration_ms {
+		return 0, .Duration_Past_Bound
 	}
 	if terms.principal_id != manager.principal_id {
 		return 0, .Invalid_Proof
@@ -484,7 +483,7 @@ manager_create_grant :: proc "contextless" (
 		authorities  = authorities,
 		proof_kind   = proof_kind,
 		created_ms   = now_ms,
-		expires_ms   = saturating_add_u64(now_ms, terms.duration_ms),
+		expires_ms   = ends_at_ms,
 	}
 	manager.counters.active_grants += 1
 	manager.counters.total_grants_created += 1
@@ -757,6 +756,20 @@ manager_get_grant :: proc "contextless" (manager: ^Wide_Grant_Manager, grant_ser
 		return {}, false
 	}
 	return manager.grants[slot_index], true
+}
+
+// manager_grant_state returns the current lifecycle state and expiry time of
+// grant_serial, or found == false when no slot holds that serial.
+manager_grant_state :: proc "contextless" (manager: ^Wide_Grant_Manager, grant_serial: u64) -> (state: wide_grants.Wide_Grant_State, expires_ms: u64, found: bool) {
+	if !manager.initialized {
+		return .None, 0, false
+	}
+	slot_index, ok := find_grant_slot_by_serial(manager, grant_serial)
+	if !ok {
+		return .None, 0, false
+	}
+	slot := &manager.grants[slot_index]
+	return slot.state, slot.expires_ms, true
 }
 
 // manager_verify_chain verifies the full hash-chained act log held by manager.

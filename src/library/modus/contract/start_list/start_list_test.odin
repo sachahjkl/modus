@@ -9,6 +9,7 @@ import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
+import "modus:contract/wide_grants"
 
 // A list of three start rows that the border takes, and its bytes, for the
 // cases that change one field.
@@ -51,7 +52,7 @@ wired_rows :: proc() -> (rows: [4]Start_Row, wirings: [3]Wiring_Row_Record, byte
 	}
 	wirings = {wiring_row(3, 1, 1, 1), wiring_row(3, 2, 2, 1), log_row(3, 1, 2)}
 	bytes = make([]u8, list_size(4, 3), context.temp_allocator)
-	_, written := list_write(rows[:], wirings[:], bytes)
+	_, written := list_write(rows[:], wirings[:], bytes, 1)
 	assert(written)
 	return
 }
@@ -101,15 +102,22 @@ header_change :: proc(bytes: []u8, change: proc(header: ^List_Header)) -> []u8 {
 expect_refused :: proc(t: ^testing.T, bytes: []u8, problem: List_Problem, place: int, refusal: errors.Error_Record = {}, loc := #caller_location) {
 	list: List
 	_, _, before := wired_rows()
-	_, _, _ = list_read(before, &list)
+	_, _, _ = list_read(before, &list, rows_place(before))
 	assert(list.row_count == 4)
-	read_problem, read_place, read_refusal := list_read(bytes, &list)
+	read_problem, read_place, read_refusal := list_read(bytes, &list, rows_place(bytes))
 	testing.expect_value(t, read_problem, problem, loc = loc)
 	testing.expect_value(t, read_place, place, loc = loc)
 	testing.expect_value(t, read_refusal, refusal, loc = loc)
 	testing.expect_value(t, list.row_count, 0, loc = loc)
 	testing.expect_value(t, list.wiring_count, 0, loc = loc)
-	testing.expect(t, list == List{}, "a refused list kept a row", loc = loc)
+	testing.expect_value(t, list.wiring_pages, u64(0), loc = loc)
+}
+
+// rows_place gives the place of the wiring rows of bytes, sized as a reader
+// of the list sizes it (list_wiring_count).
+@(private = "file")
+rows_place :: proc(bytes: []u8) -> []Wiring_Row {
+	return make([]Wiring_Row, list_wiring_count(bytes), context.temp_allocator)
 }
 
 // The header: no byte, one byte short of the header, another magic,
@@ -127,14 +135,37 @@ a_list_with_a_wrong_header_is_refused :: proc(t: ^testing.T) {
 	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.version = 0}), .Wrong_Version, 0)
 	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.version = LIST_VERSION - 1}), .Wrong_Version, 0)
 	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.version = LIST_VERSION + 1}), .Wrong_Version, 0)
-	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.reserved = 1}), .Reserved_Not_Zero, 0)
+	// Pages of wirings with no wiring row.
+	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.wiring_pages = 1}), .Bad_Wiring_Pages, 0)
 	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.row_count = 0})[:size_of(List_Header)], .No_Row, 0)
 	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.row_count = ROW_CAPACITY + 1}), .Too_Many_Rows, 0)
 	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.row_count = max(u32)}), .Too_Many_Rows, 0)
-	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.wiring_count = WIRING_ROW_CAPACITY + 1}), .Too_Many_Wirings, 0)
-	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.wiring_count = max(u32)}), .Too_Many_Wirings, 0)
-	// One wiring row that the header counts and the bytes do not hold.
-	expect_refused(t, header_change(bytes, proc(header: ^List_Header) {header.wiring_count = 1}), .Too_Short, 0)
+	// Wiring rows that the header counts and the bytes do not hold: one,
+	// nine, the largest count; the reader pays a place for none of them.
+	for count in ([?]u32{1, 9, max(u32)}) {
+		counted := header_change(bytes, proc(header: ^List_Header) {header.wiring_pages = 1})
+		(^List_Header)(raw_data(counted)).wiring_count = count
+		testing.expect_value(t, list_wiring_count(counted), 0)
+		expect_refused(t, counted, .Too_Short, 0)
+	}
+	// Rows with no page.
+	_, _, wired := wired_rows()
+	expect_refused(t, header_change(wired, proc(header: ^List_Header) {header.wiring_pages = 0}), .Bad_Wiring_Pages, 0)
+	// What the starter reads: the pages of the header, the audits, and no
+	// fact of a list that is not whole.
+	audits, wiring_pages, facts_ok := list_starter_facts(wired)
+	testing.expect(t, facts_ok && audits == 0 && wiring_pages == 1, "the facts of the wired list")
+	_, _, cut_ok := list_starter_facts(wired[:len(wired) - 1])
+	testing.expect(t, !cut_ok, "a cut list gives facts")
+	_, _, empty_ok := list_starter_facts(nil)
+	testing.expect(t, !empty_ok, "no list gives facts")
+	// No header: no row to place.
+	testing.expect_value(t, list_wiring_count(wired[:size_of(List_Header) - 1]), 0)
+	testing.expect_value(t, list_wiring_count(wired), 3)
+	// A place of the reader one row short of the rows of the list.
+	short_list: List
+	short_problem, _, _ := list_read(wired, &short_list, rows_place(wired)[:2])
+	testing.expect_value(t, short_problem, List_Problem.Too_Many_Wirings)
 	expect_refused(t, bytes[:len(bytes) - 1], .Too_Short, 0)
 	longer := make([]u8, len(bytes) + 1, context.temp_allocator)
 	copy(longer, bytes)
@@ -218,7 +249,14 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.reader_handle = 5}), .Wiring_Refused, refused(.Reader_Handle, 5, 4)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.writer_index = 0}), .Wiring_Refused, refused(.Writer_Index, 0, module.RECORD_STREAM_INDEX_MOST)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.capacity = 33}), .Wiring_Refused, refused(.Capacity, 33, output.WIRING_CAPACITY_MOST)},
-		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_offset, record.wiring.terms_count = 64, 8}), .Wiring_Refused, refused(.Terms_Offset, 64, 0)},
+		// The terms: an offset, a count that is not the size of the terms, and
+		// bytes of terms in a row with none.
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_offset, record.wiring.terms_count = 64, 8}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_offset, record.wiring.terms_count = 1, START_LIST_TERMS_BYTES}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_count = START_LIST_TERMS_BYTES - 1}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_count = START_LIST_TERMS_BYTES + 1}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_count = max(u32)}), .Bad_Terms, {}},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.terms[START_LIST_TERMS_BYTES - 1] = 1}), .Bad_Terms, {}},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.condition_offset, record.wiring.condition_count = 64, size_of(output.Condition_Terms)}), .Wiring_Refused, refused(.Condition_Offset, 64, 0)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.reserved[1] = 1}), .Wiring_Refused, refused(.Reserved, 1, 0)},
 		// A pair names an earlier row that the output border takes, and the
@@ -245,8 +283,52 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	expect_refused(t, record_change(bytes, 2, proc(record: ^Row_Record) {record.restart_count = RESTART_LIMIT}), .Writer_Restarts, 0)
 	list: List
 	reader_restarts := record_change(bytes, 0, proc(record: ^Row_Record) {record.restart_count = RESTART_LIMIT})
-	problem, _, _ := list_read(reader_restarts, &list)
+	problem, _, _ := list_read(reader_restarts, &list, rows_place(reader_restarts))
 	testing.expect_value(t, problem, List_Problem.None)
+	// A list with no terms declares no audit.
+	plain_list: List
+	plain_problem, _, _ := list_read(bytes, &plain_list, rows_place(bytes))
+	testing.expect_value(t, plain_problem, List_Problem.None)
+	testing.expect_value(t, list_audit_count(&plain_list), 0)
+	// Terms that name no audit that keeps what leaves a server: each field
+	// at its edges, and bytes that are no terms.
+	audit :: wide_grants.Space_Terms{kind_word = i64(wide_grants.Collector_Space_Kind.Audit), bound_records = 1, forwarding_word = i64(wide_grants.Space_Forwarding.Keeps), record_size = 1}
+	bad_terms := [?]wide_grants.Space_Terms {
+		{},
+		{kind_word = i64(wide_grants.Collector_Space_Kind.Keep), bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = 3, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = -1, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = i64(wide_grants.Space_Forwarding.Forward), record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = 0, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 0, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = -1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = wide_grants.SPACE_AUDIT_BOUND_MOST + 1, forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = max(i64), forwarding_word = audit.forwarding_word, record_size = 1},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = 0},
+		{kind_word = audit.kind_word, bound_records = 1, forwarding_word = audit.forwarding_word, record_size = wide_grants.SPACE_RECORD_BYTES_MOST + 1},
+	}
+	for terms in bad_terms {
+		row := good
+		row.wiring.terms_count = START_LIST_TERMS_BYTES
+		row.terms = transmute([START_LIST_TERMS_BYTES]u8)terms
+		expect_refused(t, wiring_change(bytes, 4, 1, row), .Bad_Terms, 1)
+	}
+	// A row with terms at each edge of their range: the list keeps them,
+	// with their count.
+	good_terms := [?]wide_grants.Space_Terms {
+		audit,
+		{kind_word = audit.kind_word, bound_records = wide_grants.SPACE_AUDIT_BOUND_MOST, forwarding_word = audit.forwarding_word, record_size = wide_grants.SPACE_RECORD_BYTES_MOST},
+	}
+	for terms in good_terms {
+		with_terms := good
+		with_terms.wiring.terms_count = START_LIST_TERMS_BYTES
+		with_terms.terms = transmute([START_LIST_TERMS_BYTES]u8)terms
+		problem, _, _ = list_read(wiring_change(bytes, 4, 1, with_terms), &list, rows_place(wiring_change(bytes, 4, 1, with_terms)))
+		testing.expect_value(t, problem, List_Problem.None)
+		testing.expect_value(t, list_audit_count(&list), 1)
+		testing.expect_value(t, list.wirings[1].wiring.terms_count, u32(START_LIST_TERMS_BYTES))
+		testing.expect_value(t, list.wirings[1].terms, with_terms.terms)
+	}
 }
 
 // The writer of a list refuses more start rows or wiring rows than a list
@@ -259,12 +341,10 @@ a_list_past_its_room_is_not_written :: proc(t: ^testing.T) {
 		testing.expectf(t, !made, "the row of %q is made", name)
 	}
 	rows: [ROW_CAPACITY + 1]Start_Row
-	bytes := make([]u8, list_size(ROW_CAPACITY + 1, WIRING_ROW_CAPACITY + 1), context.temp_allocator)
+	bytes := make([]u8, list_size(ROW_CAPACITY + 1, 2), context.temp_allocator)
 	_, written := list_write(rows[:], nil, bytes)
 	testing.expect(t, !written, "a list past the capacity is written")
-	wirings: [WIRING_ROW_CAPACITY + 1]Wiring_Row_Record
-	_, wirings_written := list_write(rows[:1], wirings[:], bytes)
-	testing.expect(t, !wirings_written, "a list past the capacity of the wiring rows is written")
+	wirings: [2]Wiring_Row_Record
 	first, _ := row_make("input", {}, .Not_Started, .Not_Needed)
 	one := [1]Start_Row{first}
 	_, short_written := list_write(one[:], nil, bytes[:list_size(1) - 1])
@@ -282,7 +362,7 @@ a_list_past_its_room_is_not_written :: proc(t: ^testing.T) {
 the_pages_of_the_wirings_of_a_list_are_counted :: proc(t: ^testing.T) {
 	_, _, bytes := wired_rows()
 	list: List
-	list_read(bytes, &list)
+	list_read(bytes, &list, rows_place(bytes))
 	sizes := [3]u32{56, 56, size_of(output.Log_Output_Record)}
 	_, short_ok := wiring_pages_of_list(&list, sizes[:2])
 	testing.expect(t, !short_ok, "the pages are counted with a size missing")
@@ -292,7 +372,7 @@ the_pages_of_the_wirings_of_a_list_are_counted :: proc(t: ^testing.T) {
 	testing.expect_value(t, wiring_pages_of_row(0, module.RECORD_SIZE_LIMIT + 1), u64(0))
 	_, plain := three_rows()
 	plain_list: List
-	list_read(plain, &plain_list)
+	list_read(plain, &plain_list, rows_place(plain))
 	pages, ok := wiring_pages_of_list(&plain_list, nil)
 	testing.expect(t, ok)
 	testing.expect_value(t, pages, u64(0))
@@ -301,12 +381,24 @@ the_pages_of_the_wirings_of_a_list_are_counted :: proc(t: ^testing.T) {
 	pages, ok = wiring_pages_of_list(&list, sizes[:])
 	testing.expect(t, ok)
 	description_pages := u64(output.DESCRIPTION_FILE_BYTES_MOST / ring.PAGE_SIZE)
-	expected := u64(WIRING_PAGES_OF_THE_ASKER)
+	// The asker, the place of the 3 rows in the memory of the start policy,
+	// then each row.
+	expected := u64(WIRING_PAGES_OF_THE_ASKER) + list_table_pages(3)
 	expected += ring.compartment_pages(output.WIRING_CAPACITY_DEFAULT, 64) + 1 + description_pages
 	expected += ring.compartment_pages(32, 64) + 1 + description_pages
 	expected += ring.compartment_pages(output.WIRING_CAPACITY_DEFAULT, output.compartment_size(size_of(output.Log_Output_Record))) + 1 + description_pages
 	testing.expect_value(t, pages, expected)
 	testing.expect_value(t, wiring_pages_of_row(0, 56), ring.compartment_pages(256, 64) + 1 + description_pages)
+	// The records before a list count the same pages; another count of
+	// sizes, none.
+	_, wired_records, _ := wired_rows()
+	wired_records[1].wiring.capacity = 32
+	record_pages, records_ok := wiring_pages_of_records(wired_records[:], sizes[:])
+	testing.expect(t, records_ok && record_pages == expected, "the pages of the records differ from the pages of the list")
+	_, short_ok = wiring_pages_of_records(wired_records[:], sizes[:2])
+	testing.expect(t, !short_ok, "records with fewer sizes are counted")
+	testing.expect_value(t, list_table_pages(0), u64(0))
+	testing.expect_value(t, list_table_pages(1), u64(1))
 }
 
 // The names that the root service starts by a procedure of its own: no
@@ -392,7 +484,7 @@ a_word_of_parts_past_the_last_part_is_refused :: proc(t: ^testing.T) {
 a_written_list_reads_back :: proc(t: ^testing.T) {
 	written, bytes := three_rows()
 	list: List
-	problem, _, _ := list_read(bytes, &list)
+	problem, _, _ := list_read(bytes, &list, rows_place(bytes))
 	testing.expect_value(t, problem, List_Problem.None)
 	testing.expect_value(t, list.row_count, 3)
 	testing.expect_value(t, list.wiring_count, 0)
@@ -409,21 +501,24 @@ a_written_list_reads_back :: proc(t: ^testing.T) {
 		names[index] = {'a' + u8(index / 26), 'a' + u8(index % 26)}
 		row, _ = row_make(string(names[index][:]), {}, .Not_Started, .Not_Needed)
 	}
-	// The last row writes the most wiring rows, each to the row before it.
-	wirings: [WIRING_ROW_CAPACITY]Wiring_Row_Record
+	// The last row writes 20 wiring rows, each to an earlier row: a list
+	// has no count of its wiring rows.
+	WIRINGS :: 20
+	wirings: [WIRINGS]Wiring_Row_Record
 	for &record, index in wirings {
-		record = wiring_row(ROW_CAPACITY, u32(index + 1), ROW_CAPACITY - 1, u32(index + 1))
+		record = wiring_row(ROW_CAPACITY, u32(index + 1), u32(index + 1), u32(index + 1))
 	}
-	full_bytes := make([]u8, list_size(ROW_CAPACITY, WIRING_ROW_CAPACITY), context.temp_allocator)
-	_, full_written := list_write(full[:], wirings[:], full_bytes)
+	full_bytes := make([]u8, list_size(ROW_CAPACITY, WIRINGS), context.temp_allocator)
+	_, full_written := list_write(full[:], wirings[:], full_bytes, 7)
 	testing.expect(t, full_written)
-	full_problem, _, _ := list_read(full_bytes, &list)
+	full_problem, _, _ := list_read(full_bytes, &list, rows_place(full_bytes))
 	testing.expect_value(t, full_problem, List_Problem.None)
 	testing.expect_value(t, list.row_count, ROW_CAPACITY)
-	testing.expect_value(t, list.wiring_count, WIRING_ROW_CAPACITY)
+	testing.expect_value(t, list.wiring_count, WIRINGS)
+	testing.expect_value(t, list.wiring_pages, u64(7))
 
 	_, wired, wired_bytes := wired_rows()
-	wired_problem, _, _ := list_read(wired_bytes, &list)
+	wired_problem, _, _ := list_read(wired_bytes, &list, rows_place(wired_bytes))
 	testing.expect_value(t, wired_problem, List_Problem.None)
 	testing.expect_value(t, list.row_count, 4)
 	testing.expect_value(t, list.wiring_count, 3)

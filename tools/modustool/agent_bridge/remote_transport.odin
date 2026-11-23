@@ -19,6 +19,7 @@ import module "modus:contract/module"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/value_kinds"
+import "modus:contract/wide_grants"
 import "modus:sentence"
 import "modustool:build"
 import "modustool:machine"
@@ -79,7 +80,28 @@ remote_transport_interface :: proc(transport: ^Remote_Machine_Transport) -> Mach
 		send_key       = remote_transport_send_key,
 		send_pointer   = remote_transport_send_pointer,
 		read_log_facts = remote_transport_read_log_facts,
+		ask_wide_grant = remote_transport_ask_wide_grant,
 	}
+}
+
+// remote_transport_ask_wide_grant sends the ask of a wide grant through
+// `remote`, and gives the number of the screen that the trusted display
+// shows, or the sentence of the refusal.
+@(private = "file")
+remote_transport_ask_wide_grant :: proc(user_data: rawptr, authorities: wide_grants.Wide_Authorities, duration_ms: u64) -> (screen: u64, err: string, ok: bool) {
+	transport, transport_ok := remote_transport_from_user_data(user_data)
+	if !transport_ok {
+		return 0, "remote transport is not open", false
+	}
+	answer, call_transport, sent := machine.wide_grant_ask_send(&transport.client, authorities, duration_ms)
+	if !sent {
+		return 0, format_remote_transport_failure(call_transport, context.temp_allocator), false
+	}
+	if answer.status != .Ok {
+		error := answer.error
+		return 0, fmt.tprintf("remote refused the ask of a wide grant: kind %d, unit %d, field %d", error.kind, error.unit, error.argument), false
+	}
+	return u64(answer.value), "", true
 }
 
 @(private = "file")

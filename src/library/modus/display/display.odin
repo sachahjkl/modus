@@ -200,6 +200,13 @@ CLIENT_ADD_CAPTURE :: 5
 // The flag of a client that holds the start grant Screen_Capture. A flag,
 // not a choice: 0 says the opposite.
 CLIENT_CAPTURE :: 1
+// The place of the flag of a window that takes the keys of the input
+// service only, in the values of Client_Add: the window of `unlock` that
+// proves a principal for a wide grant (src/md/features/wide_grants.md, "The
+// deliberate act: the proof of the principal"). No key and no pointer of the
+// remote display reaches it.
+CLIENT_ADD_LOCAL_INPUT_ONLY :: 6
+CLIENT_LOCAL_INPUT_ONLY :: 1
 
 // The viewers of the capture face: each viewer that the service of the
 // remote display holds has its place here, by the place of its record.
@@ -567,8 +574,9 @@ Control :: enum u32 {
 	// root to compositor. values: ring memory handle (in the compositor). For
 	// a disk process, values 1 to 3 hold its nickname, as the root ring
 	// carries a name of 23 bytes, and value 4 the first 8 bytes of the hash
-	// of its file (modus:contract/disk_process_page, hash_head); for another
-	// process, values 1 to 4 are 0. Value CLIENT_ADD_CAPTURE is
+	// of its file (modus:contract/disk_process_page, hash_head); for a
+	// process of the boot image, values 1 to 3 hold the name of its module
+	// in the same form, and value 4 is 0. Value CLIENT_ADD_CAPTURE is
 	// CLIENT_CAPTURE for a process with the start grant Screen_Capture.
 	Client_Add    = 1,
 	Client_Remove = 2, // root to compositor. values: the same handle
@@ -606,6 +614,20 @@ Control :: enum u32 {
 	// compositor to root: the compositor closed its extra budget of a growth,
 	// as no picture of it is left. values: the number of the growth.
 	Screen_Budget_Release   = 11,
+	// root to compositor: show the screen of a wide grant
+	// (src/md/features/wide_grants.md, "The path of a grant, end to end").
+	// values: wide_grants.screen_show_values.
+	Wide_Grant_Screen_Show    = 12,
+	// compositor to root: the answer of the principal on that screen.
+	// values: wide_grants.screen_answer_values.
+	Wide_Grant_Screen_Answer  = 13,
+	// root to compositor: the mark of a grant that holds, or its end with
+	// a grant serial of 0. values: wide_grants.mark_values.
+	Wide_Grant_Mark           = 14,
+	// compositor to root: the principal pressed revoke on the mark, with
+	// the keys or the pointer of the input service. values[0]: the grant
+	// serial of the mark.
+	Wide_Grant_Revoke_Pressed = 15,
 }
 
 // Where the focus goes in the window that Settings_Raise raises. The values
@@ -650,6 +672,7 @@ KEY_ESCAPE :: 0x01 // Escape.
 KEY_BACKSPACE :: 0x0E // Backspace.
 KEY_ENTER :: 0x1C // Enter.
 KEY_TAB :: 0x0F // Tab.
+KEY_SPACE :: 0x39 // Space.
 KEY_F3 :: 0x3D // F3.
 KEY_F7 :: 0x41 // F7: with Control and Shift, the compositor moves the window in front by keys.
 KEY_F8 :: 0x42 // F8: with Control and Shift, the compositor resizes the window in front by keys.

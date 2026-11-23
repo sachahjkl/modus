@@ -312,6 +312,7 @@ Unit :: enum i64 {
 	Kernel_Status = 62, // Refused: a kernel operation inside the call refused, and found is its op.Status, which a sentence names in words.
 	Device_Windows = 63, // Full: the device windows of the IOMMU, which the objects that a service declares and that are not contiguous hold; limit their count.
 	Count_Repair = 64, // Busy: the storage service repairs the counts of the blocks of its disk and makes no change until the end (src/md/data/storage_capacity.md). value: the stores that the repair walked; limit: the stores in all.
+	Act_Records = 65, // Full: the act record of a call under a wide grant found no room, and the call did not run (src/md/features/wide_grants.md, "The size of the act records"): the audit space of the grant in the collector is full, or its ring did not take the record. found: the wide_grants.Act_Write_Status of the write.
 }
 
 // The name of each error kind, as the contract names it: a column of a
@@ -432,6 +433,7 @@ UNIT_MEMBER_NAMES := [Unit]string {
 	.Kernel_Status      = "Kernel_Status",
 	.Device_Windows     = "Device_Windows",
 	.Count_Repair       = "Count_Repair",
+	.Act_Records        = "Act_Records",
 }
 
 // The word of a Kind as the record of another party holds it: a field of a
@@ -596,6 +598,7 @@ UNIT_NAMES := [Unit]string {
 	.Kernel_Status = "status of the kernel",
 	.Device_Windows = "device windows of the IOMMU",
 	.Count_Repair = "repair of the counts of the blocks",
+	.Act_Records   = "act records of the wide grant",
 }
 
 // A ring completion (src/library/modus/contract/ring) has the status of the contract of its

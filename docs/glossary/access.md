@@ -710,6 +710,16 @@ The design: `src/md/features/wide_grants.md`, "The record of each act".
 
 Do not use: audit log, activity log.
 
+### Authority key
+
+The authority key is the secret key of 32 bytes under which the root service tags the proof of each wide grant, and with which the collector checks it.
+
+The root service makes a fresh key at each start, from a seed of the strength `Processor` at least. It gives the key to the collector in four values of its context, which the collector erases after it reads them. No disk keeps it, so a proof of one start gives no grant after a restart. A collector with no key, or with the all-zero key, refuses each wide grant. It is not the key of a principal.
+
+The design: `src/md/features/wide_grants.md`, "The deliberate act: the proof of the principal".
+
+Do not use: grant secret, collector key.
+
 ### Agent step
 
 An agent step is an ordered list of 1 to 16 console lines of Lex that an agent sends at once, and that its agent console runs, each to its typed result.

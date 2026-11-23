@@ -112,12 +112,12 @@ test_enum_border_parsers_refuse_zero_and_unknown_words :: proc(t: ^testing.T) {
 		testing.expect(t, ok && parsed == expected)
 	}
 
-	// Act_Kind refuses 0, 10, max(u64)
+	// Act_Kind refuses 0, one past its last member, max(u64)
 	if _, ok := act_kind_from_word(0); ok {
 		testing.fail_now(t, "act_kind_from_word accepted 0")
 	}
-	if _, ok := act_kind_from_word(10); ok {
-		testing.fail_now(t, "act_kind_from_word accepted 10")
+	if _, ok := act_kind_from_word(u64(max(Act_Kind)) + 1); ok {
+		testing.fail_now(t, "act_kind_from_word accepted one past the last member")
 	}
 	if _, ok := act_kind_from_word(max(u64)); ok {
 		testing.fail_now(t, "act_kind_from_word accepted max(u64)")
@@ -434,6 +434,8 @@ test_authority_key_and_new_enums_at_the_border :: proc(t: ^testing.T) {
 	for word in ([?]u64{0, 4, 99, max(u64)}) {
 		_, origin_ok := proof_origin_from_word(word)
 		testing.expectf(t, !origin_ok, "proof origin word %d accepted", word)
+	}
+	for word in ([?]u64{0, u64(max(Revocation_Reason)) + 1, 99, max(u64)}) {
 		_, reason_ok := revocation_reason_from_word(word)
 		testing.expectf(t, !reason_ok, "revocation reason word %d accepted", word)
 	}

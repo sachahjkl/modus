@@ -53,7 +53,7 @@ a_connected_end_with_a_fact_missing_is_refused :: proc(t: ^testing.T) {
 // both are refused with every fact true.
 @(test)
 an_end_that_names_nothing_is_refused :: proc(t: ^testing.T) {
-	every_fact := End_Facts{true, true, true, true, true, true}
+	every_fact := End_Facts{true, true, true, true, true, true, true}
 	testing.expect(t, !wiring_end_allowed(.None, every_fact))
 	testing.expect(t, !wiring_end_allowed(Wiring_End(u32(max(Wiring_End)) + 1), every_fact))
 }
@@ -101,5 +101,9 @@ the_ends_of_the_rule_are_taken :: proc(t: ^testing.T) {
 	testing.expect(t, wiring_end_allowed(.Asker, {}))
 	testing.expect(t, wiring_end_allowed(.Started, {started_by_asker = true}))
 	testing.expect(t, wiring_end_allowed(.Started, {asker_is_start_policy = true, started_by_start_policy = true}))
+	testing.expect(t, wiring_end_allowed(.Started, {audit_wired_by_root = true}))
+	// The fact of the audit opens no other end.
+	testing.expect(t, !wiring_end_allowed(.Connected, {audit_wired_by_root = true}))
+	testing.expect(t, !wiring_end_allowed(.None, {audit_wired_by_root = true}))
 	testing.expect(t, wiring_end_allowed(.Connected, {asker_acts_for_principal = true, process_is_a_service = true, asker_holds_a_connection = true}))
 }

@@ -515,8 +515,13 @@ Budget_Request :: struct {
 	// their pages for the screen of the machine (budget_request_of_screen),
 	// and a 4K machine pays a 4K screen. SCREEN_PICTURES_LIMIT at most.
 	screen_pictures: u64,
+	// The pages of the rings of the wirings that the process asks for, in
+	// pages: the root service carves its wiring budget to that measure at
+	// its first wiring. 0: half of pages. A shorter record of an older file
+	// reads 0 (src/md/features/module_outputs.md, "The bounds of the wirings").
+	wiring_pages: u64,
 }
-#assert(size_of(Budget_Request) == 32)
+#assert(size_of(Budget_Request) == 40)
 
 // The most screen pictures that a module asks for: the compositor holds
 // two, the remote display three.

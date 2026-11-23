@@ -1,5 +1,7 @@
 package collector_service
 
+import "modus:contract/wide_grants"
+
 // Log facts emitted by the freestanding collector service. Field names avoid
 // the reserved log table header names (number, time, process, level).
 
@@ -14,10 +16,39 @@ Service_Ready :: struct {
 
 // The audit spaces that a start read back from the private store, each
 // segment checked.
-@(log_fact = "collector: read {spaces} audit spaces with {records} records from its store")
+// The windows of the spaces that the budget of the collector held at its
+// start: the most of its open spaces, while the budget still pays them.
+@(log_fact = "collector: its budget pays {windows} windows of spaces")
+Space_Windows_Paid :: struct {
+	windows: u64,
+}
+
+// The wakes of the poll of rings that one wait cannot hold, at each power
+// of two: until the wait room of the kernel, a reader of more rings than a
+// wait holds reads them again on a period.
+@(log_fact = "collector: {wakes} wakes of its loop and {read_wakes} of its reads to read rings that one wait cannot hold")
+Poll_Wakes_Counted :: struct {
+	wakes:      u64,
+	read_wakes: u64,
+}
+
+// A pass removed closed audit spaces whose retention ended.
+@(log_fact = "collector: removed {spaces} closed audit spaces whose retention ended")
+Closed_Spaces_Removed :: struct {
+	spaces: u64,
+}
+
+// A pass on the closed audit spaces was refused: it goes on at the next.
+@(log_fact = "collector: the removal of closed audit spaces stopped: {refusal}; the next pass goes on")
+Closed_Spaces_Pass_Refused :: struct {
+	refusal: wide_grants.Space_Refusal,
+}
+
+@(log_fact = "collector: read {spaces} audit spaces with {records} records from its store, in {objects} objects")
 Spaces_Loaded :: struct {
 	spaces:  u64,
 	records: u64,
+	objects: u64, // A measure: the objects that the start read, a few for each space whatever its count of records.
 }
 
 // A start found a damaged object of its audit spaces: each step of a space
@@ -80,6 +111,31 @@ Source_Opened :: struct {
 Source_Refused :: struct {
 	wiring_number: u64,
 	refusal_code:  u64,
+}
+
+// The router of the act spaces refused the end of a grant: its state says
+// why (a grant that ended already, another grant).
+@(log_fact = "collector: the end of the act records of grant {grant_serial} was refused: refusal {refusal_code}")
+Act_Wiring_End_Refused :: struct {
+	refusal_code: u64,
+	grant_serial: u64,
+}
+
+// The space of the root service had no room for the record of the end of
+// a grant: the grant ended, with no record of its end.
+@(log_fact = "collector: the grant {grant_serial} ended with no record of its end: the space of the root service is full")
+Act_Wiring_End_Not_Recorded :: struct {
+	grant_serial: u64,
+}
+
+// The collector closed a ring of act records: a record of no grant, of an
+// ended grant, of another grant or of another producer, or one that broke
+// the terms of its space.
+@(log_fact = "collector: closed the act records of wiring {wiring_number}, act refusal {act_refusal_code}, space refusal {space_refusal_code}")
+Act_Source_Refused :: struct {
+	wiring_number:      u64,
+	act_refusal_code:   u64,
+	space_refusal_code: u64,
 }
 
 #assert(size_of(Source_Refused) == 16)

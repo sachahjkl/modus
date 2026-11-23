@@ -20,8 +20,12 @@ package wide_grants
 
 import "modus:contract/errors"
 
-// The sources that a collector reads at once: the ends of one process.
-SOURCE_LINKS_MOST :: 16
+// The forward queue gives each source its part (FORWARD_QUEUE_PER_SPACE_LIMIT)
+// up to these sources that forward at once; past them a full queue holds
+// the record of a source, which waits and is not lost. The links of the
+// collector themselves have no count: they grow as its budget pays
+// (Source_Links_Port).
+FORWARD_SOURCES_SHARED :: 16
 
 // Where a source is.
 Source_Link_State :: enum u8 {
@@ -52,9 +56,39 @@ Source_Link :: struct {
 	end_error:     errors.Error_Record, // The error record of the end of the source, for the end of its pair.
 }
 
-// The sources of a collector.
+// Where the links of a collector grow: in arenas of its budget on a
+// machine, on the heap in a host test. grow gives the links and the places
+// of forward_pass beside them, count of each at least, at the same
+// addresses, the entries before kept, zeroed past them; nil when the
+// budget does not pay them.
+Source_Links_Port :: struct {
+	user: rawptr,
+	grow: proc "contextless" (user: rawptr, count: int) -> (links: []Source_Link, held: []u32),
+}
+
+// The sources of a collector: one link for each ring of its record input
+// sources, with no count.
 Source_Links :: struct {
-	links: [SOURCE_LINKS_MOST]Source_Link,
+	links: []Source_Link,
+	held:  []u32, // forward_pass: the spaces whose pair waits, one place for each link.
+	port:  Source_Links_Port,
+}
+
+// links_ensure makes links hold count links. false: the budget does not pay
+// them, and nothing changed.
+links_ensure :: proc "contextless" (links: ^Source_Links, count: int) -> bool {
+	if len(links.links) >= count {
+		return true
+	}
+	if links.port.grow == nil {
+		return false
+	}
+	grown, held := links.port.grow(links.port.user, count)
+	if len(grown) < count || len(held) < count || (len(links.links) > 0 && raw_data(grown) != raw_data(links.links)) {
+		return false
+	}
+	links.links, links.held = grown, held
+	return true
 }
 
 // What a step of a source did with a record.
@@ -116,7 +150,7 @@ link_of_space :: proc "contextless" (links: ^Source_Links, space_number: u32) ->
 // service wrote, the terms that its asker gave, and the size of its record
 // from the description of its wiring. It refuses a tag of 0 or of a link
 // (Space_Held), terms whose record size is not the size of the record
-// (Wrong_Size), no place for one more link (Space_Limit_Reached), each
+// (Wrong_Size), a link that the budget does not pay (Memory_Refused), each
 // refusal of space_open, and a space that another link feeds (Space_Held):
 // its forward queue names the space, so one space has one pair at a time.
 // A refusal adds no link. A space that forwards starts with its pair
@@ -136,7 +170,12 @@ link_open :: proc "contextless" (links: ^Source_Links, store: ^Space_Store, tag:
 		}
 	}
 	if free == nil {
-		return nil, .Space_Limit_Reached
+		// No free link: the links grow, as the budget pays.
+		count := len(links.links)
+		if !links_ensure(links, count + 1) {
+			return nil, .Memory_Refused
+		}
+		free = &links.links[count]
 	}
 	space_number, opened := space_open(store, source, output, terms)
 	if opened != .None {
@@ -189,7 +228,7 @@ link_retry :: proc "contextless" (store: ^Space_Store, link: ^Source_Link) -> (s
 		return .Kept, .None
 	case .Space_Full, .Forward_Full, .Store_Failed, .Store_Damaged:
 		return .Held, refusal
-	case .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Bound_Past_Room, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held:
+	case .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed, .Act_Space:
 		return .Refused, refusal
 	}
 	return .Refused, refusal
@@ -229,7 +268,25 @@ link_close :: proc "contextless" (link: ^Source_Link, error: errors.Error_Record
 // pair never came (the pair becomes Gone, so links_settle frees the link
 // and its space is no longer held).
 forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, port: Forward_Port) -> Forward_Step {
-	held: [SPACE_CAPACITY + 1]bool
+	// The spaces whose pair waits, skipped for the rest of the pass: only a
+	// space that a link feeds forwards, so the links bound them.
+	held := links.held[:min(len(links.held), len(links.links))]
+	held_count := 0
+	is_held :: proc "contextless" (held: []u32, space: u32) -> bool {
+		for number in held {
+			if number == space {
+				return true
+			}
+		}
+		return false
+	}
+	held_add :: proc "contextless" (held: []u32, count: int, space: u32) -> int {
+		if count >= len(held) || is_held(held[:count], space) {
+			return count
+		}
+		held[count] = space
+		return count + 1
+	}
 	moved, full, waiting := false, false, false
 	offset := u32(0)
 	for {
@@ -237,7 +294,7 @@ forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, p
 		if item == nil {
 			break
 		}
-		if item.space <= SPACE_CAPACITY && held[item.space] {
+		if is_held(held[:held_count], item.space) {
 			offset += 1
 			continue
 		}
@@ -260,12 +317,12 @@ forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, p
 			forward_remove_at(store, offset, .Forwarded)
 			moved = true
 		case .Full:
-			held[item.space] = true
+			held_count = held_add(held[:], held_count, item.space)
 			full = true
 			offset += 1
 		case .No_Ring:
 			if link.pair == .Waiting && link.state == .Open {
-				held[item.space] = true
+				held_count = held_add(held[:], held_count, item.space)
 				waiting = true
 				offset += 1
 				continue

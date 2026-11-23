@@ -102,7 +102,9 @@ budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memo
 	if stated.screen_pictures > module.SCREEN_PICTURES_LIMIT {
 		return {}, false
 	}
-	counted.request = {pages = pages, processes = stated.processes, threads = stated.threads, screen_pictures = stated.screen_pictures}
+	// The wiring budget is carved from the pages of the process.
+	add(&pages, stated.wiring_pages) or_return
+	counted.request = {pages = pages, processes = stated.processes, threads = stated.threads, screen_pictures = stated.screen_pictures, wiring_pages = stated.wiring_pages}
 	return counted, true
 }
 

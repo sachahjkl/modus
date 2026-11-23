@@ -302,3 +302,24 @@ a_call_waits_for_an_ending_place_of_its_service_and_row :: proc(t: ^testing.T) {
 	testing.expect_value(t, service_place_lookup(.Refused, true, true), Service_Place_Lookup.Refusal)
 	testing.expect_value(t, service_place_lookup(.Giving_Up, true, true), Service_Place_Lookup.Given_Up)
 }
+
+// A second connection of a key ends the wide grant of its row only when
+// the row holds one and another connection of that very key is bound: no
+// grant, another key, the zero key, a row of another key and no other
+// connection each keep it; the key that comes twice ends it.
+@(test)
+a_second_connection_ends_the_wide_grant_of_its_key :: proc(t: ^testing.T) {
+	key := [32]u8{0 = 3, 31 = 4}
+	other := [32]u8{0 = 5}
+	row := Client{key = key, serial = 1, principal = 1, uses = client_uses_word({.Calls}), wide_grant = 9}
+	no_grant := row
+	no_grant.wide_grant = 0
+	testing.expect(t, !second_connection_ends_grant(no_grant, key, {key}))
+	testing.expect(t, !second_connection_ends_grant(row, key, {other}))
+	testing.expect(t, !second_connection_ends_grant(row, key, {}))
+	testing.expect(t, !second_connection_ends_grant(row, other, {other}))
+	zero_row := row
+	zero_row.key = {}
+	testing.expect(t, !second_connection_ends_grant(zero_row, {}, {{}}))
+	testing.expect(t, second_connection_ends_grant(row, key, {other, key}))
+}

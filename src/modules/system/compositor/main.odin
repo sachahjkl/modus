@@ -157,8 +157,9 @@ import "base:intrinsics"
 //   and reserves its memory at its first glyph: 2 x 354 pages
 //   (display.TEXT_MEMORY_PAGES) = 708 pages;
 // - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 9 pages, which the
-//   kernel takes at the first wait.
-// 130 + 128 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 9 = 21810: the
+//   kernel takes at the first wait;
+// - the end of its record output of the acts of a wide grant: 4 pages.
+// 130 + 128 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 9 + 4 = 21814: the
 // bound of 128 windows at the largest surface, more than the least largest budget
 // of a process, and less than the share of a machine of 1 GiB. Page tables
 // are paid as the windows map, so a machine with a smaller share still runs
@@ -167,12 +168,12 @@ import "base:intrinsics"
 // (entry). Three threads: the interface, the ranking of the palette, and
 // the reading of a plan difference (powerbox_dialog.odin), whose work is in
 // proportion to the difference.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21810, processes = 1, threads = 3, screen_pictures = 2}
-#assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES)
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21814, processes = 1, threads = 3, screen_pictures = 2}
+#assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES + 4)
 // The request on the machine of the machine tests, whose screen is the
-// reference screen: 21810 working pages, 2 x 2025 pages of the frame and
+// reference screen: 21814 working pages, 2 x 2025 pages of the frame and
 // the background, and the code, the data and the stacks that the tool
-// counts, under a bound of 8192 pages: 34052 pages, under the largest
+// counts, under a bound of 8192 pages: 34056 pages, under the largest
 // budget of that machine (50 000 pages), so no boot of a test writes
 // Budget_Part_Limited for the compositor. It passes the least largest
 // budget (16384 pages): a machine whose root holds less than about 128 000
@@ -343,6 +344,19 @@ Client :: struct {
 	// says: the compositor takes the commands of the capture face and of
 	// the input face from it (capture.odin).
 	capture_allowed: bool,
+	// The window takes the keys and the pointer of the input service only,
+	// as its Client_Add says: the root service marks the window of unlock
+	// that proves a principal for a wide grant (wide_grant_screen.odin).
+	local_input_only: bool,
+	// The id of the window in the bound of a wide grant: never given to
+	// another window in this run (wide_grant_screen.odin, window_serial_next).
+	window_serial:     u64,
+	// The name that the root service gave the process in Client_Add: the
+	// name of its module, or the nickname of a disk process. The screen of
+	// a wide grant names a window by it, never by a title that the process
+	// chose.
+	given_name:        [process_page.NICKNAME_LIMIT]u8,
+	given_name_length: int,
 	minimized:       bool,
 	maximized:       bool,
 	// The place and the size of a maximized window before its maximize: the
@@ -984,10 +998,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				settings_raise(record.values[0], record.values[1]) // tray_widgets.odin
 			case .Screen_Budget_Give:
 				screen_budget_take(system.Handle(record.values[0]), record.values[1], record.values[2], record.values[3], record.values[4]) // screen_of_memory.odin
-			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release:
-				// The border refused None above. Start, Stop and
-				// Appearance_Next go from the compositor to the root service,
-				// never to the compositor.
+			case .Wide_Grant_Screen_Show:
+				wide_grant_screen_show(record.values) // wide_grant_screen.odin
+			case .Wide_Grant_Mark:
+				wide_grant_mark_take(record.values)
+			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release, .Wide_Grant_Screen_Answer, .Wide_Grant_Revoke_Pressed:
+				// The border refused None above. The others go from the
+				// compositor to the root service, never to the compositor.
 				system.log_fact(.Info, Control_Command_Not_Taken{word = u64(record.kind)})
 			}
 		}
@@ -1216,11 +1233,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// knows that the screen shows what the processes sent.
 		system.service_run(&service)
 		plan_difference_asker_check()
+		wide_grant_screen_waiting_open() // wide_grant_screen.odin: a screen that waited for another dialog.
 		pointer_update(now) // After each change of what is under the pointer.
 		if second_of_bar(now) != shown_second {
 			shown_second = second_of_bar(now)
 			damage_clock()
 			tray_widgets_second() // tray_widgets.odin: the foot of the calendar.
+			if wide_grant_display.active {
+				damage_bar() // The mark shows the minutes left.
+				wide_grant_counts_tick(now) // wide_grant_screen.odin
+			}
 		}
 		if damage_count > 0 && now >= next_frame {
 			draw(now)
@@ -1347,8 +1369,14 @@ client_add :: proc "contextless" (record: ring.Record) {
 		}
 		client = {ring_memory = memory, ring = opened}
 		client.capture_allowed = record.values[display.CLIENT_ADD_CAPTURE] == display.CLIENT_CAPTURE
+		client.local_input_only = record.values[display.CLIENT_ADD_LOCAL_INPUT_ONLY] == display.CLIENT_LOCAL_INPUT_ONLY
+		client.window_serial = window_serial_next() // wide_grant_screen.odin
 		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
-		if nickname.length > 0 {
+		client.given_name_length = copy(client.given_name[:], process_page.nickname_text(&nickname))
+		// Value 4 is the head of the hash of the file of a disk process: a
+		// process of the boot image has 0 there, and its module name in
+		// values 1 to 3.
+		if nickname.length > 0 && record.values[4] != 0 {
 			client.from_disk = true
 			copy(client.nickname[:len(client.nickname) - 1], process_page.nickname_text(&nickname))
 			process_page.hash_prefix_write(&client.hash_prefix, record.values[4])
@@ -1386,6 +1414,9 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 // that is about the window, which window_unmade shares.
 window_leave :: proc "contextless" (index: int) {
 	client := &clients[index]
+	// The window leaves the bound of a wide grant and the screen: its id
+	// is never given again, so no later window takes its place there.
+	wide_grant_window_closed(client) // wide_grant_screen.odin
 	{
 		for position in 0 ..< order_count {
 			if order[position] == index {
@@ -1647,6 +1678,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		// The dialog of the trusted display takes the pointer.
 		return
 	}
+	if wide_grant_screen_pointer(pressed) || wide_grant_mark_pointer(pressed) { // wide_grant_screen.odin
+		// The screen and the mark of a wide grant take the pointer.
+		return
+	}
 	if palette_is_open() {
 		// The panel takes the pointer: no menu and no window receives it.
 		palette_pointer(motion_x != 0 || motion_y != 0, pressed, released, wheel)
@@ -1757,17 +1792,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			resize_begin(index, edges) // window_resize.odin
 			return
 		}
-		for position := order_count - 1; position >= 0; position -= 1 {
+		if position := window_position_at(pointer_x, pointer_y); position >= 0 {
 			client := &clients[order[position]]
-			if client.minimized {
-				continue
-			}
 			csd := client.decoration == .Client
-			outer_width := csd ? client.width : client.width + 2 * BORDER
-			outer_height := csd ? client.height : client.height + TITLE_HEIGHT + BORDER
-			if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, outer_height) {
-				continue
-			}
+			outer_width, _ := window_outer_size(client)
 			client_index := order[position]
 			raise(position)
 			if !csd {
@@ -1798,7 +1826,6 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 					return
 				}
 			}
-			break
 		}
 	}
 	// The process with focus receives the pointer when it is over its surface,
@@ -1806,11 +1833,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// screen: it receives none.
 	if order_count > 0 && !clients[order[order_count - 1]].minimized {
 		client := &clients[order[order_count - 1]]
-		x := pointer_x - client.x - BORDER
-		y := pointer_y - client.y - TITLE_HEIGHT
 		// One event more when the pointer leaves the surface: the process
 		// then draws at rest what the pointer was over (a scroll bar).
-		on_surface := inside(x, y, 0, 0, client.width, client.height)
+		x, y, on_surface := surface_point(client, pointer_x, pointer_y)
 		over := held || on_surface
 		if over || client.pointer_over {
 			// The notches go only with a pointer over the surface: not
@@ -1821,6 +1846,40 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 		client.pointer_over = over
 	}
+}
+
+// window_outer_size gives the size of a window with its frame: the surface
+// alone for a window that draws its own frame.
+window_outer_size :: proc "contextless" (client: ^Client) -> (width, height: int) {
+	if client.decoration == .Client {
+		return client.width, client.height
+	}
+	return client.width + 2 * BORDER, client.height + TITLE_HEIGHT + BORDER
+}
+
+// window_position_at gives the place in the order of the top window whose
+// frame holds the point (x, y), or -1: the one hit test of a press on the
+// windows, which the input of a viewer under a wide grant reads too.
+window_position_at :: proc "contextless" (x, y: int) -> int {
+	for position := order_count - 1; position >= 0; position -= 1 {
+		client := &clients[order[position]]
+		if client.minimized {
+			continue
+		}
+		width, height := window_outer_size(client)
+		if inside(x, y, client.x, client.y, width, height) {
+			return position
+		}
+	}
+	return -1
+}
+
+// surface_point gives the place of (x, y) on the surface of a window, and
+// says if it is on the surface: the place that the process receives.
+surface_point :: proc "contextless" (client: ^Client, x, y: int) -> (surface_x, surface_y: int, on_surface: bool) {
+	surface_x = x - client.x - BORDER
+	surface_y = y - client.y - TITLE_HEIGHT
+	return surface_x, surface_y, inside(surface_x, surface_y, 0, 0, client.width, client.height)
 }
 
 // pointer_leaves_front tells the process of the window in front that the

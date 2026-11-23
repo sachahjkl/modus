@@ -20,7 +20,7 @@ An external agent drives a running modus machine through one typed bridge on the
 
 ## The chosen form
 
-### Four explicit capabilities
+### The capabilities
 
 | Command | Required permission | Required remote key uses | Safety gate |
 |---|---|---|---|
@@ -28,6 +28,7 @@ An external agent drives a running modus machine through one typed bridge on the
 | `Read_Screen` | `Read_Screen` | `View` | Screen dimensions within `remote_display` bounds; returns typed frame metadata and PNG or raw BGRX pixels; writes a host file only in the folder of `--snapshot-dir`, under a name of the bridge |
 | `Send_Key` | `Send_Input` | `View`, `Input` | Active, non-expired `wide_grants.Wide_Grant_Terms` bound to the client key and covering `target_window_id`; scan code, code point, and modifiers within `remote_display` limits; fail-closed act record in the BLAKE3 hash chain before send |
 | `Send_Pointer` | `Send_Input` | `View`, `Input` | Active, non-expired `wide_grants.Wide_Grant_Terms` bound to the client key and covering `target_window_id`; coordinates, buttons, and wheel within `remote_display` limits; fail-closed act record in the BLAKE3 hash chain before send |
+| `Ask_Wide_Grant` | none | `Calls` | Scopes `view` or `view_and_input`, minutes 1 to 1440; sends the stream `Wide_Grant_Ask` of `remote`, which names the key of the handshake; gives the number of the screen. The principal answers the screen on the machine: the bridge gets no grant from it ([wide_grants.md](wide_grants.md), "The ask of an agent") |
 | `Read_Log_Facts` | `Read_Log_Facts` | `Calls` | Bounded record limit and valid sequence range (`sequence_end == 0` or `sequence_end >= sequence_start`); optional identifier filters for module and fact name |
 
 ### Binary wire framing (`"MODAB1"`)
@@ -108,4 +109,4 @@ On the host, `tools/modustool/agent_bridge` provides a line-delimited JSON-RPC 2
 
 ## State
 
-Built: the freestanding contract package `src/library/modus/contract/agent_bridge` (`"MODAB1"` binary framing, closed enums, `bridge_authorize_command`, the read-only list of `Eval_Lex`, and adversarial host tests), the host JSON-RPC stdio adapter `tools/modustool/agent_bridge` (pluggable `Machine_Transport`, real `remote` QUIC call transport adapter, append-only BLAKE3 act collector verification, and comprehensive host tests), and the CLI command `modustool agent-bridge`. Live `remote_display` frame/input streaming over the peer relay and end-to-end machine tests remain. The single-call path of `Eval_Lex` and its classifier are removed when the read-only agent console runs the lines of an agent.
+Built: the freestanding contract package `src/library/modus/contract/agent_bridge` (`"MODAB1"` binary framing, closed enums, `bridge_authorize_command`, the read-only list of `Eval_Lex`, and adversarial host tests), the host JSON-RPC stdio adapter `tools/modustool/agent_bridge` (pluggable `Machine_Transport`, real `remote` QUIC call transport adapter, append-only BLAKE3 act collector verification, and comprehensive host tests), and the CLI command `modustool agent-bridge`. Built: `ask_wide_grant`, through the stream `Wide_Grant_Ask` of `remote`. Live `remote_display` frame/input streaming over the peer relay and end-to-end machine tests remain. The single-call path of `Eval_Lex` and its classifier are removed when the read-only agent console runs the lines of an agent.

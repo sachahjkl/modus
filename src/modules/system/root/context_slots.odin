@@ -7,6 +7,7 @@ import "modus:contract/frame"
 import "modus:contract/remote"
 import "modus:contract/settings"
 import "modus:contract/tpm_service"
+import "modus:contract/wide_grants"
 import "modus:disk_process"
 import "modus:principals"
 import "modus:system"
@@ -35,6 +36,8 @@ import "modus:system"
 #assert(principals.VALUE_NAME == system.GRANT_VALUE_UNLOCK_NAME)
 #assert(principals.VALUE_PRINCIPAL == system.GRANT_VALUE_UNLOCK_PRINCIPAL)
 #assert(principals.VALUE_SEAL_ALLOWED == system.GRANT_VALUE_SEAL_ALLOWED)
+#assert(wide_grants.CONTEXT_VALUE_PRINCIPAL_SLOT == system.GRANT_VALUE_SERVICE_PRINCIPAL)
+#assert(wide_grants.CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT == system.GRANT_VALUE_WIDE_GRANT_AUTHORITY_KEY)
 
 // grant_slot_refused writes the line of a start that a taken slot stopped:
 // two grants of the start grant set of the process have one slot, and the process does not start

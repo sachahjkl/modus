@@ -592,6 +592,10 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["kind_words"] = u32(len("close a window"))
 	most["scroll_part"] = u32(len("the track above the thumb"))
 	most["close_cause"] = u32(len("a press of the pointer outside it"))
+	// The asker and the act of an act dialog: a text of its field, which the
+	// dialog cuts with the cut mark (src/md/features/assistant.md).
+	most["asker"] = 55
+	most["act"] = 55
 	most["theme"] = 32
 	most["license"] = 32
 	most["pointer_form"] = u32(len("light"))

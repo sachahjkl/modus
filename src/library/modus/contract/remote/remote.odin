@@ -123,7 +123,24 @@ Request_Kind :: enum u32 {
 	// (modus:contract/machine_wire). request_check refuses it: the remote
 	// service reads this word first and gives the stream to the mesh.
 	Mesh = 2,
+	// An ask of a wide grant for the key of the client: a
+	// wide_grants.Wide_Grant_Ask_Request follows. request_check refuses it.
+	Wide_Grant_Ask = 3,
 }
+
+// request_kind_of_stream reads the kind word at the start of a stream: the
+// member, or false for a stream shorter than the word or a word that names
+// no kind.
+request_kind_of_stream :: proc "contextless" (bytes: []u8) -> (kind: Request_Kind, ok: bool) {
+	if len(bytes) < size_of(u32) {
+		return .None, false
+	}
+	return request_kind_of_word(read(bytes, u32))
+}
+
+// The record that follows the kind Wide_Grant_Ask is in
+// modus:contract/wide_grants (Wide_Grant_Ask_Request), the one border of
+// the scopes of a grant.
 
 // request_kind_of_word is the border of the kind word of a Request
 // (Request.kind): the member, or false for a word that names no kind.
