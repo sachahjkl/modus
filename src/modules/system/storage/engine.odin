@@ -765,6 +765,9 @@ Plan :: struct {
 	delta_count:  int,
 	slot_pages:   []^block_tree.Slot_Page, // The slots of the work on an object.
 	owner_count:  int, // The blocks of the table of the blocks outside the stores.
+	leaves_touched: int, // The distinct leaves of the count tree that the changes of the plan touch.
+	repair_conflict: bool, // The plan moves a tree while a repair of the count tree runs: refused.
+	release_count:  int, // The states of plan_fixed.release_states: the commit gives them to the removal queue.
 	// The table of the blocks outside the stores: the fixed one, or one of
 	// the room of a large commit. A power of 2 of places.
 	outside_blocks: []u64,
@@ -822,6 +825,47 @@ plan_fixed: struct {
 	// takes one of its room from its pool, and gives it back.
 	count_staging:      []block_counts.Frame,
 	count_staged_slots: []i32,
+	// The leaves of the count tree that the changes of the plan touch: an
+	// open table of 1 + the leaf, with the places in use.
+	leaf_slots:  [LEAF_SLOTS]u64,
+	leaf_places: [LEAF_SLOTS / 2]u32,
+	// The states that the commit gives to the removal queue, and the lists
+	// that it writes for them.
+	release_states: [RELEASE_STATES_MOST]format.Release_State,
+	release_lists:  [RELEASE_LISTS_MOST]format.Release_List,
+	// The list of a step of the queue, as it reads it and writes it again.
+	step_list:      format.Release_List,
+}
+
+// The leaves that the table of a plan holds: past half, each new change
+// counts as one more leaf.
+LEAF_SLOTS :: 8192
+
+// The lists of the states that one commit gives to the removal queue: each
+// one entry of the queue and one block, so the removal queue takes at most
+// this many puts from one commit.
+RELEASE_LISTS_MOST :: 64
+RELEASE_STATES_MOST :: RELEASE_LISTS_MOST * format.RELEASES_OF_A_LIST
+
+// leaf_note counts a leaf of the count tree that a change of the plan
+// touches.
+leaf_note :: proc "contextless" (number: u64) {
+	key := number / format.COUNTS_OF_A_PAGE + 1
+	if plan.leaves_touched >= len(plan_fixed.leaf_places) {
+		plan.leaves_touched += 1
+		return
+	}
+	mask := u64(LEAF_SLOTS - 1)
+	at := (key * 0x9E37_79B9_7F4A_7C15 >> 20) & mask
+	for plan_fixed.leaf_slots[at] != 0 {
+		if plan_fixed.leaf_slots[at] == key {
+			return
+		}
+		at = (at + 1) & mask
+	}
+	plan_fixed.leaf_slots[at] = key
+	plan_fixed.leaf_places[plan.leaves_touched] = u32(at)
+	plan.leaves_touched += 1
 }
 
 // The places of the table of the blocks outside the stores: a power of 2,
@@ -865,6 +909,12 @@ plan_tables_fixed :: proc "contextless" () {
 		plan.outside_blocks[place] = 0
 	}
 	plan.owner_count = 0
+	for place in plan_fixed.leaf_places[:min(plan.leaves_touched, len(plan_fixed.leaf_places))] {
+		plan_fixed.leaf_slots[place] = 0
+	}
+	plan.leaves_touched = 0
+	plan.release_count = 0
+	plan.repair_conflict = false
 	plan.outside_blocks = plan_fixed.outside_blocks[:]
 	plan.outside_owners = plan_fixed.outside_owners[:]
 	plan.outside_places = plan_fixed.outside_places[:]
@@ -1064,6 +1114,7 @@ delta_add :: proc "contextless" (number: u64, change: i64) {
 		plan.delta_blocks[place] = number
 		plan.delta_places[plan.delta_count] = place
 		plan.delta_count += 1
+		leaf_note(number)
 	}
 	before := i64(storage_mount.block_count(&opened, number)) + i64(plan.delta_values[place])
 	plan.delta_values[place] += i32(change)
@@ -1072,7 +1123,9 @@ delta_add :: proc "contextless" (number: u64, change: i64) {
 	// A count below 0: the engine releases a name that it never counted.
 	// The commit is refused, and the store stops taking changes: its counts
 	// are not trusted.
-	if after < 0 {
+	// A count that could not be read gives 0: its commit is refused for the
+	// read, and the store stays trusted.
+	if after < 0 && opened.counts.failure == .Good {
 		plan.count_fault = true
 	}
 	if after > i64(REFERENCE_LIMIT) {
@@ -1161,10 +1214,19 @@ state_release :: proc "contextless" (root: Pointer, size: u64) {
 	// leaves of the commit, its changes so far at most, and those, pass half
 	// of its staging, or its blocks pass the room of the counts.
 	if count_after(root.block) == 1 && !state_damaged(root) {
-		held := state_blocks_of(root, size)
+		// The names that the release changes, counted with no change: a
+		// version that shares most of its nodes with the state that stays
+		// changes a few names, whatever its size.
 		room := len(plan.delta_blocks) / 2 - plan.delta_count - RELEASE_ROOM_RESERVE
-		leaf_room := len(opened.count_staging) / 2 - plan.delta_count
-		if i64(held) > i64(room) || i64(held) > i64(leaf_room) {
+		leaf_room := len(opened.count_staging) / 2 - plan.leaves_touched
+		limit := max(min(room, leaf_room), 0)
+		_, within := storage_release.release_names(&releaser, root, size, limit)
+		if releaser.device {
+			releaser.device = false
+			plan.device = true
+			return
+		}
+		if !within {
 			release_queue(root, size)
 			return
 		}
@@ -1180,29 +1242,69 @@ RELEASE_ROOM_RESERVE :: 16384
 // of the store of the plan: the entry of the queue holds that name until
 // the last step.
 release_queue :: proc "contextless" (root: Pointer, size: u64) {
-	number := plan.store_block.next_removal + 1
-	plan.store_block.next_removal = number
-	key := format.removal_name(number)
-	queued := Entry{kind = u64(format.Entry_Kind.Release), pointer = root, size = size}
-	tree.put(&plan.trees[1].work, key[:], entry_bytes(&queued), false)
-	plan.trees[1].changed = true
-	plan.store_block.removing += 1
+	if plan.release_count >= len(plan_fixed.release_states) {
+		capacity_reached(len(plan_fixed.release_states))
+		return
+	}
+	plan_fixed.release_states[plan.release_count] = {root = root, size = size}
+	plan.release_count += 1
 }
 
-// release_step frees the next part of a state of the removal queue
-// (storage_release.step): up to its bound of names, and of leaves of the
-// count tree, a quarter of the staging of the commit, the rest for the
-// other pages of the commit. It gives true when the state is free whole:
-// the queue then drops its entry.
-release_step :: proc "contextless" (root: Pointer, size: u64, cursor: ^u64) -> bool {
-	done := storage_release.step(&releaser, root, size, cursor, len(opened.count_staging) / 4)
+// release_lists_write writes the states that the commit gives to the
+// removal queue in lists of 127, each one block and one entry of the queue
+// (format.Release_List): the queue takes one put for each list.
+release_lists_write :: proc "contextless" () {
+	for first := 0; first < plan.release_count; first += format.RELEASES_OF_A_LIST {
+		count := min(plan.release_count - first, format.RELEASES_OF_A_LIST)
+		list := &plan_fixed.release_lists[first / format.RELEASES_OF_A_LIST]
+		list^ = {magic = format.RELEASE_LIST_MAGIC, count = u32(count)}
+		copy(list.states[:], plan_fixed.release_states[first:][:count])
+		pointer := plan_write((^Block)(list))
+		if pointer.block == 0 {
+			return // plan_write gave the cause.
+		}
+		number := plan.store_block.next_removal + 1
+		plan.store_block.next_removal = number
+		key := format.removal_name(number)
+		queued := Entry{kind = u64(format.Entry_Kind.Release), pointer = pointer}
+		tree.put(&plan.trees[1].work, key[:], entry_bytes(&queued), false)
+		plan.trees[1].changed = true
+		plan.store_block.removing += 1
+	}
+	plan.release_count = 0
+}
+
+// release_step frees the next parts of the states of a release list of the
+// removal queue (storage_release.step_state), several states in one step,
+// up to its bound of names, and of leaves of the count tree, a quarter of
+// the staging of the commit, the rest for the other pages of the commit.
+// It leaves in the list the states that are not free, each with its cursor,
+// and gives true when the list is empty: the queue then drops its entry.
+release_step :: proc "contextless" (list: ^format.Release_List) -> bool {
+	storage_release.step_begin(&releaser, len(opened.count_staging) / 4)
+	// The states in their order: each free one leaves the list, and the
+	// step goes on with the next while its bounds hold.
+	freed := 0
+	for freed < int(list.count) {
+		state := &list.states[freed]
+		if !storage_release.step_state(&releaser, state.root, state.size, &state.cursor) {
+			break
+		}
+		freed += 1
+	}
 	plan.release_damaged += releaser.damaged
 	releaser.damaged = 0
 	if releaser.device {
 		plan.device = true
 		return false
 	}
-	return done
+	left := int(list.count) - freed
+	copy(list.states[:left], list.states[freed:list.count])
+	for &state in list.states[left:list.count] {
+		state = {}
+	}
+	list.count = u32(left)
+	return left == 0
 }
 
 // The names of the plan, for the steps of a release.
@@ -1762,9 +1864,27 @@ repair_waits :: proc "contextless" () -> bool {
 
 // repair_step runs one step of the repair of the count tree.
 repair_step :: proc "contextless" () {
-	if !storage_mount.repair_step(&opened, &mount_reader) {
-		system.log_fact(.Warning, Count_Repair_Stopped{})
+	stop := storage_mount.repair_step(&opened, &mount_reader, repair_roots)
+	switch stop {
+	case .None:
+	case .Device, .Damaged, .Bound:
+		// The repair does not start again before the next open: the store
+		// whose walk it stopped in takes no change, the others go on, and
+		// the wrong leaves stay passed.
+		index := opened.repair_failed_store
+		name := ""
+		if index >= 0 && index < store_numbers() {
+			store_faulty[index] = true
+			name = store_name_of(index)
+		}
+		system.log_fact(.Warning, Count_Repair_Stopped{store = store_field(name)})
 	}
+}
+
+// repair_roots gives the roots of a store as the last commit left them.
+repair_roots :: proc "contextless" (_: ^storage_mount.State, store_index: int) -> (tree: Pointer, removals: Pointer) {
+	head := store_blocks[store_index]
+	return head.tree, head.removals
 }
 
 // count_after_commit gives the count and the owner of a block after the
@@ -1860,6 +1980,7 @@ plan_finish :: proc "contextless" () {
 		}
 	}
 	plan_entries_put()
+	release_lists_write()
 	plan_trees_finish()
 	entry := plan_cell()
 	if entry.store.block != 0 {
@@ -1897,6 +2018,22 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.device {
 		plan_drop()
 		return errors.fail(error, failure(.Disk), .Device)
+	}
+	if plan.repair_conflict {
+		plan_drop()
+		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
+	}
+	// A read of the count tree that failed comes first: the counts that it
+	// gave are not the counts of the disk, so they are no fault of the
+	// engine, and the store stays trusted.
+	switch opened.counts.failure {
+	case .Good:
+	case .Device:
+		plan_drop()
+		return errors.fail(error, failure(.Disk), .Device)
+	case .Wrong:
+		plan_drop()
+		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
 	}
 	if plan.count_fault {
 		plan_drop()

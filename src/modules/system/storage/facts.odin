@@ -338,10 +338,13 @@ Count_Leaves_Differ :: struct {
 @(log_fact = "storage: the leaves of the count tree that had a wrong check are counted again and written")
 Count_Leaves_Repaired :: struct {}
 
-// A step of the repair of the count tree failed on the device: the repair
-// starts again at its next step.
-@(log_fact = "storage: the repair of the count tree did not end: a read failed on the device; it starts again")
-Count_Repair_Stopped :: struct {}
+// A repair of the count tree stopped before its end: a read failed on the
+// device, a node was wrong, or the walk passed its bound. No repair starts
+// again before the next start.
+@(log_fact = "storage: the repair of the count tree stopped in the store {store}: the store takes no change, and the leaves of the count tree stay wrong until the next start")
+Count_Repair_Stopped :: struct {
+	store: [40]u8,
+}
 
 // A set of the damage of the form Count_Tree is full: the service makes no
 // change until its next start.

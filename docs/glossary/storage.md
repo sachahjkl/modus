@@ -82,9 +82,9 @@ Do not use: trash, bin, garbage list.
 
 ### Release
 
-A release is an entry of a removal queue that holds the last name of a state too large to free in one commit: its root, its size, and the first block of data that no step has freed.
+A release is an entry of a removal queue that holds the last names of states too large to free in one commit, in a list of up to 127 states: for each one its root, its size, and the first block of data that no step has freed.
 
-The release of a state counts each block that it frees in the commit of the release. A state of a terabyte would pass the room of any commit, so the storage service puts such a state in the removal queue, and each later step frees the next blocks, up to 65 536, in the order of its blocks of data. The remove of the object is one commit, and a loss of power loses no step. A release is not a version: nothing reads it, and no restore brings it back.
+The release of a state changes the count of each name that it drops in the commit of the release. A state of a terabyte would pass the room of any commit, so the storage service puts such a state in a list of the removal queue, and each later step frees the next blocks of the states of a list, up to 65 536 names, in the order of their blocks of data. A version that shares most of its blocks with the state that stays drops few names, and goes in its commit. The remove of the object is one commit, and a loss of power loses no step. A release is not a version: nothing reads it, and no restore brings it back.
 
 The design: `src/md/data/storage_capacity.md`, "A large state is released in steps".
 

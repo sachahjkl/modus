@@ -2,6 +2,7 @@
 package storage_mount
 
 import "base:runtime"
+import "core:fmt"
 import "core:testing"
 import format "modus:contract/store"
 import "internal:storage/block_counts"
@@ -322,8 +323,8 @@ a_wrong_leaf_is_counted_again :: proc(t: ^testing.T) {
 	free_block := block_counts.free_search(&state.counts, 2, none, nil)
 	testing.expect(t, free_block >= format.COUNTS_OF_A_PAGE, "the wrong leaf is passed")
 
-	for steps := 0; repair_waits(state) || state.repairing; steps += 1 {
-		testing.expect(t, repair_step(state, &disk))
+	for steps := 0; repair_waits(state); steps += 1 {
+		testing.expect_value(t, repair_step(state, &disk, test_roots), Repair_Stop.None)
 		if steps > 10 {
 			testing.fail_now(t, "the repair does not end")
 		}
@@ -395,18 +396,28 @@ disk_queue :: proc(disk: ^Test_Disk, entry: format.Entry, in_tree: bool = false)
 	disk_root(disk, disk_put(disk, &block), 6)
 }
 
-// A release in the removal queue: the open counts its state from its
+// disk_release_list writes a release list of these states, and gives its
+// pointer.
+@(private = "file")
+disk_release_list :: proc(disk: ^Test_Disk, states: []format.Release_State, count: u32 = 0) -> format.Pointer {
+	list := format.Release_List{magic = format.RELEASE_LIST_MAGIC, count = count != 0 ? count : u32(len(states))}
+	copy(list.states[:], states)
+	return disk_put(disk, &list)
+}
+
+// A release in the removal queue: a list of states, each counted from its
 // cursor (reference_release, reference_part): no name for a block of data
 // before it, one for each block from it, one for the node that holds it.
-// A cursor of 0 is a whole state. A release in a tree of a store, and a
-// kind that names no member, are damage.
+// A cursor of 0 is a whole state. A release in a tree of a store, a kind
+// that names no member, and a list out of its form are damage.
 @(test)
 the_open_counts_a_release_from_its_cursor :: proc(t: ^testing.T) {
 	for cursor in ([?]u64{0, 1, 2}) {
 		disk := disk_make(64)
 		defer delete(disk.bytes)
 		object := disk_large_object(&disk)
-		disk_queue(&disk, {kind = u64(format.Entry_Kind.Release), size = object.size, pointer = object.root, generation = cursor})
+		list := disk_release_list(&disk, {{root = object.root, size = object.size, cursor = cursor}})
+		disk_queue(&disk, {kind = u64(format.Entry_Kind.Release), pointer = list})
 		state := test_state_make(64)
 		defer test_state_free(state)
 		result := mount(state, &disk, 64)
@@ -416,17 +427,59 @@ the_open_counts_a_release_from_its_cursor :: proc(t: ^testing.T) {
 		testing.expectf(t, state.references[first] == (cursor == 0 ? 1 : 0), "cursor %d: the first block of data has %d names", cursor, state.references[first])
 		testing.expectf(t, state.references[first + 1] == (cursor <= 1 ? 1 : 0), "cursor %d: the second block of data has %d names", cursor, state.references[first + 1])
 		testing.expectf(t, state.references[object.root.block] == 1, "cursor %d: the node keeps its name", cursor)
+		testing.expectf(t, state.references[list.block] == 1, "cursor %d: the list has one name", cursor)
 	}
-	for in_tree in ([?]bool{true, false}) {
+	// Two states in one list: each one counted.
+	{
 		disk := disk_make(64)
 		defer delete(disk.bytes)
-		object := disk_large_object(&disk)
-		kind := in_tree ? u64(format.Entry_Kind.Release) : 4
-		disk_queue(&disk, {kind = kind, size = object.size, pointer = object.root}, in_tree)
+		one := disk_large_object(&disk)
+		two := disk_object(&disk)
+		list := disk_release_list(&disk, {{root = one.root, size = one.size}, {root = two.root, size = two.size}})
+		disk_queue(&disk, {kind = u64(format.Entry_Kind.Release), pointer = list})
 		state := test_state_make(64)
 		defer test_state_free(state)
 		result := mount(state, &disk, 64)
-		testing.expectf(t, !result.failed && state.store_damaged[0], "a release in a tree (%v) or a kind 4 in the queue is damage", in_tree)
+		testing.expect(t, !result.failed && !state.store_damaged[0])
+		testing.expect(t, state.references[one.root.block] == 1 && state.references[two.root.block] == 1, "both states are counted")
+	}
+	// Out of form: a count of 0, a count past the bound, a wrong check, an
+	// entry with another word than 0, a release in a tree, a kind 4.
+	Bad :: struct {
+		label: string,
+		build: proc(disk: ^Test_Disk, object: Object_Blocks),
+	}
+	bad := [?]Bad {
+		{"a count of 0", proc(disk: ^Test_Disk, object: Object_Blocks) {
+				disk_queue(disk, {kind = u64(format.Entry_Kind.Release), pointer = disk_release_list(disk, nil)})
+			}},
+		{"a count of 128", proc(disk: ^Test_Disk, object: Object_Blocks) {
+				disk_queue(disk, {kind = u64(format.Entry_Kind.Release), pointer = disk_release_list(disk, {{root = object.root, size = object.size}}, format.RELEASES_OF_A_LIST + 1)})
+			}},
+		{"a wrong check", proc(disk: ^Test_Disk, object: Object_Blocks) {
+				list := disk_release_list(disk, {{root = object.root, size = object.size}})
+				list.check ~= 1
+				disk_queue(disk, {kind = u64(format.Entry_Kind.Release), pointer = list})
+			}},
+		{"a size in the entry", proc(disk: ^Test_Disk, object: Object_Blocks) {
+				disk_queue(disk, {kind = u64(format.Entry_Kind.Release), size = 1, pointer = disk_release_list(disk, {{root = object.root, size = object.size}})})
+			}},
+		{"a release in a tree", proc(disk: ^Test_Disk, object: Object_Blocks) {
+				disk_queue(disk, {kind = u64(format.Entry_Kind.Release), pointer = disk_release_list(disk, {{root = object.root, size = object.size}})}, true)
+			}},
+		{"a kind 4 in the queue", proc(disk: ^Test_Disk, object: Object_Blocks) {
+				disk_queue(disk, {kind = 4, size = object.size, pointer = object.root})
+			}},
+	}
+	for item in bad {
+		disk := disk_make(64)
+		defer delete(disk.bytes)
+		object := disk_large_object(&disk)
+		item.build(&disk, object)
+		state := test_state_make(64)
+		defer test_state_free(state)
+		result := mount(state, &disk, 64)
+		testing.expectf(t, !result.failed && state.store_damaged[0], "%s is damage", item.label)
 	}
 	// The border of the kind: Release is 3, and 4 names no member.
 	kind, ok := format.entry_kind_of_word(3)
@@ -468,4 +521,160 @@ a_hostile_count_tree_is_found_by_the_walk :: proc(t: ^testing.T) {
 	root_counts_set(&disk, root, 1)
 	level := mount(state, &disk, 64)
 	testing.expect(t, level.count_tree_damaged)
+}
+
+// The roots of a store as the open read them: no commit runs between the
+// steps of these repairs.
+test_roots :: proc "contextless" (state: ^State, store_index: int) -> (tree: format.Pointer, removals: format.Pointer) {
+	head := state.store_heads[store_index]
+	return head.tree, head.removals
+}
+
+// repair_until_done runs the steps of a repair to its end.
+@(private = "file")
+repair_until_done :: proc(t: ^testing.T, state: ^State, disk: ^Test_Disk, between: proc(state: ^State, disk: ^Test_Disk, step: int) = nil) -> (steps: int) {
+	for repair_waits(state) {
+		testing.expect_value(t, repair_step(state, disk, test_roots), Repair_Stop.None)
+		steps += 1
+		if between != nil {
+			between(state, disk, steps)
+		}
+		if steps > 10_000 {
+			testing.fail_now(t, "the repair does not end")
+		}
+	}
+	return steps
+}
+
+// leaf_zero_break gives the state of the form Count_Tree of a disk with a
+// count tree whose leaf 0 has a wrong check, read once so that it is known
+// wrong.
+@(private = "file")
+leaf_zero_break :: proc(t: ^testing.T, disk: ^Test_Disk, blocks: u64) -> (state: ^State, memory: []u64, tables: ^State) {
+	tables = test_state_make(blocks)
+	_ = mount(tables, disk, blocks)
+	root := count_tree_write(t, tables, disk)
+	root_counts_set(disk, root, 1)
+	testing.expect_value(t, mount(tables, disk, blocks).count_leaves_differ, u64(0))
+	state, memory = tree_state_make(blocks)
+	testing.expect(t, !mount(state, disk, blocks).failed)
+	directory := (^format.Count_Directory)(&disk.bytes[root.block * BLOCK_SIZE])
+	disk.bytes[directory.children[0].block * BLOCK_SIZE + 100] ~= 1
+	testing.expect(t, block_counts.counts_bind(&state.counts, &state.count_source, root, blocks, state.counts.frames, state.counts.slots))
+	_, _, outcome := block_counts.count_get(&state.counts, 5)
+	testing.expect_value(t, outcome, block_counts.Read.Wrong)
+	return state, memory, tables
+}
+
+// A tree of 40 entries that name one large object: its root has 40 names,
+// each node under it one. The repair reads the shared root once, in steps
+// of one node, and gives the counts of the walk of the tables.
+@(test)
+a_repair_counts_a_shared_tree_once :: proc(t: ^testing.T) {
+	disk := disk_make(1100)
+	defer delete(disk.bytes)
+	object := disk_large_object(&disk)
+	names: [40]string
+	for &name, index in names {
+		name = fmt.tprintf("n%02d", index)
+	}
+	entries: [11]Named_Entry
+	leaves: [4]format.Pointer
+	for &leaf, place in leaves {
+		for &item, index in entries[:10] {
+			item = {names[place * 10 + index], object_entry(object, {})}
+		}
+		leaf = disk_leaf(&disk, entries[:10])
+	}
+	branch: [BLOCK_SIZE]u8
+	header := (^format.Tree_Header)(&branch)
+	header^ = {level = 1, count = 4, magic = format.NODE_MAGIC}
+	for leaf, place in leaves {
+		record := branch[format.TREE_HEADER_SIZE + place * (size_of(format.Entry_Name) + size_of(format.Pointer)):]
+		copy(record, names[place * 10])
+		(^format.Pointer)(&record[size_of(format.Entry_Name)])^ = leaf
+	}
+	block: format.Store_Block
+	block.tree = disk_put(&disk, &branch)
+	block.objects = 40
+	disk_root(&disk, disk_put(&disk, &block), 12)
+	state, memory, tables := leaf_zero_break(t, &disk, 1100)
+	defer delete(memory)
+	defer free(state)
+	defer test_state_free(tables)
+	testing.expect_value(t, tables.references[object.root.block], u32(40))
+	state.repair_nodes_per_step = 1
+	steps := repair_until_done(t, state, &disk)
+	testing.expect(t, steps > 3, "the repair took several steps")
+	for number in u64(0) ..< format.COUNTS_OF_A_PAGE {
+		count, owner, _ := block_counts.count_get(&state.counts, number)
+		testing.expectf(t, count == tables.references[number] && owner == tables.owner[number], "block %d: %d, not %d", number, count, tables.references[number])
+	}
+}
+
+// A commit between two steps of a repair: a new object, outside the wrong
+// leaf, joins the store, with a new leaf of its tree. The repair goes on
+// from the new tree, and the counts of the wrong leaf are those of the
+// walk, which the commit did not change.
+@(test)
+a_commit_between_two_steps_of_a_repair :: proc(t: ^testing.T) {
+	disk := disk_make(1100)
+	defer delete(disk.bytes)
+	object := disk_large_object(&disk)
+	disk.next = 600
+	leaf := disk_leaf(&disk, {{"a", object_entry(object, {})}})
+	block: format.Store_Block
+	block.tree = leaf
+	block.objects = 1
+	disk_root(&disk, disk_put(&disk, &block), 6)
+	state, memory, tables := leaf_zero_break(t, &disk, 1100)
+	defer delete(memory)
+	defer free(state)
+	defer test_state_free(tables)
+	state.repair_nodes_per_step = 1
+	commit :: proc(state: ^State, disk: ^Test_Disk, step: int) {
+		if step != 1 {
+			return
+		}
+		// The commit writes its blocks past the wrong leaf, and the store
+		// names the new leaf of its tree.
+		disk.next = 700
+		other := disk_object(disk)
+		state.store_heads[0].tree = disk_leaf(disk, {{"a", repair_test_object_entry}, {"b", object_entry(other, {})}})
+	}
+	repair_test_object_entry = object_entry(object, {})
+	repair_until_done(t, state, &disk, commit)
+	for number in u64(0) ..< format.COUNTS_OF_A_PAGE {
+		count, _, _ := block_counts.count_get(&state.counts, number)
+		testing.expectf(t, count == tables.references[number], "block %d: %d, not %d", number, count, tables.references[number])
+	}
+}
+
+@(private = "file")
+repair_test_object_entry: format.Entry
+
+// A repair that cannot read a node stops, and no repair starts again: the
+// wrong leaves stay wrong.
+@(test)
+a_stopped_repair_does_not_start_again :: proc(t: ^testing.T) {
+	disk := disk_make(1100)
+	defer delete(disk.bytes)
+	object := disk_large_object(&disk)
+	table := disk_store(&disk, object, {})
+	disk_root(&disk, table, 5)
+	state, memory, tables := leaf_zero_break(t, &disk, 1100)
+	defer delete(memory)
+	defer free(state)
+	defer test_state_free(tables)
+	// The leaf of the tree of the store changes on the disk.
+	tree_leaf := state.store_heads[0].tree.block
+	disk.bytes[tree_leaf * BLOCK_SIZE + 64] ~= 1
+	stop := Repair_Stop.None
+	for steps := 0; repair_waits(state) && steps < 100; steps += 1 {
+		stop = repair_step(state, &disk, test_roots)
+	}
+	testing.expect_value(t, stop, Repair_Stop.Damaged)
+	testing.expect(t, state.repair_off && !repair_waits(state), "no repair starts again")
+	testing.expect_value(t, len(state.counts.repaired), 0)
+	testing.expect_value(t, state.counts.wrong_leaf_count, 1)
 }

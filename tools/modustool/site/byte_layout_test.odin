@@ -78,6 +78,8 @@ expected_fields :: proc() -> []Expected_Field {
 	count_page: store.Count_Page
 	count_directory: store.Count_Directory
 	count_child: store.Count_Child
+	release_list: store.Release_List
+	release_state: store.Release_State
 	rows := [?]Expected_Field {
 		{"module.Header", "magic", offset_of(module.Header, magic), size_of(header.magic)},
 		{"module.Header", "version", offset_of(module.Header, version), size_of(header.version)},
@@ -401,6 +403,14 @@ expected_fields :: proc() -> []Expected_Field {
 		{"store.Count_Child", "block", offset_of(store.Count_Child, block), size_of(count_child.block)},
 		{"store.Count_Child", "check", offset_of(store.Count_Child, check), size_of(count_child.check)},
 		{"store.Count_Child", "free", offset_of(store.Count_Child, free), size_of(count_child.free)},
+		{"store.Release_List", "magic", offset_of(store.Release_List, magic), size_of(release_list.magic)},
+		{"store.Release_List", "count", offset_of(store.Release_List, count), size_of(release_list.count)},
+		{"store.Release_List", "reserved", offset_of(store.Release_List, reserved), size_of(release_list.reserved)},
+		{"store.Release_List", "states", offset_of(store.Release_List, states), size_of(release_list.states)},
+		{"store.Release_List", "padding", offset_of(store.Release_List, padding), size_of(release_list.padding)},
+		{"store.Release_State", "root", offset_of(store.Release_State, root), size_of(release_state.root)},
+		{"store.Release_State", "size", offset_of(store.Release_State, size), size_of(release_state.size)},
+		{"store.Release_State", "cursor", offset_of(store.Release_State, cursor), size_of(release_state.cursor)},
 	}
 	list := make([]Expected_Field, len(rows), context.temp_allocator)
 	copy(list, rows[:])

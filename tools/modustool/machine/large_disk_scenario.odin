@@ -8,9 +8,10 @@ import "modustool:build"
 // A data disk larger than the tables of the storage service
 // (src/md/data/storage_capacity.md, "The open has two forms"): 32 GiB,
 // where the budget of the service holds the tables of 16 GiB. The first
-// machine formats the whole disk with its count tree and commits an
-// object; the second opens the disk from its count tree, with no walk of
-// its blocks, and reads the object back.
+// machine formats the whole disk with its count tree, commits an object,
+// and commits and removes another; the second opens the disk from its
+// count tree, with no walk of its blocks, reads the first object back and
+// finds no second one.
 
 TEST_LARGE_DISK :: foundation.BUILD_FOLDER + "/test_large_disk.img"
 TEST_OUTPUT_LARGE_DISK :: foundation.BUILD_FOLDER + "/test_output_large_disk_%d.txt"
@@ -30,6 +31,14 @@ scenario_large_disk_first := [?]Step {
 	{kind = .Wait, text = "> storage.write(0, \"large\", \"kept on a large disk\")"},
 	{kind = .Type, text = "storage.read(0, \"large\")"},
 	{kind = .Wait, text = "[console] kept on a large disk"},
+	// A remove: its commit releases the state of the object through the
+	// count tree.
+	{kind = .Type, text = "storage.write(0, \"gone\", \"removed on a large disk\")"},
+	{kind = .Wait, text = "> storage.write(0, \"gone\", \"removed on a large disk\")"},
+	{kind = .Type, text = "storage.remove(0, \"gone\")"},
+	{kind = .Wait, text = "> storage.remove(0, \"gone\")"},
+	{kind = .Type, text = "storage.read(0, \"gone\")"},
+	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -43,6 +52,8 @@ scenario_large_disk_second := [?]Step {
 	{kind = .Record, process = "root", level = "Info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.read(0, \"large\")"},
 	{kind = .Wait, text = "[console] kept on a large disk"},
+	{kind = .Type, text = "storage.read(0, \"gone\")"},
+	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

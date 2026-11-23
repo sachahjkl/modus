@@ -258,3 +258,66 @@ a_failed_read_stops_the_step :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(object.changes), 0)
 	testing.expect_value(t, cursor, u64(0))
 }
+
+// Thousands of versions released in one commit: each version shares all
+// its nodes of level 1 with the state that stays but one, which has one
+// block of its own. release_names counts the names that each release
+// changes, a hundred or so, not the 4161 blocks of the state; each one
+// fits a room of 200 with the changes of the releases before it, and the
+// blocks that stay keep their names.
+@(test)
+thousands_of_versions_release_their_own_blocks :: proc(t: ^testing.T) {
+	object := object_make()
+	defer object_free(object)
+	dense :: proc(n: u64) -> u64 {return 40_000_000 + n}
+	whole := u64(format.OBJECT_FANOUT * format.OBJECT_FANOUT)
+	kept := node_make(object, 2, 0, whole, dense)
+	kept_node := object.nodes_of[kept.block]
+	VERSIONS :: 3000
+	roots := make([]Object_Child, VERSIONS, context.temp_allocator)
+	for &root, version in roots {
+		// One node of level 1 of its own, over 64 blocks: one of its own,
+		// 63 of the state that stays.
+		changed := version % format.OBJECT_FANOUT
+		own: Object_Node
+		own.header = {level = 1, magic = format.OBJECT_NODE_MAGIC}
+		base := object.nodes_of[kept_node.children[changed].block]
+		own.children = base.children
+		block := 50_000_000 + u64(version)
+		object.counts[block] = 1
+		own.children[0] = {block = block, blocks = 1}
+		for item in own.children[1:] {
+			object.counts[item.block] += 1
+		}
+		own_number := object.next
+		object.next += 1
+		object.nodes_of[own_number] = own
+		object.counts[own_number] = 1
+		top: Object_Node
+		top.header = {level = 2, magic = format.OBJECT_NODE_MAGIC}
+		top.children = kept_node.children
+		top.children[changed] = {block = own_number, blocks = 65}
+		for item, place in top.children {
+			if place != changed {
+				object.counts[item.block] += 1
+			}
+		}
+		root = {block = object.next}
+		object.next += 1
+		object.nodes_of[root.block] = top
+		object.counts[root.block] = 1
+	}
+	for root in roots {
+		names, within := release_names(object, {block = root.block}, whole * format.BLOCK_SIZE, 200)
+		testing.expectf(t, within && names <= 200, "a version changes %d names", names)
+		test_drop_whole(object, root, 2)
+	}
+	commit(t, object)
+	for item in kept_node.children {
+		testing.expectf(t, object.counts[item.block] == 1, "a node of the state that stays keeps one name, not %d", object.counts[item.block])
+	}
+	testing.expect_value(t, object.counts[50_000_000], i64(0))
+	// A room too small for one version: past its limit.
+	_, within := release_names(object, {block = kept.block}, whole * format.BLOCK_SIZE, 10)
+	testing.expect(t, !within, "the state that stays holds more than 10 names")
+}

@@ -51,10 +51,22 @@ STEP_BLOCKS :: 65536
 // block, and a state that another name holds too when no step started, is
 // one name to drop.
 step :: proc "contextless" (releaser: ^Releaser, root: Pointer, size: u64, cursor: ^u64, leaves: int) -> bool {
+	step_begin(releaser, leaves)
+	return step_state(releaser, root, size, cursor)
+}
+
+// step_begin starts a step: its bound of names and of leaves.
+step_begin :: proc "contextless" (releaser: ^Releaser, leaves: int) {
 	releaser.blocks_left = STEP_BLOCKS
 	releaser.leaves_left = leaves
 	releaser.last_leaf = max(u64)
 	releaser.device = false
+}
+
+// step_state frees the next part of one state in the step in progress,
+// with what is left of its bounds: a step goes on with the next state of
+// a list while its bounds hold.
+step_state :: proc "contextless" (releaser: ^Releaser, root: Pointer, size: u64, cursor: ^u64) -> bool {
 	levels := format.object_levels(min(size, format.OBJECT_SIZE_LIMIT))
 	if levels == 0 || cursor^ == 0 && releaser.count_after(releaser, root.block) > 1 {
 		if !leaf_take(releaser, root.block, 1) {
@@ -64,6 +76,52 @@ step :: proc "contextless" (releaser: ^Releaser, root: Pointer, size: u64, curso
 		return true
 	}
 	return part(releaser, {block = root.block, check = root.check}, levels, 0, cursor)
+}
+
+// release_names counts, with no change, the names that the release of
+// the last name of a state changes: the root, each child of a node that
+// loses its last name, and the children under each such child, up to
+// `limit`. A node that another state names too stops the count: it loses
+// one name only. within is false past the limit. Inside one state a node
+// has one name from its parent, so the count is the count of the release.
+// A read that fails is no name more: the release does not walk under it.
+release_names :: proc "contextless" (releaser: ^Releaser, root: Pointer, size: u64, limit: int) -> (names: int, within: bool) {
+	levels := format.object_levels(min(size, format.OBJECT_SIZE_LIMIT))
+	names = 1
+	if levels == 0 {
+		return names, names <= limit
+	}
+	within = names_under(releaser, {block = root.block, check = root.check}, levels, &names, limit)
+	return names, within && names <= limit
+}
+
+@(private)
+names_under :: proc "contextless" (releaser: ^Releaser, child: Object_Child, level: int, names: ^int, limit: int) -> bool {
+	node := &releaser.nodes[level]
+	switch releaser.read_node(releaser, child, level, node) {
+	case .Good:
+	case .Device:
+		releaser.device = true
+		return true
+	case .Wrong:
+		return true
+	}
+	for place in 0 ..< format.OBJECT_FANOUT {
+		item := node.children[place]
+		if item.block == 0 {
+			continue
+		}
+		names^ += 1
+		if names^ > limit {
+			return false
+		}
+		if level > 1 && releaser.count_after(releaser, item.block) == 1 {
+			if !names_under(releaser, item, level - 1, names, limit) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // leaf_take takes the room of the leaves that a change of \`blocks\` names

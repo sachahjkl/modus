@@ -241,7 +241,7 @@ An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
 | Pointer | the root of its block tree: an object node, or its one block of data when it has one block; none when each of its bytes is zero | its root node; none when it is empty |
 | Versions | its version index | none |
 
-The removal queue of a store holds one more kind: a release (`Entry_Kind.Release`, 3), a state of an object that steps free (section 4.4). Its pointer is the root of the state, its size the bytes of the state, its generation the first block of data that no step has freed; its other fields are zero. No tree of a store holds a release.
+The removal queue of a store holds one more kind: a release (`Entry_Kind.Release`, 3), states of objects that steps free (section 4.4). Its pointer is a release list (`Release_List`): one block of up to 127 states, each its root, its size and the first block of data that no step has freed (its cursor); its other fields are zero. The list is a block of its store. No tree of a store holds a release.
 
 ```byte-layout store.Entry
 store.Entry, 104 bytes: the record of a leaf after its name of 256 bytes
@@ -318,9 +318,9 @@ The count tree holds, on the disk, the count of names and the owner of each bloc
 
 A commit, when its plan is final, makes the new version of each leaf whose counts it changes, and of each directory above them, each to a new block. Those new blocks, and the blocks of the pages that they replace, change counts too, in leaves that the commit adds, until no leaf is added; a new block is taken near the blocks of the commit. The pages are written with the other blocks of the commit and read back before the root: a loss of power leaves the counts of one commit.
 
-The open has two forms. When the memory of the service holds a table of each block (6 bytes and 3 bits for each), the open walks each store and checks each block, as before, and compares each leaf with the counts that it found: a leaf that differs is written by the next commits, with the fact `Count_Leaves_Differ`; a tree with a wrong page is no tree (`Count_Tree_Damaged`), and the next commits write a new one. A disk that the tool wrote has no tree yet: its first commits write it, and `counts_complete` is 1 when each leaf is written. When the memory does not hold a table of each block, a root whose tree is complete opens with no walk of the blocks of the objects: the counts come from the leaves, through a cache of up to 4096 pages in the memory of the service; the open walks the trees of the stores for their entries, reading each node once, so a disk whose trees name one node again and again ends its open with its store faulty; a wrong block is found when it is read, and the service keeps up to 32 768 wrong blocks (with the largest cache) before it stops its changes (`Damage_Set_Full`). A leaf with a wrong check is passed by the search of a free block, and a repair walks each store again, one store at each step when no call waits, to count the names of its blocks; the next commit writes it (`Count_Leaves_Repaired`). A root whose tree is not complete is refused whole, as before (`Root_Larger_Than_Tables`), and so is a disk whose newest root a form refuses: an older root would lose the commits after it. A budget that pays neither form refuses the open whole.
+The open has two forms. When the memory of the service holds a table of each block (6 bytes and 3 bits for each), the open walks each store and checks each block, as before, and compares each leaf with the counts that it found: a leaf that differs is written by the next commits, with the fact `Count_Leaves_Differ`; a tree with a wrong page is no tree (`Count_Tree_Damaged`), and the next commits write a new one. A disk that the tool wrote has no tree yet: its first commits write it, and `counts_complete` is 1 when each leaf is written. When the memory does not hold a table of each block, a root whose tree is complete opens with no walk of the blocks of the objects: the counts come from the leaves, through a cache of up to 4096 pages in the memory of the service; the open walks the trees of the stores for their entries, reading each node once, so a disk whose trees name one node again and again ends its open with its store faulty; a wrong block is found when it is read, and the service keeps up to 32 768 wrong blocks (with the largest cache) before it stops its changes (`Damage_Set_Full`). A leaf with a wrong check is passed by the search of a free block, and a repair walks each store again when no call waits, in steps of at most 4096 nodes that resume by names, to count the names of its blocks; the next commit writes it (`Count_Leaves_Repaired`). While a repair runs, a rename and the remove of a tree are refused (`Damaged`, unit `Counts`). A repair that stops (a failed read, a wrong node of a tree, a walk past its bound) does not start again before the next start; its store takes no change (`Count_Repair_Stopped`). A root whose tree is not complete is refused whole, as before (`Root_Larger_Than_Tables`), and so is a disk whose newest root a form refuses: an older root would lose the commits after it. A budget that pays neither form refuses the open whole.
 
-```byte-layout store.Count_Page store.Count_Directory store.Count_Child
+```byte-layout store.Count_Page store.Count_Directory store.Count_Child store.Release_List store.Release_State
 store.Count_Page, 4096 bytes: a leaf of the count tree: the counts of names and the owners of 512 blocks
 offset  size  field    type
      0     4  magic    u32
@@ -343,6 +343,20 @@ offset  size  field  type
      0     8  block  u64
      8     8  check  u64
     16     8  free   u64
+
+store.Release_List, 4096 bytes: a list of the states of a release in the removal queue
+offset  size  field     type
+     0     4  magic     u32
+     4     4  count     u32
+     8     8  reserved  u64
+    16  4064  states    [RELEASES_OF_A_LIST]Release_State
+  4080    16  padding   [BLOCK_SIZE - 16 - RELEASES_OF_A_LIST * size_of(Release_State)]u8
+
+store.Release_State, 32 bytes: one state of a release list
+offset  size  field   type
+     0    16  root    Pointer
+    16     8  size    u64
+    24     8  cursor  u64
 ```
 
 ## 4. The interface of the service
@@ -411,7 +425,7 @@ A connection to the storage service is a handle on a store or on a part of it. A
 
 A remove of a tree is one commit: its entry leaves its tree, and the tree goes into the removal queue of the store. The name is gone at that commit. The blocks under it stay counted in the store until the service frees them, in steps: each step is one commit that removes up to 64 entries of the first tree of the queue (an inner tree goes into the queue in its turn). The service runs a step when no call waits. So the cost of the call is one commit, whatever the size of the tree; the work after it is bounded for each commit, and a loss of power loses no step: the queue is on the disk. `usage` gives the trees in the queue.
 
-**A large state goes the same way.** The release of the last name of a state counts each block that it frees, in the table of the counts of its commit. When the blocks of the state pass the room left in that table, or half of the pages of the count tree that the commit can write (its blocks can lie in as many leaves as blocks), the state goes into the removal queue as an entry of the kind `Release` (3), which holds the name of its root: the remove of an object of any size is one commit. Each step then frees up to 65 536 blocks, and changes at most a quarter of the pages of the count tree of its commit, in the order of the blocks of data, and keeps in the entry the first block of data that no step has freed (its field `generation`). A node that another state names too loses one name, whatever its size; the last step frees the root and drops the entry. The open counts a queued state from that block. The blocks of the state stay counted in the store until their step.
+**A large state goes the same way.** The release of the last name of a state counts each block that it frees, in the table of the counts of its commit. The commit first counts, with no change, the names that the release changes: the root, each child of a node that loses its last name, and the children under it. A version that shares most of its nodes with the state that stays changes a few names, whatever its size, and is released in its commit. When those names pass the room left in that table, or half of the pages of the count tree that the commit can write less the leaves that it touches already, the state goes to the removal queue: the commit gathers such states in release lists of 127, one block and one entry of the queue for each list, so a commit that releases thousands of large versions puts a few entries. The remove of an object of any size is one commit; a commit holds at most 64 lists. Each step then frees the states of the first list in their order, several in one step, up to 65 536 names and at most a quarter of the pages of the count tree of its commit, in the order of the blocks of data, and writes the list again with what is left, each state with its cursor. A node that another state names too loses one name, whatever its size; the last step of a state frees its root, and the step after the last state drops the entry. The open counts a queued state from that block. The blocks of the state stay counted in the store until their step.
 
 ### 4.5 Budgets
 

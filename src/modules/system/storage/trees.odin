@@ -444,7 +444,9 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	// The form Count_Tree keeps the damage that it finds in sets: past a
 	// full set the damage is not known whole, and a change could name a
 	// damaged block as whole.
-	if opened.damage_set_full {
+	// More wrong leaves than a repair counts are damage that is not known
+	// whole too.
+	if opened.damage_set_full || opened.counts.wrong_leaves_full {
 		if !damage_set_full_said {
 			damage_set_full_said = true
 			system.log_fact(.Error, Damage_Set_Full{wrong_blocks = u64(len(opened.wrong_set) / 2)})
@@ -990,6 +992,13 @@ entry_free :: proc "contextless" (index: int) {
 			plan.store_block.trees -= 1
 			return
 		}
+		// A tree that moves to the removal queue moves its entries: the
+		// walk of a repair of the count tree would count them twice or not
+		// at all. The remove waits for the end of the repair.
+		if storage_mount.repair_running(&opened) {
+			plan.repair_conflict = true
+			return
+		}
 		number := plan.store_block.next_removal + 1
 		plan.store_block.next_removal = number
 		key := format.removal_name(number)
@@ -1108,6 +1117,12 @@ path_under :: proc "contextless" (path: []Entry_Name, tree_path: []Entry_Name, n
 // tree at `from_path` to the tree at `to_path`, with a new name. A tree
 // moves with all under it: its entry moves, nothing else is written.
 entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, from: Kept_Name, to_path: []Entry_Name, to: Kept_Name, error: ^errors.Error_Record) -> i64 {
+	// The walk of a repair of the count tree resumes by names: an entry
+	// that moves between two of its steps would be counted twice or not at
+	// all. A rename waits for the end of the repair.
+	if storage_mount.repair_running(&opened) {
+		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
+	}
 	if path_under(to_path, from_path, from.key) {
 		return errors.fail(error, failure(.Name), .Bad_Value, .Trees, 3, 0, 0)
 	}
@@ -1183,7 +1198,7 @@ removal_waits :: proc "contextless" () -> bool {
 // them goes into the queue in its turn. It gives false when no store has a
 // removal to continue.
 removal_step :: proc "contextless" () -> bool {
-	if broken || opened.damage_set_full {
+	if broken || opened.damage_set_full || opened.counts.wrong_leaves_full {
 		return false
 	}
 	store_index := -1
@@ -1207,17 +1222,33 @@ removal_step :: proc "contextless" () -> bool {
 		return true
 	}
 	if queued.kind == u64(format.Entry_Kind.Release) {
-		// A large state: the next part of its blocks, then the queue keeps
-		// the cursor, or drops the entry with the last part.
-		cursor := queued.generation
-		if release_step(queued.pointer, queued.size, &cursor) {
+		// A list of large states: the next parts of their blocks, then the
+		// list again with what is left, or no list with the last part.
+		list := &plan_fixed.step_list
+		outcome := read_single(queued.pointer, (^Block)(list))
+		if outcome == .Device {
+			plan.device = true
+		} else if outcome == .Wrong || !format.release_list_valid(list) {
+			// A wrong list: its states keep their blocks until the next open,
+			// which does not count under it either.
+			storage_mount.wrong_block_set(&opened, queued.pointer.block)
+			delta_add(queued.pointer.block, -1)
 			tree.remove(&queue.work, queued_name[:])
 			plan.store_block.removing -= 1
+			plan.release_damaged += 1
+			queue.changed = true
 		} else {
-			queued.generation = cursor
-			tree.put(&queue.work, queued_name[:], entry_bytes(&queued), true)
+			empty := release_step(list)
+			delta_add(queued.pointer.block, -1)
+			if empty {
+				tree.remove(&queue.work, queued_name[:])
+				plan.store_block.removing -= 1
+			} else {
+				queued.pointer = plan_write((^Block)(list))
+				tree.put(&queue.work, queued_name[:], entry_bytes(&queued), true)
+			}
+			queue.changed = true
 		}
-		queue.changed = true
 	} else if queued.kind != u64(format.Entry_Kind.Tree) || queued.pointer.block == 0 {
 		// An empty tree in the queue: it leaves the queue.
 		tree.remove(&queue.work, queued_name[:])

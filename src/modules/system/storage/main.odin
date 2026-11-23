@@ -1369,6 +1369,9 @@ disk_open :: proc "contextless" () {
 		return
 	}
 	switch {
+	case mounted.failed && mounted.no_memory:
+		// The open said why: No_Table_Memory.
+		system.stop(.Failed)
 	case mounted.failed && mounted.larger_than_capacity:
 		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(table_blocks_held)})
 		system.stop(.Failed)
