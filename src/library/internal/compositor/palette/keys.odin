@@ -343,6 +343,7 @@ typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune) -> (
 	if text_changed {
 		panel.choice_undrawn = false
 		panel.typed_since_list = true
+		panel.nothing_to_run = false
 	}
 	return true, text_changed
 }
@@ -428,6 +429,7 @@ panel_paste :: proc "contextless" (panel: ^Panel, text: string) -> (drawn: bool,
 panel_open :: proc "contextless" (panel: ^Panel) {
 	panel.state = .Search
 	panel.pressed_row = NO_ROW
+	panel.nothing_to_run = false
 }
 
 // panel_close closes the panel and empties its typed part. The owner then
@@ -435,6 +437,7 @@ panel_open :: proc "contextless" (panel: ^Panel) {
 panel_close :: proc "contextless" (panel: ^Panel) {
 	panel.state = .Closed
 	panel.pressed_row = NO_ROW
+	panel.nothing_to_run = false
 	form_close(panel)
 	line_editor.line_clear(&panel.line)
 	// The next open starts each setting row at its value in use.

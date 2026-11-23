@@ -1091,7 +1091,12 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		}
 		picked := palette.chosen_entry(panel)
 		if picked == nil {
+			// The panel stays open with its typed part, and says that Enter
+			// ran nothing (src/md/features/palette.md, "Enter with nothing to
+			// run").
+			palette.nothing_to_run_show(panel)
 			system.log_fact(.Info, Palette_No_Entry_To_Run{})
+			palette_refresh()
 			break
 		}
 		if state_next == .Confirm {

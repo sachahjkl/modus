@@ -719,7 +719,11 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 			interface.text_put(&empty, "\" in its name")
 			interface.draw_text(table, x + TEXT_MARGIN, y + LIST_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, interface.text_of(&empty), text_room), graphics.colors.dim, interface.FONT_INTERFACE)
 		}
-		// The detail line: what the chosen entry does, whole.
+		// The detail line: what Enter did when it found no entry; else what
+		// the chosen entry does, whole.
+		if note := detail_note(panel, chosen); note != "" {
+			interface.draw_text(table, x + TEXT_MARGIN, y + DETAIL_TOP + 4, interface.text_fit(table, interface.FONT_INTERFACE, note, text_room), graphics.colors.failed, interface.FONT_INTERFACE)
+		}
 		if chosen != nil {
 			about: interface.Text_Builder
 			if entry_is_setting_row(chosen) {

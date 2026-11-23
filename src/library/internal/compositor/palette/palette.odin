@@ -329,6 +329,27 @@ Panel :: struct {
 	// For the owner: an open window names the act name of the chosen
 	// entry, so the band offers go to. The owner sets it before each draw.
 	go_to_offered:    bool,
+	// Enter came with no chosen entry: the detail line says "nothing to
+	// run" until the next edit of the typed part or the next open
+	// (src/md/features/palette.md, "Enter with nothing to run").
+	nothing_to_run:   bool,
+}
+
+// The words of the detail line after Enter with no chosen entry.
+NOTHING_TO_RUN :: "nothing to run"
+
+// nothing_to_run_show keeps the note of an Enter that found no entry.
+nothing_to_run_show :: proc "contextless" (panel: ^Panel) {
+	panel.nothing_to_run = true
+}
+
+// detail_note gives the note of the detail line when no entry is chosen:
+// "nothing to run" after an Enter that found none, else nothing.
+detail_note :: proc "contextless" (panel: ^Panel, chosen: ^Entry) -> string {
+	if chosen != nil || !panel.nothing_to_run || panel.state != .Search {
+		return ""
+	}
+	return NOTHING_TO_RUN
 }
 
 // typed_text gives the typed part.

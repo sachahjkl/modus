@@ -377,9 +377,10 @@ TASKBAR_PREVIEW_FOOT :: 6
 TASKBAR_PREVIEW_GAP :: 2 // Between the bar and the card.
 TASKBAR_TRAY_GAP :: 8 // Between the last plate and the tray.
 
-// The slot of the plate under the pointer at the last move, or -1: a change
-// draws the plates and the preview again.
-taskbar_hover_slot := -1
+// The plate under the pointer at the last move, and whether its preview
+// shows (bar.Taskbar_Preview): a change draws the plates and the preview
+// again.
+taskbar_preview_state: bar.Taskbar_Preview
 // The first column that no plate reaches, in the last frame: the left of
 // the tray. A press and a move read the plates that the eye sees.
 taskbar_plates_right: int
@@ -464,19 +465,59 @@ desktop_taskbar_pointer_move :: proc "contextless" (x, y: int) {
 	if desktop_features_ready && menu_open == .None && tray_state.open == .None {
 		slot = bar.plate_at(bar_layout, taskbar_plates_right, x, y)
 	}
-	if slot == taskbar_hover_slot {
+	if !bar.taskbar_preview_pointer(&taskbar_preview_state, slot, taskbar_preview_reaches(x, y)) {
 		return
 	}
-	taskbar_hover_slot = slot
-	damage_bar()
-	if taskbar_preview_area.width > 0 {
-		damage_add(taskbar_preview_area.x, taskbar_preview_area.y, taskbar_preview_area.width, taskbar_preview_area.height)
-	}
+	taskbar_preview_damage()
 	if slot >= 0 {
 		height := taskbar_preview_height(order_count)
 		plate_x, _, _, _ := bar.plate(bar_layout, slot)
 		left := clamp(plate_x, 0, max(0, desktop_width - TASKBAR_PREVIEW_WIDTH))
 		damage_add(left, taskbar_preview_top(height), TASKBAR_PREVIEW_WIDTH, height)
+	}
+}
+
+// taskbar_preview_reaches says if a place is on the card of the preview of
+// the last frame, or in the gap between the card and the bar: the pointer
+// that goes from the plate to the card crosses that gap.
+taskbar_preview_reaches :: proc "contextless" (x, y: int) -> bool {
+	area := taskbar_preview_area
+	if area.width == 0 {
+		return false
+	}
+	top, height := area.y, area.height + TASKBAR_PREVIEW_GAP
+	if bar_layout.edge == .Top {
+		top -= TASKBAR_PREVIEW_GAP
+	}
+	return inside(x, y, area.x, top, area.width, height)
+}
+
+// taskbar_preview_damage draws the plates and the card of the last frame
+// again.
+taskbar_preview_damage :: proc "contextless" () {
+	damage_bar()
+	if taskbar_preview_area.width > 0 {
+		damage_add(taskbar_preview_area.x, taskbar_preview_area.y, taskbar_preview_area.width, taskbar_preview_area.height)
+	}
+}
+
+// taskbar_preview_dismiss closes the card of the preview that shows:
+// Escape, a press outside the card, a change of the windows
+// (src/md/features/desktop_shell_look.md, "The preview closes as a hover
+// card does"). It says whether a card closed.
+taskbar_preview_dismiss :: proc "contextless" () -> bool {
+	if !bar.taskbar_preview_close(&taskbar_preview_state) {
+		return false
+	}
+	taskbar_preview_damage()
+	return true
+}
+
+// taskbar_preview_press gives a press of any button to the preview: a press
+// outside the card closes it.
+taskbar_preview_press :: proc "contextless" (x, y: int) {
+	if bar.taskbar_preview_press(&taskbar_preview_state, taskbar_preview_reaches(x, y)) {
+		taskbar_preview_damage()
 	}
 }
 
@@ -668,7 +709,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 				all_minimized = false
 			}
 		}
-		hovered := slot == taskbar_hover_slot && menu_open == .None && tray_state.open == .None
+		hovered := slot == bar.taskbar_preview_slot(&taskbar_preview_state) && menu_open == .None && tray_state.open == .None
 		// The plate in front is a step lighter than the bar: white text
 		// reads on the steel plate of the dark appearance and vanishes on
 		// the white plate of the light one, so the text is the strong text.
@@ -705,7 +746,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		}
 		// The preview lists the windows of a group of several, under the
 		// pointer: a plate of one window says all that the preview would.
-		if hovered && same_count > 1 && !desktop_context_menu.open {
+		if hovered && taskbar_preview_state.shown && same_count > 1 && !desktop_context_menu.open {
 			taskbar_preview_group = {x = x, title = fit, name = name, count = same_count}
 		}
 		slot += 1

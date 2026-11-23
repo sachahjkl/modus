@@ -299,6 +299,45 @@ a_name_too_long_is_not_listed :: proc(t: ^testing.T) {
 	testing.expect_value(t, panel.list.entries[1].number, 3)
 }
 
+// Enter with no entry: the panel keeps its typed part and its state, and the
+// detail line says "nothing to run" until the next edit of the typed part,
+// a close or an open; a chosen entry takes the line, and a state other than
+// the search shows no note.
+@(test)
+enter_with_nothing_to_run_says_so :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	panel_of_test(panel)
+	panel_open(panel)
+	testing.expect_value(t, detail_note(panel, nil), "")
+	type_text(panel, "xyz")
+	testing.expect_value(t, chosen_entry(panel), (^Entry)(nil))
+	testing.expect_value(t, key_action(panel.state, .Enter), Action.Run)
+	nothing_to_run_show(panel)
+	testing.expect_value(t, detail_note(panel, nil), NOTHING_TO_RUN)
+	testing.expect_value(t, panel.state, State.Search)
+	testing.expect_value(t, typed_text(panel), "xyz")
+	// A key that edits nothing keeps the note.
+	typed_edit(panel, .Left, 0)
+	testing.expect_value(t, detail_note(panel, nil), NOTHING_TO_RUN)
+	// An edit of the typed part takes it away.
+	type_text(panel, "q")
+	testing.expect_value(t, detail_note(panel, nil), "")
+	// A close and an open take it away.
+	nothing_to_run_show(panel)
+	panel_close(panel)
+	testing.expect_value(t, detail_note(panel, nil), "")
+	panel_open(panel)
+	nothing_to_run_show(panel)
+	panel_open(panel)
+	testing.expect_value(t, detail_note(panel, nil), "")
+	// A chosen entry, and another state, show no note.
+	nothing_to_run_show(panel)
+	testing.expect_value(t, detail_note(panel, &panel.list.entries[0]), "")
+	panel.state = .Confirm
+	testing.expect_value(t, detail_note(panel, nil), "")
+}
+
 // One ranked list over the two kinds: with equal scores a window comes
 // before the module of the same name, and the close comes last.
 @(test)

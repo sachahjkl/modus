@@ -173,14 +173,6 @@ BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
 TITLE_ICON_X :: 8 // The icon of the module in the title bar, from the corner of the frame.
 TITLE_TEXT_X :: TITLE_ICON_X + bar.ICON_SIZE + 6 // The title, after the icon.
-// A new window: the first one at (PLACE_X, PLACE_Y), each next one lower
-// and to the right, by PLACE_STEP_X and PLACE_STEP_Y. Each is a sum of
-// spacing tokens, so the new windows line up with each other
-// (docs/DESIGN.md, "6. Spacing").
-PLACE_X :: 64
-PLACE_Y :: 56
-PLACE_STEP_X :: 40
-PLACE_STEP_Y :: 32
 CLIENT_CAPACITY :: 32 // The root service starts 32 processes at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: bar.CLOCK_WIDTH // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
@@ -323,7 +315,6 @@ order_count: int
 // of the bar keep it, so a change of the focus moves no plate.
 opened: [CLIENT_CAPACITY]int
 opened_count: int
-placed: int
 input: ring.Ring
 control: ring.Ring
 pointer_x, pointer_y: int
@@ -908,6 +899,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// Local Escape closed the bar viewer list popover.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && tray_widget_escape():
 					// Escape closed the card of a tray widget (tray_widgets.odin).
+				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && taskbar_preview_dismiss():
+					// Escape closed the preview of a group of the bar (desktop_features.odin).
 				case keyboard_desktop_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// A move or a resize of the window in front by keys, or the bar with the keys (keyboard_desktop.odin).
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
@@ -1303,6 +1296,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		client = {}
 		windows_declined_tell() // scale.odin: a window that declined the scale left.
 		palette_entries_refresh() // A window left.
+		taskbar_preview_dismiss()
 		windows_menu_rows_build() // start_menu.odin
 		return
 	}
@@ -1370,12 +1364,15 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// window has the nickname that the root service gave.
 	client.title = client.from_disk ? client.nickname : system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.icon = bar.icon_of(system.name_of(client.title[:]))
-	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
-	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
-	// A large window moves up and left until the screen shows all of it; a
-	// window wider than the screen keeps its close button on the screen.
-	client.x, client.y = bar.new_window_place(client.x, client.y, window_frame_of(client), client.height, desktop_width, desktop_height)
-	placed += 1
+	// A free place of the work area, or a cascade place that covers no title
+	// (src/md/features/window_placement.md). A window larger than the work
+	// area keeps its close button on the screen.
+	frame := window_frame_of(client)
+	if x, y, found := bar.new_window_free_place(desktop_work_box(), shown_window_boxes(index), frame.outer_width, client.height + frame.title_height + frame.border, frame.title_height); found {
+		client.x, client.y = x, y
+	} else {
+		client.x, client.y = bar.new_window_place(bar.CASCADE_X, bar.CASCADE_Y, frame, client.height, desktop_width, desktop_height)
+	}
 	pointer_leaves_front()
 	damage_focus()
 	order[order_count] = index
@@ -1388,6 +1385,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// the fact of the contract when it reads it.
 	work_area_send(client)
 	palette_entries_refresh() // A window appeared.
+	taskbar_preview_dismiss()
 	windows_menu_rows_build() // start_menu.odin
 }
 
@@ -1410,6 +1408,7 @@ lower :: proc "contextless" (position: int) {
 	}
 	damage_focus()
 	palette_entries_refresh() // Another window can be in front.
+	taskbar_preview_dismiss()
 }
 
 raise :: proc "contextless" (position: int) {
@@ -1423,6 +1422,7 @@ raise :: proc "contextless" (position: int) {
 	copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
 	order[order_count - 1] = index
 	palette_entries_refresh() // Another window is in front.
+	taskbar_preview_dismiss()
 }
 
 inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
@@ -1463,6 +1463,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// learns from this line where the press landed.
 	if pressed {
 		system.log_fact(.Info, Left_Button_Pressed{x = u64(pointer_x), y = u64(pointer_y)})
+	}
+	if pressed || right_pressed {
+		taskbar_preview_press(pointer_x, pointer_y) // A press outside the preview of the bar closes it.
 	}
 
 	if plan_difference_pointer(pressed) { // powerbox_dialog.odin
@@ -2365,6 +2368,32 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 
 // window_frame_of gives the frame that the compositor draws around the
 // surface of a client, for the places of src/library/internal/compositor/bar.
+// desktop_work_box gives the work area: the desktop less the bar.
+desktop_work_box :: proc "contextless" () -> bar.Box {
+	top := desktop_work_top()
+	return {0, top, desktop_width, desktop_work_bottom() - top}
+}
+
+// The outer boxes of the shown windows, for the place of a new window.
+shown_boxes: [CLIENT_CAPACITY]bar.Box
+
+// shown_window_boxes gives the outer box of each window that shows, but the
+// window of a client index: a minimized window does not show.
+shown_window_boxes :: proc "contextless" (except: int) -> []bar.Box {
+	count := 0
+	for position in 0 ..< opened_count {
+		other := opened[position]
+		client := &clients[other]
+		if other == except || !client.created || client.minimized || count >= len(shown_boxes) {
+			continue
+		}
+		frame := window_frame_of(client)
+		shown_boxes[count] = {client.x, client.y, frame.outer_width, client.height + frame.title_height + frame.border}
+		count += 1
+	}
+	return shown_boxes[:count]
+}
+
 window_frame_of :: proc "contextless" (client: ^Client) -> bar.Window_Frame {
 	return {outer_width = client.width + 2 * BORDER, border = BORDER, close_size = CLOSE_SIZE, title_height = TITLE_HEIGHT}
 }
