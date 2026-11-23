@@ -617,8 +617,8 @@ stream_row_write :: proc "contextless" (stream: ^Line_Stream, record: []u8, row:
 }
 
 // list_page_ready asks the root service for its list page once, maps it,
-// and takes the wiring ring if the completion provides one (when the start
-// did not already provide a wiring ring in the context).
+// and takes the wiring ring that comes with it: the console declares no
+// record stream, so its context holds no wiring ring.
 list_page_ready :: proc "contextless" () -> bool {
 	if list_page != nil {
 		return true

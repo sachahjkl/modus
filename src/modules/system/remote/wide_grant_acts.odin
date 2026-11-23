@@ -1,16 +1,16 @@
 // Wide-grant act record output of the remote service
 // (src/md/features/wide_grants.md, "The record of each act").
 //
-// Each call outside the agent console executed under a wide grant emits an
-// Act_Stream_Record onto `acts` without blocking. When the audit ring is full,
-// the caller refuses the act with Busy so no act runs unrecorded.
+// Each call of a key whose row of the client table holds a wide grant emits
+// a Call_Made record onto `acts` without blocking. When the audit ring is
+// full, the caller refuses the call with Busy so no call runs unrecorded.
 package remote_service
 
 import "modus:contract/wide_grants"
 import "modus:system"
 
-// Wide-grant act records emitted by remote for calls outside the agent
-// console while a wide grant holds.
+// Wide-grant act records emitted by remote for the calls of a key while a
+// wide grant of that key holds.
 acts: system.Record_Output(wide_grants.Act_Stream_Record)
 
 // remote_wide_grant_act_emit writes one remote-service act record onto `acts`

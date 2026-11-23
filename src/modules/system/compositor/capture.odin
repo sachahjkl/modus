@@ -177,9 +177,22 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		_ = capture_record_viewer_input(record)
 		character := display.key_character_of(character_word)
+		// A trusted surface, a window marked local, and under a wide grant
+		// each window out of its bound get no key of a viewer
+		// (wide_grant_screen.odin).
+		if !wide_grant_viewer_key_allowed() {
+			return
+		}
 		// The path of a key of the input service: the palette, the
-		// clipboard, then the window in front, never the bar.
+		// clipboard, then the window in front, never the bar. Under a wide
+		// grant, the window in front only.
 		switch {
+		case wide_grant_display.active && order_count > 0:
+			in_front := order[order_count - 1]
+			if _, dropped_full := wide_grant_act_emit(.Key_Injected, u64(in_front + 1), code, modifiers); dropped_full {
+				return
+			}
+			send(&clients[in_front], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
 		case palette_key(u32(code), character, pressed != 0, u32(modifiers)):
 		case clipboard_key(character, u32(modifiers), pressed != 0):
 		case order_count > 0:
@@ -197,10 +210,16 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		}
 		capture.remote_pointers += 1
 		viewer_slot := capture_record_viewer_input(record)
+		// The pointer of a viewer reaches no trusted surface and no window
+		// marked local; under a wide grant, only a window of its bound
+		// (wide_grant_screen.odin).
+		allowed, target_window := wide_grant_viewer_pointer_allowed(logical_pixel_of(int(x)), logical_pixel_of(int(y)))
+		if !allowed {
+			return
+		}
 		if wide_grant_display.active {
-			target_win := order_count > 0 ? u64(order[order_count - 1] + 1) : 1
 			act_kind := buttons != 0 ? wide_grants.Act_Kind.Pointer_Clicked : wide_grants.Act_Kind.Pointer_Moved
-			if _, dropped_full := wide_grant_act_emit(act_kind, target_win, x, y); dropped_full {
+			if _, dropped_full := wide_grant_act_emit(act_kind, target_window, x, y); dropped_full {
 				return
 			}
 		}

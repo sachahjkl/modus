@@ -1,6 +1,7 @@
 package root
 
 import "modus:contract/value_kinds"
+import "modus:system"
 
 // The log facts of the principals, of their sessions and of the trust of
 // the boot (src/md/features/log_facts.md). Each fact template is the
@@ -254,3 +255,71 @@ Wide_Grant_Authority_Key_Ready :: struct {}
 Wide_Grant_Authority_Key_Refused :: struct {
 	status_code: u64,
 }
+
+// The facts of the path of a wide grant (src/md/features/wide_grants.md,
+// "The path of a grant, end to end").
+
+@(log_fact = "root: the ring of the wide grants of a collector was not made: {status}")
+Wide_Grant_Collector_Ring_Failed :: struct {
+	status: system.Status,
+}
+
+@(log_fact = "root: the trusted display shows the screen {flow} of a wide grant of principal {principal}")
+Wide_Grant_Screen_Asked :: struct {
+	principal: u64,
+	flow:      u64,
+}
+
+@(log_fact = "root: the answer of the screen of a wide grant was refused: refusal {refusal_code}")
+Wide_Grant_Screen_Refused :: struct {
+	refusal_code: u64,
+}
+
+@(log_fact = "root: principal {principal} refused the screen of a wide grant")
+Wide_Grant_Screen_Declined :: struct {
+	principal: u64,
+}
+
+@(log_fact = "root: principal {principal} gave no proof of a wide grant: no grant")
+Wide_Grant_Proof_Not_Given :: struct {
+	principal: u64,
+}
+
+@(log_fact = "root: the proof of a wide grant of principal {principal} was refused: refusal {refusal_code}")
+Wide_Grant_Proof_Refused :: struct {
+	principal:    u64,
+	refusal_code: u64,
+}
+
+@(log_fact = "root: no collector of principal {principal} runs: no wide grant")
+Wide_Grant_Collector_Absent :: struct {
+	principal: u64,
+}
+
+@(log_fact = "root: the collector refused a wide grant: status {status_word}, refusal {refusal_code}")
+Wide_Grant_Collector_Refused :: struct {
+	status_word:  u64,
+	refusal_code: u64,
+}
+
+@(log_fact = "root: a wiring of the act records of a wide grant was refused: {status}; the grant ends")
+Wide_Grant_Wiring_Refused :: struct {
+	status: system.Status,
+}
+
+@(log_fact = "root: the wide grant {grant_serial} of principal {principal} holds, with {writers} writers of act records")
+Wide_Grant_Active :: struct {
+	principal:    u64,
+	grant_serial: u64,
+	writers:      u64,
+}
+
+@(log_fact = "root: the wide grant {grant_serial} of principal {principal} ended: reason {reason_code}")
+Wide_Grant_Ended :: struct {
+	principal:    u64,
+	grant_serial: u64,
+	reason_code:  u64,
+}
+
+@(log_fact = "root: the control ring of the trusted display is full: the mark of a wide grant was not sent")
+Wide_Grant_Control_Full :: struct {}

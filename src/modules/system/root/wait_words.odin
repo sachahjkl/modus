@@ -41,6 +41,11 @@ root_waited_queues :: proc "contextless" () -> (count: int) {
 	if devices_ring.head != nil {
 		count += 1
 	}
+	for &link in collector_links {
+		if link.ring.head != nil {
+			count += 1
+		}
+	}
 	return count
 }
 

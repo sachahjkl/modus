@@ -45,13 +45,16 @@ Powerbox_Prompt_State :: struct {
 	last_decision:   powerbox.Item_Decision,
 }
 
+// The mark of the grant that holds, as the root service wrote it, and the
+// windows that bound the input of a viewer (wide_grant_screen.odin).
 Wide_Grant_Display_State :: struct {
-	active:       bool,
-	grant_id:     u64,
-	principal_id: u64,
-	authorities:  wide_grants.Wide_Authorities,
-	revoked_once: bool,
-	dropped_acts: u64,
+	active:        bool,
+	mark:          wide_grants.Mark,
+	bound:         wide_grants.Screen_Answer,
+	card_open:     bool,
+	acts_recorded: u64,
+	dropped_acts:  u64,
+	dropped_input: u64,
 }
 
 // Wide-grant act records emitted by the trusted display: agent input target
@@ -71,7 +74,7 @@ plan_difference_dialog: bar.Plan_Difference_Dialog
 // shows: one at a time, so a key or a press acts on the one that the
 // principal sees.
 trusted_dialog_open :: proc "contextless" () -> bool {
-	return powerbox_prompt.open || plan_difference_dialog.open
+	return powerbox_prompt.open || plan_difference_dialog.open || wide_grant_trusted_surface_open()
 }
 
 powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, process_name, resource_text: string) -> u64 {
@@ -321,28 +324,17 @@ plan_difference_pointer :: proc "contextless" (pressed: bool) -> bool {
 	return true
 }
 
-wide_grant_mark_set :: proc "contextless" (active: bool, grant_id: u64) {
-	wide_grant_display.active = active
-	wide_grant_display.grant_id = active ? grant_id : 0
-	if active {
-		wide_grant_display.authorities = {.View_Screen, .Send_Input}
-	} else {
-		wide_grant_display.authorities = {}
-	}
-	damage_bar()
-}
-
 // wide_grant_act_emit writes one trusted-display act record onto `acts`
 // without blocking while a wide grant is active. If the audit ring is full,
 // it increments dropped_acts and returns dropped_full == true so the caller
 // drops the agent input rather than running it unrecorded.
 wide_grant_act_emit :: proc "contextless" (kind: wide_grants.Act_Kind, target_window_id: u64, detail_0: u64 = 0, detail_1: u64 = 0) -> (recorded: bool, dropped_full: bool) {
-	if !wide_grant_display.active || wide_grant_display.grant_id == 0 || kind == .None {
+	if !wide_grant_display.active || wide_grant_display.mark.grant_serial == 0 || kind == .None {
 		return false, false
 	}
 	record := wide_grants.Act_Stream_Record {
-		grant_serial     = wide_grant_display.grant_id,
-		principal_id     = wide_grant_display.principal_id,
+		grant_serial     = wide_grant_display.mark.grant_serial,
+		principal_id     = wide_grant_display.mark.principal_id,
 		timestamp_ms     = system.time(),
 		producer_word    = u64(wide_grants.Act_Producer.Trusted_Display),
 		act_kind_word    = u64(kind),
@@ -352,6 +344,7 @@ wide_grant_act_emit :: proc "contextless" (kind: wide_grants.Act_Kind, target_wi
 	}
 	switch system.output_write(&acts, record, wait = false) {
 	case .Ok:
+		wide_grant_display.acts_recorded += 1
 		return true, false
 	case .Full:
 		wide_grant_display.dropped_acts += 1
@@ -368,8 +361,9 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 	}
 	ctrl_shift := u32(display.MODIFIER_CONTROL | display.MODIFIER_SHIFT)
 	if wide_grant_display.active && code == display.KEY_ESCAPE && (modifiers & ctrl_shift) == ctrl_shift {
-		wide_grant_display.revoked_once = true
-		wide_grant_mark_set(false, 0)
+		return wide_grant_revoke_press() // wide_grant_screen.odin
+	}
+	if wide_grant_screen_key(code, pressed) {
 		return true
 	}
 	if plan_difference_dialog.open {
@@ -416,12 +410,7 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 }
 
 powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
-	if wide_grant_display.active {
-		badge_w := 104
-		badge_x := max(0, desktop_width / 2 - badge_w / 2)
-		interface.draw_rectangle(table, badge_x, desktop_bar_y() + 3, badge_w, BAR_HEIGHT - 6, graphics.colors.stop_process)
-		interface.draw_text(table, badge_x + 8, desktop_bar_y() + 7, "AGENT GRANT", graphics.COLOR_WHITE, interface.FONT_INTERFACE)
-	}
+	wide_grant_records(table) // wide_grant_screen.odin
 	plan_difference_records(table)
 	if !powerbox_prompt.open {
 		return
@@ -474,7 +463,6 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 // title plate in the gradient of a focused window with its line of light.
 // The shadow and the edge are tokens: a shade of the background is near
 // black in the light appearance too, a black box there.
-@(private = "file")
 trusted_card_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, header: string) {
 	interface.draw_rectangle(table, x + 4, y + 4, width, height, graphics.colors.shadow)
 	interface.draw_vertical_gradient(table, x, y, width, height, graphics.colors.card_top, graphics.colors.card_bottom)
@@ -580,7 +568,6 @@ plan_difference_button_records :: proc "contextless" (table: ^interface.Draw_Tab
 // its act, then its key in a dim text. The act that grants is a plate of
 // the chosen blue with a line of light; the refusal is a plate of the track
 // with a hairline border. It gives the x of its left edge.
-@(private = "file")
 powerbox_button_records :: proc "contextless" (table: ^interface.Draw_Table, right, y: int, act, key: string, grants: bool) -> int {
 	act_width := interface.text_measured_width(table, interface.FONT_INTERFACE, act)
 	key_width := interface.text_measured_width(table, interface.FONT_INTERFACE, key)

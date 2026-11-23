@@ -510,6 +510,7 @@ resolve_end_from_request :: proc "contextless" (s: ^State, work: ^Plan_Work, req
 		}
 		facts.started_by_asker = lent.started_by_asker != 0
 		facts.started_by_start_policy = lent.started_by_start_policy != 0
+		facts.audit_wired_by_root = lent.audit_wired_by_root != 0
 		return idx, facts, true
 	case .Connected:
 		for i in 0 ..< req.connected_count {
@@ -532,6 +533,13 @@ resolve_end_from_request :: proc "contextless" (s: ^State, work: ^Plan_Work, req
 	case .None:
 	}
 	return -1, facts, false
+}
+
+// audit_row_allowed says if a row that names the fact of the audit of a wide
+// grant has the one form that the fact allows: a Wire of a record output,
+// with the pace Always_Holds_Writer, whose reader is the asker.
+audit_row_allowed :: proc "contextless" (form: output.Wiring_List_Form, row: output.Checked_Wiring, reader_idx: int, asker_idx: int) -> bool {
+	return form == .Wire && row.writer_stream == .Record_Output && row.pace == .Always_Holds_Writer && row.paired_row == 0 && reader_idx >= 0 && reader_idx == asker_idx
 }
 
 // paired_source_of gives the row of the source of the pair of the row
@@ -611,6 +619,14 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 	}
 	if !output.wiring_end_allowed(row.writer_end, writer_facts) || !output.wiring_end_allowed(row.reader_end, reader_facts) {
 		return .No_Right, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
+	}
+	// The fact of the audit of a wide grant names one row only: a Wire of
+	// a record output to the asker itself, which holds its writer. Any other
+	// row that carries it is refused, so the fact opens no other wiring.
+	if writer_facts.audit_wired_by_root || reader_facts.audit_wired_by_root {
+		if !audit_row_allowed(work.form, row, reader_idx, work.asker_index) {
+			return .No_Right, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
+		}
 	}
 	// Self-wire or directed cycle refused.
 	if writer_idx == reader_idx || graph_reaches(s, work, number, reader_idx, writer_idx) {

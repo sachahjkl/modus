@@ -598,6 +598,28 @@ Principal_Recovery_Key_Not_Typed :: struct {
 	principal: u64,
 }
 
+// The proof of a wide grant (src/md/features/wide_grants.md, "The path of
+// a grant, end to end").
+@(log_fact = "unlock: the passphrase of principal {principal} is asked for a wide grant")
+Wide_Grant_Proof_Asked :: struct {
+	principal: u64,
+}
+
+@(log_fact = "unlock: principal {principal} has no passphrase that proves a wide grant here: no grant")
+Wide_Grant_Proof_Not_Possible :: struct {
+	principal: u64,
+}
+
+@(log_fact = "unlock: the passphrase of principal {principal} proved a wide grant")
+Wide_Grant_Proof_Given :: struct {
+	principal: u64,
+}
+
+@(log_fact = "unlock: the root service did not take the end of the proof of a wide grant: {status}")
+Wide_Grant_Proof_Not_Taken :: struct {
+	status: op.Status_Word,
+}
+
 // The current passphrase of a change is not typed.
 @(log_fact = "unlock: the current passphrase of principal {principal} is not typed: nothing changes")
 Current_Passphrase_Not_Typed :: struct {

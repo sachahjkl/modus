@@ -993,6 +993,18 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	if u64(len(connection.region)) < remote.REGION_SIZE {
 		return refuse(buffer, errors.error_make(.Too_Small, .Bytes, remote.FIELD_SERVICE, i64(len(connection.region)), remote.REGION_SIZE), service, connection.hash)
 	}
+	// Under a wide grant of the key, each call is an act: its record leaves
+	// first, and a full ring refuses the call, so no call runs unrecorded
+	// (src/md/features/wide_grants.md, "The path of a grant, end to end").
+	if row := client_rows[client.row]; row.wide_grant != 0 && row.serial == client.serial {
+		hash_head: u64
+		for index in 0 ..< 8 {
+			hash_head |= u64(connection.hash[index]) << (8 * u64(index))
+		}
+		if _, busy := remote_wide_grant_act_emit(row.wide_grant, client.principal, .Call_Made, 0, hash_head, u64(received)); busy {
+			return refuse(buffer, errors.error_make(.Busy, .Records, remote.FIELD_SERVICE, 0, 0), service, connection.hash)
+		}
+	}
 	completion, call_error, called := isolated_call_make(connection, request, arguments)
 	if !called {
 		return refuse(buffer, call_error, service, connection.hash)

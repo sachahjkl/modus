@@ -135,6 +135,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		return status
 	}
 	start_wiring_keep(&work)
+	if name == "collector" {
+		wide_grant_collector_started(&work) // wide_grant_authority.odin
+	}
 	if place != nil {
 		place^ = work.slot
 	}
@@ -294,6 +297,9 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // of the process is freed with what this service made for it, and the
 // device service that the start started stops.
 start_abandon :: proc "contextless" (work: ^Start_Work) {
+	if work.name == "collector" {
+		wide_grant_collector_abandon(work)
+	}
 	if work.slot != nil {
 		release(work.slot)
 	}
@@ -378,9 +384,9 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	case "unlock":
 		unlock_values_write(&work.values)
 	case "collector":
-		// The collector receives its principal and the fresh wide-grant
-		// authority key in slots 4 and 5..8.
-		wide_grant_authority_values_write(work)
+		// The collector receives its principal, the authority key of the
+		// wide grants and the ring of the grants (wide_grant_authority.odin).
+		wide_grant_collector_context(work)
 	case "module_files":
 		// The module file service serves the callers of the principal of
 		// its store only, and learns that principal here.
@@ -477,7 +483,11 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 	// The capture face and the input face ride this ring: the compositor
 	// takes them only from the client whose record says so.
 	capture: u64 = .Screen_Capture in work.start_grant_set.grants ? display.CLIENT_CAPTURE : 0
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), display.CLIENT_ADD_CAPTURE = capture}})
+	// The window of unlock that proves a principal for a wide grant takes
+	// the keys of the input service only: an agent with input never types
+	// the proof of its own grant.
+	local_input_only: u64 = work.name == "unlock" && unlock_run.mode == .Prove_Wide_Grant ? display.CLIENT_LOCAL_INPUT_ONLY : 0
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), display.CLIENT_ADD_CAPTURE = capture, display.CLIENT_ADD_LOCAL_INPUT_ONLY = local_input_only}})
 	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
 	return .Ok
 }
@@ -643,6 +653,10 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// no handle of this service for its budget: the handle table of this
 	// service holds one handle for each process that it keeps one for.
 	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.start_grant_set.grants)
+	// The collector pays the rings of the audit of a wide grant, which the
+	// root service asks in its name (src/md/features/wide_grants.md, "The
+	// path of a grant, end to end").
+	work.wiring.keep_budget ||= work.name == "collector"
 	held_entry: ^u64
 	switch work.hold {
 	case .None:

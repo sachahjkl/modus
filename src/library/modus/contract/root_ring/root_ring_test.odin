@@ -477,3 +477,28 @@ a_machine_key_report_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) 
 		testing.expect_value(t, report.state, state)
 	}
 }
+
+// The commands of the path of a wide grant: the proof comes from the
+// holder of Principals alone, the ask and the end from a root ring; the
+// outcome of a proof refuses None, one past the last member and the
+// largest word before it takes each member.
+@(test)
+the_wide_grant_commands_keep_their_senders :: proc(t: ^testing.T) {
+	testing.expect(t, !sender_allowed(.Wide_Grant_Proof, {.Root_Ring, .Connect, .Debugger, .Start_Policy, .Plans}))
+	testing.expect(t, sender_allowed(.Wide_Grant_Proof, {.Principals}))
+	for command in ([2]Root_Command{.Wide_Grant_Ask, .Wide_Grant_End}) {
+		testing.expect(t, !sender_allowed(command, {.Principals, .Connect, .Debugger, .Start_Policy, .Plans}))
+		testing.expect(t, sender_allowed(command, {.Root_Ring}))
+	}
+	for word in ([?]u64{0, u64(max(Wide_Grant_Proof_Outcome)) + 1, max(u64)}) {
+		_, ok := wide_grant_proof_outcome_of_word(word)
+		testing.expectf(t, !ok, "the outcome word %d is taken", word)
+	}
+	for outcome in Wide_Grant_Proof_Outcome {
+		if outcome == .None {
+			continue
+		}
+		read, ok := wide_grant_proof_outcome_of_word(u64(outcome))
+		testing.expect(t, ok && read == outcome)
+	}
+}

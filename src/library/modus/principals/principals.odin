@@ -101,6 +101,11 @@ Unlock_Mode :: enum u64 {
 	// policy, to read the choice of principal 0
 	// (src/md/features/start_policy.md, "What the root service keeps in code").
 	Machine_Key_Without_Window = 7,
+	// Prove the principal at VALUE_PRINCIPAL for a wide grant: its
+	// passphrase, or the machine passphrase for principal 0, opens its keys,
+	// and the end goes to the root service with Wide_Grant_Proof. Nothing is
+	// written, and no session starts (src/md/features/wide_grants.md).
+	Prove_Wide_Grant = 8,
 }
 
 // unlock_mode_of_word reads the word of VALUE_MODE. A word that names no
@@ -133,6 +138,8 @@ mode_words :: proc "contextless" (mode: Unlock_Mode) -> string {
 		return "a new recovery key"
 	case .Machine_Key_Without_Window:
 		return "the machine key before the start policy"
+	case .Prove_Wide_Grant:
+		return "the proof of a wide grant"
 	}
 	// Only a conversion that skips unlock_mode_of_word reaches this line:
 	// it is said, not taken for an unlock.
@@ -199,7 +206,7 @@ change_end_sentences := [Change_End]string {
 change_problem :: proc "contextless" (form: Principal_Record_Form, mode: Unlock_Mode, has_tpm: bool, seal_allowed: bool) -> Change_Problem {
 	switch mode {
 	case .Change_Passphrase, .New_Recovery_Key:
-	case .Unlock, .Create_Principal, .Set_Machine_Passphrase, .Unlock_Machine_Key_Held, .Seal_Machine_Key, .Machine_Key_Without_Window:
+	case .Unlock, .Create_Principal, .Set_Machine_Passphrase, .Unlock_Machine_Key_Held, .Seal_Machine_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant:
 		return .Unknown_Change
 	}
 	switch form {

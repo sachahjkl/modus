@@ -77,7 +77,14 @@ remote_clients_create :: proc "contextless" () {
 // which waits on the version of the table: a revocation ends the
 // connection of the client at once, not at the next deadline of its QUIC.
 client_row_write :: proc "contextless" (place: int, client: remote.Client) {
-	remote.client_table_write(client_table, place, client)
+	written := client
+	// The wide grant of a key stays through each other change of its row:
+	// only the path of the grant writes it (wide_grant_row_set), so a call
+	// of `remote` under a grant never finds its row without it.
+	if place >= 0 && place < remote.CLIENT_CAPACITY && client_table.clients[place].key == client.key && client.serial != 0 {
+		written.wide_grant = client_table.clients[place].wide_grant
+	}
+	remote.client_table_write(client_table, place, written)
 	system.word_wake(&client_table.version, system.WAKE_ALL)
 }
 

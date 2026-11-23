@@ -23,6 +23,12 @@ End_Facts :: struct {
 	// Connected: the asker holds a connection to the process that is not
 	// its history store and not one of a row of the client table.
 	asker_holds_a_connection:  bool,
+	// Started: the root service itself names this process as the writer
+	// of the act records of a wide grant, with the collector as the asker
+	// and the reader (src/md/features/wide_grants.md, "The path of a grant,
+	// end to end"). Only the core writes it; the wiring service takes it
+	// only for such a row.
+	audit_wired_by_root:       bool,
 }
 
 // start_policy_row_allowed gives whether a holder of the grant
@@ -47,15 +53,16 @@ start_policy_row_allowed :: proc "contextless" (form: Wiring_List_Form, writer_e
 
 // wiring_end_allowed gives whether an asker can name a process as one end:
 // the child of its start and the asker itself always; a Started end a
-// process whose start it asked for, or one that the start policy asked for
-// when the asker is the start policy; a Connected end a service to which it
+// process whose start it asked for, one that the start policy asked for
+// when the asker is the start policy, or one that the root service names
+// for the audit of a wide grant; a Connected end a service to which it
 // holds a plain connection, when it acts for the principal.
 wiring_end_allowed :: proc "contextless" (end: Wiring_End, facts: End_Facts) -> bool {
 	switch end {
 	case .Child, .Asker:
 		return true
 	case .Started:
-		return facts.started_by_asker || (facts.asker_is_start_policy && facts.started_by_start_policy)
+		return facts.started_by_asker || (facts.asker_is_start_policy && facts.started_by_start_policy) || facts.audit_wired_by_root
 	case .Connected:
 		return facts.asker_acts_for_principal && facts.process_is_a_service && facts.asker_holds_a_connection
 	case .None:

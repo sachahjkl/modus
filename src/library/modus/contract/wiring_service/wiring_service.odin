@@ -667,7 +667,11 @@ Resolved_Lent_End :: struct {
 	started_by_asker:        u8,
 	started_by_start_policy: u8,
 	present:                 u8,
-	reserved:                [5]u8,
+	// 1: the core names this process as a writer of the act records of a
+	// wide grant (output.End_Facts.audit_wired_by_root). An asker list never
+	// sets it: the core writes the request whole.
+	audit_wired_by_root:     u8,
+	reserved:                [4]u8,
 }
 #assert(size_of(Resolved_Lent_End) == 24)
 
@@ -732,7 +736,7 @@ resolved_request_check :: proc "contextless" (req: ^Resolved_Wiring_Request) -> 
 	}
 	for index in 0 ..< req.lent_count {
 		entry := &req.lent[index]
-		if entry.present > 1 || entry.started_by_asker > 1 || entry.started_by_start_policy > 1 || entry.reserved != ([5]u8{}) {
+		if entry.present > 1 || entry.started_by_asker > 1 || entry.started_by_start_policy > 1 || entry.audit_wired_by_root > 1 || entry.reserved != ([4]u8{}) {
 			return {}, false
 		}
 		if entry.present == 1 && !process_identity_valid({entry.process_slot, entry.process_serial}) {

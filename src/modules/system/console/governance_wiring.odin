@@ -8,49 +8,8 @@ import "modus:contract/blake3"
 import "modus:system"
 import "modus:contract/role_contract"
 import "modus:contract/tree_hash"
-import "modus:contract/wide_grants"
-
-// Wide-grant act records emitted by an agent console for each line and its
-// result kind while a wide grant holds
-// (src/md/features/wide_grants.md, "The record of each act").
-acts: system.Record_Output(wide_grants.Act_Stream_Record)
 
 console_active_locale: locale_cldr.Locale_Id = .En_US
-
-// console_wide_grant_act_emit writes one agent-console act record onto `acts`
-// without blocking. Returns busy == true when an audit ring is full so the
-// caller answers its line Busy rather than running it unrecorded.
-console_wide_grant_act_emit :: proc "contextless" (
-	grant_serial: u64,
-	principal_id: u64,
-	kind: wide_grants.Act_Kind,
-	target_window_id: u64 = 0,
-	detail_word_0: u64 = 0,
-	detail_word_1: u64 = 0,
-) -> (recorded: bool, busy: bool) {
-	if grant_serial == 0 || kind == .None {
-		return false, false
-	}
-	record := wide_grants.Act_Stream_Record {
-		grant_serial     = grant_serial,
-		principal_id     = principal_id,
-		timestamp_ms     = system.time(),
-		producer_word    = u64(wide_grants.Act_Producer.Agent_Console),
-		act_kind_word    = u64(kind),
-		target_window_id = target_window_id,
-		detail_word_0    = detail_word_0,
-		detail_word_1    = detail_word_1,
-	}
-	switch system.output_write(&acts, record, wait = false) {
-	case .Ok:
-		return true, false
-	case .Full:
-		return false, true
-	case .No_Reader, .No_Writer, .Ended, .Bad_Record, .No_Record:
-		return false, false
-	}
-	return false, false
-}
 
 console_action_requires_prompt :: proc "contextless" (act: console_prompt.Act_Kind, wide_grant_active: bool) -> bool {
 	return console_prompt.wide_grant_act_policy(act, wide_grant_active) != .Allow_Silent

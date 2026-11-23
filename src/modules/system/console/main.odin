@@ -133,7 +133,7 @@ import "base:intrinsics"
 // Itself and four sandboxes, each a call host with its thread. The working
 // memory holds 7583 pages, and the 144 pages of the stack of the second
 // thread past the stack of a thread that names no size.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7731, processes = 5, threads = 6}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7727, processes = 5, threads = 6}
 
 // The stack of the second thread, which runs the lines: the bytes that the
 // evaluator may take, and 128 KiB for the host and the command that a call

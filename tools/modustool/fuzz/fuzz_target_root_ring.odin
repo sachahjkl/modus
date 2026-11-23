@@ -100,6 +100,8 @@ fuzz_root_ring_start_grant_set_of :: proc(word: u64) -> (start_grant_set: bit_se
 // - the start policy, with Start_Policy, sends Start and Stop as the
 //   console does, and alone sends Machine_Usable
 //   (src/md/features/start_policy.md);
+// - unlock, with Principals, alone sends Wide_Grant_Proof too
+//   (src/md/features/wide_grants.md, "The path of a grant, end to end");
 // - the holder of the role Plans, with Plans, alone sends Plan_Roles
 //   (src/md/features/declarations.md, "The apply as built");
 // - each other command from Root_Ring, the console; None from nobody.
@@ -113,7 +115,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 	switch command {
 	case .None:
 		return false
-	case .Principal_Record, .Principal_Unlock, .Machine_Key, .Principal_Change_End:
+	case .Principal_Record, .Principal_Unlock, .Machine_Key, .Principal_Change_End, .Wide_Grant_Proof:
 		return .Principals in start_grant_set
 	case .Debug, .Debug_Store, .Debug_Start:
 		return .Debugger in start_grant_set
@@ -127,7 +129,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return .Plans in start_grant_set
 	case .Start, .Stop, .Wire:
 		return .Root_Ring in start_grant_set || .Start_Policy in start_grant_set
-	case .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice, .Start_Edit:
+	case .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice, .Start_Edit, .Wide_Grant_Ask, .Wide_Grant_End:
 		return .Root_Ring in start_grant_set
 	}
 	return false

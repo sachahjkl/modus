@@ -968,3 +968,48 @@ a_paired_record_output_of_a_declared_record_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal.found, 2)
 	testing.expect(t, s == before)
 }
+
+// The fact of the audit of a wide grant: the core names a writer that the
+// asker did not start, and the collector as the asker and the reader. Each
+// other row with the fact is refused with No_Grant and no wiring: a reader
+// that is not the asker, a pace that does not hold the writer, and a writer
+// with no fact at all. The row of the audit is taken last.
+@(test)
+the_fact_of_an_audit_opens_one_row_only :: proc(t: ^testing.T) {
+	mod := build_test_module({{"Item", "x", 8, true}}, {{"out", 1, .One}}, {{"in_many", 1, .Many}})
+	image, offs, szs := pack_image(mod)
+	s: State
+	state_init(&s)
+	collector := ws.Process_Identity{1, 1}
+	writer := ws.Process_Identity{2, 2}
+	other := ws.Process_Identity{3, 3}
+	_, _ = process_register(&s, collector, offs[0], szs[0], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, writer, offs[0], szs[0], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, other, offs[0], szs[0], {.Has_Wiring_Ring})
+	audited := [2]ws.Resolved_Lent_End {
+		{process_slot = writer.slot, process_serial = writer.serial, audit_wired_by_root = 1, present = 1},
+		{process_slot = collector.slot, process_serial = collector.serial, audit_wired_by_root = 1, present = 1},
+	}
+	to_other := [2]ws.Resolved_Lent_End {
+		{process_slot = writer.slot, process_serial = writer.serial, audit_wired_by_root = 1, present = 1},
+		{process_slot = other.slot, process_serial = other.serial, audit_wired_by_root = 1, present = 1},
+	}
+	no_fact := [2]ws.Resolved_Lent_End {
+		{process_slot = writer.slot, process_serial = writer.serial, present = 1},
+		{process_slot = collector.slot, process_serial = collector.serial, audit_wired_by_root = 1, present = 1},
+	}
+	cases := [?]struct {
+		lent: [2]ws.Resolved_Lent_End,
+		pace: output.Wiring_Pace,
+	}{{to_other, .Always_Holds_Writer}, {audited, .Writer_Chooses}, {audited, .Never_Holds_Writer}, {no_fact, .Always_Holds_Writer}}
+	for case_of, index in cases {
+		lent := case_of.lent
+		st, ref, _, _ := wire_once(&s, image, collector, make_wire_row(.Started, 1, 1, .Started, 2, 1, case_of.pace), lent[:])
+		testing.expectf(t, st == .No_Right, "case %d: %v", index, st)
+		testing.expect_value(t, errors.Kind(ref.kind), errors.Kind.No_Grant)
+		testing.expect_value(t, s.wirings_running, 0)
+	}
+	st, _, _, _ := wire_once(&s, image, collector, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), audited[:])
+	testing.expect_value(t, st, ws.Response_Status.Ok)
+	testing.expect_value(t, s.wirings_running, 1)
+}

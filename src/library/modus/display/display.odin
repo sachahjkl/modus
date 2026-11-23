@@ -180,6 +180,13 @@ CLIENT_ADD_CAPTURE :: 5
 // The flag of a client that holds the start grant Screen_Capture. A flag,
 // not a choice: 0 says the opposite.
 CLIENT_CAPTURE :: 1
+// The place of the flag of a window that takes the keys of the input
+// service only, in the values of Client_Add: the window of `unlock` that
+// proves a principal for a wide grant (src/md/features/wide_grants.md, "The
+// deliberate act: the proof of the principal"). No key and no pointer of the
+// remote display reaches it.
+CLIENT_ADD_LOCAL_INPUT_ONLY :: 6
+CLIENT_LOCAL_INPUT_ONLY :: 1
 
 // The viewers that one record Capture_Viewers names.
 CAPTURE_VIEWER_CAPACITY :: 4
@@ -512,6 +519,20 @@ Control :: enum u32 {
 	// that window, then a Settings_Raise_Focus. The root service names the
 	// window by the process that it started, so no other window can take it.
 	Settings_Raise          = 9,
+	// root to compositor: show the screen of a wide grant
+	// (src/md/features/wide_grants.md, "The path of a grant, end to end").
+	// values: wide_grants.screen_show_values.
+	Wide_Grant_Screen_Show    = 10,
+	// compositor to root: the answer of the principal on that screen.
+	// values: wide_grants.screen_answer_values.
+	Wide_Grant_Screen_Answer  = 11,
+	// root to compositor: the mark of a grant that holds, or its end with
+	// a grant serial of 0. values: wide_grants.mark_values.
+	Wide_Grant_Mark           = 12,
+	// compositor to root: the principal pressed revoke on the mark, with
+	// the keys or the pointer of the input service. values[0]: the grant
+	// serial of the mark.
+	Wide_Grant_Revoke_Pressed = 13,
 }
 
 // Where the focus goes in the window that Settings_Raise raises. The values
@@ -556,6 +577,7 @@ KEY_ESCAPE :: 0x01 // Escape.
 KEY_BACKSPACE :: 0x0E // Backspace.
 KEY_ENTER :: 0x1C // Enter.
 KEY_TAB :: 0x0F // Tab.
+KEY_SPACE :: 0x39 // Space.
 KEY_F3 :: 0x3D // F3.
 KEY_F7 :: 0x41 // F7: with Control and Shift, the compositor moves the window in front by keys.
 KEY_F8 :: 0x42 // F8: with Control and Shift, the compositor resizes the window in front by keys.

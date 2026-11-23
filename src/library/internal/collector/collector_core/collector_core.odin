@@ -375,7 +375,7 @@ required_authority_for_act :: proc "contextless" (kind: wide_grants.Act_Kind) ->
 		return .Send_Input, true
 	case .Action_Invoked:
 		return .Read_Semantic_Tree, true
-	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked:
+	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made:
 		return .View_Screen, false
 	}
 	return .View_Screen, false

@@ -58,6 +58,11 @@ Client :: struct {
 	// (client_display_paused): the row holds no View and no Input, as
 	// principal 0 cannot see the screen of a named session.
 	not_in_front:   u64,
+	// The serial of the wide grant that the key holds, from the collector;
+	// 0: none. `remote` writes an act record before each call of a key whose
+	// row holds one (src/md/features/wide_grants.md, "The path of a grant,
+	// end to end").
+	wide_grant:     u64,
 }
 
 // client_display_paused says if a row of a principal holds no View and no

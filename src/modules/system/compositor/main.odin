@@ -287,6 +287,10 @@ Client :: struct {
 	// says: the compositor takes the commands of the capture face and of
 	// the input face from it (capture.odin).
 	capture_allowed: bool,
+	// The window takes the keys and the pointer of the input service only,
+	// as its Client_Add says: the root service marks the window of unlock
+	// that proves a principal for a wide grant (wide_grant_screen.odin).
+	local_input_only: bool,
 	minimized:       bool,
 	maximized:       bool,
 	// The place and the size of a maximized window before its maximize: the
@@ -880,10 +884,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				quality_window_started(system.Handle(record.values[0]), record.values[1])
 			case .Settings_Raise:
 				settings_raise(record.values[0], record.values[1]) // tray_widgets.odin
-			case .None, .Start, .Stop, .Appearance_Next:
-				// The border refused None above. Start, Stop and
-				// Appearance_Next go from the compositor to the root service,
-				// never to the compositor.
+			case .Wide_Grant_Screen_Show:
+				wide_grant_screen_show(record.values) // wide_grant_screen.odin
+			case .Wide_Grant_Mark:
+				wide_grant_mark_take(record.values)
+			case .None, .Start, .Stop, .Appearance_Next, .Wide_Grant_Screen_Answer, .Wide_Grant_Revoke_Pressed:
+				// The border refused None above. The others go from the
+				// compositor to the root service, never to the compositor.
 				system.log_fact(.Info, Control_Command_Not_Taken{word = u64(record.kind)})
 			}
 		}
@@ -1117,6 +1124,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			shown_second = second_of_bar(now)
 			damage_clock()
 			tray_widgets_second() // tray_widgets.odin: the foot of the calendar.
+			if wide_grant_display.active {
+				damage_bar() // The mark shows the minutes left.
+			}
 		}
 		if damage_count > 0 && now >= next_frame {
 			draw(now)
@@ -1243,6 +1253,7 @@ client_add :: proc "contextless" (record: ring.Record) {
 		}
 		client = {ring_memory = memory, ring = opened}
 		client.capture_allowed = record.values[display.CLIENT_ADD_CAPTURE] == display.CLIENT_CAPTURE
+		client.local_input_only = record.values[display.CLIENT_ADD_LOCAL_INPUT_ONLY] == display.CLIENT_LOCAL_INPUT_ONLY
 		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
 		if nickname.length > 0 {
 			client.from_disk = true
@@ -1497,6 +1508,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 
 	if plan_difference_pointer(pressed) { // powerbox_dialog.odin
 		// The dialog of the trusted display takes the pointer.
+		return
+	}
+	if wide_grant_screen_pointer(pressed) || wide_grant_mark_pointer(pressed) { // wide_grant_screen.odin
+		// The screen and the mark of a wide grant take the pointer.
 		return
 	}
 	if palette_is_open() {

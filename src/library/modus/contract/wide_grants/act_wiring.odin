@@ -158,7 +158,7 @@ act_kind_is_lifecycle :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
 	case .Grant_Started, .Grant_Revoked, .Grant_Expired:
 		return true
-	case .None, .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Forbidden_Act_Blocked:
+	case .None, .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked, .Forbidden_Act_Blocked, .Call_Made:
 		return false
 	}
 	return false

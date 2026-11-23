@@ -1383,3 +1383,17 @@ ASSISTIVE_KIND_FIELD_BYTES :: 16
 entry_field :: proc "contextless" (name: string) -> [ENTRY_NAME_FIELD_BYTES]u8 {
 	return value_kinds.text_field(name, ENTRY_NAME_FIELD_BYTES)
 }
+
+// The facts of the screen and the mark of a wide grant
+// (wide_grant_screen.odin).
+
+@(log_fact = "compositor: a record of the screen or the mark of a wide grant was refused at its border")
+Wide_Grant_Screen_Word_Refused :: struct {}
+
+@(log_fact = "compositor: the control ring is full: the answer of a wide grant was not sent; press again")
+Wide_Grant_Answer_Not_Sent :: struct {}
+
+@(log_fact = "compositor: the principal pressed revoke on the wide grant {grant}")
+Wide_Grant_Revoke_Pressed :: struct {
+	grant: u64,
+}

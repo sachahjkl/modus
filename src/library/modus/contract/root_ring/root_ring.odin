@@ -475,6 +475,38 @@ Root_Command :: enum u32 {
 	// the serial in force, values[1] its generation. Only the process with
 	// the start grant Plans sends this command.
 	Plan_Roles = 32,
+	// Wide_Grant_Ask opens the path of a wide grant
+	// (src/md/features/wide_grants.md, "The path of a grant, end to end"):
+	// values[0..3] the client key of the agent, values[4] the word of the
+	// scopes that it proposes (wide_grants.Wide_Authorities), values[5] the
+	// duration in milliseconds, values[6] 0. The sender acts for the
+	// principal of the row of the key in the client table. The completion
+	// comes at once, with the serial of the flow in values[0]: the grant
+	// comes after the screen and the proof.
+	Wide_Grant_Ask = 33,
+	// Wide_Grant_Proof is the end of the proof of `unlock` in the mode
+	// Prove_Wide_Grant: values[4] the principal, values[5] a
+	// Wide_Grant_Proof_Outcome. Only the holder of Principals sends it.
+	Wide_Grant_Proof = 34,
+	// Wide_Grant_End ends the wide grant of a client key: values[0..3] the
+	// key. The sender acts for the principal of the grant.
+	Wide_Grant_End = 35,
+}
+
+// values[5] of a Wide_Grant_Proof: how the proof of the principal ended.
+// The values cross the root ring.
+Wide_Grant_Proof_Outcome :: enum u64 {
+	None      = 0, // Refused at the border.
+	Proved    = 1, // The passphrase opened the keys of the principal.
+	Cancelled = 2, // The principal ended the window with no passphrase.
+	Refused   = 3, // The principal has no passphrase that proves it here.
+}
+
+// wide_grant_proof_outcome_of_word is the border of values[5] of a
+// Wide_Grant_Proof: a word that names no member, and None, are refused.
+wide_grant_proof_outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Wide_Grant_Proof_Outcome, ok: bool) {
+	member := enum_word.member_of_word(Wide_Grant_Proof_Outcome, word) or_return
+	return member, member != .None
 }
 
 // values[5] of a Debug_Start: what it does.
@@ -694,6 +726,9 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Start_Edit             = .Root_Ring,
 	.Debug_Start            = .Debugger,
 	.Plan_Roles             = .Plans,
+	.Wide_Grant_Ask         = .Root_Ring,
+	.Wide_Grant_Proof       = .Principals,
+	.Wide_Grant_End         = .Root_Ring,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -875,6 +910,9 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Start_Edit             = .Command,
 	.Debug_Start            = .Command,
 	.Plan_Roles             = .Command,
+	.Wide_Grant_Ask         = .Command,
+	.Wide_Grant_Proof       = .Command,
+	.Wide_Grant_End         = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -1051,6 +1089,9 @@ root_command_names := [Root_Command]string {
 	.Start_Edit             = "Start_Edit",
 	.Debug_Start            = "Debug_Start",
 	.Plan_Roles             = "Plan_Roles",
+	.Wide_Grant_Ask         = "Wide_Grant_Ask",
+	.Wide_Grant_Proof       = "Wide_Grant_Proof",
+	.Wide_Grant_End         = "Wide_Grant_End",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1090,6 +1131,9 @@ root_first_argument_names := [Root_Command]string {
 	.Start_Edit             = "store",
 	.Debug_Start            = "name",
 	.Plan_Roles             = "override",
+	.Wide_Grant_Ask         = "key",
+	.Wide_Grant_Proof       = "name",
+	.Wide_Grant_End         = "key",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1130,6 +1174,9 @@ root_second_argument_names := [Root_Command]string {
 	.Start_Edit             = "name",
 	.Debug_Start            = "",
 	.Plan_Roles             = "",
+	.Wide_Grant_Ask         = "scopes",
+	.Wide_Grant_Proof       = "principal",
+	.Wide_Grant_End         = "",
 }
 
 // command_of_record reads the command that an error record names: the

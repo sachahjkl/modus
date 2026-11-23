@@ -1192,6 +1192,7 @@ root_loop_pass :: proc "contextless" () {
 	wiring_request_step(&wait)
 	devices_answers(&wait)
 	principals_answers(&wait)
+	wide_grant_deadline := wide_grant_pass(&wait) // wide_grant_authority.odin
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
@@ -1206,7 +1207,7 @@ root_loop_pass :: proc "contextless" () {
 	// read of the entropy device in flight (entropy.odin), the hang
 	// bound of a start policy that runs, and any in-flight request to
 	// the delegated wiring service.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline()))
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), wide_grant_deadline))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -1221,7 +1222,11 @@ control_ring_serve :: proc "contextless" () {
 		switch control_word {
 		case .Appearance_Next:
 			settings_appearance_next_start() // text_settings.odin
-		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise:
+		case .Wide_Grant_Screen_Answer:
+			wide_grant_screen_answered(record.values) // wide_grant_authority.odin
+		case .Wide_Grant_Revoke_Pressed:
+			wide_grant_revoke_pressed(record.values)
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Wide_Grant_Screen_Show, .Wide_Grant_Mark:
 			// This service sends these to the compositor, and takes none
 			// from it.
 			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
@@ -2296,6 +2301,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	disk_processes_service_end(item)
 	devices_service_end(item)
 	principals_service_end(item)
+	wide_grant_process_released(item) // wide_grant_authority.odin
 	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {

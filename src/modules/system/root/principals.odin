@@ -287,6 +287,11 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	if number == principals.MACHINE {
 		return .Bad_State
 	}
+	// A wide grant of the principal ends at the lock, with its reason,
+	// before its collector stops with the session.
+	if wide_grant_flow_state.stage != .Idle && wide_grant_flow_state.principal == number {
+		wide_grant_end(.Session_Locked, true) // wide_grant_authority.odin
+	}
 	count: u64
 	for &item in started {
 		if item.process != 0 && item.principal == number {
@@ -332,7 +337,9 @@ unlock_stopped :: proc "contextless" () {
 	// the stage Stopped says that no `unlock` creates.
 	asked := unlock_run.stage == .Stop_Asked
 	unlock_run.stage = .Stopped
-	if asked || !principal_locked() {
+	// The run that proves a wide grant ends by itself, and unlocks nothing:
+	// its stop is no failed unlock.
+	if asked || !principal_locked() || unlock_run.mode == .Prove_Wide_Grant {
 		return
 	}
 	unlock_run.failed_stops += 1

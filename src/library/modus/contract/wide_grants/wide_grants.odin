@@ -101,6 +101,8 @@ Revocation_Reason :: enum u64 {
 	Principal_Revoked       = 1,
 	Replaced_By_Newer_Grant = 2,
 	Duplicate_Connection    = 3,
+	Session_Locked          = 4, // The session of the principal was locked.
+	Time_Bound              = 5, // The duration of the terms ran out.
 }
 
 // Closed lifecycle state machine of a wide grant.
@@ -126,6 +128,7 @@ Act_Kind :: enum u64 {
 	Grant_Revoked         = 7,
 	Grant_Expired         = 8,
 	Forbidden_Act_Blocked = 9,
+	Call_Made             = 10, // A call of an export through `remote`: detail 0 the head of the hash of the service, detail 1 the bytes of the request.
 }
 
 // Closed set of refusal reasons returned by wide grant border validators,
@@ -513,7 +516,7 @@ act_kind_requires_target_window :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
 	case .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked:
 		return true
-	case .None, .Frame_Read, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked:
+	case .None, .Frame_Read, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made:
 		return false
 	}
 	return true
@@ -526,7 +529,9 @@ act_kind_is_agent_invocable :: proc "contextless" (kind: Act_Kind) -> bool {
 	switch kind {
 	case .Frame_Read, .Key_Injected, .Pointer_Moved, .Pointer_Clicked, .Action_Invoked:
 		return true
-	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked:
+	case .None, .Grant_Started, .Grant_Revoked, .Grant_Expired, .Forbidden_Act_Blocked, .Call_Made:
+		// A call is recorded by `remote` on its own ring, never through the
+		// manager of the collector.
 		return false
 	}
 	return false

@@ -25,6 +25,7 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
+import "modus:contract/wide_grants"
 import ws "modus:contract/wiring_service"
 import "internal:root/start_policy_rules"
 import "modus:random"
@@ -76,6 +77,10 @@ Wiring_Request :: struct {
 	counted_restart:    ^start_policy_rules.Name_Count,
 	start_reply_handle: u64,
 	deadline:           u64,
+	// A Wire of the audit of a wide grant: the root service asked it for
+	// itself, and its answer goes to the path of the grant, not to a ring
+	// (wide_grant_authority.odin).
+	audit_of_wide_grant: bool,
 }
 
 // State of the delegated `wiring` service process.
@@ -728,6 +733,84 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 	return .Ok, true
 }
 
+// audit_wire_begin asks the wiring service for one wiring of the audit of a
+// wide grant (src/md/features/wide_grants.md, "The path of a grant, end to
+// end"): the record output acts of writer to collector.sources, with the
+// terms of an audit space. The collector is the asker and the reader, and
+// pays the ring from its budget; the core writes the request whole, with
+// the fact audit_wired_by_root on both ends, so no list of an asker ever
+// carries it. The answer reaches wide_grant_wire_answered.
+audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, producer: wide_grants.Act_Producer, writer_output_index: u32, collector_input_index: u32) -> system.Status {
+	if wiring_request.stage != .Idle {
+		return .No_Slot
+	}
+	if !wiring_service_start() {
+		return .Bad_State
+	}
+	for item in ([2]^Started{collector, writer}) {
+		if !item.wiring_registered {
+			wiring_register_process(item)
+		}
+		if !item.wiring_registered {
+			return .Bad_State
+		}
+	}
+	values: [7]u64
+	if budget_status := wiring_asker_budget_ensure(collector, .Wire, &values); budget_status != .Ok {
+		return budget_status
+	}
+	endpoints := [1]wide_grants.Act_Producer_Endpoint{{producer = producer, end = .Started, handle = 1, output_index = writer_output_index}}
+	rows: [1]output.Wiring
+	terms: wide_grants.Space_Terms
+	terms_start := u32(output.wiring_terms_start(1, 2))
+	if _, refusal := wide_grants.act_wiring_rows_build(.Started, 2, collector_input_index, endpoints[:], terms_start, wide_grants.ACT_SPACE_BOUND_RECORDS, rows[:], &terms); refusal != .None {
+		return .Bad_Operation
+	}
+	core_list_copy = {}
+	handles := [2]u32{1, 2}
+	if !output.wiring_list_write(core_list_copy[:], rows[:], handles[:]) {
+		return .Bad_Operation
+	}
+	intrinsics.mem_copy_non_overlapping(&core_list_copy[terms_start], &terms, size_of(terms))
+	core_resolved_req = {
+		form        = u32(output.Wiring_List_Form.Wire),
+		list_bytes  = output.WIRING_LIST_BYTES_MOST,
+		lent_count  = 2,
+	}
+	core_resolved_req.lent[0] = {process_slot = writer.process_slot, process_serial = writer.process_serial, audit_wired_by_root = 1, present = 1}
+	core_resolved_req.lent[1] = {process_slot = collector.process_slot, process_serial = collector.process_serial, audit_wired_by_root = 1, present = 1}
+	intrinsics.mem_copy_non_overlapping(&wiring_region[ws.REGION_LIST_OFFSET], &core_list_copy[0], output.WIRING_LIST_BYTES_MOST)
+	intrinsics.mem_copy_non_overlapping(&wiring_region[ws.REGION_REQUEST_OFFSET], &core_resolved_req, size_of(ws.Resolved_Wiring_Request))
+	stag := next_service_tag()
+	cmd := ws.Command{kind = .Wire, tag = stag, process = {collector.process_slot, collector.process_serial}, flags = process_flags_of(collector)}
+	if !system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
+		return .No_Slot
+	}
+	wiring_request = {
+		stage               = .Wire,
+		command             = .Wire,
+		root_command        = .Wire,
+		service_tag         = stag,
+		asker               = collector,
+		deadline            = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
+		audit_of_wide_grant = true,
+	}
+	return .Ok
+}
+
+// audit_unwire_begin ends every wiring whose asker is the collector: the
+// wirings of the audit of a wide grant, which only the core asks for in its
+// name. .No_Slot: the wiring service serves another request; the caller
+// tries again at the next pass.
+audit_unwire_begin :: proc "contextless" (collector: ^Started) -> system.Status {
+	if wiring_process == nil || collector == nil || collector.process == 0 {
+		return .Ok
+	}
+	values: [7]u64
+	status, _ := wirings_revoke_begin(nil, collector, 0, &values)
+	return status
+}
+
 // wirings_revoke_begin delegates revocation of the recorded grant `.Wirings`
 // of `target` to `wiring`.
 wirings_revoke_begin :: proc "contextless" (caller: ^Started, target: ^Started, tag: u32, values: ^[7]u64) -> (status: system.Status, held: bool) {
@@ -769,7 +852,12 @@ wiring_request_deadline :: proc "contextless" () -> u64 {
 wiring_request_reply :: proc "contextless" (status: system.Status, values: [7]u64) {
 	asker := wiring_request.asker
 	tag := wiring_request.tag
+	audit := wiring_request.audit_of_wide_grant
 	wiring_request = {}
+	if audit {
+		wide_grant_wire_answered(status)
+		return
+	}
 	if asker != nil && asker.process != 0 && asker.requests.head != nil {
 		_ = system.send(&asker.requests.completions, ring.Record{kind = u32(status), tag = tag, values = values})
 	}
