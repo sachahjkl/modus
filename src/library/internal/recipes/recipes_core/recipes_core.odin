@@ -174,7 +174,7 @@ cache_hit_count :: proc "contextless" (state: ^Recipes_State) -> u64 {
 	return local + remote
 }
 
-@(private = "file")
+@(private)
 find_local_object :: proc "contextless" (state: ^Recipes_State, hash: blake3.Hash) -> ^Local_Object_Slot {
 	for &slot in state.objects {
 		if slot.active && slot.hash == hash {

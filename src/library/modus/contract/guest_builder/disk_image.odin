@@ -48,7 +48,12 @@ DISK_HEADER_SIZE :: 64
 DISK_SECTOR_SIZE :: 512
 
 // Maximum number of file entries stored in one MODGBD1 disk image.
-MAX_DISK_ENTRIES :: 64
+// A disk can hold thousands of files across subdirectories while each single
+// directory node respects tree_hash.MAX_TREE_ENTRIES.
+MAX_DISK_ENTRIES :: 4096
+
+// Maximum entries in one unpacked directory node.
+MAX_NODE_ENTRIES :: tree_hash.MAX_TREE_ENTRIES
 
 // Fixed byte size of one MODGBD1 directory entry.
 DISK_ENTRY_SIZE :: 2 + 2 + MAX_MOUNT_PATH_BYTES + 8 + 8 + blake3.HASH_SIZE
@@ -57,7 +62,7 @@ DISK_ENTRY_SIZE :: 2 + 2 + MAX_MOUNT_PATH_BYTES + 8 + 8 + blake3.HASH_SIZE
 DISK_FLAG_READ_ONLY :: u32(1)
 
 // Maximum encoded byte length of one intermediate directory node during unpack.
-UNPACK_NODE_BUFFER_BYTES :: tree_hash.HEADER_SIZE + MAX_DISK_ENTRIES * tree_hash.ENTRY_SIZE
+UNPACK_NODE_BUFFER_BYTES :: tree_hash.MAX_ENCODED_TREE_BYTES
 
 #assert(DISK_ENTRY_SIZE == 176)
 #assert(DISK_HEADER_SIZE == 64)
@@ -88,7 +93,7 @@ Disk_Entry_View :: struct {
 // Caller-supplied zero-allocation scratch workspace for unpack_output_disk.
 // Keeps recursive directory tree construction off the freestanding thread stack.
 Disk_Unpack_Workspace :: struct {
-	level_entries: [MAX_PATH_DEPTH][MAX_DISK_ENTRIES]tree_hash.Tree_Entry,
+	level_entries: [MAX_PATH_DEPTH][MAX_NODE_ENTRIES]tree_hash.Tree_Entry,
 	node_buffer:   [UNPACK_NODE_BUFFER_BYTES]u8,
 }
 
@@ -147,12 +152,28 @@ pack_disk_image :: proc "contextless" (
 				return 0, .Malformed_Disk_Image
 			}
 		}
-		// Check all earlier entries because characters below '/' (such as '-'
-		// and '.') can sort between "a" and "a/file".
-		for earlier in 0 ..< index {
-			earlier_path := transmute([]u8)files[earlier].path
-			if paths_conflict_as_file_and_directory(earlier_path, path_bytes) {
-				return 0, .Duplicate_Input_Mount
+		// Binary search earlier sorted entries for every strict directory
+		// prefix of path_bytes: characters below '/' (such as '-' and '.')
+		// can sort between "a" and "a/file", so prefix lookup runs in
+		// O(depth * log N) instead of O(N).
+		for slash := 0; slash < len(path_bytes); slash += 1 {
+			if path_bytes[slash] != '/' {
+				continue
+			}
+			prefix := path_bytes[:slash]
+			low, high := 0, index
+			for low < high {
+				mid := low + (high - low) / 2
+				mid_path := transmute([]u8)files[mid].path
+				cmp := compare_path_bytes(mid_path, prefix)
+				if cmp == 0 {
+					return 0, .Duplicate_Input_Mount
+				}
+				if cmp < 0 {
+					low = mid + 1
+				} else {
+					high = mid
+				}
 			}
 		}
 	}
@@ -308,14 +329,28 @@ validate_disk_image :: proc "contextless" (
 				return {}, .Malformed_Disk_Image
 			}
 		}
-		// Check all earlier entries because characters below '/' (such as '-'
-		// and '.') can sort between "a" and "a/file".
-		for earlier in 0 ..< index {
-			earlier_offset := DISK_HEADER_SIZE + earlier * DISK_ENTRY_SIZE
-			earlier_length := int(byte_order.read_u16_little_endian(image, earlier_offset))
-			earlier_path := image[earlier_offset + 4:][:earlier_length]
-			if paths_conflict_as_file_and_directory(earlier_path, path_slice) {
-				return {}, .Malformed_Disk_Image
+		// Binary search earlier sorted entries for every strict directory
+		// prefix of path_slice in O(depth * log N).
+		for slash := 0; slash < len(path_slice); slash += 1 {
+			if path_slice[slash] != '/' {
+				continue
+			}
+			prefix := path_slice[:slash]
+			low, high := 0, index
+			for low < high {
+				mid := low + (high - low) / 2
+				mid_offset := DISK_HEADER_SIZE + mid * DISK_ENTRY_SIZE
+				mid_length := int(byte_order.read_u16_little_endian(image, mid_offset))
+				mid_path := image[mid_offset + 4:][:mid_length]
+				cmp := compare_path_bytes(mid_path, prefix)
+				if cmp == 0 {
+					return {}, .Malformed_Disk_Image
+				}
+				if cmp < 0 {
+					low = mid + 1
+				} else {
+					high = mid
+				}
 			}
 		}
 		data_offset := byte_order.read_u64_little_endian(image, entry_offset + 128)
@@ -399,6 +434,18 @@ bytes_equal :: proc "contextless" (left, right: []u8) -> bool {
 	return true
 }
 
+// A visit of one object of an output disk as unpack_output_disk_visit
+// meets it: a file by its content hash and its bytes, or a directory node by
+// its tree hash and its canonical bytes, each child before its parent. The
+// bytes live only during the call. false refuses the unpack.
+Disk_Object_Visit_Proc :: #type proc "contextless" (kind: tree_hash.Tree_Entry_Kind, hash: blake3.Hash, bytes: []u8, user_data: rawptr) -> bool
+
+// One visitor of the objects of an unpack, or none.
+Disk_Object_Visitor :: struct {
+	visit:     Disk_Object_Visit_Proc,
+	user_data: rawptr,
+}
+
 // build_tree_level recursively encodes entries[start ..< end) after stripping
 // prefix_length bytes into canonical MODTREE1 bytes and returns its domain-
 // separated tree_hash. At depth 0, the canonical bytes are copied into
@@ -412,6 +459,7 @@ build_tree_level :: proc "contextless" (
 	depth: int,
 	workspace: ^Disk_Unpack_Workspace,
 	root_output: []u8,
+	visitor: Disk_Object_Visitor,
 ) -> (written_root: int, node_hash: blake3.Hash, refusal: Guest_Builder_Refusal) {
 	if depth < 0 || depth >= MAX_PATH_DEPTH {
 		return 0, {}, .Output_Extraction_Failed
@@ -427,7 +475,7 @@ build_tree_level :: proc "contextless" (
 		path_bytes := transmute([]u8)entry_view.path
 		remainder := path_bytes[prefix_length:]
 		segment, has_slash := path_first_segment(remainder)
-		if node_count >= MAX_DISK_ENTRIES {
+		if node_count >= MAX_NODE_ENTRIES {
 			return 0, {}, .Output_Extraction_Failed
 		}
 		if !has_slash {
@@ -438,6 +486,9 @@ build_tree_level :: proc "contextless" (
 			level_entries[node_count] = made
 			node_count += 1
 			cursor += 1
+			if visitor.visit != nil && !visitor.visit(.Object, entry_view.content_hash, image[entry_view.data_offset:][:entry_view.data_size], visitor.user_data) {
+				return 0, {}, .Output_Extraction_Failed
+			}
 		} else {
 			// Gather the contiguous range of entries sharing this subdirectory segment.
 			group_end := cursor + 1
@@ -461,6 +512,7 @@ build_tree_level :: proc "contextless" (
 				depth + 1,
 				workspace,
 				nil,
+				visitor,
 			)
 			if child_refusal != .None {
 				return 0, {}, child_refusal
@@ -500,6 +552,9 @@ build_tree_level :: proc "contextless" (
 	if hash_refusal != .None {
 		return 0, {}, .Output_Extraction_Failed
 	}
+	if visitor.visit != nil && !visitor.visit(.Tree, computed_hash, workspace.node_buffer[:encoded_length], visitor.user_data) {
+		return 0, {}, .Output_Extraction_Failed
+	}
 	if depth == 0 {
 		if len(root_output) < encoded_length {
 			return 0, {}, .Output_Extraction_Failed
@@ -520,6 +575,20 @@ unpack_output_disk :: proc "contextless" (
 	workspace: ^Disk_Unpack_Workspace,
 	canonical_tree_output: []u8,
 ) -> (written_tree_bytes: int, output_tree_hash: blake3.Hash, refusal: Guest_Builder_Refusal) {
+	return unpack_output_disk_visit(image, output_size_bound, workspace, canonical_tree_output, {})
+}
+
+// unpack_output_disk_visit is unpack_output_disk that also gives each file
+// and each directory node of the disk to a visitor, so a caller keeps every
+// object that the output tree names, and a later build takes the tree as
+// an input.
+unpack_output_disk_visit :: proc "contextless" (
+	image: []u8,
+	output_size_bound: u64,
+	workspace: ^Disk_Unpack_Workspace,
+	canonical_tree_output: []u8,
+	visitor: Disk_Object_Visitor,
+) -> (written_tree_bytes: int, output_tree_hash: blake3.Hash, refusal: Guest_Builder_Refusal) {
 	if workspace == nil {
 		return 0, {}, .Output_Extraction_Failed
 	}
@@ -538,5 +607,159 @@ unpack_output_disk :: proc "contextless" (
 		0,
 		workspace,
 		canonical_tree_output,
+		visitor,
 	)
+}
+
+// Streamed MODGBD1 writer for large multi-hundred-MiB disks: callers write
+// sorted entries one at a time directly into a backing slice (or memory-mapped
+// storage buffer) without keeping every input slice live simultaneously.
+Disk_Stream_Writer :: struct {
+	disk:                 []u8,
+	role:                 Guest_Disk_Role,
+	frozen_epoch_seconds: u64,
+	expected_entries:     u32,
+	written_entries:      u32,
+	data_cursor:          u64,
+	active:               bool,
+}
+
+// disk_stream_begin prepares writer to stream expected_entries sorted files
+// into disk_buffer. Leaves disk_buffer untouched on any refusal.
+disk_stream_begin :: proc "contextless" (
+	writer: ^Disk_Stream_Writer,
+	role: Guest_Disk_Role,
+	expected_entries: u32,
+	frozen_epoch_seconds: u64,
+	disk_buffer: []u8,
+) -> Guest_Builder_Refusal {
+	if writer == nil {
+		return .Malformed_Disk_Image
+	}
+	writer^ = {}
+	checked_role, role_ok := guest_disk_role_of_word(u64(role))
+	if !role_ok {
+		return .Malformed_Disk_Image
+	}
+	if expected_entries > MAX_DISK_ENTRIES {
+		return .Too_Many_Inputs
+	}
+	directory_end := u64(DISK_HEADER_SIZE) + u64(expected_entries) * u64(DISK_ENTRY_SIZE)
+	if directory_end > u64(len(disk_buffer)) {
+		return .Output_Too_Large
+	}
+	for &value in disk_buffer[:directory_end] {
+		value = 0
+	}
+	writer^ = {
+		disk                 = disk_buffer,
+		role                 = checked_role,
+		frozen_epoch_seconds = frozen_epoch_seconds,
+		expected_entries     = expected_entries,
+		data_cursor          = directory_end,
+		active               = true,
+	}
+	return .None
+}
+
+// disk_stream_write_entry appends one sorted file entry to writer, validating
+// path syntax, strict sort order, prefix non-conflict, and buffer capacity.
+disk_stream_write_entry :: proc "contextless" (
+	writer: ^Disk_Stream_Writer,
+	path: string,
+	content: []u8,
+) -> Guest_Builder_Refusal {
+	if writer == nil || !writer.active {
+		return .Malformed_Disk_Image
+	}
+	if writer.written_entries >= writer.expected_entries {
+		return .Too_Many_Inputs
+	}
+	path_bytes := transmute([]u8)path
+	if !validate_relative_path(path_bytes) {
+		return .Invalid_Mount_Path
+	}
+	index := int(writer.written_entries)
+	if index > 0 {
+		prev_offset := DISK_HEADER_SIZE + (index - 1) * DISK_ENTRY_SIZE
+		prev_length := int(byte_order.read_u16_little_endian(writer.disk, prev_offset))
+		prev_path := writer.disk[prev_offset + 4:][:prev_length]
+		order := compare_path_bytes(prev_path, path_bytes)
+		if order == 0 {
+			return .Duplicate_Input_Mount
+		}
+		if order > 0 {
+			return .Malformed_Disk_Image
+		}
+	}
+	for slash := 0; slash < len(path_bytes); slash += 1 {
+		if path_bytes[slash] != '/' {
+			continue
+		}
+		prefix := path_bytes[:slash]
+		low, high := 0, index
+		for low < high {
+			mid := low + (high - low) / 2
+			mid_offset := DISK_HEADER_SIZE + mid * DISK_ENTRY_SIZE
+			mid_length := int(byte_order.read_u16_little_endian(writer.disk, mid_offset))
+			mid_path := writer.disk[mid_offset + 4:][:mid_length]
+			cmp := compare_path_bytes(mid_path, prefix)
+			if cmp == 0 {
+				return .Duplicate_Input_Mount
+			}
+			if cmp < 0 {
+				low = mid + 1
+			} else {
+				high = mid
+			}
+		}
+	}
+	payload_size := u64(len(content))
+	if payload_size > u64(len(writer.disk)) - writer.data_cursor {
+		return .Output_Too_Large
+	}
+	entry_offset := DISK_HEADER_SIZE + index * DISK_ENTRY_SIZE
+	byte_order.write_u16_little_endian(writer.disk, entry_offset, u16(len(path_bytes)))
+	byte_order.write_u16_little_endian(writer.disk, entry_offset + 2, 0)
+	copy(writer.disk[entry_offset + 4:][:len(path_bytes)], path_bytes)
+	byte_order.write_u64_little_endian(writer.disk, entry_offset + 128, writer.data_cursor)
+	byte_order.write_u64_little_endian(writer.disk, entry_offset + 136, payload_size)
+	content_hash := blake3.hash(content)
+	copy(writer.disk[entry_offset + 144:][:blake3.HASH_SIZE], content_hash[:])
+	if payload_size > 0 {
+		copy(writer.disk[writer.data_cursor:][:payload_size], content)
+		writer.data_cursor += payload_size
+	}
+	writer.written_entries += 1
+	return .None
+}
+
+// disk_stream_finish writes the canonical MODGBD1 header after all expected
+// entries have been streamed and zeroes any trailing bytes in the buffer.
+disk_stream_finish :: proc "contextless" (writer: ^Disk_Stream_Writer) -> (total_bytes: u64, refusal: Guest_Builder_Refusal) {
+	if writer == nil || !writer.active || writer.written_entries != writer.expected_entries {
+		return 0, .Malformed_Disk_Image
+	}
+	magic := DISK_MAGIC
+	copy(writer.disk[0:7], magic[:])
+	writer.disk[7] = DISK_FORMAT_VERSION
+	byte_order.write_u32_little_endian(writer.disk, 8, u32(writer.role))
+	flags := u32(0)
+	switch writer.role {
+	case .Root_Image, .Inputs_Read_Only:
+		flags = DISK_FLAG_READ_ONLY
+	case .Output_Writable:
+		flags = 0
+	}
+	byte_order.write_u32_little_endian(writer.disk, 12, flags)
+	byte_order.write_u32_little_endian(writer.disk, 16, writer.expected_entries)
+	byte_order.write_u32_little_endian(writer.disk, 20, 0)
+	byte_order.write_u64_little_endian(writer.disk, 24, writer.frozen_epoch_seconds)
+	byte_order.write_u64_little_endian(writer.disk, 32, writer.data_cursor)
+	for &value in writer.disk[writer.data_cursor:] {
+		value = 0
+	}
+	total := writer.data_cursor
+	writer.active = false
+	return total, .None
 }

@@ -13,11 +13,26 @@ Guest_Boots :: struct {
 	memory_pages:  u64,
 }
 
-// One line that the guest wrote on its serial console, at most 128 bytes
-// of it: each byte of 128 or more is '?'.
+// One line of the log of the kernel, which the guest writes on its serial
+// port, at most 128 bytes of it: each byte of 128 or more is '?'.
 @(log_fact = "linux: guest: {text}")
 Guest_Line :: struct {
 	text: [128]u8,
+}
+
+// One line of the shell, which the guest writes on its virtio console
+// hvc0, at most 128 bytes of it: each byte of 128 or more is '?'.
+@(log_fact = "linux: shell: {text}")
+Shell_Line :: struct {
+	text: [128]u8,
+}
+
+// The budget of the process holds less memory than a guest needs: the
+// guest does not start.
+@(log_fact = "linux: the budget has {pages} pages left, and a guest needs {least}: the guest does not start")
+Guest_Memory_Too_Small :: struct {
+	pages: u64,
+	least: u64,
 }
 
 // The progress of the guest, at each power of two of its runs: the runs,
@@ -86,6 +101,18 @@ Kernel_Refused :: struct {
 No_Terminal :: struct {}
 @(log_fact = "linux: no store: the guest image is in the private store of the process")
 No_Store :: struct {}
+
+// The window of the guest changed its size: the width of the lines and the
+// size of the virtio console. taken is 1 when the console line and the
+// device took the size, 0 when one refused it. The shell learns the size
+// from its terminal hvc0, and its answer is a line of the shell.
+@(log_fact = "linux: the window has {columns} columns and {rows} rows: the console line and the virtio console took the size ({taken})")
+
+Window_Resized :: struct {
+	columns: u64,
+	rows:    u64,
+	taken:   u64,
+}
 
 // The processors of the machine have no guest support.
 @(log_fact = "linux: Guest_Run gave Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs")

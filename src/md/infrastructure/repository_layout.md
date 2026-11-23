@@ -45,6 +45,7 @@ src/
     demonstrations/            the modules that show a property to a principal
     tests/                     the test modules
   outside/<work>/              a work of others in C that a module compiles in: its license, the patches of the system, its entry, the thin libc (outside_source.md)
+  guest/<program>/             a program of the system that runs in a guest of Linux, not on modus: the init of a guest build (../features/guest_build_image.md)
 tools/modustool/               the tool: one command, in packages
   foundation/ resources/ build/ checks/ fuzz/ similarity/ machine/ site/
 docs/                          the guides, the glossary, the research, the pictures, the films, the measures

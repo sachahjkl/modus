@@ -41,6 +41,7 @@ Recipe_Build_Outcome :: enum u8 {
 	From_Cache    = 1,
 	Built_Locally = 2,
 	Refused       = 3,
+	Building      = 4, // A guest build runs on the build thread of the service: the history gives its end.
 }
 
 // Closed set of refusal reasons for recipe validation, cache verification,
@@ -82,6 +83,11 @@ Recipe_Refusal :: enum u8 {
 	Input_Absent          = 33, // An object of an input is not in the place of the objects of the service: no build gave it.
 	Builder_Timed_Out     = 34, // The builder gave no answer within builder.BUILD_TIME_BOUND_MILLISECONDS: the service ended it.
 	Input_Too_Large       = 35, // The inputs of one build hold more objects than builder.MAX_INPUT_OBJECTS, or a tree nested deeper than the bound.
+	Output_Too_Large      = 36, // The output passes the size bound of the recipe.
+	Builder_Busy          = 37, // The guest builds that the service holds are as many as it runs and queues: a build waits for room.
+	Memory_Past_Bound     = 38, // The guest build needs more memory than the budget of the service has left.
+	Put_Quota_Reached     = 39, // The principal put as many objects in the hour as a principal may keep while no recipe names them.
+	Build_Cancelled       = 40, // The principal that queued the guest build cancelled it.
 }
 
 // recipe_refusal_of_word is the one border of a refusal word that crosses
@@ -136,6 +142,11 @@ recipe_refusal_words := [Recipe_Refusal]string {
 	.Input_Absent          = "an input is not an output of a build of this machine",
 	.Builder_Timed_Out     = "the builder gave no answer within the bound of a build",
 	.Input_Too_Large       = "the inputs hold more objects than one build takes",
+	.Output_Too_Large      = "the output passes the size bound of the recipe",
+	.Builder_Busy          = "the guest builds of the service are full",
+	.Memory_Past_Bound     = "the guest build needs more memory than the service has",
+	.Put_Quota_Reached     = "the principal kept as many objects in the hour as it may",
+	.Build_Cancelled       = "the principal cancelled the build",
 }
 
 // Closed set of commands accepted on the recipes service ring.

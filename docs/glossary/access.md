@@ -734,7 +734,7 @@ Do not use: agentic loop, ReAct loop, iteration (for this).
 
 A guest is a machine that a process of the system runs on the processor, with the virtualization support of the processor, and with its own kernel and its own processes.
 
-A guest holds only what its process was granted. It is a process that `Process_Create` made and that no thread ran: its addresses are the guest physical addresses, and `Memory_Map` with its handle gives it memory. The process that holds it runs its guest processor with `Guest_Run`, and answers each guest exit. A foreign system (Linux) runs in a guest, and its concepts stay inside it. Built: the AMD form, up to four guest processors for each guest; the process `guest_demo` runs a guest of seven bytes.
+A guest holds only what its process was granted. It is a process that `Process_Create` made and that no thread ran: its addresses are the guest physical addresses, and `Memory_Map` with its handle gives it memory. The process that holds it runs its guest processor with `Guest_Run`, and answers each guest exit. A foreign system (Linux) runs in a guest, and its concepts stay inside it. Built: the AMD form, up to 32 guest processors for each guest; the process `guest_demo` runs a guest of seven bytes.
 
 The design: `docs/ARCHITECTURE.md`, "A guest", and `docs/PROPERTIES.md`, "Objective".
 

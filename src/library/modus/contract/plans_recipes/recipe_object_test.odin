@@ -126,3 +126,46 @@ recipe_object_gives_the_recipe_hash :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// A hash as text: each length but 64, an uppercase digit and a byte that
+// is no digit are refused; 64 lowercase digits give the hash back.
+@(test)
+hash_of_hexadecimal_refusals_then_round_trip :: proc(t: ^testing.T) {
+	digest := blake3.hash([]u8{'h'})
+	name := blob_object_name(digest)
+	digits: [64]u8
+	hex_digits := "0123456789abcdef"
+	for value, index in digest {
+		digits[2 * index] = hex_digits[value >> 4]
+		digits[2 * index + 1] = hex_digits[value & 15]
+	}
+	for length in ([?]int{0, 1, 63}) {
+		_, ok := hash_of_hexadecimal(digits[:length])
+		testing.expect(t, !ok)
+	}
+	longer: [65]u8
+	copy(longer[:], digits[:])
+	_, long_ok := hash_of_hexadecimal(longer[:])
+	testing.expect(t, !long_ok)
+	for bad in ([?]u8{'A', 'g', ' ', 0}) {
+		wrong := digits
+		wrong[10] = bad
+		_, ok := hash_of_hexadecimal(wrong[:])
+		testing.expectf(t, !ok, "the byte %v is refused", bad)
+	}
+	back, ok := hash_of_hexadecimal(digits[:])
+	testing.expect(t, ok && back == digest)
+	testing.expect_value(t, private_object_name_text(&name)[5:], string(digits[:52]))
+}
+
+// The object of a recipe in a store has one name, which is not the name of
+// a blob of the same hash.
+@(test)
+recipe_object_name_is_one_name :: proc(t: ^testing.T) {
+	digest := blake3.hash([]u8{'r'})
+	first := recipe_object_name(digest)
+	second := recipe_object_name(digest)
+	testing.expect_value(t, private_object_name_text(&first), private_object_name_text(&second))
+	blob := blob_object_name(digest)
+	testing.expect(t, private_object_name_text(&first) != private_object_name_text(&blob))
+}

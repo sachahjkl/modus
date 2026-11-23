@@ -6,7 +6,7 @@ import "modus:contract/enum_word"
 // one by its index, from 0 to `GUEST_PROCESSOR_CAPACITY - 1`. Each one has
 // its own state, paid at its first run, and runs on one thread at a time;
 // several threads run several guest processors of one guest at once.
-GUEST_PROCESSOR_CAPACITY :: 4
+GUEST_PROCESSOR_CAPACITY :: 32
 
 // guest_processor_of_word gives the guest processor that the third argument
 // of `Guest_Run` names, or false for an index past the last guest processor.

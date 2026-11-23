@@ -106,7 +106,6 @@ Model_Specific_Register :: enum u32 {
 	Kernel_Gs_Base           = 0xC000_0102,
 }
 
-FLAGS_INTERRUPT :: u64(1) << 9
 VECTOR_GENERAL_PROTECTION :: u8(13)
 VECTOR_DEBUG :: u8(1)
 VECTOR_ALIGNMENT_CHECK :: u8(17)
@@ -276,6 +275,42 @@ linux_machine_resume :: proc "contextless" (machine: ^Linux_Machine, registers: 
 // SERIAL_RECEIVE_BYTES, and a byte past it is dropped and counted.
 linux_machine_serial_input :: proc "contextless" (machine: ^Linux_Machine, bytes: []u8) -> (taken: int) {
 	return serial_receive_put(&machine.serial, bytes)
+}
+
+// linux_machine_console_output_take gives the bytes that the guest wrote
+// on its virtio console since the last call: the terminal hvc0 of Linux.
+linux_machine_console_output_take :: proc "contextless" (machine: ^Linux_Machine, out: []u8) -> (count: int) {
+	if machine == nil {
+		return 0
+	}
+	return virtio_console_output_take(&machine.devices[.Console], out)
+}
+
+// linux_machine_console_input gives bytes of a principal to the virtio
+// console of the guest, and gives how many it took: as many as the buffers
+// that the driver of the guest posted hold. The rest waits for the caller,
+// in order; the line of the device rises at once.
+linux_machine_console_input :: proc "contextless" (machine: ^Linux_Machine, bytes: []u8) -> (taken: int) {
+	if machine == nil {
+		return 0
+	}
+	taken = virtio_console_receive(&machine.devices[.Console], machine.memory, bytes)
+	machine_lines_update(machine)
+	return taken
+}
+
+// linux_machine_console_resize propagates a host terminal resize to the
+// VirtIO console device configuration and updates interrupt lines so the
+// guest driver can deliver SIGWINCH.
+linux_machine_console_resize :: proc "contextless" (machine: ^Linux_Machine, columns: int, rows: int) -> bool {
+	if machine == nil || columns < 1 || columns > int(max(u16)) || rows < 1 || rows > int(max(u16)) {
+		return false
+	}
+	if !virtio_console_resize(&machine.devices[.Console], u16(columns), u16(rows)) {
+		return false
+	}
+	machine_lines_update(machine)
+	return true
 }
 
 // linux_machine_start makes the machine of a build on the memory of the
@@ -573,7 +608,7 @@ machine_device_at :: proc "contextless" (machine: ^Linux_Machine, address: u64) 
 // interrupts off, or with no interrupt that can come, the guest stopped.
 @(private = "file")
 machine_halt :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers) -> Machine_Step {
-	if registers.rflags & FLAGS_INTERRUPT == 0 {
+	if registers.rflags & op.GUEST_FLAGS_INTERRUPT == 0 {
 		return .Halted
 	}
 	machine_lines_update(machine)

@@ -11,21 +11,31 @@ import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding recipes service process, including
-// local object staging and realisation tables.
-// One builder runs at a time, as a call host of its own budget:
-// 1024 pages of the service, system.CALL_HOST_PAGES (512) of the builder,
-// and the memory objects of one native C build (source up to 256 KiB,
-// assembly text up to 1 MiB, module up to 64 KiB) with its compiler and
-// assembler call hosts one at a time.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4096, processes = 2, threads = 2}
-#assert(4096 >= 1024 + system.CALL_HOST_PAGES)
+// The budget that the service asks for. Its own pages and one builder that
+// it starts as a call host of its own budget: 1024 pages of the service,
+// system.CALL_HOST_PAGES (512) of the builder, and the memory objects of
+// one native C build (source up to 256 KiB, assembly text up to 1 MiB,
+// module up to 64 KiB) with its compiler and assembler call hosts one at a
+// time. Then one guest build of a typical guest (guest_build.odin): 128 MiB
+// of guest memory, the kernel of a distribution, its nested page table and
+// its process, its kernel, its initial archive, its output disk and its
+// input disks, and the stack of the build thread past the stack that the
+// tool counts for a thread. The starter grants up to a share of the
+// machine; each guest build sizes its buffers from its spec and from what
+// the granted budget has left (recipes_core.guest_build_plan), so a smaller
+// grant runs the guest builds that fit it.
+SERVICE_AND_BUILDER_PAGES :: u64(4096)
+#assert(SERVICE_AND_BUILDER_PAGES >= 1024 + system.CALL_HOST_PAGES)
+TYPICAL_GUEST_BUILD_PAGES :: recipes_core.TYPICAL_GUEST_BUILD_PAGES
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 54_512, processes = 3, threads = 2}
+#assert(54_512 == SERVICE_AND_BUILDER_PAGES + TYPICAL_GUEST_BUILD_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -158,7 +168,16 @@ handle_command :: proc "contextless" (command: ring.Record) {
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_spec, rawptr(&service_region_base[spec_offset]), size_of(pr.Recipe_Spec))
-		staged_result = recipes_core.build_with_inputs_tree(&service_state, &copied_spec, mode)
+		// A recipe of the guest builder builds on the build thread, which
+		// completes the command at its end (guest_build.odin).
+		if copied_spec.builder_hash == pr.guest_builder_hash() && mode != .Cache_Only {
+			ring_recipe_hash, _ := pr.recipe_hash(&copied_spec)
+			if refusal := guest_build_queue({principal = recipes_core.GUEST_QUEUE_RING_PRINCIPAL, recipe_hash = ring_recipe_hash, mode = mode, from_ring = true, spec = copied_spec, ring_tag = command.tag, result_offset = result_offset}); refusal != .None {
+				ring.push(&service_ring.completions, ring.Record{kind = u32(pr.Service_Ring_Status.Refused), tag = command.tag, values = {u64(refusal), 0, 0, 0, 0, 0, 0}})
+			}
+			return
+		}
+		staged_result = recipes_core.build_with_builders(&service_state, &copied_spec, mode, nil)
 		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[result_offset]), &staged_result, size_of(pr.Recipe_Build_Result))
 		if staged_result.refusal == .Verify_Disagreement {
 			system.log_fact(.Warning, Realisation_Disagreement{disagreements = service_state.counters.verify_disagreements})
@@ -266,10 +285,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	recipes_core.state_init(&service_state, store_port)
 	builder_start_init(ctx)
 	c_builder_bind(ctx)
+	if store_open {
+		retention_pass()
+	}
 	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0})
 
 	for {
 		wait := system.wait_begin()
+		// The lock of the state: the build thread holds it during a build,
+		// but while its guest runs (guest_build.odin).
+		system.lock(&service_lock)
+		guest_build_end()
 		if export_ok {
 			system.service_run(&export_service)
 			system.service_wait(&wait, &export_service)
@@ -286,6 +312,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			system.wait_records(&wait, &service_ring.commands)
 		}
+		system.unlock(&service_lock)
 		system.wait_end(&wait)
 	}
 }

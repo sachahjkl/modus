@@ -67,8 +67,13 @@ VIRTIO_STATUS_FAILED :: u32(128)
 
 // The feature bits that the devices offer.
 VIRTIO_FEATURE_VERSION_1 :: u64(1) << 32
+VIRTIO_CONSOLE_FEATURE_SIZE :: u64(1) << 0
 VIRTIO_BLOCK_FEATURE_READ_ONLY :: u64(1) << 5
 VIRTIO_BLOCK_FEATURE_FLUSH :: u64(1) << 9
+
+// Default dimensions of a VirtIO console before any window resize.
+VIRTIO_CONSOLE_DEFAULT_COLUMNS :: u16(96)
+VIRTIO_CONSOLE_DEFAULT_ROWS :: u16(26)
 
 // The interrupt status bits.
 VIRTIO_INTERRUPT_USED_BUFFER :: u32(1)
@@ -129,16 +134,21 @@ Virtio_Device :: struct {
 	disk:                    []u8,
 	read_only:               bool,
 	identifier:              [VIRTIO_BLOCK_IDENTIFIER_BYTES]u8,
-	// A console: what the guest wrote, up to the capture, and the bytes past it.
-	console:                 [VIRTIO_CONSOLE_CAPTURE_BYTES]u8,
-	console_length:          u32,
-	console_dropped:         u64,
+	// A console: what the guest wrote, up to the capture, the bytes past it,
+	// and its active terminal grid size (VirtIO 1.2 section 5.3.4).
+	console:                  [VIRTIO_CONSOLE_CAPTURE_BYTES]u8,
+	console_length:           u32,
+	console_dropped:          u64,
+	console_cols:             u16,
+	console_rows:             u16,
+	configuration_generation: u32,
 	// The counts that the process reads: requests served, writes that a
-	// read-only disk refused, requests refused, and chains that broke the
-	// rules of the specification.
-	requests:                u64,
-	writes_refused:          u64,
-	requests_refused:        u64,
+	// read-only disk refused, writes past the bound of a writable disk,
+	// requests refused, and chains that broke the rules of the specification.
+	requests:                 u64,
+	writes_refused:           u64,
+	writes_past_bound:        u64,
+	requests_refused:         u64,
 	malformed_chains:        u64,
 	registers_refused:       u64,
 	// The chain that is read now: no buffer of it on the stack of the thread.
@@ -158,7 +168,28 @@ virtio_block_device :: proc "contextless" (disk: []u8, read_only: bool, identifi
 
 virtio_console_device :: proc "contextless" () -> (device: Virtio_Device) {
 	device.kind = .Console
+	device.console_cols = VIRTIO_CONSOLE_DEFAULT_COLUMNS
+	device.console_rows = VIRTIO_CONSOLE_DEFAULT_ROWS
 	return
+}
+
+// virtio_console_resize updates the console configuration dimensions and
+// signals a configuration change interrupt when the guest driver negotiated
+// VIRTIO_CONSOLE_F_SIZE. Refuses zero dimensions or non-console devices.
+virtio_console_resize :: proc "contextless" (device: ^Virtio_Device, columns: u16, rows: u16) -> bool {
+	if device == nil || device.kind != .Console || columns == 0 || rows == 0 {
+		return false
+	}
+	if device.console_cols == columns && device.console_rows == rows {
+		return true
+	}
+	device.console_cols = columns
+	device.console_rows = rows
+	device.configuration_generation += 1
+	if device.status & VIRTIO_STATUS_NEEDS_RESET == 0 && device.status & VIRTIO_STATUS_DRIVER_OK != 0 && device.driver_features & VIRTIO_CONSOLE_FEATURE_SIZE != 0 {
+		device.interrupt_status |= VIRTIO_INTERRUPT_CONFIGURATION
+	}
+	return true
 }
 
 virtio_queue_count :: proc "contextless" (device: ^Virtio_Device) -> u32 {
@@ -176,7 +207,7 @@ virtio_device_features :: proc "contextless" (device: ^Virtio_Device) -> u64 {
 	case .Block:
 		return VIRTIO_FEATURE_VERSION_1 | (device.read_only ? VIRTIO_BLOCK_FEATURE_READ_ONLY : VIRTIO_BLOCK_FEATURE_FLUSH)
 	case .Console:
-		return VIRTIO_FEATURE_VERSION_1
+		return VIRTIO_FEATURE_VERSION_1 | VIRTIO_CONSOLE_FEATURE_SIZE
 	}
 	return 0
 }
@@ -251,7 +282,7 @@ virtio_read :: proc "contextless" (device: ^Virtio_Device, offset: u64, size: u8
 	case .Status:
 		return device.status, true
 	case .Configuration_Generation:
-		return 0, true // The configuration never changes.
+		return device.configuration_generation, true
 	case .Device_Features_Select, .Driver_Features, .Driver_Features_Select, .Queue_Select, .Queue_Size, .Queue_Notify, .Interrupt_Acknowledge, .Queue_Descriptor_Low, .Queue_Descriptor_High, .Queue_Driver_Low, .Queue_Driver_High, .Queue_Device_Low, .Queue_Device_High:
 		return 0, true // The registers that the driver only writes read as 0.
 	}
@@ -390,8 +421,12 @@ virtio_configuration_read :: proc "contextless" (device: ^Virtio_Device, offset:
 		return max(u32), false
 	}
 	configuration: [16]u8
-	if device.kind == .Block {
+	switch device.kind {
+	case .Block:
 		byte_order.write_u64_little_endian(configuration[:], 0, virtio_block_capacity(device))
+	case .Console:
+		byte_order.write_u16_little_endian(configuration[:], 0, device.console_cols)
+		byte_order.write_u16_little_endian(configuration[:], 2, device.console_rows)
 	}
 	for index in 0 ..< u64(size) {
 		if offset + index < len(configuration) {
@@ -611,6 +646,9 @@ virtio_block_serve :: proc "contextless" (device: ^Virtio_Device, memory: Guest_
 					chain_copy_out(memory, chain, VIRTIO_BLOCK_HEADER_BYTES, device.disk[sector * VIRTIO_SECTOR_BYTES:][:data])
 					status = .Ok
 				} else {
+					if !virtio_sectors_inside(sector, data, capacity) {
+						device.writes_past_bound += 1
+					}
 					device.requests_refused += 1
 				}
 			case .Flush:
@@ -654,6 +692,21 @@ virtio_console_transmit :: proc "contextless" (device: ^Virtio_Device, memory: G
 		device.console_dropped += u64(len(bytes) - taken)
 	}
 	return 0, true
+}
+
+// virtio_console_output_take gives the bytes that the guest wrote on the
+// console since the last call, at most len(out), and keeps the rest in
+// order for the next call. A caller that takes them at each exit keeps the
+// capture from filling.
+virtio_console_output_take :: proc "contextless" (device: ^Virtio_Device, out: []u8) -> (count: int) {
+	if device == nil || device.kind != .Console {
+		return 0
+	}
+	count = copy(out, device.console[:device.console_length])
+	rest := int(device.console_length) - count
+	copy(device.console[:rest], device.console[count:device.console_length])
+	device.console_length = u32(rest)
+	return count
 }
 
 // virtio_console_receive gives input bytes to the guest through the

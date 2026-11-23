@@ -382,3 +382,112 @@ virtio_console_rings :: proc(t: ^testing.T) {
 	testing.expect_value(t, test_used_index(memory, 1), u16(0))
 	_ = byte_order.read_u16_little_endian
 }
+// A resize of the console: a size of 0 and a device that is no console are
+// refused with nothing changed; a new size changes the configuration and
+// its generation, and raises the configuration interrupt only for a driver
+// that took VIRTIO_CONSOLE_F_SIZE; the same size again changes nothing.
+@(test)
+virtio_console_resize_refusals_and_change :: proc(t: ^testing.T) {
+	bytes := make([]u8, TEST_VIRTIO_MEMORY)
+	defer delete(bytes)
+	memory := Guest_Memory{bytes}
+	disk: [512]u8
+	block := virtio_block_device(disk[:], true, "test")
+	testing.expect(t, !virtio_console_resize(&block, 80, 24))
+	testing.expect(t, !virtio_console_resize(nil, 80, 24))
+
+	console := virtio_console_device()
+	for size in ([?][2]u16{{0, 24}, {80, 0}, {0, 0}}) {
+		testing.expect(t, !virtio_console_resize(&console, size[0], size[1]))
+	}
+	testing.expect_value(t, console.configuration_generation, u32(0))
+	testing.expect_value(t, console.console_cols, VIRTIO_CONSOLE_DEFAULT_COLUMNS)
+
+	// No driver yet: the size changes, and no interrupt rises.
+	testing.expect(t, virtio_console_resize(&console, 100, 30))
+	testing.expect_value(t, console.interrupt_status, u32(0))
+	testing.expect_value(t, console.configuration_generation, u32(1))
+
+	test_driver_start(&console, memory)
+	testing.expect(t, virtio_console_resize(&console, max(u16), 1))
+	testing.expect(t, console.interrupt_status & VIRTIO_INTERRUPT_CONFIGURATION != 0)
+	columns, columns_ok := virtio_read(&console, VIRTIO_CONFIG_OFFSET, 2)
+	rows, rows_ok := virtio_read(&console, VIRTIO_CONFIG_OFFSET + 2, 2)
+	testing.expect(t, columns_ok && rows_ok)
+	testing.expect_value(t, columns, u32(max(u16)))
+	testing.expect_value(t, rows, u32(1))
+	generation, _ := virtio_read(&console, u64(Virtio_Register.Configuration_Generation), 4)
+	testing.expect_value(t, generation, u32(2))
+
+	// The same size again: no new generation and no new interrupt.
+	test_register(&console, memory, .Interrupt_Acknowledge, VIRTIO_INTERRUPT_CONFIGURATION)
+	testing.expect(t, virtio_console_resize(&console, max(u16), 1))
+	testing.expect_value(t, console.configuration_generation, u32(2))
+	testing.expect_value(t, console.interrupt_status & VIRTIO_INTERRUPT_CONFIGURATION, u32(0))
+
+	// A driver that did not take the feature gets the size but no interrupt.
+	plain := virtio_console_device()
+	test_register(&plain, memory, .Status, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER)
+	test_register(&plain, memory, .Status, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK)
+	testing.expect(t, virtio_console_resize(&plain, 132, 43))
+	testing.expect_value(t, plain.interrupt_status & VIRTIO_INTERRUPT_CONFIGURATION, u32(0))
+	testing.expect_value(t, plain.console_rows, u16(43))
+}
+// The capture of the console drains in order: a taker of 0 bytes takes
+// nothing, a short taker takes the oldest bytes and leaves the rest, and a
+// device that is no console gives nothing. A capture that the taker
+// empties takes a burst again.
+@(test)
+virtio_console_output_drains_in_order :: proc(t: ^testing.T) {
+	bytes := make([]u8, TEST_VIRTIO_MEMORY)
+	defer delete(bytes)
+	memory := Guest_Memory{bytes}
+	console := virtio_console_device()
+	test_driver_start(&console, memory)
+	copy(bytes[TEST_BUFFERS:], "abcdef")
+	test_submit(&console, memory, 1, {{TEST_BUFFERS, 6, 0, 0}})
+	out: [4]u8
+	testing.expect_value(t, virtio_console_output_take(&console, out[:0]), 0)
+	testing.expect_value(t, virtio_console_output_take(nil, out[:]), 0)
+	disk: [512]u8
+	block := virtio_block_device(disk[:], true, "test")
+	testing.expect_value(t, virtio_console_output_take(&block, out[:]), 0)
+	testing.expect_value(t, virtio_console_output_take(&console, out[:]), 4)
+	testing.expect_value(t, string(out[:]), "abcd")
+	testing.expect_value(t, virtio_console_output_take(&console, out[:]), 2)
+	testing.expect_value(t, string(out[:2]), "ef")
+	testing.expect_value(t, virtio_console_output_take(&console, out[:]), 0)
+	for _ in 0 ..< 4 {
+		test_submit(&console, memory, 1, {{TEST_BUFFERS, 1024, 0, 0}})
+	}
+	testing.expect_value(t, console.console_length, u32(VIRTIO_CONSOLE_CAPTURE_BYTES))
+	testing.expect_value(t, console.console_dropped, u64(0))
+}
+
+// A write past the bound of a writable disk is counted in
+// writes_past_bound and changes no byte; a write inside it serves.
+@(test)
+virtio_output_disk_write_past_bound :: proc(t: ^testing.T) {
+	bytes := make([]u8, TEST_VIRTIO_MEMORY)
+	defer delete(bytes)
+	memory := Guest_Memory{bytes}
+	disk: [4 * VIRTIO_SECTOR_BYTES]u8
+	output := virtio_block_device(disk[:], false, "out")
+	test_driver_start(&output, memory)
+	for &value in bytes[TEST_BUFFERS + 0x1000:][:2 * VIRTIO_SECTOR_BYTES] {
+		value = 0xEE
+	}
+	// The last sector and one past it: past the bound.
+	status := test_block_request(&output, memory, u32(Virtio_Block_Request.Out), 3, u32(2 * VIRTIO_SECTOR_BYTES))
+	testing.expect_value(t, status, u8(Virtio_Block_Status.Io_Error))
+	testing.expect(t, output.writes_past_bound > 0, "the write past the bound is counted")
+	for value in disk {
+		testing.expect_value(t, value, u8(0))
+	}
+	// The last sector alone: inside the bound.
+	past := output.writes_past_bound
+	status = test_block_request(&output, memory, u32(Virtio_Block_Request.Out), 3, u32(VIRTIO_SECTOR_BYTES))
+	testing.expect_value(t, status, u8(Virtio_Block_Status.Ok))
+	testing.expect_value(t, output.writes_past_bound, past)
+	testing.expect_value(t, disk[3 * VIRTIO_SECTOR_BYTES], u8(0xEE))
+}

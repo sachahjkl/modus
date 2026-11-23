@@ -256,8 +256,13 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// native C builder, src/md/features/program_loop.md): the boot image gives
 	// the module of the call host and the compilers, log_gives gives a child
 	// its own log handle, and store_gives lets recipes give storage shares to
-	// a builder (src/md/features/recipes.md, "The builder").
-	{name = "recipes", grants = {.Serve, .Store, .Image}, terms = {on_demand = true, log_gives = true, store_gives = true}},
+	// a builder (src/md/features/recipes.md, "The builder"). Its store holds
+	// the objects of its guest builds by their hashes: a kernel of 13 MB, an
+	// initial archive and the files of the inputs and the outputs
+	// (src/md/features/recipes.md, "The guest builder in the service"). A
+	// guest build needs no grant: the guest is a process that its own budget
+	// pays.
+	{name = "recipes", grants = {.Serve, .Store, .Image}, terms = {store_blocks = 16384, on_demand = true, log_gives = true, store_gives = true}},
 	// The holder of the role Projects: the pins of each project in its
 	// private store (src/md/features/declarations.md).
 	{name = "projects", grants = {.Serve, .Store}, terms = {on_demand = true}},

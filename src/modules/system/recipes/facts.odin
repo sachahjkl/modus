@@ -1,6 +1,7 @@
 package recipes_service
 
 import "modus:contract/call_outcome"
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // Log facts emitted by the delegated recipes service.
@@ -25,6 +26,96 @@ Service_Failed :: struct {
 Recipe_Build_Completed :: struct {
 	outcome:      u64,
 	refusal_code: u64,
+}
+
+// The budget of the service did not pay the disks of a guest build: the
+// build is refused.
+@(log_fact = "recipes: the disks of a guest build were not made: a buffer of {pages} pages was refused with {status_word}")
+Guest_Buffers_Refused :: struct {
+	status_word: op.Status_Word,
+	pages:       u64,
+}
+
+// An object that a guest build needs is not in the private store.
+@(log_fact = "recipes: the private store holds no object {hash} for a guest build: status {status}")
+Guest_Object_Missing :: struct {
+	hash:   value_kinds.Hash_Field,
+	status: u64,
+}
+
+// A guest build asks for more memory than the budget of the service has
+// left: its guest and its nested page table.
+@(log_fact = "recipes: the guest build was not started: it needs {pages} pages of memory, and the budget of the service has {left} left")
+Guest_Memory_Past_Bound :: struct {
+	pages: u64,
+	left:  u64,
+}
+
+// The guest of a build ran to its end.
+@(log_fact = "recipes: the guest build ended after {exits} exits of the guest ({runs} runs), with the exit status {exit_code} and the state {state}")
+Guest_Build_Ended :: struct {
+	exits:     u64,
+	runs:      u64,
+	exit_code: u64,
+	state:     u64,
+}
+
+// A guest build joined the queue of the guest builds.
+@(log_fact = "recipes: the guest build of the recipe {recipe} is in the queue")
+Guest_Build_Queued :: struct {
+	recipe: value_kinds.Hash_Field,
+}
+
+// A guest build started on the build thread.
+@(log_fact = "recipes: the guest build of the recipe {recipe} started")
+Guest_Build_Started :: struct {
+	recipe: value_kinds.Hash_Field,
+}
+
+// A guest build gave the realisation of its recipe.
+@(log_fact = "recipes: the recipe {recipe} is realised with the output {output}")
+Guest_Recipe_Realised :: struct {
+	recipe: value_kinds.Hash_Field,
+	output: value_kinds.Hash_Field,
+}
+
+// The kernel did not start the build thread: the build is refused.
+@(log_fact = "recipes: the build thread did not start: Thread_Create gave {status_word}")
+Guest_Thread_Refused :: struct {
+	status_word: op.Status_Word,
+}
+
+// One pass of the retention of the store.
+@(log_fact = "recipes: the retention pass kept {kept} objects of {marked} named, and removed {removed} (refusal {refusal})")
+Retention_Passed :: struct {
+	marked:  u64,
+	kept:    u64,
+	removed: u64,
+	refusal: u64,
+}
+
+// A check before the run of the guest refused the build.
+@(log_fact = "recipes: the guest build was refused before its run: refusal {refusal}, boot refusal {boot_refusal}")
+Guest_Build_Refused_Before_Run :: struct {
+	refusal:      u64,
+	boot_refusal: u64,
+}
+
+// The processors of the machine run no guest.
+@(log_fact = "recipes: Guest_Run gave Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest build runs")
+Guests_Unsupported :: struct {}
+
+// A kernel operation of a guest build failed.
+@(log_fact = "recipes: the guest build stopped: {step} gave {status_word}")
+Guest_Step_Failed :: struct {
+	status_word: op.Status_Word,
+	step:        [40]u8,
+}
+
+// A recipe object of the private store does not decode to its hash.
+@(log_fact = "recipes: the stored recipe {recipe} does not decode to its hash: it is not registered")
+Stored_Recipe_Damaged :: struct {
+	recipe: value_kinds.Hash_Field,
 }
 
 // The call host of a builder did not start: the status word of the start,

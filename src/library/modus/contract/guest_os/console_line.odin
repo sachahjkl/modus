@@ -13,8 +13,9 @@ package guest_os
 // becomes '?', so no byte of the guest makes a sequence of UTF-8 that a
 // reader of the line decodes.
 
-// The bytes of one line, at most: a longer line ends at this length.
-CONSOLE_LINE_BYTES :: 160
+// The bytes of one line, at most: matches the widest terminal grid so a
+// wide window never wraps early.
+CONSOLE_LINE_BYTES :: 192
 // The number of a sequence, at most: a larger number counts as this one.
 CONSOLE_SEQUENCE_NUMBER_MOST :: CONSOLE_LINE_BYTES
 
@@ -31,6 +32,7 @@ Console_Line :: struct {
 	text:            [CONSOLE_LINE_BYTES]u8,
 	length:          int, // The bytes of text.
 	cursor:          int, // The place of the next byte, from 0 to length.
+	columns:         int, // Active line wrap width (1 ..= CONSOLE_LINE_BYTES); 0 means CONSOLE_LINE_BYTES.
 	escape:          Console_Escape,
 	number:          int, // The number of the sequence that is read, at most CONSOLE_SEQUENCE_NUMBER_MOST.
 }
@@ -45,6 +47,24 @@ Console_Change :: enum u8 {
 // console_line_text gives the text of the line, and its cursor.
 console_line_text :: proc "contextless" (line: ^Console_Line) -> (text: []u8, cursor: int) {
 	return line.text[:line.length], line.cursor
+}
+
+// console_line_limit gives the active wrap width of line in bytes.
+console_line_limit :: proc "contextless" (line: ^Console_Line) -> int {
+	if line.columns > 0 && line.columns <= CONSOLE_LINE_BYTES {
+		return line.columns
+	}
+	return CONSOLE_LINE_BYTES
+}
+
+// console_line_set_columns updates the active wrap width of line to match a
+// resized terminal window. Refuses columns outside 1 ..= CONSOLE_LINE_BYTES.
+console_line_set_columns :: proc "contextless" (line: ^Console_Line, columns: int) -> bool {
+	if line == nil || columns < 1 || columns > CONSOLE_LINE_BYTES {
+		return false
+	}
+	line.columns = columns
+	return true
 }
 
 // console_line_next starts a new line after an end.
@@ -99,7 +119,8 @@ console_line_put :: proc "contextless" (line: ^Console_Line, value: u8) -> Conso
 // is full ends: the byte waits for the next line.
 @(private = "file")
 console_line_write :: proc "contextless" (line: ^Console_Line, value: u8) -> Console_Change {
-	if line.cursor == CONSOLE_LINE_BYTES {
+	limit := console_line_limit(line)
+	if line.cursor >= limit {
 		// The caller takes the full line and starts the next one; the byte
 		// goes at its start.
 		return .Ended
@@ -107,7 +128,7 @@ console_line_write :: proc "contextless" (line: ^Console_Line, value: u8) -> Con
 	line.text[line.cursor] = value
 	line.cursor += 1
 	line.length = max(line.length, line.cursor)
-	return line.cursor == CONSOLE_LINE_BYTES ? .Ended : .Changed
+	return line.cursor >= limit ? .Ended : .Changed
 }
 
 // console_sequence_put reads one byte of a sequence ESC [ <number> <final>.

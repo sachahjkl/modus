@@ -78,11 +78,11 @@ disks_check :: proc "c" (spec_bytes: ^system.Bytes_To_Read, input_disk: ^system.
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, ARGUMENT_SPEC)
 	}
 	spec_count := intrinsics.volatile_load(&spec_bytes.count)
-	if spec_count != contract.SPEC_WIRE_SIZE {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(spec_count), contract.SPEC_WIRE_SIZE)
+	if spec_count < contract.SPEC_WIRE_MIN_SIZE || spec_count > contract.SPEC_WIRE_SIZE {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(min(spec_count, 1 << 62)), contract.SPEC_WIRE_SIZE)
 	}
-	intrinsics.mem_copy_non_overlapping(&spec_wire_copy[0], spec_bytes.bytes, contract.SPEC_WIRE_SIZE)
-	spec, spec_refusal := contract.decode_build_spec(spec_wire_copy[:])
+	intrinsics.mem_copy_non_overlapping(&spec_wire_copy[0], spec_bytes.bytes, int(spec_count))
+	spec, spec_refusal := contract.decode_build_spec(spec_wire_copy[:spec_count])
 	if spec_refusal != .None {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, ARGUMENT_SPEC, 0, 0, i64(spec_refusal))
 	}

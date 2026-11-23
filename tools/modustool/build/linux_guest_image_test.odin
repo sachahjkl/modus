@@ -2,6 +2,7 @@
 package build
 
 import "core:strconv"
+import "core:strings"
 import "core:testing"
 
 // Cpio_Read is one entry of the archive as a reader of the form newc reads it.
@@ -49,11 +50,17 @@ cpio_read_all :: proc(archive: []u8) -> (entries: [dynamic]Cpio_Read, ok: bool) 
 }
 
 // The archive of the guest: each entry reads back, the init of busybox is
-// /init, the console and the serial port are nodes, and poweroff halts.
+// /init, the console, the serial port and hvc0 are nodes, each module is
+// in its folder and the script loads each in order, the transport with the
+// windows of the command line, the shell runs on hvc0, and poweroff halts.
 @(test)
 linux_guest_initial_archive_reads_back :: proc(t: ^testing.T) {
 	busybox := []u8{0x7F, 'E', 'L', 'F', 1, 2, 3}
-	archive := linux_guest_initial_archive(busybox)
+	modules: [Linux_Guest_Module][]u8
+	for &module, index in modules {
+		module = []u8{0x7F, 'E', 'L', 'F', u8(index)}
+	}
+	archive := linux_guest_initial_archive(busybox, modules)
 	testing.expect_value(t, len(archive) % 4, 0)
 	entries, ok := cpio_read_all(archive)
 	defer delete(entries)
@@ -78,6 +85,23 @@ linux_guest_initial_archive_reads_back :: proc(t: ^testing.T) {
 	testing.expect(t, has_poweroff && string(poweroff.data) == LINUX_GUEST_POWEROFF)
 	inittab, has_inittab := find(entries[:], "etc/inittab")
 	testing.expect(t, has_inittab && string(inittab.data) == LINUX_GUEST_INITTAB)
+	testing.expect(t, strings.contains(LINUX_GUEST_INITTAB, "hvc0::respawn:-/bin/sh"), "the shell runs on hvc0")
+	testing.expect(t, !strings.contains(LINUX_GUEST_INITTAB, "ttyS0::"), "no shell runs on the serial port")
+	hvc, has_hvc := find(entries[:], "dev/hvc0")
+	testing.expect(t, has_hvc && hvc.major == 229 && hvc.minor == 0)
+	files := LINUX_GUEST_MODULE_FILES
+	script, has_script := find(entries[:], "etc/modules.sh")
+	testing.expect(t, has_script)
+	last_place := -1
+	for module in Linux_Guest_Module {
+		path := strings.concatenate({LINUX_GUEST_MODULES_FOLDER, "/", files[module]}, context.temp_allocator)
+		entry, found := find(entries[:], path)
+		testing.expectf(t, found && string(entry.data) == string(modules[module]), "the module %v is in the archive", module)
+		place := strings.index(string(script.data), strings.concatenate({"insmod /", path}, context.temp_allocator))
+		testing.expectf(t, place > last_place, "the module %v loads after the modules that it needs", module)
+		last_place = place
+	}
+	testing.expect(t, strings.contains(string(script.data), "virtio_mmio.ko $devices"), "the transport takes the windows of the command line")
 	// A cut archive is refused at its cut, as Linux refuses it.
 	for cut in ([?]int{0, 1, 109, 110, len(archive) - 4, len(archive) - 1}) {
 		cut_entries, cut_ok := cpio_read_all(archive[:cut])

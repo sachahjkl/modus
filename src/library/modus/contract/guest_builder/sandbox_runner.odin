@@ -13,6 +13,7 @@
 //     with exit code 0 and zero sandbox violations.
 package guest_builder
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import op "modus:contract/operation"
 
@@ -30,7 +31,11 @@ Guest_Sandbox_Runner :: struct {
 	refusal:                  Guest_Builder_Refusal,
 	sandbox_violations:       u64,
 	last_violation:           Sandbox_Violation_Kind,
-	guest_exits_handled:      u64,
+	guest_exits_handled:      u64, // The exits that the guest caused: the same for each run of one spec.
+	guest_runs:               u64, // Each exit, Interrupted included: a measure, which the speed of the host changes.
+	clock_nanoseconds:        u64, // The last time of the system that the caller gave (runner_clock_advance).
+	deadline_nanoseconds:     u64, // The time of the system past which the run ends Timed_Out.
+	cancel_requested:         u32, // Atomic: another thread sets it (runner_cancel); the run ends Refused with Cancelled at the next exit.
 	guest_exit_code:          u32,
 	guest_exited:             bool,
 	rtc_selected_register:    u8,
@@ -189,7 +194,41 @@ runner_start :: proc "contextless" (runner: ^Guest_Sandbox_Runner) -> Guest_Buil
 		return .Nonzero_Guest_Exit
 	}
 	runner.state = .Running
+	bound := build_time_bound_nanoseconds(&runner.spec)
+	runner.deadline_nanoseconds = runner.clock_nanoseconds + min(bound, max(u64) - runner.clock_nanoseconds)
 	return .None
+}
+
+// runner_deadline_from starts the time bound of a running build at
+// now_nanoseconds, the time of the system when its guest starts: the time
+// that the caller spent before, on its disks and its kernel, is not the
+// time of the guest.
+runner_deadline_from :: proc "contextless" (runner: ^Guest_Sandbox_Runner, now_nanoseconds: u64) {
+	if runner == nil {
+		return
+	}
+	runner_clock_advance(runner, now_nanoseconds)
+	bound := build_time_bound_nanoseconds(&runner.spec)
+	runner.deadline_nanoseconds = runner.clock_nanoseconds + min(bound, max(u64) - runner.clock_nanoseconds)
+}
+
+// runner_cancel asks a running build to end at the next exit of its guest.
+// Another thread than the one that runs the guest may call it: the word is
+// atomic, and the thread of the guest reads it at each exit.
+runner_cancel :: proc "contextless" (runner: ^Guest_Sandbox_Runner) {
+	if runner != nil {
+		intrinsics.atomic_store(&runner.cancel_requested, 1)
+	}
+}
+
+// runner_clock_advance gives the runner the time of the system, in
+// nanoseconds: before runner_start, the start of the build, then after each
+// exit. A time earlier than the last one is not taken, so the clock of a
+// build never goes back.
+runner_clock_advance :: proc "contextless" (runner: ^Guest_Sandbox_Runner, now_nanoseconds: u64) {
+	if runner != nil {
+		runner.clock_nanoseconds = max(runner.clock_nanoseconds, now_nanoseconds)
+	}
 }
 
 // runner_record_violation records one sandbox violation and the refusal code.
@@ -359,14 +398,26 @@ runner_report_violation :: proc "contextless" (runner: ^Guest_Sandbox_Runner, ki
 	runner.state = .Refused
 }
 
-// runner_exit_counted counts one Guest_Run exit against the bound of the
-// spec, and gives false, with the state Timed_Out, past it. An exit
-// Interrupted comes from the timer of the host, not from the guest: its
-// count depends on the speed of the machine, so it is never counted, never
-// ends the run, and never reaches the report. Only the exits that the guest
-// causes are counted, so two builds of one spec count the same exits.
+// runner_exit_counted counts one Guest_Run exit, and gives false, with the
+// state Timed_Out, past a bound. Each exit counts in guest_runs. Two bounds
+// end a run: the time of the system past the deadline of the spec, which
+// ends a guest that never exits by itself, and the bound of the exits that
+// the guest causes. An exit Interrupted comes from the timer of the host,
+// not from the guest: its count depends on the speed of the machine, so it
+// counts only in guest_runs and never in guest_exits_handled, and two
+// builds of one spec count the same exits of the guest.
 runner_exit_counted :: proc "contextless" (runner: ^Guest_Sandbox_Runner, exit_kind: op.Guest_Exit_Kind) -> bool {
 	if runner == nil || runner.state != .Running {
+		return false
+	}
+	runner.guest_runs += 1
+	if intrinsics.atomic_load(&runner.cancel_requested) != 0 {
+		runner.state = .Refused
+		runner.refusal = .Cancelled
+		return false
+	}
+	if runner.clock_nanoseconds >= runner.deadline_nanoseconds {
+		runner.state = .Timed_Out
 		return false
 	}
 	if exit_kind == .Interrupted {

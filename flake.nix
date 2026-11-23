@@ -243,7 +243,23 @@
     guestImages = {
       MODUS_LINUX_KERNEL_IMAGE = "${pkgs.linux}/bzImage";
       MODUS_LINUX_GUEST_BUSYBOX = "${pkgs.pkgsStatic.busybox}/bin/busybox";
+      MODUS_LINUX_GUEST_MODULES = "${linuxGuestModules}";
     };
+
+    # The kernel of Nixpkgs builds the virtio transport, its ring, the
+    # console and the block device as loadable modules, so a guest that
+    # reads a virtio disk or runs a shell on hvc0 loads them from its initial
+    # archive. They are decompressed here: the busybox of the guest and the
+    # init of a guest build then load them with init_module, with no
+    # decoder of xz in the guest. The names are in the order of their
+    # dependencies (tools/modustool/build/linux_guest_modules.odin).
+    linuxGuestModules = pkgs.runCommand "linux-guest-modules" {nativeBuildInputs = [pkgs.xz];} ''
+      mkdir $out
+      base=${pkgs.linux.modules}/lib/modules/${pkgs.linux.modDirVersion}/kernel
+      for path in drivers/virtio/virtio_ring drivers/virtio/virtio drivers/virtio/virtio_mmio drivers/char/virtio_console drivers/block/virtio_blk; do
+        xz -dc $base/$path.ko.xz > $out/$(basename $path).ko
+      done
+    '';
 
     # The folders of the store of the outside sources, for the tool: each
     # shell and the check set them.

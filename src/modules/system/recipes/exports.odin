@@ -164,10 +164,14 @@ register_evaluation :: proc "c" (output: ^system.Bytes_To_Read, result: ^[]pr.Re
 	return .Succeeded, 1
 }
 
-// build realises a registered recipe. A mode that takes the cache gives a
-// realisation of the local store at once, with no build; on a miss the
-// service builds the recipe, keeps its output and its realisation, and the
-// next build of the recipe is a hit.
+// build realises a registered recipe, or a recipe that the private store
+// keeps by its hash. A mode that takes the cache gives a realisation of the
+// local store at once, with no build; on a miss the service builds the
+// recipe, keeps its output and its realisation, and the next build of the
+// recipe is a hit. The inputs tree builder builds in the call. A recipe of
+// the guest builder starts its build on the build thread and answers
+// Building: builds and cache_lookup give its end. A second guest build
+// while one runs is refused with Builder_Busy.
 //
 // - **recipe**: the recipe hash that register gave.
 // - **mode**: the Build_Mode word: 1 Cache_First, 2 Build_Only,
@@ -192,7 +196,124 @@ build :: proc "c" (recipe: ^pr.Recipe_Reference, mode: i64, result: ^[]pr.Recipe
 		return recipe_refusal_fail(error, .Bad_Build_Mode, 2)
 	}
 	copied_reference = intrinsics.volatile_load(recipe)
-	export_result = recipes_core.build_registered(&service_state, &service_registry, blake3.Hash(copied_reference.recipe_hash), checked_mode, &builder_start)
+	return build_of_hash(blake3.Hash(copied_reference.recipe_hash), checked_mode, result, error)
+}
+
+// build_stored is build for a recipe named by its hash as text, the form in
+// which the console types a hash: a record with a hash field has no
+// command that makes it.
+//
+// - **recipe**: 64 lowercase hexadecimal digits, the recipe hash.
+// - **mode**: the Build_Mode word, as for build.
+// - **result**: one row, as for build.
+//
+// The result is 1, or a negative number with an error record, as for
+// build; a text that is not 64 lowercase hexadecimal digits is refused with
+// ERROR_BUILD and the refusal Unknown_Recipe.
+@(export, link_name = "build_stored")
+build_stored :: proc "c" (recipe: ^system.Bytes_To_Read, mode: i64, result: ^[]pr.Recipe_Build_Row, error: ^errors.Error_Record) -> i64 {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure
+	}
+	if recipe == nil {
+		return errors.fail(error, ERROR_BUILD, .Bad_Address, .None, 1)
+	}
+	count := intrinsics.volatile_load(&recipe.count)
+	if count != 2 * blake3.HASH_SIZE {
+		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+	}
+	digits: [2 * blake3.HASH_SIZE]u8
+	intrinsics.mem_copy_non_overlapping(&digits[0], recipe.bytes, len(digits))
+	recipe_hash, hash_ok := pr.hash_of_hexadecimal(digits[:])
+	if !hash_ok {
+		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+	}
+	if mode < 0 {
+		return recipe_refusal_fail(error, ERROR_BUILD, .Bad_Build_Mode, 2)
+	}
+	checked_mode, mode_ok := pr.build_mode_of_word(u64(mode))
+	if !mode_ok {
+		return recipe_refusal_fail(error, ERROR_BUILD, .Bad_Build_Mode, 2)
+	}
+	return build_of_hash(recipe_hash, checked_mode, result, error)
+}
+
+// build_cancel cancels a guest build that the principal of the caller
+// queued, named by its recipe hash as text (src/md/features/recipes.md,
+// "The queue of the guest builds"): a waiting build leaves the queue, and a
+// running build ends at the next exit of its guest, refused with
+// Build_Cancelled.
+//
+// - **recipe**: 64 lowercase hexadecimal digits, the recipe hash.
+//
+// The result is 1 when the build left the queue, 2 when the running build
+// was asked to end, or a negative number with an error record:
+// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or ERROR_BUILD
+// with Unknown_Recipe: no build of this recipe of the principal of the
+// caller waits or runs, or the text is not a hash. A build of another
+// principal gets the same answer, so a caller learns nothing of it.
+@(export, link_name = "build_cancel")
+build_cancel :: proc "c" (recipe: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure
+	}
+	if recipe == nil {
+		return errors.fail(error, ERROR_BUILD, .Bad_Address, .None, 1)
+	}
+	count := intrinsics.volatile_load(&recipe.count)
+	if count != 2 * blake3.HASH_SIZE {
+		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+	}
+	digits: [2 * blake3.HASH_SIZE]u8
+	intrinsics.mem_copy_non_overlapping(&digits[0], recipe.bytes, len(digits))
+	recipe_hash, hash_ok := pr.hash_of_hexadecimal(digits[:])
+	if !hash_ok {
+		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+	}
+	switch guest_build_cancel(caller_principal(), recipe_hash) {
+	case .Removed:
+		return 1
+	case .Requested:
+		return 2
+	case .Absent:
+		return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+	}
+	return recipe_refusal_fail(error, ERROR_BUILD, .Unknown_Recipe, 1)
+}
+
+// caller_principal gives the number of the principal of the caller of the
+// call that runs: the key of its quota of put and of its share of the
+// queue. A connection that closes and opens again keeps it.
+@(private = "file")
+caller_principal :: proc "contextless" () -> u64 {
+	connection := system.service_caller()
+	if connection == nil {
+		return recipes_core.GUEST_QUEUE_RING_PRINCIPAL
+	}
+	return isolated.caller_principal(connection.grant)
+}
+
+// build_of_hash builds the recipe of recipe_hash for build and build_stored.
+@(private = "file")
+build_of_hash :: proc "contextless" (recipe_hash: blake3.Hash, checked_mode: pr.Build_Mode, result: ^[]pr.Recipe_Build_Row, error: ^errors.Error_Record) -> i64 {
+	// A recipe that a writer of the store kept there registers at its first
+	// build (guest_build.odin).
+	stored_recipe_register(recipe_hash)
+	// A recipe of the guest builder builds on the build thread, so the
+	// service answers each other call while its guest runs; the answer is
+	// Building, and the history and the log give its end. Cache_Only never
+	// builds, and answers here.
+	if spec := recipes_core.registered_recipe(&service_registry, recipe_hash); spec != nil && spec.builder_hash == pr.guest_builder_hash() && checked_mode != .Cache_Only {
+		if refusal := guest_build_queue({principal = caller_principal(), recipe_hash = recipe_hash, mode = checked_mode}); refusal != .None {
+			return recipe_refusal_fail(error, ERROR_BUILD, refusal, 1)
+		}
+		export_result = {outcome = .Building, recipe_hash = recipe_hash}
+		if len(result^) > 0 {
+			result[0] = pr.recipe_build_row_of(&export_result, checked_mode)
+		}
+		return 1
+	}
+	export_result = recipes_core.build_registered(&service_state, &service_registry, recipe_hash, checked_mode, &builder_start)
 	system.log_fact(.Info, Recipe_Build_Completed{outcome = u64(export_result.outcome), refusal_code = u64(export_result.refusal)})
 	if export_result.refusal != .None {
 		return recipe_refusal_fail(error, export_result.refusal, 1)
@@ -201,6 +322,56 @@ build :: proc "c" (recipe: ^pr.Recipe_Reference, mode: i64, result: ^[]pr.Recipe
 		result[0] = pr.recipe_build_row_of(&export_result, checked_mode)
 	}
 	return .Succeeded, 1
+}
+
+// The bytes of the largest object that put takes in one call.
+OBJECT_PUT_BYTES_MOST :: recipes_core.PUT_OBJECT_BYTES_MOST
+
+// One object of the private store, as put gives it: its hash.
+Object_Reference :: struct {
+	hash: value_kinds.Hash_Field,
+}
+
+copied_object: [OBJECT_PUT_BYTES_MOST]u8
+
+// put keeps an object in the private store by its hash, so a recipe names
+// it as an input, or a guest build as its kernel or its initial archive. A
+// caller keeps at most recipes_core.PUT_OBJECTS_PER_CALLER_MOST objects in
+// one run of the service (Put_Quota_Reached past it); past the run, only
+// what a recipe or a realisation names stays.
+//
+// - **kind**: the Cache_Object_Kind word: 1 a blob, 2 a tree, whose bytes
+//   are a canonical MODTREE1 node.
+// - **bytes**: the object, at most OBJECT_PUT_BYTES_MOST bytes.
+// - **result**: one row: the hash of the object.
+//
+// The result is 1, or a negative number with an error record:
+// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
+// ERROR_RECIPE with the refusal as the value found.
+@(export, link_name = "put")
+put :: proc "c" (kind: i64, bytes: ^system.Bytes_To_Read, result: ^[]Object_Reference, error: ^errors.Error_Record) -> i64 {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure
+	}
+	if bytes == nil {
+		return errors.fail(error, ERROR_RECIPE, .Bad_Address, .None, 2)
+	}
+	count := intrinsics.volatile_load(&bytes.count)
+	if count > OBJECT_PUT_BYTES_MOST {
+		return errors.fail(error, ERROR_RECIPE, .Too_Long, .Bytes, 2, i64(min(count, 1 << 62)), OBJECT_PUT_BYTES_MOST)
+	}
+	// A private copy: the hash and the write read the same bytes.
+	if count > 0 {
+		intrinsics.mem_copy_non_overlapping(&copied_object[0], bytes.bytes, int(count))
+	}
+	hash, refusal := recipes_core.put_object(&service_state, &put_ledger, caller_principal(), system.time() / 1000, kind, copied_object[:count])
+	if refusal != .None {
+		return recipe_refusal_fail(error, ERROR_RECIPE, refusal, refusal == .Bad_Input_Kind ? 1 : 2)
+	}
+	if len(result^) > 0 {
+		result[0] = {hash = value_kinds.Hash_Field(hash)}
+	}
+	return 1
 }
 
 // cache_lookup gives the realisation of a recipe in the local store, with
@@ -396,7 +567,8 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	switch export_result.outcome {
 	case .From_Cache:
 		system.log_fact(.Info, C_Substituted{size = value_kinds.Size_In_Bytes(len(bytes)), recipe_hash = value_kinds.Hash_Field(export_result.recipe_hash), output_hash = value_kinds.Hash_Field(export_result.output_hash)}, name)
-	case .Built_Locally, .None, .Refused:
+	case .Built_Locally, .None, .Refused, .Building:
+		// A C build answers in its call: it is never Building.
 		system.log_fact(.Info, C_Built{size = value_kinds.Size_In_Bytes(len(bytes)), recipe_hash = value_kinds.Hash_Field(export_result.recipe_hash), output_hash = value_kinds.Hash_Field(export_result.output_hash)}, name)
 	}
 	return .Succeeded, i64(len(bytes))

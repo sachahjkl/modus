@@ -87,6 +87,16 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 	case .Damaged_Recipe:
 		// The caller gave the recipe: its bytes are an argument.
 		return errors.error_make(.Malformed, .None, argument, 0, 0, found)
+	case .Output_Too_Large:
+		return errors.error_make(.Over_Limit, .Bytes, argument, 0, 0, found)
+	case .Builder_Busy:
+		return errors.error_make(.Busy, .None, argument, 0, 0, found)
+	case .Memory_Past_Bound:
+		return errors.error_make(.Over_Limit, .Pages, argument, 0, 0, found)
+	case .Build_Cancelled:
+		return errors.error_make(.Refused, .None, argument, 0, 0, found)
+	case .Put_Quota_Reached:
+		return errors.error_make(.Over_Limit, .Objects, argument, 0, 0, found)
 	}
 	return errors.error_make(.Refused, .None, argument, 0, 0, found)
 }

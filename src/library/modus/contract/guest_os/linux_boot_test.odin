@@ -136,7 +136,7 @@ bz_image_boot_prepare :: proc(t: ^testing.T) {
 	testing.expect_value(t, registers.rsi, LINUX_ZERO_PAGE_ADDRESS)
 	testing.expect_value(t, registers.mode_load, u8(op.Guest_Mode_Load.Long_64))
 	testing.expect_value(t, registers.code_selector, LINUX_CODE_SELECTOR)
-	testing.expect_value(t, registers.rflags & FLAGS_INTERRUPT, u64(0))
+	testing.expect_value(t, registers.rflags & op.GUEST_FLAGS_INTERRUPT, u64(0))
 	// The protected-mode part, then zeros to the end of the working space.
 	testing.expect(t, bytes[0x100_0000] == image[1024] && bytes[0x100_0000 + 0x1BFF] == image[0x1FFF])
 	testing.expect_value(t, bytes[0x100_0000 + 0x1C00], u8(0))

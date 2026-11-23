@@ -377,11 +377,11 @@ read_device_cache_conflict :: proc "contextless" (process: ^Process, handle: u64
 		return false
 	}
 	region := &regions[slot.object]
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
 	if !region.cache_types_counted {
 		return false
 	}
-	lock_take(&frame_lock, .Frame)
-	defer lock_free(&frame_lock, .Frame)
 	return device_cache_type_conflict(slot.object, device_cache_type_of(region, flags))
 }
 

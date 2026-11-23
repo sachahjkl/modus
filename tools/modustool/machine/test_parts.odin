@@ -144,8 +144,14 @@ test_parts := [?]Test_Part {
 	},
 	{
 		name = "linux",
-		does = "The machine of a shell of Linux: its data disk holds the private store `linux` with the bzImage of Nixpkgs and an initial archive with a static busybox. The start menu starts `linux`, Linux boots in a guest on the serial console, the tool types `echo modus-guest-ok` in the terminal window and waits for the output, then types `poweroff`, and `linux` ends with the halt of the guest. On a host that gives the test machine no SVM, the machine checks only that `linux` says that no guest runs",
+		does = "The machine of a shell of Linux: its data disk holds the private store `linux` with the bzImage of Nixpkgs and an initial archive with a static busybox. The start menu starts `linux`, Linux boots in a guest, loads the virtio modules and writes its log on the serial port, and runs its shell on the virtio console `hvc0`; the tool types `echo modus-guest-ok` in the terminal window and waits for the output, starts a program that waits for SIGWINCH, resizes the window and waits for the size that the program reads, then types `poweroff`, and `linux` ends with the halt of the guest. On a host that gives the test machine no SVM, the machine checks only that `linux` says that no guest runs",
 		procedures = {"linux_tests_run"},
+		volumes = {build.BOOT_VOLUME},
+	},
+	{
+		name = "guest_build",
+		does = "The machine of a guest build: its data disk holds the private store `recipes` with the bzImage of Nixpkgs, the initial archive of a build (its `init`, a static busybox and the virtio modules), one input file and a recipe of the guest builder, each by its hash. The console calls `recipes.build_stored`; the service runs the guest on its build thread, the `init` unpacks the input disk, runs the command, writes the output disk and gives the exit status 0, and the realisation names the tree hash that the tool computed on the host. On a host that gives the test machine no SVM, the machine checks only that the service says that no guest runs",
+		procedures = {"guest_build_tests_run"},
 		volumes = {build.BOOT_VOLUME},
 	},
 	{name = "no_pit", does = "The machine with no time base: no 8254 (`-machine q35,pit=off`) and a processor whose CPUID states no frequency of its cycle counter; the kernel writes its line and stops with the code 1", procedures = {"no_pit_tests_run"}, volumes = {build.BOOT_VOLUME}},

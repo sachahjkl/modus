@@ -386,7 +386,7 @@ guest_processor_index_bounds :: proc(t: ^testing.T) {
 		index, ok := guest_processor_of_word(word)
 		testing.expectf(t, ok && u64(index) == word, "processor word %v", word)
 	}
-	testing.expect_value(t, GUEST_PROCESSOR_CAPACITY, 4)
+	testing.expect_value(t, GUEST_PROCESSOR_CAPACITY, 32)
 	// The form of the argument names the same bound for the error record.
 	testing.expect_value(t, OPERATIONS[.Guest_Run].parameters[2].form, Form.Bounded)
 	testing.expect_value(t, OPERATIONS[.Guest_Run].parameters[2].limit, u64(GUEST_PROCESSOR_CAPACITY - 1))
