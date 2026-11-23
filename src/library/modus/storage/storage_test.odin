@@ -6,7 +6,6 @@ import "modus:contract/errors"
 import "modus:contract/storage_status"
 import "core:testing"
 import block "modus:contract/block"
-import "modus:contract/storage_status"
 import "modus:system"
 
 // The kind of a Listed row comes from the storage service. Each word that

@@ -435,10 +435,10 @@ capacity_bounds_and_one_past_bound_are_refused :: proc(t: ^testing.T) {
 	paid_port, _ := wiring_tables_heap(256, 20)
 	state_init(&paid, paid_port)
 	for i in 0 ..< 2 {
-		_, reg_st := process_register(&paid, askers[i], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
+		_, reg_st, _ := process_register(&paid, askers[i], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
 		testing.expect_value(t, reg_st, call_outcome.Call_Outcome.Succeeded)
 	}
-	_, _ = process_register(&paid, writers[1], offs[0], szs[0], {.Is_Service, .Has_Wiring_Ring})
+	_, _, _ = process_register(&paid, writers[1], offs[0], szs[0], {.Is_Service, .Has_Wiring_Ring})
 	for _ in 0 ..< 20 {
 		w_st, _, _, _ := wire_once(&paid, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
 		testing.expect_value(t, w_st, call_outcome.Call_Outcome.Succeeded)
@@ -462,9 +462,9 @@ capacity_bounds_and_one_past_bound_are_refused :: proc(t: ^testing.T) {
 	shared: State
 	shared_port, shared_tables := wiring_tables_heap(256, 256)
 	state_init(&shared, shared_port)
-	filler_index, _ := process_register(&shared, askers[0], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
-	collector_index, _ := process_register(&shared, askers[1], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
-	_, _ = process_register(&shared, writers[1], offs[0], szs[0], {.Is_Service, .Has_Wiring_Ring})
+	filler_index, _, _ := process_register(&shared, askers[0], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
+	collector_index, _, _ := process_register(&shared, askers[1], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
+	_, _, _ = process_register(&shared, writers[1], offs[0], szs[0], {.Is_Service, .Has_Wiring_Ring})
 	shared_tables.asker_paid[filler_index] = 20
 	for _ in 0 ..< 20 {
 		w_st, _, _, _ := wire_once(&shared, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
@@ -486,10 +486,10 @@ capacity_bounds_and_one_past_bound_are_refused :: proc(t: ^testing.T) {
 	few_port, _ := wiring_tables_heap(2, 256)
 	state_init(&few, few_port)
 	for i in 0 ..< 2 {
-		_, reg_st := process_register(&few, askers[i], 0, 0, {.Can_Wire})
+		_, reg_st, _ := process_register(&few, askers[i], 0, 0, {.Can_Wire})
 		testing.expect_value(t, reg_st, call_outcome.Call_Outcome.Succeeded)
 	}
-	_, reg_st := process_register(&few, askers[2], 0, 0, {.Can_Wire})
+	_, reg_st, _ := process_register(&few, askers[2], 0, 0, {.Can_Wire})
 	testing.expect_value(t, reg_st, call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted)
 	_, still := process_find(&few, askers[1])
 	testing.expect(t, still, "a refused register changed a process")
@@ -1088,9 +1088,9 @@ the_fact_of_an_audit_opens_one_row_only :: proc(t: ^testing.T) {
 	collector := ws.Process_Identity{1, 1}
 	writer := ws.Process_Identity{2, 2}
 	other := ws.Process_Identity{3, 3}
-	_, _ = process_register(&s, collector, offs[0], szs[0], {.Has_Wiring_Ring})
-	_, _ = process_register(&s, writer, offs[0], szs[0], {.Has_Wiring_Ring})
-	_, _ = process_register(&s, other, offs[0], szs[0], {.Has_Wiring_Ring})
+	_, _, _ = process_register(&s, collector, offs[0], szs[0], {.Has_Wiring_Ring})
+	_, _, _ = process_register(&s, writer, offs[0], szs[0], {.Has_Wiring_Ring})
+	_, _, _ = process_register(&s, other, offs[0], szs[0], {.Has_Wiring_Ring})
 	audited := [2]ws.Resolved_Lent_End {
 		{process_slot = writer.slot, process_serial = writer.serial, audit_wired_by_root = 1, present = 1},
 		{process_slot = collector.slot, process_serial = collector.serial, audit_wired_by_root = 1, present = 1},
@@ -1110,11 +1110,11 @@ the_fact_of_an_audit_opens_one_row_only :: proc(t: ^testing.T) {
 	for case_of, index in cases {
 		lent := case_of.lent
 		st, ref, _, _ := wire_once(&s, image, collector, make_wire_row(.Started, 1, 1, .Started, 2, 1, case_of.pace), lent[:])
-		testing.expectf(t, st == .No_Right, "case %d: %v", index, st)
+		testing.expectf(t, st == .Grant_Or_Right_Missing, "case %d: %v", index, st)
 		testing.expect_value(t, errors.Kind(ref.kind), errors.Kind.No_Grant)
 		testing.expect_value(t, s.wirings_running, 0)
 	}
 	st, _, _, _ := wire_once(&s, image, collector, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), audited[:])
-	testing.expect_value(t, st, ws.Response_Status.Ok)
+	testing.expect_value(t, st, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, s.wirings_running, 1)
 }

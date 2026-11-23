@@ -169,16 +169,19 @@ first_run :: proc "c" () -> ! {
 }
 
 // debug_image_pages checks the range of the debug image that the boot
-// program gives: on a page, inside the bound, and inside one range of the
-// memory of the boot, which the kernel never gives as a free frame. A
+// program gives: on a page, with no wrap of its end, and inside one range of
+// the memory of the boot (its computed bound), which the kernel never gives as a free frame. A
 // memory object over other memory would let the root service read and
 // give pages that the kernel uses.
 debug_image_pages :: proc "contextless" (boot: ^info.Boot_Info) -> (pages: u64, accepted: bool) {
 	start, size := boot.debug_image, boot.debug_image_size
-	if start == 0 || start % PAGE_SIZE != 0 || size == 0 || size > info.DEBUG_IMAGE_LIMIT || start > max(u64) - info.DEBUG_IMAGE_LIMIT - PAGE_SIZE {
+	if start == 0 || start % PAGE_SIZE != 0 || size == 0 || size > max(u64) - PAGE_SIZE {
 		return 0, false
 	}
 	pages = (size + PAGE_SIZE - 1) / PAGE_SIZE
+	if start > max(u64) - pages * PAGE_SIZE {
+		return 0, false
+	}
 	end := start + pages * PAGE_SIZE
 	for range in info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range) {
 		if kind, ok := info.memory_kind_of_word(range.kind); !ok || kind != .Boot || range.page_count > (max(u64) - range.start) / PAGE_SIZE {

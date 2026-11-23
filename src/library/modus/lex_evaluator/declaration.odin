@@ -1309,7 +1309,7 @@ serialize_value_into :: proc "contextless" (ws: ^Declaration_Workspace, writer: 
 		insertion_sort_names(names[:field_count])
 		declaration_eval.output_write_u8(writer, u8(declaration_eval.Value_Tag.Record))
 		declaration_eval.output_write_u32(writer, u32(field_count))
-		for fname in names {
+		for fname in names[:field_count] {
 			declaration_eval.output_write_string(writer, fname)
 			field_val, ok := field_force(&ws.evaluation, value, fname, {}, lex_parser.NO_NODE)
 			if !ok {

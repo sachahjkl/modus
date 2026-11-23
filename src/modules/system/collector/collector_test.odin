@@ -664,8 +664,8 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 	heads: [4]wide_grants.Kept_Record_Head
 	bytes: [4 * size_of(wide_grants.Act_Stream_Record)]u8
 	error: errors.Error_Record
-	expect_refusal(t, read_all(service, &compositor_caller, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
-	testing.expect_value(t, read_all(service, &principal_reader, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error), i64(1))
+	expect_refusal(t, answer_of(read_all(service, &compositor_caller, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+	expect_answer(t, answer_of(read_all(service, &principal_reader, i64(router.space_numbers[.Trusted_Display]), heads[:], bytes[:], &error)), 1)
 
 	// Revocation ends recording cleanly.
 	testing.expect_value(t, collector_core.manager_revoke_grant(manager, serial, 300, .Principal_Revoked), wide_grants.Wide_Grant_Refusal.None)
@@ -698,7 +698,7 @@ the_export_opens_no_act_space :: proc(t: ^testing.T) {
 		terms := wide_grants.act_audit_space_terms()
 		terms.record_size = record_size
 		error: errors.Error_Record
-		expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &terms, &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Records)
+		expect_refusal(t, answer_of(space_open_for(service, &console, &source_text, &output_text, &terms, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Records)
 		testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Act_Space))
 		testing.expect_value(t, error.argument, i64(2))
 	}

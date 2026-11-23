@@ -600,7 +600,10 @@ guest_builder_bridge_input_file_count :: proc(t: ^testing.T) {
 		edge := edge_make(4 * 1024 * 1024, 4 * 1024 * 1024)
 		defer edge_end(edge)
 		blob := edge_blob(edge, "x")
-		files: [tree_hash.MAX_TREE_ENTRIES]tree_hash.Tree_Entry
+		// Eight folders of the same files fill the disk exactly; a name of
+		// four bytes, "f" and three digits, numbers 1000 files at most.
+		files: [gb.MAX_DISK_ENTRIES / 8]tree_hash.Tree_Entry
+		#assert(gb.MAX_DISK_ENTRIES % 8 == 0 && gb.MAX_DISK_ENTRIES / 8 <= tree_hash.MAX_TREE_ENTRIES && gb.MAX_DISK_ENTRIES / 8 <= 1000)
 		for &entry, index in files {
 			entry, _ = tree_hash.tree_entry_make(.Object, edge_name("f", index, 4), blob)
 		}

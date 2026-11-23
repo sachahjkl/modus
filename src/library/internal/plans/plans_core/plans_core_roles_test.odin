@@ -267,7 +267,7 @@ test_plans_roles_set_of_refuses_two_outermost_holders :: proc(t: ^testing.T) {
 // its overrides; a plan with none, and a set of the defaults, carry zero.
 @(test)
 test_plans_roles_set_of_carries_the_script_font_set :: proc(t: ^testing.T) {
-	plan := pr.Plan_Spec{principal = 0, entry_count = 2}
+	plan := test_plan(0, 2)
 	plan.entries[0], _ = pr.plan_entry_make_role("first", .Assistive, roles_test_hash(1))
 	plan.entries[1], _ = pr.plan_entry_make_script_fonts(roles_test_hash(9))
 	set: rd.Plan_Roles_Set

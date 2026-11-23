@@ -526,14 +526,22 @@ fallible_record_result :: proc(t: ^testing.T) {
 	testing.expect_value(t, read_record.kind, i64(errors.Kind.Bad_Value))
 	testing.expect_value(t, read_record.operation, 3)
 
-	// A parameter count that leaves no argument for both the place and the
+	// The place of the result and the record take the last two words of
+	// the call form: eleven parameters, three optional, are fourteen words
+	// and fit with both; a fourth optional parameter leaves no word for the
 	// record.
 	nearly_full := integer_description(module.PARAMETER_CAPACITY - 1)
 	nearly_full.result, nearly_full.result_detail = u8(module.Type.Record), 1
 	nearly_full.error_record = 1
+	for index in 0 ..< 3 {
+		nearly_full.parameter_needs[index] = u8(module.Parameter_Need.Optional)
+	}
 	args: [module.PARAMETER_CAPACITY - 1]Argument
 	_, _, _, encoded = encode(file, nearly_full, args[:], region[:])
-	testing.expect(t, !encoded)
+	testing.expect(t, encoded, "fourteen words of parameters, the place and the record are sixteen words")
+	nearly_full.parameter_needs[3] = u8(module.Parameter_Need.Optional)
+	_, _, _, encoded = encode(file, nearly_full, args[:], region[:])
+	testing.expect(t, !encoded, "fifteen words of parameters, the place and the record are seventeen words")
 }
 
 // The completion of a call crosses from the receiver to the caller with no

@@ -172,19 +172,19 @@ when WRITTEN_SHAPING_COMPILED_IN {
 	// The declarations name the records of the package: the check of the
 	// declarations of an import reads the layout of a struct by its name.
 	foreign _ {
-		@(link_name = "process_fonts_open")
+		@(require_results, link_name = "process_fonts_open")
 		module_process_fonts_open :: proc "c" (held: ^system.Table_To_Append(Held_Font), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
-		@(link_name = "line_shape")
+		@(require_results, link_name = "line_shape")
 		module_line_shape :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(Placed_Glyph), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
-		@(link_name = "line_widths")
+		@(require_results, link_name = "line_widths")
 		module_line_widths :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, ranges: ^system.Table_To_Change(Text_Range), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
-		@(link_name = "line_fit")
+		@(require_results, link_name = "line_fit")
 		module_line_fit :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, room: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
-		@(link_name = "glyph_find")
+		@(require_results, link_name = "glyph_find")
 		module_glyph_find :: proc "c" (face: i64, character: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
-		@(link_name = "glyph_outline")
+		@(require_results, link_name = "glyph_outline")
 		module_glyph_outline :: proc "c" (face: i64, font: i64, glyph: i64, points: ^system.Table_To_Append(Outline_Word), contours: ^system.Table_To_Append(Contour_End), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
-		@(link_name = "cell_cluster_read")
+		@(require_results, link_name = "cell_cluster_read")
 		module_cell_cluster_read :: proc "c" (face: i64, text: ^system.Bytes_To_Read, place: i64, sara_am_taken: i64, cluster: ^system.Table_To_Append(Cell_Cluster), marks: ^system.Table_To_Append(Cell_Mark), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 	}
 

@@ -70,10 +70,10 @@ a_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	locked.entries[0].value_layer_word = u64(chosen_values.Layer.Locked)
 	third, _ := plan_hash(&locked)
 	testing.expect(t, third != first)
-	difference: Plan_Difference
+	difference := test_difference()
 	testing.expect_value(t, plan_diff_compute(&current, &proposed, &difference), Plan_Refusal.None)
 	testing.expect(t, difference.changed_values == 1 && difference.any_grant_added && difference.changes[0].old_value_word == 2 && difference.changes[0].new_value_word == 1)
-	added: Plan_Difference
+	added := test_difference()
 	testing.expect_value(t, plan_diff_compute(nil, &current, &added), Plan_Refusal.None)
 	testing.expect(t, added.added_values == 1 && added.any_grant_added)
 	// The row reads back.
@@ -153,7 +153,7 @@ a_text_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	first_hash, _ := plan_hash(&first)
 	second_hash, _ := plan_hash(&second)
 	testing.expect(t, first_hash != second_hash)
-	difference: Plan_Difference
+	difference := test_difference()
 	testing.expect_value(t, plan_diff_compute(&first, &second, &difference), Plan_Refusal.None)
 	testing.expect(t, difference.change_count == 1 && difference.changes[0].change == .Changed && difference.any_grant_added)
 	item := &difference.changes[0]

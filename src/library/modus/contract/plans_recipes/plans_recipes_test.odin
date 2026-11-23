@@ -803,7 +803,7 @@ the_script_font_set_of_a_plan :: proc(t: ^testing.T) {
 	testing.expect(t, !made, "a zero hash makes no entry")
 	entry, ok := plan_entry_make_script_fonts(make_hash(1))
 	testing.expect(t, ok)
-	plan := Plan_Spec{principal = 0, entry_count = 1}
+	plan := test_plan(0, 1)
 	plan.entries[0] = entry
 	refusal, _ := plan_validate(&plan)
 	testing.expect_value(t, refusal, Plan_Refusal.None)
@@ -825,14 +825,14 @@ the_script_font_set_of_a_plan :: proc(t: ^testing.T) {
 		{proc(plan: ^Plan_Spec) {plan.entries[0].kind_word = u64(max(Plan_Entry_Kind)) + 1}, .Bad_Entry_Kind},
 	}
 	for broken, index in cases {
-		changed := plan
+		changed := test_plan_copy(&plan)
 		broken.change(&changed)
 		found_refusal, _ := plan_validate(&changed)
 		testing.expectf(t, found_refusal == broken.refusal, "case %d: %v, expected %v", index, found_refusal, broken.refusal)
 	}
-	other := plan
+	other := test_plan_copy(&plan)
 	other.entries[0].module_hash = make_hash(2)
-	difference: Plan_Difference
+	difference := test_difference()
 	testing.expect_value(t, plan_diff_compute(&plan, &other, &difference), Plan_Refusal.None)
 	testing.expect(t, difference.has_changes && difference.change_count == 1 && !difference.any_grant_added)
 	item := difference.changes[0]

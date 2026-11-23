@@ -93,7 +93,7 @@ Answer :: struct {
 @(private = "file")
 // value_of gives the value of a call that succeeded, and -1 for a refusal:
 // the tests of a count read the count, and expect_error reads the refusal.
-value_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> i64 {
+value_of :: proc "contextless" (outcome: call_outcome.Call_Outcome, value: i64) -> i64 {
 	return outcome == .Succeeded ? value : -1
 }
 
@@ -169,7 +169,7 @@ the_three_ways_give_the_same_records :: proc(t: ^testing.T) {
 		room := width / 3
 		lines: [16]text_rendering.Text_Range
 		line_table := system.Table_To_Append(text_rendering.Text_Range){records = &lines[0], count = 0, capacity = 16}
-		line_outcome, line_count := value_of(break_text(&outlines.table, i64(each.face), i64(each.size), &text_table, room, &line_table, &error))
+		line_outcome, line_count := break_text(&outlines.table, i64(each.face), i64(each.size), &text_table, room, &line_table, &error)
 		testing.expect(t, line_outcome == .Succeeded && line_count > 1 && line_count <= 16)
 		start := 0
 		for line in lines[:line_count] {
@@ -470,7 +470,7 @@ shape_through_module :: proc(t: ^testing.T, outlines: ^Test_Outlines, text: stri
 	error: errors.Error_Record
 	text_table := bytes_to_read(transmute([]u8)text)
 	table := system.Table_To_Append(text_rendering.Placed_Glyph){records = raw_data(placed), count = 0, capacity = u64(len(placed))}
-	outcome, result := value_of(shape_text(&outlines.table, i64(text_rendering.Face.Interface), i64(size), &text_table, &table, &error))
+	outcome, result := shape_text(&outlines.table, i64(text_rendering.Face.Interface), i64(size), &text_table, &table, &error)
 	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, error.kind, i64(0))
 	count = int(result)

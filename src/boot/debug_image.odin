@@ -1,11 +1,12 @@
 package boot
 
-import info "modus:contract/boot_info"
 import "base:intrinsics"
 
 // The debug image (docs/MODULE_CONTRACT.md, "Debug information"): the debug
 // objects of the modules, one file of the boot volume beside the boot
-// program, apart from the boot image. The boot program and the boot image
+// program, apart from the boot image. Its bound is computed: the memory
+// that the firmware gives for it. A fixed bound refused the debug image of
+// the build once it grew past it, and the machine lost its names. The boot program and the boot image
 // are the same bytes with and without it, so a debug object changes no
 // measure and no signature. It is data for a reader of names: no code
 // comes from it, and each reader checks each debug object before it uses
@@ -15,7 +16,7 @@ DEBUG_IMAGE_PATH :: "\\DEBUG\\OBJECTS.IMG"
 
 // debug_image_read reads the debug image of the volume of the boot program
 // into pages of its own. It gives 0 and 0 when the volume has no such file,
-// when the file is empty or over the bound, or when the firmware refuses a
+// when the file is empty, or when the firmware refuses a
 // step. It runs after the last allocation of the start that stops the
 // machine when it fails, and it never stops the machine itself: a start
 // never fails for the debug image. A failed read gives its pages back.
@@ -53,8 +54,13 @@ debug_image_read :: proc "contextless" () -> (address: u64, size: u64) {
 	if file.set_position(file, max(u64)) != 0 || file.get_position(file, &size) != 0 || file.set_position(file, 0) != 0 {
 		return 0, 0
 	}
-	if size == 0 || size > info.DEBUG_IMAGE_LIMIT {
-		print("boot program: the debug image is empty or over its bound: not read\r\n")
+	if size == 0 {
+		print("boot program: the debug image is empty: not read\r\n")
+		return 0, 0
+	}
+	// Format property: a count of pages that wraps names no memory.
+	if size > max(u64) - PAGE_SIZE {
+		print("boot program: the debug image is larger than an address holds: not read\r\n")
 		return 0, 0
 	}
 	page_count := (size + PAGE_SIZE - 1) / PAGE_SIZE

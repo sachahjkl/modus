@@ -50,11 +50,6 @@ PAGE_SIZE :: 4096 // The page of the processor.
 PAGE_TABLE_LEVELS :: 4 // The levels of a page table of the processor: addresses of 48 bits.
 // The pages of the stack on which the boot program starts the kernel.
 BOOT_STACK_PAGES :: 16
-// The bound of the debug image (Boot_Info.debug_image): its pages stay taken
-// from the memory of the machine for its whole run. The debug image of the
-// build is 2.3 MiB, and 32 MiB is about 14 times it. The boot program reads
-// no larger file, and the kernel refuses a larger range.
-DEBUG_IMAGE_LIMIT :: 32 << 20
 
 // What a range of physical memory holds, as the boot program tells the
 // kernel. The kernel takes its page frames from the `Free` ranges only.
@@ -135,7 +130,7 @@ Boot_Info :: struct {
 	// read it. It is data for a reader of names: the boot program does not
 	// verify it, and no code comes from it.
 	debug_image:        u64,
-	debug_image_size:   u64, // At most `DEBUG_IMAGE_LIMIT`.
+	debug_image_size:   u64, // Computed: the size of the file, inside one range of the memory of the boot.
 	// The start policy that the root service starts: the word of a
 	// Start_Request, and the word of the Start_Request_Source that asked
 	// for it (start_request_of_words).

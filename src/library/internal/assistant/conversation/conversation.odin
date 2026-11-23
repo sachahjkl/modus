@@ -400,7 +400,7 @@ reply :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bo
 		return refused(error, .Wrong_State, .State, .Requests, 1, serial)
 	}
 	if int(request.step_count) >= assistant_contract.AGENT_LOOP_STEP_CAPACITY {
-		return refused(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Records, 1, i64(request.step_count) + 1, assistant_contract.AGENT_LOOP_STEP_CAPACITY)
+		return refused(error, .Argument_Refused, .Too_Long, .Records, 1, i64(request.step_count) + 1, assistant_contract.AGENT_LOOP_STEP_CAPACITY)
 	}
 	if refused, refusal := text_refusal(error, 2, text, assistant_contract.REPLY_TEXT_BYTES); refused {
 		return refusal, 0, nil
@@ -446,7 +446,7 @@ reply_refused :: proc "contextless" (conversation: ^Conversation, acts_for_princ
 		return refused(error, .Wrong_State, .State, .Requests, 1, serial)
 	}
 	if int(request.step_count) >= assistant_contract.AGENT_LOOP_STEP_CAPACITY {
-		return refused(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Records, 1, i64(request.step_count) + 1, assistant_contract.AGENT_LOOP_STEP_CAPACITY)
+		return refused(error, .Argument_Refused, .Too_Long, .Records, 1, i64(request.step_count) + 1, assistant_contract.AGENT_LOOP_STEP_CAPACITY)
 	}
 	kind_member, kind_ok := errors.kind_of_word(kind)
 	if !kind_ok || kind_member == .None {

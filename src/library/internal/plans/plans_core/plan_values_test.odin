@@ -12,7 +12,7 @@ import rd "modus:contract/root_delegation"
 // passes the check of the core. A plan with no value is a set of no owner.
 @(test)
 the_values_of_a_plan_become_one_set :: proc(t: ^testing.T) {
-	plan: pr.Plan_Spec
+	plan := test_plan(0, 0)
 	add :: proc(plan: ^pr.Plan_Spec, owner, field: string, word: u64, layer: chosen_values.Layer) {
 		entry, _ := pr.plan_entry_make_value(owner, field, word, layer)
 		plan.entries[plan.entry_count] = entry
@@ -51,7 +51,7 @@ the_values_of_a_plan_become_one_set :: proc(t: ^testing.T) {
 @(test)
 values_with_no_port_or_a_refusal_are_refused :: proc(t: ^testing.T) {
 	state: Plans_State
-	plan: pr.Plan_Spec
+	plan := test_plan(0, 0)
 	entry, _ := pr.plan_entry_make_value("display", "bar_edge", 2, .Plan_Default)
 	plan.entries[0], plan.entry_count = entry, 1
 	testing.expect_value(t, values_give(&state, MACHINE_PRINCIPAL, &plan, 1, .Apply), pr.Plan_Refusal.Values_Refused)
@@ -80,7 +80,7 @@ a_refused_send_again_of_the_values_marks_the_state :: proc(t: ^testing.T) {
 	@(static) sends: int
 	@(static) pauses: int
 	state := new(Plans_State, context.temp_allocator)
-	plan: pr.Plan_Spec
+	plan := test_plan(0, 0)
 	entry, _ := pr.plan_entry_make_value("display", "bar_edge", 2, .Plan_Default)
 	plan.entries[0], plan.entry_count = entry, 1
 	take :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
@@ -155,7 +155,7 @@ any_word :: proc "contextless" (word: u64) -> bool {return true}
 // texts, 32 of 256 bytes for one owner, fits the set.
 @(test)
 a_text_of_the_plan_reaches_its_owner :: proc(t: ^testing.T) {
-	plan: pr.Plan_Spec
+	plan := test_plan(0, 0)
 	home, _ := pr.plan_entry_make_text_value("browser", "home", "http://example.org/a,b", .Plan_Default)
 	interval, _ := pr.plan_entry_make_value("monitor", "sample_interval", 1000, .Locked)
 	plan.entries[0], plan.entries[1], plan.entry_count = home, interval, 2

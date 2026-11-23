@@ -63,16 +63,18 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 	testing.expect_value(t, dialog.shown_at_milliseconds, 1000)
 }
 
-// The memory that the open needs: one item for each comma of a list that is
-// not blank, and one more; a blank list needs none.
+// The memory that the open needs: one item for each line feed of a list
+// that is not blank, and one more; a blank list needs none. A comma is part
+// of its item.
 @(test)
 plan_difference_items_needed_counts_each_item :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_items_needed("", ""), 0)
 	testing.expect_value(t, plan_difference_items_needed("  ", " "), 0)
 	testing.expect_value(t, plan_difference_items_needed("a", ""), 1)
-	testing.expect_value(t, plan_difference_items_needed("a", "b, c"), 3)
+	testing.expect_value(t, plan_difference_items_needed("a", "b\nc"), 3)
+	testing.expect_value(t, plan_difference_items_needed("a", "b, c"), 2)
 	// A list that the open refuses still counts: the memory comes first.
-	testing.expect_value(t, plan_difference_items_needed("a,,b", ","), 5)
+	testing.expect_value(t, plan_difference_items_needed("a\n\nb", "\n"), 5)
 	testing.expect_value(t, plan_difference_items_needed(items_text(TEST_SIDE_ITEMS), items_text(TEST_SIDE_ITEMS)), TEST_OPEN_ITEMS)
 }
 

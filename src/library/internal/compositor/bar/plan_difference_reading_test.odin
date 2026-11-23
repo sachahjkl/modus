@@ -115,7 +115,7 @@ plan_difference_ended_before_its_reading :: proc(t: ^testing.T) {
 	testing.expect_value(t, busy, Plan_Difference_Refusal.Busy)
 
 	// A refused reading: an empty item. The dialog ends unread.
-	bad := transmute([]u8)string("a,,b")
+	bad := transmute([]u8)string("a\n\nb")
 	refused := plan_difference_read(slice_source(&bad), len(bad), 0, {user = &left, take = heap_take})
 	testing.expect_value(t, refused.refusal, Plan_Difference_Refusal.Empty_Item)
 	testing.expect(t, plan_difference_adopt(&dialog, second, &refused, 1))

@@ -22,9 +22,9 @@ a_home_is_read_at_its_border :: proc(t: ^testing.T) {
 	room: [ADDRESS_CAPACITY + 8]u8
 	_, empty, _ := home_problem_of("", room[:])
 	testing.expect_value(t, empty, Home_Problem.Too_Short)
-	// 160 bytes: "http://h/" and a path of 64 bytes is the longest path; a
-	// long query fills the rest.
-	at_bound := strings.concatenate({"http://h/", strings.repeat("p", 63, context.temp_allocator), "?", strings.repeat("q", 160 - 9 - 63 - 1, context.temp_allocator)}, context.temp_allocator)
+	// HOME_BYTES_MOST bytes: "http://h/" and a path of 64 bytes is the
+	// longest path; a long query fills the rest.
+	at_bound := strings.concatenate({"http://h/", strings.repeat("p", 63, context.temp_allocator), "?", strings.repeat("q", HOME_BYTES_MOST - 9 - 63 - 1, context.temp_allocator)}, context.temp_allocator)
 	testing.expect_value(t, len(at_bound), HOME_BYTES_MOST)
 	canonical, bound_problem, _ := home_problem_of(at_bound, room[:])
 	testing.expect(t, bound_problem == .None && canonical == at_bound)

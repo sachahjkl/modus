@@ -458,12 +458,12 @@ test_plans_display_lists_name_each_side :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(lists.removed[:lists.removed_length]), "disk calc narrowed\nstore notes read\nstart clock")
 	// A text value shows whole, in quotes, a comma included: the line feed
 	// is the one separator.
-	text_plan := pr.Plan_Spec{principal = 0, entry_count = 1}
+	text_plan := test_plan(0, 1)
 	text_plan.entries[0], _ = pr.plan_entry_make_text_value("browser", "home", "http://a.example/x,y", .Locked)
-	text_difference: pr.Plan_Difference
+	text_difference := pr.Plan_Difference{changes = make([]pr.Plan_Diff_Item, 1, context.temp_allocator)}
 	testing.expect_value(t, pr.plan_diff_compute(nil, &text_plan, &text_difference), pr.Plan_Refusal.None)
 	text_lists: Plan_Display_Lists
-	testing.expect_value(t, display_lists_of_difference(&text_difference, &text_lists), pr.Plan_Refusal.None)
+	testing.expect_value(t, display_lists_of_difference(lists_state, &text_difference, &text_lists), pr.Plan_Refusal.None)
 	testing.expect_value(t, string(text_lists.added[:text_lists.added_length]), "lock browser.home = \"http://a.example/x,y\"")
 }
 
@@ -631,7 +631,7 @@ test_plans_apply_shows_each_entry_of_a_plan_of_any_count :: proc(t: ^testing.T) 
 		testing.expectf(t, refusal == .None && ticket != 0, "%d entries: %v", count, refusal)
 		testing.expect_value(t, lists.added_count, count)
 		testing.expect_value(t, int(difference.change_count), count)
-		testing.expect_value(t, strings.count(display.added, ", "), count - 1)
+		testing.expect_value(t, strings.count(display.added, pr.PLAN_DISPLAY_ITEM_SEPARATOR), count - 1)
 		display.decisions[ticket] = .Accepted
 		record, finished, poll_refusal := apply_poll(state, &port, 0, ticket, 100, &difference)
 		testing.expectf(t, finished && poll_refusal == .None, "%d entries: %v", count, poll_refusal)

@@ -616,18 +616,18 @@ picker_pages_reach_each_store_of_a_long_list :: proc(t: ^testing.T) {
 	testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT, &unknown, &page), powerbox.Powerbox_Refusal.Untrusted_Answer)
 
 	testing.expect_value(t, mark_dialog_shown(state, dlg.dialog_serial, TRUSTED_DISPLAY_SLOT, 1100), powerbox.Powerbox_Refusal.None)
-	answer := make_grant_answer(&dlg, 1100, 1400, 1400, .Granted, .This_Run)
+	answer := make_grant_answer(&dlg, 1100, 1650, 1650, .Granted, .This_Run)
 	answer.items[0].picker_selected = true
 	answer.items[0].picker_index = chosen.list_index
 	answer.items[0].picker_change_count = dlg.picker_change_count
 	// A pick with the hash of another name is refused, with no grant.
 	answer.items[0].picker_name_hash = dlg.picker_candidates[0].name_hash
-	bad := resolve_answer(state, &answer, 1400)
+	bad := resolve_answer(state, &answer, 1650)
 	testing.expect_value(t, bad.refusal, powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
 	answer.items[0].picker_name_hash = chosen.name_hash
-	good := resolve_answer(state, &answer, 1400)
+	good := resolve_answer(state, &answer, 1650)
 	testing.expect_value(t, good.refusal, powerbox.Powerbox_Refusal.None)
 	grant, found := lookup_issued_grant(state, good.items[0].granted_handle_id)
 	testing.expect(t, found)
@@ -658,11 +658,11 @@ picker_pick_after_the_list_changed_is_refused :: proc(t: ^testing.T) {
 	page: powerbox.Picker_Page
 	testing.expect_value(t, picker_page_take(state, TRUSTED_DISPLAY_SLOT, &request, &page), powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
 	testing.expect_value(t, mark_dialog_shown(state, dlg.dialog_serial, TRUSTED_DISPLAY_SLOT, 1100), powerbox.Powerbox_Refusal.None)
-	answer := make_grant_answer(&dlg, 1100, 1400, 1400, .Granted, .This_Run)
+	answer := make_grant_answer(&dlg, 1100, 1650, 1650, .Granted, .This_Run)
 	answer.items[0].picker_selected = true
 	answer.items[0].picker_change_count = dlg.picker_change_count
 	answer.items[0].picker_name_hash = dlg.picker_candidates[0].name_hash
-	result := resolve_answer(state, &answer, 1400)
+	result := resolve_answer(state, &answer, 1650)
 	testing.expect_value(t, result.refusal, powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 }

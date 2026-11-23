@@ -140,6 +140,13 @@ Run :: struct {
 // The rows that a test gives a read when it names no count.
 TEST_ROWS :: 32
 
+// plan_with_room gives a plan of principal 0 with no entry, in memory of
+// the test that holds count entries.
+plan_with_room :: proc(count: int) -> pr.Plan_Spec {
+	bytes, _ := pr.plan_bytes_for(count)
+	return pr.plan_of_memory(0, make([]u8, bytes, context.temp_allocator))
+}
+
 // read_text evaluates a line and reads its plan with rows_given rows.
 @(private = "file")
 read_text :: proc(image: ^Fake_Image, text: string, rows_given := TEST_ROWS) -> ^Run {
@@ -262,7 +269,7 @@ a_plan_becomes_its_rows :: proc(t: ^testing.T) {
 	home := strings.repeat("h", 40, context.temp_allocator)
 	text_plan := read_text(image, strings.concatenate({"plan { values = { browser = { home = \"", home, "\" } } }"}, context.temp_allocator))
 	testing.expect(t, text_plan.evaluated && text_plan.refusal.problem == .None && text_plan.count == 1)
-	plan: pr.Plan_Spec
+	plan := plan_with_room(TEST_ROWS)
 	all := make([dynamic]pr.Plan_Entry_Row, context.temp_allocator)
 	append(&all, ..run.rows[:run.count])
 	append(&all, ..values.rows[:values.count])
@@ -360,6 +367,7 @@ the_rows_of_a_plan_are_typed_at_the_border_of_plans :: proc(t: ^testing.T) {
 	good := read_text(image, "plan { values = { display = { bar_edge = .bottom, notification_show_milliseconds = 1000 }, browser = { home = \"modus://welcome\" } } }")
 	testing.expect(t, good.evaluated && good.refusal.problem == .None && good.count == 3)
 	plan := new(pr.Plan_Spec, context.temp_allocator)
+	plan^ = plan_with_room(TEST_ROWS)
 	refusal, _ := pr.plan_of_rows(0, good.rows[:good.count], plan)
 	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
 	passed, _ := description.entries_check(described_image, plan)
@@ -391,7 +399,10 @@ the_rows_of_a_plan_are_typed_at_the_border_of_plans :: proc(t: ^testing.T) {
 		{"display", "nothing", 1, "", WORD, .Field_Unknown},
 	}
 	for item in cases {
-		bad := plan^
+		// A copy in memory of its own: each case changes one entry of its
+		// copy and leaves the plan that passed as it was.
+		bad := plan_with_room(TEST_ROWS)
+		pr.plan_copy(&bad, plan)
 		entry := &bad.entries[1]
 		made: bool
 		if item.kind == TEXT {

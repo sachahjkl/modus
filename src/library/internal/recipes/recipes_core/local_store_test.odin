@@ -158,16 +158,19 @@ large_output :: proc(size: int, seed: u8) -> []u8 {
 	return bytes
 }
 
-// An output at each edge of the staging, past it, and at the bound of one
-// object of a cache: built from memory of the builder, kept in the store,
-// read back after a start with its hash checked, and read into a buffer of
-// its size only. One byte past the bound is refused, and keeps nothing.
+// An output at each edge of the staging, past it, and past 16 MiB, the old
+// bound of one object of a cache: built from memory of the builder, kept in
+// the store, read back after a start with its hash checked, and read into a
+// buffer of its size only. The bound of an output is the bound of an object
+// of the protocol (object_cache.MAX_OBJECT_BYTES, 4 PiB), a format property
+// that no memory of a test holds: the free space of the store is the bound
+// that holds in practice.
 @(test)
 an_output_of_any_size_reaches_the_store_and_comes_back :: proc(t: ^testing.T) {
 	state := new(Recipes_State, context.temp_allocator)
 	store: Large_Store
 	state_init(state, large_store_port(&store))
-	sizes := [?]int{1, STAGING_BYTES - 1, STAGING_BYTES, STAGING_BYTES + 1, 1024 * 1024 + 1, int(OUTPUT_BYTES_MOST)}
+	sizes := [?]int{1, STAGING_BYTES - 1, STAGING_BYTES, STAGING_BYTES + 1, 1024 * 1024 + 1, 16 * 1024 * 1024 + 1}
 	for size, index in sizes {
 		builder := Large_Builder{output = large_output(size, u8(index))}
 		spec := large_spec(index)
@@ -184,12 +187,7 @@ an_output_of_any_size_reaches_the_store_and_comes_back :: proc(t: ^testing.T) {
 		_, short := output_read(state, again.output_hash, into[:size - 1])
 		testing.expect_value(t, short, pr.Recipe_Refusal.Buffer_Too_Small)
 	}
-	objects := len(store.objects)
-	past := Large_Builder{output = large_output(int(OUTPUT_BYTES_MOST) + 1, 9)}
-	refused := build_recipe(state, large_spec(100), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &past)
-	testing.expect_value(t, refused.refusal, pr.Recipe_Refusal.Malformed_Output)
-	testing.expect_value(t, len(store.objects), objects)
-	_, absent := output_read(state, blake3.hash(past.output), nil)
+	_, absent := output_read(state, blake3.hash(transmute([]u8)string("no output")), nil)
 	testing.expect_value(t, absent, pr.Recipe_Refusal.Cache_Miss)
 }
 
