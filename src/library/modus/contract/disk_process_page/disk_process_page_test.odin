@@ -11,6 +11,7 @@ import "core:testing"
 a_row_is_found_by_its_slot_and_its_serial :: proc(t: ^testing.T) {
 	page := new(Page)
 	defer free(page)
+	page.row_count = ROW_CAPACITY
 	hash: [HASH_SIZE]u8
 	for &byte, index in hash {
 		byte = u8(index * 7 + 1)
@@ -43,6 +44,7 @@ a_row_is_found_by_its_slot_and_its_serial :: proc(t: ^testing.T) {
 a_page_in_the_middle_of_a_change_gives_no_row :: proc(t: ^testing.T) {
 	page := new(Page)
 	defer free(page)
+	page.row_count = ROW_CAPACITY
 	row_write(page, 0, row_of(2, 1, "visitor", {}))
 	page.change_count += 1
 	_, found := row_find(page, 2, 1)
@@ -63,24 +65,44 @@ the_nickname_and_the_hash_prefix :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(prefix[:]), "5f0c0000000000a9")
 }
 
-// The page has a row for each place of the table of the root service: the
-// last place holds a row; a write at the capacity, one past it, or at a
-// negative place changes nothing.
+// The page has a row for each place of the table of the root service of
+// its machine: the last place holds a row; a write at the row count, one
+// past it, at the capacity or at a negative place changes nothing, for the
+// rows of a machine of 1 GiB and for the most rows. A row count past the
+// capacity reads as the capacity.
 @(test)
 a_write_past_the_rows_changes_nothing :: proc(t: ^testing.T) {
+	testing.expect(t, ROW_CAPACITY == op.PROCESS_SLOTS_MOST - 1)
+	testing.expect(t, PAGE_PAGES_MOST * 4096 >= size_of(Page))
+	testing.expect_value(t, page_pages(ROW_CAPACITY), u64(PAGE_PAGES_MOST))
+	testing.expect_value(t, page_pages(max(int)), u64(PAGE_PAGES_MOST))
+	testing.expect_value(t, page_pages(255), u64(5))
+	testing.expect_value(t, page_pages(0), u64(1))
+	testing.expect_value(t, page_pages(-1), u64(1))
+	for rows in ([?]int{255, ROW_CAPACITY}) {
+		page := new(Page)
+		defer free(page)
+		page.row_count = u64(rows)
+		for place in ([?]int{-1, rows, rows + 1, ROW_CAPACITY, max(int)}) {
+			row_write(page, place, row_of(7, 1, "outside", {}))
+			testing.expect_value(t, page.change_count, u64(0))
+		}
+		_, outside := row_find(page, 7, 1)
+		testing.expect(t, !outside)
+		row_write(page, rows - 1, row_of(255, 4, "last", {}))
+		found, ok := row_find(page, 255, 4)
+		testing.expect(t, ok)
+		nickname := nickname_of(found.nickname)
+		testing.expect_value(t, nickname_text(&nickname), "last")
+	}
+	// A row in the memory of the type past the row count is not read.
 	page := new(Page)
 	defer free(page)
-	testing.expect(t, ROW_CAPACITY == op.PROCESS_SLOTS_MOST - 1)
-	testing.expect(t, PAGE_PAGES * 4096 >= size_of(Page))
-	for place in ([?]int{-1, ROW_CAPACITY, ROW_CAPACITY + 1, max(int)}) {
-		row_write(page, place, row_of(7, 1, "outside", {}))
-		testing.expect_value(t, page.change_count, u64(0))
-	}
-	_, outside := row_find(page, 7, 1)
-	testing.expect(t, !outside)
-	row_write(page, ROW_CAPACITY - 1, row_of(255, 4, "last", {}))
-	found, ok := row_find(page, 255, 4)
-	testing.expect(t, ok)
-	nickname := nickname_of(found.nickname)
-	testing.expect_value(t, nickname_text(&nickname), "last")
+	page.row_count = 10
+	page.rows[10] = row_of(9, 9, "hidden", {})
+	_, hidden := row_find(page, 9, 9)
+	testing.expect(t, !hidden)
+	page.row_count = max(u64)
+	_, past := row_find(page, 9, 9)
+	testing.expect(t, past)
 }

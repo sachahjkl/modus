@@ -28,7 +28,7 @@ tables_start :: proc "contextless" () {
 	origins = table_take(Origin_Link, process_capacity * HOLDINGS_PER_PROCESS, "the origin tree")
 	process_records = table_take(Process_Record_State, process_capacity, "the records of the processes")
 	threads = table_take(Thread, thread_table_capacity, "the threads")
-	wait_links = table_take(Wait_Link, thread_table_capacity * op.WORD_WAIT_CAPACITY, "the word wait")
+	wait_entries = table_take(Wait_Entry, thread_table_capacity * op.WORD_WAIT_INLINE, "the word wait")
 	regions = table_take(Region, region_capacity, "the memory objects")
 	region_locks = table_take(Lock, region_capacity, "the locks of the memory objects")
 	log("kernel: tables: ", u64(process_capacity), " process slots, ", u64(thread_table_capacity), " threads, ", u64(region_capacity), " memory objects: ", Size{(before - free_frames) * PAGE_SIZE >> 20, .Mebibytes})

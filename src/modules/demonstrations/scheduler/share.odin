@@ -31,11 +31,13 @@ THREAD_PLACE_LIMIT :: 1024
 // the kernel applies the weights at each tick, and the round only follows
 // the threads that start, end and block.
 POLICY_PERIOD :: 100
-// The least process weight. A process has at most this many threads, so the
-// weight of one thread, the process weight divided by a count of threads,
-// is 1 or more, and the weights of the threads that count never sum to more
-// than the process weight.
-PROCESS_WEIGHT_LEAST :: op.THREAD_REPORT_CAPACITY
+// The least process weight: 1/32 of the full weight, the narrowest share.
+// A process has at most op.THREAD_REPORT_CAPACITY threads, no more than
+// this value, so the weight of one thread, the process weight divided by a
+// count of threads, is 1 or more, and the weights of the threads that count
+// never sum to more than the process weight.
+PROCESS_WEIGHT_LEAST :: op.WEIGHT_FULL / 32
+#assert(PROCESS_WEIGHT_LEAST >= op.THREAD_REPORT_CAPACITY)
 // The process weight is divided by this count for the new-thread weight
 // limit: a process has at most this many threads, so the threads that no
 // round saw never sum to a whole process weight, whatever the moments of
@@ -486,9 +488,10 @@ acts_for_principal :: proc "contextless" () -> bool {
 // round robin reads no weight.
 //
 // - **name**: the name of the processes, 31 bytes at most.
-// - **weight**: the process weight, from 256 to 1024. 1024 is the weight of
-//   a process with no setting. A process has at most 256 threads, so 256 is
-//   the least weight that gives each thread a weight of 1 or more.
+// - **weight**: the process weight, from 256 to 8192, the full weight of a
+//   thread. 8192 is the weight of a process with no setting. 256 is 1/32 of
+//   it, and still gives each of the 256 threads of a process a weight of 1
+//   or more.
 //
 // The result is the process weight that the name had. It fails with -1 and
 // an error record, and no setting changes:
@@ -497,11 +500,11 @@ acts_for_principal :: proc "contextless" () -> bool {
 // - `Empty`: the name has no byte;
 // - `Too_Long`: the name has more than 31 bytes;
 // - `Too_Small`: the weight is under 256;
-// - `Bad_Value`: the weight is above 1024;
+// - `Bad_Value`: the weight is above 8192;
 // - `Full`: 16 names have a setting.
 //
-// Example: `scheduler.share("paint", 256)` gives the process `paint` a
-// quarter of the weight of another process, the least share.
+// Example: `scheduler.share("paint", 2048)` gives the process `paint` a
+// quarter of the weight of another process.
 @(export, link_name = "share")
 share :: proc "c" (name: ^string, weight: i64, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {

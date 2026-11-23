@@ -422,14 +422,16 @@ CONNECTION_CAPACITY :: 256
 
 connections: [CONNECTION_CAPACITY]Connection
 
-// The processes that this service starts: each process slot of the
-// kernel but its own.
+// The most places of the processes that this service starts: each process
+// slot of the largest machine but its own. The places of this machine are
+// `started`, one for each process slot of the kernel but its own
+// (root_tables.odin).
 STARTED_CAPACITY :: op.PROCESS_SLOTS_MOST - 1
 
 machine: system.Handle
 image: []u8
 image_memory: system.Handle
-started: [STARTED_CAPACITY]Started
+started: []Started // root_tables_start.
 // The shared code of the modules of the processes that this service starts.
 prepared: system.Prepared_Modules
 display_holder: system.Handle
@@ -727,6 +729,8 @@ entropy_report: random.Entropy_Report
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[op.ROOT_MACHINE]
+	// The places of the processes, before anything reads them.
+	root_tables_start()
 	boot_image_take(ctx)
 	// The kernel refuses a stop code that the host cannot receive whole,
 	// with its error record, and changes nothing: the line after the two
@@ -1159,8 +1163,8 @@ display_holder_end :: proc "contextless" () {
 	}
 }
 
-// The places of the one wait of the loop (root_ring.ROOT_WAITED_QUEUES_MOST):
-// more than a wait on the stack holds.
+// The places of the one wait of the loop, with each queue of each place
+// (root_ring.root_wait_words): made by root_tables_start.
 root_wait_set: system.Wait_Set
 
 // root_loop_pass is one pass of the loop of this service: the control ring

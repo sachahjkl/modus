@@ -374,7 +374,7 @@ changed :: proc "contextless" (now, before: u64) -> bool {
 // The first line of each row of the list, and at shown_count the count of
 // the lines of all the rows: made when the list is read, not at each
 // picture.
-shown_row: [PROCESS_SLOTS + 1]int
+shown_row: []int // One more than the slots: tables_take.
 
 // The width of the column of the names in which shown_row counted the
 // lines: a frame whose column has another width counts them again.

@@ -786,14 +786,14 @@ Operation :: enum u32 {
 	// - `words`: the address of `count` records `Word`: each one is the address of a word of 32 bits, a
 	//   multiple of 4 that the process can read, and the value that the word holds while the thread waits
 	//   (the low 32 bits of `value`).
-	// - `count`: the words of this command. One entry holds at most `WORD_WAIT_CAPACITY` words in all its
-	//   commands.
+	// - `count`: the words of this command. One entry holds at most `WORD_WAIT_INLINE` words in all its
+	//   commands, or the words of the wait room of the thread (`Thread_Control_Command.Wait_Room`).
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
-	// - `No_Slot`: the entry would hold more than `WORD_WAIT_CAPACITY` words.
+	// - `No_Slot`: the entry would hold more words than the thread has room for.
 	// - `Bad_Address`: the process cannot read the table or a word, or a word is not a multiple of 4. The
 	//   entry then does not wait.
 	//
@@ -1398,11 +1398,16 @@ STRATEGY_NAMES := [Strategy]string {
 }
 
 // The weight of a thread created with the weight 0: the most. A weight is
-// from 1 to 1024: a process can lower or split the share of its threads,
-// never raise it above the default. 1024 keeps each product of the virtual
-// time inside 64 bits (docs/SCHEDULING.md, "Integer arithmetic and the
-// overflow argument").
-WEIGHT_FULL :: 1024
+// from 1 to 8192: a process can lower or split the share of its threads,
+// never raise it above the default. The unit is fine enough that a process
+// weight of 1/32 of the full weight, divided between the THREAD_CAPACITY
+// threads of a process, gives each thread a weight of 1 or more: the count
+// of threads of a process does not narrow the shares that a policy can
+// give. 8192 keeps each product of the virtual time inside 64 bits, and the
+// sum of the weights of a queue inside 32 bits (docs/SCHEDULING.md,
+// "Integer arithmetic and the overflow argument").
+WEIGHT_FULL :: 8192
+#assert(WEIGHT_FULL / 32 >= THREAD_CAPACITY)
 REQUEST_DEFAULT :: 3000 // Microseconds: the request of a thread created with the request 0.
 // Microseconds: the longest request, 100 ms. The bound keeps the lag bound of
 // EEVDF (two requests) inside the overflow argument of the scheduler
@@ -1443,7 +1448,7 @@ REQUEST_LIMIT :: 100_000
 // weight of a thread that no round of the policy saw ([new-thread weight
 // limit](term:new-thread-weight-limit)).
 //
-// Example: `{weight = 256, request = 500}` gives the thread a quarter of the
+// Example: `{weight = 2048, request = 500}` gives the thread a quarter of the
 // share of a thread of the full weight, and asks for stints of 500
 // microseconds under EEVDF.
 Thread_Schedule :: struct {
@@ -1879,11 +1884,45 @@ Word :: struct {
 }
 
 // The words of the wait of one kernel entry, in all its `Word_Wait`
-// commands. One more gives `No_Slot`. A server that waits on the rings of
-// many clients holds 3 words for each ring; the root service waits on the
-// rings of each process that it started. A `system.Wait` holds this many
-// words on the stack of its thread: 256 words take about 12 KiB of it.
-WORD_WAIT_CAPACITY :: 256
+// commands, that each thread has with no wait room: the kernel keeps their
+// entries in its thread table. One more gives `No_Slot`. A `system.Wait`
+// holds this many words on the stack of its thread, about 3.5 KiB.
+WORD_WAIT_INLINE :: 64
+// The most words of the wait of one kernel entry, with a wait room
+// (`Thread_Control_Command.Wait_Room`). A server that waits on the rings of
+// many clients holds 3 words for each ring; the root service waits on two
+// queues of each process that it started. The pages of the room come from
+// the budget of the process, so the budget bounds a room before this does.
+WORD_WAIT_MOST :: 65536
+// The words that one page of a wait room holds: the kernel keeps an entry
+// of 32 bytes for each word.
+WAIT_ROOM_WORDS_OF_A_PAGE :: 128
+// The pages of a wait room hang from one page of the kernel that names them.
+WAIT_ROOM_PAGES_MOST :: 512
+#assert((WORD_WAIT_MOST - WORD_WAIT_INLINE + WAIT_ROOM_WORDS_OF_A_PAGE - 1) / WAIT_ROOM_WORDS_OF_A_PAGE <= WAIT_ROOM_PAGES_MOST)
+
+// wait_room_pages gives the pages that a wait room of `words` words takes
+// from the budget of its process: 0 up to WORD_WAIT_INLINE, which need no
+// room; else one page that names the others, and one page for each
+// WAIT_ROOM_WORDS_OF_A_PAGE words past WORD_WAIT_INLINE. The caller checks
+// `words <= WORD_WAIT_MOST`.
+//
+// Example: 2048 words take 1 + 16 = 17 pages; 64 take none.
+wait_room_pages :: proc "contextless" (words: u64) -> u64 {
+	if words <= WORD_WAIT_INLINE {
+		return 0
+	}
+	return 1 + (words - WORD_WAIT_INLINE + WAIT_ROOM_WORDS_OF_A_PAGE - 1) / WAIT_ROOM_WORDS_OF_A_PAGE
+}
+
+// wait_room_words gives the words that a wait room of `pages` pages
+// holds, with the WORD_WAIT_INLINE words of the thread.
+wait_room_words :: proc "contextless" (pages: u64) -> u64 {
+	if pages == 0 {
+		return WORD_WAIT_INLINE
+	}
+	return WORD_WAIT_INLINE + (pages - 1) * WAIT_ROOM_WORDS_OF_A_PAGE
+}
 
 // What the kernel tells a thread: the kernel adds 1 to the `events` word of
 // the thread record and wakes the thread, when
@@ -2278,6 +2317,23 @@ Thread_Control_Command :: enum u64 {
 	// handle in `number` (with Read and Write) -> nothing. The target must
 	// be in state Created and not already be recorded or replayed.
 	Replay_Start         = 21,
+	// Gives the calling thread room for `size` words in each wait from now
+	// on -> the words of the room. `thread` and `number` are 0: a room
+	// serves the thread that waits. The kernel takes the pages of the room
+	// from the budget of the process (wait_room_pages) and gives back the
+	// pages of the room before; the thread ends with its room, whose pages
+	// return to the budget. A size of WORD_WAIT_INLINE or less removes the
+	// room. Bad_Operation for a size above WORD_WAIT_MOST, or a thread or
+	// a number that is not 0; Bad_State when the entry registered words
+	// already; No_Budget when the budget cannot pay the pages: nothing
+	// changes.
+	Wait_Room            = 22,
+}
+
+// thread_control_sizes_the_wait says if a command of Thread_Control gives
+// the calling thread its wait room: it names no thread and reads no handle.
+thread_control_sizes_the_wait :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	return command == .Wait_Room
 }
 
 // thread_control_records_a_process says if a command of Thread_Control
@@ -2355,7 +2411,7 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 		return {.Inspect, .Write}
 	case .Write_Schedule, .Write_Placement:
 		return {.Control}
-	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
+	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
 		return {.Inspect}
 	}
 	// Only a cast that skipped the border of the command reaches this line:
@@ -2384,7 +2440,7 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 	switch command {
 	case .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule:
 		return {.Schedule, .Inspect}, true
-	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
 		return {}, false
 	}
 	// Only a cast that skipped the border of the command reaches this line.
@@ -2395,12 +2451,12 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 // also takes the process handle with Debug of the process that the caller
 // debugs, with the number of a thread of that process in place of a thread
 // handle: each command but the two of the schedule, the two of the
-// placement and the three of the thread counters. A debugger holds, reads
+// placement, the three of the thread counters and the wait room. A debugger holds, reads
 // and writes a thread; the share of a thread and its processors are not a
 // part of debugging, and the thread counters are of the calling thread.
 thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control_Command) -> bool {
 	switch command {
-	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Wait_Room:
 		return false
 	case .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Record_Start, .Record_End, .Replay_Start:
 		return true
@@ -2923,7 +2979,7 @@ Status :: enum u32 {
 	No_Slot       = 5, // A table of fixed capacity is full.
 	// The handle table of a process, the 128 mappings of a process, the threads of a process
 	// (`THREAD_CAPACITY`), the module records (`PROCESS_MODULE_CAPACITY`), the words of a wait
-	// (`WORD_WAIT_CAPACITY`), the message interrupts (`MESSAGE_CAPACITY`), the rules of an event table, or a
+	// (`WORD_WAIT_INLINE`, or the wait room of the thread), the message interrupts (`MESSAGE_CAPACITY`), the rules of an event table, or a
 	// table of the kernel. Another try can pass after a slot frees.
 	Bad_State     = 6, // The object is not in a state where the operation applies.
 	// The process is stopped or not created, the thread is not held or ended, no thread waits for the fault

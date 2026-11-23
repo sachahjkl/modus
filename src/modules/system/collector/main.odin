@@ -493,6 +493,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 // wide-grant manager, then loops over commands and monotonic expiry checks.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	collector_wait_set = system.wait_set_of(collector_wait_words[:], collector_wait_parts[:])
 	export_service, export_ok := system.service_open(ctx)
 	has_delegated := false
 	if ctx.handles[wide_grants.SERVICE_RING_SLOT] != 0 {

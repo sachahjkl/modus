@@ -22,7 +22,7 @@ disk_process_page: ^process_page.Page
 
 disk_process_page_create :: proc "contextless" () {
 	status: system.Status
-	disk_process_page_memory, status = system.memory_create(process_page.PAGE_PAGES)
+	disk_process_page_memory, status = system.memory_create(process_page.page_pages(len(started)))
 	address: rawptr
 	if status == .Ok {
 		address, status = system.memory_map(disk_process_page_memory)
@@ -31,6 +31,7 @@ disk_process_page_create :: proc "contextless" () {
 		fail("cannot create the disk process page", status)
 	}
 	disk_process_page = (^process_page.Page)(address)
+	disk_process_page.row_count = u64(len(started))
 }
 
 // disk_process_page_give adds the disk process page, read-only, to the
@@ -43,7 +44,7 @@ disk_process_page_give :: proc "contextless" (mappings: []system.Mapping, count:
 		mapping_dropped_log("the disk process page", len(mappings))
 		return
 	}
-	mappings[count^] = {memory = disk_process_page_memory, address = process_page.PAGE_ADDRESS, first = 0, page_count = process_page.PAGE_PAGES, flags = {}}
+	mappings[count^] = {memory = disk_process_page_memory, address = process_page.PAGE_ADDRESS, first = 0, page_count = process_page.page_pages(len(started)), flags = {}}
 	count^ += 1
 	system.range_mapped_put(values, .Disk_Process_Page)
 }

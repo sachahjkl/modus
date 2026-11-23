@@ -903,6 +903,13 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pr
 		if holds.threads != 0 {
 			unit, asked, held = .Pages, 1 + ring.PAGE_COUNT, holds.pages // The thread area.
 		}
+	case .Thread_Control:
+		// A wait room: its pages, before the pages of the room that it
+		// replaces return.
+		if v[2] != u64(op.Thread_Control_Command.Wait_Room) {
+			return false
+		}
+		unit, asked, held, argument = .Pages, op.wait_room_pages(v[4]), holds.pages, 5
 	case .Budget_Create:
 		amounts := [5]u64{holds.pages, holds.processes, holds.threads, holds.processor, holds.log_records}
 		units := [5]errors.Unit{.Pages, .Processes, .Threads, .Processor, .Log_Records}
@@ -1181,11 +1188,13 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 	#partial switch operation {
 	case .Word_Wait:
 		// The words of this entry count too: only a list longer than the
-		// capacity is one cause that the record can name.
-		if v[1] <= op.WORD_WAIT_CAPACITY {
+		// room of the calling thread is one cause that the record can name.
+		// The diagnosis runs in the entry of that thread, on its processor.
+		capacity := u64(wait_capacity(&threads[processor_self().current]))
+		if v[1] <= capacity {
 			return false
 		}
-		record_set(record, .Too_Long, .Words, 2, v[1], op.WORD_WAIT_CAPACITY, 0)
+		record_set(record, .Too_Long, .Words, 2, v[1], capacity, 0)
 		return true
 	case .Memory_Map:
 		if v[1] != 0 || !mappings {
@@ -1480,6 +1489,19 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		// takes.
 		if v[2] == u64(op.Thread_Control_Command.Read_Memory) && v[4] > op.THREAD_MEMORY_READ_LIMIT {
 			record_set(record, .Bad_Value, .None, 5, v[4], op.THREAD_MEMORY_READ_LIMIT, 0)
+			return true
+		}
+		// A wait room of more words than a wait holds, or one that names a
+		// thread: a room serves the calling thread only.
+		if v[2] == u64(op.Thread_Control_Command.Wait_Room) {
+			switch {
+			case v[4] > op.WORD_WAIT_MOST:
+				record_set(record, .Too_Long, .Words, 5, v[4], op.WORD_WAIT_MOST, 0)
+			case v[0] != 0:
+				record_set(record, .Bad_Value, .None, 1, v[0], 0, 0)
+			case:
+				record_set(record, .Bad_Value, .None, 2, v[1], 0, 0)
+			}
 			return true
 		}
 	case .Fault_Handler_Set:

@@ -207,8 +207,8 @@ waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region
 			thread_words_wake(&thread)
 			continue
 		}
-		for word in thread.words[:thread.word_count] {
-			words[count] = {page = word &~ (PAGE_SIZE - 1), thread = u32(slot + 1)}
+		for n in 0 ..< thread.word_count {
+			words[count] = {page = wait_entry(&thread, n).word &~ (PAGE_SIZE - 1), thread = u32(slot + 1)}
 			count += 1
 		}
 	}

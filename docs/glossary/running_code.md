@@ -72,6 +72,14 @@ The design: `docs/ARCHITECTURE.md`, "K4. Rings and wait".
 
 Do not use: futex.
 
+### Wait room
+
+A wait room is the room of one thread for the words of its waits past the 64 that the kernel holds for each thread, in pages that the budget of its process pays.
+
+A thread that waits on the rings of many clients asks the kernel for it once, with `Thread_Control_Command.Wait_Room` and the count of its words; the library asks at the first wait with a wait set (`system.Wait_Set`). The kernel keeps an entry of 32 bytes for each word, 128 in a page, and one page that names the others: a room of 1036 words, the wait of the root service on a machine of 1 GiB, takes 9 pages. A wait holds at most 65536 words (`op.WORD_WAIT_MOST`). The room ends with its thread, and its pages return to the budget. Example: the compositor asks for 539 words, 2 for the ring of each of its 128 clients, 2 more while a client waits for room, and its fixed words. The design: `src/md/data/table_sizes.md`, "A wait holds 64 words on the stack, and more in a wait set of its caller".
+
+Do not use: wait buffer, wait capacity.
+
 ### Lock
 
 A lock is one word of memory that one thread holds at a time (`system.Lock`).
@@ -744,9 +752,9 @@ Do not use: quantum.
 
 ### Weight
 
-A weight is a number from 1 to 1024 of a thread: its share of a processor against the other threads of its queue, under a strategy with weights.
+A weight is a number from 1 to 8192 of a thread: its share of a processor against the other threads of its queue, under a strategy with weights.
 
-The weight is set when the thread is created. The weight 0 gives the new-thread weight limit of the creating thread or of its process: 1024, the full weight, unless it was lowered. A write of the thread schedule changes the weight while the thread lives: a process only lowers it, and only the holder of the right **Schedule** on the machine raises it. The processor limit of the budget holds under any weight.
+The weight is set when the thread is created. The weight 0 gives the new-thread weight limit of the creating thread or of its process: 8192, the full weight, unless it was lowered. A write of the thread schedule changes the weight while the thread lives: a process only lowers it, and only the holder of the right **Schedule** on the machine raises it. The processor limit of the budget holds under any weight.
 
 The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation" and "The schedule of a live thread".
 
@@ -754,7 +762,7 @@ Do not use: priority, nice value, shares.
 
 ### Virtual time
 
-The virtual time of a thread is its run time in weighted cycles: a run of c cycles adds c * 1024 / weight.
+The virtual time of a thread is its run time in weighted cycles: a run of c cycles adds c * 8192 / weight.
 
 The fair strategy runs the thread whose virtual time is least; EEVDF runs an eligible thread with the earliest virtual deadline. A thread with half the weight gains virtual time twice as fast, so it runs half as much. Two virtual times are compared by the sign of their difference, so the counter can wrap.
 
@@ -818,7 +826,7 @@ Do not use: program priority, program limit.
 
 ### Weight limit
 
-A weight limit is the most that the weight of one thread can be: a number from 1 to 1024, and 1024, the full weight, for a thread that nobody limited.
+A weight limit is the most that the weight of one thread can be: a number from 1 to 8192, and 8192, the full weight, for a thread that nobody limited.
 
 It makes a lowered weight last across the creation of threads: without it, a process leaves a lowered weight by a new thread. Only a write through the machine handle with **Schedule** and **Inspect** sets it. A new thread gets the new-thread weight limit of its creator as its weight limit. Example: the machine handle writes `{weight_limit = 256}` for a thread; its weight becomes 256, and its own write of 1024 is refused. It is not a share for a process, and not the new-thread weight limit.
 
@@ -828,7 +836,7 @@ Do not use: maximum priority, weight cap, ceiling.
 
 ### New-thread weight limit
 
-A new-thread weight limit is the weight limit that one thread, or all the threads of one process, give to each thread that they create: a number from 1 to 1024, and for a thread at most its weight limit.
+A new-thread weight limit is the weight limit that one thread, or all the threads of one process, give to each thread that they create: a number from 1 to 8192, and for a thread at most its weight limit.
 
 A thread has one in its thread schedule, a process in its process schedule. A creation takes the smaller of the two, and the new thread gets it as its weight limit and as its own new-thread weight limit. Only the machine handle with **Schedule** and **Inspect** sets it. Example: the share policy writes `{new_thread_weight_limit = 32}` to a process and its one thread; that thread keeps the weight 1024, and each thread that it creates has the weight 32. It is not the weight limit of the thread itself.
 
@@ -838,9 +846,9 @@ Do not use: child weight, inherited weight, creation weight.
 
 ### Process weight
 
-A process weight is a number from 32 to 1024 that the share policy divides between the threads of one process: the share of processor time of that process against the other processes.
+A process weight is a number from 256 to 8192 that the share policy divides between the threads of one process: the share of processor time of that process against the other processes.
 
-The principal sets it for the processes with one name: `scheduler.share("paint", 256)`. A process with no setting has 1024. It is a setting of the process `scheduler`: the kernel knows the weight of each thread only. The least value is 256 because a process has at most 256 threads, so each thread has a weight of 1 or more. It has an effect only while the share policy is on. Example: with the process weight 1024, the 8 threads of a process that compute have the weight 128 each.
+The principal sets it for the processes with one name: `scheduler.share("paint", 2048)`. A process with no setting has 8192. It is a setting of the process `scheduler`: the kernel knows the weight of each thread only. The least value is 256, 1/32 of the full weight, and it still gives each of the 256 threads of a process a weight of 1 or more. It has an effect only while the share policy is on. Example: with the process weight 8192, the 8 threads of a process that compute have the weight 1024 each.
 
 The design: `docs/SCHEDULING.md`, "A share for each process".
 

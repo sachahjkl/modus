@@ -25,8 +25,9 @@ WAKE_ALL :: max(u64)
 
 // The words that a wait holds in itself, on the stack of its thread: about
 // 3.5 KiB. A stream end, a call and a window wait on fewer
-// (src/md/data/table_sizes.md, "A wait holds 64 words on the stack").
-WAIT_INLINE_WORDS :: 64
+// (src/md/data/table_sizes.md, "A wait holds 64 words on the stack"). The
+// kernel holds as many for each thread with no wait room.
+WAIT_INLINE_WORDS :: op.WORD_WAIT_INLINE
 
 // What wait_end does with one word of a list, past its value.
 Wait_Part :: struct {
@@ -37,14 +38,50 @@ Wait_Part :: struct {
 	kept:       bool, // Several threads set the flag: the thread does not clear it after the wait.
 }
 
-// The places of a list of op.WORD_WAIT_CAPACITY words, in memory of the
-// caller: a thread that waits on more than WAIT_INLINE_WORDS words (the
-// loop of a service with a ring for each client) keeps one in its globals
-// or its arena, and gives it to wait_begin. One set serves one thread: two
-// threads that fill one set at once mix their lists.
+// The places of a list of more than WAIT_INLINE_WORDS words, in memory of
+// the caller: a thread that waits on the rings of many clients sizes one
+// to its tables, keeps it in its globals or its arena (wait_set_of), and
+// gives it to wait_begin. The first wait_begin with the set asks the kernel
+// for a wait room of its words for the calling thread
+// (op.Thread_Control_Command.Wait_Room), which the budget of the process
+// pays. One set serves one thread: the room is of the thread that asked,
+// and two threads that fill one set at once mix their lists.
 Wait_Set :: struct {
-	words: [op.WORD_WAIT_CAPACITY]op.Word,
-	parts: [op.WORD_WAIT_CAPACITY]Wait_Part,
+	words: []op.Word,
+	parts: []Wait_Part,
+	// The words that the kernel holds for the thread of the set: 0 until the
+	// first wait_begin asks; WAIT_INLINE_WORDS when the kernel refused the
+	// room, so a list past them is refused (Wait.refused) and not sent.
+	room:  int,
+}
+
+// wait_set_of gives a set of the places of the caller: words and parts of
+// one length, at most op.WORD_WAIT_MOST. It asks the kernel for nothing:
+// the first wait_begin of the thread that waits does.
+wait_set_of :: proc "contextless" (words: []op.Word, parts: []Wait_Part) -> Wait_Set {
+	count := min(len(words), len(parts), op.WORD_WAIT_MOST)
+	return {words = words[:count], parts = parts[:count]}
+}
+
+// wait_set_room asks the kernel once for the wait room of a set, for the
+// calling thread. A refusal (the budget cannot pay its pages) leaves the
+// set at the words of the kernel with no room, and writes one line.
+@(private = "file")
+wait_set_room :: proc "contextless" (set: ^Wait_Set) {
+	if set.room != 0 {
+		return
+	}
+	set.room = WAIT_INLINE_WORDS
+	if len(set.words) <= WAIT_INLINE_WORDS {
+		set.room = len(set.words)
+		return
+	}
+	held, status := call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, u64(len(set.words)))
+	if status != .Ok {
+		log(.Error, "system: the kernel gave no wait room of ", u64(len(set.words)), " words to this thread: its waits hold ", u64(WAIT_INLINE_WORDS), " words, and a wait on more waits until its deadline")
+		return
+	}
+	set.room = min(int(held[0]), len(set.words))
 }
 
 // The list of the words of one wait, built by `wait_begin` and the
@@ -69,13 +106,13 @@ Wait :: struct {
 // wait_words gives the places of the words of a list.
 @(private = "file")
 wait_words :: #force_inline proc "contextless" (wait: ^Wait) -> []op.Word {
-	return wait.set != nil ? wait.set.words[:] : wait.inline_words[:]
+	return wait.set != nil ? wait.set.words[:wait.set.room] : wait.inline_words[:]
 }
 
 // wait_parts gives the places of the parts of a list.
 @(private = "file")
 wait_parts :: #force_inline proc "contextless" (wait: ^Wait) -> []Wait_Part {
-	return wait.set != nil ? wait.set.parts[:] : wait.inline_parts[:]
+	return wait.set != nil ? wait.set.parts[:wait.set.room] : wait.inline_parts[:]
 }
 
 // wait_room_left gives the words that a list still takes, with the flags
@@ -102,9 +139,20 @@ events :: proc "contextless" () -> ^u32 {
 // reads the state that an event changes. set: the places of the caller for
 // a list of more than WAIT_INLINE_WORDS words; nil: the places of the list.
 wait_begin :: proc "contextless" (set: ^Wait_Set = nil) -> (wait: Wait) {
+	if set != nil {
+		wait_set_room(set)
+	}
 	wait.set = set
 	word := events()
 	wait_word(&wait, word, intrinsics.volatile_load(word))
+	return wait
+}
+
+// wait_of_set starts a list in the places of a set with no word, for a
+// loop that adds the event word itself or waits on none.
+wait_of_set :: proc "contextless" (set: ^Wait_Set) -> (wait: Wait) {
+	wait_set_room(set)
+	wait.set = set
 	return wait
 }
 

@@ -13,6 +13,8 @@
 package collector_service
 
 import "modus:contract/errors"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
 import "modus:contract/module"
 import "modus:contract/output"
 import "modus:contract/wide_grants"
@@ -230,8 +232,20 @@ pairs_orphaned_close :: proc "contextless" () {
 	}
 }
 
+// The words of the wait of the loop: the words that the loop adds besides
+// the rings, and the rings of each end of the sources and of the pairs that
+// a process holds (system.STREAM_END_CAPACITY each), so each ring fits.
+// The words before the rings: the event word, the export service and its
+// connections with their flags, and the ring of the delegated commands with
+// its flag.
+COLLECTOR_WAIT_WORDS_BEFORE_RINGS :: 1 + 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY) + 2
+COLLECTOR_WAIT_WORDS :: COLLECTOR_WAIT_WORDS_KEPT + COLLECTOR_WAIT_WORDS_BEFORE_RINGS + 2 * system.STREAM_END_CAPACITY * system.INPUT_RECORDS_WAIT_WORDS
+#assert(COLLECTOR_WAIT_WORDS <= op.WORD_WAIT_MOST)
 // The places of the wait of the loop: the rings of the sources and the
-// pairs take more than a wait on the stack holds.
+// pairs take more than a wait on the stack holds. The set is made at the
+// start of entry.
+collector_wait_words: [COLLECTOR_WAIT_WORDS]op.Word
+collector_wait_parts: [COLLECTOR_WAIT_WORDS]system.Wait_Part
 collector_wait_set: system.Wait_Set
 
 // sources_wait adds the rings of the sources and the full rings of the

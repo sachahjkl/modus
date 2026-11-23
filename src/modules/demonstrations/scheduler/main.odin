@@ -75,7 +75,7 @@
 // the button of the view of the shares turns it on: each process then has
 // one process weight, which the process divides between the threads of
 // that process, so a process with many threads takes no more of the
-// processors than a process with one. `scheduler.share("paint", 256)` gives
+// processors than a process with one. `scheduler.share("paint", 2048)` gives
 // the processes with a name another process weight. The policy is off when
 // the process starts. The two commands are served after the checks.
 //
@@ -1950,7 +1950,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	original := report.strategy
 	refusals_right = refusals()
 	if !refusals_right {
-		fail("a change with no right Schedule, or a weight above 1024, was not refused")
+		fail("a change with no right Schedule, or a weight above the full weight, was not refused")
 	}
 	if !find_self() {
 		fail("the process did not find its own threads in the reports")

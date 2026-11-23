@@ -688,6 +688,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log_fact(.Info, Word_Wait_Counted{alone = pairs_alone, loaded = pairs_loaded, lost = lost_wakes})
 	}
+	wait_room_case() // wait_room.odin
 	for kind in op.Lock_Kind {
 		system.log_fact(.Info, Entry_Lock_Waits{waits = entry_locks[kind].waits, takes = entry_locks[kind].takes, lock = lock_field(kind)})
 	}

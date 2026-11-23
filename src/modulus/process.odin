@@ -256,9 +256,15 @@ Thread :: struct #align (64) {
 	in_enter:     bool,
 	run_time:     u64,
 	// The word wait of the entry in progress or of the wait in progress:
-	// the physical addresses of the words.
-	words:        [op.WORD_WAIT_CAPACITY]u64,
+	// its entries are in wait_entries, then in the wait room (wait.odin).
 	word_count:   u32, // The words registered in the wait table (wait.odin).
+	// The wait room of the thread: the page that names the pages of its
+	// entries past op.WORD_WAIT_INLINE, 0 for none; its pages with that one;
+	// the budget that paid them. Only the thread changes them, in its own
+	// entry with no word registered, or its end (wait_room_set).
+	wait_room:        u64,
+	wait_room_pages:  u32,
+	wait_room_budget: u32,
 	word_changed: bool, // A word did not hold the value: this entry does not wait.
 	wait_serial:  u32, // Changes when a wait ends: wait.odin. Run lock of home.
 	woken:        bool, // A waker came while the thread registered its words. Run lock of home.
@@ -2024,6 +2030,7 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	thread.finished = true
 	extended_switch.thread_mark_modified(&thread.extended_switch)
 	wait_unregister(thread)
+	wait_room_end(thread)
 	process_index := thread.process
 	process := &processes[process_index]
 	// The debug handler of another process ends with its thread: that

@@ -831,7 +831,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Word_Wait:
 		thread := &threads[index]
-		if v[1] > u64(op.WORD_WAIT_CAPACITY - thread.word_count) {
+		if v[1] > u64(wait_capacity(thread) - thread.word_count) {
 			return .No_Slot
 		}
 		if !user_range(process, v[0], v[1] * size_of(op.Word), false) {

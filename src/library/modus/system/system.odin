@@ -1117,7 +1117,7 @@ thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: 
 // its scheduling strategy.
 //
 // ```odin
-// status := system.thread_schedule_write(worker.handle, 0, {weight = 256})
+// status := system.thread_schedule_write(worker.handle, 0, {weight = 2048})
 // ```
 thread_schedule_write :: proc "contextless" (thread: Handle, number: u64, schedule: op.Thread_Schedule, error: ^errors.Error_Record = nil) -> (status: Status) {
 	written := schedule

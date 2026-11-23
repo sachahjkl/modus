@@ -251,12 +251,13 @@ stop_step_drops_the_completions_then_runs_the_held_commands :: proc(t: ^testing.
 // and the count of its words, at the edges 0, 1 and the capacity.
 @(test)
 wait_command_names_the_list_and_its_count :: proc(t: ^testing.T) {
-	words: [op.WORD_WAIT_CAPACITY]op.Word
-	for count in ([?]int{0, 1, op.WORD_WAIT_CAPACITY}) {
+	words := make([]op.Word, op.WORD_WAIT_MOST)
+	defer delete(words)
+	for count in ([?]int{0, 1, op.WORD_WAIT_INLINE, op.WORD_WAIT_MOST}) {
 		command := wait_command(words[:count])
 		testing.expect_value(t, command.kind, u32(op.Operation.Word_Wait))
 		testing.expect_value(t, command.tag, 0)
-		testing.expect_value(t, command.values[0], u64(uintptr(&words)))
+		testing.expect_value(t, command.values[0], u64(uintptr(raw_data(words))))
 		testing.expect_value(t, command.values[1], u64(count))
 		for value in command.values[2:] {
 			testing.expect_value(t, value, 0)

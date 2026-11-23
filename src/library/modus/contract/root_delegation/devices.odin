@@ -30,12 +30,14 @@ DEVICES_REGION_SLOT :: 11
 // The shared region of the devices service holds one bind place for each
 // place of the table of processes of the core, so two Bind_Device commands
 // in flight never share bytes: the discovered record at the start of the
-// place, the grant specification that the service writes after it.
+// place, the grant specification that the service writes after it. The
+// core sizes the region from its places (devices_region_pages); the
+// devices service reads its size, and refuses an offset past it.
+// DEVICES_BIND_PLACE_COUNT is the most places, of the largest machine.
 DEVICES_BIND_PLACE_COUNT :: op.PROCESS_SLOTS_MOST
 DEVICES_BIND_PLACE_BYTES :: 512
 DEVICES_BIND_SPEC_OFFSET :: 256
-DEVICES_REGION_PAGES :: DEVICES_BIND_PLACE_COUNT * DEVICES_BIND_PLACE_BYTES / op.PAGE_SIZE
-#assert(DEVICES_BIND_PLACE_COUNT * DEVICES_BIND_PLACE_BYTES % op.PAGE_SIZE == 0)
+#assert(op.PAGE_SIZE % DEVICES_BIND_PLACE_BYTES == 0)
 #assert(size_of(Pci_Discovered_Device) <= DEVICES_BIND_SPEC_OFFSET)
 #assert(size_of(Device_Grant_Spec) <= DEVICES_BIND_PLACE_BYTES - DEVICES_BIND_SPEC_OFFSET)
 
@@ -291,11 +293,21 @@ device_bar_withheld :: proc "contextless" (index, table_bar, pending_bar: u32) -
 	return index == table_bar || index == pending_bar
 }
 
+// devices_region_pages gives the pages of the shared region for `places`
+// bind places, at least one page; a count past DEVICES_BIND_PLACE_COUNT
+// counts as that count.
+//
+// Example: 255 places (a machine of 1 GiB) take 32 pages; 1024 take 128.
+devices_region_pages :: proc "contextless" (places: int) -> u64 {
+	count := u64(clamp(places, 1, DEVICES_BIND_PLACE_COUNT))
+	return (count * DEVICES_BIND_PLACE_BYTES + op.PAGE_SIZE - 1) / op.PAGE_SIZE
+}
+
 // devices_bind_place_offsets gives the offsets in the shared region of the
-// discovered record and of the grant specification of one bind place,
-// refusing a place past DEVICES_BIND_PLACE_COUNT.
-devices_bind_place_offsets :: proc "contextless" (place: int) -> (discovered_offset, spec_offset: u64, ok: bool) {
-	if place < 0 || place >= DEVICES_BIND_PLACE_COUNT {
+// discovered record and of the grant specification of one bind place of
+// `places`, refusing a place past them or past DEVICES_BIND_PLACE_COUNT.
+devices_bind_place_offsets :: proc "contextless" (place: int, places: int) -> (discovered_offset, spec_offset: u64, ok: bool) {
+	if place < 0 || place >= min(places, DEVICES_BIND_PLACE_COUNT) {
 		return 0, 0, false
 	}
 	discovered_offset = u64(place) * DEVICES_BIND_PLACE_BYTES

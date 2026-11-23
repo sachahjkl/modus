@@ -40,14 +40,16 @@ import "modus:system"
 // words of the event of its surface; the log; the wiring ring and its flag;
 // the service ring and each of its connections, each with its flag.
 MAIN_WAIT_WORDS_BESIDE_FOLLOW :: 1 + 4 + 1 + 2 + 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY)
-// The full rings of follow that the main wait waits on: the rest of the
-// list. A full ring past them gets its row at the next wake of this
-// service for another cause, at the latest the next record of the log.
-FOLLOW_RINGS_WAITED_MOST :: (op.WORD_WAIT_CAPACITY - MAIN_WAIT_WORDS_BESIDE_FOLLOW) / system.OUTPUT_ROOM_WAIT_WORDS
-#assert(FOLLOW_RINGS_WAITED_MOST >= 1)
-#assert(MAIN_WAIT_WORDS_BESIDE_FOLLOW + FOLLOW_RINGS_WAITED_MOST * system.OUTPUT_ROOM_WAIT_WORDS <= op.WORD_WAIT_CAPACITY)
+// The full rings of follow that the main wait waits on: each ring that a
+// process holds (system.STREAM_END_CAPACITY), so no ring waits for a wake
+// for another cause.
+FOLLOW_RINGS_WAITED_MOST :: system.STREAM_END_CAPACITY
+MAIN_WAIT_WORDS :: MAIN_WAIT_WORDS_BESIDE_FOLLOW + FOLLOW_RINGS_WAITED_MOST * system.OUTPUT_ROOM_WAIT_WORDS
+#assert(MAIN_WAIT_WORDS <= op.WORD_WAIT_MOST)
 // The places of the main wait, which waits on these rings: more than a
-// wait on the stack holds.
+// wait on the stack holds. The set is made at the start of entry.
+log_wait_words: [MAIN_WAIT_WORDS]op.Word
+log_wait_parts: [MAIN_WAIT_WORDS]system.Wait_Part
 log_wait_set: system.Wait_Set
 
 // One row of log.follow: one record of the whole log, as records() gives

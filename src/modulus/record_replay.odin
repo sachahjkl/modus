@@ -1158,7 +1158,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		intrinsics.atomic_add(&record_replay_active_count, 1)
 		return .Ok
 
-	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Wait_Room:
 		return .Bad_Operation
 	}
 	return .Bad_Operation
@@ -1982,7 +1982,7 @@ record_command_output_range :: proc "contextless" (command: ring.Record, status:
 		switch sub {
 		case .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Read_Process_Schedule, .Read_Counters:
 			return v[3], results[0]
-		case .None, .Stop, .Resume, .Write_Registers, .Write_Extended_State, .Write_Schedule, .Write_Breakpoints, .Write_Placement, .Write_Process_Schedule, .Start_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
+		case .None, .Stop, .Resume, .Write_Registers, .Write_Extended_State, .Write_Schedule, .Write_Breakpoints, .Write_Placement, .Write_Process_Schedule, .Start_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
 		}
 	case .None, .Log, .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Size, .Process_Create, .Process_Start, .Process_Stop, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Machine_Stop, .Thread_Create, .Thread_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Memory_Commit, .Memory_Protect, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Guest_Run:
 	}

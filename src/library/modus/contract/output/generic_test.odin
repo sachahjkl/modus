@@ -88,12 +88,12 @@ the_types_of_a_process_have_a_bound :: proc(t: ^testing.T) {
 // that fit, and one past them, which does not.
 @(test)
 the_rings_of_a_reader_fit_one_wait :: proc(t: ^testing.T) {
-	most := (op.WORD_WAIT_CAPACITY - READER_WAIT_WORDS_BESIDE_RINGS) / READER_WAIT_WORDS_OF_A_RING
-	testing.expect(t, reader_wait_words(most) <= op.WORD_WAIT_CAPACITY)
-	testing.expect(t, reader_wait_words(most + 1) > op.WORD_WAIT_CAPACITY)
+	most := (op.WORD_WAIT_INLINE - READER_WAIT_WORDS_BESIDE_RINGS) / READER_WAIT_WORDS_OF_A_RING
+	testing.expect(t, reader_wait_words(most) <= op.WORD_WAIT_INLINE)
+	testing.expect(t, reader_wait_words(most + 1) > op.WORD_WAIT_INLINE)
 	testing.expect_value(t, reader_wait_words(0), READER_WAIT_WORDS_BESIDE_RINGS)
 	// 16 ends at most for one process, in the root service and the library.
-	testing.expect(t, reader_wait_words(16) <= op.WORD_WAIT_CAPACITY)
+	testing.expect(t, reader_wait_words(16) <= op.WORD_WAIT_INLINE)
 }
 
 // The turn of a reader of several rings: a place outside the table and an

@@ -37,23 +37,14 @@ budget_share: u64 = module.LARGEST_BUDGET_SHARE_DEFAULT
 // What this service held at its start: the share is of the machine, not of
 // what the processes left.
 machine_at_start: system.Budget_Request
-// The process slots of this machine (System_Report.process_slots), which
-// the kernel chose at its start: a walk over the slots reads them, never
-// op.PROCESS_SLOTS_MOST.
-machine_process_slots: u64
-
-// budgets_start reads the budget of this service and the slots of the
-// kernel once, before the first start, and decides the largest budget of
-// this machine. The pages of a later read are lower by what the processes
-// hold, so the share is of the machine, not of what is left.
+// budgets_start reads the budget of this service once, before the first
+// start, and decides the largest budget of this machine. The pages of a
+// later read are lower by what the processes hold, so the share is of the
+// machine, not of what is left.
 budgets_start :: proc "contextless" () {
 	own, _ := system.budget_read()
 	machine_at_start = {pages = own.pages, processes = own.processes, threads = own.threads}
 	largest_budget = module.largest_budget_of_machine(machine_at_start, budget_share)
-	report: op.System_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status == .Ok {
-		machine_process_slots = report.process_slots
-	}
 }
 
 // budget_share_take is the one place where the share that the plan of
