@@ -487,7 +487,37 @@ act_table_refuses_a_column_kind_or_a_cell_of_the_other_form :: proc(t: ^testing.
 	testing.expect(t, !act_of(talk, 1).table.present)
 	result, kept := act_table(talk, true, 1, table, "Process", 1, columns[:], cells[:], &error)
 	testing.expect(t, result == 1 && kept != nil)
-	kind, unit := act_table_column_kind(&kept.table, 1)
-	testing.expect(t, kind == .Size && unit == pages)
+	unit, is_size := act_table_column_form(&kept.table, 1).(value_kinds.Size_Unit)
+	testing.expect(t, is_size && unit == .Pages)
+	_, is_text := act_table_column_form(&kept.table, 0).(Text_Form)
+	testing.expect(t, is_text)
 	testing.expect_value(t, act_table_cell_integer(&kept.table, 0, 1), 9052)
+}
+
+// The two words of a column become its form at one border: each kind with
+// a unit of its own kind gives its form; a kind of no member, None, a
+// negative word, and a unit of no member of its kind give none.
+@(test)
+the_words_of_a_column_become_its_form_once :: proc(t: ^testing.T) {
+	refused := [?][2]i64{{0, 0}, {6, 0}, {-1, 0}, {max(i64), 0}, {1, 1}, {2, -1}, {3, 5}, {3, -1}, {4, 4}, {5, 0}, {5, 9}, {min(i64), min(i64)}}
+	for words in refused {
+		_, ok := column_form_of_words(words[0], words[1])
+		testing.expectf(t, !ok, "the words %v", words)
+	}
+	form, ok := column_form_of_words(1, 0)
+	_, is_text := form.(Text_Form)
+	testing.expect(t, ok && is_text)
+	form, ok = column_form_of_words(2, 0)
+	_, is_integer := form.(Integer_Form)
+	testing.expect(t, ok && is_integer)
+	form, ok = column_form_of_words(3, i64(value_kinds.Size_Unit.Blocks))
+	size, is_size := form.(value_kinds.Size_Unit)
+	testing.expect(t, ok && is_size && size == .Blocks)
+	form, ok = column_form_of_words(4, i64(value_kinds.Duration_Unit.Seconds))
+	time, is_time := form.(value_kinds.Duration_Unit)
+	testing.expect(t, ok && is_time && time == .Seconds)
+	form, ok = column_form_of_words(5, 8)
+	hexadecimal, is_hexadecimal := form.(Hexadecimal_Form)
+	testing.expect(t, ok && is_hexadecimal && hexadecimal.bytes == 8)
+	testing.expect(t, form_is_text(Text_Form{}) && !form_is_text(value_kinds.Size_Unit.Pages))
 }

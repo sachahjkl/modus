@@ -131,67 +131,68 @@ Draw_Columns :: struct {
 @(private = "file")
 column_of :: proc "contextless" (table: ^conversation.Act_Table, column: int, bytes: u32) -> console_results.Column {
 	name := conversation.act_table_column_name(table, column)
-	kind, unit := conversation.act_table_column_kind(table, column)
-	switch kind {
-	case .Integer:
+	switch form in conversation.act_table_column_form(table, column) {
+	case conversation.Text_Form:
+		return console_results.text_column(name, bytes)
+	case conversation.Integer_Form:
 		return console_results.integer_column(name)
-	case .Size:
-		return console_results.size_column(name, value_kinds.Size_Unit(unit))
-	case .Time:
-		return console_results.time_column(name, value_kinds.Duration_Unit(unit))
-	case .Hexadecimal:
-		return {name = name, type = .Integer, detail = u32(unit), unsigned = true, kind = .Hexadecimal}
-	case .Text, .None:
+	case value_kinds.Size_Unit:
+		return console_results.size_column(name, form)
+	case value_kinds.Duration_Unit:
+		return console_results.time_column(name, form)
+	case conversation.Hexadecimal_Form:
+		return {name = name, type = .Integer, detail = u32(form.bytes), unsigned = true, kind = .Hexadecimal}
 	}
 	return console_results.text_column(name, bytes)
 }
 
+// row_size gives the bytes of a row of the first count columns, as
+// description_write lays it out: a text column at any byte, a number
+// column at a multiple of its size, and the row at a multiple of its
+// widest number. A text column is at most bound bytes.
+@(private = "file")
+row_size :: proc "contextless" (widths: []u32, is_text: []bool, count: int, bound: u32) -> u32 {
+	size, alignment: u32 = 0, 1
+	for column in 0 ..< count {
+		width := is_text[column] ? min(widths[column], bound) : widths[column]
+		column_alignment := is_text[column] ? 1 : max(width, 1)
+		size = (size + column_alignment - 1) / column_alignment * column_alignment + width
+		alignment = max(alignment, column_alignment)
+	}
+	return (size + alignment - 1) / alignment * alignment
+}
+
 // column_widths gives the bytes of each column, and the count of columns
-// that a row of RECORD_SIZE_LIMIT bytes keeps. A number column has the
-// bytes of its number. A text column is as wide as its longest cell; when
-// a row passes the bound, the widest text columns take a common bound, and
-// a cell past its column ends with the cut mark. A bound under CELL_LEAST
-// would leave no room for the mark: the last columns are then dropped.
-column_widths :: proc "contextless" (table: ^conversation.Act_Table, widths: []u32) -> (kept: int) {
+// that a row of RECORD_SIZE_LIMIT bytes keeps, with the padding that
+// description_write gives a number column (row_size). A number column has
+// the bytes of its number. A text column is as wide as its longest cell,
+// and at most text_most bytes; when a row passes the bound, the widest
+// text columns take a common bound, and a cell past its column ends with
+// the cut mark. A bound under CELL_LEAST would leave no room for the mark:
+// the last columns are then dropped.
+column_widths :: proc "contextless" (table: ^conversation.Act_Table, widths: []u32, text_most: u32 = assistant_contract.ACT_TABLE_CELL_BYTES) -> (kept: int) {
 	is_text: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]bool
 	for column in 0 ..< table.column_count {
-		kind, unit := conversation.act_table_column_kind(table, column)
-		switch kind {
-		case .Integer, .Size, .Time:
+		switch form in conversation.act_table_column_form(table, column) {
+		case conversation.Integer_Form, value_kinds.Size_Unit, value_kinds.Duration_Unit:
 			widths[column] = 8
-		case .Hexadecimal:
-			widths[column] = u32(unit)
-		case .Text, .None:
+		case conversation.Hexadecimal_Form:
+			widths[column] = u32(form.bytes)
+		case conversation.Text_Form:
 			is_text[column] = true
 			widths[column] = 1
 			for row in 0 ..< table.row_count {
 				widths[column] = max(widths[column], u32(len(conversation.act_table_cell_text(table, row, column))))
 			}
+			widths[column] = min(widths[column], max(text_most, CELL_LEAST))
 		}
-	}
-	least :: proc "contextless" (width: u32, text: bool) -> u32 {
-		return text ? min(width, CELL_LEAST) : width
 	}
 	kept = table.column_count
-	for kept > 0 {
-		least_sum: u32
-		for column in 0 ..< kept {
-			least_sum += least(widths[column], is_text[column])
-		}
-		if least_sum <= module.RECORD_SIZE_LIMIT {
-			break
-		}
+	for kept > 0 && row_size(widths, is_text[:], kept, CELL_LEAST) > module.RECORD_SIZE_LIMIT {
 		kept -= 1
 	}
 	bound := u32(assistant_contract.ACT_TABLE_CELL_BYTES)
-	for bound > CELL_LEAST {
-		sum: u32
-		for column in 0 ..< kept {
-			sum += is_text[column] ? min(widths[column], bound) : widths[column]
-		}
-		if sum <= module.RECORD_SIZE_LIMIT {
-			break
-		}
+	for bound > CELL_LEAST && row_size(widths, is_text[:], kept, bound) > module.RECORD_SIZE_LIMIT {
 		bound -= 1
 	}
 	for column in 0 ..< kept {
@@ -224,12 +225,10 @@ description_and_rows :: proc "contextless" (scratch: ^Scratch, table: ^conversat
 	for row in 0 ..< table.row_count {
 		place := rows[row * int(size):][:size]
 		for column in 0 ..< count {
-			kind, _ := conversation.act_table_column_kind(table, column)
-			switch kind {
-			case .Integer, .Size, .Time, .Hexadecimal:
-				console_results.row_integer_set(place, columns.columns[column], conversation.act_table_cell_integer(table, row, column))
-			case .Text, .None:
+			if conversation.form_is_text(conversation.act_table_column_form(table, column)) {
 				console_results.row_text_set(place, columns.columns[column], conversation.act_table_cell_text(table, row, column))
+			} else {
+				console_results.row_integer_set(place, columns.columns[column], conversation.act_table_cell_integer(table, row, column))
 			}
 		}
 	}
@@ -313,13 +312,33 @@ lines_reset :: proc "contextless" (lines: ^Lines) {
 	lines.sink = {data = lines, write = line_write, end_line = line_end, width = 0}
 }
 
+// record_value_room gives the bytes of a text value of a record: the cells
+// of a line after the name of the widest field and the gaps that
+// draw_record writes before and after it, so a long value ends with the
+// cut mark inside the width and never runs past the window. A character
+// takes a cell or more and one byte or more, so a value of so many bytes
+// takes no more cells. A table, or a line with no width, has the bound of
+// a cell.
+@(private = "file")
+record_value_room :: proc "contextless" (table: ^conversation.Act_Table, width_cells: int) -> u32 {
+	if table.shape != .Record || width_cells <= 0 {
+		return assistant_contract.ACT_TABLE_CELL_BYTES
+	}
+	name_width := 0
+	for column in 0 ..< table.column_count {
+		name_width = max(name_width, console_results.text_columns(conversation.act_table_column_name(table, column)))
+	}
+	room := width_cells - 2 * console_results.COLUMN_GAP - name_width
+	return u32(clamp(room, CELL_LEAST, assistant_contract.ACT_TABLE_CELL_BYTES))
+}
+
 // draw writes the lines of a result at a width in cells, with at most
 // row_limit rows; the drawer counts the rest against total_rows. ok is
 // false when the description cannot be written.
 draw :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversation.Act_Table, width_cells: int, row_limit: int) -> (ok: bool) {
 	lines_reset(lines)
 	widths: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]u32
-	kept := column_widths(table, widths[:])
+	kept := column_widths(table, widths[:], record_value_room(table, width_cells))
 	if kept == 0 {
 		return false
 	}

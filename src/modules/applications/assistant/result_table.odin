@@ -35,6 +35,10 @@ result_frame: u64
 // a room: the kept ones, or new ones written into the oldest slot. nil
 // when the result cannot show in that room.
 result_lines_of :: proc "contextless" (entry: ^conversation.Entry, width_cells, line_room: int) -> ^result_lines.Lines {
+	// No room: no slot is chosen, so a kept result stays kept.
+	if line_room < 1 {
+		return nil
+	}
 	result_frame += 1
 	oldest := &result_slots[0]
 	for &slot in result_slots {
@@ -46,7 +50,11 @@ result_lines_of :: proc "contextless" (entry: ^conversation.Entry, width_cells, 
 			oldest = &slot
 		}
 	}
-	oldest^ = {act = entry.act, width_cells = width_cells, line_room = line_room, used = result_frame}
+	// The fields are set in place: a slot holds about 33 KiB of lines, and
+	// a record literal of it would be a temporary on the stack. fit resets
+	// the counts of the lines.
+	oldest.valid = false
+	oldest.act, oldest.width_cells, oldest.line_room, oldest.used = entry.act, width_cells, line_room, result_frame
 	if !result_lines.fit(&oldest.lines, &result_scratch, &entry.table, width_cells, line_room) {
 		return nil
 	}

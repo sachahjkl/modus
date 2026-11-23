@@ -33,7 +33,10 @@ table_make :: proc(shape: assistant_contract.Act_Table_Shape, name: string, colu
 	table.column_count, table.row_count = len(columns), len(rows)
 	for column, index in columns {
 		copy(table.columns[index].name[:], column.name)
-		table.columns[index].kind, table.columns[index].unit = i64(column.kind), column.unit
+		// The fixture makes each form as act_table does, at its border.
+		form, form_ok := conversation.column_form_of_words(i64(column.kind), column.unit)
+		assert(form_ok)
+		table.columns[index].form = form
 	}
 	for row, row_index in rows {
 		for cell, column_index in row {
@@ -210,4 +213,57 @@ a_record_is_one_line_for_each_field :: proc(t: ^testing.T) {
 	testing.expect_value(t, texts[0], "Counts")
 	testing.expect(t, strings.contains(texts[1], "processes") && strings.has_suffix(texts[1], "12"))
 	testing.expect(t, strings.contains(texts[3], "owner") && strings.has_suffix(texts[3], "root"))
+}
+
+// A record in a window of 89 cells: a value of 64 bytes under a name of 31
+// ends with the cut mark inside the width, never past it.
+@(test)
+a_long_value_of_a_record_ends_with_its_mark_inside_the_width :: proc(t: ^testing.T) {
+	long_name := strings.repeat("n", 31, context.temp_allocator)
+	long_value := strings.repeat("v", assistant_contract.ACT_TABLE_CELL_BYTES, context.temp_allocator)
+	columns := []Column{{long_name, .Text, 0}, {"count", .Integer, 0}}
+	table := table_make(.Record, "Wide", columns, [][]Cell{{long_value, i64(7)}}, 1)
+	lines := new(Lines, context.temp_allocator)
+	scratch := new(Scratch, context.temp_allocator)
+	testing.expect(t, fit(lines, scratch, table, 89, 10))
+	texts := all_lines(lines)
+	testing.expect_value(t, len(texts), 3)
+	for text in texts {
+		testing.expectf(t, console_results.text_columns(text) <= 89, "%q passes 89 cells", text)
+	}
+	testing.expectf(t, strings.has_suffix(texts[1], cut_mark.MARK_END), "%q", texts[1])
+	// With room, the whole value shows.
+	testing.expect(t, fit(lines, scratch, table, 200, 10))
+	testing.expect(t, strings.has_suffix(all_lines(lines)[1], long_value))
+}
+
+// A row whose text widths sum to 256 bytes but whose numbers need padding
+// to their size: the padding counts, so the row fits a record of 256
+// bytes and the table draws.
+@(test)
+the_padding_of_the_numbers_counts_in_the_bound_of_a_row :: proc(t: ^testing.T) {
+	text_57 := strings.repeat("t", 57, context.temp_allocator)
+	text_61 := strings.repeat("u", 61, context.temp_allocator)
+	columns := []Column{{"a", .Text, 0}, {"b", .Integer, 0}, {"c", .Text, 0}, {"d", .Integer, 0}, {"e", .Text, 0}, {"f", .Integer, 0}, {"g", .Text, 0}}
+	table := table_make(.Table, "Padded", columns, [][]Cell{{text_57, i64(1), text_57, i64(2), text_57, i64(3), text_61}}, 1)
+	widths: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]u32
+	kept := column_widths(table, widths[:])
+	testing.expect_value(t, kept, 7)
+	// Laid out as description_write lays it out: each number at a multiple
+	// of 8, the row at a multiple of 8.
+	size: u32
+	for column in 0 ..< kept {
+		if column % 2 == 1 {
+			size = (size + 7) / 8 * 8
+		}
+		size += widths[column]
+	}
+	size = (size + 7) / 8 * 8
+	testing.expectf(t, size <= 256, "a row of %d bytes", size)
+	lines := new(Lines, context.temp_allocator)
+	scratch := new(Scratch, context.temp_allocator)
+	testing.expect(t, fit(lines, scratch, table, 4000, 10))
+	texts := all_lines(lines)
+	testing.expect(t, strings.has_prefix(texts[0], "a"))
+	testing.expect_value(t, texts[len(texts) - 1], "1 row of Padded")
 }

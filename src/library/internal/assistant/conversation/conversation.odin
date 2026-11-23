@@ -8,6 +8,8 @@ package conversation
 
 import "base:intrinsics"
 import bridge_contract "modus:contract/agent_bridge"
+import "modus:contract/enum_word"
+import "modus:contract/value_kinds"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
 
@@ -58,8 +60,64 @@ Act_Table :: struct {
 	total_rows:   int, // The rows of the whole result.
 	column_count: int,
 	row_count:    int, // The rows here: at most ACT_TABLE_ROW_CAPACITY.
-	columns:      [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]assistant_contract.Act_Table_Column,
+	columns:      [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]Act_Column,
 	cells:        [assistant_contract.ACT_TABLE_ROW_CAPACITY * assistant_contract.ACT_TABLE_COLUMN_CAPACITY]assistant_contract.Act_Table_Cell, // Row after row: column_count cells in each row.
+}
+
+// How a column is written and aligned, typed: the kind and its unit in one
+// value, which act_table makes once from the two words of the contract
+// record (column_form_of_words). Past that border the code reads the form
+// and never a word.
+Text_Form :: struct {}
+Integer_Form :: struct {}
+Hexadecimal_Form :: struct {
+	bytes: u8, // The bytes of the number, 1 to 8: two digits for each.
+}
+Column_Form :: union #no_nil {
+	Text_Form,
+	Integer_Form,
+	value_kinds.Size_Unit, // A size in its unit.
+	value_kinds.Duration_Unit, // A time in its unit.
+	Hexadecimal_Form,
+}
+
+// One column of a kept result: its name and its form.
+Act_Column :: struct {
+	name: [assistant_contract.ACT_TABLE_NAME_BYTES]u8,
+	form: Column_Form,
+}
+
+// column_form_of_words is the border of the two words of a column: the
+// kind (agent_bridge.Lex_Column_Kind) and its unit. ok is false for a kind
+// that names no member, None too, and for a unit that names no member of
+// the unit of its kind.
+column_form_of_words :: proc "contextless" (kind_word, unit_word: i64) -> (form: Column_Form, ok: bool) {
+	kind := bridge_contract.lex_column_kind_of_word(kind_word) or_return
+	if !bridge_contract.lex_column_unit_valid(kind, unit_word) {
+		return Text_Form{}, false
+	}
+	switch kind {
+	case .Text:
+		return Text_Form{}, true
+	case .Integer:
+		return Integer_Form{}, true
+	case .Size:
+		unit := enum_word.member_of_word(value_kinds.Size_Unit, u64(unit_word)) or_return
+		return unit, true
+	case .Time:
+		unit := enum_word.member_of_word(value_kinds.Duration_Unit, u64(unit_word)) or_return
+		return unit, true
+	case .Hexadecimal:
+		return Hexadecimal_Form{bytes = u8(unit_word)}, true
+	case .None:
+	}
+	return Text_Form{}, false
+}
+
+// form_is_text says if a column of a form holds texts, not values.
+form_is_text :: proc "contextless" (form: Column_Form) -> bool {
+	_, text := form.(Text_Form)
+	return text
 }
 
 // act_table_name gives the name of the record of a table.
@@ -74,11 +132,9 @@ act_table_column_name :: proc "contextless" (table: ^Act_Table, column: int) -> 
 	return name
 }
 
-// act_table_column_kind gives the kind of a column and its unit word,
-// which act_table checked.
-act_table_column_kind :: proc "contextless" (table: ^Act_Table, column: int) -> (kind: bridge_contract.Lex_Column_Kind, unit: i64) {
-	kind, _ = bridge_contract.lex_column_kind_of_word(table.columns[column].kind)
-	return kind, table.columns[column].unit
+// act_table_column_form gives the form of a column, which act_table made.
+act_table_column_form :: proc "contextless" (table: ^Act_Table, column: int) -> Column_Form {
+	return table.columns[column].form
 }
 
 // act_table_cell_integer gives the value of a cell of a number column.
@@ -539,29 +595,28 @@ act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal
 		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 4, total_rows, i64(row_count)), nil
 	}
 	for index in 0 ..< column_count {
-		staging.columns[index] = intrinsics.volatile_load(&columns[index])
-	}
-	for index in 0 ..< len(cells) {
-		staging.cells[index] = intrinsics.volatile_load(&cells[index])
-	}
-	for index in 0 ..< column_count {
-		column := &staging.columns[index]
-		column_name, column_ok := assistant_contract.fixed_text(column.name[:])
+		// The copy of the record is read once; its words become the form
+		// of the column here, and nowhere else.
+		raw := intrinsics.volatile_load(&columns[index])
+		column_name, column_ok := assistant_contract.fixed_text(raw.name[:])
 		if !column_ok || column_name == "" {
 			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 5, 0, assistant_contract.ACT_TABLE_NAME_BYTES, i64(index + 1)), nil
 		}
-		kind, kind_ok := bridge_contract.lex_column_kind_of_word(column.kind)
-		if !kind_ok || !bridge_contract.lex_column_unit_valid(kind, column.unit) {
-			return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 5, column.kind, column.unit, i64(index + 1)), nil
+		form, form_ok := column_form_of_words(raw.kind, raw.unit)
+		if !form_ok {
+			return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 5, raw.kind, raw.unit, i64(index + 1)), nil
 		}
+		staging.columns[index] = {name = raw.name, form = form}
+	}
+	for index in 0 ..< len(cells) {
+		staging.cells[index] = intrinsics.volatile_load(&cells[index])
 	}
 	for index in 0 ..< len(cells) {
 		cell := &staging.cells[index]
 		text, cell_ok := assistant_contract.fixed_text(cell.text[:])
 		// A text column holds a text and no value; a number column a
 		// value and no text: each fact of a cell is in one place.
-		kind, _ := bridge_contract.lex_column_kind_of_word(staging.columns[index % column_count].kind)
-		number := kind != .Text
+		number := !form_is_text(staging.columns[index % column_count].form)
 		if !cell_ok || (number && text != "") || (!number && cell.integer != 0) {
 			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 6, 0, assistant_contract.ACT_TABLE_CELL_BYTES, i64(index / column_count + 1)), nil
 		}
