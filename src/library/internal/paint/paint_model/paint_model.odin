@@ -8,6 +8,7 @@ package paint_model
 
 import "base:intrinsics"
 import "modus:contract/lz4"
+import "modus:contract/store"
 import "modus:graphics"
 
 // The bounds of a picture. They are bounds of cost of one memory object,
@@ -426,10 +427,11 @@ fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics
 	picture_changed(picture)
 	return changed
 }
-// The history of undo and redo.
+// The history of undo and redo (src/md/features/paint_application.md,
+// "The memory of the history"): a ring of steps in the memory of the
+// caller, bounded by one copy of the picture, and the one step that a
+// change larger than that bound keeps in the copy before the stroke.
 
-HISTORY_BYTES :: 1024 * 1024 // The arena of the compressed rectangles.
-HISTORY_STEPS_LIMIT :: 64 // The changes that the history keeps.
 // The pixels that one LZ4 block holds: a step is a list of blocks of strips
 // of whole rows of its box, so the scratch of a step is one strip, never a
 // whole picture. A strip has as many rows of the box as fit these pixels,
@@ -437,32 +439,56 @@ HISTORY_STEPS_LIMIT :: 64 // The changes that the history keeps.
 HISTORY_STRIP_PIXELS :: 1 << 16
 #assert(HISTORY_STRIP_PIXELS >= PICTURE_SIDE_LIMIT)
 HISTORY_STRIP_BYTES :: HISTORY_STRIP_PIXELS * size_of(graphics.Color)
-// The bytes before each block in the arena: its length, a little-endian u32.
+// The bytes before each block in the ring: its length, a little-endian u32.
 HISTORY_BLOCK_HEAD_BYTES :: 4
 
-// One change of the picture: its box, and the pixels of the box before and
-// after it, each a list of LZ4 blocks of strips in the arena.
-History_Step :: struct {
+// The head of a step in the ring, before its two parts: the blocks before,
+// then the blocks after. The heads link the steps, so the history has no
+// table of steps.
+@(private)
+History_Head :: struct {
 	box:          Box,
-	offset:       int, // The first byte of the step in the arena: the blocks before, then the blocks after.
 	before_bytes: int,
 	after_bytes:  int,
+	previous:     int, // The place of the step before, or NO_STEP.
+	next:         int, // The place of the step after, or NO_STEP.
 }
 
-// The history: the steps in their order, the oldest first. The steps
-// before the place done are applied, and undo takes the last of them; the
-// steps from done are undone, and redo takes the first of them. The arena
-// is in the memory of the caller; the bytes of the steps follow each other
-// from its start.
+// A place of a step is a multiple of this, so its head is aligned.
+@(private)
+HISTORY_STEP_ALIGNMENT :: 8
+@(private)
+NO_STEP :: -1
+
+// History_Grow makes the ring of a history hold at least wanted bytes: it
+// sets ring to a longer slice that keeps the bytes before it in place.
+// false: the memory cannot grow, and the ring holds what it held.
+History_Grow :: #type proc "contextless" (history: ^History, wanted: int) -> bool
+
+// The history. The steps are in the ring, the oldest first in their order;
+// the first done steps are applied, so undo takes the last of them and redo
+// the next. The places of the oldest, the newest and the last applied step
+// have a meaning only while count, and done, are above 0. A history of
+// zero bytes is empty.
 History :: struct {
-	arena: []u8, // HISTORY_BYTES bytes.
-	steps: [HISTORY_STEPS_LIMIT]History_Step,
-	count: int,
-	done:  int,
-	used:  int, // The bytes of the arena in use.
+	ring:        []u8, // The memory that the history holds now; the caller's.
+	grow:        History_Grow, // nil: the ring is fixed.
+	grow_data:   rawptr,
+	oldest:      int,
+	newest:      int,
+	applied:     int,
+	count:       int,
+	done:        int,
+	// The one step that the copy before the stroke holds: its box, in that
+	// copy and in the picture, of the same stride. Undo and redo exchange
+	// the box between them.
+	in_copy:     bool,
+	copy_box:    Box,
+	copy_pixels: []graphics.Color,
+	copy_stride: int,
 }
 
-// The memory that a strip needs on its way into and out of the arena,
+// The memory that a strip needs on its way into and out of the ring,
 // which the caller keeps: the pixels of one strip, and its compressed form.
 History_Scratch :: struct {
 	pixels:     [HISTORY_STRIP_PIXELS]graphics.Color,
@@ -471,13 +497,22 @@ History_Scratch :: struct {
 }
 
 Record_Outcome :: enum u8 {
-	Kept      = 0, // The change can be undone.
-	Empty     = 1, // The box is empty: no change to keep.
-	Too_Large = 2, // The change does not fit in the arena alone: the history is cleared, and the change cannot be undone.
+	Kept    = 0, // The change can be undone.
+	Empty   = 1, // The box is empty: no change to keep.
+	Refused = 2, // The box is outside the memory of the picture: the history is cleared.
 }
 
+// history_clear forgets each step, and keeps the ring and its growth.
 history_clear :: proc "contextless" (history: ^History) {
-	history.count, history.done, history.used = 0, 0, 0
+	history^ = {ring = history.ring, grow = history.grow, grow_data = history.grow_data}
+}
+
+// history_copy_reused drops the step that the copy before the stroke holds:
+// the caller writes that copy again (a stroke, a wider picture, a read).
+history_copy_reused :: proc "contextless" (history: ^History) {
+	if history.in_copy {
+		history_clear(history)
+	}
 }
 
 history_can_undo :: proc "contextless" (history: ^History) -> bool {
@@ -488,6 +523,18 @@ history_can_redo :: proc "contextless" (history: ^History) -> bool {
 	return history.done < history.count
 }
 
+@(private)
+history_head :: proc "contextless" (history: ^History, place: int) -> ^History_Head {
+	return (^History_Head)(&history.ring[place])
+}
+
+// step_bytes gives the bytes of a step in the ring: its head and its parts,
+// to the next place of a step.
+@(private)
+step_bytes :: proc "contextless" (before_bytes, after_bytes: int) -> int {
+	bytes := size_of(History_Head) + before_bytes + after_bytes
+	return (bytes + HISTORY_STEP_ALIGNMENT - 1) / HISTORY_STEP_ALIGNMENT * HISTORY_STEP_ALIGNMENT
+}
 // box_pack copies the pixels of a box of a picture memory, of a width of
 // rows (its stride), into one block, row after row, and gives its bytes.
 @(private)
@@ -526,108 +573,161 @@ strip_of :: proc "contextless" (box: Box, top: int) -> Box {
 }
 
 // history_part_write writes the pixels of a box as the blocks of its strips
-// at a place of the arena, and gives their bytes. ok is false when a block
-// does not fit in the arena past that place.
+// at a place of the ring, and gives their bytes. ok is false when a block
+// does not fit in the ring past that place.
 @(private)
 history_part_write :: proc "contextless" (history: ^History, pixels: []graphics.Color, stride: int, box: Box, offset: int, scratch: ^History_Scratch) -> (bytes: int, ok: bool) {
 	at := offset
 	for top := box.top; top < box.bottom; top += strip_rows(box) {
 		written, refused := lz4.compress_block(box_pack(pixels, stride, strip_of(box, top), scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
-		if refused != .None || at + HISTORY_BLOCK_HEAD_BYTES + written > len(history.arena) {
+		if refused != .None || at + HISTORY_BLOCK_HEAD_BYTES + written > len(history.ring) {
 			return 0, false
 		}
-		word_write(history.arena, at, u32(written))
-		intrinsics.mem_copy_non_overlapping(&history.arena[at + HISTORY_BLOCK_HEAD_BYTES], raw_data(scratch.compressed[:]), written)
+		word_write(history.ring, at, u32(written))
+		intrinsics.mem_copy_non_overlapping(&history.ring[at + HISTORY_BLOCK_HEAD_BYTES], raw_data(scratch.compressed[:]), written)
 		at += HISTORY_BLOCK_HEAD_BYTES + written
 	}
 	return at - offset, true
 }
 
-// history_drop_oldest removes the oldest step and moves the bytes of the
-// others to the start of the arena. It gives the bytes that it freed.
+// history_drop_oldest forgets the oldest step. No byte moves: its bytes are
+// free for the next steps of the ring.
 @(private)
-history_drop_oldest :: proc "contextless" (history: ^History) -> (freed: int) {
-	if history.count == 0 {
-		return 0
+history_drop_oldest :: proc "contextless" (history: ^History) {
+	if history.count <= 1 {
+		history_clear(history)
+		return
 	}
-	first := history.steps[0]
-	freed = first.before_bytes + first.after_bytes
-	// One step can fill the arena exactly: then nothing follows it, and
-	// the place after it is past the arena.
-	if history.used > freed {
-		intrinsics.mem_copy(raw_data(history.arena), &history.arena[freed], history.used - freed)
-	}
-	history.used -= freed
-	for index in 1 ..< history.count {
-		step := history.steps[index]
-		step.offset -= freed
-		history.steps[index - 1] = step
-	}
+	history.oldest = history_head(history, history.oldest).next
+	history_head(history, history.oldest).previous = NO_STEP
 	history.count -= 1
 	history.done = max(history.done - 1, 0)
-	return freed
 }
 
 // history_part_measure gives the bytes that the blocks of the strips of a
-// box take in the arena, with no write. ok is false when a strip does not
-// compress.
+// box take in the ring, with no write. ok is false when a strip does not
+// compress, or when the bytes pass ceiling: the measure stops there, so a
+// change past the bound costs no compression of the rest of it.
 @(private)
-history_part_measure :: proc "contextless" (pixels: []graphics.Color, stride: int, box: Box, scratch: ^History_Scratch) -> (bytes: int, ok: bool) {
+history_part_measure :: proc "contextless" (pixels: []graphics.Color, stride: int, box: Box, ceiling: int, scratch: ^History_Scratch) -> (bytes: int, ok: bool) {
 	for top := box.top; top < box.bottom; top += strip_rows(box) {
 		written, refused := lz4.compress_block(box_pack(pixels, stride, strip_of(box, top), scratch.pixels[:]), scratch.compressed[:], &scratch.hash_table)
 		if refused != .None {
 			return 0, false
 		}
 		bytes += HISTORY_BLOCK_HEAD_BYTES + written
+		if bytes > ceiling {
+			return 0, false
+		}
 	}
 	return bytes, true
+}
+
+// history_holds says if the ring holds the bytes up to end, under the
+// bound: it grows the ring when it can.
+@(private)
+history_holds :: proc "contextless" (history: ^History, end, bound: int) -> bool {
+	if end > bound {
+		return false
+	}
+	if end > len(history.ring) && history.grow != nil {
+		history.grow(history, end)
+	}
+	return end <= len(history.ring)
+}
+
+// history_place gives the place of a new step of a size: after the newest,
+// or at the start of the ring when the end of the bound is reached, the
+// oldest steps going until it has its room. false: the ring alone does not
+// hold it; the history is then empty.
+@(private)
+history_place :: proc "contextless" (history: ^History, bytes, bound: int) -> (place: int, ok: bool) {
+	for {
+		if history.count == 0 {
+			return 0, history_holds(history, bytes, bound)
+		}
+		newest := history_head(history, history.newest)
+		tail := history.newest + step_bytes(newest.before_bytes, newest.after_bytes)
+		if history.newest >= history.oldest {
+			// The steps are one run from the oldest to the newest: the room is
+			// after the newest, else before the oldest.
+			if history_holds(history, tail + bytes, bound) {
+				return tail, true
+			}
+			if bytes <= history.oldest {
+				return 0, true
+			}
+		} else if tail + bytes <= history.oldest {
+			// The ring wrapped: the room is between the newest and the oldest.
+			return tail, true
+		}
+		history_drop_oldest(history)
+	}
 }
 
 // history_record keeps a change of the picture: the pixels of a box before
 // it, from a copy of the picture made before the change, and after it,
 // from the picture; both have rows of stride pixels, and hold the box. The
+// bound is the bytes that the ring may hold: one copy of the picture. The
 // steps that redo would give are removed first. The step is measured once;
-// the oldest steps go until it fits; then it is written.
-history_record :: proc "contextless" (history: ^History, before, after: []graphics.Color, stride: int, box: Box, scratch: ^History_Scratch) -> Record_Outcome {
+// the oldest steps go until it fits; then it is written. A step that does
+// not fit in the ring alone is kept in the copy (before), the one step of
+// the history, until history_copy_reused.
+history_record :: proc "contextless" (history: ^History, before, after: []graphics.Color, stride: int, box: Box, bound: int, scratch: ^History_Scratch) -> Record_Outcome {
 	if box_empty(box) {
 		return .Empty
 	}
 	if box.left < 0 || box.top < 0 || box.right > stride || box.bottom * stride > min(len(before), len(after)) {
 		history_clear(history)
-		return .Too_Large
+		return .Refused
 	}
-	history.count = history.done
-	history.used = 0
-	if history.count > 0 {
-		last := history.steps[history.count - 1]
-		history.used = last.offset + last.before_bytes + last.after_bytes
-	}
-	before_bytes, before_ok := history_part_measure(before, stride, box, scratch)
-	after_bytes, after_ok := history_part_measure(after, stride, box, scratch)
-	if !before_ok || !after_ok || before_bytes + after_bytes > len(history.arena) {
+	if history.in_copy {
 		history_clear(history)
-		return .Too_Large
 	}
-	for history.count > 0 && (history.used + before_bytes + after_bytes > len(history.arena) || history.count >= HISTORY_STEPS_LIMIT) {
-		history_drop_oldest(history)
+	// The steps after the last applied one are what redo would give.
+	if history.done == 0 {
+		history_clear(history)
+	} else if history.count > history.done {
+		history.newest = history.applied
+		history_head(history, history.newest).next = NO_STEP
+		history.count = history.done
 	}
-	offset := history.used
-	written_before, wrote_before := history_part_write(history, before, stride, box, offset, scratch)
-	written_after, wrote_after := history_part_write(history, after, stride, box, offset + before_bytes, scratch)
+	room := bound - size_of(History_Head)
+	before_bytes, before_ok := history_part_measure(before, stride, box, room, scratch)
+	after_bytes, after_ok := history_part_measure(after, stride, box, room - before_bytes, scratch)
+	place := 0
+	placed := false
+	if before_ok && after_ok {
+		place, placed = history_place(history, step_bytes(before_bytes, after_bytes), bound)
+	}
+	if !placed {
+		history_clear(history)
+		history.in_copy, history.copy_box, history.copy_pixels, history.copy_stride = true, box, before, stride
+		history.count, history.done = 1, 1
+		return .Kept
+	}
+	written_before, wrote_before := history_part_write(history, before, stride, box, place + size_of(History_Head), scratch)
+	written_after, wrote_after := history_part_write(history, after, stride, box, place + size_of(History_Head) + before_bytes, scratch)
 	// The compression gives the same bytes for the same pixels: a write
-	// that differs from its measure is a fault of the arena, and the step
-	// is not kept.
+	// that differs from its measure is a fault of the ring, and the history
+	// keeps nothing of it.
 	if !wrote_before || !wrote_after || written_before != before_bytes || written_after != after_bytes {
 		history_clear(history)
-		return .Too_Large
+		return .Refused
 	}
-	history.steps[history.count] = {box = box, offset = offset, before_bytes = before_bytes, after_bytes = after_bytes}
+	head := history_head(history, place)
+	head^ = {box = box, before_bytes = before_bytes, after_bytes = after_bytes, previous = NO_STEP, next = NO_STEP}
+	if history.count == 0 {
+		history.oldest = place
+	} else {
+		head.previous = history.newest
+		history_head(history, history.newest).next = place
+	}
+	history.newest, history.applied = place, place
 	history.count += 1
 	history.done = history.count
-	history.used = offset + before_bytes + after_bytes
 	return .Kept
 }
-
 // history_part_apply writes the blocks of one part of a step into the
 // picture. Each block is checked first: a block that does not give the
 // pixels of its strip refuses the whole part, and the picture does not
@@ -671,32 +771,74 @@ history_part_apply :: proc "contextless" (picture: ^Picture, box: Box, part: []u
 	return true
 }
 
-// history_undo puts back the pixels before the last applied change. false:
-// no change to undo, or a damaged block; nothing changed.
-history_undo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> bool {
-	if history.done == 0 {
+// history_copy_exchange exchanges the box of the step in the copy between
+// the picture and the copy, row by row through the scratch. false: the
+// picture has another stride, or a memory does not hold the box; nothing
+// changed.
+@(private)
+history_copy_exchange :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> bool {
+	box := history.copy_box
+	stride := history.copy_stride
+	if picture.width != stride || box_empty(box) || box.left < 0 || box.top < 0 || box.right > stride || box.bottom > picture.height ||
+	   box.bottom * stride > min(len(picture.pixels), len(history.copy_pixels)) {
 		return false
 	}
-	step := history.steps[history.done - 1]
-	if !history_part_apply(picture, step.box, history.arena[step.offset:][:step.before_bytes], scratch) {
-		return false
+	width := box.right - box.left
+	row_bytes := width * size_of(graphics.Color)
+	for row in box.top ..< box.bottom {
+		start := row * stride + box.left
+		intrinsics.mem_copy_non_overlapping(&scratch.pixels[0], &picture.pixels[start], row_bytes)
+		intrinsics.mem_copy_non_overlapping(&picture.pixels[start], &history.copy_pixels[start], row_bytes)
+		intrinsics.mem_copy_non_overlapping(&history.copy_pixels[start], &scratch.pixels[0], row_bytes)
 	}
-	history.done -= 1
+	picture_changed(picture)
 	return true
 }
 
-// history_redo applies again the first undone change. false: no change to
-// redo, or a damaged block; nothing changed.
-history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> bool {
+// history_undo puts back the pixels before the last applied change, and
+// gives its box. false: no change to undo, or a damaged step; nothing
+// changed.
+history_undo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> (box: Box, ok: bool) {
+	if history.done == 0 {
+		return {}, false
+	}
+	if history.in_copy {
+		if !history_copy_exchange(history, picture, scratch) {
+			return {}, false
+		}
+		history.done = 0
+		return history.copy_box, true
+	}
+	head := history_head(history, history.applied)
+	if !history_part_apply(picture, head.box, history.ring[history.applied + size_of(History_Head):][:head.before_bytes], scratch) {
+		return {}, false
+	}
+	history.applied = head.previous
+	history.done -= 1
+	return head.box, true
+}
+
+// history_redo applies again the first undone change, and gives its box.
+// false: no change to redo, or a damaged step; nothing changed.
+history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> (box: Box, ok: bool) {
 	if history.done >= history.count {
-		return false
+		return {}, false
 	}
-	step := history.steps[history.done]
-	if !history_part_apply(picture, step.box, history.arena[step.offset + step.before_bytes:][:step.after_bytes], scratch) {
-		return false
+	if history.in_copy {
+		if !history_copy_exchange(history, picture, scratch) {
+			return {}, false
+		}
+		history.done = 1
+		return history.copy_box, true
 	}
+	place := history.done == 0 ? history.oldest : history_head(history, history.applied).next
+	head := history_head(history, place)
+	if !history_part_apply(picture, head.box, history.ring[place + size_of(History_Head) + head.before_bytes:][:head.after_bytes], scratch) {
+		return {}, false
+	}
+	history.applied = place
 	history.done += 1
-	return true
+	return head.box, true
 }
 
 // The picture file: a header of FILE_HEADER_BYTES, then rows of the width
@@ -1251,8 +1393,11 @@ picture_replace_allowed :: proc "contextless" (drag: ^Drag) -> bool {
 
 // The names of the pictures.
 
-NAME_LIMIT :: 32 // The bytes of the longest name.
 OBJECT_SUFFIX :: ".picture" // The object of a picture in the private store is its name and this.
+// The bytes of the longest name: the longest name of an object of the
+// store, less the suffix. A name follows the names of the store.
+NAME_LIMIT :: store.ENTRY_NAME_CAPACITY - len(OBJECT_SUFFIX)
+#assert(NAME_LIMIT >= 1)
 // The temporary object of a large first keep is the name and this; the list
 // shows no picture of it, and the open of the store removes it.
 PARTIAL_SUFFIX :: ".partial"
@@ -1338,30 +1483,70 @@ partial_name_of_object :: proc "contextless" (object: string) -> (name: string, 
 	return name_of_object_with_suffix(object, PARTIAL_SUFFIX)
 }
 
-// first_free_name gives the first name picture-1, picture-2, ... that a
-// list of names does not hold, written into a room. ok is false when each
-// of the first PICTURE_NAMES_TRIED names is taken.
-PICTURE_NAMES_TRIED :: 1000
-first_free_name :: proc "contextless" (taken: []string, room: ^[NAME_LIMIT]u8) -> (name: string, ok: bool) {
-	for number in 1 ..= PICTURE_NAMES_TRIED {
-		count := copy(room[:], "picture-")
-		digits: [8]u8
-		digit_count := 0
-		for rest := number; rest > 0; rest /= 10 {
-			digits[len(digits) - 1 - digit_count] = u8('0' + rest % 10)
-			digit_count += 1
+// The numbers of the names picture-1, picture-2, ... that the store holds,
+// which the open of the store marks as it reads each page: the small ones
+// one bit each, and the largest of all. No count of pictures bounds it: past
+// the small numbers, the next name is the one after the largest.
+PICTURE_NUMBERS_SMALL :: 1024
+Picture_Numbers :: struct {
+	small:   [PICTURE_NUMBERS_SMALL / 64]u64, // Bit n: picture-n is taken, for n from 1.
+	largest: int,
+}
+
+// PICTURE_NUMBER_DIGITS: the digits of a number that the names take, so a
+// number stays far inside an int.
+@(private)
+PICTURE_NUMBER_DIGITS :: 15
+@(private)
+PICTURE_NAME_PREFIX :: "picture-"
+
+// picture_number_mark marks the number of a name picture-N, N from 1 with no
+// zero first; another name marks nothing.
+picture_number_mark :: proc "contextless" (numbers: ^Picture_Numbers, name: string) {
+	if len(name) <= len(PICTURE_NAME_PREFIX) || name[:len(PICTURE_NAME_PREFIX)] != PICTURE_NAME_PREFIX {
+		return
+	}
+	digits := name[len(PICTURE_NAME_PREFIX):]
+	if len(digits) > PICTURE_NUMBER_DIGITS || digits[0] == '0' {
+		return
+	}
+	number := 0
+	for digit in transmute([]u8)digits {
+		if digit < '0' || digit > '9' {
+			return
 		}
-		count += copy(room[count:], digits[len(digits) - digit_count:])
-		candidate := string(room[:count])
-		free := true
-		for other in taken {
-			free &&= other != candidate
-		}
-		if free {
-			return candidate, true
+		number = number * 10 + int(digit - '0')
+	}
+	if number < PICTURE_NUMBERS_SMALL {
+		numbers.small[number / 64] |= 1 << u64(number % 64)
+	}
+	numbers.largest = max(numbers.largest, number)
+}
+
+// first_free_name gives the first name picture-1, picture-2, ... whose
+// number is not marked, written into a room; past the small numbers, the
+// name after the largest. ok is false only when that name has more digits
+// than a name takes.
+first_free_name :: proc "contextless" (numbers: ^Picture_Numbers, room: ^[NAME_LIMIT]u8) -> (name: string, ok: bool) {
+	number := numbers.largest + 1
+	for small in 1 ..< PICTURE_NUMBERS_SMALL {
+		if numbers.small[small / 64] & (1 << u64(small % 64)) == 0 {
+			number = small
+			break
 		}
 	}
-	return "", false
+	digits: [PICTURE_NUMBER_DIGITS + 1]u8
+	digit_count := 0
+	for rest := number; rest > 0 && digit_count < len(digits); rest /= 10 {
+		digits[len(digits) - 1 - digit_count] = u8('0' + rest % 10)
+		digit_count += 1
+	}
+	if digit_count > PICTURE_NUMBER_DIGITS || len(PICTURE_NAME_PREFIX) + digit_count > NAME_LIMIT {
+		return "", false
+	}
+	count := copy(room[:], PICTURE_NAME_PREFIX)
+	count += copy(room[count:], digits[len(digits) - digit_count:])
+	return string(room[:count]), true
 }
 
 // The colors.

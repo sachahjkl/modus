@@ -1,8 +1,11 @@
 #+build !freestanding
 package paint_model
 
+import "base:runtime"
 import "core:fmt"
+import "core:strings"
 import "core:testing"
+import "modus:contract/store"
 import "modus:graphics"
 
 // picture_make gives a picture of a size in memory of room pixels, at
@@ -214,13 +217,16 @@ History_Test :: struct {
 	picture: Picture,
 	before:  []graphics.Color,
 	history: History,
+	bound:   int, // The bytes that the ring may hold.
 	scratch: ^History_Scratch,
 }
 
+// history_test_make gives a picture of 200 x 100 and a fixed ring of bound
+// bytes: by default one copy of the picture, the bound of the window.
 @(private = "file")
-history_test_make :: proc(arena_bytes: int) -> History_Test {
-	test := History_Test{picture = picture_make(200, 100, room = 300 * 120), before = make([]graphics.Color, 300 * 120), scratch = new(History_Scratch)}
-	test.history.arena = make([]u8, arena_bytes)
+history_test_make :: proc(bound := 200 * 100 * 4) -> History_Test {
+	test := History_Test{picture = picture_make(200, 100, room = 300 * 120), before = make([]graphics.Color, 300 * 120), bound = bound, scratch = new(History_Scratch)}
+	test.history.ring = make([]u8, bound)
 	copy(test.before, test.picture.pixels)
 	return test
 }
@@ -229,7 +235,7 @@ history_test_make :: proc(arena_bytes: int) -> History_Test {
 history_test_free :: proc(test: ^History_Test) {
 	delete(test.picture.pixels)
 	delete(test.before)
-	delete(test.history.arena)
+	delete(test.history.ring)
 	free(test.scratch)
 }
 
@@ -239,104 +245,246 @@ history_test_free :: proc(test: ^History_Test) {
 history_test_change :: proc(test: ^History_Test, x: int, color: graphics.Color) -> Record_Outcome {
 	copy(test.before, test.picture.pixels)
 	box := segment_draw(&test.picture, x, 0, x, 99, 1, color)
-	return history_record(&test.history, test.before, test.picture.pixels, test.picture.width, box, test.scratch)
+	return history_record(&test.history, test.before, test.picture.pixels, test.picture.width, box, test.bound, test.scratch)
 }
 
-// With no change, undo and redo are refused; an empty box is not kept.
-// Undo puts back the pixels before, redo the pixels after, and a new
-// change removes what redo would give.
+@(private = "file")
+undo :: proc(test: ^History_Test) -> bool {
+	_, ok := history_undo(&test.history, &test.picture, test.scratch)
+	return ok
+}
+
+@(private = "file")
+redo :: proc(test: ^History_Test) -> bool {
+	_, ok := history_redo(&test.history, &test.picture, test.scratch)
+	return ok
+}
+
+// noise_fill writes pixels that LZ4 does not compress into a box.
+@(private = "file")
+noise_fill :: proc(picture: ^Picture, box: Box, seed: u32) {
+	state := seed
+	for row in box.top ..< box.bottom {
+		for column in box.left ..< box.right {
+			state = state * 1_664_525 + 1_013_904_223
+			picture.pixels[row * picture.width + column] = state >> 8
+		}
+	}
+}
+
+// With no step, undo and redo are refused and change nothing; an empty
+// box is not kept. With one step, undo puts back the pixels before and
+// gives the box, redo the pixels after; a new change removes what redo
+// would give.
 @(test)
 undo_and_redo_put_back_the_pixels :: proc(t: ^testing.T) {
-	test := history_test_make(HISTORY_BYTES)
+	test := history_test_make()
 	defer history_test_free(&test)
-	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
-	testing.expect(t, !history_redo(&test.history, &test.picture, test.scratch))
-	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, {}, test.scratch), Record_Outcome.Empty)
+	generation := test.picture.generation
+	testing.expect(t, !undo(&test) && !redo(&test), "no step: nothing to undo or redo")
+	testing.expect_value(t, test.picture.generation, generation)
+	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, {}, test.bound, test.scratch), Record_Outcome.Empty)
+	testing.expect_value(t, test.history.count, 0)
+	// One step.
 	testing.expect_value(t, history_test_change(&test, 10, 0xFF0000), Record_Outcome.Kept)
+	testing.expect_value(t, test.history.count, 1)
+	testing.expect(t, !redo(&test), "one applied step: nothing to redo")
+	box, undone := history_undo(&test.history, &test.picture, test.scratch)
+	testing.expect(t, undone && box == Box{10, 0, 11, 100}, "undo gives the box of its step")
+	testing.expect_value(t, pixel_at(&test.picture, 10, 50), COLOR_PAPER)
+	testing.expect(t, !undo(&test), "one step undone: nothing to undo")
+	testing.expect(t, redo(&test))
+	testing.expect_value(t, pixel_at(&test.picture, 10, 50), graphics.Color(0xFF0000))
+	testing.expect(t, undo(&test) && redo(&test), "the one step undoes again")
+	// Two steps.
 	testing.expect_value(t, history_test_change(&test, 20, 0x00FF00), Record_Outcome.Kept)
-	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, undo(&test))
 	testing.expect_value(t, pixel_at(&test.picture, 20, 50), COLOR_PAPER)
 	testing.expect_value(t, pixel_at(&test.picture, 10, 50), graphics.Color(0xFF0000))
-	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, undo(&test))
 	testing.expect_value(t, pixel_at(&test.picture, 10, 50), COLOR_PAPER)
-	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
-	testing.expect(t, history_redo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, !undo(&test))
+	testing.expect(t, redo(&test))
 	testing.expect_value(t, pixel_at(&test.picture, 10, 50), graphics.Color(0xFF0000))
 	testing.expect(t, history_can_redo(&test.history))
 	testing.expect_value(t, history_test_change(&test, 30, 0x0000FF), Record_Outcome.Kept)
 	testing.expect(t, !history_can_redo(&test.history), "a new change removes what redo would give")
 	testing.expect_value(t, test.history.count, 2)
+	// A new change after each step is undone removes them all.
+	testing.expect(t, undo(&test) && undo(&test) && !undo(&test))
+	testing.expect_value(t, history_test_change(&test, 40, 0x0000FF), Record_Outcome.Kept)
+	testing.expect_value(t, test.history.count, 1)
+	testing.expect(t, undo(&test) && !undo(&test))
+	testing.expect_value(t, pixel_at(&test.picture, 40, 50), COLOR_PAPER)
 }
 
-// The history keeps HISTORY_STEPS_LIMIT changes: the oldest goes, and the
-// others still undo in their order.
+// No count of steps: in one copy of the picture, 300 small steps are each
+// kept, past the 64 of before.
 @(test)
-the_history_keeps_its_limit_of_steps :: proc(t: ^testing.T) {
-	test := history_test_make(HISTORY_BYTES)
+the_history_has_no_count_of_steps :: proc(t: ^testing.T) {
+	test := history_test_make()
 	defer history_test_free(&test)
-	for index in 0 ..< HISTORY_STEPS_LIMIT + 3 {
-		testing.expect_value(t, history_test_change(&test, index, graphics.Color(index + 1)), Record_Outcome.Kept)
+	for index in 0 ..< 300 {
+		testing.expect_value(t, history_test_change(&test, index % 200, graphics.Color(index + 1)), Record_Outcome.Kept)
 	}
-	testing.expect_value(t, test.history.count, HISTORY_STEPS_LIMIT)
+	testing.expect_value(t, test.history.count, 300)
 	undone := 0
-	for history_undo(&test.history, &test.picture, test.scratch) {
+	for undo(&test) {
 		undone += 1
 	}
-	testing.expect_value(t, undone, HISTORY_STEPS_LIMIT)
-	// The three oldest changes are not undone.
-	testing.expect_value(t, pixel_at(&test.picture, 2, 50), graphics.Color(3))
-	testing.expect_value(t, pixel_at(&test.picture, 3, 50), COLOR_PAPER)
-}
-
-// A change that does not fit in the arena alone clears the history; a
-// change that needs the room of older ones drops them.
-@(test)
-a_change_larger_than_the_arena_clears_the_history :: proc(t: ^testing.T) {
-	test := history_test_make(160)
-	defer history_test_free(&test)
-	testing.expect_value(t, history_test_change(&test, 10, 0xFF0000), Record_Outcome.Kept)
-	kept := test.history.used
-	testing.expect(t, kept > 0 && kept <= 160)
-	for index in 0 ..< 8 {
-		testing.expect_value(t, history_test_change(&test, 20 + index, 0x00FF00), Record_Outcome.Kept)
-		testing.expect(t, test.history.used <= 160)
-	}
-	testing.expect(t, test.history.count < 9, "older changes went for the room")
-	// Noise does not compress: its two blocks pass the arena.
-	copy(test.before, test.picture.pixels)
-	state := u32(1)
-	for row in 0 ..< 100 {
+	testing.expect_value(t, undone, 300)
+	for row in ([?]int{0, 50, 99}) {
 		for column in 0 ..< 200 {
-			state = state * 1_664_525 + 1_013_904_223
-			test.picture.pixels[row * test.picture.width + column] = state >> 8
+			testing.expect_value(t, pixel_at(&test.picture, column, row), COLOR_PAPER)
 		}
 	}
-	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, {0, 0, 200, 100}, test.scratch), Record_Outcome.Too_Large)
+}
+
+// At the bound, the oldest steps go and the others undo in their order,
+// across the end of the ring many times: after the steps that undo gives,
+// the picture is the one after the step before them. The ring never
+// passes the bound.
+@(test)
+the_oldest_steps_drop_at_the_bound :: proc(t: ^testing.T) {
+	STEPS :: 150
+	test := history_test_make(bound = 2048)
+	defer history_test_free(&test)
+	snapshots := make([][]graphics.Color, STEPS + 1)
+	defer {
+		for snapshot in snapshots {
+			delete(snapshot)
+		}
+		delete(snapshots)
+	}
+	snapshots[0] = make([]graphics.Color, 200 * 100)
+	copy(snapshots[0], test.picture.pixels[:200 * 100])
+	wraps := 0
+	for index in 0 ..< STEPS {
+		// Steps of several sizes: a column, or a band of noise.
+		outcome: Record_Outcome
+		if index % 7 == 3 {
+			copy(test.before, test.picture.pixels)
+			box := Box{(index * 13) % 190, 10, (index * 13) % 190 + 6, 13}
+			noise_fill(&test.picture, box, u32(index))
+			outcome = history_record(&test.history, test.before, test.picture.pixels, test.picture.width, box, test.bound, test.scratch)
+		} else {
+			outcome = history_test_change(&test, (index * 7) % 200, graphics.Color(index + 1))
+		}
+		testing.expect_value(t, outcome, Record_Outcome.Kept)
+		testing.expect(t, !test.history.in_copy, "each step fits the ring")
+		testing.expect_value(t, len(test.history.ring), 2048)
+		if test.history.newest == 0 && test.history.count > 1 {
+			wraps += 1
+		}
+		snapshots[index + 1] = make([]graphics.Color, 200 * 100)
+		copy(snapshots[index + 1], test.picture.pixels[:200 * 100])
+	}
+	kept := test.history.count
+	testing.expect(t, kept > 1 && kept < STEPS, "the oldest steps went for the room")
+	testing.expect(t, wraps > 3, "the steps went across the end of the ring several times")
+	for undone in 1 ..= kept {
+		testing.expect(t, undo(&test))
+		testing.expectf(t, string(transmute([]u8)test.picture.pixels[:200 * 100]) == string(transmute([]u8)snapshots[STEPS - undone]), "after %d undos", undone)
+	}
+	testing.expect(t, !undo(&test), "the steps that went do not undo")
+	for redone in 1 ..= kept {
+		testing.expect(t, redo(&test))
+		testing.expectf(t, string(transmute([]u8)test.picture.pixels[:200 * 100]) == string(transmute([]u8)snapshots[STEPS - kept + redone]), "after %d redos", redone)
+	}
+	testing.expect(t, !redo(&test))
+}
+
+// A change larger than the bound is the one step of the history, in the
+// copy before it: undo and redo exchange its box; a small step after it
+// takes the ring again; a reuse of the copy drops it.
+@(test)
+a_change_larger_than_the_bound_is_kept_in_the_copy :: proc(t: ^testing.T) {
+	test := history_test_make(bound = 4096)
+	defer history_test_free(&test)
+	testing.expect_value(t, history_test_change(&test, 10, 0xFF0000), Record_Outcome.Kept)
+	copy(test.before, test.picture.pixels)
+	whole := Box{0, 0, 200, 100}
+	noise_fill(&test.picture, whole, 1)
+	after := make([]graphics.Color, 200 * 100)
+	defer delete(after)
+	copy(after, test.picture.pixels[:200 * 100])
+	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, whole, test.bound, test.scratch), Record_Outcome.Kept)
+	testing.expect(t, test.history.in_copy && test.history.count == 1, "the one step, in the copy")
+	box, undone := history_undo(&test.history, &test.picture, test.scratch)
+	testing.expect(t, undone && box == whole)
+	testing.expect_value(t, pixel_at(&test.picture, 10, 50), graphics.Color(0xFF0000))
+	testing.expect_value(t, pixel_at(&test.picture, 11, 50), COLOR_PAPER)
+	testing.expect(t, !undo(&test), "the step before it went")
+	testing.expect(t, redo(&test))
+	testing.expect(t, string(transmute([]u8)test.picture.pixels[:200 * 100]) == string(transmute([]u8)after), "redo gives the change whole")
+	testing.expect(t, undo(&test) && redo(&test), "it undoes again")
+	// A picture of another width refuses the exchange.
+	test.picture.width = 199
+	testing.expect(t, !undo(&test))
+	test.picture.width = 200
+	// A small step after it is kept in the ring.
+	testing.expect_value(t, history_test_change(&test, 20, 0x00FF00), Record_Outcome.Kept)
+	testing.expect(t, !test.history.in_copy && test.history.count == 1)
+	// The copy serves again: the step in it goes.
+	copy(test.before, test.picture.pixels)
+	noise_fill(&test.picture, whole, 2)
+	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, whole, test.bound, test.scratch), Record_Outcome.Kept)
+	history_copy_reused(&test.history)
 	testing.expect(t, !history_can_undo(&test.history) && !history_can_redo(&test.history))
+	// A box outside the memory is refused, and clears the history.
+	testing.expect_value(t, history_test_change(&test, 30, 0x0000FF), Record_Outcome.Kept)
+	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, {0, 0, 201, 1}, test.bound, test.scratch), Record_Outcome.Refused)
+	testing.expect(t, !history_can_undo(&test.history))
+	// A history history_copy_reused with no step in the copy keeps its steps.
+	testing.expect_value(t, history_test_change(&test, 40, 0x0000FF), Record_Outcome.Kept)
+	history_copy_reused(&test.history)
+	testing.expect(t, history_can_undo(&test.history))
+}
+
+@(private = "file")
+refused_grow :: proc "contextless" (history: ^History, wanted: int) -> bool {
+	return false
+}
+
+// A budget that does not pay the growth of the ring bounds it at what it
+// holds: with no byte, each change is the one step in the copy, and still
+// undoes.
+@(test)
+a_ring_that_cannot_grow_keeps_the_step_in_the_copy :: proc(t: ^testing.T) {
+	test := history_test_make(bound = 0)
+	defer history_test_free(&test)
+	test.bound = 200 * 100 * 4
+	test.history.grow = refused_grow
+	testing.expect_value(t, history_test_change(&test, 10, 0xFF0000), Record_Outcome.Kept)
+	testing.expect(t, test.history.in_copy)
+	testing.expect(t, undo(&test))
+	testing.expect_value(t, pixel_at(&test.picture, 10, 50), COLOR_PAPER)
 }
 
 // A damaged block is refused, and the picture and the history stay.
 @(test)
 a_damaged_step_changes_nothing :: proc(t: ^testing.T) {
-	test := history_test_make(HISTORY_BYTES)
+	test := history_test_make()
 	defer history_test_free(&test)
 	history_test_change(&test, 10, 0xFF0000)
-	step := test.history.steps[0]
+	head := history_head(&test.history, test.history.applied)
+	step := head^
 	// A block of the wrong size: the box asks for more pixels.
-	test.history.steps[0].box.bottom += 1
+	head.box.bottom += 1
 	generation := test.picture.generation
-	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, !undo(&test))
 	testing.expect_value(t, test.picture.generation, generation)
 	testing.expect_value(t, test.history.done, 1)
 	// A box outside the extent.
-	test.history.steps[0] = step
-	test.history.steps[0].box.right = test.picture.width + 1
-	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
+	head^ = step
+	head.box.right = test.picture.width + 1
+	testing.expect(t, !undo(&test))
 	// Bytes that are no LZ4 block: a literal length past the block.
-	test.history.steps[0] = step
-	test.history.arena[step.offset] = 0xF0
-	test.history.arena[step.offset + 1] = 0xFF
-	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
+	head^ = step
+	blocks := test.history.applied + size_of(History_Head) + HISTORY_BLOCK_HEAD_BYTES
+	test.history.ring[blocks] = 0xF0
+	test.history.ring[blocks + 1] = 0xFF
+	testing.expect(t, !undo(&test))
 	testing.expect_value(t, pixel_at(&test.picture, 10, 50), graphics.Color(0xFF0000))
 }
 
@@ -515,22 +663,28 @@ no_replace_of_the_picture_during_a_drag :: proc(t: ^testing.T) {
 	testing.expect(t, picture_replace_allowed(&drag))
 }
 
-// A step that fills the arena exactly is kept, and the next one drops it
-// with no read past the arena.
+// A step that fills the ring exactly is kept, and the next one drops it
+// with no read past the ring; one byte less keeps it in the copy.
 @(test)
-a_step_that_fills_the_arena_exactly :: proc(t: ^testing.T) {
-	measure := history_test_make(HISTORY_BYTES)
+a_step_that_fills_the_ring_exactly :: proc(t: ^testing.T) {
+	measure := history_test_make()
 	testing.expect_value(t, history_test_change(&measure, 10, 0xFF0000), Record_Outcome.Kept)
-	exact := measure.history.used
+	head := history_head(&measure.history, measure.history.newest)
+	exact := step_bytes(head.before_bytes, head.after_bytes)
 	history_test_free(&measure)
-	test := history_test_make(exact)
+	test := history_test_make(bound = exact)
 	defer history_test_free(&test)
 	testing.expect_value(t, history_test_change(&test, 10, 0xFF0000), Record_Outcome.Kept)
-	testing.expect_value(t, test.history.used, len(test.history.arena))
+	testing.expect(t, !test.history.in_copy)
 	testing.expect_value(t, history_test_change(&test, 10, 0x00FF00), Record_Outcome.Kept)
 	testing.expect_value(t, test.history.count, 1)
-	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, !test.history.in_copy)
+	testing.expect(t, undo(&test))
 	testing.expect_value(t, pixel_at(&test.picture, 10, 50), graphics.Color(0xFF0000))
+	short := history_test_make(bound = exact - 1)
+	defer history_test_free(&short)
+	testing.expect_value(t, history_test_change(&short, 10, 0xFF0000), Record_Outcome.Kept)
+	testing.expect(t, short.history.in_copy, "a step one byte past the bound is kept in the copy")
 }
 
 // An undo after the extent grew wider writes the pixels of its box at their
@@ -538,57 +692,64 @@ a_step_that_fills_the_arena_exactly :: proc(t: ^testing.T) {
 // the extent is damaged, and is refused.
 @(test)
 an_undo_after_a_wider_extent_keeps_its_pixels :: proc(t: ^testing.T) {
-	test := history_test_make(HISTORY_BYTES)
+	test := history_test_make()
 	defer history_test_free(&test)
 	testing.expect_value(t, history_test_change(&test, 150, 0xFF0000), Record_Outcome.Kept)
 	testing.expect_value(t, history_test_change(&test, 150, 0x00FF00), Record_Outcome.Kept)
 	testing.expect_value(t, picture_extend(&test.picture, 300, 120), Extend_Outcome.Grown)
-	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, undo(&test))
 	testing.expect_value(t, pixel_at(&test.picture, 150, 50), graphics.Color(0xFF0000))
 	testing.expect_value(t, pixel_at(&test.picture, 151, 50), COLOR_PAPER)
-	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, undo(&test))
 	testing.expect_value(t, pixel_at(&test.picture, 150, 50), COLOR_PAPER)
-	testing.expect(t, history_redo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, redo(&test))
 	// A box past the extent: the step is refused, and nothing changes.
 	test.picture.height = 50
 	generation := test.picture.generation
-	testing.expect(t, !history_redo(&test.history, &test.picture, test.scratch))
+	testing.expect(t, !redo(&test))
 	testing.expect_value(t, test.picture.generation, generation)
 }
 
-// The first free name skips the names that the store holds.
+// The first free name skips the numbers that the store holds: the small
+// ones one by one, then the one after the largest. A name that is not
+// picture-N, or N with a zero first, marks nothing.
 @(test)
 the_first_free_name_of_a_picture :: proc(t: ^testing.T) {
 	room: [NAME_LIMIT]u8
-	name, ok := first_free_name(nil, &room)
-	testing.expect(t, ok && name == "picture-1")
-	name, ok = first_free_name([]string{"picture-1", "picture-3", "sky"}, &room)
-	testing.expect(t, ok && name == "picture-2")
-	// Each name tried is taken but the last, then each one. The names are
-	// written here: calls of first_free_name to make them would cost the
-	// square of the names for each name.
-	taken := make([]string, PICTURE_NAMES_TRIED)
-	defer delete(taken)
-	for index in 0 ..< PICTURE_NAMES_TRIED {
-		taken[index] = fmt.aprintf("picture-%d", index + 1)
+	numbers: Picture_Numbers
+	name, ok := first_free_name(&numbers, &room)
+	testing.expect(t, ok && name == "picture-1", "an empty store")
+	for taken in ([?]string{"picture-1", "picture-3", "sky", "picture-02", "picture-", "picture-x", "picture-1000000000000000"}) {
+		picture_number_mark(&numbers, taken)
 	}
-	defer for name in taken {
-		delete(name)
+	name, ok = first_free_name(&numbers, &room)
+	testing.expect(t, ok && name == "picture-2", "the first number not taken")
+	testing.expect_value(t, numbers.largest, 3)
+	// Each small number taken: the name after the largest, past the 1000
+	// names that were the bound before.
+	for number in 1 ..< PICTURE_NUMBERS_SMALL {
+		picture_number_mark(&numbers, fmt.tprintf("picture-%d", number))
 	}
-	name, ok = first_free_name(taken[:PICTURE_NAMES_TRIED - 1], &room)
-	testing.expect(t, ok && name == "picture-1000")
-	_, ok = first_free_name(taken, &room)
-	testing.expect(t, !ok, "each name tried is taken")
-	testing.expect_value(t, name_check("picture-1000"), Name_Problem.None)
+	picture_number_mark(&numbers, "picture-5000")
+	name, ok = first_free_name(&numbers, &room)
+	testing.expect(t, ok && name == "picture-5001", name)
+	testing.expect_value(t, name_check(name), Name_Problem.None)
+	// The largest number of digits: the next has one more, which is refused.
+	picture_number_mark(&numbers, "picture-999999999999999")
+	_, ok = first_free_name(&numbers, &room)
+	testing.expect(t, !ok, "a name past the digits of a number")
 }
 
 // A name is 1 to NAME_LIMIT bytes of lowercase letters, digits, "-" and
 // "_"; an object is a picture only with a valid name and the suffix.
 @(test)
 the_names_of_the_pictures :: proc(t: ^testing.T) {
-	long := "abcdefghijklmnopqrstuvwxyz012345"
+	// The longest name of the store, less the suffix: a name follows the
+	// names of the store.
+	testing.expect_value(t, NAME_LIMIT + len(OBJECT_SUFFIX), store.ENTRY_NAME_CAPACITY)
+	long := strings.repeat("a", NAME_LIMIT, context.temp_allocator)
 	testing.expect_value(t, name_check(""), Name_Problem.Empty)
-	testing.expect_value(t, name_check("abcdefghijklmnopqrstuvwxyz0123456"), Name_Problem.Too_Long)
+	testing.expect_value(t, name_check(strings.repeat("a", NAME_LIMIT + 1, context.temp_allocator)), Name_Problem.Too_Long)
 	for name in ([]string{"A", "a b", "a/b", ".", "a.picture", "é", "a\x00"}) {
 		testing.expectf(t, name_check(name) == .Bad_Character, "%q is refused", name)
 	}
@@ -599,8 +760,10 @@ the_names_of_the_pictures :: proc(t: ^testing.T) {
 	testing.expect(t, !ok)
 	object: string
 	object, ok = object_name(&room, long)
-	testing.expect(t, ok && object == "abcdefghijklmnopqrstuvwxyz012345.picture")
-	for refused in ([]string{"", ".picture", "x.pic", "A.picture", "a b.picture", "picture", "abcdefghijklmnopqrstuvwxyz0123456.picture"}) {
+	testing.expect(t, ok && object == strings.concatenate({long, ".picture"}, context.temp_allocator))
+	testing.expect_value(t, len(object), store.ENTRY_NAME_CAPACITY)
+	too_long := strings.concatenate({long, "a.picture"}, context.temp_allocator)
+	for refused in ([]string{"", ".picture", "x.pic", "A.picture", "a b.picture", "picture", too_long}) {
 		_, found := picture_name_of_object(refused)
 		testing.expectf(t, !found, "%q is no picture", refused)
 	}
@@ -1209,3 +1372,67 @@ a_read_waits_for_the_end_of_a_stroke :: proc(t: ^testing.T) {
 	testing.expect_value(t, keep_step(&state, 0, false, false), Keep_Step.Keep)
 	testing.expect_value(t, keep_step(&state, 0, true, false), Keep_Step.Nothing)
 }
+
+@(private = "file")
+heap_ring_grow :: proc "contextless" (history: ^History, wanted: int) -> bool {
+	context = runtime.default_context()
+	bound := int(uintptr(history.grow_data))
+	if wanted > bound {
+		return false
+	}
+	ring := make([]u8, min(max(2 * wanted, 1 << 16), bound), runtime.heap_allocator())
+	copy(ring, history.ring)
+	delete(history.ring, runtime.heap_allocator())
+	history.ring = ring
+	return true
+}
+
+// A fill on a photo of 6000 x 4000 (24 MP): rows of detail at the top, a
+// sky of one color, and a frame of one pixel around it, which the fill
+// paints. The box of the fill is the whole photo, which is what the history
+// keeps; the frame keeps the cost of the fill itself small. The ring grows
+// to the step, under the bound of one copy of the photo; undo gives the
+// photo back, and redo the fill.
+@(test)
+a_fill_on_a_photo_undoes :: proc(t: ^testing.T) {
+	WIDTH :: 6000
+	HEIGHT :: 4000
+	SKY :: graphics.Color(0x87CEEB)
+	photo := picture_make(WIDTH, HEIGHT)
+	defer delete(photo.pixels)
+	noise_fill(&photo, {0, 0, WIDTH, 200}, 7)
+	for &pixel in photo.pixels[200 * WIDTH:] {
+		pixel = SKY
+	}
+	FRAME :: graphics.Color(0x101010)
+	for column in 0 ..< WIDTH {
+		photo.pixels[column], photo.pixels[(HEIGHT - 1) * WIDTH + column] = FRAME, FRAME
+	}
+	for row in 0 ..< HEIGHT {
+		photo.pixels[row * WIDTH], photo.pixels[row * WIDTH + WIDTH - 1] = FRAME, FRAME
+	}
+	before := make([]graphics.Color, WIDTH * HEIGHT)
+	defer delete(before)
+	copy(before, photo.pixels)
+	memory := Fill_Memory{visited = make([]u64, fill_visited_words(WIDTH * HEIGHT))}
+	defer delete(memory.visited)
+	box := fill_region(&photo, 0, 0, 0x228B22, &memory)
+	testing.expect_value(t, box, Box{0, 0, WIDTH, HEIGHT})
+	bound := WIDTH * HEIGHT * size_of(graphics.Color)
+	history := History{grow = heap_ring_grow, grow_data = rawptr(uintptr(bound))}
+	// The grow procedure makes the ring with the heap of the process.
+	defer delete(history.ring, runtime.heap_allocator())
+	scratch := new(History_Scratch)
+	defer free(scratch)
+	testing.expect_value(t, history_record(&history, before, photo.pixels, WIDTH, box, bound, scratch), Record_Outcome.Kept)
+	testing.expect(t, !history.in_copy && len(history.ring) <= bound, "the fill is a step of the ring, under its bound")
+	_, undone := history_undo(&history, &photo, scratch)
+	testing.expect(t, undone)
+	testing.expect(t, string(transmute([]u8)photo.pixels) == string(transmute([]u8)before), "undo gives the photo back")
+	_, redone := history_redo(&history, &photo, scratch)
+	testing.expect(t, redone)
+	testing.expect_value(t, photo.pixels[HEIGHT * WIDTH - 1], graphics.Color(0x228B22))
+	testing.expect_value(t, photo.pixels[199 * WIDTH + 1], before[199 * WIDTH + 1])
+	testing.expect_value(t, photo.pixels[3000 * WIDTH + 3000], SKY)
+}
+

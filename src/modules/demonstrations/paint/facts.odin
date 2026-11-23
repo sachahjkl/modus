@@ -1,7 +1,11 @@
 package paint
 
+import "modus:contract/value_kinds"
+
 // The log facts of paint (src/md/features/log_facts.md). A Text field
-// comes last, and holds its longest text and a zero byte.
+// comes last, and holds its longest text and a zero byte. A name of a
+// picture has the length of a name of the store, so it is a text view, a
+// last field.
 
 // The window is open and draws.
 @(log_fact = "paint: ok")
@@ -24,7 +28,7 @@ No_Store :: struct {}
 Picture_Kept :: struct {
 	rows:  u64,
 	bytes: u64,
-	name:  [40]u8,
+	name:  value_kinds.Text_View,
 }
 
 // A picture of the private store is the picture of the window, and it
@@ -34,7 +38,7 @@ Picture_Opened :: struct {
 	width:        u64,
 	height:       u64,
 	drawn_pixels: u64,
-	name:         [40]u8,
+	name:         value_kinds.Text_View,
 }
 
 // A picture of the private store is the picture of the window, all paper.
@@ -42,14 +46,14 @@ Picture_Opened :: struct {
 Picture_Opened_Blank :: struct {
 	width:  u64,
 	height: u64,
-	name:   [40]u8,
+	name:   value_kinds.Text_View,
 }
 
 // The file of a picture is refused: the picture of the window stays.
 @(log_fact = "paint: the file of the picture is refused, problem {problem}: {name}")
 Picture_Refused :: struct {
 	problem: u64,
-	name:    [40]u8,
+	name:    value_kinds.Text_View,
 }
 
 // The budget did not pay the memory of a picture of a size: the picture of
