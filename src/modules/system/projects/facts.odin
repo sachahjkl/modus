@@ -1,5 +1,7 @@
 package projects_service
 
+import "modus:contract/value_kinds"
+
 // Log facts emitted by the delegated projects service.
 
 FAILURE_FIELD_BYTES :: 96
@@ -33,4 +35,11 @@ Project_Exited :: struct {
 @(log_fact = "projects: refused command with refusal {refusal_code}")
 Project_Command_Refused :: struct {
 	refusal_code: u64,
+}
+
+// projects.new made a project of a principal, with the store of its name.
+@(log_fact = "projects: made the project {project} of principal {principal}, with the store of its name for its source")
+Project_Made :: struct {
+	principal: u64,
+	project:   value_kinds.Module_Name_Field,
 }

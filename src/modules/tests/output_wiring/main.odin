@@ -586,12 +586,15 @@ probes_case :: proc "contextless" () {
 	// handle that Connect gave, and lends nothing: that handle has no Give.
 	// A service for which this process does not act for the principal is
 	// refused; a number that no Connect gave names no connection.
-	packed := system.name_pack("log")
-	connect_status, connected := root_call(.Connect, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
+	// The one path of a Connect: the answer, then the ready completion of
+	// the service.
+	connection, connect_status := system.service_connection(&requests, next_tag, "log")
+	next_tag += 1
 	if connect_status != .Ok {
 		wrong("the connection to the log service gave the status", u64(connect_status))
 	}
-	service_number := u32(connected[0])
+	defer system.call_connection_end(&connection)
+	service_number := u32(connection.process)
 	not_acting := [1]u32{lend(second_reader)}
 	status, answer = wire(row(.Connected, service_number, 1, .Started, 1, READER_PROBES), not_acting[:])
 	refused("a service for which this process does not act for the principal", before, status, answer, .No_Right, fail(.Wire, .No_Grant, .Wirings, 0, 0, 0, 1))

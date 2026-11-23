@@ -640,30 +640,20 @@ requests: ring.Ring // To the root service: Connect only (the grant Connect), an
 has_requests: bool
 request_tag: u32
 
-// root_connect asks the root service for a connection, and waits for its
-// completion.
+// root_connect asks the root service for a connection through the one
+// path of a Connect, and gives the answer of a refusal. A connection that
+// the root service gives is ended at once: the cases read only refusals.
 root_connect :: proc "contextless" (name: string) -> (completion: ring.Record, ok: bool) {
 	if !has_requests {
 		return {}, false
 	}
 	request_tag += 1
-	packed := system.name_pack(name)
-	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
-		return {}, false
+	connection, status := system.service_connection(&requests, request_tag, name, &completion)
+	if status == .Ok {
+		system.call_connection_end(&connection)
+		return {}, true
 	}
-	// The bound only ends a hang.
-	limit := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-	for system.time() < limit {
-		for record in system.receive(&requests.completions) {
-			if record.tag == request_tag {
-				return record, true
-			}
-		}
-		wait: system.Wait
-		system.wait_records(&wait, &requests.completions)
-		system.wait_end(&wait, limit)
-	}
-	return {}, false
+	return completion, completion.tag == request_tag
 }
 
 the_context: ^system.Context

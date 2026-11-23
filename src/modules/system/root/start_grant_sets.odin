@@ -252,12 +252,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "plans", grants = {.Serve, .Store, .Image, .Connect, .Plans}, terms = {callable = {0 = "display"}, on_demand = true}},
 	// The holder of the role Recipes: the cache of the realisations and the
 	// recipes in its private store (src/md/features/recipes.md). It starts
-	// each builder as a call host: the boot image gives the module of the
-	// builder and the file of the storage service that the call host maps,
-	// and the call host writes on the log that this service gives it, and
-	// reads its two stores, shares of the store of this service, with the
-	// storage service that this service gives it
-	// (src/md/features/recipes.md, "The builder").
+	// each builder as a call host (including c_compiler and assemble for the
+	// native C builder, src/md/features/program_loop.md): the boot image gives
+	// the module of the call host and the compilers, log_gives gives a child
+	// its own log handle, and store_gives lets recipes give storage shares to
+	// a builder (src/md/features/recipes.md, "The builder").
 	{name = "recipes", grants = {.Serve, .Store, .Image}, terms = {on_demand = true, log_gives = true, store_gives = true}},
 	// The holder of the role Projects: the pins of each project in its
 	// private store (src/md/features/declarations.md).

@@ -106,9 +106,9 @@ A machine signs the realisations of its own builds with the key of the principal
 One recipe runs no module: a recipe whose builder hash is `inputs_tree_builder_hash()` (the BLAKE3 key of the context `"modus builder inputs tree v1"`) gives one tree whose entries are its inputs, each under its name, a Blob as an object and a Tree as a tree. It takes no argument and gives a Tree only.
 
 - **The recipes service builds it itself.** Its output is a function of the input table only, so no code of a caller runs and nothing needs a sandbox. A cache miss of such a recipe is a bounded step in the service: at most 32 entries, no network, no clock.
-- **Why it exists.** It joins the outputs of several recipes into one tree, the output of a project with several parts, and it was the first recipe that `recipes.build` realised end to end, before builders ran in a sandbox.
+- **Why it exists.** It joins the outputs of several recipes into one tree, the output of a project with several parts, and it was the first recipe that `recipes.build` realised end to end, before builders ran in call hosts.
 - **Refused: a builder module for it.** A module that only joins hashes would need a start, a sandbox and a store "out" for 32 hashes, and its realisation would depend on the trust of its module hash. The service computes the same bytes with `tree_hash`, which each machine checks.
-- **Refused: run any builder in the process of the service.** Each other builder runs foreign code, so it runs in its own process, with the sandbox of "The builder".
+- **Refused: run any builder in the process of the service.** Each other builder runs foreign code, so `recipes` starts it in its own call host with no grant, with the sandbox of "The builder".
 - **The recipe of the inputs of a project.** `projects.build_recipe(project)` gives a recipe of this builder with one input for each pin of the project, a tree by the tree hash of the pin. `recipes.register` then `recipes.build` realise it, so the inputs of a project are one tree hash, and a moved pin gives another recipe.
 
 ### The recipe of a declaration

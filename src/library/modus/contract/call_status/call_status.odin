@@ -23,9 +23,10 @@ Call_Status :: enum u32 {
 	// count from before the call. The reason of the failure stays in the
 	// record; the status says that the details are missing.
 	Failed_With_Wrong_Details = 9,
-	// The deadline that the caller gave passed during the call, before the
-	// answer: the export can still run, so the caller ends the other
-	// process or waits again.
+	// The deadline that the caller gave passed during the call, while the
+	// other process ran: the caller ends the call. The deadline only ends a
+	// hang (src/md/api/call_ring_ready.md; the call outcome
+	// Deadline_Passed_During_The_Call of src/md/api/call_outcome.md).
 	Deadline_Passed = 10,
 }
 

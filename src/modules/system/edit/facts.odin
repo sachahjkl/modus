@@ -11,6 +11,14 @@ No_Store :: struct {}
 @(log_fact = "edit: the text in the store is damaged: the editor starts empty, and the next change writes a new text")
 Stored_Text_Damaged :: struct {}
 
+// A group of changes ended, and the store took the whole text as a new
+// version.
+@(log_fact = "edit: kept a text of {length} in the generation {generation}")
+Text_Kept :: struct {
+	length:     value_kinds.Size_In_Bytes,
+	generation: u64,
+}
+
 // The store holds no text yet.
 @(log_fact = "edit: a new store: an empty text")
 New_Store :: struct {}
