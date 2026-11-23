@@ -106,8 +106,87 @@ inst_ax :: #force_inline proc "contextless" (op: Opcode, ax: u32) -> Instruction
 	return Instruction(u32(op) | ((ax & 0x00FF_FFFF) << 8))
 }
 
-inst_op :: #force_inline proc "contextless" (inst: Instruction) -> Opcode {
-	return Opcode(u32(inst) & 0xFF)
+@(rodata)
+OPCODES_IN_ORDER := [len(Opcode)]Opcode {
+	.Nop,
+	.Move,
+	.Load_None,
+	.Load_Bool,
+	.Load_Int_Imm,
+	.Load_Const,
+	.Get_Upval,
+	.Get_Let,
+	.Let_Enter,
+	.Neg,
+	.Not,
+	.Add,
+	.Sub,
+	.Mul,
+	.Div,
+	.Rem,
+	.List_Concat,
+	.Eq,
+	.Neq,
+	.Lt,
+	.Le,
+	.Gt,
+	.Ge,
+	.Jmp,
+	.Jmp_If_False,
+	.Jmp_If_False_Keep,
+	.Jmp_If_True_Keep,
+	.Check_Bool,
+	.Closure,
+	.Check_Call,
+	.Call,
+	.Tail_Call,
+	.Call_Builtin,
+	.Call_Site,
+	.Ret,
+	.Make_Record,
+	.Get_Field,
+	.With,
+	.Destructure,
+	.List_Begin,
+	.List_Push,
+	.List_End,
+	.Str_Begin,
+	.Str_Push,
+	.Str_End,
+	.Assert_Fail,
+	.Trace,
+	.Load_Global,
+	.Refuse_Parse,
+	.Extra_Arg,
+}
+
+@(rodata)
+BUILTINS_IN_ORDER := [len(Builtin_Id)]Builtin_Id {
+	.None,
+	.Map,
+	.Filter,
+	.Fold,
+	.Zip,
+	.Fields,
+	.Values,
+	.Has,
+	.Extend,
+	.Merge_Deep,
+}
+
+inst_op :: #force_inline proc "contextless" (inst: Instruction) -> (Opcode, bool) {
+	b := u32(inst) & 0xFF
+	if b >= u32(len(OPCODES_IN_ORDER)) {
+		return .Nop, false
+	}
+	return OPCODES_IN_ORDER[b], true
+}
+
+builtin_of_byte :: #force_inline proc "contextless" (b: u8) -> (Builtin_Id, bool) {
+	if int(b) >= len(BUILTINS_IN_ORDER) {
+		return .None, false
+	}
+	return BUILTINS_IN_ORDER[b], true
 }
 
 inst_a :: #force_inline proc "contextless" (inst: Instruction) -> u8 {

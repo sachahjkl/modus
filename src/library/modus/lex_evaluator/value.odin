@@ -422,12 +422,21 @@ value_member :: #force_inline proc "contextless" (sym: lex_parser.Sym_Id, chunk_
 	return {kind = .Member, aux = chunk_id, meta = u32(sym), data = u64(u32(node_idx))}
 }
 
+@(rodata, private = "file")
+TEXT_STORAGES_IN_ORDER := [len(Text_Storage)]Text_Storage {
+	.Empty,
+	.Source,
+	.Arena,
+	.Sym,
+	.Host,
+}
+
 // value_text resolves any .Text VM value to its UTF-8 byte slice.
 value_text :: proc "contextless" (eval: ^Evaluation, v: Value) -> string {
-	if eval == nil || v.kind != .Text {
+	if eval == nil || v.kind != .Text || int(v.flags) >= len(TEXT_STORAGES_IN_ORDER) {
 		return ""
 	}
-	switch Text_Storage(v.flags) {
+	switch TEXT_STORAGES_IN_ORDER[v.flags] {
 	case .Empty:
 		return ""
 	case .Source:

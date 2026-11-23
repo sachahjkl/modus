@@ -1372,7 +1372,11 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 		inst := eval.code[ip]
 		node_idx := eval.code_nodes[ip]
 		frame.ip = ip + 1
-		op := inst_op(inst)
+		op, op_ok := inst_op(inst)
+		if !op_ok {
+			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = node_idx})
+			return false
+		}
 
 		if op == .Extra_Arg {
 			eval.extra_arg = inst_ax_val(inst)
@@ -1716,7 +1720,7 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 		case .Check_Bool:
 			val := eval.reg_stack[reg_base + a]
 			if val.kind != .Boolean {
-				op_kind := lex_parser.Operator(inst_b(inst))
+				op_kind, _ := lex_parser.operator_of_byte(inst_b(inst))
 				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, operator = op_kind, left_kind = .Boolean, right_kind = val.kind})
 				return false
 			}
@@ -1818,7 +1822,11 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			}
 
 		case .Call_Builtin:
-			bid := Builtin_Id(inst_b(inst))
+			bid, bid_ok := builtin_of_byte(inst_b(inst))
+			if !bid_ok {
+				refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = node_idx})
+				return false
+			}
 			argc := int(inst_c(inst))
 			args := eval.reg_stack[reg_base + a + 1 : reg_base + a + 1 + argc]
 			if !vm_exec_builtin(eval, frame, bid, args, u8(a), node_idx) {

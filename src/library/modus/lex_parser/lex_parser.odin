@@ -606,12 +606,99 @@ node_integer :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> i6
 	return 0
 }
 
+@(rodata)
+OPERATORS_IN_ORDER := [len(Operator)]Operator {
+	.None,
+	.Add,
+	.Subtract,
+	.Multiply,
+	.Divide,
+	.Remainder,
+	.With,
+	.Equal,
+	.Not_Equal,
+	.Less,
+	.Less_Or_Equal,
+	.Greater,
+	.Greater_Or_Equal,
+	.Logical_And,
+	.Logical_Or,
+	.List_Concat,
+}
+
+@(rodata)
+REFUSALS_IN_ORDER := [len(Refusal)]Refusal {
+	.None,
+	.Text_Too_Long,
+	.Nodes_Full,
+	.Line_Ends_Too_Soon,
+	.Unexpected,
+	.Number_Too_Large,
+	.Text_Without_End_Quote,
+	.Close_Parenthesis_Missing,
+	.Comma_Or_Close_Missing,
+	.Too_Many_Arguments,
+	.Fact_Name_Missing,
+	.Condition_Head_Refused,
+	.Field_Name_Missing,
+	.Literal_Close_Missing,
+	.Literal_Name_Missing,
+	.Literal_Equal_Missing,
+	.Literal_Field_Twice,
+	.Named_Argument_Twice,
+	.Positional_After_Named,
+	.Let_Name_Missing,
+	.Let_Equal_Missing,
+	.Let_In_Missing,
+	.Let_Name_Twice,
+	.Word_As_Name,
+	.Parameter_Name_Missing,
+	.Parameter_Twice,
+	.Too_Many_Parameters,
+	.List_Close_Missing,
+	.Hash_Not_Valid,
+	.If_Then_Missing,
+	.If_Else_Missing,
+	.Nesting_Too_Deep,
+	.Thin_Arrow,
+	.Pipe_No_Left,
+	.Pipe_Line_End,
+	.Pipe_Not_A_Call,
+	.Lone_Bar,
+	.Placeholder_Not_Whole,
+	.Placeholder_Twice,
+	.Placeholder_Nested,
+	.Placeholder_Without_Pipe,
+	.Escape_Not_Valid,
+	.Interpolation_Close_Missing,
+	.Pattern_Field_Missing,
+	.Pattern_Close_Missing,
+	.Pattern_Field_Twice,
+	.Pattern_Rest_Not_Last,
+	.Pattern_At_Missing_Brace,
+}
+
+operator_of_byte :: #force_inline proc "contextless" (b: u8) -> (Operator, bool) {
+	if int(b) >= len(OPERATORS_IN_ORDER) {
+		return .None, false
+	}
+	return OPERATORS_IN_ORDER[b], true
+}
+
+refusal_of_byte :: #force_inline proc "contextless" (b: u8) -> (Refusal, bool) {
+	if int(b) >= len(REFUSALS_IN_ORDER) {
+		return .None, false
+	}
+	return REFUSALS_IN_ORDER[b], true
+}
+
 node_operator :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Operator {
 	node := node_at(tree, index)
 	if node == nil || node.kind != .Binary {
 		return .None
 	}
-	return Operator(node.sub)
+	op, _ := operator_of_byte(node.sub)
+	return op
 }
 
 node_refusal :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Refusal {
@@ -621,7 +708,8 @@ node_refusal :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Re
 	}
 	switch node.kind {
 	case .Refused, .Fact_Name, .Field_Names, .Condition:
-		return Refusal(node.sub)
+		r, _ := refusal_of_byte(node.sub)
+		return r
 	case .Integer, .Text, .Text_Interp, .Name, .Call, .Negate, .Logical_Not, .Binary, .Record_Literal, .Literal_Field, .Named_Argument, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder, .Pattern_Record, .Pattern_Field:
 		return .None
 	}

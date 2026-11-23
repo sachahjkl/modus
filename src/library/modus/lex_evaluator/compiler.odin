@@ -230,7 +230,8 @@ patch_jmp :: proc "contextless" (c: ^Compiler, jmp_pos: u32, node_idx: lex_parse
 	delta := i64(target) - i64(jmp_pos) - 1
 	if delta >= i64(min(i16)) && delta <= i64(max(i16)) {
 		old := c.eval.code[jmp_pos]
-		c.eval.code[jmp_pos] = inst_asbx(inst_op(old), inst_a(old), i16(delta))
+		op, _ := inst_op(old)
+		c.eval.code[jmp_pos] = inst_asbx(op, inst_a(old), i16(delta))
 		return
 	}
 	// Rare wide jump (> 32767 instructions): shift branch forward by 1 word and
@@ -245,10 +246,11 @@ patch_jmp :: proc "contextless" (c: ^Compiler, jmp_pos: u32, node_idx: lex_parse
 	}
 	c.eval.code_count += 1
 	old := c.eval.code[jmp_pos]
+	op, _ := inst_op(old)
 	new_target := u32(c.eval.code_count)
 	c.eval.code[jmp_pos] = inst_ax(.Extra_Arg, new_target)
 	c.eval.code_nodes[jmp_pos] = node_idx
-	c.eval.code[jmp_pos + 1] = inst_asbx(inst_op(old), inst_a(old), 0)
+	c.eval.code[jmp_pos + 1] = inst_asbx(op, inst_a(old), 0)
 	c.eval.code_nodes[jmp_pos + 1] = node_idx
 }
 
