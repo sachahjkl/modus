@@ -209,10 +209,10 @@ Trusted_Display_Port :: struct {
 // that add or widen a grant, and the items that remove or narrow one, each
 // a list of items that commas separate.
 Plan_Display_Lists :: struct {
-	added:          [pr.PLAN_DISPLAY_ITEM_CAPACITY * (pr.PLAN_DISPLAY_ITEM_BYTES + 2)]u8,
+	added:          [pr.PLAN_DISPLAY_ITEM_CAPACITY * (pr.PLAN_DISPLAY_ITEM_BYTES + len(pr.PLAN_DISPLAY_ITEM_SEPARATOR))]u8,
 	added_length:   int,
 	added_count:    int,
-	removed:        [pr.PLAN_DISPLAY_ITEM_CAPACITY * (pr.PLAN_DISPLAY_ITEM_BYTES + 2)]u8,
+	removed:        [pr.PLAN_DISPLAY_ITEM_CAPACITY * (pr.PLAN_DISPLAY_ITEM_BYTES + len(pr.PLAN_DISPLAY_ITEM_SEPARATOR))]u8,
 	removed_length: int,
 	removed_count:  int,
 }
@@ -746,6 +746,7 @@ decimal_put :: proc "contextless" (text: []u8, length: int, word: u64) -> int {
 // principal never accepts a line that it did not see.
 display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Difference, lists: ^Plan_Display_Lists) -> pr.Plan_Refusal {
 	lists^ = {}
+	lines := 0
 	for index in 0 ..< int(difference.change_count) {
 		item := &difference.changes[index]
 		text: [pr.PLAN_DISPLAY_ITEM_BYTES + 1]u8 // One more byte: an item past the bound is refused, not cut.
@@ -772,7 +773,15 @@ display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Differen
 		length = text_put(text[:], length, string(item.name_bytes[:item.name_length]))
 		if item.entry_kind == .Value && item.change != .Removed {
 			length = text_put(text[:], length, " = ")
-			length = decimal_put(text[:], length, item.new_value_word)
+			if item.new_value_kind_word == u64(chosen_values.Entry_Kind.Text) {
+				// In quotes: the border of the plan took no control byte, so
+				// the text is one item of the list, whole.
+				length = text_put(text[:], length, "\"")
+				length = text_put(text[:], length, string(item.new_value_text[:min(int(item.new_value_text_length), pr.PLAN_VALUE_TEXT_BYTES)]))
+				length = text_put(text[:], length, "\"")
+			} else {
+				length = decimal_put(text[:], length, item.new_value_word)
+			}
 		}
 		addition := true
 		switch item.change {
@@ -798,12 +807,18 @@ display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Differen
 		if length > pr.PLAN_DISPLAY_ITEM_BYTES {
 			return .Display_Refused
 		}
+		// The lines of both sides: a difference that the dialog cannot show
+		// whole on the reference screen is refused here, before any dialog.
+		lines += pr.plan_display_item_lines(string(text[:length]))
+		if lines > pr.PLAN_DISPLAY_LINE_CAPACITY {
+			return .Display_Refused
+		}
 		if addition {
 			if lists.added_count >= pr.PLAN_DISPLAY_ITEM_CAPACITY {
 				return .Display_Refused
 			}
 			if lists.added_count > 0 {
-				lists.added_length = text_put(lists.added[:], lists.added_length, ", ")
+				lists.added_length = text_put(lists.added[:], lists.added_length, pr.PLAN_DISPLAY_ITEM_SEPARATOR)
 			}
 			lists.added_length = text_put(lists.added[:], lists.added_length, string(text[:length]))
 			lists.added_count += 1
@@ -812,7 +827,7 @@ display_lists_of_difference :: proc "contextless" (difference: ^pr.Plan_Differen
 				return .Display_Refused
 			}
 			if lists.removed_count > 0 {
-				lists.removed_length = text_put(lists.removed[:], lists.removed_length, ", ")
+				lists.removed_length = text_put(lists.removed[:], lists.removed_length, pr.PLAN_DISPLAY_ITEM_SEPARATOR)
 			}
 			lists.removed_length = text_put(lists.removed[:], lists.removed_length, string(text[:length]))
 			lists.removed_count += 1

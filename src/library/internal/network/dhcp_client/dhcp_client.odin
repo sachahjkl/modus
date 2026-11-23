@@ -13,6 +13,10 @@ import "modus:contract/plan_values"
 
 CLIENT_PORT :: 68
 SERVER_PORT :: 67
+// The prefixes that a machine takes: a subnet of 8 bits at most, and of 2
+// hosts at least.
+PREFIX_LEAST :: 8
+PREFIX_MOST :: 30
 // The fixed part of a message and the magic cookie (RFC 2131, section 2).
 FIXED_SIZE :: 236
 MESSAGE_LEAST :: FIXED_SIZE + 4
@@ -250,7 +254,7 @@ reply_read :: proc "contextless" (message: []u8, transaction: u32, hardware: [6]
 		return {}, .Bad_Mask
 	}
 	prefix, mask_ok := prefix_of_mask(reply.mask)
-	if !mask_ok || prefix < 8 || prefix > 30 {
+	if !mask_ok || prefix < PREFIX_LEAST || prefix > PREFIX_MOST {
 		return {}, .Bad_Mask
 	}
 	reply.prefix = prefix
@@ -523,7 +527,7 @@ static_of :: proc "contextless" (plan: plan_values.Owner_Values) -> (static: Sta
 	if !has_address && !has_prefix && !has_gateway {
 		return {}, false, false
 	}
-	if !has_address || !has_prefix || address > u64(max(u32)) || prefix < 8 || prefix > 30 || gateway > u64(max(u32)) {
+	if !has_address || !has_prefix || address > u64(max(u32)) || prefix < PREFIX_LEAST || prefix > PREFIX_MOST || gateway > u64(max(u32)) {
 		return {}, true, true
 	}
 	mask := ~u32(0) << (32 - u32(prefix))

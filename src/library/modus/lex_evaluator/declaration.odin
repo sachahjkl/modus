@@ -16,6 +16,60 @@ import "modus:contract/plans_recipes"
 import "modus:console_language"
 import "modus:lex_parser"
 
+// The names of the evaluation that make the values of a plan, in both
+// modes: `plan { … }`, `module(blake3:…)` and `store(name, .read, …)`
+// (src/md/features/declarations.md, "A plan written in the console").
+
+// plan_value_make tags a lazy record as a plan. ok is false for a value
+// that is no lazy record, and for a full pool of tagged records.
+plan_value_make :: proc "contextless" (evaluation: ^Evaluation, record: Value) -> (value: Value, problem: Plan_Make_Problem) {
+	if !is_lazy_record(record.kind) {
+		return {}, .Not_A_Record
+	}
+	if evaluation.tagged_record_count >= len(evaluation.tagged_records) {
+		return {}, .Pool_Full
+	}
+	index := evaluation.tagged_record_count
+	evaluation.tagged_records[index] = record
+	evaluation.tagged_record_count += 1
+	return {kind = .Plan_Value, integer = i64(index)}, .None
+}
+
+// store_ref_make makes `store(name, rights…)`: a Text, then members.
+store_ref_make :: proc "contextless" (evaluation: ^Evaluation, arguments: []Value) -> (value: Value, problem: Plan_Make_Problem) {
+	if len(arguments) < 1 || arguments[0].kind != .Text {
+		return {}, .Not_A_Record
+	}
+	right_count := len(arguments) - 1
+	if right_count > len(evaluation.active_list_items) - evaluation.list_item_count {
+		return {}, .Pool_Full
+	}
+	first := evaluation.list_item_count
+	for index in 0 ..< right_count {
+		if arguments[index + 1].kind != .Member {
+			return {}, .Not_A_Record
+		}
+		evaluation.active_list_items[first + index] = arguments[index + 1]
+	}
+	evaluation.list_item_count += right_count
+	return {kind = .Store_Ref, text = arguments[0].text, integer = i64(first), detail = u32(right_count)}, .None
+}
+
+// Why a value of a plan is not made.
+Plan_Make_Problem :: enum u8 {
+	None         = 0,
+	Not_A_Record = 1, // An argument of another kind: plan takes a record literal, store a text and members, module a hash.
+	Pool_Full    = 2, // The pool of tagged records or of list items is full.
+}
+
+// record_field_names gives the names of the fields of a lazy record, of a
+// plan, or of a `with`, in the order of their first place. ok is false for
+// a value of another kind, or past DECLARATION_RECORD_FIELDS_LIMIT names.
+record_field_names :: proc "contextless" (evaluation: ^Evaluation, value: Value, names: ^[DECLARATION_RECORD_FIELDS_LIMIT]string) -> (count: int, ok: bool) {
+	ok = collect_lazy_record_fields(evaluation, value, names, &count, 0)
+	return count, ok
+}
+
 DECLARATION_TREE_CAPACITY :: 16
 DECLARATION_NODE_POOL :: 8192
 DECLARATION_CALL_CAPACITY :: 1024
@@ -686,40 +740,32 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 		return {kind = .Follow_Ref, detail = arguments[0].detail, text = arguments[1].text}, true
 
 	case "store":
-		if len(arguments) < 1 || arguments[0].kind != .Text {
+		made, problem := store_ref_make(&ws.evaluation, arguments)
+		switch problem {
+		case .None:
+			return made, true
+		case .Not_A_Record:
 			decl_host_fail(ws, .Type_Error, "store", {})
-			return {}, false
-		}
-		right_count := len(arguments) - 1
-		if right_count > len(ws.evaluation.active_list_items) - ws.evaluation.list_item_count {
+		case .Pool_Full:
 			decl_host_fail(ws, .Pool_Exhausted, "store", {})
-			return {}, false
 		}
-		first := ws.evaluation.list_item_count
-		for i in 0 ..< right_count {
-			right_arg := arguments[i + 1]
-			if right_arg.kind != .Member {
-				decl_host_fail(ws, .Type_Error, "store", {})
-				return {}, false
-			}
-			ws.evaluation.active_list_items[first + i] = right_arg
-		}
-		ws.evaluation.list_item_count += right_count
-		return {kind = .Store_Ref, text = arguments[0].text, integer = i64(first), detail = u32(right_count)}, true
+		return {}, false
 
 	case "plan":
-		if len(arguments) != 1 || !is_lazy_record(arguments[0].kind) {
+		if len(arguments) != 1 {
 			decl_host_fail(ws, .Type_Error, "plan", {})
 			return {}, false
 		}
-		if ws.evaluation.tagged_record_count >= len(ws.evaluation.tagged_records) {
+		made, problem := plan_value_make(&ws.evaluation, arguments[0])
+		switch problem {
+		case .None:
+			return made, true
+		case .Not_A_Record:
+			decl_host_fail(ws, .Type_Error, "plan", {})
+		case .Pool_Full:
 			decl_host_fail(ws, .Pool_Exhausted, "plan", {})
-			return {}, false
 		}
-		idx := ws.evaluation.tagged_record_count
-		ws.evaluation.tagged_records[idx] = arguments[0]
-		ws.evaluation.tagged_record_count += 1
-		return {kind = .Plan_Value, integer = i64(idx)}, true
+		return {}, false
 
 	case "project":
 		if len(arguments) != 1 || !is_lazy_record(arguments[0].kind) {

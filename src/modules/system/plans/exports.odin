@@ -9,6 +9,7 @@ import "internal:plans/plans_core"
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/plan_values"
 import pr "modus:contract/plans_recipes"
 import "modus:system"
 
@@ -90,6 +91,10 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: i6
 	case .Values_Refused:
 		// The core refused the values of the plan: no value changed.
 		return errors.fail(error, result, .Refused, .Records, 1, 0, 0, found)
+	case .Values_Too_Large:
+		// The values of one owner do not fit its page: the value is the
+		// entry that passes it, the limit the bytes of a page.
+		return errors.fail(error, result, .Over_Limit, .Bytes, 1, i64(bad_index), plan_values.OWNER_BYTES_MOST, found)
 	}
 	return errors.fail(error, result, .Refused, .None, 0, 0, 0, found)
 }

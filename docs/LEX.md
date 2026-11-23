@@ -104,7 +104,7 @@ Every value of Lex carries one explicit kind (`lex_evaluator.Kind`).
 | `Recipe_Ref` | `recipe(module(blake3:...), args)` | Lazy build specification identified by its recipe hash. Forcing it does not run a build. |
 | `Follow_Ref` | `follow(publisher, name)` | Publisher-signed release pointer input in a declaration. |
 | `Store_Ref` | `store("kernel", .Read, .Write)` | Store grant specification inside a project console or plan. |
-| `Plan_Value` / `Project_Value` | `plan { ... }`, `project { ... }` | Tagged lazy record values passed to `plans` and `projects` services. |
+| `Plan_Value` / `Project_Value` | `plan { ... }`, `project { ... }` | Tagged lazy record values passed to `plans` and `projects` services. In the console, a plan given to `plans.apply` or `plans.difference` becomes the rows of the plan, each value typed by the description of its owner ("A plan in the console"). |
 
 ### Integers with units
 

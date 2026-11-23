@@ -69,3 +69,58 @@ values_with_no_port_or_a_refusal_are_refused :: proc(t: ^testing.T) {
 	state.values = {replace = silent}
 	testing.expect_value(t, values_give(&state, MACHINE_PRINCIPAL, &plan, 1, .Apply), pr.Plan_Refusal.Values_Refused)
 }
+
+// A text of the plan reaches its owner: the set keeps it as a text entry,
+// the page of the owner gives it back, and text_in_force reads it by the
+// precedence; a word of the same set stays a word. The largest plan of
+// texts, 32 of 256 bytes for one owner, fits the set.
+@(test)
+a_text_of_the_plan_reaches_its_owner :: proc(t: ^testing.T) {
+	plan: pr.Plan_Spec
+	home, _ := pr.plan_entry_make_text_value("browser", "home", "http://example.org/a,b", .Plan_Default)
+	interval, _ := pr.plan_entry_make_value("monitor", "sample_interval", 1000, .Locked)
+	plan.entries[0], plan.entries[1], plan.entry_count = home, interval, 2
+	out: [plan_values.SET_SIZE]u8
+	written, ok := plan_values_set_of(&plan, 2, out[:])
+	testing.expect(t, ok && written > 0)
+	browser, found := plan_values.owner_values_of(out[:], "browser")
+	testing.expect(t, found)
+	page: [plan_values.OWNER_PAGE_SIZE]u8
+	testing.expect(t, plan_values.owner_page_write(page[:], browser))
+	read, read_ok := plan_values.owner_page_read(page[:])
+	testing.expect(t, read_ok)
+	any_text :: proc "contextless" (text: string) -> bool {return true}
+	text, layer, text_found := plan_values.text_in_force("home", {}, read, any_text)
+	testing.expect(t, text_found && text == "http://example.org/a,b" && layer == .Plan_Default)
+	_, word_found := chosen_values.find(read.defaults, "home")
+	testing.expect(t, !word_found)
+	monitor, _ := plan_values.owner_values_of(out[:], "monitor")
+	word, word_ok := chosen_values.find(monitor.locks, "sample_interval")
+	testing.expect(t, word_ok && word == 1000)
+	// 32 texts of 256 bytes for one owner.
+	full: pr.Plan_Spec
+	long: [pr.PLAN_VALUE_TEXT_BYTES]u8
+	for &byte in long {
+		byte = 'a'
+	}
+	field: [3]u8 = {'f', 'a', 'a'}
+	for index in 0 ..< pr.MAX_PLAN_ENTRIES {
+		field[1], field[2] = 'a' + u8(index / 26), 'a' + u8(index % 26)
+		full.entries[index], _ = pr.plan_entry_make_text_value("browser", string(field[:]), string(long[:]), .Plan_Default)
+	}
+	// 32 texts of 256 bytes do not fit the page of one owner: the border of
+	// the plan refuses them at the entry that passes the page, and the core
+	// would refuse the set; the entries that fit pass.
+	full.entry_count = pr.MAX_PLAN_ENTRIES
+	refusal, bad := pr.plan_validate(&full)
+	testing.expect_value(t, refusal, pr.Plan_Refusal.Values_Too_Large)
+	per_entry := chosen_values.ENTRY_SIZE + pr.PLAN_VALUE_TEXT_BYTES
+	testing.expect_value(t, int(bad), plan_values.OWNER_BYTES_MOST / per_entry)
+	full.entry_count = bad
+	fitting, _ := pr.plan_validate(&full)
+	testing.expect_value(t, fitting, pr.Plan_Refusal.None)
+	fitting_written, fitting_ok := plan_values_set_of(&full, 3, out[:])
+	testing.expect(t, fitting_ok && fitting_written > 0)
+	fitting_values, _ := plan_values.owner_values_of(out[:], "browser")
+	testing.expect(t, plan_values.owner_fits_page(fitting_values))
+}

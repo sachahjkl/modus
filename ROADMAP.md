@@ -7,7 +7,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Next
 
 - **The palette and the window of settings read the range and the choices.** The palette offers the stops of a range and the rows of a choices export, and the window of settings shows the settings of any module from their descriptions, so a module gets its settings shown with no code in either. [Design](src/md/features/module_settings.md)
-- **A plan written as `plan { ... }` reaches `plans.apply`.** The console reads the fields `roles`, `stores` and `values` of a Lex plan into the rows that `plans.apply` takes, so a principal writes `values = { display = { bar_edge = .bottom } }` in place of a table of rows. [Design](src/md/features/declarations.md)
 - **The words of the windows and the notifications.** Each window, notification, dialog and status line says the problem, the cause and what to do, in the words of `docs/WRITING.md`: no "invalid", no "failed" alone, buttons that name their action, and "you" where a window says "principal".
 - **A check of the display texts of the modules.** `modustool check` refuses a display text, a description of a setting and a label of a module file that uses a word that `docs/WRITING.md` refuses, that is not in sentence case, or that has a wrong end period, so a new text keeps the guide with no review.
 - **The cache signing key authorised, and the first publication to the cache.** The deployment of `cache.modus.systems` names `resources/keys/cache_signing_key.public` in `--authorized-key`, and the next release fills the public object cache, which `cache-get cache.modus.systems:5010 test-recipe` then proves; until then the job `cache` of a release fails and the release is published. [Design](src/md/infrastructure/cache_publication.md)
@@ -46,7 +45,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
-- **A plan gives a text value.** A plan of principal 0 gives the default of a text setting, as the home of the browser, or locks it, as it does for a word. [Design](src/md/features/module_settings.md)
+- **A plan longer than one line.** A principal applies a plan of a declaration file, whose evaluation process gives its record, so a plan is no longer bound by the 200 bytes of a line of the console and can name a holder by a name of the catalog. [Design](src/md/features/declarations.md)
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)

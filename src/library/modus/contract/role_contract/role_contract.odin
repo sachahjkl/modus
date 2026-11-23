@@ -225,6 +225,49 @@ face_kind_from_word :: proc "contextless" (word: u64) -> (kind: Face_Kind, ok: b
 	return member, true
 }
 
+// The module of the boot image that holds each role when no plan names
+// another: the root service starts it (src/md/features/roles_and_contracts.md),
+// and the console types the values of a plan by its description
+// (src/md/features/declarations.md, "A plan written in the console"). An
+// empty name: the role has no default holder.
+@(rodata)
+DEFAULT_HOLDER_NAMES := [Role]string {
+	.None           = "",
+	.Display        = "compositor",
+	.Input          = "input",
+	.Console        = "console",
+	.Assistive      = "",
+	.Speech         = "",
+	.Terminal       = "terminal",
+	.Start_Policy   = "start_policy",
+	.Storage        = "storage",
+	.Network        = "network",
+	.Block_Device   = "block",
+	.Network_Device = "frame",
+	.Sound_Device   = "sound",
+	.Entropy_Device = "entropy",
+	.Tpm            = "tpm",
+	.Remote_Display = "remote_display",
+	.Plans          = "plans",
+	.Projects       = "projects",
+	.Recipes        = "recipes",
+	.Powerbox       = "powerbox",
+	.Disk_Processes = "disk_processes",
+	.Principals     = "principals",
+	.Devices        = "devices",
+	.Settings       = "settings",
+}
+
+// role_of_name gives the role whose canonical name is name: "display".
+role_of_name :: proc "contextless" (name: string) -> (role: Role, found: bool) {
+	for member in Role {
+		if member != .None && role_properties(member).name == name {
+			return member, true
+		}
+	}
+	return .None, false
+}
+
 // role_properties returns the scope, trust class, multiplicity rule, and
 // canonical name for a Role. Only Assistive permits multiple holders in one
 // scope; only Display, Input, Console, Assistive, and Powerbox are in the

@@ -25,10 +25,6 @@ Values_Port :: struct {
 	replace: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool),
 }
 
-// The bytes of the records of one owner while a set is written.
-@(private = "file")
-OWNER_RECORD_BYTES :: chosen_values.HEADER_SIZE + pr.MAX_PLAN_ENTRIES * chosen_values.ENTRY_SIZE
-
 // plan_values_set_of writes the set of the Value entries of a plan, owner
 // by owner, in the order of their first entry: the defaults and the locks
 // of each, as records of chosen values. A plan with no plan (nil) is the
@@ -43,7 +39,9 @@ plan_values_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation: u64, 
 		defaults_count, locks_count: int,
 	}
 	@(static) owners: [plan_values.OWNER_CAPACITY]Owner_Records
-	@(static) bytes: [plan_values.OWNER_CAPACITY][2][OWNER_RECORD_BYTES]u8
+	// The records of every owner, one after the other: the texts of a plan
+	// fit a set, so they fit this.
+	@(static) bytes: [plan_values.SET_SIZE]u8
 	owner_count := 0
 	count := plan == nil ? 0 : min(int(plan.entry_count), pr.MAX_PLAN_ENTRIES)
 	for index in 0 ..< count {
@@ -72,6 +70,9 @@ plan_values_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation: u64, 
 		}
 		records := &owners[place]
 		change := chosen_values.Change{name = field, kind = .Choose, value = entry.value_word}
+		if entry.value_kind_word == u64(chosen_values.Entry_Kind.Text) {
+			change = {name = field, kind = .Choose_Text, text = pr.plan_value_text(entry)}
+		}
 		if layer == .Locked {
 			records.locks[records.locks_count] = change
 			records.locks_count += 1
@@ -81,14 +82,21 @@ plan_values_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation: u64, 
 		}
 	}
 	blocks: [plan_values.OWNER_CAPACITY]plan_values.Owner_Block
+	at := 0
 	for index in 0 ..< owner_count {
 		records := &owners[index]
-		defaults_written, defaults_problem := chosen_values.write_record({}, records.defaults[:records.defaults_count], bytes[index][0][:])
-		locks_written, locks_problem := chosen_values.write_record({}, records.locks[:records.locks_count], bytes[index][1][:])
-		if defaults_problem != .None || locks_problem != .None {
+		defaults_written, defaults_problem := chosen_values.write_record({}, records.defaults[:records.defaults_count], bytes[at:])
+		if defaults_problem != .None {
 			return 0, false
 		}
-		blocks[index] = {owner = records.owner, defaults = bytes[index][0][:defaults_written], locks = bytes[index][1][:locks_written]}
+		defaults := bytes[at:][:defaults_written]
+		at += defaults_written
+		locks_written, locks_problem := chosen_values.write_record({}, records.locks[:records.locks_count], bytes[at:])
+		if locks_problem != .None {
+			return 0, false
+		}
+		blocks[index] = {owner = records.owner, defaults = defaults, locks = bytes[at:][:locks_written]}
+		at += locks_written
 	}
 	written = plan_values.set_write(out, MACHINE_PRINCIPAL, max(generation, 1), blocks[:owner_count])
 	if written == 0 {

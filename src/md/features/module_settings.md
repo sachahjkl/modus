@@ -122,15 +122,19 @@ The owner reads its plan record at its start from a page that nobody writes afte
 **How the values reach their owner.** The holder of Plans gives the core the plan values of principal 0 with the command `Plan_Values`, as it gives the roles with `Plan_Roles`: on a page that the core lends, the whole set of the generation that the principal accepted. The core copies the set once, checks it whole (`modus:contract/plan_values`) and replaces its values in one step: the core never runs with a part of a plan. At the start of an owner, the core maps the values of that owner, read-only, at the fixed range `Plan_Values_Page`; an owner that started before the change keeps the values that it started with, and takes the new ones at its next start.
 
 - The set names each owner by the name of its store: the role for a role holder, the module name for another module, `root` for the core itself.
-- Each value is a name and a word, with its layer: `Plan_Default` or `Locked`. The owner checks each word at the border of its field, as it checks a chosen word: a word that its border refuses holds as no value of the plan.
+- Each value is a name and a word or a text, with its layer: `Plan_Default` or `Locked`. The owner checks each value at the border of its field, as it checks a chosen value: a word that its border refuses holds as no value of the plan.
 - The record of chosen values and the plan values share one form of entry (`modus:contract/chosen_values`): a name of 32 bytes and a word. One reader, one border.
 - The forms refused: a value that the owner reads with a call to the holder of Plans at each use (a plan holder that is slow or replaced would stall each owner); a page that the core writes during the life of the owner (a value that changes under a running owner is a live edit, refused).
+
+**The description of a plan-only value.** A value with no setter still has one description: an export `plan_only` of its owner, whose optional parameters are the plan-only values of the owner, with their ranges. The console types a plan by it (`src/md/features/declarations.md`, "A plan written in the console"), and the window of settings can show it. Each call of it is refused with `No_Grant`, unit `Plan_Lock`: the plan of principal 0 is the one door of these values. The owner `root` has no exports; its fields are typed by the constants of `root_plan_values`.
 
 The owners and their fields, as built:
 
 - `settings`: each setting by its name in `settings.descriptions`, and `time_zone`, a default or a lock (`settings.choice_of_kept`).
 - `display` (the holder of the display): `bar_edge`, `do_not_disturb`, `notification_show_milliseconds`, `magnifier_eighths`, `consent_arm_milliseconds` (`display_choices.choices_of_record`).
-- `storage`: `keep_all_minutes` and `hours_end_hours`, the retention rule, with their order (`storage_retention.rule_of`).
+- `storage`: `keep_all_minutes` and `hours_end_hours`, the retention rule, with their order (`storage_retention.rule_of`), described by `storage.plan_only`.
+- `network`: `static_address`, `static_prefix` and `static_gateway` (`dhcp_client.static_of`), described by `network.plan_only`.
+- `browser`: `home`, a text; `monitor`: `sample_interval`.
 - `root`: `budget_share`, and the start size and the largest size of the screen of memory (`root_plan_values.root_plan_of`); the core reads them at the start of the holder of the display.
 - any owner of a store: `store_blocks`, the quota of its store, which the core reads when it opens the store (`root_plan_values.store_blocks_of`).
 
@@ -157,7 +161,7 @@ The forms refused: a lock that writes the value of the plan in the kept record (
 
 A module that holds no role declares its settings in the same form as an owner of a role: a setter export whose optional parameters are its settings, each with its range or its enum getter, a getter for each setting, `reset` and `settings_state`. It keeps its chosen values in its private store (the grant Store), in one object, `settings`, in the form of `modus:contract/chosen_values`. Its plan values are those of the owner of its module name. A module setting is a taste: the plan alone holds a value of the line of "The two doors", as for a role.
 
-**A text value.** A setting is a word or a text. A kept record holds both kinds of entry (`chosen_values.Entry_Kind`): a text entry gives the place and the length of its text in the bytes after the entries, in the order of the entries with no gap, so one record has one form. The reader refuses a text that is not UTF-8 or longer than `chosen_values.TEXT_BYTES_MOST`, 1024 bytes, before any owner sees it; the owner checks its own bound and its own rules after. `plan_values.text_in_force` gives a text by the same precedence as a word. A plan gives no text yet: a plan entry of the kind `Value` carries a word (`ROADMAP.md`).
+**A text value.** A setting is a word or a text. A kept record holds both kinds of entry (`chosen_values.Entry_Kind`): a text entry gives the place and the length of its text in the bytes after the entries, in the order of the entries with no gap, so one record has one form. The reader refuses a text that is not UTF-8 or longer than `chosen_values.TEXT_BYTES_MOST`, 1024 bytes, before any owner sees it; the owner checks its own bound and its own rules after. `plan_values.text_in_force` gives a text by the same precedence as a word. A plan gives a text as it gives a word: a row of the kind `Value` carries `value_kind_word` (`Word` or `Text`) and, for a text, `value_text`, at most `plans_recipes.PLAN_VALUE_TEXT_BYTES` (256) bytes. Its border refuses a text that is not UTF-8 or holds a control byte: the difference shows it on the trusted display in quotes, and a control byte could break the lines of the dialog. The set of the core keeps it as a text entry of the records of the owner, and the owner reads it with `plan_values.text_in_force`.
 
 **The keeper.** `modus:kept_choices` keeps the record of one owner: it reads the object on a worker thread after the first frame, holds each change that comes before the read ends and puts it on the record that the store gives, writes the record after each change, and leaves a record that this release cannot read as it is until the principal changes a value. The owner checks each word at its border before the keeper sees it, and computes the values in force from the record of the keeper and its plan values. The compositor, the browser and the monitor use it.
 
@@ -195,8 +199,9 @@ The faults that the inventory found, fixed before any mechanism:
 | Undo a choice | `settings.reset(font = true)` |
 | See each setting of an owner, its layer and its range | `compositor.settings_state()` |
 | Change the setting of one screen | `display.set_for(display.screens() \|> first(1), scale = .sixteen_eighths)` |
-| Set a plan-only value | `plan { storage = { keep_every_version_minutes = 30 } } \|> plans.apply` |
-| Lock a setting | `plan { display = { appearance = locked(.dark) } } \|> plans.apply` |
+| Set a plan-only value | `plans.apply("retention", plan { values = { storage = { keep_all_minutes = 30 } } }, {})` |
+| Lock a setting | `plans.apply("dark", plan { locks = { settings = { appearance = .dark } } }, {})` |
+| Give a default address to the browser | `plans.apply("home", plan { values = { browser = { home = "modus://guide" } } }, {})` |
 
 ## Refused forms
 
@@ -240,9 +245,9 @@ Built: layers 1 to 8, and the DHCP client.
 - Module files are version 8: any word parameter can be optional, as a Presence word then its value, and the table `Parameter_Settings` holds the range, the choices export and the instances export of a parameter. The console refuses a value out of a range before the call; one `compositor.set` takes the five settings of the role. The palette and the window of settings do not read the ranges and the choices yet.
 - Each window gets its presentation record in the event `Presentation` and keeps it on its own presentation page; only `settings`, the date service, the input service and the compositor map the settings page of the machine.
 
-- A plan of principal 0 holds values of the kind `Value` (`owner.field`, a word, `Plan_Default` or `Locked`); the holder of Plans sends them with `Plan_Values` before the roles, and each owner of "The owners and their fields, as built" reads its page at its start. No reader turns a Lex `plan { ... }` into rows yet: a plan gives its values as rows of `plans.apply`.
+- A plan of principal 0 holds values of the kind `Value` (`owner.field`, a word or a text, `Plan_Default` or `Locked`); the holder of Plans sends them with `Plan_Values` before the roles, and each owner of "The owners and their fields, as built" reads its page at its start. The console reads `plan { values = …, locks = … }` into rows, each value typed by the description of its owner (`modus:plan_reader`).
 - The network service takes its address from DHCP, or the static address of the plan ([dhcp_client.md](dhcp_client.md)).
 - The browser (`home`) and the monitor (`sample_interval`) have module settings, kept in their private stores through `modus:kept_choices`, which the compositor uses too.
 - A lock of the plan makes each setter and each `reset` refuse a locked setting with `No_Grant`, unit `Plan_Lock`; a press on the desktop changes nothing under it.
 
-Not built: the palette and the window of settings do not read the ranges and the choices yet, and no reader turns a Lex `plan { ... }` into rows (`ROADMAP.md`).
+Not built: the palette and the window of settings do not read the ranges and the choices yet, and a plan is bound by one line of the console (`ROADMAP.md`).

@@ -39,6 +39,45 @@ BUDGET_SHARE_DEFAULT :: u64(4)
 STORE_BLOCKS_LEAST :: u64(1)
 STORE_BLOCKS_MOST :: u64(1 << 20)
 
+// One field of the core and its range: the description of a value of the
+// core, which has no exports. The console types a plan by it
+// (src/md/features/declarations.md, "A plan written in the console").
+Field_Range :: struct {
+	name:        string,
+	least, most: u64,
+}
+
+// The fields of the owner `root`.
+@(rodata)
+ROOT_FIELDS := [?]Field_Range {
+	{BUDGET_SHARE_FIELD, BUDGET_SHARE_LEAST, BUDGET_SHARE_MOST},
+	{MEMORY_SCREEN_START_WIDTH_FIELD, u64(memory_screen.MIN_WIDTH), u64(memory_screen.MAX_WIDTH)},
+	{MEMORY_SCREEN_START_HEIGHT_FIELD, u64(memory_screen.MIN_HEIGHT), u64(memory_screen.MAX_HEIGHT)},
+	{MEMORY_SCREEN_MOST_WIDTH_FIELD, u64(memory_screen.MIN_WIDTH), u64(memory_screen.MAX_WIDTH)},
+	{MEMORY_SCREEN_MOST_HEIGHT_FIELD, u64(memory_screen.MIN_HEIGHT), u64(memory_screen.MAX_HEIGHT)},
+}
+
+// The field of the quota of a store, which each owner of a store has.
+STORE_BLOCKS_RANGE :: Field_Range{STORE_BLOCKS_FIELD, STORE_BLOCKS_LEAST, STORE_BLOCKS_MOST}
+
+// field_range_of gives the range of a field that the core reads: a field of
+// the owner `root`, or `store_blocks` of any owner. found is false for
+// another field, which the module of its owner describes.
+field_range_of :: proc "contextless" (owner, field: string) -> (range: Field_Range, found: bool) {
+	if field == STORE_BLOCKS_FIELD {
+		return STORE_BLOCKS_RANGE, true
+	}
+	if owner != OWNER {
+		return {}, false
+	}
+	for item in ROOT_FIELDS {
+		if item.name == field {
+			return item, true
+		}
+	}
+	return {}, false
+}
+
 // The values in force of the owner `root`, each with the layer that gives
 // it.
 Root_Plan :: struct {

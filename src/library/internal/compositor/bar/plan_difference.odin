@@ -5,13 +5,20 @@
 // A plan is applied whole: the dialog has no tick, only accept and refuse.
 package bar
 
+import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
+import "modus:contract/text_encoding"
 
-PLAN_DIFFERENCE_NAME_BYTES :: 48
-PLAN_DIFFERENCE_ITEM_BYTES :: 48
-// The items of one side: each fits on the reference screen with no scroll,
-// so the principal never accepts a line that it did not see.
-PLAN_DIFFERENCE_ITEM_CAPACITY :: 8
+// The bounds of the contract of a plan: one fact in one place.
+PLAN_DIFFERENCE_NAME_BYTES :: pr.PLAN_DISPLAY_NAME_BYTES
+PLAN_DIFFERENCE_ITEM_BYTES :: pr.PLAN_DISPLAY_ITEM_BYTES
+// The items of one side, and the lines of the items of both sides: the
+// dialog fits on the reference screen with no scroll, so the principal
+// never accepts a line that it did not see. An item is cut into lines of
+// PLAN_DIFFERENCE_LINE_CHARACTERS characters, never cut short.
+PLAN_DIFFERENCE_ITEM_CAPACITY :: pr.PLAN_DISPLAY_ITEM_CAPACITY
+PLAN_DIFFERENCE_LINE_CHARACTERS :: pr.PLAN_DISPLAY_LINE_CHARACTERS
+PLAN_DIFFERENCE_LINE_CAPACITY :: pr.PLAN_DISPLAY_LINE_CAPACITY
 
 // The places of the dialog, in pixels.
 PLAN_DIFFERENCE_WIDTH :: 480
@@ -63,6 +70,8 @@ Plan_Difference_Refusal :: enum u8 {
 	Empty_Item, // A list holds an item with no byte: two commas, or a comma at an end.
 	Item_Too_Long, // An item past PLAN_DIFFERENCE_ITEM_BYTES.
 	Too_Many_Items, // A side past PLAN_DIFFERENCE_ITEM_CAPACITY.
+	Item_Not_Text, // An item that is not UTF-8, or holds a control byte: the lines of the dialog would not be the item.
+	Too_Many_Lines, // The items of both sides take more than PLAN_DIFFERENCE_LINE_CAPACITY lines.
 	No_Change, // Nothing added and nothing removed: nothing to accept.
 	Not_A_Name, // The asker of an act is not an identifier: a name of a process.
 	Not_An_Act, // The act is not two identifiers with a period between them.
@@ -125,6 +134,9 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	}
 	if added_count == 0 && removed_count == 0 {
 		return 0, .No_Change, 2
+	}
+	if plan_difference_side_lines(added_items[:added_count]) + plan_difference_side_lines(removed_items[:removed_count]) > PLAN_DIFFERENCE_LINE_CAPACITY {
+		return 0, .Too_Many_Lines, 2
 	}
 	dialog.serial += 1
 	dialog.open = true
@@ -197,7 +209,9 @@ identifier_valid :: proc "contextless" (text: string) -> bool {
 	return true
 }
 
-// plan_difference_items splits a list of names. An empty list has no item.
+// plan_difference_items splits a list of items, which a line feed separates
+// (pr.PLAN_DISPLAY_ITEM_SEPARATOR): an item can hold a comma. An empty list
+// has no item. An item is text with no control byte.
 @(private = "file")
 plan_difference_items :: proc "contextless" (list: string, items: ^[PLAN_DIFFERENCE_ITEM_CAPACITY]Plan_Difference_Item) -> (count: int, refusal: Plan_Difference_Refusal) {
 	if len(plan_difference_trim(list)) == 0 {
@@ -205,8 +219,13 @@ plan_difference_items :: proc "contextless" (list: string, items: ^[PLAN_DIFFERE
 	}
 	start := 0
 	for index in 0 ..= len(list) {
-		if index < len(list) && list[index] != ',' {
+		if index < len(list) && list[index] != '\n' {
 			continue
+		}
+		// text_valid refuses a control character and a sequence that is not
+		// UTF-8: the line feeds are between the items, never in one.
+		if !text_encoding.text_valid(transmute([]u8)list[start:index]) {
+			return 0, .Item_Not_Text
 		}
 		item := plan_difference_trim(list[start:index])
 		start = index + 1
@@ -240,6 +259,39 @@ plan_difference_trim :: proc "contextless" (text: string) -> string {
 // plan_difference_name gives the name of the plan of the dialog.
 plan_difference_name :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> string {
 	return string(dialog.plan_name[:dialog.plan_name_length])
+}
+
+// plan_difference_side_lines gives the lines of the items of one side.
+plan_difference_side_lines :: proc "contextless" (items: []Plan_Difference_Item) -> int {
+	lines := 0
+	for &item in items {
+		lines += pr.plan_display_item_lines(plan_difference_item_text(&item))
+	}
+	return lines
+}
+
+// plan_difference_item_line gives the line of an item from 0: at most
+// PLAN_DIFFERENCE_LINE_CHARACTERS whole characters. The dialog draws each
+// line of each item, so no item is cut short.
+plan_difference_item_line :: proc "contextless" (item: ^Plan_Difference_Item, line: int) -> string {
+	text := plan_difference_item_text(item)
+	start, characters := 0, 0
+	for index in 0 ..< len(text) {
+		if text[index] & 0xC0 == 0x80 {
+			continue
+		}
+		if characters == line * PLAN_DIFFERENCE_LINE_CHARACTERS {
+			start = index
+		}
+		if characters == (line + 1) * PLAN_DIFFERENCE_LINE_CHARACTERS {
+			return text[start:index]
+		}
+		characters += 1
+	}
+	if characters <= line * PLAN_DIFFERENCE_LINE_CHARACTERS {
+		return ""
+	}
+	return text[start:]
 }
 
 // plan_difference_item_text gives the text of an item.
@@ -341,10 +393,10 @@ plan_difference_place :: proc "contextless" (dialog: ^Plan_Difference_Dialog, sc
 	// then the buttons.
 	height = 2 + PLAN_DIFFERENCE_TITLE_HEIGHT + 1 + PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_LINE
 	if dialog.added_count > 0 {
-		height += PLAN_DIFFERENCE_GAP + (1 + dialog.added_count) * PLAN_DIFFERENCE_LINE
+		height += PLAN_DIFFERENCE_GAP + (1 + plan_difference_side_lines(dialog.added[:dialog.added_count])) * PLAN_DIFFERENCE_LINE
 	}
 	if dialog.removed_count > 0 {
-		height += PLAN_DIFFERENCE_GAP + (1 + dialog.removed_count) * PLAN_DIFFERENCE_LINE
+		height += PLAN_DIFFERENCE_GAP + (1 + plan_difference_side_lines(dialog.removed[:dialog.removed_count])) * PLAN_DIFFERENCE_LINE
 	}
 	height += PLAN_DIFFERENCE_MARGIN + PLAN_DIFFERENCE_BUTTON_HEIGHT + PLAN_DIFFERENCE_MARGIN
 	x = max(0, (screen_width - width) / 2)

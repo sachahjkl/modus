@@ -183,6 +183,26 @@ A record is a group of named fields, as a module describes it. The command with 
 84
 ```
 
+### A plan
+
+`plan { … }` is a plan of the principal, and `plans.apply` shows its difference on the trusted display before it holds (`src/md/features/declarations.md`, "A plan written in the console"). Its four fields, each optional:
+
+| Field | Form | Rows |
+|---|---|---|
+| `roles` | `{ display = module(blake3:…) }` | The holder of each role, by the hash of its module |
+| `stores` | `[store("notes", .read), store("documents", .read, .write)]` | A store grant, read or read and write |
+| `values` | `{ browser = { home = "modus://guide" } }` | A default of the plan for a value of an owner |
+| `locks` | `{ settings = { appearance = .dark } }` | A lock of the plan over the choice of the principal |
+
+```
+plans.apply("evening", plan { locks = { settings = { appearance = .dark } } }, {})
+plans.apply("home", plan { values = { browser = { home = "modus://guide" }, monitor = { sample_interval = 1000 } } }, {})
+```
+
+The console types each value by the description of its owner before the call: a member, as `.dark`, names a member of the enum of the setter of the owner; a number is in the range of its parameter; a text is in its bound, UTF-8, with no control byte. An owner is a module of the image, the name of a role (its holder: the one that the plan gives, else the default one), or `root`, the core. A plan-only value, which no setter takes, is a parameter of the export `plan_only` of its owner. Each refusal names what is wrong: "display.bar_edge has no member .botom: its members are .top, .bottom, .left, .right", "display.notification_show_milliseconds is 10, outside its range 1000 to 60000".
+
+A plan is one line of the console, 200 bytes at most. A text of a value takes one row of the plan for each 40 bytes; a plan holds 32 rows.
+
 ### Functions and lists
 
 **A function** is `(name, …) => expression`: its parameters, at most 12, then its body. A `(` starts a function when `=>` follows its `)`; else it holds an expression. The body runs to the `,` or the `)` around the function. A `let` names a function, and a call by that name runs its body with the arguments in the place of the parameters:

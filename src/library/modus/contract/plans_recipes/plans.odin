@@ -11,6 +11,7 @@ import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/chosen_values"
 import "modus:contract/enum_word"
+import "modus:contract/plan_values"
 import "modus:contract/powerbox"
 import "modus:contract/role_contract"
 import "modus:contract/start_grant"
@@ -34,6 +35,11 @@ APPLIED_PLAN_WIRE_SIZE :: 8 + 4 + 4 + blake3.HASH_SIZE + blake3.HASH_SIZE + 8 + 
 MAX_PLAN_ENTRIES :: 32
 MAX_PLAN_DIFF_CHANGES :: 64
 MAX_ENTRY_NAME_BYTES :: 64
+// The longest text of a Value entry: the longest text that a setting takes
+// from a plan. UTF-8, with no control byte: the difference shows it on the
+// trusted display, whose lists a line feed separates.
+PLAN_VALUE_TEXT_BYTES :: 256
+#assert(PLAN_VALUE_TEXT_BYTES <= chosen_values.TEXT_BYTES_MOST)
 MAX_PLAN_CANONICAL_BYTES :: 16384
 
 #assert(APPLIED_PLAN_WIRE_SIZE == 104)
@@ -48,8 +54,9 @@ Plan_Entry_Kind :: enum u8 {
 	Store_Grant  = 4,
 	// A value of the plan for one owner of settings: a default or a lock
 	// (src/md/features/module_settings.md, "Plan records"). The name is
-	// `owner.field`, each a name of chosen values; value_word is the word,
-	// value_layer_word the layer, Plan_Default or Locked.
+	// `owner.field`, each a name of chosen values; value_kind_word says if
+	// it is a word (value_word) or a text (value_text); value_layer_word is
+	// the layer, Plan_Default or Locked.
 	Value        = 5,
 }
 
@@ -106,6 +113,7 @@ Plan_Refusal :: enum u8 {
 	Roles_Refused          = 32, // The root service refused the roles of the plan of principal 0: nothing was committed.
 	Bad_Value              = 33, // A Value entry whose name is not `owner.field`, whose layer is not Plan_Default or Locked, or that carries a field of another kind.
 	Values_Refused         = 34, // The root service refused the values of the plan of principal 0: nothing was committed.
+	Values_Too_Large       = 35, // The values of one owner do not fit the page that the core gives it (plan_values.OWNER_BYTES_MOST): bad_index names the entry that passes it.
 }
 
 // Closed set of completion statuses returned on the recipes and projects
@@ -128,8 +136,11 @@ Plan_Entry :: struct {
 	recipe_hash:          blake3.Hash,
 	start_grants_mask:    u64,
 	store_rights_word:    u64,
-	value_word:           u64, // A Value: the word that the owner checks at the border of its field.
+	value_word:           u64, // A Value of the kind Word: the word that the owner checks at the border of its field.
 	value_layer_word:     u64, // A Value: a chosen_values.Layer, Plan_Default or Locked.
+	value_kind_word:      u64, // A Value: a chosen_values.Entry_Kind, Word or Text; 0 for another kind of entry.
+	value_text:           [PLAN_VALUE_TEXT_BYTES]u8, // A Value of the kind Text: its bytes, zero after value_text_length.
+	value_text_length:    u16,
 }
 
 // Complete typed plan value produced by declaration evaluation and checked by
@@ -157,6 +168,9 @@ Plan_Diff_Item :: struct {
 	old_value_layer_word: u64,
 	new_value_word:       u64, // A Value: the word after, 0 for a removed one.
 	new_value_layer_word: u64,
+	new_value_kind_word:  u64, // A Value: the kind after, Word or Text; 0 for a removed one.
+	new_value_text:       [PLAN_VALUE_TEXT_BYTES]u8, // A Value of the kind Text: the text after, which the trusted display shows.
+	new_value_text_length: u16,
 }
 
 // Summary and itemized difference between two plans. Feeds directly into the
@@ -469,9 +483,77 @@ plan_entry_make_value :: proc "contextless" (owner, field: string, word: u64, la
 	copy(entry.name_bytes[len(owner) + 1:], field)
 	entry.name_length = u8(len(owner) + 1 + len(field))
 	entry.kind_word = u64(Plan_Entry_Kind.Value)
+	entry.value_kind_word = u64(chosen_values.Entry_Kind.Word)
 	entry.value_word = word
 	entry.value_layer_word = u64(layer)
 	return entry, true
+}
+
+// plan_entry_make_text_value constructs a Value entry of the kind Text: the
+// default or the lock of one text field of one owner. ok is false for a
+// text that plan_value_text_valid refuses.
+plan_entry_make_text_value :: proc "contextless" (owner, field: string, text: string, layer: chosen_values.Layer) -> (entry: Plan_Entry, ok: bool) {
+	if !plan_value_text_valid(text) {
+		return {}, false
+	}
+	entry, ok = plan_entry_make_value(owner, field, 0, layer)
+	if !ok {
+		return {}, false
+	}
+	entry.value_kind_word = u64(chosen_values.Entry_Kind.Text)
+	copy(entry.value_text[:], text)
+	entry.value_text_length = u16(len(text))
+	return entry, true
+}
+
+// plan_value_text_valid is the border of the text of a Value entry: at most
+// PLAN_VALUE_TEXT_BYTES bytes of UTF-8, and no control byte (0 to 31, and
+// 127): the trusted display shows it whole, and a line feed separates the
+// items of its lists.
+plan_value_text_valid :: proc "contextless" (text: string) -> bool {
+	if len(text) > PLAN_VALUE_TEXT_BYTES || !text_encoding.text_valid(transmute([]u8)text) {
+		return false
+	}
+	for byte in transmute([]u8)text {
+		if byte < 0x20 || byte == 0x7F {
+			return false
+		}
+	}
+	return true
+}
+
+// plan_value_text gives the text of a Value entry of the kind Text, and ""
+// for another entry.
+plan_value_text :: proc "contextless" (entry: ^Plan_Entry) -> string {
+	if entry.value_kind_word != u64(chosen_values.Entry_Kind.Text) {
+		return ""
+	}
+	return string(entry.value_text[:min(int(entry.value_text_length), PLAN_VALUE_TEXT_BYTES)])
+}
+
+// plan_value_of_kind_valid checks the value of a Value entry by its kind: a
+// word holds no text, and a text holds the word 0, a valid text, and zero
+// bytes after it, so one plan has one hash.
+@(private = "file")
+plan_value_of_kind_valid :: proc "contextless" (entry: ^Plan_Entry) -> bool {
+	switch entry.value_kind_word {
+	case u64(chosen_values.Entry_Kind.Word):
+		return entry.value_text_length == 0 && bytes_zero(entry.value_text[:])
+	case u64(chosen_values.Entry_Kind.Text):
+		length := int(entry.value_text_length)
+		return entry.value_word == 0 && length <= PLAN_VALUE_TEXT_BYTES && bytes_zero(entry.value_text[length:]) && plan_value_text_valid(string(entry.value_text[:length]))
+	}
+	return false
+}
+
+@(private = "file")
+bytes_zero :: proc "contextless" (bytes: []u8) -> bool {
+	for byte in bytes {
+		if byte != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 @(private = "file")
@@ -574,8 +656,11 @@ plan_validate :: proc "contextless" (plan: ^Plan_Spec) -> (refusal: Plan_Refusal
 			if _, layer_ok := plan_value_layer_of_word(entry.value_layer_word); !layer_ok {
 				return .Bad_Value, index
 			}
+			if !plan_value_of_kind_valid(entry) {
+				return .Bad_Value, index
+			}
 		}
-		if kind != .Value && (entry.value_word != 0 || entry.value_layer_word != 0) {
+		if kind != .Value && (entry.value_word != 0 || entry.value_layer_word != 0 || entry.value_kind_word != 0 || entry.value_text_length != 0 || !bytes_zero(entry.value_text[:])) {
 			return .Bad_Entry_Kind, index
 		}
 
@@ -634,6 +719,27 @@ plan_validate :: proc "contextless" (plan: ^Plan_Spec) -> (refusal: Plan_Refusal
 		}
 	}
 
+	// The values of one owner fit the page that the core gives it: an entry
+	// takes its entry of chosen values and its text. The first entry that
+	// passes the bound is named.
+	for index in u32(0) ..< plan.entry_count {
+		entry := &plan.entries[index]
+		owner, _, parts_ok := plan_value_parts(entry)
+		if entry.kind_word != u64(Plan_Entry_Kind.Value) || !parts_ok {
+			continue
+		}
+		bytes := 0
+		for earlier in u32(0) ..= index {
+			other := &plan.entries[earlier]
+			other_owner, _, other_ok := plan_value_parts(other)
+			if other.kind_word == u64(Plan_Entry_Kind.Value) && other_ok && other_owner == owner {
+				bytes += chosen_values.ENTRY_SIZE + len(plan_value_text(other))
+			}
+		}
+		if bytes > plan_values.OWNER_BYTES_MOST {
+			return .Values_Too_Large, index
+		}
+	}
 	return .None, 0
 }
 
@@ -691,6 +797,8 @@ plan_hash :: proc "contextless" (plan: ^Plan_Spec) -> (digest: blake3.Hash, refu
 		encoder_u64(&encoder, entry.store_rights_word)
 		encoder_u64(&encoder, entry.value_word)
 		encoder_u64(&encoder, entry.value_layer_word)
+		encoder_u64(&encoder, entry.value_kind_word)
+		encoder_bytes(&encoder, entry.value_text[:min(int(entry.value_text_length), PLAN_VALUE_TEXT_BYTES)])
 	}
 	if encoder.overflow {
 		return {}, .Buffer_Too_Small
@@ -790,7 +898,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 			module_changed := cur_entry.module_hash != matched.module_hash || cur_entry.interposed_over_hash != matched.interposed_over_hash
 			grants_changed := cur_entry.start_grants_mask != matched.start_grants_mask
 			rights_changed := cur_rights != prop_rights
-			value_changed := cur_entry.value_word != matched.value_word || cur_entry.value_layer_word != matched.value_layer_word
+			value_changed := cur_entry.value_word != matched.value_word || cur_entry.value_layer_word != matched.value_layer_word || cur_entry.value_kind_word != matched.value_kind_word || plan_value_text(cur_entry) != plan_value_text(matched)
 			if !module_changed && !grants_changed && !rights_changed && !value_changed {
 				continue
 			}
@@ -847,6 +955,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 				item.new_store_rights = prop_rights
 				item.old_value_word, item.old_value_layer_word = cur_entry.value_word, cur_entry.value_layer_word
 				item.new_value_word, item.new_value_layer_word = matched.value_word, matched.value_layer_word
+				item.new_value_kind_word, item.new_value_text, item.new_value_text_length = matched.value_kind_word, matched.value_text, matched.value_text_length
 			}
 		}
 	}
@@ -903,6 +1012,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 			item.added_grants_mask = added_bits
 			item.new_store_rights = prop_rights
 			item.new_value_word, item.new_value_layer_word = prop_entry.value_word, prop_entry.value_layer_word
+			item.new_value_kind_word, item.new_value_text, item.new_value_text_length = prop_entry.value_kind_word, prop_entry.value_text, prop_entry.value_text_length
 		}
 	}
 

@@ -54,6 +54,7 @@ Set_Problem :: enum u8 {
 	Bad_Record        = 8, // The defaults or the locks of an owner are no record of chosen values.
 	Default_And_Lock  = 9, // One name is a default and a lock of one owner: the lock and the default would say two things.
 	Reserved_Not_Zero = 10, // The reserved bytes of the header, or bytes after the last block that are not zero.
+	Owner_Too_Large   = 11, // The two records of an owner do not fit its page (OWNER_PAGE_SIZE): the core could not give them.
 }
 
 // The name of each problem, for a line of the log.
@@ -70,6 +71,7 @@ SET_PROBLEM_NAMES := [Set_Problem]string {
 	.Bad_Record        = "a record not valid",
 	.Default_And_Lock  = "a default and a lock",
 	.Reserved_Not_Zero = "reserved bytes",
+	.Owner_Too_Large   = "an owner past its page",
 }
 
 // The values of one owner in a checked set or page: two records of chosen
@@ -193,6 +195,9 @@ set_walk :: proc "contextless" (bytes: []u8, owner: string) -> (head: Set_Head, 
 		if records_problem != .None {
 			return {}, {}, false, records_problem
 		}
+		if !owner_fits_page(owner_values) {
+			return {}, {}, false, .Owner_Too_Large
+		}
 		if name == owner {
 			values, found = owner_values, true
 		}
@@ -208,6 +213,17 @@ set_walk :: proc "contextless" (bytes: []u8, owner: string) -> (head: Set_Head, 
 	}
 	return head, values, found, .None
 }
+
+// owner_fits_page says if the values of an owner fit the page that the
+// core gives it: the header of the page and its two records.
+owner_fits_page :: proc "contextless" (values: Owner_Values) -> bool {
+	return OWNER_PAGE_HEADER_SIZE + max(chosen_values.record_size(values.defaults), chosen_values.HEADER_SIZE) + max(chosen_values.record_size(values.locks), chosen_values.HEADER_SIZE) <= OWNER_PAGE_SIZE
+}
+
+// owner_bytes_most gives the bytes of the entries and the texts that the
+// values of one owner may hold, so that its page holds them: the border of
+// a plan refuses an owner past it.
+OWNER_BYTES_MOST :: OWNER_PAGE_SIZE - OWNER_PAGE_HEADER_SIZE - 2 * chosen_values.HEADER_SIZE
 
 // set_check checks a whole set, as the core reads its copy of the page of
 // the holder of Plans.

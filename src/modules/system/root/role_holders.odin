@@ -18,32 +18,7 @@ import "modus:system"
 // that a plan installs. Nothing of this service names the module of a role
 // elsewhere: it starts, routes and trusts the holder through this table.
 role_holder_names := role_policy.Holder_Names {
-	defaults = {
-		.None           = "",
-		.Display        = "compositor",
-		.Input          = "input",
-		.Console        = "console",
-		.Assistive      = "",
-		.Speech         = "",
-		.Terminal       = "terminal",
-		.Start_Policy   = "start_policy",
-		.Storage        = "storage",
-		.Network        = "network",
-		.Block_Device   = "block",
-		.Network_Device = "frame",
-		.Sound_Device   = "sound",
-		.Entropy_Device = "entropy",
-		.Tpm            = "tpm",
-		.Remote_Display = "remote_display",
-		.Plans          = "plans",
-		.Projects       = "projects",
-		.Recipes        = "recipes",
-		.Powerbox       = "powerbox",
-		.Disk_Processes = "disk_processes",
-		.Principals     = "principals",
-		.Devices        = "devices",
-		.Settings       = "settings",
-	},
+	defaults = role_contract.DEFAULT_HOLDER_NAMES,
 }
 
 // The renderer of the terminal of the console: the boot image and the screen

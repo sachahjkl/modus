@@ -104,6 +104,10 @@ Evaluation_Pools :: struct {
 MAP_NAME :: "map"
 FILTER_NAME :: "filter"
 
+// The `plan { … }` values of one console line: a line applies one plan, and
+// compares two at most.
+TAGGED_RECORD_CAPACITY :: 4
+
 // The two ways that the one evaluator runs.
 Evaluation_Mode :: enum u8 {
 	Console     = 0, // In the console: each effect runs, and each line is forced whole.
@@ -275,6 +279,8 @@ Evaluation :: struct {
 	list_item_count:     int,
 	hashes:              [HASH_CAPACITY]blake3.Hash,
 	hash_count:          int,
+	// Inline tagged records for console lines: `plan { … }` in a line.
+	inline_tagged_records: [TAGGED_RECORD_CAPACITY]Value,
 	slots:               [lex_parser.NODE_CAPACITY]i16, // Inline slots for console lines.
 	slot_counts:         [lex_parser.NODE_CAPACITY]u16, // Inline slot counts for console lines.
 	stack_bytes:         uint, // The bytes of stack that the evaluation may take.
@@ -313,6 +319,7 @@ evaluation_start :: proc "contextless" (evaluation: ^Evaluation, tree: ^lex_pars
 		call_thunks = evaluation.call_thunks[:],
 		list_items  = evaluation.list_items[:],
 		hashes      = evaluation.hashes[:],
+		tagged_records = evaluation.inline_tagged_records[:],
 		depth_limit = 0,
 	}
 	evaluation_start_with_pools(evaluation, tree, mode, host, pools, budget, stack_bytes)

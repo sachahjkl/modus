@@ -779,6 +779,11 @@ host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Va
 // parameter of an export. Each command of the console has an effect: the
 // names of the evaluation, which have none, are not built.
 host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signature: lex_evaluator.Command_Signature, found: bool) {
+	// The names of the evaluation that make the values of a plan come before
+	// a command of the same name (plan_rows.odin).
+	if plan_signature, is_plan_name := plan_name_signature(name); is_plan_name {
+		return plan_signature, true
+	}
 	// The arguments are forced before the call connects a service
 	// (command_find_connecting in call_run): a signature from the image
 	// connects nothing.
@@ -823,6 +828,10 @@ host_record_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []
 }
 
 host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool) {
+	if _, is_plan_name := plan_name_signature(name); is_plan_name {
+		value = plan_name_run(name, arguments)
+		return value, !failed
+	}
 	value = call_run(name, arguments)
 	return value, !failed
 }
@@ -1138,6 +1147,11 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 		// call gives the Presence word Absent, then 0.
 		if argument.kind == .None && found.run == nil && module.parameter_optional(found.function, index) {
 			continue
+		}
+		// A plan given to a table of the rows of a plan becomes those rows
+		// (plan_rows.odin); a refusal fails the line with its sentence.
+		if !plan_rows_of_argument(found, index, argument) && failed {
+			return {}
 		}
 		if !argument_accepted(found, index, argument^) {
 			return argument_refusal(name, found, index, argument^)

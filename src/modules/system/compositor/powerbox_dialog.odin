@@ -465,16 +465,17 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	// The words of the face: a plan, or one act of an agent that asked.
 	element, header, name_label, accept := "plan difference", "TRUSTED PLAN DIFFERENCE", "plan", "Accept plan"
 	add_heading := "adds"
-	// The act is code, service.export, in the font of the cells, as a
-	// reader compares it character by character (docs/FONTS.md, section
-	// 12.6); the items of a plan are names in the interface font.
-	item_font := interface.FONT_INTERFACE
+	// Each item is in the font of the cells, as a reader compares it
+	// character by character (docs/FONTS.md, section 12.6): an act,
+	// service.export, and an item of a plan, whose value can be a text. A
+	// cell has one width, so the lines of an item are known before the
+	// draw (bar.plan_difference_item_line).
+	item_font := interface.Font{}
 	switch dialog.face {
 	case .Plan:
 	case .Act:
 		element, header, name_label, accept = "act", "TRUSTED ACT", "asker", "Allow once"
 		add_heading = "runs"
-		item_font = interface.Font{}
 	}
 	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity(element)), .Alert_Dialog, {name = element})
 	defer interface.draw_element_pop(table)
@@ -503,9 +504,14 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		line_y += bar.PLAN_DIFFERENCE_LINE
 		for &item in side.items {
 			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, side.sign, side.color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
-			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(&item), text_x + text_room - item_x)
-			interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, item_font)
-			line_y += bar.PLAN_DIFFERENCE_LINE
+			#assert(bar.PLAN_DIFFERENCE_LINE_CHARACTERS * graphics.CELL_WIDTH <= bar.PLAN_DIFFERENCE_WIDTH - 2 * bar.PLAN_DIFFERENCE_MARGIN - 24)
+			for line in 0 ..< max(1, pr.plan_display_item_lines(bar.plan_difference_item_text(&item))) {
+				// text_fit cuts nothing here: a line of the item fits its room;
+				// it stays as the guard of the box of the dialog.
+				shown := interface.text_fit(table, item_font, bar.plan_difference_item_line(&item, line), text_x + text_room - item_x)
+				interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, item_font)
+				line_y += bar.PLAN_DIFFERENCE_LINE
+			}
 		}
 	}
 	accept_x, button_y, button_width, button_height := bar.plan_difference_button_place(x, y, width, height, .Accept)

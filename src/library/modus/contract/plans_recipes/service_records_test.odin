@@ -128,8 +128,9 @@ plan_of_rows_gives_the_plan_of_the_makers :: proc(t: ^testing.T) {
 	testing.expect_value(t, second_refusal, Plan_Refusal.None)
 	testing.expect(t, first == second, "a plan from rows has the hash of the same plan from the makers")
 
-	back := plan_entry_row_of_entry(&from_rows.entries[0])
-	testing.expect(t, back == rows[0], "a row survives the round trip through an entry")
+	back: [1]Plan_Entry_Row
+	testing.expect_value(t, plan_rows_of_entry(&from_rows.entries[0], back[:]), 1)
+	testing.expect(t, back[0] == rows[0], "a row survives the round trip through an entry")
 }
 
 @(test)

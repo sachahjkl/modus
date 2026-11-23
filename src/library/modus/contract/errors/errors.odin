@@ -305,6 +305,7 @@ Unit :: enum i64 {
 	Recorded_Writes = 61, // Absent: no input of the history before the point wrote a byte of the range of a watch back (src/md/features/record_and_replay.md). value: the address; limit: the count of bytes; found: the point, 0 for the whole history.
 	Kernel_Status = 62, // Refused: a kernel operation inside the call refused, and found is its op.Status, which a sentence names in words.
 	Plan_Lock   = 63, // No_Grant: a setting that a lock of the plan of principal 0 holds (src/md/features/module_settings.md, "The lock"). argument: the setting, from 1.
+	Display_Lines = 64, // Too_Long: the lines of the items of a dialog of the trusted display; limit: the lines that fit the reference screen.
 }
 
 // The name of each error kind, as the contract names it: a column of a
@@ -422,6 +423,7 @@ UNIT_MEMBER_NAMES := [Unit]string {
 	.Recorded_Writes    = "Recorded_Writes",
 	.Kernel_Status      = "Kernel_Status",
 	.Plan_Lock          = "Plan_Lock",
+	.Display_Lines      = "Display_Lines",
 }
 
 // The word of a Kind as the record of another party holds it: a field of a
@@ -585,6 +587,7 @@ UNIT_NAMES := [Unit]string {
 	.Recorded_Writes = "writes of the input history",
 	.Kernel_Status = "status of the kernel",
 	.Plan_Lock   = "lock of the plan",
+	.Display_Lines = "lines of the dialog",
 }
 
 // A ring completion (src/library/modus/contract/ring) has the status of the contract of its
