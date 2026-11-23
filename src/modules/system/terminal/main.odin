@@ -286,7 +286,7 @@ Edit_Line :: struct {
 	cursor:     int,
 	has_cursor: bool,
 	style:      terminal.Style,
-	code:       terminal.Code_Runs, // Checked against the text. None: the line is plain.
+	code:       terminal.Edit_Code_Runs, // Checked against the text. None: the line is plain.
 }
 edit_line: Edit_Line
 // The parts of the next edit line, which wait for its Edit record.
@@ -307,7 +307,7 @@ key_serial_forwarded: u64
 // The Edit records whose serial was refused (the reader only).
 edit_serials_refused: u64
 // The runs of code that the next Edit record takes (terminal.Kind.Code_Runs).
-edit_runs_pending: terminal.Code_Runs
+edit_runs_pending: terminal.Edit_Code_Runs
 // The lists of runs of code that were refused for the edit line: each one
 // left its line plain. The list counts its own.
 edit_runs_refused: u64
@@ -563,11 +563,9 @@ apply :: proc "contextless" (record: ring.Record) {
 		}
 		switch target {
 		case .Edit:
-			read, ok := terminal.code_runs_read(first, second)
-			if !ok {
+			if !terminal.edit_code_runs_add(&edit_runs_pending, first, second) {
 				edit_runs_refused += 1
 			}
-			edit_runs_pending = read
 		case .List_Row:
 			terminal.list_keep_code_runs(&list_keeping, record.values, first, second)
 		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs, .Edit_Part:

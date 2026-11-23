@@ -37,7 +37,7 @@ Renderer_Edit :: struct {
 	length:     int,
 	has_cursor: bool,
 	cursor:     int, // Bytes from the start of the text, at most length.
-	code:       Code_Runs, // Checked against the text: no runs when they did not fit.
+	code:       Edit_Code_Runs, // Checked against the text: no runs when they did not fit.
 }
 
 // The status line as a renderer shows it. A total of 0: no status line.
@@ -75,7 +75,7 @@ Renderer_Intake :: struct {
 	edit_staging:      Edit_Staging, // The parts of the next edit line.
 	status:            Renderer_Status,
 	hint:              Renderer_Hint,
-	edit_runs_pending: Code_Runs,
+	edit_runs_pending: Edit_Code_Runs, // The runs that the next Edit record takes.
 	list:              List_Keeping,
 	records_refused:   u64, // Records whose word names no record.
 	runs_refused:      u64, // Runs for the edit line that did not fit it, or that named no target that takes runs.
@@ -192,11 +192,9 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 		}
 		switch target {
 		case .Edit:
-			read, ok := code_runs_read(first, second)
-			if !ok {
+			if !edit_code_runs_add(&intake.edit_runs_pending, first, second) {
 				intake.runs_refused += 1
 			}
-			intake.edit_runs_pending = read
 		case .List_Row:
 			list_keep_code_runs(&intake.list, record.values, first, second)
 		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs, .Edit_Part:

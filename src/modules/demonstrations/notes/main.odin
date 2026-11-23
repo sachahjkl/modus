@@ -226,21 +226,6 @@ preview_arena: system.Arena
 rows_arena: system.Arena
 transfer_arena: system.Arena
 
-// arena_bytes_grow and arena_rows_grow are the growth of the buffers of
-// the text model: each extends the one buffer of its arena in place.
-arena_bytes_grow :: proc "contextless" (data: rawptr, current: []u8, minimum: int) -> (grown: []u8, ok: bool) {
-	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum))
-	return bytes, status == .Ok
-}
-
-arena_rows_grow :: proc "contextless" (data: rawptr, current: []text_model.Row, minimum: int) -> (grown: []text_model.Row, ok: bool) {
-	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum * size_of(text_model.Row)))
-	if status != .Ok {
-		return nil, false
-	}
-	return ([^]text_model.Row)(raw_data(bytes))[:len(bytes) / size_of(text_model.Row)], true
-}
-
 // arenas_start reserves the arenas and gives them to the text model and to
 // the store thread. A reservation that the budget refuses leaves its zero
 // arena, which refuses each growth: the texts then keep the buffers inside
@@ -252,9 +237,9 @@ arenas_start :: proc "contextless" () {
 	transfer_arena, _ = system.arena_create(TRANSFER_RESERVE_PAGES)
 	read_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
 	write_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
-	text_model.text_init_buffer(&text, nil, arena_bytes_grow, &text_arena)
-	text_model.text_init_buffer(&preview, nil, arena_bytes_grow, &preview_arena)
-	text_model.layout_init_buffer(&layout, nil, arena_rows_grow, &rows_arena)
+	text_model.text_init_buffer(&text, nil, system.arena_grow, &text_arena)
+	text_model.text_init_buffer(&preview, nil, system.arena_grow, &preview_arena)
+	text_model.layout_init_buffer(&layout, nil, system.arena_grow, &rows_arena)
 }
 
 // transfer_bytes gives count bytes of the transfer arena after its first

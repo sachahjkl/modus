@@ -215,6 +215,21 @@ arena_extend_to :: proc "contextless" (arena: ^Arena, minimum_bytes: u64, error:
 	return arena.base[:arena.used_bytes], .Ok
 }
 
+// arena_grow is the growth of one buffer of records that an arena holds,
+// in the form that a buffer of a caller takes (the bytes of a text, the
+// rows of its layout, the places of the matches of a search): data is the
+// ^Arena, and the buffer grows in place to at least minimum records, so
+// the records before stay where they are. false: the arena refused, and
+// the buffer is as it was. The caller gives it where a procedure of its
+// record type is wanted, and the compiler makes the form of that type.
+arena_grow :: proc "contextless" (data: rawptr, current: []$Record, minimum: int) -> (grown: []Record, ok: bool) {
+	bytes, status := arena_extend_to((^Arena)(data), u64(max(minimum, 0) * size_of(Record)))
+	if status != .Ok {
+		return nil, false
+	}
+	return ([^]Record)(raw_data(bytes))[:len(bytes) / size_of(Record)], true
+}
+
 // arena_reset sets the end of the arena back to its start and keeps its
 // committed pages: the next pushes take the same addresses and commit
 // nothing until they pass the largest end so far. The bytes are not

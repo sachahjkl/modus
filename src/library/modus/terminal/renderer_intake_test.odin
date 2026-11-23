@@ -135,8 +135,9 @@ renderer_intake_checks_the_runs_of_the_edit_line :: proc(t: ^testing.T) {
 	renderer_intake_take(&intake, {kind = u32(Kind.Code_Runs), tag = 0, values = {0 = u64(max(Kind)) + 1}})
 	renderer_intake_take(&intake, {kind = u32(Kind.Code_Runs), tag = 0, values = {0 = u64(Kind.Text)}})
 	testing.expect_value(t, intake.runs_refused, u64(3))
-	// A run past the end of a line of 4 bytes.
-	put(&intake, {0, 9, u8(Code_Kind.Function), 0})
+	// A run past the end of a line of 4 bytes: the start in two bytes,
+	// little end first, then the length and the kind.
+	put(&intake, {0, 0, 9, u8(Code_Kind.Function)})
 	renderer_intake_take(&intake, {kind = u32(Kind.Code_Runs), tag = 4, values = {0 = u64(Kind.Edit)}})
 	put(&intake, transmute([]u8)string("help"))
 	event := renderer_intake_take(&intake, {kind = u32(Kind.Edit), tag = 4, values = {1 = 1 << 63}})
@@ -146,7 +147,7 @@ renderer_intake_checks_the_runs_of_the_edit_line :: proc(t: ^testing.T) {
 	testing.expect(t, intake.edit.has_cursor)
 	testing.expect_value(t, intake.edit.cursor, 4)
 	// Runs that fit.
-	put(&intake, {0, 4, u8(Code_Kind.Function), 0})
+	put(&intake, {0, 0, 4, u8(Code_Kind.Function)})
 	renderer_intake_take(&intake, {kind = u32(Kind.Code_Runs), tag = 4, values = {0 = u64(Kind.Edit)}})
 	put(&intake, transmute([]u8)string("help"))
 	renderer_intake_take(&intake, {kind = u32(Kind.Edit), tag = 4, values = {1 = NO_CURSOR}})

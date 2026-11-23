@@ -549,3 +549,41 @@ arena_extend_to_grows_one_buffer_in_place :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(bytes), 2 * PAGE_SIZE + 1)
 	testing.expect_value(t, uintptr(raw_data(bytes)), FAKE_BASE)
 }
+
+// The growth of a buffer of records of 12 bytes: past the reservation and
+// a budget that pays nothing first (refused, the arena as it was), then a
+// negative count (no growth), then whole records only, from the same base.
+@(test)
+arena_grow_gives_whole_records_in_place :: proc(t: ^testing.T) {
+	Record :: [3]u32
+	RESERVED_PAGES :: 2
+	none: []Record
+	past := fake_reservation(RESERVED_PAGES, 100)
+	grown, ok := arena_grow(&past.arena, none, RESERVED_PAGES * PAGE_SIZE / size_of(Record) + 1)
+	testing.expect(t, !ok && grown == nil)
+	testing.expect_value(t, past.used_bytes, 0)
+
+	poor := fake_reservation(RESERVED_PAGES, 0)
+	grown, ok = arena_grow(&poor.arena, none, 1)
+	testing.expect(t, !ok && grown == nil)
+	testing.expect_value(t, poor.used_bytes, 0)
+
+	fake := fake_reservation(RESERVED_PAGES, 100)
+	grown, ok = arena_grow(&fake.arena, none, -1)
+	testing.expect(t, ok)
+	testing.expect_value(t, len(grown), 0)
+	testing.expect_value(t, fake.used_bytes, 0)
+	grown, ok = arena_grow(&fake.arena, grown, 10)
+	testing.expect(t, ok)
+	testing.expect_value(t, len(grown), 10)
+	testing.expect_value(t, uintptr(raw_data(grown)), FAKE_BASE)
+	// The doubled step is 240 bytes: 20 whole records.
+	grown, ok = arena_grow(&fake.arena, grown, 11)
+	testing.expect(t, ok)
+	testing.expect_value(t, len(grown), 20)
+	testing.expect_value(t, uintptr(raw_data(grown)), FAKE_BASE)
+	// The reservation whole: the records that fit in it, a part cut off.
+	grown, ok = arena_grow(&fake.arena, grown, RESERVED_PAGES * PAGE_SIZE / size_of(Record))
+	testing.expect(t, ok)
+	testing.expect_value(t, len(grown), RESERVED_PAGES * PAGE_SIZE / size_of(Record))
+}

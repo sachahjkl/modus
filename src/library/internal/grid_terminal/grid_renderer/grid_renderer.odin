@@ -197,7 +197,7 @@ grid_write_edit_line :: proc "contextless" (
 	screen: ^Grid_Screen,
 	row: int,
 	text: []u8,
-	runs: ^terminal_records.Code_Runs,
+	runs: []terminal_records.Code_Run,
 	cursor_byte: u64,
 	appearance: graphics.Appearance,
 ) {
@@ -219,18 +219,15 @@ grid_write_edit_line :: proc "contextless" (
 		}
 		i := place
 		fg := palette.text
-		if runs != nil {
-			for r_idx in 0 ..< clamp(runs.count, 0, terminal_records.CODE_RUN_LIMIT) {
-				run := runs.runs[r_idx]
-				if i >= int(run.start) && i < int(run.start) + int(run.length) {
-					if kind, ok := terminal_records.code_kind_of(run.kind); ok && kind != .None {
-						class := terminal_records.code_kind_classes[kind]
-						if class != .None {
-							fg = graphics.code_class_color(class, appearance)
-						}
+		for run in runs {
+			if i >= int(run.start) && i < int(run.start) + int(run.length) {
+				if kind, ok := terminal_records.code_kind_of(run.kind); ok && kind != .None {
+					class := terminal_records.code_kind_classes[kind]
+					if class != .None {
+						fg = graphics.code_class_color(class, appearance)
 					}
-					break
 				}
+				break
 			}
 		}
 		grid_cell_set(screen, row, cell, character, fg, palette.background)

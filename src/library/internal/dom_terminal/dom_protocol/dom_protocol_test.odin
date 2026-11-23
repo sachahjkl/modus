@@ -247,7 +247,7 @@ the_largest_list_fits_one_line :: proc(t: ^testing.T) {
 		row.matched = {max(u64), max(u64)}
 		row.icon = .History_Line
 		for index in 0 ..< terminal_records.CODE_RUN_LIMIT {
-			row.code.runs[index] = {start = u8(index * 4), length = 4, kind = u8(terminal_records.Code_Kind.Text_Unfinished)}
+			row.code.runs[index] = {start = u16(index * 4), length = 4, kind = u8(terminal_records.Code_Kind.Text_Unfinished)}
 		}
 		row.code.count = terminal_records.CODE_RUN_LIMIT
 	}

@@ -18,10 +18,16 @@ package dom_protocol
 import "modus:contract/text_encoding"
 import terminal_records "modus:terminal"
 
-// The bytes of the longest line: a completion list of LIST_ROWS rows, each
-// with a text of RUN_LIMIT bytes escaped to at most two bytes for each
-// byte, its matched places and CODE_RUN_LIMIT runs.
-LINE_LIMIT :: 32768
+// The bytes of the longest line: an edit line of EDIT_TEXT_LIMIT bytes,
+// escaped to at most two bytes for each byte, with EDIT_CODE_RUN_LIMIT
+// runs; a completion list of LIST_ROWS rows of RUN_LIMIT bytes is less.
+LINE_LIMIT :: 65536
+
+// The longest edit line: its frame and cursor in 64 bytes, its text, and
+// each run as [start,end,"kind"], with two numbers of at most 5 digits and
+// the longest name of a kind.
+EDIT_LINE_BYTES_MOST :: 64 + 2 * terminal_records.EDIT_TEXT_LIMIT + terminal_records.EDIT_CODE_RUN_LIMIT * (2 * 5 + len("[,,\"\"],") + len("Text_Unfinished"))
+#assert(EDIT_LINE_BYTES_MOST <= LINE_LIMIT)
 
 // The mark of a character that the page must not receive.
 SANITIZED_MARK :: '?'
@@ -233,10 +239,10 @@ list_icon_name :: proc "contextless" (icon: terminal_records.List_Icon) -> strin
 // intake checked the runs against the text; a byte that names no kind is
 // left out, as each border reads it again.
 @(private = "file")
-put_runs :: proc "contextless" (line: ^Line, runs: ^terminal_records.Code_Runs, text: []u8) {
+put_runs :: proc "contextless" (line: ^Line, runs: []terminal_records.Code_Run, text: []u8) {
 	put_byte(line, '[')
 	written := 0
-	for run in runs.runs[:clamp(runs.count, 0, terminal_records.CODE_RUN_LIMIT)] {
+	for run in runs {
 		kind, kind_ok := terminal_records.code_kind_of(run.kind)
 		if !kind_ok || kind == .None {
 			continue
@@ -301,7 +307,7 @@ write_clear :: proc "contextless" (line: ^Line) {
 // write_edit writes the edit line: its text, its cursor in characters when
 // it has one, and its runs of code when it has some.
 write_edit :: proc "contextless" (line: ^Line, edit: ^terminal_records.Renderer_Edit) {
-	text := edit.text[:clamp(edit.length, 0, terminal_records.RUN_LIMIT)]
+	text := edit.text[:clamp(edit.length, 0, terminal_records.EDIT_TEXT_LIMIT)]
 	put_raw(line, "{\"t\":\"edit\",\"text\":")
 	put_string(line, text)
 	if edit.has_cursor {
@@ -310,7 +316,7 @@ write_edit :: proc "contextless" (line: ^Line, edit: ^terminal_records.Renderer_
 	}
 	if edit.code.count > 0 {
 		put_key(line, "runs")
-		put_runs(line, &edit.code, text)
+		put_runs(line, edit.code.runs[:clamp(edit.code.count, 0, terminal_records.EDIT_CODE_RUN_LIMIT)], text)
 	}
 	put_raw(line, "}\n")
 }
@@ -406,7 +412,7 @@ put_list_item :: proc "contextless" (line: ^Line, row: ^terminal_records.List_Ro
 	}
 	if row.code.count > 0 {
 		put_key(line, "runs")
-		put_runs(line, &row.code, text)
+		put_runs(line, row.code.runs[:clamp(row.code.count, 0, terminal_records.CODE_RUN_LIMIT)], text)
 	}
 	put_byte(line, '}')
 }

@@ -30,7 +30,7 @@ ansi_render_edit_line_highlights_code_runs_and_places_cursor :: proc(t: ^testing
 			1 = {start = 6, length = 9, kind = u8(terminal_records.Code_Kind.Text)},
 		},
 	}
-	emit_edit_line(&sink, 12, line, &runs, 5, .Dark)
+	emit_edit_line(&sink, 12, line, runs.runs[:runs.count], 5, .Dark)
 	out := string(sink_written(&sink))
 	testing.expect(t, !sink.overflow)
 	testing.expect(t, strings.contains(out, "\x1b[12;1H"))

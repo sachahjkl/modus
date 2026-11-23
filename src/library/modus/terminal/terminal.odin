@@ -191,7 +191,10 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           Kind.Edit or Kind.List_Row; another target is not kept.
 //           values[1]: for List_Row, the number of the row. The next record
 //           of the target takes the runs; a record of the target with no
-//           Code_Runs before it is plain.
+//           Code_Runs before it is plain. The Edit record takes the runs of
+//           each Code_Runs record of the target Edit since the Edit record
+//           before, up to EDIT_CODE_RUN_LIMIT, with their places in bytes of
+//           the whole line, its Edit_Part records first.
 //   Edit_Part A part of the next edit line, which is longer than one
 //           record: tag: the count of its bytes. The terminal keeps the
 //           parts, in order, up to EDIT_TEXT_LIMIT bytes, and shows nothing

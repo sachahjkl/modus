@@ -92,7 +92,7 @@ code_kind_of_refuses_a_byte_that_names_no_kind :: proc(t: ^testing.T) {
 }
 
 // test_run writes one run with the byte of its kind, as a process does.
-test_run :: proc(start, length: u8, kind: Code_Kind) -> Code_Run {
+test_run :: proc(start: u16, length: u8, kind: Code_Kind) -> Code_Run {
 	return {start = start, length = length, kind = u8(kind)}
 }
 
@@ -134,7 +134,7 @@ code_runs_checked_against_their_row :: proc(t: ^testing.T) {
 	// A count past the limit is the limit.
 	many: Code_Runs
 	for &run, index in many.runs {
-		run = test_run(u8(index), 1, .Operator)
+		run = test_run(u16(index), 1, .Operator)
 	}
 	many.count = 1000
 	testing.expect(t, code_runs_check(&many, RUN_LIMIT) && many.count == CODE_RUN_LIMIT)

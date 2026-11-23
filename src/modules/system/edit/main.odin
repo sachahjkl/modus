@@ -237,30 +237,6 @@ transfer_arena: system.Arena
 version_rows: [VERSION_ROWS_CAPACITY]storage.Version
 version_generations: [VERSION_ROWS_CAPACITY]i64
 
-// arena_bytes_grow, arena_rows_grow and arena_matches_grow are the growth
-// of the buffers of the text model: each extends the one buffer of its
-// arena in place.
-arena_bytes_grow :: proc "contextless" (data: rawptr, current: []u8, minimum: int) -> (grown: []u8, ok: bool) {
-	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum))
-	return bytes, status == .Ok
-}
-
-arena_rows_grow :: proc "contextless" (data: rawptr, current: []text_model.Row, minimum: int) -> (grown: []text_model.Row, ok: bool) {
-	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum * size_of(text_model.Row)))
-	if status != .Ok {
-		return nil, false
-	}
-	return ([^]text_model.Row)(raw_data(bytes))[:len(bytes) / size_of(text_model.Row)], true
-}
-
-arena_matches_grow :: proc "contextless" (data: rawptr, current: []i32, minimum: int) -> (grown: []i32, ok: bool) {
-	bytes, status := system.arena_extend_to((^system.Arena)(data), u64(minimum * size_of(i32)))
-	if status != .Ok {
-		return nil, false
-	}
-	return ([^]i32)(raw_data(bytes))[:len(bytes) / size_of(i32)], true
-}
-
 // arenas_start reserves the arenas and gives them to the text model. A
 // reservation that the budget refuses leaves its zero arena, which refuses
 // each growth: the text then keeps the buffers inside the model.
@@ -269,9 +245,9 @@ arenas_start :: proc "contextless" () {
 	rows_arena, _ = system.arena_create(ROWS_RESERVE_PAGES)
 	matches_arena, _ = system.arena_create(MATCHES_RESERVE_PAGES)
 	transfer_arena, _ = system.arena_create(TRANSFER_RESERVE_PAGES)
-	text_model.text_init_buffer(&text, nil, arena_bytes_grow, &text_arena)
-	text_model.layout_init_buffer(&layout, nil, arena_rows_grow, &rows_arena)
-	text_model.search_init_buffer(&search, nil, arena_matches_grow, &matches_arena)
+	text_model.text_init_buffer(&text, nil, system.arena_grow, &text_arena)
+	text_model.layout_init_buffer(&layout, nil, system.arena_grow, &rows_arena)
+	text_model.search_init_buffer(&search, nil, system.arena_grow, &matches_arena)
 }
 
 // transfer_bytes gives count bytes of the transfer arena after its first

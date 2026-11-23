@@ -89,7 +89,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Edit:
 				edit := &intake.edit
 				cursor := edit.has_cursor ? u64(edit.cursor) : terminal_records.NO_CURSOR
-				ansi_terminal.emit_edit_line(&out, edit_row, edit.text[:edit.length], &edit.code, cursor, .Dark)
+				ansi_terminal.emit_edit_line(&out, edit_row, edit.text[:edit.length], edit.code.runs[:clamp(edit.code.count, 0, len(edit.code.runs))], cursor, .Dark)
 				edit_column = ansi_terminal.edit_column_of(edit.has_cursor ? u64(edit.cursor) : u64(edit.length), edit.length)
 			case .List:
 				ansi_terminal.emit_completion_popup(&out, &intake.list.shown, edit_row, columns, rows, .Dark)

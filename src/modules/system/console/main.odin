@@ -599,10 +599,8 @@ edit_show :: proc "contextless" () {
 		shown_cursor = cursor
 		// The edit line is code: its runs go first, and the Edit
 		// that follows takes them. The time of a line that runs has none.
-		// A run starts at a byte of one record (terminal.Code_Run), so a
-		// line longer than one record is plain.
-		if !running && len(text) <= terminal.RUN_LIMIT {
-			runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
+		if !running {
+			runs: [terminal.EDIT_CODE_RUN_LIMIT]terminal.Code_Run
 			run_count := edit_runs(text, int(cursor), runs[:])
 			terminal.code_runs_send(&output, .Edit, 0, runs[:run_count])
 		}
