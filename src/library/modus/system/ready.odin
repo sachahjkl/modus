@@ -24,6 +24,10 @@ Ready_Ring :: struct {
 	mapped: ring.Ring,
 }
 
+// The bound of the wait for the starter is the hang bound of an answer of a
+// process, as each wait of the library for another process.
+#assert(root_ring.READY_ANSWER_BOUND_MILLISECONDS == ANSWER_BOUND_MILLISECONDS)
+
 // The ready ring has the smallest capacity: it carries one record.
 READY_RING_CAPACITY :: ring.CAPACITY
 
@@ -48,8 +52,8 @@ ready :: proc "contextless" () -> (sent: bool) {
 // ready_at_end says the first state of work of a process that stops and
 // never said it, then waits for the one completion of the starter: the
 // starter has read the peak of the budget, which lives until the stop. The
-// wait ends at the completion, or at the hang bound when the starter does
-// not answer: the stop then goes on, and the floor is not checked. A
+// wait ends at the completion, or at root_ring.READY_ANSWER_BOUND_MILLISECONDS
+// when the starter does not answer: the stop then goes on, and the floor is not checked. A
 // process that said it, or that has no ready ring, does not wait.
 ready_at_end :: proc "contextless" () {
 	memory, mapped, claimed := ready_ring_claim()
@@ -63,7 +67,7 @@ ready_at_end :: proc "contextless" () {
 	if !send(&mapped.commands, ring.Record{kind = u32(root_ring.Root_Command.Ready)}) {
 		return
 	}
-	deadline := time() + TEST_HANG_BOUND_MILLISECONDS
+	deadline := time() + root_ring.READY_ANSWER_BOUND_MILLISECONDS
 	for {
 		wait := wait_begin()
 		if _, answered := receive(&mapped.completions); answered {

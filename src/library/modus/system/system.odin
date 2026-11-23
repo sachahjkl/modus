@@ -318,7 +318,8 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 // (src/md/api/kernel_ring_completion_room.md, "The stop of a process").
 // Before it, a process that never said its first state of work says it,
 // and waits for its starter to read the peak of its budget, at most the
-// hang bound (ready_at_end).
+// bound of that answer, root_ring.READY_ANSWER_BOUND_MILLISECONDS
+// (ready_at_end).
 //
 // Example: `system.stop(.Done)` at the end of the work; `system.stop(.Failed)`
 // after a check of a test that failed, with its line on the log before;

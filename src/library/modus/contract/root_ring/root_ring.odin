@@ -1177,6 +1177,15 @@ refuse :: proc "contextless" (values: ^[7]u64, outcome: call_outcome.Call_Outcom
 	return outcome
 }
 
+// The bound of the wait of a process that stops for the one completion of
+// its ready ring (system.ready_at_end), in milliseconds. The root service
+// answers in one pass of its loop, and its stop is the end of the machine:
+// the bound only ends a hang of the root service, so it is the hang bound
+// of an answer of a process (system.ANSWER_BOUND_MILLISECONDS, which the
+// library checks against it), never a measure of the root service. Past
+// it the stop goes on, and the floor of the process is not checked.
+READY_ANSWER_BOUND_MILLISECONDS :: 60_000
+
 // ready_record_refused says if a record of a ready ring is not the record
 // Ready with each value 0: the one record that the ring carries. A refused
 // record ends the ring as a Ready does, with a line, and the starter reads
