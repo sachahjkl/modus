@@ -745,7 +745,6 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 		}
 		return outcome
 	}
-	outcome.value = answer.value
 	write_sentence :: proc(prefix: string, record: ^errors.Error_Record, operation, argument: string) -> string {
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
@@ -784,11 +783,14 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 		sentence.write_part(&writer, "error: ")
 		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error, call_ended)
 		append(&outcome.lines, sentence.written(&writer))
+		append(&outcome.lines, fmt.tprintf("  outcome    %s", call_outcome.CALL_OUTCOME_NAMES[call_ended]))
+		append(&outcome.lines, fmt.tprintf("  effect     %s", call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(call_ended)]))
 		if _, has_details := module.error_details_parameter(call.file, call.function); has_details {
 			error_details_lines(&outcome.lines, &call, answer, result)
 		}
 		return outcome
 	}
+	outcome.value = answer.value
 	outcome.outcome = .Result
 	result_type, result_type_ok := module.function_result_type(call.function)
 	if !result_type_ok {

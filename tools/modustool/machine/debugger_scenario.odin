@@ -421,7 +421,7 @@ scenario_debugger_commands := [?]Step {
 	// The machine has no source text: the tool reads the line in the
 	// repository, because the file has the hash of the build.
 	{kind = .Call, text = "debugger.source(0, 0)", expected = "source: " + DEBUG_TARGET_SOURCE_FILE + ":" + DEBUG_TARGET_LINE_OF_THE_STORE + ": " + DEBUG_TARGET_TEXT_OF_THE_STORE},
-	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: the receiver has no free place: the table has its 1 processes that the debugger service debugs for this caller"},
+	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: debugger.attach: the receiver has no free place: the table has its 1 processes that the debugger service debugs for this caller\n  outcome    Callee_Busy"},
 	{kind = .Call, text = "debugger.detach()", expected = "1 rows of Detached"},
 	{kind = .Wait, text = DEBUG_TARGET_RUNS},
 	{kind = .Call, text = "debugger.attach(\"notes\")", outcome = .Failed, expected = "error: " + DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Store" + REFUSES_THE_DEBUG_ACCESS},

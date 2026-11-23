@@ -393,18 +393,20 @@ set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes
 		// zero bytes after it; the blocks after it are dropped.
 		keep := blocks_of(new_size)
 		owner := pending_index(pending) + 1
+		dropped_blocks := false
 		for &block in pending_blocks {
 			if block.owner == owner && block.index >= keep {
 				block.owner = 0
 				pending.blocks -= 1
 				pending_blocks_used -= 1
+				dropped_blocks = true
 			}
 		}
 		if inside := new_size % BLOCK_SIZE; inside != 0 {
 			block_place, taken := pending_block_take(&ranged, new_size / BLOCK_SIZE, error)
 			if taken != .Succeeded {
-				// The blocks past the new end are dropped already.
-				return call_outcome.outcome_passed_on(taken, true), 0
+				// Only a partial change when the loop above dropped pending blocks.
+				return call_outcome.outcome_passed_on(taken, dropped_blocks), 0
 			}
 			intrinsics.mem_zero(&pending_blocks[block_place].bytes[inside], BLOCK_SIZE - int(inside))
 		}
@@ -436,7 +438,7 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 		// the connection sees the last commit at its next read.
 		if changed == .Another_Change_Came_First || changed == .Data_Damaged {
 			pending_drop(pending)
-			return call_outcome.outcome_passed_on(changed, true), 0
+			return changed, 0
 		}
 		return changed, 0
 	}

@@ -491,7 +491,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   a process with no setting. A process has at most 32 threads, so 32 is
 //   the least weight that gives each thread a weight of 1 or more.
 //
-// The result is the process weight that the name had. It fails with -1 and
+// The result is the process weight that the name had. It fails with its call outcome and
 // an error record, and no setting changes:
 //
 // - `No_Grant`: the caller does not act for the principal;
@@ -570,7 +570,7 @@ share :: proc "c" (name: ^string, weight: i64, error: ^errors.Error_Record) -> (
 // - **on**: 1 turns the policy on, 0 turns it off.
 //
 // The result is 1 when the policy was on before the call, else 0. It fails
-// with -1 and an error record:
+// with its call outcome and an error record:
 //
 // - `No_Grant`: the caller does not act for the principal;
 // - `Bad_Value`: on is not 0 or 1.

@@ -577,7 +577,7 @@ Language_Row :: struct {
 // - `Out_Of_Range`: the count of the table is past its capacity; value: the count; limit: the capacity.
 // - `Bad_Value`: a record that names no locale in its canonical form, or the root locale `und`; value: the
 //   word of its `language_tag.Locale_Problem`, 0 for the root locale; found: the record, from 1.
-// - `Exists`: a language that the table holds in an earlier record; found: the record, from 1.
+// - `Bad_Value`: also a duplicate language that the table holds in an earlier record; found: the record, from 1.
 // - `Refused`: the store did not keep the list. The page keeps the list before.
 //
 // Example: `settings.set_languages([language("fr"), language("en")])`, then `settings.languages()` gives fr, then en.
@@ -606,7 +606,7 @@ set_languages :: proc "c" (languages: ^system.Table_To_Read(language_tag.Locale)
 	case .No_Language, .Record_Past_Count:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, 0, 0, record)
 	case .Duplicate:
-		return call_outcome.fail(error, .Name_Already_Taken, .Exists, .Records, 1, 0, 0, record)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, 0, 0, record)
 	}
 	current, _ := settings.read(page)
 	current.languages = list

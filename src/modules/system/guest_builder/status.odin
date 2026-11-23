@@ -87,7 +87,7 @@ disks_check :: proc "c" (spec_bytes: ^system.Bytes_To_Read, input_disk: ^system.
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, ARGUMENT_SPEC, 0, 0, i64(spec_refusal))
 	}
 	if spec.memory_pages > GUEST_MEMORY_PAGES_MOST {
-		return call_outcome.fail(error, .Argument_Refused, .Over_Limit, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages), i64(GUEST_MEMORY_PAGES_MOST), i64(contract.Guest_Builder_Refusal.Memory_Past_Bound))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages), i64(GUEST_MEMORY_PAGES_MOST), i64(contract.Guest_Builder_Refusal.Memory_Past_Bound))
 	}
 	memory, disk, copied := input_disk_copy(input_disk, error)
 	if copied != .Succeeded {

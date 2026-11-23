@@ -437,6 +437,14 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 		// module in a new call host starts it again.
 		return call_outcome.fail(error, .Wrong_State, .Refused, .None, 0, 0, 0, 0)
 	}
+	// Map the output before running chibicc so a refused output handle leaves
+	// compiler_used false and changes no state.
+	memory, mapped := output_map(output, numbers.output, error)
+	if mapped != .Succeeded {
+		system.arena_end(&arena)
+		return mapped, 0
+	}
+	defer system.memory_unmap(raw_data(memory))
 	compiler_used = true
 	memory_refused = false
 
@@ -459,6 +467,8 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 			named_byte = i64(source_copy[call.error_offset])
 		}
 		system.arena_end(&arena)
+		// The compiler ran, so the call host is spent: a refusal past this
+		// point changed state, and a retry in this call host gets Wrong_State.
 		if memory_refused {
 			// The record of the refused commit, in the words of the export:
 			// the call of the caller asked for no operation.
@@ -467,28 +477,21 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 				error.operation = 0
 				error.argument = 0
 			}
-			return .Budget_Or_Capacity_Exhausted, 0
+			return call_outcome.outcome_passed_on(.Budget_Or_Capacity_Exhausted, true), 0
 		}
 		if named {
-			return call_outcome.fail(error, .Argument_Refused, .Bad_Byte, .None, numbers.source, call.error_offset, 0, named_byte)
+			return call_outcome.fail(error, call_outcome.outcome_passed_on(.Argument_Refused, true), .Bad_Byte, .None, numbers.source, call.error_offset, 0, named_byte)
 		}
-		return call_outcome.fail(error, .Argument_Refused, .Refused, .None, numbers.source, 0, 0, 0)
+		return call_outcome.fail(error, call_outcome.outcome_passed_on(.Argument_Refused, true), .Refused, .None, numbers.source, 0, 0, 0)
 	case .Done:
 	}
 
-	memory, mapped := output_map(output, numbers.output, error)
-	if mapped != .Succeeded {
-		system.arena_end(&arena)
-		return mapped, 0
-	}
 	if call.text_size > u64(len(memory)) {
-		system.memory_unmap(raw_data(memory))
 		system.arena_end(&arena)
-		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, numbers.output, i64(len(memory)), i64(call.text_size))
+		return call_outcome.fail(error, call_outcome.outcome_passed_on(.Argument_Refused, true), .Too_Small, .Bytes, numbers.output, i64(len(memory)), i64(call.text_size))
 	}
 	size := call.text_size
 	intrinsics.mem_copy_non_overlapping(raw_data(memory), call.text, int(size))
-	system.memory_unmap(raw_data(memory))
 	system.arena_end(&arena)
 	system.log_fact(.Info, Text_Written{size = value_kinds.Size_In_Bytes(size)})
 	return .Succeeded, i64(size)
@@ -499,10 +502,14 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 // `source` is the C source, 1 byte to 256 KiB, with no byte 0. `output` is a memory object that the caller lends to
 // write; the text starts at its first byte, and the module `assemble` takes it. Each function that is not `static`
 // becomes an `export` of the text: its `int` and `long` parameters and result are Integers. A call host compiles one
-// source: a second call that reaches the compiler fails with `Refused`, and `unload` then `isolate` give a new one. A
-// source that chibicc refuses fails with -1 and the error record `Bad_Byte`, whose value is the offset of the byte
-// that its diagnostic names, or `Refused` when the diagnostic names no byte of the source; the log has the
-// diagnostic. A memory object smaller than the text fails with `Too_Small`, and the limit is the bytes of the text.
+// source: a second call that reaches the compiler fails with `Wrong_State` and `Refused`, and `unload` then `isolate`
+// give a new one. A refusal before the compiler runs (an argument, or an output that the kernel does not map) changes
+// nothing, and gives its outcome: `Argument_Refused` for an argument. Once the compiler ran, each failure gives
+// `Stopped_After_A_Partial_Change`: the call host is spent, and a new call host compiles the next source. A source
+// that chibicc refuses gives the error record `Bad_Byte`, whose value is the offset of the byte that its diagnostic
+// names, or `Refused` when the diagnostic names no byte of the source; the log has the diagnostic. A memory object
+// smaller than the text gives `Too_Small`, and the limit is the bytes of the text. A refused commit of the memory of
+// the compiler gives the record of the kernel.
 @(export, link_name = "compile")
 compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return compile_to_output(source, nil, output.handle, {source = ARGUMENT_SOURCE, output = ARGUMENT_OUTPUT}, error)

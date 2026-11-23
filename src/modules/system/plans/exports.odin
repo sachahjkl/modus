@@ -63,7 +63,7 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: p
 	case .Empty_Plan:
 		return call_outcome.fail(error, .Argument_Refused, .Empty, .Records, 1, 0, pr.MAX_PLAN_ENTRIES, found)
 	case .Too_Many_Entries:
-		return call_outcome.fail(error, .Argument_Refused, .Over_Limit, .Records, 1, 0, pr.MAX_PLAN_ENTRIES, found)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, 0, pr.MAX_PLAN_ENTRIES, found)
 	case .Bad_Entry_Kind, .Bad_Role, .Zero_Module_Hash, .Bad_Start_Grant, .Bad_Store_Rights, .Invalid_Name, .Duplicate_Entry, .Cyclic_Role_Chain, .Trusted_Path_Forbidden, .Principal_Mismatch:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, i64(bad_index), 0, found)
 	case .Buffer_Too_Small, .Truncated, .Trailing_Bytes, .Bad_Header, .Zero_Plan_Hash:
@@ -109,7 +109,7 @@ plan_of_table :: proc "contextless" (rows: ^system.Table_To_Read(pr.Plan_Entry_R
 		return failure, false
 	}
 	if count > pr.MAX_PLAN_ENTRIES {
-		failure, _ = call_outcome.fail(error, .Argument_Refused, .Over_Limit, .Records, 1, i64(min(count, u64(max(i64)))), pr.MAX_PLAN_ENTRIES, i64(pr.Plan_Refusal.Too_Many_Entries))
+		failure, _ = call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(min(count, u64(max(i64)))), pr.MAX_PLAN_ENTRIES, i64(pr.Plan_Refusal.Too_Many_Entries))
 		return failure, false
 	}
 	for index in 0 ..< count {

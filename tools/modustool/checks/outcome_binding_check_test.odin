@@ -47,6 +47,56 @@ outside :: proc "c" (value: i64, error: ^errors.Error_Record) -> i64 {
 	testing.expect_value(t, found[3].reason, Outcome_Binding_Reason.Outcome_Without_Required_Read)
 }
 
+// Foreign blocks inside a `when` statement are checked too, type aliases
+// ending in "Call_Outcome" are refused, an outcome with no error parameter
+// is refused, and a swapped pair (i64, Call_Outcome) is refused even when
+// no parameter is named error. An aliased import of modus:contract/call_outcome
+// is accepted.
+@(test)
+when_blocks_aliases_swapped_pairs_and_missing_error_are_checked :: proc(t: ^testing.T) {
+	source := `package caller
+
+import co "modus:contract/call_outcome"
+import "modus:contract/errors"
+
+Drawing_Call_Outcome :: co.Call_Outcome
+
+when DRAWING_THROUGH_MODULE {
+	foreign _ {
+		@(require_results)
+		alias_result :: proc "c" (value: i64, error: ^errors.Error_Record) -> (Drawing_Call_Outcome, i64) ---
+		@(require_results)
+		no_error_param :: proc "c" (value: i64) -> (co.Call_Outcome, i64) ---
+		@(require_results)
+		swapped_no_error :: proc "c" (value: i64) -> (i64, co.Call_Outcome) ---
+		@(require_results)
+		swapped_with_error :: proc "c" (value: i64, error: ^errors.Error_Record) -> (i64, co.Call_Outcome) ---
+		missing_attr_in_when :: proc "c" (value: i64, error: ^errors.Error_Record) -> (co.Call_Outcome, i64) ---
+		@(require_results)
+		valid_in_when :: proc "c" (value: i64, error: ^errors.Error_Record) -> (co.Call_Outcome, i64) ---
+	}
+}
+`
+	found := make([dynamic]Outcome_Binding_Fault, context.temp_allocator)
+	count, ok := outcome_binding_faults_of_source("caller_when.odin", source, &found)
+	testing.expect(t, ok)
+	testing.expect_value(t, count, 6)
+	testing.expect_value(t, len(found), 5)
+	if len(found) != 5 {
+		return
+	}
+	testing.expect_value(t, found[0].binding, "alias_result")
+	testing.expect_value(t, found[0].reason, Outcome_Binding_Reason.Error_Record_Without_Outcome)
+	testing.expect_value(t, found[1].binding, "no_error_param")
+	testing.expect_value(t, found[1].reason, Outcome_Binding_Reason.Outcome_Without_Error_Record)
+	testing.expect_value(t, found[2].binding, "swapped_no_error")
+	testing.expect_value(t, found[2].reason, Outcome_Binding_Reason.Outcome_Not_First)
+	testing.expect_value(t, found[3].binding, "swapped_with_error")
+	testing.expect_value(t, found[3].reason, Outcome_Binding_Reason.Outcome_Not_First)
+	testing.expect_value(t, found[4].binding, "missing_attr_in_when")
+	testing.expect_value(t, found[4].reason, Outcome_Binding_Reason.Outcome_Without_Required_Read)
+}
+
 // A source that the parser refuses is a failure of the check, never a
 // file with no binding.
 @(test)

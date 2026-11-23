@@ -241,7 +241,10 @@ refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Statu
 // outcome_of_status_word gives the call outcome of a refusal of the root
 // service or of the kernel, from the status word of its completion.
 outcome_of_status_word :: proc "contextless" (word: u32) -> call_outcome.Call_Outcome {
-	status, _ := system.status_of_word(word)
+	status, refusal := system.status_of_word(word)
+	if refusal.kind != 0 {
+		return .Answer_Unreadable
+	}
 	return system.outcome_of_status(status)
 }
 
@@ -559,7 +562,7 @@ session_of_caller :: proc "contextless" (error: ^errors.Error_Record, needs_the_
 		return refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if !session.attached || session.caller_ring != caller.ring_memory {
-		return refuse(error, .Wrong_State, .Absent, .Debugged_Processes)
+		return refuse(error, .Nothing_Has_That_Name, .Absent, .Debugged_Processes)
 	}
 	process: op.Process_Report
 	if !inspect_call(.Process, session.slot, &process, size_of(process)) || process.process_serial != session.process_serial || process.state == .None || process.state == .Stopped {
@@ -710,7 +713,7 @@ thread_of_argument :: proc "contextless" (thread: i64, stopped: bool, error: ^er
 		return 0, refuse(error, .Nothing_Has_That_Name, .Absent, .Threads, 1)
 	}
 	if stopped && !thread_stopped(u64(thread)) {
-		return 0, refuse(error, .Wrong_State, .Absent, .Held_Threads, 1)
+		return 0, refuse(error, .Nothing_Has_That_Name, .Absent, .Held_Threads, 1)
 	}
 	return u64(thread), .Succeeded
 }

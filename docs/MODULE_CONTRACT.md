@@ -630,7 +630,7 @@ compile(source: Bytes, output: Handle) -> Integer
 ```
 
 - `source` is the C source, 1 byte to 256 KiB. `output` is a memory object that the caller lends with Read and Write. The result is the bytes of the text, which starts at the first byte of `output`.
-- A call host compiles one source: a second call that reaches the compiler fails with `Refused`. To compile again, `unload("c_compiler")` and `isolate("c_compiler")`.
+- A call host compiles one source: a second call that reaches the compiler fails with `Wrong_State` and `Refused`. Once the compiler ran, each failure gives `Stopped_After_A_Partial_Change`, because the call host is spent. To compile again, `unload("c_compiler")` and `isolate("c_compiler")`.
 
 ```
 > isolate("c_compiler")
@@ -956,7 +956,7 @@ On x86-64 this is the System V AMD64 assignment:
 | Integer parameters | Up to 12 (`module.PARAMETER_CAPACITY`). The first 6 in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order. The 7th to the 12th on the stack, one word of 8 bytes each: the 7th at the stack pointer of the call, the 8th 8 bytes above it, and so on |
 | Float parameters | Up to 8, in `xmm0` to `xmm7`, in order |
 | Results | Up to 2 integers in `rax`, `rdx`, and up to 2 floats in `xmm0`, `xmm1`. An export that can fail gives its call outcome in `rax` and its value in `rdx` |
-| A record, a slice, a string, a variant | Passed as the address of memory that the caller owns. Never by value, but the one pair of an export that can fail: `struct modus_answer { uint64_t outcome; int64_t value; }`, two words of 8 bytes that every compiler returns in `rax` and `rdx` |
+| A record, a slice, a string, a variant | Passed as the address of memory that the caller owns. Never by value, but the one pair of an export that can fail: `Modus_Answer` (`typedef struct Modus_Answer { Modus_Call_Outcome outcome; int64_t value; } Modus_Answer;` in `modus_call_outcome.h`), two words of 8 bytes that every compiler returns in `rax` and `rdx` |
 | More integer parameters than registers | On the stack, by the rule of System V for a value of the integer class. The count includes the buffer of a Text or Table result, the place of a Record result and the address of an error record |
 | Variable parameter lists | Not permitted |
 | Errors | A function that can fail takes the address of an error record as its last parameter, and gives the call outcome first, then its value (section 8). A function with one result cannot fail. The sign of a value means nothing |
@@ -1360,7 +1360,7 @@ The description of an export names each parameter and the result with one member
 |---|---|---|---|---|
 | `Integer` | A signed integer of 64 bits | The value, in a register | The value, in the result register | An integer of 1, 2, 4 or 8 bytes, signed or unsigned |
 | `Text` | UTF-8 bytes | The address of a slice record `{address, count}` | One more argument, the address of a buffer record `{address, capacity}`; the integer result is the count of bytes of the full text | The bytes in the record, in a field of a fixed size, with zero bytes after the text |
-| `Record` | Bytes of a fixed size with described fields | The address of the record | One more argument, the address of the memory of the record; the export has no integer result | Not allowed: a record holds no record |
+| `Record` | Bytes of a fixed size with described fields | The address of the record | One more argument, the address of the memory of the record; the export has no integer value, and an export that can fail gives its call outcome alone | Not allowed: a record holds no record |
 | `Handle` | A handle that the caller lends for the time of the call, with the rights that the callee needs | The handle, in a register | Not allowed | The handle, in 4 bytes |
 | `Table` | Records of one description that follow each other, with a direction | The address of a table place `{address, count, capacity}` | One more argument, the address of a buffer record `{address, capacity in records}`; the integer result is the count of records of the full table | Not allowed |
 | `Bytes` | Bytes with no description, with a direction | The address of a table place, with the count and the capacity in bytes | Not allowed | A hash, in a field of 1 to 32 bytes of the kind `Hash`, or the values of a log fact, in a field of 144 bytes of the kind `Fact_Values` ("The kind of a field") |
@@ -1812,7 +1812,7 @@ The kinds, the meaning of `limit` and `found` for each kind, and the units are i
 
 - **Direct call**: one more argument, after the buffer of a result: the address of an error record of the caller.
 - **Isolated call**: one more field of the argument record, after the field of a result: the offset of 56 bytes in the call region. The receiver gives the export the address of that place: the export only writes it, so no copy is needed. `isolated.encode` writes zero bytes there.
-- **The pair**: the export gives the call outcome first, then its value: `-> (outcome: call_outcome.Call_Outcome, value: i64)` in Odin, `struct modus_answer` in C, `rax` and `rdx` on x86-64. An export with a Record result or no result that can fail gives the outcome alone. The tool refuses an export with an error record that does not give the outcome first, and an export that gives an outcome with no error record: the signature is the promise.
+- **The pair**: the export gives the call outcome first, then its value: `-> (outcome: call_outcome.Call_Outcome, value: i64)` in Odin, `Modus_Answer` in C, `rax` and `rdx` on x86-64. An export with a Record result or no result that can fail gives the outcome alone. The tool refuses an export with an error record that does not give the outcome first, and an export that gives an outcome with no error record: the signature is the promise.
 - **When**: the export writes the record when it fails, and only then. It fails when its outcome is not `Succeeded`; its value is then 0, and a caller does not read it. A value is a value only: `number("-5")` gives -5 and `Succeeded`.
 - **The outcome**: the callee runs the ordered tests of the members and gives the first that holds. An export that changed state that its caller can see, then stopped, gives `Stopped_After_A_Partial_Change`, never a refusal, and its documentation states what holds then (`sample.scale_values_up_to`). Generic code acts on the effect group (`call_outcome.effect_group_of`), code that knows the export compares a member.
 - **The read of the outcome is forced.** A binding of an export that can fail has `@(require_results)` in Odin and `__attribute__((warn_unused_result))` in C, so a caller that drops the outcome does not compile. `modustool check` refuses a binding that takes an error record and gives no outcome first, or that gives one with no forced read (`outcome_binding_check`, [`docs/TOOLS.md`](TOOLS.md), "The rules that a check holds").

@@ -106,7 +106,7 @@ empty :: proc "c" () {
 // box of the glider, from 0. A value past the board wraps: `column` modulo
 // 96, `row` modulo 64.
 //
-// It adds cells and removes none. The result is 1. It fails with -1 and an
+// It adds cells and removes none. The result is 1. It fails with its call outcome and an
 // error record: `Too_Small` when `column` or `row` is negative; the record
 // names the argument, and no cell changes.
 @(export, link_name = "glider")

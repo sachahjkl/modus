@@ -605,7 +605,7 @@ run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> (out
 	amounts_a, ok_a := work_budget.work_budget_child_amounts(PROBE_REQUIREMENTS, 0)
 	amounts_b, ok_b := work_budget.work_budget_child_amounts(PROBE_REQUIREMENTS, 32)
 	if !ok_a || !ok_b {
-		return call_outcome.fail(error, .Wrong_State, .Bad_Value, .Pages)
+		return call_outcome.fail(error, .Wrong_State, .State, .Pages)
 	}
 
 	parent_a, status_a := system.budget_create(amounts_a, own_budget, error)
@@ -675,7 +675,7 @@ run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> (out
 
 	// Confirm the service's own budget did not lose pages to client work.
 	if own_after_work.pages < own_before.pages {
-		return call_outcome.fail(error, .Wrong_State, .Budget, .Pages, 0, i64(own_after_work.pages), i64(own_before.pages))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, 0, i64(own_after_work.pages), i64(own_before.pages))
 	}
 	return .Succeeded, 0
 }

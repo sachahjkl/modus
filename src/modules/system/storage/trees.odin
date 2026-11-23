@@ -434,7 +434,7 @@ Store_Of :: struct {
 
 // store_prepare starts the plan of a change of a store: it refuses a store
 // that the service cannot change, and makes a new store for a first change
-// when `create`. It gives the index of the store, or the word of an Export_Error.
+// when `create`. It gives the index of the store and Succeeded, or -1 and the call outcome.
 store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^errors.Error_Record) -> (store_index: int, result: call_outcome.Call_Outcome) {
 	if len(store.name) == 0 || store.limit == 0 {
 		return -1, refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
@@ -630,7 +630,7 @@ work_failure_take :: proc "contextless" () -> (damaged: bool) {
 // the block tree of the object: a write of the whole object is a cut, a
 // size and a change of each of its blocks; a block that keeps its bytes
 // keeps its block. The state before becomes a version. It gives the
-// generation of the commit, or the word of an Export_Error with the error record.
+// generation of the commit and Succeeded, or 0 and the call outcome with the error record.
 // `name_argument` is the argument of the name in the export.
 // `finds_by_hash`: the connection of the caller reaches the whole store, so
 // the new state names the root of an object of the store with the same
@@ -998,7 +998,7 @@ added_kinds: [ADD_LIMIT]format.Entry_Kind
 // region: they are copied first, then checked.
 entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []Add_Row, names: []u8, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	if len(rows) > ADD_LIMIT {
-		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Too_Long, .Records, 2, i64(len(rows)), ADD_LIMIT)
+		return call_outcome.fail_with_value_first(error, .Argument_Refused, .Too_Long, .Records, 2, i64(len(rows)), ADD_LIMIT)
 	}
 	count := copy(added_rows[:], rows)
 	for &row, number in added_rows[:count] {

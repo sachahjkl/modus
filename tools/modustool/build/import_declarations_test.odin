@@ -39,6 +39,7 @@ sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, n
 @(private = "file")
 IMPORTER_HEAD :: `package importer_of_the_test
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:system"
 
@@ -109,6 +110,33 @@ a_declaration_with_the_call_form_of_its_export_agrees :: proc(t: ^testing.T) {
 	difference, readable := declared_difference(t, "i32", GOOD_SIGNATURE)
 	testing.expect(t, readable)
 	testing.expect_value(t, difference, "")
+	// A fallible Record result gives Call_Outcome alone, with no i64.
+	record_diff, record_readable := declared_difference(t, "i32", `(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^Measure, error: ^errors.Error_Record) -> call_outcome.Call_Outcome`)
+	testing.expect(t, record_readable)
+	testing.expect(t, strings.contains(record_diff, "its result is Record, the export has Text"), record_diff)
+	// An aliased import of modus:contract/call_outcome resolves through the import table.
+	aliased_source := `package aliased_importer
+
+import co "modus:contract/call_outcome"
+import "modus:contract/errors"
+
+foreign _ {
+	f :: proc "c" (x: i64, error: ^errors.Error_Record) -> (co.Call_Outcome, i64) ---
+}
+`
+	state: Describe_State
+	state.records = make([dynamic]Record_Description, context.temp_allocator)
+	state.structs = make(map[string]Struct_Source, context.temp_allocator)
+	file, parsed := parse_source("aliased_importer.odin", aliased_source, &state)
+	testing.expect(t, parsed)
+	decls := make([dynamic]Foreign_Declaration, context.temp_allocator)
+	foreign_declarations_collect(file.decls[:], &decls)
+	testing.expect_value(t, len(decls), 1)
+	if len(decls) == 1 {
+		form, problem, ok := call_form_of_declaration(&state, aliased_source, decls[0].type)
+		testing.expectf(t, ok, "aliased import of call_outcome refused: %s", problem)
+		testing.expect(t, form.has_error && form.result == .Integer)
+	}
 }
 
 // Each way in which a declaration can pass other registers than the
@@ -149,6 +177,10 @@ a_declaration_with_another_call_form_is_refused :: proc(t: ^testing.T) {
 		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (i64, call_outcome.Call_Outcome)`, "the results (i64, call_outcome.Call_Outcome) have no description"},
 		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (Drawing_Call_Outcome, i64)`, "the results (Drawing_Call_Outcome, i64) have no description"},
 		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64, i64)`, "the declaration has more than two results"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> call_outcome.Call_Outcome`, "the declaration has a Text or Table result, so it returns its count as i64"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]Measure, error: ^errors.Error_Record) -> call_outcome.Call_Outcome`, "the declaration has a Text or Table result, so it returns its count as i64"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^Measure, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "the declaration has a Record result, so it gives no i64 value"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^Measure) -> i64`, "the declaration has a Record result, so it gives no i64 value"},
 	}
 	for item in refused_results {
 		problem, readable := declared_difference(t, "i32", item.signature)
@@ -297,6 +329,7 @@ declared_nine_difference :: proc(t: ^testing.T, signature: string) -> (differenc
 	described := call_form_of_description(exports[0], records)
 	source := strings.concatenate({`package importer_of_nine
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:system"
 

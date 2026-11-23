@@ -445,6 +445,81 @@ error_record_place :: proc(t: ^testing.T) {
 	testing.expect(t, !encoded)
 }
 
+// A Record result with an error record: the result address comes after the
+// parameters, and the error record address comes after it. On success,
+// result_store copies the record into the call region; on failure, the
+// receiver skips result_store so the caller's place stays zero while the
+// error record carries the failure.
+@(test)
+fallible_record_result :: proc(t: ^testing.T) {
+	storage: [512]u8
+	file := record_file(&storage)
+	function := description(.Integer)
+	function.result, function.result_detail = u8(module.Type.Record), 1
+	function.error_record = 1
+
+	// Success path: outcome word 0 copies the record out.
+	region: [256]u8
+	for &b in region {
+		b = 0xEE
+	}
+	offset, size, place, error_place, encoded := encode(file, function, {{integer = 42}}, region[:])
+	testing.expect(t, encoded)
+	testing.expect_value(t, size, u64(8 + 8 + 8))
+	testing.expect_value(t, error_place, Slice{start = 24, count = ERROR_RECORD_SIZE})
+	testing.expect_value(t, place, Slice{start = 24 + ERROR_RECORD_SIZE, count = 16})
+	call: Call
+	testing.expect(t, decode(file, function, offset, size, region[:], &call))
+	testing.expect_value(t, call.arguments[0], u64(42))
+	testing.expect_value(t, call.arguments[1], u64(uintptr(&call.records[1])))
+	testing.expect_value(t, call.arguments[2], u64(uintptr(&region[error_place.start])))
+	testing.expect_value(t, call.result, place)
+	testing.expect_value(t, call.error, error_place)
+	(^[2]u64)(uintptr(call.arguments[1]))^ = {11, 22}
+	value, outcome_word := export_answer(function, {0, 999})
+	testing.expect_value(t, outcome_word, u64(0))
+	testing.expect_value(t, value, u64(0))
+	if outcome_word == 0 {
+		result_store(function, &call, region[:])
+	}
+	result: [2]u64
+	testing.expect(t, result_record(region[:], place, ([^]u8)(&result)[:16]))
+	testing.expect_value(t, result, [2]u64{11, 22})
+
+	// Failure path: non-zero outcome word skips result_store, keeping the
+	// caller's zeroed record place untouched while keeping the error record.
+	for &b in region {
+		b = 0xEE
+	}
+	offset, size, place, error_place, encoded = encode(file, function, {{integer = 7}}, region[:])
+	testing.expect(t, encoded)
+	call = {}
+	testing.expect(t, decode(file, function, offset, size, region[:], &call))
+	(^[2]u64)(uintptr(call.arguments[1]))^ = {77, 88}
+	(^u64)(uintptr(call.arguments[2]))^ = 1234
+	value, outcome_word = export_answer(function, {1, 555})
+	testing.expect_value(t, outcome_word, u64(1))
+	testing.expect_value(t, value, u64(0))
+	if outcome_word == 0 {
+		result_store(function, &call, region[:])
+	}
+	result = {0xFF, 0xFF}
+	testing.expect(t, result_record(region[:], place, ([^]u8)(&result)[:16]))
+	testing.expect_value(t, result, [2]u64{0, 0})
+	testing.expect_value(t, (^u64)(&region[error_place.start])^, u64(1234))
+
+	// Edges: an error record that overlaps the result record, or a parameter
+	// count that leaves no argument for both the record and the error record.
+	(^u64)(&region[16])^ = place.start
+	testing.expect(t, !decode(file, function, offset, size, region[:], &call))
+	nearly_full := integer_description(module.PARAMETER_CAPACITY - 1)
+	nearly_full.result, nearly_full.result_detail = u8(module.Type.Record), 1
+	nearly_full.error_record = 1
+	args: [module.PARAMETER_CAPACITY - 1]Argument
+	_, _, _, _, encoded = encode(file, nearly_full, args[:], region[:])
+	testing.expect(t, !encoded)
+}
+
 // The completion of a call carries the result register of an Integer, an
 // Enum, a Text and a Table result, and 0 for each other result and for a
 // byte that names no type. An Enum result once gave 0: a getter that gave

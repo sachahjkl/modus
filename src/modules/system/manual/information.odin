@@ -39,7 +39,7 @@ catalog :: proc "contextless" () -> information.Catalog {
 // table_count gives the pair of an export with a Table result: the count of
 // rows, or an outcome with its error record (src/library/modus/contract/errors):
 // Nothing_Has_That_Name with Absent, no module has the name of argument 1;
-// Data_Damaged with Malformed, the module of the boot image breaks a rule of
+// Data_Damaged with Damaged, the module of the boot image breaks a rule of
 // the format, with the kind of the problem and the byte of the file; or the
 // outcome of the kernel refusal of a report, with Refused and the status.
 @(private = "file")
@@ -50,12 +50,15 @@ table_count :: proc "contextless" (count: int, problem: information.Problem, err
 	case .No_Module:
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	case .Refused:
-		status, _ := system.status_of_word(u32(problem.value))
+		status, refusal := system.status_of_word(u32(problem.value))
+		if refusal.kind != 0 {
+			return call_outcome.fail(error, .Answer_Unreadable, .Refused, .None, 0, 0, 0, i64(problem.value))
+		}
 		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .None, 0, 0, 0, i64(problem.value))
 	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Import_Slot, .Direction, .Enum, .Member_Text:
 		// Each of these is a fault of the module file that the boot image holds.
 	}
-	return call_outcome.fail(error, .Data_Damaged, .Malformed, .None, 1, i64(problem.kind), 0, i64(problem.offset))
+	return call_outcome.fail(error, .Data_Damaged, .Damaged, .None, 1, i64(problem.kind), 0, i64(problem.offset))
 }
 
 // modules gives one row for each module of the boot image: its name, its hash, its sizes (code, constants, data, zero), whether it has an entry, its counts of exports, imports and records.
@@ -76,7 +79,7 @@ modules :: proc "c" (result: ^[]information.Module) -> i64 {
 // **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
 // - `Absent`: no module has this name;
-// - `Malformed`: the module breaks a rule of the format: `problem(name)` says where.
+// - `Damaged`: the module breaks a rule of the format: `problem(name)` says where.
 @(export, link_name = "exports")
 exports :: proc "c" (name: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.exports(catalog(), name^, result^)
@@ -91,7 +94,7 @@ exports :: proc "c" (name: ^string, result: ^[]information.Export, error: ^error
 // **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
 // - `Absent`: no module has this name;
-// - `Malformed`: the module breaks a rule of the format.
+// - `Damaged`: the module breaks a rule of the format.
 @(export, link_name = "imports")
 imports :: proc "c" (name: ^string, result: ^[]information.Import, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.imports(catalog(), name^, result^)
@@ -162,7 +165,7 @@ handles :: proc "c" (right: ^string, result: ^[]information.Export, error: ^erro
 // **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
 // - `Absent`: no module has this name;
-// - `Malformed`: the module breaks a rule of the format.
+// - `Damaged`: the module breaks a rule of the format.
 @(export, link_name = "import_slots")
 import_slots :: proc "c" (name: ^string, result: ^[]information.Import_Slot, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.import_slots(catalog(), name^, result^)
@@ -176,7 +179,7 @@ import_slots :: proc "c" (name: ^string, result: ^[]information.Import_Slot, err
 // **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
 // - `Absent`: no module has this name;
-// - `Malformed`: the module breaks a rule of the format.
+// - `Damaged`: the module breaks a rule of the format.
 @(export, link_name = "segments")
 segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.segments(catalog(), name^, result^)

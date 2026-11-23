@@ -249,7 +249,7 @@ Animation_Row :: struct {
 //
 // - **name**: a name of the first column of [animations](heron.animations), 16 bytes at most. The match is exact.
 //
-// The result is the count of the frames of the animation. It fails with -1 and an error record: `Absent` when no
+// The result is the count of the frames of the animation. It fails with its call outcome and an error record: `Absent` when no
 // animation has this name; the record names the first argument.
 //
 // Example, in the console after `connect("heron")`: `heron.play("dash")`.

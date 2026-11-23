@@ -1259,8 +1259,8 @@ cache_later :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 }
 
 // plan_commit writes the blocks of the plan, then the root, and gives the
-// new state to the service. It gives the generation, or the word of an Export_Error
-// with the record.
+// new state to the service. It gives the generation and Succeeded, or 0 and
+// the call outcome with the error record.
 plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	plan_trees_failure_take()
 	if plan.tree_damaged {

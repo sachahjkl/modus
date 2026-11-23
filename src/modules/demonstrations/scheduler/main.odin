@@ -1859,7 +1859,7 @@ strategy_name_is :: proc "contextless" (text: string, name: string) -> bool {
 // it serves only a caller whose requests are those of the principal; the
 // root service gives that grant, shows it and revokes it.
 //
-// It fails with -1 and an error record, and the strategy does not change:
+// It fails with its call outcome and an error record, and the strategy does not change:
 //
 // - `No_Grant`: the caller does not act for the principal;
 // - `Too_Long`: the name has more than 16 bytes;

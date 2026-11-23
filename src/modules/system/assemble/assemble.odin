@@ -82,7 +82,7 @@ refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors
 		error.operation = 0
 		error.argument = 0
 	}
-	return system.outcome_of_status(status), 0
+	return system.outcome_of_own_status(status), 0
 }
 
 // text_and_workspace_push copies the text into the arena and carves a

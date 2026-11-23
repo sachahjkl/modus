@@ -179,7 +179,7 @@ canvas_scale_words :: proc(t: ^testing.T) {
 
 // Tables whose clips are out of order, as a hostile caller gives them: a
 // pop with no push, a push past the bound, a push with no pop. The export
-// refuses each before the first pixel, with -1 and the error record
+// refuses each before the first pixel, with Argument_Refused and the error record
 // Bad_Value of the argument now, unit Records, the problem as the value and
 // the number from 1 of the record as found, and the pixels stay as they
 // were. The same table in order draws.

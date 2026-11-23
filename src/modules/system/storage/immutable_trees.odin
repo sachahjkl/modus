@@ -282,7 +282,7 @@ tree_store_status_refusal :: proc "contextless" (status: immutable_tree.Tree_Sto
 	case .Depth_Exceeded:
 		return refuse(error, .Argument_Refused, .Too_Long, .Trees, argument, NESTING_LIMIT + 1, NESTING_LIMIT)
 	case .Too_Many_Entries:
-		return refuse(error, .Budget_Or_Capacity_Exhausted, .Too_Long, .Records, argument, tree_hash.MAX_TREE_ENTRIES + 1, tree_hash.MAX_TREE_ENTRIES)
+		return refuse(error, .Argument_Refused, .Too_Long, .Records, argument, tree_hash.MAX_TREE_ENTRIES + 1, tree_hash.MAX_TREE_ENTRIES)
 	case .Capacity_Exceeded, .Full:
 		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Trees, argument)
 	case .Buffer_Too_Small:
@@ -323,7 +323,7 @@ parse_hex_hash_argument :: proc "contextless" (given: string, error: ^errors.Err
 // - `No_Grant` (Grant_Or_Right_Missing: no store, read-only connection, or target_place is not the caller's own store);
 // - `Absent` (Argument_Refused, Nothing_Has_That_Name: place or target_place absent);
 // - `Bad_Value` (Argument_Refused, unit Trees: target_place is equal to or inside place);
-// - `Too_Long` (Argument_Refused, Budget_Or_Capacity_Exhausted: tree nesting past 32 levels or more than 512 entries in one tree);
+// - `Too_Long` (Argument_Refused: tree nesting past 32 levels or more than 512 entries in one tree);
 // - `Over_Limit` (Budget_Or_Capacity_Exhausted: store block limit exceeded);
 // - `Full`, `Device`, `Damaged`.
 @(export, link_name = "freeze_tree")

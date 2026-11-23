@@ -435,7 +435,7 @@ Add_Row_Export :: struct {
 // **Error kinds**
 //
 // - those of [write](storage.write);
-// - `Too_Long` (Budget_Or_Capacity_Exhausted, more than 256 rows);
+// - `Too_Long` (Argument_Refused, more than 256 rows);
 // - `Bad_Value` (Argument_Refused, a kind that is not 1 or 2);
 // - `Out_Of_Range` (Argument_Refused, a row names bytes past the names);
 // - `Exists` (Name_Already_Taken, a name exists, or two rows have one name: found is the row).
@@ -747,7 +747,7 @@ share_end :: proc "contextless" (item: ^Share) {
 //
 // **Error kinds**
 //
-// - `Absent` (Argument_Refused, unit Connections: no share of this connection has this number).
+// - `Absent` (Nothing_Has_That_Name, unit Connections: no share of this connection has this number).
 @(export, link_name = "unshare")
 unshare :: proc "c" (number: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	caller := caller_of()

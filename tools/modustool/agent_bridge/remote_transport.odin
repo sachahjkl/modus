@@ -293,7 +293,7 @@ remote_transport_eval_lex :: proc(
 			argument = module.string_at(call.file, call.function.parameter_names[number], u32(call.function.parameter_name_counts[number]))
 		}
 		sentence.call_failure_text(&writer, outcome, &answer.error, fmt.tprintf("%s.%s", call.service, call.export), argument)
-		return {}, fmt.aprintf("%s (effect group %s)", sentence.written(&writer), call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(outcome)], allocator = allocator), false
+		return {}, fmt.aprintf("%s (outcome %s, effect %s)", sentence.written(&writer), call_outcome.CALL_OUTCOME_NAMES[outcome], call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(outcome)], allocator = allocator), false
 	}
 
 	return decode_remote_call_result(&call, answer, result_bytes, allocator)

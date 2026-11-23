@@ -68,7 +68,7 @@ notes: [NOTE_CAPACITY]Note // notes[(calls - 1) % NOTE_CAPACITY] is the last.
 // - **amount**: the amount, positive or negative.
 // - **note**: why, 36 bytes at most.
 //
-// The result is the new count, never negative. It fails with -1 and an error record, and the count does not
+// The result is the new count, never negative. It fails with its call outcome and an error record, and the count does not
 // change:
 //
 // - `Too_Long`: the note has more than 36 bytes;

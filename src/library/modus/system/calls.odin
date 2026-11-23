@@ -227,11 +227,17 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 		}
 		{
 			if completion.kind != u32(isolated.Status.Ok) {
+				refusal, refusal_ok := enum_word.member_of_word(isolated.Status, u64(completion.kind))
+				if !refusal_ok {
+					if error != nil {
+						error^ = errors.error_make(.Bad_Value, .None, 0, i64(completion.kind))
+					}
+					return 0, .Wrong_Answer, .Answer_Unreadable
+				}
 				// The values of a refusal hold its error record.
 				if error != nil {
 					error^ = transmute(errors.Error_Record)completion.values
 				}
-				refusal, _ := enum_word.member_of_word(isolated.Status, u64(completion.kind))
 				return 0, .Refused, outcome_of_call_status(.Refused, refusal)
 			}
 			result = i64(completion.values[0])
@@ -258,7 +264,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 				// the export failed, the status says that the details did
 				// not come.
 				if problem, _ := isolated.error_details_return(file, function, arguments, connection.region, offset); problem != .None {
-					return 0, .Failed_With_Wrong_Details, outcome
+					return 0, .Failed_With_Wrong_Details, .Answer_Unreadable
 				}
 				return 0, .Failed, outcome
 			}
@@ -266,7 +272,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 				if error != nil {
 					error^ = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
 				}
-				return result, .Wrong_Answer, .Answer_Unreadable
+				return 0, .Wrong_Answer, .Answer_Unreadable
 			}
 			// A Table result: the records are in the call region, and the
 			// count comes from the other process. The caller gets the

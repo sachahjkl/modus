@@ -300,7 +300,7 @@ line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_R
 // - **text**: the bytes of the text.
 // - **color**: the number of a color of the palette, 0 to 15.
 //
-// The result is the count of bytes of the text. It fails with -1 and an error record: Bad_Value when x or y is
+// The result is the count of bytes of the text. It fails with its call outcome and an error record: Bad_Value when x or y is
 // outside the picture, or when the color is not 0 to 15; the record names the argument.
 @(export, link_name = "write")
 write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {

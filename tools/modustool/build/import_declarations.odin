@@ -275,6 +275,7 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 	}
 	// The results: the value of an export that cannot fail (i64), or the
 	// call outcome first and the value of one that can (src/md/api/call_outcome.md).
+	result_types: [3]^ast.Expr
 	result_texts: [3]string
 	result_count := 0
 	if type.results != nil {
@@ -286,6 +287,7 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 				if result_count == len(result_texts) {
 					return {}, "the declaration has more than two results", false
 				}
+				result_types[result_count] = field.type
 				result_texts[result_count] = source[field.type.pos.offset:field.type.end.offset]
 				result_count += 1
 			}
@@ -295,17 +297,16 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 	switch result_count {
 	case 0:
 	case 1:
-		switch result_texts[0] {
-		case "i64":
+		if result_texts[0] == "i64" {
 			gives_value = true
-		case OUTCOME_TYPE_TEXT:
+		} else if is_contract_type(state, result_types[0], "call_outcome", "Call_Outcome") {
 			gives_outcome = true
-		case:
+		} else {
 			return {}, fmt.tprintf("the result type %s has no description", result_texts[0]), false
 		}
 	case 2:
-		if result_texts[0] != OUTCOME_TYPE_TEXT || result_texts[1] != "i64" {
-			return {}, fmt.tprintf("the results (%s, %s) have no description: an export that can fail gives (%s, i64)", result_texts[0], result_texts[1], OUTCOME_TYPE_TEXT), false
+		if !is_contract_type(state, result_types[0], "call_outcome", "Call_Outcome") || result_texts[1] != "i64" {
+			return {}, fmt.tprintf("the results (%s, %s) have no description: an export that can fail gives (call_outcome.Call_Outcome, i64)", result_texts[0], result_texts[1]), false
 		}
 		gives_outcome, gives_value = true, true
 	case:
@@ -313,9 +314,15 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 	}
 	if gives_outcome != form.has_error {
 		if form.has_error {
-			return {}, fmt.tprintf("the declaration takes an error record, so its export can fail: it gives %s first", OUTCOME_TYPE_TEXT), false
+			return {}, "the declaration takes an error record, so its export can fail: it gives call_outcome.Call_Outcome first", false
 		}
 		return {}, "the declaration gives a call outcome, so its last parameter is the error record", false
+	}
+	if (form.result == .Text || form.result == .Table) && !gives_value {
+		return {}, "the declaration has a Text or Table result, so it returns its count as i64", false
+	}
+	if form.result == .Record && gives_value {
+		return {}, "the declaration has a Record result, so it gives no i64 value", false
 	}
 	if gives_value && form.result == .None {
 		form.result = .Integer
@@ -323,10 +330,6 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 	form.parameters = parameters[:]
 	return form, "", true
 }
-
-// The type of the call outcome, as a declaration writes it: the tool
-// follows no alias.
-OUTCOME_TYPE_TEXT :: "call_outcome.Call_Outcome"
 
 // call_form_of_description gives the call form of an export as the tool
 // described it from the source of its module.

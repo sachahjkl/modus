@@ -306,6 +306,13 @@ malformed_modules :: proc(t: ^testing.T) {
 		{"a reserved byte of a field that is not 0", proc(file: []u8) {record(file, .Fields, 2, module.Field).reserved[1] = 1}, .Record, .Fields, 2},
 		{"a record of 300 bytes", proc(file: []u8) {record(file, .Records, 1, module.Record).size = 300}, .Record, .Records, 1},
 		{"an entry that names no export", proc(file: []u8) {(^module.Header)(&file[0]).entry_export = 7}, .Entry, .None, 0},
+		{"an error record that names no record", proc(file: []u8) {record(file, .Functions, 2, module.Function).error_record = 9}, .Function, .Functions, 2},
+		// The pair of an export that can fail has an integer value: an Enum
+		// result has no place in it.
+		{"an error record with an Enum result", proc(file: []u8) {
+				function := record(file, .Functions, 2, module.Function)
+				function.result, function.result_detail, function.error_record = u8(module.Type.Enum), 1, 1
+			}, .Function, .Functions, 2},
 	}
 	scratch := make([]u8, len(good), context.temp_allocator)
 	for item in cases {
@@ -321,6 +328,12 @@ malformed_modules :: proc(t: ^testing.T) {
 		count, found := exports(catalog, "bad", export_rows[:])
 		testing.expectf(t, count == 0 && found == problem, "%s: exports gives the problem", item.about)
 	}
+	// A Record result with an error record is a fallible export that gives
+	// its call outcome alone: the file keeps each rule.
+	copy(scratch, good)
+	fallible_record := record(scratch, .Functions, 2, module.Function)
+	fallible_record.result, fallible_record.result_detail, fallible_record.error_record = u8(module.Type.Record), 1, 1
+	testing.expect_value(t, check(scratch).kind, Problem_Kind.None)
 	// The place in the file: the name of export 2 is at the start of its record.
 	copy(scratch, good)
 	record(scratch, .Functions, 2, module.Function).name_offset = 60000

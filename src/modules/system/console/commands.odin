@@ -2100,7 +2100,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	// export writes it when it fails.
 	error: errors.Error_Record
 	if item.function.error_record != 0 {
-		integers[parameter_total + int(item.result == .Text || item.result == .Table)] = u64(uintptr(&error))
+		integers[parameter_total + int(item.result == .Text || item.result == .Table || item.result == .Record)] = u64(uintptr(&error))
 	}
 	floats: [system.CALL_FLOATS]u64
 	results: [system.CALL_RESULTS]u64
@@ -2402,7 +2402,7 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	system.call_failure_text(&writer, outcome, error, item.name, argument)
 	result := fail(system.written(&writer))
 	if !already {
-		failure_record_set(error^, item.name, item.parameter_names[:item.parameter_count])
+		failure_record_set(error^, item.name, item.parameter_names[:item.parameter_count], outcome)
 	}
 	return result
 }

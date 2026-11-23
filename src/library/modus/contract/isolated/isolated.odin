@@ -319,10 +319,6 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	result_field := result_field_size(function.result) or_return
 	size += result_field
 	if function.error_record != 0 {
-		// A Record result gives no integer result, so a failure has no sign.
-		if function.result == u8(module.Type.Record) {
-			return 0, false
-		}
 		size += 8
 	}
 	return size, true
@@ -355,7 +351,7 @@ load :: proc "contextless" (region: []u8, offset: u64, $T: typeid) -> (value: T)
 // the call region is too small.
 // For an export with an error record, `error` names its place, after the
 // result: encode writes zero bytes there. The caller reads it when the
-// integer result is negative.
+// call outcome is not Succeeded.
 // A Table or Bytes argument: see table_encode. encode writes region_start
 // in the argument: keep the arguments for tables_return.
 encode :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, result: Slice, error: Slice, ok: bool) {
@@ -653,14 +649,18 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	// read it.
 	call.error = {}
 	if function.error_record != 0 {
-		field += result_type == .Text || result_type == .Table ? size_of(Slice) : 0
+		if result_type == .Text || result_type == .Table {
+			field += size_of(Slice)
+		} else if result_type == .Record {
+			field += 8
+		}
 		start := load(record[:], field, u64)
 		if start > limit || ERROR_RECORD_SIZE > limit - start || start % 8 != 0 {
 			return refuse(refusal, .Out_Of_Range, .Bytes, 0, start + min(u64(ERROR_RECORD_SIZE), limit), limit)
 		}
 		region_range_add(&ranges, {start, start + ERROR_RECORD_SIZE, true, 0}, refusal) or_return
 		call.error = {start = start, count = ERROR_RECORD_SIZE}
-		error_argument := u64(function.parameter_count) + u64(result_type == .Text || result_type == .Table)
+		error_argument := u64(function.parameter_count) + u64(result_type == .Text || result_type == .Table || result_type == .Record)
 		call.arguments[error_argument] = u64(uintptr(raw_data(region))) + start
 	}
 	return true

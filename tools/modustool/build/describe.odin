@@ -1106,7 +1106,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				text := type_text(source, fields[0].type)
 				address = text == "rawptr" || strings.has_prefix(text, "^")
 			}
-			if !address || result_text != "" && result_text != "i64" {
+			if !address || returns_outcome || result_text != "" && result_text != "i64" {
 				return describe_fail(path, declaration, "the entry has one parameter, an address, and no result or an i64 result")
 			}
 			// The entry has a comment as each export has: what this module

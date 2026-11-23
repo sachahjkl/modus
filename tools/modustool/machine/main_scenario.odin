@@ -2296,14 +2296,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface paint"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "paint.line(0, 0, 10, 10, 16)"},
-	{kind = .Wait, text = "error: paint.line: Argument_Refused: the argument color has the value 16, which the call refuses; it takes at most 15"},
+	{kind = .Wait, text = "error: paint.line: the argument color has the value 16, which the call refuses; it takes at most 15"},
 	// A text below the last row of the picture, and a glider at a negative
 	// column: each is refused with its record, and draws nothing. The
 	// picture of a new window is 640 x 352.
 	{kind = .Type, text = "paint.write(0, 352, \"below the picture\", 0)"},
-	{kind = .Wait, text = "error: paint.write: Argument_Refused: the argument y has the value 352, which the call refuses; it takes at most 351"},
+	{kind = .Wait, text = "error: paint.write: the argument y has the value 352, which the call refuses; it takes at most 351"},
 	{kind = .Type, text = "life.glider(-1, 10)"},
-	{kind = .Wait, text = "error: life.glider: Argument_Refused: the argument column has -1; it must have at least 0"},
+	{kind = .Wait, text = "error: life.glider: the argument column has -1; it must have at least 0"},
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
 	// (After the check of the log: these lines do not push the boot
@@ -2595,7 +2595,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "storage.version(1, \"note_000001\", {generation})", expected = "a second line"},
 	{kind = .Call, text = "storage.compare(1, \"note_000001\", {generation}, {generation+1})", expected = "1 rows of Byte_Range"},
 	// The generation 1 is the format of the disk: no object has it.
-	{kind = .Call, text = "storage.version(1, \"note_000001\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1"},
+	{kind = .Call, text = "storage.version(1, \"note_000001\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1\n  outcome    Nothing_Has_That_Name"},
 	{kind = .Call, text = "storage.restore(1, \"note_000001\", {generation})", expected = "{generation+2}"},
 	{kind = .Call, text = "storage.clone(1, \"note_000001\", \"copy\")", expected = "{generation+3}"},
 	// A second note, and the first again.
@@ -2788,7 +2788,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "inspect.mappings(\"console\")", expected = " rows of Mapping"},
 	{kind = .Call, text = "inspect.threads(\"threads\")", expected = " rows of Thread"},
 	{kind = .Call, text = "inspect.modules(\"console\")", expected = "console "},
-	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument process names none of the processes"},
+	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument process names none of the processes\n  outcome    Nothing_Has_That_Name"},
 	// A table from the host: rows of field values go into the call region
 	// of the monitor. A Change table is refused by the tool: its rows would
 	// not come back. The service sample is not reachable from the network
@@ -3048,7 +3048,7 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(font = .comic)", outcome = .Wrong, expected = "error: the parameter font of settings.set is the enum Font, which has no member comic: its members are .vector, .spleen"},
 	{kind = .Call, text = "settings.set(font = .french)", outcome = .Wrong, expected = "which has no member french"},
 	{kind = .Call, text = "settings.set(colour = .red)", outcome = .Wrong, expected = "error: settings.set has no parameter colour"},
-	{kind = .Call, text = "settings.set()", outcome = .Failed, expected = "error: settings.set: the call names nothing that exists"},
+	{kind = .Call, text = "settings.set()", outcome = .Failed, expected = "error: settings.set: the call names nothing that exists\n  outcome    Argument_Refused"},
 	// Three settings in one call.
 	{kind = .Call, text = "settings.set(subpixel_order = .red_green_blue, pointer_theme = .of_the_owner, grid_fit = .on)", expected = "1"},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},

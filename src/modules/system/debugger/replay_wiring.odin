@@ -113,6 +113,16 @@ kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: syste
 	return refused(error, status)
 }
 
+// own_kernel_refused gives the outcome of a kernel refusal on an object
+// that the service owns (its history memory), never blaming the caller.
+own_kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
+	outcome := system.outcome_of_own_status(status)
+	if error != nil && error.kind != i64(errors.Kind.None) {
+		return outcome
+	}
+	return refuse(error, outcome, .Refused, .None, 0, 0, 0, i64(status))
+}
+
 // history_header_read copies the header of the history once, through the
 // border of the contract, and gives why the history ended.
 history_header_read :: proc "contextless" () -> (header: input_history.History_Header, end: input_history.History_End_Reason, ok: bool) {
@@ -213,13 +223,13 @@ record_begin :: proc "contextless" (error: ^errors.Error_Record) -> (failure: ca
 	record_session_release()
 	history, made := system.memory_create(HISTORY_PAGES, flags = {.Contiguous}, error = error)
 	if made != .Ok {
-		return kernel_refused(error, made)
+		return own_kernel_refused(error, made)
 	}
 	record_session.history = history
 	address, mapped := system.memory_map(history, {}, error = error)
 	if mapped != .Ok {
 		record_session_release()
-		return kernel_refused(error, mapped)
+		return own_kernel_refused(error, mapped)
 	}
 	record_session.bytes = ([^]u8)(address)[:HISTORY_PAGES * system.PAGE_SIZE]
 	if started := system.process_record_start(session.process, history, error); started != .Ok {
@@ -349,7 +359,7 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 		if error != nil {
 			error^ = errors.completion_record(completion.values)
 		}
-		return .Argument_Refused
+		return outcome_of_status_word(completion.kind)
 	}
 	handle := system.Handle(completion.values[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
@@ -388,7 +398,7 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 		if error != nil {
 			error^ = errors.completion_record(released.values)
 		}
-		return .Argument_Refused
+		return outcome_of_status_word(released.kind)
 	}
 	record_session.replay_process = handle
 	record_session.replay_slot = slot
