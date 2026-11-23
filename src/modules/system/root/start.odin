@@ -233,8 +233,9 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 			return needed_service_failed(work.refusal)
 		}
 	}
-	// A process with a store: the storage service starts first.
-	if .Store in grants && .Acts_For_Principal not_in grants {
+	// A process with a store (and no Root_Ring to connect itself): the
+	// storage service starts first.
+	if .Store in grants && .Root_Ring not_in grants {
 		running := false
 		for &item in started {
 			if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
@@ -454,11 +455,11 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 
 // start_store_give connects the process to its private store, in its
 // context: the call ring, the call region, the storage service with the
-// right Read, and its file. A process that acts for its principal connects
-// to the storage service itself.
+// right Read, and its file. A process with Root_Ring connects to the
+// storage service itself.
 start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	grants := work.start_grant_set.grants
-	if .Store not_in grants || .Acts_For_Principal in grants {
+	if .Store not_in grants || .Root_Ring in grants {
 		return .Succeeded
 	}
 	storage_service: ^Started

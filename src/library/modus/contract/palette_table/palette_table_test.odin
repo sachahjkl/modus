@@ -136,7 +136,7 @@ a_bad_entry_is_named :: proc(t: ^testing.T) {
 	memory := table_of_test(5)
 	defer delete(memory)
 	entry := (^Entry)(&memory[ENTRIES_OFFSET + 4 * size_of(Entry)])
-	entry.reserved = 1
+	entry.reserved_first = 1
 	// A stable generation that is not 0: a refusal must not give it.
 	(^Header)(raw_data(memory)).change_count = 4
 	problem, index := snapshot_take(memory, entries_of_table(memory), &snapshot)
@@ -144,7 +144,7 @@ a_bad_entry_is_named :: proc(t: ^testing.T) {
 	testing.expect_value(t, index, 4)
 	testing.expect_value(t, snapshot.entry_count, 0)
 	testing.expect_value(t, snapshot.generation, 0)
-	entry.reserved = 0
+	entry.reserved_first = 0
 	entry.signature_length = 2 // Shorter than the name.
 	problem, index = snapshot_take(memory, entries_of_table(memory), &snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Signature)
@@ -302,10 +302,10 @@ a_provider_setting_entry_is_checked :: proc(t: ^testing.T) {
 	entry.reserved_first = 1
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
 	entry.reserved_first = 0
-	for place in 0 ..< 2 {
-		entry.reserved[place] = max(u8)
+	for place in 0 ..< len(entry.reserved_tail) {
+		entry.reserved_tail[place] = max(u8)
 		testing.expect_value(t, entry_problem(&entry), Problem.Bad_Kind)
-		entry.reserved[place] = 0
+		entry.reserved_tail[place] = 0
 	}
 	entry.kind = u8(Entry_Kind.Command)
 	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Setting)
@@ -638,14 +638,101 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	testing.expect(t, ok && string(argument.text[:argument.length]) == "été")
 	_, _, ok = argument_unpack(argument_pack(0, .Text, 0, "\xe9t\xe9"))
 	testing.expect(t, !ok)
-	// A text cut by the pack ends after a whole character: 47 bytes, not 48.
-	long: [ARGUMENT_TEXT_CAPACITY + 1]u8
+	// A text cut by the inline pack ends after a whole character: 47 bytes, not 48.
+	long: [ARGUMENT_INLINE_TEXT_CAPACITY + 1]u8
 	long[0] = 'a'
 	for index := 1; index + 1 < len(long); index += 2 {
 		long[index], long[index + 1] = 0xC3, 0xA9
 	}
 	_, argument, ok = argument_unpack(argument_pack(0, .Text, 0, string(long[:])))
-	testing.expect(t, ok && argument.length == ARGUMENT_TEXT_CAPACITY - 1)
+	testing.expect(t, ok && argument.length == ARGUMENT_INLINE_TEXT_CAPACITY - 1)
+}
+
+// Chunked text arguments cross the 48-byte inline fast tier up to 1024 bytes,
+// count every slow-tier assembly in chunked_arguments, support all 12
+// parameters, and refuse malformed / out-of-order / past-bound chunks.
+@(test)
+chunked_text_arguments_and_twelve_parameters :: proc(t: ^testing.T) {
+	// 12 parameters fit in Entry and pass entry_problem.
+	entry: Entry
+	entry.kind = u8(Entry_Kind.Export)
+	entry.parameter_count = PARAMETER_CAPACITY
+	entry.name_length = u8(copy(entry.name[:], "weigh12"))
+	entry.signature_length = u8(copy(entry.signature[:], "weigh12(...) -> Integer"))
+	entry.result = u8(Value_Kind.Integer)
+	for i in 0 ..< PARAMETER_CAPACITY {
+		entry.parameters[i] = u8(Value_Kind.Integer)
+		entry.parameter_name_lengths[i] = u8(copy(entry.parameter_names[i][:], "arg"))
+	}
+	testing.expect_value(t, entry_problem(&entry), Problem.None)
+	entry.parameter_count = PARAMETER_CAPACITY + 1
+	testing.expect_value(t, entry_problem(&entry), Problem.Bad_Length)
+
+	// Inline boundary (48 bytes) uses 1 chunk and does NOT increment chunked_arguments.
+	assembly: Argument_Assembly
+	buf48: [ARGUMENT_INLINE_TEXT_CAPACITY]u8
+	for &b in buf48 { b = 'a' }
+	testing.expect_value(t, argument_chunk_count(.Text, string(buf48[:])), 1)
+	v48, more48 := argument_pack_chunk(0, .Text, 0, string(buf48[:]), 0)
+	testing.expect(t, !more48)
+	testing.expect(t, argument_assembly_take(&assembly, v48))
+	testing.expect(t, 0 in assembly.given && assembly.in_progress == {})
+	testing.expect_value(t, assembly.values[0].length, ARGUMENT_INLINE_TEXT_CAPACITY)
+	testing.expect_value(t, assembly.chunked_arguments, u64(0))
+
+	// 49 bytes (one past inline capacity) uses 2 chunks and increments chunked_arguments.
+	buf49: [ARGUMENT_INLINE_TEXT_CAPACITY + 1]u8
+	for &b, i in buf49 { b = u8('a' + (i % 26)) }
+	testing.expect_value(t, argument_chunk_count(.Text, string(buf49[:])), 2)
+	c0, m0 := argument_pack_chunk(11, .Text, 0, string(buf49[:]), 0)
+	c1, m1 := argument_pack_chunk(11, .Text, 0, string(buf49[:]), 1)
+	testing.expect(t, m0 && !m1)
+	// Inline unpack must refuse multi-chunk record.
+	_, _, inline_ok := argument_unpack(c0)
+	testing.expect(t, !inline_ok)
+	testing.expect(t, argument_assembly_take(&assembly, c0))
+	testing.expect(t, 11 in assembly.in_progress && 11 not_in assembly.given)
+	testing.expect(t, argument_assembly_take(&assembly, c1))
+	testing.expect(t, 11 in assembly.given && 11 not_in assembly.in_progress)
+	testing.expect_value(t, string(assembly.values[11].text[:assembly.values[11].length]), string(buf49[:]))
+	testing.expect_value(t, assembly.chunked_arguments, u64(1))
+
+	// Full bound (1024 bytes) crosses 22 chunks cleanly.
+	argument_assembly_reset(&assembly)
+	buf1024: [ARGUMENT_TEXT_CAPACITY]u8
+	for &b, i in buf1024 { b = u8('0' + (i % 10)) }
+	chunks := argument_chunk_count(.Text, string(buf1024[:]))
+	testing.expect_value(t, chunks, ARGUMENT_MAX_CHUNKS)
+	for idx in 0 ..< chunks {
+		vals, more := argument_pack_chunk(7, .Text, 0, string(buf1024[:]), idx)
+		testing.expect(t, more == (idx + 1 < chunks))
+		testing.expect(t, argument_assembly_take(&assembly, vals))
+	}
+	testing.expect(t, 7 in assembly.given && assembly.in_progress == {})
+	testing.expect_value(t, string(assembly.values[7].text[:assembly.values[7].length]), string(buf1024[:]))
+	testing.expect_value(t, assembly.chunked_arguments, u64(2))
+
+	// Refusals: out-of-order chunk, total > 1024, non-zero high bits, quote in chunk 1, bad UTF-8 split, duplicate parameter.
+	argument_assembly_reset(&assembly)
+	testing.expect(t, !argument_assembly_take(&assembly, c1)) // chunk 1 before chunk 0
+	bad_total := c0
+	bad_total[0] = (bad_total[0] & 0xFFFF_0000_FFFF_FFFF) | (u64(ARGUMENT_TEXT_CAPACITY + 1) << 32)
+	testing.expect(t, !argument_assembly_take(&assembly, bad_total))
+	bad_high := c0
+	bad_high[0] |= u64(1) << 48
+	testing.expect(t, !argument_assembly_take(&assembly, bad_high))
+	// Quote in second chunk is refused on completion.
+	buf_quote := buf49
+	buf_quote[ARGUMENT_INLINE_TEXT_CAPACITY] = '"'
+	q0, _ := argument_pack_chunk(2, .Text, 0, string(buf_quote[:]), 0)
+	q1, _ := argument_pack_chunk(2, .Text, 0, string(buf_quote[:]), 1)
+	testing.expect(t, argument_assembly_take(&assembly, q0))
+	testing.expect(t, !argument_assembly_take(&assembly, q1))
+	testing.expect(t, 2 not_in assembly.given)
+	// Duplicate completed parameter is refused.
+	argument_assembly_reset(&assembly)
+	testing.expect(t, argument_assembly_take(&assembly, v48))
+	testing.expect(t, !argument_assembly_take(&assembly, v48))
 }
 
 // A concurrent writer changing entry_count and byte_length under the seqlock

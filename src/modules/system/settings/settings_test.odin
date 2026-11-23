@@ -4,8 +4,13 @@ package settings_process
 import "base:intrinsics"
 import "core:sync"
 import "core:testing"
+import "modus:contract/chosen_values"
+import "modus:contract/isolated"
+import "modus:contract/module"
+import "modus:contract/module_file_writer"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
+import "modus:graphics"
 import "modus:interface"
 import "modus:layout"
 
@@ -307,5 +312,176 @@ settings_declined_notice :: proc(t: ^testing.T) {
 		frame_texts_of(&quiet, settings.choice_default(), 0)
 		quiet_boxes, _ := settings_layout(&table, &quiet, width, LARGEST_HEIGHT, 0, tokens)
 		testing.expect(t, quiet_boxes.scale_declined == layout.NO_BOX)
+	}
+}
+
+// Builds a validated synthetic module binary with an optional `set` export
+// combining an instance parameter (`instances_export`), an Enum parameter, a
+// ranged Integer parameter (`range`), an open-choices Integer parameter
+// (`choices_export`), a bounded Text parameter, plus `settings_state`.
+@(private = "file")
+synthetic_settings_module :: proc(t: ^testing.T) -> []u8 {
+	code := [1]u8{0xC3}
+	segments := [1]module_file_writer.Segment_Part{{memory_offset = 0, memory_size = module.PAGE_SIZE, flags = {.Read, .Execute}, data = code[:]}}
+	choice_fields := [2]module_file_writer.Field_Description{
+		{name = "id", offset = 0, type = .Integer, detail = 8},
+		{name = "name", offset = 8, type = .Text, detail = 16},
+	}
+	state_fields := [2]module_file_writer.Field_Description{
+		{name = "layer", offset = 0, type = .Integer, detail = 8},
+		{name = "value", offset = 8, type = .Integer, detail = 8},
+	}
+	records := [2]module_file_writer.Record_Description{
+		{name = "Choice", size = 24, fields = choice_fields[:]},
+		{name = "Setting_State", size = 16, fields = state_fields[:]},
+	}
+	enum_members := [2]module_file_writer.Member_Description{
+		{name = "off", value = 0},
+		{name = "on", value = 1},
+	}
+	enums := [1]module_file_writer.Enum_Description{
+		{name = "Toggle", size = 8, members = enum_members[:]},
+	}
+	set_types := [5]module.Type{.Integer, .Enum, .Integer, .Integer, .Text}
+	set_names := [5]string{"screen", "mode", "delay_ms", "profile", "home"}
+	enum_detail, enum_ok := module.enum_detail_make(1, 0)
+	testing.expect(t, enum_ok)
+	set_details := [5]u32{0, enum_detail, 0, 0, 0}
+	set_needs := [5]module.Parameter_Need{.Required, .Optional, .Optional, .Optional, .Optional}
+	exports := [4]module_file_writer.Export_Part{
+		{
+			name              = "set",
+			parameters        = set_types[:],
+			parameter_names   = set_names[:],
+			parameter_details = set_details[:],
+			parameter_needs   = set_needs[:],
+			result            = .Integer,
+		},
+		{name = "screens", result = .Table, result_detail = 1},
+		{name = "profiles", result = .Table, result_detail = 1},
+		{name = "settings_state", result = .Table, result_detail = 2},
+	}
+	param_settings := [4]module.Parameter_Setting{
+		{export_index = 1, parameter = 0, instances_export = 2},
+		{export_index = 1, parameter = 2, has_range = module.PARAMETER_RANGE_GIVEN, least = 250, most = 5000},
+		{export_index = 1, parameter = 3, choices_export = 3},
+		{export_index = 1, parameter = 4, has_range = module.PARAMETER_RANGE_GIVEN, least = 1, most = 1024},
+	}
+	parts := module_file_writer.Module_Parts{
+		segments           = segments[:],
+		exports            = exports[:],
+		records            = records[:],
+		enums              = enums[:],
+		parameter_settings = param_settings[:],
+	}
+	needed, size_refusal := module_file_writer.file_size_needed(parts)
+	testing.expect_value(t, size_refusal.refusal, module_file_writer.Refusal.None)
+	buf := make([]u8, int(needed), context.temp_allocator)
+	written, write_refusal := module_file_writer.write(parts, buf)
+	testing.expect_value(t, write_refusal.refusal, module_file_writer.Refusal.None)
+	return buf[:written]
+}
+
+// Dynamic discovery from module.Parameter_Setting handles invalid binaries,
+// Enum members, range stops, choices_export, instances_export, bounded Text,
+// settings_state (including locked layer and invalid layer refusal), setter
+// argument encoding, and non-overlapping layout across window sizes.
+@(test)
+discovered_module_settings_and_layout :: proc(t: ^testing.T) {
+	layout_tree_begin()
+	mod: Discovered_Module
+	// Refusal cases: empty, invalid binary, non-optional set export.
+	testing.expect(t, !module_settings_discover_file("", nil, &mod))
+	bad := [16]u8{0 = 1, 1 = 2, 2 = 3, 3 = 4}
+	testing.expect(t, !module_settings_discover_file("broken", bad[:], &mod))
+	testing.expect_value(t, mod.param_count, 0)
+
+	file := synthetic_settings_module(t)
+	testing.expect(t, module_settings_discover_file("sample_mod", file, &mod))
+	testing.expect_value(t, discovered_module_name(&mod), "sample_mod")
+	testing.expect_value(t, discovered_module_title(&mod), "SAMPLE MOD")
+	testing.expect_value(t, mod.param_count, 5)
+	testing.expect(t, mod.has_instances && mod.instance_param_index == 0)
+	testing.expect_value(t, mod.params[0].kind, Discovered_Param_Kind.Instances)
+	testing.expect_value(t, mod.params[1].kind, Discovered_Param_Kind.Enum)
+	testing.expect_value(t, mod.params[1].value_count, 2)
+	testing.expect_value(t, mod.params[2].kind, Discovered_Param_Kind.Range)
+	testing.expect(t, mod.params[2].value_count >= 2 && mod.params[2].values[0] == 250 && mod.params[2].values[mod.params[2].value_count - 1] == 5000)
+	testing.expect_value(t, mod.params[3].kind, Discovered_Param_Kind.Choices)
+	testing.expect_value(t, mod.params[4].kind, Discovered_Param_Kind.Text)
+
+	// Decode instances_export and choices_export table rows.
+	Choice_Row :: struct #packed {
+		id:   i64,
+		name: [16]u8,
+	}
+	inst_rows := [2]Choice_Row{{id = 10}, {id = 20}}
+	copy(inst_rows[0].name[:], "Screen A")
+	copy(inst_rows[1].name[:], "Screen B")
+	inst_count := discovered_table_choices_decode(file, mod.params[0].instances_export, ([^]u8)(&inst_rows[0])[:size_of(inst_rows)], 2, &mod.params[0])
+	testing.expect_value(t, inst_count, 2)
+	testing.expect_value(t, discovered_value_label(&mod.params[0], 1), "Screen B")
+
+	choice_rows := [2]Choice_Row{{id = 101}, {id = 202}}
+	copy(choice_rows[0].name[:], "Warm")
+	copy(choice_rows[1].name[:], "Cool")
+	choice_count := discovered_table_choices_decode(file, mod.params[3].choices_export, ([^]u8)(&choice_rows[0])[:size_of(choice_rows)], 2, &mod.params[3])
+	testing.expect_value(t, choice_count, 2)
+	testing.expect_value(t, discovered_value_label(&mod.params[3], 0), "Warm")
+
+	// Apply settings_state: refuse unknown layer word first, then apply valid rows.
+	State_Row :: struct #packed {
+		layer: i64,
+		value: i64,
+	}
+	bad_state := [1]State_Row{{layer = 99, value = 1}}
+	testing.expect(t, !discovered_state_apply(&mod, ([^]u8)(&bad_state[0])[:size_of(bad_state)], 1))
+	good_state := [3]State_Row{
+		{layer = i64(chosen_values.Layer.Chosen), value = 1},
+		{layer = i64(chosen_values.Layer.Locked), value = 5000},
+		{layer = i64(chosen_values.Layer.Plan_Default), value = 202},
+	}
+	testing.expect(t, discovered_state_apply(&mod, ([^]u8)(&good_state[0])[:size_of(good_state)], 3))
+	testing.expect(t, mod.state_loaded)
+	testing.expect_value(t, mod.params[1].layer, chosen_values.Layer.Chosen)
+	testing.expect_value(t, mod.params[2].layer, chosen_values.Layer.Locked)
+	testing.expect_value(t, mod.params[2].current_value, i64(5000))
+	testing.expect_value(t, mod.params[3].current_value, i64(202))
+
+	// Build setter arguments with selected instance 1 (id = 20) and delay_ms = 5000.
+	mod.selected_instance_index = 1
+	args: [module.PARAMETER_CAPACITY]isolated.Argument
+	arg_count, args_ok := discovered_set_arguments_build(&mod, mod.params[2].param_index, 5000, args[:])
+	testing.expect(t, args_ok && arg_count == 5)
+	testing.expect(t, args[0].presence == .Given && args[0].integer == 20)
+	testing.expect(t, args[1].presence == .Absent)
+	testing.expect(t, args[2].presence == .Given && args[2].integer == 5000)
+	testing.expect(t, args[3].presence == .Absent && args[4].presence == .Absent)
+
+	// Layout with discovered cards has zero overlap and every button inside its card.
+	set: Discovered_Set
+	set.modules[0] = mod
+	set.module_count = 1
+	table: interface.Draw_Table
+	texts: Frame_Texts
+	frame_texts_of(&texts, settings.choice_default())
+	for app in ([?]graphics.Appearance{.Dark, .Light}) {
+		tokens, _ := layout.tokens_for(app, .Standard)
+		for width in ([?]int{LEAST_WIDTH, WIDTH, TWO_COLUMNS_WIDTH, LARGEST_WIDTH}) {
+			boxes, ok := settings_layout(&table, &texts, width, HEIGHT, 0, tokens, &set)
+			testing.expectf(t, ok, "settings_layout failed with discovered module at width %d", width)
+			tree := &layout_tree
+			card := area_of(tree, boxes.discovered_cards[0].card)
+			content := card_content(card)
+			for section in Section {
+				testing.expectf(t, areas_apart(card, area_of(tree, boxes.cards[section])), "discovered card overlaps %v at width %d", section, width)
+			}
+			for p in 0 ..< mod.param_count {
+				for v in 0 ..< mod.params[p].value_count {
+					btn := area_of(tree, boxes.discovered_cards[0].params[p].values[v])
+					testing.expectf(t, area_inside(btn, content), "button %d.%d %v outside card %v at width %d", p, v, btn, content, width)
+				}
+			}
+		}
 	}
 }

@@ -299,3 +299,91 @@ parameter_setting :: proc "contextless" (file: []u8, export_index: u32, index: i
 	}
 	return {}, false
 }
+
+// Plan value: at most 6 stops for a ranged Integer parameter, matching the
+// button row capacity of the palette and keeping a settings card compact.
+RANGE_STOP_CAPACITY :: 6
+
+// range_stops computes up to len(out) (at most RANGE_STOP_CAPACITY) strictly
+// increasing stops across [least, most], always starting with least and ending
+// with most. Returns 0 if least > most or len(out) == 0. Uses unsigned 128-bit
+// arithmetic so the entire i64 range never overflows.
+range_stops :: proc "contextless" (least, most: i64, out: []i64) -> int {
+	if least > most || len(out) == 0 {
+		return 0
+	}
+	limit := min(len(out), RANGE_STOP_CAPACITY)
+	if least == most || limit == 1 {
+		out[0] = least
+		return 1
+	}
+	span := u64(most) - u64(least)
+	if span < u64(limit) {
+		count := int(span) + 1
+		for i in 0 ..< count {
+			out[i] = i64(u64(least) + u64(i))
+		}
+		return count
+	}
+	// Use 5 stops when 5 or more slots are available for a wide range so the
+	// stops fall on clean quarters (0%, 25%, 50%, 75%, 100%).
+	desired := limit >= 5 ? 5 : limit
+	// Choose a clean snapping step when the span is wide enough.
+	snap_step: u64 = 1
+	if span >= 100 {
+		rough := span / u64((desired - 1) * 4)
+		// Largest 1/2/5 * 10^k <= rough.
+		base: u64 = 1
+		for base <= rough / 10 {
+			base *= 10
+		}
+		switch {
+		case base * 5 <= rough:
+			snap_step = base * 5
+		case base * 2 <= rough:
+			snap_step = base * 2
+		case base <= rough:
+			snap_step = base
+		}
+	}
+	out[0] = least
+	count := 1
+	for i in 1 ..< desired - 1 {
+		offset := u64((u128(span) * u128(i)) / u128(desired - 1))
+		candidate := i64(u64(least) + offset)
+		if snap_step > 1 {
+			// Snap to nearest multiple of snap_step using unsigned distance
+			// from zero when possible, without crossing out[count - 1] or most.
+			snapped: i64
+			if candidate >= 0 {
+				mag := u64(candidate)
+				rem := mag % snap_step
+				rounded := rem >= snap_step / 2 ? mag + (snap_step - rem) : mag - rem
+				if rounded <= u64(max(i64)) {
+					snapped = i64(rounded)
+				} else {
+					snapped = candidate
+				}
+			} else {
+				mag := u64(-candidate)
+				rem := mag % snap_step
+				rounded := rem >= snap_step / 2 ? mag + (snap_step - rem) : mag - rem
+				if rounded <= u64(1) << 63 {
+					snapped = i64(-rounded)
+				} else {
+					snapped = candidate
+				}
+			}
+			if snapped > out[count - 1] && snapped < most {
+				candidate = snapped
+			}
+		}
+		if candidate > out[count - 1] && candidate < most {
+			out[count] = candidate
+			count += 1
+		}
+	}
+	out[count] = most
+	count += 1
+	return count
+}

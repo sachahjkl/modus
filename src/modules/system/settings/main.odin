@@ -115,7 +115,7 @@ LARGEST_HEIGHT :: 800
 // 6400 = 7800. The tool counts the window at its largest size, at the
 // largest scale (docs/MODULE_CONTRACT.md, "The budget that a module asks
 // for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7800, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7840, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 // The window that sets the scale back fits the least work area that each
 // holder of the display leaves at each scale, with its title.
 #assert(LEAST_HEIGHT + 40 <= scale_factor.WORK_AREA_LEAST_HEIGHT)
@@ -174,7 +174,7 @@ has_store: bool
 // The draw tables of the window: the four sections, the scroll bar and the
 // action bar take about 400 records at the largest size. A full table
 // drops the records past it, and the window writes one line.
-window_memory: interface.Window_Memory(1024, 16384)
+window_memory: interface.Window_Memory(2048, 32768)
 table_full_logged: bool
 drawn_change: u32 = 1 // The change count of the last frame; odd: none yet.
 
@@ -1391,6 +1391,7 @@ Settings_Boxes :: struct {
 	language_lines:        [settings.LANGUAGE_LIST_CAPACITY]Language_Boxes,
 	add_title:             layout.Box_Index,
 	add_buttons:           [len(common_languages)]layout.Box_Index,
+	discovered_cards:      [DISCOVERED_MODULE_CAPACITY]Discovered_Card_Boxes,
 	action_bar:            layout.Box_Index,
 	content_height:        int, // The height of the content of the view, which the scroll bar moves.
 	scroll:                int, // The first line of the content in the view, which the solver clamped.
@@ -1587,7 +1588,7 @@ section_add :: proc "contextless" (builder: ^Layout_Builder, boxes: ^Settings_Bo
 // settings_tree_build builds the tree of the window at a size: the view
 // that scrolls, with the sections in one column or two, the scroll bar
 // beside it when with_scroll_bar, and the action bar at the foot.
-settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, with_scroll_bar: bool, tokens: layout.Element_Tokens) -> (boxes: Settings_Boxes, ok: bool) {
+settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, with_scroll_bar: bool, tokens: layout.Element_Tokens, discovered: ^Discovered_Set = nil) -> (boxes: Settings_Boxes, ok: bool) {
 	tree := &layout_tree
 	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y}) != .Done {
 		return {}, false
@@ -1612,6 +1613,13 @@ settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: 
 			// left and the other sections at the right.
 			if columns == 1 || (section == .Display) == (column == 0) {
 				section_add(&builder, &boxes, table, texts, section, room, tokens)
+			}
+		}
+		if discovered != nil {
+			for mod_idx in 0 ..< min(discovered.module_count, DISCOVERED_MODULE_CAPACITY) {
+				if columns == 1 || (mod_idx % 2 == 0) == (column == 0) {
+					discovered_section_add(&builder, &boxes.discovered_cards[mod_idx], table, &discovered.modules[mod_idx], room, tokens)
+				}
 			}
 		}
 		builder_close(&builder)
@@ -1639,16 +1647,16 @@ settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: 
 // the bar, whose width can wrap more lines. ok false: the size is outside
 // the range of a tree, or the tree refused a box; the frame draws no
 // section.
-settings_layout :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, tokens: layout.Element_Tokens) -> (boxes: Settings_Boxes, ok: bool) {
+settings_layout :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, tokens: layout.Element_Tokens, discovered: ^Discovered_Set = nil) -> (boxes: Settings_Boxes, ok: bool) {
 	if width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
 		return {}, false
 	}
-	boxes, ok = settings_tree_build(table, texts, width, height, 0, false, tokens)
+	boxes, ok = settings_tree_build(table, texts, width, height, 0, false, tokens, discovered)
 	if !ok {
 		return {}, false
 	}
 	if boxes.content_height > int(area_of(&layout_tree, boxes.view).height) {
-		boxes, ok = settings_tree_build(table, texts, width, height, scroll, true, tokens)
+		boxes, ok = settings_tree_build(table, texts, width, height, scroll, true, tokens, discovered)
 	}
 	return boxes, ok
 }
@@ -1837,7 +1845,10 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 	interface.action_bar_input_take(&frame, &bar)
 	texts: Frame_Texts
 	frame_texts_of(&texts, choice, display.windows_that_declined_the_scale())
-	boxes, laid_out := settings_layout(frame.table, &texts, width, height, view_scroll, tokens)
+	system.lock(&discovered_lock)
+	discovered_snapshot := discovered_set
+	system.unlock(&discovered_lock)
+	boxes, laid_out := settings_layout(frame.table, &texts, width, height, view_scroll, tokens, &discovered_snapshot)
 	tree := &layout_tree
 	bar_area := interface.Area{0, height - interface.ACTION_BAR_ROW_HEIGHT, width, interface.ACTION_BAR_ROW_HEIGHT}
 	outcome: Draw_Outcome
@@ -1889,6 +1900,9 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			if section == .Region_And_Language {
 				region_draw(&frame, &boxes, choice, &texts, tokens, &focus_area)
 			}
+		}
+		for mod_idx in 0 ..< min(discovered_snapshot.module_count, DISCOVERED_MODULE_CAPACITY) {
+			discovered_card_draw(&frame, mod_idx, &discovered_snapshot.modules[mod_idx], &boxes.discovered_cards[mod_idx], tokens, &focus_area)
 		}
 		interface.draw_clip_pop(frame.table)
 		view_scroll = 0
@@ -2012,17 +2026,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", STAYS_FIXED_CAUSE_FIELD_BYTES)})
 	}
 	service, _ = system.service_open(ctx)
+	discovered_start(ctx)
 	draw_with_bar(&window)
 	started, _ := settings.read(page)
 	system.log_fact(.Info, Window_Ready{font = value_field(started, .Font), subpixel_order = value_field(started, .Subpixel_Order), pointer_theme = value_field(started, .Pointer_Theme), grid_fit = value_field(started, .Grid_Fit), keyboard_layout = value_field(started, .Keyboard_Layout), appearance = value_field(started, .Appearance), scale = value_field(started, .Scale)})
+	discovered_seen := intrinsics.atomic_load_explicit(&discovered_dirty, .Acquire)
 	for {
 		wait := system.wait_begin()
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
+		system.wait_word(&wait, &discovered_dirty, discovered_seen)
 		deadline := appearance_edge_step(&wait)
 		system.wait_end(&wait, deadline)
 		system.service_run(&service)
-		if interface.window_events(&window_memory.drawing, &window) {
+		dirty_now := intrinsics.atomic_load_explicit(&discovered_dirty, .Acquire)
+		discovered_changed := dirty_now != discovered_seen
+		discovered_seen = dirty_now
+		if interface.window_events(&window_memory.drawing, &window) || discovered_changed {
 			draw_with_bar(&window)
 		}
 	}

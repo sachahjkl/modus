@@ -1285,7 +1285,11 @@ palette_form_send :: proc "contextless" () {
 	sent := palette_provider_ring.head != nil
 	tag := palette_tag_next()
 	for field in 0 ..< form.field_count {
-		sent = sent && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = tag, values = palette.form_argument(form, field)})
+		chunks := palette.form_argument_chunks(form, field)
+		for chunk in 0 ..< chunks {
+			values, _ := palette.form_argument_chunk(form, field, chunk)
+			sent = sent && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = tag, values = values})
+		}
 	}
 	sent = sent && palette_choose(form.generation, &form.entry, .Run_With_Arguments, form.field_count, tag)
 	if sent {
@@ -1317,9 +1321,13 @@ palette_candidates_ask :: proc "contextless" (first: int = 0, choose_last: bool 
 	form.candidate_first_asked = max(first, 0)
 	text := palette.field_text(form, form.current)
 	if len(text) > 0 && len(text) <= palette_table.ARGUMENT_TEXT_CAPACITY {
-		if !system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = palette_tags, values = palette_table.argument_pack(form.current, .Text, 0, text)}) {
-			form.candidates_pending = false
-			return
+		chunks := palette_table.argument_chunk_count(.Text, text)
+		for chunk in 0 ..< chunks {
+			values, _ := palette_table.argument_pack_chunk(form.current, .Text, 0, text, chunk)
+			if !system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = palette_tags, values = values}) {
+				form.candidates_pending = false
+				return
+			}
 		}
 	}
 	// Until the answer, Tab waits (palette.form_tab). A ring that takes

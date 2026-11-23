@@ -220,9 +220,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "sample", grants = {.Serve}, terms = {on_demand = true}},
 	// A service: the console calls its exports through a connection.
 	{name = "heron", grants = {.Serve}},
-	// It writes the settings, keeps them in its private store, and serves
-	// set() and get().
-	{name = "settings", grants = {.Settings, .Serve, .Store}},
+	// It writes the settings, keeps them in its private store, serves set()
+	// and get(), reads module descriptions from the boot image to discover
+	// module settings dynamically, and connects to the role and module
+	// setters on behalf of the principal.
+	{name = "settings", grants = {.Settings, .Serve, .Store, .Image, .Connect, .Acts_For_Principal}, terms = {callable = {0 = "compositor", 1 = "monitor", 2 = "browser"}}},
 	// It reads the real-time clock, writes the date page, and serves now().
 	{name = "date", grants = {.Clock, .Serve}},
 	// The start policy: its root ring starts and stops the processes of

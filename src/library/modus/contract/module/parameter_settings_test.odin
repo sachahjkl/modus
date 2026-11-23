@@ -244,3 +244,41 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	_, negative := parameter_setting(file, 1, -1)
 	testing.expect(t, !absent && !past && !negative)
 }
+
+@(test)
+range_stops_refuses_bad_bounds_and_covers_edges :: proc(t: ^testing.T) {
+	stops: [RANGE_STOP_CAPACITY]i64
+	// Refusal cases: inverted range, empty output slice.
+	testing.expect_value(t, range_stops(10, 9, stops[:]), 0)
+	testing.expect_value(t, range_stops(max(i64), min(i64), stops[:]), 0)
+	testing.expect_value(t, range_stops(0, 10, nil), 0)
+	// Single-value range and 1-slot output.
+	testing.expect_value(t, range_stops(5, 5, stops[:]), 1)
+	testing.expect_value(t, stops[0], i64(5))
+	testing.expect_value(t, range_stops(1, 100, stops[:1]), 1)
+	testing.expect_value(t, stops[0], i64(1))
+	// Small ranges emit every integer.
+	small_count := range_stops(10, 14, stops[:])
+	testing.expect_value(t, small_count, 5)
+	for i in 0 ..< 5 {
+		testing.expect_value(t, stops[i], i64(10 + i))
+	}
+	// Real module setting ranges: strictly increasing, exact endpoints.
+	ranges := [?][2]i64{
+		{1000, 60000},
+		{250, 5000},
+		{12, 64},
+		{500, 10000},
+		{-720, 840},
+		{min(i64), max(i64)},
+	}
+	for r in ranges {
+		count := range_stops(r[0], r[1], stops[:])
+		testing.expectf(t, count >= 2 && count <= RANGE_STOP_CAPACITY, "range %v gave %d stops", r, count)
+		testing.expect_value(t, stops[0], r[0])
+		testing.expect_value(t, stops[count - 1], r[1])
+		for i in 1 ..< count {
+			testing.expectf(t, stops[i] > stops[i - 1], "stops not strictly increasing for %v: %v", r, stops[:count])
+		}
+	}
+}

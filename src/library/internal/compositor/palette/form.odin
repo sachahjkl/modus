@@ -202,7 +202,7 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 				return true, false
 			}
 			if net_count + line_editor.character_length(character) > palette_table.ARGUMENT_TEXT_CAPACITY {
-				message_set(form, form.current, "a text of the palette has 48 bytes at most; the console takes a longer one")
+				message_set(form, form.current, "a text of the palette has 1024 bytes at most; the console takes a longer one")
 				return true, false
 			}
 		}
@@ -254,7 +254,7 @@ form_field_paste :: proc "contextless" (panel: ^Panel, text: string) -> (drawn: 
 			}
 		}
 		if net_count + len(text) > palette_table.ARGUMENT_TEXT_CAPACITY {
-			message_set(form, form.current, "a text of the palette has 48 bytes at most; the console takes a longer one")
+			message_set(form, form.current, "a text of the palette has 1024 bytes at most; the console takes a longer one")
 			return true, false, false
 		}
 	}
@@ -588,15 +588,33 @@ form_check :: proc "contextless" (panel: ^Panel) -> bool {
 	return true
 }
 
-// form_argument gives the values of the Argument command of one field: a
-// typed value, an Integer as a number and a Text as its bytes.
-form_argument :: proc "contextless" (form: ^Form, field: int) -> [7]u64 {
+// form_argument_chunks gives how many Command.Argument records carry one field:
+// 1 for an Integer or an inline Text (<= ARGUMENT_INLINE_TEXT_CAPACITY), and
+// multiple ordered chunks for a longer Text up to ARGUMENT_TEXT_CAPACITY.
+form_argument_chunks :: proc "contextless" (form: ^Form, field: int) -> int {
+	if field_is_integer(form, field) {
+		return 1
+	}
+	return palette_table.argument_chunk_count(.Text, field_text(form, field))
+}
+
+// form_argument_chunk gives chunk chunk_index of the Argument command for one
+// field.
+form_argument_chunk :: proc "contextless" (form: ^Form, field: int, chunk_index: int) -> (values: [7]u64, more: bool) {
 	text := field_text(form, field)
 	if field_is_integer(form, field) {
 		value, _ := integer_of(text)
-		return palette_table.argument_pack(field, .Integer, value, "")
+		return palette_table.argument_pack_chunk(field, .Integer, value, "", 0)
 	}
-	return palette_table.argument_pack(field, .Text, 0, text)
+	return palette_table.argument_pack_chunk(field, .Text, 0, text, chunk_index)
+}
+
+// form_argument gives the values of the single-record Argument command of one
+// inline field: an Integer as a number, or up to ARGUMENT_INLINE_TEXT_CAPACITY
+// bytes of a Text.
+form_argument :: proc "contextless" (form: ^Form, field: int) -> [7]u64 {
+	values, _ := form_argument_chunk(form, field, 0)
+	return values
 }
 
 // form_submit is Enter in a form. With all false, Enter in a field that is

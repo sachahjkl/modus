@@ -34,13 +34,13 @@ The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "4. 
 
 - **A float parameter is not in the description.** The eight float registers of the call form are loaded as before, and a float type is still a new member of `module.Type` with no change of the call. The stack words are for integer arguments only: a float past the eighth is not part of the call form.
 - **The isolated call has no stack.** A receiver decodes the argument record into one array of 16 words and calls `export_call`, which puts each value in its register or on its stack word. The argument record and the call ring do not change their form.
-- **A palette entry still has six parameters.** The form of the palette panel has six fields, and its table is a contract of its own. The console lists in the palette no command with more parameters than the form has; the console line calls each one.
+- **A palette entry takes up to 12 parameters.** `palette_table.PARAMETER_CAPACITY` is 12, matching `module.PARAMETER_CAPACITY`, so the palette lists and opens forms for commands with 7 to 12 parameters too.
 - **A receiver copies more.** The private memory of an isolated call grows with the bound: about 3 KiB for the copies of the Record parameters. A service keeps one such record for each call that runs.
 
 ## What is built and what is left
 
-Built: the bound of 12 parameters and of 16 words, the ten stack words of `export_call`, the description of version 2, the checks of the tool, the console, the isolated call and the call from the host. The export `weigh` of the module `sample` takes nine parameters and an error record, with a weight for each place, so the machine test of the console proves the order of the stack words in a direct and an isolated call.
+Built: the bound of 12 parameters and of 16 words, the ten stack words of `export_call`, the description of version 2, the checks of the tool, the console, the isolated call, the call from the host, and the 12-field palette form (`palette_table` version 11). The export `weigh` of the module `sample` takes nine parameters and an error record, with a weight for each place, so the machine test of the console proves the order of the stack words in a direct and an isolated call.
 
 The draw export of the drawing module takes seven arguments, the error record on the stack: the rectangles of a frame in one call ([picture.md](picture.md)).
 
-Left: the palette form with more than six fields.
+Left: nothing.
