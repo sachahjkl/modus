@@ -58,10 +58,17 @@ window_frame_draws_each_element_where_a_press_reaches_it :: proc(t: ^testing.T) 
 		execute(frame.table, canvas)
 		testing.expectf(t, pixels[pressed_y * surface + pressed_x] == ELEMENT_COLOR, "at %v the pixel %d,%d under the press is %x, not the element", scale, pressed_x, pressed_y, pixels[pressed_y * surface + pressed_x])
 
-		// The same records with no scale: the element is elsewhere.
+		// The same records with no scale: at each scale but 1 the element is
+		// elsewhere; at 1 a logical pixel is a pixel of the surface, and the
+		// two draw the same.
 		frame.table.scale = nil
 		graphics.clear(canvas, BACKGROUND)
 		execute(frame.table, canvas)
-		testing.expectf(t, pixels[pressed_y * surface + pressed_x] == BACKGROUND, "at %v a frame with no scale still covers the pixel under the press: the check cannot fail", scale)
+		unscaled := pixels[pressed_y * surface + pressed_x]
+		if u64(scale) == scale_factor.EIGHTHS_OF_ONE {
+			testing.expectf(t, unscaled == ELEMENT_COLOR, "at %v a frame with no scale misses the element", scale)
+		} else {
+			testing.expectf(t, unscaled == BACKGROUND, "at %v a frame with no scale still covers the pixel under the press: the check cannot fail", scale)
+		}
 	}
 }

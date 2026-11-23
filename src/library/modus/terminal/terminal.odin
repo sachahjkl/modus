@@ -114,19 +114,24 @@ context_of :: proc "contextless" (grants: ^system.Context_Grants, values: ^syste
 // which package grid_resize checks against these).
 GRID_CELL_WIDTH :: 8
 GRID_CELL_HEIGHT :: 16
-// The largest logical screen: the reference screen, the largest mode that
-// the boot program sets, at the smallest scale, 1536 x 864 logical pixels.
-// The constants stay untyped, so the eighths of the smallest scale are
-// written here and checked against the enum.
-SMALLEST_SCALE_EIGHTHS :: 10
-#assert(SMALLEST_SCALE_EIGHTHS == int(min(scale_factor.Scale)))
-LARGEST_LOGICAL_SCREEN_WIDTH :: reference_screen.WIDTH * scale_factor.EIGHTHS_OF_ONE / SMALLEST_SCALE_EIGHTHS
-LARGEST_LOGICAL_SCREEN_HEIGHT :: reference_screen.HEIGHT * scale_factor.EIGHTHS_OF_ONE / SMALLEST_SCALE_EIGHTHS
+// The logical screen of the grid: the reference screen, the largest mode
+// that the boot program sets, at the default scale, 1.25: 1536 x 864
+// logical pixels. The constants stay untyped, so the eighths of the
+// default scale are written here and checked against the contract.
+GRID_SCALE_EIGHTHS :: 10
+#assert(GRID_SCALE_EIGHTHS == int(scale_factor.DEFAULT))
+GRID_LOGICAL_SCREEN_WIDTH :: reference_screen.WIDTH * scale_factor.EIGHTHS_OF_ONE / GRID_SCALE_EIGHTHS
+GRID_LOGICAL_SCREEN_HEIGHT :: reference_screen.HEIGHT * scale_factor.EIGHTHS_OF_ONE / GRID_SCALE_EIGHTHS
 // The most columns and rows of a terminal window: a grid that covers the
-// largest logical screen, so a maximized window is never wider or taller
-// than its grid.
-COLUMNS_LIMIT :: LARGEST_LOGICAL_SCREEN_WIDTH / GRID_CELL_WIDTH
-ROWS_LIMIT :: LARGEST_LOGICAL_SCREEN_HEIGHT / GRID_CELL_HEIGHT
+// logical screen at the default scale and at each larger one, so a
+// maximized window there is never wider or taller than its grid. At 1 and
+// 1.125 the logical screen is larger (1920 x 1080 at 1, 240 x 67 cells):
+// a maximized window stops at the largest size that its limits state, as
+// a maximize asks only for sizes within the limits. A grid of the screen at
+// 1 was refused: each terminal keeps its cells for the largest grid, and
+// 240 x 67 cells is 1.55 times the memory of 192 x 54 for each terminal.
+COLUMNS_LIMIT :: GRID_LOGICAL_SCREEN_WIDTH / GRID_CELL_WIDTH
+ROWS_LIMIT :: GRID_LOGICAL_SCREEN_HEIGHT / GRID_CELL_HEIGHT
 #assert(COLUMNS_LIMIT == 192 && ROWS_LIMIT == 54)
 
 RING_CAPACITY :: 4096 // The records of each queue of the terminal ring.

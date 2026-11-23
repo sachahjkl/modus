@@ -67,7 +67,13 @@ the_place_of_a_scenario_on_the_screen :: proc(t: ^testing.T) {
 		_, smallest_ok := screen_place_of_logical(min(int), scale)
 		testing.expect(t, !smallest_ok)
 		limit, limit_ok := screen_place_of_logical(LOGICAL_PLACE_LIMIT, scale)
-		testing.expect(t, limit_ok && limit > LOGICAL_PLACE_LIMIT)
+		// At the scale 1 a logical place is its pixel of the screen; past it,
+		// the pixel is past the place.
+		if u64(scale) == scale_factor.EIGHTHS_OF_ONE {
+			testing.expect(t, limit_ok && limit == LOGICAL_PLACE_LIMIT)
+		} else {
+			testing.expect(t, limit_ok && limit > LOGICAL_PLACE_LIMIT)
+		}
 		_, screen_past_ok := logical_place_of_screen(LOGICAL_PLACE_LIMIT + 1, scale)
 		testing.expect(t, !screen_past_ok)
 		for pixel in -40 ..= reference_screen.WIDTH + 40 {

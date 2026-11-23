@@ -24,14 +24,22 @@ the_scale_in_force_of_a_page :: proc(t: ^testing.T) {
 	choice.scale = .Eleven_Eighths
 	settings.write(&page, choice, 0, .Dark)
 	testing.expect_value(t, scale_in_force(), scale_factor.Scale.Eleven_Eighths)
-	// A word past the window bound on the page is refused with the page.
-	page.values[settings.Setting.Scale] = u32(scale_factor.Scale.Twelve_Eighths)
-	testing.expect_value(t, scale_in_force(), scale_factor.DEFAULT)
+	// The ends of the range are taken; a word one past each end is refused
+	// with the page.
+	for scale in ([?]scale_factor.Scale{.Eight_Eighths, .Sixteen_Eighths}) {
+		choice.scale = scale
+		settings.write(&page, choice, 0, .Dark)
+		testing.expect_value(t, scale_in_force(), scale)
+	}
+	for word in ([?]u32{scale_factor.EIGHTHS_OF_ONE - 1, u32(scale_factor.Scale.Sixteen_Eighths) + 1}) {
+		page.values[settings.Setting.Scale] = word
+		testing.expect_value(t, scale_in_force(), scale_factor.DEFAULT)
+	}
 }
 
 // The size of a surface: a logical size at a scale, by the rule of each
 // edge; 1 logical pixel is at least 1 pixel of the screen, and the largest
-// logical size at the window bound is SURFACE_SCREEN_LIMIT.
+// logical size at the largest scale is SURFACE_SCREEN_LIMIT.
 @(test)
 the_size_of_a_surface :: proc(t: ^testing.T) {
 	width, height := surface_size_of(560, 592, .Ten_Eighths)
@@ -40,7 +48,7 @@ the_size_of_a_surface :: proc(t: ^testing.T) {
 	width, height = surface_size_of(1, 1, .Ten_Eighths)
 	testing.expect_value(t, width, 1)
 	testing.expect_value(t, height, 1)
-	largest_width, largest_height := surface_size_of(SURFACE_LIMIT, SURFACE_LIMIT, scale_factor.WINDOW_BOUND)
+	largest_width, largest_height := surface_size_of(SURFACE_LIMIT, SURFACE_LIMIT, scale_factor.LARGEST)
 	testing.expect_value(t, largest_width, SURFACE_SCREEN_LIMIT)
 	testing.expect_value(t, largest_height, SURFACE_SCREEN_LIMIT)
 }
@@ -264,4 +272,37 @@ the_answers_of_a_resize :: proc(t: ^testing.T) {
 	action, refused = rescale_step(&machine, {kind = .Resize_Taken, serial = 2})
 	testing.expect(t, action == .None && !refused)
 	testing.expect_value(t, machine, Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 2})
+}
+// A decline: the budget did not pay the offer. The machine leaves Offered
+// for Released with the serial of the offer, draws nothing, ignores a
+// Scale_Named of the declined scale, and at another scale offers the serial
+// after it. A decline in another phase changes nothing.
+@(test)
+a_declined_scale_waits_for_another_scale :: proc(t: ^testing.T) {
+	machine := Rescale_Machine{phase = .Steady, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 3}
+	action, _ := rescale_step(&machine, {kind = .Scale_Named, scale = .Sixteen_Eighths})
+	testing.expect_value(t, action, Rescale_Action.Release)
+	action, _ = rescale_step(&machine, {kind = .Released, serial = 3})
+	testing.expect_value(t, action, Rescale_Action.Offer)
+	testing.expect_value(t, machine.serial, 4)
+	rescale_declined_step(&machine)
+	testing.expect_value(t, machine.phase, Rescale_Phase.Released)
+	testing.expect_value(t, machine.serial, 4)
+	testing.expect(t, !rescale_draws(&machine))
+	testing.expect(t, !picture_owed_of(machine, 3))
+	// An answer of the offer that was never sent changes nothing.
+	action, _ = rescale_step(&machine, {kind = .Refused, serial = 4})
+	testing.expect_value(t, action, Rescale_Action.None)
+	testing.expect_value(t, machine.phase, Rescale_Phase.Released)
+	// Another scale: the offer of the next serial.
+	action, _ = rescale_step(&machine, {kind = .Scale_Named, scale = .Twelve_Eighths})
+	testing.expect_value(t, action, Rescale_Action.Offer)
+	testing.expect_value(t, machine.serial, 5)
+	testing.expect_value(t, machine.scale, scale_factor.Scale.Twelve_Eighths)
+	for phase in ([?]Rescale_Phase{.Steady, .Releasing, .Released, .Resizing}) {
+		other := Rescale_Machine{phase = phase, scale = .Ten_Eighths, wanted = .Ten_Eighths, serial = 7}
+		before := other
+		rescale_declined_step(&other)
+		testing.expectf(t, other == before, "a decline in %v changed the machine", phase)
+	}
 }

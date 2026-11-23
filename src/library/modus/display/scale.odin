@@ -24,7 +24,7 @@ import "modus:system"
 // The largest width and height of a surface in pixels of the screen: a
 // window of SURFACE_LIMIT logical pixels at the largest scale that the
 // setting takes. The compositor refuses a larger surface.
-SURFACE_SCREEN_LIMIT :: (SURFACE_LIMIT * int(scale_factor.WINDOW_BOUND) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE
+SURFACE_SCREEN_LIMIT :: (SURFACE_LIMIT * int(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE
 
 // The place of the surface serial in a Present.
 PRESENT_SURFACE_SERIAL :: 6
@@ -218,10 +218,13 @@ surface_answer_of_word :: proc "contextless" (word: u64) -> (kind: Surface_Answe
 	return enum_word.member_of_word(Surface_Answer_Kind, word)
 }
 
-// The window could not make its surface at the new scale: a fault of the
-// system, as its budget counts its pictures at the window bound. The
-// process stops, and the compositor closes its window.
-@(log_fact = "display: {window}: no surface of {width}x{height} at {scale} eighths, status {status}: the window stops")
+// The budget of the window cannot pay its surface at the new scale: a
+// process whose starter limited its budget, or a window grown past its
+// stated size. The window declines the scale: it draws nothing, the
+// compositor draws its frame with the background, and the window offers a
+// surface again at the next scale that the compositor names. The desktop
+// and the other windows go on.
+@(log_fact = "display: {window}: its budget does not pay a surface of {width}x{height} at {scale} eighths, status {status}: the window declines the scale and shows its frame until another scale")
 Surface_Not_Made :: struct {
 	width:  u64,
 	height: u64,
@@ -368,7 +371,7 @@ rescale_due_run :: proc "contextless" (window: ^Window) {
 // longer maps, makes the surface of the logical size of the window at the
 // scale of the machine, from the budget of the window, gives it to the
 // compositor with Read and sends Surface_Rescale. A surface that the budget
-// cannot pay is a fault: the process writes its fact and stops.
+// cannot pay declines the scale (rescale_decline).
 @(private)
 rescale_offer_send :: proc "contextless" (window: ^Window) {
 	if window.surface != 0 {
@@ -380,12 +383,36 @@ rescale_offer_send :: proc "contextless" (window: ^Window) {
 	screen_width, screen_height := surface_size_of(window.width, window.height, scale)
 	memory, address, granted, status := surface_make(window, screen_width, screen_height)
 	if status != .Ok {
-		system.log_fact(.Error, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = op.Status_Word(status), window = window_fact_title(window)})
-		system.stop(.Failed)
+		system.log_fact(.Warning, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = op.Status_Word(status), window = window_fact_title(window)})
+		rescale_decline(window)
+		return
 	}
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Rescale), values = {0 = u64(granted), 1 = u64(screen_width), 2 = u64(screen_height), 3 = u64(scale), 4 = window.rescale.serial}})
 	surface_take(window, memory, address, screen_width, screen_height)
 	rescale_first_picture(window)
+}
+
+// rescale_decline ends an offer that the budget could not pay: the machine
+// goes to Released with the serial of the offer, so the next scale offers
+// the serial after it, and the window holds no picture that a process
+// could draw into. Surface_Declined tells the compositor, which counts the
+// window as one that declined the scale in force. A full ring sends
+// nothing: the compositor then waits for the window as for a slow one.
+@(private)
+rescale_decline :: proc "contextless" (window: ^Window) {
+	rescale_declined_step(&window.rescale)
+	window.pictures = {}
+	window.canvas = {}
+	_ = system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Declined), values = {0 = window.rescale.serial, 1 = u64(window.rescale.scale)}})
+}
+
+// rescale_declined_step moves a machine in Offered to Released: the offer
+// was never sent. It changes nothing in another phase. A host test drives
+// it with rescale_step.
+rescale_declined_step :: proc "contextless" (machine: ^Rescale_Machine) {
+	if machine.phase == .Offered {
+		machine.phase = .Released
+	}
 }
 
 // rescale_first_picture presents the offered surface at once, filled with

@@ -95,9 +95,8 @@ Canvas_Shape :: struct {
 }
 
 // canvas_scale_of_word is the one border of the scale word of a canvas: no
-// scale for 0, the member for a count from 10 to 16, and ok false for each
-// other word. The window bound of the setting is no rule of the drawing:
-// the module draws at each scale of the range.
+// scale for 0, the member for a count from 8 to 16, and ok false for each
+// other word: the module draws at each scale of the range.
 canvas_scale_of_word :: proc "contextless" (word: i64) -> (scale: Maybe(scale_factor.Scale), ok: bool) {
 	if word == 0 {
 		return nil, true

@@ -78,6 +78,45 @@ interior_screen_box :: proc "contextless" (client: ^Client) -> bar.Screen_Box {
 	return bar.screen_box_of({client.x + BORDER, client.y + TITLE_HEIGHT, client.x + BORDER + client.width, client.y + TITLE_HEIGHT + client.height}, scale)
 }
 
+// The count of the windows that declined the scale in force, as the last
+// Settings_Changed named it to each window.
+windows_declined_told: int
+
+// window_declined_scale_in_force says if a window declined the scale in
+// force and shows no surface: its budget does not pay a surface at it.
+window_declined_scale_in_force :: proc "contextless" (client: ^Client) -> bool {
+	return client.created && client.released && client.declined && client.declined_scale == scale
+}
+
+// windows_declined_count counts the windows that declined the scale in
+// force.
+windows_declined_count :: proc "contextless" () -> int {
+	count := 0
+	for &client in clients {
+		if window_declined_scale_in_force(&client) {
+			count += 1
+		}
+	}
+	return count
+}
+
+// windows_declined_tell names a new count of the windows that declined the
+// scale in force to each window, in a Settings_Changed of the same scale:
+// the window of settings shows it, and each other window rescales to the
+// scale that it has already, which changes nothing.
+windows_declined_tell :: proc "contextless" () {
+	count := windows_declined_count()
+	if count == windows_declined_told {
+		return
+	}
+	windows_declined_told = count
+	for &client in clients {
+		if client.ring.head != nil {
+			send(&client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale), 2 = u64(count)})
+		}
+	}
+}
+
 // A change of the scale waits for each window to show a surface of the new
 // scale: windows_at_scale_check then writes its one line.
 windows_at_scale_due: bool
@@ -93,6 +132,11 @@ windows_at_scale_check :: proc "contextless" () {
 	windows: u64
 	for &client in clients {
 		if !client.created {
+			continue
+		}
+		// A window that declined the scale in force is settled: it waits
+		// for another scale, and the count of Settings_Changed names it.
+		if window_declined_scale_in_force(&client) {
 			continue
 		}
 		if client.released || client.resize_pictures != nil || client.surface_scale != scale {

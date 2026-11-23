@@ -256,7 +256,7 @@ the_parts_of_the_control_center_are_where_the_eye_sees_them :: proc(t: ^testing.
 		testing.expectf(t, (module != "") == launches && (label != "") == launches, "%v and its module", part)
 		testing.expectf(t, tray_part_closes_card(part) == launches, "%v and the close of its card", part)
 	}
-	testing.expect(t, !tray_part_takes_press(.Appearance_Tile) && !tray_part_takes_press(.Display_Tile) && !tray_part_takes_press(.None))
+	testing.expect(t, tray_part_takes_press(.Appearance_Tile) && !tray_part_takes_press(.Display_Tile) && !tray_part_takes_press(.None))
 }
 
 // The button Clear all has a place only with a history, in the head of
@@ -288,12 +288,13 @@ the_keys_walk_the_parts_of_a_card :: proc(t: ^testing.T) {
 	testing.expect_value(t, tray_part_step(.Notifications, -1, .Clear_All, false), Tray_Part.None)
 	testing.expect_value(t, tray_part_step(.Notifications, 1, .None, true), Tray_Part.Clear_All)
 	testing.expect_value(t, tray_part_step(.Notifications, 1, .Clear_All, false), Tray_Part.Clear_All)
-	testing.expect_value(t, tray_part_step(.Control_Center, 0, .None, true), Tray_Part.Bar_Edge_Tile)
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .None, true), Tray_Part.Appearance_Tile)
 	testing.expect_value(t, tray_part_step(.Control_Center, 0, .None, false), Tray_Part.Launch_Edit)
-	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Launch_Edit, true), Tray_Part.Bar_Edge_Tile)
-	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Bar_Edge_Tile, false), Tray_Part.Launch_Edit)
-	// A part that takes no press, or of another card, starts at an end.
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Launch_Edit, true), Tray_Part.Appearance_Tile)
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Appearance_Tile, false), Tray_Part.Launch_Edit)
 	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Appearance_Tile, true), Tray_Part.Bar_Edge_Tile)
+	// A part that takes no press, or of another card, starts at an end.
+	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Display_Tile, true), Tray_Part.Appearance_Tile)
 	testing.expect_value(t, tray_part_step(.Control_Center, 0, .Clear_All, false), Tray_Part.Launch_Edit)
 	// A whole round reaches each part that acts once.
 	part := Tray_Part.None

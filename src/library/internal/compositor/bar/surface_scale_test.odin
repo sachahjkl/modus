@@ -7,7 +7,7 @@ import "modus:contract/settings"
 
 // A page that the read refuses keeps the scale in force: the all-zero page,
 // a page whose writer is in its change (an odd count), and a page whose
-// scale word is past the window bound. Each gives its defaults, 1.25 for
+// scale word is one past the range. Each gives its defaults, 1.25 for
 // the scale among them, and the desktop at 1.375 stays at 1.375. The page
 // that the read takes comes last.
 @(test)
@@ -27,7 +27,7 @@ a_refused_page_keeps_the_scale :: proc(t: ^testing.T) {
 
 	page = {}
 	settings.write(&page, written, 0, .Dark)
-	page.values[settings.Setting.Scale] = u32(scale_factor.WINDOW_BOUND) + 1
+	page.values[settings.Setting.Scale] = u32(max(scale_factor.Scale)) + 1
 	choice, read_ok = settings.read(&page)
 	testing.expect(t, !read_ok)
 	testing.expect_value(t, scale_after_read(in_force, choice.scale, read_ok), in_force)
@@ -55,10 +55,10 @@ create_of_test :: proc() -> Surface_Create_Facts {
 
 // The sizes of Surface_Create. Each refusal first: no memory, no Read, a
 // logical side of 0, one past the limit, 4096 and the largest word; a scale
-// word of no member, and one past the window bound; memory one byte short
+// word of no member: 0, 7 and 17; memory one byte short
 // of the pixels at the scale of the record. Then the edges that hold: 1 x 1,
-// and the limit at each scale up to the bound, whose pixels of the screen
-// are 2560 at 1.25 and 2816 at 1.375.
+// and the limit at each scale of the range, whose pixels of the screen
+// are 2048 at 1, 2560 at 1.25, 2816 at 1.375 and 4096 at 2.
 @(test)
 surface_create_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	Case :: struct {
@@ -77,8 +77,8 @@ surface_create_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	cases[5].facts.height, cases[5].refusal = 4096, .Size_Out_Of_Range
 	cases[6].facts.width, cases[6].refusal = max(u64), .Size_Out_Of_Range
 	cases[7].facts.scale_word, cases[7].refusal = 0, .No_Scale
-	cases[8].facts.scale_word, cases[8].refusal = scale_factor.EIGHTHS_OF_ONE, .No_Scale
-	cases[9].facts.scale_word, cases[9].refusal = u64(scale_factor.WINDOW_BOUND) + 1, .No_Scale
+	cases[8].facts.scale_word, cases[8].refusal = scale_factor.EIGHTHS_OF_ONE - 1, .No_Scale
+	cases[9].facts.scale_word, cases[9].refusal = u64(max(scale_factor.Scale)) + 1, .No_Scale
 	cases[10].facts.scale_word, cases[10].refusal = max(u64), .No_Scale
 	cases[11].facts.memory_bytes, cases[11].refusal = 700 * 740 * SURFACE_BYTES_FOR_EACH_PIXEL - 1, .Too_Small
 	for each, index in cases {
@@ -100,21 +100,21 @@ surface_create_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	facts.width, facts.height, facts.memory_bytes = 1, 1, SURFACE_BYTES_FOR_EACH_PIXEL
 	refusal, _, screen_width, screen_height = surface_create_refusal(facts)
 	testing.expect(t, refusal == .None && screen_width == 1 && screen_height == 1)
-	for limit in ([?][2]u64{{u64(scale_factor.Scale.Ten_Eighths), 2560}, {u64(scale_factor.Scale.Eleven_Eighths), 2816}}) {
+	for limit in ([?][2]u64{{u64(scale_factor.Scale.Eight_Eighths), 2048}, {u64(scale_factor.Scale.Ten_Eighths), 2560}, {u64(scale_factor.Scale.Eleven_Eighths), 2816}, {u64(scale_factor.Scale.Sixteen_Eighths), 4096}}) {
 		facts = {is_memory = true, readable = true, memory_bytes = limit[1] * limit[1] * SURFACE_BYTES_FOR_EACH_PIXEL, scale_word = limit[0], width = WINDOW_LOGICAL_LIMIT, height = WINDOW_LOGICAL_LIMIT}
 		refusal, _, screen_width, screen_height = surface_create_refusal(facts)
 		testing.expectf(t, refusal == .None && screen_width == limit[1] && screen_height == limit[1], "the limit at %d eighths gives %v, %d", limit[0], refusal, screen_width)
 	}
 }
 
-// Each logical size up to the limit, at each scale up to the bound, gives
+// Each logical size up to the limit, at each scale of the range, gives
 // pixels of the screen that give it back: the compositor keeps the logical
 // size of the record and the pixels of the rule, so a surface never has
 // pixels that no logical size gives (1252 at 1.25 is one: 1001 gives 1251,
 // 1002 gives 1253).
 @(test)
 each_logical_size_gives_its_pixels_back :: proc(t: ^testing.T) {
-	for scale in ([?]scale_factor.Scale{.Ten_Eighths, .Eleven_Eighths}) {
+	for scale in scale_factor.Scale {
 		for logical in i32(1) ..= WINDOW_LOGICAL_LIMIT {
 			pixels := scale_factor.screen_pixel_of_logical_pixel(logical, scale)
 			back := scale_factor.logical_pixel_of_screen_pixel(i32(pixels), scale)
@@ -187,7 +187,7 @@ surface_rescale_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
 	cases[15].facts.serial, cases[15].refusal = 6, .Other_Serial
 	cases[16].facts.serial, cases[16].refusal = 0, .Other_Serial
 	cases[17].facts.scale_word, cases[17].refusal = 0, .Other_Scale
-	cases[18].facts.scale_word, cases[18].refusal = u64(scale_factor.WINDOW_BOUND) + 1, .Other_Scale
+	cases[18].facts.scale_word, cases[18].refusal = u64(max(scale_factor.Scale)) + 1, .Other_Scale
 	cases[19].facts.scale_word, cases[19].refusal = u64(scale_factor.Scale.Ten_Eighths), .Other_Scale
 	cases[20].facts.window_width, cases[20].refusal = WINDOW_LOGICAL_LIMIT + 1, .Other_Size
 	cases[21].facts.window_height, cases[21].refusal = 0, .Other_Size
@@ -300,4 +300,37 @@ a_surface_of_another_scale_stays_inside_its_window :: proc(t: ^testing.T) {
 	// A surface of 0 pixels covers nothing.
 	empty := surface_clip(10, 10, 0, 0, {10, 10, 20, 20})
 	testing.expect(t, empty.right <= empty.left && empty.bottom <= empty.top)
+}
+// A Surface_Declined is taken only in place of the offer that the window
+// owes: each broken rule first, each with the one fact that breaks it, the
+// scale words of no member (0, 7, 17, the largest) and another member of
+// the range; the decline that holds comes last.
+@(test)
+surface_declined_refusal_refuses_each_broken_rule :: proc(t: ^testing.T) {
+	held :: proc() -> Surface_Declined_Facts {
+		return {scale_word = u64(scale_factor.Scale.Sixteen_Eighths), serial = 5, created = true, released = true, released_serial = 4, scale = .Sixteen_Eighths}
+	}
+	Case :: struct {
+		facts:   Surface_Declined_Facts,
+		refusal: Surface_Declined_Refusal,
+	}
+	cases: [10]Case
+	for &each in cases {
+		each.facts = held()
+	}
+	cases[0].facts.created, cases[0].refusal = false, .No_Window
+	cases[1].facts.pending, cases[1].refusal = true, .Pending
+	cases[2].facts.released, cases[2].refusal = false, .Not_Released
+	cases[3].facts.serial, cases[3].refusal = 4, .Other_Serial
+	cases[4].facts.serial, cases[4].refusal = 6, .Other_Serial
+	cases[5].facts.serial, cases[5].refusal = max(u64), .Other_Serial
+	cases[6].facts.scale_word, cases[6].refusal = 0, .Other_Scale
+	cases[7].facts.scale_word, cases[7].refusal = scale_factor.EIGHTHS_OF_ONE - 1, .Other_Scale
+	cases[8].facts.scale_word, cases[8].refusal = u64(max(scale_factor.Scale)) + 1, .Other_Scale
+	cases[9].facts.scale_word, cases[9].refusal = u64(scale_factor.Scale.Fifteen_Eighths), .Other_Scale
+	for each, index in cases {
+		testing.expectf(t, surface_declined_refusal(each.facts) == each.refusal, "case %d gives %v, not %v", index, surface_declined_refusal(each.facts), each.refusal)
+	}
+	testing.expect_value(t, surface_declined_refusal({scale_word = max(u64), serial = 5, created = true, released = true, released_serial = 4, scale = .Sixteen_Eighths}), Surface_Declined_Refusal.Other_Scale)
+	testing.expect_value(t, surface_declined_refusal(held()), Surface_Declined_Refusal.None)
 }

@@ -18,8 +18,7 @@ import "modus:contract/enum_word"
 import "modus:contract/reference_screen"
 
 // The eighths of the scale 1: a logical pixel that is one pixel of the
-// screen. It is no member of Scale: on the reference screen the desktop
-// never draws at 1.
+// screen.
 EIGHTHS_OF_ONE :: 8
 
 // The scale factor, as its count of eighths. The values are the words of
@@ -27,7 +26,9 @@ EIGHTHS_OF_ONE :: 8
 // multiple of 8 logical pixels, as each spacing token, on whole pixels of
 // the screen; a scale in hundredths has no value.
 Scale :: enum u8 {
-	Ten_Eighths      = 10, // 1.25: the logical screen is 1536 x 864.
+	Eight_Eighths    = 8, // 1: the logical screen is the screen, 1920 x 1080.
+	Nine_Eighths     = 9, // 1.125: 1707 x 960.
+	Ten_Eighths      = 10, // 1.25: 1536 x 864.
 	Eleven_Eighths   = 11, // 1.375: 1396 x 785.
 	Twelve_Eighths   = 12, // 1.5: 1280 x 720.
 	Thirteen_Eighths = 13, // 1.625: 1181 x 664.
@@ -39,27 +40,29 @@ Scale :: enum u8 {
 // The scale of a desktop that the principal did not set.
 DEFAULT :: Scale.Ten_Eighths
 
+// The largest scale. The budget of a window counts its pictures at it, so
+// a window pays its surface at each scale that a principal sets: a budget
+// is fixed at the start of its process, and no operation grows it
+// (src/md/features/window_resize.md, "The rescale").
+LARGEST :: Scale.Sixteen_Eighths
+
+// The lines of the logical screen at LARGEST, rounded down as
+// logical_screen rounds them: 540.
+LARGEST_LOGICAL_HEIGHT :: i64(reference_screen.HEIGHT * EIGHTHS_OF_ONE) / i64(LARGEST)
+
 // The least height of the work area, in logical pixels, that a holder of
-// the display gives its windows at each scale up to WINDOW_BOUND: the
-// tallest window of today, 708 lines, with a title of at most 40 lines that
-// the holder draws over it. A window counts on this height and on the work
-// area that its holder names (modus:display, the event Work_Area), never on
-// the bar or another part that one holder draws.
-WORK_AREA_LEAST_HEIGHT :: 748
-
-// The largest scale whose logical screen holds WORK_AREA_LEAST_HEIGHT: 785
-// lines at 1.375 hold 748, and 720 at 1.5 do not. A larger scale waits for
-// windows that fit 960 x 540 or that the principal resizes.
-WINDOW_BOUND :: Scale.Eleven_Eighths
-
-// The lines of the logical screen at WINDOW_BOUND, rounded down as
-// logical_screen rounds them.
-WINDOW_BOUND_LOGICAL_HEIGHT :: i64(reference_screen.HEIGHT * EIGHTHS_OF_ONE) / i64(WINDOW_BOUND)
+// the display leaves its windows at each scale: the least height of the
+// window of settings, 320 lines, with a title of at most 40 lines that the
+// holder draws over it. So at each scale the principal reaches the bar and
+// the one window that sets the scale back. A window taller than the work
+// area keeps its title on the screen and is moved or resized to show the
+// rest; it never sets the range of the scale.
+WORK_AREA_LEAST_HEIGHT :: 360
 
 // The most lines of the logical screen that a holder of the display keeps
-// for itself at WINDOW_BOUND (a bar, a panel): the rest is the least work
-// area. A holder states that its own part fits, with this constant.
-HOLDER_LINES_MOST :: WINDOW_BOUND_LOGICAL_HEIGHT - WORK_AREA_LEAST_HEIGHT
+// for itself at LARGEST (a bar, a panel): the rest is the least work area.
+// A holder states that its own part fits, with this constant.
+HOLDER_LINES_MOST :: LARGEST_LOGICAL_HEIGHT - WORK_AREA_LEAST_HEIGHT
 
 // What scale_of_word refused. The package holds no table of words for
 // them: a table of texts holds addresses that a loader writes, and the
@@ -67,22 +70,18 @@ HOLDER_LINES_MOST :: WINDOW_BOUND_LOGICAL_HEIGHT - WORK_AREA_LEAST_HEIGHT
 // (docs/MODULE_CONTRACT.md, "A library as a module").
 Scale_Problem :: enum {
 	None,
-	No_Member, // The word is no count of eighths from 10 to 16: 0, 8 and 9 too.
-	Past_Window_Bound, // A count of the range whose logical screen a window of today does not fit.
+	No_Member, // The word is no count of eighths from 8 to 16: 0 and 7 too.
 }
 
 // scale_of_word is the one border of a word of the scale: the Scale that it
-// names, or a problem. A word that names no member and a member past
-// WINDOW_BOUND are refused, never clamped and never read as the default:
-// the caller keeps the scale that it had. The scale is the zero value with
-// a problem, which names no member: a caller reads it only with None.
+// names, or a problem. A word that names no member is refused, never
+// clamped and never read as the default: the caller keeps the scale that it
+// had. The scale is the zero value with a problem, which names no member: a
+// caller reads it only with None.
 scale_of_word :: proc "contextless" (word: u64) -> (scale: Scale, problem: Scale_Problem) {
 	member, ok := enum_word.member_of_word(Scale, word)
 	if !ok {
 		return {}, .No_Member
-	}
-	if u8(member) > u8(WINDOW_BOUND) {
-		return {}, .Past_Window_Bound
 	}
 	return member, .None
 }

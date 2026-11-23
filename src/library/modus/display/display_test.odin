@@ -562,15 +562,26 @@ event_of_record_reads_each_event :: proc(t: ^testing.T) {
 	testing.expect_value(t, event, Event{kind = .Pointer, x = -3, y = 7, buttons = BUTTON_LEFT, wheel = WHEEL_TOWARD_THE_END})
 
 	// Settings_Changed names the scale of the compositor: a word that names
-	// no scale refuses the record, 0 and 8 too, and so does a scale one past
-	// the window bound.
+	// no scale refuses the record: 0, 7 under the scale 1, 17 past 2, and the
+	// largest word.
 	settings_changed := ring.Record{kind = u32(Event_Kind.Settings_Changed)}
-	for word in ([?]u64{0, scale_factor.EIGHTHS_OF_ONE, u64(scale_factor.Scale.Ten_Eighths) - 1, u64(scale_factor.WINDOW_BOUND) + 1, u64(scale_factor.Scale.Sixteen_Eighths) + 1, max(u64)}) {
+	for word in ([?]u64{0, scale_factor.EIGHTHS_OF_ONE - 1, u64(scale_factor.Scale.Sixteen_Eighths) + 1, max(u64)}) {
 		settings_changed.values[1] = word
 		_, scale_ok := event_of_record(settings_changed)
 		testing.expectf(t, !scale_ok, "a Settings_Changed with the scale word %d is taken", word)
 	}
+	// The count of the windows that declined the scale: one past its limit
+	// and the largest word are refused; the limit is taken.
 	settings_changed.values[1] = u64(scale_factor.Scale.Eleven_Eighths)
+	for word in ([?]u64{WINDOWS_DECLINED_LIMIT + 1, max(u64)}) {
+		settings_changed.values[2] = word
+		_, declined_ok := event_of_record(settings_changed)
+		testing.expectf(t, !declined_ok, "a Settings_Changed that counts %d windows is taken", word)
+	}
+	settings_changed.values[2] = WINDOWS_DECLINED_LIMIT
+	limit_event, limit_ok := event_of_record(settings_changed)
+	testing.expect(t, limit_ok && limit_event.windows_declined == WINDOWS_DECLINED_LIMIT)
+	settings_changed.values[2] = 0
 	event, ok = event_of_record(settings_changed)
 	testing.expect(t, ok)
 	testing.expect_value(t, event, Event{kind = .Settings_Changed, scale = .Eleven_Eighths})

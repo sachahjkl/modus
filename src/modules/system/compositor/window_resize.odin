@@ -306,6 +306,39 @@ surface_rescale_take :: proc "contextless" (client: ^Client, record: ring.Record
 	client.resize_scale, client.resize_serial = scale, serial
 	client.resize_pending_edges = {}
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Rescale_Taken), 1 = serial})
+	if client.declined {
+		client.declined = false
+		windows_declined_tell() // scale.odin
+	}
+}
+
+// surface_declined_take takes the record Surface_Declined of a window: its
+// budget could not pay its surface at the scale in force, after its
+// release. The checks are bar.surface_declined_refusal. A taken record
+// moves the serial released to the serial of the offer, so the next
+// Surface_Rescale of the window names the serial after it; the frame of
+// the window keeps the background; the count of the windows that declined
+// the scale goes to each window. A refused record changes nothing, and is
+// counted with the refused resizes.
+surface_declined_take :: proc "contextless" (client: ^Client, record: ring.Record) {
+	serial := record.values[0]
+	facts := bar.Surface_Declined_Facts {
+		scale_word      = record.values[1],
+		serial          = serial,
+		created         = client.created,
+		released        = client.released,
+		pending         = client.resize_pictures != nil,
+		released_serial = client.surface_serial,
+		scale           = scale,
+	}
+	if bar.surface_declined_refusal(facts) != .None {
+		client.resizes_refused += 1
+		return
+	}
+	client.surface_serial = serial
+	client.declined, client.declined_scale = true, scale
+	system.log_fact(.Warning, Window_Declined_Scale{scale = u64(scale), window = window_field(client.title[:])})
+	windows_declined_tell() // scale.odin
 }
 
 // surface_screen_damage records the part of the screen that the surface of

@@ -105,11 +105,15 @@ LARGEST_HEIGHT :: 800
 // stack, its tables and its glyph memory, 1400 pages. A resize holds the
 // old surface and the new one together until the compositor shows the new
 // one, so the working memory also holds a second surface at the largest
-// size: 1024 x 800 logical pixels are 1408 x 1100 at 1.375, two pictures of
-// 4 bytes a pixel, 12 390 400 bytes, 3025 pages. 1400 + 3025 = 4425. The
-// tool counts the window at its largest size, at the window bound
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4425, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// size: 1024 x 800 logical pixels are 2048 x 1600 at the largest scale, 2,
+// two pictures of 4 bytes a pixel, 26 214 400 bytes, 6400 pages. 1400 +
+// 6400 = 7800. The tool counts the window at its largest size, at the
+// largest scale (docs/MODULE_CONTRACT.md, "The budget that a module asks
+// for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7800, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The window that sets the scale back fits the least work area that each
+// holder of the display leaves at each scale, with its title.
+#assert(LEAST_HEIGHT + 40 <= scale_factor.WORK_AREA_LEAST_HEIGHT)
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"): the keys of the focus of the interface package.
@@ -131,6 +135,8 @@ bar: interface.Action_Bar_State
 // reads these tables: the build writes them into the module file.
 @(rodata, member_texts = "en")
 scale_texts := [scale_factor.Scale]string {
+	.Eight_Eighths    = "1",
+	.Nine_Eighths     = "1.125",
 	.Ten_Eighths      = "1.25",
 	.Eleven_Eighths   = "1.375",
 	.Twelve_Eighths   = "1.5",
@@ -175,7 +181,7 @@ ERROR_STORE :: -4
 // with_value gives a choice with one setting at the value of a button or of
 // a name: its place in the names of the values of the setting, whose word
 // the description gives. ok false: the border refuses that word, and
-// scale_problem says why for the scale (a count past the window bound).
+// scale_problem says why for the scale (a count that names no member).
 with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Setting, place: int) -> (changed: settings.Choice, ok: bool, scale_problem: scale_factor.Scale_Problem) {
 	values := settings.values_of(choice)
 	values[setting] = settings.word_of_value(setting, place)
@@ -362,10 +368,10 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 // and the dark one at night: the page holds the appearance in force, which the log says with the time that the
 // rule read.
 //
-// The scale factor of the desktop is a count of eighths: `.ten_eighths`, 1.25, is the default. Each window lets
-// its surface go, makes a surface of its size at the scale that the compositor names from its own budget, and
-// draws again. The scales from `.twelve_eighths`, 1.5, to `.sixteen_eighths`, 2, are members, and are refused
-// until each window fits their logical screen.
+// The scale factor of the desktop is a count of eighths, from `.eight_eighths`, 1, to `.sixteen_eighths`, 2;
+// `.ten_eighths`, 1.25, is the default. Each window lets its surface go, makes a surface of its size at the scale
+// that the compositor names from its own budget, and draws again. A window whose budget does not pay that surface
+// declines the scale and shows its frame only, until another scale; the window of settings says how many did.
 //
 // Each parameter names its getter: the export of the same name gives the value in use, and the palette marks its
 // button with it.
@@ -376,7 +382,7 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 // - **grid_fit**: `.on` or `.off`.
 // - **keyboard_layout**: `.united_states` or `.french`.
 // - **appearance**: `.auto`, `.dark` or `.light`.
-// - **scale**: `.ten_eighths` and the other counts of eighths up to `.sixteen_eighths`.
+// - **scale**: a count of eighths, `.eight_eighths` to `.sixteen_eighths`.
 //
 // The caller must act for the principal (**Acts_For_Principal**): the console and the host have it. The result is
 // 1, or a negative number with an error record:
@@ -385,9 +391,6 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 // - `Absent` (-2): the call gives no setting.
 // - `Bad_Value` (-3): a value that names no member of the enum of its setting; the record names the argument and
 //   holds the value. No setting changes.
-// - `Out_Of_Range` (-3): a scale from `.twelve_eighths` to `.sixteen_eighths`, past the largest scale whose
-//   logical screen each window fits; the record holds the count of eighths and the largest count, 11. No setting
-//   changes.
 // - `Refused` (-4): the store did not keep the values. The page changed all the same, so the windows show the new
 //   values until the next start of the machine.
 //
@@ -410,8 +413,6 @@ set :: proc "c" (font: settings.Font, subpixel_order: settings.Subpixel_Order, p
 		return errors.fail(error, ERROR_NAME, .Absent, .None, 0)
 	case .Bad_Value:
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, argument, i64(words[refused]))
-	case .Past_Window_Bound:
-		return errors.fail(error, ERROR_VALUE, .Out_Of_Range, .None, argument, i64(scale), i64(scale_factor.WINDOW_BOUND))
 	}
 	if !change(changed, current.zone_offset_minutes) {
 		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
@@ -654,6 +655,20 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 	return count
 }
 
+// appearance_next_pass is the pass of the tile of the Control Center: the
+// appearance after the one of the page, kept in the store and written on
+// the page, as a press on its button in the window does. The compositor
+// asks for it only while no window of settings runs, so this process is the
+// one writer of the page.
+appearance_next_pass :: proc "contextless" () -> ! {
+	choice, _ := settings.read(page)
+	before := choice.appearance
+	choice.appearance = settings.appearance_next(before)
+	kept := change(choice, choice.zone_offset_minutes)
+	system.log_fact(.Info, Appearance_Next_Kept{before = value_kinds.text_field(settings.value_name_of(.Appearance, u32(before)), VALUE_NAME_FIELD_BYTES), after = value_field(choice, .Appearance), store = store_field(kept)})
+	system.stop(kept ? .Done : .Failed)
+}
+
 // boot_pass reads the record of the store and writes the page: the pass of
 // the boot, with no window.
 boot_pass :: proc "contextless" () -> ! {
@@ -737,13 +752,13 @@ Setting_Text :: struct {
 
 @(rodata)
 setting_texts := [settings.Setting]Setting_Text {
-	.Font            = {"Font", "The font of the text of every window.", {"Vector", "Spleen 8x16", "", "", "", "", "", ""}},
-	.Subpixel_Order  = {"Color stripes", "The order of the color stripes of the screen: text is sharper when it matches.", {"RGB", "BGR", "None (gray)", "", "", "", "", ""}},
-	.Pointer_Theme   = {"Pointer theme", "Posy when the boot image holds it; without it, both are the theme of the system.", {"Posy", "System", "", "", "", "", "", ""}},
-	.Grid_Fit        = {"Grid fit", "Puts the stems of the glyphs on whole pixels: sharper, and a little less exact.", {"On", "Off", "", "", "", "", "", ""}},
-	.Keyboard_Layout = {"Layout", "The characters of the keys. A change holds from the next key.", {"US (QWERTY)", "French (AZERTY)", "", "", "", "", "", ""}},
-	.Appearance      = {"Appearance", "Auto is light from 07:00 to 19:00 of the local time, and dark at night.", {"Auto", "Dark", "Light", "", "", "", "", ""}},
-	.Scale           = {"Scale", "The size of each thing on the screen. The dim stops wait for windows that fit a smaller screen.", {"125 %", "137.5 %", "150 %", "162.5 %", "175 %", "187.5 %", "200 %", ""}},
+	.Font            = {"Font", "The font of the text of every window.", {"Vector", "Spleen 8x16", "", "", "", "", "", "", ""}},
+	.Subpixel_Order  = {"Color stripes", "The order of the color stripes of the screen: text is sharper when it matches.", {"RGB", "BGR", "None (gray)", "", "", "", "", "", ""}},
+	.Pointer_Theme   = {"Pointer theme", "Posy when the boot image holds it; without it, both are the theme of the system.", {"Posy", "System", "", "", "", "", "", "", ""}},
+	.Grid_Fit        = {"Grid fit", "Puts the stems of the glyphs on whole pixels: sharper, and a little less exact.", {"On", "Off", "", "", "", "", "", "", ""}},
+	.Keyboard_Layout = {"Layout", "The characters of the keys. A change holds from the next key.", {"US (QWERTY)", "French (AZERTY)", "", "", "", "", "", "", ""}},
+	.Appearance      = {"Appearance", "Auto is light from 07:00 to 19:00 of the local time, and dark at night.", {"Auto", "Dark", "Light", "", "", "", "", "", ""}},
+	.Scale           = {"Scale", "The size of each thing on the screen, from 100 % to 200 %. The whole desktop draws again at once.", {"100 %", "112.5 %", "125 %", "137.5 %", "150 %", "162.5 %", "175 %", "187.5 %", "200 %"}},
 }
 
 // The sections of the window, in the order of use.
@@ -898,6 +913,34 @@ Frame_Texts :: struct {
 	lines_shown:       int, // The languages of the list whose tag was written: the list stops at the first that was not.
 	added:             [len(common_languages)]settings.Language_List, // The list with each common language at its end.
 	can_add:           [len(common_languages)]bool, // The list does not hold the common language, and is not full.
+	declined_buffer:   [DECLINED_NOTICE_BYTES]u8,
+	declined_notice:   string, // "2 windows show only their frame: ...", or "" when no window declined the scale.
+}
+
+// The parts of the notice of the windows that declined the scale, and its
+// bytes: the 19 digits of the largest count and the longer form.
+DECLINED_ONE :: " window shows only its frame"
+DECLINED_MANY :: " windows show only their frame"
+DECLINED_REASON :: ": its budget does not pay a surface at this scale. A smaller scale, or a new start of the window, shows it again."
+DECLINED_NOTICE_BYTES :: 19 + len(DECLINED_MANY) + len(DECLINED_REASON)
+#assert(len(DECLINED_MANY) >= len(DECLINED_ONE))
+
+// declined_notice_write writes the notice of the windows whose budget does
+// not pay a surface at the scale in force, or "" for none.
+declined_notice_write :: proc "contextless" (buffer: []u8, windows: int) -> string {
+	if windows <= 0 {
+		return ""
+	}
+	digits: [20]u8
+	place := len(digits)
+	for value := windows; value > 0 || place == len(digits); value /= 10 {
+		place -= 1
+		digits[place] = u8('0' + value % 10)
+	}
+	count := copy(buffer, digits[place:])
+	count += copy(buffer[count:], windows == 1 ? DECLINED_ONE : DECLINED_MANY)
+	count += copy(buffer[count:], DECLINED_REASON)
+	return string(buffer[:count])
 }
 
 // zone_line_write writes the line of a zone in the list: "UTC+05:30" and
@@ -914,7 +957,8 @@ zone_line_write :: proc "contextless" (buffer: []u8, minutes: i32, places: strin
 }
 
 // frame_texts_of gives the texts of a frame of the window.
-frame_texts_of :: proc "contextless" (texts: ^Frame_Texts, choice: settings.Choice) {
+frame_texts_of :: proc "contextless" (texts: ^Frame_Texts, choice: settings.Choice, windows_declined := 0) {
+	texts.declined_notice = declined_notice_write(texts.declined_buffer[:], windows_declined)
 	zone := choice.zone_offset_minutes
 	texts.zone_line_count = 0
 	texts.zone_chosen = -1
@@ -994,6 +1038,7 @@ Settings_Boxes :: struct {
 	setting_boxes:         [settings.Setting]Setting_Boxes,
 	scale_value:           layout.Box_Index, // NO_BOX: each stop of the track holds its percentage.
 	scale_track:           layout.Box_Index,
+	scale_declined:        layout.Box_Index, // NO_BOX: each window pays its surface at the scale in force.
 	zone_title:            layout.Box_Index,
 	zone_explanation:      layout.Box_Index,
 	zone_list:             layout.Box_Index,
@@ -1145,6 +1190,9 @@ section_add :: proc "contextless" (builder: ^Layout_Builder, boxes: ^Settings_Bo
 			}
 			boxes.scale_track = builder_add(builder, line_box(BUTTON_HEIGHT))
 			builder_close(builder)
+			if texts.declined_notice != "" {
+				boxes.scale_declined = builder_add(builder, line_box(interface.caption_height(table, texts.declined_notice, room)))
+			}
 		} else {
 			flow := flow_begin(builder, room, gap)
 			for place in 0 ..< int(settings.descriptions[setting].value_count) {
@@ -1290,23 +1338,15 @@ scale_stop_width :: proc "contextless" (track_width: int) -> int {
 }
 
 // scale_track_draw draws the track of the scale: one stop for each member
-// of the enum, the stop in force marked, each with its percentage when
-// labels_inside. A stop that the border refuses is an outline with a dim
-// label, and takes no press. A press on a stop, or Enter with the focus on
-// it, sets the scale.
+// of the enum, from 100 % to 200 %, the stop in force marked, each with its
+// percentage when labels_inside. A press on a stop, or Enter with the focus
+// on it, sets the scale.
 scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, choice: settings.Choice, labels_inside: bool, focus_area: ^interface.Area) {
 	stop_width := scale_stop_width(area.width)
 	for member, place in scale_factor.Scale {
 		stop := interface.Area{area.x + place * (stop_width + SCALE_STOP_GAP), area.y, stop_width, area.height}
 		label := setting_texts[.Scale].value_labels[place]
 		label_y := stop.y + (stop.height - interface.LINE) / 2
-		if _, problem := scale_factor.scale_of_word(u64(member)); problem != .None {
-			interface.draw_outline(frame.table, stop.x, stop.y, stop.width, stop.height, 1, graphics.colors.dim)
-			if labels_inside {
-				interface.draw_text(frame.table, stop.x + BUTTON_LABEL_PADDING, label_y, label, graphics.colors.dim, interface.FONT_INTERFACE)
-			}
-			continue
-		}
 		element := interface.identity_with(interface.identity("scale stop"), place)
 		result := interface.element_interact(frame, element, stop, .Button)
 		interface.element_name(frame, stop, label)
@@ -1444,7 +1484,7 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 	interface.background(&frame, {0, 0, width, height})
 	interface.action_bar_input_take(&frame, &bar)
 	texts: Frame_Texts
-	frame_texts_of(&texts, choice)
+	frame_texts_of(&texts, choice, display.windows_that_declined_the_scale())
 	boxes, laid_out := settings_layout(frame.table, &texts, width, height, view_scroll, tokens)
 	tree := &layout_tree
 	bar_area := interface.Area{0, height - interface.ACTION_BAR_ROW_HEIGHT, width, interface.ACTION_BAR_ROW_HEIGHT}
@@ -1465,10 +1505,14 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 				setting_header_draw(&frame, area_of(tree, setting_boxes.title), area_of(tree, setting_boxes.explanation), setting_texts[setting].title, setting_texts[setting].explanation, tokens)
 				if setting == .Scale {
 					if boxes.scale_value != layout.NO_BOX {
-						in_force := int(choice.scale) - int(scale_factor.Scale.Ten_Eighths)
+						in_force := int(choice.scale) - int(min(scale_factor.Scale))
 						text_on_button_line(&frame, area_of(tree, boxes.scale_value), setting_texts[.Scale].value_labels[clamp(in_force, 0, len(scale_factor.Scale) - 1)], tokens.text, interface.FONT_INTERFACE_BOLD)
 					}
 					scale_track_draw(&frame, area_of(tree, boxes.scale_track), choice, boxes.scale_value == layout.NO_BOX, &focus_area)
+					if boxes.scale_declined != layout.NO_BOX {
+						notice := area_of(tree, boxes.scale_declined)
+						interface.draw_caption(&frame, notice.x, notice.y, notice.width, texts.declined_notice)
+					}
 					continue
 				}
 				for place in 0 ..< int(settings.descriptions[setting].value_count) {
@@ -1553,13 +1597,19 @@ draw_with_bar :: proc "contextless" (window: ^display.Window) {
 // opens its private store; a process with no store still runs, and says
 // "NOT kept: no store".
 //
-// - **The boot pass** (the context value `VALUE_BOOT_PASS` is not 0): it
+// - **The boot pass** (the context value `VALUE_PASS` is `Boot`): it
 //   reads the record of its store, writes the page, wakes the compositor,
 //   writes "settings: the boot pass: ..." with its time, and stops with
 //   `Done`. A missing or unreadable record gives the defaults. A record of
 //   another version gives the defaults, which the pass keeps in its place.
 //   A store that fails the read or refuses that write gives the defaults
 //   too, and the pass stops with `Failed`.
+// - **The next appearance** (`VALUE_PASS` is `Appearance_Next`): the tile
+//   of the Control Center. It keeps and writes the appearance after the one
+//   of the page (settings.appearance_next), and stops with `Done`, or with
+//   `Failed` when the store did not keep it.
+// - **A word that names no pass**: it writes its fact and stops with
+//   `Refused`, with no write.
 // - **Otherwise**: it opens its window (with none, it stops with `Failed`)
 //   and its service, draws, and writes "settings: ok, ...". Then one loop
 //   waits on the events of the window and on the service ring, runs the
@@ -1575,8 +1625,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page = (^settings.Page)(address)
 	date_page = date.page_of(ctx)
 	store, has_store = storage.open(ctx)
-	if ctx.values[settings.VALUE_BOOT_PASS] != 0 {
+	pass, pass_ok := settings.pass_of_word(ctx.values[settings.VALUE_PASS])
+	if !pass_ok {
+		system.log_fact(.Warning, Pass_Refused{word = ctx.values[settings.VALUE_PASS]})
+		system.stop(.Refused)
+	}
+	switch pass {
+	case .Window:
+	case .Boot:
 		boot_pass()
+	case .Appearance_Next:
+		appearance_next_pass()
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "settings")
 	if !ok {

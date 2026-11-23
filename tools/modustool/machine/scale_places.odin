@@ -53,7 +53,7 @@ logical_place_of_screen :: proc(pixel: int, scale: scale_factor.Scale) -> (place
 // the body are on the screen at a scale that the setting takes. The cell of
 // the body is half its size on the screen wide, a half up, and two widths
 // high; Spleen draws at its scale 1 in the middle of the cell, as long as
-// the cell is under 16 by 32 (each scale up to the window bound).
+// the cell is under 16 by 32 (each scale under 2).
 Spleen_Cells :: struct {
 	step:              int, // The pixels of the screen from one cell to the next.
 	glyph_x, glyph_y:  int, // The glyph of 8 by 16 from the corner of its cell.

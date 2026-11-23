@@ -534,7 +534,7 @@ start_handles_of_the_start_grant_set_give :: proc "contextless" (work: ^Start_Wo
 	}
 	if .Settings in grants {
 		start_grant_put(work, .Settings_Page, {settings_memory, {.Read, .Write}})
-		system.value_put(&work.values, settings.VALUE_BOOT_PASS, u64(settings_boot_pass))
+		system.value_put(&work.values, settings.VALUE_PASS, u64(settings_pass))
 	}
 	if .Clock in grants {
 		start_grant_put(work, .Date_Page, {date_memory, {.Read, .Write}})

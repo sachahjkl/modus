@@ -3067,6 +3067,26 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: window settings shows a surface of 700x860 at 10 eighths", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
 	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "the holder of the display refused the surface"},
+	// The whole range with the windows open: 1, where a logical pixel is a
+	// pixel of the screen; 1.5; and 2, where the logical screen is 960 x 540
+	// and the larger windows keep their titles on the screen. The budget of
+	// each window counts its pictures at 2, so no window declines a scale:
+	// a decline fails the step. Then 1.25 again for the steps after.
+	{kind = .Call, text = "settings.set(scale = .eight_eighths)", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1; "},
+	{kind = .Wait, text = " windows shows a surface at 8 eighths", fails_on = "declined the scale"},
+	{kind = .Shot, text = "desktop_at_1"},
+	{kind = .Call, text = "settings.set(scale = .twelve_eighths)", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.5; "},
+	{kind = .Wait, text = " windows shows a surface at 12 eighths", fails_on = "declined the scale"},
+	{kind = .Shot, text = "desktop_at_1_5"},
+	{kind = .Call, text = "settings.set(scale = .sixteen_eighths)", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 2; "},
+	{kind = .Wait, text = " windows shows a surface at 16 eighths", fails_on = "declined the scale"},
+	{kind = .Shot, text = "desktop_at_2"},
+	{kind = .Call, text = "settings.set(scale = .ten_eighths)", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
+	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
 	// Tables and bytes as parameters: one description, three ways to call

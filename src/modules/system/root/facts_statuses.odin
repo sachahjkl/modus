@@ -122,6 +122,13 @@ Settings_Boot_Pass_Failed :: struct {
 	status: op.Status,
 }
 
+// The tile of the Control Center asked for the next appearance, and the
+// pass of settings did not start.
+@(log_fact = "root: the next appearance of the Control Center did not start settings (status {status})")
+Appearance_Next_Not_Started :: struct {
+	status: op.Status,
+}
+
 @(log_fact = "root: cannot start the TPM service: status {status}")
 Tpm_Service_Start_Failed :: struct {
 	status: op.Status,

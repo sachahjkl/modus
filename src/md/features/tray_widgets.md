@@ -26,11 +26,11 @@ The places, the hit tests, the history of the notifications, the grid of a month
 
 - The tile of the bar edge says `Top` or `Bottom`; a press moves the bar.
 - The tile of the magnifier says `On` or `Off`; a press turns it on or off. On, the tile is a plate of the chosen blue with white text.
-- The tile of the appearance says `Dark` or `Light`: the appearance in force.
+- The tile of the appearance says `Dark` or `Light`: the appearance in force. A press asks for the next setting, auto, dark, light. The compositor does not write the settings page: with no window of `settings`, it asks the root service (the control command `Appearance_Next`), which starts `settings` for the pass of the next appearance (`settings.Pass.Appearance_Next`): the one writer keeps it and writes the page, and the tile shows the new value when the page changes. With a window of `settings` open, that process is the one writer: the compositor raises its window with the focus on the appearance in force (the act name `settings.set:appearance`), where Enter on another value sets it.
 - The tile of the display says `VirtIO-GPU 1.2` when the compositor found the device, else `Processor`, and the size of the screen in pixels. It is blue while the frame goes to the VirtIO-GPU scanout.
 - The launch buttons start `settings`, `monitor`, `browser` and `edit` with `Start`, as a line of the start menu does, and close the card.
 
-An off tile is sunk in the card: `recess`, a border of `track`, a line of `shadow` under its top edge. A tile that a press changes has a border of the title blue under the pointer; the tiles of the appearance and of the display take no press, and have no look under the pointer.
+An off tile is sunk in the card: `recess`, a border of `track`, a line of `shadow` under its top edge. A tile that a press changes has a border of the title blue under the pointer; the tile of the display takes no press, and has no look under the pointer.
 
 **The notification center.** The last 6 notifications that the desktop showed, the newest first, each with its title, its body and its time of day. Its head has the caption `notifications` and the button `Clear all`. With no notification, the card is one line: `No notifications`. The history is a copy that the compositor keeps: a banner that expires stays in it.
 
@@ -40,7 +40,7 @@ An off tile is sunk in the card: `recess`, a border of `track`, a line of `shado
 
 ## Refused forms
 
-- **A tile that switches the appearance.** The compositor reads the settings page and does not write it: the appearance is a setting of the principal, and the module `settings` is its one place. The tile says the appearance in force; the launch button of `settings` changes it.
+- **A tile that writes the appearance itself.** The compositor reads the settings page and does not write it: the appearance is a setting of the principal, and the module `settings` is its one writer. A tile that looks pressable and takes no press was refused too: the principal pressed it and nothing happened. The tile asks the one writer, through the root service, which already starts `settings` for its boot pass.
 - **A heading on the control center and on the calendar.** The button that opened the card says what it is; the month heads the calendar.
 - **The tray buttons after the pills.** A pill can come and go; a tray button keeps one place, so the pointer and the machine test find it.
 - **The notification center as the queue of the banners.** A banner leaves after 8 seconds; the history must keep it.

@@ -58,7 +58,7 @@ A process can draw any text size from 4 to 128 logical pixels; the rasterizer dr
 
 **The heading: 24, the step between the body and the large number.** 16, 24 and 32 are steps of 1.5 and 1.33; 20 is a step of 1.25 that a reader hardly sees beside the body and the bold weight. 24 is a multiple of 8, so at each scale in eighths it is a whole count of pixels of the screen (3 for each eighth): its line, its cell of 12 and its baseline stay on whole pixels.
 
-**The steps of the scale.** 16, 24, 32 and 48 are whole pixels at each scale from 1.25 to 2. 14 is a whole count at 1.5 (21) and 2 (28), and half a pixel off at 1.25 (17.5) and 1.75 (24.5). A text size needs no whole pixel: the glyphs are drawn at the fractional size, and only the baseline goes to a whole pixel, which the box of the record holds. A caption never forms a text grid, so no cell of it needs whole pixels.
+**The steps of the scale.** 16, 24, 32 and 48 are whole pixels at each scale from 1 to 2. 14 is a whole count at 1.5 (21) and 2 (28), and half a pixel off at 1.25 (17.5) and 1.75 (24.5). A text size needs no whole pixel: the glyphs are drawn at the fractional size, and only the baseline goes to a whole pixel, which the box of the record holds. A caption never forms a text grid, so no cell of it needs whole pixels.
 
 **The elements at the tokens.** Each element is sized from the measure of its text at its size, never from a fixed line of 16:
 
@@ -137,7 +137,7 @@ The numbers:
 
 | | The glyph caches and the demand cache | Every glyph drawn by its process |
 |---|---|---|
-| The sizes that they serve | Lines of 16, 32 and 48 pixels only. The scale factor from 1.25 to 2 gives lines of 20 to 32 pixels: of these seven sizes, only 32 is a size of a cache | Each size |
+| The sizes that they serve | Lines of 16, 32 and 48 pixels only. The scale factor from 1 to 2 gives lines of 16 to 32 pixels: of these nine sizes, 16 and 32 are sizes of a cache | Each size |
 | The boot image | More than 1.3 MB of caches: 390 624 and 397 344 bytes for Paper Mono with and without the grid fit, 424 784 and 108 324 bytes for B612 and B612 Bold, and the cache of Paper Mono SemiBold | The font outlines only: about 195 KB, already in the image |
 | The start of the machine | The root service checks the hash of each cache: 796 to 966 µs for 390 624 bytes, about 3 ms for all | Nothing more |
 | Shared memory | The demand cache: 4 395 008 bytes, 1 073 pages that the root service pays, and the process `glyphs` at each start | None |

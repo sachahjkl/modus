@@ -169,7 +169,7 @@ fuzz_kept_settings_seeds :: proc(seeds: ^[dynamic][]u8) {
 	// The record of the defaults and of each last value, then the same
 	// with the count of the values at its bound and one past it.
 	// The last value that the border of each setting takes: for the scale,
-	// the window bound.
+	// 2.
 	values: [settings.Setting]u32
 	for setting in settings.Setting {
 		values[setting] = settings.word_of_value(setting, int(settings.descriptions[setting].value_count) - 1)

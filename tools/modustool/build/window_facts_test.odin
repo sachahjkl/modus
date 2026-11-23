@@ -583,6 +583,13 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["pointer_form"] = u32(len("light"))
 	most["shape_name"] = u32(len("resize_top_left_bottom_right"))
 	most["limits_problem"] = u32(len("a least size is below the least size of a resizable surface"))
+	// The window stays fixed: the sentence of a problem of its limits, or of
+	// a full command ring.
+	most["cause"] = u32(len("a least size is below the least size of a resizable surface"))
+	// The next appearance of the Control Center: the names of two values of
+	// the setting appearance.
+	most["before"] = u32(len("light"))
+	most["after"] = u32(len("light"))
 	most["local_time"] = 19
 	most["zone"] = 6
 	for setting_field in ([7]string{"font", "subpixel_order", "pointer_theme", "grid_fit", "keyboard_layout", "appearance", "in_force"}) {

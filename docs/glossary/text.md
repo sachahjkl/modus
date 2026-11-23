@@ -456,7 +456,7 @@ Do not use: span (for this), slice.
 
 The boot pass is the start of the process `settings` that the root service makes at the start of the machine, with no window, to put the kept settings on the settings page.
 
-The settings survive a stop as one record (`Kept_Settings`) in the private store of `settings`. The root service cannot read the store itself, so it starts `settings` with the value 1 at `VALUE_BOOT_PASS` of its context. The process reads the record, writes the page, wakes the compositor and stops. A record of another version, or none, gives the defaults. Until the boot pass ends, the boot display and the first frames use the defaults; then each window draws again.
+The settings survive a stop as one record (`Kept_Settings`) in the private store of `settings`. The root service cannot read the store itself, so it starts `settings` with the pass `Boot` at `VALUE_PASS` of its context. The process reads the record, writes the page, wakes the compositor and stops. A record of another version, or none, gives the defaults. Until the boot pass ends, the boot display and the first frames use the defaults; then each window draws again.
 
 The design: `docs/FONTS.md`, "7. The setting".
 

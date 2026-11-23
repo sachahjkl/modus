@@ -224,3 +224,39 @@ settings_zone_list :: proc(t: ^testing.T) {
 	testing.expect_value(t, texts.zone_line_count, len(zone_places) + 1)
 	testing.expect_value(t, texts.zone_lines[1], "UTC-12:00  Baker Island")
 }
+// The notice of the windows that declined the scale: none for 0 and for a
+// count under 0; one window and many; the largest count is written whole,
+// with the end of its sentence. In the layout it lies inside the card
+// Display, under the track, at the least and at the largest width.
+@(test)
+settings_declined_notice :: proc(t: ^testing.T) {
+	buffer: [DECLINED_NOTICE_BYTES]u8
+	testing.expect_value(t, declined_notice_write(buffer[:], 0), "")
+	testing.expect_value(t, declined_notice_write(buffer[:], -1), "")
+	testing.expect_value(t, declined_notice_write(buffer[:], min(int)), "")
+	one := declined_notice_write(buffer[:], 1)
+	testing.expectf(t, len(one) > 2 && one[:2] == "1 " && one[len(one) - 9:] == "it again.", "the notice of one window: %s", one)
+	ENDING :: "shows it again."
+	for count in ([?]int{2, 64, max(int)}) {
+		notice := declined_notice_write(buffer[:], count)
+		testing.expectf(t, len(notice) >= len(ENDING) && notice[len(notice) - len(ENDING):] == ENDING, "the notice of %d windows is cut: %s", count, notice)
+	}
+	tokens, _ := layout.tokens_for(.Dark, .Standard)
+	table: interface.Draw_Table
+	for width in ([?]int{LEAST_WIDTH, LARGEST_WIDTH}) {
+		texts: Frame_Texts
+		frame_texts_of(&texts, settings.choice_default(), 3)
+		boxes, ok := settings_layout(&table, &texts, width, LARGEST_HEIGHT, 0, tokens)
+		testing.expect(t, ok)
+		testing.expect(t, boxes.scale_declined != layout.NO_BOX)
+		notice := area_of(&layout_tree, boxes.scale_declined)
+		card := area_of(&layout_tree, boxes.cards[.Display])
+		track := area_of(&layout_tree, boxes.scale_track)
+		testing.expectf(t, notice.y >= track.y + track.height && notice.x >= card.x && notice.x + notice.width <= card.x + card.width && notice.y + notice.height <= card.y + card.height, "at %d the notice %v is not under the track %v in its card %v", width, notice, track, card)
+		testing.expect(t, notice.height > 0)
+		quiet: Frame_Texts
+		frame_texts_of(&quiet, settings.choice_default(), 0)
+		quiet_boxes, _ := settings_layout(&table, &quiet, width, LARGEST_HEIGHT, 0, tokens)
+		testing.expect(t, quiet_boxes.scale_declined == layout.NO_BOX)
+	}
+}

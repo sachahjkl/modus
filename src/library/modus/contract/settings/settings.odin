@@ -9,9 +9,10 @@
 // name, the names of its values and the word of its first value. The word
 // of a value is its place in the names plus the first word: the place for
 // each setting but the scale, whose word is its count of eighths
-// (modus:contract/scale_factor). The first value of each setting is its
-// default: the vector font with the grid fit, red green blue, the pointer
-// theme of the owner when the boot image has it, the scale 1.25. The word
+// (modus:contract/scale_factor). The first value of each setting but the
+// scale is its default: the vector font with the grid fit, red green blue,
+// the pointer theme of the owner when the boot image has it; the default
+// scale is 1.25 (scale_factor.DEFAULT), the third of its range. The word
 // 0 names no scale, so the root service writes the defaults into the page
 // that it creates (page_defaults_write), and an all-zero page is refused.
 //
@@ -65,7 +66,36 @@ import "modus:contract/scale_factor"
 
 PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a process maps the settings page.
 GRANT_PAGE :: 12 // The handle of the context of the process `settings`: the page, with Read and Write.
-VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The process `settings`: 1 for the pass at boot (read the kept record, write the page, stop).
+VALUE_PASS :: op.CONTEXT_VALUE_SETTINGS_PASS // The process `settings`: the word of its Pass.
+
+// The pass that the process `settings` runs, as its starter names it in
+// the context value VALUE_PASS. The values cross the context, so they are
+// stated; pass_of_word is their one border.
+Pass :: enum u64 {
+	Window          = 0, // No pass: the window and the service.
+	Boot            = 1, // At boot: read the kept record, write the page, stop.
+	Appearance_Next = 2, // The tile of the Control Center: the next appearance (appearance_next), kept and written, then stop.
+}
+
+// pass_of_word is the border of the context value VALUE_PASS: a word that
+// names no Pass is refused, never read as the window.
+pass_of_word :: proc "contextless" (word: u64) -> (pass: Pass, ok: bool) {
+	return enum_word.member_of_word(Pass, word)
+}
+
+// appearance_next gives the appearance after one press on the tile of the
+// Control Center: auto, then dark, then light, then auto again.
+appearance_next :: proc "contextless" (appearance: Appearance) -> Appearance {
+	switch appearance {
+	case .Auto:
+		return .Dark
+	case .Dark:
+		return .Light
+	case .Light:
+		return .Auto
+	}
+	return .Auto
+}
 KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds Kept_Settings.
 
 // The settings, in the order of the page and of the window.
@@ -128,7 +158,7 @@ Appearance_In_Force :: enum u32 {
 }
 
 SETTING_CAPACITY :: 8 // The page and the kept record have room for 8 values.
-VALUE_NAME_CAPACITY :: 8 // The most values of one setting.
+VALUE_NAME_CAPACITY :: 9 // The most values of one setting: the scale has 9, from 1 to 2 by eighths.
 
 // Description: the name of a setting, the names of its values and the word
 // of the first one, for the window of `settings`. The exports take the
@@ -137,24 +167,24 @@ VALUE_NAME_CAPACITY :: 8 // The most values of one setting.
 Description :: struct {
 	name:        string, // The name in the exports and in the console: "subpixel_order".
 	title:       string, // For the window.
-	value_names: [VALUE_NAME_CAPACITY]string, // The name of each value, by its place.
+	value_names: [VALUE_NAME_CAPACITY]string, // The name of each value, by its place; "" past the values.
 	value_count: u32, // The values of the setting.
 	first_word:  u32, // The word of the value at the place 0: the word of a value is its place plus this.
 }
 
 // The description of each setting. The scale names each count of eighths
-// of its range; the border refuses the ones past the window bound
-// (scale_factor.scale_of_word), and the window of `settings` shows only the
-// others.
+// of its range, from 1 to 2; the border takes each of them
+// (scale_factor.scale_of_word).
 descriptions := [Setting]Description {
-	.Font            = {"font", "font", {"vector", "spleen", "", "", "", "", "", ""}, len(Font), 0},
-	.Subpixel_Order  = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", "", "", "", "", ""}, len(Subpixel_Order), 0},
-	.Pointer_Theme   = {"pointer_theme", "pointer theme", {"owner", "system", "", "", "", "", "", ""}, len(Pointer_Theme), 0},
-	.Grid_Fit        = {"grid_fit", "grid fit", {"on", "off", "", "", "", "", "", ""}, len(Grid_Fit), 0},
-	.Keyboard_Layout = {"keyboard_layout", "keyboard layout", {"us", "french", "", "", "", "", "", ""}, len(Keyboard_Layout), 0},
-	.Appearance      = {"appearance", "appearance", {"auto", "dark", "light", "", "", "", "", ""}, len(Appearance), 0},
-	.Scale           = {"scale", "scale", {"1.25", "1.375", "1.5", "1.625", "1.75", "1.875", "2", ""}, len(scale_factor.Scale), u32(scale_factor.Scale.Ten_Eighths)},
+	.Font            = {"font", "font", {"vector", "spleen", "", "", "", "", "", "", ""}, len(Font), 0},
+	.Subpixel_Order  = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", "", "", "", "", "", ""}, len(Subpixel_Order), 0},
+	.Pointer_Theme   = {"pointer_theme", "pointer theme", {"owner", "system", "", "", "", "", "", "", ""}, len(Pointer_Theme), 0},
+	.Grid_Fit        = {"grid_fit", "grid fit", {"on", "off", "", "", "", "", "", "", ""}, len(Grid_Fit), 0},
+	.Keyboard_Layout = {"keyboard_layout", "keyboard layout", {"us", "french", "", "", "", "", "", "", ""}, len(Keyboard_Layout), 0},
+	.Appearance      = {"appearance", "appearance", {"auto", "dark", "light", "", "", "", "", "", ""}, len(Appearance), 0},
+	.Scale           = {"scale", "scale", {"1", "1.125", "1.25", "1.375", "1.5", "1.625", "1.75", "1.875", "2"}, len(scale_factor.Scale), u32(min(scale_factor.Scale))},
 }
+#assert(len(scale_factor.Scale) <= VALUE_NAME_CAPACITY)
 
 // word_of_value gives the word of the value at a place of a setting. A
 // place past the values of the setting gives a word that its border
@@ -192,7 +222,7 @@ first_word_of :: proc "contextless" (setting: Setting) -> u32 {
 	case .Font, .Subpixel_Order, .Pointer_Theme, .Grid_Fit, .Keyboard_Layout, .Appearance:
 		return 0
 	case .Scale:
-		return u32(scale_factor.Scale.Ten_Eighths)
+		return u32(min(scale_factor.Scale))
 	}
 	return 0
 }
@@ -423,7 +453,7 @@ Choice :: struct {
 	grid_fit:            Grid_Fit,
 	keyboard_layout:     Keyboard_Layout,
 	appearance:          Appearance, // The setting of the appearance: Auto, Dark or Light.
-	scale:               scale_factor.Scale, // The scale factor of the desktop, up to scale_factor.WINDOW_BOUND.
+	scale:               scale_factor.Scale, // The scale factor of the desktop, from 1 to 2.
 	appearance_in_force: Appearance_In_Force, // The appearance that each process draws now.
 	zone_offset_minutes: i32, // The time zone that the principal chose, kept valid.
 	change_count:        u32, // The change count of the page at the copy.
@@ -480,8 +510,8 @@ value_valid :: proc "contextless" (setting: Setting, word: u32) -> bool {
 // refused, never read as the default: the caller keeps what it had, or
 // refuses the whole page or record. The choice of a refusal is the
 // defaults. The time zone, the appearance in force and the count are not
-// set. A scale word past the window bound is refused as a word that names
-// no scale: scale_factor.scale_of_word on the word says which.
+// set. A scale word outside 8 to 16 is refused as a word that names no
+// scale: scale_factor.scale_of_word on the word says which.
 //
 // The members come from the enumerations, and not from `descriptions`:
 // that table holds names, so it has addresses that a loader writes, and a
@@ -533,7 +563,6 @@ Set_Problem :: enum u8 {
 	None              = 0, // The choice holds each given value.
 	Nothing_Given     = 1, // The call gives no setting.
 	Bad_Value         = 2, // A value that names no member of its enum: `refused` says which setting.
-	Past_Window_Bound = 3, // A scale past scale_factor.WINDOW_BOUND, which no window fits yet.
 }
 
 // choice_of_arguments is the border of the export `set`: the choice of now
@@ -580,11 +609,6 @@ choice_of_arguments :: proc "contextless" (current: Choice, arguments: Set_Argum
 	}
 	if given_count == 0 {
 		return current, {}, .Nothing_Given
-	}
-	// A member of the scale that no window fits yet: the border of the
-	// page refuses it, so the export refuses it before any write.
-	if _, scale_problem := scale_factor.scale_of_word(u64(changed.scale)); scale_problem != .None {
-		return current, .Scale, .Past_Window_Bound
 	}
 	return changed, {}, .None
 }

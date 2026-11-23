@@ -47,8 +47,8 @@ Budget_Count :: struct {
 //
 // Example: the stated budget {working_memory_pages = 100, threads = 3,
 // window_width = 512, window_height = 256}, a module of 5 pages and one
-// import of 3 pages give 100 + 8 + (72 + 2 * 19) + 484 = 702 pages (the
-// window of 704 x 352 pixels of the screen at 1.375), the
+// import of 3 pages give 100 + 8 + (72 + 2 * 19) + 1024 = 1242 pages (the
+// window of 1024 x 512 pixels of the screen at 2), the
 // least processes and 3 threads.
 budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memory_sizes: []u64) -> (counted: Budget_Count, ok: bool) {
 	add :: proc(sum: ^u64, value: u64) -> bool {
@@ -76,13 +76,14 @@ budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memo
 	// The parts of a window are at most BUDGET_WINDOW_PART_LIMIT, so the
 	// product cannot pass the end of 64 bits; it is checked all the same.
 	// The parts are logical pixels: the pictures are their pixels of the
-	// screen at the largest scale that the setting takes, the window bound,
-	// so a window keeps its pictures at each scale that a principal sets.
+	// screen at the largest scale, 2, so a window pays its pictures at each
+	// scale that a principal sets: a budget is fixed at the start of its
+	// process, and no operation grows it.
 	if stated.window_width > BUDGET_WINDOW_PART_LIMIT || stated.window_height > BUDGET_WINDOW_PART_LIMIT {
 		return {}, false
 	}
-	screen_width := u64(scale_factor.screen_pixel_of_logical_pixel(i32(stated.window_width), scale_factor.WINDOW_BOUND))
-	screen_height := u64(scale_factor.screen_pixel_of_logical_pixel(i32(stated.window_height), scale_factor.WINDOW_BOUND))
+	screen_width := u64(scale_factor.screen_pixel_of_logical_pixel(i32(stated.window_width), scale_factor.LARGEST))
+	screen_height := u64(scale_factor.screen_pixel_of_logical_pixel(i32(stated.window_height), scale_factor.LARGEST))
 	pixels := multiply(screen_width, screen_height) or_return
 	picture_bytes := multiply(pixels, BUDGET_WINDOW_PICTURES * BUDGET_WINDOW_PIXEL_BYTES) or_return
 	counted.window_pages = module_pages_of_size(picture_bytes)

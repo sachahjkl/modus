@@ -63,7 +63,7 @@ HEIGHT :: 668
 // stack, its tables and its glyph memory. And the picture of the logical
 // size in which it draws by hand (interface.Hand_Picture): 800 x 668
 // pixels of 4 bytes, 522 pages. 1004 + 522 = 1526. The tool counts the
-// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// window at the largest scale (docs/MODULE_CONTRACT.md, "The budget that a
 // module asks for").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1526, window_width = WIDTH, window_height = HEIGHT}
 

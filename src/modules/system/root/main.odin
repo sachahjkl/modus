@@ -1194,6 +1194,8 @@ control_ring_serve :: proc "contextless" () {
 			continue
 		}
 		switch control_word {
+		case .Appearance_Next:
+			settings_appearance_next_start() // text_settings.odin
 		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started:
 			// This service sends these to the compositor, and takes none
 			// from it.

@@ -162,6 +162,14 @@ Command :: enum u32 {
 	// frame of the window with the background, and answers with
 	// Surface_Answer, Released. values: the surface serial.
 	Surface_Release  = 20,
+	// The budget of the window could not pay its surface at the scale of
+	// the compositor, after its release: the window declines that scale and
+	// draws nothing. The compositor draws the frame with the background,
+	// counts the window among those that declined the scale in force, and
+	// names the count in Settings_Changed; it sends no answer. The window
+	// offers the next serial at the next scale. values: the serial of the
+	// offer, one past the serial released, and the word of the scale.
+	Surface_Declined = 21,
 }
 
 // The place of the capture flag in the values of Client_Add.
@@ -412,7 +420,9 @@ Event_Kind :: enum u32 {
 	// The settings of the owner changed (modus:contract/settings): next_event
 	// already gave the new font to src/library/modus/graphics; the process draws its
 	// window again. values: the change count of the settings page, the word
-	// of the scale of the compositor, to which the window rescales.
+	// of the scale of the compositor, to which the window rescales, and the
+	// count of the windows that declined that scale (Surface_Declined), up
+	// to WINDOWS_DECLINED_LIMIT.
 	Settings_Changed = 3,
 	// The palette goes to an element of this window: the compositor raised
 	// it. values[0]: the act_name_hash of the act name. The window layer
@@ -487,6 +497,11 @@ Control :: enum u32 {
 	// measure of the start of a window
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
 	Client_Started          = 7,
+	// compositor to root: the tile Appearance of the Control Center was
+	// pressed. The root service starts `settings` for the pass of the next
+	// appearance (settings.Pass.Appearance_Next), unless a process
+	// `settings` runs: that one is the one writer of the page. No values.
+	Appearance_Next         = 8,
 }
 
 // The ring from the input service to the compositor.
@@ -540,6 +555,21 @@ BUTTON_LEFT :: 1 // The bit of `Event.buttons` set while the left button is down
 BUTTON_RIGHT :: 2 // The bit set while the right button is down.
 
 SURFACE_LIMIT :: 2048 // The largest width and height.
+
+// The most windows that a Settings_Changed counts as declining the scale:
+// more than a compositor holds, so a larger word is no count.
+WINDOWS_DECLINED_LIMIT :: 64
+
+// The windows that declined the scale in force, as the newest
+// Settings_Changed of the compositor named them: the window of settings
+// shows a notice while it is not 0.
+windows_declined_scale: int
+
+// windows_that_declined_the_scale gives the windows that declined the scale
+// in force: their budget does not pay a surface at it.
+windows_that_declined_the_scale :: proc "contextless" () -> int {
+	return windows_declined_scale
+}
 
 // The least size of a resizable surface: the title bar holds the close
 // button and a part of the title.
@@ -619,6 +649,7 @@ Event :: struct {
 	copy_action:    Copy_Action, // Copy_Asked: Copy (Ctrl+C) or Cut (Ctrl+X).
 	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A process that shows the key names it (key_shown).
 	scale: scale_factor.Scale, // Settings_Changed: the scale of the compositor.
+	windows_declined: int, // Settings_Changed: the windows that declined that scale, 0 to WINDOWS_DECLINED_LIMIT.
 	surface_answer: Surface_Answer_Kind, // Surface_Answer: the answer.
 	surface_serial: u64, // Surface_Answer: the serial that it names.
 }
@@ -1132,6 +1163,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		if read.kind == .Settings_Changed {
 			_ = text_settings_apply()
 			rescale_take(window, {kind = .Scale_Named, scale = read.scale})
+			windows_declined_scale = read.windows_declined
 		}
 		if read.kind == .Surface_Answer {
 			kind: Rescale_Input_Kind
@@ -1211,13 +1243,14 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		// so that a sum of them stays far inside an int.
 		event.wheel = int(clamp(i64(record.values[key_path.POINTER_RECORD_WHEEL]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 	case .Settings_Changed:
-		// The scale of the compositor: a scale up to the window bound,
-		// never a word that a window would rescale to.
+		// The scale of the compositor: a member of the range, never a word
+		// that names no scale for a window to rescale to.
 		scale, problem := scale_factor.scale_of_word(record.values[1])
-		if problem != .None {
+		if problem != .None || record.values[2] > WINDOWS_DECLINED_LIMIT {
 			return {}, false
 		}
 		event.scale = scale
+		event.windows_declined = int(record.values[2])
 	case .Surface_Answer:
 		answer, answer_ok := surface_answer_of_word(record.values[0])
 		if !answer_ok || record.values[1] == 0 {

@@ -91,7 +91,7 @@ the_zone_on_the_page :: proc(t: ^testing.T) {
 // The kept record: a word that names no value of its setting refuses the
 // whole record, at each edge, and nothing of it is read; a record of the
 // version before and a short record are refused; a zone that is not valid
-// reads as UTC. A scale word past the window bound refuses the record as a
+// reads as UTC. A scale word outside 8 to 16 refuses the record as a
 // word that names no scale. A record of the six settings before the scale
 // keeps them and reads the scale 1.25. The record of a choice reads back
 // as that choice.
@@ -111,7 +111,7 @@ the_kept_record :: proc(t: ^testing.T) {
 		testing.expect_value(t, zone, 0)
 	}
 	kept.values[Setting.Font] = u32(Font.Spleen)
-	refused_scales := [?]u32{0, scale_factor.EIGHTHS_OF_ONE, u32(scale_factor.Scale.Ten_Eighths) - 1, u32(scale_factor.WINDOW_BOUND) + 1, u32(scale_factor.Scale.Sixteen_Eighths), u32(scale_factor.Scale.Sixteen_Eighths) + 1, max(u32)}
+	refused_scales := [?]u32{0, scale_factor.EIGHTHS_OF_ONE - 1, u32(scale_factor.Scale.Sixteen_Eighths) + 1, max(u32)}
 	for word in refused_scales {
 		kept.values[Setting.Scale] = word
 		read_choice, _, ok := kept_read(bytes)
@@ -160,8 +160,8 @@ the_kept_record :: proc(t: ^testing.T) {
 
 // refused_words_of gives the words that the border of a setting must
 // refuse: one past its last value, the next one, a word past 255 and the
-// largest word; for the scale also 0, 1, the scale 1, one under its first
-// word and each count past the window bound.
+// largest word; for the scale also 0, 1, one under its first word (7) and
+// one past its last (17).
 @(private = "file")
 refused_words_of :: proc(setting: Setting, words: ^[16]u32) -> int {
 	count := 0
@@ -170,10 +170,7 @@ refused_words_of :: proc(setting: Setting, words: ^[16]u32) -> int {
 		count^ += 1
 	}
 	if setting == .Scale {
-		for word in ([?]u32{0, 1, scale_factor.EIGHTHS_OF_ONE, u32(scale_factor.Scale.Ten_Eighths) - 1}) {
-			add(words, &count, word)
-		}
-		for word in u32(scale_factor.WINDOW_BOUND) + 1 ..= u32(scale_factor.Scale.Sixteen_Eighths) + 1 {
+		for word in ([?]u32{0, 1, scale_factor.EIGHTHS_OF_ONE - 1, u32(scale_factor.Scale.Sixteen_Eighths) + 1}) {
 			add(words, &count, word)
 		}
 	} else {
@@ -188,7 +185,7 @@ refused_words_of :: proc(setting: Setting, words: ^[16]u32) -> int {
 
 // A word that a setting does not have refuses the page: one past the last
 // value of each setting, a word past 255, the largest word, and for the
-// scale each count outside 10 to the window bound. The choice is the
+// scale each count outside 8 to 16. The choice is the
 // defaults, so no reader acts on the word. The appearance in force past its
 // last member refuses the page too. Each value of each setting then reads
 // back as its member.
@@ -223,9 +220,6 @@ a_value_out_of_its_setting :: proc(t: ^testing.T) {
 	for setting in Setting {
 		for place in 0 ..< int(descriptions[setting].value_count) {
 			word := word_of_value(setting, place)
-			if setting == .Scale && word > u32(scale_factor.WINDOW_BOUND) {
-				continue
-			}
 			testing.expectf(t, value_valid(setting, word), "the word %d of %v is refused", word, setting)
 			values := values_of(choice_default())
 			values[setting] = word
@@ -241,7 +235,7 @@ a_value_out_of_its_setting :: proc(t: ^testing.T) {
 // setting and a word past its values name no value, and give no name.
 @(test)
 the_place_of_a_word :: proc(t: ^testing.T) {
-	_, under_ok := value_place_of_word(.Scale, u32(scale_factor.Scale.Ten_Eighths) - 1)
+	_, under_ok := value_place_of_word(.Scale, u32(min(scale_factor.Scale)) - 1)
 	testing.expect(t, !under_ok)
 	_, zero_ok := value_place_of_word(.Scale, 0)
 	testing.expect(t, !zero_ok)
@@ -253,8 +247,12 @@ the_place_of_a_word :: proc(t: ^testing.T) {
 	testing.expect_value(t, value_name_of(.Font, len(Font)), "")
 	place, ok := value_place_of_word(.Scale, u32(scale_factor.Scale.Eleven_Eighths))
 	testing.expect(t, ok)
-	testing.expect_value(t, place, 1)
+	testing.expect_value(t, place, 3)
 	testing.expect_value(t, value_name_of(.Scale, u32(scale_factor.Scale.Eleven_Eighths)), "1.375")
+	first, first_ok := value_place_of_word(.Scale, u32(scale_factor.Scale.Eight_Eighths))
+	testing.expect(t, first_ok && first == 0)
+	testing.expect_value(t, value_name_of(.Scale, u32(scale_factor.Scale.Eight_Eighths)), "1")
+	testing.expect_value(t, value_name_of(.Scale, u32(scale_factor.Scale.Sixteen_Eighths)), "2")
 	testing.expect_value(t, value_name_of(.Font, u32(Font.Spleen)), "spleen")
 }
 
@@ -361,7 +359,7 @@ the_arguments_of_set_refuse_a_value_past_the_enum :: proc(t: ^testing.T) {
 		arguments.keyboard_layout = Keyboard_Layout(word)
 		append(&past, Case{arguments, .Keyboard_Layout, .Bad_Value})
 	}
-	for word in ([?]u8{0, 9, u8(max(scale_factor.Scale)) + 1, max(u8) - 1}) {
+	for word in ([?]u8{scale_factor.EIGHTHS_OF_ONE - 1, u8(max(scale_factor.Scale)) + 1, max(u8) - 1}) {
 		arguments := nothing_given()
 		arguments.scale = scale_factor.Scale(word)
 		append(&past, Case{arguments, .Scale, .Bad_Value})
@@ -377,12 +375,6 @@ the_arguments_of_set_refuse_a_value_past_the_enum :: proc(t: ^testing.T) {
 	mixed.font, mixed.appearance = .Spleen, Appearance(3)
 	append(&past, Case{mixed, .Appearance, .Bad_Value})
 	append(&past, Case{nothing_given(), {}, .Nothing_Given})
-	beyond := nothing_given()
-	beyond.scale = .Twelve_Eighths
-	append(&past, Case{beyond, .Scale, .Past_Window_Bound})
-	largest := nothing_given()
-	largest.scale = max(scale_factor.Scale)
-	append(&past, Case{largest, .Scale, .Past_Window_Bound})
 	for item in past {
 		changed, refused, problem := choice_of_arguments(current, item.arguments)
 		testing.expectf(t, problem == item.problem && refused == item.refused, "%v gives %v of %v, not %v of %v", item.arguments, problem, refused, item.problem, item.refused)
@@ -602,4 +594,31 @@ the_language_list_in_the_kept_record :: proc(t: ^testing.T) {
 	read_choice, _, read_ok := kept_read(bytes)
 	testing.expect(t, read_ok)
 	testing.expect_value(t, read_choice.languages.count, LANGUAGE_LIST_CAPACITY)
+}
+// The pass of the context: each word that names no pass is refused (3, one
+// past the last; 255; the largest word); each pass comes back from its
+// word.
+@(test)
+the_pass_of_a_word :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(max(Pass)) + 1, 255, max(u64)}) {
+		_, ok := pass_of_word(word)
+		testing.expectf(t, !ok, "the word %d names a pass", word)
+	}
+	for pass in Pass {
+		read, ok := pass_of_word(u64(pass))
+		testing.expect(t, ok && read == pass)
+	}
+}
+
+// The tile cycles the three appearances: three presses come back to the
+// first, and no two presses in a row give one appearance.
+@(test)
+the_next_appearance_cycles :: proc(t: ^testing.T) {
+	testing.expect_value(t, appearance_next(.Auto), Appearance.Dark)
+	testing.expect_value(t, appearance_next(.Dark), Appearance.Light)
+	testing.expect_value(t, appearance_next(.Light), Appearance.Auto)
+	for appearance in Appearance {
+		testing.expect(t, appearance_next(appearance) != appearance)
+		testing.expect_value(t, appearance_next(appearance_next(appearance_next(appearance))), appearance)
+	}
 }

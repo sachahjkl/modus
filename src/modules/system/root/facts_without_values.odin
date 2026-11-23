@@ -8,6 +8,9 @@ package root
 @(log_fact = "root: no debug image: a stop report names each frame by its module and its offset")
 Debug_Image_Absent :: struct {}
 
+@(log_fact = "root: the next appearance of the Control Center starts no pass: a window of settings runs, and it is the one writer of the settings page")
+Appearance_Next_Refused_Settings_Runs :: struct {}
+
 @(log_fact = "root: the standard VGA does not hold the framebuffer of the firmware and its display registers: the compositor writes the screen page that the display shows")
 Standard_Vga_Without_Framebuffer :: struct {}
 

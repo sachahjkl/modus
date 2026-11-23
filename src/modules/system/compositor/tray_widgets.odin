@@ -6,6 +6,7 @@
 package compositor
 
 import "internal:compositor/bar"
+import "internal:compositor/palette"
 import "modus:contract/accessibility"
 import "modus:contract/date"
 import "modus:contract/ring"
@@ -147,8 +148,10 @@ tray_widgets_press :: proc "contextless" (x, y: int) -> bool {
 // tray_part_do does the act of a part of a card, from a press or from Enter.
 tray_part_do :: proc "contextless" (part: bar.Tray_Part) {
 	switch part {
-	case .None, .Appearance_Tile, .Display_Tile:
-		// These tiles say a state: they take no press.
+	case .None, .Display_Tile:
+		// These parts say a state: they take no press.
+	case .Appearance_Tile:
+		appearance_next_ask()
 	case .Bar_Edge_Tile:
 		switch bar_layout.edge {
 		case .Top:
@@ -471,4 +474,32 @@ calendar_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, widt
 	two_digits(&uptime_writer, seconds % 60)
 	interface.draw_text_right(table, grid_x + grid_width - bar.CALENDAR_GRID_INSET, foot_y, system.written(&uptime_writer), graphics.colors.dim)
 	_ = height
+}
+// The act name of the button of the appearance in force in the window of
+// settings (src/modules/system/settings, value_button).
+APPEARANCE_ACT_NAME :: "settings.set:appearance"
+
+// appearance_next_ask takes a press on the tile Appearance: the next
+// appearance, auto, dark, light. The page has one writer, the process
+// settings: with its window open, the compositor raises that window and
+// puts the focus on the appearance in force, where Enter on another value
+// sets it; with none, it asks the root service to start settings for the
+// pass of the next appearance, which writes the page. The tile shows the
+// new appearance when the page changes.
+appearance_next_ask :: proc "contextless" () {
+	hash := display.act_name_hash(APPEARANCE_ACT_NAME)
+	for position := order_count - 1; position >= 0; position -= 1 {
+		index := order[position]
+		if palette.act_name_set_has(&clients[index].act_names, hash) {
+			raise(position)
+			send(&clients[index], .Go_To, {0 = u64(hash)})
+			system.log_fact(.Info, Appearance_Tile_Goes_To_Settings{})
+			return
+		}
+	}
+	if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Appearance_Next)}) {
+		system.log_fact(.Warning, Appearance_Tile_Ring_Full{})
+		return
+	}
+	system.log_fact(.Info, Appearance_Tile_Asks_Next{})
 }
