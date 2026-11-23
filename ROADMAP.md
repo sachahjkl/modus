@@ -47,6 +47,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A remote display of a 4K, 5K or 8K screen.** The protocol and the service take a screen up to 7680 × 4320, and the stated budget of `remote_display` pays 2560 × 1440; a larger screen needs a budget past the largest budget of a process, which the plan of the principal gives once budgets leave the code. [Design](src/md/features/remote_display.md)
+- **The address of the network from the network.** The network service takes the prefix length of its interface as a field and checks it; DHCP, or the plan, then gives the address, the gateway and the prefix of a real network in place of the network of QEMU.
+
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)

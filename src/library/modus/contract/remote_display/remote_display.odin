@@ -38,15 +38,18 @@ LISTEN_PORT :: 7101
 // that offers another one fails the handshake.
 APPLICATION_PROTOCOL :: "modus-remote-display"
 
-// The viewers that the service holds at one time. A third client gets no
-// record until one ends.
-CONNECTION_CAPACITY :: 2
+// The viewers that the service holds at one time: a person on two
+// machines, agents and a colleague see the screen together. The viewer
+// past this count gets no record until one ends.
+CONNECTION_CAPACITY :: 8
 
-// The largest screen: the reference screen of the system
-// (src/md/features/desktop_to_browser.md). A record that names a larger
-// one is refused.
-SCREEN_WIDTH_LIMIT :: 1920
-SCREEN_HEIGHT_LIMIT :: 1080
+// The largest screen that the protocol carries: 8K UHD, so 1440p, 4K and
+// 5K screens pass. A record that names a larger one is refused. This bounds
+// the words of the protocol only: the memory of the service follows the
+// screen in force, and the bounds of a viewer frame follow the screen of
+// its session (viewer_frame_piece_limit, viewer_frame_bytes_limit).
+SCREEN_WIDTH_LIMIT :: 7680
+SCREEN_HEIGHT_LIMIT :: 4320
 
 // The largest screen piece. A rectangle of the damage goes as screen pieces of this size at
 // most, from its top left corner, row after row.
@@ -54,9 +57,9 @@ SCREEN_PIECE_WIDTH :: 128
 SCREEN_PIECE_HEIGHT :: 64
 SCREEN_PIECE_PIXEL_LIMIT :: SCREEN_PIECE_WIDTH * SCREEN_PIECE_HEIGHT
 
-// The most screen pieces of one viewer frame: a whole screen of the largest size, with the
-// partial screen pieces of 8 rectangles that do not meet.
-VIEWER_FRAME_PIECE_LIMIT :: 1024
+// The rectangles of one viewer frame at most: the damage set of the service
+// (interface.DAMAGE_CAPACITY), whose rectangles do not meet.
+VIEWER_FRAME_RECTANGLE_LIMIT :: 8
 
 // The application error code of a CONNECTION_CLOSE or a RESET_STREAM of a
 // connection to the service.
@@ -286,16 +289,37 @@ POINTER_PICTURE_MIN_BODY :: size_of(Pointer_Picture_Header) + POINTER_SIZE_MINIM
 POINTER_PICTURE_BODY_LIMIT :: size_of(Pointer_Picture_Header) + POINTER_SIZE_MAXIMUM * POINTER_SIZE_MAXIMUM * 4
 SERVICE_BODY_LIMIT :: SCREEN_PIECE_BODY_LIMIT
 #assert(POINTER_PICTURE_BODY_LIMIT <= SERVICE_BODY_LIMIT)
-// The bytes of the screen pieces of one viewer frame at most: each pixel of the largest
-// screen in its worst code, and the headers of the most screen pieces.
-VIEWER_FRAME_BYTES_LIMIT :: SCREEN_WIDTH_LIMIT * SCREEN_HEIGHT_LIMIT * CODED_PIXEL_LIMIT + VIEWER_FRAME_PIECE_LIMIT * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header))
+// viewer_frame_piece_limit gives the most screen pieces of one viewer frame
+// of a screen: the pieces of the whole screen, and the partial pieces of
+// VIEWER_FRAME_RECTANGLE_LIMIT rectangles that do not meet. A rectangle of
+// w x h has at most (w / 128 + 1) * (h / 64 + 1) pieces: its area, then a
+// row and a column of partial pieces and a corner, each of which the area
+// of the screen does not count. The sum of the areas is at most the screen.
+viewer_frame_piece_limit :: proc "contextless" (screen: Screen) -> u64 {
+	across := u64((screen.width + SCREEN_PIECE_WIDTH - 1) / SCREEN_PIECE_WIDTH)
+	down := u64((screen.height + SCREEN_PIECE_HEIGHT - 1) / SCREEN_PIECE_HEIGHT)
+	return across * down + VIEWER_FRAME_RECTANGLE_LIMIT * (across + down + 1)
+}
+
+// viewer_frame_bytes_limit gives the bytes of the screen pieces of one
+// viewer frame of a screen at most: each pixel of the screen in its worst
+// code, and the headers of the most screen pieces.
+viewer_frame_bytes_limit :: proc "contextless" (screen: Screen) -> u64 {
+	return u64(screen.width) * u64(screen.height) * CODED_PIXEL_LIMIT + viewer_frame_piece_limit(screen) * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header))
+}
+
+// The largest screen, as a Screen.
+SCREEN_LARGEST :: Screen{SCREEN_WIDTH_LIMIT, SCREEN_HEIGHT_LIMIT}
+// The pieces of a viewer frame of the largest screen fit the count of a
+// Viewer_Frame_Start.
+#assert((SCREEN_WIDTH_LIMIT / SCREEN_PIECE_WIDTH + 1) * (SCREEN_HEIGHT_LIMIT / SCREEN_PIECE_HEIGHT + 1) * (VIEWER_FRAME_RECTANGLE_LIMIT + 1) < 1 << 32)
 
 // Why a border refused a record.
 Record_Problem :: enum u8 {
 	None,
 	Unknown_Kind, // The kind names no member, or None.
 	Wrong_Direction, // A kind of the other direction.
-	Past_Bound, // A length past the bound of the direction, a viewer frame past VIEWER_FRAME_BYTES_LIMIT or VIEWER_FRAME_PIECE_LIMIT.
+	Past_Bound, // A length past the bound of the direction, a viewer frame past viewer_frame_bytes_limit or viewer_frame_piece_limit of its screen.
 	Wrong_Length, // A length that is not the length of the kind, or a body that is not that length.
 	Outside_Screen, // A rectangle or a place outside the screen, or a screen past its limit.
 	Empty_Rectangle, // A rectangle of width or height 0, or a screen piece larger than SCREEN_PIECE_WIDTH x SCREEN_PIECE_HEIGHT.
@@ -523,7 +547,7 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 		switch {
 		case start.serial == 0 || start.reserved != 0:
 			return {}, .Bad_Field
-		case start.screen_piece_count > VIEWER_FRAME_PIECE_LIMIT || start.bytes > VIEWER_FRAME_BYTES_LIMIT:
+		case u64(start.screen_piece_count) > viewer_frame_piece_limit(screen) || start.bytes > viewer_frame_bytes_limit(screen):
 			return {}, .Past_Bound
 		case u64(start.screen_piece_count) * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header)) > start.bytes:
 			// Each screen piece has its two headers at least.

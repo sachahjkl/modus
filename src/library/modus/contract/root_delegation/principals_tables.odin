@@ -16,7 +16,7 @@ import "modus:contract/enum_word"
 // The bytes of a persisted table, with its tag: disk_process.TABLE_SIZE,
 // which the core checks with an assertion. A contract package does not
 // import that support package.
-TABLE_BYTES :: 1168
+TABLE_BYTES :: 2288
 
 // The bytes of the name of the storage service in a Table_Call_Input.
 STORAGE_MODULE_NAME_BYTES :: 32

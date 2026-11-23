@@ -137,6 +137,35 @@ a_row_out_of_front_holds_no_view_and_no_input :: proc(t: ^testing.T) {
 	testing.expect(t, client_grant_holds(&clients, 0, 4, .View) && client_grant_holds(&clients, 0, 4, .Input))
 }
 
+// The table holds more keys than the clients of one person: the ninth key,
+// the thirty-third key and each key up to the last row take a free row and
+// hold their grant; the key past the last row finds no free row. The table
+// fits the pages that the root service makes for it, and one principal
+// holds half of the rows, so two principals fill it together.
+@(test)
+client_table_holds_many_clients_and_refuses_one_past_the_last_row :: proc(t: ^testing.T) {
+	testing.expect(t, CLIENT_CAPACITY >= 64, "the client table holds fewer than 64 keys")
+	testing.expect(t, CLIENT_ROWS_OF_ONE_PRINCIPAL >= 8, "one principal holds fewer than 8 keys")
+	testing.expect_value(t, CLIENT_ROWS_OF_ONE_PRINCIPAL * 2, CLIENT_CAPACITY)
+	testing.expect(t, size_of(Client_Table) <= CLIENT_TABLE_PAGES * 4096)
+	testing.expect(t, size_of(Client_Table) > (CLIENT_TABLE_PAGES - 1) * 4096, "the client table has a page that it does not use")
+	testing.expect(t, CONNECTION_CAPACITY >= 32, "the remote service holds fewer than 32 connections")
+	clients: [CLIENT_CAPACITY]Client
+	for index in 0 ..< CLIENT_CAPACITY {
+		key := [32]u8{0 = 0x50, 1 = u8(index), 2 = u8(index >> 8)}
+		action, place := client_restore_decision(&clients, key, 0)
+		testing.expectf(t, action == .Take_Row && place == index, "key %d: %v at %d", index + 1, action, place)
+		clients[place] = {key = key, principal = 0, serial = u64(index + 1), uses = client_uses_word({.Calls})}
+		testing.expectf(t, client_grant_holds(&clients, place, u64(index + 1), .Calls), "key %d holds no grant", index + 1)
+	}
+	for edge in ([?]int{8, 32, CLIENT_CAPACITY - 1}) {
+		testing.expect_value(t, client_find(&clients, clients[edge].key), edge)
+	}
+	action, place := client_restore_decision(&clients, [32]u8{0 = 0x60}, 0)
+	testing.expect(t, action == .No_Free_Row && place == -1)
+	testing.expect(t, !client_grant_holds(&clients, CLIENT_CAPACITY, 1, .Calls))
+}
+
 // The code of the end of a connection whose grant ended has its name.
 @(test)
 revoked_has_its_name :: proc(t: ^testing.T) {

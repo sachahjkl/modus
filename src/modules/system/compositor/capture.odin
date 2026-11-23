@@ -147,14 +147,25 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 			capture_end("the service closed it")
 		}
 	case .Capture_Viewers:
-		if capture.client != index || record.values[0] > display.CAPTURE_VIEWER_CAPACITY {
+		count, input, first, last, part_ok := display.capture_viewers_part_check(record.values)
+		if capture.client != index || !part_ok {
 			capture_refuse(client, "a list of viewers past its capacity, or with no capture face")
 			return
 		}
-		capture.viewer_count = int(record.values[0])
-		capture.viewer_input = record.values[1] & (1 << display.CAPTURE_VIEWER_CAPACITY - 1)
+		capture.viewer_count = count
+		capture.viewer_input = input
 		for &key, place in capture.viewer_keys {
-			key = place < capture.viewer_count ? record.values[2 + place] : 0
+			switch {
+			case place >= count:
+				key = 0
+			case place >= first && place < first + display.CAPTURE_VIEWER_KEYS_OF_A_PART:
+				key = record.values[3 + place - first]
+			}
+		}
+		// The mark and its list change once, with the last part: a part
+		// before it names the keys of its viewers only.
+		if !last {
+			return
 		}
 		was_open := capture_viewer_popover.open
 		old_count := capture_viewer_popover.count

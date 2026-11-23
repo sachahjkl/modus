@@ -211,11 +211,31 @@ Do not use: ARP cache entry, neighbour entry.
 
 The gateway is the machine of the link that carries IPv4 packets to other networks: 10.0.2.2 on the first machine.
 
-The network service sends each datagram whose address is not on its link (10.0.2.0/24) to the hardware address of the gateway. With the network of the tests, the gateway is the peer of the modus tool; with the user network of QEMU, it is libslirp. The host reaches the machine from the address of the gateway, so the listen grant of the remote service admits that address only. The gateway is not a routing table: the network service has one route.
+The network service sends each datagram whose address is not on its link (10.0.2.0/24 on the network of the tests: the prefix length of the interface decides it) to the hardware address of the gateway. With the network of the tests, the gateway is the peer of the modus tool; with the user network of QEMU, it is libslirp. The host reaches the machine from the address of the gateway, so the listen grant of the remote service admits that address only. The gateway is not a routing table: the network service has one route.
 
 The design: `docs/NETWORK.md`, "The parts".
 
 Do not use: router, default route.
+
+### Prefix length
+
+The prefix length is the count of the first bits of an IPv4 address that name its network: 24 for 10.0.2.15 on the network of the tests.
+
+It is a field of the address of the interface of the network service (`network.Interface_Address`), beside the local address and the gateway. The mask of the link, the next hop of each address and the broadcast address come from it, so an address on the link is reached by its hardware address, and any other address through the gateway. A prefix of 0 or past 32 bits, a local address that is the network or the broadcast address of its prefix, and a gateway off the link are refused at the start of the service. A prefix length is not a mask written in the code.
+
+The design: `docs/NETWORK.md`, "The parts".
+
+Do not use: netmask, subnet mask.
+
+### Window scale
+
+The window scale is the shift of the window field of the TCP segments of one side, which each side offers in its SYN (RFC 7323).
+
+The window field has 16 bits, so with no scale a window is 65 535 bytes at most. When both SYNs carry the option, the window of each later segment is its field shifted left by the scale of its sender, up to about 1 GiB; the TCP library gives the least shift whose window holds its receive buffer. When one SYN has no option, no window is scaled in either way. The window of a SYN is never scaled. A window scale is not a change of the size of the receive buffer: the process chooses that buffer.
+
+The design: `docs/NETWORK.md`, "The TCP library".
+
+Do not use: window scaling factor, WSCALE.
 
 ### Peer
 

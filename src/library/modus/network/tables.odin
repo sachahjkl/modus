@@ -235,7 +235,10 @@ source_valid :: proc "contextless" (address: u32, local: u32, mask: u32) -> bool
 	return true
 }
 
-ARP_CAPACITY :: 16 // The neighbors that the network service remembers.
+// The neighbors that the network service remembers: the hosts of a whole
+// /24 that talk to the machine fit. A full table replaces its oldest entry
+// that no request waits for (neighbor_learn).
+ARP_CAPACITY :: 256
 
 // One address of the link and its hardware address.
 Neighbor :: struct {

@@ -121,9 +121,18 @@ viewer_popover_multiple_viewers_and_invalid_indexes :: proc(t: ^testing.T) {
 	testing.expect(t, !popover.open)
 
 	// Over-capacity sync clamps cleanly to VIEWER_CAPACITY.
-	many := [VIEWER_CAPACITY + 2]u64{k0, k1, k2, make_key_head(0xDE, 0xAD, 0xBE, 0xEF), 1, 2}
-	testing.expect(t, viewer_popover_sync(&popover, true, VIEWER_CAPACITY + 2, many[:], 0xFF))
+	many: [VIEWER_CAPACITY + 2]u64
+	for &key, index in many {
+		key = make_key_head(0xDE, 0xAD, u8(index), 0xEF)
+	}
+	testing.expect(t, viewer_popover_sync(&popover, true, VIEWER_CAPACITY + 2, many[:], 0xFFFF))
 	testing.expect_value(t, popover.count, VIEWER_CAPACITY)
+	testing.expect_value(t, popover.viewers[VIEWER_CAPACITY - 1].key_head, many[VIEWER_CAPACITY - 1])
+	// The last of 8 viewers has its row and its button, inside the card.
+	_, _, _, _, last_ok := viewer_popover_disconnect_rect(900, 120, 1280, VIEWER_CAPACITY, VIEWER_CAPACITY - 1)
+	testing.expect(t, last_ok)
+	_, _, _, _, past_ok := viewer_popover_disconnect_rect(900, 120, 1280, VIEWER_CAPACITY, VIEWER_CAPACITY)
+	testing.expect(t, !past_ok)
 }
 
 @(test)

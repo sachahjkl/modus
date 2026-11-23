@@ -359,7 +359,7 @@ options_that_break_a_rule :: proc(t: ^testing.T) {
 // inject_damaged puts one segment from A to B on the link, with its
 // checksum written, then one bit of it changed: what the wire can do.
 inject_damaged :: proc(link: ^Link, header: Header, data: []u8, changed_byte: int) {
-	offset := header.mss != 0 ? HEADER_MSS : HEADER
+	offset := header_size(header)
 	flying := Flying{at = link.now, to = 1, from = ADDRESS_A, length = offset + len(data)}
 	copy(flying.bytes[offset:], data)
 	header_write(flying.bytes[:], ADDRESS_A, ADDRESS_B, header, flying.length)

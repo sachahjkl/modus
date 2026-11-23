@@ -64,11 +64,15 @@ import "modus:quic_server"
 import "modus:random"
 import "modus:system"
 
-// The copy of the screen of the largest screen, the two pictures and the
-// header of the capture face, the QUIC connections and their streams, and
-// the page tables of these mappings:
-// 2025 + 4051 + about 300 + 24 = 6400.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6400, processes = 1, threads = 1}
+// The memory follows the screen in force: the copy of the screen, the two
+// pictures and the header of the capture face, the 8 QUIC connections and
+// their streams (about 437 pages), and the page tables of these mappings.
+// The budget states a screen of 2560 x 1440: 3600 + 7201 + 437 + about 60 =
+// 11298. A screen of 1920 x 1080 uses 6513 pages of it. A larger screen,
+// as 3840 x 2160 (24 739 pages) or 7680 x 4320 (about 98 000 pages), needs
+// a larger budget than the largest budget of a process: the face is then
+// refused with its line, and the service runs on.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11300, processes = 1, threads = 1}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -128,6 +132,14 @@ RECORD_READ_LIMIT :: 10_000
 
 RECEIVE_PLACES :: 64
 #assert(CAPACITY <= quic_server.MAX_CAPACITY)
+// Each viewer has the place of its record in the capture header and the
+// list of the bar.
+#assert(CAPACITY <= display.CAPTURE_VIEWER_CAPACITY)
+// A viewer frame takes the rectangles of the damage of its viewer.
+#assert(interface.DAMAGE_CAPACITY <= protocol.VIEWER_FRAME_RECTANGLE_LIMIT)
+// The QUIC tables and a copy and the pictures of a screen of 2560 x 1440
+// fit the stated budget.
+#assert(TABLE_PAGES + (2560 * 1440 * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE * 3 + display.CAPTURE_HEADER_PAGES <= MODULE_BUDGET.working_memory_pages)
 
 // The records to the compositor that its ring did not take: the commands of
 // the capture face, and the keys and the pointer of the viewers. While it is
@@ -175,6 +187,7 @@ Capture_State :: enum u8 {
 	Closed, // No viewer: no face.
 	Asking, // Capture_Size_Ask went; the size did not come.
 	Open, // The memory went with Capture_Open.
+	Refused, // The screen in force is past the protocol, or its memory past the budget: closed until no viewer is bound.
 }
 capture_state: Capture_State
 screen: protocol.Screen
@@ -378,21 +391,25 @@ viewers_tell :: proc "contextless" () {
 	if capture_state != .Open {
 		return
 	}
-	record := ring.Record{kind = u32(display.Command.Capture_Viewers)}
+	keys: [display.CAPTURE_VIEWER_CAPACITY]u64
+	input: u64
 	count := 0
 	for viewer in viewers {
 		if !viewer.bound || count == display.CAPTURE_VIEWER_CAPACITY {
 			continue
 		}
 		head := viewer.key
-		record.values[2 + count] = transmute(u64)[8]u8{head[0], head[1], head[2], head[3], head[4], head[5], head[6], head[7]}
+		keys[count] = transmute(u64)[8]u8{head[0], head[1], head[2], head[3], head[4], head[5], head[6], head[7]}
 		if viewer.input {
-			record.values[1] |= 1 << u64(count)
+			input |= 1 << u64(count)
 		}
 		count += 1
 	}
-	record.values[0] = u64(count)
-	compositor_send(record)
+	parts: [display.CAPTURE_VIEWER_CAPACITY / display.CAPTURE_VIEWER_KEYS_OF_A_PART]ring.Record
+	part_count := display.capture_viewers_parts(keys[:count], input, &parts)
+	for part in parts[:part_count] {
+		compositor_send(part)
+	}
 }
 
 // viewer_disconnect_by_key_head ends the bound viewer whose 8-byte key prefix
@@ -931,6 +948,24 @@ capture_events :: proc "contextless" () {
 	system.wake_writer(&window.completions)
 }
 
+// mirror_pages_of gives the pages of the copy of a screen.
+mirror_pages_of :: proc "contextless" (width, height: u64) -> u64 {
+	return (width * height * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+}
+
+// mirror_release gives back the copy of the screen: its pages return to the
+// budget of this process when no viewer looks, or before a copy of another
+// size.
+mirror_release :: proc "contextless" () {
+	if mirror != nil {
+		system.memory_unmap(mirror)
+	}
+	if mirror_memory != 0 {
+		system.close(mirror_memory)
+	}
+	mirror, mirror_memory, mirror_pixels, mirror_valid = nil, 0, 0, false
+}
+
 // capture_size_take makes the memory of the capture face for the size of
 // the screen, gives it to the compositor, and makes the copy of the screen.
 capture_size_take :: proc "contextless" (width, height: u64) {
@@ -938,45 +973,56 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 		return
 	}
 	if width == 0 || height == 0 || width > protocol.SCREEN_WIDTH_LIMIT || height > protocol.SCREEN_HEIGHT_LIMIT {
-		system.log_fact(.Info, Screen_Past_Reference{width = width, height = height})
-		capture_state = .Closed
+		system.log_fact(.Info, Screen_Past_Largest{width = width, height = height})
+		capture_state = .Refused
 		return
 	}
-	screen = {u32(width), u32(height)}
+	// The copy of the screen and the two pictures have the size of the
+	// screen in force: a screen of 1080p pays for 1080p, and a larger one
+	// takes what its size needs. A budget that does not pay them is a
+	// refusal on the log, and the face stays closed: the service runs on.
 	pages := display.capture_pages(int(width), int(height))
+	copy_pages := mirror_pages_of(width, height)
+	mirror_release()
 	status: system.Status
-	if capture_memory, status = system.memory_create(pages); status != .Ok {
-		system.log_fact(.Info, Capture_Memory_Refused{pages = value_kinds.Size_In_Pages(pages)})
-		capture_state = .Closed
+	mirror_memory, status = system.memory_create(copy_pages)
+	mirror_address: rawptr
+	if status == .Ok {
+		mirror_address, status = system.memory_map(mirror_memory, {.Write})
+	} else {
+		mirror_memory = 0
+	}
+	if status == .Ok {
+		mirror = ([^]u32)(mirror_address)
+		if capture_memory, status = system.memory_create(pages); status != .Ok {
+			capture_memory = 0
+		}
+	}
+	if status != .Ok {
+		mirror_release()
+		system.log_fact(.Info, Capture_Memory_Refused{width = width, height = height, pages = value_kinds.Size_In_Pages(pages + copy_pages)})
+		capture_state = .Refused
 		return
 	}
 	address, map_status := system.memory_map(capture_memory, {})
 	given, give_status := system.give(window_memory, capture_memory, {.Read, .Write})
 	if map_status != .Ok || give_status != .Ok {
 		system.log_fact(.Info, Capture_Memory_Not_Given{})
+		if map_status == .Ok {
+			system.memory_unmap(address)
+		}
 		system.close(capture_memory)
 		capture_memory = 0
-		capture_state = .Closed
+		mirror_release()
+		capture_state = .Refused
 		return
 	}
+	screen = {u32(width), u32(height)}
 	capture_mapped = address
 	capture_header = (^display.Capture_Header)(address)
 	pixels := ([^]u32)(rawptr(uintptr(address) + display.CAPTURE_HEADER_PAGES * system.PAGE_SIZE))
 	for &picture, place in capture_pictures {
 		picture = pixels[place * int(width) * int(height):]
-	}
-	if mirror == nil {
-		mirror_pages := (u64(protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-		mirror_address: rawptr
-		mirror_status: system.Status
-		mirror_memory, mirror_status = system.memory_create(mirror_pages)
-		if mirror_status == .Ok {
-			mirror_address, mirror_status = system.memory_map(mirror_memory, {.Write})
-		}
-		if mirror_status != .Ok {
-			fail("no memory for the copy of the screen")
-		}
-		mirror = ([^]u32)(mirror_address)
 	}
 	mirror_pixels = int(width) * int(height)
 	mirror_valid = false
@@ -1069,6 +1115,13 @@ capture_follow :: proc "contextless" () {
 			compositor_send({kind = u32(display.Command.Capture_Size_Ask)})
 		}
 	case .Asking:
+	case .Refused:
+		// The face was refused for the screen in force: no new ask while
+		// a viewer waits, so the refusal writes one line and not one for
+		// each pass. The next viewer, after none, asks again.
+		if bound == 0 {
+			capture_state = .Closed
+		}
 	case .Open:
 		if bound == 0 {
 			compositor_send({kind = u32(display.Command.Capture_Close)})
@@ -1076,7 +1129,7 @@ capture_follow :: proc "contextless" () {
 			system.close(capture_memory)
 			capture_memory, capture_mapped, capture_header = 0, nil, nil
 			held_picture = -1
-			mirror_valid = false
+			mirror_release()
 			capture_state = .Closed
 			system.log_fact(.Info, Capture_Face_Closed{pictures = captures})
 		}

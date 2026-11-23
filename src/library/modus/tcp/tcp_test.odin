@@ -407,7 +407,7 @@ established :: proc(t: ^testing.T, link: ^Link) -> bool {
 
 // inject puts one segment from A to B on the link, with data.
 inject :: proc(link: ^Link, header: Header, data: []u8 = nil) {
-	offset := header.mss != 0 ? HEADER_MSS : HEADER
+	offset := header_size(header)
 	flying := Flying{at = link.now, to = 1, from = ADDRESS_A, length = offset + len(data)}
 	copy(flying.bytes[offset:], data)
 	header_write(flying.bytes[:], ADDRESS_A, ADDRESS_B, header, flying.length)

@@ -178,18 +178,21 @@ Small_Damage_Measured :: struct {
 	least_time:  value_kinds.Time_In_Microseconds,
 }
 
-// The screen of the compositor is past the reference screen of the
+// The screen of the compositor is past the largest screen of the
 // protocol.
-@(log_fact = "remote_display: the screen of {width}x{height} is past the reference screen of the protocol: no capture face")
-Screen_Past_Reference :: struct {
+@(log_fact = "remote_display: the screen of {width}x{height} is past the largest screen of the protocol, 7680x4320: no capture face")
+Screen_Past_Largest :: struct {
 	width:  u64,
 	height: u64,
 }
 
-// No memory for the capture face.
-@(log_fact = "remote_display: no memory for the capture face: {pages}")
+// The budget of this process does not pay the two pictures of the capture
+// face and the copy of the screen, at the size of the screen in force.
+@(log_fact = "remote_display: no capture face for the screen of {width}x{height}: its two pictures and its copy need {pages}, which the budget of this process does not give")
 Capture_Memory_Refused :: struct {
-	pages: value_kinds.Size_In_Pages,
+	width:  u64,
+	height: u64,
+	pages:  value_kinds.Size_In_Pages,
 }
 
 // The memory of the capture face does not map, or the compositor does not

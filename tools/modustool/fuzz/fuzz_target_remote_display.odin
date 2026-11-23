@@ -127,7 +127,7 @@ fuzz_remote_display_service_check :: proc(header: protocol.Record_Header, body: 
 		}
 	case .Viewer_Frame_Start:
 		start := record.viewer_frame_start
-		if start.screen_piece_count > protocol.VIEWER_FRAME_PIECE_LIMIT || start.bytes > protocol.VIEWER_FRAME_BYTES_LIMIT || start.serial == 0 {
+		if u64(start.screen_piece_count) > protocol.viewer_frame_piece_limit(screen) || start.bytes > protocol.viewer_frame_bytes_limit(screen) || start.serial == 0 {
 			return fuzz_broken(.Contract, "service_record_check takes a viewer frame past its bound: %v", start)
 		}
 	case .Screen_Piece:

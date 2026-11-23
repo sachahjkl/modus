@@ -24,6 +24,18 @@ vnc_rfb_banner_events_and_raw_update_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, rp, Gateway_Refusal.None)
 	testing.expect(t, pe.buttons == 1 && pe.x == 100 && pe.y == 50)
 
+	// A screen past 8K in either side is refused; an 8K screen takes a
+	// pointer at its last pixel and refuses one past it.
+	_, wide := rfb_decode_pointer_event([]u8{5, 0, 0, 0, 0, 0}, MAX_GATEWAY_WIDTH + 1, 1080)
+	testing.expect_value(t, wide, Gateway_Refusal.Dimensions_Invalid)
+	_, tall := rfb_decode_pointer_event([]u8{5, 0, 0, 0, 0, 0}, 1920, MAX_GATEWAY_HEIGHT + 1)
+	testing.expect_value(t, tall, Gateway_Refusal.Dimensions_Invalid)
+	_, past := rfb_decode_pointer_event([]u8{5, 0, 0x1E, 0x00, 0x00, 0x00}, MAX_GATEWAY_WIDTH, MAX_GATEWAY_HEIGHT)
+	testing.expect_value(t, past, Gateway_Refusal.Dimensions_Invalid)
+	corner, at_corner := rfb_decode_pointer_event([]u8{5, 0, 0x1D, 0xFF, 0x10, 0xDF}, MAX_GATEWAY_WIDTH, MAX_GATEWAY_HEIGHT)
+	testing.expect_value(t, at_corner, Gateway_Refusal.None)
+	testing.expect(t, corner.x == 7679 && corner.y == 4319)
+
 	// 2x2 RGBA Raw FramebufferUpdate.
 	pixels: [16]u8
 	pixels[0] = 0xFF

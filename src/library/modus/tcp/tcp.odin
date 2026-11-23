@@ -113,10 +113,16 @@ Connection :: struct {
 	timing:                bool, // The segment that ends at rtt_sequence is timed.
 	in_recovery:           bool, // Fast recovery, until recover is acknowledged.
 	syn_acknowledged:      bool, // The remote acknowledged the SYN of this side.
+	window_scale_agreed:   bool, // Both SYNs carried the window scale option: send_scale and receive_scale hold.
 	events:                Event_Kinds, // The events that the next step reports.
 	local_port:            u16, // The TCP port of this side.
 	remote_port:           u16, // The TCP port of the remote.
 	mss:                   u16, // The bytes of data in one segment: the least of the two MSS.
+	// The window scale of RFC 7323: the shift of the window fields of the
+	// remote, and of this side. Both are 0 unless the two SYNs carried the
+	// option: a remote that does not scale gets windows of 65535 at most.
+	send_scale:            u8,
+	receive_scale:         u8,
 	remote_address:        u32, // The IPv4 address of the remote.
 
 	// Send: SND.UNA, SND.NXT, SND.WND, SND.WL1, SND.WL2 of RFC 9293.
@@ -529,7 +535,11 @@ connection_end :: proc "contextless" (connection: ^Connection, now: u64, kinds: 
 // window), and gives the window to send. The edge never moves back.
 @(private)
 window_offer :: proc "contextless" (table: ^Table, connection: ^Connection) -> u32 {
-	room := min(table.receive_size - connection.receive_ready, WINDOW_LIMIT)
+	// The window field carries the room shifted right by the scale of
+	// this side: the room is a whole count of units of the scale, so the
+	// remote reads the window that the edge says.
+	unit := u32(1) << connection.receive_scale
+	room := min(table.receive_size - connection.receive_ready, u32(WINDOW_LIMIT) << connection.receive_scale) &~ (unit - 1)
 	candidate := connection.receive_next + room
 	if before(connection.receive_edge, connection.receive_next) {
 		connection.receive_edge = connection.receive_next
@@ -726,7 +736,7 @@ emit :: proc "contextless" (table: ^Table, output: ^Output, connection_index: in
 	}
 	place := output.places[output.count]
 	segment := output.memory[int(place) * output.place_size:][:output.place_size]
-	offset := header.mss != 0 ? HEADER_MSS : HEADER
+	offset := header_size(header)
 	length := offset + len(first) + len(second)
 	copy(segment[offset:], first)
 	copy(segment[offset + len(first):], second)
@@ -757,7 +767,7 @@ reset_answer :: proc "contextless" (table: ^Table, output: ^Output, remote_addre
 // segment_send writes one segment of a connection, with the data of the
 // send buffer from offset bytes after send_unacknowledged.
 @(private)
-segment_send :: proc "contextless" (table: ^Table, output: ^Output, index: int, flags: Flags, sequence: u32, offset, count: u32, mss: u16 = 0) -> bool {
+segment_send :: proc "contextless" (table: ^Table, output: ^Output, index: int, flags: Flags, sequence: u32, offset, count: u32, mss: u16 = 0, window_scale_offer := false) -> bool {
 	connection := &table.connections[index]
 	header := Header {
 		source_port      = connection.local_port,
@@ -766,10 +776,16 @@ segment_send :: proc "contextless" (table: ^Table, output: ^Output, index: int, 
 		flags            = flags,
 		mss              = mss,
 	}
+	if window_scale_offer {
+		header.window_scale = window_scale_of_buffer(table.receive_size)
+		header.has_window_scale = true
+	}
 	if .Ack in flags {
 		header.acknowledgment = connection.receive_next
 	}
-	header.window = u16(window_offer(table, connection))
+	// The window of a SYN is never scaled (RFC 7323, section 2.2).
+	window := window_offer(table, connection)
+	header.window = .Syn in flags ? u16(min(window, WINDOW_LIMIT)) : u16(min(window >> connection.receive_scale, WINDOW_LIMIT))
 	first, second: []u8
 	if count > 0 {
 		buffer := send_buffer(table, index)
@@ -812,7 +828,10 @@ connection_output :: proc "contextless" (table: ^Table, index: int, now: u64, ou
 	case .Syn_Sent, .Syn_Received:
 		if connection.send_next == connection.initial_send {
 			flags := connection.state == .Syn_Sent ? Flags{.Syn} : Flags{.Syn, .Ack}
-			if !segment_send(table, output, index, flags, connection.initial_send, 0, 0, table.mss != 0 ? table.mss : MSS_LOCAL) {
+			// An active open always offers the window scale; a SYN, ACK
+			// answers it only when the SYN of the remote offered it.
+			offer := connection.state == .Syn_Sent || connection.window_scale_agreed
+			if !segment_send(table, output, index, flags, connection.initial_send, 0, 0, table.mss != 0 ? table.mss : MSS_LOCAL, offer) {
 				return false
 			}
 			first := connection.send_most == connection.initial_send
@@ -1068,10 +1087,35 @@ listen :: proc "contextless" (table: ^Table, remote_address: u32, header: Header
 	connection.receive_next = header.sequence + 1
 	connection.receive_edge = connection.receive_next
 	mss_agree(table, connection, header.mss)
+	window_scale_agree(table, connection, header)
 	connection.send_window = u32(header.window)
 	connection.send_window_most = u32(header.window)
 	connection.window_sequence = header.sequence
 	window_offer(table, connection)
+}
+
+// window_scale_agree takes the window scale option of the SYN of the
+// remote (RFC 7323, section 2.2): with the option, the windows of the
+// remote are shifted by its scale and the windows of this side by the
+// scale of its buffer; with none, no window is scaled in either way. This
+// side offers the option in its own SYN, so a SYN, ACK that answers that
+// SYN decides it too.
+@(private)
+window_scale_agree :: proc "contextless" (table: ^Table, connection: ^Connection, header: Header) {
+	connection.window_scale_agreed = header.has_window_scale
+	connection.send_scale = header.has_window_scale ? min(header.window_scale, WINDOW_SCALE_LIMIT) : 0
+	connection.receive_scale = header.has_window_scale ? window_scale_of_buffer(table.receive_size) : 0
+}
+
+// window_of gives the window that a segment of the remote gives: its field,
+// shifted by the scale of the remote, but in a SYN, whose window is never
+// scaled.
+@(private)
+window_of :: proc "contextless" (connection: ^Connection, header: Header) -> u32 {
+	if .Syn in header.flags {
+		return u32(header.window)
+	}
+	return u32(header.window) << connection.send_scale
 }
 
 // syn_sent reads a segment in the state Syn_Sent (RFC 9293 3.10.7.3).
@@ -1098,6 +1142,7 @@ syn_sent :: proc "contextless" (table: ^Table, index: int, remote_address: u32, 
 	connection.receive_next = header.sequence + 1
 	connection.receive_edge = connection.receive_next
 	mss_agree(table, connection, header.mss)
+	window_scale_agree(table, connection, header)
 	window_offer(table, connection)
 	if has_ack {
 		connection.send_unacknowledged = header.acknowledgment
@@ -1228,7 +1273,7 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 			connection.events += connection.passive ? {.Accepted} : {.Opened}
 			connection.window_sequence = header.sequence
 			connection.window_acknowledgment = header.acknowledgment
-			connection.send_window = u32(header.window)
+			connection.send_window = window_of(connection, header)
 			connection.send_window_most = max(connection.send_window_most, connection.send_window)
 		} else {
 			reset_answer(table, output, connection.remote_address, header, index)
@@ -1358,7 +1403,7 @@ acknowledge :: proc "contextless" (table: ^Table, connection: ^Connection, heade
 				return false
 			}
 		}
-	} else if ack == connection.send_unacknowledged && len(header.data) == 0 && header.flags & {.Syn, .Fin} == {} && u32(header.window) == connection.send_window && connection.send_next != connection.send_unacknowledged {
+	} else if ack == connection.send_unacknowledged && len(header.data) == 0 && header.flags & {.Syn, .Fin} == {} && window_of(connection, header) == connection.send_window && connection.send_next != connection.send_unacknowledged {
 		// A duplicate ACK (RFC 5681 2).
 		connection.duplicate_acks += 1
 		if connection.duplicate_acks == 3 && !connection.in_recovery && after(ack, connection.recover) {
@@ -1381,7 +1426,7 @@ acknowledge :: proc "contextless" (table: ^Table, connection: ^Connection, heade
 		if header.window == 0 && connection.send_window != 0 {
 			connection.zero_windows += 1
 		}
-		connection.send_window = u32(header.window)
+		connection.send_window = window_of(connection, header)
 		connection.send_window_most = max(connection.send_window_most, connection.send_window)
 		connection.window_sequence = header.sequence
 		connection.window_acknowledgment = ack

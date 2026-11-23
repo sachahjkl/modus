@@ -387,7 +387,7 @@ Table_Refused_Written_Over :: struct {
 	table_problem: [104]u8,
 }
 
-@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify; it gives no grant, and the table of {new_record} is written over it")
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify; it gives no grant, and the table of {new_record} is written over it")
 Table_Refused_Older_Format_Written_Over :: struct {
 	principal:  u64,
 	new_record: [32]u8,
@@ -399,7 +399,7 @@ Table_Refused_Bad_Row_Written_Over :: struct {
 	new_record: [32]u8,
 }
 
-@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero; it gives no grant, and the table of {new_record} is written over it")
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the client keys of remote in the table are more than 32, or one is zero bytes, or one comes two times, or a byte after the last key is not zero; it gives no grant, and the table of {new_record} is written over it")
 Table_Refused_Bad_Client_Keys_Written_Over :: struct {
 	principal:  u64,
 	new_record: [32]u8,
@@ -412,7 +412,7 @@ Table_Refused_Kept :: struct {
 	table_problem: [104]u8,
 }
 
-@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify; it gives no grant, and it is kept: no change is written over it")
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify; it gives no grant, and it is kept: no change is written over it")
 Table_Refused_Older_Format_Kept :: struct {
 	principal: u64,
 }
@@ -422,7 +422,7 @@ Table_Refused_Bad_Row_Kept :: struct {
 	principal: u64,
 }
 
-@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero; it gives no grant, and it is kept: no change is written over it")
+@(log_fact = "root: refused the disk grant table of principal {principal} from the store module_files: the client keys of remote in the table are more than 32, or one is zero bytes, or one comes two times, or a byte after the last key is not zero; it gives no grant, and it is kept: no change is written over it")
 Table_Refused_Bad_Client_Keys_Kept :: struct {
 	principal: u64,
 }

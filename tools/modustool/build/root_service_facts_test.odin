@@ -147,13 +147,13 @@ TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the ca
 // The sentences of disk_process.table_problem_sentences that a Text field
 // holds; the three longer ones have a fact type each.
 @(private = "file")
-TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 1168 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
+TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 2288 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
 @(private = "file")
-TABLE_PROBLEM_OLDER_FORMAT :: "the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify"
+TABLE_PROBLEM_OLDER_FORMAT :: "the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify"
 @(private = "file")
 TABLE_PROBLEM_BAD_ROW :: "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero"
 @(private = "file")
-TABLE_PROBLEM_BAD_CLIENT_KEYS :: "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero"
+TABLE_PROBLEM_BAD_CLIENT_KEYS :: "the client keys of remote in the table are more than 32, or one is zero bytes, or one comes two times, or a byte after the last key is not zero"
 @(private = "file")
 NEW_RECORDS := [?]string{"the new machine passphrase", "the new principal"}
 @(private = "file")

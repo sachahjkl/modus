@@ -204,7 +204,7 @@ Do not use: screen sharing, remote desktop, VNC server.
 
 A viewer is a program on another machine that proves a client key whose row holds the use View, and rebuilds the screen from the frames of the remote display.
 
-It sees what the screen shows, in the session in front, and sends keys and a pointer only when the row also holds Input. Two viewers at one time. The first viewer is the peer of the tool, in the machine test; the native viewer is a program of its own. A viewer is not a window of the machine.
+It sees what the screen shows, in the session in front, and sends keys and a pointer only when the row also holds Input. Eight viewers at one time. The first viewer is the peer of the tool, in the machine test; the native viewer is a program of its own. A viewer is not a window of the machine.
 
 The design: `src/md/features/remote_display.md`.
 

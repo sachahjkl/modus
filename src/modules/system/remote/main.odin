@@ -92,14 +92,15 @@ import "modus:random"
 import "modus:contract/root_ring"
 import "modus:system"
 
-// 2 QUIC connections of about 85 KiB each, 8 streams of about 130 KiB for
+// 32 QUIC connections of about 89 KiB each, 4 streams of about 130 KiB for
 // each, and a buffer of a request or an answer of about 64 KiB for each
-// stream: about 820 pages, in one mapping of the process (docs/QUIC.md,
-// section 7), and the call regions of its connections to services: 3067
-// pages. And the glyph memory of the copy of the text rendering of the
-// drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 3067 + 354 = 3421.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3421, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// stream: 6912 pages (TABLE_PAGES), in one mapping of the process
+// (docs/QUIC.md, section 7); the call rings and call regions of its 72
+// connections to services, about 94 pages each: 6768 pages; and the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES).
+// 6912 + 6768 + 354 = 14034, under the largest budget of a process.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 14034, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -132,6 +133,9 @@ CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
 STREAM_BYTES :: CALL_COUNT * size_of(quic.Stream)
 BUFFER_BYTES :: CALL_COUNT * CALL_BUFFER_SIZE
 TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + BUFFER_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+// The connections and their streams fit in the stated budget beside the
+// connections to services and the text memory.
+#assert(TABLE_PAGES + 94 * SERVICE_CONNECTION_CAPACITY + display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
 // The bounds of a call stream, in milliseconds of the machine. Each one
@@ -145,7 +149,8 @@ REQUEST_TIME_LIMIT :: 10_000
 ANSWER_TIME_LIMIT :: 10_000
 // After this side reset a stream, the host must end its own direction this
 // long after; else the connection ends (CONNECTION_CLOSE, Timeout): a
-// stream record that the host never ends would hold one call of the 8.
+// stream record that the host never ends would hold one call of the
+// CALLS_AT_ONCE of its connection.
 RELEASE_TIME_LIMIT :: 10_000
 // An isolated call blocks the QUIC of this process. After a call that took
 // SLOW_CALL_MILLISECONDS or more, the next call waits
@@ -286,9 +291,12 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-// The 9 services of the row of "remote" in start_grant_sets in the root service, for each of
-// the CAPACITY connections, each of which can have a key of another row.
-SERVICE_CONNECTION_CAPACITY :: 24
+// The 9 services of the row of "remote" in start_grant_sets in the root
+// service, each with as many callers as a service takes
+// (isolated.SERVICE_CONNECTION_CAPACITY): a connection of each row to each
+// service up to the bound of the service. A row past that bound gets the
+// refusal of the root service, not of this table.
+SERVICE_CONNECTION_CAPACITY :: 9 * isolated.SERVICE_CONNECTION_CAPACITY
 
 service_connections: [SERVICE_CONNECTION_CAPACITY]Service_Connection
 
@@ -1359,8 +1367,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	quic_connections = ([^]quic.Connection)(table)[:CAPACITY]
 	streams = ([^]quic.Stream)(rawptr(uintptr(table) + CONNECTION_BYTES))[:CALL_COUNT]
 	call_buffers = ([^][CALL_BUFFER_SIZE]u8)(rawptr(uintptr(table) + CONNECTION_BYTES + STREAM_BYTES))[:CALL_COUNT]
-	// The limits of quic_echo, for a table of 2 records: one address (the
-	// host) may hold both, in the handshake too.
+	// The limits of quic_echo, for a table of CAPACITY records: one address
+	// (the host) may hold each of them, in the handshake too.
 	limits := quic.SERVER_LIMITS_DEFAULT
 	limits.connections_per_remote_address = CAPACITY
 	limits.handshakes_per_remote_address = CAPACITY

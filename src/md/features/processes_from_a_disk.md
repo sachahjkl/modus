@@ -201,7 +201,7 @@ The page is a fact that the root service states, not a grant: it gives no handle
 
 The table also holds the client keys of `remote` that its principal allowed, 4 at most, after the rows and under the same tag ([remote_client_keys.md](remote_client_keys.md)). They follow the global setting, with no exception of their own. So the read, the write, the states and the refusals of this section hold for them too, with one difference: a revocation of a key is never refused, as it ends a grant at once. Such a revocation starts the writes of an unwritten table again, and a revocation before a read of the run is taken out of the table that the read gives.
 
-A table of 1008 bytes is a table of the format 1, which had no client keys: the read refuses it as an older format that this system does not read, and the refusal of a change does not ask for a restore, as no version of it verifies.
+A table of 1008, 1136 or 1168 bytes is a table of the format 1 (no client keys), 2 (client keys with no uses) or 3 (4 client keys): the read refuses it as an older format that this system does not read, and the refusal of a change does not ask for a restore, as no version of it verifies.
 
 The name `grant_table` is kept, as the name `module_files` is: no disk process has it, so the table is never read as a module file and never written over one.
 

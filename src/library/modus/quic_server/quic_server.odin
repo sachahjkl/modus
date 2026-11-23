@@ -23,17 +23,17 @@ PLACE_COUNT :: datagram.REGION_PAGES * system.PAGE_SIZE / PLACE_SIZE
 // The most receive places and the most concurrent QUIC connections that one
 // shared server endpoint manages.
 RECEIVE_PLACES_LIMIT :: 96
-VALIDATE_PLACE_BITS :: 4
+VALIDATE_PLACE_BITS :: 5
 MAX_CAPACITY :: 1 << VALIDATE_PLACE_BITS
 
 // Tags on the datagram ring:
 //   0 ..< receive_places                 Receive of that place.
 //   SEND_TAG + place                     Send of that place.
 //   CALL_TAG                             Info and Release.
-//   VALIDATE_TAG | gen<<4 | place        Validate of the record at place.
+//   VALIDATE_TAG | gen<<5 | place        Validate of the record at place.
 //
 // A Validate completion that arrives after its record ended and the place
-// was reused names the old generation and confirms nothing: 2^27 records
+// was reused names the old generation and confirms nothing: 2^26 records
 // would have to turn over in one ring round to collide.
 SEND_TAG :: 1000
 CALL_TAG :: 100_000

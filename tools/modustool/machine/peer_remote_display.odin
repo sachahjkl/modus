@@ -28,10 +28,11 @@ import "modustool:fuzz"
 // wait for its viewer frames, compare the screen that the viewer rebuilt
 // with a picture of QEMU of the same moment, and send what a viewer must
 // not send: each refusal is checked by the code of the end of the
-// connection. Viewer 0 runs the cases; viewers 1 and 2 are the second and
-// the third viewer of the case "a third viewer".
+// connection. Viewer 0 runs the cases; the next viewers fill the capacity
+// of the service in the case "a viewer past the capacity", and the last one
+// is the viewer past it.
 
-PEER_DISPLAY_VIEWERS :: 3
+PEER_DISPLAY_VIEWERS :: protocol.CONNECTION_CAPACITY + 1
 PEER_DISPLAY_PORT_FIRST :: 44000 // The local UDP port of the first connection of viewer 0; one more for each next one.
 PEER_DISPLAY_PORT_STEP :: 1000 // The ports of viewer n start at PEER_DISPLAY_PORT_FIRST + n * this.
 // The first byte of the fixed private key of the viewer of a machine test;
@@ -129,8 +130,6 @@ peer_display_make :: proc(number: int) -> ^Peer_Remote_Display {
 	state.streams = make([]quic.Stream, 1)
 	state.incoming = make([]u8, protocol.RECORD_HEADER_SIZE + protocol.SCREEN_PIECE_BODY_LIMIT)
 	state.piece_pixels = make([]u32, protocol.SCREEN_PIECE_PIXEL_LIMIT)
-	state.pixels = make([]u32, protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT)
-	state.shown = make([]u32, protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT)
 	state.cryptography = fuzz.quic_cryptography_of_the_host()
 	// A seed of its own for each viewer: two viewers never draw the same
 	// connection identifiers.
@@ -271,6 +270,16 @@ peer_display_record :: proc(state: ^Peer_Remote_Display, record: protocol.Servic
 		peer_display_refuse(state, "a record of the other direction")
 	case .Screen_Size:
 		state.screen = {record.screen_size.width, record.screen_size.height}
+		// The pixels of the viewer have the size of the screen of the
+		// session: a screen of 8K is 132 MB, which a screen of 1080p does
+		// not pay for.
+		pixel_count := int(state.screen.width) * int(state.screen.height)
+		if len(state.pixels) < pixel_count {
+			delete(state.pixels)
+			delete(state.shown)
+			state.pixels = make([]u32, pixel_count)
+			state.shown = make([]u32, pixel_count)
+		}
 	case .Pointer_Place:
 		state.pointer = record.pointer_place
 	case .Pointer_Shape:
@@ -648,12 +657,13 @@ peer_display_compare_run :: proc(machine: ^Machine, state: ^Peer_Remote_Display,
 	attempts := 0
 	// One copy for each try, in one buffer: a try costs the pixels of a
 	// screen.
-	shown := make([]u32, protocol.SCREEN_WIDTH_LIMIT * protocol.SCREEN_HEIGHT_LIMIT)
+	shown: [dynamic]u32
 	defer delete(shown)
 	for time.tick_since(start) < foundation.HANG_BOUND {
 		sync.mutex_lock(&state.lock)
 		screen, pointer, frames, active := state.screen, state.shown_pointer, state.frames_taken, state.active
-		copy(shown, state.shown[:int(screen.width) * int(screen.height)])
+		resize(&shown, int(screen.width) * int(screen.height))
+		copy(shown[:], state.shown[:int(screen.width) * int(screen.height)])
 		sync.mutex_unlock(&state.lock)
 		if !active {
 			return false, fmt.tprintf("the session ended: %s", peer_display_end_text(state))
@@ -670,7 +680,7 @@ peer_display_compare_run :: proc(machine: ^Machine, state: ^Peer_Remote_Display,
 		if !dumped {
 			return false, "QEMU gave no picture of the screen"
 		}
-		different, compared := peer_display_compare(shown, screen, pointer, dump)
+		different, compared := peer_display_compare(shown[:], screen, pointer, dump)
 		dump_width, dump_height := dump.width, dump.height
 		delete(dump.file)
 		if different == -1 {
@@ -762,26 +772,36 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 			return false, fmt.tprintf("a viewer that takes no viewer frame: %s", peer_display_end_text(state))
 		}
 		return true, "a viewer that took no viewer frame: the service ended the connection with the code Timeout"
-	case "a third viewer":
-		// Two viewers at one time; the third gets no record of the server,
-		// and its handshake ends at its deadline.
-		second, third := machine.peer.display_viewers[1], machine.peer.display_viewers[2]
-		if !peer_display_session(state, viewer_key) || !peer_display_session(second, viewer_key) {
-			return false, fmt.tprintf("two viewers at one time: %s; %s", peer_display_end_text(state), peer_display_end_text(second))
+	case "a viewer past the capacity":
+		// The viewers of the capacity at one time; the one past it gets no
+		// record of the server, and its handshake ends at its deadline.
+		viewers := machine.peer.display_viewers[:protocol.CONNECTION_CAPACITY]
+		past := machine.peer.display_viewers[protocol.CONNECTION_CAPACITY]
+		for viewer, number in viewers {
+			if !peer_display_session(viewer, viewer_key) {
+				return false, fmt.tprintf("viewer %d of %d at one time: %s", number + 1, protocol.CONNECTION_CAPACITY, peer_display_end_text(viewer))
+			}
 		}
-		if !peer_display_begin(third, viewer_key) || !peer_display_wait(third, .End) {
-			return false, "the third viewer did not end"
+		if !peer_display_begin(past, viewer_key) || !peer_display_wait(past, .End) {
+			return false, "the viewer past the capacity did not end"
 		}
-		sync.mutex_lock(&third.lock)
-		timeout, frames := third.handshake_timeout, third.frames_taken
-		sync.mutex_unlock(&third.lock)
-		if !timeout || frames != 0 || peer_display_frames(state) == 0 || peer_display_frames(second) == 0 {
-			return false, fmt.tprintf("the third viewer: %s, with %d viewer frames", peer_display_end_text(third), frames)
+		sync.mutex_lock(&past.lock)
+		timeout, frames := past.handshake_timeout, past.frames_taken
+		sync.mutex_unlock(&past.lock)
+		if !timeout || frames != 0 {
+			return false, fmt.tprintf("the viewer past the capacity: %s, with %d viewer frames", peer_display_end_text(past), frames)
 		}
-		if !peer_display_close(second) || !peer_display_close(state) {
-			return false, "the two viewers did not end"
+		for viewer, number in viewers {
+			if peer_display_frames(viewer) == 0 {
+				return false, fmt.tprintf("viewer %d took no viewer frame", number + 1)
+			}
 		}
-		return true, "two viewers took viewer frames at one time; the third got no record of the server, and its handshake ended at its deadline"
+		#reverse for viewer in viewers {
+			if !peer_display_close(viewer) {
+				return false, "the viewers of the capacity did not end"
+			}
+		}
+		return true, fmt.tprintf("%d viewers took viewer frames at one time; the one past them got no record of the server, and its handshake ended at its deadline", protocol.CONNECTION_CAPACITY)
 	case "view":
 		if !peer_display_session(state, viewer_key) {
 			return false, fmt.tprintf("no whole viewer frame came: %s", peer_display_end_text(state))

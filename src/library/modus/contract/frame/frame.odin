@@ -52,7 +52,7 @@ FRAME_LIMIT :: 1514 // An Ethernet frame with 1500 bytes of data, with no check 
 FRAME_LEAST :: 60 // The device adds zero bytes to a shorter frame that it sends.
 PLACE_SIZE :: 2048 // A Receive with less room than FRAME_LIMIT can lose a frame.
 RING_CAPACITY :: 256 // The capacity of the frame ring.
-READ_REGION_CAPACITY :: 8 // The places of read regions of one client.
+READ_REGION_CAPACITY :: 32 // The places of read regions of one client: one for each endpoint of the network service.
 
 // The role of the frame ring in the context of a frame service.
 SERVICE_RING :: 0
