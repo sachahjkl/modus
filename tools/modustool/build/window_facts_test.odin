@@ -613,7 +613,7 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 // The longest sentence of a refusal of a choice of the palette by the
 // console.
 @(private = "file")
-CHOICE_REFUSAL_LONGEST :: "a line of the console holds no quote and no invalid sequence of UTF-8 in a text"
+CHOICE_REFUSAL_LONGEST :: "a line of the console holds no quote and no broken sequence of UTF-8 in a text"
 
 // The words of a word of a contract enum, as a reader writes them: the
 // name of its member, or its number for a word that names none.

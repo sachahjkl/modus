@@ -122,9 +122,9 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7800, window_width 
 // freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [3]interface.Action_Bar_Item {
 	return {
-		interface.action_bar_item("next button", 3, "Tab"),
-		interface.action_bar_item("button before", 2, "Shift", "Tab"),
-		interface.action_bar_item("choose the value", 3, "Enter"),
+		interface.action_bar_item("Next button", 3, "Tab"),
+		interface.action_bar_item("Button before", 2, "Shift", "Tab"),
+		interface.action_bar_item("Choose value", 3, "Enter"),
 	}
 }
 bar: interface.Action_Bar_State
@@ -153,8 +153,8 @@ subpixel_order_texts := #partial [settings.Subpixel_Order]string {
 }
 @(rodata, member_texts = "en")
 pointer_theme_texts := [settings.Pointer_Theme]string {
-	.Of_The_Owner  = "owner",
-	.Of_The_System = "system",
+	.Of_The_Owner  = "Owner",
+	.Of_The_System = "System",
 }
 @(rodata, member_texts = "en")
 keyboard_layout_texts := #partial [settings.Keyboard_Layout]string {
@@ -514,8 +514,12 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 // error record:
 //
 // - `No_Grant` (-1): the caller does not act for the principal.
-// - `Too_Long` (-3): the zone has more than 32 bytes.
-// - `Bad_Value` (-3): the text is no zone: "+8:00", "+08:10", "+15:00", "UTC".
+// - `Empty` (-3): the zone is empty.
+// - `Too_Small` (-3): the zone has fewer than 6 bytes ("+8:00", "UTC").
+// - `Too_Long` (-3): the zone has more than 6 bytes.
+// - `Bad_Byte` (-3): a byte of the zone is not '+', '-', ':', or a digit.
+// - `Bad_Value` (-3): the minutes part is 60 or more, or the offset is outside -12:00 to +14:00 ("+15:00").
+// - `Not_Multiple` (-3): the offset is not a multiple of 15 minutes ("+08:10").
 // - `Refused` (-4): the store did not keep the zone. The page keeps the zone before.
 //
 // Example: `settings.set_time_zone("+08:00")`, then `settings.time_zone()` gives "+08:00".
@@ -527,11 +531,25 @@ set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> i64 {
 	zone_buffer: [32]u8
 	given, zone_ok := copied(zone^, zone_buffer[:])
 	if !zone_ok {
-		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, i64(len(zone^)), len(zone_buffer))
+		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, i64(len(zone^)), settings.ZONE_TEXT_SIZE)
 	}
-	minutes, parsed := settings.zone_parse(given)
-	if !parsed {
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1)
+	minutes, problem, detail_value, detail_found := settings.zone_parse_checked(given)
+	switch problem {
+	case .None:
+	case .Empty:
+		return errors.fail(error, ERROR_VALUE, .Empty, .Bytes, 1, 0, settings.ZONE_TEXT_SIZE)
+	case .Too_Short:
+		return errors.fail(error, ERROR_VALUE, .Too_Small, .Bytes, 1, detail_value, settings.ZONE_TEXT_SIZE)
+	case .Too_Long:
+		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, detail_value, settings.ZONE_TEXT_SIZE)
+	case .Bad_Byte:
+		return errors.fail(error, ERROR_VALUE, .Bad_Byte, .Bytes, 1, detail_value, 0, detail_found)
+	case .Minutes_Over:
+		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, detail_value, 59, detail_found)
+	case .Out_Of_Range:
+		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_MOST))
+	case .Not_Quarter:
+		return errors.fail(error, ERROR_VALUE, .Not_Multiple, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_STEP), detail_found)
 	}
 	current, _ := settings.read(page)
 	if !change(current, minutes) {

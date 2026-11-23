@@ -256,10 +256,10 @@ hex_count: int
 // freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [4]interface.Action_Bar_Item {
 	return {
-		interface.action_bar_item("undo", 4, "Ctrl", "Z"),
-		interface.action_bar_item("redo", 3, "Ctrl", "Shift", "Z"),
-		interface.action_bar_item("pictures", 2, "Ctrl", "O"),
-		interface.action_bar_item("clear", 1, "C"),
+		interface.action_bar_item("Undo", 4, "Ctrl", "Z"),
+		interface.action_bar_item("Redo", 3, "Ctrl", "Shift", "Z"),
+		interface.action_bar_item("Pictures", 2, "Ctrl", "O"),
+		interface.action_bar_item("Clear", 1, "C"),
 	}
 }
 bar: interface.Action_Bar_State
@@ -983,11 +983,11 @@ tools_row :: proc "contextless" (frame: ^interface.Frame) {
 	}
 	x += 2 * GAP
 	activated: bool
-	x, activated = button_fitted(frame, x, GAP, "smaller")
+	x, activated = button_fitted(frame, x, GAP, "Smaller")
 	if activated {
 		size_index = paint_model.size_index_step(size_index, -1)
 	}
-	x, activated = button_fitted(frame, x, GAP, "larger")
+	x, activated = button_fitted(frame, x, GAP, "Larger")
 	if activated {
 		size_index = paint_model.size_index_step(size_index, 1)
 	}
@@ -1027,16 +1027,16 @@ palette_row :: proc "contextless" (frame: ^interface.Frame) {
 		interface.draw_outline(frame.table, x, PALETTE_TOP, PALETTE_CELL, PALETTE_CELL, 3, graphics.colors.text_strong)
 		x += PALETTE_CELL + GAP
 	}
-	width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, "custom color") + 16
-	if interface.button(frame, {x, PALETTE_TOP, width, PALETTE_CELL}, interface.identity("custom color"), "custom color", panel == .Color).activated {
+	width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, "Custom color") + 16
+	if interface.button(frame, {x, PALETTE_TOP, width, PALETTE_CELL}, interface.identity("custom color"), "Custom color", panel == .Color).activated {
 		panel_toggle(.Color)
 	}
 }
 @(rodata)
 CHANNEL_NAMES := [paint_model.Channel]string {
-	.Red   = "red",
-	.Green = "green",
-	.Blue  = "blue",
+	.Red   = "Red",
+	.Green = "Green",
+	.Blue  = "Blue",
 }
 
 // color_panel draws the custom color: a sample, three channels each with
@@ -1081,12 +1081,12 @@ color_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.Area
 	y += GAP
 	field := interface.Area{x, y, area.width - 80 - GAP, ROW_HEIGHT}
 	entered := interface.text_input(frame, field, interface.identity("color text"), hex_text[:], &hex_count, "#RRGGBB").activated
-	if interface.button(frame, {field.x + field.width + GAP, y, 80, ROW_HEIGHT}, interface.identity("apply"), "apply").activated || entered {
+	if interface.button(frame, {field.x + field.width + GAP, y, 80, ROW_HEIGHT}, interface.identity("apply"), "Apply").activated || entered {
 		if parsed, ok := paint_model.color_of_text(string(hex_text[:hex_count])); ok {
 			color = parsed
 			message = ""
 		} else {
-			message = "a color is #RRGGBB"
+			message = "A color is #RRGGBB."
 		}
 	}
 }
@@ -1098,31 +1098,31 @@ pictures_panel :: proc "contextless" (frame: ^interface.Frame, area: interface.A
 	x, y := area.x, area.y
 	if !keep.store_open {
 		opening := interface.background_work_busy(&work) && store_request.act == .Open
-		interface.cell_text(frame, {x, y, area.width, ROW_HEIGHT}, opening ? "the store opens" : "no store: nothing is kept", graphics.colors.dim)
+		interface.cell_text(frame, {x, y, area.width, ROW_HEIGHT}, opening ? "The store opens." : "No store: nothing is kept.", graphics.colors.dim)
 		return
 	}
 	BUTTON_WIDTH :: 72
 	field := interface.Area{x, y, area.width - 2 * (BUTTON_WIDTH + GAP), ROW_HEIGHT}
-	interface.text_input(frame, field, interface.identity("picture name"), name_text[:], &name_count, "name")
+	interface.text_input(frame, field, interface.identity("picture name"), name_text[:], &name_count, "Name")
 	name := string(name_text[:name_count])
-	if interface.button(frame, {field.x + field.width + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("new"), "new").activated {
+	if interface.button(frame, {field.x + field.width + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("new"), "New").activated {
 		panel_act(.New, name)
 	}
-	if interface.button(frame, {field.x + field.width + 2 * GAP + BUTTON_WIDTH, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("rename"), "rename").activated {
+	if interface.button(frame, {field.x + field.width + 2 * GAP + BUTTON_WIDTH, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("rename"), "Rename").activated {
 		panel_act(.Rename, name)
 	}
 	y += ROW_HEIGHT + 2 * GAP
 	list := interface.Area{x, y, area.width, max(area.y + area.height - y - ROW_HEIGHT - 2 * GAP, interface.TABLE_LINE)}
-	chosen := interface.list_with_choice(frame, list, interface.identity("pictures"), picture_names[:picture_name_count], &picture_choice, {empty_text = "no picture in the store", name = "pictures"}).activated
+	chosen := interface.list_with_choice(frame, list, interface.identity("pictures"), picture_names[:picture_name_count], &picture_choice, {empty_text = "No picture in the store.", name = "pictures"}).activated
 	y = list.y + list.height + 2 * GAP
 	if picture_name_count == 0 {
 		return
 	}
 	chosen_name := picture_names[clamp(picture_choice, 0, picture_name_count - 1)]
-	if interface.button(frame, {x, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("open"), "open").activated || chosen {
+	if interface.button(frame, {x, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("open"), "Open").activated || chosen {
 		panel_act(.Read, chosen_name)
 	}
-	if interface.button(frame, {x + BUTTON_WIDTH + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("delete"), "delete").activated {
+	if interface.button(frame, {x + BUTTON_WIDTH + GAP, y, BUTTON_WIDTH, ROW_HEIGHT}, interface.identity("delete"), "Delete").activated {
 		panel_act(.Delete, chosen_name)
 	}
 }

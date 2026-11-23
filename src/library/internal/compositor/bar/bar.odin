@@ -58,9 +58,9 @@ section_line_count :: proc "contextless" (section: Menu_Section) -> int {
 // The headings of the sections, as the menu shows them.
 @(rodata)
 section_headings := [Menu_Section]string {
-	.Applications   = "applications",
-	.Tools          = "tools",
-	.Demonstrations = "demonstrations",
+	.Applications   = "Applications",
+	.Tools          = "Tools",
+	.Demonstrations = "Demonstrations",
 }
 
 // The bytes of the label of a name: a name of the menu is shorter.

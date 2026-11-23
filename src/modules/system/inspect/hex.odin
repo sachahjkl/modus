@@ -127,7 +127,7 @@ draw_hex :: proc "contextless" (frame: ^interface.Frame) {
 		y += 8
 	}
 	if hex_memory == nil {
-		write(inside, 0, y, "no memory of the demonstration: Memory_Create failed", element_tokens.failed)
+		write(inside, 0, y, "No demonstration memory: the kernel did not create the memory object.", element_tokens.failed)
 		return
 	}
 	start := u64(uintptr(hex_memory))

@@ -557,7 +557,7 @@ draw_top_band :: proc "contextless" (frame: ^interface.Frame, boxes: ^Window_Box
 	if bevelled_button(frame, area_of(boxes.forward), interface.identity("browser forward"), ">").activated && history_place + 1 < history_count {
 		act^ = {kind = .Forward}
 	}
-	if bevelled_button(frame, area_of(boxes.reload), interface.identity("browser reload"), "reload").activated && history_count > 0 {
+	if bevelled_button(frame, area_of(boxes.reload), interface.identity("browser reload"), "Reload").activated && history_count > 0 {
 		act^ = {kind = .Reload}
 	}
 	// The well: a recess with a border that a reader sees on each surface,
@@ -566,10 +566,10 @@ draw_top_band :: proc "contextless" (frame: ^interface.Frame, boxes: ^Window_Box
 	interface.draw_rectangle(table, well.x, well.y, well.width, well.height, tokens.surface_recess)
 	interface.draw_outline(table, well.x, well.y, well.width, well.height, 1, tokens.border)
 	field := interface.Area{well.x + ADDRESS_WELL_INSET, well.y + ADDRESS_WELL_INSET, max(well.width - 2 * ADDRESS_WELL_INSET, 0), max(well.height - 2 * ADDRESS_WELL_INSET, 0)}
-	if interface.text_input(frame, field, address_identity, address_field[:], &address_field_count, "an address").activated {
+	if interface.text_input(frame, field, address_identity, address_field[:], &address_field_count, "An address").activated {
 		act^ = {kind = .Load_Address_Field}
 	}
-	if bevelled_button(frame, area_of(boxes.go), interface.identity("browser go"), "go").activated {
+	if bevelled_button(frame, area_of(boxes.go), interface.identity("browser go"), "Go").activated {
 		act^ = {kind = .Load_Address_Field}
 	}
 	// The badge of the origin, outlined in the color of an expected state,

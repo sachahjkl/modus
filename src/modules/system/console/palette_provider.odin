@@ -1052,7 +1052,7 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		palette_arguments_given = {}
 		system.write_part(&writer, ")")
 		if fits && outside_line {
-			palette_refuse(record.tag, "a line of the console holds no quote and no invalid sequence of UTF-8 in a text")
+			palette_refuse(record.tag, "a line of the console holds no quote and no broken sequence of UTF-8 in a text")
 			return
 		}
 		if fits && no_member_name {

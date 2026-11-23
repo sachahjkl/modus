@@ -473,17 +473,17 @@ draw :: proc "contextless" (window: ^display.Window) {
 // freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [11]interface.Action_Bar_Item {
 	return {
-		interface.action_bar_item("module before", 6, "Up"),
-		interface.action_bar_item("module after", 6, "Down"),
-		interface.action_bar_item("next link", 5, "Tab"),
-		interface.action_bar_item("open the link", 5, "Enter"),
-		interface.action_bar_item("back", 4, "Backspace"),
-		interface.action_bar_item("all the modules", 3, "Ctrl", "O"),
-		interface.action_bar_item("empty the filter", 3, "Esc"),
-		interface.action_bar_item("link before", 2, "Shift", "Tab"),
-		interface.action_bar_item("rows before", 1, "Page Up"),
-		interface.action_bar_item("rows after", 1, "Page Down"),
-		interface.action_bar_item("start of the text", 0, "Home"),
+		interface.action_bar_item("Module before", 6, "Up"),
+		interface.action_bar_item("Module after", 6, "Down"),
+		interface.action_bar_item("Next link", 5, "Tab"),
+		interface.action_bar_item("Open link", 5, "Enter"),
+		interface.action_bar_item("Back", 4, "Backspace"),
+		interface.action_bar_item("All modules", 3, "Ctrl", "O"),
+		interface.action_bar_item("Empty filter", 3, "Esc"),
+		interface.action_bar_item("Link before", 2, "Shift", "Tab"),
+		interface.action_bar_item("Rows before", 1, "Page Up"),
+		interface.action_bar_item("Rows after", 1, "Page Down"),
+		interface.action_bar_item("Start of text", 0, "Home"),
 	}
 }
 bar: interface.Action_Bar_State

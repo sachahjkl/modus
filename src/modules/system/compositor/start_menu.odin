@@ -110,10 +110,10 @@ menu_line_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, wid
 }
 
 // The labels of the quick actions of the start menu.
-START_ACTION_DEMONSTRATIONS :: "demonstrations"
-START_ACTION_BAR_TO_BOTTOM :: "bar to bottom"
-START_ACTION_BAR_TO_TOP :: "bar to top"
-START_ACTION_MAGNIFIER :: "magnifier"
+START_ACTION_DEMONSTRATIONS :: "Demonstrations"
+START_ACTION_BAR_TO_BOTTOM :: "Bar to bottom"
+START_ACTION_BAR_TO_TOP :: "Bar to top"
+START_ACTION_MAGNIFIER :: "Magnifier"
 
 // start_menu_records appends the start menu: the applications and the
 // tools under their headings and the quick actions in the left pane, and,
@@ -324,7 +324,7 @@ windows_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	defer interface.draw_element_pop(table)
 	menu_card_records(table, x, y, width, height)
 	heading_y := y + bar.BORDER + (bar.TITLE - graphics.CELL_HEIGHT) / 2
-	interface.draw_text(table, x + bar.BORDER + bar.WINDOWS_ICON_X, heading_y, "windows", graphics.colors.dim, interface.FONT_CAPTION)
+	interface.draw_text(table, x + bar.BORDER + bar.WINDOWS_ICON_X, heading_y, "Windows", graphics.colors.dim, interface.FONT_CAPTION)
 	count: interface.Text_Builder
 	interface.draw_text_right(table, x + width - bar.BORDER - bar.PADDING, heading_y, interface.number_text(&count, u64(order_count)), graphics.colors.text)
 	interface.draw_rectangle(table, x + bar.BORDER + bar.PADDING, y + bar.BORDER + bar.TITLE - 4, width - 2 * bar.BORDER - 2 * bar.PADDING, 1, graphics.colors.track)

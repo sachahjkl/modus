@@ -128,12 +128,12 @@ Tool :: enum u8 {
 
 @(rodata)
 TOOL_NAMES := [Tool]string {
-	.Brush     = "brush",
-	.Eraser    = "eraser",
-	.Line      = "line",
-	.Rectangle = "rectangle",
-	.Ellipse   = "ellipse",
-	.Fill      = "fill",
+	.Brush     = "Brush",
+	.Eraser    = "Eraser",
+	.Line      = "Line",
+	.Rectangle = "Rectangle",
+	.Ellipse   = "Ellipse",
+	.Fill      = "Fill",
 }
 
 // The sizes of a brush, in pixels: each step is visible, and the list is

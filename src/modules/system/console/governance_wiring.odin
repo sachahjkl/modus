@@ -88,7 +88,7 @@ tree_hash_command :: proc "contextless" (arguments: []Value) -> Value {
 	content_hash := blake3.hash(transmute([]u8)content)
 	entry, r1 := tree_hash.tree_entry_make(.Object, name, content_hash)
 	if r1 != .None {
-		return fail("tree_hash: invalid entry name")
+		return fail("tree_hash: the entry name is empty, too long, or holds a byte it must not have")
 	}
 	entries := [1]tree_hash.Tree_Entry{entry}
 	encoded: [256]u8

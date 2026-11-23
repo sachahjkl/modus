@@ -83,11 +83,11 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1683, window_width 
 // freestanding process runs no call before its entry.
 bar_items :: proc "contextless" () -> [5]interface.Action_Bar_Item {
 	return {
-		interface.action_bar_item("older version", 4, "Up"),
-		interface.action_bar_item("newer version", 3, "Down"),
-		interface.action_bar_item("restore the version shown", 4, "Enter"),
-		interface.action_bar_item("the current note", 2, "Esc"),
-		interface.action_bar_item("count 1000", 1, "Tab"),
+		interface.action_bar_item("Older version", 4, "Up"),
+		interface.action_bar_item("Newer version", 3, "Down"),
+		interface.action_bar_item("Restore shown version", 4, "Enter"),
+		interface.action_bar_item("Current note", 2, "Esc"),
+		interface.action_bar_item("Count 1000", 1, "Tab"),
 	}
 }
 bar: interface.Action_Bar_State

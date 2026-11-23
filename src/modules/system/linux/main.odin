@@ -214,7 +214,8 @@ fail :: proc "contextless" (text: string) -> ! {
 // step_failed logs a kernel operation that failed, and stops.
 step_failed :: proc "contextless" (status: system.Status, step: string) -> ! {
 	system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field(step, 40)})
-	fail("the guest cannot run: a kernel operation failed")
+	buffer: [160]u8
+	fail(system.format(buffer[:], "The guest cannot run: the kernel refused ", step, "."))
 }
 
 @(export, link_name = "entry")
