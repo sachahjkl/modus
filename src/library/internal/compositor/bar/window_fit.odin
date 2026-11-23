@@ -1,19 +1,20 @@
 package bar
 
-// The fit of a window into the work area at a new scale
-// (src/md/features/window_resize.md, "The fit at a new scale"). A window keeps its logical size across a rescale, so a window
-// larger than the work area of a larger scale would hold more pixels than
-// the screen, which its budget does not pay.
+// The fit of a window into the work area (src/md/features/window_scroll.md,
+// "The compositor clamps"; window_resize.md, "The fit at a new scale"). A
+// surface larger than the work area would hold more pixels than the screen,
+// which the budget of the window does not pay, and a part of it would be
+// out of reach: each window gets at most the work area, and a window whose
+// layout is larger scrolls it.
 
-// A window by the corner of its frame and the size of its surface, in
-// logical pixels, with the columns and the lines of its frame around the
+// A window by the corner of its frame and the size that it wants for its
+// surface (the size that it opened with, or that the principal asked last),
+// in logical pixels, with the columns and the lines of its frame around the
 // surface: 0 for a window that draws its own frame.
 Fit_Window :: struct {
 	x, y:                        int,
 	width, height:               int,
 	chrome_width, chrome_height: int,
-	limits:                      Size_Range,
-	resizable:                   bool,
 }
 
 // The work area of the new scale, in logical pixels.
@@ -41,24 +42,16 @@ fit_order :: proc "contextless" (width, height, fitted_width, fitted_height: int
 	return .Fit_First
 }
 
-// window_fit gives the place and the size of a window in the work area: a
-// resizable window larger than the work area gets the size that fits, and
-// never less than its least size; a smaller window, or one that is not
-// resizable, keeps its size. The place is moved so that the whole window is
-// in the work area; a window still larger keeps its corner at the top left
-// of the work area, so its title and its close button stay on the screen.
+// window_fit gives the place and the size of a window in the work area: the
+// wanted size, cut to the room under the frame on each axis, and never
+// below 1. It has no floor at the least size and none for a fixed window:
+// the window scrolls its layout in the smaller surface. The place is moved
+// so that the whole window is in the work area; on a work area smaller than
+// the frame, the corner stays at its top left, so the title and the close
+// button stay on the screen.
 window_fit :: proc "contextless" (window: Fit_Window, work: Work_Box) -> (x, y, width, height: int) {
-	width, height = window.width, window.height
-	if window.resizable {
-		room_width := work.width - window.chrome_width
-		room_height := work.height - window.chrome_height
-		if width > room_width {
-			width = max(room_width, window.limits.least_width)
-		}
-		if height > room_height {
-			height = max(room_height, window.limits.least_height)
-		}
-	}
+	width = clamp(window.width, 1, max(work.width - window.chrome_width, 1))
+	height = clamp(window.height, 1, max(work.height - window.chrome_height, 1))
 	outer_width := width + window.chrome_width
 	outer_height := height + window.chrome_height
 	// The right and the bottom edge first: the left and the top win when the

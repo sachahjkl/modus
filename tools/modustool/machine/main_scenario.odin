@@ -3249,6 +3249,40 @@ scenario := [?]Step {
 	{kind = .Key, text = "ctrl-shift-up"},
 	{kind = .Wait, text = "compositor: window console restored"},
 	{kind = .Wait, text = "compositor: window console resized from "},
+	// A window that does not fit the work area (src/md/features/window_scroll.md):
+	// settings opened at 2, where the work area is 960 x 508 under the bar.
+	// Its surface of 560 x 688 gets at most the room under its frame, 482
+	// lines, from its first surface; it lays out at that size, over its least
+	// height, and scrolls its sections. Shift+Tab with no focus reaches its
+	// last control, at the foot of its content: the view moves to show it.
+	// The console and the palette take the keys, so no step presses at 2;
+	// the palette starts settings in the session of the desktop, whose store
+	// keeps the scale.
+	{kind = .Call, text = "settings.set(scale = .sixteen_eighths)", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 2; "},
+	{kind = .Wait, text = " windows shows a surface at 16 eighths", fails_on = "declined the scale"},
+	{kind = .Type, text = "stop(\"settings\")"},
+	{kind = .Wait, text = "root: settings stopped"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = "settings"},
+	{kind = .Wait, text = " for \"settings\": settings (module)"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the palette starts settings"},
+	{kind = .Wait, text = "compositor: window settings asked to draw at 560x482"},
+	{kind = .Wait, text = "compositor: window settings resized from 560x688 to 560x482", fails_on = "no surface of"},
+	{kind = .Key, text = "shift-tab"},
+	{kind = .Wait, text = "settings: the focus moves the view to the line "},
+	// Back to 1.25 with the keys of the window: Tab past the last control
+	// comes back to the first, the stop 100 %; two more reach 125 %, and
+	// Enter presses it. The view moves back up to show it.
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "settings: the focus moves the view to the line "},
+	{kind = .Key, text = "tab"},
+	{kind = .Key, text = "tab"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
+	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
 	// Tables and bytes as parameters: one description, three ways to call

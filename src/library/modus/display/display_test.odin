@@ -22,6 +22,27 @@ the_focus_of_a_settings_raise_refuses_a_word_that_names_no_member :: proc(t: ^te
 	}
 }
 
+// The layout of a window from its view: a fixed window keeps the size that
+// it opened with, at each view, the smallest too; a resizable window takes
+// its least size under a view below it, on each axis alone, and the view
+// at and above the least size.
+@(test)
+the_layout_of_a_window_keeps_its_least_size :: proc(t: ^testing.T) {
+	limits := Size_Limits{least_width = 400, least_height = 320, largest_width = 1024, largest_height = 800}
+	for view in ([?][2]int{{1, 1}, {560, 482}, {560, 688}}) {
+		width, height := layout_size_of(view[0], view[1], false, limits, 560, 688)
+		testing.expectf(t, width == 560 && height == 688, "a fixed window in %v lays out at %dx%d", view, width, height)
+	}
+	Case :: struct {
+		view, layout: [2]int,
+	}
+	cases := [?]Case{{{1, 1}, {400, 320}}, {{399, 482}, {400, 482}}, {{560, 319}, {560, 320}}, {{400, 320}, {400, 320}}, {{560, 482}, {560, 482}}, {{1024, 800}, {1024, 800}}}
+	for each in cases {
+		width, height := layout_size_of(each.view[0], each.view[1], true, limits, 560, 688)
+		testing.expectf(t, width == each.layout[0] && height == each.layout[1], "a resizable window in %v lays out at %dx%d", each.view, width, height)
+	}
+}
+
 // The root service, the input service and each window write the kind of a
 // record that the compositor reads: None, one past the last member and the
 // largest word are refused, and give None. Then each member but None comes

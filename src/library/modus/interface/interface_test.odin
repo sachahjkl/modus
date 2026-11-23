@@ -1890,6 +1890,8 @@ grid_numbers_that_wrap_are_refused :: proc(t: ^testing.T) {
 // screen, and a damage that missed a pixel of the screen shows.
 @(test)
 window_frame_end_shows_each_frame_whole :: proc(t: ^testing.T) {
+	// Each Present starts a frame of the glyph cache of the process.
+	process_drawing_begin()
 	LOGICAL_SIZE :: 96
 	SCALE :: scale_factor.Scale.Eleven_Eighths
 	WIDTH :: (LOGICAL_SIZE * int(SCALE) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE

@@ -644,6 +644,28 @@ size_limits_of_words :: proc "contextless" (words: [4]u64, width, height: int) -
 	return limits, .None
 }
 
+// layout_size_of gives the layout of a window from its view, the logical
+// size of its surface: a fixed window lays out at the size that it opened
+// with; a resizable one at the larger of the view and its least size. So a
+// clamp of the compositor to the work area never breaks a layout: the window
+// layer of the interface package scrolls it in the view
+// (src/md/features/window_scroll.md).
+layout_size_of :: proc "contextless" (view_width, view_height: int, resizable: bool, limits: Size_Limits, opened_width, opened_height: int) -> (width, height: int) {
+	if !resizable {
+		return opened_width, opened_height
+	}
+	return max(view_width, limits.least_width), max(view_height, limits.least_height)
+}
+
+// view_size gives the logical size of the surface of a window: its view,
+// or its layout for a window in plain memory that has no view.
+view_size :: proc "contextless" (window: ^Window) -> (width, height: int) {
+	if window.view_width <= 0 || window.view_height <= 0 {
+		return window.width, window.height
+	}
+	return window.view_width, window.view_height
+}
+
 // size_inside says if a size is inside the limits.
 size_inside :: proc "contextless" (limits: Size_Limits, width, height: int) -> bool {
 	return width >= limits.least_width && width <= limits.largest_width && height >= limits.least_height && height <= limits.largest_height
@@ -681,7 +703,14 @@ Window :: struct {
 	ring_memory: system.Handle, // The memory of the ring to the compositor.
 	ring:        ring.Ring, // The ring, mapped.
 	surface:     system.Handle, // The memory of the pixels of the surface; 0 while the rescale let it go.
-	width, height: int, // The size of the window, in logical pixels: its layout.
+	width, height: int, // The size of the window, in logical pixels: its layout, which the process lays out at.
+	// The logical size of the surface: the layout, or less when the
+	// compositor clamped the window to the work area; the window layer of
+	// the interface package then scrolls the layout in it
+	// (src/md/features/window_scroll.md).
+	view_width, view_height: int,
+	// The size that the window opened with: the layout of a fixed window.
+	opened_width, opened_height: int,
 	rescale:     Rescale_Machine, // The scale and the serial of the surface, and the phase of a change of the scale (scale.odin).
 	rescale_due: Rescale_Action, // A record of the rescale that the full command ring did not take yet.
 	// A Surface_Declined that the full command ring did not take yet, with
@@ -781,6 +810,8 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	// The size is logical; the surface is in pixels of the screen, at the
 	// scale in force (scale.odin).
 	window.width, window.height = width, height
+	window.view_width, window.view_height = width, height
+	window.opened_width, window.opened_height = width, height
 	scale := scale_in_force()
 	window.rescale = {phase = .Steady, scale = scale, wanted = scale, serial = 1}
 	screen_width, screen_height := surface_size_of(width, height, scale)
@@ -887,7 +918,7 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	// test waits for this line before a picture of the new size.
 	if window.resized_picture_due {
 		window.resized_picture_due = false
-		system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.width), "x", u64(window.height), " after a resize")
+		system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the first picture of ", u64(window.view_width), "x", u64(window.view_height), " after a resize")
 	}
 	return true
 }
@@ -924,6 +955,10 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 		return .None, false
 	}
 	window.size_limits, window.resizable = checked, true
+	// A clamp of the compositor can come before the limits: the layout of a
+	// resizable window is then the view, or its least size.
+	view_width, view_height := view_size(window)
+	window.width, window.height = layout_size_of(view_width, view_height, true, checked, window.opened_width, window.opened_height)
 	return .None, true
 }
 
@@ -941,9 +976,15 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 // the compositor takes no other size, and no surface that the principal
 // did not ask for.
 //
-// The statuses: Ok; Bad_Operation for a window that is not resizable, with
-// no Resized to answer, for another size than the asked one, or for a size
-// outside its limits (nothing changes); No_Slot when the command ring is
+// The size is the view: the surface. A fixed window takes a Resized of at
+// most its size, and a resizable one a Resized below its least size: the
+// compositor clamps the window to the work area, and the layout keeps its
+// size (layout_size_of), which the window layer scrolls
+// (src/md/features/window_scroll.md).
+//
+// The statuses: Ok; Bad_Operation for a fixed window asked a size larger
+// than it opened with, with no Resized to answer, for another size than
+// the asked one, or for a size past its largest limit (nothing changes); No_Slot when the command ring is
 // full (nothing was made: call again later, or the next present declines
 // the request); No_Budget, or another status of Memory_Create, Memory_Map
 // or Handle_Give, with its error record: the window keeps its size, writes
@@ -952,7 +993,7 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 surface_resize :: proc "contextless" (window: ^Window, width, height: int, error: ^errors.Error_Record = nil) -> system.Status {
 	title := string(window.title[:window.title_count])
 	switch {
-	case !window.resizable:
+	case !window.resizable && (width > window.opened_width || height > window.opened_height):
 		errors.fail(error, 0, .State, .None, 1)
 		return .Bad_Operation
 	case window.rescale.phase != .Steady:
@@ -964,7 +1005,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	case !window.resize_asked || width != window.resize_asked_width || height != window.resize_asked_height:
 		errors.fail(error, 0, .State, .None, 2, i64(width), i64(window.resize_asked_width), i64(height))
 		return .Bad_Operation
-	case !size_inside(window.size_limits, width, height):
+	case window.resizable && (width < 1 || height < 1 || width > window.size_limits.largest_width || height > window.size_limits.largest_height):
 		errors.fail(error, 0, .Out_Of_Range, .None, width < window.size_limits.least_width || width > window.size_limits.largest_width ? 2 : 3, i64(width), i64(window.size_limits.largest_width), i64(height))
 		return .Bad_Operation
 	case ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands):
@@ -980,7 +1021,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	memory, address, granted, status := surface_make(window, screen_width, screen_height)
 	if status != .Ok {
 		errors.fail(error, 0, status == .No_Budget ? errors.Kind.Budget : errors.Kind.Refused, .None, 2, i64(screen_width), i64(screen_height))
-		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.width), "x", u64(window.height))
+		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.view_width), "x", u64(window.view_height))
 		// A full ring keeps the request: the next present declines it.
 		_ = resize_decline(window)
 		return status
@@ -991,10 +1032,11 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	_, _ = rescale_step(&window.rescale, {kind = .Resize_Offered})
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Surface_Resize), values = {0 = u64(granted), 1 = u64(screen_width), 2 = u64(screen_height), 3 = window.rescale.serial}})
 	window.resize_asked = false
-	window.before_resize = {memory = window.surface, pictures = window.pictures, width = window.width, height = window.height}
+	window.before_resize = {memory = window.surface, pictures = window.pictures, width = window.view_width, height = window.view_height, layout_width = window.width, layout_height = window.height}
 	window.surface = 0 // surface_take lets go of no surface: the kept one stays mapped.
 	surface_take(window, memory, address, screen_width, screen_height)
-	window.width, window.height = width, height
+	window.view_width, window.view_height = width, height
+	window.width, window.height = layout_size_of(width, height, window.resizable, window.size_limits, window.opened_width, window.opened_height)
 	window.resized_picture_due = true
 	return .Ok
 }
@@ -1008,7 +1050,7 @@ resize_decline :: proc "contextless" (window: ^Window) -> bool {
 		return false
 	}
 	window.resize_asked = false
-	system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.width), "x", u64(window.height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
+	system.log(.Info, "display: ", string(window.title[:window.title_count]), ": the window keeps ", u64(window.view_width), "x", u64(window.view_height), ", not the asked ", u64(max(window.resize_asked_width, 0)), "x", u64(max(window.resize_asked_height, 0)))
 	return true
 }
 
@@ -1211,6 +1253,14 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		if read.kind == .Resized {
 			window.resize_asked = true
 			window.resize_asked_width, window.resize_asked_height = read.width, read.height
+			// A fixed window gets Resized only as a clamp of the compositor to
+			// the work area: its layout keeps the size that it opened with, so
+			// the answer needs no choice of the process, and a process whose
+			// loop reads its events by itself takes the clamp too
+			// (src/md/features/window_scroll.md).
+			if !window.resizable {
+				_ = surface_resize(window, read.width, read.height)
+			}
 		}
 		if read.kind == .Copy_Asked {
 			// The newest request replaces the one before: the compositor

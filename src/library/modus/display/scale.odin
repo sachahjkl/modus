@@ -267,7 +267,8 @@ Resize_Refused :: struct {
 Kept_Surface :: struct {
 	memory:        system.Handle, // 0: no surface is kept.
 	pictures:      [PICTURE_COUNT]graphics.Canvas,
-	width, height: int, // The logical size of the window with it.
+	width, height: int, // The view of the window with it: the logical size of the surface.
+	layout_width, layout_height: int, // The layout of the window with it.
 }
 
 // kept_surface_close lets a kept surface go.
@@ -326,7 +327,7 @@ rescale_take :: proc "contextless" (window: ^Window, input: Rescale_Input) {
 	case .Back_To_Shown:
 		// The compositor shows the surface before the resize: the window
 		// draws it again, at its size, and the new one goes.
-		refused_width, refused_height := window.width, window.height
+		refused_width, refused_height := window.view_width, window.view_height
 		if window.surface != 0 {
 			system.memory_unmap(rawptr(window.pictures[0].pixels))
 			system.close(window.surface)
@@ -334,7 +335,8 @@ rescale_take :: proc "contextless" (window: ^Window, input: Rescale_Input) {
 		kept := window.before_resize
 		window.before_resize = {}
 		window.surface, window.pictures = kept.memory, kept.pictures
-		window.width, window.height = kept.width, kept.height
+		window.view_width, window.view_height = kept.width, kept.height
+		window.width, window.height = kept.layout_width, kept.layout_height
 		window.picture = 0
 		window.canvas = window.pictures[0]
 		window.resized_picture_due = true
@@ -408,7 +410,7 @@ rescale_offer_send :: proc "contextless" (window: ^Window) -> (sent: bool) {
 		window.surface = 0
 	}
 	scale := window.rescale.scale
-	screen_width, screen_height := surface_size_of(window.width, window.height, scale)
+	screen_width, screen_height := surface_size_of(window.view_width, window.view_height, scale)
 	memory, address, granted, status := surface_make(window, screen_width, screen_height)
 	if status != .Ok {
 		system.log_fact(.Warning, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = op.Status_Word(status), window = window_fact_title(window)})

@@ -449,7 +449,7 @@ The windows that follow the rule:
 - The boot display and the window of `boot`: a fact of the card of the machine on the lines that it needs (the name of the processor).
 - `persistence_check`, `quic_echo`, `return_fault`, `fault_ring`, `extended_state`, `interface_font`.
 
-A window states its size in logical pixels, and its least size fits the least work area: at each scale, a holder of the display leaves its windows at least 360 logical lines (`scale_factor.WORK_AREA_LEAST_HEIGHT`), with a title over them. On the reference screen of 1920 by 1080 at the scale 2, the logical screen is 960 by 540. A window taller than the work area keeps its title on the screen; the principal moves it, or resizes it when it is resizable (`src/md/features/desktop_to_browser.md`, "The reference screen").
+A window states its size in logical pixels, and its least size fits the least work area: at each scale, a holder of the display leaves its windows at least 360 logical lines (`scale_factor.WORK_AREA_LEAST_HEIGHT`), with a title over them. On the reference screen of 1920 by 1080 at the scale 2, the logical screen is 960 by 540. The compositor gives a window a surface of at most the work area; when the layout of the window is larger, the window layer scrolls it, with a scroll bar on each axis that does not fit, the wheel, PageUp and PageDown, and the focus kept in view (`src/md/features/window_scroll.md`).
 
 ## 6. The output and its execution
 

@@ -1554,9 +1554,11 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			if focus_area.height > 0 && focus_area.y < view.y {
 				view_scroll = max(view_scroll - (view.y - focus_area.y) - int(tokens.gap), 0)
 				outcome.draw_again = true
+				system.log_fact(.Info, View_Follows_Focus{first = u64(view_scroll)})
 			} else if focus_area.height > 0 && focus_area.y + focus_area.height > view.y + view.height {
 				view_scroll += focus_area.y + focus_area.height - view.y - view.height + int(tokens.gap)
 				outcome.draw_again = true
+				system.log_fact(.Info, View_Follows_Focus{first = u64(view_scroll)})
 			}
 		}
 	}

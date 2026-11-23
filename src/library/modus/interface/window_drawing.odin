@@ -58,6 +58,16 @@ Window_Drawing :: struct {
 	act_names_sent_count: int,
 	act_names_sent_once:  bool, // A set went to the compositor: before it, the compositor has none.
 	act_names_dropped_logged: bool, // The line of a frame with act names that it did not keep is on the log: a window writes it one time.
+	// The scroll of a layout larger than the view (window_scroll.odin): the
+	// first column and line of the layout in the view; the scroll that moved
+	// the input of the frame now, which places its bars; the records of the
+	// bars in the frame; the focus before Tab moved it.
+	scroll_x, scroll_y:           int,
+	input_shift_x, input_shift_y: int,
+	bar_first, bar_end:           int,
+	focus_before:                 Element_Identity,
+	scroll_logged:                bool, // The line that the window scrolls is on the log, since it last fitted.
+	showing_picture:              bool, // The frame shows a hand picture, whose frame took the input of the scroll.
 	// The named elements that the log has from this window: a drawn frame
 	// writes the lines of what differs (element_places_publish).
 	element_places_written: Element_Places,
@@ -440,7 +450,8 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		// The principal resized the window: the surface of the new size
 		// has no picture known, so the next frame draws it whole. A
 		// refused surface keeps the old one, whose pictures stay known.
-		if event.kind == .Resized && display.surface_resize(window, event.width, event.height) == .Ok {
+		// A fixed window took the clamp of the compositor in next_event.
+		if event.kind == .Resized && (!window.resizable || display.surface_resize(window, event.width, event.height) == .Ok) {
 			draw_whole_window_next(drawing)
 		}
 		// The keys of the clipboard wait for the next frame, whose element
@@ -524,7 +535,12 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 window_frame_begin_at :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, interface_font: ^display.Interface_Font, time: u64) -> Frame {
 	drawing.now.interface_font = interface_font
 	drawing.now.scale = window.rescale.scale
-	return frame_begin(&drawing.now, &drawing.state, &drawing.input, time)
+	focus_before := drawing.state.focus
+	frame := frame_begin(&drawing.now, &drawing.state, &drawing.input, time)
+	// A layout larger than the view: the input goes into the coordinates
+	// of the layout (window_scroll.odin).
+	window_scroll_begin(drawing, window, focus_before)
+	return frame
 }
 
 // window_scroll_bar_wake gives the time, in milliseconds of the clock of
@@ -560,8 +576,15 @@ window_scroll_bar_wake :: proc "contextless" (drawing: ^Window_Drawing) -> (time
 // and window_frame_show. This procedure calls them in this order and
 // measures the time between them.
 window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> int {
+	// The keys, the focus and the bars of a window that scrolls; the frame
+	// that shows a hand picture has them in its picture already.
+	if !drawing.showing_picture {
+		window_scroll_input(drawing, frame, window)
+	}
 	frame_end(frame)
+	window_scroll_move(drawing)
 	clipboard_answer(drawing, frame, window)
+	window_input_unshift(drawing)
 	input_clear(&drawing.input)
 	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start
@@ -602,7 +625,9 @@ Frame_Changes :: struct {
 window_frame_changes :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> (changes: Frame_Changes) {
 	// The damage and the debts of the pictures are in logical pixels, as
 	// the records; they go to the screen once, where the frame is drawn.
-	surface := Rectangle{0, 0, window.width, window.height}
+	// The surface is the view of the window.
+	view_width, view_height := display.view_size(window)
+	surface := Rectangle{0, 0, view_width, view_height}
 	changes.picture = window.picture
 	// The difference from the last table to this frame. With no last
 	// table, with a table that was full, or with a difference that the
@@ -627,7 +652,8 @@ window_frame_changes :: proc "contextless" (drawing: ^Window_Drawing, window: ^d
 // found, then keeps the frame as the last table. It gives the count of the
 // rectangles that it drew.
 window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, changes: ^Frame_Changes) -> int {
-	surface := Rectangle{0, 0, window.width, window.height}
+	view_width, view_height := display.view_size(window)
+	surface := Rectangle{0, 0, view_width, view_height}
 	// sent: the compositor has the present. When the command ring is full,
 	// the present is lost, and the picture that was drawn is not the last
 	// table: its next frame is whole. A draw that the drawing module
@@ -675,8 +701,12 @@ window_frame_show :: proc "contextless" (drawing: ^Window_Drawing, window: ^disp
 // false: the compositor did not take the picture before (the frame is
 // left out). The process draws nothing and shows nothing.
 window_frame_end_into_picture :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window, picture: ^Hand_Picture) -> bool {
+	// The bars of a window that scrolls go into the picture, in the
+	// coordinates of the layout; show_picture moves the picture.
+	window_scroll_input(drawing, frame, window)
 	frame_end(frame)
 	clipboard_answer(drawing, frame, window)
+	window_input_unshift(drawing)
 	input_clear(&drawing.input)
 	act_names_offer(drawing, frame, window)
 	drawing.build_time = system.nanoseconds() - drawing.build_start
@@ -707,7 +737,9 @@ window_frame_end_into_picture :: proc "contextless" (drawing: ^Window_Drawing, f
 show_picture :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, picture: graphics.Canvas, generation: u32) {
 	frame := window_frame_begin(drawing, window)
 	draw_picture(frame.table, 0, 0, picture, generation)
+	drawing.showing_picture = true
 	window_frame_end(drawing, &frame, window)
+	drawing.showing_picture = false
 }
 
 // window_drawing_of_picture makes the drawing of a window that is one

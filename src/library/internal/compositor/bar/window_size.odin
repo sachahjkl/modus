@@ -147,6 +147,10 @@ Surface_Resize_Facts :: struct {
 	limits:       Size_Range, // Its limits.
 	asked:        bool, // The compositor sent Resized, and no answer came since.
 	asked_width, asked_height: int, // The size that it asked.
+	// The ask was a clamp to the work area (window_fit): the compositor
+	// chose the size, below the limits or for a fixed window, and the window
+	// scrolls its layout in it (src/md/features/window_scroll.md).
+	clamp:        bool,
 }
 
 // The rule that a Surface_Resize breaks. None: the compositor takes it.
@@ -171,13 +175,17 @@ surface_resize_refusal :: proc "contextless" (facts: Surface_Resize_Facts) -> Su
 		return .Not_Memory
 	case !facts.readable:
 		return .No_Read
-	case !facts.resizable:
+	case !facts.resizable && !facts.clamp:
 		return .Not_Resizable
 	case !facts.asked:
 		return .Not_Asked
 	case facts.asked_width < 0 || facts.asked_height < 0 || facts.width != u64(facts.asked_width) || facts.height != u64(facts.asked_height):
 		return .Other_Size
-	case facts.limits.least_width < 0 || facts.limits.least_height < 0 || facts.width < u64(facts.limits.least_width) || facts.height < u64(facts.limits.least_height) || facts.width > u64(max(facts.limits.largest_width, 0)) || facts.height > u64(max(facts.limits.largest_height, 0)):
+	case facts.clamp && (facts.width > u64(max(i32)) || facts.height > u64(max(i32))):
+		// The compositor asks a clamp of at most the work area: a larger
+		// size is no clamp, and the product below must not overflow.
+		return .Outside_Limits
+	case !facts.clamp && (facts.limits.least_width < 0 || facts.limits.least_height < 0 || facts.width < u64(facts.limits.least_width) || facts.height < u64(facts.limits.least_height) || facts.width > u64(max(facts.limits.largest_width, 0)) || facts.height > u64(max(facts.limits.largest_height, 0))):
 		return .Outside_Limits
 	}
 	// The size is now inside the limits, which a surface bounds: the

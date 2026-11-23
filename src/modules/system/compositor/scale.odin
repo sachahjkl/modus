@@ -161,31 +161,41 @@ window_fit_after_scale :: proc "contextless" (client: ^Client) {
 }
 
 // window_fit_target gives the place and the size of a window in the work
-// area of the scale in force (bar.window_fit): a maximized window takes the
-// work area; a larger resizable window gets the size that fits, within its
-// limits; each window is moved onto the screen. The size is the surface of
-// the window, as window_place_and_size_take asks it.
+// area in force (bar.window_fit): its wanted size, or for a maximized
+// window the work area within its limits, cut to the room under the frame;
+// each window is moved onto the screen, a maximized one to the corner of
+// the work area. The size is the surface of the window, as
+// window_size_ask asks it.
 window_fit_target :: proc "contextless" (client: ^Client) -> (x, y, width, height: int) {
-	chrome_width, chrome_height := 2 * BORDER, TITLE_HEIGHT + BORDER
-	if client.decoration == .Client {
-		chrome_width, chrome_height = 0, 0
-	}
-	if client.maximized {
-		if zone_x, zone_y, outer_width, outer_height, ok := desktop_zone_frame(.Maximized); ok {
-			x, y, width, height = zone_x, zone_y, outer_width - chrome_width, outer_height - chrome_height
-			if client.resizable {
-				limits := size_range_of(client)
-				width = clamp(width, limits.least_width, limits.largest_width)
-				height = clamp(height, limits.least_height, limits.largest_height)
-			} else {
-				width, height = client.width, client.height
-			}
-			return
+	chrome_width, chrome_height := window_chrome_of(client) // window_resize.odin
+	x, y = client.x, client.y
+	width, height = client.wanted_width, client.wanted_height
+	zone_x, zone_y, outer_width, outer_height, zoned := desktop_zone_frame(.Maximized)
+	maximized := client.maximized && zoned
+	if maximized {
+		x, y = zone_x, zone_y
+		if client.resizable {
+			limits := size_range_of(client)
+			width = clamp(outer_width - chrome_width, limits.least_width, limits.largest_width)
+			height = clamp(outer_height - chrome_height, limits.least_height, limits.largest_height)
 		}
 	}
 	top := desktop_work_top()
 	work := bar.Work_Box{left = 0, top = top, width = desktop_width, height = desktop_work_bottom() - top}
-	return bar.window_fit({x = client.x, y = client.y, width = client.width, height = client.height, chrome_width = chrome_width, chrome_height = chrome_height, limits = size_range_of(client), resizable = client.resizable}, work)
+	fitted_x, fitted_y: int
+	fitted_x, fitted_y, width, height = bar.window_fit({x = x, y = y, width = width, height = height, chrome_width = chrome_width, chrome_height = chrome_height}, work)
+	if !maximized {
+		x, y = fitted_x, fitted_y
+	}
+	return
+}
+
+// window_fit_now fits a window into the work area in force at once: at the
+// creation of its surface, a window larger than the work area gets at most
+// the work area, and scrolls its layout (src/md/features/window_scroll.md).
+window_fit_now :: proc "contextless" (client: ^Client) {
+	x, y, width, height := window_fit_target(client)
+	window_place_and_size_take(client, x, y, width, height) // window_resize.odin
 }
 
 // windows_declined_tell names a new count of the windows that declined the

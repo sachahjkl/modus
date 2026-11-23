@@ -25,22 +25,19 @@ import "modus:system"
 #assert(bar.SURFACE_BYTES_FOR_EACH_PIXEL == display.PICTURE_COUNT * size_of(graphics.Color))
 
 // resizable_take takes the record Resizable of a window: its size limits,
-// checked at the border against the size of the surface that the process
-// has: the surface of a Surface_Resize that waits for its Present, or else
-// the surface on the screen. A refusal keeps the window as it was, with one
-// line for the life of the window.
+// checked at the border against the size that the window wants, which its
+// layout has: the size that it opened with, or the last size of the
+// principal that it took. A clamp to the work area leaves the surface below
+// the limits and the layout at that size (display.layout_size_of). A
+// refusal keeps the window as it was, with one line for the life of the
+// window.
 resizable_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 	if !client.created {
 		// A window with no surface yet has no size that the limits can hold.
 		return
 	}
-	// The limits are logical pixels, as the size of the window and the
-	// logical size of a surface that waits for its Present.
-	width, height := client.width, client.height
-	if client.resize_pictures != nil {
-		width, height = client.resize_logical_width, client.resize_logical_height
-	}
-	limits, problem := display.size_limits_of_words({record.values[0], record.values[1], record.values[2], record.values[3]}, width, height)
+	// The limits are logical pixels, as the wanted size of the window.
+	limits, problem := display.size_limits_of_words({record.values[0], record.values[1], record.values[2], record.values[3]}, client.wanted_width, client.wanted_height)
 	if problem != .None {
 		if !client.resizable_refusal_logged {
 			client.resizable_refusal_logged = true
@@ -109,6 +106,7 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 		asked        = client.resize_asked,
 		asked_width  = at_scale(client.resize_asked_width, surface_scale),
 		asked_height = at_scale(client.resize_asked_height, surface_scale),
+		clamp        = client.resize_asked_clamp,
 	}
 	if facts.is_memory {
 		// A refused size reads as 0 bytes: the check refuses it.
@@ -135,6 +133,11 @@ surface_resize_take :: proc "contextless" (client: ^Client, record: ring.Record)
 	client.resize_logical_width, client.resize_logical_height = client.resize_asked_width, client.resize_asked_height
 	client.resize_scale, client.resize_serial = surface_scale, serial
 	client.resize_pending_edges = client.resize_edges
+	// A size of the principal that no clamp cut is the size that the window
+	// wants from now on.
+	if !client.resize_asked_clamp {
+		client.wanted_width, client.wanted_height = client.resize_asked_width, client.resize_asked_height
+	}
 	client.resize_asked, client.resize_edges = false, {}
 	send(client, .Surface_Answer, {0 = u64(display.Surface_Answer_Kind.Resize_Taken), 1 = serial})
 	// The scale after the answer: the window rescales its new surface.
@@ -426,16 +429,41 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 	}
 	resize_outline_damage()
 	resizing = -1
-	// One request at a time: a request that waits for its answer is never
-	// crossed by a second.
-	if client.resize_asked || !bar.drag_asks_size(client.released, client.resize_pictures != nil, width == client.width && height == client.height) {
-		return
+	_ = window_size_ask(client, width, height, resize_start.edges)
+}
+
+// window_size_ask asks the process of a window for a size with the one
+// event Resized, as at the release of a drag of its edges. The compositor
+// cuts the size to the room of the work area under the frame, so no surface
+// passes the work area; a cut size, a size below the least size, or any
+// size of a fixed window is a clamp, which the window scrolls its layout in
+// (src/md/features/window_scroll.md). One request at a time: a request that
+// waits for its answer is never crossed by a second. It gives true when it
+// sent the request.
+window_size_ask :: proc "contextless" (client: ^Client, width, height: int, edges: bar.Resize_Edges) -> (asked: bool) {
+	chrome_width, chrome_height := window_chrome_of(client)
+	top := desktop_work_top()
+	_, _, asked_width, asked_height := bar.window_fit({width = width, height = height, chrome_width = chrome_width, chrome_height = chrome_height}, {left = 0, top = top, width = desktop_width, height = desktop_work_bottom() - top})
+	limits := size_range_of(client)
+	clamp := !client.resizable || asked_width != width || asked_height != height || asked_width < limits.least_width || asked_height < limits.least_height
+	if client.resize_asked || !bar.drag_asks_size(client.released, client.resize_pictures != nil, asked_width == client.width && asked_height == client.height) {
+		return false
 	}
-	client.resize_asked = true
-	client.resize_asked_width, client.resize_asked_height = width, height
-	client.resize_edges = resize_start.edges
-	send(client, .Resized, {0 = u64(width), 1 = u64(height)})
-	system.log_fact(.Info, Draw_Size_Asked{width = u64(width), height = u64(height), window = window_field(client.title[:])})
+	client.resize_asked, client.resize_asked_clamp = true, clamp
+	client.resize_asked_width, client.resize_asked_height = asked_width, asked_height
+	client.resize_edges = edges
+	send(client, .Resized, {0 = u64(asked_width), 1 = u64(asked_height)})
+	system.log_fact(.Info, Draw_Size_Asked{width = u64(asked_width), height = u64(asked_height), window = window_field(client.title[:])})
+	return true
+}
+
+// window_chrome_of gives the columns and the lines of the frame of a window
+// around its surface: none for a window that draws its own frame.
+window_chrome_of :: proc "contextless" (client: ^Client) -> (chrome_width, chrome_height: int) {
+	if client.decoration == .Client {
+		return 0, 0
+	}
+	return 2 * BORDER, TITLE_HEIGHT + BORDER
 }
 
 // window_frame_take puts a window into a frame of the screen: its place,
@@ -450,28 +478,21 @@ window_frame_take :: proc "contextless" (client: ^Client, x, y, outer_width, out
 }
 
 // window_place_and_size_take moves a window and asks its process for a new
-// size with the one event Resized, as at the release of a drag of its edges.
-// The size stays within the limits that the process declared; a window
-// that is not resizable only moves. The top left corner stays where it is
-// when the new surface comes, so the window fills the frame that it asked.
+// size (window_size_ask). The size stays within the limits that the process
+// declared; a fixed window is asked its wanted size, which the work area
+// can cut. The top left corner stays where it is when the new surface
+// comes, so the window fills the frame that it asked.
 window_place_and_size_take :: proc "contextless" (client: ^Client, x, y, width, height: int) {
 	damage_window(client)
 	client.x, client.y = x, y
 	damage_window(client)
-	if !client.resizable || client.resize_asked {
-		return
+	asked_width, asked_height := client.wanted_width, client.wanted_height
+	if client.resizable {
+		limits := size_range_of(client)
+		asked_width = clamp(width, limits.least_width, limits.largest_width)
+		asked_height = clamp(height, limits.least_height, limits.largest_height)
 	}
-	limits := size_range_of(client)
-	asked_width := clamp(width, limits.least_width, limits.largest_width)
-	asked_height := clamp(height, limits.least_height, limits.largest_height)
-	if !bar.drag_asks_size(client.released, client.resize_pictures != nil, asked_width == client.width && asked_height == client.height) {
-		return
-	}
-	client.resize_asked = true
-	client.resize_asked_width, client.resize_asked_height = asked_width, asked_height
-	client.resize_edges = {.Right, .Bottom}
-	send(client, .Resized, {0 = u64(asked_width), 1 = u64(asked_height)})
-	system.log_fact(.Info, Draw_Size_Asked{width = u64(asked_width), height = u64(asked_height), window = window_field(client.title[:])})
+	_ = window_size_ask(client, asked_width, asked_height, {.Right, .Bottom})
 }
 
 // resize_outline_damage records the rectangle of the outline.
