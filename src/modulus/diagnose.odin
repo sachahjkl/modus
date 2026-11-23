@@ -167,7 +167,7 @@ read_own_full :: proc "contextless" (process: ^Process) -> (mappings, modules, t
 			modules = false
 		}
 	}
-	threads = process.thread_areas == max(u32)
+	threads = process.thread_count >= op.THREAD_CAPACITY
 	return mappings, modules, threads
 }
 
@@ -216,12 +216,22 @@ read_machine_full :: proc "contextless" () -> (full: Machine_Full) {
 	return full
 }
 
-// read_word says if a process can wait on a word. Lock: the process lock.
+// read_device_word says if a word of a process is in device memory. Lock:
+// the process lock.
 @(private = "file")
-read_word :: proc "contextless" (process: ^Process, address: u64) -> bool {
+read_device_word :: proc "contextless" (process: ^Process, address: u64) -> bool {
 	at, taken := caller_lock(process)
 	defer process_unlock(at, taken)
-	return word_address(process, address) != 0
+	return word_in_device_memory(process, address)
+}
+
+// read_word says if a process can wait on a word, or with write, wake it.
+// Lock: the process lock.
+@(private = "file")
+read_word :: proc "contextless" (process: ^Process, address: u64, write := false) -> bool {
+	at, taken := caller_lock(process)
+	defer process_unlock(at, taken)
+	return word_address(process, address, write) != 0
 }
 
 // read_threads gives the threads of a process. Lock: the process lock.
@@ -903,6 +913,13 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pr
 		if holds.threads != 0 {
 			unit, asked, held = .Pages, 1 + ring.PAGE_COUNT, holds.pages // The thread area.
 		}
+	case .Thread_Control:
+		// A wait room: its pages, before the pages of the room that it
+		// replaces return.
+		if v[2] != u64(op.Thread_Control_Command.Wait_Room) {
+			return false
+		}
+		unit, asked, held, argument = .Pages, op.wait_room_pages(v[4]), holds.pages, 5
 	case .Budget_Create:
 		amounts := [5]u64{holds.pages, holds.processes, holds.threads, holds.processor, holds.log_records}
 		units := [5]errors.Unit{.Pages, .Processes, .Threads, .Processor, .Log_Records}
@@ -1007,16 +1024,23 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 				return false // Unmapped since: the cause is not known now.
 			}
 			if !read_word(process, word.address) {
-				record_set(record, .Bad_Address, .Bytes, 1, word.address, 4, 0)
+				// found 2: the word is in device memory, which no wait takes.
+				record_set(record, .Bad_Address, .Bytes, 1, word.address, 4, read_device_word(process, word.address) ? 2 : 0)
 				return true
 			}
 		}
 		return false
 	case .Word_Wake:
-		if read_word(process, v[0]) {
+		// A wake needs Write on its word: found is 1 for a word that the
+		// process can read and not write, 2 for a word of device memory.
+		if read_word(process, v[0], write = true) {
 			return false
 		}
-		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, 0)
+		found := u64(read_word(process, v[0]))
+		if read_device_word(process, v[0]) {
+			found = 2
+		}
+		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, found)
 	case .Inspect:
 		size: u64
 		if kind, kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1]); kind_known {
@@ -1181,11 +1205,13 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 	#partial switch operation {
 	case .Word_Wait:
 		// The words of this entry count too: only a list longer than the
-		// capacity is one cause that the record can name.
-		if v[1] <= op.WORD_WAIT_CAPACITY {
+		// room of the calling thread is one cause that the record can name.
+		// The diagnosis runs in the entry of that thread, on its processor.
+		capacity := u64(wait_capacity(&threads[processor_self().current]))
+		if v[1] <= capacity {
 			return false
 		}
-		record_set(record, .Too_Long, .Words, 2, v[1], op.WORD_WAIT_CAPACITY, 0)
+		record_set(record, .Too_Long, .Words, 2, v[1], capacity, 0)
 		return true
 	case .Memory_Map:
 		if v[1] != 0 || !mappings {
@@ -1198,6 +1224,16 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 			return false
 		}
 		record_set(record, .Full, .Modules, 0, 0, op.PROCESS_MODULE_CAPACITY, 0)
+		return true
+	case .Memory_Physical:
+		// It makes no handle. The device windows are named only when the
+		// object needs one and none is free: a requester past the slots is
+		// another cause, and stays Refused.
+		slot, found := read_handle_find(process, v[1], .Memory)
+		if !found || !iommu_windows_wanted(slot.object) {
+			return false
+		}
+		record_set(record, .Full, .Device_Windows, 0, 0, u64(IOMMU_WINDOW_CAPACITY) - 1, 0)
 		return true
 	case .Handle_Give:
 		// The one cause of No_Slot here: the handle table of the target.
@@ -1225,12 +1261,12 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 		if !read_regions_full() {
 			return false
 		}
-		record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
+		record_set(record, .Full, .Memory, 0, 0, u64(region_capacity) - 1, 0)
 	case .Process_Create:
 		if !read_machine_full().processes {
 			return false
 		}
-		record_set(record, .Full, .Processes, 0, 0, PROCESS_CAPACITY - 1, 0)
+		record_set(record, .Full, .Processes, 0, 0, u64(process_capacity) - 1, 0)
 	case .Thread_Create, .Process_Start:
 		// The causes: the thread areas of the process, its mappings (the
 		// thread area is a mapping), the memory objects of the machine (the
@@ -1261,7 +1297,7 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 		case device_kind == .Message && read_machine_full().messages:
 			record_set(record, .Full, .Interrupts, 0, 0, op.MESSAGE_CAPACITY, 0)
 		case (device_kind == .Memory || device_kind == .Display_Memory) && read_regions_full():
-			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
+			record_set(record, .Full, .Memory, 0, 0, u64(region_capacity) - 1, 0)
 		case:
 			return false
 		}
@@ -1352,6 +1388,13 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 	// An open choice by design: of the many operations, this diagnosis names
 	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
+	case .Word_Wait:
+		// A word that the entry holds already: the value is its place in
+		// the whole command.
+		if facts := &processor_self().operation; facts.word_wait_duplicate {
+			record_set(record, .Bad_Value, .Words, 1, facts.word_wait_refused_place, 0, 0)
+			return true
+		}
 	case .Log:
 		// A fact has no value runs: its values are not text. Its bound is 0,
 		// whatever the count, so this check comes first.
@@ -1470,6 +1513,19 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		// takes.
 		if v[2] == u64(op.Thread_Control_Command.Read_Memory) && v[4] > op.THREAD_MEMORY_READ_LIMIT {
 			record_set(record, .Bad_Value, .None, 5, v[4], op.THREAD_MEMORY_READ_LIMIT, 0)
+			return true
+		}
+		// A wait room of more words than a wait holds, or one that names a
+		// thread: a room serves the calling thread only.
+		if v[2] == u64(op.Thread_Control_Command.Wait_Room) {
+			switch {
+			case v[4] > op.WORD_WAIT_MOST:
+				record_set(record, .Too_Long, .Words, 5, v[4], op.WORD_WAIT_MOST, 0)
+			case v[0] != 0:
+				record_set(record, .Bad_Value, .None, 1, v[0], 0, 0)
+			case:
+				record_set(record, .Bad_Value, .None, 2, v[1], 0, 0)
+			}
 			return true
 		}
 	case .Fault_Handler_Set:

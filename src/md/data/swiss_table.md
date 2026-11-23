@@ -39,7 +39,7 @@ When keys are chosen externally (glyph descriptors, hashes, IP addresses, names)
   - **QUIC per-address budgets** (`src/library/modus/quic/server_budgets.odin`): 1 024 entries keyed by remote IPv4 address (`u32`), currently scanned linearly; hostile remote addresses make a seeded Swiss table a direct fit.
   - **QUIC and TCP connection tables** (`src/library/modus/quic/server.odin`, `src/library/modus/tcp/`) and **storage block cache** (`src/modules/system/storage/engine.odin`, 64 cached blocks): small today, candidates for `Hash_Index` if their capacities grow beyond linear-scan range.
 - **Stay linear scans**: small name tables with tens of entries (`disk_process.Grant_Table`, `root` roles and running processes, `console` commands and variables, `network` ARP neighbors, `storage` store names).
-- **Excluded**: the kernel wait table (`src/modulus/wait.odin`, 64 intrusive linked-list buckets keyed by physical word address). The kernel imports no support packages and executes no SSE2 instructions.
+- **Excluded**: the kernel wait table (`modulus:word_table`: a bucket for each page frame, intrusive lists of the words and their waiters, keyed by the physical address of the word). The kernel imports no support packages and executes no SSE2 instructions.
 
 ## The chosen form
 

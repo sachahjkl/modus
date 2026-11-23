@@ -216,16 +216,6 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 		grant_slot_refused(name, slot)
 		return start_refuse(work, .Data_Damaged, .Damaged, .Records, 0, i64(slot))
 	}
-	// The rings of the process are queues of the wait of the loop of this
-	// service: past the bound, the start is refused before any service
-	// starts for it and before any ring is made (wait_words.odin).
-	if record, refused := waited_queues_refusal(.Start, start_waited_queues(grants, work.file)); refused {
-		// The record Full of the words of the wait: the queues of the loop
-		// of this service are shared by each process, and free when one
-		// ends.
-		start_refusal_keep(work, record)
-		return .Callee_Busy
-	}
 	// A process with an endpoint: the network service starts first. A
 	// service that starts here and a refusal of this start after it change
 	// no state of the sender (needed_service_failed).

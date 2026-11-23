@@ -106,7 +106,7 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 // for each mapping, no walk of the page table.
 process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Report, index: u32) {
 	report^ = {}
-	if index == 0 || index >= PROCESS_CAPACITY {
+	if index == 0 || index >= process_capacity {
 		return
 	}
 	about := &processes[index]
@@ -121,7 +121,10 @@ process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Repor
 	if about.table == 0 {
 		return
 	}
-	for &mapping in about.mappings {
+	// The order of the mappings is the order of their addresses: the
+	// report sorts nothing.
+	for place in about.mapping_order[:about.mapping_order_count] {
+		mapping := &about.mappings[place]
 		if mapping.page_count == 0 || report.count == op.MAPPING_REPORT_CAPACITY {
 			continue
 		}
@@ -152,7 +155,7 @@ process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Repor
 		if mapping.address >= op.THREAD_AREA_BASE {
 			item.flags += {.Thread_Area}
 		}
-		if mapping.region < REGION_CAPACITY {
+		if mapping.region < region_capacity {
 			region := &regions[mapping.region]
 			item.region_pages = region.page_count
 			item.region_serial = region.serial
@@ -176,13 +179,7 @@ process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Repor
 				item.flags += {.Shared}
 			}
 		}
-		// In the order of the addresses.
-		place := report.count
-		for place > 0 && report.mappings[place - 1].address > item.address {
-			report.mappings[place] = report.mappings[place - 1]
-			place -= 1
-		}
-		report.mappings[place] = item
+		report.mappings[report.count] = item
 		report.count += 1
 	}
 }
@@ -194,7 +191,7 @@ process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Repor
 // words of the memory of the process. The caller holds the control lock.
 stop_report_for_inspect :: proc "contextless" (report: ^op.Stop_Report, index: u32) {
 	report^ = {}
-	if index == 0 || index >= PROCESS_CAPACITY {
+	if index == 0 || index >= process_capacity {
 		return
 	}
 	about := &processes[index]
@@ -236,7 +233,7 @@ stop_report_for_inspect :: proc "contextless" (report: ^op.Stop_Report, index: u
 // fields of the scheduler are read with no run lock, each one whole.
 threads_report :: proc "contextless" (report: ^op.Thread_Table_Report, index: u32) {
 	report^ = {}
-	if index == 0 || index >= PROCESS_CAPACITY || processes[index].state == .None {
+	if index == 0 || index >= process_capacity || processes[index].state == .None {
 		return
 	}
 	report.process_serial = u64(processes[index].serial)

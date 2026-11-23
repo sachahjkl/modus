@@ -167,6 +167,90 @@ Word_Wait_Counted :: struct {
 	lost:   u64,
 }
 
+// The wait room of the kernel at its edges (wait_room.odin).
+@(log_fact = "locks: the wait room: with no room a wait of {inline_words} words and one more {no_room_status}; a word twice in a wait {twice_status}; a room past {most_words} words {too_many_status}, for another thread {other_status}; a room of {asked} words held {held} words for {pages} pages of the budget; a wait of the {held} words {held_status}, of one more {past_status}; the room given back returned its pages: {returned}: {verdict}")
+Wait_Room_Checked :: struct {
+	inline_words:    u64,
+	no_room_status:  op.Status_Word,
+	twice_status:    op.Status_Word,
+	most_words:      u64,
+	too_many_status: op.Status_Word,
+	other_status:    op.Status_Word,
+	asked:           u64,
+	held:            u64,
+	pages:           u64,
+	held_status:     op.Status_Word,
+	past_status:     op.Status_Word,
+	returned:        u64,
+	verdict:         [16]u8,
+}
+
+// The pages of a room returned to the budget at each end of the room.
+@(log_fact = "locks: the pages of a wait room returned at the end of its thread: {thread_end}; at the stop of its process during a wait: {stopped_back}; at the stop of its process after its budget ended: {ended_back}: {verdict}")
+Wait_Room_Ends :: struct {
+	thread_end:   u64,
+	stopped_back: u64,
+	ended_back:   u64,
+	verdict:      [16]u8,
+}
+
+// One wait of the most words, in one kernel entry: a measure.
+@(log_fact = "locks: a wait of {words} words: {status} in {time} (a measure)")
+Wait_Room_Long :: struct {
+	words:  u64,
+	status: op.Status_Word,
+	time:   value_kinds.Time_In_Microseconds,
+}
+
+// A wake through a read-only mapping of the word.
+@(log_fact = "locks: a wake of a word through a read-only mapping {status}, and the thread that waits on it still waits: {still_waits}; a wake through the mapping with Write woke {woken} thread: {verdict}")
+Read_Only_Wake_Refused :: struct {
+	status:      op.Status_Word,
+	still_waits: u64,
+	woken:       u64,
+	verdict:     [16]u8,
+}
+
+// The time of one unmap of a mapping whose pages each have a frame, with no
+// waited word in the process, and with one: a measure.
+@(log_fact = "locks: an unmap of {pages} pages took {alone} with no thread waiting on a word of it, {waited} with a thread waiting on its last word (a measure)")
+Unmap_Time :: struct {
+	pages:  u64,
+	alone:  value_kinds.Time_In_Microseconds,
+	waited: value_kinds.Time_In_Microseconds,
+}
+
+// One wake of the last word of a bucket that holds the words of a frame.
+@(log_fact = "locks: a wake of a word of a frame whose {words} words a thread waits on woke {woken} thread in {time} (a measure)")
+Full_Frame_Wake :: struct {
+	words: u64,
+	woken: u64,
+	time:  value_kinds.Time_In_Microseconds,
+}
+
+// The unmap of a waited object wakes its waiter; the next user of frames
+// wakes its own waiter alone.
+@(log_fact = "locks: a thread that waits on a word of an object that its process unmaps and closes was woken by the unmap: {unmap_woke}; another process that takes frames woke {other_woken} thread with its own wake: {verdict}")
+Unmap_Wakes_Waiter :: struct {
+	unmap_woke:  u64,
+	other_woken: u64,
+	verdict:     [16]u8,
+}
+
+// Two processes wait each on a word of a page that they never touched.
+@(log_fact = "locks: two processes wait each on a word of a page that they never touched: the wake of one counted {woken} thread, and the other still waits: {other_waits}: {verdict}")
+Untouched_Page_Waits :: struct {
+	woken:       u64,
+	other_waits: u64,
+	verdict:     [16]u8,
+}
+
+// verdict_field gives the Text field of the verdict of a case in the words
+// of the line: "as it must" or "WRONG".
+verdict_field :: proc "contextless" (right: bool) -> [16]u8 {
+	return value_kinds.text_field(right ? "as it must" : "WRONG", 16)
+}
+
 // A check failed: each check as 1 when it passed, and the lost wakes.
 @(log_fact = "locks: wrong: entries {entries_right} faults {faults_right} pages {pages_right} wakes {wakes_right} lost {lost} stress {stress_right} frames {frames_right}")
 Checks_Wrong :: struct {

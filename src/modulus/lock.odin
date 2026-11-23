@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:slot_set"
 
 // The locks of the kernel (docs/ARCHITECTURE.md, "Locks of the kernel").
 //
@@ -127,16 +128,14 @@ lock_counts_sum :: proc "contextless" () -> (sum: [op.LOCK_KIND_CAPACITY]op.Lock
 // waits in `stops_pending` until control_free, so that a stop never runs
 // inside the process locks of the path that closed the handle.
 control_lock: Lock
-stops_pending: u64 // Bit n: process n has no handle. Control lock.
+stops_pending: Process_Set // The processes that have no handle. Control lock.
 
 control_take :: proc "contextless" () {
 	lock_take(&control_lock, .Control)
 }
 
 control_free :: proc "contextless" () {
-	for stops_pending != 0 {
-		index := u32(intrinsics.count_trailing_zeros(stops_pending))
-		stops_pending &~= 1 << index
+	for index in slot_set.take(&stops_pending) {
 		process := &processes[index]
 		if intrinsics.atomic_load(&process.references) != 0 {
 			continue
@@ -152,23 +151,23 @@ control_free :: proc "contextless" () {
 
 // The lock of each process. It is out of the process record: a new process
 // in a slot does not reset it.
-process_locks: [PROCESS_CAPACITY]Lock
+process_locks: [PROCESS_CAPACITY_MOST]Lock
 
 // process_lock takes the lock of a process, unless this processor holds it
 // already. true: this call took it; give it to process_unlock.
 process_lock :: proc "contextless" (index: u32) -> bool {
 	cpu := processor_self()
-	if cpu.processes_held & (1 << index) != 0 {
+	if slot_set.has(&cpu.processes_held, index) {
 		return false
 	}
 	lock_take(&process_locks[index], .Process)
-	cpu.processes_held |= 1 << index
+	slot_set.add(&cpu.processes_held, index)
 	return true
 }
 
 process_unlock :: proc "contextless" (index: u32, taken: bool) {
 	if taken {
-		processor_self().processes_held &~= 1 << index
+		slot_set.remove(&processor_self().processes_held, index)
 		lock_free(&process_locks[index], .Process)
 	}
 }

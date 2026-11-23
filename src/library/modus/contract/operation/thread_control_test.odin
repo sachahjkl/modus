@@ -128,6 +128,10 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			// No thread handle takes them: they name a process, through
 			// the machine handle only.
 			testing.expect(t, thread_control_names_a_process(command))
+		case .Wait_Room:
+			// No handle: it gives the calling thread its wait room.
+			testing.expect(t, thread_control_sizes_the_wait(command))
+			testing.expect(t, !thread_control_takes_debug_handle(command))
 		case .Start_Counters, .Read_Counters, .Stop_Counters:
 			// No thread handle takes them: they act on the calling
 			// thread, through the machine handle with Counters only.
@@ -167,14 +171,14 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 }
 
 // The process handle with Debug names a thread for each command but the
-// two of the schedule, the two of the placement and the three of the
-// thread counters.
+// two of the schedule, the two of the placement, the three of the
+// thread counters and the wait room.
 @(test)
 the_commands_of_a_debug_handle :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
 		taken := thread_control_takes_debug_handle(command)
 		#partial switch command {
-		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+		case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Wait_Room:
 			testing.expect(t, !taken)
 		case:
 			testing.expect(t, taken)

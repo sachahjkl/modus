@@ -110,28 +110,35 @@ The same picture in text:
 
 ## Kernel systems
 
-The kernel, `modulus`, is small on purpose: it does only what a process cannot do safely for itself (P1, P4). It has five systems, and the kernel operations reach them (`src/library/modus/contract/operation`, `Operation`; their count is in `PROPERTIES.md`, "1. Small kernel with a small, counted interface"). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
+The kernel, `modulus`, is small on purpose: it does only what a process cannot do safely for itself (P1, P4). It has five systems, and the kernel operations reach them (`src/library/modus/contract/operation`, `Operation`; their count is in `PROPERTIES.md`, "1. Small kernel with a small, counted interface"). Each system owns a small set of flat tables (P13), sized once at the start of the kernel, so the kernel allocates nothing while it runs.
 
-The fixed sizes of the tables, from `src/modulus/process.odin`, `src/modulus/processor.odin` and `src/library/modus/contract/operation`:
+The sizes of the tables, from `src/modulus/tables.odin`, `src/modulus/process.odin`, `src/modulus/processor.odin` and `src/library/modus/contract/operation`:
 
-| Table | Capacity | Why a fixed size is enough |
+| Table | Capacity | Why this size |
 |---|---|---|
-| Processes | 64 (`PROCESS_CAPACITY`) | A process slot is also a bit in the sets of the kernel events ("Kernel events", section 7) |
-| Handles of one process | 128 (`HANDLE_CAPACITY`) | A process holds what its grants name, not one handle for each piece of data |
-| Mappings of one process | 128 (`MAPPING_CAPACITY`) | One mapping covers a range of any size, also a reserved range with no pages paid |
-| Threads of the machine | 256 (`THREAD_TABLE_CAPACITY`); 32 for one process (`THREAD_CAPACITY`) | The extended state area of each thread is a field of its slot ("The extended state of the processor", section 2) |
-| Memory objects | 2048 (`REGION_CAPACITY`) | |
-| Budgets | 128 (`BUDGET_CAPACITY`) | |
+| Processes | One slot for each 4 MiB of usable memory, from 64 to 1024 (`process_capacity`, `op.PROCESS_SLOTS_LEAST`, `op.PROCESS_SLOTS_MOST`): 256 on a machine of 1 GiB | A log record keeps the process slot in two bytes (`op.Log_Record`). A set of process slots is an array of words (`modulus:slot_set`) |
+| Handles of one process | 1024 (`HANDLE_CAPACITY`) | A server with a ring and a region for each of hundreds of clients |
+| Mappings of one process | 1024 (`MAPPING_CAPACITY`) | One mapping covers a range of any size, also a reserved range with no pages paid |
+| Threads of the machine | 4 for each process slot (`thread_table_capacity`); 256 for one process (`op.THREAD_CAPACITY`) | The extended state area of each thread is a field of its slot ("The extended state of the processor", section 2). A log record names a thread by its number in its process, so this table has no bound of one byte |
+| Memory objects | 64 for each process slot (`region_capacity`) | An IOMMU window is not the slot of its object: only a declared object takes one of the 2047 windows (`IOMMU_WINDOW_CAPACITY`), and gives it back when it is no longer declared |
+| Budgets | 4096 (`BUDGET_CAPACITY`) | |
 | Processors | 64 (`PROCESSOR_CAPACITY`) | |
+| Words of one wait | 64 for each thread (`op.WORD_WAIT_INLINE`); up to 32768 (`op.WORD_WAIT_MOST`) with a wait room that the budget of the process pays | A `system.Wait` holds 64 words on the stack of its thread; a thread that waits on more gives a `system.Wait_Set` of its own memory, and the kernel holds the words in its wait room |
 
 A full table is a status of the operation that asks for one more entry (`No_Slot`), never a failure of the kernel.
+
+### The tables of the kernel
+
+The tables are memory of the kernel: `tables_start` takes them from the free frames, after the memory map and before the root budget, so no budget pays them and the root budget holds the free memory less their size. Their cost for each process slot, measured, and the reasons of the rule are in `src/md/data/table_sizes.md`. A record of the size of a process is never a composite literal: the kernel stack, 64 KiB, cannot hold its copy, so the kernel writes it in place (`process_reset`).
+
+The sizes are bounds of the tables, not budgets. A process gets its slot, its threads and its pages from a budget that its starter divides (`PROPERTIES.md`, "20. No ambient access: the other holes to close", line 16).
 
 ### K1. Handle table
 
 The handle table is how the kernel knows who can do what. A process names an object only by a handle, and the handle carries the rights that the process has on it.
 
 - **Does**: Keeps, per process, the table of handles. Checks the kind and the rights of each handle that a kernel operation receives: a wrong kind gives the status `Bad_Handle`, a missing right `No_Right`. Copies handles between processes with a part of their rights (`Handle_Give`), ends them (`Handle_Close`), and ends every copy that came from one handle (`Handle_Revoke`).
-- **Owns**: one table of objects for each object kind; one handle table per process, of 128 handles (`HANDLE_CAPACITY` in `src/modulus/process.odin`).
+- **Owns**: one table of objects for each object kind; one handle table per process, of 1024 handles (`HANDLE_CAPACITY` in `src/modulus/process.odin`).
 - **A handle** (`op.Handle`) is one value of 32 bits: the low 16 bits are the slot in the handle table of the process, from 1; the high 16 bits are the generation of the slot. A close adds 1 to the generation, so an old handle number never names the next object of its slot. The value 0 names no object.
 - **Object kinds** (`op.Object_Kind`):
 
@@ -187,7 +194,7 @@ Under KVM the cycle counter goes on while the host runs another task on the phys
 A thread talks to the kernel through a ring, and waits through the kernel. Rings between processes need no kernel at all: they are memory that both processes map.
 
 - **Does**: Executes the commands that a thread puts in its kernel ring. Gives the one blocking point of the system: a thread enters the kernel and waits until a word that it names changes (`Word_Wait`, `Word_Wake`), or until a deadline. A ring between two processes uses that wait: a reader waits on a word of the ring, and a writer wakes it.
-- **Owns**: the wait table (buckets of the words that threads wait on, named by their physical address, so two processes that map one memory object wait on one word). The kernel has no table of rings: a ring between processes is a memory object, and the kernel does not know its layout.
+- **Owns**: the wait table (a bucket for each page frame, and in it a list for each word that threads wait on, named by its physical address, so two processes that map one memory object wait on one word). The kernel has no table of rings: a ring between processes is a memory object, and the kernel does not know its layout.
 - **The kernel ring**: each **thread** has one ring to the kernel, one page after its thread record (`src/library/modus/contract/operation`, the comment of the package; `MODULE_CONTRACT.md`, section 6). A completion therefore never reaches another thread of the same process. All kernel operations are records in that ring, and the one entry point is the `syscall` instruction, "enter": run the commands of the ring, then return or wait. One entry point keeps the interface counted and small (P1, P4).
 - **A full completion queue**: the kernel runs a command only when the completion queue of the thread has room for its answer. Else it leaves that command, and each one after it, in the command queue, unrun, and the entry returns with no wait, also when the thread asked for one. The thread reads its completions and enters again; the kernel then runs the commands in their order. So no answer is lost, and the kernel keeps nothing for a command.
 - **One writer of a kernel ring**: only its own thread writes a kernel ring. The ring is memory of the process, so the kernel does not enforce it; it is a rule of the library, and each thread finds its ring through its thread record. The check of the room before a command, the empty check of the library and the check of the tag depend on it. Another thread of the process that writes the ring breaks them only for that process.
@@ -529,7 +536,7 @@ Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a d
 | Thread: `record_in_kernel`, `fault_waits`, `fault_serial`, `fault_address`; process: `fault_handler`, `fault_handler_serial`, `fault_written`, `fault_full`, `fault_serial` | **fault** (`fault_deliver`), **op** (`Fault_Handler_Set`, `Fault_Answer`), **stop** (`thread_finish`) | the same | process lock of the process; `thread.state` and `deadline` of a thread that starts to wait, under its run lock too | a thread with `fault_waits` is `Waiting` with no deadline and has no entry in the table of words; `fault_handler` names a live thread of the process, or 0 |
 | Process: `fault_kinds` | **fault** (`fault_deliver`: first with no lock, then under the process lock) | **op** (`Fault_Handler_Set`), **stop** (`thread_finish` of the handler) | written under the process lock with an atomic store; the read with no lock is a filter only | 0 when `fault_handler` is 0 |
 | Thread: `references`, `budget` | **op**, **tick** (budget) | **op**, budget end | `references` atomic (a copy of a handle in its own process adds 1 with no control lock); `budget` written under the frame lock | |
-| Wait table: buckets of entries (word, thread, serial) | **wake** | **op** (`Word_Wait`), the start of the next entry, **stop** | wait lock of the bucket | an entry is valid while its serial is the `wait_serial` of its thread |
+| Wait table: a bucket for each frame, a list for each word of entries (word, thread, serial) | **wake** | **op** (`Word_Wait`), the start of the next entry, **stop** | the wait lock of the bucket | an entry is valid while its serial is the `wait_serial` of its thread |
 | Process: `handles`, `mappings`, `next_address`, the lower half of its page table, `thread_areas`, `thread_count`, `mapped_pages`, `modules`, `stop`, `state`, `code`, `has_ports` | **op**, **fault**, **revoke**, **stop**, reports | **op**, **fault**, **revoke**, **stop** | process lock | a mapping names a memory object with one reference; a handle names an object with one reference |
 | Process: `references` | **op** | **op**, **revoke**, **stop** | atomic; the change to 0 under the control lock | the process runs while a handle names it |
 | Process: `holds` | scheduler, **stop**, `stop_wait` | scheduler, **stop** | atomic | the processors that run a thread of it, plus the stop in progress |
@@ -582,7 +589,7 @@ A processor takes locks only in this order. It takes a lock of a kind only if it
 5. **Frame lock** (one).
 6. **Cache lock** (one for each processor: its stack of free frames). One at a time.
 7. **Log lock** (one). The serial writer is not a lock of this order: its holder takes no lock, and no path waits for it with no end.
-8. **Wait lock** (one for each bucket of the wait table). One at a time.
+8. **Wait lock** (64 locks; a bucket of the wait table takes the lock of its number). One at a time.
 9. **Run lock** (one for each processor). Two at a time only to move a thread from a queue to another, in the order of the processor index: the balance, and a move for the placement of a thread.
 
 Interrupts are off in the kernel, so a processor never takes a lock again in an interrupt. Two places take an interrupt, and each holds no lock and no serial writer: `idle_wait`, and `interrupt_window`, after each byte of the drain of the serial port in the idle loop, which frees the serial writer before the window and takes it again after. A processor that waits for a lock answers `processor_sync` while it waits.
@@ -609,7 +616,7 @@ A lock alone does not make a path correct: a path can free a lock, wait, and fin
 - **Budgets and the tick.** The tick adds the processor time to the budget of the thread and each budget above, with atomic additions, and with no lock. When a budget ends, its objects and its children move to its parent (control lock and frame lock), and its slot is used again only after `processor_sync` to all processors: a tick that walked through the old budget has finished its walk. The log records of each second are an amount that moves, as the pages: a budget counts only the records of its own processes, in one word with the second and the count, against what it holds. A count in each budget of the chain would tell a process, by a refusal, that the others wrote much (`src/md/features/log_side_channels.md`).
 #### Waits and access
 
-- **The word wait.** A word is named by its physical address. A thread registers each word in the bucket of the word, under the wait lock of the bucket, after it compared the value: a waker changes the word before it enters the kernel, so either the waker finds the entry, or the thread finds the new value. The waker then takes the run lock of the thread: a thread that waits becomes Ready; a thread that still registers (in its own entry) gets `woken` and does not wait. An entry carries the `wait_serial` of its thread; the serial changes when the wait ends, so a late waker of an old wait does not count a thread that runs as woken. A thread removes its entries at its next kernel entry.
+- **The word wait.** A word is named by its physical address, from an entry that names a present page of the process: the kernel first makes the page present as a read of the word would (`user_range`), so an untouched page gets its frame and never gives the offset of the word alone, which an untouched page of another process would give too (`word_table.word_physical`; `src/md/data/table_sizes.md`, "The word of a wait is a frame of its process"). The wait table has a bucket for each page frame of the machine (`modulus:word_table`), sized at the start from the frames, and in a bucket a list for each distinct word: a wake reads the distinct words of the frame of its word, at most 1024, then the entries of its word only. A thread holds a word once in a wait: a second entry of the same word is refused (`Bad_Operation`). A wait needs Read on its word; a wake needs Write, as it is a signal to the waiters: a process that maps a page read-only (the date page, the settings page, an end page) can wait on its words and cannot wake their waiters (`Bad_Address`, whose record has `found` 1 when the process can read the word). A thread registers each word in the bucket of the word, under the wait lock of the bucket, after it compared the value: a waker changes the word before it enters the kernel, so either the waker finds the entry, or the thread finds the new value. The waker then takes the run lock of the thread: a thread that waits becomes Ready; a thread that still registers (in its own entry) gets `woken` and does not wait. An entry carries the `wait_serial` of its thread; the serial changes when the wait ends, so a late waker of an old wait does not count a thread that runs as woken. A thread removes its entries at its next kernel entry. The entries of the first 64 words of a thread are in a table of the kernel (`wait_entries`); the entries past them are in the wait room of the thread, pages that the budget of its process paid, which the thread changes only in its own entry with no word registered, and which return at its end to the budget of its process, read under the frame lock as for a page table. A `Word_Wait` of more than 1024 words registers them in chunks of 1024, with the process lock free between two chunks (`word_wait_in_chunks`); a refused command or chunk leaves the entry with no wait. A wait does not keep its frame: an unmap, a decommit, a revocation and the end of a point copy wake the threads of the process that wait on a word of a frame that leaves it, before the frame can serve another process (`waiters_on_pages_wake`, `waiters_on_frames_wake`). A word of device memory is refused (`Bad_Address`, `found` 2).
 - **Revocation.** It holds the control lock. It sets `revoking` and lists the holdings that came from the handle, under the origin lock. While `revoking` is set, a path that adds a holding to the origin tree without the control lock stops and runs again under the control lock, after the revocation. Then the revocation ends each holding under its process lock, after it checks under the origin lock that the tree did not change since it chose the holding: the count of changes travels from the choice of the first holding (`revoke`) through each step (`revoke_under`). If another processor changed the tree, it looks again from the handle: a slot that a close freed can hold a new handle.
 - **The kernel half of the page tables** changes only at boot, on one processor. A report reads it and never makes a table (`kernel_entry` with no create).
 - **Ports.** A processor changes only its own port bitmap, in `run`, when the process that runs or its `ports_serial` changed. A change of the Ports handles of a process adds 1 to `ports_serial`, then synchronizes all processors: each one checks again before it returns to a process.
@@ -657,7 +664,7 @@ The terms are in `glossary/access.md`: uncommitted object, committed page, decom
 An example of the whole cycle, as a process writes it with the system library:
 
 1. `Memory_Create` with the flag `Uncommitted` and 262144 pages (1 GiB, the most for one object): the budget pays the frame list only, and at least one page.
-2. `Memory_Map` maps the whole object at one address: one of the 128 mappings of the process.
+2. `Memory_Map` maps the whole object at one address: one of the 1024 mappings of the process.
 3. `Memory_Commit` with a table of one `Page_Range` of 16 pages: the budget pays 16 pages; each one gets its frame at its first touch.
 4. `Memory_Protect` with `No_Access` on the last page of a stack: a guard page. A touch there is a fault, which the process receives in its fault ring if it named a fault handler.
 5. `Memory_Commit` with the flag `Decommit`: the 16 pages return to the budget, and their content is lost.
@@ -666,7 +673,7 @@ An example of the whole cycle, as a process writes it with the system library:
 
 | Need | Form | Why this form |
 |---|---|---|
-| Reserve a range of addresses with no memory behind it | `Memory_Create` with the flag `Uncommitted`, then `Memory_Map` | An uncommitted object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 128 mappings of a process are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
+| Reserve a range of addresses with no memory behind it | `Memory_Create` with the flag `Uncommitted`, then `Memory_Map` | An uncommitted object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 1024 mappings of a process are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
 | Commit and decommit pages | the operation `Memory_Commit` (memory, address of a table of `Page_Range`, count, flags): the flag `Decommit` takes pages back | A new operation: the existing ones create an object, map it, unmap it; none changes what the budget pays for some pages of an object that lives. One operation for the two ways, as `Handle_Give` and `Handle_Close` are not one: here the two ways change the same three counts (budget, reserved pages, frames) in opposite directions over the same table |
 | Change the protection of pages | the operation `Memory_Protect` (address of a table of `Address_Range`, count, `Map_Flags`) | The protection of a mapping is set by `Memory_Map` for all its pages; changing it for some pages of a mapping that lives is a new act. `Map_Flags` has the flag `No_Access` for it |
 | Large pages | `Memory_Create` with the flag `Large_Pages` (contiguous, a whole number of 2 MiB, aligned on 2 MiB); `Memory_Map` uses large pages for each 2 MiB that is aligned in the mapping | No new operation: the process asks for an object whose frames can be large pages; the kernel uses them where the mapping allows it |
@@ -742,7 +749,7 @@ A process can take rights away from pages that it already maps: make them read-o
 - For an object with a frame list, a part of a mapping takes away from the protection of its mapping now, as marks in the slots of its pages ("The state of a page"). A part that gets the protection of its mapping has no mark, and a whole mapping clears the marks of its pages. A page that gets its frame later gets the protection of its slot.
 - For a contiguous object (device memory, large pages) the protection is of the whole mapping: a range must cover the mapping.
 
-**Why the marks are in the object, not in the mapping.** While an object has marks (`marked_pages`), it is not mapped again and not given (`Bad_State`, kind `Object_Marked`): the marks are of the object, so they would reach another mapping. The other form, the marks in each mapping (a table of ranges in the mapping), lets an object with parts protected be shared. It costs a table in each of the 128 mappings of each process, or a second table to allocate, for a case that no process needs now. The count is one word, and the slots stay the one place of the state of a page.
+**Why the marks are in the object, not in the mapping.** While an object has marks (`marked_pages`), it is not mapped again and not given (`Bad_State`, kind `Object_Marked`): the marks are of the object, so they would reach another mapping. The other form, the marks in each mapping (a table of ranges in the mapping), lets an object with parts protected be shared. It costs a table in each of the 1024 mappings of each process, or a second table to allocate, for a case that no process needs now. The count is one word, and the slots stay the one place of the state of a page.
 
 **The shoot-down.** The page table entries that exist are rewritten; then one `processor_sync` goes to the processors whose page table is the one of the process, for all the ranges of the call. A processor answers it at its next kernel entry, its idle wait or its wait for a lock, and reloads its page table: it keeps no old translation. The operation returns after each of them answered. The cost is measured with 1, 2 and 4 processors running threads of the process.
 
@@ -756,7 +763,7 @@ An object made with `Large_Pages` takes its frames in one run aligned on 2 MiB (
 
 When a process maps an object with no address, the kernel picks the lowest free range from a fixed base. So the addresses of a process stay few and stable, and a process that maps and unmaps in a loop does not walk through its address space.
 
-A mapping with no address takes the lowest address from `CHOSEN_BASE` where its pages fit with one page with no mapping before and after them: the first gap between the mappings of the process (`chosen_address`, at most 129 passes over the 128 mappings). So the range of a mapping that ended serves again: a process that maps and unmaps at each call uses the same few addresses. `address_space` maps and unmaps one object 100 000 times and its budget is the same after as after the first time.
+A mapping with no address takes the lowest address from `CHOSEN_BASE` where its pages fit with one page with no mapping before and after them: the first gap between the mappings of the process (`chosen_address`, at most 1025 passes over the 1024 mappings). So the range of a mapping that ended serves again: a process that maps and unmaps at each call uses the same few addresses. `address_space` maps and unmaps one object 100 000 times and its budget is the same after as after the first time.
 
 ### The page tables of a process
 
@@ -830,7 +837,7 @@ offset  size  field           type
     32     4  fault_written   u32
     36     4  fault_read      u32
     40     4  fault_full      u32
-    44     4  fault_reserved  u32
+    44     4  wait_room_words u32
     48  1024  fault_records   [FAULT_RECORD_CAPACITY]Fault_Record
 
 operation.Fault_Record, 64 bytes: one record of the fault ring
@@ -882,7 +889,7 @@ A process can hold one of its threads still, read its registers, change them, an
 
 A process stops one of its threads, reads and writes its registers, and resumes it (`Thread_Control`, operation 33). A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the process that runs a guest use it. The code is `src/modulus/thread_control.odin`; the checks of a write are `op.thread_registers_refusal` and `op.extended_state_refusal` in `src/library/modus/contract/operation`, with host tests; the test is the process `fault_ring` (`modustool test fault_ring`, the cases 20 to 28). The terms are in `glossary/access.md`: thread control, stop count, held thread, register image.
 
-**The operation.** One operation with a command (`op.Thread_Control_Command`): `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`, the two commands of the schedule, `Read_Schedule` and `Write_Schedule` (below), the two commands of the placement, `Read_Placement` and `Write_Placement` (below), the two commands of the schedule of a process, `Read_Process_Schedule` and `Write_Process_Schedule` (below), the three commands of a debugger, `Read_Breakpoints`, `Write_Breakpoints` and `Read_Memory` ("The debugger of a process"), and the three commands of the thread counters, `Start_Counters`, `Read_Counters` and `Stop_Counters` ("The counters of a thread"). Its reason: no operation of the kernel stops a thread without its end, or gives its registers, and a guest needs both; one operation with a command keeps the count of operations lower than four. The arguments: a thread handle with the right of the command, or 0 and the number of a thread of the calling process (`Thread_Record.number`, the `thread` of a fault record); the command; the address and the size of a register image or of an extended state area.
+**The operation.** One operation with a command (`op.Thread_Control_Command`): `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`, the two commands of the schedule, `Read_Schedule` and `Write_Schedule` (below), the two commands of the placement, `Read_Placement` and `Write_Placement` (below), the two commands of the schedule of a process, `Read_Process_Schedule` and `Write_Process_Schedule` (below), the three commands of a debugger, `Read_Breakpoints`, `Write_Breakpoints` and `Read_Memory` ("The debugger of a process"), the three commands of the thread counters, `Start_Counters`, `Read_Counters` and `Stop_Counters` ("The counters of a thread"), and `Wait_Room`, which gives the calling thread room for the words of its waits past 64, in pages that the budget of its process pays ("Locks of the kernel", "The word wait"; `src/md/data/table_sizes.md`). Its reason: no operation of the kernel stops a thread without its end, or gives its registers, and a guest needs both; one operation with a command keeps the count of operations lower than four. The arguments: a thread handle with the right of the command, or 0 and the number of a thread of the calling process (`Thread_Record.number`, the `thread` of a fault record); the command; the address and the size of a register image or of an extended state area.
 
 **Who can act on a thread.** A process acts on its own threads, by their number or by a handle. A thread of another process needs a thread handle that this process received (`Handle_Give`), or the process handle with the right `Debug` of a process that the caller debugs, with the number of the thread ("The debugger of a process"; property 20, line 2). No other number and no other process handle names it. A thread handle needs the right of the command (`op.thread_control_rights`), else `No_Right`:
 
@@ -1469,7 +1476,7 @@ One event ring for each processor, in one contiguous memory object that the call
 ### 7. The work at an event point
 
 - **With no rule of its kind**: one load of `observed_kinds`, a word in the first line of the processor record (the line that each kernel entry reads already: `current`), and one branch. No call, no lock, no other memory. The event points of an operation and of a lock wait read the cycle counter at the start only when the event is wanted; their end tests a local value (0: no start).
-- **With a rule of its kind for other processes only**: after the first branch, one load of the set of the process slots of the kind (`Event_Table.processes`, one word for each kind: bit n for the process slot n, bit 0 for a rule for every process; the machine has 64 process slots), a mask (`1 | 1 << process`), and one branch. No read of the cycle counter, no call (`event_wanted`). The set is a part of the table, published with it under the rule of section 8: it is read only after the acquire load of the word said that the kind has a rule. The event point of a lock wait finds its process through `current` and its thread only after the first branch.
+- **With a rule of its kind for other processes only**: after the first branch, two loads of the set of the process slots of the kind (`Event_Table.processes`, one set of 256 bits for each kind: the slot n for the process slot n, the slot 0 for a rule for every process), and two branches. No read of the cycle counter, no call (`event_wanted`). The set is a part of the table, published with it under the rule of section 8: it is read only after the acquire load of the word said that the kind has a rule. The event point of a lock wait finds its process through `current` and its thread only after the first branch.
 - **With rules**: a call of `event_record`. It loads the word again (a wait for a lock between the start and the end answers `processor_sync`: section 8), tests the rules (at most 16, each a few compares; a rule with "one in N" adds 1 to its count with an atomic addition and divides), and writes one record of 64 bytes and the count `written` of its ring. No lock, no wait, no call of the scheduler, no address of a process.
 - **"One in N" is exact across processors**: one count for each rule, in its own line, with an atomic addition. This is the one place where two processors can write one line on an event point: only for a rule with "one in N", and only when the events of that rule come on two processors at one time. A count for each processor would keep the lines apart, but "one in N" would then mean one in N on each processor, and N events of one thread that moves between processors would not give N / 10 records.
 
@@ -1641,15 +1648,15 @@ operation.Log_Record, 256 bytes: one record of the log of the kernel
 offset  size  field           type
      0     8  sequence        u64
      8     8  time            u64
-    16     1  process         u8
-    17     1  thread          u8
-    18     1  level           Log_Level
-    19     1  more            u8
-    20     4  process_serial  u32
-    24     4  own_number      u32
-    28     2  text_count      u16
-    30     1  run_count       u8
-    31     1  form            u8
+    16     2  process         u16
+    18     1  thread          u8
+    19     1  level           Log_Level
+    20     1  more            u8
+    21     1  text_count      u8
+    22     1  run_count       u8
+    23     1  form            u8
+    24     4  process_serial  u32
+    28     4  own_number      u32
     32    32  name            [PROCESS_NAME_BYTES_MOST + 1]u8
     64    24  runs            [LOG_RUN_CAPACITY]value_kinds.Value_Run
     88   168  text            [LOG_TEXT_CAPACITY]u8

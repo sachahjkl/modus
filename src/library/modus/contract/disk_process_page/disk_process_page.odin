@@ -1,5 +1,5 @@
 // The disk process page (src/md/features/processes_from_a_disk.md, "The
-// grants of a disk process"): one page that the root service writes, with
+// grants of a disk process"): page_pages pages that the root service writes, with
 // one row for each disk process that runs: its process slot, its process
 // serial, its nickname and the whole hash of its file. The root service
 // maps it with the right Read only, at PAGE_ADDRESS, into each process that
@@ -32,10 +32,12 @@ import op "modus:contract/operation"
 
 PAGE_ADDRESS :: fixed_addresses.DISK_PROCESS_PAGE_ADDRESS // Where a process maps the disk process page.
 
-// The rows of the page: the root service starts 48 processes at most, and a
-// row is the place of the slot of the process in its table of started
-// processes.
-ROW_CAPACITY :: 48
+// The most rows of the page: the root service starts a process in each
+// process slot but its own, and a row is the place of the slot of the
+// process in its table of started processes. The page of a machine holds
+// the rows of its places (Page.row_count), and its memory only them
+// (page_pages).
+ROW_CAPACITY :: op.PROCESS_SLOTS_MOST - 1
 
 // The most bytes of a nickname: three words of a row, with a zero byte
 // after it, as the root ring carries it.
@@ -55,11 +57,31 @@ Row :: struct {
 #assert(size_of(Row) == 72)
 
 // The disk process page: what the root service writes and the monitor reads.
+// Only the first row_count rows have memory.
 Page :: struct {
 	change_count: u64, // Even when the page is stable. Each change adds 2.
+	row_count:    u64, // The rows of this machine: the root service writes it once, before it gives the page.
 	rows:         [ROW_CAPACITY]Row,
 }
-#assert(size_of(Page) <= 4096)
+
+// page_pages gives the pages of a disk process page of `rows` rows, at most
+// ROW_CAPACITY. A row is 72 bytes.
+//
+// Example: 255 rows (a machine of 1 GiB) take 5 pages; 1023 take 18.
+page_pages :: proc "contextless" (rows: int) -> u64 {
+	count := u64(clamp(rows, 0, ROW_CAPACITY))
+	return (u64(offset_of(Page, rows)) + count * size_of(Row) + 4095) / 4096
+}
+
+// The most pages of the page, which its fixed range holds.
+PAGE_PAGES_MOST :: (size_of(Page) + 4095) / 4096
+
+// rows_of gives the rows of a page that have memory: its row count, at
+// most ROW_CAPACITY.
+@(private = "file")
+rows_of :: proc "contextless" (page: ^Page) -> int {
+	return int(min(intrinsics.atomic_load_explicit(&page.row_count, .Acquire), ROW_CAPACITY))
+}
 
 // page_of gives the disk process page of a process, or nil.
 page_of :: proc "contextless" (ctx: ^op.Context) -> ^Page {
@@ -87,7 +109,7 @@ row_find :: proc "contextless" (page: ^Page, slot: u64, process_serial: u64) -> 
 		}
 		copied: Row
 		matched := false
-		for &place in page.rows {
+		for &place in page.rows[:rows_of(page)] {
 			if intrinsics.atomic_load_explicit(&place.slot, .Acquire) != slot || intrinsics.atomic_load_explicit(&place.process_serial, .Acquire) != process_serial {
 				continue
 			}
@@ -111,7 +133,7 @@ row_find :: proc "contextless" (page: ^Page, slot: u64, process_serial: u64) -> 
 
 // row_write sets the row at index. The one writer is the root service.
 row_write :: proc "contextless" (page: ^Page, index: int, row: Row) {
-	if page == nil || index < 0 || index >= ROW_CAPACITY {
+	if page == nil || index < 0 || index >= rows_of(page) {
 		return
 	}
 	place := &page.rows[index]

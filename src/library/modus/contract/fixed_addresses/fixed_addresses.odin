@@ -103,7 +103,7 @@ Fixed_Range :: enum u8 {
 	// the console, and gives its size at the value 21 of the context. The
 	// report then names the procedure and the line of each frame.
 	Disk_Process_Page = 12, // The disk process page (modus:contract/disk_process_page).
-	// One page, read-only, that the root service writes: the nickname and
+	// Pages, read-only, that the root service writes: the nickname and
 	// the hash of each disk process that runs, by its process slot. The
 	// root service maps it in each process that it starts with the right
 	// Inspect of the machine, as the monitor.

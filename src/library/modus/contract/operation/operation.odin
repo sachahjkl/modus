@@ -82,8 +82,11 @@ CHOSEN_BASE :: 0x0000_1000_0000_0000 // Where the kernel puts a mapping with no 
 MODULE_BASE :: 0x0000_2000_0000_0000
 // The first address above the stack of the first thread. The stack grows
 // down from here: its `STACK_PAGES` pages end at this address. The starter
-// maps it, and gives it to `Process_Start` as the stack address.
-STACK_TOP :: 0x0000_7FFF_FFE0_0000
+// maps it, and gives it to `Process_Start` as the stack address. The page
+// at this address has no mapping: a write past the top faults. The stack,
+// the context and the first 8 thread areas share one page table
+// (src/md/data/table_sizes.md).
+STACK_TOP :: CONTEXT_ADDRESS - PAGE_SIZE
 // The pages of the stack of the first thread: 64 pages, 256 KiB. A thread
 // that `system.thread_start` makes has its own count (`THREAD_STACK_PAGES`).
 STACK_PAGES :: 64
@@ -93,8 +96,9 @@ STACK_PAGES :: 64
 // (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
 THREAD_STACK_PAGES :: 16
 // The address of the context of the process (`Context`): the starter maps one
-// page there and gives this address as the parameter of the entry.
-CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
+// page there and gives this address as the parameter of the entry. One page
+// with no mapping separates it from the thread areas.
+CONTEXT_ADDRESS :: THREAD_AREA_BASE - 2 * PAGE_SIZE
 // The thread areas: one per thread, THREAD_AREA_PAGES pages each. An area
 // is the thread record (one page), the kernel ring, and one page with no
 // memory.
@@ -102,12 +106,17 @@ CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
 // The thread number n has its area at `THREAD_AREA_BASE + n *
 // THREAD_AREA_PAGES * PAGE_SIZE`. The page with no memory is a guard page: a
 // write past the kernel ring faults and touches no other thread.
-THREAD_AREA_BASE :: 0x0000_7FFF_FFF4_0000
+THREAD_AREA_BASE :: TIME_ADDRESS - THREAD_CAPACITY * THREAD_AREA_PAGES * PAGE_SIZE
 THREAD_AREA_PAGES :: 4 // One page of thread record, the two pages of the kernel ring (`ring.PAGE_COUNT`), one guard page.
 // The threads of one process, at the same time. `Thread_Create` gives
-// `No_Slot` when all the thread numbers are in use. The 32 thread areas end
-// below `TIME_ADDRESS`.
-THREAD_CAPACITY :: 32
+// `No_Slot` when all the thread numbers are in use. The 256 thread areas,
+// 4 MiB, end at `TIME_ADDRESS`. A compiler or a server starts a thread for
+// each processor of a large machine.
+THREAD_CAPACITY :: 256
+#assert(THREAD_AREA_BASE == 0x0000_7FFF_FFBE_0000)
+#assert(STACK_TOP == 0x0000_7FFF_FFBD_D000)
+// The stack, the context and the first areas are in one span of 2 MiB.
+#assert((STACK_TOP - STACK_PAGES * PAGE_SIZE) / (2 << 20) == THREAD_AREA_BASE / (2 << 20))
 // The time page: one page that the kernel writes and that each process can
 // only read. A process reads the time with no kernel entry.
 TIME_ADDRESS :: 0x0000_7FFF_FFFE_0000
@@ -777,15 +786,21 @@ Operation :: enum u32 {
 	// - `words`: the address of `count` records `Word`: each one is the address of a word of 32 bits, a
 	//   multiple of 4 that the process can read, and the value that the word holds while the thread waits
 	//   (the low 32 bits of `value`).
-	// - `count`: the words of this command. One entry holds at most `WORD_WAIT_CAPACITY` words in all its
-	//   commands.
+	// - `count`: the words of this command. One entry holds at most `WORD_WAIT_INLINE` words in all its
+	//   commands, or the words of the wait room of the thread (`Thread_Control_Command.Wait_Room`).
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
-	// - `No_Slot`: the entry would hold more than `WORD_WAIT_CAPACITY` words.
-	// - `Bad_Address`: the process cannot read the table or a word, or a word is not a multiple of 4. The
+	// - `No_Slot`: the entry would hold more words than the thread has room for.
+	// - Each refusal leaves the entry with no wait, also on the words that the commands before it in the
+	//   same entry registered.
+	// - `Bad_Operation`: a word that the entry holds already, at the same address: the entry then
+	//   does not wait, and its error record names the place of that word in the command. A thread holds
+	//   each word once, so the list of a word never grows with one thread.
+	// - `Bad_Address`: the process cannot read the table or a word, a word is not a multiple of 4, or a
+	//   word is in device memory (its record has `found` 2): no wait takes a register of a device. The
 	//   entry then does not wait.
 	//
 	// ```odin
@@ -793,18 +808,22 @@ Operation :: enum u32 {
 	// ```
 	Word_Wake      = 20, // (word, count) -> threads woken.
 	// Ends the wait of at most `count` threads that wait on a word. A thread that put the word in the wait
-	// of its entry and does not wait yet counts too: it does not wait, and reads its words again.
+	// of its entry and does not wait yet counts too: it does not wait, and reads its words again. A wake is
+	// a signal to the waiters, so it needs Write on the word: a process that maps the page of the word
+	// read-only (the date page, the settings page) signals no waiter of it.
 	//
 	// **Arguments**
 	//
-	// - `word`: the address of a word of 32 bits, a multiple of 4 that the process can read.
+	// - `word`: the address of a word of 32 bits, a multiple of 4 that the process can write.
 	// - `count`: the most threads to wake.
 	//
 	// **Results**: the count of threads woken.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Address`: the process cannot read the word, or its address is not a multiple of 4.
+	// - `Bad_Address`: the process cannot write the word, its address is not a multiple of 4, or it is in
+	//   device memory. The error record names the word; its `found` is 1 when the process can read the
+	//   word and not write it, 2 when the word is in device memory.
 	//
 	// ```odin
 	// system.word_wake(&ready)
@@ -931,8 +950,10 @@ Operation :: enum u32 {
 	//   registers; or the device is behind a conventional bridge, and the caller does not hold the registers
 	//   of each device behind that bridge, which all share its requester and its domain (the log names the
 	//   device that it misses).
-	// - `No_Slot`: the caller holds the registers of more than 4 devices, or the 32 slots of the devices of
-	//   the kernel are in use.
+	// - `No_Slot`: the caller holds the registers of more than 4 devices, the 32 slots of the devices of
+	//   the kernel are in use, or the object is not contiguous and each of the 2047 device windows is held
+	//   (the record `Full` of the unit `Device_Windows`). A window returns when no device has the pages of
+	//   its object.
 	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
 	Process_Module = 26, // (process, record: Module_Record).
 	// Records a module that a loader put in a process, in the module records of the process. The kernel
@@ -1387,11 +1408,16 @@ STRATEGY_NAMES := [Strategy]string {
 }
 
 // The weight of a thread created with the weight 0: the most. A weight is
-// from 1 to 1024: a process can lower or split the share of its threads,
-// never raise it above the default. 1024 keeps each product of the virtual
-// time inside 64 bits (docs/SCHEDULING.md, "Integer arithmetic and the
-// overflow argument").
-WEIGHT_FULL :: 1024
+// from 1 to 8192: a process can lower or split the share of its threads,
+// never raise it above the default. The unit is fine enough that a process
+// weight of 1/32 of the full weight, divided between the THREAD_CAPACITY
+// threads of a process, gives each thread a weight of 1 or more: the count
+// of threads of a process does not narrow the shares that a policy can
+// give. 8192 keeps each product of the virtual time inside 64 bits, and the
+// sum of the weights of a queue inside 32 bits (docs/SCHEDULING.md,
+// "Integer arithmetic and the overflow argument").
+WEIGHT_FULL :: 8192
+#assert(WEIGHT_FULL / 32 >= THREAD_CAPACITY)
 REQUEST_DEFAULT :: 3000 // Microseconds: the request of a thread created with the request 0.
 // Microseconds: the longest request, 100 ms. The bound keeps the lag bound of
 // EEVDF (two requests) inside the overflow argument of the scheduler
@@ -1432,7 +1458,7 @@ REQUEST_LIMIT :: 100_000
 // weight of a thread that no round of the policy saw ([new-thread weight
 // limit](term:new-thread-weight-limit)).
 //
-// Example: `{weight = 256, request = 500}` gives the thread a quarter of the
+// Example: `{weight = 2048, request = 500}` gives the thread a quarter of the
 // share of a thread of the full weight, and asks for stints of 500
 // microseconds under EEVDF.
 Thread_Schedule :: struct {
@@ -1868,8 +1894,47 @@ Word :: struct {
 }
 
 // The words of the wait of one kernel entry, in all its `Word_Wait`
-// commands. One more gives `No_Slot`.
-WORD_WAIT_CAPACITY :: 64
+// commands, that each thread has with no wait room: the kernel keeps their
+// entries in its thread table. One more gives `No_Slot`. A `system.Wait`
+// holds this many words on the stack of its thread, about 3.5 KiB.
+WORD_WAIT_INLINE :: 64
+// The most words of the wait of one kernel entry, with a wait room
+// (`Thread_Control_Command.Wait_Room`). A server that waits on the rings of
+// many clients holds 3 words for each ring; the root service waits on two
+// queues of each process that it started. The pages of the room come from
+// the budget of the process, so the budget bounds a room before this does.
+// The pages of a room hang from one page that names them: 511 pages of 64
+// words, past the 64 inline words.
+WORD_WAIT_MOST :: 32768
+// The words that one page of a wait room holds: the kernel keeps an entry
+// of 64 bytes for each word, in the lists of its word.
+WAIT_ROOM_WORDS_OF_A_PAGE :: 64
+// The pages of a wait room hang from one page of the kernel that names them.
+WAIT_ROOM_PAGES_MOST :: 512
+#assert((WORD_WAIT_MOST - WORD_WAIT_INLINE + WAIT_ROOM_WORDS_OF_A_PAGE - 1) / WAIT_ROOM_WORDS_OF_A_PAGE <= WAIT_ROOM_PAGES_MOST)
+
+// wait_room_pages gives the pages that a wait room of `words` words takes
+// from the budget of its process: 0 up to WORD_WAIT_INLINE, which need no
+// room; else one page that names the others, and one page for each
+// WAIT_ROOM_WORDS_OF_A_PAGE words past WORD_WAIT_INLINE. The caller checks
+// `words <= WORD_WAIT_MOST`.
+//
+// Example: 2048 words take 1 + 31 = 32 pages; 64 take none.
+wait_room_pages :: proc "contextless" (words: u64) -> u64 {
+	if words <= WORD_WAIT_INLINE {
+		return 0
+	}
+	return 1 + (words - WORD_WAIT_INLINE + WAIT_ROOM_WORDS_OF_A_PAGE - 1) / WAIT_ROOM_WORDS_OF_A_PAGE
+}
+
+// wait_room_words gives the words that a wait room of `pages` pages
+// holds, with the WORD_WAIT_INLINE words of the thread.
+wait_room_words :: proc "contextless" (pages: u64) -> u64 {
+	if pages == 0 {
+		return WORD_WAIT_INLINE
+	}
+	return WORD_WAIT_INLINE + (pages - 1) * WAIT_ROOM_WORDS_OF_A_PAGE
+}
 
 // What the kernel tells a thread: the kernel adds 1 to the `events` word of
 // the thread record and wakes the thread, when
@@ -1910,7 +1975,11 @@ Thread_Record :: struct {
 	fault_written: u32, // The kernel writes it: the count of fault records written since the handler was set.
 	fault_read:    u32, // The handler writes it: the count of fault records that it read.
 	fault_full:    u32, // The kernel writes it: the faults that found the ring full and stopped the process, since the process started.
-	fault_reserved: u32, // Not read.
+	// The kernel writes it: the words that each wait of this thread holds,
+	// with its wait room (Thread_Control_Command.Wait_Room); 0 until the
+	// first room, which is WORD_WAIT_INLINE. The library reads it, so the
+	// room is of the thread and not of one list (system.Wait_Set).
+	wait_room_words: u32,
 	fault_records: [FAULT_RECORD_CAPACITY]Fault_Record,
 }
 #assert(size_of(Thread_Record) <= PAGE_SIZE)
@@ -2264,6 +2333,23 @@ Thread_Control_Command :: enum u64 {
 	// handle in `number` (with Read and Write) -> nothing. The target must
 	// be in state Created and not already be recorded or replayed.
 	Replay_Start         = 21,
+	// Gives the calling thread room for `size` words in each wait from now
+	// on -> the words of the room. `thread` and `number` are 0: a room
+	// serves the thread that waits. The kernel takes the pages of the room
+	// from the budget of the process (wait_room_pages) and gives back the
+	// pages of the room before; the thread ends with its room, whose pages
+	// return to the budget. A size of WORD_WAIT_INLINE or less removes the
+	// room. Bad_Operation for a size above WORD_WAIT_MOST, or a thread or
+	// a number that is not 0; Bad_State when the entry registered words
+	// already; No_Budget when the budget cannot pay the pages: nothing
+	// changes.
+	Wait_Room            = 22,
+}
+
+// thread_control_sizes_the_wait says if a command of Thread_Control gives
+// the calling thread its wait room: it names no thread and reads no handle.
+thread_control_sizes_the_wait :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	return command == .Wait_Room
 }
 
 // thread_control_records_a_process says if a command of Thread_Control
@@ -2341,7 +2427,7 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 		return {.Inspect, .Write}
 	case .Write_Schedule, .Write_Placement:
 		return {.Control}
-	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
+	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
 		return {.Inspect}
 	}
 	// Only a cast that skipped the border of the command reaches this line:
@@ -2370,7 +2456,7 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 	switch command {
 	case .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule:
 		return {.Schedule, .Inspect}, true
-	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
 		return {}, false
 	}
 	// Only a cast that skipped the border of the command reaches this line.
@@ -2381,12 +2467,12 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 // also takes the process handle with Debug of the process that the caller
 // debugs, with the number of a thread of that process in place of a thread
 // handle: each command but the two of the schedule, the two of the
-// placement and the three of the thread counters. A debugger holds, reads
+// placement, the three of the thread counters and the wait room. A debugger holds, reads
 // and writes a thread; the share of a thread and its processors are not a
 // part of debugging, and the thread counters are of the calling thread.
 thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control_Command) -> bool {
 	switch command {
-	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Wait_Room:
 		return false
 	case .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Record_Start, .Record_End, .Replay_Start:
 		return true
@@ -2909,7 +2995,7 @@ Status :: enum u32 {
 	No_Slot       = 5, // A table of fixed capacity is full.
 	// The handle table of a process, the 128 mappings of a process, the threads of a process
 	// (`THREAD_CAPACITY`), the module records (`PROCESS_MODULE_CAPACITY`), the words of a wait
-	// (`WORD_WAIT_CAPACITY`), the message interrupts (`MESSAGE_CAPACITY`), the rules of an event table, or a
+	// (`WORD_WAIT_INLINE`, or the wait room of the thread), the message interrupts (`MESSAGE_CAPACITY`), the rules of an event table, or a
 	// table of the kernel. Another try can pass after a slot frees.
 	Bad_State     = 6, // The object is not in a state where the operation applies.
 	// The process is stopped or not created, the thread is not held or ended, no thread waits for the fault
@@ -3204,11 +3290,12 @@ Process_Mapping :: struct {
 }
 #assert(size_of(Process_Mapping) == 64)
 
-MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
+MAPPING_REPORT_CAPACITY :: 1024 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
 // HANDLE_CAPACITY of the kernel: the places of the handle table of one process. The place 0 holds no handle,
 // so a process holds `HANDLE_TABLE_CAPACITY - 1` handles at most, and one more gives `No_Slot` with the
-// record `Full` of the unit `Handles`.
-HANDLE_TABLE_CAPACITY :: 128
+// record `Full` of the unit `Handles`. A server with a ring and a region for each of hundreds of clients
+// holds that many handles.
+HANDLE_TABLE_CAPACITY :: 1024
 
 // The mappings of one process, in the order of their addresses. `Inspect`
 // with the kind `Process_Mappings` writes it; the developer tools show the
@@ -3242,7 +3329,7 @@ Thread_Report :: struct {
 }
 #assert(size_of(Thread_Report) == 80)
 
-THREAD_REPORT_CAPACITY :: 32 // The thread areas of one process: `THREAD_CAPACITY`.
+THREAD_REPORT_CAPACITY :: THREAD_CAPACITY // The thread areas of one process.
 
 // The threads of one process, with the state of the scheduler of each.
 // `Inspect` with the kind `Threads` writes it.
@@ -3407,16 +3494,24 @@ LOG_RECORDS_OF_THE_KERNEL :: 64
 // The log records of each second of a process of normal use: what the root
 // service gives each process that it starts.
 LOG_RECORDS_OF_A_PROCESS :: 1000
-// The process slots of the kernel.
-PROCESS_SLOTS_OF_THE_MACHINE :: 64
+// The process slots of the kernel: the kernel chooses their count once, at
+// its start, from the memory of the machine (src/md/data/table_sizes.md),
+// from PROCESS_SLOTS_LEAST to PROCESS_SLOTS_MOST, and gives it in
+// `System_Report.process_slots`. A process that reads each slot reads that
+// count. The tables of the services that have one entry for each process
+// slot have the size of PROCESS_SLOTS_MOST.
+PROCESS_SLOTS_LEAST :: 64
+PROCESS_SLOTS_MOST :: 1024
+#assert(PROCESS_SLOTS_MOST <= 1 << 16) // Log_Record.process has two bytes.
 // The bytes of the name of a process (`Process_Create`). The kernel keeps
 // the name with a zero byte after it.
 PROCESS_NAME_BYTES_MOST :: 31
-// The log records of each second of the whole machine: the amount of the
-// root budget, which divides it among every budget, a process of normal use
-// in each process slot. The serial port can lose the lines of a flood of
+// The log records of each second of the whole machine at its most: the
+// root budget holds LOG_RECORDS_OF_A_PROCESS for each process slot of the
+// machine, and divides it among every budget, a process of normal use in
+// each process slot. The serial port can lose the lines of a flood of
 // these records, and says how many (src/md/features/log_side_channels.md).
-LOG_RECORDS_OF_THE_MACHINE :: PROCESS_SLOTS_OF_THE_MACHINE * LOG_RECORDS_OF_A_PROCESS
+LOG_RECORDS_OF_THE_MACHINE_MOST :: PROCESS_SLOTS_MOST * LOG_RECORDS_OF_A_PROCESS
 
 // The pages of the own log ring of a process: the kernel keeps a copy of
 // each record of the process there, which only the records of that process
@@ -3451,30 +3546,36 @@ Log_Head :: struct {
 // principal the records of those two numbers only, numbered by `own_number`
 // (modus:contract/log_scope), from the own log ring of its process
 // (`Log_Read`): the kernel writes each record of a process in the whole log
-// and in that ring. The slots have one byte each: the kernel has
-// at most 256 process slots and 256 thread slots, which leaves room for the
-// two numbers in 256 bytes. See [log record](term:log-record).
+// and in that ring. The process slot has two bytes, and the number
+// of the thread in its process and the count of the bytes of the text one
+// byte each: the kernel has at most PROCESS_SLOTS_MOST process slots, a
+// process at most 256 threads, and a record at most 168 bytes of text,
+// which leaves room for the serial and the own number in a head of 32
+// bytes. See [log record](term:log-record).
 //
 // Example: the line `[console] started` on the serial port is one record
 // with `name = "console"`, `level = .Info`, `text_count = 7`.
 Log_Record :: struct {
 	sequence:       u64, // The number of the record in the whole log, from 0.
 	time:           u64, // Microseconds since the start of the machine.
-	process:        u8, // The process slot. 0: the kernel.
-	thread:         u8, // The slot of the thread. 0: the kernel.
+	process:        u16, // The process slot. 0: the kernel.
+	thread:         u8, // The number of the thread in its process: its thread area. 0 for a record of the kernel, whose process is 0.
 	level:          Log_Level, // The level that the writer gave.
 	more:           u8, // 1: the text continues in the next record.
-	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
-	own_number:     u32, // The number of the record among the records of its process, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
-	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`. 0 for a fact.
+	text_count:     u8, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`. 0 for a fact.
 	run_count:      u8, // The value runs of the text: runs[:run_count]. 0 for a fact.
 	form:           u8, // The byte of a `Log_Record_Form` (`log_record_form`): what the bytes after the name hold. 0: a text.
+	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
+	own_number:     u32, // The number of the record among the records of its process, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
 	name:           [PROCESS_NAME_BYTES_MOST + 1]u8, // The name of the process, or "kernel".
 	runs:           [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count]. A fact: the first bytes of its `Log_Fact`.
 	text:           [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes. A fact: the rest of its `Log_Fact`.
 }
 
 #assert(size_of(Log_Record) == 256)
+#assert(LOG_TEXT_CAPACITY < 1 << 8) // Log_Record.text_count has one byte.
+#assert(PROCESS_SLOTS_MOST <= 1 << 16) // The process slot fits Log_Record.process.
+#assert(THREAD_CAPACITY <= 1 << 8) // The number of a thread in its process fits Log_Record.thread.
 #assert(offset_of(Log_Record, name) == 32)
 #assert(offset_of(Log_Record, runs) == 64)
 

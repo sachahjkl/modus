@@ -325,16 +325,9 @@ Own_Tables_Full :: struct {
 	started_process: value_kinds.Module_Name_Field,
 }
 
-// The root ring of a chosen start policy does not fit the wait of the loop.
-@(log_fact = "root: cannot start the start policy {refused_process}: its root ring makes {words} words of the wait of the loop of this service, past its {word_limit}; the queues of the wait are full")
-Start_Policy_Wait_Full :: struct {
-	words:           u64,
-	word_limit:      u64,
-	refused_process: value_kinds.Module_Name_Field,
-}
-
-// The wait of the loop did not fit: written once.
-@(log_fact = "root: the wait of the loop holds more words than {word_capacity}: each wait ends at once, and the queues past it are not waited on")
+// The wait of the loop did not fit: the kernel gave no wait room for the
+// words of the places. Written once.
+@(log_fact = "root: the wait of the loop holds more words than {word_capacity}: the kernel gave no wait room for them, so each wait ends at its deadline")
 Root_Wait_Full :: struct {
 	word_capacity: u64,
 }

@@ -230,7 +230,7 @@ Weight_Limit_Written :: struct {
 }
 
 // The rounds of the own writes of the thread under the weight limit.
-@(log_fact = "scheduler: under the weight limit {limit}, {rounds} rounds of its own writes of the weights {round_weight}, 1, 1024 and {last_round_weight}, then the weight {machine_weight} through the machine handle: {accepted} of its own accepted, {refused} refused, {machine_raises} raised by the machine handle, a wrong weight or limit {above} times: {verdict}")
+@(log_fact = "scheduler: under the weight limit {limit}, {rounds} rounds of its own writes of the weights {round_weight}, 1, 8192 and {last_round_weight}, then the weight {machine_weight} through the machine handle: {accepted} of its own accepted, {refused} refused, {machine_raises} raised by the machine handle, a wrong weight or limit {above} times: {verdict}")
 Weight_Limit_Rounds :: struct {
 	limit:             u64,
 	rounds:            u64,
@@ -444,7 +444,7 @@ Share_Policy_Rounds :: struct {
 }
 
 // The weights of the own threads of this process under the share policy.
-@(log_fact = "scheduler: under the share policy, a thread of this process created with the weight {asked_weight} has the weight {weight}, and the weight {lowered_weight} after it lowered itself to {lowered_to}; after this process started {more_threads} threads more, its {threads} threads have the weights {least} to {most}, which sum to {sum} of 1024: {verdict}")
+@(log_fact = "scheduler: under the share policy, a thread of this process created with the weight {asked_weight} has the weight {weight}, and the weight {lowered_weight} after it lowered itself to {lowered_to}; after this process started {more_threads} threads more, its {threads} threads have the weights {least} to {most}, which sum to {sum} of 8192: {verdict}")
 Own_Threads_Weights :: struct {
 	asked_weight:   u64,
 	weight:         u64,
@@ -459,7 +459,7 @@ Own_Threads_Weights :: struct {
 }
 
 // The weights after the share policy went off.
-@(log_fact = "scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight {lowered_weight} and the two full weight limits, and no write of the policy was refused: {none_refused}: {verdict}")
+@(log_fact = "scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 8192 and the two full weight limits again, the thread that lowered itself has the weight {lowered_weight} and the two full weight limits, and no write of the policy was refused: {none_refused}: {verdict}")
 Share_Policy_Off_Weights :: struct {
 	lowered_weight: u64,
 	none_refused:   u64,
@@ -492,7 +492,7 @@ Short_Threads_Without_Image :: struct {}
 Short_Threads_Without_Processes :: struct {}
 
 // The threads of a process of short threads that no round saw.
-@(log_fact = "scheduler: the share policy and a process that keeps {alive} short threads alive, after one round: {checked} of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit {new_part}: {each_right}, and those of one read summed to under 1024: {sum_under}: {verdict}")
+@(log_fact = "scheduler: the share policy and a process that keeps {alive} short threads alive, after one round: {checked} of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit {new_part}: {each_right}, and those of one read summed to under 8192: {sum_under}: {verdict}")
 Short_Threads_Unseen :: struct {
 	alive:      u64,
 	checked:    u64,

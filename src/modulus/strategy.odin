@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:weighted_average"
 
 // The scheduling strategies (docs/SCHEDULING.md). A strategy is six
 // procedures over the data of one run queue. The generic code of
@@ -296,8 +297,9 @@ strategy_weight_raised :: proc "contextless" (queue: ^Run_Queue, home: u32, thre
 // only while its budget has time. So its lag is taken here from the
 // average of the other threads, times W / (W + w), with W their weights
 // and w its own: the same value, with no read of its budget. The
-// difference is clamped as a key of the average is (2^44), and the
-// weights sum to at most 2^18.
+// difference is clamped as a key of the average is (2^44), and the product
+// is taken as d - d * w / (W + w): d * w is at most 2^57, where d * W
+// passes 64 bits with the 4096 threads of the largest table.
 strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread) {
 	if !thread.placed {
 		return
@@ -308,7 +310,8 @@ strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread
 	}
 	lag: i64
 	if average, others := eevdf_average(queue, home, thread); others != 0 {
-		lag = clamp(i64(average - thread.virtual), -KEY_LIMIT, KEY_LIMIT) * others / (others + i64(thread.weight))
+		distance := clamp(i64(average - thread.virtual), -KEY_LIMIT, KEY_LIMIT)
+		lag = distance - distance * i64(thread.weight) / (others + i64(thread.weight))
 	}
 	bound := i64(eevdf_bound(thread))
 	thread.lag = clamp(lag, -bound, bound)
@@ -372,7 +375,7 @@ round_robin_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^R
 // of them compare by the sign of their difference.
 
 CHARGE_LIMIT :: u64(1) << 32 // Cycles: the longest charge.
-KEY_LIMIT :: i64(1) << 44 // Weighted cycles: the largest distance to the queue clock in an average.
+KEY_LIMIT :: weighted_average.KEY_LIMIT // Weighted cycles: the largest distance to the queue clock in an average.
 
 before :: #force_inline proc "contextless" (a, b: u64) -> bool {
 	return i64(a - b) < 0
@@ -454,7 +457,8 @@ fair_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Th
 		clock_advance(queue, thread.virtual)
 		return false
 	}
-	// The weights are at most 2^10 each, 2^18 for the 256 threads.
+	// The weights are at most 2^13 each, 2^25 for the 4096 threads of the
+	// largest table: the product with the latency stays far inside 64 bits.
 	stint := max(fair_least_stint, fair_latency * u64(thread.weight) / u64(thread.weight + queue.weight))
 	return cycles_now() - cpu.stint_start >= stint
 }
@@ -485,13 +489,13 @@ fair_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queu
 // requests (at least one tick), and across a move.
 
 // eevdf_slice gives the request of a thread in weighted cycles: at most
-// 2^39 (REQUEST_LIMIT at 5 GHz, weight 1).
+// 2^42 (REQUEST_LIMIT at 5 GHz, weight 1).
 eevdf_slice :: #force_inline proc "contextless" (thread: ^Thread) -> u64 {
 	return weighted(microseconds_to_cycles(u64(thread.request)), thread.weight)
 }
 
 // eevdf_bound gives the largest lag of a thread: two requests, at least
-// one tick. At most 2^40.
+// one tick. At most 2^43.
 eevdf_bound :: #force_inline proc "contextless" (thread: ^Thread) -> u64 {
 	return max(2 * eevdf_slice(thread), weighted(tick_cycles, thread.weight))
 }
@@ -501,44 +505,44 @@ eevdf_bound :: #force_inline proc "contextless" (thread: ^Thread) -> u64 {
 // with its weight; and the sum of their weights. A thread that is not
 // placed does not count, and `without` does not count: the average of the
 // other threads of a thread. The keys are clamped (KEY_LIMIT): a product is at
-// most 2^54, the sum of 256 threads at most 2^62.
+// most 2^57, and the sum of the 4096 threads of the largest table passes 64
+// bits, so it is kept in two words (modulus:weighted_average).
 eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32, without: ^Thread = nil) -> (average: u64, weight: i64) {
 	clock := queue.virtual
-	sum: i64
-	add :: #force_inline proc "contextless" (thread: ^Thread, clock: u64, sum: ^i64, weight: ^i64) {
+	sum: weighted_average.Weighted_Sum
+	add :: #force_inline proc "contextless" (thread: ^Thread, clock: u64, sum: ^weighted_average.Weighted_Sum) {
 		if thread.placed {
-			key := clamp(i64(thread.virtual - clock), -KEY_LIMIT, KEY_LIMIT)
-			sum^ += i64(thread.weight) * key
-			weight^ += i64(thread.weight)
+			weighted_average.add(sum, thread.weight, i64(thread.virtual - clock))
 		}
 	}
 	for index := queue.head; index != 0; index = threads[index].queue_next {
 		if &threads[index] != without && !budget_spent(threads[index].budget) {
-			add(&threads[index], clock, &sum, &weight)
+			add(&threads[index], clock, &sum)
 		}
 	}
 	// A processor that starts runs schedule before the first processor
 	// puts its record in `processors`: no record, no thread on it.
 	if cpu := processors[home]; cpu != nil {
 		if running := cpu.current; running != 0 && &threads[running] != without {
-			add(&threads[running], clock, &sum, &weight)
+			add(&threads[running], clock, &sum)
 		}
 	}
-	if weight == 0 {
+	if sum.weights == 0 {
 		return clock, 0
 	}
-	return clock + u64(sum / weight), weight
+	return clock + u64(weighted_average.mean(sum)), i64(sum.weights)
 }
 
 // eevdf_place puts a thread that is not in the list at V minus its lag,
-// scaled by (W + w) / W so that V does not move when the thread joins: a
-// lag of at most 2^40 times at most 2^18 + 2^10. Its deadline is one
-// request after.
+// scaled by (W + w) / W so that V does not move when the thread joins,
+// taken as lag + lag * w / W: a lag of at most 2^43 times a weight of at
+// most 2^13, where lag * (W + w) passes 64 bits with the 4096 threads of
+// the largest table. Its deadline is one request after.
 eevdf_place :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, lag: i64) {
 	average, total := eevdf_average(queue, home)
 	scaled := lag
 	if total != 0 {
-		scaled = lag * (total + i64(thread.weight)) / total
+		scaled = lag + lag * i64(thread.weight) / total
 	}
 	thread.virtual = average - u64(scaled)
 	thread.virtual_deadline = thread.virtual + eevdf_slice(thread)

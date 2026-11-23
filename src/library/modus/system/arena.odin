@@ -181,6 +181,45 @@ arena_push :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64, erro
 	return &arena.base[start], .Ok
 }
 
+// arena_take gives count values of T from an arena, zero when the arena
+// never held them: a table whose size the process learns at its start, as
+// one entry for each process slot of the machine (process_slots_of). A count
+// of 0 gives an empty table and takes nothing. The statuses are those of
+// arena_push.
+//
+// ```odin
+// started = system.arena_take(&tables, Started, int(slots) - 1) or_return
+// ```
+arena_take :: proc "contextless" (arena: ^Arena, $T: typeid, count: int, error: ^errors.Error_Record = nil) -> (values: []T, status: Status) {
+	if count <= 0 {
+		return nil, .Ok
+	}
+	address := arena_push(arena, u64(count) * size_of(T), align_of(T), error) or_return
+	return ([^]T)(address)[:count], .Ok
+}
+
+// arena_take_pages gives the pages that an arena reserves for tables of
+// these sizes in bytes, each aligned on at most 64 bytes.
+arena_take_pages :: proc "contextless" (sizes: []u64) -> u64 {
+	bytes: u64
+	for size in sizes {
+		bytes = (bytes + 63) & ~u64(63) + size
+	}
+	return max((bytes + PAGE_SIZE - 1) / PAGE_SIZE, 1)
+}
+
+// process_slots_of gives the process slots of the machine
+// (System_Report.process_slots), which the kernel chose at its start: a
+// table with one entry for each process slot is this long. 0: the handle
+// cannot read the report of the machine (it needs Inspect).
+process_slots_of :: proc "contextless" (machine: Handle) -> u64 {
+	report: op.System_Report
+	if _, status := call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+		return 0
+	}
+	return min(report.process_slots, op.PROCESS_SLOTS_MOST)
+}
+
 // arena_reset sets the end of the arena back to its start and keeps its
 // committed pages: the next pushes take the same addresses and commit
 // nothing until they pass the largest end so far. The bytes are not

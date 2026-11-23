@@ -118,7 +118,7 @@ log_output_text_part :: proc "contextless" (text: []u8, runs: []value_kinds.Valu
 		time       = time,
 		level      = level,
 		more       = u8(len(part) < len(rest)),
-		text_count = u16(len(part)),
+		text_count = u8(len(part)),
 	}
 	copy(record.text[:], part)
 	record.run_count = u8(value_kinds.value_runs_of_record(runs, start, len(part), record.runs[:]))

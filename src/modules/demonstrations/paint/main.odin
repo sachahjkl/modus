@@ -61,9 +61,9 @@ LARGEST_HEIGHT :: 864
 #assert(LARGEST_WIDTH == paint_model.PICTURE_WIDTH_LIMIT)
 #assert(LARGEST_HEIGHT == paint_model.PICTURE_HEIGHT_LIMIT)
 
-// The budget of paint, under the largest budget that the root service
-// gives a process (module.LARGEST_BUDGET_PAGES of the module contract, which
-// the root service reads too: 16384 pages), with a margin. The tool counts the module pages (the code,
+// The budget of paint, under the least largest budget that the root
+// service gives a process on any machine (module.LARGEST_BUDGET_LEAST_PAGES
+// of the module contract: 16384 pages), with a margin. The tool counts the module pages (the code,
 // the data and each array below), the stacks of the two threads and the
 // two pictures of the window at its largest size; the source states the
 // working memory. The arrays, in pages of 4 KiB:
@@ -108,7 +108,7 @@ WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + PAGE_BYTES
 // that the tool counts (72 and 19 pages): a bound over the measured module.
 MODULE_PAGES_BOUND :: 512
 ARRAY_PAGES :: (2 * size_of([paint_model.PICTURE_PIXELS]graphics.Color) + paint_model.HISTORY_BYTES + size_of(paint_model.History_Scratch) + size_of(paint_model.Fill_Memory) + paint_model.FILE_HEADER_BYTES + paint_model.KEEP_PIECE_BYTES + paint_model.FILE_HEADER_BYTES + PAGE_BYTES - 1) / PAGE_BYTES
-#assert(ARRAY_PAGES + WINDOW_PAGES + MODULE_BUDGET.working_memory_pages + MODULE_PAGES_BOUND + PAGES_MARGIN <= module.LARGEST_BUDGET_PAGES)
+#assert(ARRAY_PAGES + WINDOW_PAGES + MODULE_BUDGET.working_memory_pages + MODULE_PAGES_BOUND + PAGES_MARGIN <= module.LARGEST_BUDGET_LEAST_PAGES)
 
 GAP :: 4
 ROW_HEIGHT :: 28 // The row of the tools.

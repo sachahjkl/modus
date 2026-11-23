@@ -2,6 +2,8 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:mapping_order"
+import "modulus:word_table"
 
 // The virtual memory of a process (docs/ARCHITECTURE.md, "The virtual
 // memory of a process"): commit and decommit the pages of an uncommitted
@@ -190,13 +192,24 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 // one pass over its 262 144 slots, 2 MiB read in order.
 WAITING_WORD_CAPACITY :: 256
 
-waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region, ranges: []op.Page_Range) {
-	Waiting_Word :: struct {
-		page:   u64, // The frame of the word.
-		thread: u32,
+// One registered word of a thread of a process, by the frame of its page.
+@(private = "file")
+Waiting_Word :: struct {
+	page:   u64, // The frame of the word.
+	thread: u32, // 0: woken already.
+}
+
+// waiting_words_collect gives the words of the threads of a process,
+// sorted by frame. A thread with more words than the table holds is woken
+// now. The caller holds the process lock of the process.
+@(private = "file")
+waiting_words_collect :: proc "contextless" (process: ^Process, words: ^[WAITING_WORD_CAPACITY]Waiting_Word) -> (count: int) {
+	// No thread of the process waits: no pass over the thread table. Each
+	// unmap of a process that waits on nothing, and each of the unmaps of
+	// the end of a process, costs one read here.
+	if intrinsics.atomic_load(&process.waited_words) == 0 {
+		return 0
 	}
-	words: [WAITING_WORD_CAPACITY]Waiting_Word
-	count := 0
 	index := index_of_process(process)
 	for &thread, slot in threads[1:] {
 		if thread.process != index || thread.word_count == 0 {
@@ -206,18 +219,47 @@ waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region
 			thread_words_wake(&thread)
 			continue
 		}
-		for word in thread.words[:thread.word_count] {
-			words[count] = {page = word &~ (PAGE_SIZE - 1), thread = u32(slot + 1)}
+		for n in 0 ..< thread.word_count {
+			words[count] = {page = wait_entry(&thread, n).word &~ (PAGE_SIZE - 1), thread = u32(slot + 1)}
 			count += 1
 		}
-	}
-	if count == 0 {
-		return
 	}
 	for at in 1 ..< count {
 		for back := at; back > 0 && words[back - 1].page > words[back].page; back -= 1 {
 			words[back - 1], words[back] = words[back], words[back - 1]
 		}
+	}
+	return count
+}
+
+// waiting_words_wake_frame wakes each thread with a word in a frame, once,
+// and gives the words that it woke.
+@(private = "file")
+waiting_words_wake_frame :: proc "contextless" (words: []Waiting_Word, frame: u64) -> (matched: int) {
+	low, high := 0, len(words)
+	for low < high {
+		middle := (low + high) / 2
+		if words[middle].page < frame {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	for at := low; at < len(words) && words[at].page == frame; at += 1 {
+		if words[at].thread != 0 {
+			thread_words_wake(&threads[words[at].thread])
+			words[at].thread = 0
+			matched += 1
+		}
+	}
+	return matched
+}
+
+waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region, ranges: []op.Page_Range) {
+	words: [WAITING_WORD_CAPACITY]Waiting_Word
+	count := waiting_words_collect(process, &words)
+	if count == 0 {
+		return
 	}
 	remaining := count
 	frames_seen: u64
@@ -229,26 +271,72 @@ waiters_on_frames_wake :: proc "contextless" (process: ^Process, region: ^Region
 				continue
 			}
 			frames_seen += 1
-			low, high := 0, count
-			for low < high {
-				middle := (low + high) / 2
-				if words[middle].page < frame {
-					low = middle + 1
-				} else {
-					high = middle
-				}
-			}
-			for at := low; at < count && words[at].page == frame; at += 1 {
-				if words[at].thread != 0 {
-					thread_words_wake(&threads[words[at].thread])
-					words[at].thread = 0
-					remaining -= 1
-				}
-			}
+			remaining -= waiting_words_wake_frame(words[:count], frame)
 			if remaining == 0 || !region.contiguous && frames_seen >= frames {
 				return
 			}
 		}
+	}
+}
+
+// waiters_on_pages_wake wakes each thread of a process that has a word in
+// a frame that the page table of the process names for the pages from
+// address: the frames of a mapping that ends, or the frames of point copies
+// that return to the history. It reads the entries, not the slots of the
+// object, so a frame that the process maps in place of the frame of the
+// object (a point copy) is matched too. Its caller frees no such frame
+// before: a thread that waits names the frame, and the next user of the
+// frame would take its wakes and give it theirs. The caller holds the
+// process lock of the process. With no word waited in the process it reads
+// no entry.
+//
+// The cost: one walk of the upper levels for each 2 MiB of the range, as
+// unmap does; a 2 MiB with no table is passed whole, a large page is one
+// entry, and the walk ends when it has seen `present` present pages (the
+// present_page_count of the mapping) or matched each word.
+waiters_on_pages_wake :: proc "contextless" (process: ^Process, address: u64, page_count: u64, present: u64) {
+	words: [WAITING_WORD_CAPACITY]Waiting_Word
+	count := waiting_words_collect(process, &words)
+	if count == 0 || present == 0 {
+		return
+	}
+	remaining := count
+	seen: u64
+	for page := u64(0); page < page_count; {
+		virtual := address + page * PAGE_SIZE
+		run := min(512 - (virtual >> 12 & 511), page_count - page)
+		entry := page_entry(process.table, virtual)
+		if entry == nil {
+			page += run // No table under this 2 MiB: no page of it is present.
+			continue
+		}
+		if entry^ & PAGE_LARGE != 0 {
+			// One large page: its 4 KiB frames in order, from the frame of
+			// this address.
+			if base, ok := word_table.word_physical(entry^, virtual); ok {
+				for at in 0 ..< run {
+					remaining -= waiting_words_wake_frame(words[:count], base + at * PAGE_SIZE)
+				}
+				seen += run
+			}
+		} else {
+			entries := ([^]u64)(entry)
+			for at in 0 ..< run {
+				frame, ok := word_table.word_physical(entries[at], virtual + at * PAGE_SIZE)
+				if !ok {
+					continue
+				}
+				seen += 1
+				remaining -= waiting_words_wake_frame(words[:count], frame)
+				if remaining == 0 || seen >= present {
+					return
+				}
+			}
+		}
+		if remaining == 0 || seen >= present {
+			return
+		}
+		page += run
 	}
 }
 
@@ -273,7 +361,7 @@ protection_bits :: proc "contextless" (mapping: ^Mapping, flags: op.Map_Flags) -
 // A range covers the pages of one mapping of this process; Write needs a
 // mapping made with Write, Execute one made with Execute; a part of a
 // mapping needs an object with a frame list named only by this process.
-protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u8, status: Operation_Outcome) {
+protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u16, status: Operation_Outcome) {
 	if .Write in flags && .Execute in flags || .No_Access in flags && flags != {.No_Access} {
 		return mappings, .Bad_Operation
 	}
@@ -282,14 +370,8 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 		if address % PAGE_SIZE != 0 || count == 0 || address >= USER_END || count > (USER_END - address) / PAGE_SIZE {
 			return mappings, .Bad_Address
 		}
-		found := -1
-		for &mapping, slot in process.mappings {
-			if mapping.page_count != 0 && address >= mapping.address && (address - mapping.address) / PAGE_SIZE + count <= mapping.page_count {
-				found = slot
-				break
-			}
-		}
-		if found < 0 {
+		found, inside := mapping_order.containing(process.mapping_order[:process.mapping_order_count], process.mappings[:], address)
+		if !inside || (address - process.mappings[found].address) / PAGE_SIZE + count > process.mappings[found].page_count {
 			return mappings, .Bad_Address
 		}
 		mapping := &process.mappings[found]
@@ -328,7 +410,7 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 				return mappings, .Bad_State
 			}
 		}
-		mappings[index] = u8(found)
+		mappings[index] = found
 	}
 	// One table that names one mapping whole and in part: the parts are
 	// checked against the protection before the change of the whole:
@@ -410,6 +492,40 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 	if walked > op.RANGE_TABLE_PAGE_LIMIT {
 		return 0, .Bad_Operation
 	}
+	// A whole mapping that gains Write counts as a writer of its object
+	// before the check of the recorded mappings, as a new mapping does
+	// (map_region): of a writer and a recorded process that maps the object
+	// at the same time, one sees the other. The check in protect_check
+	// refuses early; this one decides. A refusal takes the counts back.
+	gains: [op.RANGE_TABLE_CAPACITY]bool
+	gain_count := 0
+	for range, index in ranges {
+		mapping := &process.mappings[places[index]]
+		whole := range.address == mapping.address && range.page_count == mapping.page_count
+		if !whole || mapping.bits & PAGE_WRITE != 0 || protection_bits(mapping, flags) & PAGE_WRITE == 0 {
+			continue
+		}
+		// Two ranges of one mapping count it once.
+		counted := false
+		for earlier in 0 ..< index {
+			counted ||= gains[earlier] && places[earlier] == places[index]
+		}
+		if !counted {
+			gains[index] = true
+			gain_count += 1
+			intrinsics.atomic_add(&regions[mapping.region].writable_mapping_count, 1)
+		}
+	}
+	for gained, index in gains[:len(ranges)] {
+		if gained && record_replay_write_conflict(index_of_process(process), process.mappings[places[index]].region) {
+			for taken, back in gains[:len(ranges)] {
+				if taken {
+					intrinsics.atomic_sub(&regions[process.mappings[places[back]].region].writable_mapping_count, 1)
+				}
+			}
+			return 0, .Bad_State
+		}
+	}
 	self := processor_self()
 	for range, index in ranges {
 		mapping := &process.mappings[places[index]]
@@ -419,7 +535,21 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 		count := range.page_count
 		mapping.protected = true
 		if first == 0 && count == mapping.page_count {
+			wrote := mapping.bits & PAGE_WRITE != 0
 			mapping.bits = protection_bits(mapping, flags)
+			writes := mapping.bits & PAGE_WRITE != 0
+			// A gain of Write was counted above, once for the mapping.
+			if writes && !wrote && !gains[index] {
+				counted := false
+				for earlier in 0 ..< index {
+					counted ||= gains[earlier] && places[earlier] == places[index]
+				}
+				if !counted {
+					intrinsics.atomic_add(&region.writable_mapping_count, 1)
+				}
+			} else if wrote && !writes {
+				intrinsics.atomic_sub(&region.writable_mapping_count, 1)
+			}
 		}
 		// The protection of each page of a part, in its slot, as marks that
 		// take away from the protection of the mapping now: a part that gets

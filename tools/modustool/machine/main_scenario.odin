@@ -1307,6 +1307,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "locks: kernel entries, each locker on its own objects: 1 locker 16384, 2 lockers 32768, 4 lockers 65536"},
 	{kind = .Wait, text = "locks: pages on first use, each locker in its own memory: 1 locker 2048, 2 lockers 4096, 4 lockers 8192"},
 	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
+	{kind = .Wait, text = "locks: the wait room: with no room a wait of 64 words and one more No_Slot; a word twice in a wait Bad_Operation; a room past 32768 words Bad_Operation, for another thread Bad_Operation; a room of 65 words held 128 words for 2 pages of the budget; a wait of the 128 words Ok, of one more No_Slot; the room given back returned its pages: 1: as it must"},
+	{kind = .Wait, text = "locks: the pages of a wait room returned at the end of its thread: 1; at the stop of its process during a wait: 1; at the stop of its process after its budget ended: 1: as it must"},
+	{kind = .Wait, text = "locks: a wait of 32768 words: Ok in "},
+	{kind = .Wait, text = "locks: an unmap of 4096 pages took "},
+	{kind = .Wait, text = "locks: a wake of a word of a frame whose 1024 words a thread waits on woke 1 thread in "},
+	{kind = .Wait, text = "locks: two processes wait each on a word of a page that they never touched: the wake of one counted 1 thread, and the other still waits: 1: as it must"},
+	{kind = .Wait, text = "locks: a wake of a word through a read-only mapping Bad_Address, and the thread that waits on it still waits: 1; a wake through the mapping with Write woke 1 thread: as it must"},
+	{kind = .Wait, text = "locks: a thread that waits on a word of an object that its process unmaps and closes was woken by the unmap: 1; another process that takes frames woke 1 thread with its own wake: as it must"},
 	{kind = .Wait, text = "locks: frames: "},
 	{kind = .Wait, text = "locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor 0: "},
 	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped process returned its pages, its slot and its threads"},
@@ -1334,12 +1342,12 @@ scenario := [?]Step {
 	// the changes of strategy lose no thread. The machine of the test has
 	// 4 processors: the lines name them.
 	{kind = .Launch, text = "scheduler"},
-	{kind = .Wait, text = "scheduler: a thread created with the weight 300 and the request 700 us read its own schedule: weight 300, request 700 us; after it lowered them to 150 and 350 us: weight 150, request 350 us; its own writes of the weight 300 and of the request 700 us: Bad_Operation and Bad_Operation, and the schedule stayed: 1; the first thread: weight 1024, request 3000 us: as it must"},
+	{kind = .Wait, text = "scheduler: a thread created with the weight 300 and the request 700 us read its own schedule: weight 300, request 700 us; after it lowered them to 150 and 350 us: weight 150, request 350 us; its own writes of the weight 300 and of the request 700 us: Bad_Operation and Bad_Operation, and the schedule stayed: 1; the first thread: weight 8192, request 3000 us: as it must"},
 	{kind = .Wait, text = "scheduler: refused writes of a schedule: a weight above the full weight Bad_Operation, a request above the limit Bad_Operation, and the schedule stayed: 1; the machine handle with no right Schedule No_Right; a read and a write through the machine handle with Schedule and no Inspect No_Right and No_Right; a thread handle with Inspect and no Control No_Right, and it reads: 1; another command with the machine handle Bad_Handle; the machine number of a thread that ended Bad_State: as it must"},
 	{kind = .Wait, text = "scheduler: a thread of another process, the root service, found by its name and its serial: through the machine handle its schedule was read, written, read back and written back: as it must"},
 	{kind = .Wait, text = "scheduler: the weight limit 256 written through the machine handle: the thread has the weight 256; its own write of the full weight Bad_Operation, the error record has the weight of the thread: 1; its own write of the full limit changed nothing: 1: as it must"},
-	{kind = .Wait, text = "scheduler: under the weight limit 256, 1000 rounds of its own writes of the weights 256, 1, 1024 and 256, then the weight 256 through the machine handle: 2000 of its own accepted, 2000 refused, 1000 raised by the machine handle, a wrong weight or limit 0 times: as it must"},
-	{kind = .Wait, text = "scheduler: under the weight limit 256: a new thread with the weight 257 Bad_Operation; a new thread with the weight 0 has the weight 256 and the limit 256, and its own write of the full weight Bad_Operation; after the machine handle wrote the full limit the first thread has the weight 1024: as it must"},
+	{kind = .Wait, text = "scheduler: under the weight limit 256, 1000 rounds of its own writes of the weights 256, 1, 8192 and 256, then the weight 256 through the machine handle: 2000 of its own accepted, 2000 refused, 1000 raised by the machine handle, a wrong weight or limit 0 times: as it must"},
+	{kind = .Wait, text = "scheduler: under the weight limit 256: a new thread with the weight 257 Bad_Operation; a new thread with the weight 0 has the weight 256 and the limit 256, and its own write of the full weight Bad_Operation; after the machine handle wrote the full limit the first thread has the weight 8192: as it must"},
 	{kind = .Wait, text = "scheduler: at least 100 rounds on a held spinner under EEVDF, until one had a lag below 0: the spinner lowered to the weight 1 and ran a tick, a Stop, its own writes of the full weight and of the request 1 us, the full weight through the machine handle, a Resume: 0 of its raises were not refused, the reported lag changed after 0 of its writes, and was not 0 after 0 raises of the machine handle: as it must"},
 	{kind = .Wait, text = "scheduler: a thread read its own placement: each of the 4 processors in its set and in its limit: 1; its own write of the processor 3 alone: Ok, and it then read that processor alone, with the same limit: 1; in 50 samples of its thread report, each after one more tick of its run, its home or its processor was another one 0 times: as it must"},
 	{kind = .Wait, text = "scheduler: refused sets of a placement, on a spinner that the machine handle keeps on the processor 0: through its thread handle a wider set Bad_Operation and a processor that the machine does not have Bad_Operation, with their error records: 1; through the machine handle a limit of no processor of the machine Bad_Operation and a set outside its limit Bad_Operation, with their error records: 1; the placement stayed: 1: as it must"},
@@ -1364,9 +1372,9 @@ scenario := [?]Step {
 	// The share policy: four processes with 1, 2, 4 and 8 spinning threads.
 	// Each condition is a value that the kernel gives back, or an order of
 	// two counts of ticks; the shares are a measure.
-	{kind = .Wait, text = "scheduler: the share policy, three rounds: each thread of the processes with 1, 2, 4 and 8 spinning threads has the weight and the weight limit 1024, 512, 256 and 128, and the new-thread weight limit 32; the weights of each process sum to 1024, 1024, 1024 and 1024; the third round wrote none of their threads: 1: as it must"},
-	{kind = .Wait, text = "scheduler: under the share policy, a thread of this process created with the weight 30 has the weight 30, and the weight 15 after it lowered itself to 15; after this process started 7 threads more, its 9 threads have the weights 15 to 113, which sum to 919 of 1024: as it must"},
-	{kind = .Wait, text = "scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight 15 and the two full weight limits, and no write of the policy was refused: 1: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy, three rounds: each thread of the processes with 1, 2, 4 and 8 spinning threads has the weight and the weight limit 8192, 4096, 2048 and 1024, and the new-thread weight limit 32; the weights of each process sum to 8192, 8192, 8192 and 8192; the third round wrote none of their threads: 1: as it must"},
+	{kind = .Wait, text = "scheduler: under the share policy, a thread of this process created with the weight 30 has the weight 30, and the weight 15 after it lowered itself to 15; after this process started 7 threads more, its 9 threads have the weights 15 to 910, which sum to 7295 of 8192: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 8192 and the two full weight limits again, the thread that lowered itself has the weight 15 and the two full weight limits, and no write of the policy was refused: 1: as it must"},
 	{kind = .Wait, text = "scheduler: the process with 8 spinning threads against the process with 1, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it: as it must"},
 	{kind = .Wait, text = "scheduler: shares of the processes with 1, 2, 4 and 8 spinning threads under EEVDF, by the ticks of the kernel: without the share policy "},
 	{kind = .Wait, text = "scheduler: one round of the share policy, over "},
@@ -1374,7 +1382,7 @@ scenario := [?]Step {
 	// saw have the new-thread weight limit of their process; a creating
 	// thread whose own value is full creates under the value of its
 	// process. All are states; the parts of the two processes are a measure.
-	{kind = .Wait, text = "scheduler: the share policy and a process that keeps 6 short threads alive, after one round: 24 of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit 32: 1, and those of one read summed to under 1024: 1: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy and a process that keeps 6 short threads alive, after one round: 24 of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit 32: 1, and those of one read summed to under 8192: 1: as it must"},
 	{kind = .Wait, text = "scheduler: under the share policy the first thread of this process got through the machine handle a new-thread weight limit of its own above 33: 1, and the process has the new-thread weight limit 32; a new thread with the weight 33 Bad_Operation, and the error record names 32; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
 	{kind = .Wait, text = "scheduler: the first thread of a process started under the share policy, by a thread whose own new-thread weight limit is above 33, has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
 	{kind = .Wait, text = "scheduler: the process of short threads got "},
@@ -1398,10 +1406,10 @@ scenario := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"scheduler\")"},
 	{kind = .Wait, text = "[console]   commands   3"},
-	{kind = .Type, text = "scheduler.share(\"terminal\", 512)"},
-	{kind = .Wait, text = "[console] 1024"},
+	{kind = .Type, text = "scheduler.share(\"terminal\", 4096)"},
+	{kind = .Wait, text = "[console] 8192"},
 	{kind = .Type, text = "scheduler.share(\"terminal\", 16)"},
-	{kind = .Wait, text = "the argument weight has 16; it must have at least 32"},
+	{kind = .Wait, text = "the argument weight has 16; it must have at least 256"},
 	{kind = .Type, text = "scheduler.policy(1)"},
 	{kind = .Wait, text = "scheduler: the share policy is on: each process has its process weight, divided between its threads that count, one round each 100 ms"},
 	{kind = .Front, text = "scheduler"},

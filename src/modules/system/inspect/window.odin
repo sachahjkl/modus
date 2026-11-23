@@ -374,7 +374,7 @@ changed :: proc "contextless" (now, before: u64) -> bool {
 // The first line of each row of the list, and at shown_count the count of
 // the lines of all the rows: made when the list is read, not at each
 // picture.
-shown_row: [PROCESS_SLOTS + 1]int
+shown_row: []int // One more than the slots: tables_take.
 
 // The width of the column of the names in which shown_row counted the
 // lines: a frame whose column has another width counts them again.
@@ -506,6 +506,10 @@ draw_list :: proc "contextless" (frame: ^interface.Frame) {
 	text(inside, 0, y + 3 * LINE, element_tokens.text_dim, "tab: bytes")
 }
 
+// The parts of the band of the address space: two for each mapping, 48 KiB,
+// which the stack of the window does not hold.
+map_segments: [2 * op.MAPPING_REPORT_CAPACITY]addresses.Segment
+
 draw_map :: proc "contextless" (frame: ^interface.Frame) {
 	name := system.name_of(current.process.name[:])
 	buffer: [64]u8
@@ -528,7 +532,7 @@ draw_map :: proc "contextless" (frame: ^interface.Frame) {
 	x = text(inside, x, 0, element_tokens.text_dim, " with a frame  ")
 	x = text(inside, x, 0, state_color(current.process.state), current.process.state == .Stopped ? "stopped" : "runs")
 	// The band: each mapping scaled by its pages, each gap folded.
-	segments: [2 * op.MAPPING_REPORT_CAPACITY]addresses.Segment
+	segments := &map_segments
 	count := addresses.band(mappings, inside.width, 16, 4, segments[:])
 	BAND_Y :: 24
 	if len(mappings) == 0 {

@@ -1,16 +1,14 @@
 package root_ring
 
-import "modus:contract/errors"
 import op "modus:contract/operation"
-import "modus:contract/start_grant"
 
 // The words of the one wait of the loop of the root service
 // (src/md/features/module_outputs.md, "The words of the wait of the root
-// service"). A wait holds op.WORD_WAIT_CAPACITY words. A list that does
-// not fit ends each wait at once: the loop then turns with no wait, and
-// the queues past the capacity are never waited on. The root service
-// counts its queues and refuses a new one past the bound where it is
-// made; the count of what runs is its state, and the decision is here.
+// service"). The root service sizes its wait set at its start from its
+// places, one for each process slot of the machine but its own, so that
+// each queue that it can hold has its words: no start is refused for the
+// wait, and no queue is waited on late. The kernel holds the words in a
+// wait room that the budget of the root service pays.
 
 // The persisted tables whose calls the loop waits on: one for each
 // principal. The root service checks it against principals.
@@ -27,35 +25,23 @@ ROOT_WAIT_FIXED_WORDS :: 1 + 1 + 2 + 2 + 2 + 2 * ROOT_WAIT_PERSISTED_TABLES
 // the root service waits.
 ROOT_WAIT_WORDS_OF_A_QUEUE :: 2
 
-// The root rings, the control rings of the network and the wiring rings
-// that the loop waits on, together.
-ROOT_WAITED_QUEUES_MOST :: (op.WORD_WAIT_CAPACITY - ROOT_WAIT_FIXED_WORDS) / ROOT_WAIT_WORDS_OF_A_QUEUE
-#assert(ROOT_WAIT_FIXED_WORDS + ROOT_WAITED_QUEUES_MOST * ROOT_WAIT_WORDS_OF_A_QUEUE <= op.WORD_WAIT_CAPACITY)
+// The queues of one place: the root ring of its process and the control
+// ring of its network device.
+ROOT_WAIT_QUEUES_OF_A_PLACE :: 2
 
-// start_waited_queues gives the queues that the start of a module brings
-// to the loop: its root ring, the control ring of a network device, and
-// its wiring ring when its module declares a record stream.
-start_waited_queues :: proc "contextless" (grants: bit_set[start_grant.Grant], declares_record_streams: bool) -> (count: int) {
-	if root_ring_given(grants) {
-		count += 1
-	}
-	if .Network_Device in grants {
-		count += 1
-	}
-	if declares_record_streams {
-		count += 1
-	}
-	return count
+// The queues beside the places: the rings of the delegated wiring service
+// and of the devices service.
+ROOT_WAIT_QUEUES_BESIDE_PLACES :: 2
+
+// root_wait_words gives the words of the wait of the loop with each queue
+// of `places` places: the size of the wait set of the root service.
+//
+// Example: 255 places (a machine of 1 GiB) give 12 + 2 x (510 + 2) = 1036
+// words; 1023 places give 4108.
+root_wait_words :: proc "contextless" (places: int) -> int {
+	return ROOT_WAIT_FIXED_WORDS + ROOT_WAIT_WORDS_OF_A_QUEUE * (ROOT_WAIT_QUEUES_OF_A_PLACE * max(places, 0) + ROOT_WAIT_QUEUES_BESIDE_PLACES)
 }
 
-// waited_queues_refusal gives the error record of a command whose added
-// queues do not fit the wait beside the queues that run, or false when
-// they fit or add none: Full of the unit Words, the words with the new
-// queues as the value, and the capacity as the limit.
-waited_queues_refusal :: proc "contextless" (command: Root_Command, running, added: int) -> (values: [7]u64, refused: bool) {
-	if added <= 0 || running + added <= ROOT_WAITED_QUEUES_MOST {
-		return {}, false
-	}
-	words := ROOT_WAIT_FIXED_WORDS + (running + added) * ROOT_WAIT_WORDS_OF_A_QUEUE
-	return errors.ring_fail(u32(command), .Full, .Words, 0, i64(words), op.WORD_WAIT_CAPACITY), true
-}
+// The largest wait, with a place for each process slot but one, fits a
+// wait of the kernel.
+#assert(ROOT_WAIT_FIXED_WORDS + ROOT_WAIT_WORDS_OF_A_QUEUE * (ROOT_WAIT_QUEUES_OF_A_PLACE * (op.PROCESS_SLOTS_MOST - 1) + ROOT_WAIT_QUEUES_BESIDE_PLACES) <= op.WORD_WAIT_MOST)

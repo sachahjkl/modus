@@ -32,6 +32,8 @@ package locker
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:lockers"
+import op "modus:contract/operation"
+import "modus:contract/ring"
 import "modus:system"
 
 // entries enters the kernel with one cheap operation on an own object,
@@ -118,10 +120,158 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 // tables of its range, tells `locks` that it is ready, then waits for each
 // command and runs its mode until the next one. With no board or a slot
 // number past the board, it stops with `Failed`.
+// wait_room_role is the role of a locker in the case of the wait room
+// (lockers.ROLE_WAIT_ROOM). The status of the room is the count of the
+// slot, for `locks` to check.
+wait_room_role :: proc "contextless" (ctx: ^system.Context) -> ! {
+	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
+	if status != .Ok {
+		system.stop(.Failed)
+	}
+	slot := &(^lockers.Board)(address).slots[0]
+	_, room_status := system.call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, ctx.values[lockers.VALUE_ROOM_WORDS])
+	if ctx.values[lockers.VALUE_BUDGET_END] != 0 {
+		system.close(system.own_budget())
+	}
+	slot.count = u64(room_status)
+	intrinsics.atomic_add(&slot.done, 1)
+	system.word_wake(&slot.done, system.WAKE_ALL)
+	// Each word holds 0 and the wait names 0: the wait has no end but the
+	// stop of the process.
+	waited: [lockers.ROOM_WAITED]u32
+	words: [lockers.ROOM_WAITED]op.Word
+	for &word, index in words {
+		word = {address = u64(uintptr(&waited[index])), value = 0}
+	}
+	for {
+		commands := [1]ring.Record{{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&words[0])), 1 = len(words)}}}
+		completions: [1]ring.Record
+		system.commands_call(commands[:], completions[:], system.WAIT_FOREVER)
+	}
+}
+
+// The slot and the word of the role of the untouched page.
+untouched_slot: ^lockers.Slot
+untouched_word: ^u32
+
+// untouched_waiter waits on the word of a page that no instruction of this
+// process touched, until a wake or the hang bound, and counts the end.
+untouched_waiter :: proc "c" (parameter: rawptr) -> ! {
+	words := [1]op.Word{{address = u64(uintptr(untouched_word)), value = 0}}
+	commands := [1]ring.Record{{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&words[0])), 1 = 1}}}
+	completions: [1]ring.Record
+	system.commands_call(commands[:], completions[:], system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
+	intrinsics.atomic_add(&untouched_slot.count, 1)
+	system.thread_stop()
+}
+
+// untouched_role is the role of a locker in the case of the untouched page
+// (lockers.ROLE_UNTOUCHED_WAIT).
+untouched_role :: proc "contextless" (ctx: ^system.Context) -> ! {
+	board, board_status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
+	index := ctx.values[lockers.VALUE_INDEX]
+	memory, memory_status := system.memory_create(1)
+	page: rawptr
+	page_status := memory_status
+	if memory_status == .Ok {
+		page, page_status = system.memory_map(memory, {.Write})
+	}
+	if board_status != .Ok || page_status != .Ok || index >= lockers.LOCKER_CAPACITY {
+		system.stop(.Failed)
+	}
+	untouched_slot = &(^lockers.Board)(board).slots[index]
+	untouched_word = (^u32)(uintptr(page) + lockers.UNTOUCHED_OFFSET)
+	if _, started := system.thread_start(untouched_waiter, nil); started != .Ok {
+		system.stop(.Failed)
+	}
+	if ctx.values[lockers.VALUE_WAKES] != 0 {
+		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+		for system.time() < deadline {
+			if woken := system.word_wake(untouched_word, system.WAKE_ALL); woken != 0 {
+				untouched_slot.entries = woken
+				break
+			}
+			system.sleep(system.time() + 1)
+		}
+	}
+	intrinsics.atomic_add(&untouched_slot.done, 1)
+	system.word_wake(&untouched_slot.done, system.WAKE_ALL)
+	for {
+		system.word_wait(&untouched_slot.command, intrinsics.atomic_load(&untouched_slot.command))
+	}
+}
+
+// 1: the waiter of the role of the unmap ended its wait.
+unmap_waiter_ended: u32
+
+// The waiter of the role of the unmap: it waits on its word until the hang
+// bound, and says if the wait ended before.
+unmap_waiter :: proc "c" (parameter: rawptr) -> ! {
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	words := [1]op.Word{{address = u64(uintptr(untouched_word)), value = 0}}
+	commands := [1]ring.Record{{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&words[0])), 1 = 1}}}
+	completions: [1]ring.Record
+	now, _ := system.commands_call(commands[:], completions[:], deadline)
+	untouched_slot.limit = now < deadline ? 1 : 0
+	intrinsics.atomic_store(&unmap_waiter_ended, 1)
+	system.word_wake(&unmap_waiter_ended, system.WAKE_ALL)
+	system.thread_stop()
+}
+
+// unmap_role is the role of a locker in the case of the unmap
+// (lockers.ROLE_UNMAP_WAIT).
+unmap_role :: proc "contextless" (ctx: ^system.Context) -> ! {
+	board, board_status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
+	index := ctx.values[lockers.VALUE_INDEX]
+	memory, memory_status := system.memory_create(1)
+	page: rawptr
+	page_status := memory_status
+	if memory_status == .Ok {
+		page, page_status = system.memory_map(memory, {.Write})
+	}
+	if board_status != .Ok || page_status != .Ok || index >= lockers.LOCKER_CAPACITY {
+		system.stop(.Failed)
+	}
+	untouched_slot = &(^lockers.Board)(board).slots[index]
+	untouched_word = (^u32)(page)
+	intrinsics.atomic_store(untouched_word, 0)
+	waiter, started := system.thread_start(unmap_waiter, nil)
+	if started != .Ok {
+		system.stop(.Failed)
+	}
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for system.time() < deadline {
+		states, _ := system.call(.Thread_State, u64(waiter.handle))
+		if op.Process_State(states[0]) == .Waiting {
+			break
+		}
+		system.sleep(system.time() + 1)
+	}
+	system.memory_unmap(page)
+	system.close(memory)
+	for intrinsics.atomic_load(&unmap_waiter_ended) == 0 && system.time() < deadline {
+		system.word_wait(&unmap_waiter_ended, 0, deadline)
+	}
+	intrinsics.atomic_add(&untouched_slot.done, 1)
+	system.word_wake(&untouched_slot.done, system.WAKE_ALL)
+	for {
+		system.word_wait(&untouched_slot.command, intrinsics.atomic_load(&untouched_slot.command))
+	}
+}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_CHURN {
 		churn(ctx.values[lockers.VALUE_STOP_AFTER], ctx.handles[lockers.GRANT_PEER])
+	}
+	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_WAIT_ROOM {
+		wait_room_role(ctx)
+	}
+	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_UNTOUCHED_WAIT {
+		untouched_role(ctx)
+	}
+	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_UNMAP_WAIT {
+		unmap_role(ctx)
 	}
 	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
 	index := ctx.values[lockers.VALUE_INDEX]

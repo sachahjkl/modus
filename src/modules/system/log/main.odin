@@ -87,7 +87,7 @@ ROWS :: 30
 // The processes that the window counts one by one: two for each process
 // slot, so the processes that stopped count beside the ones that run. The
 // records of a process past them count with the others.
-COUNTED_PROCESSES :: 2 * op.PROCESS_SLOTS_OF_THE_MACHINE
+COUNTED_PROCESSES :: 2 * op.PROCESS_SLOTS_MOST
 MARGIN :: 12
 LINE :: 16
 COLUMN_PROCESS :: 11 * 8 // After "00000.000" and two spaces.
@@ -138,7 +138,7 @@ level_color :: proc "contextless" (level: system.Log_Level) -> graphics.Color {
 // serial name the process, as the log scope names it: two processes with
 // one name are two counts.
 Process_Count :: struct {
-	slot:   u8,
+	slot:   u16,
 	serial: u32,
 	name:   [32]u8,
 	count:  u64,
@@ -771,6 +771,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 // never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	log_wait_set = system.wait_set_of(log_wait_words[:], log_wait_parts[:])
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "log")
 	if !ok {
 		system.stop(.Failed)
@@ -863,7 +864,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The list comes after the reads and after the question to the
 		// canvas: a record or a call that arrived since ends the wait at
 		// once.
-		wait: system.Wait
+		wait := system.wait_of_set(&log_wait_set)
 		display.wait_events(&wait, &window)
 		system.wait_log(&wait, &reader)
 		// A new end of log.follow: the pump takes it at the next pass, so
@@ -872,9 +873,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// A follower whose full ring refused a row: its read wakes the
 		// pump, which writes the row that it kept, or the gap of the
 		// records that the kernel wrote over meanwhile. The count of the
-		// refused rings past FOLLOW_RINGS_WAITED_MOST is dropped: such a
-		// ring loses nothing, its row comes at the next wake for another
-		// cause, and no reader of this service asks for the count.
+		// The list holds each ring of follow (FOLLOW_RINGS_WAITED_MOST), so
+		// the count of the rings that it could not wait on is 0.
 		_ = system.wait_output_room(&wait, &follow, FOLLOW_RINGS_WAITED_MOST)
 		system.service_wait(&wait, &service)
 		system.wait_end(&wait)

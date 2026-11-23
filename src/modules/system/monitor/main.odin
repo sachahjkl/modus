@@ -113,8 +113,6 @@ GAUGE_HIGHLIGHT_ALPHA :: 70
 // A zebra band of the table: the recess at this alpha, on every second row.
 ZEBRA_ALPHA :: 150
 
-PROCESS_SLOTS :: 64
-
 // The title of a card, and the one number of a metric card.
 FONT_CARD_TITLE :: interface.Font{kind = .Interface, size = graphics.TEXT_CAPTION * interface.TEXT_SIZE_UNITS, weight = .Bold}
 FONT_METRIC :: interface.Font{size = graphics.TEXT_LARGE * interface.TEXT_SIZE_UNITS, weight = .Bold}
@@ -570,10 +568,36 @@ table_chrome_draw :: proc "contextless" (table: ^interface.Draw_Table, tokens: l
 	interface.draw_text_right(table, int(columns[.Share].x + columns[.Share].width), y, "share", tokens.text_dim, interface.FONT_CAPTION)
 }
 
-previous_run_time: [PROCESS_SLOTS]u64
+// The run time of each process slot at the picture before. One entry for
+// each process slot of this machine, taken at the start (tables_take).
+previous_run_time: []u64
 // The process serial, plus one, of the disk process of each slot whose line
 // the log has: one line for each disk process, not one at each picture.
-logged_disk_process: [PROCESS_SLOTS]u64
+logged_disk_process: []u64
+// The arena of the two tables.
+tables: system.Arena
+
+// tables_take takes the tables of the process slots of this machine. With
+// no count of the slots, or no page for them, the tables are empty and the
+// monitor shows no process.
+tables_take :: proc "contextless" () {
+	slots := int(system.process_slots_of(machine))
+	if slots == 0 {
+		return
+	}
+	sizes := [?]u64{u64(slots) * size_of(u64), u64(slots) * size_of(u64)}
+	status: system.Status
+	if tables, status = system.arena_create(system.arena_take_pages(sizes[:])); status != .Ok {
+		return
+	}
+	run_times, run_status := system.arena_take(&tables, u64, slots)
+	logged, logged_status := system.arena_take(&tables, u64, slots)
+	if run_status != .Ok || logged_status != .Ok {
+		system.arena_end(&tables)
+		return
+	}
+	previous_run_time, logged_disk_process = run_times, logged
+}
 disk_processes: ^process_page.Page
 
 // disk_process_log writes one line for each disk process that the monitor
@@ -583,7 +607,7 @@ disk_processes: ^process_page.Page
 // another line.
 disk_process_log :: proc "contextless" (slot: u64, process_serial: u64, nickname: string, row: process_page.Row) {
 	// The serial plus one: a slot with no line holds 0, also for a serial 0.
-	if slot >= PROCESS_SLOTS || logged_disk_process[slot] == process_serial + 1 {
+	if slot >= u64(len(logged_disk_process)) || logged_disk_process[slot] == process_serial + 1 {
 		return
 	}
 	logged_disk_process[slot] = process_serial + 1
@@ -627,6 +651,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		sample_history.sample_history_start(&graphs[graph], graph_scale(graph), places.graph_boxes[graph])
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
+	tables_take()
 	disk_processes = process_page.page_of(ctx)
 	service, _ = system.service_open(ctx)
 	previous_time: u64
@@ -689,7 +714,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The processor time of all the processes since the sample
 			// before, for the graph: the processes whose rows do not fit too.
 			run_time_total: u64
-			for slot in 1 ..< min(report.process_slots, PROCESS_SLOTS) {
+			for slot in 1 ..< min(report.process_slots, u64(len(previous_run_time))) {
 				process: op.Process_Report
 				system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process))
 				if process.state == .None {

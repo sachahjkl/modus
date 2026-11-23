@@ -75,8 +75,8 @@ bus_classified: bool
 // The discovered record of the device of each device service, at the place
 // of the service in the table of processes: a devices service that starts
 // again gets each binding again.
-bound_devices: [STARTED_CAPACITY]rd.Pci_Discovered_Device
-bound_device_present: [STARTED_CAPACITY]bool
+bound_devices: []rd.Pci_Discovered_Device // One for each place: root_tables_start.
+bound_device_present: []bool
 
 // devices_service_start starts the devices service with its ring, its
 // region and its log, and nothing else. It gives false past
@@ -104,7 +104,7 @@ devices_service_start :: proc "contextless" () -> bool {
 	region_memory: system.Handle
 	region_address: rawptr
 	if status == .Ok {
-		region_memory, status = system.memory_create(rd.DEVICES_REGION_PAGES)
+		region_memory, status = system.memory_create(rd.devices_region_pages(len(started)))
 	}
 	if status == .Ok {
 		region_address, status = system.memory_map(region_memory, {.Write})
@@ -141,7 +141,7 @@ devices_service_start :: proc "contextless" () -> bool {
 	devices_process = slot
 	devices_ring_memory, devices_ring = ring_memory, ring_opened
 	devices_region_memory = region_memory
-	devices_region = ([^]u8)(region_address)[:rd.DEVICES_REGION_PAGES * system.PAGE_SIZE]
+	devices_region = ([^]u8)(region_address)[:rd.devices_region_pages(len(started)) * system.PAGE_SIZE]
 	system.log_fact(.Info, Devices_Service_Started{starts = u64(devices_starts), start_limit = u64(DEVICES_RESTART_LIMIT)})
 	for present, index in bound_device_present {
 		if present {
@@ -352,9 +352,12 @@ classified_device_of_role :: proc "contextless" (role: rd.Device_Class_Role) -> 
 
 @(private = "file")
 started_index_of :: proc "contextless" (item: ^Started) -> (index: int, ok: bool) {
+	if len(started) == 0 {
+		return 0, false
+	}
 	first := uintptr(&started[0])
 	address := uintptr(item)
-	if address < first || address >= first + size_of(started) || (address - first) % size_of(Started) != 0 {
+	if address < first || address >= first + uintptr(len(started)) * size_of(Started) || (address - first) % size_of(Started) != 0 {
 		return 0, false
 	}
 	return int((address - first) / size_of(Started)), true
@@ -365,7 +368,7 @@ started_index_of :: proc "contextless" (item: ^Started) -> (index: int, ok: bool
 // answer (devices_answers).
 @(private = "file")
 devices_bind_send :: proc "contextless" (index: int) {
-	discovered_offset, spec_offset, ok := rd.devices_bind_place_offsets(index)
+	discovered_offset, spec_offset, ok := rd.devices_bind_place_offsets(index, len(started))
 	if !ok || devices_ring.head == nil || started[index].process == 0 {
 		return
 	}

@@ -13,6 +13,9 @@ GRANT_PEER :: 1 // ROLE_CHURN: a process, with the right Control, that this one 
 VALUE_INDEX :: 0 // The place of the locker on the board.
 VALUE_ROLE :: 1 // ROLE_MEASURE or ROLE_CHURN.
 VALUE_STOP_AFTER :: 2 // ROLE_CHURN: the milliseconds after which the process stops its peer, or itself with no peer. 0: never.
+VALUE_ROOM_WORDS :: 3 // ROLE_WAIT_ROOM: the words of the wait room that the process asks for.
+VALUE_BUDGET_END :: 4 // ROLE_WAIT_ROOM: 1: the process closes the one handle of its budget, which ends, before it waits.
+VALUE_WAKES :: 5 // ROLE_UNTOUCHED_WAIT: 1: the process wakes its own word after its waiter waits.
 
 // A locker of the measures: it works on the board.
 ROLE_MEASURE :: 0
@@ -23,6 +26,28 @@ ROLE_MEASURE :: 0
 // the process can stop itself or its peer at the same time.
 ROLE_CHURN :: 1
 CHURN_THREADS :: 4 // The threads that a churn locker can have at one time.
+// A locker of the case of the wait room: it asks for a room of
+// VALUE_ROOM_WORDS words, ends its budget when VALUE_BUDGET_END says so,
+// adds 1 to `done` of the slot 0 of the board, then waits on ROOM_WAITED
+// words of its own with no end, until `locks` stops it. The pages of the
+// room return to the budget that pays the process then, whichever it is.
+ROLE_WAIT_ROOM :: 2
+ROOM_WAITED :: 100
+// A locker of the case of the untouched page: it maps a new memory object
+// and touches no page of it; a thread waits on the word at UNTOUCHED_OFFSET
+// of it, which the wait itself makes present. With VALUE_WAKES, its first
+// thread then wakes that word until the wake counts a thread, and writes
+// the count in `entries` of its slot. The waiter adds 1 to `count` of the
+// slot when its wait ends. Each adds 1 to `done`, then waits for its stop.
+ROLE_UNTOUCHED_WAIT :: 3
+UNTOUCHED_OFFSET :: 0x10
+// A locker of the case of the unmap: a thread waits on a word of a memory
+// object of its own; the first thread unmaps the object and closes it, then
+// waits until the waiter ends. The waiter writes 1 in `limit` of its slot
+// when its wait ended before its deadline: only the unmap ended it, as no
+// one changes or wakes the word. Then `done` gets 1, and the process waits
+// for its stop.
+ROLE_UNMAP_WAIT :: 4
 
 LOCKER_CAPACITY :: 4 // The lockers that `locks` starts.
 FAULT_PAGES :: 256 // The pages of one memory object in the measure of the pages on first use.

@@ -329,19 +329,19 @@ The step that describes the exports reads the constant from the tree of the pars
 | The least budget | 2048 | 1 | 1 |
 | The largest budget of a process | 16384 | 8 | 32 |
 
-Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 64 000 (`op.LOG_RECORDS_OF_THE_MACHINE`), 1000 for each process slot (`src/md/features/log_side_channels.md`). The root service keeps a table of budget exceptions (`budget_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another largest budget or other limits in time, and holds its reason. A disk process and a module of another project have no row.
+Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 1000 for each process slot, 256 000 on a machine of 1 GiB and at most 1 024 000 (`op.LOG_RECORDS_OF_THE_MACHINE_MOST`; `src/md/features/log_side_channels.md`). The largest budget of a process of the boot image is one share of the pages and of the threads that the root service holds at its start, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages (`module.largest_budget_of_machine`; `src/md/features/module_budget_request.md`): a machine of 1 GiB gives one process a quarter of the memory that the kernel and its tables leave (`src/md/data/table_sizes.md`, "The cost, measured"). The root service keeps a table of budget exceptions (`processor_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another limit of processor time, and holds its reason. No row gives pages. A disk process and a module of another project have no row.
 
 **A disk process** is paid by one budget that the root service makes from its own at the first disk process, and keeps (`src/library/modus/disk_process/budget.odin`):
 
 | Amount | Pages | Processes | Threads | Processor | Log records |
 |---|---|---|---|---|---|
-| The budget of all disk processes | 16384 | 4 | 16 | two processors | 4000 in each second |
-| The largest budget of one disk process | 8192 | 1 | 4 | one processor for each thread | 1000 in each second |
+| The budget of all disk processes | 32768 | 4 | 16 | two processors | 4000 in each second |
+| The largest budget of one disk process | 16384 | 1 | 4 | one processor for each thread | 1000 in each second |
 
 A file chooses its own request, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process holds no grant that starts a process, so one process slot loses nothing. The log has one line when the budget of the disk processes is made:
 
 ```
-root: the disk processes share one budget of 64 MiB, 4 processes and 16 threads
+root: the disk processes share one budget of 128 MiB, 4 processes and 16 threads
 ```
 
 A request above the largest budget starts the process with the largest budget, and the log has one line for each part:
@@ -489,6 +489,7 @@ offset  size  field         type
 | `values[5]` | The end page of the wiring, with Read only | The same | The same |
 | `values[6]` | Its pair (`output.WIRING_VALUE_PAIR`): for a ring of a record output `Paired`, the number of the wiring of its source, a reader end of this process; else 0 | The word of its `output.Reader_Filter`: `None` (0), or `By_Writer` (1) when the wiring has a condition or comes from a record output `Paired`, so the serials of the ring move forward by any count | The same |
 
+- **A page with Read only gives a wait and no wake.** A process waits on the end word of its end page, and only the wiring service, which maps the page with Write, wakes it: `Word_Wake` needs Write on its word, so a process that maps a page read-only (an end page, the date page, the settings page) signals no waiter of it, and gets `Bad_Address` (`docs/ARCHITECTURE.md`, "The word wait").
 - **Each handle comes through the ring.** The root service gives the handles with `Handle_Give` and the memory of the wiring ring as the target, and the process proves each one with `Handle_State` before it maps it.
 - **The border** `output.given_end_of_record` refuses a kind that names no command, a ring handle of 0 or past 32 bits, an index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (an index that is not 0 for the asker), an end page of 0 or past 32 bits, a description file beside a writer end or none beside a reader, a pace that names no member, a pace word beside a reader, a condition page past 32 bits beside a writer, a pair past 32 bits beside a writer, terms beside the asker, and a filter word that names no `Reader_Filter` beside a reader. The library refuses a pair that names no reader end of the process, with `Absent` of the unit `Wirings`. Its error record is `Bad_Value` with the index of the word + 1 as the argument, 0 for the kind.
 - **The description file** (`output.description_file_write`) is a module file with the one record of the wiring at the index 1: a process has no copy of its own module file, so the reader checks each compartment against it.
