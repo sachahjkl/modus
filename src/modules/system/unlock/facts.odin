@@ -43,9 +43,9 @@ REQUEST_FIELD_BYTES :: 8
 // the TPM: the longest, "the wait until the TPM is ready", has 31 bytes.
 STEP_FIELD_BYTES :: 32
 // The bytes of the Text field of the words of a request to the TPM service
-// (tpm_service.command_words): the longest, "measure of a start policy",
-// has 25 bytes, and a zero byte.
-TPM_REQUEST_WORDS_FIELD_BYTES :: 32
+// (tpm_service.command_words): the longest, "the work of the service
+// itself", has 30 bytes, and a zero byte.
+TPM_REQUEST_FIELD_BYTES :: 32
 // The bytes of the Text field of how the keys are sealed after a change:
 // the longest has 68 bytes.
 HOW_FIELD_BYTES :: 72
@@ -215,25 +215,24 @@ Tpm_No_Answer :: struct {
 	request: [8]u8,
 }
 
-// The wait for the answer of the TPM service passed one more interval
-// (src/md/features/tpm_sealed_machine_key.md, "A wait that is long"). The
-// seconds are the count of the report times the interval, so the second
-// report reads 60 s, which the tool turns into a failure. The request is
-// the words of tpm_service.command_words.
-@(log_fact = "unlock: the wait for the TPM service passed {passed_seconds} s: the {request} request, tag {tag}; waited {waited_milliseconds} ms")
+// The wait report of the wait for the answer of the TPM service, which
+// passed one more interval (src/md/features/tpm_sealed_machine_key.md, "A
+// wait that is long"). The seconds are the count of the report times the
+// interval: a fixed number, not the time of the clock at the check. The
+// request is in the words of tpm_service.command_words, so the field has a
+// name of its own: request holds the words "seal" and "unseal".
+@(log_fact = "unlock: the wait for the TPM service passed {passed_seconds} s, for {tpm_request}; waited {waited_milliseconds} ms")
 Tpm_Wait_Passed :: struct {
 	passed_seconds:      u64,
-	tag:                 u64,
 	waited_milliseconds: u64,
-	request:             [32]u8,
+	tpm_request:         [32]u8,
 }
 
 // The wait for the answer of the TPM service reached its bound.
-@(log_fact = "unlock: the wait for the TPM service reached its bound after {waited_milliseconds} ms: the {request} request, tag {tag}")
+@(log_fact = "unlock: the wait for the TPM service reached its bound after {waited_milliseconds} ms, for {tpm_request}")
 Tpm_Wait_Bound_Reached :: struct {
-	tag:                 u64,
 	waited_milliseconds: u64,
-	request:             [32]u8,
+	tpm_request:         [32]u8,
 }
 
 // PCR 7 and PCR 11 do not hold the values of the seal.
@@ -1066,8 +1065,8 @@ Machine_Recovery_Asked :: struct {}
 #assert(size_of(Machine_Record_Refused) == PROBLEM_FIELD_BYTES)
 #assert(size_of(Object_Write_Not_Answered) == 8 + OBJECT_FIELD_BYTES)
 #assert(size_of(Tpm_No_Answer) == REQUEST_FIELD_BYTES)
-#assert(size_of(Tpm_Wait_Passed) == 24 + TPM_REQUEST_WORDS_FIELD_BYTES)
-#assert(size_of(Tpm_Wait_Bound_Reached) == 16 + TPM_REQUEST_WORDS_FIELD_BYTES)
+#assert(size_of(Tpm_Wait_Passed) == 16 + TPM_REQUEST_FIELD_BYTES)
+#assert(size_of(Tpm_Wait_Bound_Reached) == 8 + TPM_REQUEST_FIELD_BYTES)
 #assert(size_of(Tpm_Interface_Failed) == REQUEST_FIELD_BYTES + STEP_FIELD_BYTES)
 #assert(size_of(Passphrase_Changed) == 8 + PRINCIPAL_NAME_FIELD_BYTES + HOW_FIELD_BYTES)
 #assert(size_of(Versions_Erase_Failed) == size_of(errors.Error_Record_Fact_Fields) + OBJECT_FIELD_BYTES)
@@ -1088,10 +1087,10 @@ object_field :: proc "contextless" (object: string) -> [OBJECT_FIELD_BYTES]u8 {
 	return value_kinds.text_field(object, OBJECT_FIELD_BYTES)
 }
 
-// tpm_request_words_field gives the Text field of the words of a request to
-// the TPM service, for the reports of a long wait.
-tpm_request_words_field :: proc "contextless" (command: tpm_service.Command) -> [TPM_REQUEST_WORDS_FIELD_BYTES]u8 {
-	return value_kinds.text_field(tpm_service.command_words[command], TPM_REQUEST_WORDS_FIELD_BYTES)
+// tpm_request_field gives the Text field of the words of a request to
+// the TPM service, for the wait reports of a long wait.
+tpm_request_field :: proc "contextless" (command: tpm_service.Command) -> [TPM_REQUEST_FIELD_BYTES]u8 {
+	return value_kinds.text_field(tpm_service.command_words[command], TPM_REQUEST_FIELD_BYTES)
 }
 
 // request_field gives the Text field of the request to the TPM service.

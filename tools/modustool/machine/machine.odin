@@ -522,9 +522,7 @@ Machine :: struct {
 	host_process:   os.Process,
 	monitor:   ^os.File,
 	seen:      int, // The bytes of the log that the Wait steps used.
-	failure_scanned: int, // The bytes of the log that machine_failure_line read.
-	failure_line: string, // The line that common_failure_check found last, in the temporary allocator of its read.
-	tpm_device: bool, // The machine has a TPM: a stall of the path of a key fails every step (TPM_STALL_TEXTS).
+	failure_scanned: int, // The bytes of the log that common_failure_line read.
 	output:    string, // The file of the log of the kernel.
 	x, y:      int, // The pointer.
 	pointer_known: bool, // The tool knows where the pointer is.
@@ -1001,76 +999,15 @@ common_failure_line :: proc(log: string, from: int) -> string {
 	return ""
 }
 
-// The second progress report of a wait of the path of a key: the TPM
-// service or unlock waited 60 s (src/md/features/tpm_sealed_machine_key.md,
-// "A wait that is long"). A software TPM of the test answers in far less,
-// so on a machine with a TPM device a line that holds one of these texts
-// fails every step, and the failure quotes the line, which names the step,
-// the TPM command and the request that waited.
-TPM_STALL_TEXTS :: [?]string{"tpm: a wait passed 60 s:", "unlock: the wait for the TPM service passed 60 s:"}
-
-// tpm_stall_line gives the first whole line of log that holds a text of
-// TPM_STALL_TEXTS, or "". It reads from from, with the rule of
-// common_failure_line: a line can start up to a whole line before it.
-tpm_stall_line :: proc(log: string, from: int) -> string {
-	start := clamp(from, 0, len(log))
-	start = strings.last_index_byte(log[:start], '\n') + 1
-	rest := log[start:]
-	for len(rest) > 0 {
-		end := strings.index_byte(rest, '\n')
-		if end < 0 {
-			// A line that has not ended yet: the next read finds it whole.
-			return ""
-		}
-		line := strings.trim_right(rest[:end], "\r")
-		for text in TPM_STALL_TEXTS {
-			if strings.contains(line, text) {
-				return line
-			}
-		}
-		rest = rest[end + 1:]
-	}
-	return ""
-}
-
-// machine_failure_line gives the first line from from that fails every
-// step of the machine: a common failure of the kernel, then, on a machine
-// with a TPM device, the report of a stall of the path of a key. stall says
-// which one.
-machine_failure_line :: proc(log: string, from: int, tpm_device: bool) -> (line: string, stall: bool) {
-	if line = common_failure_line(log, from); line != "" {
-		return line, false
-	}
-	if tpm_device {
-		if line = tpm_stall_line(log, from); line != "" {
-			return line, true
-		}
-	}
-	return "", false
-}
-
-// machine_failure_print prints the failure of a line of
-// machine_failure_line.
-machine_failure_print :: proc(line: string, stall: bool) {
-	if stall {
-		fmt.eprintfln("modustool: test failed: the machine printed \"%s\": a wait of the path of a key passed 60 s, which fails every step of a machine with a TPM", line)
-	} else {
+// common_failure_check gives the line of common_failure_texts that the
+// machine printed since the last check, and prints the failure, or "".
+common_failure_check :: proc(machine: ^Machine, log: string) -> string {
+	line := common_failure_line(log, machine.failure_scanned)
+	machine.failure_scanned = len(log)
+	if line != "" {
 		fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
 	}
-}
-
-// common_failure_check says if the machine printed a line of
-// machine_failure_line since the last check, and prints the failure. The
-// line stays in failure_line for a caller that quotes it.
-common_failure_check :: proc(machine: ^Machine, log: string) -> bool {
-	line, stall := machine_failure_line(log, machine.failure_scanned, machine.tpm_device)
-	machine.failure_scanned = len(log)
-	if line == "" {
-		return false
-	}
-	machine.failure_line = line
-	machine_failure_print(line, stall)
-	return true
+	return line
 }
 
 log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := foundation.HANG_BOUND) -> bool {
@@ -1079,7 +1016,7 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := f
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
-		if common_failure_check(machine, log) {
+		if common_failure_check(machine, log) != "" {
 			return false
 		}
 		if len(log) > machine.seen {
@@ -1106,8 +1043,8 @@ log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: tim
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
-		if common_failure_check(machine, log) {
-			return machine.failure_line, false
+		if line := common_failure_check(machine, log); line != "" {
+			return line, false
 		}
 		if len(log) > machine.seen {
 			outcome, line := wait_or_failure_decide(log[machine.seen:], text, failure, true)
@@ -1474,7 +1411,6 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		memory_file = options.memory_file,
 		serial_input = &serial_input,
 		fact_outside_modules = options.fact_outside_modules,
-		tpm_device = tpm_device,
 	}
 	if range_target {
 		machine.range_places = selection.places
@@ -1539,8 +1475,8 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	// The whole log once more after the end: a line lost after the last
 	// wait, or during a step that waits for no line, fails the machine too.
 	// The flush of machine_stop writes that line before the end.
-	if line, stall := machine_failure_line(log_read(&machine), 0, machine.tpm_device); line != "" {
-		machine_failure_print(line, stall)
+	if line := common_failure_line(log_read(&machine), 0); line != "" {
+		fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
 		passed = false
 	}
 	if machine.fact_catalog != nil {

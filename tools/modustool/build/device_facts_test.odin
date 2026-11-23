@@ -1,6 +1,8 @@
 package build
 
+import "modus:contract/tpm_service"
 import "modus:contract/value_kinds"
+import "modus:sentence"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"
@@ -52,6 +54,12 @@ device_text_bytes_most :: proc() -> map[string]u32 {
 	most["protocol"] = len("TCP")
 	most["end_reason"] = len("closed by this service")
 	most["pin_refusal"] = u32(pin_refusal_words_most())
+	most["tpm_request"] = u32(tpm_request_words_most())
+	bound_most := 0
+	for bound in tpm_service.Wait_Bound {
+		bound_most = max(bound_most, len(tpm_service.wait_bound_words[bound]))
+	}
+	most["ending_bound"] = u32(bound_most)
 	return most
 }
 
@@ -315,5 +323,39 @@ the_facts_of_the_tpm_service_write_the_lines_of_before :: proc(t: ^testing.T) {
 	for count in counts {
 		facts_expect_line(t, render(t, file, "Extend_Refused_At_Limit", {{"extends", count}}), line_of_before("tpm: refused an extend of PCR 12: ", count, " extends ran in this start, the most that it takes"))
 		facts_expect_line(t, render(t, file, "Start_Policy_Measured", {{"extend", count}, {"extend_limit", u64(2)}}), line_of_before("tpm: extended PCR 12 with the digest of a start policy: extend ", count, " of ", u64(2), " in this start"))
+	}
+}
+
+// The wait report and the bound fact of a wait of the TPM service write
+// their sentence: each step of the interface, each request and each bound
+// by its words, the seconds of the first two reports, the code of a
+// command and the milliseconds at 0 and max(u64), and the locality 0 of the
+// service and max(u64).
+@(test)
+the_wait_facts_of_the_tpm_service_write_their_sentences :: proc(t: ^testing.T) {
+	file, ok := facts_file_of_folder(t, foundation.SYSTEM_MODULE_SOURCES + "tpm")
+	if !ok {
+		return
+	}
+	render :: proc(t: ^testing.T, file: []u8, type_name: string, values: []Fact_Test_Field) -> string {
+		return fact_test_render(t, file, "tpm_device_service", type_name, values)
+	}
+	edges := [2]u64{0, max(u64)}
+	passed_seconds := [2]u64{30, 60}
+	for step in tpm_service.Device_Step {
+		step_words := tpm_service.device_step_words[step]
+		for command in tpm_service.Command {
+			request_words := tpm_service.command_words[command]
+			for edge in edges {
+				other := max(u64) - edge
+				for passed in passed_seconds {
+					facts_expect_line(t, render(t, file, "Wait_Passed", {{"passed_seconds", passed}, {"command_code", edge}, {"locality", other}, {"waited_milliseconds", edge}, {"step", step_words}, {"tpm_request", request_words}}), line_of_before("tpm: a wait passed ", passed, " s: ", step_words, ", for the TPM command ", sentence.Hex(edge), " in locality ", other, ", during ", request_words, "; waited ", edge, " ms"))
+				}
+				for bound in tpm_service.Wait_Bound {
+					bound_words := tpm_service.wait_bound_words[bound]
+					facts_expect_line(t, render(t, file, "Wait_Bound_Reached", {{"command_code", other}, {"locality", edge}, {"waited_milliseconds", other}, {"step", step_words}, {"tpm_request", request_words}, {"ending_bound", bound_words}}), line_of_before("tpm: a wait reached ", bound_words, " after ", other, " ms: ", step_words, ", for the TPM command ", sentence.Hex(other), " in locality ", edge, ", during ", request_words))
+				}
+			}
+		}
 	}
 }

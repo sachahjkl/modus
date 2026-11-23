@@ -98,6 +98,16 @@ The design: `src/md/features/tpm_sealed_machine_key.md`.
 
 Do not use: TPM driver (for the program), TPM daemon, resource manager.
 
+### Wait report
+
+A wait report is the fact that the TPM service or `unlock` writes each 30 s of a long wait for the TPM, and names what the wait waits for.
+
+The bounds of the path of a key are long, so that a slow TPM that works does not fail. A wait report makes such a wait readable before its bound: the TPM service names the step of the interface, the TPM command, the locality and the request (`tpm_device_service.Wait_Passed`); `unlock` names its request (`unlock.Tpm_Wait_Passed`). A reader reads it; no test fails on it. It is not a stall (`docs/glossary/project.md`): nothing counts progress.
+
+The design: `src/md/features/tpm_sealed_machine_key.md`, "A wait that is long".
+
+Do not use: progress report, stall report, heartbeat, keepalive.
+
 ### Sealed by the TPM
 
 A secret is sealed by the TPM when the TPM holds it in a sealed object whose policy is the values of PCR 7 and PCR 11 at the seal: the TPM gives it back only to the same system, measured by the boot program, with the same state of Secure Boot.

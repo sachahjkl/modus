@@ -179,38 +179,40 @@ Shutdown_Refused :: struct {
 @(log_fact = "tpm: TPM2_Shutdown after the use of an authorization value: a stop of the machine now makes the TPM count no failure")
 Shutdown_Done :: struct {}
 
-// The bytes of the Text field of the words of a request
-// (tpm_service.command_words): the longest, "measure of a start policy",
-// has 25 bytes, and a zero byte.
-REQUEST_FIELD_BYTES :: 32
-// The bytes of the Text field of the bound that ended a wait: the longest,
-// "the deadline of the work", has 24 bytes, and a zero byte.
+// The bytes of the Text field tpm_request: the words of a request
+// (tpm_service.command_words). The field is not "request", which is the
+// name of a control request of 16 bytes in the sound service: the longest, "the work of the service
+// itself", has 30 bytes, and a zero byte.
+TPM_REQUEST_FIELD_BYTES :: 32
+// The bytes of the Text field of the bound that ended a wait
+// (tpm_service.wait_bound_words): the longest, "the deadline of the work",
+// has 24 bytes, and a zero byte.
 BOUND_FIELD_BYTES :: 32
 
-// A wait of the interface passed one more interval
+// The wait report of a wait of the interface that passed one more interval
 // (src/md/features/tpm_sealed_machine_key.md, "A wait that is long"). The
-// seconds are the count of the report times the interval, so the second
-// report reads 60 s, which the tool turns into a failure.
-@(log_fact = "tpm: a wait passed {passed_seconds} s: {step}, for the TPM command {command_code} in locality {locality}, in the {request}; waited {waited_milliseconds} ms")
+// seconds are the count of the report times the interval: a fixed number,
+// not the time of the clock at the check.
+@(log_fact = "tpm: a wait passed {passed_seconds} s: {step}, for the TPM command {command_code} in locality {locality}, during {tpm_request}; waited {waited_milliseconds} ms")
 Wait_Passed :: struct {
 	passed_seconds:      u64,
 	command_code:        value_kinds.Hexadecimal_Sixteen_Digits,
 	locality:            u64,
 	waited_milliseconds: u64,
 	step:                [32]u8,
-	request:             [32]u8,
+	tpm_request:         [32]u8,
 }
 
 // A wait of the interface reached its bound: the step and the work that
 // waited, and which bound ended it.
-@(log_fact = "tpm: a wait reached {bound} after {waited_milliseconds} ms: {step}, for the TPM command {command_code} in locality {locality}, in the {request}")
+@(log_fact = "tpm: a wait reached {ending_bound} after {waited_milliseconds} ms: {step}, for the TPM command {command_code} in locality {locality}, during {tpm_request}")
 Wait_Bound_Reached :: struct {
 	command_code:        value_kinds.Hexadecimal_Sixteen_Digits,
 	locality:            u64,
 	waited_milliseconds: u64,
 	step:                [32]u8,
-	request:             [32]u8,
-	bound:               [32]u8,
+	tpm_request:         [32]u8,
+	ending_bound:        [32]u8, // Not "bound": a field of that name is a time in milliseconds in each module.
 }
 
 // The service refused an unseal: the creation data names no PCR digest.
@@ -326,8 +328,8 @@ Completion_Lost :: struct {}
 
 #assert(size_of(Capability_Refused) == 8 + PROPERTIES_FIELD_BYTES)
 #assert(size_of(Shutdown_Interface_Failed) == STEP_FIELD_BYTES)
-#assert(size_of(Wait_Passed) == 32 + STEP_FIELD_BYTES + REQUEST_FIELD_BYTES)
-#assert(size_of(Wait_Bound_Reached) == 24 + STEP_FIELD_BYTES + REQUEST_FIELD_BYTES + BOUND_FIELD_BYTES)
+#assert(size_of(Wait_Passed) == 32 + STEP_FIELD_BYTES + TPM_REQUEST_FIELD_BYTES)
+#assert(size_of(Wait_Bound_Reached) == 24 + STEP_FIELD_BYTES + TPM_REQUEST_FIELD_BYTES + BOUND_FIELD_BYTES)
 #assert(size_of(Capability_Answer_Malformed) == PROPERTIES_FIELD_BYTES)
 
 // step_field gives the Text field of the words of a step of the
@@ -336,9 +338,15 @@ step_field :: proc "contextless" (step: tpm_service.Device_Step) -> [STEP_FIELD_
 	return value_kinds.text_field(tpm_service.device_step_words[step], STEP_FIELD_BYTES)
 }
 
-// request_field gives the Text field of the words of a request.
-request_field :: proc "contextless" (command: tpm_service.Command) -> [REQUEST_FIELD_BYTES]u8 {
-	return value_kinds.text_field(tpm_service.command_words[command], REQUEST_FIELD_BYTES)
+// tpm_request_field gives the Text field of the words of a request.
+tpm_request_field :: proc "contextless" (command: tpm_service.Command) -> [TPM_REQUEST_FIELD_BYTES]u8 {
+	return value_kinds.text_field(tpm_service.command_words[command], TPM_REQUEST_FIELD_BYTES)
+}
+
+// bound_field gives the Text field of the words of the bound that ended a
+// wait.
+bound_field :: proc "contextless" (bound: tpm_service.Wait_Bound) -> [BOUND_FIELD_BYTES]u8 {
+	return value_kinds.text_field(tpm_service.wait_bound_words[bound], BOUND_FIELD_BYTES)
 }
 
 // properties_field gives the Text field of the properties that a
