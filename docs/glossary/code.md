@@ -884,7 +884,7 @@ Do not use: source hash, directory reference.
 
 A recipe is a builder hash, a table of the names and hashes of its inputs, and a typed argument record: it names how an output is made.
 
-The recipe hash, its identity, is the BLAKE3 hash of the builder hash, the output kind, the source date, the inputs sorted by name with the kind of each, and the bytes of the argument record (`plans_recipes.recipe_hash`). `recipe(module(builder), arguments)` is a lazy value of Lex; forcing it gives its hash and builds nothing. Each field of the arguments that is a tree reference or a module file is an input, with its kind; a bare hash names no kind and is refused, in the arguments and as the builder. The evaluator and the service `recipes` read it with one conversion, so a declaration and the service give one hash. `recipes.build` realises it, from a realisation or in a sandbox. It is a record, not a script.
+Its hash is the BLAKE3 hash of the builder, the output kind, the source date, the inputs sorted by name with their kinds, and the argument bytes (`plans_recipes.recipe_hash`). `recipe(module(builder), arguments)` is a lazy value of Lex: forcing it gives its hash and builds nothing. A field that is a tree reference or a module file is an input; a bare hash names no kind and is refused. The evaluator and the service `recipes` share one conversion, so both give one hash. `recipes.build` realises it. It is a record, not a script.
 
 The design: `src/md/features/recipes.md`.
 
