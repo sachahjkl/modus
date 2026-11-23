@@ -336,14 +336,18 @@ MAX_RECIPE_OBJECT_BYTES :: len(RECIPE_OBJECT_MAGIC) + MAX_RECIPE_CANONICAL_BYTES
 // hash of an object is computed from the object alone.
 recipe_object_encode :: proc "contextless" (spec: ^Recipe_Spec, output: []u8) -> (written: int, refusal: Recipe_Refusal) {
 	magic := RECIPE_OBJECT_MAGIC
-	if len(output) < len(magic) {
-		return 0, .Buffer_Too_Small
-	}
-	canonical_written, canonical_refusal := recipe_canonical_write(spec, output[len(magic):])
+	// The canonical bytes are written apart first, so a refused call writes
+	// no byte of output.
+	canonical: [MAX_RECIPE_CANONICAL_BYTES]u8
+	canonical_written, canonical_refusal := recipe_canonical_write(spec, canonical[:])
 	if canonical_refusal != .None {
 		return 0, canonical_refusal
 	}
+	if len(output) < len(magic) + canonical_written {
+		return 0, .Buffer_Too_Small
+	}
 	copy(output[:len(magic)], magic[:])
+	copy(output[len(magic):], canonical[:canonical_written])
 	return len(magic) + canonical_written, .None
 }
 

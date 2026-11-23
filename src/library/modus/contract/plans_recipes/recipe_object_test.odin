@@ -109,9 +109,20 @@ recipe_object_gives_the_recipe_hash :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(decoded.arguments[:decoded.arguments_length]), "--release")
 	again, _ := recipe_hash(decoded)
 	testing.expect(t, again == expected)
-	// A buffer one byte too small writes nothing.
+	// A buffer one byte too small, and an empty one, write nothing.
 	small: [MAX_RECIPE_OBJECT_BYTES]u8
-	none, small_refusal := recipe_object_encode(spec, small[:written - 1])
-	testing.expect_value(t, small_refusal, Recipe_Refusal.Buffer_Too_Small)
-	testing.expect_value(t, none, 0)
+	for &value in small {
+		value = 0xAA
+	}
+	for size in ([2]int{written - 1, 0}) {
+		none, small_refusal := recipe_object_encode(spec, small[:size])
+		testing.expect_value(t, small_refusal, Recipe_Refusal.Buffer_Too_Small)
+		testing.expect_value(t, none, 0)
+		for value, index in small {
+			if value != 0xAA {
+				testing.expectf(t, false, "the byte %d of the buffer changed", index)
+				break
+			}
+		}
+	}
 }

@@ -154,10 +154,17 @@ CACHE_RELEASE_POINTER_NAME :: "release"
 CACHE_RELEASE_IMAGE_ENTRY :: "boot.image"
 CACHE_RELEASE_FILES_ENTRY :: "files"
 
+// The bits of each part of a release number in the number of its release
+// pointer: 22 for the major part, 21 for the minor and the patch parts, so
+// the three fill 64 bits and keep their order.
+RELEASE_NUMBER_MINOR_BITS :: 21
+RELEASE_NUMBER_MAJOR_BITS :: 64 - 2 * RELEASE_NUMBER_MINOR_BITS
+
 // release_number_value gives the number of a release pointer for a release
-// number a.b.c: a × 1 000 000 + b × 1 000 + c, so a later release has a
-// higher number. Each part is digits with no leading zero, and b and c are
-// below 1000.
+// number a.b.c: a shifted by 42 bits, b by 21 bits, then c, so a later
+// release has a higher number. Each part is digits with no leading zero; a
+// is below 2^22, b and c below 2^21. The number 0 is refused: the first
+// number of a pointer is 1.
 release_number_value :: proc(text: string) -> (number: u64, ok: bool) {
 	parts: [3]u64
 	part := 0
@@ -175,7 +182,8 @@ release_number_value :: proc(text: string) -> (number: u64, ok: bool) {
 			if digits == 1 && parts[part] == 0 {
 				return 0, false
 			}
-			if digits == 6 {
+			// Eight digits pass each bound, so a part never overflows.
+			if digits == 8 {
 				return 0, false
 			}
 			parts[part] = parts[part] * 10 + u64(character - '0')
@@ -184,10 +192,13 @@ release_number_value :: proc(text: string) -> (number: u64, ok: bool) {
 			return 0, false
 		}
 	}
-	if part != 2 || digits == 0 || parts[1] >= 1000 || parts[2] >= 1000 {
+	if part != 2 || digits == 0 {
 		return 0, false
 	}
-	number = parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2]
+	if parts[0] >= 1 << RELEASE_NUMBER_MAJOR_BITS || parts[1] >= 1 << RELEASE_NUMBER_MINOR_BITS || parts[2] >= 1 << RELEASE_NUMBER_MINOR_BITS {
+		return 0, false
+	}
+	number = parts[0] << (2 * RELEASE_NUMBER_MINOR_BITS) | parts[1] << RELEASE_NUMBER_MINOR_BITS | parts[2]
 	return number, number > 0
 }
 
@@ -322,16 +333,39 @@ cache_publish_release :: proc(client: ^Cache_Client, signer: ^ed25519.Private_Ke
 	if !number_ok {
 		return report, fmt.tprintf("the release number %s gives no number of a release pointer", release.RELEASE_NUMBER)
 	}
-	pointer, signed_pointer := cache_client_release_pointer_sign(signer, CACHE_RELEASE_POINTER_NAME, number, trees.release_hash)
-	if !signed_pointer {
-		return report, "the release pointer was not signed"
-	}
-	if outcome := cache_client_put_release_pointer(client, pointer); outcome != .Done {
-		return report, fmt.tprintf("the release pointer %d was not put: %s", number, cache_client_outcome_text(outcome, client.server_status))
+	if pointer_problem := cache_publish_release_pointer(client, signer, number, trees.release_hash); pointer_problem != "" {
+		return report, pointer_problem
 	}
 	report.release_tree = trees.release_hash
 	report.release_number = number
 	return report, ""
+}
+
+// cache_publish_release_pointer puts the release pointer of a release. A
+// pointer of the same signer with a higher number on the cache means that a
+// later release is published: a run of the job of an older release is then
+// done, as cache_verify_release_pointer accepts it, and puts nothing.
+cache_publish_release_pointer :: proc(client: ^Cache_Client, signer: ^ed25519.Private_Key, number: u64, release_tree: blake3.Hash) -> (problem: string) {
+	public_key: [object_cache.PUBLIC_KEY_SIZE]u8
+	ed25519.private_key_public_bytes(signer, public_key[:])
+	held, held_outcome := cache_client_get_release_pointer(client, public_key, CACHE_RELEASE_POINTER_NAME)
+	switch held_outcome {
+	case .Done:
+		if held.number > number {
+			return ""
+		}
+	case .Not_Found:
+	case .Bad_Request, .Unreachable, .Damaged_Answer, .Server_Refused, .Hash_Mismatch, .Untrusted_Signer, .Bad_Signature, .Too_Large, .Deadline_Passed:
+		return fmt.tprintf("the release pointer on the cache was not read: %s", cache_client_outcome_text(held_outcome, client.server_status))
+	}
+	pointer, signed_pointer := cache_client_release_pointer_sign(signer, CACHE_RELEASE_POINTER_NAME, number, release_tree)
+	if !signed_pointer {
+		return "the release pointer was not signed"
+	}
+	if outcome := cache_client_put_release_pointer(client, pointer); outcome != .Done {
+		return fmt.tprintf("the release pointer %d was not put: %s", number, cache_client_outcome_text(outcome, client.server_status))
+	}
+	return ""
 }
 
 // cache_verify_test_recipe gets the realisation of the cache test recipe,

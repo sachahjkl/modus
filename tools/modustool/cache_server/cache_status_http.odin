@@ -2,7 +2,8 @@
 // (src/md/infrastructure/public_object_cache.md, "The reader of a
 // request"). The page is a public address behind a proxy, so each byte of a
 // request is a hostile input: one request on one connection, a head of a
-// bound size within a deadline, one method and three whole paths.
+// bound size within a deadline, one method, and a closed set of path forms
+// parsed at one border (src/md/infrastructure/cache_browser.md, "The paths").
 package cache_server
 
 import "core:fmt"
@@ -698,9 +699,11 @@ status_answer_write :: proc(socket: net.TCP_Socket, deadline: Status_Deadline, a
 		fmt.sbprintf(&b, "Content-Disposition: %s\r\n", content_disposition)
 	}
 	strings.write_string(&b, "\r\n")
-	// An answer with no body is a head of less than 200 bytes, which the
-	// empty send buffer of a new connection holds whole: one send of at most
-	// a millisecond, also after the deadline, so a 408 reaches the client.
+	// An answer with no body is an answer that the reader refused, or a raw
+	// path that finds no blob: it has no type, no policy and no disposition,
+	// so its head is less than 200 bytes, which the empty send buffer of a
+	// new connection holds whole: one send of at most a millisecond, also
+	// after the deadline, so a 408 reaches the client.
 	if len(body) == 0 {
 		_ = net.set_option(socket, .Send_Timeout, time.Millisecond)
 		count, failed := status_send_once(socket, b.buf[:])

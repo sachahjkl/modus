@@ -37,6 +37,24 @@ BROWSE_HEX_PREVIEW_BYTES :: 256
 // Maximum exports listed on a modus module blob page.
 BROWSE_MODULE_EXPORTS_MAX :: 200
 
+// The bytes of one name that a module file states (an export, a parameter,
+// a record, an enum), and of one line of summary. A string of a module is a
+// count into its string table that the module chooses, so each one is cut
+// before it reaches a page.
+BROWSE_MODULE_NAME_BYTES :: 128
+BROWSE_MODULE_SUMMARY_BYTES :: 512
+
+// The largest page of the browser. A page that would pass it is replaced by
+// a page that says so.
+BROWSE_PAGE_BYTES_MOST :: 1 << 20
+
+// The most records of a table of a module that the page validates: the
+// check of a module costs work in proportion to its tables, and the page
+// runs within the deadline of one connection.
+BROWSE_MODULE_SEGMENTS_MOST :: 256
+BROWSE_MODULE_TABLE_RECORDS_MOST :: 1 << 16
+BROWSE_MODULE_REBASE_WORDS_MOST :: 1 << 20
+
 // One HTTP answer produced by a browse handler.
 Browse_Answer :: struct {
 	status:              Status_Answer,
@@ -59,6 +77,7 @@ Browse_Object_State :: enum u8 {
 Browse_Blob_Kind :: enum u8 {
 	Module,
 	Damaged_Module,
+	Module_Past_Bounds, // A module whose tables pass the bounds of this page: not validated.
 	Image_Png,
 	Text,
 	Other,
@@ -99,7 +118,6 @@ browse_not_found_page :: proc(page: Cache_Page_Settings, heading: string, senten
 // hash check and showing none of its bytes.
 @(private = "file")
 browse_damaged_page :: proc(page: Cache_Page_Settings, title: string, digest: blake3.Hash, sentence: string) -> Browse_Answer {
-	hex := hash_to_hex(digest)
 	b := strings.builder_make(context.temp_allocator)
 	cache_page_start(&b, page, title, sentence, .None)
 	strings.write_string(&b, "<h1>")
@@ -109,7 +127,6 @@ browse_damaged_page :: proc(page: Cache_Page_Settings, title: string, digest: bl
 	strings.write_string(&b, "</dd>\n</dl>\n<p>")
 	foundation.html_escape(&b, sentence)
 	strings.write_string(&b, "</p>\n<p>None of its bytes are shown.</p>\n</section>\n")
-	_ = hex
 	cache_page_end(&b)
 	return browse_html_answer(page, .Ok, "no-store", strings.to_string(b))
 }
@@ -218,10 +235,74 @@ browse_blob_is_text :: proc(data: []u8) -> bool {
 	return true
 }
 
+// browse_module_tables_within_bounds reads the counts of the table
+// directory, before any check of a module: a count past its bound refuses
+// the module for this page. The string table counts bytes, which the bound
+// of an object already bounds.
+browse_module_tables_within_bounds :: proc(file: []u8) -> bool {
+	for kind in module.Table_Kind {
+		count := module.count(file, kind)
+		#partial switch kind {
+		case .Strings:
+			continue
+		case .Segments:
+			if count > BROWSE_MODULE_SEGMENTS_MOST {
+				return false
+			}
+		case .Rebases:
+			if count > BROWSE_MODULE_REBASE_WORDS_MOST {
+				return false
+			}
+		case:
+			if count > BROWSE_MODULE_TABLE_RECORDS_MOST {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// browse_module_text gives a text of a module file as a page shows it: cut
+// to bound bytes on a whole character, with a mark when it was cut, each
+// byte that is not UTF-8 and each control character (a tab and an end of
+// line kept when lines is true) replaced by U+FFFD.
+browse_module_text :: proc(text: string, bound: int, lines := false) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	index := 0
+	for index < len(text) {
+		r, width := utf8.decode_rune_in_string(text[index:])
+		replaced := r == utf8.RUNE_ERROR && width <= 1
+		if !replaced && (r < 0x20 || (r >= 0x7F && r <= 0x9F)) {
+			replaced = !(lines && (r == '\t' || r == '\n'))
+		}
+		piece_width := replaced ? 3 : width
+		if strings.builder_len(b) + piece_width > bound {
+			strings.write_string(&b, "…")
+			break
+		}
+		if replaced {
+			strings.write_rune(&b, utf8.RUNE_ERROR)
+		} else {
+			strings.write_string(&b, text[index:index + width])
+		}
+		index += max(width, 1)
+	}
+	return strings.to_string(b)
+}
+
+// browse_module_name gives a name of the string table, cut and cleaned.
+@(private = "file")
+browse_module_name :: proc(file: []u8, offset, count: u32, bound := BROWSE_MODULE_NAME_BYTES) -> string {
+	return browse_module_text(module.string_at(file, offset, count), bound)
+}
+
 // browse_classify_blob detects the kind of a verified blob in fixed order:
 // modus module (validated or damaged), PNG image, UTF-8 text, or other bytes.
 browse_classify_blob :: proc(data: []u8) -> (kind: Browse_Blob_Kind, module_error: module.Error) {
 	if len(data) >= 8 && byte_order.read_u64_little_endian(data, 0) == module.MAGIC {
+		if !browse_module_tables_within_bounds(data) {
+			return .Module_Past_Bounds, .None
+		}
 		err := module.validate(data)
 		if err == .None {
 			return .Module, .None
@@ -393,7 +474,7 @@ module_type_text :: proc(file: []u8, type: module.Type, detail: u32, direction: 
 		return strings.concatenate({prefix, "Bytes"}, context.temp_allocator)
 	case .Record:
 		if rec, ok := module.record(file, .Records, detail, module.Record); ok {
-			name := module.string_at(file, rec.name_offset, rec.name_count)
+			name := browse_module_name(file, rec.name_offset, rec.name_count)
 			if name != "" {
 				return name
 			}
@@ -401,7 +482,7 @@ module_type_text :: proc(file: []u8, type: module.Type, detail: u32, direction: 
 		return "Record"
 	case .Table:
 		if rec, ok := module.record(file, .Records, detail, module.Record); ok {
-			name := module.string_at(file, rec.name_offset, rec.name_count)
+			name := browse_module_name(file, rec.name_offset, rec.name_count)
 			if name != "" {
 				return strings.concatenate({prefix, "Table of ", name}, context.temp_allocator)
 			}
@@ -410,7 +491,7 @@ module_type_text :: proc(file: []u8, type: module.Type, detail: u32, direction: 
 	case .Enum:
 		enum_index, _ := module.enum_detail_of(detail)
 		if described, prob := module.enum_type(file, enum_index); prob == .None {
-			name := module.enum_name(file, described)
+			name := browse_module_text(module.enum_name(file, described), BROWSE_MODULE_NAME_BYTES)
 			if name != "" {
 				return name
 			}
@@ -425,7 +506,7 @@ module_type_text :: proc(file: []u8, type: module.Type, detail: u32, direction: 
 @(private = "file")
 browse_module_export_signature :: proc(file: []u8, function: module.Function) -> string {
 	b := strings.builder_make(context.temp_allocator)
-	name := module.string_at(file, function.name_offset, function.name_count)
+	name := browse_module_name(file, function.name_offset, function.name_count)
 	strings.write_string(&b, name)
 	strings.write_byte(&b, '(')
 	count := min(int(function.parameter_count), module.PARAMETER_CAPACITY)
@@ -433,7 +514,7 @@ browse_module_export_signature :: proc(file: []u8, function: module.Function) ->
 		if index > 0 {
 			strings.write_string(&b, ", ")
 		}
-		param_name := module.string_at(file, function.parameter_names[index], u32(function.parameter_name_counts[index]))
+		param_name := browse_module_name(file, function.parameter_names[index], u32(function.parameter_name_counts[index]))
 		if param_name != "" {
 			strings.write_string(&b, param_name)
 			strings.write_string(&b, ": ")
@@ -590,6 +671,8 @@ cache_browse_blob :: proc(server: ^Cache_Server, page_settings: Cache_Page_Setti
 		kind_text = "modus module"
 	case .Damaged_Module:
 		kind_text = "modus module (did not parse)"
+	case .Module_Past_Bounds:
+		kind_text = "modus module past the bounds of this page"
 	case .Image_Png:
 		kind_text = "PNG image"
 	case .Text:
@@ -625,6 +708,11 @@ cache_browse_blob :: proc(server: ^Cache_Server, page_settings: Cache_Page_Setti
 		strings.write_string(&b, "<section class=\"card accent-kernel\" aria-labelledby=\"blob-head\">\n<h2 id=\"blob-head\">Head bytes</h2>\n")
 		browse_write_hex_preview(&b, data)
 		strings.write_string(&b, "</section>\n")
+	case .Module_Past_Bounds:
+		strings.write_string(&b, "<section class=\"card accent-process\" aria-labelledby=\"module-refusal\">\n<h2 id=\"module-refusal\">Module check</h2>\n<p>This blob starts with the header of a modus module, and its tables hold more records than this page checks. It is not validated, and no module metadata is shown.</p>\n</section>\n")
+		strings.write_string(&b, "<section class=\"card accent-kernel\" aria-labelledby=\"blob-head\">\n<h2 id=\"blob-head\">Head bytes</h2>\n")
+		browse_write_hex_preview(&b, data)
+		strings.write_string(&b, "</section>\n")
 	case .Image_Png:
 		strings.write_string(&b, "<section class=\"card accent-boot\" aria-labelledby=\"blob-image\">\n<h2 id=\"blob-image\">Preview</h2>\n")
 		fmt.sbprintf(&b, "<img class=\"blob-image\" src=\"/blob/%s/raw\" alt=\"PNG image %s\">\n</section>\n", hex_str, hex_str)
@@ -649,7 +737,24 @@ cache_browse_blob :: proc(server: ^Cache_Server, page_settings: Cache_Page_Setti
 	}
 
 	cache_page_end(&b)
+	if strings.builder_len(b) > BROWSE_PAGE_BYTES_MOST {
+		return browse_too_large_page(page_settings, digest)
+	}
 	return browse_html_answer(page_settings, .Ok, "no-store", strings.to_string(b))
+}
+
+// browse_too_large_page replaces a page past BROWSE_PAGE_BYTES_MOST: the
+// blob stays whole at its raw path.
+@(private = "file")
+browse_too_large_page :: proc(page: Cache_Page_Settings, digest: blake3.Hash) -> Browse_Answer {
+	hex := hash_to_hex(digest)
+	b := strings.builder_make(context.temp_allocator)
+	cache_page_start(&b, page, "Blob page too large", "The page of this blob passes the bound of a page.", .None)
+	strings.write_string(&b, "<h1>Blob page too large</h1>\n<section class=\"card accent-process\">\n<dl class=\"symbol-facts\">\n<dt>Hash</dt><dd>")
+	hash_write(&b, digest)
+	fmt.sbprintf(&b, "</dd>\n</dl>\n<p>The page of this blob passes %d bytes, the bound of a page of this host, so this host does not show it. <a href=\"/blob/%s/raw\">Download the raw bytes</a>.</p>\n</section>\n", BROWSE_PAGE_BYTES_MOST, string(hex[:]))
+	cache_page_end(&b)
+	return browse_html_answer(page, .Ok, "no-store", strings.to_string(b))
 }
 
 // browse_write_module_sections renders the metadata of a validated modus module.
@@ -659,7 +764,9 @@ browse_write_module_sections :: proc(b: ^strings.Builder, file: []u8) {
 	if hdr_err != .None {
 		return
 	}
-	about, doc_text := module.documentation(file)
+	about_raw, doc_text_raw := module.documentation(file)
+	about := browse_module_text(about_raw, BROWSE_MODULE_SUMMARY_BYTES)
+	doc_text := browse_module_text(doc_text_raw, BROWSE_TEXT_PREVIEW_BYTES, true)
 	export_total := int(module.count(file, .Exports))
 	export_count := max(0, export_total - 1)
 	budget, budget_stated := module.budget_request(file)
@@ -671,7 +778,7 @@ browse_write_module_sections :: proc(b: ^strings.Builder, file: []u8) {
 	strings.write_string(b, "</dd>\n<dt>Entry export</dt><dd>")
 	if hdr.entry_export > 0 {
 		if entry_fn, ok := module.function(file, hdr.entry_export); ok {
-			entry_name := module.string_at(file, entry_fn.name_offset, entry_fn.name_count)
+			entry_name := browse_module_name(file, entry_fn.name_offset, entry_fn.name_count)
 			if entry_name != "" {
 				strings.write_string(b, "<code>")
 				foundation.html_escape(b, entry_name)
@@ -690,7 +797,7 @@ browse_write_module_sections :: proc(b: ^strings.Builder, file: []u8) {
 	strings.write_string(b, "</dd>\n")
 	if budget_stated {
 		strings.write_string(b, "<dt>Requested budget</dt><dd>")
-		fmt.sbprintf(b, "%d pages (%s), %d processes, %d threads", budget.pages, cache_page_bytes_text(budget.pages * module.PAGE_SIZE), budget.processes, budget.threads)
+		fmt.sbprintf(b, "%d pages (%s), %d processes, %d threads", budget.pages, cache_page_bytes_text(budget.pages > max(u64) / module.PAGE_SIZE ? max(u64) : budget.pages * module.PAGE_SIZE), budget.processes, budget.threads)
 		strings.write_string(b, "</dd>\n")
 	} else {
 		strings.write_string(b, "<dt>Requested budget</dt><dd>none stated</dd>\n")
@@ -703,7 +810,7 @@ browse_write_module_sections :: proc(b: ^strings.Builder, file: []u8) {
 	strings.write_string(b, "</dl>\n")
 	if doc_text != "" && doc_text != about {
 		strings.write_string(b, "<p>")
-		foundation.html_escape(b, browse_utf8_prefix_cut(doc_text, BROWSE_TEXT_PREVIEW_BYTES))
+		foundation.html_escape(b, doc_text)
 		strings.write_string(b, "</p>\n")
 	}
 	strings.write_string(b, "<p>A module file holds no file name of its own; the tree that references it names it.</p>\n</section>\n")
@@ -714,12 +821,15 @@ browse_write_module_sections :: proc(b: ^strings.Builder, file: []u8) {
 		columns := [?]site.Site_Column{{"Signature", .Line}, {"Summary", .Prose}}
 		table := site.site_table_start(b, "Module exports", columns[:])
 		for index in u32(1) ..= u32(shown) {
+			if strings.builder_len(b^) > BROWSE_PAGE_BYTES_MOST {
+				break
+			}
 			fn, ok := module.function(file, index)
 			if !ok {
 				continue
 			}
 			sig := browse_module_export_signature(file, fn)
-			fn_about := module.string_at(file, fn.about_offset, fn.about_count)
+			fn_about := browse_module_name(file, fn.about_offset, fn.about_count, BROWSE_MODULE_SUMMARY_BYTES)
 			strings.write_string(b, "<tr><td><code>")
 			foundation.html_escape(b, sig)
 			strings.write_string(b, "</code></td><td>")
@@ -749,7 +859,7 @@ cache_browse_blob_raw :: proc(server: ^Cache_Server, digest: blake3.Hash) -> Bro
 	case .Module:
 		content_type = "application/octet-stream"
 		extension = ".module"
-	case .Damaged_Module, .Other:
+	case .Damaged_Module, .Module_Past_Bounds, .Other:
 		content_type = "application/octet-stream"
 		extension = ".bin"
 	case .Image_Png:
@@ -778,12 +888,22 @@ cache_browse_realisation :: proc(server: ^Cache_Server, page_settings: Cache_Pag
 	}
 	hex := hash_to_hex(recipe_digest)
 	hex_str := string(hex[:])
-	data, found, read_ok := store_read_by_hex(server, .Realisations, hex_str, context.temp_allocator)
-	if !read_ok {
-		return browse_damaged_page(page_settings, "Damaged realisation", recipe_digest, "This host did not read the realisation file.")
-	}
-	if !found {
+	// The size of the file first: a record has one size, and no file past
+	// it is read.
+	realisation_path, realisation_path_ok := store_path_for_hex(server.root_directory, .Realisations, hex_str, context.temp_allocator)
+	if !realisation_path_ok {
 		return browse_not_found_page(page_settings, "Realisation not found", "No realisation for this recipe is in this object cache.")
+	}
+	realisation_stat, realisation_stat_error := os.stat(realisation_path, context.temp_allocator)
+	if realisation_stat_error != nil {
+		return browse_not_found_page(page_settings, "Realisation not found", "No realisation for this recipe is in this object cache.")
+	}
+	if realisation_stat.type != .Regular || realisation_stat.size != object_cache.REALISATION_WIRE_SIZE {
+		return browse_damaged_page(page_settings, "Damaged realisation", recipe_digest, "This realisation file does not have the size of a realisation record.")
+	}
+	data, found, read_ok := store_read_by_hex(server, .Realisations, hex_str, context.temp_allocator)
+	if !read_ok || !found {
+		return browse_damaged_page(page_settings, "Damaged realisation", recipe_digest, "This host did not read the realisation file.")
 	}
 	record, decode_refusal := object_cache.decode_realisation_record(data)
 	if decode_refusal != .None || !object_cache.hashes_equal_constant_time(record.recipe_hash, recipe_digest) {
@@ -792,6 +912,11 @@ cache_browse_realisation :: proc(server: ^Cache_Server, page_settings: Cache_Pag
 
 	signing_bytes, sign_bytes_ok := object_cache.realisation_signing_bytes(&record)
 	sig_valid := sign_bytes_ok && cache_server_verify_ed25519(record.signer_public_key, signing_bytes[:], record.signature)
+	// A record whose signature does not verify is damaged: none of its
+	// fields is a fact that this host checked.
+	if !sig_valid {
+		return browse_damaged_page(page_settings, "Damaged realisation", recipe_digest, "The signature of this realisation does not verify against the key that it names.")
+	}
 	signer_authorised := object_cache.signer_is_trusted(server.authorized_signers[:], record.signer_public_key)
 	_, output_held := browse_object_stat(server, record.output_hash)
 
@@ -813,14 +938,10 @@ cache_browse_realisation :: proc(server: ^Cache_Server, page_settings: Cache_Pag
 	strings.write_string(&b, "</dd>\n<dt>Signer</dt><dd>")
 	hash_write(&b, record.signer_public_key)
 	strings.write_string(&b, "</dd>\n<dt>Signature check</dt><dd>")
-	if sig_valid {
-		if signer_authorised {
-			strings.write_string(&b, "Verified by this host against the signer key above, which is an authorised upload key of this host.")
-		} else {
-			strings.write_string(&b, "Verified by this host against the signer key above. This key is not in the authorised upload keys of this host.")
-		}
+	if signer_authorised {
+		strings.write_string(&b, "Verified by this host against the signer key above, which is an authorised upload key of this host.")
 	} else {
-		strings.write_string(&b, "Signature check did not pass against the signer key above.")
+		strings.write_string(&b, "Verified by this host against the signer key above. This key is not in the authorised upload keys of this host.")
 	}
 	strings.write_string(&b, "</dd>\n</dl>\n")
 	strings.write_string(&b, "<p>This check ran on this host. A client must still trust a publisher key from the publisher and verify the signature itself, never this host.</p>\n</section>\n")
@@ -893,12 +1014,12 @@ cache_browse_releases :: proc(server: ^Cache_Server, page_settings: Cache_Page_S
 	b := strings.builder_make(context.temp_allocator)
 	cache_page_start(&b, page_settings, "releases", "Signed release pointers stored on this object cache.", .Releases)
 	strings.write_string(&b, "<h1>Releases</h1>\n<section class=\"card accent-boot\" aria-labelledby=\"releases-heading\">\n<h2 id=\"releases-heading\">Release pointers</h2>\n")
-	strings.write_string(&b, "<p>Each row is a signed release pointer stored on this host. A client trusts the publisher key from the publisher, never this list.</p>\n")
+	strings.write_string(&b, "<p>Each row is a release pointer whose signature this host checked against its publisher key when it kept it. A client trusts the publisher key from the publisher, never this list.</p>\n")
 	if rows.shown == 0 {
 		strings.write_string(&b, "<p>No release pointer yet.</p>\n")
 	} else {
-		columns := [?]site.Site_Column{{"Name", .Short}, {"Number", .Number}, {"Tree", .Hash}, {"Publisher", .Hash}, {"Written", .Date}}
-		kinds := [?]value_kinds.Value_Kind{.None, .Number, .Version, .Version, .None}
+		columns := [?]site.Site_Column{{"Name", .Short}, {"Number", .Number}, {"Tree", .Hash}, {"Publisher", .Hash}, {"Key of this host", .Short}, {"Written", .Date}}
+		kinds := [?]value_kinds.Value_Kind{.None, .Number, .Version, .Version, .None, .None}
 		table := site.site_table_start(&b, "Release pointers", columns[:], kinds[:])
 		for index in 0 ..< rows.shown {
 			kept := rows.rows[index]
@@ -914,7 +1035,10 @@ cache_browse_releases :: proc(server: ^Cache_Server, page_settings: Cache_Page_S
 			}
 			strings.write_string(&b, "</td><td>")
 			hash_write(&b, kept.pointer.publisher_public_key)
-			strings.write_string(&b, "</td><td>")
+			// The host checked the signature when it kept the pointer; whether
+			// it authorises the key is a fact of now.
+			authorised := object_cache.signer_is_trusted(server.authorized_signers[:], kept.pointer.publisher_public_key)
+			fmt.sbprintf(&b, "</td><td>%s</td><td>", authorised ? "authorised" : "not authorised now")
 			time_write(&b, kept.written)
 			strings.write_string(&b, "</td></tr>\n")
 		}

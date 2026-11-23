@@ -20,7 +20,7 @@ import "modus:cryptography/ed25519"
 // make_minimal_valid_module constructs a valid modus module file with one
 // export, documentation, and a requested budget for blob inspection tests.
 @(private = "file")
-make_minimal_valid_module :: proc(allocator := context.temp_allocator) -> []u8 {
+make_minimal_valid_module :: proc(allocator := context.temp_allocator, function_name := "hello", export_count := 1, filler := 0, names_whole_table := false) -> []u8 {
 	str_buf := strings.builder_make(context.temp_allocator)
 	strings.write_byte(&str_buf, 0) // offset 0 unused
 	add_str :: proc(b: ^strings.Builder, s: string) -> (offset: u32, count: u32) {
@@ -28,7 +28,12 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator) -> []u8 {
 		strings.write_string(b, s)
 		return offset, u32(len(s))
 	}
-	fn_name_off, fn_name_len := add_str(&str_buf, "hello")
+	// Filler bytes in the string table, with control bytes and bytes that
+	// are not UTF-8, for the exports that name the whole table.
+	for index in 0 ..< filler {
+		strings.write_byte(&str_buf, index % 97 == 0 ? 0xFF : (index % 89 == 0 ? 0x01 : 'x'))
+	}
+	fn_name_off, fn_name_len := add_str(&str_buf, function_name)
 	param_name_off, param_name_len := add_str(&str_buf, "count")
 	fn_about_off, fn_about_len := add_str(&str_buf, "Returns a greeting for <reader>.")
 	doc_about_off, doc_about_len := add_str(&str_buf, "Sample library module.")
@@ -39,9 +44,9 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator) -> []u8 {
 	header_size := size_of(module.Header)
 	dir_size := int(table_count) * size_of(module.Table_Entry)
 	exports_off := header_size + dir_size
-	exports_size := 2 * size_of(module.Export)
+	exports_size := (export_count + 1) * size_of(module.Export)
 	funcs_off := exports_off + exports_size
-	funcs_size := 2 * size_of(module.Function)
+	funcs_size := (export_count + 1) * size_of(module.Function)
 	strings_off := funcs_off + funcs_size
 	strings_size := len(str_bytes)
 	docs_off := strings_off + strings_size
@@ -65,14 +70,16 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator) -> []u8 {
 	mem.copy(raw_data(out), &hdr, size_of(hdr))
 
 	dir := ([^]module.Table_Entry)(raw_data(out[header_size:]))
-	dir[module.Table_Kind.Exports] = {offset = u64(exports_off), count = 2, record_size = size_of(module.Export)}
-	dir[module.Table_Kind.Functions] = {offset = u64(funcs_off), count = 2, record_size = size_of(module.Function)}
+	dir[module.Table_Kind.Exports] = {offset = u64(exports_off), count = u32(export_count + 1), record_size = size_of(module.Export)}
+	dir[module.Table_Kind.Functions] = {offset = u64(funcs_off), count = u32(export_count + 1), record_size = size_of(module.Function)}
 	dir[module.Table_Kind.Strings] = {offset = u64(strings_off), count = u32(strings_size), record_size = 1}
 	dir[module.Table_Kind.Documentation] = {offset = u64(docs_off), count = 2, record_size = size_of(module.Documentation)}
 	dir[module.Table_Kind.Budget] = {offset = u64(budget_off), count = 2, record_size = size_of(module.Budget_Request)}
 
 	exports := ([^]module.Export)(raw_data(out[exports_off:]))
-	exports[1] = {code_offset = 0, function = 1}
+	for index in 1 ..= export_count {
+		exports[index] = {code_offset = 0, function = u32(index)}
+	}
 
 	funcs := ([^]module.Function)(raw_data(out[funcs_off:]))
 	fn := module.Function {
@@ -86,7 +93,15 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator) -> []u8 {
 	fn.parameters[0] = u8(module.Type.Integer)
 	fn.parameter_names[0] = param_name_off
 	fn.parameter_name_counts[0] = u8(param_name_len)
-	funcs[1] = fn
+	if names_whole_table {
+		fn.name_offset = 0
+		fn.name_count = u32(strings_size)
+		fn.about_offset = 0
+		fn.about_count = u32(strings_size)
+	}
+	for index in 1 ..= export_count {
+		funcs[index] = fn
+	}
 
 	copy(out[strings_off:], str_bytes)
 
@@ -254,7 +269,7 @@ browse_tree_pages_escaping_damage_and_wrong_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, put_frame(t, &server, &put_held), object_cache.Cache_Response_Status.Ok)
 
 	unheld_hash := blake3.hash(transmute([]u8)string("not uploaded"))
-	e1, _ := tree_hash.tree_entry_make(.Object, "<script>alert(1)</script>", held_hash)
+	e1, _ := tree_hash.tree_entry_make(.Object, "<img src=x onerror=alert(1)>&\"", held_hash)
 	e2, _ := tree_hash.tree_entry_make(.Object, "absent_file", unheld_hash)
 	entries2 := [2]tree_hash.Tree_Entry{e1, e2}
 	tree2_buf := make([]u8, tree_hash.tree_encoded_size(2), context.temp_allocator)
@@ -267,8 +282,8 @@ browse_tree_pages_escaping_damage_and_wrong_kind :: proc(t: ^testing.T) {
 	tree2_ans := cache_browse_tree(&server, settings, tree2_hash, 1)
 	testing.expect_value(t, tree2_ans.status, Status_Answer.Ok)
 	tree2_html := string(tree2_ans.body)
-	testing.expect(t, !strings.contains(tree2_html, "<script>"))
-	testing.expect(t, strings.contains(tree2_html, "&lt;script&gt;alert(1)&lt;/script&gt;"))
+	testing.expect(t, !strings.contains(tree2_html, "<img src=x"))
+	testing.expect(t, strings.contains(tree2_html, "&lt;img src=x onerror=alert(1)&gt;&amp;"))
 	held_hex := hash_to_hex(held_hash)
 	unheld_hex := hash_to_hex(unheld_hash)
 	testing.expect(t, strings.contains(tree2_html, strings.concatenate({"/blob/", string(held_hex[:])}, context.temp_allocator)))
@@ -539,12 +554,21 @@ browse_realisation_with_and_without_recipe_and_signature_states :: proc(t: ^test
 	r2_wire[object_cache.REALISATION_WIRE_SIZE - 1] ~= 0x01
 	testing.expect_value(t, os.write_entire_file(r2_path, r2_wire[:]), nil)
 	bad_sig_page := cache_browse_realisation(&server, settings, r2_hash)
-	testing.expect(t, strings.contains(string(bad_sig_page.body), "Signature check did not pass"))
+	testing.expect(t, strings.contains(string(bad_sig_page.body), "Damaged realisation"))
+	testing.expect(t, strings.contains(string(bad_sig_page.body), "does not verify"))
+	testing.expect(t, !strings.contains(string(bad_sig_page.body), strings.concatenate({"/blob/", string(out_hex[:])}, context.temp_allocator)))
+	testing.expect(t, !strings.contains(string(bad_sig_page.body), "Output kind"))
 
 	// Truncate the realisation file on disk -> damaged realisation page.
 	testing.expect_value(t, os.write_entire_file(r2_path, r2_wire[:20]), nil)
 	dmg_real_page := cache_browse_realisation(&server, settings, r2_hash)
 	testing.expect(t, strings.contains(string(dmg_real_page.body), "Damaged realisation"))
+	testing.expect(t, strings.contains(string(dmg_real_page.body), "size of a realisation record"))
+	// One byte more than a record: refused by its size, not read.
+	long_record: [object_cache.REALISATION_WIRE_SIZE + 1]u8
+	testing.expect_value(t, os.write_entire_file(r2_path, long_record[:]), nil)
+	long_real_page := cache_browse_realisation(&server, settings, r2_hash)
+	testing.expect(t, strings.contains(string(long_real_page.body), "size of a realisation record"))
 }
 
 // Release pointers (protocol, monotonicity, restart rescan, /releases page) and
@@ -607,6 +631,7 @@ browse_releases_protocol_search_and_http :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(rel_body, strings.concatenate({"/tree/", string(t_hex[:])}, context.temp_allocator)))
 	testing.expect(t, strings.contains(rel_body, ">11<"))
 	testing.expect(t, strings.contains(rel_body, ">10<"))
+	testing.expect(t, strings.contains(rel_body, ">authorised<"))
 
 	// HTTP /search with matching prefix finds the tree with a /tree/ link.
 	search_req := fmt.tprintf("GET /search?h=%s HTTP/1.1\r\n\r\n", string(t_hex[:8]))
@@ -642,13 +667,26 @@ browse_releases_protocol_search_and_http :: proc(t: ^testing.T) {
 	testing.expect_value(t, bounded.objects_shown, BROWSE_SEARCH_ROWS)
 
 	// Release number parsing edges.
-	num_ok_val, num_ok := release_number_value("0.97.0")
-	testing.expect(t, num_ok)
-	testing.expect_value(t, num_ok_val, u64(97_000))
-	for bad_ver in ([?]string{"", "0.0.0", "0.1000.0", "0.0.1000", "01.0.0", "1.2", "1.2.3.4", "a.b.c"}) {
+	for bad_ver in ([?]string{"", "0.0.0", "0.2097152.0", "0.0.2097152", "4194304.0.0", "123456789.0.0", "01.0.0", "0.01.0", "1.2", "1.2.3.4", "1..2", ".1.2", "1.2.", "a.b.c", "1.2.-3"}) {
 		_, ok_v := release_number_value(bad_ver)
 		testing.expectf(t, !ok_v, "release number %q must be refused", bad_ver)
 	}
+	num_ok_val, num_ok := release_number_value("0.97.0")
+	testing.expect(t, num_ok)
+	testing.expect_value(t, num_ok_val, u64(97) << 21)
+	// A minor or a patch part of 1000 and more, and the largest of each part.
+	small, _ := release_number_value("0.999.999")
+	large, large_ok := release_number_value("0.1000.0")
+	testing.expect(t, large_ok)
+	testing.expect(t, large > small)
+	patch_large, patch_ok := release_number_value("0.0.1000")
+	testing.expect(t, patch_ok)
+	testing.expect(t, patch_large < small)
+	largest, largest_ok := release_number_value("4194303.2097151.2097151")
+	testing.expect(t, largest_ok)
+	testing.expect_value(t, largest, max(u64))
+	first, _ := release_number_value("0.0.1")
+	testing.expect_value(t, first, u64(1))
 
 	// Reopening the store rescans release_pointers/ and ignores a damaged file.
 	dmg_ptr_path, _ := store_path_for_hex(test.directory, .Release_Pointers, "0000000000000000000000000000000000000000000000000000000000000001")
@@ -659,3 +697,74 @@ browse_releases_protocol_search_and_http :: proc(t: ^testing.T) {
 	reopen_rows := cache_status_release_rows(&reopened.status)
 	testing.expect_value(t, reopen_rows.total, 2)
 }
+
+// The strings of a module are counts into its string table that the module
+// chooses: a name past the bound is cut, a byte that is not UTF-8 or a
+// control byte is replaced, and a module whose exports each name the whole
+// table gives a page within its bound.
+@(test)
+browse_module_strings_are_bounded_and_cleaned :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		_ = os.remove_all(dir)
+		delete(dir)
+	}
+	private_key, public_key, _ := make_test_keypair(0x57)
+	authorized := [1][object_cache.PUBLIC_KEY_SIZE]u8{public_key}
+	server, opened := cache_server_open(dir, authorized[:])
+	testing.expect(t, opened)
+	defer cache_server_destroy(&server)
+	settings := Cache_Page_Settings{endpoint = "cache.example:5010", site_address = DEFAULT_SITE_ADDRESS}
+	put_blob :: proc(t: ^testing.T, server: ^Cache_Server, key: ^ed25519.Private_Key, pub: [32]u8, payload: []u8) -> blake3.Hash {
+		h := blake3.hash(payload)
+		req := make_signed_put_object_request(.Blob, h, payload, key, pub)
+		testing.expect_value(t, put_frame(t, server, &req), object_cache.Cache_Response_Status.Ok)
+		return h
+	}
+
+	// A name one byte past the bound.
+	long_name := strings.repeat("a", BROWSE_MODULE_NAME_BYTES + 1, context.temp_allocator)
+	long_module := make_minimal_valid_module(function_name = long_name)
+	testing.expect_value(t, module.validate(long_module), module.Error.None)
+	long_page := cache_browse_blob(&server, settings, put_blob(t, &server, &private_key, public_key, long_module))
+	long_body := string(long_page.body)
+	testing.expect(t, !strings.contains(long_body, long_name))
+	testing.expect(t, strings.contains(long_body, strings.concatenate({strings.repeat("a", BROWSE_MODULE_NAME_BYTES, context.temp_allocator), "…("}, context.temp_allocator)))
+
+	// The clean-up: control bytes, bytes that are not UTF-8, the cut on a
+	// whole character, and an empty text.
+	testing.expect_value(t, browse_module_text("bad\x01\xffname", 64), "bad��name")
+	testing.expect_value(t, browse_module_text("line\nnext\ttab", 64, true), "line\nnext\ttab")
+	testing.expect_value(t, browse_module_text("line\nnext", 64), "line�next")
+	testing.expect_value(t, browse_module_text("a\x7fb\u0085c", 64), "a�b�c")
+	testing.expect_value(t, browse_module_text(strings.repeat("é", 10, context.temp_allocator), 5), "éé…")
+	testing.expect_value(t, browse_module_text("", 5), "")
+
+	// 200 exports, each with a name and a summary of the whole string table
+	// of 1 MiB: the page stays within its bound.
+	hostile := make_minimal_valid_module(export_count = BROWSE_MODULE_EXPORTS_MAX, filler = 1 << 20, names_whole_table = true)
+	testing.expect_value(t, module.validate(hostile), module.Error.None)
+	hostile_page := cache_browse_blob(&server, settings, put_blob(t, &server, &private_key, public_key, hostile))
+	testing.expect_value(t, hostile_page.status, Status_Answer.Ok)
+	testing.expectf(t, len(hostile_page.body) <= BROWSE_PAGE_BYTES_MOST, "the page holds %d bytes", len(hostile_page.body))
+	testing.expect(t, !strings.contains(string(hostile_page.body), strings.repeat("x", BROWSE_MODULE_SUMMARY_BYTES + 1, context.temp_allocator)))
+	testing.expect(t, utf8.valid_string(string(hostile_page.body)))
+
+	// A module with more segments, or more rebase words, than the page checks:
+	// not validated.
+	past := make_minimal_valid_module()
+	directory := ([^]module.Table_Entry)(raw_data(past[size_of(module.Header):]))
+	directory[module.Table_Kind.Segments] = {offset = 0, count = BROWSE_MODULE_SEGMENTS_MOST + 1, record_size = 1}
+	kind, _ := browse_classify_blob(past)
+	testing.expect_value(t, kind, Browse_Blob_Kind.Module_Past_Bounds)
+	directory[module.Table_Kind.Segments] = {}
+	directory[module.Table_Kind.Rebases] = {offset = 0, count = BROWSE_MODULE_REBASE_WORDS_MOST + 1, record_size = 8}
+	kind, _ = browse_classify_blob(past)
+	testing.expect_value(t, kind, Browse_Blob_Kind.Module_Past_Bounds)
+	past_page := cache_browse_blob(&server, settings, put_blob(t, &server, &private_key, public_key, past))
+	testing.expect(t, strings.contains(string(past_page.body), "more records than this page checks"))
+	// The edge that passes: the bound itself.
+	directory[module.Table_Kind.Rebases] = {}
+	testing.expect(t, browse_module_tables_within_bounds(past))
+}
+

@@ -87,4 +87,4 @@ Built: the client, `cache-put`, `cache-get`, the cache test recipe, `key new cac
 
 The cache signing key of the publisher exists: its public key is `resources/keys/cache_signing_key.public`, its seed is in `secrets/production.yaml` and in the environment `cache`.
 
-Left: the `--authorized-key` of that public key in the deployment of `cache.modus.systems`, and the first publication by a release. Until the deployment authorises the key, the job `cache` fails with "the object cache does not authorise the key that signed the upload", and the release is published.
+Left: the `--authorized-key` of that public key in the deployment of `cache.modus.systems`, and the first publication by a release. The deployed `cache-serve` must also be upgraded to a build that knows `Put_Release_Pointer` before the next release: an older server refuses that request, and the job `cache` then fails after it put the files. Until the deployment authorises the key, the job `cache` fails with "the object cache does not authorise the key that signed the upload", and the release is published.
