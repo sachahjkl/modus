@@ -1317,7 +1317,7 @@ root_loop_pass :: proc "contextless" () {
 // control_ring_serve answers the control ring of the compositor: a start
 // or a stop from the desktop.
 control_ring_serve :: proc "contextless" () {
-	for record in system.receive(&control.completions) {
+	for record in root_receive(&control.completions, "the compositor") {
 		control_word, known := enum_word.member_of_word(display.Control, u64(record.kind))
 		if !known {
 			system.log_fact(.Warning, Compositor_Record_Unknown{record_kind = u64(record.kind)})
@@ -2547,6 +2547,9 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	}
 	if item.requests.head != nil {
 		system.ring_close(&item.requests)
+	}
+	// A root ring that ended for false counters keeps its handle to here.
+	if item.requests_memory != 0 {
 		system.close(item.requests_memory)
 	}
 	// A process that stopped before its first state of work says nothing:

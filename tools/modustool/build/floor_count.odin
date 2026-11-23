@@ -6,6 +6,7 @@ import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "core:fmt"
 import "core:math/bits"
+import "core:strings"
 import "modustool:foundation"
 
 // The parts of the floor of a module that the tool counts, and the sum that
@@ -293,10 +294,24 @@ floor_grant_rows: []foundation.Start_Grant_Set_Row
 floor_grant_rows_read: bool
 
 // floor_wiring_derived says if the module of name sends Wire from its root
-// ring (the start grant Root_Ring) and is not a start policy, whose wiring
-// pages its list prices: the root service then carves its wiring budget
-// from its floor. ok is false when the table cannot be read.
-floor_wiring_derived :: proc(name: string) -> (derived: bool, ok: bool) {
+// ring: it holds the start grant Root_Ring, is not a start policy, whose
+// wiring pages its list prices, and a source of its own package names a
+// step of Wire (root_ring.Wire_Step). The root service then carves its
+// wiring budget from its floor. A holder of the grant that never wires gets
+// no wiring part. ok is false when the table cannot be read.
+floor_wiring_derived :: proc(name: string, module_folder: string, sources: []Fact_Source) -> (derived: bool, ok: bool) {
+	module_package := strings.trim_right(module_folder, "/")
+	wires := false
+	for source in sources {
+		folder := source.path[:max(strings.last_index_byte(source.path, '/'), 0)]
+		own := folder == module_package || strings.has_suffix(folder, strings.concatenate({"/", module_package}, context.temp_allocator))
+		if own && !strings.has_suffix(source.path, "_test.odin") && (strings.contains(source.source, "Wire_Step.") || strings.contains(source.source, "Root_Command.Wire")) {
+			wires = true
+		}
+	}
+	if !wires {
+		return false, true
+	}
 	if !floor_grant_rows_read {
 		text := foundation.read_text_file(foundation.ROOT_START_GRANT_SETS_FILE) or_return
 		rows, _, problem := start_grant_sets_read(text)

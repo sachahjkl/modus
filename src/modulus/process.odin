@@ -678,7 +678,8 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 			from.amounts.threads -= amounts.threads
 			// Log reads it with no lock (budget_log).
 			intrinsics.atomic_sub(&from.amounts.log_records, amounts.log_records)
-			budget = {live = true, parent = parent, amounts = amounts, least_pages = amounts.pages}
+			budget = {live = true, parent = parent, amounts = amounts}
+			budget_peak.created(&budget.amounts.pages, &budget.least_pages, amounts.pages)
 			// The count of this second moves with the log records.
 			budget_log_count_to_child(parent, u32(slot + 1))
 			return u32(slot + 1), .Ok
@@ -700,7 +701,7 @@ budget_release :: proc "contextless" (index: u32) {
 	parent := budget.parent
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
-	budgets[parent].amounts.pages += budget.amounts.pages
+	budget_peak.give_back(&budgets[parent].amounts.pages, budget.amounts.pages)
 	budgets[parent].amounts.processes += budget.amounts.processes
 	budgets[parent].amounts.threads += budget.amounts.threads
 	for &region in regions {
@@ -1034,7 +1035,7 @@ region_release :: proc "contextless" (index: u32) {
 		// before its frames are free.
 		iommu_region_end_held(index)
 		frames_free_held(region.physical, region.page_count)
-		budgets[region.budget].amounts.pages += region.page_count
+		budget_peak.give_back(&budgets[region.budget].amounts.pages, region.page_count)
 	case:
 		// A device that the window of the object was declared to reaches it
 		// no more before its frames are free.
@@ -1068,7 +1069,7 @@ region_release :: proc "contextless" (index: u32) {
 		reserved_pages -= paid - region.present
 		base := region.uncommitted ? uncommitted_base_cost(region.page_count) : list_pages(region.page_count)
 		reserved_pages -= base - list_pages(region.page_count) // The page with no frame of a small Uncommitted object.
-		budgets[region.budget].amounts.pages += base + paid
+		budget_peak.give_back(&budgets[region.budget].amounts.pages, base + paid)
 	}
 	region^ = {serial = region.serial}
 	lock_free(&frame_lock, .Frame)

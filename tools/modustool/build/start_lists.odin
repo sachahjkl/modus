@@ -457,11 +457,34 @@ start_list_floors_problem :: proc(floors: []Start_List_Floor, machine_pages: u64
 	sum: u64 = 0
 	for item in floors {
 		if item.pages > machine_pages - min(sum, machine_pages) {
-			return fmt.tprintf("the floors of the root service, of the start policy, of the parts of the system and of the rows, and the budget of the disk processes, need more than the %d pages of the least machine, %d MiB: %s adds %d pages to %d", machine_pages, module.TEST_MACHINE_MEMORY_MIB, item.name, item.pages, sum)
+			return fmt.tprintf("the floors of the root service, of the start policy, of the parts of the system and of the rows, the budget of the disk processes and the share that the root service keeps, need more than the %d pages of the least machine, %d MiB: %s adds %d pages to %d", machine_pages, module.TEST_MACHINE_MEMORY_MIB, item.name, item.pages, sum)
 		}
 		sum += item.pages
 	}
 	return ""
+}
+
+// start_list_kept_share gives the part of the share that the root service
+// keeps past the floors of the starts that are no row: the division of the
+// list keeps the floors of those starts (the start policy, the parts of the
+// system, the renderer, the budget of the disk processes), and never less
+// than one largest budget, for a start that a process asks
+// (start_list_kept_pages of the root service). pages is 0 when those floors
+// pass the largest budget.
+start_list_kept_share :: proc(floors: []Start_List_Floor, rows: []Start_List_Row, largest_pages: u64) -> Start_List_Floor {
+	kept: u64 = 0
+	each_floor: for item in floors {
+		if item.name == "root" {
+			continue
+		}
+		for row in rows {
+			if item.name == (start_list.root_procedure_of(row.name) == .Display ? foundation.DISPLAY_HOLDER_MODULE : row.name) {
+				continue each_floor
+			}
+		}
+		kept += item.pages
+	}
+	return {name = "the share that the root service keeps for a start that a process asks", pages = largest_pages - min(largest_pages, kept)}
 }
 
 // The floor of the start of one module of a list, at the reference screen.
@@ -693,7 +716,10 @@ start_list_resources :: proc(path: string, without: string) -> (files: []resourc
 			}
 			floors, floors_problem := start_list_floors(floor_names, floor_files, audits, list.wiring_pages)
 			if floors_problem == "" {
-				floors_problem = start_list_floors_problem(floors, module.TEST_MACHINE_ROOT_PAGES)
+				with_kept := make([dynamic]Start_List_Floor, context.temp_allocator)
+				append(&with_kept, ..floors)
+				append(&with_kept, start_list_kept_share(floors, kind.rows, module.LARGEST_BUDGET_LEAST_PAGES))
+				floors_problem = start_list_floors_problem(with_kept[:], module.TEST_MACHINE_ROOT_PAGES)
 			}
 			if floors_problem != "" {
 				problems = []string{floors_problem}

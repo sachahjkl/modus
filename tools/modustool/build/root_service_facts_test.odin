@@ -36,6 +36,8 @@ STORE_NAME :: "module_files"
 @(private = "file")
 BUDGET_PARTS := [?]string{"pages", "processes", "threads"}
 @(private = "file")
+RING_WRITERS := [?]string{"the entropy service", "the network service", "the powerbox", "the collector", "the wiring service", "the TPM service", "the compositor", "the disk processes service", "the principals service", "the devices service"}
+@(private = "file")
 PAYING_BUDGETS := [?]string{"this service", "the disk processes", "a disk process"}
 @(private = "file")
 MAPPINGS := [?]string{"the date page", "the debug image", "the disk process page", "the fresh bytes page", "the settings page and the font outlines", "the script font set", "the file of the storage service", "the file of the service", "the machine parts page", "the start list"}
@@ -93,6 +95,7 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 	most["grant"] = longest(grants[:])
 	most["budget_part"] = longest(BUDGET_PARTS[:])
 	most["paying_budget"] = longest(PAYING_BUDGETS[:])
+	most["ring_writer"] = longest(RING_WRITERS[:])
 	most["mapping"] = longest(MAPPINGS[:])
 	most["network_cause"] = longest(NETWORK_CAUSES[:])
 	most["table_key"] = longest(TABLE_KEYS[:])
@@ -250,6 +253,10 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		expect(t, render(t, file, "Start_Refused_No_Floor", {{"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": its module file gives no floor"))
 		expect(t, render(t, file, "Budget_Peak_At_Ready", {{"peak_pages", count}, {"floor_pages", max(u64) - count}, {"ready_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " reached its first state of work with a peak of ", count, " pages, for a floor of ", max(u64) - count, " pages"))
 		expect(t, render(t, file, "Budget_Floor_Passed", {{"peak_pages", count}, {"floor_pages", max(u64) - count}, {"ready_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " passed its floor before its first state of work: a peak of ", count, " pages, for a floor of ", max(u64) - count, " pages"))
+		expect(t, render(t, file, "Ready_Ring_Write_With_No_Record", {{"ready_process", process}}), line_of_before("root: the ready ring of ", sentence.Module_Name{process}, " counts a record that it does not hold: it ends, and the floor is not checked"))
+		for writer in RING_WRITERS {
+			expect(t, render(t, file, "Ring_Counters_Refused", {{"ring_writer", writer}}), line_of_before("root: the ring of ", writer, " counts more records than it holds: its records are dropped"))
+		}
 		expect(t, render(t, file, "Ready_Ring_Counters_Refused", {{"ready_process", process}}), line_of_before("root: the ready ring of ", sentence.Module_Name{process}, " counts more records than it holds: it ends, and the floor is not checked"))
 		expect(t, render(t, file, "Root_Ring_Counters_Refused", {{"caller", process}}), line_of_before("root: the root ring of ", sentence.Module_Name{process}, " counts more records than it holds: it ends, and no command of it is read"))
 		expect(t, render(t, file, "Ready_Record_Refused", {{"kind", count}, {"ready_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " sent the record ", count, " on its ready ring, which carries Ready alone: its floor is not checked"))

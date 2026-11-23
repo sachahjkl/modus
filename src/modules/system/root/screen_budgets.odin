@@ -103,6 +103,14 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 	if refusal == .None && ring.capacity(&control.commands) == ring.count(&control.commands) {
 		refusal = .No_Pages
 	}
+	// The rows of the start list that did not start keep their sizes: a
+	// growth takes no page of them.
+	if refusal == .None {
+		own, _ := system.budget_read()
+		if pages_sum(compositor_pages, service_pages) > own.pages - min(own.pages, start_list_reserved_all()) {
+			refusal = .No_Pages
+		}
+	}
 	compositor_budget, service_budget: system.Handle
 	if refusal == .None {
 		status: system.Status

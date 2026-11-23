@@ -114,6 +114,21 @@ Ready_Ring_Counters_Refused :: struct {
 	ready_process: value_kinds.Module_Name_Field,
 }
 
+// The count of the ready ring of a process moved and no record can be read:
+// a wake with no record. The ring ends, and the floor is not checked.
+@(log_fact = "root: the ready ring of {ready_process} counts a record that it does not hold: it ends, and the floor is not checked")
+Ready_Ring_Write_With_No_Record :: struct {
+	ready_process: value_kinds.Module_Name_Field,
+}
+
+// The counters of a ring that this service reads say more records than it
+// holds: this service drops what the ring counts and reads on, so it never
+// loops with no wait (root_receive).
+@(log_fact = "root: the ring of {ring_writer} counts more records than it holds: its records are dropped")
+Ring_Counters_Refused :: struct {
+	ring_writer: [32]u8,
+}
+
 // The counters of the root ring of a process say more records than it
 // holds: the ring ends, and the process sends no more command.
 @(log_fact = "root: the root ring of {caller} counts more records than it holds: it ends, and no command of it is read")

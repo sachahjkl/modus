@@ -620,7 +620,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		if disk_processes_stopping {
 			break
 		}
-		record, has := system.receive(&disk_processes_ring.completions)
+		record, has := root_receive(&disk_processes_ring.completions, "the disk processes service")
 		if !has {
 			break
 		}

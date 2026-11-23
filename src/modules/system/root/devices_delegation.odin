@@ -200,7 +200,7 @@ devices_lookup :: proc "contextless" (vendor_id, device_id: u16) -> (entry: rd.D
 	foreign_answers := 0
 	for {
 		wait := system.wait_begin()
-		for record in system.receive(&devices_ring.completions) {
+		for record in root_receive(&devices_ring.completions, "the devices service") {
 			if record.tag != tag {
 				// The answer of a notice of a binding: nothing waits for it.
 				// A service that writes such answers with no end would hold
@@ -452,7 +452,7 @@ devices_answers :: proc "contextless" (wait: ^system.Wait) {
 	// A bounded count of answers in one pass: the records past it stay in
 	// the ring, and the wait below ends at once while the ring holds one.
 	read := 0
-	for record in system.receive(&devices_ring.completions) {
+	for record in root_receive(&devices_ring.completions, "the devices service") {
 		read += 1
 		status, known := rd.devices_ring_status_from_word(record.kind)
 		if !known {

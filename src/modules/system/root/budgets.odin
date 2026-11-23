@@ -295,7 +295,7 @@ start_list_reserve :: proc "contextless" (bytes: []u8) {
 		count += 1
 	}
 	own, _ := system.budget_read()
-	if !system.start_list_sizes(sizes[:count], own.pages, largest_budget.pages) {
+	if !system.start_list_sizes(sizes[:count], own.pages, start_list_kept_pages(names[:count])) {
 		for &size in sizes[:count] {
 			size.size = size.floor
 		}
@@ -303,6 +303,64 @@ start_list_reserve :: proc "contextless" (bytes: []u8) {
 	for index in 0 ..< count {
 		_ = system.start_list_reserve_add(&start_list_reserves, names[index], sizes[index].size)
 	}
+}
+
+// The renderers of the console: this service runs one of them at a time.
+@(private = "file")
+CONSOLE_RENDERERS :: [3]string{"serial_terminal", "grid_terminal", "dom_terminal"}
+
+// start_list_kept_pages gives the pages that the division of a start list
+// keeps for the starts that are no row and that can come before the list
+// is done: the floor of the start policy, of each part of the system that
+// this service starts in its own way and that the image holds (the largest
+// renderer of the console alone), and the budget of the disk processes
+// when it is not made yet. It is never below one share of the machine,
+// which this service keeps for its own work and for a start that a process
+// asks. The tool proves that these floors and the floors of the rows fit
+// in the least machine (start_lists.odin).
+start_list_kept_pages :: proc "contextless" (rows: []string) -> u64 {
+	kept: u64 = 0
+	add :: proc "contextless" (kept: ^u64, pages: u64) {
+		kept^ = kept^ > max(u64) - pages ? max(u64) : kept^ + pages
+	}
+	floor_pages :: proc "contextless" (name: string) -> u64 {
+		if find_running(name) != nil {
+			return 0
+		}
+		floor, ok := start_floor_of(image_file_checked(name), name, principals.MACHINE, true)
+		return ok ? floor.pages : 0
+	}
+	add(&kept, floor_pages(role_holder_name(.Start_Policy)))
+	renderer: u64 = 0
+	parts: for part in system_part_names {
+		if part == "root" {
+			continue
+		}
+		for row in rows {
+			if row == part {
+				continue parts
+			}
+		}
+		for item in CONSOLE_RENDERERS {
+			if item == part {
+				renderer = max(renderer, floor_pages(part))
+				continue parts
+			}
+		}
+		add(&kept, floor_pages(part))
+	}
+	add(&kept, renderer)
+	if disk_processes_budget == 0 {
+		add(&kept, disk_process.PROCESSES_BUDGET.pages)
+	}
+	return max(kept, largest_budget.pages)
+}
+
+// start_list_reserved_all gives the pages that the rows of the start list
+// that did not start keep from each start that is no row: a budget of the
+// disk processes, a growth of the budgets of a screen of memory.
+start_list_reserved_all :: proc "contextless" () -> u64 {
+	return system.start_list_reserved_pages(&start_list_reserves, "")
 }
 
 // start_list_reserves_end ends every reserve: the start policy has walked
@@ -365,6 +423,12 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 	}
 	own, _ := system.budget_read()
 	shared := disk_process.PROCESSES_BUDGET
+	// The rows of the start list that did not start keep their sizes: the
+	// budget of the disk processes takes no page of them.
+	if shared.pages > own.pages - min(own.pages, start_list_reserved_all()) {
+		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = .No_Budget})
+		return 0, .No_Budget
+	}
 	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
 	if status != .Ok {
 		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = status})
@@ -462,28 +526,26 @@ start_budget_note :: proc "contextless" (slot: ^Started, budget: Start_Budget) {
 // waits for (system.ready_at_end), and closes the ring: no handle or
 // mapping of this service stays for it. Another record ends the ring with
 // one line and no peak, and so do counters that say more records than the
-// ring holds. A process whose start noted no floor, or that
+// ring holds and a count that moved with no record to read
+// (root_ring.ready_ring_step). A process whose start noted no floor, or that
 // stopped already, so that its budget ended, gives no line.
 ready_ring_serve :: proc "contextless" (item: ^Started) {
-	record, received := system.receive(&item.ready.mapped.commands)
-	if !received {
-		// Counters that say more records than the ring holds: no record can
-		// be read, and a wait on the ring ends at once. The ring ends here,
-		// or this service loops with no wait.
-		if ring.counters_refused(&item.ready.mapped.commands) {
-			system.log_fact(.Warning, Ready_Ring_Counters_Refused{ready_process = module_name_field(system.name_of(item.name[:]))})
-			system.ready_ring_close(&item.ready)
-		}
+	record, step := root_ring.ready_ring_step(&item.ready.mapped.commands)
+	name := module_name_field(system.name_of(item.name[:]))
+	switch step {
+	case .Wait:
 		return
-	}
-	outcome := call_outcome.Call_Outcome.Succeeded
-	if root_ring.ready_record_refused(record) {
-		outcome = .Argument_Refused
-		system.log_fact(.Warning, Ready_Record_Refused{kind = u64(record.kind), ready_process = module_name_field(system.name_of(item.name[:]))})
-	} else {
+	case .Ready:
 		ready_peak_log(item)
+		system.send(&item.ready.mapped.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = record.tag})
+	case .Refused_Record:
+		system.log_fact(.Warning, Ready_Record_Refused{kind = u64(record.kind), ready_process = name})
+		system.send(&item.ready.mapped.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Argument_Refused), tag = record.tag})
+	case .Counters_Refused:
+		system.log_fact(.Warning, Ready_Ring_Counters_Refused{ready_process = name})
+	case .Write_With_No_Record:
+		system.log_fact(.Warning, Ready_Ring_Write_With_No_Record{ready_process = name})
 	}
-	system.send(&item.ready.mapped.completions, ring.Record{kind = u32(outcome), tag = record.tag})
 	system.ready_ring_close(&item.ready)
 }
 

@@ -660,7 +660,7 @@ wide_grant_pass :: proc "contextless" (wait: ^system.Wait) -> (deadline: u64) {
 		if link.ring.head == nil {
 			continue
 		}
-		for record in system.receive(&link.ring.completions) {
+		for record in root_receive(&link.ring.completions, "the collector") {
 			wide_grant_collector_answer(record)
 		}
 		system.wait_records(wait, &link.ring.completions)

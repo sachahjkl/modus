@@ -60,13 +60,31 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 	// Counters that say more records than the ring holds: no command can be
 	// read, and a wait on the ring ends at once. The root ring of the
 	// process ends, or this service loops with no wait; each later answer
-	// to it finds no ring.
+	// to it finds no ring. Its handle stays until the release of the
+	// process: a give through it still names the process, never this
+	// service (system.give with the handle 0 gives to the caller).
 	if ring.counters_refused(&item.requests.commands) {
 		system.log_fact(.Warning, Root_Ring_Counters_Refused{caller = module_name_field(system.name_of(item.name[:]))})
 		system.ring_close(&item.requests)
-		system.close(item.requests_memory)
-		item.requests_memory = 0
 	}
+}
+
+// root_receive takes the next record of a ring that this service reads,
+// as system.receive. When the counters of the ring say more records than
+// it holds, no record can be read and a wait on the ring ends at once: it
+// drops what the ring counts (ring.false_count_refuse), writes one line
+// that names the writer, and gives no record, so the next wait of this
+// service waits. Each ring that this service reads goes through it, but
+// the root ring and the ready ring of a process, which end
+// (root_ring_serve, ready_ring_serve).
+root_receive :: proc "contextless" (queue: ^ring.Queue, writer: string) -> (record: ring.Record, ok: bool) {
+	if record, ok = system.receive(queue); ok {
+		return record, true
+	}
+	if ring.false_count_refuse(queue) {
+		system.log_fact(.Warning, Ring_Counters_Refused{ring_writer = text_field(writer, 32)})
+	}
+	return {}, false
 }
 
 // kernel_refused writes the record Refused of a kernel operation that this

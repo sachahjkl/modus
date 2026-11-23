@@ -610,7 +610,7 @@ module_convert :: proc(build: foundation.Module_Build) -> bool {
 		description.budget.start_objects = start_objects_of_sources(build.source, sources) or_return
 		description.budget.children = floor_children_of(build) or_return
 		description.budget.start_budgets = start_budgets_of_sources(build.source, sources) or_return
-		description.budget.wiring_derived = floor_wiring_derived(build.name) or_return
+		description.budget.wiring_derived = floor_wiring_derived(build.name, build.source, sources) or_return
 	}
 	elf := foundation.read_file(module_linked_file(build.name)) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)
@@ -866,7 +866,7 @@ test_descriptions :: proc() -> bool {
 			inputs.start_objects = start_objects_of_sources(build.source, sources) or_return
 			inputs.children = floor_children_of(build) or_return
 			inputs.start_budgets = start_budgets_of_sources(build.source, sources) or_return
-			inputs.wiring_derived = floor_wiring_derived(build.name) or_return
+			inputs.wiring_derived = floor_wiring_derived(build.name, build.source, sources) or_return
 			counted, counted_ok := floor_count(inputs)
 			if !counted_ok || floor != counted.floor {
 				fmt.eprintfln("modustool: test failed: the floor of %s, %d pages, %d processes, %d threads, is not its stated parts and its counted parts: %s", build.name, floor.pages, floor.processes, floor.threads, floor_count_line(counted))

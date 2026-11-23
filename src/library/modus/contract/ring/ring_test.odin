@@ -736,3 +736,29 @@ a_false_count_is_refused_and_a_flood_is_not :: proc(t: ^testing.T) {
 	ring.head.commands.write, ring.head.commands.read = 5, max(u32) - u32(CAPACITY) + 6
 	testing.expect(t, !counters_refused(queue), "a full queue across the wrap")
 }
+
+// A reader refuses a false count by its own counter: the queue is empty, a
+// push works again, and an honest queue, empty or full, is left as it is.
+@(test)
+a_false_count_is_refused_by_the_count_of_the_reader :: proc(t: ^testing.T) {
+	memory := memory_of_pages(PAGE_COUNT)
+	defer delete(memory)
+	ring, opened := open(raw_data(memory), PAGE_COUNT)
+	testing.expect(t, opened)
+	queue := &ring.commands
+	testing.expect(t, !false_count_refuse(queue), "an empty queue")
+	for number in 0 ..< u32(CAPACITY) {
+		testing.expect(t, push(queue, numbered_record(number)))
+	}
+	testing.expect(t, !false_count_refuse(queue), "a full queue")
+	testing.expect_value(t, count(queue), u32(CAPACITY))
+	ring.head.commands.write = ring.head.commands.read + u32(CAPACITY) + 1
+	testing.expect(t, false_count_refuse(queue))
+	testing.expect(t, empty(queue) && !counters_refused(queue))
+	testing.expect(t, push(queue, numbered_record(7)))
+	record, popped := pop(queue)
+	testing.expect(t, popped && record == numbered_record(7))
+	ring.head.commands.write, ring.head.commands.read = 3, 9
+	testing.expect(t, false_count_refuse(queue), "a write behind the read")
+	testing.expect_value(t, ring.head.commands.read, 3)
+}

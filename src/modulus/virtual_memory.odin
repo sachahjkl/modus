@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:mapping_order"
@@ -170,7 +171,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 			changed += 1
 		}
 	}
-	budgets[region.budget].amounts.pages += changed
+	budget_peak.give_back(&budgets[region.budget].amounts.pages, changed)
 	region.committed -= changed
 	return changed, .Ok
 }

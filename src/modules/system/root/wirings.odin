@@ -952,7 +952,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 	if wiring_ring.head == nil {
 		return
 	}
-	for record in system.receive(&wiring_ring.completions) {
+	for record in root_receive(&wiring_ring.completions, "the wiring service") {
 		if record.tag == 0 {
 			if emptied_id, is_empty := ws.asker_wirings_empty_from_record(record); is_empty {
 				for &item in started {

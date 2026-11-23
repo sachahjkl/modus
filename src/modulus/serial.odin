@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import "base:intrinsics"
 import "modulus:delivery_count"
 import "modulus:time_base"
@@ -920,7 +921,7 @@ own_log_ring_give_back :: proc "contextless" (frames: [op.OWN_LOG_PAGES]u64, bud
 	for frame in frames {
 		if frame != 0 {
 			frames_free_held(frame, 1)
-			budgets[budget^].amounts.pages += 1
+			budget_peak.give_back(&budgets[budget^].amounts.pages, 1)
 		}
 	}
 	lock_free(&frame_lock, .Frame)

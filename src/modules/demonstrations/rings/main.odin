@@ -52,10 +52,20 @@ import "modus:contract/ring"
 import "modus:random"
 import "modus:system"
 
-// Six nodes: 4114 pages. And the glyph memory of the copy of the text
-// rendering of the drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 4114 + 354 = 4468.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4468, processes = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+// Six nodes: 4114 pages, of which the six budgets of the nodes are start
+// budgets (MODULE_START_BUDGETS), 6 x 256 = 1536 pages: 2578 pages. And the
+// glyph memory of the copy of the text rendering of the drawing module,
+// which draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 2578 + 354
+// = 2932.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2932, processes = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+
+// The pages of the budget of a node: its module, its stack and its rings
+// fit in them.
+NODE_BUDGET_PAGES :: 256
+// The six nodes start before the first frame of the window, each with its
+// budget.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_BUDGET_PAGES, NODE_BUDGET_PAGES, NODE_BUDGET_PAGES, NODE_BUDGET_PAGES, NODE_BUDGET_PAGES, NODE_BUDGET_PAGES}
+#assert(len(MODULE_START_BUDGETS) == relay.NODE_COUNT)
 
 WIDTH :: 720
 HEIGHT :: 540
@@ -116,7 +126,7 @@ node_start :: proc "contextless" (index: int) -> bool {
 	values[relay.VALUE_WORK_TIME] = work_times[index]
 	name := [?]u8{'n', 'o', 'd', 'e', ' ', u8('1' + index)}
 	status: system.Status
-	node.process, status = system.process_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
+	node.process, status = system.process_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&process_generator, values), {pages = NODE_BUDGET_PAGES, processes = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
 	node.waiting_logged = false
 	return status == .Ok
 }

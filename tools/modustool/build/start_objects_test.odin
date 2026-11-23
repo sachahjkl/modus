@@ -96,13 +96,23 @@ the_start_budgets_are_read_from_the_module_alone :: proc(t: ^testing.T) {
 // with no row wires nothing.
 @(test)
 the_wiring_of_a_floor_follows_the_start_grants :: proc(t: ^testing.T) {
-	console, console_ok := floor_wiring_derived("console")
+	wires := []Fact_Source{{path = "src/modules/system/console/streams.odin", source = "package console\nstep :: root_ring.Wire_Step.Apply\n"}}
+	never := []Fact_Source{{path = "src/modules/system/console/main.odin", source = "package console\n"}}
+	in_a_package := []Fact_Source{{path = "src/library/modus/system/a.odin", source = "package system\nstep :: root_ring.Wire_Step.Apply\n"}}
+	in_a_test := []Fact_Source{{path = "src/modules/system/console/a_test.odin", source = "package console\nstep :: root_ring.Wire_Step.Apply\n"}}
+	console, console_ok := floor_wiring_derived("console", "src/modules/system/console", wires)
 	testing.expect(t, console_ok && console)
-	policy, policy_ok := floor_wiring_derived("start_policy")
+	silent, silent_ok := floor_wiring_derived("console", "src/modules/system/console", never)
+	testing.expect(t, silent_ok && !silent, "a holder of the grant that never wires")
+	library, _ := floor_wiring_derived("console", "src/modules/system/console", in_a_package)
+	testing.expect(t, !library, "a step named in another package")
+	test_only, _ := floor_wiring_derived("console", "src/modules/system/console", in_a_test)
+	testing.expect(t, !test_only, "a step named in a test")
+	policy, policy_ok := floor_wiring_derived("start_policy", "src/modules/system/start_policy", {{path = "src/modules/system/start_policy/main.odin", source = "Wire_Step.List_Page"}})
 	testing.expect(t, policy_ok && !policy)
-	clock, clock_ok := floor_wiring_derived("clock")
-	testing.expect(t, clock_ok && !clock)
-	nobody, nobody_ok := floor_wiring_derived("no_such_module")
+	clock, clock_ok := floor_wiring_derived("clock", "src/modules/demonstrations/clock", {{path = "src/modules/demonstrations/clock/main.odin", source = "Wire_Step.List_Page"}})
+	testing.expect(t, clock_ok && !clock, "no grant Root_Ring")
+	nobody, nobody_ok := floor_wiring_derived("no_such_module", "src/modules/x", wires)
 	testing.expect(t, nobody_ok && !nobody)
 }
 

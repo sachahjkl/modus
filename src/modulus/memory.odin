@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import info "modus:contract/boot_info"
 import "base:intrinsics"
 import "modulus:page_attributes"
@@ -637,7 +638,7 @@ page_tables_free :: proc "contextless" (table: u64, budget: ^u32, freed: ^Freed_
 		frames_free_held(page, 1)
 		page = next
 	}
-	budgets[budget^].amounts.pages += freed.count
+	budget_peak.give_back(&budgets[budget^].amounts.pages, freed.count)
 	lock_free(&frame_lock, .Frame)
 	freed^ = {}
 }
@@ -715,7 +716,7 @@ address_space_free :: proc "contextless" (table: u64, budget: ^u32) {
 	}
 	lock_take(&frame_lock, .Frame)
 	frames_free_held(table, 1)
-	budgets[budget^].amounts.pages += 1
+	budget_peak.give_back(&budgets[budget^].amounts.pages, 1)
 	lock_free(&frame_lock, .Frame)
 }
 

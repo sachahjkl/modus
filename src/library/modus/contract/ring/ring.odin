@@ -213,6 +213,21 @@ counters_refused :: proc "contextless" (queue: ^Queue) -> bool {
 	return write - intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed) > queue.mask + 1
 }
 
+// false_count_refuse refuses the false count of a queue that its side reads:
+// when the counters say more records than it holds, the reader sets its own
+// count to the count of the writer, so the queue is empty, its records are
+// dropped, and a wait on it waits again. The reader writes only its own
+// counter. refused is false, and nothing changes, for a queue whose
+// counters hold.
+false_count_refuse :: proc "contextless" (queue: ^Queue) -> (refused: bool) {
+	if !counters_refused(queue) {
+		return false
+	}
+	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire)
+	intrinsics.atomic_store_explicit(&queue.counters.read, write, .Release)
+	return true
+}
+
 // full says if a push into a queue would be refused now: the queue holds
 // its capacity, or its counters say more records than it holds. The writer
 // calls it before work whose record must find room: the kernel checks the

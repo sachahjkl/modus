@@ -3,8 +3,9 @@
 // budget"). The kernel takes pages from a budget at each place that pays
 // for memory, and gives them back at each end of what they paid; the least
 // count follows only the takes, so the pages at the creation less it are
-// the most that the budget paid at one time: its peak. The root service
-// reads it at the first state of work of a process, against its floor.
+// the most that the budget paid at one time: its peak. The kernel gives the
+// least count in Process_Report, and the root service reads it at the
+// first state of work of a process, against its floor.
 //
 // The kernel holds the frame lock around each call: this package reads and
 // writes plain words.
@@ -36,12 +37,4 @@ spend :: proc "contextless" (free: ^u64, least: ^u64, count: u64) -> (taken: boo
 // least count keeps the peak that the budget reached.
 give_back :: proc "contextless" (free: ^u64, count: u64) {
 	free^ += count
-}
-
-// peak gives the most pages that a budget paid at one time: its pages at
-// the creation less its least count of free pages. A least count above
-// the pages at the creation, which only a budget that received pages back
-// past its creation shows, gives 0.
-peak :: proc "contextless" (pages_at_creation: u64, least: u64) -> u64 {
-	return pages_at_creation - min(pages_at_creation, least)
 }

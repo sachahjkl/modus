@@ -193,7 +193,7 @@ start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]
 	limit := system.time() + TPM_MEASURE_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
-		for record in system.receive(&tpm_measure_ring.completions) {
+		for record in root_receive(&tpm_measure_ring.completions, "the TPM service") {
 			if record.tag != tag {
 				// A completion of a measure whose wait ended at the bound.
 				continue

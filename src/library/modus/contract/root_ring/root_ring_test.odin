@@ -5,6 +5,7 @@ import "core:testing"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/replacement_list"
+import "modus:contract/ring"
 import "modus:contract/start_grant"
 
 // values[5] of a Start: one past the last member and the largest word name
@@ -637,4 +638,61 @@ the_ready_ring_takes_ready_alone :: proc(t: ^testing.T) {
 	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {0 = 1}}))
 	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {6 = 1}}))
 	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {3 = max(u64)}}))
+}
+
+// A model of the starter over a ready ring: each pass reads the step, and
+// each step but Wait closes the ring with one line, so no later pass reads
+// it. A ring never written waits; a Ready, a wrong record, a false count
+// and a count that moves with no record each end it after one pass.
+@(test)
+the_ready_ring_ends_after_one_line :: proc(t: ^testing.T) {
+	Model :: struct {
+		memory: [2 * ring.PAGE_SIZE]u8,
+		mapped: ring.Ring,
+		open:   bool,
+		lines:  int,
+		passes: int,
+	}
+	pass :: proc(model: ^Model) -> Ready_Ring_Step {
+		if !model.open {
+			return .Wait
+		}
+		model.passes += 1
+		_, step := ready_ring_step(&model.mapped.commands)
+		if step != .Wait {
+			if step != .Ready {
+				model.lines += 1
+			}
+			model.open = false
+		}
+		return step
+	}
+	start :: proc(model: ^Model) {
+		model^ = {}
+		mapped, opened := ring.open(&model.memory[0], 2)
+		assert(opened)
+		model.mapped, model.open = mapped, true
+	}
+	model := new(Model, context.temp_allocator)
+	start(model)
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Wait)
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Wait)
+	testing.expect(t, model.open && model.lines == 0, "a ring never written waits")
+	testing.expect(t, ring.push(&model.mapped.commands, ring.Record{kind = u32(Root_Command.Ready)}))
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Ready)
+	testing.expect(t, !model.open && model.lines == 0)
+	start(model)
+	testing.expect(t, ring.push(&model.mapped.commands, ring.Record{kind = u32(Root_Command.Start)}))
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Refused_Record)
+	start(model)
+	model.mapped.head.commands.write = u32(ring.CAPACITY) + 1
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Counters_Refused)
+	before := model.passes
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Wait)
+	testing.expect(t, model.passes == before && model.lines == 1, "one line, and no second pass")
+	start(model)
+	model.mapped.head.commands.write = 1
+	model.mapped.head.commands.read = 1
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Write_With_No_Record)
+	testing.expect(t, !model.open && model.lines == 1)
 }

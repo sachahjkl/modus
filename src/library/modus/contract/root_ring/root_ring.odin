@@ -1186,6 +1186,37 @@ refuse :: proc "contextless" (values: ^[7]u64, outcome: call_outcome.Call_Outcom
 // it the stop goes on, and the floor of the process is not checked.
 READY_ANSWER_BOUND_MILLISECONDS :: 60_000
 
+// What the starter does with the ready ring of a process at one pass.
+Ready_Ring_Step :: enum u8 {
+	Wait,              // No record yet, and nothing changed: the ring stays.
+	Ready,             // The record Ready: read the peak, answer, close the ring.
+	Refused_Record,    // Another record: one line, answer, close the ring.
+	Counters_Refused,  // Counters that say more records than the ring holds: one line, close the ring.
+	Write_With_No_Record, // The count of the writer changed and no record can be read: one line, close the ring.
+}
+
+// ready_ring_step decides one pass of a starter over the ready ring of a
+// process, its queue of commands. A new ring counts no record, and an
+// honest process changes the count once, with its one record, which the
+// starter reads and then closes the ring. So a count that is not 0 with
+// no record to read, as a wake with no record, ends the ring: the bound of
+// such wakes is one, a fact of a ring that carries one record. Each step
+// but Wait ends the ring, so the starter writes at most one line for it
+// and reads it at no later pass.
+ready_ring_step :: proc "contextless" (queue: ^ring.Queue) -> (record: ring.Record, step: Ready_Ring_Step) {
+	popped: bool
+	if record, popped = ring.pop(queue); popped {
+		return record, ready_record_refused(record) ? .Refused_Record : .Ready
+	}
+	if ring.counters_refused(queue) {
+		return {}, .Counters_Refused
+	}
+	if intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire) != 0 {
+		return {}, .Write_With_No_Record
+	}
+	return {}, .Wait
+}
+
 // ready_record_refused says if a record of a ready ring is not the record
 // Ready with each value 0: the one record that the ring carries. A refused
 // record ends the ring as a Ready does, with a line, and the starter reads

@@ -456,3 +456,26 @@ the_floors_of_the_least_machine_hold_each_start_of_the_root_service :: proc(t: ^
 	_, problem := start_list_floors(names, nil, 0, 0)
 	testing.expect(t, strings.contains(problem, "root has no table Floor"), problem)
 }
+
+// The division keeps the floors of the starts that are no row, which come
+// before the list is done, and at least one largest budget: the proof adds
+// what that largest budget keeps past those floors. Rows and the root
+// service are not kept; a row that is a part of the system is a row.
+@(test)
+the_kept_share_holds_the_starts_outside_the_list :: proc(t: ^testing.T) {
+	rows := []Start_List_Row{{name = "input"}, {name = "clock"}}
+	floors := []Start_List_Floor{{"root", 900}, {"start_policy", 100}, {"input", 5000}, {"compositor", 300}, {"clock", 7000}, {"the budget of the disk processes", 200}}
+	share := start_list_kept_share(floors, rows, 1000)
+	testing.expect_value(t, share.pages, 1000 - 600)
+	share = start_list_kept_share(floors, rows, 600)
+	testing.expect_value(t, share.pages, 0)
+	share = start_list_kept_share(floors, rows, 0)
+	testing.expect_value(t, share.pages, 0)
+	share = start_list_kept_share(floors, nil, 1000)
+	testing.expect_value(t, share.pages, 0)
+	// The many starts outside the list fit beside the rows, or the proof
+	// names the share.
+	all := []Start_List_Floor{{"root", 900}, {"start_policy", 100}, {"clock", 7000}, start_list_kept_share(floors[:2], {{name = "clock"}}, 2000)}
+	testing.expect_value(t, start_list_floors_problem(all, 9900), "")
+	testing.expect(t, strings.contains(start_list_floors_problem(all, 9899), "keeps for a start that a process asks"))
+}

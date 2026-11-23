@@ -111,7 +111,7 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	for entropy_reads_answered < entropy_reads_asked {
-		record := system.receive(&entropy_ring.completions) or_break
+		record := root_receive(&entropy_ring.completions, "the entropy service") or_break
 		number := entropy_reads_answered
 		entropy_reads_answered += 1
 		at_start := number < ENTROPY_READS_AT_START

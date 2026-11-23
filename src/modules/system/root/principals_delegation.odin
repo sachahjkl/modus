@@ -470,7 +470,7 @@ principals_sync :: proc "contextless" () {
 principals_answers :: proc "contextless" (wait: ^system.Wait) {
 	if principals_ring.head != nil {
 		read := 0
-		for record in system.receive(&principals_ring.completions) {
+		for record in root_receive(&principals_ring.completions, "the principals service") {
 			read += 1
 			place := -1
 			if record.tag != 0 {

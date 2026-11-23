@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:extended_switch"
@@ -409,7 +410,7 @@ guest_control_block_write :: proc "contextless" (block: u64, table: u64) {
 guest_frame_return :: proc "contextless" (process: ^Process, frame: u64) {
 	lock_take(&frame_lock, .Frame)
 	frames_free_held(frame, 1)
-	budgets[process.budget].amounts.pages += 1
+	budget_peak.give_back(&budgets[process.budget].amounts.pages, 1)
 	lock_free(&frame_lock, .Frame)
 }
 

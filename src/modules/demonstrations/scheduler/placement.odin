@@ -572,7 +572,7 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 		// them: the first thread is on the processor 0 after this write.
 		prepared = system.thread_placement_write(machine, self_machine_number, {processors = 0b01}) == .Ok
 		status: system.Status
-		budget, status = system.budget_create({pages = 16 * BLOCKERS, threads = BLOCKERS})
+		budget, status = system.budget_create({pages = BLOCKERS_BUDGET_PAGES, threads = BLOCKERS})
 		prepared &&= status == .Ok
 		for &thread in blocked {
 			if prepared {

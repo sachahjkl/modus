@@ -228,7 +228,7 @@ network_answers :: proc "contextless" (wait: ^system.Wait) {
 		if item.process == 0 || item.network.head == nil {
 			continue
 		}
-		for record in system.receive(&item.network.completions) {
+		for record in root_receive(&item.network.completions, "the network service") {
 			if outcome, error := call_outcome.completion_outcome(record.kind, record.values); outcome != .Succeeded {
 				system.log_fact(.Warning, Network_Control_Command_Refused(errors.error_record_fact_fields(error)))
 			}
