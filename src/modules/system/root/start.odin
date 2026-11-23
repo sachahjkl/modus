@@ -656,6 +656,11 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		widened := process_budget.pages + start_list_audits * wide_grants.SPACE_AUDIT_PAGES
 		process_budget.pages = min(widened, module.LARGEST_BUDGET_PAGES)
 	}
+	// The start policy pays the wirings of its list: the header gives their
+	// pages, and this service adds them (start_policy.odin).
+	if start_policy_starting && start_list_wiring_pages > 0 {
+		process_budget.pages = min(process_budget.pages + start_list_wiring_pages, module.LARGEST_BUDGET_PAGES)
+	}
 	status: system.Status
 	// The start of the measure of the start of a window: the load of the
 	// module, its hash and Process_Start are in it

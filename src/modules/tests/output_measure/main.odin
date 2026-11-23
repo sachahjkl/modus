@@ -10,9 +10,8 @@
 // this process, which reads each of its log records: the writer prints the
 // same log calls with the wiring (measure 9).
 //
-// The largest count is 8, the wirings of one asker at most
-// (output.WIRINGS_OF_AN_ASKER_MOST): the measure of 16 readers needs a
-// second asker.
+// The largest count is 8 (READERS_MOST), a choice of the measure: an asker
+// holds the wirings that its budget pays.
 //
 // **Start**: `start("output_measure")` in the console, in a measure run.
 // **What a reader sees**: no window; the lines of the writer and of the
@@ -28,7 +27,7 @@ import "modus:system"
 
 // The counts of readers of the measure of the fan-out.
 READER_COUNTS :: [4]int{1, 2, 4, 8}
-#assert(output.WIRINGS_OF_AN_ASKER_MOST >= 8)
+READERS_MOST :: 8
 
 // The record output samples of the writer, and the record input samples
 // of the reader: one row each.
@@ -145,9 +144,9 @@ done_wait :: proc "contextless" (processes: []system.Handle) {
 // measure_run runs the writer with a count of readers.
 @(private = "file")
 measure_run :: proc "contextless" (count: int) {
-	processes: [output.WIRINGS_OF_AN_ASKER_MOST + 1]system.Handle
-	rows: [output.WIRINGS_OF_AN_ASKER_MOST]output.Wiring
-	handles: [output.WIRINGS_OF_AN_ASKER_MOST]u32
+	processes: [READERS_MOST + 1]system.Handle
+	rows: [READERS_MOST]output.Wiring
+	handles: [READERS_MOST]u32
 	for index in 0 ..< count {
 		status, answer := start_listed("output_measure_reader", false)
 		if status != .Ok || answer[0] == 0 {

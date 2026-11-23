@@ -189,12 +189,18 @@ Module_Files :: map[string][]u8
 // start_list_bytes writes the bytes of a list through the contract, and
 // reads them back through its border. problem: why the list is refused,
 // or "".
-start_list_bytes :: proc(rows: []Start_List_Row, wirings: []start_list.Wiring_Row_Record = nil) -> (bytes: []u8, list: start_list.List, problem: string) {
+start_list_bytes :: proc(rows: []Start_List_Row, wirings: []start_list.Wiring_Row_Record = nil, record_sizes: []u32 = nil) -> (bytes: []u8, list: start_list.List, problem: string) {
 	if len(rows) > start_list.ROW_CAPACITY {
 		return nil, {}, fmt.tprintf("it has %d rows, and a list holds %d", len(rows), start_list.ROW_CAPACITY)
 	}
-	if len(wirings) > start_list.WIRING_ROW_CAPACITY {
-		return nil, {}, fmt.tprintf("it has %d wiring rows, and a list holds %d", len(wirings), start_list.WIRING_ROW_CAPACITY)
+	// The header gives the pages that the wiring rows cost the start
+	// policy, which the root service adds to its budget.
+	wiring_pages, counted := start_list.wiring_pages_of_records(wirings, record_sizes)
+	if !counted {
+		return nil, {}, fmt.tprintf("the pages of its %d wiring rows cannot be counted from %d record sizes", len(wirings), len(record_sizes))
+	}
+	if wiring_pages > u64(max(u32)) {
+		return nil, {}, fmt.tprintf("its wiring rows need %d pages", wiring_pages)
 	}
 	written := make([]start_list.Start_Row, len(rows), context.temp_allocator)
 	for row, index in rows {
@@ -205,10 +211,11 @@ start_list_bytes :: proc(rows: []Start_List_Row, wirings: []start_list.Wiring_Ro
 		written[index] = made
 	}
 	bytes = make([]u8, start_list.list_size(len(rows), len(wirings)), context.temp_allocator)
-	if _, ok := start_list.list_write(written, wirings, bytes); !ok {
+	if _, ok := start_list.list_write(written, wirings, bytes, u32(wiring_pages)); !ok {
 		return nil, {}, "the contract does not write it"
 	}
-	if read_problem, place, refusal := start_list.list_read(bytes, &list); read_problem != .None {
+	place_of_rows := make([]start_list.Wiring_Row, start_list.list_wiring_count(bytes), context.temp_allocator)
+	if read_problem, place, refusal := start_list.list_read(bytes, &list, place_of_rows); read_problem != .None {
 		if read_problem == .Wiring_Refused {
 			return nil, {}, fmt.tprintf("its border refuses it: %s, at its wiring row %d: the field %d of output.Wiring_Field, the word %d", start_list.LIST_PROBLEM_TEXTS[read_problem], place, refusal.argument, refusal.value)
 		}
@@ -398,10 +405,26 @@ start_list_audits_problem :: proc(wirings: []Start_List_Wiring, collector_pages:
 	return ""
 }
 
+// start_policy_pages_problem refuses wiring pages that, added by the root
+// service to the pages that the start policy asks, pass the largest budget
+// of one process.
+start_policy_pages_problem :: proc(policy_pages: u64, wiring_pages: u64) -> string {
+	if policy_pages + wiring_pages > module.LARGEST_BUDGET_PAGES {
+		return fmt.tprintf("its wiring rows need %d pages of the budget of the start policy, and with its own %d pages that passes the largest budget of one process, %d pages", wiring_pages, policy_pages, module.LARGEST_BUDGET_PAGES)
+	}
+	return ""
+}
+
 // collector_request_pages gives the pages that the module file of the
 // collector asks, or 0 with no file.
 collector_request_pages :: proc(files: Module_Files) -> u64 {
-	file, found := files[wide_grants.COLLECTOR_MODULE_NAME]
+	return module_request_pages(files, wide_grants.COLLECTOR_MODULE_NAME)
+}
+
+// module_request_pages gives the pages that the module file of name asks,
+// or 0 with no file.
+module_request_pages :: proc(files: Module_Files, name: string) -> u64 {
+	file, found := files[name]
 	if !found || module.validate(file) != .None {
 		return 0
 	}
@@ -412,19 +435,33 @@ collector_request_pages :: proc(files: Module_Files) -> u64 {
 // start_list_problems gives each fault of a list against the modules of an
 // image: the refusal of its border, a row that names no module with an
 // entry in the image, for a rescue list no row with the mark Needed, each
-// fault of a wiring row against the module files, and wiring rows that
-// need more pages than the reserve of the start policy.
+// fault of a wiring row against the module files, a writer with more
+// wiring rows than one list of its start holds, and wiring rows whose
+// pages would pass the largest budget of the start policy.
 start_list_problems :: proc(rows: []Start_List_Row, image_modules: []string, rescue: bool, wirings: []Start_List_Wiring = nil, files: Module_Files = nil) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	records, sizes, wiring_problems := start_list_wiring_records(rows, wirings, files)
 	append(&problems, ..wiring_problems)
-	_, list, problem := start_list_bytes(rows, records)
+	// The rows of one writer are the list of its start: one command.
+	for row in rows {
+		of_writer := 0
+		for wiring in wirings {
+			if wiring.writer == row.name {
+				of_writer += 1
+			}
+		}
+		if of_writer > output.WIRING_LIST_ROW_LIMIT {
+			append(&problems, fmt.tprintf("the row %s writes %d wiring rows, and the list of one start holds %d", row.name, of_writer, output.WIRING_LIST_ROW_LIMIT))
+		}
+	}
+	_, list, problem := start_list_bytes(rows, records, sizes)
 	if problem != "" {
 		append(&problems, problem)
 	} else if len(wiring_problems) == 0 {
-		pages, counted := start_list.wiring_pages_of_list(&list, sizes)
-		if !counted || pages > start_list.WIRING_PAGES_RESERVE {
-			append(&problems, fmt.tprintf("its wiring rows need %d pages of the budget of the start policy, past its reserve of %d", pages, start_list.WIRING_PAGES_RESERVE))
+		// The root service adds the pages of the list to the budget of the
+		// start policy, which no process passes.
+		if pages_problem := start_policy_pages_problem(module_request_pages(files, foundation.START_POLICY_MODULE), list.wiring_pages); pages_problem != "" {
+			append(&problems, pages_problem)
 		}
 	}
 	for row in rows {
@@ -505,8 +542,8 @@ start_list_resources :: proc(path: string, without: string) -> (files: []resourc
 			}
 			return nil, false
 		}
-		records, _, _ := start_list_wiring_records(kind.rows, kind.wirings, files)
-		bytes, _, problem := start_list_bytes(kind.rows, records)
+		records, sizes, _ := start_list_wiring_records(kind.rows, kind.wirings, files)
+		bytes, _, problem := start_list_bytes(kind.rows, records, sizes)
 		if problem != "" {
 			fmt.eprintfln("modustool: the list %s of %s is refused: %s", kind.resource, path, problem)
 			return nil, false

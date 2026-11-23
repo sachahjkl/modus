@@ -12,7 +12,7 @@ import "modus:contract/wide_grants"
 // The lends of one test: the readers lent in order, and the lend that
 // fails (from 1; 0: none). Each test runs on its own thread.
 @(thread_local)
-lent_readers: [start_list.WIRING_ROW_CAPACITY]int
+lent_readers: [output.WIRING_LIST_ROW_LIMIT]int
 @(thread_local)
 lend_count: int
 @(thread_local)
@@ -62,8 +62,9 @@ wired_list :: proc(with_terms := false) -> (list: start_list.List) {
 		wirings[1].terms = test_terms()
 	}
 	bytes := make([]u8, start_list.list_size(4, 3), context.temp_allocator)
-	_, written := start_list.list_write(rows[:], wirings[:], bytes)
-	problem, _, _ := start_list.list_read(bytes, &list)
+	_, written := start_list.list_write(rows[:], wirings[:], bytes, 1)
+	place := make([]start_list.Wiring_Row, len(wirings), context.temp_allocator)
+	problem, _, _ := start_list.list_read(bytes, &list, place)
 	assert(written && problem == .None)
 	return
 }
@@ -183,6 +184,62 @@ a_writer_gets_the_list_of_its_rows :: proc(t: ^testing.T) {
 		testing.expect_value(t, checked.rows[index].reader_handle, place)
 	}
 	testing.expect_value(t, checked.rows[2].writer_stream, output.Writer_Stream.Log)
+}
+
+// A list whose writer has wirings rows to the readers before it: count rows,
+// the reader of row n the start row n % readers, and the writer the last
+// start row.
+@(private = "file")
+many_list :: proc(readers: int, count: int) -> (list: start_list.List, writer: int) {
+	rows := make([]start_list.Start_Row, readers + 1, context.temp_allocator)
+	for &row, index in rows {
+		name := [2]u8{'a' + u8(index / 26), 'a' + u8(index % 26)}
+		row, _ = start_list.row_make(string(name[:]), {}, .Not_Started, .Not_Needed)
+	}
+	wirings := make([]start_list.Wiring_Row_Record, count, context.temp_allocator)
+	for &record, index in wirings {
+		record = {writer_row = u32(readers + 1), wiring = {writer_end = u32(output.Wiring_End.Child), writer_stream = u32(output.Writer_Stream.Record_Output), writer_index = 1, reader_end = u32(output.Wiring_End.Started), reader_handle = u32(index % readers + 1), reader_index = 1}}
+	}
+	bytes := make([]u8, start_list.list_size(len(rows), count), context.temp_allocator)
+	_, written := start_list.list_write(rows, wirings, bytes, 1)
+	place := make([]start_list.Wiring_Row, count, context.temp_allocator)
+	problem, _, _ := start_list.list_read(bytes, &list, place)
+	assert(written && problem == .None)
+	return list, readers
+}
+
+// A writer with 20 readers gets one list of its 20 rows, each reader lent
+// once; a writer with one row more than a list holds gets no list, and the
+// numbers that it lent go back.
+@(test)
+the_rows_of_a_writer_are_one_list :: proc(t: ^testing.T) {
+	page := make([]u8, PAGE_BYTES, context.temp_allocator)
+	list, writer := many_list(20, 20)
+	running := make([]bool, 21, context.temp_allocator)
+	for &each in running {
+		each = true
+	}
+	lends_reset(0)
+	prepared := row_list_prepare(&list, writer, running, page, test_lend)
+	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Ok})
+	testing.expect_value(t, lend_count, 20)
+	checked: output.Checked_Wiring_List
+	refusal, ok := output.wiring_list_check(page, .Start, &checked)
+	testing.expectf(t, ok, "the root service refuses the list: %v", refusal)
+	testing.expect_value(t, checked.row_count, 20)
+	testing.expect_value(t, checked.handle_count, 20)
+
+	at_limit, at_writer := many_list(2, output.WIRING_LIST_ROW_LIMIT)
+	lends_reset(0)
+	prepared = row_list_prepare(&at_limit, at_writer, running[:3], page, test_lend)
+	testing.expect_value(t, prepared.outcome, Outcome.Listed)
+
+	past, past_writer := many_list(2, output.WIRING_LIST_ROW_LIMIT + 1)
+	lends_reset(0)
+	prepared = row_list_prepare(&past, past_writer, running[:3], page, test_lend)
+	testing.expect_value(t, prepared.outcome, Outcome.List_Not_Written)
+	testing.expect(t, prepared.give_back, "the lent numbers do not go back")
+	expect_given_back(t, page, ([]u32{11, 12}))
 }
 
 // A row with terms: the page holds its terms after the lent handles, at

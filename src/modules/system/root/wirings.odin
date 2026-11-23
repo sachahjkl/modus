@@ -39,7 +39,6 @@ WIRING_REQUEST_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
 
 // Child wiring budget reserve carved from an asker's budget (pages only:
 // zero processes, zero threads, zero processor time, zero log records).
-WIRING_ASKER_BUDGET_PAGES_MOST :: 512
 WIRING_ASKER_BUDGET_PAGES_MIN :: output.WIRING_LIST_PAGES_MOST + 1
 
 // Pre-allocated child ends prepared by `wiring` for a Start with wiring list.
@@ -308,7 +307,16 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 		values^ = errors.ring_fail(u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(avail.pages))
 		return .No_Budget
 	}
-	pages := min(avail.pages, u64(WIRING_ASKER_BUDGET_PAGES_MOST))
+	// The wiring budget of the start policy is what the header of its list
+	// says that its rows cost, which its budget was widened by; each other
+	// asker gives half of what its budget holds at its first wiring, and
+	// keeps the other half for its own work (src/md/features/module_outputs.md,
+	// "The bounds of the wirings").
+	pages := asker == start_policy_process && start_list_wiring_pages > 0 ? min(avail.pages, start_list_wiring_pages) : avail.pages / 2
+	if pages < list_cost {
+		values^ = errors.ring_fail(u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(pages))
+		return .No_Budget
+	}
 	err: errors.Error_Record
 	child, status := system.budget_create({pages = pages}, asker.budget, error = &err)
 	if status != .Ok {

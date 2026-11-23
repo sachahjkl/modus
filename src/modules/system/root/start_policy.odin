@@ -74,20 +74,23 @@ start_policy_starting: bool
 // starter pays for the audits").
 start_list_audits: u64
 
-// The list that start_list_audits_of reads: a table of this service, not
-// a frame of its stack.
-start_list_for_audits: start_list.List
+// The pages that the wiring rows of that list cost the start policy, as
+// its header gives them: this service, its starter, adds them to its
+// budget and carves its wiring budget from them (src/md/features/module_outputs.md,
+// "The bounds of the wirings").
+start_list_wiring_pages: u64
 
-// start_list_audits_of counts the audits of a list of the boot image. A
-// list that its border refuses has none: the start policy refuses it.
-start_list_audits_of :: proc "contextless" (entry: ^info.Image_Entry) -> u64 {
+// start_list_facts_of reads the audits and the wiring pages of a list of the
+// boot image. A list that is not whole has none: the start policy refuses it.
+start_list_facts_of :: proc "contextless" (entry: ^info.Image_Entry) -> (audits: u64, wiring_pages: u64) {
 	if !image_entry_give(entry) {
-		return 0
+		return 0, 0
 	}
-	if problem, _, _ := start_list.list_read(image[entry.offset:][:entry.size], &start_list_for_audits); problem != .None {
-		return 0
+	count, pages, ok := start_list.list_starter_facts(image[entry.offset:][:entry.size])
+	if !ok {
+		return 0, 0
 	}
-	return u64(start_list.list_audit_count(&start_list_for_audits))
+	return u64(count), pages
 }
 
 // The machine parts page: written once, before the start policy starts.
@@ -297,7 +300,7 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	}
 	if list_entry := system.image_resource_find(image, START_POLICY_LIST_NAMES[list]); list_entry != nil {
 		list_hash = list_entry.hash
-		start_list_audits = start_list_audits_of(list_entry)
+		start_list_audits, start_list_wiring_pages = start_list_facts_of(list_entry)
 	}
 	// A start policy of the boot image starts unmeasured, with the line of
 	// the cause: it is signed and measured with the system in PCR 11.

@@ -452,6 +452,35 @@ memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0, flags:
 	return Handle(results[0]), status
 }
 
+// table_make gives a table of count entries of T, zeroed, in a memory object
+// of its own that the budget of this process pays and that lives as long as
+// the process: a table whose count the process learns at its start, as the
+// wiring rows of a start list. count 0 gives an empty table and no object.
+// The statuses are those of Memory_Create and of Memory_Map; on a refusal
+// the table is empty.
+//
+// ```odin
+// rows, _ := system.table_make(start_list.Wiring_Row, count)
+// ```
+table_make :: proc "contextless" ($T: typeid, count: int) -> (table: []T, status: Status) {
+	if count <= 0 {
+		return nil, .Ok
+	}
+	pages := (u64(count) * size_of(T) + PAGE_SIZE - 1) / PAGE_SIZE
+	memory: Handle
+	memory, status = memory_create(pages)
+	if status != .Ok {
+		return nil, status
+	}
+	address: rawptr
+	address, status = memory_map(memory)
+	if status != .Ok {
+		close(memory)
+		return nil, status
+	}
+	return ([^]T)(address)[:count], .Ok
+}
+
 // memory_map maps a memory object in this process (process 0) or in another.
 // address 0 lets the kernel choose. page_count 0 maps all pages from first.
 //

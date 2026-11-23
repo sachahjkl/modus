@@ -2100,7 +2100,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: log_flood stopped: itself, done", any_order = true},
 	{kind = .Wait, text = "output_wiring: the log of log_flood kept its 605 records in order while the kernel refused its 602 calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must", fails_on = "[log_flood]"},
 	{kind = .Wait, text = "output_writer: large: 8 rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
-	{kind = .Wait, text = "output_wiring: 8 wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = " wirings of one asker, past 8, 9 and 20, until its budget paid no more; one more refused with Wire and with a Start, each with the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
 	// A side that writes its own words in its wiring ring: the root
 	// service ends the wiring whose end it refused, drops a word for a
 	// number of no wiring and a second answer of an end, one line each,
@@ -2131,7 +2131,7 @@ scenario := [?]Step {
 	// generic_source, merge and filter in one list, then a filter whose
 	// condition names no field. Each process writes a few lines only.
 	{kind = .Type, text = "start(\"generic_wiring\")"},
-	{kind = .Wait, text = "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must", fails_on = "generic_wiring: WRONG"},
+	{kind = .Wait, text = "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input and a condition on no field: refused, each with its status and its error record and the budget unchanged: as it must", fails_on = "generic_wiring: WRONG"},
 	{kind = .Wait, text = "generic_source: wrote 20 probes into left and into right, and ended both", fails_on = "generic_source: WRONG", any_order = true},
 	{kind = .Wait, text = "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list, after a refused Wire of Other into filter.source kept no type: the joined record of 0, the 20 probes of mark 1 of the two sides, each side in its order, then a clean end: as it must", fails_on = "generic_wiring: WRONG"},
 	{kind = .Wait, text = "generic_wiring: filter with a condition on the field 0 ended kept at once with the error record of that field: as it must", fails_on = "generic_wiring: WRONG"},

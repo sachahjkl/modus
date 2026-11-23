@@ -152,19 +152,38 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, windowed_problem, "")
 	testing.expect_value(t, windowed_list.rows[0].restart_window_seconds, u32(60))
 
-	// Eight rows of the largest rings, which the reserve of the start
-	// policy does not pay.
-	large := make([]Start_List_Wiring, start_list.WIRING_ROW_CAPACITY, context.temp_allocator)
-	for &wiring in large {
-		wiring = {writer = "writer", record_output = "numbers", reader = "reader", record_input = "many", capacity = output.WIRING_CAPACITY_MOST}
+	// No count of the wiring rows of a list: 8, 9 and 20 rows of one writer
+	// pass, each with its pages in the header; one writer with one row more
+	// than the list of its start holds is refused.
+	for count in ([?]int{8, 9, 20, output.WIRING_LIST_ROW_LIMIT}) {
+		many := make([]Start_List_Wiring, count, context.temp_allocator)
+		for &wiring in many {
+			wiring = {writer = "writer", record_output = "numbers", reader = "reader", record_input = "many"}
+		}
+		many_problems := start_list_problems(rows, modules, false, many, files)
+		testing.expectf(t, len(many_problems) == 0, "%d rows: %v", count, many_problems)
+		many_records, many_sizes, _ := start_list_wiring_records(rows, many, files)
+		_, many_list, _ := start_list_bytes(rows, many_records, many_sizes)
+		testing.expect_value(t, many_list.wiring_count, count)
+		expected, _ := start_list.wiring_pages_of_records(many_records, many_sizes)
+		testing.expect_value(t, many_list.wiring_pages, expected)
 	}
-	past_reserve := start_list_problems(rows, modules, false, large, files)
-	testing.expectf(t, len(past_reserve) == 1 && strings.contains(past_reserve[0], "past its reserve"), "the problems %v", past_reserve)
-	nine := make([]Start_List_Wiring, start_list.WIRING_ROW_CAPACITY + 1, context.temp_allocator)
-	for &wiring in nine {
+	past := make([]Start_List_Wiring, output.WIRING_LIST_ROW_LIMIT + 1, context.temp_allocator)
+	for &wiring in past {
 		wiring = {writer = "writer", record_output = "numbers", reader = "reader", record_input = "many"}
 	}
-	testing.expect_value(t, len(start_list_problems(rows, modules, false, nine, files)), 1)
+	past_problems := start_list_problems(rows, modules, false, past, files)
+	testing.expectf(t, len(past_problems) == 1 && strings.contains(past_problems[0], "the list of one start holds"), "the problems %v", past_problems)
+	// Wiring pages that the budget of a process does not pay beside the
+	// pages of the start policy: at the largest budget, taken; one page
+	// past it, refused.
+	testing.expect_value(t, start_policy_pages_problem(32, module.LARGEST_BUDGET_PAGES - 32), "")
+	testing.expect_value(t, start_policy_pages_problem(0, 0), "")
+	testing.expect(t, start_policy_pages_problem(32, module.LARGEST_BUDGET_PAGES - 31) != "", "pages past the largest budget pass")
+	// Sizes of another count than the rows: no list.
+	one_records, _, _ := start_list_wiring_records(rows, past[:1], files)
+	_, _, no_sizes := start_list_bytes(rows, one_records, nil)
+	testing.expect(t, no_sizes != "", "a list whose pages cannot be counted is written")
 
 	// The success: numbers, and the log into a generic record input.
 	wirings := []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}, {writer = "writer", record_output = WIRING_OUTPUT_LOG, reader = "reader", record_input = "any", pace = .Always_Holds_Writer}}
@@ -191,14 +210,14 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 	// border of the list reads back whole.
 	audited := []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "with_terms", audit_bound = 100}}
 	testing.expect_value(t, len(start_list_problems(rows, modules, false, audited, files)), 0)
-	audited_records, _, audited_problems := start_list_wiring_records(rows, audited, files)
+	audited_records, audited_sizes, audited_problems := start_list_wiring_records(rows, audited, files)
 	testing.expect_value(t, len(audited_problems), 0)
 	if len(audited_records) == 1 {
 		testing.expect_value(t, audited_records[0].wiring.terms_count, u32(start_list.START_LIST_TERMS_BYTES))
 		testing.expect_value(t, audited_records[0].wiring.terms_offset, u32(0))
 		terms := transmute(wide_grants.Space_Terms)audited_records[0].terms
 		testing.expect_value(t, terms, wide_grants.Space_Terms{kind_word = i64(wide_grants.Collector_Space_Kind.Audit), bound_records = 100, forwarding_word = i64(wide_grants.Space_Forwarding.Keeps), record_size = 16})
-		_, audited_list, audited_list_problem := start_list_bytes(rows, audited_records)
+		_, audited_list, audited_list_problem := start_list_bytes(rows, audited_records, audited_sizes)
 		testing.expect_value(t, audited_list_problem, "")
 		testing.expect_value(t, audited_list.wirings[0].terms, audited_records[0].terms)
 	}
@@ -219,8 +238,8 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 		audit = {audit_bound = 1}
 	}
 	testing.expect_value(t, start_list_audits_problem(audits[:room], COLLECTOR_PAGES), "")
-	past := start_list_audits_problem(audits, COLLECTOR_PAGES)
-	testing.expectf(t, strings.contains(past, fmt.tprintf("declares %d audits of servers", room + 1)), "the list past the largest budget: %q", past)
+	past_audits := start_list_audits_problem(audits, COLLECTOR_PAGES)
+	testing.expectf(t, strings.contains(past_audits, fmt.tprintf("declares %d audits of servers", room + 1)), "the list past the largest budget: %q", past_audits)
 	// Rows with no audit count for nothing.
 	plain := make([]Start_List_Wiring, room + 1, context.temp_allocator)
 	testing.expect_value(t, start_list_audits_problem(plain, COLLECTOR_PAGES), "")

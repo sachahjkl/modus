@@ -45,6 +45,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **A reader waits on each of its rings.** A reader of more than 19 rings waits on 19 of them and reads the others again every 10 milliseconds, as one wait of the kernel holds 64 words. With the wait room of the kernel the caller gives a larger wait, and no ring is read on a period. [Design](src/md/features/module_outputs.md)
+
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)

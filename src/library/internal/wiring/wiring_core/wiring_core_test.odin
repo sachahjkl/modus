@@ -9,6 +9,55 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import ws "modus:contract/wiring_service"
 
+// A copy of a state with its tables, for a test that checks that a refusal
+// changed nothing: the tables are in the memory of their port, so a copy
+// of the state alone would share them.
+@(private = "file")
+State_Snapshot :: struct {
+	state:     State,
+	processes: []Process_Entry,
+	wirings:   []Wiring_Entry,
+}
+
+@(private = "file")
+state_snapshot :: proc(s: ^State) -> State_Snapshot {
+	snapshot := State_Snapshot{state = s^}
+	snapshot.processes = make([]Process_Entry, len(s.processes), context.temp_allocator)
+	copy(snapshot.processes, s.processes)
+	snapshot.wirings = make([]Wiring_Entry, len(s.wirings), context.temp_allocator)
+	copy(snapshot.wirings, s.wirings)
+	return snapshot
+}
+
+// state_unchanged says if s holds what the snapshot holds. A table that grew
+// is no change while its new entries are empty: the growth is memory, not
+// state.
+@(private = "file")
+state_unchanged :: proc(s: ^State, before: State_Snapshot) -> bool {
+	plain, plain_before := s^, before.state
+	plain.processes, plain.wirings = nil, nil
+	plain_before.processes, plain_before.wirings = nil, nil
+	plain.visit_generation, plain_before.visit_generation = 0, 0
+	if mem.compare_ptrs(&plain, &plain_before, size_of(State)) != 0 || len(s.processes) < len(before.processes) || len(s.wirings) < len(before.wirings) {
+		return false
+	}
+	for &entry, index in s.processes {
+		kept := index < len(before.processes) ? before.processes[index] : Process_Entry{}
+		entry_plain, kept_plain := entry, kept
+		entry_plain.visit_mark, kept_plain.visit_mark = 0, 0
+		if mem.compare_ptrs(&entry_plain, &kept_plain, size_of(Process_Entry)) != 0 {
+			return false
+		}
+	}
+	for &entry, index in s.wirings {
+		kept := index < len(before.wirings) ? before.wirings[index] : Wiring_Entry{}
+		if mem.compare_ptrs(&entry, &kept, size_of(Wiring_Entry)) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 @(private = "file")
 Test_Record_Spec :: struct {
 	name:       string,
@@ -196,7 +245,7 @@ type_mismatch_is_refused_without_mutating_state :: proc(t: ^testing.T) {
 	image, offs, szs := pack_image(mod_a, mod_b_name, mod_b_size, mod_b_sign)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	asker := ws.Process_Identity{1, 10}
 	writer := ws.Process_Identity{2, 20}
 	r_name := ws.Process_Identity{3, 30}
@@ -237,7 +286,7 @@ duplicate_self_and_cycle_wirings_are_refused :: proc(t: ^testing.T) {
 	image, offs, szs := pack_image(mod)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	asker := ws.Process_Identity{1, 1}
 	p_a := ws.Process_Identity{2, 2}
 	p_b := ws.Process_Identity{3, 3}
@@ -310,16 +359,18 @@ duplicate_self_and_cycle_wirings_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, s.wirings_running, 4)
 }
 
-// Capacity bounds and one past each bound are refused with exact error records:
-// LIST_PAGE_ASKERS_MOST, WIRINGS_OF_AN_ASKER_MOST, WIRINGS_OF_THE_MACHINE_MOST,
-// CONNECTED_ENDS_OF_AN_ASKER_MOST, and ring room exhaustion.
+// The shares and one past each are refused with exact error records
+// (LIST_PAGE_ASKERS_MOST, CONNECTED_ENDS_OF_AN_ASKER_MOST), and so is ring
+// room exhaustion; the wirings of an asker have no count (8, 9, 20), and a
+// table whose budget pays no more refuses the next wiring or process with
+// no change.
 @(test)
 capacity_bounds_and_one_past_bound_are_refused :: proc(t: ^testing.T) {
 	mod := build_test_module({{"Tick", "n", 8, true}}, {{"ticks", 1, .One}}, nil)
 	image, offs, szs := pack_image(mod)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 
 	// Register 5 askers and 4 writers.
 	askers: [5]ws.Process_Identity
@@ -363,37 +414,66 @@ capacity_bounds_and_one_past_bound_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, st, ws.Response_Status.No_Slot)
 	testing.expect_value(t, ref.limit, i64(CONNECTED_ENDS_OF_AN_ASKER_MOST))
 
-	// Fill askers[0] up to WIRINGS_OF_AN_ASKER_MOST (4 more via Started on writers[1]), then 9th refused!
+	// No count of the wirings of an asker: askers[0] holds 8, a 9th, and up
+	// to 20, beside its 4 connected ends.
 	lent1 := [1]ws.Resolved_Lent_End{{process_slot = writers[1].slot, process_serial = writers[1].serial, started_by_asker = 1, present = 1}}
-	for _ in CONNECTED_ENDS_OF_AN_ASKER_MOST ..< output.WIRINGS_OF_AN_ASKER_MOST {
-		w_st, _, _, _ := wire_once(&s, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
-		testing.expect_value(t, w_st, ws.Response_Status.Ok)
+	for held in CONNECTED_ENDS_OF_AN_ASKER_MOST ..< 20 {
+		w_st, w_ref, _, _ := wire_once(&s, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
+		testing.expectf(t, w_st == .Ok, "the wiring %d of an asker: %v, %v", held + 1, w_st, w_ref)
+		if held + 1 == 8 || held + 1 == 9 {
+			testing.expect_value(t, s.wirings_running, held + 1)
+		}
 	}
-	st, ref, _, _ = wire_once(&s, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
-	testing.expect_value(t, st, ws.Response_Status.No_Slot)
-	testing.expect_value(t, ref.limit, i64(output.WIRINGS_OF_AN_ASKER_MOST))
+	testing.expect_value(t, s.wirings_running, 20)
+	testing.expect_value(t, s.processes[0].wirings_asked, 20)
 
-	// Fill askers[1] (8) and askers[2] (8) -> 24 = WIRINGS_OF_THE_MACHINE_MOST; askers[3]'s 1st is 25th -> refused!
-	lent2 := [1]ws.Resolved_Lent_End{{process_slot = writers[2].slot, process_serial = writers[2].serial, started_by_asker = 1, present = 1}}
-	lent3 := [1]ws.Resolved_Lent_End{{process_slot = writers[3].slot, process_serial = writers[3].serial, started_by_asker = 1, present = 1}}
-	for _ in 0 ..< output.WIRINGS_OF_AN_ASKER_MOST {
-		w_st, _, _, _ := wire_once(&s, image, askers[1], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent2[:])
+	// A table whose budget pays 20 wirings: the 21st is refused with Full of
+	// the unit Wirings at that table, and nothing changes; a revocation frees
+	// places that the next wirings take.
+	paid: State
+	paid_port, _ := wiring_tables_heap(256, 20)
+	state_init(&paid, paid_port)
+	for i in 0 ..< 2 {
+		_, reg_st := process_register(&paid, askers[i], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
+		testing.expect_value(t, reg_st, ws.Response_Status.Ok)
+	}
+	_, _ = process_register(&paid, writers[1], offs[0], szs[0], {.Is_Service, .Has_Wiring_Ring})
+	for _ in 0 ..< 20 {
+		w_st, _, _, _ := wire_once(&paid, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
 		testing.expect_value(t, w_st, ws.Response_Status.Ok)
 	}
-	for _ in 0 ..< output.WIRINGS_OF_AN_ASKER_MOST {
-		w_st, _, _, _ := wire_once(&s, image, askers[2], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent3[:])
-		testing.expect_value(t, w_st, ws.Response_Status.Ok)
-	}
-	testing.expect_value(t, s.wirings_running, WIRINGS_OF_THE_MACHINE_MOST)
-	st, ref, _, _ = wire_once(&s, image, askers[3], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
+	st, ref, _, _ = wire_once(&paid, image, askers[1], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
 	testing.expect_value(t, st, ws.Response_Status.No_Slot)
-	testing.expect_value(t, ref.limit, i64(WIRINGS_OF_THE_MACHINE_MOST))
+	testing.expect_value(t, errors.Kind(ref.kind), errors.Kind.Full)
+	testing.expect_value(t, ref.value, i64(21))
+	testing.expect_value(t, ref.limit, i64(20))
+	testing.expect_value(t, paid.wirings_running, 20)
+	testing.expect_value(t, paid.processes[1].wirings_asked, 0)
+	freed: [64]Stop_Action
+	freed_count, _ := revoke_asker_apply(&paid, askers[0], freed[:])
+	testing.expect_value(t, freed_count, 20)
+	st, _, _, _ = wire_once(&paid, image, askers[1], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
+	testing.expect_value(t, st, ws.Response_Status.Ok)
+
+	// A table of processes whose budget pays 2: the 3rd is refused, and the
+	// first two stay.
+	few: State
+	few_port, _ := wiring_tables_heap(2, 256)
+	state_init(&few, few_port)
+	for i in 0 ..< 2 {
+		_, reg_st := process_register(&few, askers[i], 0, 0, {.Can_Wire})
+		testing.expect_value(t, reg_st, ws.Response_Status.Ok)
+	}
+	_, reg_st := process_register(&few, askers[2], 0, 0, {.Can_Wire})
+	testing.expect_value(t, reg_st, ws.Response_Status.No_Slot)
+	_, still := process_find(&few, askers[1])
+	testing.expect(t, still, "a refused register changed a process")
 
 	// Ring room exhaustion refused with Busy when callback reports 0 room.
 	zero_room :: proc "contextless" (data: rawptr, proc_index: int) -> (u32, u32, bool) {
 		return 0, 32, true
 	}
-	actions: [WIRINGS_OF_THE_MACHINE_MOST]Stop_Action
+	actions: [64]Stop_Action
 	_, _ = revoke_asker_apply(&s, askers[2], actions[:])
 	st, ref, _, _ = wire_once(&s, image, askers[3], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:], nil, zero_room, nil)
 	testing.expect_value(t, st, ws.Response_Status.No_Slot)
@@ -408,7 +488,7 @@ stop_cleanup_notifies_peers_reclaims_slots_and_ignores_stale_serials :: proc(t: 
 	image, offs, szs := pack_image(mod)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	asker := ws.Process_Identity{1, 10}
 	writer := ws.Process_Identity{2, 20}
 	reader := ws.Process_Identity{3, 30}
@@ -425,7 +505,7 @@ stop_cleanup_notifies_peers_reclaims_slots_and_ignores_stale_serials :: proc(t: 
 	testing.expect_value(t, s.wirings_running, 1)
 
 	// Stale serial on writer's slot is completely ignored.
-	actions: [WIRINGS_OF_THE_MACHINE_MOST]Stop_Action
+	actions: [64]Stop_Action
 	stale := ws.Process_Stop_Notice{process_slot = writer.slot, process_serial = writer.serial - 1, kind = .Process_Stopped, cause = .Fault}
 	cnt, _, matched := process_stop_apply(&s, stale, actions[:])
 	testing.expect(t, !matched && cnt == 0)
@@ -495,7 +575,7 @@ unwire_enforces_asker_ownership :: proc(t: ^testing.T) {
 	image, offs, szs := pack_image(mod)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	asker1 := ws.Process_Identity{1, 10}
 	asker2 := ws.Process_Identity{2, 20}
 	writer := ws.Process_Identity{3, 30}
@@ -533,7 +613,7 @@ generic_chain_resolves_and_unfixed_generic_output_is_refused :: proc(t: ^testing
 	image, offs, szs := pack_image(mod_src, mod_relay)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	asker := ws.Process_Identity{1, 10}
 	src := ws.Process_Identity{2, 20}
 	relay := ws.Process_Identity{3, 30}
@@ -579,14 +659,14 @@ stall_revocation_edges_and_bounds :: proc(t: ^testing.T) {
 	image, offs, szs := pack_image(mod_src, mod_dst)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 
 	// Out-of-bounds and inactive slots are safe no-ops.
 	wiring_stall_observe(&s, -1, true, 0, 100)
-	wiring_stall_observe(&s, WIRINGS_OF_THE_MACHINE_MOST, true, 0, 100)
+	wiring_stall_observe(&s, len(s.wirings), true, 0, 100)
 	wiring_stall_observe(&s, max(int), true, 0, 100)
 	wiring_stall_observe(&s, 0, true, 0, 100)
-	actions: [WIRINGS_OF_THE_MACHINE_MOST]Stop_Action
+	actions: [64]Stop_Action
 	testing.expect_value(t, wiring_stall_expire(&s, STALL_HANG_BOUND_MS, actions[:]), 0)
 	_, watched_empty := wiring_stall_next_deadline(&s, 0, 1_000)
 	testing.expect(t, !watched_empty)
@@ -666,7 +746,7 @@ stall_revocation_preserves_healthy_siblings_and_non_holding_paces :: proc(t: ^te
 	image, offs, szs := pack_image(mod_src, mod_dst)
 
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	asker := ws.Process_Identity{1, 10}
 	src := ws.Process_Identity{2, 20}
 	r_stalled := ws.Process_Identity{3, 30}
@@ -727,7 +807,7 @@ stall_revocation_preserves_healthy_siblings_and_non_holding_paces :: proc(t: ^te
 	testing.expect_value(t, dl, u64(1_000 + STALL_HANG_BOUND_MS))
 
 	// At t = 61 000 ms (exact bound): ONLY slot_stalled is revoked!
-	actions: [WIRINGS_OF_THE_MACHINE_MOST]Stop_Action
+	actions: [64]Stop_Action
 	revoked := wiring_stall_expire(&s, 1_000 + STALL_HANG_BOUND_MS, actions[:])
 	testing.expect_value(t, revoked, 1)
 	testing.expect_value(t, actions[0].kind, Stop_Action_Kind.End_Wiring)
@@ -806,7 +886,7 @@ pair_machine_make :: proc(machine: ^Pair_Machine) {
 	server := build_test_module({{"Order", "amount", 8, true}}, nil, {{"orders", 1, .One}})
 	other := build_test_module({{"Other", "amount", 8, true}}, nil, {{"orders", 1, .One}})
 	machine.image, machine.offsets, machine.sizes = pack_image(shop, collector, server, other)
-	state_init(&machine.state)
+	state_init(&machine.state, wiring_tables_heap_port())
 	machine.asker = {1, 10}
 	machine.shop = {2, 20}
 	machine.collector = {3, 30}
@@ -828,7 +908,7 @@ lent_of :: proc(id: ws.Process_Identity, started_by_asker: u8 = 1) -> ws.Resolve
 // its kind, its unit, its field and its row, and that no state changed.
 @(private = "file")
 expect_pair_refused :: proc(t: ^testing.T, machine: ^Pair_Machine, rows: []output.Wiring, lent: []ws.Resolved_Lent_End, child: int, status: ws.Response_Status, kind: errors.Kind, unit: errors.Unit, field: output.Wiring_Field, row: i64, loc := #caller_location) {
-	before := machine.state
+	before := state_snapshot(&machine.state)
 	work: Plan_Work
 	got, refusal := plan_start(&machine.state, machine.image, machine.asker, rows, lent, machine.offsets[child], machine.sizes[child], &work)
 	testing.expect_value(t, got, status, loc = loc)
@@ -836,7 +916,7 @@ expect_pair_refused :: proc(t: ^testing.T, machine: ^Pair_Machine, rows: []outpu
 	testing.expect_value(t, errors.Unit(refusal.unit), unit, loc = loc)
 	testing.expect_value(t, output.Wiring_Field(refusal.argument), field, loc = loc)
 	testing.expect_value(t, refusal.found, row, loc = loc)
-	testing.expectf(t, machine.state == before, "a refused list changed the state", loc = loc)
+	testing.expectf(t, state_unchanged(&machine.state, before), "a refused list changed the state", loc = loc)
 }
 
 // Each refusal of a pair, first, with the state unchanged: a pair with no
@@ -873,14 +953,14 @@ a_pair_that_breaks_a_rule_is_refused_with_no_change :: proc(t: ^testing.T) {
 	lent_server := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.server)}
 	expect_pair_refused(t, &machine, {make_wire_row(.Started, 1, 1, .Child, 0, 1), paired_row_make(make_wire_row(.Child, 0, 1, .Started, 2, 1), 1)}, lent_server[:], 1, .Bad_Command, .Unsupported, .Wiring_Rows, .Writer_End, 2)
 	// The reader of the pair reads another record than the source.
-	before := machine.state
+	before := state_snapshot(&machine.state)
 	work: Plan_Work
 	status, refusal := plan_start(&machine.state, machine.image, machine.asker, {shop_to_collector, paired_row_make(forward_to_child, 1)}, lent[:], machine.offsets[3], machine.sizes[3], &work)
 	testing.expect_value(t, status, ws.Response_Status.Bad_Command)
 	testing.expect_value(t, errors.Unit(refusal.unit), errors.Unit.Record_Types)
 	testing.expect_value(t, output.Description_Difference(refusal.value), output.Description_Difference.Name)
 	testing.expect_value(t, refusal.found, 2)
-	testing.expect(t, machine.state == before)
+	testing.expect(t, state_unchanged(&machine.state, before))
 	// A pair with another pace than Always_Holds_Writer, which the stall
 	// bound of the wiring service does not watch: each other pace.
 	for pace in ([2]output.Wiring_Pace{.Writer_Chooses, .Never_Holds_Writer}) {
@@ -908,12 +988,12 @@ a_pair_with_no_room_in_a_wiring_ring_is_refused :: proc(t: ^testing.T) {
 	}
 	lent := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector)}
 	rows := [2]output.Wiring{make_wire_row(.Started, 1, 1, .Started, 2, 1), paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1, .Always_Holds_Writer), 1)}
-	before := machine.state
+	before := state_snapshot(&machine.state)
 	work: Plan_Work
 	status, refusal := plan_start(&machine.state, machine.image, machine.asker, rows[:], lent[:], machine.offsets[2], machine.sizes[2], &work, no_room)
 	testing.expect_value(t, status, ws.Response_Status.No_Slot)
 	testing.expect_value(t, errors.Kind(refusal.kind), errors.Kind.Busy)
-	testing.expect(t, machine.state == before)
+	testing.expect(t, state_unchanged(&machine.state, before))
 }
 
 // The pairs that pass, last: the orders of shop through the collector to
@@ -953,20 +1033,20 @@ a_paired_record_output_of_a_declared_record_is_refused :: proc(t: ^testing.T) {
 	server := build_test_module({{"Order", "amount", 8, true}}, nil, {{"orders", 1, .One}})
 	image, offsets, sizes := pack_image(shop, typed, server)
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	asker := ws.Process_Identity{1, 10}
 	_, _ = process_register(&s, asker, 0, 0, {.Can_Wire})
 	_, _ = process_register(&s, {2, 20}, offsets[0], sizes[0], {.Has_Wiring_Ring})
 	_, _ = process_register(&s, {3, 30}, offsets[1], sizes[1], {.Has_Wiring_Ring})
 	lent := [2]ws.Resolved_Lent_End{lent_of({2, 20}), lent_of({3, 30})}
 	rows := [2]output.Wiring{make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1, .Always_Holds_Writer), 1)}
-	before := s
+	before := state_snapshot(&s)
 	work: Plan_Work
 	status, refusal := plan_start(&s, image, asker, rows[:], lent[:], offsets[2], sizes[2], &work)
 	testing.expect_value(t, status, ws.Response_Status.Bad_Command)
 	testing.expect_value(t, output.Wiring_Field(refusal.argument), output.Wiring_Field.Writer_Index)
 	testing.expect_value(t, refusal.found, 2)
-	testing.expect(t, s == before)
+	testing.expect(t, state_unchanged(&s, before))
 }
 
 // The fact of the audit of a wide grant: the core names a writer that the
@@ -979,7 +1059,7 @@ the_fact_of_an_audit_opens_one_row_only :: proc(t: ^testing.T) {
 	mod := build_test_module({{"Item", "x", 8, true}}, {{"out", 1, .One}}, {{"in_many", 1, .Many}})
 	image, offs, szs := pack_image(mod)
 	s: State
-	state_init(&s)
+	state_init(&s, wiring_tables_heap_port())
 	collector := ws.Process_Identity{1, 1}
 	writer := ws.Process_Identity{2, 2}
 	other := ws.Process_Identity{3, 3}

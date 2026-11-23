@@ -83,7 +83,7 @@ The fixed starters of the display, the input and the terminal become role grants
 Built:
 
 - The contract package `src/library/modus/contract/wiring_service/` (`Command`, `Response`, `Process_Stop_Notice`, `Attenuated_Grant_Kind`, and shared-region request/response records with strict borders and host tests).
-- The pure wiring state machine `src/library/internal/wiring/wiring_core/` (record-type equality, generic stream resolution, duplicate and cycle detection, capacity bounds, unwire/revocation, and stop cleanup with host tests).
+- The pure wiring state machine `src/library/internal/wiring/wiring_core/` (record-type equality, generic stream resolution, duplicate and cycle detection, the tables of its processes and its wirings, which grow in arenas of its budget with no fixed count (`src/md/features/module_outputs.md`, "The bounds of the wirings"), unwire/revocation, and stop cleanup with host tests).
 - The delegated `wiring` service (`src/modules/system/wiring/`, 948 lines), registered with `{.System_Part}` in `start_grant_sets.odin` and holding only its attenuated grants (core ring, `stops` ring, read-only boot image, shared transfer region, per-asker `Spend`-only child wiring budgets, and per-process `Give`-only process tokens plus wiring rings).
 - The root service core bridge (`src/modules/system/root/wirings.odin` reduced from 1 577 to 952 lines; `src/modules/system/root/` reduced from 14 780 to 14 031 lines, net -749 lines): starts `wiring` on demand, emits `Process_Stop_Notice` records on `stops` at reap and release, supplies attenuated grants, and drives wiring requests asynchronously from `root_loop_pass`.
 

@@ -46,13 +46,57 @@ host_output_ring_destroy :: proc(allocated: ^Host_Output_Ring) {
 	allocated^ = {}
 }
 
+// The places of the table of the ends in a host test: from the start, and
+// at most.
+@(private = "file")
+HOST_STREAM_ENDS_FIRST :: 16
+@(private = "file")
+HOST_STREAM_ENDS_MOST :: 64
+
+// The table of the ends has no count: past 16, a 17th place and up to 64
+// grow it, one at a time, at the same address, each new place free; with
+// the budget at 64 places, a 65th is refused and nothing changes; a place
+// that frees is taken again with no growth.
+@(test)
+the_table_of_the_ends_grows_with_the_budget :: proc(t: ^testing.T) {
+	wiring_memory := host_stream_seam_begin(t)
+	defer host_stream_seam_end(wiring_memory)
+	base := raw_data(stream_ends)
+	for &end in stream_ends {
+		end.command = .Reader_End
+	}
+	for count in HOST_STREAM_ENDS_FIRST + 1 ..= HOST_STREAM_ENDS_MOST {
+		place := stream_end_free_place()
+		testing.expectf(t, place != nil, "the place %d is not given", count)
+		if place == nil {
+			return
+		}
+		testing.expect_value(t, place.command, output.Wiring_Command.None)
+		place.command = .Reader_End
+		testing.expect_value(t, len(stream_ends), count)
+		testing.expect_value(t, len(closed_tags), count)
+		testing.expect(t, raw_data(stream_ends) == base, "the table moved")
+	}
+	testing.expect(t, stream_end_free_place() == nil, "a place past the budget is given")
+	testing.expect_value(t, len(stream_ends), HOST_STREAM_ENDS_MOST)
+	stream_ends[40].command = .None
+	testing.expect(t, stream_end_free_place() == &stream_ends[40], "a free place is not taken again")
+	testing.expect_value(t, len(stream_ends), HOST_STREAM_ENDS_MOST)
+}
+
 // Resets all package-level stream_ends state and attaches an empty host wiring
 // ring so Closed completions sent by stream_end_finish can be inspected.
 @(private = "file")
 host_stream_seam_begin :: proc(t: ^testing.T) -> (wiring_memory: []u64) {
 	sync.mutex_lock(&host_stream_seam_mutex)
-	stream_ends = {}
-	closed_tags = {}
+	// The table of the ends in host memory: 16 places from the start, as a
+	// test that seeds a place needs, and room to grow to 64.
+	stream_ends_host_backing = make([]Stream_End, HOST_STREAM_ENDS_MOST)
+	closed_tags_host_backing = make([]u32, HOST_STREAM_ENDS_MOST)
+	stream_ends_host_paid = HOST_STREAM_ENDS_MOST
+	stream_end_table = {count = HOST_STREAM_ENDS_FIRST}
+	stream_ends = stream_ends_host_backing[:HOST_STREAM_ENDS_FIRST]
+	closed_tags = closed_tags_host_backing[:HOST_STREAM_ENDS_FIRST]
 	closed_tag_count = 0
 	wiring_ring = {}
 	wiring_memory = make([]u64, ring.PAGE_COUNT * ring.PAGE_SIZE / size_of(u64))
@@ -66,9 +110,13 @@ host_stream_seam_begin :: proc(t: ^testing.T) -> (wiring_memory: []u64) {
 @(private = "file")
 host_stream_seam_end :: proc(wiring_memory: []u64) {
 	stream_ends_host_seam_active = false
-	stream_ends = {}
-	closed_tags = {}
+	stream_ends = nil
+	closed_tags = nil
 	closed_tag_count = 0
+	stream_end_table = {}
+	delete(stream_ends_host_backing)
+	delete(closed_tags_host_backing)
+	stream_ends_host_backing, closed_tags_host_backing, stream_ends_host_paid = nil, nil, 0
 	wiring_ring = {}
 	sync.mutex_unlock(&host_stream_seam_mutex)
 	delete(wiring_memory)

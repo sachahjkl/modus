@@ -75,7 +75,7 @@ Wrong_Budget :: struct {
 
 // Each refusal of the root service, each with its status, its error record
 // and the budget unchanged.
-@(log_fact = "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must")
+@(log_fact = "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input and a condition on no field: refused, each with its status and its error record and the budget unchanged: as it must")
 Refusals_Checked :: struct {}
 
 // A record of filter.kept is not the next probe of mark 1 of its side.

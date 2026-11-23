@@ -36,7 +36,9 @@ import "modus:system"
 // One thread serves SERVICE_RING, SERVICE_STOPS_RING, and mapped process
 // wiring rings. All stream rings, end pages, terms pages, description files,
 // and list pages are paid from each asker's child wiring budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
+// Its tables grow in arenas of this budget as processes and wirings come
+// (wiring_tables.odin): 64 pages hold hundreds of each.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, processes = 1, threads = 1}
 
 // Stall bound in wiring_core must stay identical to the system hang bound.
 #assert(wiring_core.STALL_HANG_BOUND_MS == system.TEST_HANG_BOUND_MILLISECONDS)
@@ -60,6 +62,7 @@ Process_Handles :: struct {
 	asker_budget:         system.Handle, // Child wiring budget (Spend only).
 	list_memory:          system.Handle, // Asker's list page, paid from asker_budget.
 	unknown_wiring_words: u64,
+	had_wirings:          bool, // The process held wirings that it asked before the pass: its emptying is told once.
 }
 
 // Transient memory handles made for one row before delivery completes.
@@ -87,10 +90,14 @@ image: []u8
 region: []u8
 
 state: wiring_core.State
-process_handles: [wiring_core.PROCESS_CAPACITY]Process_Handles
-wiring_end_memory: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]system.Handle
-wiring_ring_memory: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]system.Handle
-wiring_ring_capacity: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]u32
+// The tables beside the tables of state, one entry for each process and for
+// each wiring, which grow with them (wiring_tables.odin).
+process_handles: []Process_Handles
+wiring_end_memory: []system.Handle
+wiring_ring_memory: []system.Handle
+wiring_ring_capacity: []u32
+// The actions of a revocation or of a stop: one for each wiring at most.
+stop_actions: []wiring_core.Stop_Action
 
 // Private copies of shared region payloads so no byte is read twice from
 // shared memory, plus scratch buffers for description files and plans.
@@ -140,7 +147,7 @@ close_row_objects :: proc "contextless" (obj: ^Row_Objects, keep_end := false, k
 
 @(private = "file")
 wiring_slot_handles_close :: proc "contextless" (slot: int) {
-	if slot < 0 || slot >= wiring_core.WIRINGS_OF_THE_MACHINE_MOST {
+	if slot < 0 || slot >= len(state.wirings) {
 		return
 	}
 	close_handle(&wiring_end_memory[slot])
@@ -150,7 +157,7 @@ wiring_slot_handles_close :: proc "contextless" (slot: int) {
 
 @(private = "file")
 end_words_write_and_wake :: proc "contextless" (wiring_slot: int, end_word: output.End_Word, cause: op.Stop_Cause = .None, outcome: op.Stop_Outcome = .None) {
-	if end_word == .None || wiring_slot < 0 || wiring_slot >= wiring_core.WIRINGS_OF_THE_MACHINE_MOST {
+	if end_word == .None || wiring_slot < 0 || wiring_slot >= len(state.wirings) {
 		return
 	}
 	end_mem := wiring_end_memory[wiring_slot]
@@ -170,7 +177,7 @@ end_words_write_and_wake :: proc "contextless" (wiring_slot: int, end_word: outp
 
 @(private = "file")
 wiring_ring_hold :: proc "contextless" (proc_idx: int, drop_stale: bool = true) -> system.Status {
-	if proc_idx < 0 || proc_idx >= wiring_core.PROCESS_CAPACITY {
+	if proc_idx < 0 || proc_idx >= len(state.processes) {
 		return .Bad_Handle
 	}
 	ph := &process_handles[proc_idx]
@@ -197,7 +204,7 @@ wiring_ring_hold :: proc "contextless" (proc_idx: int, drop_stale: bool = true) 
 
 @(private = "file")
 wiring_rings_let_go :: proc "contextless" () {
-	for idx in 0 ..< wiring_core.PROCESS_CAPACITY {
+	for idx in 0 ..< len(state.processes) {
 		ph := &process_handles[idx]
 		entry := &state.processes[idx]
 		if ph.wiring_ring.head != nil && (!entry.active || entry.ends_given - entry.log_ends_given <= 0) {
@@ -209,7 +216,7 @@ wiring_rings_let_go :: proc "contextless" () {
 @(private = "file")
 ring_room_callback :: proc "contextless" (data: rawptr, proc_idx: int) -> (available: u32, capacity: u32, has_ring: bool) {
 	_ = data
-	if proc_idx < 0 || proc_idx >= wiring_core.PROCESS_CAPACITY {
+	if proc_idx < 0 || proc_idx >= len(state.processes) {
 		return 0, 0, false
 	}
 	ph := &process_handles[proc_idx]
@@ -271,7 +278,7 @@ image_module_name :: proc "contextless" (offset, size: u64) -> string {
 writer_names :: proc "contextless" (plan: ^wiring_core.Row_Plan, child_offset, child_size: u64) -> (source: string, output_name: string) {
 	offset, size := child_offset, child_size
 	if plan.writer_index != wiring_core.CHILD_PROCESS_INDEX {
-		if plan.writer_index < 0 || plan.writer_index >= wiring_core.PROCESS_CAPACITY || !state.processes[plan.writer_index].active {
+		if plan.writer_index < 0 || plan.writer_index >= len(state.processes) || !state.processes[plan.writer_index].active {
 			return "", ""
 		}
 		offset, size = state.processes[plan.writer_index].module_offset, state.processes[plan.writer_index].module_size
@@ -387,7 +394,7 @@ process_stop_pending :: proc "contextless" (id: ws.Process_Identity) -> bool {
 // up any half-delivered handles.
 @(private = "file")
 wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> system.Status {
-	if proc_idx < 0 || proc_idx >= wiring_core.PROCESS_CAPACITY || !state.processes[proc_idx].active {
+	if proc_idx < 0 || proc_idx >= len(state.processes) || !state.processes[proc_idx].active {
 		return .Bad_Handle
 	}
 	ph := &process_handles[proc_idx]
@@ -674,7 +681,7 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	slot, number, alloc_ok := wiring_core.wiring_slot_allocate(&state, asker_idx, plan)
 	if !alloc_ok {
 		close_row_objects(&obj, keep_end = false)
-		rec := errors.error_make(.Full, .Wirings, 0, i64(state.wirings_running + 1), wiring_core.WIRINGS_OF_THE_MACHINE_MOST)
+		rec := errors.error_make(.Full, .Wirings, 0, i64(state.wirings_running + 1), i64(len(state.wirings)))
 		rec.operation = i64(op_code)
 		return {status = .No_Slot, tag = cmd.tag, error_record = rec}
 	}
@@ -754,7 +761,7 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 		if !alloc_ok {
 			close_row_objects(obj, keep_end = false)
 			abort_prepared_batch()
-			rec := errors.error_make(.Full, .Wirings, 0, i64(state.wirings_running + 1), wiring_core.WIRINGS_OF_THE_MACHINE_MOST)
+			rec := errors.error_make(.Full, .Wirings, 0, i64(state.wirings_running + 1), i64(len(state.wirings)))
 			rec.operation = i64(op_code)
 			return {status = .No_Slot, tag = cmd.tag, error_record = rec}
 		}
@@ -938,8 +945,8 @@ handle_unwire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 
 @(private = "file")
 handle_revoke_asker :: proc "contextless" (cmd: ws.Command) -> ws.Response {
-	actions: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]wiring_core.Stop_Action
-	count, found := wiring_core.revoke_asker_apply(&state, cmd.process, actions[:])
+	actions := stop_actions
+	count, found := wiring_core.revoke_asker_apply(&state, cmd.process, actions)
 	if !found {
 		return {status = .Ok, tag = cmd.tag, ended_count = 0}
 	}
@@ -980,14 +987,14 @@ handle_query :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 
 @(private = "file")
 stops_drain :: proc "contextless" () {
-	actions: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]wiring_core.Stop_Action
+	actions := stop_actions
 	for record in system.receive(&stops_ring.commands) {
 		notice, ok := ws.stop_notice_from_record(record)
 		if !ok {
 			system.log_fact(.Warning, Stop_Notice_Refused{notice_kind = u64(record.kind)})
 			continue
 		}
-		count, proc_idx, matched := wiring_core.process_stop_apply(&state, notice, actions[:])
+		count, proc_idx, matched := wiring_core.process_stop_apply(&state, notice, actions)
 		if !matched {
 			continue
 		}
@@ -1014,16 +1021,16 @@ stops_drain :: proc "contextless" () {
 }
 
 @(private = "file")
-asker_wirings_snapshot :: proc "contextless" (had: ^[wiring_core.PROCESS_CAPACITY]bool) {
-	for i in 0 ..< wiring_core.PROCESS_CAPACITY {
-		had[i] = state.processes[i].active && state.processes[i].wirings_asked > 0
+asker_wirings_snapshot :: proc "contextless" () {
+	for i in 0 ..< len(state.processes) {
+		process_handles[i].had_wirings = state.processes[i].active && state.processes[i].wirings_asked > 0
 	}
 }
 
 @(private = "file")
-asker_wirings_notify_emptied :: proc "contextless" (had: ^[wiring_core.PROCESS_CAPACITY]bool) {
-	for i in 0 ..< wiring_core.PROCESS_CAPACITY {
-		if had[i] && state.processes[i].active && state.processes[i].wirings_asked == 0 {
+asker_wirings_notify_emptied :: proc "contextless" () {
+	for i in 0 ..< len(state.processes) {
+		if process_handles[i].had_wirings && state.processes[i].active && state.processes[i].wirings_asked == 0 {
 			_ = system.send(&core_ring.completions, ws.asker_wirings_empty_to_record(state.processes[i].id))
 		}
 	}
@@ -1031,7 +1038,7 @@ asker_wirings_notify_emptied :: proc "contextless" (had: ^[wiring_core.PROCESS_C
 
 @(private = "file")
 process_completions_drain :: proc "contextless" () {
-	for proc_idx in 0 ..< wiring_core.PROCESS_CAPACITY {
+	for proc_idx in 0 ..< len(state.processes) {
 		ph := &process_handles[proc_idx]
 		if !state.processes[proc_idx].active || ph.wiring_ring.head == nil {
 			continue
@@ -1151,7 +1158,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	region = ([^]u8)(reg_addr)[:ws.SERVICE_REGION_SIZE]
 
-	wiring_core.state_init(&state)
+	wiring_core.state_init(&state, wiring_tables_reserve()) // wiring_tables.odin
 	system.log_fact(.Info, Ready{image_bytes = image_size})
 
 	for {
@@ -1160,18 +1167,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// stops_drain so a short-lived child that exits immediately after start
 		// commits its wiring batch before its stop notice unregisters it.
 		core_commands_serve()
-		had_wirings: [wiring_core.PROCESS_CAPACITY]bool
-		asker_wirings_snapshot(&had_wirings)
+		asker_wirings_snapshot()
 		stops_drain()
 		process_completions_drain()
 		wiring_rings_let_go()
 		stall_rings_check()
-		asker_wirings_notify_emptied(&had_wirings)
+		asker_wirings_notify_emptied()
 
 		system.wait_records(&wait, &stops_ring.commands)
 		system.wait_records(&wait, &core_ring.commands)
 		waited_rings := 0
-		for proc_idx in 0 ..< wiring_core.PROCESS_CAPACITY {
+		for proc_idx in 0 ..< len(state.processes) {
 			if waited_rings >= WIRING_WAITED_RINGS_MOST {
 				break
 			}
@@ -1196,7 +1202,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 @(private = "file")
 stall_rings_check :: proc "contextless" () {
 	now_ms := system.time()
-	for slot in 0 ..< wiring_core.WIRINGS_OF_THE_MACHINE_MOST {
+	for slot in 0 ..< len(state.wirings) {
 		kept := &state.wirings[slot]
 		if !kept.active || !kept.asked_counted || kept.pace != .Always_Holds_Writer {
 			continue
@@ -1217,8 +1223,8 @@ stall_rings_check :: proc "contextless" () {
 		ring_full := (write - read) >= capacity
 		wiring_core.wiring_stall_observe(&state, slot, ring_full, read, now_ms)
 	}
-	actions: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]wiring_core.Stop_Action
-	revoked := wiring_core.wiring_stall_expire(&state, now_ms, actions[:])
+	actions := stop_actions
+	revoked := wiring_core.wiring_stall_expire(&state, now_ms, actions)
 	for i in 0 ..< revoked {
 		act := actions[i]
 		end_words_write_and_wake(act.wiring_slot, act.end_word)

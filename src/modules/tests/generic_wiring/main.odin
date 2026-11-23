@@ -302,17 +302,6 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		status, answer := start_listed("merge", true)
 		refused("a condition on merge.merged that names no field", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Field), PROBE_FIELDS + 1, PROBE_FIELDS, 3))
 	}
-	// 4. One wiring past those that an asker holds: nine sources.
-	{
-		handles := [1]u32{lend(source)}
-		rows: [output.WIRINGS_OF_AN_ASKER_MOST + 1]output.Wiring
-		for &each in rows {
-			each = row(.Started, 1, SOURCE_LEFT, .Child, 0, MERGE_SOURCES)
-		}
-		list_write(rows[:], handles[:])
-		status, answer := start_listed("merge", true)
-		refused("one source past the wirings of an asker", before, status, answer, .No_Slot, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
-	}
 	system.log_fact(.Info, Refusals_Checked{})
 }
 

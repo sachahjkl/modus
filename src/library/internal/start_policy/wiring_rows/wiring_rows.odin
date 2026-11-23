@@ -58,7 +58,7 @@ row_has_wirings :: proc "contextless" (list: ^start_list.List, writer: int) -> b
 // lends readers[n] at the place n + 1. absent is the first reader row that
 // does not run, and then count is 0. With no wiring row, count is 0 and
 // absent is -1.
-readers_of_row :: proc "contextless" (list: ^start_list.List, writer: int, running: []bool, readers: ^[start_list.WIRING_ROW_CAPACITY]int) -> (count: int, absent: int) {
+readers_of_row :: proc "contextless" (list: ^start_list.List, writer: int, running: []bool, readers: ^[output.WIRING_LIST_ROW_LIMIT]int) -> (count: int, absent: int) {
 	for &wiring_row in list.wirings[:list.wiring_count] {
 		if wiring_row.writer_row != writer {
 			continue
@@ -72,7 +72,10 @@ readers_of_row :: proc "contextless" (list: ^start_list.List, writer: int, runni
 		for earlier in readers[:count] {
 			known ||= earlier == reader
 		}
-		if !known {
+		// The rows of one writer are the list of its start, one command:
+		// a reader past the room of a list stays out, and list_of_row then
+		// writes no list for the row.
+		if !known && count < len(readers) {
 			readers[count] = reader
 			count += 1
 		}
@@ -91,8 +94,8 @@ list_of_row :: proc "contextless" (list: ^start_list.List, writer: int, readers:
 	if len(handles) != len(readers) {
 		return 0, false
 	}
-	written: [start_list.WIRING_ROW_CAPACITY]output.Wiring
-	terms_of: [start_list.WIRING_ROW_CAPACITY]int // The wiring row of each written row.
+	written: [output.WIRING_LIST_ROW_LIMIT]output.Wiring
+	terms_of: [output.WIRING_LIST_ROW_LIMIT]int // The wiring row of each written row.
 	for &wiring_row, row_index in list.wirings[:list.wiring_count] {
 		if wiring_row.writer_row != writer {
 			continue
@@ -104,7 +107,7 @@ list_of_row :: proc "contextless" (list: ^start_list.List, writer: int, readers:
 				break
 			}
 		}
-		if place < 0 {
+		if place < 0 || rows >= len(written) {
 			return 0, false
 		}
 		written[rows] = wiring_row.wiring
@@ -142,7 +145,7 @@ list_of_row :: proc "contextless" (list: ^start_list.List, writer: int, readers:
 // a list that does not fit, leave in page the way back of the numbers
 // already lent. The page is cleared before each list.
 row_list_prepare :: proc "contextless" (list: ^start_list.List, writer: int, running: []bool, page: []u8, lend: Lend) -> Prepared {
-	readers: [start_list.WIRING_ROW_CAPACITY]int
+	readers: [output.WIRING_LIST_ROW_LIMIT]int
 	count, absent := readers_of_row(list, writer, running, &readers)
 	if absent >= 0 {
 		return {outcome = .Reader_Not_Running, reader_row = u32(absent + 1), status = .Ok}
@@ -150,7 +153,7 @@ row_list_prepare :: proc "contextless" (list: ^start_list.List, writer: int, run
 	if count == 0 {
 		return {outcome = .No_List, status = .Ok}
 	}
-	handles: [start_list.WIRING_ROW_CAPACITY]u32
+	handles: [output.WIRING_LIST_ROW_LIMIT]u32
 	prepared := Prepared{outcome = .Listed, status = .Ok}
 	lent := 0
 	for reader in readers[:count] {
