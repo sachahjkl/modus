@@ -19,10 +19,6 @@ SITE_GLOSSARY_SCRIPT :: "glossary.js"
 // became one page for each group.
 SITE_GLOSSARY_PAGE_BYTE_LIMIT :: 1_000_000
 
-// The attribute of a row of the index that names the page of the group of
-// its term, relative to the index: the script reads it.
-SITE_GLOSSARY_GROUP_PAGE_ATTRIBUTE :: "data-group-page"
-
 // site_glossary_group_page gives the page of a group: a folder under the
 // glossary, named by the slug of the heading of the group.
 site_glossary_group_page :: proc(group_id: string) -> string {
@@ -186,12 +182,12 @@ site_glossary_letter_id :: proc(letter: string) -> string {
 
 // site_glossary_index_write writes the index of the glossary: the
 // introduction of the file, how to find a term, the groups with their
-// counts, then every term from A to Z with its short definition. A reader
-// looks for a word, so the order is the order of the words; the group of
-// each term is a dim label. Each row has the anchor of its term, as the
+// counts, then every term from A to Z as a compact row (name, link to its
+// entry on the page of its group, and group as a dim label) with no
+// repeated short definition. Each row keeps the anchor of its term, as the
 // entry on the page of the group has: an address of an entry that names the
 // index, from before the split, finds the row with no script, and the
-// script of the page goes on to the entry.
+// script of the page follows the link of the row to the entry.
 site_glossary_index_write :: proc(site: ^Site, index_page: string) -> string {
 	glossary := site.glossary
 	renderer := site_renderer_make(site, index_page, build.GLOSSARY_INDEX_FILE)
@@ -246,23 +242,21 @@ site_glossary_index_write :: proc(site: ^Site, index_page: string) -> string {
 		letter := site_glossary_letter(term.name)
 		if letter != current_letter {
 			if current_letter != "" {
-				strings.write_string(b, "</dl>\n")
+				strings.write_string(b, "</ul>\n")
 			}
 			letter_id := site_unique_id(&renderer, site_glossary_letter_id(letter))
-			fmt.sbprintf(b, "<h3 id=\"%s\">%s</h3>\n<dl class=\"glossary-index\">\n", letter_id, letter)
+			fmt.sbprintf(b, "<h3 id=\"%s\">%s</h3>\n<ul class=\"glossary-index\">\n", letter_id, letter)
 			current_letter = letter
 		}
 		group_link := site_page_link(site, index_page, site_glossary_group_page(term.group_id))
-		fmt.sbprintf(b, "<div id=\"%s\" %s=\"%s\">\n<dt><a href=\"%s#%s\">", term.id, SITE_GLOSSARY_GROUP_PAGE_ATTRIBUTE, group_link, group_link, term.id)
+		fmt.sbprintf(b, "<li id=\"%s\"><a href=\"%s#%s\">", term.id, group_link, term.id)
 		foundation.html_escape(b, term.name)
 		strings.write_string(b, "</a> <span class=\"glossary-index-group\">")
 		foundation.html_escape(b, term.group)
-		strings.write_string(b, "</span></dt>\n<dd>")
-		site_render_inline(&renderer, term.definition)
-		strings.write_string(b, "</dd>\n</div>\n")
+		strings.write_string(b, "</span></li>\n")
 	}
 	if current_letter != "" {
-		strings.write_string(b, "</dl>\n")
+		strings.write_string(b, "</ul>\n")
 	}
 	strings.write_string(b, "</article>\n")
 	return strings.to_string(renderer.builder)
@@ -309,7 +303,7 @@ site_glossary_pages_add :: proc(site: ^Site) -> Site_Reference_Entry {
 		site_page_add(site, Site_Page{path = path, title = fmt.tprintf("%s: %s", title, group.name), description = description, section = .Reference, crumbs = group_crumbs[:], body = strings.to_string(b), sources = site_sources(group.file), layout = .Documentation})
 	}
 
-	description := site_description_cut(fmt.tprintf("The %d terms of %s from A to Z: one term for each concept, with its short definition and a link to its entry in one of the %d groups.", term_count, SITE_SYSTEM_NAME, len(glossary.groups)))
+	description := site_description_cut(fmt.tprintf("The %d terms of %s from A to Z: each term with its group and a link to its entry on the page of one of the %d groups.", term_count, SITE_SYSTEM_NAME, len(glossary.groups)))
 	site_page_add(site, Site_Page{path = index_page, title = title, description = description, section = .Reference, crumbs = site_crumbs(.Reference), body = site_glossary_index_write(site, index_page), sources = site_sources(build.GLOSSARY_INDEX_FILE), layout = .Documentation, script = SITE_GLOSSARY_SCRIPT})
 	return Site_Reference_Entry{path = index_page, title = title, what = "Each term of the project: its definition, what it is for, and how it works. A term on another page links here.", source = build.GLOSSARY_INDEX_FILE, count = term_count, kind = .Term}
 }
@@ -342,9 +336,9 @@ site_glossary_problems :: proc(site: ^Site, written: map[string]string) -> []str
 			if count := strings.count(index_html, id_attribute); count != 1 {
 				append(&problems, fmt.tprintf("%s: %d elements with the id %s; the index has one row for each term", index_page, count, term.id))
 			}
-			row := fmt.tprintf("<div id=\"%s\" %s=\"%s\">", term.id, SITE_GLOSSARY_GROUP_PAGE_ATTRIBUTE, group_link)
+			row := fmt.tprintf("<li id=\"%s\"><a href=\"%s#%s\">", term.id, group_link, term.id)
 			if !strings.contains(index_html, row) {
-				append(&problems, fmt.tprintf("%s: the row of the term %q does not name the page of its group, %s", index_page, term.name, group_link))
+				append(&problems, fmt.tprintf("%s: the row of the term %q does not link to its entry on the page of its group, %s#%s", index_page, term.name, group_link, term.id))
 			}
 			if count := strings.count(group_html, id_attribute); count != 1 {
 				append(&problems, fmt.tprintf("%s: %d elements with the id %s; the page of the group %q has the entry of each of its terms once", group_page, count, term.id, group.name))
@@ -356,11 +350,10 @@ site_glossary_problems :: proc(site: ^Site, written: map[string]string) -> []str
 
 // site_glossary_script gives the script of the index of the glossary. An
 // address of an entry that names the index (a link of another site, a page
-// in a cache, a search engine) finds the row of the term, whose attribute
-// names the page of its group: the script goes there, with the same anchor,
-// and replaces the address in the history, so that "back" does not come
-// again to the index. A row is data in the page: the script needs no second
-// file.
+// in a cache, a search engine) finds the row of the term, reads the link
+// to its entry on the page of its group, and replaces the address in the
+// history, so that "back" does not come again to the index. A row holds
+// its own link: the script needs no second file and no duplicate attribute.
 site_glossary_script :: proc() -> string {
 	return `// The glossary is one page for each group. An address of an entry at
 // the index goes to the entry on the page of its group.
@@ -381,9 +374,10 @@ site_glossary_script :: proc() -> string {
     if (!row) {
       return;
     }
-    var page = row.getAttribute("` + SITE_GLOSSARY_GROUP_PAGE_ATTRIBUTE + `");
-    if (page) {
-      window.location.replace(page + hash);
+    var link = row.querySelector("a[href]");
+    var target = link ? link.getAttribute("href") : "";
+    if (target) {
+      window.location.replace(target);
     }
   }
   follow();

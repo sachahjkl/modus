@@ -166,16 +166,15 @@ a.term { text-decoration-style: dotted; text-decoration-thickness: 1px; }
 .glossary-group-place, .glossary-count, .glossary-index-group { color: var(--dim); }
 .glossary-count, .glossary-index-group { font-family: var(--mono); font-size: 12px; }
 /* The index: the letters as one line of square buttons, then each term
-   with its group as a dim label and its short definition under it. */
+   as a compact row with its link and its group as a dim label. */
 .glossary-groups { columns: 2 240px; }
 .glossary-letters { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; }
 .glossary-letters a { display: inline-block; min-width: 24px; line-height: 24px; text-align: center; background: var(--track); text-decoration: none; font-family: var(--mono); }
-.glossary-index { margin: 0 0 16px; }
-.glossary-index > div { padding: 4px 0; border-top: 1px solid var(--track); }
-.glossary-index > div:target { background: var(--track); }
-.glossary-index dt { font-weight: 700; }
+.glossary-index { list-style: none; padding: 0; margin: 0 0 16px; columns: 2 280px; column-gap: 24px; }
+.glossary-index > li { margin: 0; padding: 4px 0; border-top: 1px solid var(--track); break-inside: avoid; }
+.glossary-index > li:target { background: var(--track); }
+.glossary-index > li > a { font-weight: 700; }
 .glossary-index-group { font-weight: 400; margin-left: 8px; }
-.glossary-index dd { margin: 0 0 0 16px; }
 .term-definition { border-left: 2px solid var(--line); padding-left: 16px; font-weight: 600; }
 .term-avoided { color: var(--dim); }
 .term-avoided-label { font-weight: 700; margin-right: 8px; }

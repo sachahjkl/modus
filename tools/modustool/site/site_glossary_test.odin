@@ -267,24 +267,25 @@ site_glossary_pages_split_by_group :: proc(t: ^testing.T) {
 	testing.expect(t, len(index_reference) == 1 && !index_reference[0].resolved, fmt.tprintf("%v", index_reference))
 
 	// The two terms of one name keep their two anchors, each on the page
-	// of its group, and both are rows of the index.
+	// of its group, and both are compact rows of the index.
 	index_html := written[index_page]
 	testing.expect_value(t, strings.count(written[network_page], " id=\"term-frame\""), 1)
 	testing.expect_value(t, strings.count(written[desktop_page], " id=\"term-frame-2\""), 1)
 	testing.expect_value(t, strings.count(written[desktop_page], " id=\"term-frame\""), 0)
-	testing.expect(t, strings.contains(index_html, "<div id=\"term-frame\" data-group-page=\"../../../docs/reference/glossary/network/index.html\">"), index_html)
-	testing.expect(t, strings.contains(index_html, "<div id=\"term-frame-2\" data-group-page=\"../../../docs/reference/glossary/desktop/index.html\">"), index_html)
+	testing.expect(t, strings.contains(index_html, "<li id=\"term-frame\"><a href=\"../../../docs/reference/glossary/network/index.html#term-frame\">Frame</a> <span class=\"glossary-index-group\">Network</span></li>"), index_html)
+	testing.expect(t, strings.contains(index_html, "<li id=\"term-frame-2\"><a href=\"../../../docs/reference/glossary/desktop/index.html#term-frame-2\">Frame</a> <span class=\"glossary-index-group\">Desktop</span></li>"), index_html)
 	// The index lists every term once, the short names too, from A to Z,
-	// each with its group as a label.
-	testing.expect_value(t, strings.count(index_html, "<div id=\"term-"), 4)
-	frame := strings.index(index_html, "<div id=\"term-frame\"")
-	ip := strings.index(index_html, "<div id=\"term-ip\"")
-	window := strings.index(index_html, "<div id=\"term-window\"")
+	// without repeating short definitions.
+	testing.expect_value(t, strings.count(index_html, "<li id=\"term-"), 4)
+	testing.expect(t, !strings.contains(index_html, "<dd>"), index_html)
+	testing.expect(t, !strings.contains(index_html, "The bytes that a device sends at once."), index_html)
+	frame := strings.index(index_html, "<li id=\"term-frame\"")
+	ip := strings.index(index_html, "<li id=\"term-ip\"")
+	window := strings.index(index_html, "<li id=\"term-window\"")
 	testing.expect(t, frame >= 0 && frame < ip && ip < window, index_html)
 	testing.expect(t, strings.contains(index_html, "<h3 id=\"letter-f\">F</h3>"), index_html)
 	testing.expect(t, strings.contains(index_html, "<span class=\"glossary-index-group\">Desktop</span>"), index_html)
-	// No definition of the index links a term: a link to a term never
-	// names the index.
+	// No word of the index links a term through class="term": each row is the link.
 	testing.expect(t, !strings.contains(index_html, "class=\"term\""), index_html)
 	// The groups with their counts.
 	testing.expect(t, strings.contains(index_html, "<a href=\"../../../docs/reference/glossary/network/index.html\">Network</a> <span class=\"glossary-count\">2 terms</span>"), index_html)
@@ -297,10 +298,10 @@ site_glossary_pages_split_by_group :: proc(t: ^testing.T) {
 	}
 
 	// The check finds an index row that is missing, a row twice, a row
-	// that names another page and an entry that is missing.
+	// whose link names another page and an entry that is missing.
 	missing_row, _ := strings.replace_all(index_html, " id=\"term-window\"", "", context.temp_allocator)
-	twice := strings.concatenate({index_html, "<div id=\"term-ip\"></div>"}, context.temp_allocator)
-	wrong_page, _ := strings.replace_all(index_html, "<div id=\"term-window\" data-group-page=\"../../../docs/reference/glossary/desktop/index.html\">", "<div id=\"term-window\" data-group-page=\"../../../docs/reference/glossary/network/index.html\">", context.temp_allocator)
+	twice := strings.concatenate({index_html, "<li id=\"term-ip\"></li>"}, context.temp_allocator)
+	wrong_page, _ := strings.replace_all(index_html, "<li id=\"term-window\"><a href=\"../../../docs/reference/glossary/desktop/index.html#term-window\">", "<li id=\"term-window\"><a href=\"../../../docs/reference/glossary/network/index.html#term-window\">", context.temp_allocator)
 	for broken_index in ([]string{missing_row, twice, wrong_page}) {
 		broken := make(map[string]string, context.temp_allocator)
 		for path, html in written {
@@ -326,47 +327,55 @@ site_glossary_pages_split_by_group :: proc(t: ^testing.T) {
 	testing.expect(t, len(site_glossary_problems(&site, too_large)) > 0)
 }
 
-// The script of the index: it reads the anchor of a term, finds its row and
-// goes to the page that the row names, with the same anchor.
+// The script of the index: it reads the anchor of a term, finds its row,
+// reads the href of its link and replaces the address in the history.
 @(test)
 site_glossary_script_follows_the_row :: proc(t: ^testing.T) {
 	script := site_glossary_script()
-	testing.expect(t, strings.contains(script, "getAttribute(\"" + SITE_GLOSSARY_GROUP_PAGE_ATTRIBUTE + "\")"))
+	testing.expect(t, strings.contains(script, "querySelector(\"a[href]\")"))
+	testing.expect(t, strings.contains(script, "getAttribute(\"href\")"))
 	testing.expect(t, strings.contains(script, "\"#term-\""))
-	testing.expect(t, strings.contains(script, "location.replace(page + hash)"))
+	testing.expect(t, strings.contains(script, "location.replace(target)"))
 	testing.expect(t, strings.contains(script, "hashchange"))
 }
 
-// Every page of the glossary of the repository, with its frame, has at
-// most SITE_GLOSSARY_PAGE_BYTE_LIMIT bytes, and each term has its row at
+// Every page of the glossary of the repository, with its frame (both with
+// and without a site address, which adds the JSON-LD page graph), has at
+// most SITE_GLOSSARY_PAGE_BYTE_LIMIT bytes, the index stays well under
+// half the bound so the glossary can double, and each term has its row at
 // the index and its entry on the page of its group.
 @(test)
 site_glossary_pages_of_the_repository :: proc(t: ^testing.T) {
-	site := test_site()
 	glossary, problems, read_ok := build.glossary_read_folder()
 	testing.expect(t, read_ok)
 	testing.expectf(t, len(problems) == 0, "%v", problems)
-	site.glossary = glossary
-	site.terms = site_glossary_terms(glossary)
-	site_glossary_documents_add(&site)
-	testing.expect(t, site_reference_read(&site))
-	testing.expect(t, site_declarations_read(&site))
-	site_glossary_pages_add(&site)
-	written := make(map[string]string, context.temp_allocator)
-	for page in site.pages {
-		written[page.path] = site_page_html(&site, page)
-	}
-	glossary_problems := site_glossary_problems(&site, written)
-	testing.expectf(t, len(glossary_problems) == 0, "%d problems: %v", len(glossary_problems), glossary_problems)
-	for path in site_glossary_page_paths(glossary) {
-		testing.expectf(t, len(written[path]) <= SITE_GLOSSARY_PAGE_BYTE_LIMIT, "%s has %d bytes", path, len(written[path]))
-	}
-	// A term of each group resolves to the page of its group.
-	for group in glossary.groups {
-		if len(group.terms) == 0 {
-			continue
+	index_page := site_page_file(SITE_GLOSSARY_FOLDER)
+	for address in ([2]string{"", SITE_ADDRESS}) {
+		site := test_site()
+		site.address = address
+		site.glossary = glossary
+		site.terms = site_glossary_terms(glossary)
+		site_glossary_documents_add(&site)
+		testing.expect(t, site_reference_read(&site))
+		testing.expect(t, site_declarations_read(&site))
+		site_glossary_pages_add(&site)
+		written := make(map[string]string, context.temp_allocator)
+		for page in site.pages {
+			written[page.path] = site_page_html(&site, page)
 		}
-		term := group.terms[0]
-		testing.expect_value(t, site_glossary_anchor_page(&site, term.id), site_glossary_group_page(group.id))
+		glossary_problems := site_glossary_problems(&site, written)
+		testing.expectf(t, len(glossary_problems) == 0, "%d problems: %v", len(glossary_problems), glossary_problems)
+		for path in site_glossary_page_paths(glossary) {
+			testing.expectf(t, len(written[path]) <= SITE_GLOSSARY_PAGE_BYTE_LIMIT, "%s has %d bytes", path, len(written[path]))
+		}
+		testing.expectf(t, len(written[index_page]) < SITE_GLOSSARY_PAGE_BYTE_LIMIT / 2, "%s (address=%q) has %d bytes; expected well under %d", index_page, address, len(written[index_page]), SITE_GLOSSARY_PAGE_BYTE_LIMIT / 2)
+		// A term of each group resolves to the page of its group.
+		for group in glossary.groups {
+			if len(group.terms) == 0 {
+				continue
+			}
+			term := group.terms[0]
+			testing.expect_value(t, site_glossary_anchor_page(&site, term.id), site_glossary_group_page(group.id))
+		}
 	}
 }

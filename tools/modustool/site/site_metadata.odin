@@ -528,34 +528,51 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_reference(&node, "image", card_id)
 		site_json_close(&node)
 	case main_entity != "" && (page.path == site_page_file(SITE_GLOSSARY_FOLDER) || site_glossary_group_of_page(site.glossary, page.path) >= 0):
-		// The index holds the set of every term; the page of a group, the
-		// set of its terms. A term is named by its entry on the page of its
-		// group, on both: one id for one term.
+		// The index lists each group's DefinedTermSet in hasPart so it does
+		// not repeat every term and its definition; the page of each group
+		// holds the DefinedTerm entries of its own terms.
 		is_index := page.path == site_page_file(SITE_GLOSSARY_FOLDER)
 		strings.write_byte(&b, ',')
 		node := site_json_open(&b, "DefinedTermSet", main_entity)
 		site_json_text(&node, "name", page.title)
 		site_json_text(&node, "url", page_address)
-		site_json_key(&node, "hasDefinedTerm")
-		strings.write_byte(&b, '[')
-		written_terms := 0
-		for term in site.terms {
-			if !is_index && term.page != page.path {
-				continue
+		if is_index {
+			site_json_key(&node, "hasPart")
+			strings.write_byte(&b, '[')
+			for group, group_index in site.glossary.groups {
+				if group_index > 0 {
+					strings.write_byte(&b, ',')
+				}
+				group_address := site_page_address(address, site_glossary_group_page(group.id))
+				group_entity := strings.concatenate({group_address, "#terms"}, context.temp_allocator)
+				part := site_json_open(&b, "DefinedTermSet", group_entity)
+				site_json_text(&part, "name", group.name)
+				site_json_text(&part, "url", group_address)
+				site_json_close(&part)
 			}
-			if written_terms > 0 {
-				strings.write_byte(&b, ',')
+			strings.write_byte(&b, ']')
+		} else {
+			site_json_key(&node, "hasDefinedTerm")
+			strings.write_byte(&b, '[')
+			written_terms := 0
+			for term in site.terms {
+				if term.page != page.path {
+					continue
+				}
+				if written_terms > 0 {
+					strings.write_byte(&b, ',')
+				}
+				written_terms += 1
+				term_address := strings.concatenate({site_page_address(address, term.page), "#", term.id}, context.temp_allocator)
+				term_node := site_json_open(&b, "DefinedTerm", term_address)
+				site_json_text(&term_node, "name", term.name)
+				site_json_text(&term_node, "description", site_plain_text(term.definition))
+				site_json_text(&term_node, "url", term_address)
+				site_json_reference(&term_node, "inDefinedTermSet", main_entity)
+				site_json_close(&term_node)
 			}
-			written_terms += 1
-			term_address := strings.concatenate({site_page_address(address, term.page), "#", term.id}, context.temp_allocator)
-			term_node := site_json_open(&b, "DefinedTerm", term_address)
-			site_json_text(&term_node, "name", term.name)
-			site_json_text(&term_node, "description", site_plain_text(term.definition))
-			site_json_text(&term_node, "url", term_address)
-			site_json_reference(&term_node, "inDefinedTermSet", main_entity)
-			site_json_close(&term_node)
+			strings.write_byte(&b, ']')
 		}
-		strings.write_byte(&b, ']')
 		site_json_close(&node)
 	case page.path == site_page_file(SITE_MODULES_FOLDER):
 		strings.write_byte(&b, ',')

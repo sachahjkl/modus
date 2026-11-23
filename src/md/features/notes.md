@@ -1,6 +1,6 @@
 # Notes
 
-`notes` is the notes application of a principal: a list of notes, the text of one note, and the versions of that note, in one window. It is the desktop application of property 9: no file, no path, no save action, and a history of each note that the storage service keeps. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The notes".
+`notes` (`src/modules/applications/notes`, module group `applications`, category `Application`) is the notes application of a principal: a list of notes, the text of one note, and the versions of that note, in one window, listed at the top of the start menu beside `assistant`. It is the desktop application of property 9: no file, no path, no save action, and a history of each note that the storage service keeps. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The notes".
 
 ## Purpose
 
@@ -37,7 +37,7 @@ The window thread makes no call of the storage service: no read, no write, no li
 - **An act starts only when the queue takes it whole.** A change of note needs room for the commit and the load; a deletion for the removal and the load of the note shown after it; a restore for the restore and the load after it. Else the status band says that the store is busy, and nothing changed. A change keeps waiting one more pause when the queue is full. The window thread never waits for room.
 - **A restore loads the note from the store.** Enter restores only a version whose bytes came, and the window then loads the note that the store made current, never its preview.
 - **A note that could not be read is locked.** Its text is empty, no key changes it, and no commit writes it, until another note is shown.
-- **Only a connection that ended stops the keeping.** A refusal, a damaged object or a buffer that is too small is the answer of one call: the status band says "not kept" until a write is done again, and the next change writes again. A version that cannot be read says so, and is not restored.
+- **Only a connection that ended stops the keeping.** A refusal, a damaged object or a buffer that is too small is the answer of one call: the refusal is tracked per note in `internal:notes/note_list`, so only the note whose write failed shows "not kept" until a write of that note succeeds, and the next change writes again. A version that cannot be read says so, is not restored, and clears when the pane of the versions closes (Escape) or another version is chosen.
 - **A cut is a change.** It waits with the typed keys; a copy changes nothing and needs no gate.
 - **The rules are pure** in `internal:notes/note_session`: the gates of the keys, the room of each act, and which result the window takes; a host test gives each order of the acts and the results.
 - **The window thread still enters the kernel for the queues**: the wake of the store thread, and a lock that it takes only for the copy of one record. These are the hand over of the work, not a call of a service.

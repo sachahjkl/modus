@@ -7,6 +7,7 @@ import "core:testing"
 import "modus:mark"
 import "modustool:foundation"
 import "modustool:resources"
+import "modustool:build"
 import "modustool:checks"
 
 @(private = "file")
@@ -55,7 +56,13 @@ metadata_test_site :: proc(address: string) -> Site {
 	site_page_add(&site, Site_Page{path = site_section_page(.Guides), is_index = true, title = "Guides", description = "The guides.", section = .Guides, crumbs = site_crumbs(.Docs), body = "<h1>Guides</h1>"})
 	site_page_add(&site, Site_Page{path = TEST_GUIDE_A, title = "Guide A", description = "The guide A.", section = .Guides, crumbs = site_crumbs(.Guides), body = guide_body})
 	site_page_add(&site, Site_Page{path = TEST_GUIDE_B, title = "Guide B", description = "The guide B.", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>Guide B</h1>"})
-	site_page_add(&site, Site_Page{path = site_page_file(SITE_GLOSSARY_FOLDER), title = "Glossary", description = "The terms.", section = .Reference, crumbs = site_crumbs(.Reference), body = "<h1>Glossary</h1><dl><div id=\"term-module\"><dt>Module</dt></div><div id=\"term-module-metadata\"><dt>Module metadata</dt></div></dl>"})
+	groups := make([]build.Glossary_Group, 1, context.temp_allocator)
+	groups[0] = build.Glossary_Group{name = "Code", id = "code"}
+	site.glossary.groups = groups
+	glossary_index_path := site_page_file(SITE_GLOSSARY_FOLDER)
+	code_link := site_page_link(&site, glossary_index_path, site_glossary_group_page("code"))
+	glossary_index_body := strings.concatenate({"<h1>Glossary</h1><ul class=\"glossary-index\"><li id=\"term-module\"><a href=\"", code_link, "#term-module\">Module</a> <span class=\"glossary-index-group\">Code</span></li><li id=\"term-module-metadata\"><a href=\"", code_link, "#term-module-metadata\">Module metadata</a> <span class=\"glossary-index-group\">Code</span></li></ul>"}, context.temp_allocator)
+	site_page_add(&site, Site_Page{path = glossary_index_path, title = "Glossary", description = "The terms.", section = .Reference, crumbs = site_crumbs(.Reference), body = glossary_index_body})
 	// The page of the group of the two terms: a link to a term names it.
 	site_page_add(&site, Site_Page{path = site_glossary_group_page("code"), title = "Glossary: Code", description = "The terms of the group Code.", section = .Reference, crumbs = site_crumbs(.Reference), body = "<h1 id=\"code\">Code</h1><div class=\"term-entry\"><h2 id=\"term-module\">Module</h2></div><div class=\"term-entry\"><h2 id=\"term-module-metadata\">Module metadata</h2></div>"})
 	site_page_add(&site, Site_Page{path = site_section_page(.News), title = "News", description = "The news.", section = .News, crumbs = site_crumbs(.Home), body = "<h1>News</h1><article id=\"news-2026-11-12-a\"></article>"})
@@ -164,10 +171,16 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "\"position\":3,\"name\":\"Guides\",\"item\":\"" + TEST_ADDRESS + "/docs/guides/\""))
 	testing.expect(t, !strings.contains(written[TEST_GUIDE_A], "dateModified"))
 	glossary_page := site_page_file(SITE_GLOSSARY_FOLDER)
-	testing.expect(t, strings.contains(written[glossary_page], "\"@type\":\"DefinedTerm\""))
-	// The index names each term by its entry on the page of its group.
-	testing.expect(t, strings.contains(written[glossary_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/code/#term-module\""))
-	testing.expect(t, !strings.contains(written[glossary_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/#term-module\""))
+	glossary_group_page := site_glossary_group_page("code")
+	// The index lists each group's DefinedTermSet in hasPart and does not repeat every term.
+	testing.expect(t, strings.contains(written[glossary_page], "\"@type\":\"DefinedTermSet\""))
+	testing.expect(t, strings.contains(written[glossary_page], "\"hasPart\""))
+	testing.expect(t, strings.contains(written[glossary_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/code/#terms\""))
+	testing.expect(t, !strings.contains(written[glossary_page], "\"@type\":\"DefinedTerm\""))
+	// The page of a group names each of its terms by its entry on that page.
+	testing.expect(t, strings.contains(written[glossary_group_page], "\"@type\":\"DefinedTerm\""))
+	testing.expect(t, strings.contains(written[glossary_group_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/code/#term-module\""))
+	testing.expect(t, !strings.contains(written[glossary_group_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/#term-module\""))
 	testing.expect(t, strings.contains(written["news/index.html"], "\"@type\":\"BlogPosting\""))
 	testing.expect(t, strings.contains(written["news/index.html"], "\"datePublished\":\"2026-11-12\""))
 	testing.expect(t, strings.contains(written[site_section_page(.Guides)], "\"@type\":\"CollectionPage\""))

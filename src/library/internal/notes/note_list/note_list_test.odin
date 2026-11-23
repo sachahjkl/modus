@@ -196,3 +196,59 @@ a_change_is_due_at_most_5_seconds_after_the_first_change :: proc(t: ^testing.T) 
 	change_wait_mark(&wait, 20_000)
 	testing.expect_value(t, wait.first_change, u64(20_000))
 }
+
+// A refused write marks only the note whose write failed: other notes stay
+// kept, and a successful write of another note does not clear the first.
+@(test)
+write_refused_is_tracked_per_note :: proc(t: ^testing.T) {
+	list := new(Note_List)
+	defer free(list)
+	list_reset(list)
+	// Edges: empty list, empty name, unknown name, out-of-range indices.
+	for bad in ([?]int{-1, 0, 1, NOTE_CAPACITY, max(int), min(int)}) {
+		testing.expect(t, !note_is_write_refused(list, bad))
+	}
+	index, found := note_write_done(list, "", false, 0)
+	testing.expect(t, !found && index == -1)
+	index, found = note_write_done(list, "note_000001", false, 0)
+	testing.expect(t, !found && index == -1)
+
+	first, _ := list_add_stored(list, "note_000001", transmute([]u8)string("one"), 10)
+	second, _ := list_add_stored(list, "note_000002", transmute([]u8)string("two"), 20)
+	testing.expect(t, !note_is_write_refused(list, first))
+	testing.expect(t, !note_is_write_refused(list, second))
+
+	// Refusing a write on the first note leaves the second note kept.
+	index, found = note_write_done(list, "note_000001", false, 99)
+	testing.expect(t, found && index == first)
+	testing.expect(t, note_is_write_refused(list, first))
+	testing.expect(t, !note_is_write_refused(list, second))
+	testing.expect_value(t, list.notes[first].generation, i64(10))
+
+	// A write that succeeds on the second note updates only the second note.
+	index, found = note_write_done(list, "note_000002", true, 25)
+	testing.expect(t, found && index == second)
+	testing.expect(t, note_is_write_refused(list, first))
+	testing.expect(t, !note_is_write_refused(list, second))
+	testing.expect_value(t, list.notes[second].generation, i64(25))
+
+	// A write of an unknown name changes nothing.
+	index, found = note_write_done(list, "note_000099", true, 30)
+	testing.expect(t, !found && index == -1)
+	testing.expect(t, note_is_write_refused(list, first))
+
+	// A write that succeeds on the first note clears its refusal and updates
+	// its generation.
+	index, found = note_write_done(list, "note_000001", true, 31)
+	testing.expect(t, found && index == first)
+	testing.expect(t, !note_is_write_refused(list, first))
+	testing.expect_value(t, list.notes[first].generation, i64(31))
+
+	// Removing a refused note shifts the remaining notes without leaking its flag.
+	_, _ = note_write_done(list, "note_000001", false, 0)
+	testing.expect(t, note_is_write_refused(list, first))
+	shown, _ := list_remove(list, first)
+	testing.expect_value(t, shown, 0)
+	testing.expect_value(t, note_name(&list.notes[0]), "note_000002")
+	testing.expect(t, !note_is_write_refused(list, 0))
+}

@@ -28,11 +28,12 @@ PAUSE_MILLISECONDS :: 1000
 LONGEST_WAIT_MILLISECONDS :: 5000
 
 Note :: struct {
-	name:        [NAME_BYTES]u8,
-	name_count:  int, // 0: the store does not hold the note yet; its first commit names it.
-	title:       [TITLE_BYTES]u8,
-	title_count: int,
-	generation:  i64, // The last commit of the note; 0: none.
+	name:          [NAME_BYTES]u8,
+	name_count:    int, // 0: the store does not hold the note yet; its first commit names it.
+	title:         [TITLE_BYTES]u8,
+	title_count:   int,
+	generation:    i64, // The last commit of the note; 0: none.
+	write_refused: bool, // The last write of this note was refused: the store does not hold its text.
 }
 
 Note_List :: struct {
@@ -196,6 +197,46 @@ list_remove :: proc "contextless" (list: ^Note_List, index: int) -> (shown: int,
 		return -1, .None
 	}
 	return min(index, list.count - 1), .None
+}
+
+// note_find gives the index of the note with an object name, or -1:
+// a result names its note, and the list can change before it comes.
+note_find :: proc "contextless" (list: ^Note_List, name: string) -> int {
+	if len(name) == 0 {
+		return -1
+	}
+	for index in 0 ..< list.count {
+		if note_name(&list.notes[index]) == name {
+			return index
+		}
+	}
+	return -1
+}
+
+// note_write_done records the result of a write for the note with an object
+// name: a refused write marks only that note, and a write that succeeded
+// clears it and records its commit generation. Nothing changes when the name
+// is absent.
+note_write_done :: proc "contextless" (list: ^Note_List, name: string, kept: bool, generation: i64) -> (index: int, found: bool) {
+	index = note_find(list, name)
+	if index < 0 {
+		return -1, false
+	}
+	note := &list.notes[index]
+	note.write_refused = !kept
+	if kept {
+		note.generation = generation
+	}
+	return index, true
+}
+
+// note_is_write_refused says if the last write of the note at index was
+// refused. false for an index that names no note.
+note_is_write_refused :: proc "contextless" (list: ^Note_List, index: int) -> bool {
+	if index < 0 || index >= list.count {
+		return false
+	}
+	return list.notes[index].write_refused
 }
 
 // list_newest gives the note with the latest commit, or -1 for an empty
